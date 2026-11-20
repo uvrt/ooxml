@@ -18,6 +18,22 @@ cause = """#89: docx-agent rolls the tree back, but its id pool and aliases keep
 drew; the Rust core changes nothing (tool rule 3: a no-op changes nothing). A docx-agent \
 leftover, not copied."""
 
+# Lane P2c12: the same as #89 through the tool -- Markdown that writes nothing (empty, or only a
+# comment).
+[[difference]]
+mode = "text"
+input = { tool = "word_insert_markdown", arguments = { markdown = "" } }
+cause = """#89 through word_insert_markdown: docx-agent rolls the tree back, but its id pool and \
+aliases keep what the stamping drew; the Rust core changes nothing (tool rule 3: a no-op changes \
+nothing). A docx-agent leftover, not copied."""
+
+[[difference]]
+mode = "text"
+input = { tool = "word_insert_markdown", arguments = { markdown = "<!-- only a comment -->\n" } }
+cause = """#89 through word_insert_markdown: docx-agent rolls the tree back, but its id pool and \
+aliases keep what the stamping drew; the Rust core changes nothing (tool rule 3: a no-op changes \
+nothing). A docx-agent leftover, not copied."""
+
 # #84: a SEQ field inserted in the document's text box, untracked and tracked (lane P4b8: by
 # input, not by case number).
 [[difference]]
@@ -38,6 +54,28 @@ file = "generated/trial/template-saved-as-docx.docx"
 input = { tool = "word_fields", arguments = { action = "update" } }
 cause = """#84: docx-agent's session adds its TemplateOpened warning (the host's, not the tool's) \
 to an update that changes nothing."""
+
+# P4b8: a comment on a row the table holds inside a row content control.
+[[difference]]
+gate = "fixtures"
+mode = "structure"
+file = "generated/controls.docx"
+input = { tool = "word_comments", arguments = { action = "add", items = [{ target = "t:7B000001/r1", text = "On the last row" }] } }
+cause = """P4b8: docx-agent's Table.rows counts the row inside the row content control, its table \
+entry's rows do not, so _add_block_comment fails with an internal IndexError ("list index out \
+of range"). Rust finds no such row either and refuses the address as text, naming the forms it \
+takes."""
+
+# The same, the case that names the row as the table's last.
+[[difference]]
+gate = "fixtures"
+mode = "structure"
+file = "generated/controls.docx"
+input = { tool = "word_comments", arguments = { action = "add", items = [{ target = "t:7B000001/r1", text = "On a row" }] } }
+cause = """P4b8: docx-agent's Table.rows counts the row inside the row content control, its table \
+entry's rows do not, so _add_block_comment fails with an internal IndexError ("list index out \
+of range"). Rust finds no such row either and refuses the address as text, naming the forms it \
+takes."""
 
 [[difference]]
 gate = "reads"
@@ -86,6 +124,69 @@ mode = "objects"
 file = "generated/lists-and-styles.docx"
 input = { tool = "word_drawings", arguments = { action = "float" } }
 cause = """P4c10: as the constructs.docx float entry above: docx-agent's ns0 prefix on the new wp:anchor."""
+
+# P4c11: word_drawings insert_picture floated (wrap given; the cases give such a picture
+# the alt text below) in the fixtures whose root does not declare the wordprocessingDrawing
+# namespace: the float's new wp:anchor, as the P4c10 float entries above.
+[[difference]]
+mode = "objects"
+file = "generated/markdown/constructs.docx"
+input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
+cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
+
+[[difference]]
+mode = "objects"
+file = "generated/lists-and-styles.docx"
+input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
+cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
+
+[[difference]]
+mode = "objects"
+file = "generated/markdown/blank.docx"
+input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
+cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
+
+[[difference]]
+mode = "objects"
+file = "generated/markdown/dutch-template.docx"
+input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
+cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
+
+[[difference]]
+mode = "objects"
+file = "generated/markdown/review.docx"
+input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
+cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
+
+[[difference]]
+mode = "objects"
+file = "generated/controls.docx"
+input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
+cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
+
+[[difference]]
+mode = "objects"
+file = "generated/ids-and-markup.docx"
+input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
+cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
+
+[[difference]]
+mode = "objects"
+file = "generated/mode14.docx"
+input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
+cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
+
+[[difference]]
+mode = "objects"
+file = "docx2svg/layout-sweep.docx"
+input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
+cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
+
+[[difference]]
+mode = "objects"
+file = "docx2svg/style-document.docx"
+input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
+cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
 
 # P4c10: a set that leaves the frame as it was (square wrapping on a frame wrapped square,
 # one step back or forward with no drawing there) in a fixture lxml did not write.

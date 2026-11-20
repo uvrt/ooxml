@@ -2,8 +2,8 @@
 //! drawings listed (pictures, then charts: id, kind, size, inline, alt text); a text box
 //! or a shape inserted at a position or after text found once; a drawing moved, resized,
 //! floated, put in the line or set (wrapping, order, place, a picture's alt text) -- each
-//! one command -- and the reply. A picture inserted from a blob and a name given with
-//! `ref` are left to the host.
+//! one command -- and the reply. A picture inserted from a blob is `drawings_picture`'s; a
+//! name given with `ref` is left to the host.
 //!
 //! Must not: change the document but through a command.
 
@@ -87,7 +87,7 @@ fn reply(
 fn run(args: &WordDrawings, editing: &Editing<'_>, list: &TryCall) -> Result<ToolResult<Value>, ToolError> {
     match args.action {
         DrawingAction::List => listed(editing, list),
-        DrawingAction::InsertPicture => Ok(unported("word_drawings insert_picture", list)),
+        DrawingAction::InsertPicture => super::drawings_picture::insert_picture(args, editing, list),
         DrawingAction::InsertTextBox | DrawingAction::InsertShape => {
             if args.reference.is_some() {
                 return Ok(unported("word_drawings ref", list));
@@ -240,7 +240,7 @@ fn set_action(args: &WordDrawings, editing: &Editing<'_>, list: &TryCall) -> Res
 
 /// Where a text box or shape goes (docx-agent's `_position`): `at` as given, or the end
 /// of the text `find` names once.
-fn position(args: &WordDrawings, editing: &Editing<'_>, list: &TryCall) -> Result<String, ToolError> {
+pub(super) fn position(args: &WordDrawings, editing: &Editing<'_>, list: &TryCall) -> Result<String, ToolError> {
     let key = one_of(&[("at", args.at.is_some()), ("find", args.find.is_some())], list)?;
     if key == "find" {
         let range = find_once(editing, args.find.as_deref().unwrap_or(""), list)?;

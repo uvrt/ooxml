@@ -6,6 +6,7 @@
 | `mode14.docx` | `77be777abae6193af48cb3c970c7a4c67a2a3a4a1c147acc569c89a7fc7240cc` |
 | `controls.docx` | `fc2f42cc7f052802a23f82f3fa25d0d39c65bf54c7f8db674aba0042d23934b4` |
 | `lists-and-styles.docx` | `94c56b4994c7f50480d634cbf099d808c7ded428b5a8c254bd289fd3567fabaf` |
+| `review-follow.docx` | `32b604fc864d48b02ff62b6fbf9e1b433572ca31b8734bd98bdfdb72eb63f715` |
 | `own-tracked-note.docx` | `385d29b4493f8feaf6ef8f6ca9f707d3102f3e95c1c9a16c766104157065aa31` |
 
 Written by `tools/make_fixtures.py` in this repository, deterministically (running it
@@ -32,6 +33,12 @@ names), numbered lists over one abstract definition (one restarted), a list a pa
 style gives, an unused list instance, formatting that changes mid-word with runs split by
 rsids and a proofing mark, an external and an internal hyperlink, a bookmark, and an inline
 picture -- a 4x4 one-colour PNG written by the same script.
+`review-follow.docx` (mode 15) is what a review settles beyond its records: after plain
+paragraphs and a plain table (what edit sets over every fixture work on), data-bound
+controls (text, a drop-down list, a date whose node lacks its time) showing tracked changes,
+and a table with tracked cell insertions that a comment describing them ("Tracked structural
+change: ...", as docx-agent wrote before its round 57) is anchored in, beside an ordinary
+comment; each bound node holds what its control shows -- for `word_changes`.
 `own-tracked-note.docx` (mode 15) is a footnote of three paragraphs, it and its reference
 tracked insertions by the differential harness's own author ("Writer A"): a tracked edit or
 delete of the note removes those insertions outright -- for `word_notes` and annotation-id

@@ -66,9 +66,10 @@ fn selection(args: &WordChanges) -> Result<Selection, ToolError> {
     })
 }
 
-/// A refusal of the review's selection: an id or `within` refused with its way out.
+/// A refusal of the review's selection: an id or `within` refused with its way out (a
+/// `within` at no field, as today's tool names none).
 fn refusal(error: ooxml_word_edit::EditError, args: &WordChanges) -> ToolError {
-    let field = if args.ids.is_some() { "ids" } else { "within" };
+    let field = if args.ids.is_some() { "ids" } else { "" };
     let mut list = args.clone();
     list.action = ChangeAction::List;
     list.ids = None;

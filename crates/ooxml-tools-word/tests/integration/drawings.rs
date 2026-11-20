@@ -12,13 +12,33 @@ use ooxml_base::Limits;
 use ooxml_opc::Package;
 use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools::ToolArgs;
-use ooxml_tools_word::{word_drawings, CallEditor, Editing, WordDrawings};
+use ooxml_tools_word::{word_drawings, Blob, BlobList, CallEditor, Editing, WordDrawings};
 use ooxml_word_edit::{Editor, Tracking};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
 const FIXTURE: &[u8] =
     include_bytes!("../../../../python/docx-agent/tests/fixtures/generated/charts/chart-places.docx");
+
+/// `b1`: a 96 by 48 pixel PNG header stating no density (96 dpi: 72 by 36 pt); `b2`: text.
+fn picture_blobs() -> BlobList {
+    let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+    png.extend_from_slice(&13u32.to_be_bytes());
+    png.extend_from_slice(b"IHDR");
+    png.extend_from_slice(&96u32.to_be_bytes());
+    png.extend_from_slice(&48u32.to_be_bytes());
+    png.extend_from_slice(&[8, 2, 0, 0, 0, 0, 0, 0, 0]);
+    let blob = |handle: &str, mime: &str, data: Vec<u8>| Blob {
+        handle: handle.to_owned(),
+        name: format!("{handle}.bin"),
+        mime: mime.to_owned(),
+        data: Arc::from(data),
+    };
+    BlobList(vec![
+        blob("b1", "image/png", png),
+        blob("b2", "text/plain", b"words".to_vec()),
+    ])
+}
 
 /// Each of `calls` to `word_drawings` in turn on a fresh copy of the fixture (tracked as
 /// `author` when given): the replies, and the main part as it was left.
@@ -27,6 +47,7 @@ fn calls(calls: &[Value], author: Option<&str>) -> (Vec<Value>, String) {
     let editor = Editor::open(package, StoreConfig::default(), Arc::new(Still), Arc::new(Unlimited)).unwrap();
     let opened = editor.store().snapshot().doc().clone();
     let caller = Caller::anonymous();
+    let blobs = picture_blobs();
     let tracking = author.map(|a| Tracking {
         author: a.to_owned(),
         date: "2026-11-17T10:00:00Z".to_owned(),
@@ -41,6 +62,7 @@ fn calls(calls: &[Value], author: Option<&str>) -> (Vec<Value>, String) {
         date: "2026-11-17T10:00:00Z",
         layout: None,
         others: ooxml_tools_word::Others::default(),
+        blobs: Some(&blobs),
     };
     let mut replies = Vec::new();
     for arguments in calls {
@@ -137,4 +159,39 @@ fn refusals_carry_their_way_out() {
         replies[1]["error"]["message"],
         "d:4 is inline: float it first (float_drawing)"
     );
+}
+
+#[test]
+fn a_picture_inserted_from_a_blob_at_its_natural_size_or_a_width() {
+    let (replies, xml) = calls(
+        &[
+            json!({"action": "insert_picture", "image": "b1", "at": "p@body/0@0", "alt_text": "A logo"}),
+            json!({"action": "insert_picture", "image": "b1", "at": "after:p@body/0", "alt_text": "Again",
+                   "width": 36}),
+        ],
+        None,
+    );
+    assert_eq!(replies[0]["data"]["size"], json!([72.0, 36.0]));
+    assert_eq!(replies[1]["data"]["size"], json!([36.0, 18.0]));
+    assert!(replies[1]["data"]["paragraph"].is_string(), "a paragraph of its own");
+    assert!(xml.contains("descr=\"A logo\""));
+    assert_eq!(xml.matches("<pic:pic").count(), 2, "the fixture has none");
+}
+
+#[test]
+fn a_picture_call_refused_before_anything_changes() {
+    let (replies, _) = calls(
+        &[
+            json!({"action": "insert_picture", "image": "b9", "at": "p@body/0@0", "alt_text": "x"}),
+            json!({"action": "insert_picture", "image": "b2", "at": "p@body/0@0", "alt_text": "x"}),
+            json!({"action": "insert_picture", "image": "b1", "at": "p@body/0@0"}),
+            json!({"action": "insert_picture", "image": "b1", "at": "p@body/0@0", "alt_text": "x", "height": 9}),
+        ],
+        None,
+    );
+    assert_eq!(replies[0]["error"]["code"], "not_found");
+    assert_eq!(replies[0]["error"]["valid_options"][0], "b1 (b1.bin)");
+    for reply in &replies[1..] {
+        assert_eq!(reply["error"]["code"], "invalid_arguments", "{reply}");
+    }
 }

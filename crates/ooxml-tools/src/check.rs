@@ -85,7 +85,7 @@ impl ToolSpec {
             {
                 out.push(format!("{where_}: no description"));
             }
-            for alias in &property.intent.aliases {
+            for alias in property.intent.aliases.iter().chain(&property.intent.refused_aliases) {
                 if object.property(alias).is_some() {
                     out.push(format!("{where_}: the alias {alias:?} is a parameter"));
                 }

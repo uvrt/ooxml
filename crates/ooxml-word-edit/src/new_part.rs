@@ -120,6 +120,69 @@ fn add_relationship(package: &Package, source: &str, target: &str, rel_type: &st
     Ok(relate(package, source, rel_type, &relative, false)?.0)
 }
 
+/// A relationship of `rel_type` from `source` to the part `target`, as ooxml-edit's
+/// `add_relationship` makes one: an existing one of that type to that part reused. Returns
+/// the package made (`None`: none was added) and the relationship's id.
+///
+/// # Errors
+/// When the relationships part is not XML.
+pub(crate) fn add_internal(
+    package: &Package,
+    source: &str,
+    target: &str,
+    rel_type: &str,
+) -> Result<(Option<Package>, String), ModelError> {
+    let existing = package
+        .relationships(source)?
+        .iter()
+        .find(|r| r.rel_type == rel_type && !r.external && r.target_part.as_deref() == Some(target))
+        .map(|r| r.id.clone());
+    match existing {
+        Some(id) => Ok((None, id)),
+        None => {
+            let relative = relative_to(target, directory(source));
+            relate(package, source, rel_type, &relative, false).map(|(p, id)| (Some(p), id))
+        }
+    }
+}
+
+/// `part` of `content_type` declared as ooxml-edit's `add_part` declares a new part's type:
+/// nothing when its extension's `Default` gives that type already, a `Default` for an
+/// extension without one (after the last `Default`, the convention for media), else an
+/// `Override`. `None`: nothing to declare.
+///
+/// # Errors
+/// When the content types are not XML.
+pub(crate) fn declare_type(package: &Package, part: &str, content_type: &str) -> Result<Option<Package>, ModelError> {
+    let types = package.content_types()?;
+    if types.of(part) == Some(content_type) {
+        return Ok(None);
+    }
+    let extension = part.rsplit_once('.').map(|(_, e)| e.to_lowercase()).unwrap_or_default();
+    let has_default = types.defaults.iter().any(|(e, _)| e.to_lowercase() == extension);
+    if extension.is_empty() || has_default {
+        return declare_override(package, part, content_type).map(Some);
+    }
+    edit_part(package, CONTENT_TYPES_PART, |work| {
+        let root = work.root();
+        let node = work.new_element(work.element_name(root, TYPES, "Default", ""));
+        let last = work
+            .children(root)
+            .iter()
+            .copied()
+            .rfind(|c| work.is(*c, TYPES, "Default"));
+        match last.and_then(|l| work.index(l)) {
+            Some(index) => work.insert(root, index + 1, node),
+            None => work.insert(root, 0, node),
+        }
+        for (local, value) in [("Extension", extension.as_str()), ("ContentType", content_type)] {
+            work.set(node, Arc::new(QName::new(None, local, None)), value);
+        }
+        match_tail(work, node);
+    })
+    .map(Some)
+}
+
 /// An external relationship from `source` to the address `target` of `rel_type`, as
 /// ooxml-edit's `add_external_relationship` adds one: an existing one of that type and
 /// address reused. Returns the package made (`None`: none was added) and the

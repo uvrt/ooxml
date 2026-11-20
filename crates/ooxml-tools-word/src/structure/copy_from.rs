@@ -3,16 +3,19 @@
 //! document (as it was before the call) or another open one, its blocks a range or a
 //! heading's section, the reply naming the blocks made and each source id's copy.
 //!
-//! Left to the host (`unported`): the policies other than `use_destination`, a style map,
-//! `unmapped: body`, a place given by reference, and what the edit core does not port yet.
+//! Left to the host (`unported`): a place given by reference, and what the edit core does
+//! not port yet.
 //!
 //! Must not: change the document but through a command.
 
-use super::common::{call, outcome, policy, refused, Outcome};
+use super::common::{blocks_ref_as_place, call, is_place, name_blocks, outcome, policy, refused, Outcome};
 use crate::review::Editing;
 use ooxml_tools::pyfmt::repr_str;
 use ooxml_tools::{ArgEnum, Done, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
-use ooxml_word_edit::{section_blocks, section_blocks_in, CopyBlocks, CopyRange, CopySource, EditError, Ids};
+use ooxml_word_edit::{
+    section_blocks, section_blocks_in, CopyBlocks, CopyRange, CopySource, EditError, Ids, ListPolicy, StylePolicy,
+    UnmappedPolicy,
+};
 use serde_json::{json, Map, Value};
 
 /// How many of the source ids and their copies' the reply lists.
@@ -105,16 +108,10 @@ fn unported(what: &str) -> ToolResult<Value> {
 
 fn run(args: &WordCopyFrom, editing: &Editing<'_>, way: &TryCall) -> Result<ToolResult<Value>, ToolError> {
     if let Some(name) = args.ref_name.as_deref().filter(|r| is_place(r)) {
-        return Err(ref_as_place(name, &args.at));
+        return Err(blocks_ref_as_place(name, &args.at));
     }
     if args.at.contains('$') {
         return Ok(unported("copy_from at a place by reference"));
-    }
-    if args.styles.is_some_and(|s| s != CopyStyles::UseDestination) {
-        return Ok(unported("copy_from styles other than use_destination"));
-    }
-    if args.style_map.as_ref().is_some_and(|m| !m.is_empty()) || args.unmapped == Some(Unmapped::Body) {
-        return Ok(unported("copy_from with a style map"));
     }
     let source = if args.source_doc == args.doc {
         CopySource::Own
@@ -148,6 +145,23 @@ fn run(args: &WordCopyFrom, editing: &Editing<'_>, way: &TryCall) -> Result<Tool
         range,
         at: args.at.clone(),
         policy: policy(editing),
+        styles: match args.styles {
+            None | Some(CopyStyles::UseDestination) => StylePolicy::UseDestination,
+            Some(CopyStyles::KeepSource) => StylePolicy::KeepSource,
+            Some(CopyStyles::Merge) => StylePolicy::Merge,
+        },
+        style_map: args
+            .style_map
+            .iter()
+            .flatten()
+            .map(|m| (m.source.clone(), m.destination.clone()))
+            .collect(),
+        unmapped: match args.unmapped {
+            Some(Unmapped::Body) => UnmappedPolicy::Body,
+            None | Some(Unmapped::Import) => UnmappedPolicy::Import,
+        },
+        // the tool copies lists as Word's paste does: each a new list
+        lists: ListPolicy::Separate,
     };
     Ok(match editing.editor.run(editing.caller, &command) {
         Ok(done) => reply(args, done.out),
@@ -181,36 +195,8 @@ fn reply(args: &WordCopyFrom, out: ooxml_word_edit::BlocksCopied) -> ToolResult<
         format!("Copied {count} block(s) from {}", args.source_doc),
         Some(json!({"blocks": out.blocks, "copied": Value::Object(copied)})),
     );
-    let named = match out.blocks.as_slice() {
-        [] => None,
-        [one] => Some(one.clone()),
-        [first, .., last] => Some(format!("{first}..{last}")),
-    };
-    if let (Some(name), Some(address), ooxml_tools::Outcome::Done(done)) = (
-        args.ref_name.as_ref().filter(|n| !n.is_empty()),
-        named,
-        &mut result.outcome,
-    ) {
-        done.refs.push((name.clone(), address));
-    }
+    name_blocks(&mut result, args.ref_name.as_ref(), &out.blocks);
     result
-}
-
-/// Whether a ref reads as an address or a place (docx-agent's `positions.is_place`).
-fn is_place(value: &str) -> bool {
-    value.contains([':', '@', '$']) || value.contains("..")
-}
-
-/// docx-agent's `named`: a ref that holds an address refused, the place being `at`.
-fn ref_as_place(name: &str, at: &str) -> ToolError {
-    let message = format!(
-        "ref {} is an address: ref names the blocks this call makes, for $name later; the place is at (now {}): \
-         write at: 'after:{name}' to place them after it",
-        repr_str(name),
-        repr_str(at)
-    );
-    let way = WayOut::names(["at"]).unwrap_or_else(|| WayOut::call(call("word_read", &[])));
-    ToolError::refusal(Refusal::InvalidArguments, message, way).at("ref")
 }
 
 /// The source document is not open.
