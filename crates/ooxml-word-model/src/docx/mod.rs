@@ -24,6 +24,7 @@ pub mod fields;
 pub mod formatting;
 pub mod numbering;
 pub mod outline;
+pub mod provenance;
 pub mod revisions;
 pub mod sections;
 pub mod tables;
