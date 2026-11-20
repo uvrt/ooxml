@@ -118,8 +118,11 @@ def _table_calls(session, doc, second):
                               "last": {"row": 1, "col": 1}}, False
     yield "word_edit_table", {"table": table, "action": "split", "first": {"row": 1, "col": 0}}, False
     yield "word_edit_table", {"table": table, "action": "delete_column", "index": 3}, False
-    # rows written: looked at against the rows around them by the Python handler (R126)
-    yield "word_edit_table", {"table": table, "action": "insert_row", "index": 0}, True
+    # rows written, looked at against the rows around them in the session too (R126)
+    yield "word_edit_table", {"table": table, "action": "insert_row", "index": 0}, False
+    yield "word_edit_table", {"table": table, "action": "copy_row", "index": 2}, False
+    yield "word_edit_table", {"table": table, "action": "set_cells",
+                              "cells": [{"row": 1, "col": 0, "text": "Pebble"}, {"row": 3, "col": 1, "text": "7"}]}, False
     their = _ids(session, second)
     yield "word_copy_from", {"source_doc": second, "range": their["Part 2"] + ".." + their["River stone number 2."],
                              "at": "after:" + ids["Part 1"], "ref": "copied"}, False

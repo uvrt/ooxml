@@ -16,7 +16,9 @@ use super::table_view::table_view;
 use crate::review::Editing;
 use ooxml_store::Snapshot;
 use ooxml_tools::{python_dumps, TryCall};
-use ooxml_word_edit::{row_shown, rows_unlike, ColumnCopy, LikeTheColumn, LookField, RowUnlike, TextLook, WordDoc};
+use ooxml_word_edit::{
+    row_shown, rows_unlike, ColumnCopy, Edited, LikeTheColumn, LookField, RowUnlike, TextLook, WordDoc,
+};
 use ooxml_word_model::docx::{at_path, Docx};
 use ooxml_word_model::ids::{TableId, W14};
 use serde_json::{Map, Value};
@@ -85,6 +87,18 @@ fn written_rows(before: &[String], after: &[String], after_ids: &[String], made:
     )
 }
 
+/// [`rows_written`] after the command `done` wrote rows of `table` (its id after followed).
+pub(super) fn after<O>(
+    editing: &Editing<'_>,
+    table: &str,
+    done: &Edited<O>,
+    made: Option<&str>,
+    retry: &TryCall,
+) -> Vec<String> {
+    let now = done.version.doc().ids().follow(table);
+    rows_written(editing, table, &now, done.previous.as_ref(), &done.version, made, retry)
+}
+
 /// What the call did beyond its command (`_rows_written`): `table` the table as the
 /// call named it, `now` its id after, `previous` and `version` the versions its command
 /// was applied to and made, `made` the row it added. The warnings, in order.
@@ -129,13 +143,13 @@ pub(super) fn rows_written(
         .map(|(path, _)| para_id(&docx, &new.part, path))
         .collect();
     let mut kept = editing.rows_written.map(RowsWritten::ids).unwrap_or_default();
-    let mine: Vec<String> = now_rows.iter().filter_map(|r| ids[*r].clone()).collect();
+    let mine: Vec<String> = now_rows.iter().filter_map(|r| ids.get(*r).cloned().flatten()).collect();
     if let Some(record) = editing.rows_written {
         record.note(mine.iter().cloned());
     }
     kept.extend(mine);
     let marked: Vec<bool> = (0..ids.len())
-        .map(|r| now_rows.contains(&r) || ids[r].as_ref().is_some_and(|i| kept.contains(i)))
+        .map(|r| now_rows.contains(&r) || ids.get(r).and_then(Option::as_ref).is_some_and(|i| kept.contains(i)))
         .collect();
     let ours =
         |found: Vec<RowUnlike>| -> Vec<RowUnlike> { found.into_iter().filter(|e| now_rows.contains(&e.row)).collect() };

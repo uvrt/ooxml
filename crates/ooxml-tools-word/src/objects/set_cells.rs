@@ -125,18 +125,10 @@ pub(super) fn set_cells(
         Err(error) => return Ok(refused(error, retry.clone())),
     };
     count_fills(&mut fills, &values);
-    let mut result = reply(editing, view, done.out.edits, &fills, &held, retry);
     // round 58 (R126): the rows written looked at against the rows around them
-    let now = done.version.doc().ids().follow(&view.table.id);
-    result.warnings.extend(super::rows_written::rows_written(
-        editing,
-        &view.table.id,
-        &now,
-        done.previous.as_ref(),
-        &done.version,
-        None,
-        retry,
-    ));
+    let rows = super::rows_written::after(editing, &view.table.id, &done, None, retry);
+    let mut result = reply(editing, view, done.out.edits, &fills, &held, retry);
+    result.warnings.extend(rows);
     Ok(result)
 }
 

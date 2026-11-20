@@ -157,6 +157,24 @@ pub(crate) fn tool_case(
     let reply = reply(tool, &arguments, &editing).ok_or_else(|| format!("no tool {tool}"))?;
     let head = editor.store().snapshot();
     let doc = head.doc();
+    let parts = changed_parts(&package, doc);
+    let found = touched(&opened, doc).map_err(|e| e.to_string())?;
+    let now = problems(doc).map_err(|e| e.to_string())?;
+    let delta = Delta::of(editor.baseline(), &now);
+    Ok(json!({
+        "reply": Value::Object(reply.to_json()),
+        "unported": reply.unported(),
+        "parts": parts,
+        "order": doc.package().part_names(),
+        "touched": found.iter().map(touched_json).collect::<Vec<_>>(),
+        "validation": {"new": delta.new, "fixed": delta.fixed, "baseline": delta.baseline},
+        "problems": now.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        "next": next_ids(doc),
+    }))
+}
+
+/// The parts of `doc` that differ from `package`'s, by name, as text.
+fn changed_parts(package: &Package, doc: &ooxml_word_edit::WordDoc) -> Map<String, Value> {
     let mut parts = Map::new();
     for name in doc.package().part_names() {
         let same = matches!((package.part(&name), doc.package().part(&name)), (Some(a), Some(b)) if a.same(b));
@@ -171,19 +189,7 @@ pub(crate) fn tool_case(
             .unwrap_or_else(|| Arc::from(Vec::new()));
         parts.insert(name, json!(String::from_utf8_lossy(&bytes)));
     }
-    let found = touched(&opened, doc).map_err(|e| e.to_string())?;
-    let now = problems(doc).map_err(|e| e.to_string())?;
-    let delta = Delta::of(editor.baseline(), &now);
-    Ok(json!({
-        "reply": Value::Object(reply.to_json()),
-        "unported": reply.unported(),
-        "parts": parts,
-        "order": doc.package().part_names(),
-        "touched": found.iter().map(touched_json).collect::<Vec<_>>(),
-        "validation": {"new": delta.new, "fixed": delta.fixed, "baseline": delta.baseline},
-        "problems": now.iter().map(ToString::to_string).collect::<Vec<_>>(),
-        "next": next_ids(doc),
-    }))
+    parts
 }
 
 /// The blobs a case registers (`blobs`: `{name, mime, hex}` each), as the session's

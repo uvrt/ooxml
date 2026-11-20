@@ -246,6 +246,9 @@ fn first_char(run: &Element) -> char {
     'a'
 }
 
+/// A row's cells, `(first grid column, span)`, with what their text looks like.
+type RowLooks = Vec<((usize, usize), Option<TextLook>)>;
+
 /// A table's rows as `rows_unlike` reads them: which are compared, and what each cell's
 /// text looks like (read once per cell).
 struct Scan<'a> {
@@ -257,7 +260,7 @@ struct Scan<'a> {
     marked: &'a [bool],
     /// The table's look turns its total row on.
     total: bool,
-    memo: HashMap<usize, Vec<((usize, usize), Option<TextLook>)>>,
+    memo: HashMap<usize, RowLooks>,
 }
 
 impl Scan<'_> {
@@ -281,7 +284,7 @@ impl Scan<'_> {
     }
 
     /// The row's cells, `(first grid column, span)`, with their looks, in order.
-    fn row(&mut self, r: usize) -> Vec<((usize, usize), Option<TextLook>)> {
+    fn row(&mut self, r: usize) -> RowLooks {
         if let Some(found) = self.memo.get(&r) {
             return found.clone();
         }
