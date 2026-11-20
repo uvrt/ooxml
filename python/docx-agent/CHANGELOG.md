@@ -7,6 +7,13 @@ snapshot commit; the development history before it is summarised here.
 
 ## 0.1.140 -- unreleased
 
+Phase P2, lane P2c17: the last editing group runs in the Rust session (`rust.edits.SERVED`):
+`word_changes`, `word_comments`, `word_controls`, `word_set_tracking` (the document's
+tracking mode set in the session and on the entry together), `word_copy_from` (a source in
+the same session) and `word_edit_table` for the actions that write no rows; set_cells,
+insert_row, copy_row and sync stay with the Python handler (round 58's row look, R126, is
+Python's).
+
 Phase P2, lane P2c17: a call the Rust session answers names documents as the host does
 (`Session.edit`/`Session.call` `names`): from the second session of a process on, a served
 reply named the Rust session's id of the document (an undo call `{"doc": "d3"}` for the
