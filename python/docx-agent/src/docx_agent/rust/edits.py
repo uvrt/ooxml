@@ -345,17 +345,28 @@ def _layout_before(call: Any, entry: Any) -> Any:
     return seen_before(document, state_bytes(call)) or laid_before(document)
 
 
-def _hand_engine(call: Any, entry: Any, before: Any) -> None:
-    """Where the call's checks compare layouts (a layout before of at most ``REFLOW_PAGES``
-    pages), the toolbox's engine for them, as docx-agent's wrapper hands it after a Python
-    edit: the version the session made is laid out where the document's layouts are held.
-    Put on the view as it is (``entry.held``): the checks make it current, after the step."""
+def _hand_engine(call: Any, entry: Any, before: Any, changed: bool) -> None:
+    """The toolbox's engine on the view as it is (``entry.held``), as docx-agent's wrapper
+    engages it for a Python edit: where the call's checks compare layouts (a layout before of
+    at most ``REFLOW_PAGES`` pages), handed to them -- they make the view current, after the
+    step; elsewhere, where the call ``changed`` the document, for the relayout on commit its
+    checks start (lane P2c13), which lets it go.  Under the document's lock."""
     from ..tools._base import engage_document, hand_to_checks
 
-    if not _compares(before):
-        return
-    engage_document(call, entry.held)
-    hand_to_checks(entry.held)
+    if _compares(before):
+        engage_document(call, entry.held)
+        hand_to_checks(entry.held)
+    elif changed:
+        engage_document(call, entry.held)
+
+
+def _engine(call: Any, entry: Any) -> Any:
+    """The engine a call served without the lock lays its version out with on commit (lane
+    P2c13): the toolbox's, as :func:`_hand_engine` engages it, not put on the view (the
+    document's lock is not held)."""
+    from ..tools._base import Engine
+
+    return Engine.of(call.toolbox.pool, call.limits.layout_timeout, entry.held)
 
 
 def _compares(before: Any) -> bool:
@@ -421,10 +432,12 @@ def _count(tool: str, why: str | None) -> None:
 class Made:
     """A check's marker (:attr:`~ooxml_edit.tools.served.Served.touched`): the version a
     call the session served made, and its validation (``(new, fixed, baseline)``, as
-    ``Session.validation`` gives it), which its checks report."""
+    ``Session.validation`` gives it), which its checks report; the ``engine`` its relayout on
+    commit lays the version out with (lane P2c13)."""
 
-    def __init__(self, head: Any, validation: tuple[list[str], list[str], int]) -> None:
+    def __init__(self, head: Any, validation: tuple[list[str], list[str], int], engine: Any = None) -> None:
         self.head = head
+        self.engine = engine
         new, fixed, baseline = validation
         self.validation = {"new": list(new), "fixed": list(fixed), "baseline": baseline}
 
@@ -458,7 +471,7 @@ def serve_owned(call: Any, arguments: dict[str, Any]) -> Any:
     if made is None:
         return Served(result, None, None, touched)
     first, head, step, validation = made
-    return Served(result, first, head, [*touched, Made(head, validation)],
+    return Served(result, first, head, [*touched, Made(head, validation, _engine(call, entry))],
                   None if step is None else json.loads(step))
 
 
@@ -490,7 +503,7 @@ def serve(call: Any, arguments: dict[str, Any], python: Callable[[], Any]) -> An
                 call.touch(marker)
             if made is not None:
                 entry.served(made[0], made[1])
-        _hand_engine(call, entry, before)
+        _hand_engine(call, entry, before, made is not None)
     except _Fallback as fallback:
         _count(tool, str(fallback))
         return python()
