@@ -20,7 +20,7 @@ mod values;
 mod write;
 
 pub use caption::InsertCaption;
-pub(crate) use insert::{put_back, Place};
+pub(crate) use insert::{place, put_back, Place};
 pub use insert::{InsertCrossReference, InsertField};
 pub use insert_toc::InsertToc;
 pub use pages::{FieldLayout, FieldPlace, LaidFields, PageReflow, PageShows, Unknown};

@@ -128,7 +128,8 @@ impl InsertMarkdown {
 fn html_refused(text: &str) -> EditError {
     let shown: String = text.chars().take(60).collect();
     EditError::Refused(format!(
-        "raw HTML is not inserted (html='text' keeps it as text): {shown:?}"
+        "raw HTML is not inserted (html='text' keeps it as text): {}",
+        ooxml_base::pyfmt::repr_str(&shown)
     ))
 }
 

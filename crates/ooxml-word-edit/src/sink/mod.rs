@@ -10,6 +10,7 @@
 
 mod heads;
 mod kept;
+mod media;
 mod written;
 
 pub(crate) use heads::{annotation_draws, ensured_head};
@@ -155,6 +156,11 @@ impl<'t, 's> EditSink<'t, 's> {
     /// # Errors
     /// When the change cannot be applied.
     pub fn draw(&mut self, seed: &str, count: usize) -> Result<Vec<String>> {
+        if count == 0 {
+            // nothing drawn: the sequence neither read nor written (no conflict with a
+            // writer drawing from it)
+            return Ok(Vec::new());
+        }
         self.tx.read(Key::Seq(Arc::from(seed)));
         let (values, change) = self.tx.doc().ids().draw(seed, count, &self.tx.doc().shared().sequences);
         self.write(Change::Ids(change))?;

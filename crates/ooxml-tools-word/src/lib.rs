@@ -11,6 +11,7 @@
 //! port in its loops.
 #![forbid(unsafe_code)]
 
+mod blobs;
 mod describe;
 mod find_text;
 mod objects;
@@ -28,6 +29,7 @@ mod version;
 mod word_inspect;
 mod word_read;
 
+pub use blobs::{Blob, BlobList, Blobs};
 pub use describe::{describe, Describe, DESCRIBED, NOT_DESCRIBED};
 pub use find_text::{find_text, FindStories, FindText};
 pub use pages::EnginePages;

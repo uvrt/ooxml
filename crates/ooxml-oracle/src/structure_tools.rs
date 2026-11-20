@@ -18,8 +18,8 @@ use ooxml_session::Registry;
 use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools::{ToolArgs, ToolResult};
 use ooxml_tools_word::{
-    word_headers_footers, word_links, word_move, word_notes, word_sections, CallEditor, Editing, EnginePages, Others,
-    Version, WordHeadersFooters, WordLinks, WordMove, WordNotes, WordSections,
+    word_headers_footers, word_links, word_move, word_notes, word_sections, Blob, BlobList, CallEditor, Editing,
+    EnginePages, Others, Version, WordHeadersFooters, WordLinks, WordMove, WordNotes, WordSections,
 };
 use ooxml_word_edit::touched::{touched, Touched};
 use ooxml_word_edit::validate::{problems, Delta};
@@ -121,8 +121,8 @@ pub(crate) fn tool_case(
     let date = case
         .get("date")
         .and_then(Value::as_str)
-        .unwrap_or("2026-11-17T10:00:00Z")
-        .to_owned();
+        .unwrap_or("2026-11-17T10:00:00Z");
+    let blobs = case_blobs(case);
     let copy = other_package(bytes, case);
     let copy_versions = Versions::new();
     let others: Vec<(&str, Version<'_>)> = copy
@@ -146,9 +146,10 @@ pub(crate) fn tool_case(
         tracking: tracking.as_ref(),
         doc: "d1",
         cancel: &Never,
-        date: &date,
+        date,
         layout: layout.as_ref().map(|l| l as &dyn ooxml_word_edit::FieldLayout),
         others: Others::new(&others),
+        blobs: Some(&blobs),
     };
     let arguments = case.get("arguments").cloned().unwrap_or(Value::Object(Map::new()));
     let tool = case.get("tool").and_then(Value::as_str).unwrap_or("");
@@ -182,6 +183,36 @@ pub(crate) fn tool_case(
         "problems": now.iter().map(ToString::to_string).collect::<Vec<_>>(),
         "next": next_ids(doc),
     }))
+}
+
+/// The blobs a case registers (`blobs`: `{name, mime, hex}` each), as the session's
+/// `add_blob` numbers them: `b1`, `b2`, ...
+fn case_blobs(case: &Value) -> BlobList {
+    let hex = |text: &str| -> Vec<u8> {
+        text.as_bytes()
+            .chunks(2)
+            .filter_map(|pair| {
+                std::str::from_utf8(pair)
+                    .ok()
+                    .and_then(|p| u8::from_str_radix(p, 16).ok())
+            })
+            .collect()
+    };
+    let listed = case.get("blobs").and_then(Value::as_array).into_iter().flatten();
+    BlobList(
+        listed
+            .enumerate()
+            .map(|(k, blob)| {
+                let text = |key: &str| blob.get(key).and_then(Value::as_str).unwrap_or("").to_owned();
+                Blob {
+                    handle: format!("b{}", k + 1),
+                    name: text("name"),
+                    mime: text("mime"),
+                    data: Arc::from(hex(&text("hex"))),
+                }
+            })
+            .collect(),
+    )
 }
 
 /// A page engine over the fonts a case names (`folders`: `[location, path]` pairs as

@@ -3,8 +3,9 @@ lane P2c4: the session is the only owner, :mod:`.owner`; lane P2c6: side by side
 
 A tool with a Rust editing handler (:data:`SERVED`: ``word_set_text``, ``replace_text``,
 ``word_insert_text``, ``word_delete``, ``word_format``, ``word_lists``, ``word_format_table``,
-``word_styles``, ``word_follow_sample``, ``word_fields``, ``word_headers_footers``,
-``word_template``, and each one ported after them) runs there, ahead of docx-agent's handler and its wrapper
+``word_styles``, ``word_follow_sample``, ``word_insert_markdown``, ``word_fields``,
+``word_headers_footers``, ``word_template``, and each one ported after them)
+runs there, ahead of docx-agent's handler and its wrapper
 (:func:`docx_agent.tools._base.wrap`): the call's arguments, its ``$name`` refs resolved, go to
 ``Session.edit`` with the call's caller and the document's tracking mode; the versions the
 call's edits made are the call's step (:meth:`~ooxml_edit.tools.owned.OwnedEntry.served`,
@@ -142,6 +143,40 @@ def _follow_sample(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
     return {**_own(arguments), "sample": sample, "copies": _refs_in(call, arguments.get("copies"))}
 
 
+def _insert_markdown(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    if getattr(call.entry.held, "min_text_size", None) is not None:
+        # The text a call writes below the application's minimums is measured in Python
+        # (``note_small_text``); the session has no minimums.
+        raise _Fallback("a minimum text size")
+    given = _own(arguments)
+    blob = given.get("blob")
+    if isinstance(blob, str) and given.get("markdown") is None and given.get("from") is None:
+        # The blob is the host's: its text goes as the Markdown, read as the tool reads it.
+        try:
+            given["markdown"] = call.blob(blob).data.decode("utf-8")
+        except UnicodeDecodeError:
+            raise _Fallback("a blob that is not UTF-8") from None
+        del given["blob"]
+    given["at"] = _blocks_at(call, given.get("at"))
+    return given
+
+
+def _blocks_at(call: Any, at: Any) -> Any:
+    """A placing tool's ``at`` with its ``$name`` refs resolved as the tool resolves them
+    (``text._at``: a span's last block after it, its first before it); a ref naming a
+    heading's range is the Python view's to expand."""
+    if not isinstance(at, str) or "$" not in at:
+        return at
+    head, _, rest = at.partition(":")
+    if head not in ("after", "before", "replace"):
+        rest = at
+    if any("h:" in call.resolve_ref(part) for part in rest.split("..") if part.startswith("$")):
+        raise _Fallback("a heading's range by reference")
+    from ..tools.text import _at
+
+    return _at(call, at)
+
+
 def _fields(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
     return {**_own(arguments), **{k: reads._refs(call, arguments.get(k)) for k in ("after", "before", "at")},
             "ids": _refs_in(call, arguments.get("ids"))}
@@ -166,6 +201,7 @@ SERVED: dict[str, Callable[[Any, dict[str, Any]], dict[str, Any]]] = {
     "word_format_table": _format_table,
     "word_styles": _styles,
     "word_follow_sample": _follow_sample,
+    "word_insert_markdown": _insert_markdown,
     "word_fields": _fields,
     "word_headers_footers": _headers_footers,
     "word_template": _template,

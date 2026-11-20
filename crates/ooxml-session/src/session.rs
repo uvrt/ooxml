@@ -16,6 +16,7 @@ use ooxml_opc::Package;
 use ooxml_store::{StoreConfig, StoreStats};
 use ooxml_tools::{Accepted, Refusal, ToolError, ToolResult, ToolSpec, WayOut};
 use ooxml_tools_word::{Made, Placer, Version};
+use ooxml_word_edit::EarlierIds;
 use ooxml_word_model::docx::Versions;
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
@@ -204,8 +205,30 @@ impl Session {
     /// [`SessionError::Package`] when the bytes are not a package within the limits;
     /// [`SessionError::Word`] when a Word document cannot be read.
     pub fn open(&self, bytes: Arc<[u8]>, kind: DocKind, name: &str) -> Result<DocId, SessionError> {
+        self.open_with(bytes, kind, name, &EarlierIds::default())
+    }
+
+    /// [`Session::open`], a Word document opened again with the ids it had before it was
+    /// saved (the host's state of it, [`EarlierIds`]): it never gives a retired id again.
+    ///
+    /// # Errors
+    /// As [`Session::open`].
+    pub fn open_with(
+        &self,
+        bytes: Arc<[u8]>,
+        kind: DocKind,
+        name: &str,
+        earlier: &EarlierIds,
+    ) -> Result<DocId, SessionError> {
         let package = Package::open(bytes, &self.context.limits)?;
-        let document = Arc::new(Document::open(package, kind, name, self.config.store, &self.context)?);
+        let document = Arc::new(Document::open(
+            package,
+            kind,
+            name,
+            self.config.store,
+            &self.context,
+            earlier,
+        )?);
         let id = DocId::nth(self.last_id.fetch_add(1, Ordering::Relaxed) + 1);
         self.write_table().insert(id.clone(), document);
         Ok(id)
@@ -568,6 +591,7 @@ impl Session {
             date: revision_date(self.context.clock.now()),
             made: &state.made,
             layout: context.layout.as_deref(),
+            blobs: context.blobs.as_deref(),
             others: &state.others,
         };
         tool.run(arguments, &call)
