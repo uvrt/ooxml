@@ -7,6 +7,16 @@ snapshot commit; the development history before it is summarised here.
 
 ## 0.1.140 -- unreleased
 
+Phase P2, lane P2d2: values written by reference are kept by the Rust session. A
+`word_set_text`, `word_insert_text` or `replace_text` call whose arguments hold references
+(`{{d:scores/Alpha/rating}}`) is served: the dispatcher's `call.facts` go to `Session.edit`
+(`written`), and the session keeps each value on the paragraph it went into as
+`textfacts.keep_written` and `word_set_text`'s whole values do, in the call's own versions --
+making the records' custom XML item (with its properties, relationships and content types,
+`itemID` from `uuid5`) where the document has none. `word_set_text` lists the facts with the
+paragraphs a whole value went into (`data.facts`). Other served tools given a reference
+still go to the Python handler (`rust.edits.KEEPS_WRITTEN`).
+
 Phase P2, lane P2c14: `word_drawings` runs in the Rust session, an inserted picture's bytes
 asked of the session's blobs (`Session.edit(blobs=...)`); a catalogue `asset` stays with the
 Python handler.

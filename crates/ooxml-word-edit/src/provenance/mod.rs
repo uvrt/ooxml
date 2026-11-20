@@ -15,12 +15,18 @@
 //! A review moves or drops the tables' records as well ([`follow_review`], run by the
 //! review itself before this).
 //!
-//! Must not: write a new entry (docx-agent's tools that place values do), or run but once
-//! per command, after it ([`Followed`]).
+//! Values written by reference and labels are kept on their paragraphs by [`KeepText`]
+//! (the tool that wrote them says where), the item made where there is none.
+//!
+//! Must not: decide where a value went, or run the follow-up but once per command, after
+//! it ([`Followed`]).
 
 mod item;
+mod keep;
+mod made;
 mod review;
 
+pub use keep::{KeepText, TextKeep};
 pub(crate) use review::follow_review;
 
 use crate::doc::WordDoc;
