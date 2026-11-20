@@ -22,6 +22,7 @@ pub mod drawings;
 pub mod facts;
 pub mod fields;
 pub mod formatting;
+pub mod graphics;
 pub mod numbering;
 pub mod outline;
 pub mod provenance;

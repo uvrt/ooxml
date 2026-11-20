@@ -2,8 +2,8 @@
 ``word_reads_diff.py``: docx-agent's toolbox against the Rust tools (``word-reads``), case by
 case.  ``describe``'s fields the Rust core does not give yet
 (``ooxml_tools_word::NOT_DESCRIBED``) and the application-only ``memory`` are left out of the
-comparison, as are a drawing's chart and SmartArt JSON in ``word_inspect`` (the chart model,
-phase P3); every other field must be equal.
+comparison, as is a drawing's SmartArt JSON in ``word_inspect`` (the diagram's data model,
+not read by the Rust core yet); every other field must be equal.
 
 The addressed cases (``ranges``, ``inspect``, ``find``, ``batch``) are made per document from
 what it holds: its first, a middle and its last body paragraph, a span of five blocks, its
@@ -114,11 +114,11 @@ def python_replies(toolbox, path, what: str) -> dict:
 
 
 def _without_graphics(data):
-    """``data`` without a drawing's chart or SmartArt JSON (phase P3)."""
+    """``data`` without a drawing's SmartArt JSON (the diagram's data model)."""
     if isinstance(data, list):
         return [_without_graphics(item) for item in data]
     if isinstance(data, dict):
-        return {k: _without_graphics(v) for k, v in data.items() if k not in ("chart", "diagram")}
+        return {k: _without_graphics(v) for k, v in data.items() if k != "diagram"}
     return data
 
 
