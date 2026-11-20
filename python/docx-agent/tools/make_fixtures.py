@@ -269,7 +269,8 @@ def review_follow() -> dict[str, str]:
     tracked cell insertion that a comment written to describe it is anchored in, beside
     an ordinary comment."""
     def bound(node: str) -> str:
-        return (f'<w:dataBinding w:prefixMappings="xmlns:ns0=\'urn:follow\'" w:xpath="/ns0:root[1]/ns0:{node}[1]" '
+        # prefix "fl", not Word's "ns0": test_ids reads a stray ns0 near the head as a leak
+        return (f'<w:dataBinding w:prefixMappings="xmlns:fl=\'urn:follow\'" w:xpath="/fl:root[1]/fl:{node}[1]" '
                 f'w:storeItemID="{FOLLOW_STORE}"/>')
 
     items = '<w:listItem w:displayText="One" w:value="a"/><w:listItem w:displayText="Two" w:value="b"/>'

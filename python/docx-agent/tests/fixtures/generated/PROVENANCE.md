@@ -6,7 +6,7 @@
 | `mode14.docx` | `77be777abae6193af48cb3c970c7a4c67a2a3a4a1c147acc569c89a7fc7240cc` |
 | `controls.docx` | `fc2f42cc7f052802a23f82f3fa25d0d39c65bf54c7f8db674aba0042d23934b4` |
 | `lists-and-styles.docx` | `94c56b4994c7f50480d634cbf099d808c7ded428b5a8c254bd289fd3567fabaf` |
-| `review-follow.docx` | `f1529b0e8f0887f2730fbcff81336e96ba0e45046b4aba65ce51976c2fa2367b` |
+| `review-follow.docx` | `55bb81d0ab17a3355aae43e0c87f799b29a46add4de5d4d47793b1f3c8e0587b` |
 
 Written by `tools/make_fixtures.py` in this repository, deterministically (running it
 again writes the same bytes), every part by hand: the styles are a handful written there,
