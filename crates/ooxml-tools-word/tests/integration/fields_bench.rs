@@ -1,6 +1,7 @@
 //! `FIELDS_BENCH=<path to a .docx> cargo test --release -p ooxml-tools-word --test integration -- --ignored
 //! --nocapture fields_bench::`: the field tools on a long document, each the best of three on a fresh editor
-//! (opening not counted), over one page engine kept for the document as a host keeps it (its first layout timed
+//! (opening not counted; a call whose run takes over [`ONCE_PAST`] runs once, to keep the gates' bench within
+//! its 30-minute limit), over one page engine kept for the document as a host keeps it (its first layout timed
 //! apart): before each call the engine has laid out the version the call starts from, as a host's kept layout
 //! has, and the fields have been listed once (the document's field scans, as a session keeps them).
 //! `FIELDS_CALLS=footer,one` (names: update, again, one, toc, footer) runs only those; `again` (asked by name
@@ -53,6 +54,10 @@ impl Timed {
     }
 }
 
+/// A run longer than this is not repeated: its best of three would not change the picture and
+/// three such runs of each slow call pass the gates' 30-minute limit.
+const ONCE_PAST: Duration = Duration::from_secs(20);
+
 fn editor(bytes: &Arc<[u8]>) -> Editor {
     let package = Package::open(Arc::clone(bytes), &Limits::default()).unwrap();
     Editor::open(
@@ -64,7 +69,7 @@ fn editor(bytes: &Arc<[u8]>) -> Editor {
     .unwrap()
 }
 
-/// The best of three calls of `tool` with `arguments`, each on a fresh editor whose opened
+/// The best of three calls of `tool` (one past [`ONCE_PAST`]) with `arguments`, each on a fresh editor whose opened
 /// version the engine has laid out (not counted), and the last reply.
 fn best<A: ToolArgs>(
     bytes: &Arc<[u8]>,
@@ -128,6 +133,9 @@ fn best_after<A: ToolArgs>(
         if took < out.0 {
             out = (took, Value::Object(reply.to_json()));
         }
+        if took > ONCE_PAST {
+            break;
+        }
     }
     out
 }
@@ -173,7 +181,7 @@ fn run_calls(bytes: &Arc<[u8]>, layout: &Timed, ids: &[String]) {
         let summary = reply.get("summary").cloned().unwrap_or(Value::Null);
         let warnings = reply.get("warnings").cloned().unwrap_or(Value::Null);
         println!(
-            "{name}: {:.1} ms -- {summary} {warnings}; over three runs {}",
+            "{name}: {:.1} ms -- {summary} {warnings}; over the runs {}",
             took.as_secs_f64() * 1000.0,
             layout.take()
         );
