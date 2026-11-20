@@ -12,9 +12,9 @@ use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, Command, KeySet, Seq, Snapshot, StoreConfig, Txn};
 use ooxml_word_edit::{
-    AddBookmark, AddHyperlink, Day, DeleteNote, EditError, EditNote, Editor, InsertCaption, InsertField, InsertNote,
-    InsertSectionBreak, InsertText, Key, MoveBlocks, MoveNote, Moving, NoteKind, RemoveBookmark, RevisionPolicy,
-    SectionValues, SetSection, SetStoryText, SetText, Tracking, UpdateFields, WordDoc,
+    AddBookmark, AddHyperlink, CopyBlocks, CopyRange, CopySource, Day, DeleteNote, EditError, EditNote, Editor, InsertCaption, InsertField, InsertNote,
+    InsertSectionBreak, InsertText, Key, ListPolicy, MoveBlocks, MoveNote, Moving, NoteKind, RemoveBookmark, RevisionPolicy,
+    SectionValues, SetSection, SetStoryText, SetText, StylePolicy, Tracking, UnmappedPolicy, UpdateFields, WordDoc,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -621,4 +621,34 @@ fn a_paragraph_moved_while_tracking_takes_words_move_form() {
     assert!(body[to..].starts_with("<w:moveToRangeStart ") && body.contains("<w:moveTo "));
     let paragraph = format!(r#"w14:paraId="{}""#, copy.trim_start_matches("p:"));
     assert!(body.contains(&paragraph), "the copy holds its id");
+}
+
+/// docx-agent's `copy_blocks(lists=...)`: a copied list item goes into a new list of its own
+/// (`separate`), or into the list before the place when its first level counts as the
+/// copied one's (`continue`, `_continued`).
+#[test]
+fn a_copied_list_item_starts_a_list_or_continues_the_one_before_it() {
+    let bytes = fixture("generated/lists-and-styles.docx");
+    for (lists, num_id, nums) in [(ListPolicy::Separate, "5", 5), (ListPolicy::Continue, "2", 4)] {
+        let editor = editor(&bytes);
+        let command = CopyBlocks {
+            source: CopySource::Own,
+            range: CopyRange::Blocks("p:5A000003".to_owned()),
+            at: "after:p:5A000008".to_owned(),
+            policy: RevisionPolicy::Untracked,
+            styles: StylePolicy::UseDestination,
+            style_map: Vec::new(),
+            unmapped: UnmappedPolicy::Import,
+            lists,
+        };
+        let out = editor.store().run(&Caller::anonymous(), &command).unwrap().out;
+        let made = out.blocks[0].trim_start_matches("p:").to_owned();
+        let head = editor.store().snapshot();
+        let text = |part: &str| String::from_utf8(head.doc().tree(part).unwrap().unwrap().write()).unwrap();
+        let body = text("word/document.xml");
+        let at = body.find(&format!("w14:paraId=\"{made}\"")).unwrap();
+        let copy = &body[at..at + body[at..].find("</w:p>").unwrap()];
+        assert!(copy.contains(&format!("<w:numId w:val=\"{num_id}\"/>")), "{lists:?}: {copy}");
+        assert_eq!(text("word/numbering.xml").matches("<w:num ").count(), nums, "{lists:?}");
+    }
 }

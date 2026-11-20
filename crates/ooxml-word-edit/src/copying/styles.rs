@@ -12,8 +12,7 @@
 //! (`body_style`), instead of importing it. `keep_source` and `merge` flatten the source's
 //! formatting into direct formatting ([`super::flatten`]).
 //!
-//! Not ported yet ([`EditError::Unsupported`]: the host copies such blocks its own way): an
-//! imported style naming a list.
+//! An imported style's lists are brought as the blocks' are ([`super::lists`]).
 //!
 //! Must not: write but into the edit's copy of the style sheet, or through
 //! [`crate::builtin::ensure`] with that copy put back first.
@@ -21,9 +20,11 @@
 use super::canonical::canonical;
 use super::cascade::{tag_of, Formatting, Props, Tag};
 use super::theme::{theme_part, Themes};
-use super::{StylePolicy, UnmappedPolicy};
+use super::lists::ListMaps;
+use super::{ListPolicy, StylePolicy, UnmappedPolicy};
 use crate::doc::{Key, Shared};
 use crate::names::W;
+use crate::placing::Place;
 use crate::review::space::Space;
 use crate::sink::EditSink;
 use crate::styles::REL_STYLES;
@@ -120,6 +121,8 @@ pub(crate) struct Policies {
     pub(crate) names: HashMap<String, String>,
     /// What a style neither mapped nor in the destination becomes.
     pub(crate) unmapped: UnmappedPolicy,
+    /// Whether a copied list continues the list before the place.
+    pub(crate) lists: ListPolicy,
 }
 
 /// The styles of one copy: the maps it keeps and the styles it imported.
@@ -133,11 +136,13 @@ pub(crate) struct Styles<'s> {
     dest_cascade: Formatting,
     pub(super) themes: Themes,
     /// The destination's styles part (`None`: it has none yet).
-    part: Option<String>,
+    pub(super) part: Option<String>,
     /// Source style id -> destination style id (`None`: the default, no reference).
     map: HashMap<String, Option<String>>,
     /// The destination's body style, once read.
     body: Option<Option<String>>,
+    /// The lists brought.
+    pub(super) lists: ListMaps,
     shared: Arc<Shared>,
     /// What was imported or added, in order.
     pub(crate) warnings: Vec<String>,
@@ -150,7 +155,12 @@ impl<'s> Styles<'s> {
     /// # Errors
     /// When a part is not XML; [`EditError::Unsupported`] for a theme docx-agent cannot
     /// read.
-    pub(crate) fn new(sink: &mut EditSink<'_, '_>, source: &'s Docx, policies: Policies) -> Result<Styles<'s>> {
+    pub(crate) fn new(
+        sink: &mut EditSink<'_, '_>,
+        source: &'s Docx,
+        policies: Policies,
+        place: &Place,
+    ) -> Result<Styles<'s>> {
         let docx = sink.docx()?;
         let part = ooxml_word_model::parts::related(sink.doc().package(), &docx.main, REL_STYLES)?;
         if let Some(part) = &part {
@@ -163,6 +173,7 @@ impl<'s> Styles<'s> {
             .ok_or_else(|| EditError::Unsupported("a theme whose colours docx-agent cannot read".to_owned()))?;
         Ok(Styles {
             source,
+            lists: ListMaps::new(policies.lists, place.clone()),
             policies,
             dest: Sheet::of(&docx),
             cascade: Formatting::of(source),
@@ -386,9 +397,9 @@ impl<'s> Styles<'s> {
         };
         let new_id = self.free_id(id, name);
         self.map.insert(id.to_owned(), Some(new_id.clone()));
-        let work = styles_work(sink, space, &part)?;
-        let adopted = work.adopt(node).ok_or_else(|| EditError::Path(part.clone()))?;
-        let copy = work.deep_copy(adopted);
+        // built apart and appended last, as docx-agent does: what it brings first (the
+        // styles it names, their lists) may put the style sheet back meanwhile
+        let (mut work, copy) = detached_copy(node)?;
         work.set(copy, Arc::new(QName::new(Some("w"), "styleId", Some(W))), &new_id);
         work.remove_attr(copy, Some(W), "default");
         for child in work.children(copy).to_vec() {
@@ -397,7 +408,6 @@ impl<'s> Styles<'s> {
             }
         }
         for tag in ["basedOn", "next", "link"] {
-            let work = styles_work(sink, space, &part)?;
             let Some(reference) = work.find(copy, W, tag) else {
                 continue;
             };
@@ -410,19 +420,19 @@ impl<'s> Styles<'s> {
             let mapped = self
                 .style(sink, space, &value, kind_of(&target).as_deref())?
                 .ok_or_else(|| EditError::Unsupported("a copied style based on no style".to_owned()))?;
-            styles_work(sink, space, &part)?.set(reference, w_val(), &mapped);
+            work.set(reference, w_val(), &mapped);
         }
+        self.style_lists(sink, space, &mut work, copy)?;
         let shared = Arc::clone(&self.shared);
-        let work = styles_work(sink, space, &part)?;
-        if !work.iter(copy, W, &["numId"]).is_empty() {
-            return Err(EditError::Unsupported("a copied style's list".to_owned()));
+        if kind == Some("paragraph") && self.based_in_destination(&work, copy) {
+            self.fold_defaults(&mut work, copy, shared.facts.orders())?;
         }
-        if kind == Some("paragraph") && self.based_in_destination(work, copy) {
-            self.fold_defaults(work, copy, shared.facts.orders())?;
-        }
-        let root = work.root();
-        work.append(root, copy);
-        let own_kind = work.get(copy, Some(W), "type").map(str::to_owned);
+        let built = work.build_element(copy).ok_or_else(|| EditError::Path(part.clone()))?;
+        let styles = styles_work(sink, space, &part)?;
+        let adopted = styles.adopt(&built).ok_or_else(|| EditError::Path(part.clone()))?;
+        let root = styles.root();
+        styles.append(root, adopted);
+        let own_kind = built.attribute(Some(W), "type").map(str::to_owned);
         self.dest.add(&new_id, name_key(node), own_kind, false);
         space.mark_dirty(&part);
         self.warnings
@@ -510,6 +520,19 @@ impl<'s> Styles<'s> {
         }
         candidate
     }
+}
+
+/// `element` (another document's) as lxml's `copy.deepcopy` makes it, in a work of its
+/// own: detached, declaring the namespaces its names use.
+///
+/// # Errors
+/// When the element cannot be read.
+pub(super) fn detached_copy(element: &Arc<Element>) -> Result<(Work, Id)> {
+    let mut work = Work::of(element, Vec::new());
+    let copy = work
+        .adopt_copy(element)
+        .ok_or_else(|| EditError::Path(element.name().local().to_owned()))?;
+    Ok((work, copy))
 }
 
 /// The edit's copy of the style sheet `part`, made on first use.
