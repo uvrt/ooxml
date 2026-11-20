@@ -424,7 +424,9 @@ def checks(entry: Any, touched: Sequence[Any]) -> dict[str, Any]:
         # No layout to compare in Python: after an edit the Rust session made, its checks
         # (one served without the lock carries its version's own: lane P2c6).
         made = next((t for t in touched if isinstance(t, Made)), None)
-        validated = made.validation if made is not None else owned_validation(entry)
+        timed = next((t for t in touched if isinstance(t, Timing)), None) or Timing()
+        with timed.part("validate"):
+            validated = made.validation if made is not None else owned_validation(entry)
         if validated is not None:
             if made is not None:
                 # Lane P2c13: served without the lock, the view not the call's -- the
@@ -659,9 +661,12 @@ def word_tool(name: str, description: str, params: Mapping[str, Any], *, group: 
 
 
 def _engaged(work: Callable[..., Any]) -> Callable[..., Any]:
-    """``work`` with the layout engine, as a handler has it (:func:`wrap`)."""
+    """``work`` with the layout engine, as a handler has it (:func:`wrap`); not done where
+    the Rust session is asked first (lane P2c13: it lays out in Rust, as it edits)."""
     @functools.wraps(work)
     def run(call: Any, **arguments: Any) -> Any:
+        if call.changing and edits.will_serve(call, arguments):
+            return None
         engage(call)
         try:
             return work(call, **arguments)

@@ -287,6 +287,27 @@ def comment_write_cases(document) -> list[dict]:
     if paragraphs:
         pid, text = paragraphs[0]
         out.append(call("word_comments", action="add", items=[{"find": text[:4], "within": pid, "text": "In"}]))
+        if len(text) > 6:
+            # a range's whole paragraph is looked in; text of another paragraph is nowhere in it
+            out.append(call("word_comments", action="add",
+                            items=[{"find": text[-4:], "within": f"{pid}@0:2", "text": "In the range"}]))
+        if len(paragraphs) > 2:
+            third, other = paragraphs[2]
+            out += [call("word_comments", action="add",
+                         items=[{"find": other[:5], "within": f"{pid}..{third}", "text": "In the span"}]),
+                    call("word_comments", action="add",
+                         items=[{"find": other[:8], "within": pid, "text": "Not there"}])]
+        out.append(call("word_comments", action="add", items=[{"find": text[:4], "within": "p:NoSuch", "text": "x"}]))
+    for table in tables[:1]:
+        try:
+            cells = [p.text for p in document.get(table).cell(0, 0).paragraphs if p.text]
+        except IndexError:
+            cells = []
+        if cells:
+            out.append(call("word_comments", action="add",
+                            items=[{"find": cells[0][:3], "within": table, "text": "In the table"}]))
+    if paragraphs:
+        pid, text = paragraphs[0]
         out += [call("word_comments", action="add", items=[{"target": pid}]),
                 call("word_comments", action="add", items=[{"text": "x"}]),
                 call("word_comments", action="add", items=[{"target": pid, "find": "x", "text": "x"}]),
@@ -458,6 +479,44 @@ def copy_cases(document) -> list[dict]:
             out += [from_d2(range=block, at="end", styles="keep_source"),
                     from_d2(range=block, at="end", styles="merge", unmapped="body")]
     return out + [tracked(case) for case in out]
+
+
+
+@CASES
+def review_within_cases(document) -> list[dict]:
+    """``word_changes`` within text (lane P4b9, P4a's deferred ``within``): each of the
+    first changes' paragraphs by a range at its start, one over its second half, a position
+    in it and a range into the next paragraph -- listed (changes, records),
+    previewed, accepted and rejected; a span (listed; refused for records)."""
+    from docx_agent.edit import text as _text
+
+    out = []
+    seen: list[str] = []
+    for change in document.changes()[:3]:
+        for pid in change.paragraph_ids[:1]:
+            if pid in seen or "@" in pid:
+                continue
+            seen.append(pid)
+            _part, entry = document._resolve(pid)
+            n = len(_text.paragraph_text(entry.element, "markup"))
+            withins = [f"{pid}@0:{min(3, n)}", f"{pid}@{n // 2}:{n}", f"{pid}@{n // 2}"]
+            if len(change.paragraph_ids) > 1 and "@" not in change.paragraph_ids[1]:
+                withins.append(f"{pid}@{n // 2}..{change.paragraph_ids[1]}@1")
+            for within in withins:
+                out += [call("word_changes", action="list", within=within),
+                        call("word_changes", action="list", detail="records", within=within),
+                        call("word_changes", action="preview", within=within),
+                        call("word_changes", action="accept", within=within),
+                        call("word_changes", action="reject", within=within)]
+    if len(seen) > 1:
+        span = f"{seen[0]}..{seen[1]}"
+        out += [call("word_changes", action="list", within=span),
+                call("word_changes", action="list", detail="records", within=span),
+                call("word_changes", action="accept", within=span),
+                call("word_changes", action="accept", within="p:00000000"),
+                call("word_changes", action="list", within="p:00000000@2"),
+                call("word_changes", action="list", detail="records", within="p:00000000@2")]
+    return out
 
 
 def cases(document) -> list[dict]:
