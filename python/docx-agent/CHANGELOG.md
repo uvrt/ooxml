@@ -17,6 +17,9 @@ making the records' custom XML item (with its properties, relationships and cont
 paragraphs a whole value went into (`data.facts`). Other served tools given a reference
 still go to the Python handler (`rust.edits.KEEPS_WRITTEN`).
 
+Phase P2, lane P2c13: an edit the Rust session serves starts the relayout on commit while
+the document's checks ask, as docx-agent's own edits do (it left the layout stale before).
+
 Phase P2, lane P2c13: `word_fields`, `word_headers_footers` and `word_template` run in the
 Rust session (`rust.edits.SERVED`), which lays the versions out with the document's page
 engine (`pages.word_pages`, `Session.edit(layout=...)`); their work ahead in Python is
