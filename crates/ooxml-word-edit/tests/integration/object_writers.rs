@@ -24,7 +24,7 @@ enum Edit {
     Set(SetText),
     Insert(InsertText),
     Cells(SetCells),
-    Format(FormatTable),
+    Format(FormatTable<'static>),
     Rows(EditTable),
 }
 
@@ -147,6 +147,7 @@ fn edit(rng: &mut Rng, targets: &[String], tables: &[String], writer: u64) -> Ed
             table,
             formats: (0..1 + rng.below(3)).map(|_| format(rng)).collect(),
             policy: policy(rng, writer),
+            layout: None,
         }),
     }
 }

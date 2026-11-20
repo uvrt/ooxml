@@ -7,6 +7,10 @@ snapshot commit; the development history before it is summarised here.
 
 ## 0.1.140 -- unreleased
 
+Phase P2, lane P2c14: `word_drawings` runs in the Rust session, an inserted picture's bytes
+asked of the session's blobs (`Session.edit(blobs=...)`); a catalogue `asset` stays with the
+Python handler.
+
 Phase P2, lane P2c14: `word_move`, `word_sections`, `word_notes` and `word_links` run in the
 Rust session (`rust.edits.SERVED`; a ref after a side, `after: "before:$x"`, resolved);
 `word_compare_blocks` and `word_design_facts` are read there, a reference in another open

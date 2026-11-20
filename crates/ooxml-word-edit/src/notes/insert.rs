@@ -8,12 +8,14 @@
 //! Must not: write but through the sink.
 
 use super::{ensure_notes_part, next_number, place, stamp_paragraph, NoteEdited, NoteKind};
+use crate::address_keys::names_by_id;
 use crate::doc::{Draw, DrawFrom, Key};
 use crate::links::set_run_style;
 use crate::names::{W, W14, W16DU};
 use crate::policy::RevisionPolicy;
 use crate::review::space::Space;
 use crate::review::xml::make;
+use crate::set_text::block_key;
 use crate::sink::{annotation_draws, EditSink};
 use crate::stamping::{stamp_document, w14_prefix};
 use crate::text::write::{check_text, make_run};
@@ -71,9 +73,21 @@ impl InsertNote {
         self.check(sink.doc())?;
         let docx = sink.docx()?;
         let (paragraph, offset) = place(sink.doc(), &docx, &self.at)?;
-        // the notes part is written whole (and made with the first note), its number one
-        // above the largest: the note reads the whole document
-        sink.read_everything();
+        // The note depends on the paragraph its reference goes in (written below) and on its
+        // notes part, written whole (and made with the first note), its number one above the
+        // largest there (read below); a place named by condition, or a range's end, depends
+        // on the document around it.
+        if names_by_id(&self.at) && !self.at.contains("..") {
+            sink.read(block_key(&paragraph.part, &paragraph.id));
+        } else {
+            sink.read_everything();
+        }
+        if matches!(self.policy, RevisionPolicy::Tracked(_)) {
+            // tracked, the notes part (put whole, not numbered again where it is applied)
+            // holds revision ids drawn on this version: another edit drawing some meanwhile
+            // is a conflict
+            sink.read(Key::Annotations);
+        }
         let renamed = stamp_document(&mut *sink, &docx)?;
         let (text_style, reference_style) = self.kind.styles();
         let text_id = crate::builtin::ensure(&mut *sink, text_style, "paragraph")?;
@@ -112,7 +126,7 @@ impl InsertNote {
             attribute: Arc::new(QName::new(Some(&prefix), "textId", Some(W14))),
         });
         let id = crate::ranges::renamed_id(&renamed, &paragraph.id);
-        let keys = vec![crate::set_text::block_key(&main, &id), Key::Annotations];
+        let keys = vec![block_key(&main, &id), Key::Annotations];
         sink.replace_drawing(&main, &paragraph.path, new, keys, draws)?;
         if dated {
             for part in [main.as_str(), notes.as_str()] {
