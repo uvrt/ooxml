@@ -8,11 +8,14 @@ session serves).
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 from ooxml_edit.tools import Toolbox
 from ooxml_edit.tools.owned import OwnedEntry
 
 from docx_agent.rust import edits
+from docx_agent.rust import served as rust_served
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from docx_agent.tools.objects import ROWS_WRITTEN
 from test_rows_r58 import ROWS, _look, _rows, _shelf
@@ -29,7 +32,8 @@ def _run(toolbox, monkeypatch, data: bytes, served: bool, calls) -> tuple[list, 
     ``served`` false: word_edit_table taken out of the session's tools."""
     with monkeypatch.context() as patched:
         if not served:
-            patched.setattr(edits, "SERVED", {k: v for k, v in edits.SERVED.items() if k != "word_edit_table"})
+            hosting = rust_served.hosting()
+            patched.setattr(rust_served, "_HOSTING", [dataclasses.replace(hosting, served=hosting.served - {"word_edit_table"})])
         session = toolbox.session()
         doc = session.open(data, "shelf.docx")
         if not isinstance(session.entry(doc), OwnedEntry):
