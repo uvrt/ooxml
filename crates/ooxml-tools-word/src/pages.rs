@@ -15,7 +15,7 @@
 //! the edit core's [`FieldLayout`], and the page engine behind it for what a tool reads of
 //! the pages themselves (`check`'s reflow and layout facts).
 //!
-//! Must not: hold anything but the engine, or lay out but through it.
+//! Must not: hold anything but the engine and its seed, or lay out but through them.
 
 use ooxml_base::Cancel;
 use ooxml_opc::Package;
@@ -24,7 +24,7 @@ use ooxml_word_layout::facts::LayoutFacts;
 use ooxml_word_layout::fields::update::{drawn_text, style_reference_known, PageNumbers};
 use ooxml_word_model::value::Text;
 use ooxml_word_pages::summary::Summary;
-use ooxml_word_pages::{Fallback, LaidVersion, PageEngine, PagesError};
+use ooxml_word_pages::{EngineSeed, Fallback, LaidVersion, PageEngine, PagesError};
 use std::borrow::Borrow;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -34,6 +34,10 @@ use std::sync::{Arc, Mutex, PoisonError};
 pub trait WordLayout: FieldLayout {
     /// The document's page engine: locked while a version is laid out or a page painted.
     fn engine(&self) -> &Arc<Mutex<PageEngine>>;
+
+    /// The engine's seed ([`PageEngine::seed`]): what it laid out last, read without waiting
+    /// for it, and a spare engine of its kind for a caller that does not wait.
+    fn seed(&self) -> &EngineSeed;
 
     /// `package` (a version of the document) laid out by [`WordLayout::engine`], stopped
     /// where `cancel` says so.
@@ -73,6 +77,7 @@ pub enum NotLaid {
 /// The edit core's layout port over a page engine.
 pub struct EnginePages {
     engine: Arc<Mutex<PageEngine>>,
+    seed: EngineSeed,
 }
 
 impl std::fmt::Debug for EnginePages {
@@ -82,10 +87,17 @@ impl std::fmt::Debug for EnginePages {
 }
 
 impl EnginePages {
-    /// The port over `engine` (one document's).
+    /// The port over `engine` (one document's), whose seed ([`PageEngine::seed`]) is `seed`.
     #[must_use]
-    pub fn new(engine: Arc<Mutex<PageEngine>>) -> EnginePages {
-        EnginePages { engine }
+    pub fn new(engine: Arc<Mutex<PageEngine>>, seed: EngineSeed) -> EnginePages {
+        EnginePages { engine, seed }
+    }
+
+    /// The port over `engine`, held by it alone so far.
+    #[must_use]
+    pub fn of(engine: PageEngine) -> EnginePages {
+        let seed = engine.seed();
+        EnginePages::new(Arc::new(Mutex::new(engine)), seed)
     }
 }
 
@@ -110,6 +122,10 @@ fn summarised(engine: &mut PageEngine, package: &Package) -> Result<Summary, Str
 impl WordLayout for EnginePages {
     fn engine(&self) -> &Arc<Mutex<PageEngine>> {
         &self.engine
+    }
+
+    fn seed(&self) -> &EngineSeed {
+        &self.seed
     }
 }
 

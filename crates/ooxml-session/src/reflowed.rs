@@ -3,7 +3,8 @@
 //! applied to, where the document's last check saw it or the host's engine laid it out
 //! last, to the version its last edit made (`ooxml_tools_word::reflow_after_edit`).
 //!
-//! Must not: lay out but through the host's layout, or change what the last check saw.
+//! Must not: lay out but through the host's layout (its engine, or a spare made from its
+//! seed where another call holds the engine), or change what the last check saw.
 
 use crate::document::Document;
 use ooxml_base::Cancel;

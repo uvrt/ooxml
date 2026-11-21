@@ -18,6 +18,7 @@
 //! and `pages` holding none of the ranges' blocks (the host warns of it).
 
 mod args;
+mod edit_reflow;
 mod facts;
 mod laid_facts;
 mod laid_tables;
@@ -27,6 +28,7 @@ mod ranges;
 mod reflow;
 
 pub use args::{Check, CheckCopy, CheckInclude, CheckScale, CopyLists, CopyReference, ScaleShow, ScaleStep, StepText};
+pub use edit_reflow::{reflow_after_edit, EditedFrom, REFLOW_PAGES, STALE};
 pub use facts::{
     direct_formatting_json, empty_run_json, grid_mismatch_json, lost_cell_json, lost_original_json, row_unlike_json,
     skipped_level_json, spacing_problem_json, style_use_json, text_language_json,
@@ -37,7 +39,7 @@ pub use laid_facts::{
 };
 pub use laid_tables::{column_fit_json, past_margins_json, split_row_json, uncertain_json, unrepeated_json};
 pub use ranges::{ranges_json, Trials, TRIALS, TRIAL_SECONDS};
-pub use reflow::{reflow_after_edit, EditedFrom, LastCheck, Seen, REFLOW_PAGES, STALE};
+pub use reflow::{LastCheck, Seen};
 
 use crate::describe::cancelled;
 use crate::pages::NotLaid;

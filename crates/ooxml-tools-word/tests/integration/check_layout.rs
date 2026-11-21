@@ -9,13 +9,12 @@ use crate::check::{checked, limited, versions, Past};
 use crate::common::engine;
 use ooxml_tools_word::{EnginePages, LastCheck, LayoutLimit, CHECK_NO_LAYOUT};
 use serde_json::json;
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 #[test]
 fn a_check_of_the_layout_reports_its_facts_in_docx_agents_order() {
     let (first, _) = versions();
-    let layout = EnginePages::new(Arc::new(Mutex::new(engine())));
+    let layout = EnginePages::of(engine());
     let last = LastCheck::default();
     let reply = checked(
         &first,
@@ -63,7 +62,7 @@ fn a_check_of_the_layout_reports_its_facts_in_docx_agents_order() {
 #[test]
 fn min_size_and_styles_ask_for_the_layout() {
     let (first, _) = versions();
-    let layout = EnginePages::new(Arc::new(Mutex::new(engine())));
+    let layout = EnginePages::of(engine());
     let last = LastCheck::default();
     let arguments = json!({"doc": "d1", "include": ["validate"], "min_size": 40, "styles": ["No Such Style"]});
     let reply = checked(&first, 1, arguments, &last, Some(&layout));
@@ -80,7 +79,7 @@ fn min_size_and_styles_ask_for_the_layout() {
 #[test]
 fn a_check_of_a_range_reports_the_range_and_its_facts() {
     let (first, _) = versions();
-    let layout = EnginePages::new(Arc::new(Mutex::new(engine())));
+    let layout = EnginePages::of(engine());
     let last = LastCheck::default();
     let reply = checked(
         &first,
@@ -108,7 +107,7 @@ fn a_check_of_a_range_reports_the_range_and_its_facts() {
 #[test]
 fn a_layout_past_the_limit_gives_the_facts_read_from_the_document_alone() {
     let (_, edited) = versions();
-    let layout = EnginePages::new(Arc::new(Mutex::new(engine())));
+    let layout = EnginePages::of(engine());
     let last = LastCheck::default();
     let limit = LayoutLimit {
         cancel: &Past,
@@ -127,7 +126,7 @@ fn a_layout_past_the_limit_gives_the_facts_read_from_the_document_alone() {
 #[test]
 fn a_notes_paragraph_is_on_the_pages_that_draw_it() {
     let (first, _) = versions();
-    let layout = EnginePages::new(Arc::new(Mutex::new(engine())));
+    let layout = EnginePages::of(engine());
     let last = LastCheck::default();
     let arguments = json!({"doc": "d1", "include": ["layout"], "styles": ["Normal"]});
     let reply = checked(&first, 1, arguments, &last, Some(&layout));

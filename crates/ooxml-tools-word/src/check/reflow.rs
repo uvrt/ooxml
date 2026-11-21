@@ -5,24 +5,20 @@
 //! document's last check with `reflow` ([`LastCheck`], kept per document by the session),
 //! ids followed through the version's aliases. A check keeps the version it saw, not its
 //! summary: the next compares the two page by page ([`Summarised::compare`]), painting
-//! only the pages an edit reached; a first check paints none. Also owns the reflow a
-//! changing call's checks report ([`reflow_after_edit`], docx-agent's `_base.checks`): the
-//! version before the call's first edit, where a check saw it or the engine laid it out
-//! last, against the version the call made.
+//! only the pages an edit reached; a first check paints none. A reflow is written as
+//! docx-agent's `reflow_json` writes it (also for an edit's checks: [`super::edit_reflow`]).
 //!
 //! Must not: lay out but through the host's engine ([`WordLayout`]).
 
-use crate::pages::{LayoutLimit, NotLaid, WordLayout};
-use ooxml_base::Cancel;
-use ooxml_opc::Package;
+use crate::pages::{NotLaid, WordLayout};
 use ooxml_word_pages::coverage::Coverage;
 use ooxml_word_pages::summarised::Summarised;
 use ooxml_word_pages::summary::Reflow;
 use ooxml_word_pages::warnings::LayoutWarning;
-use ooxml_word_pages::{LaidVersion, PagesError};
+use ooxml_word_pages::LaidVersion;
 use serde_json::{Map, Value};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError, TryLockError};
+use std::sync::{Mutex, PoisonError};
 
 /// The approximations, story stops and placeholders a coverage lists at most.
 const LISTED: usize = 5;
@@ -32,11 +28,6 @@ const WARNINGS: usize = 10;
 const SHORT: usize = 160;
 /// The moved blocks a `since_last_check` lists at most.
 const MOVED: usize = 20;
-/// The most pages a changing call's checks compare (docx-agent's `REFLOW_PAGES`): beyond,
-/// the reflow says [`STALE`].
-pub const REFLOW_PAGES: usize = 20;
-/// The reflow of a changing call whose version before had more than [`REFLOW_PAGES`].
-pub const STALE: &str = "stale: call check";
 
 /// What a document's last check with `reflow` saw: the version and its pages (the
 /// version laid out, or a summary the host's check made).
@@ -220,7 +211,7 @@ pub(super) fn since(
 
 /// A reflow as docx-agent's `reflow_json` writes it: the pages changed, the page counts,
 /// and where present the first blocks that moved and the pages not compared.
-fn reflow_json(found: Reflow) -> Value {
+pub(super) fn reflow_json(found: Reflow) -> Value {
     let mut out = Map::new();
     out.insert("changed".into(), Value::from(found.changed));
     out.insert(
@@ -240,92 +231,4 @@ fn reflow_json(found: Reflow) -> Value {
         out.insert("unknown".into(), Value::from(found.unknown));
     }
     Value::Object(out)
-}
-
-/// The version a changing call's first edit was applied to: its number and package.
-#[derive(Clone, Copy)]
-pub struct EditedFrom<'a> {
-    /// Its number.
-    pub version: u64,
-    /// Its package.
-    pub package: &'a Package,
-}
-
-/// The reflow a changing call's checks report (docx-agent's `_base.checks`), measured from
-/// `before` -- where the document's last check saw it (`last`) or `layout`'s engine laid it
-/// out last, else `None`: no reflow is measured -- to `after` (the version the call's last
-/// edit made), ids followed through `aliases`. More than [`REFLOW_PAGES`] before: [`STALE`].
-/// `after` is laid out under the call's `limit` on laying out (else until `cancel`): a stop
-/// is said as docx-agent's deadline says it. What the last check saw is left as it was.
-///
-/// The engine is never waited for: where another call lays a version out on it, no reflow is
-/// measured (writers are not serialized behind another's relayout); else it is held for the
-/// whole measure (the version before kept comparable, the version after laid out, the two
-/// compared page by page).
-#[must_use]
-pub fn reflow_after_edit(
-    layout: &dyn WordLayout,
-    last: &LastCheck,
-    before: EditedFrom<'_>,
-    after: &Package,
-    aliases: &std::collections::BTreeMap<String, String>,
-    (limit, cancel): (Option<LayoutLimit<'_>>, &dyn Cancel),
-) -> Option<Value> {
-    let seen = last.get().filter(|seen| seen.version == Some(before.version));
-    let mut engine = match layout.engine().try_lock() {
-        Ok(engine) => engine,
-        Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
-        Err(TryLockError::WouldBlock) => return None,
-    };
-    let was = match seen.map(|s| s.pages) {
-        Some(Summarised::Laid {
-            version,
-            engine: theirs,
-        }) if Arc::ptr_eq(&theirs, layout.engine()) => Was::Here(version),
-        Some(other) => Was::Elsewhere(other),
-        None => Was::Here(engine.laid_last(before.package)?),
-    };
-    if was.count() > REFLOW_PAGES {
-        return Some(Value::from(STALE));
-    }
-    if let Was::Here(version) = &was {
-        engine.watch(version);
-    }
-    let now = match engine.lay_out_until(after, limit.map_or(cancel, |l| l.cancel)) {
-        Ok(Ok(now)) => now,
-        Err(PagesError::Stopped) => {
-            let within = limit.map_or_else(String::new, |l| {
-                format!(" within {} s", ooxml_scene::python_g(l.timeout.as_secs_f64()))
-            });
-            return Some(Value::from(format!(
-                "timeout: laying the document out did not finish{within}"
-            )));
-        }
-        Ok(Err(_)) | Err(_) => return None,
-    };
-    let aliases: HashMap<String, String> = aliases.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-    let found = match was {
-        Was::Here(version) => engine.compare(&now, &version, &aliases),
-        Was::Elsewhere(seen) => {
-            drop(engine);
-            Summarised::watched(now, Arc::clone(layout.engine())).compare(&seen, &aliases)
-        }
-    };
-    found.map(reflow_json)
-}
-
-/// The version before a call's edit, as [`reflow_after_edit`] compares with it: laid out by
-/// the call's engine, or what a check saw elsewhere (a summary, another engine's version).
-enum Was {
-    Here(Arc<LaidVersion>),
-    Elsewhere(Summarised),
-}
-
-impl Was {
-    fn count(&self) -> usize {
-        match self {
-            Was::Here(version) => version.page_count(),
-            Was::Elsewhere(seen) => seen.count(),
-        }
-    }
 }

@@ -3,7 +3,7 @@
 //! the engine laid it out last or the document's last check saw it -- to the version the
 //! call made; "stale: call check" past 20 pages; a stop laying out said as docx-agent's
 //! deadline says it. Another writer's commit before the edit is in "before". A call never waits
-//! for the engine: busy with another's relayout, no reflow is measured.
+//! for the engine: busy with another's relayout, the versions are laid out on a spare engine.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
 use crate::check::{versions, Past};
@@ -56,7 +56,7 @@ fn reflow(layout: &EnginePages, last: &LastCheck, made: &Made, limit: Option<Lay
 fn an_edit_after_the_version_was_laid_out_reports_its_reflow() {
     let (package, _) = versions();
     let editor = editor(package.clone());
-    let layout = EnginePages::new(Arc::new(Mutex::new(engine())));
+    let layout = EnginePages::of(engine());
     let laid = layout.laid(&package, &Never).unwrap();
     let made = edit(&editor, &"longer text ".repeat(400));
     let found = reflow(&layout, &LastCheck::default(), &made, None).expect("measured");
@@ -70,7 +70,7 @@ fn an_edit_after_the_version_was_laid_out_reports_its_reflow() {
 fn without_a_layout_of_the_version_before_no_reflow_is_measured() {
     let (package, _) = versions();
     let editor = editor(package);
-    let layout = EnginePages::new(Arc::new(Mutex::new(engine())));
+    let layout = EnginePages::of(engine());
     let made = edit(&editor, "Shorter");
     assert_eq!(reflow(&layout, &LastCheck::default(), &made, None), None);
 }
@@ -81,7 +81,7 @@ fn another_writer_s_commit_before_the_edit_is_in_the_version_before() {
     // which nothing laid out -- not the version the engine laid out before it committed.
     let (package, _) = versions();
     let editor = editor(package.clone());
-    let layout = EnginePages::new(Arc::new(Mutex::new(engine())));
+    let layout = EnginePages::of(engine());
     layout.laid(&package, &Never).unwrap();
     let theirs = edit(&editor, "Another writer's text");
     let made = edit(&editor, &"longer text ".repeat(400));
@@ -89,7 +89,7 @@ fn another_writer_s_commit_before_the_edit_is_in_the_version_before() {
     assert_eq!(before.seq(), theirs.last.seq(), "applied to the other writer's version");
     assert_eq!(reflow(&layout, &LastCheck::default(), &made, None), None);
     // laid out after their commit, the reflow is measured from their version
-    let layout = EnginePages::new(Arc::new(Mutex::new(engine())));
+    let layout = EnginePages::of(engine());
     layout.laid(before.doc().package(), &Never).unwrap();
     let found = reflow(&layout, &LastCheck::default(), &made, None).expect("measured");
     assert_eq!(found["changed"][0], json!(1), "{found}");
@@ -97,15 +97,54 @@ fn another_writer_s_commit_before_the_edit_is_in_the_version_before() {
 
 #[test]
 fn an_engine_busy_laying_another_version_out_is_not_waited_for() {
+    // Held by another call, the versions are laid out on a spare engine of its kind: the
+    // reflow is the one measured on the engine itself.
     let (package, _) = versions();
     let editor = editor(package.clone());
-    let layout = EnginePages::new(Arc::new(Mutex::new(engine())));
+    let layout = EnginePages::of(engine());
     layout.laid(&package, &Never).unwrap();
     let made = edit(&editor, &"longer text ".repeat(400));
     let busy = layout.engine().lock().unwrap();
-    assert_eq!(reflow(&layout, &LastCheck::default(), &made, None), None);
+    let spared = reflow(&layout, &LastCheck::default(), &made, None).expect("measured on a spare");
     drop(busy);
-    assert!(reflow(&layout, &LastCheck::default(), &made, None).is_some());
+    let found = reflow(&layout, &LastCheck::default(), &made, None).expect("measured");
+    assert_eq!(spared, found);
+    assert_eq!(found["changed"][0], json!(1), "{found}");
+}
+
+#[test]
+fn a_busy_engine_that_did_not_lay_the_version_before_out_measures_none() {
+    let (package, _) = versions();
+    let editor = editor(package);
+    let layout = EnginePages::of(engine());
+    let made = edit(&editor, "Shorter");
+    let _busy = layout.engine().lock().unwrap();
+    assert_eq!(reflow(&layout, &LastCheck::default(), &made, None), None);
+}
+
+#[test]
+fn a_busy_engine_says_stale_past_twenty_pages_and_a_stop_on_the_spare() {
+    let package = long(24);
+    let long_one = editor(package.clone());
+    let layout = EnginePages::of(engine());
+    layout.laid(&package, &Never).unwrap();
+    let made = edit(&long_one, "Shorter");
+    let busy = layout.engine().lock().unwrap();
+    assert_eq!(reflow(&layout, &LastCheck::default(), &made, None), Some(json!(STALE)));
+    drop(busy);
+    let (package, _) = versions();
+    let short_one = editor(package.clone());
+    layout.laid(&package, &Never).unwrap();
+    let made = edit(&short_one, &"longer text ".repeat(400));
+    let limit = LayoutLimit {
+        cancel: &Past,
+        timeout: Duration::from_millis(1500),
+    };
+    let _busy = layout.engine().lock().unwrap();
+    assert_eq!(
+        reflow(&layout, &LastCheck::default(), &made, Some(limit)),
+        Some(json!("timeout: laying the document out did not finish within 1.5 s"))
+    );
 }
 
 /// The fixture with `count` page breaks before its body.
@@ -122,7 +161,7 @@ fn long(count: usize) -> Package {
 fn a_version_before_of_more_than_twenty_pages_is_stale() {
     let package = long(24);
     let editor = editor(package.clone());
-    let layout = EnginePages::new(Arc::new(Mutex::new(engine())));
+    let layout = EnginePages::of(engine());
     assert!(layout.laid(&package, &Never).unwrap().page_count() > 20);
     let made = edit(&editor, "Shorter");
     assert_eq!(reflow(&layout, &LastCheck::default(), &made, None), Some(json!(STALE)));
@@ -132,7 +171,7 @@ fn a_version_before_of_more_than_twenty_pages_is_stale() {
 fn laying_the_version_made_out_past_the_limit_is_said() {
     let (package, _) = versions();
     let editor = editor(package.clone());
-    let layout = EnginePages::new(Arc::new(Mutex::new(engine())));
+    let layout = EnginePages::of(engine());
     layout.laid(&package, &Never).unwrap();
     let made = edit(&editor, &"longer text ".repeat(400));
     let limit = LayoutLimit {
@@ -167,7 +206,7 @@ fn edits_with_their_reflow_timed_alone_and_with_twenty_four_writers() {
     let (package, _) = versions();
     for measured in [false, true] {
         let editor = editor(package.clone());
-        let layout = EnginePages::new(Arc::new(Mutex::new(engine())));
+        let layout = EnginePages::of(engine());
         layout.laid(&package, &Never).unwrap();
         let calls: Vec<(Duration, bool)> = (0..20)
             .map(|i| {
@@ -209,6 +248,38 @@ fn edits_with_their_reflow_timed_alone_and_with_twenty_four_writers() {
             quantile(&mixed, 0.5),
             quantile(&mixed, 0.99),
             wall.as_secs_f64() * 1000.0
+        );
+    }
+}
+
+#[test]
+#[ignore = "a timing: cargo test --release -- --ignored edit_reflow"]
+fn a_reflow_on_a_spare_engine_timed_against_the_engine_s_own() {
+    let (package, _) = versions();
+    let layout = EnginePages::of(engine());
+    for (name, busy) in [("own engine", false), ("spare engine", true)] {
+        let mut times = Vec::new();
+        for i in 0..10 {
+            let editor = editor(package.clone());
+            let before = edit(&editor, &"before text ".repeat(1800 + i))
+                .last
+                .doc()
+                .package()
+                .clone();
+            layout.laid(&before, &Never).unwrap();
+            let made = edit(&editor, &"after text ".repeat(1790 + i));
+            let held = busy.then(|| layout.engine().lock().unwrap());
+            let started = Instant::now();
+            let found = reflow(&layout, &LastCheck::default(), &made, None).expect("measured");
+            times.push(started.elapsed());
+            drop(held);
+            assert!(found.get("changed").is_some(), "{found}");
+        }
+        times.sort();
+        println!(
+            "{name}: reflow of a ~19-page version p50 {:.1} ms max {:.1} ms",
+            quantile(&times, 0.5),
+            quantile(&times, 1.0)
         );
     }
 }
