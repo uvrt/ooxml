@@ -9,7 +9,7 @@
 //!
 //! Must not: lay out but through the host's engine ([`WordLayout`]).
 
-use crate::pages::WordLayout;
+use crate::pages::{NotLaid, WordLayout};
 use ooxml_word_pages::coverage::Coverage;
 use ooxml_word_pages::summarised::Summarised;
 use ooxml_word_pages::warnings::LayoutWarning;
@@ -146,13 +146,14 @@ pub(super) struct Laid {
 }
 
 /// `version`'s reflow facts, read from `layout`'s engine (no page painted for them but
-/// where its coverage needs it).
+/// where its coverage needs it). Only laying the version out is held to the call's limit on
+/// laying out (docx-agent's deadline holds its layout, not the facts read from it).
 ///
 /// # Errors
 /// Where the version is not the engine's (a version laid out by another generation).
-pub(super) fn laid_facts(layout: &dyn WordLayout, version: &LaidVersion) -> Result<Laid, String> {
+pub(super) fn laid_facts(layout: &dyn WordLayout, version: &LaidVersion) -> Result<Laid, NotLaid> {
     let mut engine = layout.engine().lock().unwrap_or_else(PoisonError::into_inner);
-    let not_ours = || "the version laid out is not the engine's".to_owned();
+    let not_ours = || NotLaid::Other("the version laid out is not the engine's".to_owned());
     let coverage = engine.coverage(version).ok_or_else(not_ours)?;
     drop(engine);
     let mut facts = Map::new();

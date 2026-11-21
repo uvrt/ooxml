@@ -48,6 +48,7 @@ mod page_context;
 pub mod page_said;
 mod pictures;
 pub mod png;
+mod stats;
 pub mod summarised;
 pub mod summary;
 pub mod support;
@@ -58,8 +59,9 @@ mod weight;
 
 pub use causes::RelaidCause;
 pub use disk::DiskFonts;
-pub use engine::{EngineBudgets, EngineOptions, EngineStats, PageDigests, PageEngine};
+pub use engine::{EngineBudgets, EngineOptions, PageDigests, PageEngine};
 pub use error::{Fallback, PagesError};
 pub use fonts::{embedded_parts, font_table, DocumentFonts, FontSetup};
 pub use pictures::PackagePictures;
+pub use stats::EngineStats;
 pub use version::{LaidVersion, PageView};

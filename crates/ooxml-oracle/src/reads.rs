@@ -74,7 +74,8 @@ pub fn run(args: &[String]) -> Result<(), String> {
                 .get("before")
                 .and_then(Value::as_array)
                 .map_or(&[][..], Vec::as_slice);
-            through_session(tool, &arguments, (file, name), item.get("fonts"), before)
+            let limit = item.get("layout_timeout").and_then(Value::as_f64);
+            through_session(tool, &arguments, (file, name), (item.get("fonts"), limit), before)
         } else {
             call(tool, &arguments, &version)
         };
@@ -107,15 +108,16 @@ fn call(tool: &str, arguments: &Value, version: &Version<'_>) -> Value {
 
 /// `tool` (`read_batch`, `check`) through a session holding the document as `d1`, which
 /// owns it (a check's validation compares with the problems it opened with), handed a page
-/// engine laying out with `fonts` (docx-agent's, as the case gives them) where given, after
-/// the calls `before` (each `{"tool", "arguments"}`, through the same session and engine).
-/// A reply that says part of it is not given yet (`unported`) is an error naming what; a
-/// call before it that fails is an error naming that call.
+/// engine laying out with `fonts` (docx-agent's, as the case gives them) where given, within
+/// `layout_timeout` seconds where given, after the calls `before` (each `{"tool",
+/// "arguments"}`, through the same session and engine). A reply that says part of it is not
+/// given yet (`unported`) is an error naming what; a call before it that fails is an error
+/// naming that call.
 fn through_session(
     tool: &str,
     arguments: &Value,
     (file, name): (&str, &str),
-    fonts: Option<&Value>,
+    (fonts, layout_timeout): (Option<&Value>, Option<f64>),
     before: &[Value],
 ) -> Value {
     let Ok(bytes) = std::fs::read(file) else {
@@ -129,6 +131,7 @@ fn through_session(
         layout: fonts.map(|fonts| {
             Arc::new(crate::structure_tools::engine_pages(fonts)) as Arc<dyn ooxml_tools_word::WordLayout>
         }),
+        layout_timeout: layout_timeout.and_then(|s| std::time::Duration::try_from_secs_f64(s).ok()),
         ..CallContext::default()
     };
     for (k, step) in before.iter().enumerate() {

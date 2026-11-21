@@ -1,7 +1,8 @@
 //! The page engine over made-up packages: a version read again from its bytes keeps the
 //! parts whose stored bytes did not change and is laid out from the version before; a
 //! version given as its touched parts is the version given whole; a document the layout
-//! does not lay out yet is a fallback with its reason; columns with a line between them,
+//! does not lay out yet is a fallback with its reason; a layout stopped lays nothing out
+//! and the next is laid out from the version before; columns with a line between them,
 //! line numbers and a drop cap are laid out and painted in Rust; a floating shape is
 //! painted in Rust and said of as docx2svg says it. The faces are the open ones the repository ships.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -194,6 +195,67 @@ fn a_version_given_by_its_touched_parts_is_the_version_given_whole() {
         .unwrap()
         .unwrap();
     assert_eq!(svgs(&mut kept, &updated), svgs(&mut fresh, &whole));
+}
+
+/// Says stop from its `n`-th question on.
+struct After(AtomicUsize);
+
+impl ooxml_base::Cancel for After {
+    fn is_cancelled(&self) -> bool {
+        let left = self.0.load(Ordering::SeqCst);
+        if left == 0 {
+            return true;
+        }
+        self.0.store(left - 1, Ordering::SeqCst);
+        false
+    }
+}
+
+fn after(n: usize) -> After {
+    After(AtomicUsize::new(n))
+}
+
+#[test]
+fn a_layout_stopped_lays_nothing_out_and_the_next_is_laid_out_from_the_one_before() {
+    let opened = |bytes: Vec<u8>| ooxml_opc::Package::open(Arc::from(bytes), &ooxml_base::Limits::default()).unwrap();
+    let mut kept = engine();
+    let first = kept.lay_out(&opened(package(&paragraphs(120, None)))).unwrap().unwrap();
+    let edited = opened(package(&paragraphs(120, Some(60))));
+    for n in [0, 1] {
+        // stopped before its first block, and after it
+        let stopped = kept.lay_out_until(&edited, &after(n));
+        assert!(
+            matches!(stopped, Err(ooxml_word_pages::PagesError::Stopped)),
+            "after {n}"
+        );
+        assert!(
+            Arc::ptr_eq(kept.last().unwrap(), &first),
+            "the version before is still the last"
+        );
+    }
+    assert_eq!(kept.stats().stopped, 2);
+    let second = kept.lay_out_until(&edited, &after(usize::MAX)).unwrap().unwrap();
+    assert!(second.relaid(), "laid out from the version before");
+    // the version laid out last is answered, nothing laid out to stop
+    let again = kept.lay_out_until(&edited, &after(0)).unwrap().unwrap();
+    assert!(Arc::ptr_eq(&again, &second));
+    // asked once per block and once per page: stopped at its last page
+    let asked = after(usize::MAX);
+    engine().lay_out_until(&edited, &asked).unwrap().unwrap();
+    let asks = usize::MAX - asked.0.load(Ordering::SeqCst);
+    assert!(asks > 120, "{asks} asks");
+    let mut fresh = engine();
+    assert!(matches!(
+        fresh.lay_out_until(&edited, &after(asks - 1)),
+        Err(ooxml_word_pages::PagesError::Stopped)
+    ));
+    let whole = fresh.lay_out(&edited).unwrap().unwrap();
+    assert!(!whole.relaid());
+    assert_eq!(svgs(&mut kept, &second), svgs(&mut fresh, &whole));
+    assert_eq!(second.facts(), whole.facts());
+    let summary = fresh.summary(&whole).unwrap();
+    assert_eq!(summary.pages.len(), whole.page_count());
+    assert_eq!(summary.pages, kept.summary(&second).unwrap().pages);
 }
 
 #[test]
