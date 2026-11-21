@@ -173,14 +173,7 @@ impl<F: Borrow<LayoutFacts>> PageNumbers<F> {
 
     fn page_reference_on(instruction: &str, info: &PageInfo, format: Option<&str>) -> Result<String, Unknown> {
         let instruction = instruction.replacen("PAGEREF", "PAGE", 1);
-        field_text(
-            &instruction,
-            "PAGE",
-            info.number,
-            (None, None),
-            format,
-        )
-        .map_err(|Uncomputable(why)| Unknown(why))
+        field_text(&instruction, "PAGE", info.number, (None, None), format).map_err(|Uncomputable(why)| Unknown(why))
     }
 }
 

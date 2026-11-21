@@ -18,7 +18,7 @@ mod objects;
 mod reads;
 mod review;
 mod structure;
-mod text_box_fields;
 mod style;
 mod template_bench;
+mod text_box_fields;
 mod word_read;
