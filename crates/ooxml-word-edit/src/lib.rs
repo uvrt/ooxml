@@ -124,8 +124,8 @@ pub use delete::{BlockDeleted, DeleteBlock};
 pub use delete_blocks::{blocks_named, BlocksDeleted, DeleteBlocks};
 pub use doc::{Change, Draw, DrawFrom, Key, ModelError, Shared, WordDoc};
 pub use drawings::{
-    image_format, picture_size, written_size, DrawingEdited, DrawingValues, FloatDrawing, InlineDrawing, InsertPicture,
-    InsertShape, SetDrawing, ZOrder,
+    image_format, picture_size, written_size, DrawingEdited, DrawingValues, EditGraphic, FloatDrawing, GraphicEdit,
+    GraphicEdited, GraphicParts, InlineDrawing, InsertPicture, InsertShape, PartWrite, SetDrawing, ZOrder,
 };
 pub use editor::{EditTiming, Edited, Editor};
 pub use error::{EditError, Result};
@@ -148,6 +148,7 @@ pub use lists::{
 pub use markdown::{markdown_shape, InsertMarkdown, Made, MarkdownInserted, Options as MarkdownOptions, WriteMap};
 pub use moving::{section_blocks, section_blocks_in, BlocksMoved, MoveBlocks, Moving};
 pub use notes::{DeleteNote, EditNote, InsertNote, MoveNote, NoteEdited, NoteKind};
+pub use ooxml_base::difflib::ratio as text_ratio;
 pub use paragraph_style::{SetParagraphStyle, StyleSet};
 pub use paragraphs::{InsertParagraph, ParagraphInserted};
 pub use policy::{RevisionPolicy, Tracking};
@@ -178,5 +179,4 @@ pub use tables::{
     TableFormatted, TableKeeps, TableValues, TableWidth,
 };
 pub use template::{compatibility_mode, UpgradeToModern, Upgraded, DEFAULT_COMPATIBILITY_MODE, MODERN_MODE};
-pub use text::diff::ratio as text_ratio;
 pub use text_range::anchor;

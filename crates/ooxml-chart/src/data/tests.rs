@@ -2,7 +2,7 @@
 //! give for the same part (worked out with them, 2026-11-20): rich title lines and breaks, a
 //! numeric series name, a scatter's x axis found by its position, a category code inside
 //! `mc:AlternateContent`, dates kept as serials, a blank, an index that is not a number and a
-//! value that is not one, an integer and a float as written.
+//! value that is not one, an integer and a float as written; and each series' references.
 
 use super::{chart_data, Point, SeriesData};
 
@@ -51,4 +51,22 @@ fn a_count_past_the_bound_is_unreadable() {
     let xml = CHART.replace(r#"<c:ptCount val="3"/>"#, r#"<c:ptCount val="99999999999"/>"#);
     let tree = ooxml_xml::parse(xml.as_bytes(), &ooxml_xml::Limits::default()).unwrap_or_else(|e| panic!("{e}"));
     assert!(chart_data(tree.root()).is_err());
+}
+
+#[test]
+fn each_series_names_its_references() {
+    use super::{series_references, Reference};
+    let tree = ooxml_xml::parse(CHART.as_bytes(), &ooxml_xml::Limits::default()).unwrap_or_else(|e| panic!("{e}"));
+    let found = series_references(tree.root());
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].name, Reference::Formula("S!$B$1".into()));
+    assert_eq!(found[0].categories.formula(), Some("S!$A$2:$A$4"));
+    assert_eq!(found[0].values, Reference::Formula("S!$B$2:$B$4".into()));
+    let literal = r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart><c:plotArea><c:barChart><c:ser><c:tx><c:v>A</c:v></c:tx><c:val><c:numRef><c:f/></c:numRef></c:val></c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>"#;
+    let tree = ooxml_xml::parse(literal.as_bytes(), &ooxml_xml::Limits::default()).unwrap_or_else(|e| panic!("{e}"));
+    let found = series_references(tree.root());
+    assert_eq!(found[0].name, Reference::Literal);
+    assert_eq!(found[0].categories, Reference::Absent);
+    assert_eq!(found[0].values, Reference::Formula(String::new()));
+    assert_eq!(found[0].values.formula(), None);
 }
