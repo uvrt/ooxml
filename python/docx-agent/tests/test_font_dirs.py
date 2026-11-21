@@ -93,18 +93,26 @@ def _document() -> bytes:
     return buffer.getvalue()
 
 
+def _absent(facts: dict) -> bool:
+    """Whether the layout found the probe's face nowhere: named missing, or (since docx2svg's
+    round 16, where a stand-in is installed: Courier New on a Mac with Office) laid out with
+    an approximate substitute."""
+    return FAMILY in facts.get("missing_fonts", []) or any(
+        text.startswith(f"{FAMILY} -> ") for text in facts.get("substituted_fonts", []))
+
+
 def _complete(facts: dict) -> bool:
-    return facts["complete"] and FAMILY not in facts.get("missing_fonts", [])
+    """Laid out completely, in the probe's own face."""
+    return facts["complete"] and not _absent(facts)
 
 
 def test_the_document_lays_out_with_its_folder(folder, monkeypatch):
     doc = Document.open(_document())
-    unnamed = doc.layout().coverage_facts()
-    assert not unnamed["complete"] and unnamed["missing_fonts"] == [FAMILY]
+    assert _absent(doc.layout().coverage_facts())
     doc.font_dirs = (str(folder),)
     assert _complete(doc.layout().coverage_facts())
     doc.font_dirs = ()
-    assert not doc.layout().coverage_facts()["complete"]
+    assert _absent(doc.layout().coverage_facts())
     monkeypatch.setenv(FONT_DIRS_ENV, str(folder))
     assert _complete(Document.open(_document()).layout().coverage_facts())
 
@@ -126,12 +134,12 @@ def _facts(box: Toolbox, **session_options) -> tuple[dict, dict, dict]:
 
 def test_the_toolbox_reaches_the_layout_and_the_worker(folder, monkeypatch):
     with _box(workers=1) as plain:
-        assert not any(_complete(facts) for facts in _facts(plain))
+        assert all(_absent(facts) for facts in _facts(plain))
 
     with _box(workers=1, font_dirs=[folder]) as configured:
         assert all(_complete(facts) for facts in _facts(configured))
         # A session overrides the toolbox: [] is none (no environment variable either).
-        assert not any(_complete(facts) for facts in _facts(configured, font_dirs=[]))
+        assert all(_absent(facts) for facts in _facts(configured, font_dirs=[]))
 
     # The environment variable, read where the toolbox runs, reaches the worker too.
     monkeypatch.setenv(FONT_DIRS_ENV, str(folder))
@@ -189,7 +197,7 @@ def test_a_subprocess_worker_gets_the_folder_from_its_arguments(folder, monkeypa
 
     with caplog.at_level(logging.WARNING, "ooxml_edit.tools.worker"):
         with _box(runner=SubprocessPool(1)) as box:
-            assert not any(_complete(facts) for facts in _facts(box))     # starts the worker
+            assert all(_absent(facts) for facts in _facts(box))     # starts the worker
             worker = box.pool.pids()
             monkeypatch.setenv(FONT_DIRS_ENV, str(folder))                 # set after it started
             assert all(_complete(facts) for facts in _facts(box))

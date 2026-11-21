@@ -22,6 +22,7 @@ from ooxml_edit.tools import Toolbox  # noqa: E402
 
 from docx_agent import Document  # noqa: E402
 from docx_agent.rust import check as rust_check  # noqa: E402
+from docx_agent.rust import reads  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -70,6 +71,12 @@ def test_a_check_says_the_faces_of_its_version_not_of_a_later_one(monkeypatch):
             edits["font"] = box.dispatch(session, "word_format", {"doc": doc, "targets": [alpha],
                                                                   "font": "Alpha Madeup Face"})
 
+        def edit_once() -> None:
+            if not edits:
+                thread = threading.Thread(target=edit)
+                thread.start()
+                thread.join()
+
         real = rust_check.core
 
         class Gated:
@@ -84,18 +91,36 @@ def test_a_check_says_the_faces_of_its_version_not_of_a_later_one(monkeypatch):
 
             def check(self, *args, **kwargs):
                 found = self.inner.check(*args, **kwargs)
-                if not edits:
-                    thread = threading.Thread(target=edit)
-                    thread.start()
-                    thread.join()
+                edit_once()
                 return found
 
+        class Held:
+            """The Rust session, whose check -- given the version it reads -- lets the edit
+            commit first: where the session answers a check of ranges whole (lane P5k), the
+            version it lays out is the one it was given; where it does not (it says so), the
+            owner's check that answers then starts after the edit."""
+
+            def __init__(self, inner):
+                self.inner = inner
+
+            def __getattr__(self, name):
+                return getattr(self.inner, name)
+
+            def call(self, tool, *args, **kwargs):
+                if tool == "check":
+                    edit_once()
+                return self.inner.call(tool, *args, **kwargs)
+
+        mirror = reads._owned(session.entry(doc)).handle
         monkeypatch.setattr(rust_check, "core", lambda: Gated(real()))
+        monkeypatch.setattr(mirror, "session", Held(mirror.session))
         version = session.entry(doc).version
-        served = rust_check.STATS["served"]
+        served = rust_check.STATS["served"], reads.served().get("check", 0)
         checked = box.dispatch(session, "check", {"doc": doc, "range": span})
-        assert rust_check.STATS["served"] == served + 1          # served by the owner
-        monkeypatch.setattr(rust_check, "core", real)
+        # served by the owner (lane F) or by the session whole -- not by the Python path
+        assert (rust_check.STATS["served"], reads.served().get("check", 0)) in (
+            (served[0] + 1, served[1]), (served[0], served[1] + 1))
+        monkeypatch.undo()                                        # the core and the session again
         assert edits["made"].ok and edits["font"].ok
         assert checked.version == version
         assert _faces(checked) == ["Beta Madeup Face -> " + _faces(checked)[0].split(" -> ", 1)[1]]

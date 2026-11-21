@@ -905,23 +905,37 @@ def test_render_sheet_narrows_tiles_that_do_not_fit_and_says_so(box, session):
 
 
 def test_a_check_lays_out_with_the_lock_let_go(box, session, monkeypatch):
-    """The layout a check reads runs on the document's bytes with the lock let go: an edit
-    made meanwhile does not wait, and the check reports the version it laid out."""
+    """The layout a check reads runs with the document's lock let go: an edit made meanwhile
+    does not wait, and the check reports the version it laid out.  The check is the Rust
+    session's (lane P5b): it lays the version it was given out in the session's call, held
+    here until the edit has been committed."""
     import threading
 
+    from docx_agent.rust import reads
+
     d = session.open((FIXTURES / "samplelib" / "sample-long.docx").read_bytes(), "long.docx")
+    mirror = reads._owned(session.entry(d)).handle
     started, finish = threading.Event(), threading.Event()
-    real = box.pool.run
     first = {"call": True}
 
-    def slow(fn, *args, timeout=None, **kwargs):
-        if first.pop("call", False):
-            started.set()
-            assert finish.wait(60)
-        return real(fn, *args, timeout=timeout, **kwargs)
+    class Held:
+        """The session, whose first ``check`` waits for ``finish`` before it lays out."""
 
-    monkeypatch.setattr(box.pool, "run", slow)
+        def __init__(self, inner):
+            self.inner = inner
+
+        def __getattr__(self, name):
+            return getattr(self.inner, name)
+
+        def call(self, tool, *args, **kwargs):
+            if tool == "check" and first.pop("call", False):
+                started.set()
+                assert finish.wait(60)
+            return self.inner.call(tool, *args, **kwargs)
+
+    monkeypatch.setattr(mirror, "session", Held(mirror.session))
     before = session.entry(d).version
+    served = reads.served().get("check", 0)
     out = {}
 
     def check():
@@ -945,6 +959,7 @@ def test_a_check_lays_out_with_the_lock_let_go(box, session, monkeypatch):
     checked = out["result"]
     assert checked.ok, checked.to_json()
     assert "call" not in first                         # the layout was held while the edit ran
+    assert reads.served().get("check", 0) == served + 1, reads.fallbacks().get("check")
     assert edit.version == before + 1 and checked.version == before
     assert checked.data["reflow"]["pages"] == 36
     again = ok(box, session, "check", doc=d, include=["reflow"])   # the edited version, afresh

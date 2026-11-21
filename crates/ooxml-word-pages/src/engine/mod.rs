@@ -643,7 +643,13 @@ impl PageEngine {
     pub fn page(&mut self, version: &LaidVersion, page: usize) -> Option<PageView> {
         let paint = self.paint(version, page)?;
         let blocks = version.page_facts(page).map(|p| p.blocks.clone()).unwrap_or_default();
-        let paint = Arc::unwrap_or_clone(paint);
+        let mut paint = Arc::unwrap_or_clone(paint);
+        let mut text_box_lines: Vec<Vec<_>> = paint.drawings.iter().map(|_| Vec::new()).collect();
+        for text_box in std::mem::take(&mut paint.text_boxes) {
+            if let Some(lines) = text_box_lines.get_mut(text_box.slot) {
+                lines.extend(text_box.lines);
+            }
+        }
         Some(PageView {
             page,
             info: paint.geometry.info,
@@ -656,6 +662,7 @@ impl PageEngine {
                 .iter()
                 .map(|slot| version.drawings.as_ref().map(|d| d.faces(slot)).unwrap_or_default())
                 .collect(),
+            text_box_lines,
             drawings: paint.drawings,
             blocks,
             unpainted: paint.unpainted,

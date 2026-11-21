@@ -823,8 +823,10 @@ class _PageLines:
 
 class _StoriesOnDemand(dict):
     """Where a Rust layout draws each block (:meth:`DocumentLayout._drawn`): its body's lines
-    at once; a header's, footer's or note's paragraph -- not among them -- found by painting
-    every page once, when first asked for."""
+    at once; a header's, footer's or note's paragraph, or one in a text box -- not among
+    them (``body_lines`` are the flow's) -- found by painting every page once, when first
+    asked for: the lines each page draws (``text_lines``), its text boxes' among them, as
+    the engine paints them (the lines ``PageEngine::first_page_in_text_box`` reads)."""
 
     def __init__(self, body: dict, layout: DocumentLayout) -> None:
         super().__init__(body)
@@ -839,8 +841,11 @@ class _StoriesOnDemand(dict):
             layout = self._layout
             for number, lines in enumerate(layout._lines):
                 for place, (identifier, line) in enumerate(lines):
-                    if identifier is not None and not _in_body(line):
-                        stories.setdefault(layout._canon(identifier), []).append((number, place, line))
+                    if identifier is None:
+                        continue
+                    name = layout._canon(identifier)
+                    if not _in_body(line) or name not in self:
+                        stories.setdefault(name, []).append((number, place, line))
             self._stories = stories
         return self._stories.get(key, default)
 
