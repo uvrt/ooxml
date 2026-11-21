@@ -51,6 +51,7 @@ mod content_types;
 mod control_delete;
 mod controls;
 mod copying;
+mod core_properties;
 mod delete;
 mod delete_blocks;
 mod delete_write;
@@ -124,6 +125,7 @@ pub use controls::{ControlEdited, ControlKind, FillControl, Filling, InsertContr
 pub use copying::{
     BlocksCopied, BookmarkPolicy, CopyBlocks, CopyRange, CopySource, ListPolicy, StylePolicy, UnmappedPolicy,
 };
+pub use core_properties::{core_part, core_properties, CoreProperty, CoreSet, SetCoreProperties};
 pub use delete::{BlockDeleted, DeleteBlock};
 pub use delete_blocks::{blocks_named, BlocksDeleted, DeleteBlocks};
 pub use doc::{Change, Draw, DrawFrom, Key, ModelError, Shared, WordDoc};

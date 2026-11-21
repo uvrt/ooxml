@@ -9,6 +9,7 @@ mod compare;
 mod controls;
 mod describe;
 mod design;
+mod document;
 mod drawings;
 mod edit_table;
 mod fields_bench;
