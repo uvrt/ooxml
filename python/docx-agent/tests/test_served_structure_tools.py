@@ -1,6 +1,6 @@
 """Lane P2c14: ``word_move``, ``word_sections``, ``word_notes`` and ``word_links`` served by
-the Rust session; their replies as docx-agent's own handler gives them (a session with its
-own clock is answered by the Python handler), refs they define and use included.  Made-up
+the Rust session; their replies as docx-agent's own handler gives them (a session with the
+Rust session off is answered by the Python handler), refs they define and use included.  Made-up
 documents only."""
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from docx_agent.rust import edits
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from ooxml_edit.tools import Toolbox
 from ooxml_edit.tools.owned import OwnedEntry
+from python_handler import python_session
 
 CLOCK = lambda: dt.datetime(2026, 11, 20, 9, 0, tzinfo=dt.timezone.utc)  # noqa: E731
 
@@ -35,8 +36,11 @@ def report() -> bytes:
 
 
 def _open(toolbox, data: bytes, served: bool):
-    """A session that serves (the system's clock) or one the Python handler answers (its own)."""
-    session = toolbox.session() if served else toolbox.session(clock=CLOCK)
+    """A session that serves, or one the Python handler answers (the Rust session off); both
+    date their writes by ``CLOCK``."""
+    if not served:
+        return python_session(toolbox, data, "report.docx", clock=CLOCK)
+    session = toolbox.session(clock=CLOCK)
     doc = session.open(data, "report.docx")
     if served and not isinstance(session.entry(doc), OwnedEntry):
         pytest.skip("no Rust session to own the document")

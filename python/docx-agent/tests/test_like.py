@@ -17,6 +17,7 @@ from ooxml_edit.tools import Toolbox
 from docx_agent import Document
 from docx_agent.edit import numbering as _numbering
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
+from view_edits import edited
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 W = "{%s}" % W_NS
@@ -148,8 +149,9 @@ def drawn(document: Document, identifier: str) -> tuple:
 
 def test_targets_join_the_samples_list_at_its_level_numbered_on(box, made):
     session, ids = made
-    added = doc_of(session).insert_paragraph("Third", after=ids["end"]).id
-    later = doc_of(session).insert_paragraph("Fourth", after=added).id
+    with edited(session) as document:
+        added = document.insert_paragraph("Third", after=ids["end"]).id
+        later = document.insert_paragraph("Fourth", after=added).id
     result = run(box, session, "word_format", doc="d1", targets=[f"{added}..{later}"], like=ids["step2"])
     assert result["ok"], result
     document = doc_of(session)
@@ -161,11 +163,11 @@ def test_targets_join_the_samples_list_at_its_level_numbered_on(box, made):
 
 def test_a_nested_sample_gives_its_level_and_its_own_numbering_only_where_it_has_it(box, made):
     session, ids = made
-    document = doc_of(session)
-    # A separate list of its own, as a writer's new items came out: another definition.
-    stray = document.insert_paragraph("example three", after=ids["example2"]).id
-    document.add_to_list(stray, "bullet", level=1, continue_previous=False)
-    stray_num = document.list_of(stray).num_id
+    with edited(session) as document:
+        # A separate list of its own, as a writer's new items came out: another definition.
+        stray = document.insert_paragraph("example three", after=ids["example2"]).id
+        document.add_to_list(stray, "bullet", level=1, continue_previous=False)
+        stray_num = document.list_of(stray).num_id
     result = run(box, session, "word_format", doc="d1", targets=[stray], like=ids["example1"])
     assert result["ok"], result
     document = doc_of(session)
@@ -178,9 +180,10 @@ def test_a_nested_sample_gives_its_level_and_its_own_numbering_only_where_it_has
 
 def test_indents_and_page_settings_are_taken_whole_and_runs_stay(box, made):
     session, ids = made
-    document = doc_of(session)
-    target = document.insert_paragraph("example four", after=ids["point2"], style="Plan Body").id
-    document.format_paragraph(target, keep_together=True, page_break_before=True, bold=True, alignment="center")
+    with edited(session) as document:
+        target = document.insert_paragraph("example four", after=ids["point2"], style="Plan Body").id
+        document.format_paragraph(target, keep_together=True, page_break_before=True, bold=True,
+                                  alignment="center")
     result = run(box, session, "word_format", doc="d1", targets=target, like=ids["example2"])
     assert result["ok"], result
     document = doc_of(session)
@@ -196,7 +199,8 @@ def test_indents_and_page_settings_are_taken_whole_and_runs_stay(box, made):
 
 def test_explicit_settings_in_the_same_call_win(box, made):
     session, ids = made
-    target = doc_of(session).insert_paragraph("Aside", after=ids["end"]).id
+    with edited(session) as document:
+        target = document.insert_paragraph("Aside", after=ids["end"]).id
     result = run(box, session, "word_format", doc="d1", targets=target, like=ids["example2"],
                  keep_with_next=False, indent_left=10)
     assert result["ok"], result
@@ -247,10 +251,10 @@ def test_a_table_cell_paragraph_as_the_sample(box, made):
     session, ids = made
     made_table = run(box, session, "word_insert_markdown", doc="d1", at=f"after:{ids['end']}",
                      markdown="| Item | Note |\n|---|---|\n| a | b |\n")
-    document = doc_of(session)
     table = made_table["data"]["blocks"][0]
-    cell = document.get(table).cell(1, 0).paragraphs[0].id
-    document.format_paragraph(cell, indent_left=6, keep_with_next=True)
+    with edited(session) as document:
+        cell = document.get(table).cell(1, 0).paragraphs[0].id
+        document.format_paragraph(cell, indent_left=6, keep_with_next=True)
     result = run(box, session, "word_format", doc="d1", targets=ids["intro"], like=f"{table}/c1,0")
     assert result["ok"], result
     document = doc_of(session)
@@ -274,7 +278,8 @@ def test_a_sample_of_several_paragraphs_or_none_is_refused_with_the_way_out(box,
 
 def test_tracked_like_is_a_paragraph_property_change_rejected_back(box, made):
     session, ids = made
-    target = doc_of(session).insert_paragraph("Tracked", after=ids["end"]).id
+    with edited(session) as document:
+        target = document.insert_paragraph("Tracked", after=ids["end"]).id
     assert run(box, session, "word_set_tracking", doc="d1", on=True, author="Lane")["ok"]
     result = run(box, session, "word_format", doc="d1", targets=target, like=ids["example1"])
     assert result["ok"], result
@@ -298,9 +303,9 @@ def test_one_undo_step(box, made):
 
 def test_drawn_as_the_samples_items_are(box, made):
     session, ids = made
-    document = doc_of(session)
-    point = document.insert_paragraph("Third point", after=ids["point2"]).id
-    example = document.insert_paragraph("example five", after=point).id
+    with edited(session) as document:
+        point = document.insert_paragraph("Third point", after=ids["point2"]).id
+        example = document.insert_paragraph("example five", after=point).id
     assert run(box, session, "word_format", doc="d1", targets=point, like=ids["point1"])["ok"]
     assert run(box, session, "word_format", doc="d1", targets=example, like=ids["example1"])["ok"]
     document = doc_of(session)
@@ -315,13 +320,13 @@ def test_drawn_as_the_samples_items_are(box, made):
 
 def test_removing_a_stray_lists_numbering_offers_joining_the_list_keeping_the_markers(box, made):
     session, ids = made
-    document = doc_of(session)
     strays = []
     after = ids["point2"]
-    for text, level in (("Third point", 0), ("example six", 1)):
-        after = document.insert_paragraph(text, after=after, style="List Bullet").id
-        document.add_to_list(after, "bullet", level=level, continue_previous=False)
-        strays.append(after)
+    with edited(session) as document:
+        for text, level in (("Third point", 0), ("example six", 1)):
+            after = document.insert_paragraph(text, after=after, style="List Bullet").id
+            document.add_to_list(after, "bullet", level=level, continue_previous=False)
+            strays.append(after)
     refused = run(box, session, "word_lists", doc="d1", targets=strays, action="remove")
     assert not refused["ok"]
     message = refused["error"]["message"]

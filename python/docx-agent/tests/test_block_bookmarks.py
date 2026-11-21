@@ -280,6 +280,7 @@ def test_a_span_bookmark_on_a_draft_writes_what_it_writes_on_the_document():
                                                              "bookmark": name})
                 assert found.ok, found.to_json()
                 results.append(block_stress.normal(found))
+            document = session.entry(doc).document          # (the view of the version now)
             out[mode] = (results, hashlib.sha256(document.to_bytes()).hexdigest(), document.id_state(),
                          document.bookmark("a_span").text)
     assert out["off"] == out["always"]

@@ -27,9 +27,8 @@ version's read copy (a batch's reads of its own changes); limits other than the 
 Rust paging uses; an address naming an id this session renamed or deleted (the ledger and
 the aliases are Python's until P2); a regular expression Rust does not match as Python does;
 and what Rust says it does not give as Python does yet (its ``unported``: Accept All's cell
-ends).  A refusal goes to the Python
-path too: Rust's carries its own way out (``valid_options``, ``field``, ``try_call``, tool
-rule 2), which today's does not, so the reply stays today's.
+ends).  A refusal is not a fallback (lane P2e1): Rust's is the call's answer, in
+docx-agent's words with its own way out (:mod:`.refusals`).
 """
 
 from __future__ import annotations
@@ -42,9 +41,10 @@ import weakref
 from collections import Counter, OrderedDict
 from typing import Any, Callable
 
-from ooxml_edit.tools import Result
+from ooxml_edit.tools import Result, ToolError
 
 from .. import finalizers
+from .refusals import refusal
 
 log = logging.getLogger("docx_agent.rust")
 
@@ -282,8 +282,8 @@ class _Fallback(Exception):
 def _named(call: Any) -> Any:
     """The document whose ids an address of the call names: the call's; for one the session
     owns (or a read of a version of it), its view where that is current at the call's
-    version, else none -- the session follows its renames and refuses a deleted id itself,
-    and a refusal is answered by the Python path."""
+    version, else none -- the session follows its renames and refuses a deleted id itself
+    (worded as the view words it)."""
     entry = call.entry
     owned = _owned(entry)
     if owned is None:
@@ -371,13 +371,8 @@ def _with_others(call: Any, arguments: dict[str, Any], others: tuple[str, ...],
     #103's ``Call::others``).  The call's own document named again is the tool's."""
     versions: list[Any] = []
     names: dict[str, str] = {}
-    for path in others:
-        *parents, key = path.split(".")
-        holder: Any = arguments
-        for name in parents:
-            holder = holder.get(name) if isinstance(holder, dict) else None
-        given = holder.get(key) if isinstance(holder, dict) else None
-        if not isinstance(given, str) or given == getattr(call.entry, "doc_id", None):
+    for given in (found for path in others for found in _at_path(arguments, path.split("."))):
+        if not isinstance(given, str) or given == getattr(call.entry, "doc_id", None) or given in names:
             continue
         entry = call.entries.get(given)
         if entry is None:
@@ -388,6 +383,19 @@ def _with_others(call: Any, arguments: dict[str, Any], others: tuple[str, ...],
         names[given] = mirror.doc
         versions.append(version)
     return names, versions
+
+
+def _at_path(value: Any, path: list[str]) -> list[Any]:
+    """The values at ``path`` in ``value`` (``reference.doc``; a part ending ``[]`` is each
+    item of a list: ``copies[].reference.doc``)."""
+    if not path:
+        return [value]
+    head, rest = path[0], path[1:]
+    if head.endswith("[]"):
+        items = value.get(head[:-2]) if isinstance(value, dict) else None
+        return [found for item in items or () for found in _at_path(item, rest)] \
+            if isinstance(items, list) else []
+    return _at_path(value.get(head), rest) if isinstance(value, dict) else []
 
 
 def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | None" = None,
@@ -411,10 +419,10 @@ def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | 
     envelope = json.loads(reply)
     error = envelope.get("error")
     if error is not None:
-        # A refusal Rust words as Python does but with its own way out (valid_options,
-        # field, try_call: tool rule 2), which today's answer does not carry: answered by
-        # the Python path, so the reply is today's.
-        raise _Fallback("regex" if error.get("field") == "regex" else f"refusal: {error.get('code')}")
+        if error.get("field") == "regex":
+            raise _Fallback("regex")        # (a pattern Rust does not read as Python does)
+        # A refusal is the call's answer, in docx-agent's words with Rust's way out (lane P2e1).
+        raise refusal(error)
     unported = json.loads(app).get("unported") or []
     if unported:
         raise _Fallback(unported[0])
@@ -441,6 +449,9 @@ def serve(call: Any, tool: str, arguments: dict[str, Any],
     except _Fallback as why:
         _fell_back(tool, str(why))
         return python()
+    except ToolError:
+        _served(tool)                   # the session's refusal is the answer
+        raise
     _served(tool)
     return result
 
@@ -459,7 +470,7 @@ def serve_check(call: Any, arguments: dict[str, Any]) -> Result | None:
         why = "in a batch"
     elif getattr(owned.held, "min_text_size", None) is not None:
         why = "min_text_size"
-    return serve(call, "check", arguments, lambda: None, why_not=why)
+    return serve(call, "check", arguments, lambda: None, why_not=why, others=("copies[].reference.doc",))
 
 
 def _result(envelope: dict[str, Any]) -> Result:

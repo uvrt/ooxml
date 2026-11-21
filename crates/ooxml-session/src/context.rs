@@ -70,6 +70,10 @@ pub struct CallContext {
     /// resolved against its datasets), which an editing call keeps on the paragraphs they
     /// went into; empty: none.
     pub written: Vec<ooxml_tools_word::Written>,
+    /// The moment the host dates the call's writes by (a revision's and a comment's date,
+    /// `2026-11-20T09:30:15Z`): the host's clock, to the second, as docx-agent dates them;
+    /// `None`: the session's clock.
+    pub date: Option<String>,
 }
 
 impl std::fmt::Debug for CallContext {
@@ -125,11 +129,12 @@ impl ooxml_store::Clock for StoreClock {
     }
 }
 
-/// The revision date an edit made at `now` carries, as docx-agent stamps it: UTC, to the
-/// minute (`2026-11-18T09:30:00Z`).
+/// The date an edit made at `now` carries, as docx-agent's tools date it (the session's
+/// clock, `utc_now`): UTC, to the second (`2026-11-18T09:30:15Z`).
 pub(crate) fn revision_date(now: ooxml_base::context::Timestamp) -> String {
     let days = now.seconds.div_euclid(86_400);
-    let minutes = now.seconds.rem_euclid(86_400) / 60;
+    let seconds = now.seconds.rem_euclid(86_400);
+    let minutes = seconds / 60;
     // days since 1970-01-01 to a civil date (H. Hinnant's algorithm)
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
@@ -141,19 +146,20 @@ pub(crate) fn revision_date(now: ooxml_base::context::Timestamp) -> String {
     let month = if mp < 10 { mp + 3 } else { mp - 9 };
     let year = yoe + era * 400 + i64::from(month <= 2);
     format!(
-        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:00Z",
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
         minutes / 60,
-        minutes % 60
+        minutes % 60,
+        seconds % 60
     )
 }
 
 #[cfg(test)]
 mod tests {
     #[test]
-    fn revision_dates_are_utc_to_the_minute() {
+    fn revision_dates_are_utc_to_the_second() {
         let at = |seconds| super::revision_date(ooxml_base::context::Timestamp { seconds, nanos: 0 });
         assert_eq!(at(0), "1970-01-01T00:00:00Z");
-        assert_eq!(at(1_795_000_000), "2026-11-18T11:06:00Z");
+        assert_eq!(at(1_795_000_000), "2026-11-18T11:06:40Z");
         assert_eq!(at(951_782_400), "2000-02-29T00:00:00Z");
     }
 }

@@ -49,12 +49,22 @@ def _text_tool_cases(document, targets: list[str]) -> list[dict]:
                                                 {"target": targets[-1], "text": "Two\nThree"}]))
         out.append(call("word_set_text", items=[{"target": targets[0], "text": "One"},
                                                 {"target": "p:7FFFFFFE", "text": "Two"}]))
+        # Styles: one beside items is each item's naming none (an empty name names none); an
+        # unknown one refused at its item, a span's at its text, with the styles there are.
+        out += [call("word_set_text", paragraph_style="Normal",
+                     items=[{"target": targets[0], "text": "One."},
+                            {"target": targets[-1], "text": "Two.", "paragraph_style": ""}]),
+                call("word_set_text", items=[{"target": targets[0], "text": "Good."},
+                                             {"target": targets[-1], "text": "x", "paragraph_style": "Made Up"}]),
+                call("word_set_text", target=targets[0], text="**x** in [y]{No Such Style}"),
+                call("word_set_text", target=targets[0], text="[y]{Normal}")]
     tables = document._index(document.package.document_part()).tables
     if tables:
         out += [call("word_set_text", target=f"{tables[0].id}/c0,0", text="Cell text"),
                 call("word_set_text", target=tables[0].id, text="A table"),
                 call("word_set_text", target=f"{tables[0].id}/c0,0", text="Two\nlines **here**"),
-                call("word_delete", target=tables[0].id)]
+                call("word_delete", target=tables[0].id),
+                call("word_delete", target=f"{tables[0].id}/c0,0")]
     return out
 
 

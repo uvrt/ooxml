@@ -9,12 +9,12 @@ use crate::batch::{MAX_READ_BATCH_CHARS, READ_BATCH};
 use crate::call::Call;
 use crate::context::{revision_date, CallCancel};
 use crate::document::{At, Document};
-use crate::update::{PartUpdate, Updated};
+use crate::update::{HostIds, PartUpdate, Updated};
 use crate::{CallContext, DocId, DocKind, DocNames, Registry, SessionError};
 use ooxml_base::{Cancel, Context};
 use ooxml_opc::Package;
 use ooxml_store::{StoreConfig, StoreStats};
-use ooxml_tools::{Accepted, Refusal, ToolError, ToolResult, ToolSpec, WayOut};
+use ooxml_tools::{Accepted, Outcome, Refusal, ToolError, ToolResult, ToolSpec, WayOut};
 use ooxml_tools_word::{Made, Placer, Version};
 use ooxml_word_edit::EarlierIds;
 use ooxml_word_model::docx::Versions;
@@ -346,7 +346,8 @@ impl Session {
 
     /// The bridge (section 13): commit the parts an unported tool `tool` changed, run by the
     /// host on the head's bytes, as one step made by `context.caller`, and count it in
-    /// `bridge_calls{tool}`. The version it leaves, held.
+    /// `bridge_calls{tool}`; `host`: what the host's ledger holds beside the parts (its
+    /// tool's draws of new ids and renames, [`HostIds`]). The version it leaves, held.
     ///
     /// # Errors
     /// As [`Session::update`]; a conflict with a commit since the head the tool ran on is
@@ -356,9 +357,10 @@ impl Session {
         id: &DocId,
         tool: &str,
         parts: Vec<(String, Option<Arc<[u8]>>)>,
+        host: HostIds,
         context: &CallContext,
     ) -> Result<(Updated, Opened), SessionError> {
-        let done = self.commit_by(id, Some(tool), parts, context)?;
+        let done = self.commit_by(id, Some(tool), parts, host, context)?;
         let mut counts = self.counts.bridged.lock().unwrap_or_else(PoisonError::into_inner);
         *counts.entry(tool.to_owned()).or_default() += 1;
         Ok(done)
@@ -387,7 +389,7 @@ impl Session {
         parts: Vec<(String, Option<Arc<[u8]>>)>,
         context: &CallContext,
     ) -> Result<(Updated, Opened), SessionError> {
-        self.commit_by(id, None, parts, context)
+        self.commit_by(id, None, parts, HostIds::default(), context)
     }
 
     /// [`Session::commit`] of the parts `tool` changed (`None`: no tool named).
@@ -396,11 +398,12 @@ impl Session {
         id: &DocId,
         tool: Option<&str>,
         parts: Vec<(String, Option<Arc<[u8]>>)>,
+        host: HostIds,
         context: &CallContext,
     ) -> Result<(Updated, Opened), SessionError> {
         let document = self.document(id)?;
         let cancel = CallCancel::new(context, &*self.context.cancel, &*self.context.clock);
-        let update = PartUpdate::new(parts, self.context.limits, &cancel);
+        let update = PartUpdate::new(parts, self.context.limits, &cancel).with_host(host);
         let (version, changed, attempts) = document.update(&context.caller, tool, &update).inspect_err(|e| {
             if matches!(e, SessionError::Base(ooxml_base::BaseError::Cancelled)) {
                 self.counts.cancelled.fetch_add(1, Ordering::Relaxed);
@@ -589,6 +592,7 @@ impl Session {
             Ok(found) => found,
             Err(error) => return ToolResult::failed(error),
         };
+        let given = arguments.clone();
         let Some(doc) = state.opened.as_ref() else {
             return ToolResult::failed(ToolError::internal("no document", "session:dispatch"));
         };
@@ -599,14 +603,27 @@ impl Session {
             word: document.as_deref().and_then(Document::word),
             caller: &context.caller,
             cancel,
-            date: revision_date(self.context.clock.now()),
+            date: context
+                .date
+                .clone()
+                .unwrap_or_else(|| revision_date(self.context.clock.now())),
             made: &state.made,
             layout: context.layout.as_deref(),
             blobs: context.blobs.as_deref(),
             written: &context.written,
             others: &state.others,
         };
-        tool.run(arguments, &call)
+        let result = tool.run(arguments, &call);
+        // An id a version removed, refused as one the document lacks: said as such.
+        match (&result.outcome, call.word) {
+            (Outcome::Failed(error), Some(word)) => {
+                let replaced = call.doc.word().map(|w| w.ids().replaced());
+                let none = std::collections::BTreeMap::new();
+                crate::refused::removed(&word.retired, replaced.unwrap_or(&none), &given, error)
+                    .map_or(result, ToolResult::failed)
+            }
+            _ => result,
+        }
     }
 
     /// The tool a call names, its arguments as meant, and the document it reads (kept in

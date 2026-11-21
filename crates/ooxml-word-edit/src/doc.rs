@@ -301,6 +301,12 @@ impl WordDoc {
         self.ids.draw(seed, count, &self.shared.sequences).0
     }
 
+    /// Where the next draw from `seed` starts in its sequence ([`Ids::draws_from`]).
+    #[must_use]
+    pub fn draws_from(&self, seed: &str) -> usize {
+        self.ids.draws_from(seed, &self.shared.sequences)
+    }
+
     /// What the document's versions share.
     #[must_use]
     pub fn shared(&self) -> &Shared {

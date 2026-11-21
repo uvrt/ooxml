@@ -5,7 +5,7 @@
 //! Must not: do a session's work itself, or touch a Python object without the lock.
 
 use crate::adapters::{context, SessionStop};
-use crate::options::{context_of, PyCallOptions};
+use crate::options::{context_of, PyCallOptions, PyHostIds};
 use ooxml_base::Locale;
 use ooxml_session::{
     CallContext, CancelToken, DocId, DocKind, HeldId, Opened, RetiredBy, Session, SessionConfig, SessionError,
@@ -92,7 +92,9 @@ type Validation = (Vec<String>, Vec<String>, usize);
 type EditMade = (u64, PyVersion, Option<String>, Validation);
 
 /// What a call runs with (`ooxml_core.CallContext`): who calls, a token that stops it,
-/// and how long it may run, in seconds. One may serve many calls.
+/// how long it may run, in seconds, and the moment its writes are dated by (`date`: a
+/// revision's, a comment's), UTC to the second (`2026-11-20T09:30:15Z`) -- the host's clock,
+/// as docx-agent dates them; `None`: the session's clock. One may serve many calls.
 #[pyclass(frozen, name = "CallContext", module = "ooxml_core")]
 pub struct PyCallContext {
     pub(crate) inner: CallContext,
@@ -100,9 +102,19 @@ pub struct PyCallContext {
 
 #[pymethods]
 impl PyCallContext {
+    /// # Errors
+    /// `ValueError` for a negative `deadline`, or a `date` not of that form.
     #[new]
-    #[pyo3(signature = (*, caller = None, cancel = None, deadline = None))]
-    fn new(caller: Option<&str>, cancel: Option<PyRef<'_, PyCancelToken>>, deadline: Option<f64>) -> PyResult<Self> {
+    #[pyo3(signature = (*, caller = None, cancel = None, deadline = None, date = None))]
+    fn new(
+        caller: Option<&str>,
+        cancel: Option<PyRef<'_, PyCancelToken>>,
+        deadline: Option<f64>,
+        date: Option<&str>,
+    ) -> PyResult<Self> {
+        if date.is_some_and(|d| !is_utc_second(d)) {
+            return Err(PyValueError::new_err("date is UTC to the second: 2026-11-20T09:30:15Z"));
+        }
         let deadline = deadline
             .map(|seconds| {
                 Duration::try_from_secs_f64(seconds)
@@ -114,10 +126,24 @@ impl PyCallContext {
                 caller: caller.map_or_else(Caller::anonymous, Caller::named),
                 cancel: cancel.map(|t| Arc::clone(&t.inner)),
                 deadline,
+                date: date.map(str::to_owned),
                 ..CallContext::default()
             },
         })
     }
+}
+
+/// Whether `date` is a moment as a host dates writes: `YYYY-MM-DDTHH:MM:SSZ`.
+fn is_utc_second(date: &str) -> bool {
+    let b = date.as_bytes();
+    b.len() == 20
+        && b.iter().enumerate().all(|(i, c)| match i {
+            4 | 7 => *c == b'-',
+            10 => *c == b'T',
+            13 | 16 => *c == b':',
+            19 => *c == b'Z',
+            _ => c.is_ascii_digit(),
+        })
 }
 
 /// A call that panicked, as its failure.
@@ -433,8 +459,10 @@ impl PySession {
     }
 
     /// The bridge: commit the parts the unported tool `tool` changed (``None`` removes one)
-    /// and count the call in ``bridge_calls``; returns the version it leaves, held.
-    #[pyo3(signature = (doc, tool, parts, *, context = None))]
+    /// and count the call in ``bridge_calls``; ``ids``: what the host's id ledger holds
+    /// beside the parts (a ``HostIds``: its tool's draws and renames). Returns the version
+    /// it leaves, held.
+    #[pyo3(signature = (doc, tool, parts, *, context = None, ids = None))]
     fn bridge(
         &self,
         py: Python<'_>,
@@ -442,13 +470,15 @@ impl PySession {
         tool: &str,
         parts: &Bound<'_, PyDict>,
         context: Option<PyRef<'_, PyCallContext>>,
+        ids: Option<PyRef<'_, PyHostIds>>,
     ) -> PyResult<PyVersion> {
         let id = doc_id(doc, &self.inner)?;
         let context = caller_context(context.as_deref());
         let copied = copy_parts(parts)?;
+        let host = ids.map(|i| i.inner.clone()).unwrap_or_default();
         let session = &self.inner;
         let (_, opened) = py
-            .detach(|| session.bridge(&id, tool, copied, &context))
+            .detach(|| session.bridge(&id, tool, copied, host, &context))
             .map_err(|e| to_py(&e))?;
         Ok(PyVersion { inner: opened })
     }
@@ -562,6 +592,16 @@ impl PySession {
             .collect::<PyResult<Vec<_>>>()?;
         let session = &self.inner;
         py.detach(|| session.seed_retired(&id, given)).map_err(|e| to_py(&e))
+    }
+
+    /// The host numbered the Word document's `version` (a `Version` of it) as its version
+    /// `number`: a refusal of an id a version up to it removed names the change by it.
+    fn number_version(&self, py: Python<'_>, doc: &str, version: PyRef<'_, PyVersion>, number: u64) -> PyResult<()> {
+        let id = doc_id(doc, &self.inner)?;
+        let seq = version.inner.version();
+        let session = &self.inner;
+        py.detach(|| session.number_version(&id, seq, number))
+            .map_err(|e| to_py(&e))
     }
 
     /// Close the document; its versions and history are let go.

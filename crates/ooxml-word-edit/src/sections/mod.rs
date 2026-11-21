@@ -25,7 +25,7 @@ use crate::work::{scope_above, Work};
 use crate::{EditError, Result, WordDoc};
 use ooxml_base::pyfmt::repr_str;
 use ooxml_store::{Command, Txn};
-use ooxml_word_model::address::{section, span_ends, AddressError};
+use ooxml_word_model::address::{in_table, is_text_range, section, span_ends, AddressError};
 use ooxml_word_model::docx::sections::{section_id, sections, Section};
 use ooxml_word_model::docx::{at_path, Docx};
 use std::sync::Arc;
@@ -94,6 +94,25 @@ pub(crate) fn canonical(doc: &WordDoc, found: &Found, identifier: &str) -> Strin
     identifier.to_owned()
 }
 
+/// The block `section_of` starts from (docx-agent's `_held`): a row's or cell's table, a
+/// block as named. What else `_held` reads -- a range, bookmark, hyperlink, drawing, note,
+/// comment, field or revision -- is not ported: said so, for the host to answer.
+fn held(docx: &Docx, identifier: &str) -> Result<String> {
+    if let Ok(Some(found)) = in_table(docx, identifier) {
+        if let Some(table) = found.part.ids.tables().get(found.table) {
+            return Ok(table.id.clone());
+        }
+    }
+    const HELD: [&str; 9] = ["hl:", "bm:", "d:", "fn:", "en:", "c:", "c#", "fld:", "rev:"];
+    let by_place = is_text_range(identifier) || HELD.iter().any(|p| identifier.starts_with(p));
+    if by_place || !identifier.contains([':', '@', '/', '#']) {
+        return Err(EditError::Unsupported(format!(
+            "the section of {identifier}: a section given by what a block holds"
+        )));
+    }
+    Ok(identifier.to_owned())
+}
+
 /// The id of the section a body block is in (docx-agent's `section_of`).
 fn section_of(doc: &WordDoc, docx: &Docx, identifier: &str, all: &[Section]) -> Result<String> {
     if span_ends(identifier).map_err(EditError::Address)?.is_some() {
@@ -108,7 +127,7 @@ fn section_of(doc: &WordDoc, docx: &Docx, identifier: &str, all: &[Section]) -> 
             Vec::new(),
         )));
     }
-    let (part, block) = resolve_block(doc, docx, identifier)?;
+    let (part, block) = resolve_block(doc, docx, &held(docx, identifier)?)?;
     let body = docx.body().ok_or_else(|| EditError::NoPart(docx.main.clone()))?;
     if part != docx.main {
         return Err(EditError::Address(AddressError::not_found(

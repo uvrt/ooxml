@@ -38,11 +38,25 @@ def caller_key(caller: Mapping[str, Any] | None) -> str | None:
     return json.dumps(dict(caller), sort_keys=True, default=str, separators=(",", ":"))
 
 
-def context_of(caller: Mapping[str, Any] | None) -> Any:
-    """An ``ooxml_core.CallContext`` for ``caller``."""
+def context_of(caller: Mapping[str, Any] | None, date: str | None = None) -> Any:
+    """An ``ooxml_core.CallContext`` for ``caller``, its writes dated ``date`` (UTC to the
+    second, the session clock's; ``None``: the Rust session's own clock)."""
     import ooxml_core
 
-    return ooxml_core.CallContext(caller=caller_key(caller))
+    return ooxml_core.CallContext(caller=caller_key(caller), date=date)
+
+
+def host_ids(view: Any) -> Any:
+    """An ``ooxml_core.HostIds`` of what ``view``'s id ledger holds beside the parts a Python
+    tool changed in it: where its draws of new ids got to (an id it drew and did not write is
+    given) and its renames (a block it stamped keeps its old id); ``None`` without a view."""
+    import ooxml_core
+
+    if view is None:
+        return None
+    pool = getattr(getattr(view, "_ledger", None), "pool", None)
+    drawn = {seed: k for seed, k in pool.cursors.items() if k > 0} if pool is not None else {}
+    return ooxml_core.HostIds(drawn=drawn, aliases=dict(getattr(view, "_aliases", None) or {}))
 
 
 def options(**given: Any) -> Any:
@@ -109,8 +123,11 @@ class RustOwner:
         # found under the session's bytes of the version too (only where it laid out).
         laid = live is not None and laid_mark(live) != mirror.laid
         own = live.package.to_bytes() if laid else None
+        # the view's ledger beside the parts: where its draws of new ids got to (an id it drew
+        # and did not write is given) and its renames (a block it stamped keeps its old id)
+        ids = host_ids(live)
         with mirror.lock:
-            made = mirror.session.bridge(mirror.doc, tool, parts, context=context_of(caller))
+            made = mirror.session.bridge(mirror.doc, tool, parts, context=context_of(caller), ids=ids)
             mirror.view_head = made
         if own is not None:
             same_state(live, own, bytes(made.save()))
@@ -163,6 +180,8 @@ class RustOwner:
 
         with mirror.lock:
             mirror.keep(number, head)
+            # the session words a refusal of an id this version removed by the host's number
+            mirror.session.number_version(mirror.doc, head, number)
         live = mirror.live()
         if live is not None:
             owner_committed(live, number)

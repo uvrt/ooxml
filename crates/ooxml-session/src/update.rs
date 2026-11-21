@@ -33,8 +33,9 @@ pub(crate) trait Bridged: DocModel {
     fn put_bytes(part: String, bytes: Arc<[u8]>) -> Self::Change;
     /// The change that removes `part`.
     fn remove(part: String) -> Self::Change;
-    /// What the put trees add to the version's ledger, if anything.
-    fn ledger(&self, trees: &[&Tree]) -> Option<Self::Change>;
+    /// What the put trees add to the version's ledger, if anything, with what the host's
+    /// own ledger holds that the version's does not (`host`).
+    fn ledger(&self, trees: &[&Tree], host: &HostIds) -> Option<Self::Change>;
 }
 
 impl Bridged for PackageDoc {
@@ -60,7 +61,7 @@ impl Bridged for PackageDoc {
         PartChange::Remove { part }
     }
 
-    fn ledger(&self, _trees: &[&Tree]) -> Option<PartChange> {
+    fn ledger(&self, _trees: &[&Tree], _host: &HostIds) -> Option<PartChange> {
         None
     }
 }
@@ -88,7 +89,7 @@ impl Bridged for WordDoc {
         Change::Remove { part: Arc::from(part) }
     }
 
-    fn ledger(&self, trees: &[&Tree]) -> Option<Change> {
+    fn ledger(&self, trees: &[&Tree], host: &HostIds) -> Option<Change> {
         let roots: Vec<&ooxml_xml::Element> = trees.iter().map(|t| &**t.root()).collect();
         let mut values: Vec<u32> = ooxml_word_model::ids::used_long_hex(&roots)
             .into_iter()
@@ -107,9 +108,28 @@ impl Bridged for WordDoc {
             .copied()
             .filter(|n| *n > self.ids().highest_drawing())
             .unwrap_or(0);
-        (!values.is_empty() || !drawings.is_empty()).then(|| {
+        // an id the host's tool drew and did not write is given all the same: the next draw
+        // starts past it, as the host's own next draw would
+        let cursors: Vec<(String, usize)> = host
+            .drawn
+            .iter()
+            .filter(|(seed, k)| *k > self.draws_from(seed))
+            .cloned()
+            .collect();
+        // a rename the host's tool made (a block stamped there) names the block here too
+        let known = self.ids().aliases();
+        let aliases: Vec<(String, String)> = host
+            .aliases
+            .iter()
+            .filter(|(old, new)| known.get(old.as_str()) != Some(new))
+            .cloned()
+            .collect();
+        let adds = !values.is_empty() || !drawings.is_empty() || !cursors.is_empty() || !aliases.is_empty();
+        adds.then(|| {
             Change::Ids(IdsChange {
                 values,
+                cursors,
+                aliases,
                 highest_drawing: highest,
                 drawings,
                 ..IdsChange::default()
@@ -121,8 +141,22 @@ impl Bridged for WordDoc {
 /// Parts to put (`Some(bytes)`) or remove (`None`), by name, in one step.
 pub struct PartUpdate<'a> {
     parts: Vec<(String, Option<Arc<[u8]>>)>,
+    /// What the host's ledger holds (the bridge's: its tool's draws and renames).
+    host: HostIds,
     limits: Limits,
     cancel: &'a dyn Cancel,
+}
+
+/// What the host's own ledger of a Word document holds beside the parts it bridges
+/// (docx-agent's id pool and aliases), taken into the session's: an id its tool drew and
+/// did not write is not drawn again, and a block its tool renamed (stamped) is found by its
+/// old id too.
+#[derive(Debug, Clone, Default)]
+pub struct HostIds {
+    /// Where its draws of new ids got to in each seed's sequence: `(seed, where)`.
+    pub drawn: Vec<(String, usize)>,
+    /// Its renames: an old id and the id it names now.
+    pub aliases: Vec<(String, String)>,
 }
 
 /// What an update did.
@@ -140,7 +174,19 @@ impl<'a> PartUpdate<'a> {
     /// An update of `parts`, parsed within `limits`, stopping when `cancel` says so.
     #[must_use]
     pub fn new(parts: Vec<(String, Option<Arc<[u8]>>)>, limits: Limits, cancel: &'a dyn Cancel) -> Self {
-        Self { parts, limits, cancel }
+        Self {
+            parts,
+            host: HostIds::default(),
+            limits,
+            cancel,
+        }
+    }
+
+    /// The update, with what the host's ledger holds ([`HostIds`]): taken into the
+    /// version's.
+    #[must_use]
+    pub fn with_host(self, host: HostIds) -> Self {
+        Self { host, ..self }
     }
 }
 
@@ -210,7 +256,7 @@ where
             tx.write(change)?;
         }
         let trees: Vec<&Tree> = trees.iter().collect();
-        if let Some(ledger) = tx.doc().ledger(&trees) {
+        if let Some(ledger) = tx.doc().ledger(&trees, &self.host) {
             tx.write(ledger)?;
         }
         Ok(())
