@@ -518,8 +518,9 @@ impl WordLayout {
     }
 
     /// [`WordLayout::lay_out`], or [`WordLayout::relayout`] from `previous` where given,
-    /// stopped where `cancel` says so -- asked before each top-level block of the body's
-    /// flow and before each page.
+    /// stopped where `cancel` says so -- asked before it starts (a limit passed already
+    /// lays nothing out, even a version of no blocks), before each top-level block of the
+    /// body's flow and before each page.
     ///
     /// # Errors
     /// [`BaseError::Cancelled`] where it stopped: what it made is dropped; the measures it
@@ -532,6 +533,9 @@ impl WordLayout {
         cancel: &dyn Cancel,
     ) -> Result<DocumentLayout, BaseError> {
         let stop = Stop::on(cancel);
+        if stop.now() {
+            return Err(BaseError::Cancelled);
+        }
         let laid = self.lay_out_from(model, document, previous, &stop);
         if stop.stopped() {
             return Err(BaseError::Cancelled);
