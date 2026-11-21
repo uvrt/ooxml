@@ -233,3 +233,8 @@ fn first_page(args: &WordDesignFacts) -> TryCall {
         fill: Vec::new(),
     }
 }
+
+/// Registers `word_design_facts` (the crate's [`crate::register`]).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    r.read::<WordDesignFacts>(word_design_facts);
+}

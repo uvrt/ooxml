@@ -136,3 +136,8 @@ pub(crate) fn try_call(arguments: Value) -> TryCall {
 fn range_refusal(error: RangeError, doc: &str) -> ToolError {
     crate::refusal::address_refusal(error, "range", try_call(json!({"doc": doc})))
 }
+
+/// Registers `word_read` (the crate's [`crate::register`]).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    r.read::<WordRead>(word_read);
+}
