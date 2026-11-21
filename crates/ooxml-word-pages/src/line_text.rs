@@ -2,7 +2,8 @@
 //! in Rust from the page's paint so that no line is read into Python for it: each line's
 //! count of characters that are not white space (an empty paragraph, `spacers`), the sizes
 //! its text is drawn at with their characters (`smallest_text`), and the extent of its ink
-//! and its widest word (`column_fit`, a table's ink past the margins) -- docx-agent's
+//! and its widest word (`column_fit`, a table's ink past the margins), and where it is drawn
+//! (a text box's line in a range's extent) -- docx-agent's
 //! `layout_facts` rules (`_ink`, `_line_widths`, `text_sizes`), on the same spans.
 //!
 //! Must not: paint (the engine does), or judge what it measures.
@@ -19,6 +20,12 @@ pub struct LineText {
     pub story: Option<(&'static str, String)>,
     /// Its number in its paragraph.
     pub number: usize,
+    /// The top of its pitch, px from the page's top.
+    pub top: Px,
+    /// Its pitch.
+    pub pitch: Px,
+    /// Its text column, in a section of several.
+    pub column: Option<usize>,
     /// Its characters that are not white space, every span's.
     pub inked: usize,
     /// Each text or label span not raised or lowered with characters that are not white
@@ -83,6 +90,9 @@ impl LineText {
             path: line.path.to_string(),
             story: line.story.as_ref().map(|(kind, part)| (*kind, part.to_string())),
             number: line.number,
+            top: line.top,
+            pitch: line.pitch,
+            column: line.column,
             inked,
             sizes,
             ink,
