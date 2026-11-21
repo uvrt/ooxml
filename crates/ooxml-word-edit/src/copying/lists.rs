@@ -274,7 +274,8 @@ impl Styles<'_> {
                 .cloned(),
         };
         let Some(anchor) = anchor else { return Ok(None) };
-        sink.read(Key::Part(Arc::from(place.part.as_str())));
+        // the lists of the paragraphs before the place (their order and list numbers)
+        sink.read(Key::StyleUse(Arc::from(place.part.as_str())));
         let last = if anchor.name().is(Some(W), "p") {
             Some(anchor)
         } else {

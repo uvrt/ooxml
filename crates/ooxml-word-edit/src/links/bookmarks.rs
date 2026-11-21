@@ -283,7 +283,7 @@ impl ReadPredicate<WordDoc> for NamesBookmark {
         match key {
             Key::Block { part, id } => docx.part(part).is_some_and(|story| self.near(story, id)),
             Key::Part(part) => docx.part(part).is_some_and(|story| self.starts(story.root())),
-            Key::Root(_) | Key::Seq(_) | Key::Annotations | Key::People => false,
+            Key::Root(_) | Key::Seq(_) | Key::Annotations | Key::People | Key::StyleUse(_) => false,
         }
     }
 }
