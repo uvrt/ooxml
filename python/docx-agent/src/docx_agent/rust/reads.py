@@ -159,10 +159,13 @@ class Mirror:
         #: committed (:meth:`docx_agent.rust.owner.RustOwner.bridge`).
         self.laid: tuple | None = None
 
-    def keep(self, number: int, version: Any) -> None:
-        """Keep ``version`` (an ``ooxml_core.Version``) as the document's version ``number``."""
+    def keep(self, number: int, version: Any, first: int | None = None) -> None:
+        """Keep ``version`` (an ``ooxml_core.Version``) as the document's version ``number``;
+        ``first``: the session's first version of the step, where it made several (a call's
+        edits, a batch's ops), each numbered ``number`` too."""
         self.versions[number] = version
-        self.numbers[version.number] = number
+        for seq in range(first if first is not None else version.number, version.number + 1):
+            self.numbers[seq] = number
         self.versions.move_to_end(number)
         while len(self.versions) > KEPT:
             self.versions.popitem(last=False)
@@ -340,9 +343,14 @@ def _refs(call: Any, value: Any) -> Any:
 def _owned_version(entry: Any) -> tuple["Mirror | None", Any]:
     """Lane P2c4: the session's version a call reads of a document the session owns (the
     entry's version now), found without the Python view; ``(None, None)`` otherwise."""
-    mirror = getattr(_owned(entry), "handle", None)
+    owned = _owned(entry)
+    mirror = getattr(owned, "handle", None)
     if not isinstance(mirror, Mirror):
         return None, None
+    if owned is entry and getattr(entry.history, "grouped", False):
+        # Lane H1: a call of a batch reads what the batch's ops made so far.
+        entry.flush_view()
+        return mirror, entry.history.reading_head()
     with mirror.lock:
         found = mirror.versions.get(entry.version)
     if found is None:

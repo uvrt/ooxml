@@ -8,7 +8,7 @@
 //! [`StoreConfig::optimistic_tries`] times (design section 5); free old versions inside it.
 
 use crate::changeset::ChangeSet;
-use crate::history::{Garbage, History, Planned, Step};
+use crate::history::{Garbage, GroupMark, History, Planned, Step};
 use crate::ids::IdAllocator;
 use crate::journal::Journal;
 use crate::stats::Counts;
@@ -16,7 +16,7 @@ use crate::sync::{lock, HeadCell, Mutex};
 use crate::txn::TxnParts;
 use crate::{
     Clock, Command, Counters, CountersError, DocModel, Error, HistoryOutcome, KeySet, ReadPredicate, Seq, Snapshot,
-    StepInfo, StoreStats, Txn, Version,
+    StepInfo, StoreError, StoreStats, Txn, Version,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -422,6 +422,9 @@ impl<D: DocModel> Store<D> {
         plan: impl FnOnce(&History<D>, &Snapshot<D>, &Journal<D>) -> Result<Planned<D>, Error<D>>,
     ) -> Result<HistoryOutcome<D>, Error<D>> {
         let mut state = lock(&self.state);
+        if state.history.grouped() {
+            return Err(StoreError::GroupOpen);
+        }
         let entered = self.clock.monotonic();
         let head = self.head.load();
         let mut planned = plan(&state.history, &head, &state.journal)?;
@@ -447,6 +450,77 @@ impl<D: DocModel> Store<D> {
             step: planned.step,
             writes: planned.writes,
         })
+    }
+}
+
+/// Step groups: several commits as one history step (a host's batch of calls).
+///
+/// While a group is open its commits go on the undo list as they are made, plain redo is
+/// held aside and the depth waits; [`Store::close_group`] makes them one step, and
+/// [`Store::revert_group`] takes the ones after a mark back as a new version that no redo
+/// brings back. A group opened within an open one joins it. The host holds the document
+/// alone while a group is open: another writer's commit meanwhile would become part of the
+/// group's step. Undo and redo are refused then.
+impl<D: DocModel> Store<D> {
+    /// Open a step group, or join the one open: a call's group within a batch's is part
+    /// of the batch's step, and its close only ends the joining. Where the group is now (a
+    /// joined group's revert to it takes back only what was committed since it joined).
+    /// Cheap: the commit lock for a moment, no allocation.
+    ///
+    /// # Errors
+    /// None today; the store's own, should a group refuse.
+    pub fn open_group(&self) -> Result<GroupMark, Error<D>> {
+        let mut state = lock(&self.state);
+        state.history.open_group();
+        state.history.group_mark().ok_or(StoreError::NoGroup)
+    }
+
+    /// Where the open group is now, for [`Store::revert_group`]; `None` without one.
+    pub fn group_mark(&self) -> Option<GroupMark> {
+        lock(&self.state).history.group_mark()
+    }
+
+    /// Take back the open group's commits after `mark`: the content before them published
+    /// as a new version, which is returned (`None`: none was made since `mark`).
+    ///
+    /// # Errors
+    /// [`StoreError::NoGroup`] without an open group (or with a mark of none of its).
+    pub fn revert_group(&self, mark: GroupMark) -> Result<Option<Snapshot<D>>, Error<D>> {
+        let mut state = lock(&self.state);
+        let entered = self.clock.monotonic();
+        let Some(revert) = state.history.plan_revert(mark)? else {
+            return Ok(None);
+        };
+        let head = self.head.load();
+        let seq = state.last.next();
+        state.last = seq;
+        let mut doc = revert.doc;
+        doc.carry(head.doc());
+        doc.settle();
+        let version = Arc::new(head.succeed(seq, doc, &revert.writes));
+        self.head.store(Arc::clone(&version));
+        let garbage = state.history.reverted(mark);
+        self.journal(&mut state, seq, revert.changes);
+        let held = self.clock.monotonic().saturating_sub(entered);
+        drop(state);
+        drop(garbage);
+        self.counts.committed(held);
+        Ok(Some(version))
+    }
+
+    /// Close the open group: its commits one step of `caller`'s, whose version is returned
+    /// (`None`: it made none, and redo is as it was when it opened). A joined group's close
+    /// only ends the joining (`None`).
+    ///
+    /// # Errors
+    /// [`StoreError::NoGroup`] without an open group.
+    pub fn close_group(&self, caller: &Caller) -> Result<Option<Seq>, Error<D>> {
+        let mut state = lock(&self.state);
+        let head = self.head.load();
+        let (made, garbage) = state.history.close_group(caller.0.clone(), &head)?;
+        drop(state);
+        drop(garbage);
+        Ok(made)
     }
 }
 

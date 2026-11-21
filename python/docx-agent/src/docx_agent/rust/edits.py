@@ -11,6 +11,10 @@ call's edits made are the call's step (:meth:`~ooxml_edit.tools.owned.OwnedEntry
 numbered in the order the session made them), its reply the result.  The Python view of the
 document is not read.
 
+An op of a ``batch`` is served the same way, under the batch's locks, into the batch's step
+group of the session's (lane H1: ooxml-edit's ``OwnedEntry.op_step``): the batch is one step,
+the ops' versions numbered with it.
+
 Such a call runs without the document's lock (:func:`serve_owned`, the format's ``serve``:
 :mod:`ooxml_edit.tools.served`), beside the others the session serves -- the session prepares
 each edit on a snapshot and commits it in a short section of its own.  Where its checks
@@ -18,11 +22,10 @@ compare layouts (Python lays them out) it runs under the lock (:func:`serve`).
 
 The Python handler answers instead -- on the view, committed through the bridge, counted by
 tool and reason (:func:`fallbacks`, ``edit_fallbacks{tool,reason}``), never silently -- where
-the session does not answer as it yet: an op of a ``batch`` (one step), a call on a draft,
-values written by reference in a tool that does not keep them yet (``Hosting.keeps_written``), a
-ref name that would be folded, and what the session says it leaves to the host (its
-``unported``: a find within a block, a picture, regex, ...).  The Rust handler changes nothing
-in each of those.
+the session does not answer as it yet: a call on a draft, values written by reference in a
+tool that does not keep them yet (``Hosting.keeps_written``), a ref name that would be folded,
+and what the session says it leaves to the host (its ``unported``: a find within a block, a
+picture, regex, ...).  The Rust handler changes nothing in each of those.
 
 A refusal is not a fallback (lane P2e1): the session's is the call's answer, in docx-agent's
 words, with its way out (:mod:`.refusals`).
@@ -121,8 +124,6 @@ def _why_not(call: Any, entry: Any, arguments: dict[str, Any]) -> str | None:
     if any(not REF.match(name) for name in _ref_names(arguments)):
         # folded with a warning, or refused, by the tool layer as the Python handler names it
         return "a ref name to fold"
-    if call.in_batch:
-        return "batch op"
     if getattr(call, "facts", None) and call.tool.name not in _served.hosting().keeps_written:
         return "values by reference"
     return None
@@ -278,6 +279,7 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
     mirror = entry.handle
     tool = call.tool.name
     context = context_of(call.caller, _date(call))
+    entry.flush_view()        # (in a batch: the Python ops' changes before it, the session's)
     _tracking(call, entry, context, counted)
     adapted = _served.arguments_for(call, tool, arguments)
     written = adapted.written if isinstance(adapted, Adapted) else _written(call)

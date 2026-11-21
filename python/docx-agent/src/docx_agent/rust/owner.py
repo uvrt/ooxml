@@ -159,16 +159,39 @@ class RustOwner:
 
         return make
 
-    def keep(self, mirror: "reads.Mirror", number: int, head: Any) -> None:
+    def keep(self, mirror: "reads.Mirror", number: int, head: Any, first: int | None = None) -> None:
         from .check import owner_committed
 
         with mirror.lock:
-            mirror.keep(number, head)
+            mirror.keep(number, head, first)
             # the session words a refusal of an id this version removed by the host's number
             mirror.session.number_version(mirror.doc, head, number)
         live = mirror.live()
         if live is not None:
             owner_committed(live, number)
+
+    # -- step groups: a batch's ops as one step of the session's (lane H1) -------------------
+
+    def open_group(self, mirror: "reads.Mirror") -> "_Group":
+        with mirror.lock:
+            return _Group(mirror.session.open_group(mirror.doc), mirror.tracking)
+
+    def group_mark(self, mirror: "reads.Mirror", group: "_Group") -> tuple[Any, Any]:
+        with mirror.lock:
+            return group.steps.mark(), mirror.tracking
+
+    def revert_group(self, mirror: "reads.Mirror", group: "_Group", mark: tuple[Any, Any] | None,
+                     caller: Mapping[str, Any] | None) -> Any:
+        """What the group committed after ``mark`` taken back (the session's tracking mode
+        too, as it was then): the new head, or ``None``."""
+        with mirror.lock:
+            made = group.steps.revert(mark[0] if mark is not None else None, context=context_of(caller))
+            mirror.tracking = mark[1] if mark is not None else group.tracking
+            return made
+
+    def close_group(self, mirror: "reads.Mirror", group: "_Group", caller: Mapping[str, Any] | None) -> Any:
+        with mirror.lock:
+            return group.steps.close(context=context_of(caller))
 
     def save(self, mirror: "reads.Mirror") -> bytes:
         return bytes(mirror.session.save(mirror.doc))
@@ -178,6 +201,17 @@ class RustOwner:
         if live is not None:
             live.held_by(None)
         reads._close(mirror.session, mirror.doc)
+
+
+class _Group:
+    """A document's open step group: the session's (``ooxml_core.StepGroup``) and the
+    tracking mode the session edited under when it opened."""
+
+    __slots__ = ("steps", "tracking")
+
+    def __init__(self, steps: Any, tracking: Any) -> None:
+        self.steps = steps
+        self.tracking = tracking
 
 
 def _seed_retired(mirror: "reads.Mirror", ledger: Any) -> None:

@@ -2926,7 +2926,8 @@ class Toolbox:
                                 "timeout", f"the batch passed its {limits.batch_timeout:g} s "
                                 f"deadline: {note}", details={"not_run": not_run}))
                         self._op_states(index, tool, clean, entries, context)
-                        with _reads_held(session, self, drafting, tool, clean):
+                        with _reads_held(session, self, drafting, tool, clean), \
+                                _op_steps(entries, tool, clean, caller):
                             done.append(self._run_op(session, index, tool, clean, entries,
                                                      context, combined, reading or {}))
                         if tool.changes(clean):
@@ -3355,6 +3356,7 @@ class Toolbox:
                                   key=doc_order):
                     if stack.enter_context(entries[doc].savepoint(states.get(doc))):
                         rolled.append(entries[doc])
+                stack.enter_context(_op_steps(entries, tool, arguments, context.caller))
                 return self._run_op(session, index, tool, arguments, entries, context,
                                     combined, reading)
         except _OpFailed:
@@ -3636,6 +3638,21 @@ def _caller(session: Session | SessionView, roles: Any,
         base, found, caller = session, tuple(session.roles), NO_CONTEXT
     found, caller = narrowed(found, caller, roles, context)
     return base, found, caller
+
+
+@contextmanager
+def _op_steps(entries: Mapping[str, DocumentEntry], tool: Tool, arguments: Mapping[str, Any],
+              caller: Mapping[str, Any]) -> Iterator[None]:
+    """A batch's op as one sub-step of each document it changes (lane H1:
+    :meth:`DocumentEntry.op_step`): taken back there if it raises."""
+    if not tool.changes(arguments):
+        yield
+        return
+    owner = StepOwner(dict(caller), tool.name)
+    with ExitStack() as stack:
+        for doc in sorted({d for d in tool.doc_ids(arguments) if d in entries}, key=doc_order):
+            stack.enter_context(entries[doc].op_step(owner))
+        yield
 
 
 def _context(roles: Sequence[str], caller: Mapping[str, Any]) -> CallContext:
