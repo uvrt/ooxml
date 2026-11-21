@@ -119,18 +119,16 @@ impl Package {
                 .all(|(name, slot)| other.slots.get(name).is_some_and(|o| o.content.same(&slot.content)))
     }
 
-    /// The parts that differ from `before` by identity ([`PartVersion::same`]): each part
-    /// added or whose content is not the same, in archive order, then each part removed,
-    /// in `before`'s -- known without reading a part.
+    /// The parts that differ from `before`: each part added or whose content is not the
+    /// same, in archive order, then each part removed, in `before`'s. A part is the same by
+    /// identity ([`PartVersion::same`]), else by its bytes -- two archive entries by their
+    /// stored bytes, without inflating them; else as each reads -- so that two packages
+    /// opened from bytes apart agree on the parts they share.
     pub fn changed_parts(&self, before: &Package) -> Vec<String> {
         let mut changed: Vec<String> = self
             .part_names()
             .into_iter()
-            .filter(|name| {
-                let mine = self.slots.get(name).map(|s| &s.content);
-                let theirs = before.slots.get(name).map(|s| &s.content);
-                !matches!((mine, theirs), (Some(a), Some(b)) if a.same(b))
-            })
+            .filter(|name| !self.same_content(name, before))
             .collect();
         changed.extend(
             before
@@ -139,6 +137,26 @@ impl Package {
                 .filter(|name| self.slots.get(name).is_none()),
         );
         changed
+    }
+
+    /// Whether the part `name` (normalised) holds the same content here and in `other`.
+    fn same_content(&self, name: &str, other: &Package) -> bool {
+        let (Some(mine), Some(theirs)) = (self.slots.get(name), other.slots.get(name)) else {
+            return false;
+        };
+        if mine.content.same(&theirs.content) {
+            return true;
+        }
+        if let (PartVersion::Raw(a), PartVersion::Raw(b)) = (&mine.content, &theirs.content) {
+            if let (Ok(x), Ok(y)) = (self.entry(a.index), other.entry(b.index)) {
+                let (m, n) = (x.meta(), y.meta());
+                return m.crc32 == n.crc32
+                    && m.size == n.size
+                    && m.method == n.method
+                    && self.archive.stored_data(x) == other.archive.stored_data(y);
+            }
+        }
+        matches!((self.read(name), other.read(name)), (Ok(Some(x)), Ok(Some(y))) if x == y)
     }
 
     /// Whether the package has the part `name` (any spelling of it).
