@@ -434,6 +434,53 @@ impl Block {
         keeper.sync(&self.sheet)
     }
 
+    /// `_label_cells`: the labels of the series at `own` written into the line after the
+    /// chart's data (headed "Labels" where the names live in the sheet), the cells checked
+    /// free first; the formula of their range.
+    pub(crate) fn label_cells(
+        &self,
+        address: &str,
+        keeper: &mut Keeper<'_>,
+        series: &[SerSources],
+        own: usize,
+        labels: &[String],
+    ) -> Result<String, EditError> {
+        let lines = self.lines(series);
+        let across = lines.iter().map(|(_, _, a)| *a).max().unwrap_or(0) + 1;
+        let header = self.header(series);
+        let mut positions: Vec<u32> = (self.start..self.start + self.count).collect();
+        if let Some(header) = header {
+            positions.insert(0, header);
+        }
+        self.check_free(address, keeper, series, &positions, Some(&[across]))?;
+        let Some(template) = series.get(own).and_then(|s| s.range(Which::Values)) else {
+            return Err(refused(&format!(
+                "{address}: the series' values are not in the workbook"
+            )));
+        };
+        let previous = line_of(template, self.down).0;
+        for (offset, text) in labels.iter().enumerate() {
+            let position = self.start + u32::try_from(offset).unwrap_or(u32::MAX);
+            keeper.set(
+                &self.sheet,
+                self.cell(across, position),
+                &Write::Text(text.clone()),
+                None,
+            )?;
+        }
+        if let Some(header) = header {
+            let label = Write::Text("Labels".to_owned());
+            keeper.set(
+                &self.sheet,
+                self.cell(across, header),
+                &label,
+                Some(self.cell(previous, header)),
+            )?;
+        }
+        keeper.sync(&self.sheet)?;
+        spell(&self.line_range(template, across, self.start, self.count))
+    }
+
     /// `_delete_series_cells`: the doomed series' cells cleared and, where the series sit
     /// side by side, the later series' lines moved back one.
     pub(crate) fn delete_series(

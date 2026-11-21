@@ -12,12 +12,14 @@
 //! (`c:ptCount` stays), or know which document holds the chart.
 
 mod axes;
+mod combine;
 mod format;
 mod look;
 mod looks;
 mod make;
 mod owned;
 mod path;
+mod point_labels;
 mod points;
 mod rich;
 mod series;
@@ -28,6 +30,7 @@ pub use axes::ScaleChange;
 pub use format::{points_to_emu, text_size, Colour, TextLook};
 pub use look::{labels_show_values, LabelLook};
 pub use looks::SeriesFormat;
+pub use point_labels::{PointLabels, LABEL_POSITIONS};
 pub use rich::{paragraph_text, rebuild_paragraph, replace_body_text};
 pub use series::{Hash, POINT_SOURCES};
 pub use text_style::{TextHost, TextStop, TEXT_PARTS};
@@ -385,3 +388,6 @@ mod tests;
 
 #[cfg(test)]
 mod style_tests;
+
+#[cfg(test)]
+mod combine_tests;
