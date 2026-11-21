@@ -29,6 +29,8 @@
 //! - how a copy's rows and paragraphs correspond to its sample's ([`pairing`]);
 //! - validation per change ([`validate`]: facts memoised by content, docx-agent's rules)
 //!   and what a change touched ([`touched`]);
+//! - which paragraphs were the file's when the session opened it, and which revision
+//!   records this session wrote ([`originals`]);
 //! - [`Editor`], which runs a command through the store and reports its result with
 //!   `touched` and the validation delta.
 //!
@@ -77,6 +79,7 @@ mod names;
 mod namespaces;
 mod new_part;
 mod notes;
+pub mod originals;
 pub mod pairing;
 mod paragraph_style;
 mod paragraphs;
@@ -175,9 +178,10 @@ pub use styles::{
 };
 pub use switch::{tracks_changes, word_tracks_changes, SetWordTracking, WordTracking};
 pub use tables::{
-    body_lines, body_width, loose_paragraph_after, pending_structure, table_keeps, table_keeps_at, BodyLines,
-    BodyWidth, CellValues, EditTable, FormatTable, Look, TableChange, TableChanged, TableEdit, TableFormat,
-    TableFormatted, TableKeeps, TableValues, TableWidth,
+    body_lines, body_width, loose_paragraph_after, pending_structure, row_cells, row_shown, rows_unlike, table_keeps,
+    table_keeps_at, BodyLines, BodyWidth, CellUnlike, CellValues, EditTable, FormatCall, FormatTable, Look, LookField,
+    RowUnlike, TableChange, TableChanged, TableEdit, TableFormat, TableFormatted, TableKeeps, TableValues, TableWidth,
+    TextLook, ROW_WINDOW,
 };
 pub use template::{compatibility_mode, UpgradeToModern, Upgraded, DEFAULT_COMPATIBILITY_MODE, MODERN_MODE};
 pub use text::diff::ratio as text_ratio;

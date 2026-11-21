@@ -38,7 +38,7 @@ from ooxml_edit.tools.session import StepOwner
 from ooxml_edit.tools.session import utc_now
 
 from . import served as _served
-from .owner import context_of
+from .owner import context_of, documents, options
 from .served import Adapted, Fallback, written_json
 
 _COUNTS_LOCK = threading.Lock()
@@ -63,7 +63,7 @@ def served() -> dict[str, int]:
 
 
 class _Blobs:
-    """The session's blobs as ``Session.edit(blobs=...)`` asks them (lane P2c14): Rust calls
+    """The session's blobs as ``CallOptions(blobs=...)`` asks them (lane P2c14): Rust calls
     back with the interpreter lock taken back, for the blob a call names."""
 
     def __init__(self, session: Any) -> None:
@@ -160,7 +160,7 @@ def _tracking(call: Any, entry: Any, context: Any, counted: bool) -> None:
         arguments: dict[str, Any] = {"doc": mirror.doc, "on": bool(wanted)}
         if wanted and wanted.get("author"):
             arguments["author"] = wanted["author"]
-        reply, _app, made = mirror.session.edit("word_set_tracking", json.dumps(arguments), context=context)
+        reply, _app, made = mirror.session.edit("word_set_tracking", json.dumps(arguments), options(context=context))
         if made is None and json.loads(reply).get("error") is not None:
             raise Fallback("tracking")
         mirror.tracking = wanted
@@ -175,8 +175,8 @@ def _set_mode(entry: Any, given: dict[str, Any], context: Any, names: dict[str, 
     the session to) set together, under the mirror's lock, where the session sets it."""
     mirror = entry.handle
     with mirror.lock:
-        reply, app, made = mirror.session.edit("word_set_tracking", json.dumps(given), context=context,
-                                               names=names)
+        reply, app, made = mirror.session.edit("word_set_tracking", json.dumps(given), options(
+            context=context, documents=documents(names=names)))
         if json.loads(reply).get("error") is None and not json.loads(app).get("unported"):
             wanted = {"on": True, "author": given.get("author")} if given.get("on") else None
             entry.tracking = wanted
@@ -278,8 +278,8 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
     if tool == "word_set_tracking":
         reply, app, made = _set_mode(entry, given, context, names)
     else:
-        reply, app, made = mirror.session.edit(tool, json.dumps(given), context=context, layout=layout,
-                                               blobs=blobs, written=written, names=names)
+        reply, app, made = mirror.session.edit(tool, json.dumps(given), options(
+            context=context, layout=layout, blobs=blobs, written=written, documents=documents(names=names)))
     if timing is not None:
         timing.add("update", time.perf_counter() - started)
     envelope = json.loads(reply)
