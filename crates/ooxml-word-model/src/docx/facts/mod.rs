@@ -137,6 +137,31 @@ impl PartFacts {
         out
     }
 
+    /// The first bookmark start in document order whose name `matches`: its name, id and
+    /// place (one name looked up without copying out every start).
+    #[must_use]
+    pub fn bookmark_start(&self, matches: &dyn Fn(&str) -> bool) -> Option<(String, String, Box<[u32]>)> {
+        self.blocks().find_map(|(place, facts)| {
+            facts
+                .starts
+                .iter()
+                .find(|(name, _, _)| matches(name))
+                .map(|(name, id, path)| (name.clone(), id.clone(), place.with(path)))
+        })
+    }
+
+    /// The place of the last end of the bookmark id `id`.
+    #[must_use]
+    pub fn bookmark_end(&self, id: &str) -> Option<Box<[u32]>> {
+        let mut last = None;
+        for (place, facts) in self.blocks() {
+            if let Some((_, path)) = facts.ends.iter().rev().find(|(end, _)| end == id) {
+                last = Some(place.with(path));
+            }
+        }
+        last
+    }
+
     /// The bookmarks' ends (id, place), in document order.
     #[must_use]
     pub fn bookmark_ends(&self) -> Vec<(String, Box<[u32]>)> {

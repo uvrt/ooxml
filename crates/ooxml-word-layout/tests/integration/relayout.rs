@@ -633,9 +633,15 @@ fn check(seed: u64, versions: usize) -> Seen {
             "seed {seed} version {version}"
         );
         let at = format!("seed {seed} version {version}");
-        assert!(
-            LayoutFacts::after(&relaid, &previous, &LayoutFacts::of(&previous)) == LayoutFacts::of(&whole),
-            "{at}: the facts taken from the version before differ"
+        let known = LayoutFacts::of(&previous);
+        let _ = known.first_pages();
+        let carried = LayoutFacts::after(&relaid, &previous, &known);
+        let made = LayoutFacts::of(&whole);
+        assert!(carried == made, "{at}: the facts taken from the version before differ");
+        assert_eq!(
+            carried.first_pages(),
+            made.first_pages(),
+            "{at}: the first pages carried from the version before differ"
         );
         outputs_equal(
             &at,

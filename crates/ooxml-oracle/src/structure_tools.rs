@@ -60,6 +60,7 @@ fn registered(tool: &str, arguments: &Value, editing: &Editing<'_>) -> Option<To
         placer: None,
         owned: None,
         others: editing.others,
+        word: Some(editing.opened),
     };
     Some(tool.run_outside(arguments, editing, &version))
 }
@@ -80,8 +81,9 @@ fn unregistered(tool: &str, arguments: &Value, editing: &Editing<'_>) -> Option<
 }
 
 /// `d2`, which a call may name: the document opened again (`reference_copy`) or the file
-/// `reference_file`.
-fn other_package(bytes: &Arc<[u8]>, case: &Value) -> Option<Package> {
+/// `reference_file`; its package, and the document as a session opens one (its ids
+/// stamped, their renames kept) where it opens.
+fn other_document(bytes: &Arc<[u8]>, case: &Value) -> Option<(Package, Option<WordDoc>)> {
     let other: Option<Arc<[u8]>> = match case.get("reference_file").and_then(Value::as_str) {
         Some(path) => std::fs::read(path).ok().map(Arc::from),
         None => case
@@ -90,7 +92,9 @@ fn other_package(bytes: &Arc<[u8]>, case: &Value) -> Option<Package> {
             .unwrap_or(false)
             .then(|| Arc::clone(bytes)),
     };
-    other.and_then(|b| Package::open(b, &Limits::default()).ok())
+    let package = other.and_then(|b| Package::open(b, &Limits::default()).ok())?;
+    let word = WordDoc::open(package.clone(), Arc::new(Unlimited)).ok();
+    Some((package, word))
 }
 
 /// The tracking mode a case gives (`tracked`: its author and date), if any.
@@ -129,11 +133,11 @@ pub(crate) fn tool_case(
         .and_then(Value::as_str)
         .unwrap_or("2026-11-17T10:00:00Z");
     let blobs = case_blobs(case);
-    let copy = other_package(bytes, case);
+    let copy = other_document(bytes, case);
     let copy_versions = Versions::new();
     let others: Vec<(&str, Version<'_>)> = copy
         .iter()
-        .map(|package| ("d2", other_version(package, &copy_versions)))
+        .map(|(package, word)| ("d2", other_version(package, word.as_ref(), &copy_versions)))
         .collect();
     let call_editor = CallEditor::new(&editor);
     let editing = Editing::new(&call_editor, &caller, &opened, "d1", &Never, date)
@@ -176,7 +180,7 @@ pub(crate) fn tool_case(
 }
 
 /// The other document a case names (`d2`), as a reading tool is handed it.
-fn other_version<'a>(package: &'a Package, versions: &'a Versions) -> Version<'a> {
+fn other_version<'a>(package: &'a Package, word: Option<&'a WordDoc>, versions: &'a Versions) -> Version<'a> {
     Version {
         name: "copy.docx",
         package,
@@ -185,6 +189,7 @@ fn other_version<'a>(package: &'a Package, versions: &'a Versions) -> Version<'a
         placer: None,
         owned: None,
         others: Others::default(),
+        word,
     }
 }
 

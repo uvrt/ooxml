@@ -12,6 +12,7 @@ use crate::format::keeps::Keeps;
 use crate::names::W;
 use crate::work::Work;
 use crate::{EditError, Result, WordDoc};
+use ooxml_word_model::docx::formatting::Formatting;
 use ooxml_word_model::docx::{at_path, find_path};
 use ooxml_xml::Element;
 use std::sync::Arc;
@@ -77,7 +78,8 @@ pub fn body_lines(doc: &WordDoc, table: &str) -> Result<BodyLines> {
     let story = docx
         .part(&found.part)
         .ok_or_else(|| EditError::NoPart(found.part.clone()))?;
-    let mut look = Keeps::new(&docx, story);
+    let formatting = Formatting::read(&docx);
+    let mut look = Keeps::new(&formatting, story);
     let placed = around(story.root(), &found.path).and_then(|place| Some((at_path(story.root(), &place)?, place)));
     let (effective, paragraph) = match placed {
         Some((element, place)) => (
