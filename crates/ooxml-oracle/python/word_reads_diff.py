@@ -13,6 +13,8 @@ Runs docx-agent and the Rust core on the same documents and compares, field by f
   and for ``stories=all``.
 * ``ranges``, ``inspect``, ``find``, ``batch`` and ``check``: the addressed reads, the batch,
   and ``check``'s facts read from the document alone (lane P5a; ``word_reads_tools.py``).
+* ``laid``: ``check``'s layout facts read from the pages, docx-agent's layout against a page
+  engine's (lane P5f; ``word-reads``' laid fact cases, ``word_laid_facts_cases.py``).
 * ``facts``: ``check``'s layout facts read from the document alone, as library functions
   (lane P5a2; ``word-reads``' fact cases, ``word_facts_cases.py``).
 
@@ -189,7 +191,7 @@ def report(expected: dict, rust: dict, ignore: tuple = (), results: str | None =
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("what", choices=["ids", "describe", "read", "ranges", "inspect", "find", "batch", "check",
-                                           "facts"])
+                                           "facts", "laid"])
     parser.add_argument("--rust", required=True, help="the word-ids or word-reads binary")
     parser.add_argument("--tree", action="append", help="every .docx below this folder")
     parser.add_argument("--results", help="also write the cases with differences here (JSON lines)")
@@ -197,6 +199,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.what == "ids":
         return check_ids(args)
+    if args.what == "laid":
+        from word_laid_facts_cases import check_laid
+
+        return check_laid(args, run_rust, functools.partial(report, results=args.results), files_of)
     if args.what == "facts":
         from word_facts_cases import check_facts
 

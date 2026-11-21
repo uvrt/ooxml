@@ -67,6 +67,8 @@ pub fn run(args: &[String]) -> Result<(), String> {
         };
         let reply = if let Some(fact) = item.get("fact").and_then(Value::as_str) {
             crate::facts::reply(package, fact)
+        } else if item.get("laid").is_some() {
+            crate::laid_facts::reply(package, item.get("fonts").unwrap_or(&Value::Null), item.get("min_size"))
         } else if matches!(tool, "read_batch" | "check") {
             through_session(tool, &arguments, file, name)
         } else {

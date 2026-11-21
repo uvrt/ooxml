@@ -222,7 +222,7 @@ pub(crate) fn page_break_at(paragraph: &Arc<Element>, start: bool) -> bool {
             || is_w(e, "tab")
             || is_w(e, "drawing")
     });
-    let found = if start { content.next() } else { content.last() };
+    let found = if start { content.next() } else { content.next_back() };
     found.is_some_and(|e| is_w(e, "br") && e.attribute(Some(W), "type") == Some("page"))
 }
 
