@@ -206,6 +206,32 @@ impl Ids {
         target.to_owned()
     }
 
+    /// The address `address` names now, as docx-agent's view reads an address through its
+    /// renames: a block's id followed; the table of a row's or cell's id (`t@body/0/c2,2`
+    /// once the table is `t:X`: `t:X/c2,2`); a text range's paragraphs; a span's ends; any
+    /// other form as given.
+    #[must_use]
+    pub fn follow_address(&self, address: &str) -> String {
+        use ooxml_word_model::address::{inside_table, parse_range, span_ends};
+        if let Some(found) = parse_range(address) {
+            let range = ooxml_word_model::address::RangeText {
+                start_id: self.follow(&found.start_id),
+                end_id: self.follow(&found.end_id),
+                ..found
+            };
+            return crate::text_range::range_id(&range);
+        }
+        if let Ok(Some((first, last))) = span_ends(address) {
+            let end = |e: Option<&str>| e.map(|e| self.follow_address(e)).unwrap_or_default();
+            return format!("{}..{}", end(first), end(last));
+        }
+        if let Some((table, _)) = inside_table(address) {
+            let rest = address.get(table.len()..).unwrap_or_default();
+            return format!("{}{rest}", self.follow(table));
+        }
+        self.follow(address)
+    }
+
     /// The first annotation id of the edit being applied.
     #[must_use]
     pub fn annotations(&self) -> Option<i64> {
