@@ -95,6 +95,7 @@ mod ranges_across;
 mod release;
 pub mod review;
 mod revision_ids;
+mod saving;
 mod sections;
 mod set_cells;
 mod set_text;
@@ -162,6 +163,7 @@ pub use pool::{EarlierIds, Ids, IdsChange, Sequences};
 pub use provenance::{KeepText, TextKeep};
 pub use ranges::{DeleteText, InsertText, RangesEdited, ReplaceText};
 pub use review::{record_marks, Mark, RemovedBlocks, Review, Reviewed, RowGone, Selection, TableGone, Typed};
+pub use saving::{clean, has_macros, serialise, AppStatistics, Cleaned, FileKind};
 pub use sections::{
     InsertSectionBreak, LinkToPrevious, RemoveSectionBreak, SectionEdited, SectionValues, SetSection, SetStoryText,
     StoryEdited, UnlinkFromPrevious,

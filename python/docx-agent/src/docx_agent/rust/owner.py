@@ -39,17 +39,18 @@ def caller_key(caller: Mapping[str, Any] | None) -> str | None:
 
 
 def context_of(caller: Mapping[str, Any] | None, limits: Any = None,
-               layout_timeout: float | None = None) -> Any:
+               layout_timeout: float | None = None, **more: Any) -> Any:
     """An ``ooxml_core.CallContext`` for ``caller``, with the host's ``limits`` on its reply
     (an :class:`ooxml_edit.tools.Limits`: ``max_result_chars``, ``max_list_items``; the
-    defaults where ``None``) and how long laying the document out may take in it
-    (``layout_timeout``, seconds; the session's own where ``None``)."""
+    defaults where ``None``), how long laying the document out may take in it
+    (``layout_timeout``, seconds; the session's own where ``None``) and ``more`` of its
+    keywords (``layout_counts``: a save's)."""
     import ooxml_core
 
     if limits is None:
-        return ooxml_core.CallContext(caller=caller_key(caller), layout_timeout=layout_timeout)
+        return ooxml_core.CallContext(caller=caller_key(caller), layout_timeout=layout_timeout, **more)
     return ooxml_core.CallContext(caller=caller_key(caller), max_result_chars=limits.max_result_chars,
-                                  max_list_items=limits.max_list_items, layout_timeout=layout_timeout)
+                                  max_list_items=limits.max_list_items, layout_timeout=layout_timeout, **more)
 
 
 def options(**given: Any) -> Any:

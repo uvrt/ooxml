@@ -42,6 +42,8 @@ pub struct Call<'a> {
     /// The other documents the call names (`ooxml_tools::documents`), by id, each at the
     /// version pinned for the call when it was dispatched.
     pub(crate) others: &'a [(String, Opened)],
+    /// The pages and lines of the version's layout, where the host laid it out.
+    pub(crate) counts: Option<ooxml_tools_word::LayoutCounts>,
     /// The host's limits on the call's reply.
     pub(crate) limits: ooxml_tools::Limits,
 }
@@ -143,7 +145,8 @@ impl Call<'_> {
             .version_of()
             .with_others(Others::new(&others))
             .with_owned(self.owned())
-            .with_limits(self.limits);
+            .with_limits(self.limits)
+            .with_counts(self.counts);
         run(&version)
     }
 
