@@ -17,6 +17,8 @@ ooxml-word-edit.workspace = true
 ooxml-word-layout.workspace = true
 ooxml-word-pages.workspace = true
 ooxml-store.workspace = true
+ooxml-chart.workspace = true
+ooxml-sheets.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]

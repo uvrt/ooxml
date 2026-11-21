@@ -361,6 +361,51 @@ def drawings_cases(document) -> list[dict]:
     return out + [tracked(case) for case in out]
 
 
+@CASES
+def chart_cases(document) -> list[dict]:
+    """``edit_chart``'s ``read``: every chart (group members too), a drawing that is not a
+    chart and a drawing that is not there; and the data actions that change points in place
+    on the first three charts (:func:`_chart_data_edits`)."""
+    def read(target: str) -> dict:
+        return call("edit_chart", action="read", target=target)
+
+    graphics = document._graphics()
+    charts = [identifier for _part, identifier, _frame, kind in graphics if kind == "chart"]
+    out = [read(identifier) for identifier in charts]
+    other = next((identifier for _part, identifier, _frame, kind in graphics if kind != "chart"), None)
+    if other is not None:
+        out.append(read(other))
+    out.append(read("d:999999"))
+    for identifier in charts[:3]:
+        out += _chart_data_edits(document, identifier)
+    return out
+
+
+def _chart_data_edits(document, target: str) -> list[dict]:
+    """``set_values`` (each value moved, a blank kept), ``set_value``, ``rename_series`` and
+    ``rename_category`` (to text, to nothing) by name and by position, the same value again,
+    and their refusals (a count that is not the categories', a name nothing has, a value
+    missing); ``set_value`` and ``rename_series`` tracked too."""
+    def edit(action: str, **arguments) -> dict:
+        return call("edit_chart", action=action, target=target, **arguments)
+
+    try:
+        chart = document.chart(target)
+        names = ["" if s.name is None else str(s.name) for s in chart.series]
+        values = list(chart.series[0].values) if chart.series else []
+    except Exception:  # noqa: BLE001 -- a chart docx-agent cannot read: the reads cover it
+        return []
+    first = names[0] if names and names[0] else "0"
+    moved = [None if v is None or isinstance(v, str) else v + 1.5 for v in values]
+    out = [edit("set_values", series=first, values=moved), edit("set_values", series="0", values=values),
+           edit("set_values", series="0", values=[*values, 1]), edit("set_value", series="0", category="0", value=42.5),
+           edit("set_value", series="0", category="0"), edit("set_value", series="No such series", category="0", value=1),
+           edit("rename_series", series=first, text="Renamed series"), edit("rename_series", series="0", text=first),
+           edit("rename_category", category="0", text="Renamed"), edit("rename_category", category="0", text=""),
+           edit("rename_category", category="999", text="x")]
+    return out + [tracked(case) for case in (out[3], out[6])]
+
+
 def _chunk(kind: bytes, body: bytes) -> bytes:
     return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
 

@@ -10,6 +10,10 @@
 //! document but through a command.
 
 mod cell_fills;
+mod chart_data;
+mod chart_names;
+mod chart_read;
+mod chart_workbook;
 mod controls;
 mod drawings;
 mod drawings_args;

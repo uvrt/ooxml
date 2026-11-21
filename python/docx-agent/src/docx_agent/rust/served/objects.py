@@ -1,5 +1,5 @@
 """The object tools' adapters (:mod:`docx_agent.rust.served`): ``word_format_table``,
-``word_drawings``."""
+``word_drawings``, ``edit_chart``."""
 
 from __future__ import annotations
 
@@ -21,3 +21,9 @@ def _drawings(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
         raise Fallback("a catalogue asset")
     return {**own(arguments), "target": reads._refs(call, arguments.get("target")),
             "at": sided(call, arguments.get("at"))}
+
+
+@adapter("edit_chart")
+def _chart(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    # (its data actions that change points in place; the rest answer ``unported``)
+    return {**own(arguments), "target": reads._refs(call, arguments.get("target"))}
