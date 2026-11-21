@@ -122,7 +122,14 @@ impl Call<'_> {
         .with_rows_written(Some(&word.rows_written))
         .with_limits(self.limits);
         let mut result = run(&editing);
-        *self.made.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = editor.made();
+        let made = editor.made();
+        // a call is one history step and one state number: a handler with several commands
+        // runs them as one transaction, never as a second commit
+        debug_assert!(
+            made.as_ref().is_none_or(|m| m.ids.len() <= 1),
+            "a call committed more than once: run its commands as one transaction"
+        );
+        *self.made.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = made;
         ooxml_tools_word::resolve_drawn(&mut result, &editor.moved());
         result
     }

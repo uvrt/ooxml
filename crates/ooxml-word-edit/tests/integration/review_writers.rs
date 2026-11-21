@@ -1,14 +1,18 @@
 //! The random multi-writer oracle for the review edits (lane P4a): writers on threads mix
 //! tracked and untracked `set_text` and `insert_text` with accepting and rejecting changes
-//! (by author, by kind, everything) and resolving, reopening and deleting comments, through
-//! one document's store; replayed serially in commit order on the document as opened,
+//! (by author, by kind, everything), resolving, reopening and deleting comments, and adding
+//! comments and content controls on paragraphs named by id (lane P2c18: they read narrowly),
+//! through one document's store; replayed serially in commit order on the document as opened,
 //! every version is the same, byte for byte, as the concurrent run made it.
 // Tests may unwrap, panic and index (docs/architecture/README.md, section 2.5).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
 use crate::common::{editor, fixture, policy, written, Rng, WORDS};
 use ooxml_store::{Caller, Command, Seq, Snapshot, Txn};
-use ooxml_word_edit::{CommentEdit, CommentEdits, EditError, InsertText, Review, Selection, SetText, WordDoc};
+use ooxml_word_edit::{
+    AddComments, CommentEdit, CommentEdits, CommentWrite, ControlKind, EditError, InsertControl, InsertText, Review,
+    Selection, SetText, Who, WordDoc,
+};
 use ooxml_word_model::docx::comments::comments;
 
 /// One edit of the mix.
@@ -18,6 +22,8 @@ enum Edit {
     Insert(InsertText),
     Review(Review),
     Comments(CommentEdits),
+    Add(AddComments),
+    Control(InsertControl),
 }
 
 impl Command<WordDoc> for Edit {
@@ -30,6 +36,8 @@ impl Command<WordDoc> for Edit {
             Edit::Insert(c) => c.validate(doc),
             Edit::Review(c) => c.validate(doc),
             Edit::Comments(c) => c.validate(doc),
+            Edit::Add(c) => c.validate(doc),
+            Edit::Control(c) => c.validate(doc),
         }
     }
 
@@ -39,6 +47,8 @@ impl Command<WordDoc> for Edit {
             Edit::Insert(c) => c.prepare(tx).map(|_| true)?,
             Edit::Review(c) => c.prepare(tx)?.records > 0,
             Edit::Comments(c) => c.prepare(tx)?.iter().any(|o| o.changed),
+            Edit::Add(c) => c.prepare(tx).map(|_| true)?,
+            Edit::Control(c) => c.prepare(tx).map(|_| true)?,
         })
     }
 }
@@ -47,7 +57,7 @@ impl Command<WordDoc> for Edit {
 fn edit(rng: &mut Rng, targets: &[String], threads: &[String], writer: u64) -> Edit {
     let target = targets[rng.below(targets.len())].clone();
     let words: Vec<&str> = (0..1 + rng.below(4)).map(|_| WORDS[rng.below(WORDS.len())]).collect();
-    match rng.below(10) {
+    match rng.below(12) {
         0..=2 => Edit::Set(SetText {
             target,
             text: words.join(" "),
@@ -77,6 +87,29 @@ fn edit(rng: &mut Rng, targets: &[String], threads: &[String], writer: u64) -> E
                     within: Some(target),
                 }
             },
+        }),
+        10 => Edit::Add(AddComments {
+            items: vec![CommentWrite::Add {
+                place: if rng.below(2) == 0 {
+                    target
+                } else {
+                    format!("{target}@0:{}", 1 + rng.below(2))
+                },
+                text: words.join(" "),
+            }],
+            who: Who {
+                author: format!("Writer {writer}"),
+                date: "2026-11-20T00:00:00Z".to_owned(),
+                initials: "W".to_owned(),
+            },
+        }),
+        11 => Edit::Control(InsertControl {
+            at: format!("{target}@{}", rng.below(2)),
+            kind: ControlKind::Text,
+            items: Vec::new(),
+            tag: Some(format!("w{writer}")),
+            alias: None,
+            policy: policy(rng, writer),
         }),
         _ => Edit::Comments(CommentEdits {
             edit: [CommentEdit::Resolve, CommentEdit::Reopen, CommentEdit::Delete][rng.below(3)],
@@ -136,7 +169,10 @@ fn run(seed: u64, writers: u64, per_writer: usize) -> (u64, u64, usize, usize) {
     }
     let stats = shared.store().stats();
     let reviews = records.iter().filter(|r| matches!(r.1, Edit::Review(_))).count();
-    let comment_edits = records.iter().filter(|r| matches!(r.1, Edit::Comments(_))).count();
+    let comment_edits = records
+        .iter()
+        .filter(|r| matches!(r.1, Edit::Comments(_) | Edit::Add(_) | Edit::Control(_)))
+        .count();
     (stats.conflicts, stats.exclusive, reviews, comment_edits)
 }
 

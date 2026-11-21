@@ -82,6 +82,14 @@ impl<K: Ord + Clone> KeySet<K> {
         }
     }
 
+    /// The keys of this set but those `drop` names (every key stays every key).
+    pub fn without_where(&self, drop: impl Fn(&K) -> bool) -> Self {
+        match self {
+            Self::Everything => Self::Everything,
+            Self::Keys(keys) => Self::Keys(keys.iter().filter(|key| !drop(key)).cloned().collect()),
+        }
+    }
+
     /// Whether the sets share a key.
     pub fn intersects(&self, other: &Self) -> bool {
         match (self, other) {

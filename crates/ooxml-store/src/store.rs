@@ -1,7 +1,18 @@
 //! Owns: [`Store`], one document's versions: the lock-free head readers load, the commit
 //! (conflict detection by the keys a transaction read and wrote and by its reads by
 //! condition, checked on the head against the keys written since; redo, then a run under the
-//! commit lock), history operations, the id allocator and the reopen state.
+//! commit lock), history operations, the id allocator and the reopen state; the states'
+//! numbers ([`Version::number`]).
+//!
+//! **Numbers.**  Each published version is numbered as it is published, in publish order,
+//! as a tool layer numbers a document's states: the version opened is 0; a commit gets one
+//! more than the highest number given; a plain undo whose result is the step's "before"
+//! itself gets that version's number, a plain redo whose result is the step's "after" that
+//! version's; any other undo or redo (a scoped one, or one moved past later changes) makes
+//! a state that never was, a new number. A reopen starts at 0 again. A step group is one
+//! step and one number: its commits all carry one more than the highest number given when
+//! it opened, which is given for good only when it closes having made a step; a revert that
+//! takes all its commits back brings the number it opened on back.
 //!
 //! Must not: run anything inside the commit lock beyond the check, the rebase and replay of
 //! a change set on a moved head and the publish, except a transaction that conflicted
@@ -113,9 +124,22 @@ struct Body<D: DocModel> {
     caller: Option<Arc<str>>,
 }
 
+/// A store's history as [`Store::listed`] reads it, in one go.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Listed<K: Ord> {
+    /// The highest state number given: the next step's is one more.
+    pub highest: u64,
+    /// The steps undo can reach, oldest first.
+    pub steps: Vec<StepInfo<K>>,
+    /// The steps plain redo can bring back, the next one last.
+    pub redo: Vec<StepInfo<K>>,
+}
+
 /// The state under the commit lock.
 struct State<D: DocModel> {
     last: Seq,
+    /// The highest state number given ([`Version::number`]).
+    numbered: u64,
     history: History<D>,
     /// The latest versions' change sets: within the rebase window, and back to the oldest
     /// version the history may still move a change set from.
@@ -157,6 +181,7 @@ impl<D: DocModel> Store<D> {
             head: HeadCell::new(Arc::new(Version::first(counters.version, doc))),
             state: Mutex::new(State {
                 last: counters.last,
+                numbered: 0,
                 history: History::new(config.history_depth),
                 journal: Journal::new(),
             }),
@@ -165,6 +190,28 @@ impl<D: DocModel> Store<D> {
             clock,
             counts: Counts::new(),
         }
+    }
+
+    /// Go on with the numbers a tool layer gave the document's states before it was opened
+    /// again ([`Version::number`]): the head is the state numbered `state`, the next step's
+    /// number one more than `highest`. Only before the store numbered anything itself.
+    ///
+    /// # Errors
+    /// [`CountersError::StateAboveHighest`]; [`CountersError::AlreadyNumbered`] once the
+    /// store made a step or a group is open.
+    pub fn continue_numbers(&self, state: u64, highest: u64) -> Result<(), CountersError> {
+        if state > highest {
+            return Err(CountersError::StateAboveHighest { state, highest });
+        }
+        let mut locked = lock(&self.state);
+        let head = self.head.load();
+        if locked.numbered != 0 || head.number() != 0 || locked.history.grouped() || !locked.history.steps().is_empty()
+        {
+            return Err(CountersError::AlreadyNumbered);
+        }
+        locked.numbered = highest;
+        self.head.store(Arc::new(head.renumbered(state)));
+        Ok(())
     }
 
     /// The head. Never waits for a writer.
@@ -195,6 +242,33 @@ impl<D: DocModel> Store<D> {
     /// The steps plain redo can bring back, the next one last.
     pub fn redoable(&self) -> Vec<StepInfo<D::Key>> {
         lock(&self.state).history.redoable()
+    }
+
+    /// The highest state number given ([`Version::number`]): the next step's is one more.
+    pub fn highest(&self) -> u64 {
+        lock(&self.state).numbered
+    }
+
+    /// The highest state number given ([`Version::number`]), the steps undo can reach
+    /// (oldest first) and those plain redo can bring back (the next one last), read at once.
+    pub fn listed(&self) -> Listed<D::Key> {
+        let state = lock(&self.state);
+        Listed {
+            highest: state.numbered,
+            steps: state.history.steps(),
+            redo: state.history.redoable(),
+        }
+    }
+
+    /// The version numbered `number` ([`Version::number`]) the head reaches: the head, else
+    /// the newest such state undo or redo can bring back (numbers repeat after an undo: the
+    /// head-most one); `None` when none is kept.
+    pub fn numbered(&self, number: u64) -> Option<Snapshot<D>> {
+        let head = self.head.load();
+        if head.number() == number {
+            return Some(head);
+        }
+        lock(&self.state).history.numbered(number)
     }
 
     /// The newest step `caller` made that undo can reach.
@@ -240,12 +314,12 @@ impl<D: DocModel> Store<D> {
                 held: Duration::ZERO,
             });
         }
-        // a key written only as a merge (made where the change is applied) is no conflict
-        // with another writer of it; the keys it creates under stand-ins are kept apart
-        // (`parts.created`) and none with anything: no other transaction can have read them,
-        // and its own reads of them are of its own work
+        // a key written only as a merge (made where the change is applied), or a derived one
+        // (`DocModel::derived`), is no conflict with another writer of it; the keys it creates
+        // under stand-ins are kept apart (`parts.created`) and none with anything: no other
+        // transaction can have read them, and its own reads of them are of its own work
         let mut depends = parts.reads.without(&parts.created);
-        depends.extend(&parts.writes.without(&parts.merges));
+        depends.extend(&parts.writes.without(&parts.merges).without_where(D::derived));
         let mut state = lock(&self.state);
         let entered = self.clock.monotonic();
         let head = self.head.load();
@@ -355,8 +429,13 @@ impl<D: DocModel> Store<D> {
     ) -> (Snapshot<D>, KeySet<D::Key>, Garbage<D>) {
         let seq = state.last.next();
         state.last = seq;
+        // within a group, the group's number: given for good when it closes
+        let number = state.history.group_number().unwrap_or_else(|| {
+            state.numbered += 1;
+            state.numbered
+        });
         doc.settle();
-        let version = Arc::new(before.succeed(seq, doc, &body.writes));
+        let version = Arc::new(before.succeed(seq, number, doc, &body.writes));
         self.head.store(Arc::clone(&version));
         let changes = ChangeSet::made(body.changes);
         let writes = body.writes.clone();
@@ -432,7 +511,11 @@ impl<D: DocModel> Store<D> {
         state.last = seq;
         planned.doc.carry(head.doc());
         planned.doc.settle();
-        let version = Arc::new(head.succeed(seq, planned.doc, &planned.writes));
+        let number = planned.number.unwrap_or_else(|| {
+            state.numbered += 1;
+            state.numbered
+        });
+        let version = Arc::new(head.succeed(seq, number, planned.doc, &planned.writes));
         let previous = Arc::clone(&head);
         self.head.store(Arc::clone(&version));
         let changes = planned.changes;
@@ -471,7 +554,9 @@ impl<D: DocModel> Store<D> {
     /// None today; the store's own, should a group refuse.
     pub fn open_group(&self) -> Result<GroupMark, Error<D>> {
         let mut state = lock(&self.state);
-        state.history.open_group();
+        let start = self.head.load().number();
+        let number = state.numbered.saturating_add(1);
+        state.history.open_group(start, number);
         state.history.group_mark().ok_or(StoreError::NoGroup)
     }
 
@@ -494,10 +579,11 @@ impl<D: DocModel> Store<D> {
         let head = self.head.load();
         let seq = state.last.next();
         state.last = seq;
+        let number = state.history.revert_number(mark).unwrap_or(head.number());
         let mut doc = revert.doc;
         doc.carry(head.doc());
         doc.settle();
-        let version = Arc::new(head.succeed(seq, doc, &revert.writes));
+        let version = Arc::new(head.succeed(seq, number, doc, &revert.writes));
         self.head.store(Arc::clone(&version));
         let garbage = state.history.reverted(mark);
         self.journal(&mut state, seq, revert.changes, revert.writes);
@@ -518,9 +604,12 @@ impl<D: DocModel> Store<D> {
         let mut state = lock(&self.state);
         let head = self.head.load();
         let (made, garbage) = state.history.close_group(caller.0.clone(), &head)?;
+        if let Some((_, number)) = made {
+            state.numbered = state.numbered.max(number);
+        }
         drop(state);
         drop(garbage);
-        Ok(made)
+        Ok(made.map(|(seq, _)| seq))
     }
 }
 

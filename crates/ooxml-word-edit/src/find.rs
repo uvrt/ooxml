@@ -190,7 +190,7 @@ impl ReadPredicate<WordDoc> for HoldsMatch {
         match key {
             Key::Block { part, id } => docx.part(part).is_some_and(|story| self.block_holds(story, id)),
             Key::Part(part) => docx.part(part).is_some_and(|story| self.part_holds(story)),
-            Key::Root(_) | Key::Seq(_) | Key::Annotations | Key::People => false,
+            Key::Root(_) | Key::Seq(_) | Key::Annotations | Key::People | Key::StyleUse(_) => false,
         }
     }
 }
