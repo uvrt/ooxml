@@ -124,12 +124,28 @@ pub struct Property {
     pub intent: Intent,
 }
 
+/// An argument name read as a property only while another argument of the same object has
+/// the value `value` (today's alias function that reads an argument, `_slide_on_add`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AliasWhen {
+    /// The name a model writes.
+    pub alias: String,
+    /// The argument whose value decides.
+    pub argument: String,
+    /// The value it must have (a string: an action).
+    pub value: String,
+}
+
 /// What the dispatcher accepts for a property beyond its schema, and what the property
 /// holds for it (refs, sources, facts). Declared once on the field; never sent.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Intent {
     /// Argument names read as this one, with a note (`top` for `space_before`).
     pub aliases: Vec<String>,
+    /// Argument names read as this one only while another argument of the same object has
+    /// a given value (`slide` read as `target` when `action` is `add`), with a note; at other
+    /// times the name stays unknown.
+    pub aliases_when: Vec<AliasWhen>,
     /// For a property that takes no names (a count): the argument a list of names given
     /// here can only mean, unless that one is given too (`columns: ["region", "total"]`
     /// read as `from_columns`; today's `names_as`), with a note.

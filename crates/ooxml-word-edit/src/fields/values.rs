@@ -5,12 +5,13 @@
 //!
 //! Must not: write anything.
 
-use super::pages::{FieldPlace, LaidFields, Unknown};
-use super::scan::{paragraph_of, Located};
+use super::pages::{FieldPlace, FieldRun, LaidFields, Unknown};
+use super::scan::{instruction_run, paragraph_of, Located, Marks};
+use crate::names::W;
 use crate::text_range::Span;
 use crate::WordDoc;
 use ooxml_word_model::address::bookmark_range;
-use ooxml_word_model::address::marks::Bookmarks;
+use ooxml_word_model::docx::cells::story_model_path;
 use ooxml_word_model::docx::sections::section_story;
 use ooxml_word_model::docx::text::OBJECT;
 use ooxml_word_model::docx::Docx;
@@ -196,9 +197,12 @@ pub(crate) fn place_of(docx: &Docx, located: &Located, laid: &dyn LaidFields) ->
         return part.ids.paragraph_at(&path).map(|p| Placed::Body(p.id));
     }
     let story = &part.story;
-    let which = if story.starts_with("header") {
+    // A header or footer by its root (`w:hdr`, `w:ftr`), not its name: a part may be named
+    // anything (`word/hrIdH1.xml`).
+    let root = part.root().name();
+    let which = if root.is(Some(W), "hdr") {
         "header"
-    } else if story.starts_with("footer") {
+    } else if root.is(Some(W), "ftr") {
         "footer"
     } else {
         return None;
@@ -241,10 +245,10 @@ impl Placed {
 ///
 /// # Errors
 /// [`Unknown`] where the layout (or the bookmark) cannot say: the field is left as it is.
-/// `marks`: `docx`'s bookmarks, found once for all of a pass's fields.
+/// `marks`: `docx`'s bookmarks, as the pass looks them up.
 pub(crate) fn value(
     doc: &WordDoc,
-    (docx, marks): (&Docx, &Bookmarks<'_>),
+    (docx, marks): (&Docx, &Marks<'_>),
     located: &Located,
     laid: Option<&dyn LaidFields>,
     today: Day,
@@ -264,6 +268,19 @@ pub(crate) fn value(
             let laid = laid.ok_or_else(|| unknown("no layout"))?;
             laid.page_reference(&found.instruction, FieldPlace::Body(&at)).map(Some)
         }
+        "STYLEREF" => {
+            let laid = laid.ok_or_else(|| unknown("no layout"))?;
+            let at = place_of(docx, located, laid).ok_or_else(|| unknown("not on a page"))?;
+            let root = docx.part(&located.part).ok_or_else(|| unknown("no part"))?.root();
+            let path = instruction_run(root, found)
+                .and_then(|run| story_model_path(root, &run))
+                .ok_or_else(|| unknown("no instruction run"))?;
+            let run = FieldRun {
+                part: &located.part,
+                path: &path,
+            };
+            laid.style_reference(&found.instruction, at.place(), run).map(Some)
+        }
         "REF" => {
             let Some(name) = argument(&found.instruction) else {
                 return Ok(None);
@@ -281,14 +298,14 @@ pub(crate) fn value(
 }
 
 /// The id of the body paragraph a bookmark starts in (`_bookmark_page`'s target).
-fn bookmark_place(doc: &WordDoc, docx: &Docx, marks: &Bookmarks<'_>, name: &str) -> Option<String> {
-    let found = bookmark_range(docx, marks.get(name).ok()?).ok()?;
+fn bookmark_place(doc: &WordDoc, docx: &Docx, marks: &Marks<'_>, name: &str) -> Option<String> {
+    let found = bookmark_range(docx, &marks.get(name)?).ok()?;
     let span = Span::of(doc, docx, &found).ok()?;
     (span.part == docx.main).then(|| span.first().map(|f| f.id.clone()))?
 }
 
 /// The text a bookmark marks (`Bookmark.text`).
-fn bookmark_text(doc: &WordDoc, docx: &Docx, marks: &Bookmarks<'_>, name: &str) -> Option<String> {
-    let found = bookmark_range(docx, marks.get(name).ok()?).ok()?;
+fn bookmark_text(doc: &WordDoc, docx: &Docx, marks: &Marks<'_>, name: &str) -> Option<String> {
+    let found = bookmark_range(docx, &marks.get(name)?).ok()?;
     Span::of(doc, docx, &found).ok().map(|s| s.text())
 }

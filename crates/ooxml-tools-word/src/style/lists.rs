@@ -393,3 +393,8 @@ fn earlier_item(
     }
     None
 }
+
+/// Registers `word_lists` (the crate's [`crate::register`]).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    r.edit::<WordLists>(word_lists, crate::Hosting::SERVED);
+}

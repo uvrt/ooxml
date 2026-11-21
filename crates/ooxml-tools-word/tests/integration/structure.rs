@@ -14,7 +14,7 @@ use ooxml_tools_word::{
     word_copy_from, word_fields, word_links, word_notes, CallEditor, Editing, WordHeadersFooters, WordLinks, WordMove,
     WordNotes, WordSections, KIND,
 };
-use ooxml_word_edit::{Editor, FieldLayout, FieldPlace, LaidFields, PageShows, Unknown};
+use ooxml_word_edit::{Editor, FieldLayout, FieldPlace, FieldRun, LaidFields, PageShows, Unknown};
 use ooxml_zip::{Method, NewEntry, Writer};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -75,6 +75,10 @@ impl LaidFields for LaidTwo {
 
     fn page_reference(&self, instruction: &str, at: FieldPlace<'_>) -> Result<String, Unknown> {
         self.page_field(instruction, "PAGE", at)
+    }
+
+    fn style_reference(&self, _: &str, _: FieldPlace<'_>, _: FieldRun<'_>) -> Result<String, Unknown> {
+        Err(Unknown("not drawn".into()))
     }
 
     fn pages(&self) -> Vec<PageShows> {

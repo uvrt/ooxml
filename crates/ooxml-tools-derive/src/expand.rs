@@ -101,6 +101,10 @@ fn modify(chain: TokenStream, modifier: &Modifier) -> syn::Result<TokenStream> {
             let method = format_ident!("{name}");
             quote! { #chain.#method(#a, #b) }
         }
+        Modifier::Triple(name, a, b, c) => {
+            let method = format_ident!("{name}");
+            quote! { #chain.#method(#a, #b, #c) }
+        }
         Modifier::Kinds(name, value, kinds) => {
             let method = format_ident!("{name}");
             match value {
@@ -125,6 +129,25 @@ fn modify(chain: TokenStream, modifier: &Modifier) -> syn::Result<TokenStream> {
             quote! { #chain.format(#format) }
         }
     })
+}
+
+/// The settings that order a spec's lists as today's tool declares them: `paths_first`,
+/// `aliases_first`.
+fn ordering(attrs: &ToolAttrs) -> Vec<TokenStream> {
+    let mut settings = Vec::new();
+    if !attrs.paths_first.is_empty() {
+        let first = &attrs.paths_first;
+        settings.push(quote! {
+            spec.paths_first = ::std::vec![#(::std::string::String::from(#first)),*];
+        });
+    }
+    if !attrs.aliases_first.is_empty() {
+        let first = &attrs.aliases_first;
+        settings.push(quote! {
+            spec.aliases_first = ::std::vec![#(::std::string::String::from(#first)),*];
+        });
+    }
+    settings
 }
 
 fn tool_impl(ident: &syn::Ident, attrs: &ToolAttrs) -> syn::Result<TokenStream> {
@@ -162,12 +185,7 @@ fn tool_impl(ident: &syn::Ident, attrs: &ToolAttrs) -> syn::Result<TokenStream> 
             spec.exactly_one.push(::std::vec![#(::std::string::String::from(#group)),*]);
         });
     }
-    if !attrs.paths_first.is_empty() {
-        let first = &attrs.paths_first;
-        settings.push(quote! {
-            spec.paths_first = ::std::vec![#(::std::string::String::from(#first)),*];
-        });
-    }
+    settings.extend(ordering(attrs));
     if let Some(places) = &attrs.places {
         let kind = format_ident!("{}", place_kind(places)?);
         let own = &attrs.place_own;

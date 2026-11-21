@@ -63,6 +63,37 @@ fn accept<T: ToolArgs>(arguments: Value, kind: Option<&str>) -> (T, Vec<String>)
     T::accept(arguments, kind).unwrap_or_else(|e| panic!("{}", e.to_json()))
 }
 
+/// A tool whose target has a name only one action reads (`edit_chart`'s `slide`).
+#[derive(ToolArgs, Debug, PartialEq)]
+#[tool(name = "toy_when", description = "Exercise the conditional alias.", mutates)]
+struct When {
+    /// Document id.
+    doc: String,
+    /// The object; add: where it goes.
+    #[arg(alias_when("slide", "action", "add"))]
+    target: Option<String>,
+    /// What to do.
+    action: String,
+}
+
+#[test]
+fn alias_when() {
+    let (call, notes) = accept::<When>(json!({"doc": "d1", "slide": "2", "action": "add"}), None);
+    assert_eq!(call.target.as_deref(), Some("2"));
+    assert_eq!(notes, ["slide read as target"]);
+    // Another action: the name stays unknown, and is refused as one.
+    let error = When::accept(json!({"doc": "d1", "slide": "2", "action": "read"}), None).unwrap_err();
+    assert_eq!(error.field(), Some("slide"));
+    // Both given while it applies: the call says one thing twice.
+    let both = When::accept(json!({"doc": "d1", "slide": "2", "target": "3", "action": "add"}), None);
+    assert!(both.unwrap_err().message().contains("say the same"));
+    let export = When::spec().export(None);
+    assert_eq!(
+        export["aliases"],
+        json!({"slide": {"name": "target", "when": {"action": "add"}}})
+    );
+}
+
 #[test]
 fn empty_is_absent() {
     let (call, notes) = accept::<Rules>(json!({"doc": "d1", "columns": [], "date_format": ""}), None);

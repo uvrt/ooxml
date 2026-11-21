@@ -7,7 +7,7 @@ import datetime as dt
 
 import pytest
 
-from ooxml_edit.tools import (Result, SubsetError, Toolbox, array, check_subset, integer,
+from ooxml_edit.tools import (AliasWhen, Result, SubsetError, Toolbox, array, check_subset, integer,
                               names_as, number, obj, shared, string, tool, validate_call)
 from ooxml_edit.tools import fold_ref
 from ooxml_edit.tools.dispatch import ref_rule
@@ -242,6 +242,31 @@ def test_alias_definitions_are_checked():
              aliases={"a": "doc"})(lambda call, doc, a: None)
     with pytest.raises(SubsetError, match="which is not a parameter"):
         tool("t_x", "X.", {"doc": string("Doc.")}, aliases={"b": "c"})(lambda call, doc: None)
+
+
+def test_a_conditional_alias_definition_names_parameters():
+    """An alias read only while an argument has a value (:class:`AliasWhen`) names a
+    parameter to read as and an argument to watch, both the tool's own; the Rust export
+    writes the same entry, and reading it back gives it again."""
+    params = {"doc": string("Doc."), "target": string("Target."),
+              "action": string("Action.", enum=["add", "read"])}
+    defined = tool("t_x", "X.", params, aliases={"slide": AliasWhen("target", "action", "add")})(
+        lambda call, doc, target, action: None)
+    when = defined.aliases["slide"]
+    assert when({"action": "add"}) == "target" and when({"action": "read"}) is None
+    assert when.exported() == {"name": "target", "when": {"action": "add"}}
+    assert AliasWhen.of_export(when.exported()) == when
+    with pytest.raises(ValueError):
+        AliasWhen.of_export({"name": "target", "when": {"action": "add", "kind": "x"}})
+    with pytest.raises(SubsetError, match="'slide' as 'chart', which is not a parameter"):
+        tool("t_x", "X.", params, aliases={"slide": AliasWhen("chart", "action", "add")})(
+            lambda call, doc, target, action: None)
+    with pytest.raises(SubsetError, match="while 'mode' is 'add', which is not a parameter"):
+        tool("t_x", "X.", params, aliases={"slide": AliasWhen("target", "mode", "add")})(
+            lambda call, doc, target, action: None)
+    with pytest.raises(SubsetError, match="which is a parameter"):
+        tool("t_x", "X.", params, aliases={"doc": AliasWhen("target", "action", "add")})(
+            lambda call, doc, target, action: None)
 
 
 def test_edit_chart_reads_slide_as_target_when_adding(toolbox, session):
