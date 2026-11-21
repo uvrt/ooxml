@@ -1,8 +1,10 @@
 //! Owns: the refusal of an id a version of a Word document removed -- docx-agent's words
 //! (round 37: which change removed it, the version it made as the host numbers it, who made
 //! it, and the way on; round 38: a change made before the document was saved and opened
-//! again says so) -- built from the document's retired-id record ([`crate::retired`]) for a
-//! call the tool refused as naming an id it lacks (`not_found`). The ids are read from the
+//! again says so; a block one block replaced is said replaced with that block's id, and the
+//! way on names it) -- built from the document's retired-id record ([`crate::retired`]) and
+//! the version's record of replaced blocks for a call the tool refused as naming an id it
+//! lacks (`not_found`). The ids are read from the
 //! call's arguments as docx-agent's view reads an address it lacks: a drawing's `d:<n>` at an
 //! argument's start, a block id (`p:`, `t:`, `tr:`, `s:` and eight hex digits, a story's
 //! name before it) anywhere in it.
@@ -13,19 +15,28 @@ use crate::retired::{Retired, RetiredBy};
 use ooxml_tools::{ErrorCode, Refusal, ToolError, TryCall, WayOut};
 use ooxml_word_model::ids::HeldId;
 use serde_json::{Map, Value};
+use std::collections::BTreeMap;
 
 /// The tool a refusal of a removed id says to read the document again with.
 const READ_AGAIN: &str = "word_read";
 
 /// `error` as the refusal of a removed id, where it is a `not_found` and `arguments` name
-/// an id `retired` holds; `None` otherwise (the tool's refusal stands).
-pub(crate) fn removed(retired: &Retired, arguments: &Map<String, Value>, error: &ToolError) -> Option<ToolError> {
+/// an id `retired` holds (`replaced`: each block id's value one block replaced, with that
+/// block's id); `None` otherwise (the tool's refusal stands).
+pub(crate) fn removed(
+    retired: &Retired,
+    replaced: &BTreeMap<u32, String>,
+    arguments: &Map<String, Value>,
+    error: &ToolError,
+) -> Option<ToolError> {
     if error.code() != ErrorCode::Refusal(Refusal::NotFound) {
         return None;
     }
     let mut strings = Vec::new();
     arguments.values().for_each(|value| strings_of(value, &mut strings));
-    let message = strings.into_iter().find_map(|identifier| named(retired, identifier))?;
+    let message = strings
+        .into_iter()
+        .find_map(|identifier| named(retired, replaced, identifier))?;
     let mut read = Map::new();
     if let Some(doc) = arguments.get("doc").and_then(Value::as_str) {
         read.insert("doc".into(), Value::from(doc));
@@ -43,16 +54,17 @@ pub(crate) fn removed(retired: &Retired, arguments: &Map<String, Value>, error: 
 }
 
 /// What naming a removed id in `identifier` says: its drawing, else its first block id the
-/// record holds (one the host numbered).
-fn named(retired: &Retired, identifier: &str) -> Option<String> {
+/// record holds (one the host numbered), with the block that replaced it.
+fn named(retired: &Retired, replaced: &BTreeMap<u32, String>, identifier: &str) -> Option<String> {
     if let Some((named, number)) = drawing(identifier) {
         if let Some(said) = said(retired, HeldId::Drawing(number)) {
-            return Some(message(&named, None, &said));
+            return Some(message(&named, None, &said, None));
         }
     }
     blocks(identifier).into_iter().find_map(|(named, value)| {
         let said = said(retired, HeldId::Block(value))?;
-        Some(message(&named, Some(identifier), &said))
+        let by = replaced.get(&value).map(String::as_str);
+        Some(message(&named, Some(identifier), &said, by))
     })
 }
 
@@ -107,8 +119,9 @@ fn py_str(value: &Value) -> String {
     }
 }
 
-/// docx-agent's words (`edit.document._deleted_message`).
-fn message(named: &str, identifier: Option<&str>, said: &Said) -> String {
+/// docx-agent's words (`edit.document._deleted_message`); `replaced_by`: the block that
+/// replaced it.
+fn message(named: &str, identifier: Option<&str>, said: &Said, replaced_by: Option<&str>) -> String {
     let version = said.version;
     let mut by = match &said.who {
         Some(who) => format!(" by {who}, the change that made version {version}"),
@@ -121,9 +134,13 @@ fn message(named: &str, identifier: Option<&str>, said: &Said) -> String {
         .filter(|i| *i != named)
         .map(|i| format!("{i}: "))
         .unwrap_or_default();
+    let (what, or_use) = match replaced_by {
+        Some(new) => (format!("replaced with {new}"), format!(", or use {new}")),
+        None => ("deleted".to_owned(), String::new()),
+    };
     format!(
-        "{head}{named} was deleted{by}. An id is never given to another block: read that part of the \
-         document again ({READ_AGAIN}) for the ids there now"
+        "{head}{named} was {what}{by}. An id is never given to another block: read that part of the \
+         document again ({READ_AGAIN}) for the ids there now{or_use}"
     )
 }
 
@@ -231,10 +248,21 @@ mod tests {
             earlier: true,
         };
         assert_eq!(
-            message("p:0BADF00D", Some("p:0BADF00D@2"), &said),
+            message("p:0BADF00D", Some("p:0BADF00D@2"), &said, None),
             "p:0BADF00D@2: p:0BADF00D was deleted in the change that made version 4, before the document was \
              saved and opened again. An id is never given to another block: read that part of the document \
              again (word_read) for the ids there now"
+        );
+        let said = Said {
+            version: 2,
+            who: Some("word_insert_markdown".to_owned()),
+            earlier: false,
+        };
+        assert_eq!(
+            message("p:0BADF00D", None, &said, Some("p:1234ABCD")),
+            "p:0BADF00D was replaced with p:1234ABCD by word_insert_markdown, the change that made version 2. \
+             An id is never given to another block: read that part of the document again (word_read) for the \
+             ids there now, or use p:1234ABCD"
         );
     }
 }

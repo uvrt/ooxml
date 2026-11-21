@@ -614,7 +614,10 @@ impl Session {
         // An id a version removed, refused as one the document lacks: said as such.
         match (&result.outcome, call.word) {
             (Outcome::Failed(error), Some(word)) => {
-                crate::refused::removed(&word.retired, &given, error).map_or(result, ToolResult::failed)
+                let replaced = call.doc.word().map(|w| w.ids().replaced());
+                let none = std::collections::BTreeMap::new();
+                crate::refused::removed(&word.retired, replaced.unwrap_or(&none), &given, error)
+                    .map_or(result, ToolResult::failed)
             }
             _ => result,
         }

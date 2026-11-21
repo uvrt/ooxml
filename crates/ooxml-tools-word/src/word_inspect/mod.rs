@@ -59,11 +59,7 @@ pub fn word_inspect(args: &WordInspect, version: &Version<'_>, cancel: &dyn Canc
     first.target = "body".to_owned();
     let refuse = |e| address_refusal(e, "target", try_call(&first));
     let target = followed(args, version);
-    let selected = match select(&mut reader, Some(&target)) {
-        Ok(selected) => selected,
-        Err(e) if e.code == "not_found" && names_lost_place(&docx, &target) => return Ok(renamed_place()),
-        Err(e) => return Err(refuse(e)),
-    };
+    let selected = select(&mut reader, Some(&target)).map_err(refuse)?;
     cancel.check().map_err(cancelled)?;
     let mut writer = Writer::new(&docx);
     if placer.is_some() {
@@ -159,30 +155,6 @@ fn followed(args: &WordInspect, version: &Version<'_>) -> String {
         || args.target.clone(),
         |owned| owned.doc.ids().follow_address(&args.target),
     )
-}
-
-/// A place id (`t@body/0`) stamping renamed, where this version holds no renames to follow:
-/// docx-agent's view follows it -- said, for the host to answer.
-fn renamed_place() -> Done<Value> {
-    let mut done = Done::new(String::new());
-    done.unported.push(crate::RENAMED_PLACE.to_owned());
-    done
-}
-
-/// Whether `address` is, is in, or has as an end of its span a block named by its place
-/// (`p@body/3`, `t@body/0/c1,1`) that this version lacks: one a stamping may have renamed.
-/// A place the version holds but the view leaves out (a paragraph in a text box) is refused
-/// as docx-agent's view refuses it.
-fn names_lost_place(docx: &ooxml_word_model::docx::Docx, address: &str) -> bool {
-    address
-        .split("..")
-        .map(str::trim)
-        .filter(|end| !end.is_empty())
-        .any(|end| {
-            let block = ooxml_word_model::address::inside_table(end).map_or(end, |(table, _)| table);
-            (block.starts_with("p@") || block.starts_with("t@"))
-                && ooxml_word_model::address::resolve(docx, block).is_err()
-        })
 }
 
 /// What docx-agent gives otherwise: the final view's cells whose end Accept All takes away.
