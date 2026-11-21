@@ -206,6 +206,18 @@ impl Ids {
         target.to_owned()
     }
 
+    /// The address `address` names now: a block's id followed, or the table of a row's or
+    /// cell's id (`t@body/0/c2,2` once the table is `t:X`: `t:X/c2,2`), as docx-agent's view
+    /// reads an address through its renames; any other form as given.
+    #[must_use]
+    pub fn follow_address(&self, address: &str) -> String {
+        if let Some((table, _)) = ooxml_word_model::address::inside_table(address) {
+            let rest = address.get(table.len()..).unwrap_or_default();
+            return format!("{}{rest}", self.follow(table));
+        }
+        self.follow(address)
+    }
+
     /// The first annotation id of the edit being applied.
     #[must_use]
     pub fn annotations(&self) -> Option<i64> {

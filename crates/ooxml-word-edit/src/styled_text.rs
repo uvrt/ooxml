@@ -21,7 +21,7 @@ use crate::{EditError, Result, WordDoc};
 use ooxml_markdown::styled::{parse, Piece, Styled};
 use ooxml_store::{Command, Txn};
 use ooxml_word_model::address::resolve::in_table;
-use ooxml_word_model::docx::Docx;
+use ooxml_word_model::docx::{style_kind, style_name, Docx};
 
 /// The style insert_markdown's default style map writes `construct` in (`_role_styles`:
 /// the strong and emphasis roles).
@@ -172,9 +172,7 @@ fn plan(doc: &WordDoc, docx: &Docx, item: &SetStyledText) -> Result<Plan> {
     for line in &lines {
         check_text(&line.plain)?;
     }
-    if let Some(style) = &item.paragraph_style {
-        crate::builtin::resolve(docx, style, "paragraph")?;
-    }
+    styles_known(docx, item.paragraph_style.as_deref(), &lines)?;
     let mut plan = Plan {
         lines,
         cell,
@@ -214,13 +212,70 @@ fn plan(doc: &WordDoc, docx: &Docx, item: &SetStyledText) -> Result<Plan> {
             out
         };
         for name in named {
-            crate::builtin::resolve(docx, &name, "character")?;
             if docx.find_style(&name, "character").is_none() {
                 plan.added.push(format!("style added: {name}, as Word writes it"));
             }
         }
     }
     Ok(plan)
+}
+
+impl SetStyledText {
+    /// Whether the styles the item names are known on `docx` (its paragraph style, its spans'
+    /// character styles), as the item's plan checks them first: a tool finds the item a
+    /// batch's style refusal is about by it.
+    ///
+    /// # Errors
+    /// The style refusal [`SetStyledText`] would give.
+    pub fn styles_known(&self, docx: &Docx) -> Result<()> {
+        let lines: Vec<Styled> = crate::paragraphs::lines(&self.text).into_iter().map(parse).collect();
+        styles_known(docx, self.paragraph_style.as_deref(), &lines)
+    }
+}
+
+/// `_plan`'s style checks: the paragraph style (`known_style`), then each span's character
+/// style in the order the text names them (`_character_style`, when the text is marked).
+fn styles_known(docx: &Docx, paragraph_style: Option<&str>, lines: &[Styled]) -> Result<()> {
+    if let Some(style) = paragraph_style {
+        crate::builtin::resolve(docx, style, "paragraph")
+            .map_err(|e| style_refused(docx, e, ("paragraph", "paragraph_style"), None))?;
+    }
+    if !lines.iter().any(Styled::marked) {
+        return Ok(());
+    }
+    let mut seen: Vec<&str> = Vec::new();
+    for name in lines.iter().flat_map(Styled::styles_named) {
+        if seen.contains(&name) {
+            continue;
+        }
+        seen.push(name);
+        crate::builtin::resolve(docx, name, "character")
+            .map_err(|e| style_refused(docx, e, ("character", "text"), Some(name)))?;
+    }
+    Ok(())
+}
+
+/// A style the item names refused as docx-agent's tool refuses it (`known_style`,
+/// `_character_style`): not found, naming its argument (`field`: `paragraph_style`, or `text`
+/// for a span's), the document's named styles of `kind` (the first 50) the options.
+fn style_refused(docx: &Docx, error: EditError, (kind, field): (&str, &str), span: Option<&str>) -> EditError {
+    let EditError::Refused(message) = error else {
+        return error;
+    };
+    let message = match span {
+        Some(name) => format!(
+            "[...]{{{name}}}: {message}; a span names a character style of the template (or write \\[ for a literal bracket)"
+        ),
+        None => message,
+    };
+    let options = docx
+        .styles()
+        .iter()
+        .filter(|s| style_kind(s) == kind)
+        .filter_map(|s| style_name(s).filter(|n| !n.is_empty()).map(str::to_owned))
+        .take(50)
+        .collect();
+    crate::styles::not_found_at(message, field, options)
 }
 
 /// The cell `target` names, as its table's id and grid place; `None` for another target.

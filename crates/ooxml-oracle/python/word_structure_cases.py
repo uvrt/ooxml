@@ -186,6 +186,14 @@ def story_cases(document) -> list[dict]:
                     call("word_headers_footers", section=section, which=which, action="unlink"),
                     call("word_headers_footers", section=section, which=which, action="unlink", type="even")]
     out.append(call("word_headers_footers", section="s:42", which="header", action="set", text="x"))
+    # A section named by any block: a cell's is its table's; a bookmark's is left to the host.
+    tables = document.tables()
+    if tables:
+        out.append(call("word_headers_footers", section=f"{tables[0].id}/c0,0", which="header", action="set",
+                        text="Cell"))
+    marks = document.bookmarks()
+    if marks:
+        out.append(call("word_headers_footers", section=marks[0].name, which="header", action="set", text="Mark"))
     fonts = fonts_of(document)
     for section in [s.id for s in document.sections()][:2]:
         out += [{**call("word_headers_footers", section=section, which="footer", action="set", text="Title",

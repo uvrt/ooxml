@@ -58,7 +58,12 @@ pub fn word_inspect(args: &WordInspect, version: &Version<'_>, cancel: &dyn Canc
     let mut first = args.clone();
     first.target = "body".to_owned();
     let refuse = |e| address_refusal(e, "target", try_call(&first));
-    let selected = select(&mut reader, Some(&args.target)).map_err(refuse)?;
+    let target = followed(args, version);
+    let selected = match select(&mut reader, Some(&target)) {
+        Ok(selected) => selected,
+        Err(e) if e.code == "not_found" && names_place(&target) => return Ok(renamed_place()),
+        Err(e) => return Err(refuse(e)),
+    };
     cancel.check().map_err(cancelled)?;
     let mut writer = Writer::new(&docx);
     if placer.is_some() {
@@ -68,7 +73,7 @@ pub fn word_inspect(args: &WordInspect, version: &Version<'_>, cancel: &dyn Canc
     let mut all = Vec::new();
     let mut cell = false;
     // A cell's blocks are read in their table's style (today's model reads them so).
-    let style = ooxml_word_model::address::in_table(&docx, &args.target)
+    let style = ooxml_word_model::address::in_table(&docx, &target)
         .ok()
         .flatten()
         .filter(|found| found.column.is_some())
@@ -97,7 +102,7 @@ pub fn word_inspect(args: &WordInspect, version: &Version<'_>, cancel: &dyn Canc
     cancel.check().map_err(cancelled)?;
     let mut data = Map::new();
     if cell {
-        if let Some(found) = extras::cell(&docx, &args.target) {
+        if let Some(found) = extras::cell(&docx, &target) {
             data.insert("cell".into(), found);
         }
     }
@@ -146,6 +151,27 @@ fn placer_of<'v>(args: &WordInspect, version: &Version<'v>) -> Result<Option<&'v
         )
         .at("layout")
     })
+}
+
+/// The target read through the session's renames, as docx-agent's view reads it.
+fn followed(args: &WordInspect, version: &Version<'_>) -> String {
+    version
+        .owned
+        .map_or_else(|| args.target.clone(), |owned| owned.doc.ids().follow_address(&args.target))
+}
+
+/// A place id (`t@body/0`) stamping renamed, where this version holds no renames to follow:
+/// docx-agent's view follows it -- said, for the host to answer.
+fn renamed_place() -> Done<Value> {
+    let mut done = Done::new(String::new());
+    done.unported.push(crate::RENAMED_PLACE.to_owned());
+    done
+}
+
+/// Whether `address` is, or is in, a block named by its place (`p@body/3`, `t@body/0/c1,1`).
+fn names_place(address: &str) -> bool {
+    let block = ooxml_word_model::address::inside_table(address).map_or(address, |(table, _)| table);
+    block.starts_with("p@") || block.starts_with("t@")
 }
 
 /// What docx-agent gives otherwise: the final view's cells whose end Accept All takes away.

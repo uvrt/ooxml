@@ -14,6 +14,7 @@
 use crate::address::resolve::{in_table, InTable};
 use crate::address::{self, span_ends, AddressError};
 use crate::docx::controls::controls;
+use crate::docx::tables::TableGrid;
 use crate::docx::StoryPart;
 use crate::ids::{Entry, W};
 use crate::markdown::read::{Reader, Record, TableRecord};
@@ -278,6 +279,7 @@ fn inside_table(reader: &mut Reader<'_>, address: &str) -> Result<Option<Selecte
         return Ok(None);
     };
     let table_id = part.ids.tables().get(table).map(|t| t.id.clone()).unwrap_or_default();
+    let index = table;
     let all = cut(reader, part, Some(&table_id), None, Cut::Block, &table_id)?;
     let found = find_table(&all, &table_id).cloned();
     let Some(mut table) = found else {
@@ -302,13 +304,27 @@ fn inside_table(reader: &mut Reader<'_>, address: &str) -> Result<Option<Selecte
                     records: cell.records.clone(),
                     cell: true,
                 })),
-                None => Err(AddressError::not_found(
-                    format!("{} is not in its story in this view", repr_str(address)),
-                    Vec::new(),
-                )),
+                None => Err(no_cell(part, index, (row, column))
+                    .unwrap_or_else(|| {
+                        AddressError::not_found(
+                            format!("{} is not in its story in this view", repr_str(address)),
+                            Vec::new(),
+                        )
+                    })),
             }
         }
     }
+}
+
+/// The refusal of a cell the table (index `table` of `part`) lacks at `(row, column)`
+/// (docx-agent's `NoCell`: its rows, columns and merged cells, its cells' ids the options);
+/// `None` where the table has it (it is not in this view).
+fn no_cell(part: &StoryPart, table: usize, (row, column): (usize, usize)) -> Option<AddressError> {
+    let entry = part.ids.tables().get(table)?;
+    let grid = TableGrid::new(part, &entry);
+    grid.origin(row, column)
+        .is_none()
+        .then(|| grid.no_cell(&entry.id, row, column))
 }
 
 fn find_table<'r>(records: &'r [Record], id: &str) -> Option<&'r TableRecord> {
