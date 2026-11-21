@@ -2,7 +2,9 @@
 called through docx-agent's toolbox on a document as opened, and what each side reports
 -- the reply, every changed part, the part order, ``touched``, the validation delta, the
 problems and the next ids -- for the harness to compare with the Rust core's
-(``word-edits``, ``op: "structure"``).
+(``word-edits``, ``op: "structure"``).  docx-agent's side of a case runs in
+word_tool_reference.py; this module makes the cases and settles the comparison only, so
+the reference cache does not key on it (reference_cache.py, NOT_REFERENCE).
 
 Python's behaviour is not changed: this calls docx-agent's public and documented internal
 functions only.
@@ -10,18 +12,10 @@ functions only.
 
 from __future__ import annotations
 
-import copy
 import os
-import datetime
-import json
 from pathlib import Path
 
 from docx_agent import Document
-from docx_agent import validate as _validate
-from docx_agent.edit import ids as _ids
-from lxml import etree
-from ooxml_edit.tools.savegate import compare_problems
-from ooxml_edit.xml import serialize
 
 
 TRACKING = {"author": "Writer A", "date": "2026-11-17T10:00:00Z"}
@@ -42,7 +36,6 @@ class ToolCases(list):
 
 
 CASES = ToolCases()
-_NOW = datetime.datetime(2026, 11, 17, 10, 0, 0, tzinfo=datetime.timezone.utc)
 
 
 def call(tool: str, **arguments) -> dict:
@@ -478,8 +471,85 @@ def copy_cases(document) -> list[dict]:
         if block != blocks[-1]:
             out += [from_d2(range=block, at="end", styles="keep_source"),
                     from_d2(range=block, at="end", styles="merge", unmapped="body")]
+    # Lane P4f4: blocks naming relationships (hyperlinks, pictures, charts): the relationships
+    # made again, the parts they reach copied (media found by its bytes), drawings numbered.
+    for block in _related(document, blocks)[:3]:
+        out += [from_d2(range=block, at="end"),
+                call("word_copy_from", source_doc="d1", range=block, at=f"before:{blocks[0]}")]
+    if _COPY_SOURCE.exists() and blocks:
+        source = Document.open(_COPY_SOURCE.read_bytes())
+        for block in _related(source, [b["id"] for b in source.blocks() if b["id"]])[:2]:
+            out += [{**call("word_copy_from", source_doc="d2", range=block, at=at),
+                     "reference_file": str(_COPY_SOURCE)} for at in ("end", f"before:{blocks[0]}")]
+    # Lane P4f5: blocks holding notes or comments (the notes and comments copied with them,
+    # renumbered; the modern comment parts), from this document and from others.
+    for block in _annotated(document, blocks)[:3]:
+        out += [from_d2(range=block, at="end"),
+                call("word_copy_from", source_doc="d1", range=block, at=f"before:{blocks[0]}")]
+    for other in (_COPY_SOURCE, _COMMENTED_SOURCE):
+        if other.exists() and blocks:
+            source = Document.open(other.read_bytes())
+            for block in _annotated(source, [b["id"] for b in source.blocks() if b["id"]])[:2]:
+                out += [{**call("word_copy_from", source_doc="d2", range=block, at=at),
+                         "reference_file": str(other)} for at in ("end", f"before:{blocks[0]}")]
+    # Lane P4f6: blocks holding bookmarks (renamed: the document has the name; their links and
+    # fields following), with the block before them (a link to the bookmark).
+    for block in _bookmarked(document, blocks)[:3]:
+        at = blocks.index(block)
+        span = f"{blocks[at - 1]}..{block}" if at and blocks[at - 1][:2] == block[:2] == "p:" else block
+        out += [from_d2(range=span, at="end"),
+                call("word_copy_from", source_doc="d1", range=block, at=f"before:{blocks[0]}")]
     return out + [tracked(case) for case in out]
 
+
+_RELATIONSHIPS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+
+
+def _related(document, blocks: list[str]) -> list[str]:
+    """The blocks of ``blocks`` naming a relationship or holding a drawing (lane P4f4)."""
+    out = []
+    for block in blocks:
+        try:
+            element = document._resolve(block)[1].element
+        except (KeyError, ValueError):
+            continue
+        if any(isinstance(n.tag, str) and (any(k.startswith(_RELATIONSHIPS) for k in n.attrib)
+                                           or n.tag.endswith("}docPr"))
+               for n in element.iter()):
+            out.append(block)
+    return out
+
+
+#: A document whose blocks hold comments with replies (lane P4f5).
+_COMMENTED_SOURCE = _COPY_SOURCE.parents[1] / "pilot" / "agreement-summary.docx"
+
+_ANNOTATIONS = ("}footnoteReference", "}endnoteReference", "}commentRangeStart", "}commentReference")
+
+
+def _annotated(document, blocks: list[str]) -> list[str]:
+    """The blocks of ``blocks`` holding a note reference or a comment (lane P4f5)."""
+    out = []
+    for block in blocks:
+        try:
+            element = document._resolve(block)[1].element
+        except (KeyError, ValueError):
+            continue
+        if any(isinstance(n.tag, str) and n.tag.endswith(_ANNOTATIONS) for n in element.iter()):
+            out.append(block)
+    return out
+
+
+def _bookmarked(document, blocks: list[str]) -> list[str]:
+    """The blocks of ``blocks`` holding a bookmark (lane P4f6)."""
+    out = []
+    for block in blocks:
+        try:
+            element = document._resolve(block)[1].element
+        except (KeyError, ValueError):
+            continue
+        if any(isinstance(n.tag, str) and n.tag.endswith("}bookmarkStart") for n in element.iter()):
+            out.append(block)
+    return out
 
 
 @CASES
@@ -535,64 +605,6 @@ def cases(document) -> list[dict]:
                 kept.append(case)
         found = kept
     return found
-
-
-def python_case(data: bytes, case: dict, baseline: list, toolbox, reply_of, parts_of, order_of, touched_of) -> dict:
-    """One case through docx-agent's toolbox: the reply and what the document became."""
-    session = toolbox.session(clock=lambda: _NOW)
-    doc = session.open(data, name="case.docx")
-    if case.get("reference_copy") or case.get("reference_file"):     # d2, which the call names
-        other = open(case["reference_file"], "rb").read() if case.get("reference_file") else data
-        session.open(other, name="copy.docx")
-    if case.get("tracked"):
-        session.entry(doc).tracking = {"on": True, "author": case["tracked"]["author"]}
-    for blob in case.get("blobs") or []:                # b1, b2, ... as the session numbers them
-        session.add_blob(bytes.fromhex(blob["hex"]), blob["name"], blob["mime"])
-    arguments = {**case["arguments"], "doc": doc}
-    reply = json.loads(json.dumps(toolbox.dispatch(session, case["tool"], arguments).to_json()))
-    document = session.entry(doc).document
-    out = session.save(doc).data
-    before, after = parts_of(data), parts_of(out)
-    parts = {name: body.decode("utf-8", "replace") for name, body in after.items() if before.get(name) != body}
-    main = document.package.document_part()
-    problems = _validate.check(document.package)
-    rewritten = dict(before)
-    if main in before:
-        rewritten[main] = serialize(etree.fromstring(before[main], etree.XMLParser(huge_tree=True)))
-    reserialized = [main] if main in after and rewritten.get(main) == after[main] and before[main] != after[main] \
-        else []
-    reserialized += _reserialized(before, after, main)
-    pool = copy.deepcopy(document._id_pool())
-    result = {
-        "structure": True,
-        "reply": reply_of(reply),
-        "parts": parts,
-        "order": order_of(out),
-        "touched": touched_of(document, before, after, main),
-        "touched_as_written": touched_of(document, rewritten, after, main),
-        "reserialized": reserialized,
-        "validation": compare_problems(baseline, problems, key=lambda p: (p.code, p.part, str(p))),
-        "problems": [str(p) for p in problems],
-        "next": {seed: _ids.generate(seed, pool, 1) for seed in (main, main + "\0text")},
-    }
-    session.close(doc)
-    return result
-
-
-def _reserialized(before: dict, after: dict, main: str) -> list[str]:
-    """The XML parts other than ``main`` docx-agent wrote again unchanged but for lxml's
-    serialization (a part it marks dirty without changing it)."""
-    out = []
-    for name, body in after.items():
-        if name == main or name not in before or before[name] == body:
-            continue
-        try:
-            again = serialize(etree.fromstring(before[name], etree.XMLParser(huge_tree=True)))
-        except etree.XMLSyntaxError:
-            continue
-        if again == body:
-            out.append(name)
-    return out
 
 
 def settle(want: dict, have: dict) -> None:

@@ -5,7 +5,8 @@
 //! - the chart model, a `c:chartSpace` as data plus styling ([`model`]), and its reader
 //!   ([`read`]);
 //! - a chart's data and labels as an editor shows them, and their one-line summary
-//!   ([`data`]);
+//!   ([`data`]), and what `edit_chart`'s `read` gives of its look (`data::look`,
+//!   `data::labels`);
 //! - where Word and PowerPoint differ ([`rules`]);
 //! - the layout, lowered to drawable elements ([`layout`]);
 //! - Python's number writing and arithmetic where the layout's text, paths and positions

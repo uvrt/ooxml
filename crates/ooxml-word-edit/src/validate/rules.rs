@@ -325,6 +325,7 @@ fn numbering(out: &mut Vec<Problem>, inputs: &Inputs<'_>) {
     if let Some((name, facts)) = styles.as_deref().and_then(|s| inputs.facts(s).map(|f| (s, f))) {
         owners.push((name, facts));
     }
+    let nums = num_ids(&nums);
     for (name, facts) in owners {
         for reference in facts.all().flat_map(|f| f.num_refs.iter()) {
             num_ref_problems(out, name, reference, &nums, 1);
@@ -391,19 +392,23 @@ pub(super) fn numbering_tables(
     nums
 }
 
-/// The problems of one list reference (`count` of them) of the part `name`.
+/// The `w:num` ids of `nums` ([`numbering_tables`]), to look references up in.
+pub(super) fn num_ids(nums: &[(Option<String>, Option<String>)]) -> HashSet<&str> {
+    nums.iter().filter_map(|(n, _)| n.as_deref()).collect()
+}
+
+/// The problems of one list reference (`count` of them) of the part `name`; `nums`, the
+/// numbering part's `w:num` ids ([`num_ids`]).
 pub(super) fn num_ref_problems(
     out: &mut Vec<Problem>,
     name: &str,
     (num, level): &crate::validate::facts::NumRef,
-    nums: &[(Option<String>, Option<String>)],
+    nums: &HashSet<&str>,
     count: usize,
 ) {
     for _ in 0..count {
         if let Some(value) = num {
-            let missing = value
-                .as_deref()
-                .is_some_and(|v| v != "0" && !nums.iter().any(|(n, _)| n.as_deref() == Some(v)));
+            let missing = value.as_deref().is_some_and(|v| v != "0" && !nums.contains(v));
             if missing {
                 out.push(problem("numbering-num-missing", name, py_str(value.as_deref())));
             }

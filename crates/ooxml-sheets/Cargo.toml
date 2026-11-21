@@ -1,0 +1,19 @@
+[package]
+name = "ooxml-sheets"
+version = "0.1.0"
+description = "Workbooks read: sheets by name, cells by position, shared strings, and A1 references and chart formulas"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ooxml-xml.workspace = true
+ooxml-opc.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+ooxml-zip.workspace = true
+
+[lints]
+workspace = true

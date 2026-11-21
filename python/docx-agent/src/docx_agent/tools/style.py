@@ -577,7 +577,15 @@ def word_design_facts(call: Any, doc: str, include: list[str] | None = None, cur
     """:meth:`Document.design_facts <docx_agent.Document.design_facts>`; a result too long
     for the call's limit keeps fewer entries per list (``omitted`` counts the rest), except
     ``declared_styles``, which is paged: as many styles as fit, ``next_cursor`` for the rest
-    (a later page holds only them)."""
+    (a later page holds only them).  Answered by the Rust session (lane P2c14)."""
+    from ..rust import reads
+
+    return reads.serve(call, "word_design_facts", {"include": include, "cursor": cursor},
+                       lambda: _python_design_facts(call, include, cursor))
+
+
+def _python_design_facts(call: Any, include: list[str] | None, cursor: str | None) -> Result:
+    """``word_design_facts`` by docx-agent's own model (the Rust session's fallback)."""
     document = call.document
     kinds = list(include) if include else list(KINDS)
     declared = "declared_styles" in kinds or cursor is not None
@@ -633,7 +641,19 @@ COMPARE_PAGE = 60
 def word_compare_blocks(call: Any, doc: str, blocks: list[str], reference: dict,
                         cursor: str | None = None) -> Result:
     """:meth:`Document.compare_blocks <docx_agent.Document.compare_blocks>`, paged by
-    difference."""
+    difference.  Answered by the Rust session (lane P2c14), the reference's document at the
+    version the call reads."""
+    from ..rust import reads
+
+    given = [reads._refs(call, block) for block in blocks]
+    return reads.serve(call, "word_compare_blocks", {"blocks": given, "reference": reference, "cursor": cursor},
+                       lambda: _python_compare_blocks(call, doc, blocks, reference, cursor),
+                       addresses=tuple(given), others=("reference.doc",))
+
+
+def _python_compare_blocks(call: Any, doc: str, blocks: list[str], reference: dict,
+                           cursor: str | None) -> Result:
+    """``word_compare_blocks`` by docx-agent's own model (the Rust session's fallback)."""
     other = reference.get("doc") or doc
     if other not in call.entries:
         raise ToolError("not_found", f"no open document {other!r}", field="reference.doc",

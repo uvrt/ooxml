@@ -1,7 +1,8 @@
 """docx-agent's reading tools answered by the Rust session (phase P1, lane P1c): ``describe``,
-``word_read``, ``word_inspect`` (``layout`` too), ``find_text`` and, through them, the ops of
-``read_batch``, each with the interpreter lock let go while Rust reads; and (lane P5a) the
-checks of a document the session owns that read the document alone (:func:`serve_check`).
+``word_read``, ``word_inspect`` (``layout`` too), ``find_text``, ``word_compare_blocks`` and
+``word_design_facts`` (lane P2c14) and, through them, the ops of ``read_batch``, each with the
+interpreter lock let go while Rust reads; and (lane P5a) the checks of a document the session
+owns that read the document alone (:func:`serve_check`).
 
 **The versions.**  Python owns the document (until phase P2).  A reading call reads a
 committed version's read copy (ooxml-edit's ``DocumentFormat.read_copy``); the first one on
@@ -25,8 +26,8 @@ and never silently: ``ooxml_core`` without a session; a document that is not a c
 version's read copy (a batch's reads of its own changes); limits other than the defaults the
 Rust paging uses; an address naming an id this session renamed or deleted (the ledger and
 the aliases are Python's until P2); a regular expression Rust does not match as Python does;
-and what Rust says it does not give as Python does yet (its ``unported``: a SmartArt
-diagram's summary, Accept All's cell ends).  A refusal goes to the Python
+and what Rust says it does not give as Python does yet (its ``unported``: Accept All's cell
+ends).  A refusal goes to the Python
 path too: Rust's carries its own way out (``valid_options``, ``field``, ``try_call``, tool
 rule 2), which today's does not, so the reply stays today's.
 """
@@ -257,16 +258,18 @@ def mirror_of(live: Any, copy: Any = None) -> "Mirror | None":
         return made
 
 
-def _earlier_ids(document: Any) -> "tuple[list[int], list[tuple[str, int]], int] | None":
+def _earlier_ids(document: Any) -> "tuple[list[int], list[tuple[str, int]], int, list[int]] | None":
     """The ids ``document`` had before it was saved, where its id state was opened with it
-    (round 38: its ledger's pool, restored): every value, each seed's cursor and the highest
-    drawing number -- for the session never to give a retired id again.  ``None`` where its
-    pool is not read yet (the parts' ids are all it has)."""
+    (round 38: its ledger's pool, restored): every value, each seed's cursor, the highest
+    drawing number and the drawing numbers retired (``drawings_gone``) -- for the session
+    never to give a retired id again, nor keep a retired drawing number in a copy.  ``None``
+    where its pool is not read yet (the parts' ids are all it has)."""
     ledger = getattr(document, "_ledger", None)
     pool = getattr(ledger, "pool", None)
     if pool is None:
         return None
-    return list(pool), list(getattr(pool, "cursors", {}).items()), ledger.highest_drawing
+    return (list(pool), list(getattr(pool, "cursors", {}).items()), ledger.highest_drawing,
+            sorted(ledger.drawings_gone))
 
 
 # -- serving a call ---------------------------------------------------------------------------
@@ -334,10 +337,9 @@ def _refs(call: Any, value: Any) -> Any:
     return value
 
 
-def _owned_version(call: Any) -> tuple["Mirror | None", Any]:
-    """Lane P2c4: the session's version a call on a document the session owns reads (the
+def _owned_version(entry: Any) -> tuple["Mirror | None", Any]:
+    """Lane P2c4: the session's version a call reads of a document the session owns (the
     entry's version now), found without the Python view; ``(None, None)`` otherwise."""
-    entry = call.entry
     mirror = getattr(_owned(entry), "handle", None)
     if not isinstance(mirror, Mirror):
         return None, None
@@ -348,20 +350,60 @@ def _owned_version(call: Any) -> tuple["Mirror | None", Any]:
     return mirror, found
 
 
-def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | None" = None) -> dict[str, Any]:
-    """The Rust envelope of ``tool`` with ``arguments`` on the version ``call`` reads."""
-    if _session() is None:
-        raise _Fallback("no session")
-    mirror, version = _owned_version(call)
+def _version_read(entry: Any) -> tuple["Mirror", Any]:
+    """The Rust session's copy of the document ``entry`` is, and the version of it a call
+    reads (``entry.document``: the version the call was given)."""
+    mirror, version = _owned_version(entry)
     if mirror is None:
-        copy = call.document
+        copy = entry.document
         mirror = _mirror(copy)
         if mirror is None:
             raise _Fallback("not a committed version")
         version = mirror.version(copy)
-    arguments = {"doc": mirror.doc, **{k: v for k, v in arguments.items() if v is not None}}
-    reply, _images, app = mirror.session.call(tool, json.dumps(arguments), at=[version],
-                                              placer=placer.place if placer is not None else None)
+    return mirror, version
+
+
+def _with_others(call: Any, arguments: dict[str, Any], others: tuple[str, ...],
+                 session: Any) -> tuple[dict[str, str], list[Any]]:
+    """The host's names of the other documents the call names (at a path of ``others``,
+    ``reference.doc``: its tool's ``documents`` after the first), each the session's id of
+    it (``Session.call``'s ``names``), and the versions of them the call reads (lane P2c14;
+    #103's ``Call::others``).  The call's own document named again is the tool's."""
+    versions: list[Any] = []
+    names: dict[str, str] = {}
+    for path in others:
+        *parents, key = path.split(".")
+        holder: Any = arguments
+        for name in parents:
+            holder = holder.get(name) if isinstance(holder, dict) else None
+        given = holder.get(key) if isinstance(holder, dict) else None
+        if not isinstance(given, str) or given == getattr(call.entry, "doc_id", None):
+            continue
+        entry = call.entries.get(given)
+        if entry is None:
+            raise _Fallback("a document not open")
+        mirror, version = _version_read(entry)
+        if mirror.session is not session:
+            raise _Fallback("a document in another session")
+        names[given] = mirror.doc
+        versions.append(version)
+    return names, versions
+
+
+def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | None" = None,
+          others: tuple[str, ...] = ()) -> dict[str, Any]:
+    """The Rust envelope of ``tool`` with ``arguments`` on the version ``call`` reads (and
+    of each other document named at a path of ``others``, :func:`_with_others`)."""
+    if _session() is None:
+        raise _Fallback("no session")
+    mirror, version = _version_read(call.entry)
+    names, pinned = _with_others(call, arguments, others, mirror.session)
+    # the documents named as the host names them: the reply says those names (lane P2c17)
+    names[call.entry.doc_id] = mirror.doc
+    arguments = {**{k: v for k, v in arguments.items() if v is not None}, "doc": call.entry.doc_id}
+    reply, _images, app = mirror.session.call(tool, json.dumps(arguments), at=[version, *pinned],
+                                              placer=placer.place if placer is not None else None,
+                                              names=names)
     if placer is not None and placer.error is not None:
         raise placer.error
     envelope = json.loads(reply)
@@ -380,9 +422,11 @@ def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | 
 def serve(call: Any, tool: str, arguments: dict[str, Any],
           python: Callable[[], Result], *, addresses: tuple = (),
           answer: Callable[[dict[str, Any]], Result] | None = None,
-          placer: "Placer | None" = None, why_not: str | None = None) -> Result:
+          placer: "Placer | None" = None, why_not: str | None = None,
+          others: tuple[str, ...] = ()) -> Result:
     """``tool``'s answer from the Rust session (``answer`` makes the :class:`Result` of its
-    envelope), or ``python()``'s where Rust's is not the same yet (counted, with why)."""
+    envelope), or ``python()``'s where Rust's is not the same yet (counted, with why).
+    ``others``: the paths of ``arguments`` naming another open document (:func:`_call`)."""
     try:
         if why_not is not None:
             raise _Fallback(why_not)
@@ -390,7 +434,7 @@ def serve(call: Any, tool: str, arguments: dict[str, Any],
             raise _Fallback("limits")
         if _renamed_or_deleted(_named(call), *addresses):
             raise _Fallback("renamed or deleted id")
-        envelope = _call(call, tool, arguments, placer=placer)
+        envelope = _call(call, tool, arguments, placer=placer, others=others)
         result = (answer or _result)(envelope)
     except _Fallback as why:
         _fell_back(tool, str(why))

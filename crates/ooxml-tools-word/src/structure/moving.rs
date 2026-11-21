@@ -153,3 +153,8 @@ fn run(args: &WordMove, editing: &Editing<'_>, way: &TryCall) -> Result<ToolResu
         Err(error) => refused(error, way.clone()),
     })
 }
+
+/// Registers `word_move` (the crate's [`crate::register`]).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    r.edit::<WordMove>(word_move, crate::Hosting::SERVED);
+}

@@ -141,7 +141,7 @@ pub(super) fn write_comment(
 ///
 /// # Errors
 /// When a part is not XML.
-pub(super) fn complete(sink: &mut EditSink<'_, '_>, space: &mut Space, main: &str, comments: &str) -> Result<()> {
+pub(crate) fn complete(sink: &mut EditSink<'_, '_>, space: &mut Space, main: &str, comments: &str) -> Result<()> {
     let extended = ensure_part(sink, main, Kind::Extended)?;
     let ids = ensure_part(sink, main, Kind::Ids)?;
     let extensible = ensure_part(sink, main, Kind::Extensible)?;
@@ -266,7 +266,7 @@ fn paragraphs(sink: &mut EditSink<'_, '_>, space: &mut Space, part: &str, node: 
 
 /// An entry `local` with `attributes` (in `ns`, prefixed as the root has it, else
 /// `prefix`) appended to `part`'s root (`etree.SubElement`).
-fn append(
+pub(crate) fn append(
     sink: &mut EditSink<'_, '_>,
     space: &mut Space,
     part: &str,
@@ -319,7 +319,7 @@ fn new_durable_id(sink: &mut EditSink<'_, '_>, space: &mut Space, main: &str) ->
 }
 
 /// The `w14:paraId` of the comment's last paragraph (any depth), as written.
-pub(super) fn last_para(work: &Work, comment: Id) -> String {
+pub(crate) fn last_para(work: &Work, comment: Id) -> String {
     work.iter(comment, W, &["p"])
         .last()
         .and_then(|p| work.get(*p, Some(W14), "paraId"))

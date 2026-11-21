@@ -698,6 +698,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ooxml-sheets"
+version = "0.1.0"
+dependencies = [
+ "ooxml-opc",
+ "ooxml-xml",
+ "ooxml-zip",
+ "thiserror",
+]
+
+[[package]]
 name = "ooxml-store"
 version = "0.1.0"
 dependencies = [
@@ -792,6 +802,7 @@ dependencies = [
  "ooxml-word-model",
  "ooxml-xml",
  "ooxml-zip",
+ "serde_json",
  "thiserror",
 ]
 
@@ -821,6 +832,7 @@ dependencies = [
  "ooxml-chart",
  "ooxml-colour",
  "ooxml-derive",
+ "ooxml-drawingml",
  "ooxml-opc",
  "ooxml-xml",
  "ooxml-zip",

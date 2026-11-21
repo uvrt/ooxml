@@ -180,6 +180,7 @@ def test_word_format_takes_a_cell_a_row_a_section_and_a_bookmark(box, session):
 def test_word_delete_and_word_move_take_open_spans(box, session):
     doc, document, ids = opened(session, made())
     ok(box, session, "word_move", doc=doc, blocks=f"..{ids['Alpha']}", after=ids["Delta"])
+    document = session.entry(doc).document  # (the view as the served call left it)
     assert [p.text.split()[0] for p in document.paragraphs() if p.text][-2:] == ["Opening", "Alpha"]
     ok(box, session, "word_delete", doc=doc, target=f"{ids['Delta']}..")
     document = session.entry(doc).document       # (the view as the served call left it)
@@ -198,6 +199,7 @@ def test_text_targets_take_a_cell_a_bookmark_and_a_paragraph(box, session):
     assert document.comments()[0].anchor.text == "right side"
     ok(box, session, "word_notes", doc=doc, action="insert", at=ids["Alpha"], text="A note.")
     ok(box, session, "word_notes", doc=doc, action="insert", at="bm:Spot", text="Another.")
+    document = session.entry(doc).document  # (the view as the served call left it)
     marks = [r for r in document.state()["blocks"] if r.get("notes")]
     assert [b["t"] for b in marks] == ["Alpha words here.", "Bravo words here."]
 

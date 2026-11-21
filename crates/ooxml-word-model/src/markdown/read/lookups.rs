@@ -40,10 +40,8 @@ pub struct Shared {
     revisions: OnceLock<HashMap<Key, String>>,
     /// Pictures' ids by place.
     pictures: OnceLock<HashMap<Key, String>>,
-    /// Drawings' ids by place, and those whose summary is a chart's or a SmartArt
-    /// diagram's (one, or a group holding one): docx-agent writes one, the core does not
-    /// yet (phase P3).
-    drawings: OnceLock<(HashMap<Key, String>, Vec<String>)>,
+    /// Drawings' ids by place.
+    drawings: OnceLock<HashMap<Key, String>>,
     /// Notes' ids by `(fn|en, w:id)`.
     notes: OnceLock<HashMap<(String, String), String>>,
     /// Bookmarks internal hyperlinks point at.
@@ -125,19 +123,11 @@ impl Shared {
 
     /// Drawings' ids by place.
     pub(super) fn drawings(&self, docx: &Docx) -> &HashMap<Key, String> {
-        &self.drawings_read(docx).0
-    }
-
-    fn drawings_read(&self, docx: &Docx) -> &(HashMap<Key, String>, Vec<String>) {
         self.drawings.get_or_init(|| {
-            let drawings = all_drawings(docx);
-            let graphics = drawings
-                .iter()
-                .filter(|d| summarised(d))
-                .map(|d| d.id.clone())
-                .collect();
-            let by_place = drawings.into_iter().map(|d| (key(&d.part, &d.path), d.id)).collect();
-            (by_place, graphics)
+            all_drawings(docx)
+                .into_iter()
+                .map(|d| (key(&d.part, &d.path), d.id))
+                .collect()
         })
     }
 
@@ -181,14 +171,6 @@ impl Shared {
         &self.formatting
     }
 
-    /// The drawings of `docx` (the version these lookups are of) whose summary docx-agent
-    /// writes from a SmartArt diagram's data model (a diagram, a group holding one), which
-    /// the core does not read yet.
-    #[must_use]
-    pub fn graphics(&self, docx: &Docx) -> &[String] {
-        &self.drawings_read(docx).1
-    }
-
     /// Whether a table cell's end of `docx` is one Accept All takes away: docx-agent's final
     /// view joins the next cell's text in, the core's does not yet.
     #[must_use]
@@ -196,19 +178,6 @@ impl Shared {
         *self
             .cell_ends
             .get_or_init(|| docx.parts.iter().any(|p| p.facts().cell_ends()))
-    }
-}
-
-/// Whether docx-agent writes `drawing`'s summary from a SmartArt diagram's data model, which
-/// the core does not read yet: a diagram, or a group with one among its members.
-fn summarised(drawing: &crate::docx::drawings::Drawing) -> bool {
-    use crate::docx::drawings::{group_members, member_kind};
-    match drawing.kind {
-        "diagram" => true,
-        "group" => group_members(&drawing.element, &drawing.id, false)
-            .iter()
-            .any(|(_, member)| member_kind(member) == "diagram"),
-        _ => false,
     }
 }
 

@@ -179,7 +179,7 @@ pub fn said(
     document_notes(document, &mut out);
     let mut pages = PageWalk {
         tables: HashSet::new(),
-        paragraphs: body_paragraphs(&document.body).0,
+        paragraphs: std::sync::Arc::clone(layout.body_paragraphs()),
         drawn: false,
         counts: HashMap::new(),
     };
@@ -359,7 +359,7 @@ fn body_fields(
     facts: &std::sync::OnceLock<ooxml_word_layout::facts::LayoutFacts>,
     out: &mut Said,
 ) {
-    let (paragraphs, _) = body_paragraphs(&layout.document.body);
+    let paragraphs = layout.body_paragraphs();
     let has = paragraphs.iter().any(|p| {
         p.runs
             .iter()
@@ -370,8 +370,8 @@ fn body_fields(
     }
     let facts = facts.get_or_init(|| ooxml_word_layout::facts::LayoutFacts::of(layout));
     let numbers = PageNumbers::new(layout, facts);
-    let marks = bookmarks(&paragraphs);
-    for paragraph in &paragraphs {
+    let marks = bookmarks(paragraphs);
+    for paragraph in paragraphs.iter() {
         for run in paragraph.runs.iter() {
             let Some(field) = run.field.as_ref().filter(|f| PAGE_FIELDS.contains(&&*f.keyword)) else {
                 continue;
@@ -502,7 +502,7 @@ fn column_carry_on(
 /// already.
 struct PageWalk {
     tables: HashSet<usize>,
-    paragraphs: Vec<std::sync::Arc<Paragraph>>,
+    paragraphs: std::sync::Arc<[std::sync::Arc<Paragraph>]>,
     /// The page holds a drawing a painter draws.
     drawn: bool,
     /// `NUMPAGES` and each section's `SECTIONPAGES`, by section, as counted once.

@@ -437,3 +437,58 @@ fn retired_ids_say_who_removed_them_and_an_undone_deletion_is_back() {
         .unwrap();
     assert_eq!(s.retired(&d).unwrap().len(), 2);
 }
+
+fn part_of(session: &Session, doc: &DocId, name: &str) -> Option<String> {
+    let saved = session.save(doc).unwrap();
+    let package = ooxml_opc::Package::open(Arc::from(saved), &Limits::default()).unwrap();
+    package
+        .read(name)
+        .unwrap()
+        .map(|data| String::from_utf8(data.to_vec()).unwrap())
+}
+
+#[test]
+fn a_value_written_by_reference_is_kept_on_its_paragraph() {
+    let s = session();
+    let d = s
+        .open(docx(&paragraph("22222222", "two word there")), DocKind::Docx, "a.docx")
+        .unwrap();
+    // the host wrote "3.5" for {{d:scores/Alpha/rating}} at characters 6..9 of the text
+    let record = json!({"source": "d:scores/Alpha/rating", "text": "3.5"});
+    let mut context = as_caller("w1");
+    context.written = ooxml_tools_word::Written::list_from_json(&json!([{
+        "field": "text", "start": 6, "end": 9, "text": "3.5", "record": record,
+        "brief": {"from": "d:scores/Alpha/rating", "text": "3.5"},
+    }]))
+    .unwrap();
+    let reply = call(
+        &s,
+        "word_set_text",
+        json!({"doc": "d1", "target": "p:22222222", "text": "Rated 3.5 today"}),
+        &context,
+    );
+    assert_eq!(
+        reply["data"]["facts"],
+        json!([{"from": "d:scores/Alpha/rating", "text": "3.5"}]),
+        "{reply}"
+    );
+    let item = part_of(&s, &d, "customXml/item1.xml").expect("the item is made");
+    assert!(
+        item.ends_with(
+            r#"<prov:source kind="text" key="p:22222222">{"v":1,"paragraph":"Rated 3.5 today","facts":[{"source":"d:scores/Alpha/rating","text":"3.5","p":0,"at":6}]}</prov:source></prov:sources>"#
+        ),
+        "{item}"
+    );
+    let props = part_of(&s, &d, "customXml/itemProps1.xml").unwrap();
+    assert!(props.contains("ds:itemID=\"{"), "{props}");
+    assert!(part_of(&s, &d, "word/_rels/document.xml.rels").is_some_and(|r| r.contains("customXml/item1.xml")));
+    // the value edited by hand: its fact goes, and with the last entry the item
+    call(
+        &s,
+        "word_set_text",
+        json!({"doc": "d1", "target": "p:22222222", "text": "Rated 4 today"}),
+        &as_caller("w1"),
+    );
+    assert!(part_of(&s, &d, "customXml/item1.xml").is_none());
+    assert!(part_of(&s, &d, "customXml/itemProps1.xml").is_none());
+}
