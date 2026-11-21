@@ -221,7 +221,10 @@ fn a_check_of_the_document_alone_is_the_sessions() {
         let result = s.call("check", asked, &CallContext::default());
         assert_eq!(result.unported(), [ooxml_tools_word::CHECK_LAYOUT.to_owned()]);
     }
-    for asked in [json!({"doc": "d1"}), json!({"doc": "d1", "include": ["validate", "reflow"]})] {
+    for asked in [
+        json!({"doc": "d1"}),
+        json!({"doc": "d1", "include": ["validate", "reflow"]}),
+    ] {
         let result = s.call("check", asked, &CallContext::default());
         assert_eq!(result.unported(), [ooxml_tools_word::CHECK_NO_LAYOUT.to_owned()]);
     }

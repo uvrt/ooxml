@@ -587,7 +587,9 @@ impl PySession {
     fn last_check(&self, doc: &str) -> PyResult<Option<(Option<u64>, crate::summary::PyLayoutSummary)>> {
         let id = doc_id(doc, &self.inner)?;
         let kept = self.inner.last_check(&id).map_err(|e| to_py(&e))?;
-        Ok(kept.and_then(|kept| kept.get()).map(|seen| (seen.version, crate::summary::PyLayoutSummary { inner: seen.summary })))
+        Ok(kept
+            .and_then(|kept| kept.get())
+            .map(|seen| (seen.version, crate::summary::PyLayoutSummary { inner: seen.summary })))
     }
 
     /// Keep `summary` (a `LayoutSummary` of the document's engine) as what the document's

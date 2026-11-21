@@ -73,7 +73,12 @@ pub fn check(args: &Check, version: &Version<'_>, cancel: &dyn Cancel) -> Result
     cancel.check().map_err(cancelled)?;
     if let Some(layout) = layout {
         let started = Instant::now();
-        let last = layout.engine().lock().unwrap_or_else(PoisonError::into_inner).last().cloned();
+        let last = layout
+            .engine()
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .last()
+            .cloned();
         let Ok(laid) = layout.laid(version.package) else {
             return Ok(unported(CHECK_NOT_LAID_OUT));
         };
@@ -82,7 +87,10 @@ pub fn check(args: &Check, version: &Version<'_>, cancel: &dyn Cancel) -> Result
             timing.insert("layout".into(), seconds(started));
         }
         let started = Instant::now();
-        data.insert("reflow".into(), reflow_facts(layout, &laid, version, owned, args.pages.as_deref())?);
+        data.insert(
+            "reflow".into(),
+            reflow_facts(layout, &laid, version, owned, args.pages.as_deref())?,
+        );
         timing.insert("facts".into(), seconds(started));
     }
     cancel.check().map_err(cancelled)?;

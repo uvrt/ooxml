@@ -34,7 +34,13 @@ fn versions() -> (Package, Package) {
 
 /// `check` with `arguments` of `package` (version `number`), `layout` handed to it.
 fn checked(package: &Package, number: u64, arguments: Value, last: &LastCheck, layout: Option<&EnginePages>) -> Value {
-    let editor = Editor::open(package.clone(), StoreConfig::default(), Arc::new(Still), Arc::new(Unlimited)).unwrap();
+    let editor = Editor::open(
+        package.clone(),
+        StoreConfig::default(),
+        Arc::new(Still),
+        Arc::new(Unlimited),
+    )
+    .unwrap();
     let doc = editor.store().snapshot().doc().clone();
     let versions = Versions::new();
     let version = Version {
@@ -76,17 +82,35 @@ fn a_default_check_reports_the_reflow_since_the_last() {
     assert_eq!(reflow["coverage"]["pages"], pages);
     assert!(reflow.get("since_last_check").is_none(), "{reflow}");
     // the version the last check saw: nothing since
-    let again = checked(&first, 1, json!({"doc": "d1", "include": ["reflow"]}), &last, Some(&layout));
+    let again = checked(
+        &first,
+        1,
+        json!({"doc": "d1", "include": ["reflow"]}),
+        &last,
+        Some(&layout),
+    );
     assert!(again["data"]["reflow"].get("since_last_check").is_none());
     // a later version: its pages since
-    let later = checked(&edited, 2, json!({"doc": "d1", "include": ["reflow"]}), &last, Some(&layout));
+    let later = checked(
+        &edited,
+        2,
+        json!({"doc": "d1", "include": ["reflow"]}),
+        &last,
+        Some(&layout),
+    );
     let since = &later["data"]["reflow"]["since_last_check"];
     let now = later["data"]["reflow"]["pages"].as_u64().unwrap();
     assert!(now > pages, "{later}");
     assert_eq!(since["pages"], json!([pages, now]));
     assert!(since["changed"].as_array().unwrap().contains(&json!(1)), "{since}");
     // the changed pages among those asked for
-    let back = checked(&first, 3, json!({"doc": "d1", "include": ["reflow"], "pages": [99]}), &last, Some(&layout));
+    let back = checked(
+        &first,
+        3,
+        json!({"doc": "d1", "include": ["reflow"], "pages": [99]}),
+        &last,
+        Some(&layout),
+    );
     assert_eq!(back["data"]["reflow"]["since_last_check"]["changed"], json!([]));
 }
 

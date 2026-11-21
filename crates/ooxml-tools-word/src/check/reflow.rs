@@ -91,7 +91,10 @@ fn coverage_facts(coverage: &Coverage) -> Value {
     out.insert("complete".into(), Value::from(coverage.complete));
     out.insert("status".into(), Value::from(status));
     out.insert("pages".into(), Value::from(coverage.pages));
-    out.insert("blocks_laid_out".into(), Value::from(vec![coverage.blocks, coverage.blocks]));
+    out.insert(
+        "blocks_laid_out".into(),
+        Value::from(vec![coverage.blocks, coverage.blocks]),
+    );
     if !coverage.substituted.is_empty() {
         let named: Vec<String> = coverage
             .substituted
@@ -123,7 +126,10 @@ fn coverage_facts(coverage: &Coverage) -> Value {
             .collect();
         out.insert("approximations".into(), Value::from(listed));
         if coverage.approximations.len() > LISTED {
-            out.insert("approximations_total".into(), Value::from(coverage.approximations.len()));
+            out.insert(
+                "approximations_total".into(),
+                Value::from(coverage.approximations.len()),
+            );
         }
     }
     Value::Object(out)
