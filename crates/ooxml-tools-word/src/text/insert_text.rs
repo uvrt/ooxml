@@ -294,6 +294,13 @@ fn ref_as_place(args: &WordInsertText, item: &InsertItem, place: &str, index: Op
     if index.is_none() {
         meant.insert("doc".into(), Value::from(args.doc.as_str()));
     }
+    // docx-agent's details: the item as meant, or the call that places it (its redo)
+    let detail = if index.is_some() {
+        ("item", Value::Object(meant.clone()))
+    } else {
+        let call = serde_json::json!({"tool": "word_insert_text", "arguments": meant.clone()});
+        ("call", call)
+    };
     let way = WayOut::names(["at"]).map_or_else(
         || WayOut::call(try_call(args)),
         |w| {
@@ -304,7 +311,9 @@ fn ref_as_place(args: &WordInsertText, item: &InsertItem, place: &str, index: Op
             })
         },
     );
-    ToolError::refusal(Refusal::InvalidArguments, message, way).at(field)
+    ToolError::refusal(Refusal::InvalidArguments, message, way)
+        .at(field)
+        .with_detail(detail.0, detail.1)
 }
 
 /// `inserted_range`: the id of text just inserted before or after the range `place` (its

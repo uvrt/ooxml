@@ -10,3 +10,7 @@
 - A served `word_insert_markdown` whose `table_cell` style's indents run its text past the cell's
   edge, or leave it no width, says so with the style and where the indent comes from, as
   docx-agent's handler does (round 21, T4) (lane P2e7).
+- **Served refusals as docx-agent words them (lane P2e8).** A served `word_edit_table` naming a
+  workbook's table (`t:stock`, `d2/t:stock`) says it is a table of that document (round 56,
+  R120); a served `word_insert_text` whose `ref` holds an address gives the call that places
+  it (`details.call`) or the item (`details.item`).

@@ -82,7 +82,8 @@ def options(**given: Any) -> Any:
 
 def documents(**given: Any) -> Any:
     """An ``ooxml_core.CallDocuments``: what a call needs about the open documents it names
-    (``at``: the versions it reads; ``names``: the host's names for them)."""
+    (``at``: the versions it reads; ``names``: the host's names for them; ``tables``: the tables
+    of the documents the host holds itself, asked only where a refusal names one)."""
     import ooxml_core
 
     return ooxml_core.CallDocuments(**given)

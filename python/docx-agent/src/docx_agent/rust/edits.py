@@ -220,6 +220,31 @@ def _set_mode(entry: Any, given: dict[str, Any], context: Any, names: dict[str, 
     return reply, app, made
 
 
+def _host_tables(session: Any) -> Callable[[], list[tuple[str, str, str]]]:
+    """The tables of the open documents the host holds itself (a workbook's ``t:stock``), as
+    ``CallDocuments``' ``tables`` asks them: ``(name, doc, kind)``, the name as a ``from``
+    takes it (:func:`ooxml_edit.tools.sources.offered`).  Called by the session only where a
+    refusal names one (round 56, R120: a table not in the document), as docx-agent's
+    ``_no_table`` reads them only then: reading another document may wait for it."""
+
+    def tables() -> list[tuple[str, str, str]]:
+        from ooxml_edit.tools import sources
+
+        held = dict(session.documents)
+        if len(held) < 2:
+            return []
+        found = []
+        for name in sources.offered(session)[1]:
+            try:
+                handle = sources.qualify(name, held, session.formats)[0]
+            except ToolError:
+                continue
+            found.append((name, handle, held[handle].kind))
+        return found
+
+    return tables
+
+
 def _names(call: Any, entry: Any, arguments: dict[str, Any]) -> dict[str, str]:
     """The host's names for the documents a call names, each the session's id of it
     (``Session.edit``'s ``names``; lane P2c17): the arguments name documents as the host
@@ -321,7 +346,8 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
         reply, app, made = _set_mode(entry, given, context, names)
     else:
         reply, app, made = mirror.session.edit(tool, json.dumps(given), options(
-            context=context, layout=layout, blobs=blobs, written=written, documents=documents(names=names)))
+            context=context, layout=layout, blobs=blobs, written=written,
+            documents=documents(names=names, tables=_host_tables(call.session))))
     if timing is not None:
         timing.add("update", time.perf_counter() - started)
     envelope = json.loads(reply)

@@ -75,6 +75,10 @@ pub struct CallContext {
     /// resolved against its datasets), which an editing call keeps on the paragraphs they
     /// went into; empty: none.
     pub written: Vec<ooxml_tools_word::Written>,
+    /// The tables of the open documents the host holds itself (a workbook's `t:stock`), as a
+    /// `from` names them: a call refused for a table not in its document says it is one of
+    /// those (asked only then); `None`: none.
+    pub tables: Option<Arc<dyn ooxml_tools_word::HostTables>>,
     /// The host's limits on the call's reply: a page's characters, a listing's items
     /// (docx-agent's `Limits.max_result_chars`, `Limits.max_list_items`).
     pub limits: ooxml_tools::Limits,

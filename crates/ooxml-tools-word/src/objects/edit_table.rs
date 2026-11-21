@@ -85,8 +85,9 @@ pub(super) fn unported(what: &str, retry: &TryCall) -> ToolResult<Value> {
 }
 
 /// No table `table` in the document (docx-agent's `_no_table`): its body's tables are the
-/// options.
-fn no_table(docx: &Docx, doc: &str, table: &str, retry: &TryCall) -> ToolError {
+/// options, and a table of another open document the host holds (a workbook's `t:stock`)
+/// is said to be one, with the call that keeps a table here in step with its rows.
+fn no_table(docx: &Docx, doc: &str, table: &str, others: crate::Others<'_>, retry: &TryCall) -> ToolError {
     // docx-agent's `Document.tables()`: the body's
     let ids: Vec<String> = docx
         .body()
@@ -102,12 +103,24 @@ fn no_table(docx: &Docx, doc: &str, table: &str, retry: &TryCall) -> ToolError {
         format!("{doc}'s tables: {}", shown.join(", "))
     };
     let way_out = WayOut::names(ids.iter().take(12).cloned()).unwrap_or_else(|| WayOut::call(retry.clone()));
-    ToolError::refusal(
-        Refusal::NotFound,
-        format!("no table {} in {doc}; {listed}", repr_str(table)),
-        way_out,
-    )
-    .at("table")
+    let message = match others.host_table(table) {
+        // docx-agent's example call, as Python writes a dict
+        Some(elsewhere) => format!(
+            "{table} is a table of {} ({}), not of {doc}: word_edit_table changes a table of {doc} ({}); to keep \
+             one in step with its rows, e.g. {{'table': {}, 'action': 'sync', 'from': {}}}",
+            elsewhere.doc,
+            elsewhere.kind,
+            if shown.is_empty() {
+                "it has none".to_owned()
+            } else {
+                shown.join(", ")
+            },
+            repr_str(ids.first().map_or("<id>", String::as_str)),
+            repr_str(&elsewhere.name),
+        ),
+        None => format!("no table {} in {doc}; {listed}", repr_str(table)),
+    };
+    ToolError::refusal(Refusal::NotFound, message, way_out).at("table")
 }
 
 /// The arguments for another action refused, as docx-agent refuses them before it edits.
@@ -177,7 +190,7 @@ fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<T
     let view = match table_view(head.doc(), &docx, &args.table, retry) {
         Ok(view) => view,
         Err(error) if error.code() == ErrorCode::Refusal(Refusal::NotFound) => {
-            return Err(no_table(&docx, &args.doc, &args.table, retry))
+            return Err(no_table(&docx, &args.doc, &args.table, editing.others, retry))
         }
         Err(error) => return Err(error),
     };

@@ -44,6 +44,8 @@ pub struct Call<'a> {
     /// The other documents the call names (`ooxml_tools::documents`), by id, each at the
     /// version pinned for the call when it was dispatched.
     pub(crate) others: &'a [(String, Opened)],
+    /// The tables of the open documents the host holds itself.
+    pub(crate) tables: Option<&'a dyn ooxml_tools_word::HostTables>,
     /// The host's limits on the call's reply.
     pub(crate) limits: ooxml_tools::Limits,
 }
@@ -119,7 +121,7 @@ impl Call<'_> {
         )
         .with_tracking(tracking)
         .with_layout(self.layout.map(|layout| layout as &dyn ooxml_word_edit::FieldLayout))
-        .with_others(Others::new(&others))
+        .with_others(Others::new(&others).with_tables(self.tables))
         .with_blobs(self.blobs)
         .with_written(self.written)
         .with_rows_written(Some(&word.rows_written))
@@ -139,7 +141,7 @@ impl Call<'_> {
         let version = self
             .doc
             .version_of()
-            .with_others(Others::new(&others))
+            .with_others(Others::new(&others).with_tables(self.tables))
             .with_owned(self.owned())
             .with_limits(self.limits);
         run(&version)
