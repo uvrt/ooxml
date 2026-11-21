@@ -761,9 +761,11 @@ name = "ooxml-tools-word"
 version = "0.1.0"
 dependencies = [
  "ooxml-base",
+ "ooxml-chart",
  "ooxml-derive",
  "ooxml-fonts",
  "ooxml-opc",
+ "ooxml-sheets",
  "ooxml-store",
  "ooxml-tools",
  "ooxml-word-edit",

@@ -378,6 +378,7 @@ fn moved<D: DocModel>(
     };
     let changes = journal.rebase(base, changes).ok_or_else(entangled)?;
     let mut doc = head.doc().clone();
+    doc.begin();
     for change in &changes {
         doc.apply(change).map_err(|_| entangled())?;
     }
@@ -424,6 +425,7 @@ fn reapply<D: DocModel>(
     let inverses = inverses(undone.on.doc(), &made)?;
     let (doc, changes) = if Arc::ptr_eq(head, &undone.result) {
         let mut doc = head.doc().clone();
+        doc.begin();
         for change in &inverses {
             doc.apply(change).map_err(StoreError::Model)?;
         }

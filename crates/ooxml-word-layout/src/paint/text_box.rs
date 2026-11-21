@@ -53,7 +53,7 @@ pub fn paint_text_box(
     let set = LineSet {
         items: &laid.flow.items,
         blocks: &laid.blocks,
-        paragraphs: body_paragraphs(&laid.blocks).0,
+        paragraphs: body_paragraphs(&laid.blocks).0.into(),
         laid: None,
         broken: Some(&laid.broken),
         lines: &laid.walked.lines,

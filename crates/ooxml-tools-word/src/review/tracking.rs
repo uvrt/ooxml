@@ -110,5 +110,5 @@ fn try_call(args: &WordSetTracking) -> TryCall {
 
 /// Registers `word_set_tracking` (the crate's [`crate::register`]).
 pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.tracking::<WordSetTracking>(word_set_tracking, crate::Hosting::HOST);
+    r.tracking::<WordSetTracking>(word_set_tracking, crate::Hosting::SERVED);
 }

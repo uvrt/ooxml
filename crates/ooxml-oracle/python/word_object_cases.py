@@ -361,6 +361,21 @@ def drawings_cases(document) -> list[dict]:
     return out + [tracked(case) for case in out]
 
 
+@CASES
+def chart_cases(document) -> list[dict]:
+    """``edit_chart``'s ``read``: every chart (group members too), a drawing that is not a
+    chart and a drawing that is not there."""
+    def read(target: str) -> dict:
+        return call("edit_chart", action="read", target=target)
+
+    graphics = document._graphics()
+    out = [read(identifier) for _part, identifier, _frame, kind in graphics if kind == "chart"]
+    other = next((identifier for _part, identifier, _frame, kind in graphics if kind != "chart"), None)
+    if other is not None:
+        out.append(read(other))
+    return out + [read("d:999999")]
+
+
 def _chunk(kind: bytes, body: bytes) -> bytes:
     return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
 

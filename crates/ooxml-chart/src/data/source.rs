@@ -76,6 +76,11 @@ impl<'a> Source<'a> {
         Source { reference }
     }
 
+    /// Its reference element, if any.
+    pub(crate) fn reference(&self) -> Option<&'a Element> {
+        self.reference
+    }
+
     /// Whether the source has a reference.
     pub(crate) fn is_some(&self) -> bool {
         self.reference.is_some()
