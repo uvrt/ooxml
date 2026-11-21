@@ -155,9 +155,10 @@ fn placer_of<'v>(args: &WordInspect, version: &Version<'v>) -> Result<Option<&'v
 
 /// The target read through the session's renames, as docx-agent's view reads it.
 fn followed(args: &WordInspect, version: &Version<'_>) -> String {
-    version
-        .owned
-        .map_or_else(|| args.target.clone(), |owned| owned.doc.ids().follow_address(&args.target))
+    version.owned.map_or_else(
+        || args.target.clone(),
+        |owned| owned.doc.ids().follow_address(&args.target),
+    )
 }
 
 /// A place id (`t@body/0`) stamping renamed, where this version holds no renames to follow:

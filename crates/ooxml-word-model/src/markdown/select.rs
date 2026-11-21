@@ -304,13 +304,12 @@ fn inside_table(reader: &mut Reader<'_>, address: &str) -> Result<Option<Selecte
                     records: cell.records.clone(),
                     cell: true,
                 })),
-                None => Err(no_cell(part, index, (row, column))
-                    .unwrap_or_else(|| {
-                        AddressError::not_found(
-                            format!("{} is not in its story in this view", repr_str(address)),
-                            Vec::new(),
-                        )
-                    })),
+                None => Err(no_cell(part, index, (row, column)).unwrap_or_else(|| {
+                    AddressError::not_found(
+                        format!("{} is not in its story in this view", repr_str(address)),
+                        Vec::new(),
+                    )
+                })),
             }
         }
     }
