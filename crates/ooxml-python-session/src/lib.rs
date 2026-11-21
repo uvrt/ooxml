@@ -22,6 +22,7 @@
 
 mod adapters;
 mod budget;
+mod group;
 mod layout;
 mod raster;
 mod session;
@@ -46,6 +47,8 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCancelToken>()?;
     m.add_class::<PyCallContext>()?;
     m.add_class::<PyVersion>()?;
+    m.add_class::<group::PyStepGroup>()?;
+    m.add_class::<group::PyGroupMark>()?;
     m.add_function(wrap_pyfunction!(tools::tool_specs, m)?)?;
     m.add_function(wrap_pyfunction!(tools::tool_hosting, m)?)?;
     m.add_class::<PyWordFonts>()?;

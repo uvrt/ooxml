@@ -6,6 +6,7 @@
 mod common;
 
 mod carry;
+mod group;
 mod history;
 mod predicate;
 mod rebase;

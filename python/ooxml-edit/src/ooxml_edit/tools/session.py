@@ -968,6 +968,13 @@ class DocumentEntry:
         yield False
 
     @contextmanager
+    def op_step(self, owner: "StepOwner | None" = None) -> Iterator[None]:
+        """Around one op of a :meth:`batch` that changes the document: nothing here (an
+        owned document's op is a sub-step of the owner's step group,
+        :meth:`~.owned.OwnedEntry.op_step`)."""
+        yield
+
+    @contextmanager
     def watch(self) -> Iterator[Any]:
         """What the document's content did while the block ran: its history's
         :meth:`~ooxml_edit.history.History.watch`, a
