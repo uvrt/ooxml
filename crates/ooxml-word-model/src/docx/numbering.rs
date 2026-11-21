@@ -146,6 +146,28 @@ impl Lists {
             .cloned()
     }
 
+    /// The definition whose levels instance `num_id` numbers with (docx-agent's
+    /// `definition_of`): its own (the first with its `w:nsid`), or, for a definition that
+    /// only names a list style (`w:numStyleLink`), the definition that style's list has.
+    #[must_use]
+    pub fn definition_of(&self, docx: &Docx, num_id: i64) -> Option<&Arc<Element>> {
+        let mut seen = Vec::new();
+        let mut num_id = num_id;
+        while !seen.contains(&num_id) {
+            seen.push(num_id);
+            let node = self.abstract_node(self.canonical(self.abstract_of(num_id)))?;
+            let linked = node
+                .find(Some(W), "numStyleLink")
+                .and_then(|link| style_num(docx, link.attribute(Some(W), "val")))
+                .filter(|n| *n != 0);
+            match linked {
+                Some(next) => num_id = next,
+                None => return Some(node),
+            }
+        }
+        None
+    }
+
     /// The instance `num_id` (the last of that number in the part).
     #[must_use]
     pub fn num_element(&self, num_id: i64) -> Option<&Arc<Element>> {

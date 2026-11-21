@@ -37,3 +37,13 @@ pub use edit_table_args::{CellArg, KeyPair, Loose, Position, Side, TableAction, 
 pub use format_table::word_format_table;
 pub use format_table_args::{Across, BorderStyle, HeightRule, Look, Scope, Vertical, WidthOf, WordFormatTable};
 pub(crate) use table_view::{read_look, LOOK_NAMES};
+
+/// Registers the group's tools, in the order a model is shown them (the crate's
+/// [`crate::register`]).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    format_table::register(r);
+    edit_table::register(r);
+    drawings::register(r);
+    controls::register(r);
+    edit_chart::register(r);
+}
