@@ -89,11 +89,7 @@ impl Call<'_> {
     /// made are kept for the call (its `made`), and the ids its edits drew as stand-ins are
     /// named in the reply as they were drawn where the edits landed
     /// ([`ooxml_tools_word::resolve_drawn`]).
-    pub(crate) fn edit(
-        &self,
-        word: &Word,
-        run: impl FnOnce(&Editing<'_>) -> ToolResult<Value>,
-    ) -> ToolResult<Value> {
+    pub(crate) fn edit(&self, word: &Word, run: impl FnOnce(&Editing<'_>) -> ToolResult<Value>) -> ToolResult<Value> {
         let policy = word.policy(&self.date);
         let tracking = match &policy {
             ooxml_word_edit::RevisionPolicy::Tracked(tracking) => Some(tracking),
