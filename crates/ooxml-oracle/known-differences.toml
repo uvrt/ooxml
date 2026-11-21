@@ -47,6 +47,49 @@ cause = """#84: docx-agent's _write_result takes as the old result only runs wit
 in a text box every run has one, so it writes the value as a new run beside the empty result run. \
 Rust writes the value into the result run, as docx-agent does everywhere outside a text box."""
 
+# Lane P5s (#240): page numbers inserted in chart-places' text box (at, after, before its first
+# paragraph), untracked and tracked: both write the result now (the Rust layout lays the box out,
+# lane P5n); docx-agent writes it as #84's SEQ above.
+[[difference]]
+gate = "fixtures"
+mode = "structure"
+file = "generated/charts/chart-places.docx"
+input = { tool = "word_fields", arguments = { action = "insert_field", at = "p@body/2@2", instruction = "PAGE" } }
+cause = """#240 as #84: in a text box docx-agent's _write_result finds no old result run (every run \
+has a w:r ancestor) and writes the value as a new run beside the empty result run; Rust writes \
+the value into the result run, as docx-agent does outside a text box. Same value (Word's: the \
+page the box is drawn on); Word sees no difference but the empty run."""
+
+[[difference]]
+gate = "fixtures"
+mode = "structure"
+file = "generated/charts/chart-places.docx"
+input = { tool = "word_fields", arguments = { action = "insert_field", at = "p@body/2", instruction = "NUMPAGES" } }
+cause = """#240 as #84: in a text box docx-agent's _write_result finds no old result run (every run \
+has a w:r ancestor) and writes the value as a new run beside the empty result run; Rust writes \
+the value into the result run, as docx-agent does outside a text box. Same value (Word's: the \
+page the box is drawn on); Word sees no difference but the empty run."""
+
+[[difference]]
+gate = "fixtures"
+mode = "structure"
+file = "generated/charts/chart-places.docx"
+input = { tool = "word_fields", arguments = { action = "insert_field", after = "p@body/2", instruction = "PAGE" } }
+cause = """#240 as #84: in a text box docx-agent's _write_result finds no old result run (every run \
+has a w:r ancestor) and writes the value as a new run beside the empty result run; Rust writes \
+the value into the result run, as docx-agent does outside a text box. Same value (Word's: the \
+page the box is drawn on); Word sees no difference but the empty run."""
+
+[[difference]]
+gate = "fixtures"
+mode = "structure"
+file = "generated/charts/chart-places.docx"
+input = { tool = "word_fields", arguments = { action = "insert_field", before = "p@body/2", instruction = "PAGE" } }
+cause = """#240 as #84: in a text box docx-agent's _write_result finds no old result run (every run \
+has a w:r ancestor) and writes the value as a new run beside the empty result run; Rust writes \
+the value into the result run, as docx-agent does outside a text box. Same value (Word's: the \
+page the box is drawn on); Word sees no difference but the empty run."""
+
 # Lane P5s (#240): a header's page number set on chart-places, untracked and tracked.
 [[difference]]
 gate = "fixtures"
