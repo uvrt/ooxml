@@ -500,7 +500,7 @@ impl<D: DocModel> Store<D> {
         let version = Arc::new(head.succeed(seq, doc, &revert.writes));
         self.head.store(Arc::clone(&version));
         let garbage = state.history.reverted(mark);
-        self.journal(&mut state, seq, revert.changes);
+        self.journal(&mut state, seq, revert.changes, revert.writes);
         let held = self.clock.monotonic().saturating_sub(entered);
         drop(state);
         drop(garbage);
