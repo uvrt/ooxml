@@ -549,9 +549,13 @@ def checked_before(call: Any) -> Any:
     """Lane P5b: what a changing call's reflow is measured from where no layout of the
     document's current version was made here: the summary its last check saw, kept by the
     session, where that check was of this very version (a ``LayoutSummary`` held in Rust);
-    else ``None``."""
-    owned, kept, number = last_check(call)
-    if not owned or kept is None or kept[0] is None or kept[0] != number:
+    else ``None``.  Lane P5r: the last check that laid it out, with ``reflow`` or not (a
+    check of the layout alone, of ranges: the session keeps its pages too)."""
+    mirror, version = _owned_now(call)
+    if mirror is None or version is None:
+        return None
+    kept = mirror.session.last_laid(mirror.doc)
+    if kept is None or kept[0] is None or kept[0] != version.number:
         return None
     from ..layout import LayoutSummary
 

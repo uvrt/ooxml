@@ -178,25 +178,31 @@ def _many(count: int) -> tuple[bytes, list[int]]:
     return docx(body + p("End")), starts
 
 
-def test_each_range_is_tried_alone_and_past_the_cap_the_rest_say_how_to_ask(box, session, monkeypatch):
-    monkeypatch.setattr(keep_trials, "TRIALS", 2)
-    data, starts = _many(3)
+def test_each_range_is_tried_alone_and_past_the_cap_the_rest_say_how_to_ask(box, session):
+    # The cap as it is (docx-agent's keep_trials.TRIALS, the Rust session's check's TRIALS:
+    # 4 each), so the session's check and docx-agent's are held to it alike.
+    cap = keep_trials.TRIALS
+    data, starts = _many(cap + 1)
     d = session.open(data, "many.docx")
     ids = _ids(session, d)
     spans = [f"{ids[k]}..{ids[k + 3]}" for k in starts]
     entries = _range(box, session, d, *spans)
     assert all("fix" in e for e in entries)
-    assert ["if_kept" in e for e in entries] == [True, True, False]
-    assert entries[2]["effect_left_out"].startswith("not laid out: a check tries at most 2 keeps")
-    assert repr(spans[2]) in entries[2]["effect_left_out"]
+    assert ["if_kept" in e for e in entries] == [True] * cap + [False]
+    assert entries[cap]["effect_left_out"].startswith(f"not laid out: a check tries at most {cap} keeps")
+    assert repr(spans[cap]) in entries[cap]["effect_left_out"]
     # Each alone: the first's effect is the one a check of it alone states.
     [alone] = _range(box, session, d, spans[0])
     assert alone["if_kept"] == entries[0]["if_kept"]
-    # The way out works: the third alone is tried.
-    [third] = _range(box, session, d, spans[2])
-    assert "if_kept" in third
+    # The way out works: the last alone is tried.
+    [last] = _range(box, session, d, spans[cap])
+    assert "if_kept" in last
 
 
+# docx-agent's own trials (keep_trials' budget, where its facts are made, a trial failing, its
+# count of layouts): documents the tool layer holds itself (conftest.python_owned), whose checks
+# it answers.  The Rust session's check keeps its own budget (ooxml-tools-word check/ranges.rs).
+@pytest.mark.usefixtures("python_owned")
 def test_past_the_time_budget_no_further_trial_starts(box, session, monkeypatch):
     monkeypatch.setattr(keep_trials, "TRIAL_SECONDS", 0.0)
     data, starts = _many(2)
@@ -206,6 +212,7 @@ def test_past_the_time_budget_no_further_trial_starts(box, session, monkeypatch)
     assert "if_kept" in first and "effect_left_out" in second
 
 
+@pytest.mark.usefixtures("python_owned")
 def test_a_check_laid_out_here_says_where_the_trial_is_made(box, session, monkeypatch):
     """Where the layout is read in the caller's process (a converter that cannot make a
     check's facts where the layout is held), no trial: the range says how to ask (rule 4)."""
@@ -264,6 +271,7 @@ def test_checks_with_trials_and_edits_at_once_all_finish(box):
     assert len(results) == 8 and all(r.ok for r in results), [r.error for r in results if not r.ok]
 
 
+@pytest.mark.usefixtures("python_owned")
 def test_a_trial_that_fails_never_fails_the_check(monkeypatch):
     def failing(*args, **kwargs):
         raise RuntimeError("made-up failure")
@@ -278,6 +286,7 @@ def test_a_trial_that_fails_never_fails_the_check(monkeypatch):
     assert entry["effect_left_out"].startswith("not laid out: the trial layout failed (RuntimeError)")
 
 
+@pytest.mark.usefixtures("python_owned")
 def test_a_second_check_of_the_unchanged_document_lays_no_trial_out_again():
     """The trial's result is kept in the process that made it, by the bytes checked: the
     same range checked again -- other pages, so not the caller's kept facts -- reuses it;
