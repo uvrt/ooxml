@@ -158,11 +158,13 @@ pub(super) fn keyed(tree: &Tree, change: Change) -> Change {
             patch,
             keys,
             draws,
+            created,
         } => Change::Splice {
             keys: add(&keys, &part),
             part,
             patch,
             draws,
+            created,
         },
         Change::Head { part, patch, keys } => Change::Head {
             keys: add(&keys, &part),
@@ -209,6 +211,7 @@ mod tests {
             patch: Patch::splice(NodePath(path), start, vec![old], vec![Node::Element(element(new))]),
             keys: Arc::from(Vec::new()),
             draws: Arc::from(Vec::new()),
+            created: Arc::from(Vec::new()),
         }
     }
 

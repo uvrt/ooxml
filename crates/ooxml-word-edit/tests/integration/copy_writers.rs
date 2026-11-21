@@ -7,9 +7,9 @@
 use crate::common::{fixture, written, Monotonic, Unlimited};
 use ooxml_base::Limits;
 use ooxml_opc::Package;
-use ooxml_store::{Caller, Command, StoreConfig, Txn};
+use ooxml_store::{Caller, Command, KeySet, StoreConfig, Txn};
 use ooxml_word_edit::{
-    BookmarkPolicy, CopyBlocks, CopyRange, CopySource, EditError, Editor, ListAction, ListEdit, ListPolicy,
+    BookmarkPolicy, CopyBlocks, CopyRange, CopySource, EditError, Editor, Key, ListAction, ListEdit, ListPolicy,
     RevisionPolicy, SetText, StylePolicy, UnmappedPolicy, WordDoc,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -261,4 +261,93 @@ fn a_copy_reads_the_list_before_the_place_an_edit_takes_away() {
         "the edit changes the list it joins: {numbers:?}"
     );
     interleaved(&destination(), &destination(), &remove, &copy);
+}
+
+/// Two writers that each give text to a blank `Plain Two` paragraph, prepared on one version
+/// and committed one after the other: each adds a use of the style, a write of the body's
+/// style uses, which are derived (recomputed where it lands), so neither conflicts with the
+/// other. Both uses are recorded: each step writes the style uses, and a copy run after
+/// them maps to `Plain Two`, which only both uses together make the body style (one use
+/// ties with the default style's, counted first).
+#[test]
+fn two_writers_adding_uses_of_one_style_commit_without_a_conflict() {
+    let destination = || {
+        open(built(
+            |s| with_style(s, "Plain2", "Plain Two"),
+            &[
+                paragraph("5A000301", None, Some("One")),
+                paragraph("5A000302", Some("Plain2"), None),
+                paragraph("5A000303", Some("Plain2"), None),
+            ]
+            .concat(),
+        ))
+    };
+    let given = |id: &str| SetText {
+        target: format!("p:{id}"),
+        text: "Given text".to_owned(),
+        policy: RevisionPolicy::Untracked,
+    };
+    let (first, second) = (given("5A000302"), given("5A000303"));
+    let shared = destination();
+    interleaved(&shared, &destination(), &first, &second);
+    let stats = shared.store().stats();
+    assert_eq!(
+        (stats.conflicts, stats.exclusive),
+        (0, 0),
+        "a style use added is no conflict"
+    );
+    let uses = Key::StyleUse(Arc::from("word/document.xml"));
+    let steps = shared.store().steps();
+    assert_eq!(steps.len(), 2);
+    assert!(
+        steps.iter().all(|step| step.writes.contains(&uses)),
+        "each step writes the style uses"
+    );
+    let source = open(built(
+        |s| with_style(s, "SourceOnly", "Source Only"),
+        &paragraph("5B000301", Some("SourceOnly"), Some("Copied")),
+    ));
+    let copy = CopyBlocks {
+        source: CopySource::Other(Box::new(source.store().snapshot().doc().clone())),
+        range: CopyRange::Blocks("p:5B000301".to_owned()),
+        at: "end".to_owned(),
+        policy: RevisionPolicy::Untracked,
+        styles: StylePolicy::UseDestination,
+        style_map: Vec::new(),
+        unmapped: UnmappedPolicy::Body,
+        lists: ListPolicy::Separate,
+        bookmarks: BookmarkPolicy::Rename,
+    };
+    let styled = |editor: &Editor| body(editor).matches(r#"<w:pStyle w:val="Plain2"/>"#).count();
+    let one = destination();
+    one.store().run(&Caller::anonymous(), &first).unwrap();
+    one.store().run(&Caller::anonymous(), &copy).unwrap();
+    assert_eq!(styled(&one), 2, "one use: the default style is the body style");
+    shared.store().run(&Caller::anonymous(), &copy).unwrap();
+    assert_eq!(styled(&shared), 3, "both uses: `Plain Two` is the body style");
+}
+
+/// The earlier of two steps that each add a use of one style undoes past the later one: the
+/// style uses both write are derived, which entangles neither with the other (the later step
+/// did not read them).
+#[test]
+fn a_step_adding_a_style_use_undoes_past_another() {
+    let editor = open(built(
+        |s| with_style(s, "Plain2", "Plain Two"),
+        &[
+            paragraph("5A000401", Some("Plain2"), None),
+            paragraph("5A000402", Some("Plain2"), None),
+        ]
+        .concat(),
+    ));
+    let given = |id: &str| SetText {
+        target: format!("p:{id}"),
+        text: "Given text".to_owned(),
+        policy: RevisionPolicy::Untracked,
+    };
+    editor.store().run(&Caller::anonymous(), &given("5A000401")).unwrap();
+    editor.store().run(&Caller::anonymous(), &given("5A000402")).unwrap();
+    let earlier = editor.store().steps()[0].step;
+    editor.store().undo_step(earlier, &KeySet::new()).unwrap();
+    assert_eq!(body(&editor).matches("Given text").count(), 1, "the later step kept");
 }

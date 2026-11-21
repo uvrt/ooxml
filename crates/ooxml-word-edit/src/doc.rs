@@ -41,7 +41,9 @@ pub enum Key {
     /// What a part's paragraphs show a reader of their style uses: each paragraph with text
     /// or in a list, in order, with its paragraph style, its list and whether its text is
     /// blank (the body style a copy maps to, the list a copied list continues). Written
-    /// where a change alters one (`sink::style_use`), and with the part put or removed.
+    /// where a change alters one (`sink::style_use`), and with the part put or removed. It is
+    /// derived ([`ooxml_store::DocModel::derived`]): a reader of it conflicts with a writer,
+    /// two writers of it do not (their blocks decide).
     StyleUse(Arc<str>),
 }
 
@@ -676,6 +678,12 @@ impl DocModel for WordDoc {
     fn kept(key: &Key) -> bool {
         // ids drawn stay drawn: undoing a step gives none of them back
         matches!(key, Key::Seq(_) | Key::Annotations)
+    }
+
+    fn derived(key: &Key) -> bool {
+        // what a part's paragraphs show a reader of style uses is a function of its tree,
+        // whose blocks (or the part) the writer keys as well
+        matches!(key, Key::StyleUse(_))
     }
 
     fn carry(&mut self, head: &Self) {
