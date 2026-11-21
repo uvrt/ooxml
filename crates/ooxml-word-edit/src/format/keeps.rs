@@ -8,17 +8,23 @@
 //! where the styles do not give it (off: each direct keep the styles do not give
 //! removed).
 //!
-//! Must not: write anything (the command writes the plan), or read outside the body.
+//! Also owns what a check asks of a range's keep ([`kept_blocks`], [`keep_writes`]) and the
+//! package a trial lays out ([`kept_package`]: the plan written on a copy of the main part,
+//! nothing else changed).
+//!
+//! Must not: change the document (the command writes the plan), or read outside the body.
 
-use super::values::{Property, Setting, Value};
+use super::values::{write_paragraph, Property, Setting, Value};
 use crate::blocks::{blocks_of, resolve_block, BlockKind};
 use crate::names::W;
+use crate::work::{scope_above, Work};
 use crate::{EditError, Result, WordDoc};
+use ooxml_opc::Package;
 use ooxml_word_model::address::{expand_heading, scope_paragraphs, span_ends};
 use ooxml_word_model::docx::formatting::{EffectiveParagraph, Formatting};
 use ooxml_word_model::docx::keeps::{declared, row_leads, Keeps};
 use ooxml_word_model::docx::{at_path, Docx};
-use ooxml_xml::{Element, Node};
+use ooxml_xml::{Element, Node, NodePath, Patch};
 use std::sync::Arc;
 
 /// What keeping some blocks together writes.
@@ -249,4 +255,55 @@ fn keep_values(look: &mut Keeps<'_>, paragraph: &Element, place: &[u32], names: 
         }
     }
     out
+}
+
+/// The ids of the body's blocks `address` names, in order (docx-agent's
+/// `copies.blocks_of`): those a keep of it writes on, a block-level control's blocks in its
+/// place.
+///
+/// # Errors
+/// An address naming nothing in the body.
+pub fn kept_blocks(doc: &WordDoc, docx: &Docx, address: &str) -> Result<Vec<String>> {
+    Ok(body_blocks(doc, docx, address)?.into_iter().map(|(id, _)| id).collect())
+}
+
+/// Whether keeping `address`'s blocks together (`on`) or releasing them writes anything:
+/// `false` where they are kept so (or free) already.
+///
+/// # Errors
+/// As [`keep_plan`]'s.
+pub fn keep_writes(doc: &WordDoc, docx: &Docx, address: &str, on: bool) -> Result<bool> {
+    Ok(!keep_plan(doc, docx, address, on)?.changes.is_empty())
+}
+
+/// The document's package with only what keeping (`on`) or releasing `address`'s blocks
+/// writes -- `word_format` `keep_together`'s paragraph settings, untracked and unstamped
+/// (docx-agent's `keep_trials._changed`): what a check lays out to say what the call would
+/// do. `None` where it writes nothing.
+///
+/// # Errors
+/// As [`keep_plan`]'s; the main part not XML.
+pub fn kept_package(doc: &WordDoc, docx: &Docx, address: &str, on: bool) -> Result<Option<Package>> {
+    let plan = keep_plan(doc, docx, address, on)?;
+    if plan.changes.is_empty() {
+        return Ok(None);
+    }
+    let main = docx.main.clone();
+    let mut tree = doc.tree(&main)?.ok_or_else(|| EditError::NoPart(main.clone()))?;
+    let shared = doc.shared_handle();
+    let orders = shared.facts.orders();
+    for (place, settings) in &plan.changes {
+        let (&last, above) = place.split_last().ok_or_else(|| EditError::Path(main.clone()))?;
+        let element = at_path(tree.root(), place).ok_or_else(|| EditError::Path(main.clone()))?;
+        let mut work = Work::of(element, scope_above(tree.root(), place));
+        let root = work.root();
+        write_paragraph(&mut work, root, settings, orders);
+        let new = work.build().ok_or_else(|| EditError::Path(main.clone()))?;
+        let old = Node::Element(Arc::clone(element));
+        let mut parent = vec![0usize];
+        parent.extend(above.iter().map(|k| *k as usize));
+        let patch = Patch::splice(NodePath(parent), last as usize, vec![old], vec![Node::Element(new)]);
+        tree = patch.apply(&tree).map_err(|_| EditError::Path(main.clone()))?;
+    }
+    Ok(Some(doc.package().with_new_tree(&main, tree)))
 }

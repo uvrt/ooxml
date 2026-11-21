@@ -19,6 +19,7 @@
 //! last version laid out.
 
 mod parts;
+mod trial;
 
 use crate::causes::{context_cause, part_reason, whole_cause, RelaidCause};
 use crate::digests::Lines;

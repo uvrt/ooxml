@@ -300,6 +300,12 @@ pub(crate) fn py_strip(text: &str) -> &str {
     text.trim_matches(py_space)
 }
 
+/// Whether a page's block key is a top-level block's (`block_keys(key)[0] == key`): a
+/// paragraph or table below the body and its block-level content controls.
+pub(crate) fn block_keys_top(key: &str) -> bool {
+    top_block_path(key) == Some(key)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

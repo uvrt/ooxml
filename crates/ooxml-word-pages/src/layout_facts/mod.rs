@@ -4,8 +4,9 @@
 //! ([`spacers`]), keeps broken at a page's foot and tables kept together ([`keeps`]),
 //! tables parted from the line that introduces or follows them ([`parted`]), rows split
 //! over pages and header rows not repeated ([`tables`]), columns that fit badly
-//! ([`columns`]), what is drawn past the margins ([`margins`]) and the pages laid out by
-//! rules not measured ([`uncertain`]) -- each as typed entries, in docx-agent's order, with
+//! ([`columns`]), what is drawn past the margins ([`margins`]), the pages laid out by
+//! rules not measured ([`uncertain`]), each range's extent and page breaks ([`ranges`]) and
+//! what a range's keep does in a trial layout ([`trials`]) -- each as typed entries, in docx-agent's order, with
 //! what fixes them; on the pages asked for, and about the blocks a `range` names where
 //! scoped ([`Scope`]).
 //!
@@ -24,11 +25,13 @@ pub mod columns;
 pub mod keeps;
 pub mod margins;
 pub mod parted;
+pub mod ranges;
 mod scope;
 pub mod sizes;
 pub mod spacers;
 pub mod tables;
 mod tree;
+pub mod trials;
 pub mod uncertain;
 
 use crate::line_text::LineText;
@@ -42,8 +45,10 @@ use ooxml_xml::Element;
 use std::cell::OnceCell;
 use std::collections::{BTreeSet, HashMap};
 
+pub use ranges::{room, Break, Extent, RangeLayout};
 pub use scope::{Range, Scope, ScopeError};
 pub use tree::{Block, BlockKind};
+pub use trials::{Blank, KeepEffect, TrialBlocks};
 
 /// Each page as a check reads its paint (`PageEngine::page_read`).
 pub trait PageReads {

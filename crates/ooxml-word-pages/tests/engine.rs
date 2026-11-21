@@ -2,7 +2,8 @@
 //! parts whose stored bytes did not change and is laid out from the version before; a
 //! version given as its touched parts is the version given whole; a document the layout
 //! does not lay out yet is a fallback with its reason; a layout stopped lays nothing out
-//! and the next is laid out from the version before; columns with a line between them,
+//! and the next is laid out from the version before; a trial is laid out from a version
+//! and kept nowhere; columns with a line between them,
 //! line numbers and a drop cap are laid out and painted in Rust; a floating shape is
 //! painted in Rust and said of as docx2svg says it. The faces are the open ones the repository ships.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -256,6 +257,33 @@ fn a_layout_stopped_lays_nothing_out_and_the_next_is_laid_out_from_the_one_befor
     let summary = fresh.summary(&whole).unwrap();
     assert_eq!(summary.pages.len(), whole.page_count());
     assert_eq!(summary.pages, kept.summary(&second).unwrap().pages);
+}
+
+#[test]
+fn a_trial_is_laid_out_from_the_version_checked_and_kept_nowhere() {
+    let opened = |bytes: Vec<u8>| ooxml_opc::Package::open(Arc::from(bytes), &ooxml_base::Limits::default()).unwrap();
+    let mut kept = engine();
+    let first = kept.lay_out(&opened(package(&paragraphs(120, None)))).unwrap().unwrap();
+    let edited = opened(package(&paragraphs(120, Some(60))));
+    let trial = kept.trial(&edited, &first, &after(usize::MAX)).unwrap().unwrap();
+    assert!(
+        Arc::ptr_eq(kept.last().unwrap(), &first),
+        "the version checked is still the last"
+    );
+    assert_eq!(kept.stats().trials, 1);
+    let mut fresh = engine();
+    let whole = fresh.lay_out(&edited).unwrap().unwrap();
+    assert_eq!(&trial, whole.facts(), "page for page the layout of those bytes alone");
+    // stopped: nothing laid out, the last version kept
+    assert!(matches!(
+        kept.trial(&edited, &first, &after(0)),
+        Err(ooxml_word_pages::PagesError::Stopped)
+    ));
+    assert!(Arc::ptr_eq(kept.last().unwrap(), &first));
+    // the next version is laid out from the one the engine had
+    let second = kept.lay_out(&edited).unwrap().unwrap();
+    assert!(second.relaid());
+    assert_eq!(second.facts(), whole.facts());
 }
 
 #[test]

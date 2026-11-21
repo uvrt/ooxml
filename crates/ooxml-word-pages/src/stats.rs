@@ -1,6 +1,6 @@
 //! Owns: [`EngineStats`], what a page engine did since it was made: the versions it laid
 //! out (whole, again from the one before, answered with a fallback, stopped), the parts it
-//! read, the pages it painted and said, and its time opening and laying out.
+//! read, the trial layouts it made, the pages it painted and said, and its time opening and laying out.
 //!
 //! Must not: hold anything but counts and times.
 
@@ -37,6 +37,8 @@ pub struct EngineStats {
     /// Versions asked again: the same parts as the last version laid out, which was
     /// answered (nothing laid out).
     pub kept: u64,
+    /// Trial layouts made (a version with a change a check asks about, kept nowhere).
+    pub trials: u64,
 }
 
 impl EngineStats {

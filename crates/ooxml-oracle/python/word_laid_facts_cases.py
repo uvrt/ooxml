@@ -3,7 +3,8 @@ lane P5f): ``word_reads_diff.py laid``.
 
 For each document, docx-agent's ``layout_facts`` of its layout -- the facts the Rust tools
 give so far (:data:`KEYS`, ``settings``' :data:`SETTINGS`), capped as ``check`` lists them
--- once without a minimum text size and once with each of :data:`MINIMUMS`, against the
+-- once without a minimum text size and once with each of :data:`MINIMUMS`, and for some
+ranges with each range's report (``range``: extent, keeps, each keep tried), against the
 ``word-reads`` binary's laid fact cases (``crates/ooxml-oracle/src/laid_facts.rs``: a page
 engine laying the document out with docx-agent's fonts, ``fonts_of``).
 
@@ -57,6 +58,52 @@ def _ranges(document) -> list[str]:
     return [blocks[len(blocks) // 2].id] if blocks else []
 
 
+def _block_ranges(document, layout) -> dict[str, list[str]]:
+    """The ranges tried besides :func:`_ranges`' (each range's keep, ``check``'s ``range``
+    report): ``"break"``, the span of the two top-level blocks either side of the first page
+    break (its keep tried, where it can close the break); ``"chain"``, the blocks page 2
+    starts with that keep with the next, and the one they keep with (a kept range starting
+    a page: its release tried)."""
+    from docx_agent.edit import effective
+    from docx_agent.layout_facts import _W
+
+    out: dict[str, list[str]] = {}
+    first, second = layout.blocks_on(1), layout.blocks_on(2)
+    if len(first) >= 2 and second:
+        before = first[-1] if first[-1] not in second else first[-2]
+        out["break"] = [f"{before}..{second[0]}"] if before != second[0] else []
+    if second:
+        main = document.package.document_part()
+        body = document.package.tree(main).find(_W + "body")
+        index = document._index(main)
+        blocks = [(entry.id, child) for child in body if child.tag in (_W + "p", _W + "tbl")
+                  for entry in [index.entry_for(child)] if entry is not None]
+        ids = [identifier for identifier, _ in blocks]
+        if second[0] in ids:
+            start = end = ids.index(second[0])
+
+            def chained(element) -> bool:
+                inside = [element] if element.tag == _W + "p" else list(element.iter(_W + "p"))
+                return all(effective.paragraph(document, paragraph).keep_with_next for paragraph in inside)
+
+            while end + 1 < len(blocks) and chained(blocks[end][1]):
+                end += 1
+            out["chain"] = [f"{ids[start]}..{ids[end]}" if end > start else ids[start]]
+    return {name: ranges for name, ranges in out.items() if ranges}
+
+
+def _range_report(document, layout, scope) -> list:
+    """Each range as ``check`` reports it -- its extent and keeps -- with each keep tried
+    from this layout (``keep_trials.keep_effects``, its caps)."""
+    from docx_agent.layout import layout_options
+    from docx_agent.tools.keep_trials import keep_effects
+    from docx_agent.tools.scoped import range_pages
+
+    reported, _ = range_pages(scope, layout, extent=True)
+    keep_effects(layout._raw, document.to_bytes(), layout_options(document, {}), layout, scope, reported)
+    return reported
+
+
 def check_laid(args, run_rust, report, files_of) -> int:
     from word_structure_cases import fonts_of
 
@@ -80,18 +127,27 @@ def check_laid(args, run_rust, report, files_of) -> int:
             if minimum is not None:
                 item["min_size"] = minimum
             manifest.append(item)
-        # One range: the body's first table, else its middle top-level block (check's
-        # range: the facts about its blocks, on its pages).
-        ranges = _ranges(document)
-        if ranges:
+        # The ranges: the body's first table, else its middle top-level block (check's
+        # range: the facts about its blocks, on its pages, and each range's report), and
+        # the spans a keep is tried for (:func:`_block_ranges`).
+        cases = {"range": _ranges(document)}
+        try:
+            cases.update(_block_ranges(document, layout))
+        except Exception as error:  # noqa: BLE001
+            print(f"{path} [ranges]: python failed: {error}")
+        for case, ranges in cases.items():
+            if not ranges:
+                continue
             try:
                 scope = Scope(document, ranges)
                 pages = sorted({p for found in scope.pages(layout) for p in found})
-                found = json.loads(json.dumps(_picked(layout_facts(layout, pages=pages, scope=scope))))
+                found = _picked(layout_facts(layout, pages=pages, scope=scope))
+                found["range"] = _range_report(document, layout, scope)
+                found = json.loads(json.dumps(found))
             except Exception as error:  # noqa: BLE001
-                print(f"{path} [range]: python failed: {error}")
+                print(f"{path} [{case}]: python failed: {error}")
                 continue
-            expected[(str(path), "range")] = {"facts": found}
-            manifest.append({"file": str(path), "case": "range", "laid": True, "fonts": fonts, "range": ranges})
+            expected[(str(path), case)] = {"facts": found}
+            manifest.append({"file": str(path), "case": case, "laid": True, "fonts": fonts, "range": ranges})
     rust = {key: line["reply"] for key, line in run_rust(args.rust, manifest).items()}
     return report(expected, rust)

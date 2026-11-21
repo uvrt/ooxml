@@ -16,6 +16,7 @@ mod args;
 mod facts;
 mod laid_facts;
 mod laid_tables;
+mod ranges;
 mod reflow;
 
 pub use args::{Check, CheckCopy, CheckInclude, CheckScale, CopyLists, CopyReference, ScaleShow, ScaleStep, StepText};
@@ -25,6 +26,7 @@ pub use laid_facts::{
     smallest_text_json, spacer_json,
 };
 pub use laid_tables::{column_fit_json, past_margins_json, split_row_json, uncertain_json, unrepeated_json};
+pub use ranges::{ranges_json, Trials, TRIALS, TRIAL_SECONDS};
 pub use reflow::{LastCheck, Seen};
 
 use crate::describe::cancelled;

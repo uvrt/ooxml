@@ -1,6 +1,7 @@
 //! `word-reads`' layout fact cases: `check`'s facts read from the pages
 //! (`ooxml_word_pages::layout_facts`, worded and capped by `ooxml_tools_word`), of a page
-//! engine laying the document out with the case's fonts (docx-agent's), in the form
+//! engine laying the document out with the case's fonts (docx-agent's) -- with each
+//! range's report (`range`: extent, keeps, each keep tried) where scoped -- in the form
 //! `python/word_laid_facts_cases.py` writes docx-agent's (`layout_facts`' keys): `{"facts":
 //! {...}}`, or `{"error"}`.
 //!
@@ -13,6 +14,15 @@ use ooxml_word_pages::page_read::PageRead;
 use ooxml_word_pages::{LaidVersion, PageEngine};
 use serde_json::{json, Map, Value};
 use std::sync::{Arc, Mutex, PoisonError};
+
+/// Never cancelled.
+struct Never;
+
+impl ooxml_base::Cancel for Never {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+}
 
 /// The pages' text, painted by the engine that laid the version out.
 struct Painted<'e> {
@@ -76,6 +86,16 @@ fn facts(package: &Package, fonts: &Value, min_size: Option<&Value>, range: Opti
     let mut settings = Map::new();
     ooxml_tools_word::page_facts_json(&facts, minimum.as_ref(), &approximations, &mut out, &mut settings);
     out.insert("settings".into(), Value::Object(settings));
+    if facts.scope().is_some() {
+        let trials = ooxml_tools_word::Trials {
+            engine: &engine,
+            trials: ooxml_tools_word::TRIALS,
+            seconds: ooxml_tools_word::TRIAL_SECONDS,
+            cancel: &Never,
+        };
+        let ranges = ooxml_tools_word::ranges_json(&facts, &doc, &docx, Some(&trials));
+        out.insert("range".into(), Value::from(ranges));
+    }
     Ok(Value::Object(out))
 }
 
