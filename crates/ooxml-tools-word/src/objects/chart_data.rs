@@ -8,17 +8,14 @@
 //! Must not: resolve a series or category by name (the handler does, `chart_names`), or
 //! write but through the [`EditGraphic`](ooxml_word_edit::EditGraphic) command.
 
-use super::chart_workbook::workbook_part;
-use ooxml_base::pyfmt::repr_str;
+use super::chart_block::{all_sources, Block};
+use super::chart_keeper::{refused, unported, Keeper};
 use ooxml_chart::data::Point;
-use ooxml_chart::edit::{ChartTree, DataError, PointValue, SourceRef, Which};
-use ooxml_opc::{Limits, Package};
-use ooxml_sheets::{parse_formula, SheetsError, WorkbookWriter, Write};
+use ooxml_chart::edit::{ChartTree, DataError, LabelLook, PointValue, Which};
+use ooxml_opc::Package;
 use ooxml_word_edit::{EditError, GraphicEdit, GraphicParts, PartWrite};
 use std::sync::Arc;
 
-/// What docx-agent calls the package in a reason (`edit/charts.py`'s `DOCUMENT`).
-const DOCUMENT: &str = "document";
 /// The application whose Edit Data a warning names (`edit/charts.py`'s `APPLICATION`).
 const APPLICATION: &str = "Word";
 
@@ -33,6 +30,33 @@ pub(crate) enum DataAction {
     RenameSeries { series: usize, text: String },
     /// A category's label in every series.
     RenameCategory { category: usize, text: String },
+    /// A category added last, with a value per series (`None`: blanks).
+    AddCategory {
+        text: String,
+        values: Option<Vec<Option<f64>>>,
+    },
+    /// A category taken out.
+    RemoveCategory { category: usize },
+    /// A series added last (`None`: blank values).
+    AddSeries {
+        text: String,
+        values: Option<Vec<Option<f64>>>,
+    },
+    /// A series taken out.
+    RemoveSeries { series: usize },
+    /// The legend shown at a position (`r`, `l`, `t`, `b`) or, with `None`, hidden.
+    SetLegend { position: Option<&'static str> },
+    /// Value labels shown or hidden on one series or all.
+    DataLabels {
+        show: bool,
+        series: Option<usize>,
+        number_format: Option<String>,
+        /// The labels' size (Word's look) and the document's language.
+        size: Option<u32>,
+        lang: Option<String>,
+    },
+    /// The bar plots' gap width.
+    GapWidth { percent: i64 },
 }
 
 /// A data action on the chart `address` (the target, as ooxml-edit's messages name it).
@@ -65,6 +89,31 @@ impl GraphicEdit for ChartDataEdit {
             } => edit.set_value(*series, *category, *value)?,
             DataAction::RenameSeries { series, text } => edit.rename_series(*series, text)?,
             DataAction::RenameCategory { category, text } => edit.rename_category(*category, text)?,
+            DataAction::AddCategory { text, values } => edit.add_category(&self.address, text, values.as_deref())?,
+            DataAction::RemoveCategory { category } => edit.remove_category(&self.address, *category)?,
+            DataAction::AddSeries { text, values } => {
+                edit.add_series(&self.address, part, text, values.as_deref())?;
+            }
+            DataAction::RemoveSeries { series } => edit.remove_series(&self.address, *series)?,
+            DataAction::SetLegend { position } => {
+                edit.changed = edit.chart.set_legend(*position);
+                edit.ran = edit.changed;
+            }
+            DataAction::DataLabels {
+                show,
+                series,
+                number_format,
+                size,
+                lang,
+            } => {
+                let look = LabelLook {
+                    size: *size,
+                    number_format: number_format.as_deref(),
+                    lang: lang.as_deref(),
+                };
+                edit.data_labels(&self.address, *show, *series, &look)?;
+            }
+            DataAction::GapWidth { percent } => edit.gap_width(&self.address, *percent)?,
         }
         let mut writes = Vec::new();
         if edit.changed {
@@ -207,6 +256,177 @@ impl Edit<'_> {
     }
 }
 
+impl Edit<'_> {
+    /// `add_category` (last): a value per series, the cells beside the data checked free,
+    /// the caches and the workbook's lines grown.
+    fn add_category(&mut self, address: &str, text: &str, values: Option<&[Option<f64>]>) -> Result<(), EditError> {
+        let count = self.chart.point_count();
+        let series = self.chart.series_count();
+        let per_series = match values {
+            None => vec![None; series],
+            Some(values) if values.len() == series => values.to_vec(),
+            Some(values) => return Err(refused(&format!("{} values for {series} series", values.len()))),
+        };
+        self.ran = true;
+        let sources = all_sources(&self.chart)?;
+        let block = Block::find(address, &sources, &mut self.keeper, count)?;
+        if let Some(block) = &block {
+            let free = block.start + u32::try_from(count).unwrap_or(u32::MAX);
+            block.check_free(address, &mut self.keeper, &sources, &[free], None)?;
+        }
+        let label = PointValue::Text(text.to_owned());
+        self.chart
+            .insert_category(count, Some(&label), &per_series)
+            .map_err(data_refusal)?;
+        self.changed = true;
+        if let Some(block) = block {
+            let position = u32::try_from(count).unwrap_or(u32::MAX);
+            block.insert_line(
+                &mut self.chart,
+                &mut self.keeper,
+                &sources,
+                position,
+                Some(text),
+                &per_series,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// `remove_category`.
+    fn remove_category(&mut self, address: &str, index: usize) -> Result<(), EditError> {
+        let count = self.chart.point_count();
+        if index >= count {
+            return Err(refused(&format!("{address}: no category {index} (have {count})")));
+        }
+        self.ran = true;
+        if count <= 1 {
+            return Err(refused(&format!("{address}: a chart keeps at least one category")));
+        }
+        let sources = all_sources(&self.chart)?;
+        let block = Block::find(address, &sources, &mut self.keeper, count)?;
+        self.chart.delete_category(index).map_err(data_refusal)?;
+        self.changed = true;
+        if let Some(block) = block {
+            let index = u32::try_from(index).unwrap_or(u32::MAX);
+            block.delete_line(&mut self.chart, &mut self.keeper, &sources, index)?;
+        }
+        Ok(())
+    }
+
+    /// `add_series` (last): a copy of the last series with its own values, given the next
+    /// free line of the workbook -- or, without one to keep in step, literal data.
+    fn add_series(
+        &mut self,
+        address: &str,
+        part: &str,
+        text: &str,
+        values: Option<&[Option<f64>]>,
+    ) -> Result<(), EditError> {
+        self.ran = true;
+        let series = self.chart.series_count();
+        if series == 0 {
+            return Err(refused(&format!(
+                "{address}: a chart with no series has no template to add one from"
+            )));
+        }
+        let count = self.chart.point_count();
+        let values = values.map_or_else(|| vec![None; count], <[Option<f64>]>::to_vec);
+        if values.len() != count {
+            return Err(refused(&format!(
+                "{address}: {} values for {count} categories",
+                values.len()
+            )));
+        }
+        let sources = all_sources(&self.chart)?;
+        let block = Block::find(address, &sources, &mut self.keeper, count)?;
+        self.chart
+            .append_series(Some(text), &values, part, &ooxml_word_model::ids::sha256)
+            .map_err(data_refusal)?;
+        self.changed = true;
+        match block {
+            Some(block) => {
+                block.append_series(
+                    address,
+                    &mut self.chart,
+                    &mut self.keeper,
+                    &sources,
+                    series,
+                    Some(text),
+                    &values,
+                )?;
+            }
+            None => {
+                self.chart.name_to_literal(series, Some(text));
+                self.chart.to_literal(series, Which::Values);
+                self.chart.to_literal(series, Which::Sizes);
+            }
+        }
+        Ok(())
+    }
+
+    /// `remove_series`: from the workbook first, then from the chart with its legend entries.
+    fn remove_series(&mut self, address: &str, series: usize) -> Result<(), EditError> {
+        self.ran = true;
+        if self.chart.series_count() <= 1 {
+            return Err(refused(&format!("{address}: a chart keeps at least one series")));
+        }
+        let sources = all_sources(&self.chart)?;
+        let count = self.chart.point_count();
+        if let Some(block) = Block::find(address, &sources, &mut self.keeper, count)? {
+            block.delete_series(&mut self.chart, &mut self.keeper, &sources, series)?;
+        }
+        self.chart.delete_series(series);
+        self.changed = true;
+        Ok(())
+    }
+
+    /// `set_data_labels`, its number format checked.
+    fn data_labels(
+        &mut self,
+        address: &str,
+        show: bool,
+        series: Option<usize>,
+        look: &LabelLook<'_>,
+    ) -> Result<(), EditError> {
+        if let Some(format) = look.number_format {
+            if format.trim_matches(ooxml_xml::view::py_space).is_empty() || format.chars().count() > 255 {
+                return Err(refused(&format!(
+                    "{address}: a number format is a format code, such as #,##0.0"
+                )));
+            }
+            if !show {
+                return Err(refused(&format!("{address}: a number format is for labels shown")));
+            }
+        }
+        let chosen: Vec<usize> = match series {
+            Some(series) => vec![series],
+            None => (0..self.chart.series_count()).collect(),
+        };
+        self.ran = true;
+        self.chart.set_data_labels(show, &chosen, look);
+        self.changed = true;
+        Ok(())
+    }
+
+    /// `set_gap_width`, past the handler's whole-number check.
+    fn gap_width(&mut self, address: &str, percent: i64) -> Result<(), EditError> {
+        if !(0..=500).contains(&percent) {
+            return Err(refused(&format!("{address}: a gap width is a whole percentage, 0-500")));
+        }
+        if self.chart.gap_width().is_none() {
+            return Err(refused(&format!(
+                "{address}: only bar and column charts have a gap width"
+            )));
+        }
+        if self.chart.set_gap_width(percent) {
+            self.ran = true;
+            self.changed = true;
+        }
+        Ok(())
+    }
+}
+
 /// `_same_number`: two blanks, equal texts, or equal numbers.
 fn same(a: Option<&Point>, b: Option<f64>) -> bool {
     match (a, b) {
@@ -216,142 +436,6 @@ fn same(a: Option<&Point>, b: Option<f64>) -> bool {
     }
 }
 
-/// The embedded workbook kept in step with the cache (ooxml-edit's `_Editor`): opened when
-/// first written, or the reason the edit changed the cache only.
-struct Keeper<'p> {
-    package: &'p Package,
-    chart_part: &'p str,
-    opened: bool,
-    workbook: Option<(String, WorkbookWriter)>,
-    cache_only: Option<String>,
-}
-
-impl<'p> Keeper<'p> {
-    fn new(package: &'p Package, chart_part: &'p str) -> Keeper<'p> {
-        Keeper {
-            package,
-            chart_part,
-            opened: false,
-            workbook: None,
-            cache_only: None,
-        }
-    }
-
-    fn note(&mut self, reason: String) {
-        if self.cache_only.is_none() {
-            self.cache_only = Some(reason);
-        }
-    }
-
-    /// Open the workbook the first time it is written (`_Editor.workbook`): a reason the
-    /// chart has none replaces any noted before, as ooxml-edit sets it.
-    fn open(&mut self) -> Result<(), EditError> {
-        if !self.opened {
-            self.opened = true;
-            let root = self
-                .package
-                .tree(self.chart_part)?
-                .ok_or_else(|| EditError::NoPart(self.chart_part.to_owned()))?;
-            let found =
-                workbook_part(self.package, self.chart_part, root.root(), DOCUMENT).map_err(|why| unported(why.0))?;
-            match found {
-                Err(reason) => self.cache_only = Some(reason),
-                Ok(part) => {
-                    let bytes = self
-                        .package
-                        .read(&part)?
-                        .ok_or_else(|| EditError::NoPart(part.clone()))?;
-                    // ooxml-edit words a workbook it cannot open with the exception's text
-                    let writer = WorkbookWriter::open(bytes, &Limits::default())
-                        .map_err(|_| unported("an embedded workbook that cannot be read"))?;
-                    self.workbook = Some((part, writer));
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Write point `index` of `source` into its cell (`_Editor.write`).
-    fn write(&mut self, source: Option<&SourceRef>, index: usize, value: &PointValue) -> Result<(), EditError> {
-        let Some(formula) = source.and_then(|s| s.formula.as_deref()) else {
-            return Ok(()); // a literal: nothing in the workbook to keep in step
-        };
-        let range = match parse_formula(formula) {
-            Ok(Some(range)) => range,
-            Ok(None) => {
-                self.note(format!("the formula {} is not a single range", repr_str(formula)));
-                return Ok(());
-            }
-            Err(_) => return Err(unported("a formula ooxml-sheets cannot read")),
-        };
-        self.open()?;
-        let has_sheet = match self.workbook.as_mut() {
-            Some((_, workbook)) => workbook.has_sheet(&range.sheet).map_err(sheets_error)?,
-            None => return Ok(()),
-        };
-        if !has_sheet {
-            self.note(format!("its workbook has no sheet {}", repr_str(&range.sheet)));
-            return Ok(());
-        }
-        let cell = u32::try_from(index)
-            .ok()
-            .filter(|i| range.is_line() && *i < range.length())
-            .and_then(|i| range.cell(i));
-        let Some(cell) = cell else {
-            let spelled = range
-                .formula()
-                .map_err(|_| unported("a formula ooxml-sheets cannot spell"))?;
-            self.note(format!("the formula {spelled} does not have a cell for point {index}"));
-            return Ok(());
-        };
-        let given = match value {
-            PointValue::Blank => Write::Blank,
-            PointValue::Text(text) => Write::Text(text.clone()),
-            PointValue::Number(number) => Write::Number(*number),
-        };
-        match self.workbook.as_mut() {
-            Some((_, workbook)) => workbook
-                .set_value(&range.sheet, cell, &given, None)
-                .map_err(sheets_error),
-            None => Ok(()),
-        }
-    }
-
-    /// The workbook's bytes among `writes` where it changed (its part among `read` where it
-    /// was opened); the reason the edit changed the cache only, if it did.
-    fn finish(self, writes: &mut Vec<PartWrite>, read: &mut Vec<String>) -> Result<Option<String>, EditError> {
-        if let Some((part, writer)) = self.workbook {
-            read.push(part.clone());
-            if let Some(bytes) = writer.finish().map_err(sheets_error)? {
-                writes.push(PartWrite::Bytes(part, Arc::from(bytes)));
-            }
-        }
-        Ok(self.cache_only)
-    }
-}
-
-/// A chart edit ooxml-edit refuses (`ChartDataError`, `IndexError`), as docx-agent words it:
-/// `invalid_arguments` with the message stripped of quotes at its ends.
-fn refused(message: &str) -> EditError {
-    EditError::Argument {
-        field: String::new(),
-        message: message.trim_matches(['\'', '"']).to_owned(),
-        options: Vec::new(),
-    }
-}
-
 fn data_refusal(error: DataError) -> EditError {
     refused(&error.0)
-}
-
-fn unported(what: &str) -> EditError {
-    EditError::Unsupported(format!("edit_chart: {what}"))
-}
-
-fn sheets_error(error: SheetsError) -> EditError {
-    match error {
-        SheetsError::Unsupported(what) => unported(&what),
-        // ooxml-edit words a workbook it cannot write with its exceptions' texts
-        _ => unported("an embedded workbook ooxml-sheets cannot write"),
-    }
 }
