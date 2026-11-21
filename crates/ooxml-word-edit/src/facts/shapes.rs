@@ -1,8 +1,8 @@
 //! Owns: what is kept of tables by their content alone, for the process ([`Kept`]): a
-//! table's shape as Accept All leaves it (docx-agent's `_RAGGED`, round 57 R124: 512
-//! tables, the least recently used dropped first), so that a check after an edit settles
-//! again only the tables the edit changed -- and none at all when the document is checked
-//! again, reopened, or another document holds the same tables.
+//! table's shape as Accept All leaves it (docx-agent's `_RAGGED`, round 57 R124; the least
+//! recently used dropped first), so that a check after an edit settles again only the
+//! tables the edit changed -- and none at all when the document is checked again, reopened,
+//! or another document holds the same tables.
 //!
 //! Must not: keep anything a table's own content does not determine (a table's accepted
 //! copy is read from the table alone: no style, numbering or section changes its shape),
@@ -13,8 +13,10 @@ use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{Arc, Mutex, PoisonError};
 
-/// Tables kept, at most (docx-agent's `_RAGGED_SIZE`).
-pub(super) const KEPT: usize = 512;
+/// Tables kept, at most. The memo shows in no result, so it need not keep docx-agent's 512
+/// (`_RAGGED_SIZE`): it holds every reshaped table of a 3,000-page document with 1,292 of
+/// them, so its second check settles none again.
+pub(super) const KEPT: usize = 4096;
 
 /// A table by its content: the hash of its content, and the table, compared by content
 /// where the hashes agree (a shared allocation first).
