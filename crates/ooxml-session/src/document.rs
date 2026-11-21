@@ -50,6 +50,8 @@ pub(crate) struct Word {
     tracking: RwLock<Option<String>>,
     /// The ids its versions removed, and who removed each.
     pub(crate) retired: Retired,
+    /// What its last check with `reflow` saw.
+    pub(crate) last_check: Arc<ooxml_tools_word::LastCheck>,
 }
 
 impl Word {
@@ -163,6 +165,7 @@ impl Document {
                     opened,
                     tracking: RwLock::new(None),
                     retired: Retired::default(),
+                    last_check: Arc::default(),
                 }))
             }
             DocKind::Pptx | DocKind::Xlsx => {

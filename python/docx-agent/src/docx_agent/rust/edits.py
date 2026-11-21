@@ -210,11 +210,12 @@ def _layout_before(call: Any, entry: Any) -> Any:
     the view is current (the version before the edit; ``entry.held``: read as it is, no step
     of the view's opened for it); ``None`` where there is none."""
     from ..tools.laid import laid_before, seen_before, state_bytes
+    from .reads import checked_before
 
     if not entry.view_current:
         return None
     document = entry.held
-    return seen_before(document, state_bytes(call)) or laid_before(document)
+    return seen_before(document, state_bytes(call)) or checked_before(call) or laid_before(document)
 
 
 def _hand_engine(call: Any, entry: Any, before: Any, changed: bool) -> None:

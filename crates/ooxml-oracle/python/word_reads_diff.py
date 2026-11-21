@@ -12,7 +12,8 @@ Runs docx-agent and the Rust core on the same documents and compares, field by f
   ``describe`` and ``word_read``) against docx-agent's toolbox, ``word_read`` in every view
   and for ``stories=all``.
 * ``ranges``, ``inspect``, ``find``, ``batch`` and ``check``: the addressed reads, the batch,
-  and ``check``'s facts read from the document alone (lane P5a; ``word_reads_tools.py``).
+  and ``check``'s facts read from the document alone (lane P5a) and its reflow (lane P5b;
+  ``word_reads_tools.py``).
 * ``facts``: ``check``'s layout facts read from the document alone, as library functions
   (lane P5a2; ``word-reads``' fact cases, ``word_facts_cases.py``).
 

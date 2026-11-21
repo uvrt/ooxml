@@ -226,7 +226,7 @@ fn case_blobs(case: &Value) -> BlobList {
 /// A page engine over the fonts a case names (`folders`: `[location, path]` pairs as
 /// docx2svg hands them to `ooxml_core.WordFonts`, `substitutes`, `substitute`), as the
 /// layout port the field tools read.
-fn engine_pages(fonts: &Value) -> EnginePages {
+pub(crate) fn engine_pages(fonts: &Value) -> EnginePages {
     use ooxml_fonts::{Folder, Location, WordFontOptions};
     use ooxml_word_pages::{DiskFonts, EngineBudgets, EngineOptions, FontSetup, PageEngine};
     let pairs = |key: &str| -> Vec<(String, String)> {

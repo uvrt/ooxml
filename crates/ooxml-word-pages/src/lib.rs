@@ -18,6 +18,8 @@
 //! - one version laid out ([`LaidVersion`]): its facts (made once, when first asked), its
 //!   pages' views (lines with their spans, rules, pictures and drawing slots) and SVG,
 //!   painted when asked;
+//! - how much of a document a version covers, and every warning it says, as docx2svg says
+//!   them ([`coverage`]);
 //! - what a version alone holds, in bytes, roughly ([`LaidVersion::weight`]), and what the
 //!   engine keeps within its budgets ([`EngineBudgets`]: its memos, swept once a version is
 //!   laid out; its pages' paint, least recently used let go first).
@@ -28,6 +30,7 @@
 #![forbid(unsafe_code)]
 
 mod causes;
+pub mod coverage;
 mod digests;
 mod disk;
 mod drawing_said;
@@ -40,6 +43,7 @@ pub mod line_text;
 pub mod page_said;
 mod pictures;
 pub mod png;
+mod stats;
 pub mod summary;
 pub mod support;
 mod text_boxes;
@@ -49,8 +53,9 @@ mod weight;
 
 pub use causes::RelaidCause;
 pub use disk::DiskFonts;
-pub use engine::{EngineBudgets, EngineOptions, EngineStats, PageDigests, PageEngine};
+pub use engine::{EngineBudgets, EngineOptions, PageDigests, PageEngine};
 pub use error::{Fallback, PagesError};
 pub use fonts::{embedded_parts, font_table, DocumentFonts, FontSetup};
 pub use pictures::PackagePictures;
+pub use stats::EngineStats;
 pub use version::{LaidVersion, PageView};

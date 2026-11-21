@@ -209,6 +209,21 @@ def _skip_if_a_face_is_absent(warnings, coverage=None) -> None:
             pytest.skip(f"a face this document is laid out in is not installed here: [{code}] {message}")
 
 
+def _skip_if_a_check_says_a_face_is_absent(coverage, warnings) -> None:
+    # A check's reflow facts (``coverage_facts``, its warnings as text), wherever it was laid out.
+    coverage = coverage or {}
+    if coverage.get("missing_fonts"):
+        pytest.skip("a face this document is laid out in is not installed here: "
+                    + ", ".join(coverage["missing_fonts"]))
+    approximate = [f for f in coverage.get("substituted_fonts", ()) if f.endswith("(approximate)")]
+    if approximate:
+        pytest.skip("a face this document is laid out in is not installed here (laid out with an "
+                    "approximate substitute): " + ", ".join(approximate))
+    for text in warnings or ():
+        if any(code in text for code in _FACE_ABSENT) or "cannot be measured" in text:
+            pytest.skip(f"a face this document is laid out in is not installed here: {text}")
+
+
 @pytest.fixture(autouse=True)
 def _skip_where_faces_are_absent(request, monkeypatch):
     # ``any_faces``: a test that holds without Office's faces (it leaves what they measure out).
@@ -240,22 +255,26 @@ def _skip_where_faces_are_absent(request, monkeypatch):
         # coverage and the warnings that came back (round 47: ``timed`` passed on).
         made = facts_of(document, unlocked, request, **options)
         if made is not None:
-            coverage = made[0]["reflow"]["coverage"]
-            if coverage.get("missing_fonts"):
-                pytest.skip("a face this document is laid out in is not installed here: "
-                            + ", ".join(coverage["missing_fonts"]))
-            approximate = [f for f in coverage.get("substituted_fonts", ()) if f.endswith("(approximate)")]
-            if approximate:
-                pytest.skip("a face this document is laid out in is not installed here (laid out with an "
-                            "approximate substitute): " + ", ".join(approximate))
-            for text in made[0].get("warnings") or ():
-                if any(code in text for code in _FACE_ABSENT) or "cannot be measured" in text:
-                    pytest.skip(f"a face this document is laid out in is not installed here: {text}")
+            _skip_if_a_check_says_a_face_is_absent(made[0]["reflow"].get("coverage"), made[0].get("warnings"))
         return made
+
+    from docx_agent.rust import reads as rust_reads
+
+    serve_check = rust_reads.serve_check
+
+    def checked_serve_check(call, arguments):
+        # Lane P5b: a check the Rust session answers lays out in Rust, through none of the
+        # above: read the coverage and the warnings its reflow says.
+        served = serve_check(call, arguments)
+        reflow = (served.data or {}).get("reflow") if served is not None and served.ok else None
+        if isinstance(reflow, dict):
+            _skip_if_a_check_says_a_face_is_absent(reflow.get("coverage"), served.data.get("layout_warnings"))
+        return served
 
     monkeypatch.setattr(docx2svg, "lay_out_docx", checked_lay_out)
     monkeypatch.setattr(agent_layout, "convert", checked_convert)
     monkeypatch.setattr(agent_shared, "check_facts", checked_facts)
+    monkeypatch.setattr(rust_reads, "serve_check", checked_serve_check)
     # Round 59 (R134): word_inspect's placements, keeps, a change's reflow and a batch's reads
     # ask the layout module's own (held_answers, held_facts) -- read what came back there too.
     monkeypatch.setattr(agent_layout, "check_facts", checked_facts)
