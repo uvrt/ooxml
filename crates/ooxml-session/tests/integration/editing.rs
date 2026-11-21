@@ -125,10 +125,10 @@ fn the_tracking_mode_is_kept_and_review_tools_edit() {
     assert_eq!(accepted["ok"], json!(true), "{accepted}");
     assert_eq!(accepted["version"], json!(1));
     assert!(!body_of(&s, &d).contains("w:ins"));
-    // the session's undo takes the accept back
+    // the session's undo takes the accept back: the state opened, numbered 0 again
     assert_eq!(
         s.undo(&d, 1, &CallContext::default()).unwrap(),
-        Undone { count: 1, version: 2 }
+        Undone { count: 1, version: 0 }
     );
     assert!(body_of(&s, &d).contains("w:ins"));
     let off = call(&s, "word_set_tracking", json!({"doc": "d1", "on": false}), &context);
@@ -640,4 +640,43 @@ fn a_step_group_is_one_undo_step_and_a_revert_takes_its_edits_back() {
     assert!(body_of(&s, &d).contains(">five<"));
     assert_eq!(s.undo(&d, 1, &context).unwrap().count, 1);
     assert!(body_of(&s, &d).contains(">two<"));
+}
+
+#[test]
+fn the_history_is_listed_in_state_numbers() {
+    let s = session();
+    let d = s
+        .open(docx(&paragraph("11111111", "one")), DocKind::Docx, "a.docx")
+        .unwrap();
+    let (ann, bo) = (as_caller("ann"), as_caller("bo"));
+    put(&s, &d, &paragraph("11111111", "by ann"), &ann);
+    put(&s, &d, &paragraph("11111111", "by bo"), &bo);
+    let numbers = s.numbers(&d).unwrap();
+    assert_eq!(numbers.highest, 2);
+    let steps: Vec<_> = numbers
+        .steps
+        .iter()
+        .map(|s| (s.before, s.after, s.caller.clone()))
+        .collect();
+    assert_eq!(
+        steps,
+        vec![(0, 1, Some("ann".to_owned())), (1, 2, Some("bo".to_owned()))]
+    );
+    // an undo brings back state 1 (its number again); redo would bring back 2
+    let undone = s.undo(&d, 1, &CallContext::default()).unwrap();
+    assert_eq!((undone.count, undone.version), (1, 1));
+    assert_eq!(s.snapshot(&d).unwrap().number(), 1);
+    let numbers = s.numbers(&d).unwrap();
+    assert_eq!((numbers.highest, numbers.steps.len()), (2, 1));
+    assert_eq!(numbers.redo.last().map(|r| r.after), Some(2));
+    assert_eq!(s.highest(&d).unwrap(), 2);
+    // a state found by its number: the head, an earlier one, none once let go
+    assert_eq!(s.numbered(&d, 1).unwrap().map(|o| o.number()), Some(1));
+    assert!(s.numbered(&d, 0).unwrap().is_some_and(|o| o.number() == 0));
+    // a new step takes the next number; redo is gone
+    put(&s, &d, &paragraph("11111111", "by ann again"), &ann);
+    let numbers = s.numbers(&d).unwrap();
+    assert_eq!((numbers.highest, numbers.redo.len()), (3, 0));
+    assert_eq!(numbers.steps.last().map(|s| (s.before, s.after)), Some((1, 3)));
+    assert!(s.numbered(&d, 2).unwrap().is_none(), "state 2 is out of reach");
 }

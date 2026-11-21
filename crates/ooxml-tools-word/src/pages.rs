@@ -1,7 +1,8 @@
 //! Owns: [`EnginePages`], the edit core's [`FieldLayout`] port over a Word page engine
 //! (`ooxml-word-pages`): a version laid out from the one the engine laid out last, its page
 //! numbers read as a field update reads them (`ooxml_word_layout::fields::update`), places
-//! named by the tool's block ids (each found from its id when asked), the pages a block is
+//! named by the tool's block ids (each found from its id when asked; a text box's paragraph
+//! by the page the engine paints it on), the pages a block is
 //! drawn on (`LayoutFacts::pages_of_each`), a `STYLEREF`'s text read from the page painted
 //! (the engine paints it when asked), a character's advance in the version's fonts; and the
 //! reflow between two versions, each summarised as docx-agent's `LayoutSummary` is
@@ -19,7 +20,9 @@
 
 use ooxml_base::Cancel;
 use ooxml_opc::Package;
-use ooxml_word_edit::{CharAdvance, FieldLayout, FieldPlace, FieldRun, LaidFields, PageReflow, PageShows, Unknown};
+use ooxml_word_edit::{
+    CharAdvance, FieldLayout, FieldPlace, FieldRun, LaidFields, LayOutError, PageReflow, PageShows, Unknown,
+};
 use ooxml_word_layout::facts::LayoutFacts;
 use ooxml_word_layout::fields::update::{drawn_text, style_reference_known, PageNumbers};
 use ooxml_word_model::value::Text;
@@ -110,13 +113,18 @@ fn laid(found: Result<Result<Arc<LaidVersion>, Fallback>, PagesError>) -> Result
     }
 }
 
-/// `package` laid out and its pages summarised as docx-agent compares two layouts
-/// (`DocumentLayout.compare`: every line of text a page draws, its text boxes' too).
-fn summarised(engine: &mut PageEngine, package: &Package) -> Result<Summary, String> {
-    let version = laid(engine.lay_out(package))?;
+/// `package` laid out, stopped where `cancel` says so, and its pages summarised as
+/// docx-agent compares two layouts (`DocumentLayout.compare`: every line of text a page
+/// draws, its text boxes' too).
+fn summarised(engine: &mut PageEngine, package: &Package, cancel: &dyn Cancel) -> Result<Summary, LayOutError> {
+    let found = engine.lay_out_until(package, cancel);
+    if matches!(found, Err(PagesError::Stopped)) {
+        return Err(LayOutError::Stopped);
+    }
+    let version = laid(found).map_err(LayOutError::Unsupported)?;
     engine
         .contents(&version)
-        .ok_or_else(|| "the version laid out is not the engine's".to_owned())
+        .ok_or_else(|| LayOutError::Unsupported("the version laid out is not the engine's".to_owned()))
 }
 
 impl WordLayout for EnginePages {
@@ -130,18 +138,25 @@ impl WordLayout for EnginePages {
 }
 
 impl FieldLayout for EnginePages {
-    fn lay_out(&self, package: &Package) -> Result<Box<dyn LaidFields + '_>, String> {
+    fn lay_out(&self, package: &Package, cancel: &dyn Cancel) -> Result<Box<dyn LaidFields + '_>, LayOutError> {
         let found = {
             let mut engine = self.engine.lock().unwrap_or_else(PoisonError::into_inner);
-            engine.lay_out(package)
+            engine.lay_out_until(package, cancel)
         };
-        Ok(Box::new(Laid::new(laid(found)?, &self.engine)))
+        if matches!(found, Err(PagesError::Stopped)) {
+            return Err(LayOutError::Stopped);
+        }
+        let version = laid(found).map_err(LayOutError::Unsupported)?;
+        Ok(Box::new(Laid::new(version, &self.engine)))
     }
 
-    fn reflow(&self, before: &Package, after: &Package) -> Result<PageReflow, String> {
+    fn reflow(&self, before: &Package, after: &Package, cancel: &dyn Cancel) -> Result<PageReflow, LayOutError> {
         let (was, now) = {
             let mut engine = self.engine.lock().unwrap_or_else(PoisonError::into_inner);
-            (summarised(&mut engine, before)?, summarised(&mut engine, after)?)
+            (
+                summarised(&mut engine, before, cancel)?,
+                summarised(&mut engine, after, cancel)?,
+            )
         };
         let found = now.compare(&was, &std::collections::HashMap::new());
         Ok(PageReflow {
@@ -185,6 +200,20 @@ impl<'e> Laid<'e> {
             .path_of(id)
             .ok_or_else(|| Unknown(format!("{id} is not laid out")))
     }
+
+    /// The 0-based page the paragraph `id` is first drawn on: its first body line's, or --
+    /// a paragraph of a text box, which the body's lines leave out -- the first page the
+    /// box draws it on (docx-agent's `layout().where` reads both).
+    fn first_page(&self, id: &str) -> Result<usize, Unknown> {
+        let path = self.path(id)?;
+        if let Some(page) = self.numbers.drawn_on(&path) {
+            return Ok(page);
+        }
+        let mut engine = self.engine.lock().unwrap_or_else(PoisonError::into_inner);
+        engine
+            .first_page_in_text_box(&self.version, id)
+            .ok_or_else(|| Unknown(format!("{path} is not drawn")))
+    }
 }
 
 fn unknown(error: ooxml_word_layout::fields::update::Unknown) -> Unknown {
@@ -196,7 +225,7 @@ impl LaidFields for Laid<'_> {
         match at {
             FieldPlace::Body(id) => self
                 .numbers
-                .page_field(instruction, keyword, &self.path(id)?)
+                .page_field_at(instruction, keyword, self.first_page(id)?)
                 .map_err(unknown),
             FieldPlace::Page(page) => self.numbers.page_field_at(instruction, keyword, page).map_err(unknown),
         }
@@ -206,7 +235,7 @@ impl LaidFields for Laid<'_> {
         match at {
             FieldPlace::Body(id) => self
                 .numbers
-                .page_reference(instruction, &self.path(id)?)
+                .page_reference_at(instruction, self.first_page(id)?)
                 .map_err(unknown),
             FieldPlace::Page(page) => Err(Unknown(format!("a reference to page {page}"))),
         }

@@ -45,10 +45,10 @@ use ooxml_xml::Element;
 use std::cell::OnceCell;
 use std::collections::{BTreeSet, HashMap};
 
-pub use ranges::{room, Break, Extent, RangeLayout};
+pub use ranges::{room, BeyondFacts, Break, Extent, RangeLayout};
 pub use scope::{Range, Scope, ScopeError};
 pub use tree::{Block, BlockKind};
-pub use trials::{Blank, KeepEffect, TrialBlocks};
+pub use trials::{Blank, KeepEffect, Side, TrialBlocks};
 
 /// Each page as a check reads its paint (`PageEngine::page_read`).
 pub trait PageReads {

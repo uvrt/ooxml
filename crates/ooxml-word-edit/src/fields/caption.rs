@@ -6,7 +6,7 @@
 //! Must not: write but through the sink.
 
 use super::insert::InsertField;
-use super::pages::FieldLayout;
+use super::pages::EditLayout;
 use super::values::Day;
 use super::FieldEdited;
 use crate::paragraphs::insert_paragraph;
@@ -34,7 +34,7 @@ pub struct InsertCaption<'l> {
     /// The day a `DATE` shows (none here; an update's).
     pub today: Day,
     /// The layout of the document's versions.
-    pub layout: Option<&'l dyn FieldLayout>,
+    pub layout: Option<EditLayout<'l>>,
 }
 
 impl std::fmt::Debug for InsertCaption<'_> {

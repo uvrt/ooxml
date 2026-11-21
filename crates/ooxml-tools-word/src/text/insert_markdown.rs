@@ -23,7 +23,7 @@ use crate::review::{edit_refusal, Editing};
 use crate::structure::common::{blocks_ref_as_place, is_place, name_blocks, outcome, refused, Outcome};
 use crate::written::{self, Written};
 use ooxml_tools::{ArgEnum, Outcome as Replied, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
-use ooxml_word_edit::{InsertMarkdown, MarkdownInserted, MarkdownOptions, WriteMap};
+use ooxml_word_edit::{InsertMarkdown, MarkdownInserted, MarkdownOptions, TextKeep, WriteMap};
 use serde_json::{json, Map, Value};
 
 /// A Markdown construct a style map names a style for.
@@ -184,17 +184,36 @@ fn run(args: &WordInsertMarkdown, editing: &Editing<'_>) -> Result<ToolResult<Va
         options: MarkdownOptions::default(),
         policy: editing.policy(),
     };
-    let inserted = match editing.editor.run(editing.caller, &command) {
-        Ok(done) => done.out,
-        Err(error @ ooxml_word_edit::EditError::Unsupported(_)) => return Ok(refused(error, call)),
-        Err(error) => return Ok(ToolResult::failed(edit_refusal(error, "", call))),
+    // the values written by reference kept in the same step
+    let finish = |inserted: &MarkdownInserted, after: &written::After| {
+        let mut result = reply(args, inserted.clone());
+        let keeps = if editing.written.is_empty() {
+            Vec::new()
+        } else {
+            let made = Made {
+                markdown: &markdown,
+                field,
+                facts: &facts,
+                blocks: &inserted.blocks,
+            };
+            keep_facts(args, editing, &made, after, &mut result)
+        };
+        (result, keeps)
     };
-    let blocks = inserted.blocks.clone();
-    let mut result = reply(args, inserted);
-    if !editing.written.is_empty() {
-        keep_facts(args, editing, &markdown, field, &facts, &blocks, &mut result)?;
+    match written::run_keeping(editing, &command, finish) {
+        Ok((_, result)) => Ok(result),
+        Err(error @ ooxml_word_edit::EditError::Unsupported(_)) => Ok(refused(error, call)),
+        Err(error) => Ok(ToolResult::failed(edit_refusal(error, "", call))),
     }
-    Ok(result)
+}
+
+/// What the values written by reference are found by: the Markdown written, the `from`
+/// field or the values in the Markdown, the blocks made.
+struct Made<'a> {
+    markdown: &'a str,
+    field: Option<&'a Written>,
+    facts: &'a [Written],
+    blocks: &'a [String],
 }
 
 /// The note when the values written by reference could not be lined up with the blocks.
@@ -205,20 +224,23 @@ const NOT_LINED_UP: &str =
 /// (`facts`, their places in `markdown`, the text written) with the blocks a value
 /// standing alone made, kept as their source -- and a note first where they could not be
 /// lined up (docx-agent's `_fields_placed`); then every value found where it went
-/// (`keep_written`, on the call's own Markdown).
+/// (`keep_written`, on the call's own Markdown). The keeps.
 fn keep_facts(
     args: &WordInsertMarkdown,
     editing: &Editing<'_>,
-    markdown: &str,
-    field: Option<&Written>,
-    facts: &[Written],
-    blocks: &[String],
+    made: &Made<'_>,
+    after: &written::After,
     result: &mut ToolResult<Value>,
-) -> Result<(), ToolError> {
-    let after = written::after_edit(editing)?;
+) -> Vec<TextKeep> {
+    let Made {
+        markdown,
+        field,
+        facts,
+        blocks,
+    } = *made;
     let mut keeps = Vec::new();
     let said = if let Some(field) = field {
-        keeps.extend(written::whole_keeps(&after, field, blocks));
+        keeps.extend(written::whole_keeps(after, field, blocks));
         Some(vec![written::brief(field, Some(blocks))])
     } else if facts.is_empty() {
         None
@@ -228,7 +250,7 @@ fn keep_facts(
         for (k, fact) in facts.iter().enumerate() {
             let made = found.get(&k);
             if let Some(made) = made {
-                keeps.extend(written::whole_keeps(&after, fact, made));
+                keeps.extend(written::whole_keeps(after, fact, made));
             }
             said.push(written::brief(fact, made.map(Vec::as_slice)));
         }
@@ -239,7 +261,7 @@ fn keep_facts(
     };
     if let Replied::Done(done) = &mut result.outcome {
         let argument = |name: &str| (name == "markdown").then(|| args.markdown.clone()).flatten();
-        keeps.extend(written::written_keeps(&after, editing, done, &[], &argument));
+        keeps.extend(written::written_keeps(after, editing, done, &[], &argument));
         if let Some(said) = said {
             let mut data = match done.data.take() {
                 Some(Value::Object(data)) => data,
@@ -249,7 +271,7 @@ fn keep_facts(
             done.data = Some(Value::Object(data));
         }
     }
-    written::keep(editing, keeps, &try_call(args))
+    keeps
 }
 
 /// What of the call is the host's: data it holds, values or places by reference, blocks

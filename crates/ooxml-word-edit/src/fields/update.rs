@@ -10,9 +10,9 @@
 //! table of contents being rebuilt holds aside (they are made anew each pass, as docx-agent
 //! knows a field by its element).
 //!
-//! Must not: lay out (the [`FieldLayout`] port does), or write but through the sink.
+//! Must not: lay out (the [`FieldLayout`](super::pages::FieldLayout) port does), or write but through the sink.
 
-use super::pages::{FieldLayout, LaidFields};
+use super::pages::{EditLayout, LaidFields};
 use super::scan::{all_fields, paragraph_of, result_text, same_result, Located, Marks};
 use super::toc::build::EMPTY_TOC;
 use super::values::{sequence_values, value, Day};
@@ -41,7 +41,7 @@ pub struct UpdateFields<'l> {
     /// The day `DATE` fields show.
     pub today: Day,
     /// The layout of the document's versions.
-    pub layout: Option<&'l dyn FieldLayout>,
+    pub layout: Option<EditLayout<'l>>,
 }
 
 impl std::fmt::Debug for UpdateFields<'_> {
@@ -110,7 +110,7 @@ struct Pass<'p> {
 pub(crate) fn settle(
     sink: &mut EditSink<'_, '_>,
     held: &[Known],
-    layout: Option<&dyn FieldLayout>,
+    layout: Option<EditLayout<'_>>,
     today: Day,
 ) -> Result<Vec<String>> {
     // A pass that changes nothing has settled: the next would lay out the same version.
@@ -136,7 +136,7 @@ pub(crate) fn settle(
 pub(crate) fn pass_on(
     sink: &mut EditSink<'_, '_>,
     located: &Located,
-    layout: Option<&dyn FieldLayout>,
+    layout: Option<EditLayout<'_>>,
     today: Day,
 ) -> Result<Vec<String>> {
     let docx = sink.docx()?;
@@ -173,7 +173,7 @@ fn state(doc: &WordDoc, docx: &Docx, held: &[Known]) -> Vec<(String, String)> {
 fn pass(
     sink: &mut EditSink<'_, '_>,
     held: &[Known],
-    layout: Option<&dyn FieldLayout>,
+    layout: Option<EditLayout<'_>>,
     today: Day,
 ) -> Result<Vec<String>> {
     let docx = sink.docx()?;
@@ -187,11 +187,7 @@ fn pass(
                 "a field update that needs the layout".to_owned(),
             ))
         }
-        (true, Some(layout)) => Some(
-            layout
-                .lay_out(sink.doc().package())
-                .map_err(|why| EditError::Unsupported(format!("the layout of this version: {why}")))?,
-        ),
+        (true, Some(layout)) => Some(layout.lay_out(sink.doc().package())?),
     };
     let pass = Pass { laid, today };
     let mut unknown = Vec::new();

@@ -83,13 +83,46 @@ def new_document(call: Any, kind: str, template_blob: str | None = None, size: s
         raise ToolError("invalid_arguments", f"a document's size is a page size, not {size!r}", field="size",
                         valid_options=list(PAGE_SIZES))
     template = call.blob(template_blob).data if template_blob else None
-    document = Document.new(page=size, title=title, author=author, created=call.now(), template=template,
-                            keep_content=False, locale=call.locale)
+    if template is None and _rust_blank():
+        document = _blank(call, size, title, author)
+    else:
+        document = Document.new(page=size, title=title, author=author, created=call.now(), template=template,
+                                keep_content=False, locale=call.locale)
     doc_id = call.session.adopt(document, KIND, name or "new.docx", source=template_blob or "new",
                                 size=len(template or b""))
     entry = call.session.entry(doc_id)
     return Result(summary=f"Made {entry.name} as {doc_id}", created=[doc_id],
                   data={**entry.describe(), "summary": _summary(document)})
+
+
+def _rust_blank() -> bool:
+    """Whether the Rust core makes a new blank document (``ooxml_core.new_document``)."""
+    try:
+        import ooxml_core
+    except ImportError:
+        return False
+    return hasattr(ooxml_core, "new_document")
+
+
+def _blank(call: Any, size: str | None, title: str | None, author: str | None) -> Document:
+    """Lane LC1: a new blank document made by the Rust core, as ``Document.new`` makes one
+    (:func:`docx_agent.edit.blank.build`): the page, the call's locale's language and
+    separators (en-US without one), the properties and the call's clock."""
+    import ooxml_core
+
+    from ..edit import blank
+    from ..edit.properties import as_datetime, now, w3cdtf
+
+    locale = call.locale
+    created = as_datetime(call.now()) or now()
+    data = ooxml_core.new_document(
+        page=(size or "A4", False),
+        language=locale.language if locale is not None else blank.FALLBACK_LANGUAGE,
+        separators=blank.separators_of(locale),
+        properties=(title, author, w3cdtf(created.replace(microsecond=0))))
+    document = Document.open(data)
+    document.locale = locale
+    return document
 
 
 def _summary(document: Document) -> dict[str, Any]:
@@ -123,6 +156,45 @@ def serialise(document: Document, kind: str) -> bytes:
 
 @handler("save_document")
 def save_document(call: Any, doc: str, name: str, format: str, clean: bool = False) -> Result:
+    """Lane LC1: the file written by the Rust session where it serves the call (the bytes
+    come back beside the reply), else by :func:`_python_save_document`; the output and its
+    id state (``call.output``), the save gate and the coverage are the host's either way."""
+    from ..rust import reads
+
+    files: list[tuple[str, str, bytes]] = []
+
+    def answer(envelope: dict[str, Any]) -> Result:
+        (_, given_format, data), = files
+        if given_format == "markdown":
+            return Result(summary=envelope.get("summary", ""), data=call.output(name, "markdown", data))
+        result = Result(summary=envelope.get("summary", ""), data=call.output(name, format, data, state=True))
+        cleaned = (envelope.get("data") or {}).get("cleaned")
+        if cleaned is not None:
+            result.data["cleaned"] = cleaned
+        result.data["coverage"] = _coverage(call)
+        return result
+
+    return reads.serve(call, "save_document", {"name": name, "format": format, "clean": clean or None},
+                       lambda: _python_save_document(call, name, format, clean), answer=answer,
+                       context=lambda: _save_context(call, format), files=files)
+
+
+def _save_context(call: Any, format: str) -> dict[str, Any]:
+    """What a save's call context adds: the pages and lines of the host's layout of the
+    version saved (:func:`~..edit.properties.layout_statistics`, ``layout_counts``), where it
+    has one and the statistics are due -- the body changed since the document was opened."""
+    from ..edit.properties import layout_statistics
+
+    counts = None
+    package = call.document.package
+    if format != "markdown" and package.document_part() in package.changed_parts():
+        stats = layout_statistics(call.document)
+        if "pages" in stats and "lines" in stats:
+            counts = (stats["pages"], stats["lines"])
+    return {"layout_counts": counts}
+
+
+def _python_save_document(call: Any, name: str, format: str, clean: bool) -> Result:
     document = call.document
     if format in ("pptx", "potx", "outline"):
         raise ToolError("invalid_arguments", f"{format} is a deck format; a document saves as docx, dotx or "

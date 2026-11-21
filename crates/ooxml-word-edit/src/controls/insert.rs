@@ -8,8 +8,9 @@
 //!
 //! Must not: write but through the sink.
 
+use super::number::{next_number, NumbersControl};
 use super::{rewrite, ControlEdited, InParagraph, Rewrite, CONTENT_TRACKED};
-use crate::imported::{python_int, CONTROL_RANGE};
+use crate::address_keys::names_by_id;
 use crate::names::{W, W14};
 use crate::policy::RevisionPolicy;
 use crate::ranges::renamed_id;
@@ -21,9 +22,7 @@ use crate::text_range::{range, Span};
 use crate::work::{Id, Work};
 use crate::{EditError, Result, WordDoc};
 use ooxml_store::{Command, Txn};
-use ooxml_word_model::docx::{child_val, Docx};
-use ooxml_word_model::ids::sequence_value;
-use std::collections::HashSet;
+use std::sync::Arc;
 
 /// Word's check box glyphs (MS Gothic) as it writes a new one.
 const CHECKED: &str = "2612";
@@ -107,11 +106,19 @@ impl InsertControl {
     fn edit(&self, sink: &mut EditSink<'_, '_>) -> Result<ControlEdited> {
         let (paragraph, offset) = self.check(sink.doc())?;
         let docx = sink.docx()?;
-        // the number is unlike every control's: the insertion reads the whole document
-        sink.read_everything();
+        // a place named by condition, or a range's end, depends on the document around it
+        let by_id = names_by_id(&self.at) && !self.at.contains("..");
+        if !by_id {
+            sink.read_everything();
+        }
         let renamed = stamp_document(sink, &docx)?;
         let docx = sink.docx()?;
+        // the number is unlike every control's: read by condition, a control given it
+        // meanwhile
         let number = next_number(&docx);
+        if by_id {
+            sink.read_where(Arc::new(NumbersControl { number }));
+        }
         let found = crate::set_text::find(sink.doc(), &docx, &renamed_id(&renamed, &paragraph))?;
         let at = InParagraph {
             part: found.part,
@@ -295,30 +302,4 @@ pub(crate) fn hoist(work: &mut Work, run: Id) {
             work.add_next(sdt, run);
         }
     }
-}
-
-/// The number a new control takes (`_next_control_id`): the first of the
-/// `content-control` sequence within Word's range, stepped past any control's (or its
-/// negative).
-fn next_number(docx: &Docx) -> i64 {
-    let mut used: HashSet<i64> = HashSet::new();
-    for part in &docx.parts {
-        for found in part.facts().controls() {
-            let value = found
-                .element
-                .find(Some(W), "sdtPr")
-                .and_then(|p| child_val(p, "id"))
-                .and_then(python_int);
-            used.extend(value);
-        }
-    }
-    let first = (0..)
-        .map(|k| sequence_value("content-control", k))
-        .find(|v| *v != 0)
-        .unwrap_or(1);
-    let mut number = i64::from(first) % CONTROL_RANGE + 1;
-    while used.contains(&number) || used.contains(&-number) {
-        number = (number * 7 + 13) % CONTROL_RANGE + 1;
-    }
-    number
 }

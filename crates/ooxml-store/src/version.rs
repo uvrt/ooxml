@@ -1,6 +1,8 @@
 //! Owns: [`Version`], one immutable state of a document with its number and, per key, the
 //! number of the version that last wrote it (what conflict detection and the entanglement
-//! rules compare); [`Seq`], a version's number.
+//! rules compare); [`Seq`], a version's number; the state's number ([`Version::number`]),
+//! the document's states numbered as a tool layer numbers them (the store gives it at
+//! publish: [`crate::Store`]).
 //!
 //! Must not: change a version once it is published; everything here is persistent.
 
@@ -34,6 +36,7 @@ pub type Snapshot<D> = Arc<Version<D>>;
 #[derive(Debug)]
 pub struct Version<D: DocModel> {
     seq: Seq,
+    number: u64,
     doc: D,
     stamps: Stamps<D::Key>,
 }
@@ -42,21 +45,47 @@ impl<D: DocModel> Version<D> {
     pub(crate) fn first(seq: Seq, doc: D) -> Self {
         Self {
             seq,
+            number: 0,
             doc,
             stamps: Stamps::default(),
         }
     }
 
-    /// The version after `self`: `doc` at `seq`, with `writes` stamped.
-    pub(crate) fn succeed(&self, seq: Seq, doc: D, writes: &KeySet<D::Key>) -> Self {
+    /// The same version, its state numbered `number` (a store going on with numbers given
+    /// before it opened: [`crate::Store::continue_numbers`]).
+    pub(crate) fn renumbered(&self, number: u64) -> Self {
+        Self {
+            seq: self.seq,
+            number,
+            doc: self.doc.clone(),
+            stamps: self.stamps.clone(),
+        }
+    }
+
+    /// The version after `self`: `doc` at `seq`, the state numbered `number`, with `writes`
+    /// stamped.
+    pub(crate) fn succeed(&self, seq: Seq, number: u64, doc: D, writes: &KeySet<D::Key>) -> Self {
         let mut stamps = self.stamps.clone();
         stamps.stamp(writes, seq);
-        Self { seq, doc, stamps }
+        Self {
+            seq,
+            number,
+            doc,
+            stamps,
+        }
     }
 
     /// The version's number.
     pub fn seq(&self) -> Seq {
         self.seq
+    }
+
+    /// The state's number, as a tool layer numbers a document's states: the state opened
+    /// 0, a step one more than the highest number given, a plain undo or redo the number
+    /// of the state it brings back (so numbers repeat, unlike [`Self::seq`]); see
+    /// [`crate::Store`]'s numbering rule.
+    pub fn number(&self) -> u64 {
+        self.number
     }
 
     /// The document.

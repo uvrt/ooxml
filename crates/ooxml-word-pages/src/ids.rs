@@ -66,6 +66,41 @@ impl VersionIds {
         }
     }
 
+    /// Where the paragraph the id `id` names is inside a body paragraph's content (a text
+    /// box's paragraph, which the body's lines do not draw): the body path of the paragraph
+    /// holding it (`w:body/w:p[2]`), and its own place (child indexes from the root, every
+    /// node counted), which a painted line's path is matched with
+    /// ([`VersionIds::place_of_path`]). `None` for any other id.
+    pub fn in_paragraph(&self, id: &str) -> Option<(Text, Vec<u32>)> {
+        let (root, ids) = self.part.as_ref()?;
+        let Some(Entry::Paragraph(k)) = ids.get(id) else {
+            return None;
+        };
+        let place = ids.paragraphs().get(k)?.path;
+        let place: &[u32] = &place;
+        // The first paragraph on the way down (below the body) holds it.
+        let mut node: &Element = root.children().get(*place.first()? as usize)?.as_element()?;
+        for (depth, step) in place.iter().enumerate().skip(1) {
+            node = node.children().get(*step as usize)?.as_element()?;
+            if node.name().is(Some(W), "p") {
+                let host = place.get(..=depth)?;
+                return (depth + 1 < place.len())
+                    .then(|| path_at(root, host, &self.body_counts))
+                    .flatten()
+                    .map(|path| (path, place.to_vec()));
+            }
+        }
+        None
+    }
+
+    /// The place (child indexes from the root, every node counted) of the element a layout
+    /// path names in the main part (`ooxml_word_model::read::paths::resolve_path`: a text
+    /// box's paragraph's `…/w:r[2]/wp:anchor[1]/wps:txbx/w:txbxContent/w:p[1]` too).
+    pub fn place_of_path(&self, path: &str) -> Option<Vec<u32>> {
+        let (root, _) = self.part.as_ref()?;
+        ooxml_word_model::read::paths::resolve_path(root, path).map(|(_, place)| place)
+    }
+
     /// What it holds beyond the version's tree, bytes, roughly.
     pub fn weight(&self) -> usize {
         self.all.get().map_or(0, BlockIds::weight)

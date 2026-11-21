@@ -21,7 +21,7 @@ pub(crate) fn after_edit(
     stop: (Option<LayoutLimit<'_>>, &dyn Cancel),
 ) -> Option<Value> {
     let word = document.word()?;
-    let before = made.before.as_ref()?;
+    let before = &made.before;
     let from = EditedFrom {
         version: before.seq().0,
         package: before.doc().package(),

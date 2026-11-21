@@ -86,17 +86,24 @@ pub(crate) fn to_py(error: &SessionError) -> PyErr {
 /// the document opened with.
 type Validation = (Vec<String>, Vec<String>, usize);
 
+/// A step as `Session.numbers` lists it: `(before, after, seq, caller)`.
+type NumberedRow = (u64, u64, u64, Option<String>);
+/// `Session.numbers`: `(highest, steps, redo)`.
+type HistoryNumbers = (u64, Vec<NumberedRow>, Vec<NumberedRow>);
+
 /// What `Session.edit` says a call made: its first version's number, its last version,
 /// what it touched (JSON text; `None` where it made more than one version), the last
-/// version's validation, and the reflow its checks report (JSON text; `None` where none was
-/// measured).
-type EditMade = (u64, PyVersion, Option<String>, Validation, Option<String>);
+/// version's validation, the state number of the version its first edit was applied to, and
+/// the reflow its checks report (JSON text; `None` where none was measured).
+type EditMade = (u64, PyVersion, Option<String>, Validation, u64, Option<String>);
 
 /// What a call runs with (`ooxml_core.CallContext`): who calls, a token that stops it,
 /// how long laying a document out may take in it (`layout_timeout`, seconds), how long it
-/// may run, in seconds, and the limits on its reply -- `max_result_chars` (a page's
-/// characters; 24,000 unless given) and `max_list_items` (a listing's items per page; 50
-/// unless given), as the host's `Limits`. One may serve many calls.
+/// may run, in seconds, the limits on its reply -- `max_result_chars` (a page's characters;
+/// 24,000 unless given) and `max_list_items` (a listing's items per page; 50 unless given),
+/// as the host's `Limits` -- and `layout_counts`, `(pages, lines)` of the host's layout of
+/// the version the call reads where it has laid it out (`save_document`'s `app.xml`
+/// statistics). One may serve many calls.
 #[pyclass(frozen, name = "CallContext", module = "ooxml_core")]
 pub struct PyCallContext {
     pub(crate) inner: CallContext,
@@ -108,7 +115,7 @@ impl PyCallContext {
     /// `ValueError` for a negative deadline or layout timeout, or a limit of 0.
     #[new]
     #[pyo3(signature = (*, caller = None, cancel = None, deadline = None, layout_timeout = None,
-                        max_result_chars = None, max_list_items = None))]
+                        max_result_chars = None, max_list_items = None, layout_counts = None))]
     fn new(
         caller: Option<&str>,
         cancel: Option<PyRef<'_, PyCancelToken>>,
@@ -116,6 +123,7 @@ impl PyCallContext {
         layout_timeout: Option<f64>,
         max_result_chars: Option<usize>,
         max_list_items: Option<usize>,
+        layout_counts: Option<(u64, u64)>,
     ) -> PyResult<Self> {
         let mut limits = ooxml_tools::Limits::DEFAULT;
         for (given, kept, name) in [
@@ -135,6 +143,7 @@ impl PyCallContext {
                 deadline: seconds(deadline, "deadline")?,
                 layout_timeout: seconds(layout_timeout, "layout_timeout")?,
                 limits,
+                counts: layout_counts.map(|(pages, lines)| ooxml_tools_word::LayoutCounts { pages, lines }),
                 ..CallContext::default()
             },
         })
@@ -188,6 +197,13 @@ impl PyVersion {
     #[getter]
     fn number(&self) -> u64 {
         self.inner.version()
+    }
+
+    /// The state's number, as the tool layer numbers the document's states: a step a new
+    /// one, an undo or redo the number of the state it brings back (numbers repeat).
+    #[getter]
+    fn state(&self) -> u64 {
+        self.inner.number()
     }
 
     fn __repr__(&self) -> String {
@@ -359,38 +375,47 @@ impl PySession {
     /// Run the tool `name` with `arguments` (JSON text) on a snapshot, with `options` (a
     /// `CallOptions`: who calls, the versions read, the placer, the page engine, the reply's
     /// `limit`, ...): returns the reply as JSON text -- the whole envelope, or within the
-    /// limit as the model is sent it --, the images beside it (bytes), and what only the
-    /// application reads, as JSON text: `unported`, what of the answer is not yet given as
-    /// the Python tool gives it (a list of reasons). Never raises for the call's own failure:
-    /// that is the reply's `error`, with its way out.
+    /// limit as the model is sent it --, the files the call gives the application (bytes:
+    /// `save_document`'s), and what only the application reads, as JSON text: `unported`,
+    /// what of the answer is not yet given as the Python tool gives it (a list of reasons),
+    /// and `files`, each file's `name` and `format` in the order of the bytes. Never raises
+    /// for the call's own failure: that is the reply's `error`, with its way out.
     #[pyo3(signature = (name, arguments, options = None))]
     fn call(&self, py: Python<'_>, name: &str, arguments: String, options: Option<PyRef<'_, PyCallOptions>>) -> Reply {
         let context = context_of(options.as_deref());
         let limit = options.as_ref().and_then(|o| o.limit);
         let session = &self.inner;
-        let text = py.detach(|| {
+        let (text, files, app) = py.detach(|| {
             let run = || session.call(name, Value::String(arguments), &context);
-            let result = catch_unwind(AssertUnwindSafe(run)).unwrap_or_else(|panic| panicked(name, &*panic));
-            let app = serde_json::json!({"unported": result.unported()});
+            let mut result = catch_unwind(AssertUnwindSafe(run)).unwrap_or_else(|panic| panicked(name, &*panic));
+            let files = std::mem::take(&mut result.app.files);
+            let named: Vec<Value> = files
+                .iter()
+                .map(|f| serde_json::json!({"name": f.name, "format": f.format}))
+                .collect();
+            let app = serde_json::json!({"unported": result.unported(), "files": named});
             let text = match limit {
                 Some(limit) => result.to_text(Some(limit)),
                 None => compact(&Value::Object(result.to_json())),
             };
-            (text, compact(&app))
+            (text, files, compact(&app))
         });
-        (text.0, Vec::new(), text.1)
+        let files = files.iter().map(|f| PyBytes::new(py, &f.bytes).unbind()).collect();
+        (text, files, app)
     }
 
     /// Run the editing tool `name` as [`call`](Self::call) does, with `options` (a
     /// `CallOptions`: who calls, the page engine, the blobs, the values written by reference;
     /// no limit, no images): returns the envelope's JSON text, the application's JSON text
     /// (`unported`), and what the call's edits made -- `(first, last, touched, validation,
-    /// reflow)`: the number of the version its first edit made, the version its last made
-    /// (held), what it touched as JSON text (`None` where it made more than one version), the
-    /// last version's validation as [`validation`](Self::validation) gives it, and the reflow
-    /// its checks report as JSON text (where the options' page engine laid out the version its
-    /// first edit was applied to; else `None`) -- or `None` where it changed nothing. A host that numbers the document's steps takes the call's step from
-    /// these, whatever other calls commit to the document meanwhile.
+    /// before, reflow)`: the number of the version its first edit made, the version its last
+    /// made (held), what it touched as JSON text (`None` where it made more than one version),
+    /// the last version's validation as [`validation`](Self::validation) gives it, the state
+    /// number of the version its first edit was applied to, and the reflow its checks report as
+    /// JSON text (where the options' page engine laid out the version its first edit was
+    /// applied to; else `None`) -- or `None` where it changed nothing. A host that numbers the
+    /// document's steps takes the call's step from these, whatever other calls commit to the
+    /// document meanwhile.
     ///
     /// # Errors
     /// `ValueError` for options with a `limit` (an edit's reply is whole).
@@ -420,7 +445,7 @@ impl PySession {
             let touched = m.touched.map(|t| Value::Array(t).to_string());
             let validation = (m.validation.new, m.validation.fixed, m.validation.baseline);
             let reflow = m.reflow.map(|r| r.to_string());
-            (m.first, PyVersion { inner: m.last }, touched, validation, reflow)
+            (m.first, PyVersion { inner: m.last }, touched, validation, m.before, reflow)
         });
         Ok((text, app, made))
     }
@@ -606,6 +631,48 @@ impl PySession {
             .detach(|| session.undo(&id, steps, &context))
             .map_err(|e| to_py(&e))?;
         Ok((done.count, done.version))
+    }
+
+    /// The document's state numbered `number` (`Version.state`) its head reaches, held: the
+    /// head, else the newest such state undo or redo can bring back; `None` when none is kept.
+    fn numbered(&self, py: Python<'_>, doc: &str, number: u64) -> PyResult<Option<PyVersion>> {
+        let id = doc_id(doc, &self.inner)?;
+        let session = &self.inner;
+        let found = py.detach(|| session.numbered(&id, number)).map_err(|e| to_py(&e))?;
+        Ok(found.map(|inner| PyVersion { inner }))
+    }
+
+    /// Go on with the state numbers the host gave the document before it was opened again:
+    /// its head is the state `state`, the next step's number one more than `highest`. Only
+    /// before its first step (`ValueError` otherwise, or for a state above the highest).
+    fn continue_numbers(&self, py: Python<'_>, doc: &str, state: u64, highest: u64) -> PyResult<()> {
+        let id = doc_id(doc, &self.inner)?;
+        let session = &self.inner;
+        py.detach(|| session.continue_numbers(&id, state, highest))
+            .map_err(|e| to_py(&e))
+    }
+
+    /// The highest state number given on the document (`Version.state`). Never waits.
+    fn highest(&self, py: Python<'_>, doc: &str) -> PyResult<u64> {
+        let id = doc_id(doc, &self.inner)?;
+        let session = &self.inner;
+        py.detach(|| session.highest(&id)).map_err(|e| to_py(&e))
+    }
+
+    /// The document's history in state numbers, read at once: `(highest, steps, redo)` --
+    /// the highest number given, the steps undo can reach (oldest first) and those redo can
+    /// bring back (the next one last), each `(before, after, seq, caller)`.
+    fn numbers(&self, py: Python<'_>, doc: &str) -> PyResult<HistoryNumbers> {
+        let id = doc_id(doc, &self.inner)?;
+        let session = &self.inner;
+        let numbers = py.detach(|| session.numbers(&id)).map_err(|e| to_py(&e))?;
+        let rows = |steps: Vec<ooxml_session::NumberedStep>| {
+            steps
+                .into_iter()
+                .map(|s| (s.before, s.after, s.seq, s.caller))
+                .collect()
+        };
+        Ok((numbers.highest, rows(numbers.steps), rows(numbers.redo)))
     }
 
     /// Redo up to `steps` undone calls (with a caller, its own): `(count, version)`.

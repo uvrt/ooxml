@@ -75,6 +75,9 @@ pub struct CallContext {
     /// resolved against its datasets), which an editing call keeps on the paragraphs they
     /// went into; empty: none.
     pub written: Vec<ooxml_tools_word::Written>,
+    /// The pages and lines of the host's layout of the version the call reads, where it
+    /// has laid it out (`save_document`'s `app.xml` statistics); `None`: not laid out.
+    pub counts: Option<ooxml_tools_word::LayoutCounts>,
     /// The host's limits on the call's reply: a page's characters, a listing's items
     /// (docx-agent's `Limits.max_result_chars`, `Limits.max_list_items`).
     pub limits: ooxml_tools::Limits,

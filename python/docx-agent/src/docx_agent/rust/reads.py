@@ -154,10 +154,11 @@ class Mirror:
         #: committed (:meth:`docx_agent.rust.owner.RustOwner.bridge`).
         self.laid: tuple | None = None
 
-    def keep(self, number: int, version: Any, first: int | None = None) -> None:
-        """Keep ``version`` (an ``ooxml_core.Version``) as the document's version ``number``;
-        ``first``: the session's first version of the step, where it made several (a call's
-        edits, a batch's ops), each numbered ``number`` too."""
+    def keep(self, version: Any, first: int | None = None) -> None:
+        """Keep ``version`` (an ``ooxml_core.Version``) as the document's version
+        ``version.state``; ``first``: the session's first version of the step, where it made
+        several (a batch's ops), each numbered so too."""
+        number = version.state
         self.versions[number] = version
         for seq in range(first if first is not None else version.number, version.number + 1):
             self.numbers[seq] = number
@@ -394,12 +395,18 @@ def _with_others(call: Any, arguments: dict[str, Any], others: tuple[str, ...],
 
 
 def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | None" = None,
-          others: tuple[str, ...] = (), layout: Any = None) -> dict[str, Any]:
+          others: tuple[str, ...] = (), layout: Any = None,
+          context: "Callable[[], dict[str, Any]] | None" = None,
+          files: "list[tuple[str, str, bytes]] | None" = None) -> dict[str, Any]:
     """The Rust envelope of ``tool`` with ``arguments`` on the version ``call`` reads (and
     of each other document named at a path of ``others``, :func:`_with_others`); ``layout``:
     the document's page engine (an ``ooxml_core.WordPages``), for a call that reads the
     pages (``check``'s ``reflow``), laying out within ``call.limits.layout_timeout`` (lane
-    P5c: past it, ``reflow.error`` says so, as the Python path's does)."""
+    P5c: past it, ``reflow.error`` says so, as the Python path's does). Run with the
+    ``ooxml_core.CallContext`` of the host's limits and the keywords ``context`` gives where
+    given -- asked only once the session serves the call, so a call answered in Python never
+    reads them; the files it
+    gives the application appended to ``files`` as ``(name, format, bytes)``."""
     if _session() is None:
         raise _Fallback("no session")
     mirror, version = _version_read(call.entry)
@@ -412,11 +419,12 @@ def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | 
     from .owner import context_of
 
     # the host's limits on the reply: the Rust session pages as the Python path would (lane
-    # H3); a call that lays the document out does so within the host's layout_timeout
-    context = context_of(None, call.limits,
-                         call.limits.layout_timeout if layout is not None else None)
-    reply, _images, app = mirror.session.call(tool, json.dumps(arguments), ooxml_core.CallOptions(
-        context=context,
+    # H3); a call that lays the document out does so within the host's layout_timeout; what
+    # ``context`` adds, asked only now that the session serves the call
+    made = context_of(None, call.limits, call.limits.layout_timeout if layout is not None else None,
+                      **(context() if context is not None else {}))
+    reply, given_files, app = mirror.session.call(tool, json.dumps(arguments), ooxml_core.CallOptions(
+        context=made,
         documents=ooxml_core.CallDocuments(at=[version, *pinned], names=names),
         placer=placer.place if placer is not None else None, layout=layout))
     if placer is not None and placer.error is not None:
@@ -428,9 +436,13 @@ def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | 
         # field, try_call: tool rule 2), which today's answer does not carry: answered by
         # the Python path, so the reply is today's.
         raise _Fallback("regex" if error.get("field") == "regex" else f"refusal: {error.get('code')}")
-    unported = json.loads(app).get("unported") or []
+    app = json.loads(app)
+    unported = app.get("unported") or []
     if unported:
         raise _Fallback(unported[0])
+    if files is not None:
+        files.extend((given["name"], given["format"], data)
+                     for given, data in zip(app.get("files") or [], given_files))
     return envelope
 
 
@@ -438,11 +450,13 @@ def serve(call: Any, tool: str, arguments: dict[str, Any],
           python: Callable[[], Result], *, addresses: tuple = (),
           answer: Callable[[dict[str, Any]], Result] | None = None,
           placer: "Placer | None" = None, why_not: str | None = None,
-          others: tuple[str, ...] = (), layout: Any = None) -> Result:
+          others: tuple[str, ...] = (), layout: Any = None,
+          context: "Callable[[], dict[str, Any]] | None" = None,
+          files: "list[tuple[str, str, bytes]] | None" = None) -> Result:
     """``tool``'s answer from the Rust session (``answer`` makes the :class:`Result` of its
     envelope), or ``python()``'s where Rust's is not the same yet (counted, with why).
-    ``others``: the paths of ``arguments`` naming another open document; ``layout``: the
-    document's page engine (:func:`_call`)."""
+    ``others``: the paths of ``arguments`` naming another open document; ``layout``,
+    ``context``, ``files``: as :func:`_call` takes them."""
     try:
         if why_not is not None:
             raise _Fallback(why_not)
@@ -450,7 +464,8 @@ def serve(call: Any, tool: str, arguments: dict[str, Any],
             raise _Fallback("limits")
         if _renamed_or_deleted(_named(call), *addresses):
             raise _Fallback("renamed or deleted id")
-        envelope = _call(call, tool, arguments, placer=placer, others=others, layout=layout)
+        envelope = _call(call, tool, arguments, placer=placer, others=others, layout=layout,
+                         context=context, files=files)
         result = (answer or _result)(envelope)
     except _Fallback as why:
         _fell_back(tool, str(why))

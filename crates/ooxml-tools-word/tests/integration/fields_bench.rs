@@ -12,12 +12,12 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
 use crate::common::{engine, Monotonic, Never, Unlimited};
-use ooxml_base::Limits;
+use ooxml_base::{Cancel, Limits};
 use ooxml_opc::Package;
 use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools::{ToolArgs, ToolResult};
 use ooxml_tools_word::{word_fields, word_headers_footers, CallEditor, Editing, EnginePages, WordFields};
-use ooxml_word_edit::{Editor, FieldLayout, LaidFields};
+use ooxml_word_edit::{Editor, FieldLayout, LaidFields, LayOutError};
 use ooxml_word_pages::PageEngine;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -31,9 +31,9 @@ struct Timed {
 }
 
 impl FieldLayout for Timed {
-    fn lay_out(&self, package: &Package) -> Result<Box<dyn LaidFields + '_>, String> {
+    fn lay_out(&self, package: &Package, cancel: &dyn Cancel) -> Result<Box<dyn LaidFields + '_>, LayOutError> {
         let started = Instant::now();
-        let laid = self.inner.lay_out(package);
+        let laid = self.inner.lay_out(package, cancel);
         self.spent
             .lock()
             .unwrap_or_else(PoisonError::into_inner)

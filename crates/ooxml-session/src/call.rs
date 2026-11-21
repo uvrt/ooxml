@@ -42,6 +42,8 @@ pub struct Call<'a> {
     /// The other documents the call names (`ooxml_tools::documents`), by id, each at the
     /// version pinned for the call when it was dispatched.
     pub(crate) others: &'a [(String, Opened)],
+    /// The pages and lines of the version's layout, where the host laid it out.
+    pub(crate) counts: Option<ooxml_tools_word::LayoutCounts>,
     /// The host's limits on the call's reply.
     pub(crate) limits: ooxml_tools::Limits,
 }
@@ -116,13 +118,21 @@ impl Call<'_> {
         )
         .with_tracking(tracking)
         .with_layout(self.layout.map(|layout| layout as &dyn ooxml_word_edit::FieldLayout))
+        .with_layout_limit(self.layout_limit)
         .with_others(Others::new(&others))
         .with_blobs(self.blobs)
         .with_written(self.written)
         .with_rows_written(Some(&word.rows_written))
         .with_limits(self.limits);
         let mut result = run(&editing);
-        *self.made.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = editor.made();
+        let made = editor.made();
+        // a call is one history step and one state number: a handler with several commands
+        // runs them as one transaction, never as a second commit
+        debug_assert!(
+            made.as_ref().is_none_or(|m| m.ids.len() <= 1),
+            "a call committed more than once: run its commands as one transaction"
+        );
+        *self.made.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = made;
         ooxml_tools_word::resolve_drawn(&mut result, &editor.moved());
         result
     }
@@ -136,7 +146,8 @@ impl Call<'_> {
             .version_of()
             .with_others(Others::new(&others))
             .with_owned(self.owned())
-            .with_limits(self.limits);
+            .with_limits(self.limits)
+            .with_counts(self.counts);
         run(&version)
     }
 
