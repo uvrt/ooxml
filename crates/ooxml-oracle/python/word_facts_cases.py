@@ -2,7 +2,10 @@
 lane P5a2): ``word_reads_diff.py facts``.
 
 For each document, docx-agent's ``layout_facts`` functions that need no layout --
-``empty_paragraphs``, ``numbering_skips_level``, ``accept_loses_text`` -- one case each,
+``empty_paragraphs``, ``numbering_skips_level``, ``table_grid_mismatch``, ``accept_loses_text``
+-- and two read by ``layout_facts``' own class from the document alone, ``direct_formatting``
+and the style list (``styles``: ``styles_not_allowed`` and ``styles_unknown`` for
+:data:`ALLOWED`), their ``pages`` left out -- one case each,
 against the ``word-reads`` binary's fact cases (``crates/ooxml-oracle/src/facts.rs``: the
 Rust library functions of ``ooxml_word_edit::facts`` as ``check`` words them).  Uncapped and unfiltered:
 the cap and the page and range filters are ``check``'s.
@@ -27,13 +30,44 @@ if str(TESTS) not in sys.path:
     sys.path.insert(0, str(TESTS))
 
 from docx_agent import Document
-from docx_agent.layout_facts import accept_loses_text, empty_paragraphs, numbering_skips_level, table_grid_mismatch
+from docx_agent.layout_facts import (
+    _Facts, accept_loses_text, empty_paragraphs, numbering_skips_level, table_grid_mismatch)
+
+#: The styles a ``styles`` case allows (``crates/ooxml-oracle/src/facts.rs``' ``ALLOWED``): a
+#: name in another case, an id, a heading's name and one no style has.
+ALLOWED = ["normal", "TableGrid", "heading 1", "No Such Style"]
+
+
+def _uncapped(document, styles=None) -> _Facts:
+    """``layout_facts``' class for ``document``'s layout, its lists not capped (the cap is
+    ``check``'s)."""
+    facts = _Facts(document.layout(), None, None, styles)
+    facts.capped = lambda entries, name, out: out.__setitem__(name, entries)
+    return facts
+
+
+def _unplaced(entry: dict) -> dict:
+    return {key: value for key, value in entry.items() if key != "pages"}
+
+
+def direct_formatting(document) -> list:
+    return [_unplaced(entry) for entry in _uncapped(document).direct_formatting()]
+
+
+def styles(document) -> list:
+    out: dict = {}
+    _uncapped(document, list(ALLOWED)).style_list(out)
+    return [{"styles_not_allowed": [_unplaced(e) for e in out["styles_not_allowed"]],
+             "styles_unknown": out["styles_unknown"]}]
+
 
 FACTS = {
     "empty_paragraphs": empty_paragraphs,
     "numbering_skips_level": numbering_skips_level,
     "table_grid_mismatch": table_grid_mismatch,
     "accept_loses_text": accept_loses_text,
+    "direct_formatting": direct_formatting,
+    "styles": styles,
 }
 
 
@@ -92,6 +126,7 @@ def made_up() -> dict[str, bytes]:
     for name, body in SHAPES.items():
         out["accept-" + name.replace(" ", "-").replace("'", "")] = _document(body)
     out.update(_grids(_document, _p))
+    out.update(_formatting(_document, _p, _tbl))
     # A mark deleted without an id (no change to name: the reject within the cell), and a
     # cell lost in a nested table.
     out["accept-unnamed"] = _document(_edge((0, 1)).replace('w:del w:id="95" ', "w:del "))
@@ -134,6 +169,47 @@ def _grids(document, p) -> dict[str, bytes]:
         "ragged-nested": document(tbl(1, [row(tc("x")[:-len("</w:tc>")] + tbl(2, [plain, row(tc("only"))])
                                               + p("after") + "</w:tc>")])),
     }
+
+
+def _formatting(document, p, tbl) -> dict[str, bytes]:
+    """Paragraphs set apart from their styles by direct formatting (of the paragraph, of all
+    its text, of some of it; in a cell; a table's rows kept together, whose keeps are the
+    table's), and styles in use that :data:`ALLOWED` does not name."""
+    def para(ppr: str, *runs: str) -> str:
+        return f"<w:p><w:pPr>{ppr}</w:pPr>{''.join(runs)}</w:p>"
+
+    def run(rpr: str, text: str) -> str:
+        return f"<w:r><w:rPr>{rpr}</w:rPr><w:t xml:space='preserve'>{text}</w:t></w:r>"
+
+    kept = "<w:keepNext/>"
+    lead = para(kept, run("", "Lead"))
+    body = (
+        para("<w:jc w:val='center'/><w:spacing w:before='240' w:after='0' w:line='360' w:lineRule='auto'/>",
+             run("", "Centred"))
+        + para("<w:ind w:left='720' w:hanging='360'/>", run("", "Hanging"))
+        + para("<w:spacing w:line='300' w:lineRule='exact'/><w:keepLines/><w:pageBreakBefore/>", run("", "Exact"))
+        + para("", run("<w:b/><w:sz w:val='28'/>", "Bold big"))
+        + para("", run("", "Plain "), run("<w:i/>", "some"))
+        + para("", run("<w:color w:val='FF0000'/>", "aaaa"), run("<w:color w:val='0000FF'/>", "bb"))
+        + para("", run("<w:rFonts w:ascii='Courier New' w:hAnsi='Courier New'/><w:highlight w:val='yellow'/>"
+                       "<w:u w:val='single'/><w:strike/>", "Marked"))
+        + para("", "<w:r><w:rPr><w:b/></w:rPr><w:tab/><w:t>tabbed</w:t></w:r>")
+        + para("<w:pStyle w:val='Heading1'/><w:keepNext/>", run("", "Heading kept"))
+        + para("<w:pStyle w:val='Heading1'/><w:jc w:val='right'/>", run("<w:b w:val='0'/>", "Heading right"))
+        + tbl([[lead, p("x")], [lead, p("y")], [p("last"), p("z")]])
+        + tbl([[lead, p("x")], [p("loose"), p("y")]])
+        + tbl([[para("<w:jc w:val='both'/>", run("<w:b/>", "In a cell")), p("w")]])
+    )
+    styled = (
+        para("<w:pStyle w:val='Heading1'/>", run("", "One"))
+        + "".join(para("<w:pStyle w:val='Heading2'/>", run("", f"Two {n}")) for n in range(3))
+        + para("<w:pStyle w:val='Title'/>", run("", "Title"))
+        + para("<w:pStyle w:val='Ghost'/>", run("", "Ghost"))
+        + para("<w:pStyle/>", run("", "No value"))
+        + tbl([[p("a"), p("b")]])
+        + tbl([[p("c"), p("d")]]).replace("<w:tblPr>", "<w:tblPr><w:tblStyle w:val='TableGrid'/>", 1)
+    )
+    return {"direct-shapes": document(body), "styles-mixed": document(styled)}
 
 
 def check_facts(args, run_rust, report, files_of) -> int:

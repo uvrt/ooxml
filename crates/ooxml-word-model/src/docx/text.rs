@@ -81,6 +81,8 @@ pub struct TextRun {
     pub path: Box<[u32]>,
     /// Its first character in the view.
     pub first: char,
+    /// Its first character of `w:t` in the view (`None`: it holds none).
+    pub first_text: Option<char>,
     /// How many characters of `w:t` it holds in the view.
     pub text: usize,
 }
@@ -234,10 +236,12 @@ fn count(runs: &mut Vec<TextRun>, path: &[u32], c: &Char, text: bool) {
         runs.push(TextRun {
             path: path.into(),
             first,
+            first_text: None,
             text: 0,
         });
     }
     if let (true, Some(last)) = (text, runs.last_mut()) {
+        last.first_text.get_or_insert(first);
         last.text += length;
     }
 }

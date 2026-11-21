@@ -7,7 +7,9 @@
 
 use crate::edits::Unlimited;
 use ooxml_opc::Package;
-use ooxml_tools_word::{empty_run_json, grid_mismatch_json, lost_cell_json, skipped_level_json};
+use ooxml_tools_word::{
+    direct_formatting_json, empty_run_json, grid_mismatch_json, lost_cell_json, skipped_level_json, style_use_json,
+};
 use ooxml_word_edit::{facts, EditError, WordDoc};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -34,6 +36,19 @@ fn entries(doc: &WordDoc, fact: &str) -> Result<Option<Vec<Value>>, EditError> {
             .map(grid_mismatch_json)
             .collect(),
         "accept_loses_text" => facts::accept_loses_text(doc)?.iter().map(lost_cell_json).collect(),
+        "direct_formatting" => facts::direct_formatting(doc)?
+            .iter()
+            .map(direct_formatting_json)
+            .collect(),
+        "styles" => {
+            let found = facts::style_list(doc, &ALLOWED.map(str::to_owned))?;
+            let entries: Vec<Value> = found.not_allowed.iter().map(style_use_json).collect();
+            vec![json!({"styles_not_allowed": entries, "styles_unknown": found.unknown})]
+        }
         _ => return Ok(None),
     }))
 }
+
+/// The styles a `styles` case allows (`python/word_facts_cases.py`'s `ALLOWED`): a name in
+/// another case, an id, a heading's name and one no style has.
+const ALLOWED: [&str; 4] = ["normal", "TableGrid", "heading 1", "No Such Style"];

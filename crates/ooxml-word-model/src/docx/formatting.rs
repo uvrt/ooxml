@@ -206,6 +206,27 @@ impl Formatting {
             .and_then(|p| p.find(Some(W), "rStyle"))
             .and_then(|s| s.attribute(Some(W), "val"))
             .map(str::to_owned);
+        self.resolved_run(paragraph, properties, style, first, cell)
+    }
+
+    /// What a run in the character style `style` gets in `paragraph` with none of its
+    /// direct formatting: what its styles give it (docx-agent's `effective.run`, `direct`
+    /// false).
+    #[must_use]
+    pub fn run_styled(&self, paragraph: &Element, style: Option<&str>, first: char, cell: Option<&Cell>) -> EffectiveRun {
+        self.resolved_run(paragraph, None, style.map(str::to_owned), first, cell)
+    }
+
+    /// A run's formatting from its direct `properties` (`None`: none) and its character
+    /// `style`, memoised by both.
+    fn resolved_run(
+        &self,
+        paragraph: &Element,
+        properties: Option<&Element>,
+        style: Option<String>,
+        first: char,
+        cell: Option<&Cell>,
+    ) -> EffectiveRun {
         let pstyle = paragraph_style(paragraph);
         let key: RunKey = (pstyle.clone(), cell.cloned(), style.clone(), element_key(properties));
         let known = self

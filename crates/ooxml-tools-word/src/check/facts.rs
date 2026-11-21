@@ -1,15 +1,19 @@
 //! Owns: `check`'s facts read from the document alone as docx-agent words them in `layout`
-//! (`empty_paragraphs`, `numbering_skips_level`, `table_grid_mismatch`, `accept_loses_text`):
+//! (`empty_paragraphs`, `numbering_skips_level`, `table_grid_mismatch`, `accept_loses_text`,
+//! `direct_formatting`, `styles_not_allowed`):
 //! each entry's JSON, with the calls that fix it, an entry's own lists capped as docx-agent
 //! caps them.
 //!
 //! Must not: find the facts (`ooxml_word_edit::facts` does), filter or cap them.
 
-use ooxml_word_edit::facts::{EmptyRun, GridMismatch, LostCell, SkippedLevel};
+use ooxml_word_edit::facts::{DirectFormatting, EmptyRun, FormatValue, GridMismatch, LostCell, SkippedLevel, StyleUse};
 use serde_json::{json, Map, Value};
 
 /// The most of a list inside one entry (docx-agent's `CAP`).
 const CAP: usize = 20;
+
+/// The blocks a `styles_not_allowed` entry names at most.
+const STYLE_BLOCKS: usize = 10;
 
 /// The first [`CAP`] of `items` as JSON, and how many are left out.
 fn capped<T>(items: &[T], each: impl Fn(&T) -> Value) -> (Value, usize) {
@@ -120,4 +124,47 @@ pub fn lost_cell_json(cell: &LostCell) -> Value {
         "author": cell.author,
         "fix": {"tool": "word_changes", "calls": [call]},
     })
+}
+
+fn format_value(value: &FormatValue) -> Value {
+    match value {
+        FormatValue::Unset => Value::Null,
+        FormatValue::Flag(on) => Value::Bool(*on),
+        FormatValue::Number(n) => Value::from(*n),
+        FormatValue::Name(name) => Value::from(name.clone()),
+        FormatValue::Ruled(rule, n) => json!([rule, n]),
+    }
+}
+
+/// A `direct_formatting` entry: the paragraph, its style, the direct values and its styles',
+/// the run properties on only some of its text (`in_part`, where any) and the `word_format`
+/// call that clears the others (where any).
+#[must_use]
+pub fn direct_formatting_json(entry: &DirectFormatting) -> Value {
+    let mut out = Map::new();
+    out.insert("para".into(), Value::from(entry.para.clone()));
+    out.insert("style".into(), entry.style.clone().map_or(Value::Null, Value::from));
+    let props: Map<String, Value> = entry.props.iter().map(|(n, v, _)| ((*n).to_owned(), format_value(v))).collect();
+    let base: Map<String, Value> = entry.props.iter().map(|(n, _, b)| ((*n).to_owned(), format_value(b))).collect();
+    out.insert("props".into(), Value::Object(props));
+    out.insert("style_has".into(), Value::Object(base));
+    if !entry.in_part.is_empty() {
+        out.insert("in_part".into(), Value::from(entry.in_part.clone()));
+    }
+    if !entry.props.is_empty() {
+        let clear: Vec<&str> = entry.props.iter().map(|(n, _, _)| *n).collect();
+        out.insert(
+            "fix".into(),
+            json!({"tool": "word_format", "calls": [{"targets": [entry.para], "clear": clear}]}),
+        );
+    }
+    Value::Object(out)
+}
+
+/// A `styles_not_allowed` entry: the style, its kind, how many blocks are in it and the
+/// first of them.
+#[must_use]
+pub fn style_use_json(entry: &StyleUse) -> Value {
+    let blocks: Vec<&String> = entry.blocks.iter().take(STYLE_BLOCKS).collect();
+    json!({"style": entry.style, "kind": entry.kind, "count": entry.blocks.len(), "blocks": blocks})
 }
