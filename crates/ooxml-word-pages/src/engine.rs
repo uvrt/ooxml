@@ -185,6 +185,9 @@ pub struct PageEngine {
     stats: EngineStats,
     /// The parts the version being laid out changed from the last one given.
     changed: Vec<String>,
+    /// The last version given, however it was given: what the next one changed is found
+    /// from it.
+    given: Option<Package>,
 }
 
 impl std::fmt::Debug for PageEngine {
@@ -241,6 +244,7 @@ impl PageEngine {
             generations: 0,
             stats: EngineStats::default(),
             changed: Vec::new(),
+            given: None,
         }
     }
 
@@ -261,7 +265,6 @@ impl PageEngine {
     /// The package or its Word parts do not open.
     pub fn lay_out_bytes(&mut self, bytes: Arc<[u8]>) -> Result<Result<Arc<LaidVersion>, Fallback>, PagesError> {
         let archive = Arc::new(Archive::read(bytes, &self.limits.zip).map_err(ooxml_opc::OpcError::from)?);
-        self.changed.clear();
         let package = match self.source.take() {
             Some(before) => self.next_package(&before, &archive)?,
             None => Package::open(Arc::clone(archive.bytes()), &self.limits)?,
@@ -288,7 +291,6 @@ impl PageEngine {
             )));
         };
         let mut package = source.package.clone();
-        self.changed = parts.iter().map(|(name, _)| name.clone()).collect();
         for (name, bytes) in parts {
             package = match bytes {
                 Some(bytes) => self.put(&package, name, bytes)?,
@@ -346,13 +348,11 @@ impl PageEngine {
                 continue;
             }
             self.stats.parts_read += 1;
-            self.changed.push(meta.name.clone());
             let bytes: Arc<[u8]> = archive.read_entry(entry).map_err(ooxml_opc::OpcError::from)?.into();
             package = self.put(&package, &meta.name, &bytes)?;
         }
         for name in old.keys().filter(|n| !seen.contains(*n) && !n.ends_with('/')) {
             if package.has_part(name) {
-                self.changed.push((*name).to_owned());
                 package = package.without(name)?;
             }
         }
@@ -365,6 +365,13 @@ impl PageEngine {
     /// # Errors
     /// Its Word parts do not open.
     pub fn lay_out(&mut self, package: &Package) -> Result<Result<Arc<LaidVersion>, Fallback>, PagesError> {
+        // What changed from the version given before, by identity: a session's edit gives
+        // its parts untouched as they were, its edited ones anew.
+        self.changed = self
+            .given
+            .replace(package.clone())
+            .map(|before| package.changed_parts(&before))
+            .unwrap_or_default();
         self.changed.sort();
         let fonts = self.setup.document(package);
         let (generation, mut cause) = self.generation_for(fonts);

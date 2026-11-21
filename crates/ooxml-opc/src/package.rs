@@ -119,6 +119,28 @@ impl Package {
                 .all(|(name, slot)| other.slots.get(name).is_some_and(|o| o.content.same(&slot.content)))
     }
 
+    /// The parts that differ from `before` by identity ([`PartVersion::same`]): each part
+    /// added or whose content is not the same, in archive order, then each part removed,
+    /// in `before`'s -- known without reading a part.
+    pub fn changed_parts(&self, before: &Package) -> Vec<String> {
+        let mut changed: Vec<String> = self
+            .part_names()
+            .into_iter()
+            .filter(|name| {
+                let mine = self.slots.get(name).map(|s| &s.content);
+                let theirs = before.slots.get(name).map(|s| &s.content);
+                !matches!((mine, theirs), (Some(a), Some(b)) if a.same(b))
+            })
+            .collect();
+        changed.extend(
+            before
+                .part_names()
+                .into_iter()
+                .filter(|name| self.slots.get(name).is_none()),
+        );
+        changed
+    }
+
     /// Whether the package has the part `name` (any spelling of it).
     pub fn has_part(&self, name: &str) -> bool {
         self.slots.contains_key(&normalize(name))
