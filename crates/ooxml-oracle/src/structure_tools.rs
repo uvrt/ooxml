@@ -19,7 +19,7 @@ use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools::{ToolArgs, ToolResult};
 use ooxml_tools_word::{
     word_headers_footers, word_links, word_move, word_notes, word_sections, Blob, BlobList, CallEditor, Editing,
-    EnginePages, Others, Owned, Version, WordHeadersFooters, WordLinks, WordMove, WordNotes, WordSections,
+    EnginePages, LastCheck, Others, Owned, Version, WordHeadersFooters, WordLinks, WordMove, WordNotes, WordSections,
 };
 use ooxml_word_edit::touched::{touched, Touched};
 use ooxml_word_edit::validate::{problems, Delta};
@@ -53,17 +53,26 @@ fn registered(tool: &str, arguments: &Value, editing: &Editing<'_>) -> Option<To
     static REGISTRY: OnceLock<Registry> = OnceLock::new();
     let tool = REGISTRY.get_or_init(Registry::standard).named(tool)?;
     let versions = Versions::new();
-    let version = opened_version(editing, &versions);
+    let last_check = LastCheck::default();
+    let version = opened_version(editing, &versions, &last_check);
     Some(tool.run_outside(arguments, editing, &version))
 }
 
 /// The document as opened, version 1, as a reading tool is handed it by a session that
 /// owns it: its Word document, the problems it opened with, the other documents the call
-/// names.
-pub(crate) fn opened_version<'a>(editing: &Editing<'a>, versions: &'a Versions) -> Version<'a> {
+/// names; `last_check` the document's (no layout is handed: a check that needs one leaves
+/// the call to the host).
+pub(crate) fn opened_version<'a>(
+    editing: &Editing<'a>,
+    versions: &'a Versions,
+    last_check: &'a LastCheck,
+) -> Version<'a> {
     let owned = Owned {
         doc: editing.opened,
         baseline: editing.editor.baseline(),
+        last_check,
+        layout: None,
+        layout_limit: None,
         opened: editing.opened,
     };
     Version::new("case.docx", editing.opened.package(), 1, versions)

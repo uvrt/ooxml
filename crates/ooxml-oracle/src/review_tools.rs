@@ -93,7 +93,8 @@ fn run(tool: &str, arguments: &Value, editing: &Editing<'_>) -> Result<ooxml_too
             if args.reads() {
                 // list and preview as a session serves them: on the version the call reads
                 let versions = Versions::new();
-                let version = crate::structure_tools::opened_version(editing, &versions);
+                let last_check = ooxml_tools_word::LastCheck::default();
+                let version = crate::structure_tools::opened_version(editing, &versions, &last_check);
                 match word_changes_read(&args, &version, editing.cancel) {
                     Ok(done) => ooxml_tools::ToolResult::done(done),
                     Err(error) => ooxml_tools::ToolResult::failed(error),
