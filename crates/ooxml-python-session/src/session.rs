@@ -61,7 +61,7 @@ pub(crate) fn kind_of(kind: &str) -> PyResult<DocKind> {
     DocKind::parse(kind).ok_or_else(|| to_py(&SessionError::Kind(kind.to_owned())))
 }
 
-fn doc_id(doc: &str, session: &Session) -> PyResult<DocId> {
+pub(crate) fn doc_id(doc: &str, session: &Session) -> PyResult<DocId> {
     DocId::parse(doc).ok_or_else(|| {
         to_py(&SessionError::NotOpen {
             id: doc.to_owned(),
@@ -70,7 +70,7 @@ fn doc_id(doc: &str, session: &Session) -> PyResult<DocId> {
     })
 }
 
-fn to_py(error: &SessionError) -> PyErr {
+pub(crate) fn to_py(error: &SessionError) -> PyErr {
     let message = error.to_string();
     match error {
         SessionError::NotOpen { .. } => PyKeyError::new_err(message),
@@ -145,7 +145,7 @@ fn panicked(name: &str, panic: &(dyn std::any::Any + Send)) -> ToolResult<Value>
     ))
 }
 
-fn caller_context(context: Option<&PyCallContext>) -> CallContext {
+pub(crate) fn caller_context(context: Option<&PyCallContext>) -> CallContext {
     context.map(|c| c.inner.clone()).unwrap_or_default()
 }
 
@@ -473,6 +473,13 @@ impl PySession {
         py.detach(|| session.bridge_calls().into_iter().collect())
     }
 
+    /// Open a step group on the document (`StepGroup`): what is committed until it closes is
+    /// one undo step; the host closes or reverts it on every path.
+    fn open_group(&self, py: Python<'_>, doc: &str) -> PyResult<crate::group::PyStepGroup> {
+        let id = doc_id(doc, &self.inner)?;
+        crate::group::PyStepGroup::open(py, Arc::clone(&self.inner), id)
+    }
+
     /// The document's head version, held (`Version`). Never waits for a writer.
     fn head(&self, py: Python<'_>, doc: &str) -> PyResult<PyVersion> {
         let id = doc_id(doc, &self.inner)?;
@@ -610,6 +617,24 @@ impl PySession {
             .collect::<PyResult<Vec<_>>>()?;
         let session = &self.inner;
         py.detach(|| session.seed_retired(&id, given)).map_err(|e| to_py(&e))
+    }
+
+    /// The rows of the Word document this session's `word_edit_table` calls added or wrote
+    /// into, by `w14:paraId`, sorted (round 58, R126: check's `row_text_format` reads them).
+    fn rows_written(&self, py: Python<'_>, doc: &str) -> PyResult<Vec<String>> {
+        let id = doc_id(doc, &self.inner)?;
+        let session = &self.inner;
+        let rows = py.detach(|| session.rows_written(&id)).map_err(|e| to_py(&e))?;
+        Ok(rows.into_iter().collect())
+    }
+
+    /// Keep `rows` (`w14:paraId`s) as written by a table call the host answered itself, in
+    /// the record the session's own calls keep theirs in.
+    fn note_rows_written(&self, py: Python<'_>, doc: &str, rows: Vec<String>) -> PyResult<()> {
+        let id = doc_id(doc, &self.inner)?;
+        let session = &self.inner;
+        py.detach(|| session.note_rows_written(&id, rows))
+            .map_err(|e| to_py(&e))
     }
 
     /// Close the document; its versions and history are let go.
