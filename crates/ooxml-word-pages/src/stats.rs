@@ -37,6 +37,9 @@ pub struct EngineStats {
     /// Versions asked again: the same parts as the last version laid out, which was
     /// answered (nothing laid out).
     pub kept: u64,
+    /// Pages painted for their digests (a summary's or a comparison's), and pages a
+    /// comparison took as digested before or as the same page in both versions.
+    pub pages_digested: (u64, u64),
 }
 
 impl EngineStats {

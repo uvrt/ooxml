@@ -58,6 +58,9 @@ pub(super) struct SayWith<'a> {
     pub(super) decimal: char,
     /// A part beside the main one changed since the version before.
     pub(super) others_changed: bool,
+    /// A notes', header's or footer's part is not the one the model opened before (read
+    /// from the packages, not from what the caller said changed).
+    pub(super) drawn_changed: bool,
 }
 
 /// What `laid` says (its warnings and approximations), its facts made into `facts` where
@@ -73,7 +76,10 @@ pub(super) fn say(
         // A part beside the main one changed (a chart's, a picture's, a story's): what a
         // kept page's drawings said may have changed with it.
         generation.said = crate::page_said::PageMemo::default();
-        generation.summaries = crate::summary::SummaryMemo::default();
+        generation.epoch += 1;
+    } else if with.drawn_changed {
+        // A page laid out the same may draw other notes or stories.
+        generation.epoch += 1;
     }
     let mut painter = DrawingWarnings {
         layout: &mut generation.layout,
