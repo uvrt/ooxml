@@ -38,6 +38,11 @@ pub enum Key {
     Annotations,
     /// Who the people part lists.
     People,
+    /// What a part's paragraphs show a reader of their style uses: each paragraph with text
+    /// or in a list, in order, with its paragraph style, its list and whether its text is
+    /// blank (the body style a copy maps to, the list a copied list continues). Written
+    /// where a change alters one (`sink::style_use`), and with the part put or removed.
+    StyleUse(Arc<str>),
 }
 
 /// One primitive of a change set.
@@ -592,7 +597,7 @@ impl DocModel for WordDoc {
         match keys.keys() {
             // a block is compared through its part: conservative, never a false agreement
             Some(keys) => keys.iter().all(|key| match key {
-                Key::Block { part, .. } | Key::Part(part) | Key::Root(part) => same_part(part),
+                Key::Block { part, .. } | Key::Part(part) | Key::Root(part) | Key::StyleUse(part) => same_part(part),
                 Key::Seq(_) | Key::Annotations | Key::People => true,
             }),
             None => {
@@ -610,11 +615,15 @@ impl DocModel for WordDoc {
                 }
             }
             Change::Put { part, .. } | Change::Bytes { part, .. } | Change::Remove { part } => {
-                into.insert(Key::Part(Arc::from(normalize(part))));
+                let part: Arc<str> = Arc::from(normalize(part));
+                into.insert(Key::StyleUse(Arc::clone(&part)));
+                into.insert(Key::Part(part));
             }
             Change::Restore { parts, .. } => {
                 for part in parts.iter() {
-                    into.insert(Key::Part(Arc::from(normalize(part))));
+                    let part: Arc<str> = Arc::from(normalize(part));
+                    into.insert(Key::StyleUse(Arc::clone(&part)));
+                    into.insert(Key::Part(part));
                 }
             }
             Change::People { keys, .. } => {
