@@ -57,7 +57,8 @@ CALLS = [
 def test_folded_ref_names_are_served_as_the_python_handler_answers():
     served = sum(edits.served().values())
     rust = _run(CALLS, owned=True)
-    assert sum(edits.served().values()) - served == 3, edits.fallbacks()
+    # three made, two refused: a refusal is the session's answer, counted served (lane P2e1)
+    assert sum(edits.served().values()) - served == 5, edits.fallbacks()
     assert not any("ref name" in why for reasons in edits.fallbacks().values() for why in reasons)
     python = _run(CALLS, owned=False)
     for (tool, _arguments), ours, theirs in zip(CALLS, rust, python):
