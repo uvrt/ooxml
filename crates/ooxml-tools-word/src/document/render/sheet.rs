@@ -20,17 +20,28 @@ fn base64(bytes: &[u8], out: &mut String) {
     ooxml_scene::base64::encode_into(bytes, out);
 }
 
-/// Each page's shape (its height over its width, in pixels), for pages 1-based.
+/// Each page's shape (its height over its width, from its section's `w:pgSz` in twips, as
+/// docx-agent's `_shortest_ratio` reads it), for pages 1-based. Not the whole-pixel
+/// frame's: its rounding makes a tile look taller than it is drawn, and the fit a pixel
+/// narrower than docx-agent's.
 fn shapes(call: &Drawer<'_>, pages: &[usize]) -> Vec<f64> {
+    let sections = &call.laid.layout().sections;
     let mut engine = call.layout.engine().lock().unwrap_or_else(PoisonError::into_inner);
     pages
         .iter()
         .filter_map(|page| engine.paint(call.laid, page - 1))
         .map(|paint| {
             let frame = paint.geometry.frame;
+            let declared = sections
+                .get(frame.section)
+                .map(|s| (s.props.page_size.width, s.props.page_size.height))
+                .filter(|(width, height)| *width > 0 && *height > 0);
             #[allow(clippy::cast_precision_loss)]
-            let ratio = frame.height_px as f64 / frame.width_px.max(1) as f64;
-            ratio
+            let shape = match declared {
+                Some((width, height)) => height as f64 / width as f64,
+                None => frame.height_px as f64 / frame.width_px.max(1) as f64,
+            };
+            shape
         })
         .collect()
 }

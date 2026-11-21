@@ -18,6 +18,7 @@ from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from docx_agent.tools.shared import render_pages
 
 import docx2svg
+from pixels import pixels
 
 
 def _document() -> bytes:
@@ -33,6 +34,11 @@ def test_the_renderer_and_the_layout_are_registered_tasks():
 
 
 def work_in_a_daemonic_process(queue, data: bytes) -> None:
+    # The Python path's render and check, which draw and lay out in the pool's workers: the
+    # Rust session serves both without workers (lane RD1, test_rust_render.py).
+    from docx_agent.rust import reads
+
+    reads.serve_render = reads.serve_check = lambda call, arguments: None
     try:
         with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, font_dirs=[]) as box:
             session = box.session()
@@ -63,4 +69,5 @@ def test_a_daemonic_process_works_in_subprocess_workers():
     assert got["ok"], got["error"]
     assert got["runner"] == "subprocesses"
     assert got["pids"] and got["pid"] not in got["pids"]
-    assert got["image"] == render_pages(data, [1], 300, [])[0][0]
+    # the same pixels (two rasterisers' encoders compress them differently: pixels.py)
+    assert pixels(got["image"]) == pixels(render_pages(data, [1], 300, [])[0][0])

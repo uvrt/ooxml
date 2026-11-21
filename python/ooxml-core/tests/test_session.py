@@ -199,7 +199,7 @@ def page_docx(result: str) -> bytes:
 
 
 def test_a_field_update_lays_out_with_the_hosts_engine():
-    """``layout=``: the host's page engine for the document, which ``word_fields`` lays the
+    """``layout=CallLayout(pages)``: the host's page engine for the document, which ``word_fields`` lays the
     versions it updates out with; without it a page number is left to the host."""
     from pathlib import Path
 
@@ -209,6 +209,18 @@ def test_a_field_update_lays_out_with_the_hosts_engine():
     doc = session.open(page_docx("9"), name="a.docx")
     left = call(session, "word_fields", {"doc": doc, "action": "update"})
     assert call(session, "word_fields", {"doc": doc, "action": "list"})["data"][0]["result"] == "9", left
-    reply = call(session, "word_fields", {"doc": doc, "action": "update"}, layout=pages)
+    reply = call(session, "word_fields", {"doc": doc, "action": "update"}, layout=ooxml_core.CallLayout(pages))
     assert reply["ok"], reply
     assert call(session, "word_fields", {"doc": doc, "action": "list"})["data"][0]["result"] == "1"
+
+
+def test_the_hosts_limits_and_image_budgets_are_checked_when_given():
+    """``Limits``: the host's limits on a call's reply, carried by a ``CallContext``;
+    ``CallLayout(image_budgets=)``: the session's and the round's, by name."""
+    ooxml_core.CallContext(limits=ooxml_core.Limits(max_result_chars=3000, max_images_per_call=2,
+                                                    max_image_edge=1200))
+    with pytest.raises(ValueError, match="max_images_per_call"):
+        ooxml_core.Limits(max_images_per_call=0)
+    ooxml_core.CallLayout(image_budgets=[("session", 10, 3), ("round", 4, 4)])
+    with pytest.raises(ValueError, match="week"):
+        ooxml_core.CallLayout(image_budgets=[("week", 1, 0)])
