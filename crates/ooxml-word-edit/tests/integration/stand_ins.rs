@@ -7,7 +7,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
 use crate::common::{editor, fixture, written};
-use crate::structure_reads::Paused;
+use crate::interleave::Paused;
 use ooxml_store::{Caller, Command, Txn};
 use ooxml_word_edit::{
     EditError, EditSink, Edited, Editor, InsertMarkdown, Key, MarkdownInserted, MarkdownOptions, RevisionPolicy,
