@@ -73,7 +73,7 @@ pub struct FieldInfo {
 pub fn fields(doc: &WordDoc) -> Result<Vec<FieldInfo>> {
     let docx = doc.docx()?;
     let mut out = Vec::new();
-    for located in scan::all_fields(doc, &docx) {
+    for located in scan::all_fields(doc, &docx).iter() {
         let Some(part) = docx.part(&located.part) else { continue };
         let root = part.root();
         let paragraph = scan::paragraph_of(root, &located.found.begin)

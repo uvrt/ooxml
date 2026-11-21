@@ -137,8 +137,9 @@ impl InsertToc<'_> {
         let begin = put_field(sink, &main, &holder, &instruction)?;
         let docx = sink.docx()?;
         let toc = all_fields(sink.doc(), &docx)
-            .into_iter()
+            .iter()
             .find(|l| l.part == main && l.found.begin == begin)
+            .cloned()
             .ok_or_else(|| EditError::Path(main.clone()))?;
         let known = (main.clone(), position(sink.doc(), &docx, &toc));
         let unknown = settle(&mut *sink, std::slice::from_ref(&known), self.layout, self.today)?;
@@ -200,10 +201,11 @@ fn find_toc(doc: &WordDoc, docx: &ooxml_word_model::docx::Docx, main: &str, hold
         .map(|p| p.path.to_vec())
         .ok_or_else(|| EditError::Path(main.to_owned()))?;
     all_fields(doc, docx)
-        .into_iter()
+        .iter()
         .filter(|l| l.part == main && l.found.keyword() == "TOC")
         .filter(|l| l.found.end.as_ref().and_then(|e| paragraph_of(part.root(), e)).as_ref() == Some(&path))
         .last()
+        .cloned()
         .ok_or_else(|| EditError::Path(main.to_owned()))
 }
 
