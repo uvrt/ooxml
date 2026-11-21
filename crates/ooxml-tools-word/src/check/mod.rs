@@ -12,7 +12,9 @@ mod args;
 mod facts;
 
 pub use args::{Check, CheckCopy, CheckInclude, CheckScale, CopyLists, CopyReference, ScaleShow, ScaleStep, StepText};
-pub use facts::{empty_run_json, grid_mismatch_json, lost_cell_json, skipped_level_json};
+pub use facts::{
+    empty_run_json, grid_mismatch_json, lost_cell_json, skipped_level_json, spacing_problem_json, text_language_json,
+};
 
 use crate::describe::cancelled;
 use crate::version::{Owned, Version};
