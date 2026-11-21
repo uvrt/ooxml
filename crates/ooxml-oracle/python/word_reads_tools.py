@@ -53,7 +53,8 @@ def targets(path) -> list[str]:
         out.append(f"{ids[-2]}..")
     tables = document.tables()
     if tables:
-        out += [tables[0].id, f"{tables[0].id}/c0,0", f"{tables[0].id}/r0"]
+        # (and a cell below the table's last row: refused with what the table has)
+        out += [tables[0].id, f"{tables[0].id}/c0,0", f"{tables[0].id}/r0", f"{tables[0].id}/c{len(tables[0].rows)},0"]
     found = headings(document)
     if found:
         out.append(f"h:{found[0].id}")

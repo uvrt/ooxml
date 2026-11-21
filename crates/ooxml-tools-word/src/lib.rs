@@ -56,5 +56,9 @@ pub use written::Written;
 /// What `unported` says of a final view where a cell's end is one Accept All takes away.
 pub const CELL_ENDS: &str = "Accept All's cell ends";
 
+/// What `unported` says of an address naming a block by a place id that stamping renamed,
+/// on a version without the renames to follow (docx-agent's view follows them).
+pub const RENAMED_PLACE: &str = "a place id renamed";
+
 /// The document kind these tools serve.
 pub const KIND: &str = "docx";

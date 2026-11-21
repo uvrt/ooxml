@@ -18,27 +18,33 @@ compare layouts (Python lays them out) it runs under the lock (:func:`serve`).
 The Python handler answers instead -- on the view, committed through the bridge, counted by
 tool and reason (:func:`fallbacks`, ``edit_fallbacks{tool,reason}``), never silently -- where
 the session does not answer as it yet: an op of a ``batch`` (one step), a call on a draft,
-values written by reference in a tool that does not keep them yet (``Hosting.keeps_written``), a ref name that would be folded, a refusal (the session's carries its own way out, tool rule 2,
-which today's does not), a session given its own clock (the Rust session dates revisions by
-the system's), and what the session says it leaves to the host (its ``unported``: a find
-within a block, a picture, regex, ...).  The Rust handler changes nothing in each of those.
+values written by reference in a tool that does not keep them yet (``Hosting.keeps_written``), a
+ref name that would be folded, a session given its own clock (the Rust session dates
+revisions by the system's), and what the session says it leaves to the host (its
+``unported``: a find within a block, a picture, regex, ...).  The Rust handler changes nothing
+in each of those.
+
+A refusal is not a fallback (lane P2e1): the session's is the call's answer, in docx-agent's
+words, with its way out (:mod:`.refusals`).
 """
 
 from __future__ import annotations
 
+import functools
 import json
 import threading
 import time
 from collections import Counter
 from typing import Any, Callable
 
-from ooxml_edit.tools import Result
+from ooxml_edit.tools import Result, ToolError
 from ooxml_edit.tools.session import REF
 from ooxml_edit.tools.session import StepOwner
 from ooxml_edit.tools.session import utc_now
 
 from . import served as _served
-from .owner import context_of
+from .owner import context_of, retired_ids
+from .refusals import describe_of, refusal
 from .served import Adapted, Fallback, written_json
 
 _COUNTS_LOCK = threading.Lock()
@@ -268,7 +274,8 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
     error = envelope.get("error")
     unported = json.loads(app).get("unported") or []
     if made is None and error is not None:
-        raise Fallback(f"refusal: {error.get('code')}")
+        # A refusal is the call's answer, in docx-agent's words with Rust's way out (lane P2e1).
+        raise refusal(error, functools.partial(retired_ids, mirror), arguments, describe_of(entry))
     if made is None and unported:
         raise Fallback(unported[0])
     result = _result(envelope)
@@ -324,6 +331,9 @@ def serve_owned(call: Any, arguments: dict[str, Any]) -> Any:
             result, made, markers = _edit(call, entry, arguments, counted=True)
         except Fallback as fallback:
             why = str(fallback)
+        except ToolError:
+            _count(tool, None)          # the session's refusal is the answer
+            raise
     if why is not None:
         _count(tool, why)
         return Declined(why)
@@ -368,6 +378,9 @@ def serve(call: Any, arguments: dict[str, Any], python: Callable[[], Any]) -> An
     except Fallback as fallback:
         _count(tool, str(fallback))
         return python()
+    except ToolError:
+        _count(tool, None)              # the session's refusal is the answer
+        raise
     _count(tool, None)
     return result
 

@@ -55,10 +55,10 @@ def _calls(toolbox, data: bytes, served: bool) -> list:
     ids = {p.text: p.id for p in session.entry(doc).document.paragraphs()}
     out = []
 
-    def run(arguments: dict, *, counted: bool = True) -> object:
+    def run(arguments: dict) -> object:
         before = dict(edits.served())
         result = toolbox.dispatch(session, "word_drawings", {"doc": doc, **arguments})
-        if served and counted:
+        if served:
             assert edits.served().get("word_drawings", 0) == before.get("word_drawings", 0) + 1, edits.fallbacks()
         out.append((result.ok, result.summary, result.data, sorted(result.changed), result.warnings))
         return result
@@ -73,9 +73,9 @@ def _calls(toolbox, data: bytes, served: bool) -> list:
     if drawing is not None:
         run({"action": "resize", "target": drawing, "width": 60})
         run({"action": "set", "target": drawing, "alt_text": "A made-up logo, larger"})
-    # a blob that is not there: refused (the Python handler words the refusal)
+    # a blob that is not there: refused by the session, in docx-agent's words (lane P2e1)
     missing = run({"action": "insert_picture", "image": "b9", "at": ids["Lantern meadow by the harbour."],
-                   "alt_text": "None"}, counted=False)
+                   "alt_text": "None"})
     assert not missing.ok and missing.error.code == "not_found"
     return out
 

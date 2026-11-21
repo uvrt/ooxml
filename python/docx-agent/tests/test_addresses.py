@@ -210,7 +210,9 @@ def test_a_section_parameter_takes_any_block_and_names_its_section(box, session)
     ok(box, session, "word_sections", doc=doc, action="set", section=ids["Alpha"], orientation="landscape")
     ok(box, session, "word_headers_footers", doc=doc, section=f"{table.id}/c0,0", which="header",
        action="set", text="Later pages")
-    first, last = document.sections()
+    # (the document as it is now: a served call edits it in the Rust session, and a Document
+    # held from before is not live)
+    first, last = session.entry(doc).document.sections()
     assert first.orientation == "landscape" and last.orientation == "portrait"
     assert last.header() is not None and "Later pages" in last.header().paragraphs[0].text
     error = refused(box, session, "word_sections", "invalid_arguments", doc=doc, action="set",
