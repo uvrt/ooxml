@@ -249,9 +249,7 @@ fn bracket(inner: &str) -> Token {
     if let Some(rest) = inner.strip_prefix('$') {
         return Token::new(TokenKind::Locale, rest);
     }
-    let numbered = low
-        .strip_prefix("color")
-        .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_numeric()));
+    let numbered = low.strip_prefix("color").is_some_and(ooxml_base::pystr::str_is_digit);
     if COLOURS.contains(&low.as_str()) || numbered {
         return Token::new(TokenKind::Colour, inner);
     }
@@ -377,7 +375,7 @@ pub fn is_date_code(code: Option<&str>, section: Option<usize>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{classify, sections, Kind};
+    use super::{classify, sections, tokens, Kind, TokenKind};
 
     #[test]
     fn codes_classify_as_excel_shows_them() {
@@ -397,5 +395,18 @@ mod tests {
             assert_eq!(classify(code, None).map(|c| c.kind), Some(kind), "{code}");
         }
         assert_eq!(sections(r#"0;"a;b";\;"#), vec!["0", r#""a;b""#, r"\;"]);
+    }
+
+    #[test]
+    fn a_numbered_colour_takes_what_python_reads_as_digits() {
+        // `low[5:].isdigit()`: a superscript digit is one, a vulgar fraction is not
+        for (code, kind) in [
+            ("[Color10]0", TokenKind::Colour),
+            ("[Color\u{b2}]0", TokenKind::Colour),
+            ("[Color\u{bd}]0", TokenKind::Bracket),
+            ("[Color]0", TokenKind::Bracket),
+        ] {
+            assert_eq!(tokens(code)[0].kind, kind, "{code}");
+        }
     }
 }

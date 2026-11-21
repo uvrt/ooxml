@@ -1,6 +1,6 @@
 //! Owns: a call's context ([`CallContext`]: who calls, its cancellation token, its
 //! deadline, the versions it reads, where it may ask where blocks are laid out, the host's
-//! names for its documents), the token a host cancels a call with ([`CancelToken`]), the [`Cancel`] a call
+//! names for its documents, the limits on its reply), the token a host cancels a call with ([`CancelToken`]), the [`Cancel`] a call
 //! runs under (its token, its deadline read from the session's [`Clock`], and the
 //! session's own [`Cancel`]), and the store's clock read through the session's.
 //!
@@ -79,6 +79,9 @@ pub struct CallContext {
     /// resolved against its datasets), which an editing call keeps on the paragraphs they
     /// went into; empty: none.
     pub written: Vec<ooxml_tools_word::Written>,
+    /// The host's limits on the call's reply: a page's characters, a listing's items
+    /// (docx-agent's `Limits.max_result_chars`, `Limits.max_list_items`).
+    pub limits: ooxml_tools::Limits,
 }
 
 impl std::fmt::Debug for CallContext {
@@ -87,6 +90,7 @@ impl std::fmt::Debug for CallContext {
             .field("caller", &self.caller)
             .field("deadline", &self.deadline)
             .field("layout_timeout", &self.layout_timeout)
+            .field("limits", &self.limits)
             .field(
                 "at",
                 &self

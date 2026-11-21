@@ -43,7 +43,10 @@ impl PyCancelToken {
 /// What a call runs with (`ooxml_core.CallContext`): who calls (`caller`, its key; and
 /// `context`, the caller's context as JSON in the order given, which replies name it by),
 /// a token that stops it, how long laying a document out may take in it (`layout_timeout`,
-/// seconds), and how long it may run, in seconds. One may serve many calls.
+/// seconds), how long it may run, in seconds, and the limits on its reply --
+/// `max_result_chars` (a page's characters; 24,000 unless given) and `max_list_items` (a
+/// listing's items per page; 50 unless given), as the host's `Limits`. One may serve many
+/// calls.
 #[pyclass(frozen, name = "CallContext", module = "ooxml_core")]
 pub struct PyCallContext {
     pub(crate) inner: CallContext,
@@ -51,15 +54,32 @@ pub struct PyCallContext {
 
 #[pymethods]
 impl PyCallContext {
+    /// # Errors
+    /// `ValueError` for a negative deadline or layout timeout, a limit of 0, or a context
+    /// that is not a JSON object.
     #[new]
-    #[pyo3(signature = (*, caller = None, cancel = None, deadline = None, layout_timeout = None, context = None))]
+    #[pyo3(signature = (*, caller = None, cancel = None, deadline = None, layout_timeout = None,
+                        max_result_chars = None, max_list_items = None, context = None))]
     fn new(
         caller: Option<&str>,
         cancel: Option<PyRef<'_, PyCancelToken>>,
         deadline: Option<f64>,
         layout_timeout: Option<f64>,
+        max_result_chars: Option<usize>,
+        max_list_items: Option<usize>,
         context: Option<&str>,
     ) -> PyResult<Self> {
+        let mut limits = ooxml_tools::Limits::DEFAULT;
+        for (given, kept, name) in [
+            (max_result_chars, &mut limits.result_chars, "max_result_chars"),
+            (max_list_items, &mut limits.list_items, "max_list_items"),
+        ] {
+            match given {
+                Some(0) => return Err(PyValueError::new_err(format!("{name} is 1 or more"))),
+                Some(n) => *kept = n,
+                None => {}
+            }
+        }
         let caller_context = match context.map(serde_json::from_str::<Value>).transpose() {
             Ok(None) => None,
             Ok(Some(Value::Object(fields))) => Some(Arc::new(fields)),
@@ -72,6 +92,7 @@ impl PyCallContext {
                 cancel: cancel.map(|t| Arc::clone(&t.inner)),
                 deadline: seconds(deadline, "deadline")?,
                 layout_timeout: seconds(layout_timeout, "layout_timeout")?,
+                limits,
                 ..CallContext::default()
             },
         })

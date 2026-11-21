@@ -50,6 +50,7 @@ def test_find_with_a_target_is_find_within_it(box):
     document = session.entry(d).document
     second = document.paragraphs()[2].id
     result = ok(box, session, "word_delete", doc=d, find="spare ", target=second)
+    document = session.entry(d).document        # (the view as the served call left it)
     assert [p.text for p in document.paragraphs()[1:]] == ["Shelf one holds the spare parts",
                                                            "Shelf two holds the tools"]
     assert result.warnings == [f"find was searched within target {second}: within names where to search"]
