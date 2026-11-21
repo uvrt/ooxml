@@ -10,8 +10,9 @@
 | `own-tracked-note.docx` | `385d29b4493f8feaf6ef8f6ca9f707d3102f3e95c1c9a16c766104157065aa31` |
 | `tables-accepted.docx` | `d5eeebfec7cde139b95ae6908769ab9f9946f2943bf2920709cf5b35267568ab` |
 | `table-keeps.docx` | `6ed46c496f4c062bfa80b34f945ffcf5b2904c75ac068f2ad662ba4ecbaad60f` |
+| `toc-numbered.docx` | `e7bd8e435f3fec2a48b71b029b1b301a3bca12072e71d3551220516538b88604` |
 
-Written by `tools/make_fixtures.py` (`table-keeps.docx`: `tools/make_table_fixtures.py`, with its parts) in this repository, deterministically (running it
+Written by `tools/make_fixtures.py` (`table-keeps.docx`: `tools/make_table_fixtures.py`; `toc-numbered.docx`: `tools/make_toc_fixtures.py`; with its parts) in this repository, deterministically (running it
 again writes the same bytes), every part by hand: the styles are a handful written there,
 not a template's, and nothing in them comes from Word or any other application. Licence:
 this repository's, MIT.
@@ -54,3 +55,9 @@ keeps, then a paragraph that does not keep with the next before another table; k
 and with the next; kept by the rows' paragraph style (`Label`); a last row keeping alone; one
 row; kept by a style with the last row released directly; a first row starting with a nested
 table; sixty rows kept together, taller than a page.
+
+`toc-numbered.docx` (mode 15) is a table of contents over numbered headings: `heading 1` to
+`heading 3` numbered by their styles over one multilevel list (a tab, a space and nothing
+after the number), the document's own `toc 2` (indented, in capitals), a numbered body list
+of its own before them, a heading whose numbering is removed directly and one in a table
+cell; the table's entries are out of date.
