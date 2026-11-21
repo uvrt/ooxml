@@ -35,7 +35,7 @@ pub fn field_facts(doc: &WordDoc) -> Result<FieldFacts> {
     let docx = doc.docx()?;
     let fields = all_fields(doc, &docx);
     let mut facts = FieldFacts::default();
-    for located in &fields {
+    for located in fields.iter() {
         let keyword = located.found.keyword();
         match facts.counts.iter_mut().find(|(k, _)| *k == keyword) {
             Some((_, count)) => *count += 1,
@@ -45,7 +45,7 @@ pub fn field_facts(doc: &WordDoc) -> Result<FieldFacts> {
     facts.empty_toc = empty_tocs(doc, &docx, None);
     let names = bookmark_names(&docx);
     let folded: HashSet<String> = names.iter().map(|n| casefold(n)).collect();
-    for located in &fields {
+    for located in fields.iter() {
         let keyword = located.found.keyword();
         if !TO_BOOKMARKS.contains(&keyword.as_str()) {
             continue;

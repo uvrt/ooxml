@@ -6,11 +6,10 @@
 //! Must not: write anything.
 
 use super::pages::{FieldPlace, LaidFields, Unknown};
-use super::scan::{paragraph_of, Located};
+use super::scan::{paragraph_of, Located, Marks};
 use crate::text_range::Span;
 use crate::WordDoc;
 use ooxml_word_model::address::bookmark_range;
-use ooxml_word_model::address::marks::Bookmarks;
 use ooxml_word_model::docx::sections::section_story;
 use ooxml_word_model::docx::text::OBJECT;
 use ooxml_word_model::docx::Docx;
@@ -241,10 +240,10 @@ impl Placed {
 ///
 /// # Errors
 /// [`Unknown`] where the layout (or the bookmark) cannot say: the field is left as it is.
-/// `marks`: `docx`'s bookmarks, found once for all of a pass's fields.
+/// `marks`: `docx`'s bookmarks, as the pass looks them up.
 pub(crate) fn value(
     doc: &WordDoc,
-    (docx, marks): (&Docx, &Bookmarks<'_>),
+    (docx, marks): (&Docx, &Marks<'_>),
     located: &Located,
     laid: Option<&dyn LaidFields>,
     today: Day,
@@ -281,14 +280,14 @@ pub(crate) fn value(
 }
 
 /// The id of the body paragraph a bookmark starts in (`_bookmark_page`'s target).
-fn bookmark_place(doc: &WordDoc, docx: &Docx, marks: &Bookmarks<'_>, name: &str) -> Option<String> {
-    let found = bookmark_range(docx, marks.get(name).ok()?).ok()?;
+fn bookmark_place(doc: &WordDoc, docx: &Docx, marks: &Marks<'_>, name: &str) -> Option<String> {
+    let found = bookmark_range(docx, &marks.get(name)?).ok()?;
     let span = Span::of(doc, docx, &found).ok()?;
     (span.part == docx.main).then(|| span.first().map(|f| f.id.clone()))?
 }
 
 /// The text a bookmark marks (`Bookmark.text`).
-fn bookmark_text(doc: &WordDoc, docx: &Docx, marks: &Bookmarks<'_>, name: &str) -> Option<String> {
-    let found = bookmark_range(docx, marks.get(name).ok()?).ok()?;
+fn bookmark_text(doc: &WordDoc, docx: &Docx, marks: &Marks<'_>, name: &str) -> Option<String> {
+    let found = bookmark_range(docx, &marks.get(name)?).ok()?;
     Span::of(doc, docx, &found).ok().map(|s| s.text())
 }
