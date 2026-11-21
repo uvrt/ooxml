@@ -25,9 +25,6 @@ use std::time::Duration;
 /// How many removed blocks a summary names; the rest are counted.
 const NAMED: usize = 6;
 
-/// Items a preview lists.
-const PAGE: usize = 50;
-
 /// The selection a call makes, or its refusal.
 fn selection(args: &WordChanges) -> Result<Selection, ToolError> {
     let ids = args.ids.clone().filter(|i| !i.is_empty());
@@ -431,7 +428,7 @@ fn preview(args: &WordChanges, editing: &Editing<'_>, selection: Selection) -> R
     let items: Vec<Value> = chosen.iter().map(change_json).collect();
     let mut first = args.clone();
     first.cursor = None;
-    let (shown, total, _) = page_list(&items, None, PAGE, try_call(&first))?;
+    let (shown, total, _) = page_list(&items, None, editing.limits.list_items, try_call(&first))?;
     let count = shown.len();
     data.insert("changes".into(), Value::Array(shown));
     if total > count {

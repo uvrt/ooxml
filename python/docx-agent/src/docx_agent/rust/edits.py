@@ -265,7 +265,7 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
     :meth:`~ooxml_edit.tools.owned.OwnedEntry.served`."""
     mirror = entry.handle
     tool = call.tool.name
-    context = context_of(call.caller)
+    context = context_of(call.caller, call.limits)
     _tracking(call, entry, context, counted)
     adapted = _served.arguments_for(call, tool, arguments)
     written = adapted.written if isinstance(adapted, Adapted) else _written(call)
@@ -391,7 +391,11 @@ def serve(call: Any, arguments: dict[str, Any], python: Callable[[], Any]) -> An
 
 
 def _result(envelope: dict[str, Any]) -> Result:
-    result = Result(summary=envelope.get("summary", ""), data=envelope.get("data"))
+    # a listing's page too (word_comments list, lane H3): its cursor and its total
+    result = Result(summary=envelope.get("summary", ""), data=envelope.get("data"),
+                    next_cursor=envelope.get("next_cursor"))
+    if envelope.get("total") is not None:
+        result.total = envelope["total"]
     for key in ("changed", "created", "removed"):
         getattr(result, key).extend(envelope.get(key) or [])
     result.renamed.update(envelope.get("renamed") or {})
