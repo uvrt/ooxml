@@ -10,13 +10,15 @@ use crate::edits::Unlimited;
 use ooxml_base::Limits;
 use ooxml_opc::Package;
 use ooxml_tools_word::{
-    direct_formatting_json, empty_run_json, grid_mismatch_json, lost_cell_json, lost_original_json, skipped_level_json,
-    style_use_json,
+    direct_formatting_json, empty_run_json, grid_mismatch_json, lost_cell_json, lost_original_json, row_unlike_json,
+    skipped_level_json, style_use_json,
 };
 use ooxml_word_edit::validate::{extension_problems, problems, problems_in};
 use ooxml_word_edit::{facts, EditError, WordDoc};
-use ooxml_word_model::ids::W;
+use ooxml_word_model::docx::at_path;
+use ooxml_word_model::ids::{W, W14};
 use serde_json::{json, Value};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 /// The body blocks a `problems_in` case reads alone at most
@@ -86,6 +88,10 @@ fn entries(doc: &WordDoc, opened: &WordDoc, fact: &str) -> Result<Option<Vec<Val
                 Ok(json!({"target": target, "problems": listed}))
             })
             .collect::<Result<_, EditError>>()?,
+        "row_text_format" => facts::row_text_format(doc, &written(doc)?, None)?
+            .iter()
+            .map(row_unlike_json)
+            .collect(),
         _ => return Ok(None),
     }))
 }
@@ -120,4 +126,24 @@ fn problems_in_blocks(doc: &WordDoc) -> Result<Vec<Value>, EditError> {
     }
     out.push(entry(json!("all"), &blocks).1);
     Ok(out)
+}
+
+/// The made-up rows written `row_text_format` is read with (`word_facts_cases.py`'s
+/// `_written`): each body table's every third row from row 2, by `w14:paraId`.
+fn written(doc: &WordDoc) -> Result<BTreeSet<String>, EditError> {
+    let docx = doc.docx()?;
+    let Some(body) = docx.body() else {
+        return Ok(BTreeSet::new());
+    };
+    Ok(body
+        .ids
+        .tables()
+        .iter()
+        .flat_map(|t| t.rows.into_iter().skip(2).step_by(3))
+        .filter_map(|(path, _)| {
+            at_path(body.root(), &path)?
+                .attribute(Some(W14), "paraId")
+                .map(str::to_owned)
+        })
+        .collect())
 }

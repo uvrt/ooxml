@@ -4,9 +4,10 @@
 //! their grid or ragged ([`table_grid_mismatch`]), the cells Word's Accept All removes
 //! with their text ([`accept_loses_text`]), paragraphs whose direct formatting sets them
 //! apart from their styles ([`direct_formatting`]), the styles in use that a list does
-//! not allow ([`style_list`]) and the file's text a pending deletion this session made
-//! takes out of the final view ([`accept_loses_original`]) -- each as typed entries in
-//! document order, with what fixes them.
+//! not allow ([`style_list`]), the file's text a pending deletion this session made takes
+//! out of the final view ([`accept_loses_original`]) and the rows the session wrote unlike
+//! the rows around them ([`row_text_format`]) -- each as typed entries in document order,
+//! with what fixes them.
 //!
 //! Must not: lay out, filter by pages or ranges, cap or word a reply (the tool layer does),
 //! or change the document.
@@ -17,6 +18,7 @@ mod empty;
 mod grid;
 mod numbering;
 mod original;
+mod rows;
 mod scratch;
 mod shapes;
 mod styles;
@@ -27,6 +29,7 @@ pub use empty::{empty_paragraphs, EmptyRun};
 pub use grid::{table_grid_mismatch, GridFix, GridMismatch, OffGridRow, RaggedRow};
 pub use numbering::{numbering_skips_level, SkippedLevel};
 pub use original::{accept_loses_original, LostOriginal};
+pub use rows::row_text_format;
 pub use styles::{style_list, StyleList, StyleUse};
 
 use crate::names::W;

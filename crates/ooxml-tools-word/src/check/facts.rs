@@ -1,6 +1,6 @@
 //! Owns: `check`'s facts read from the document alone as docx-agent words them in `layout`
 //! (`empty_paragraphs`, `numbering_skips_level`, `table_grid_mismatch`, `accept_loses_text`,
-//! `direct_formatting`, `styles_not_allowed`, `accept_loses_original`):
+//! `direct_formatting`, `styles_not_allowed`, `accept_loses_original`, `row_text_format`):
 //! each entry's JSON, with the calls that fix it, an entry's own lists capped as docx-agent
 //! caps them.
 //!
@@ -10,6 +10,7 @@ use crate::describe::short;
 use ooxml_word_edit::facts::{
     DirectFormatting, EmptyRun, FormatValue, GridMismatch, LostCell, LostOriginal, SkippedLevel, StyleUse,
 };
+use ooxml_word_edit::{LookField, RowUnlike, TextLook};
 use serde_json::{json, Map, Value};
 
 /// The most of a list inside one entry (docx-agent's `CAP`).
@@ -205,4 +206,43 @@ pub fn lost_original_json(entry: &LostOriginal) -> Value {
     };
     out.insert("fix".into(), json!({"tool": "word_changes", "calls": [call]}));
     Value::Object(out)
+}
+
+/// A look's `fields` as a `row_text_format` entry's `has` or `around` says them (`font`,
+/// `sz`, `color`), or as `word_format` takes them (`font`, `size`, `color`).
+fn look_json(look: &TextLook, fields: &[LookField], arguments: bool) -> Map<String, Value> {
+    let mut out = Map::new();
+    for field in fields {
+        let value = match field {
+            LookField::Font => look.font.clone().map_or(Value::Null, Value::from),
+            LookField::Size => Value::from(look.size),
+            LookField::Color => Value::from(look.color.clone()),
+        };
+        let key = if arguments { field.argument() } else { field.key() };
+        out.insert(key.into(), value);
+    }
+    out
+}
+
+/// A `row_text_format` entry: a written row unlike the rows around it, its cells (capped)
+/// with what they have and what the rows around share, and the `word_format` calls that
+/// make them match.
+#[must_use]
+pub fn row_unlike_json(entry: &RowUnlike) -> Value {
+    let (cells, _) = capped(&entry.cells, |c| {
+        json!({"cell": c.cell, "has": look_json(&c.has, &c.fields, false),
+            "around": look_json(&c.around, &c.fields, false)})
+    });
+    let calls: Vec<Value> = entry
+        .fix
+        .iter()
+        .map(|call| {
+            let mut one = Map::new();
+            one.insert("targets".into(), Value::from(call.targets.clone()));
+            one.extend(look_json(&call.look, &call.fields, true));
+            Value::Object(one)
+        })
+        .collect();
+    json!({"table": entry.table, "row": entry.row, "cells": cells,
+        "fix": {"tool": "word_format", "calls": calls}})
 }
