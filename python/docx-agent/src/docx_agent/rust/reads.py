@@ -401,9 +401,11 @@ def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | 
     # the documents named as the host names them: the reply says those names (lane P2c17)
     names[call.entry.doc_id] = mirror.doc
     arguments = {**{k: v for k, v in arguments.items() if v is not None}, "doc": call.entry.doc_id}
-    reply, _images, app = mirror.session.call(tool, json.dumps(arguments), at=[version, *pinned],
-                                              placer=placer.place if placer is not None else None,
-                                              names=names)
+    import ooxml_core
+
+    reply, _images, app = mirror.session.call(tool, json.dumps(arguments), ooxml_core.CallOptions(
+        documents=ooxml_core.CallDocuments(at=[version, *pinned], names=names),
+        placer=placer.place if placer is not None else None))
     if placer is not None and placer.error is not None:
         raise placer.error
     envelope = json.loads(reply)
