@@ -2,13 +2,16 @@
 //! text box (docx-agent's `generated/charts/chart-places.docx`) is laid out, not sent back,
 //! and painted inside the box's drawing, after the box's own paint, as docx2svg draws the
 //! floats of a text box's scratch page; a text box holding a drawing with text of its own
-//! is still sent back.
+//! is still sent back. A check's blank at a page's foot is measured with what the facts
+//! leave out -- the lines its text boxes and footnotes draw -- for a version and a trial
+//! alike (lane P5p).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use ooxml_derive::CacheBudget;
 use ooxml_fonts::{Folder, Location, WordFontOptions};
-use ooxml_word_pages::{support, DiskFonts, EngineBudgets, EngineOptions, FontSetup, PageEngine};
+use ooxml_word_pages::layout_facts::{room, BeyondFacts};
+use ooxml_word_pages::{support, DiskFonts, EngineBudgets, EngineOptions, FontSetup, Laid, PageEngine};
 use std::sync::Arc;
 
 struct Unlimited;
@@ -116,6 +119,39 @@ fn a_text_box_holding_a_drawing_with_text_is_sent_back() {
     });
     let fallback = engine.lay_out_bytes(Arc::from(edited)).unwrap().unwrap_err();
     assert_eq!(fallback.reason, support::TEXT_BOX);
+}
+
+struct Never;
+
+impl ooxml_base::Cancel for Never {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+}
+
+#[test]
+fn a_page_measured_with_its_text_boxes_and_footnotes_for_a_version_and_a_trial() {
+    let mut engine = engine();
+    let bytes = fixture();
+    let version = engine.lay_out_bytes(Arc::from(bytes.clone())).unwrap().unwrap();
+    let beyond = engine.beyond_facts(Laid::Version(&version), 0);
+    let page = &version.facts().pages[0];
+    let body = page.lines.iter().map(|l| l.top + l.pitch).max().unwrap();
+    // The box's lines are drawn (above the body's last here); the footnotes below it.
+    let foot = beyond.text_boxes.expect("the box's lines");
+    assert!(foot > page.frame.top && foot < body);
+    let notes = beyond.notes.expect("the footnotes' lines");
+    assert!(notes > body && notes < page.frame.bottom);
+    // docx-agent's blank: from the body's last line to the footnote separator.
+    assert_eq!(room(page, &beyond), (155.1, 0.3));
+    assert_eq!(room(page, &BeyondFacts::default()), (268.1, 0.42));
+    // A page whose paragraphs hold no text box is not painted for it.
+    let last = version.page_count() - 1;
+    assert_eq!(engine.beyond_facts(Laid::Version(&version), last).text_boxes, None);
+    // A trial laid out from the version measures the same.
+    let package = ooxml_opc::Package::open(Arc::from(bytes), &ooxml_base::Limits::default()).unwrap();
+    let trial = engine.trial(&package, &version, &Never).unwrap().unwrap();
+    assert_eq!(engine.beyond_facts(Laid::Trial(&trial), 0), beyond);
 }
 
 /// `package` with part `name`'s text made by `edit`.

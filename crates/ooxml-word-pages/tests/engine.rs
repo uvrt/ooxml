@@ -273,7 +273,11 @@ fn a_trial_is_laid_out_from_the_version_checked_and_kept_nowhere() {
     assert_eq!(kept.stats().trials, 1);
     let mut fresh = engine();
     let whole = fresh.lay_out(&edited).unwrap().unwrap();
-    assert_eq!(&trial, whole.facts(), "page for page the layout of those bytes alone");
+    assert_eq!(
+        trial.facts(),
+        whole.facts(),
+        "page for page the layout of those bytes alone"
+    );
     // stopped: nothing laid out, the last version kept
     assert!(matches!(
         kept.trial(&edited, &first, &after(0)),
