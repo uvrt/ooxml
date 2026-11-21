@@ -463,7 +463,7 @@ impl PyLaidPages {
     /// strike, double_strike, highlight, shading, kind, line_baseline, vertical_align)`),
     /// `rules` (`(kind, path, x, y, width, height, color, style)`), `pictures` (`(path,
     /// relationship, x, y, width, height, part, crop)`), `drawings` (slots, as a painter
-    /// is given them), `blocks` and `unpainted`. `lines` false: its lines left out (lane
+    /// is given them, each with its text boxes' `lines`), `blocks` and `unpainted`. `lines` false: its lines left out (lane
     /// L4b: what a reader of its rules, pictures and drawings alone reads).
     #[pyo3(signature = (page, lines = true))]
     fn page<'py>(&self, py: Python<'py>, page: usize, lines: bool) -> PyResult<Bound<'py, PyDict>> {
@@ -747,9 +747,16 @@ fn view_dict<'py>(py: Python<'py>, view: &PageView, with_lines: bool) -> PyResul
         .drawings
         .iter()
         .zip(&view.drawing_faces)
-        .map(|(s, faces)| {
+        .zip(&view.text_box_lines)
+        .map(|((s, faces), text)| {
             let d = slot_dict(py, s)?;
             d.set_item("faces", faces.clone())?;
+            let lines = text
+                .iter()
+                .filter(|_| with_lines)
+                .map(|l| line_tuple(py, l))
+                .collect::<PyResult<Vec<_>>>()?;
+            d.set_item("lines", lines)?;
             Ok(d)
         })
         .collect::<PyResult<Vec<_>>>()?;

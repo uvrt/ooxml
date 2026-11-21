@@ -189,6 +189,10 @@ pub struct PageView {
     pub drawings: Vec<DrawingSlot>,
     /// Per drawing, the faces its text is drawn in (a text path's): `(face, bold, italic)`.
     pub drawing_faces: Vec<Vec<(String, bool, bool)>>,
+    /// Per drawing, its text boxes' lines in page coordinates, in the order they are painted
+    /// (docx2svg's `Float.lines`): what a reader of the lines a page draws reads beside
+    /// `lines` (`Page.text_lines`).
+    pub text_box_lines: Vec<Vec<PaintedLine>>,
     /// The body blocks it draws something of (`Page.blocks`).
     pub blocks: Vec<Text>,
     /// What its paint does not draw yet, by reason.
