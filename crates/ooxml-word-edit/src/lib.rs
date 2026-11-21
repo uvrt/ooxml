@@ -168,8 +168,9 @@ pub use styles::{
 };
 pub use switch::{tracks_changes, word_tracks_changes, SetWordTracking, WordTracking};
 pub use tables::{
-    pending_structure, CellValues, EditTable, FormatTable, Look, TableChange, TableChanged, TableEdit, TableFormat,
-    TableFormatted, TableValues, TableWidth,
+    pending_structure, row_cells, row_shown, rows_unlike, CellUnlike, CellValues, EditTable, FormatCall, FormatTable,
+    Look, LookField, RowUnlike, TableChange, TableChanged, TableEdit, TableFormat, TableFormatted, TableValues,
+    TableWidth, TextLook, ROW_WINDOW,
 };
 pub use template::{compatibility_mode, UpgradeToModern, Upgraded, DEFAULT_COMPATIBILITY_MODE, MODERN_MODE};
 pub use text::diff::ratio as text_ratio;
