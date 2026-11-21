@@ -9,6 +9,7 @@
 //! page crates do).
 
 use super::laid_facts::{about, capped_values, page_facts_json, CAP};
+use super::placed::Placed;
 use super::{facts as worded, ranges_json, Trials, TRIALS, TRIAL_SECONDS};
 use crate::version::Owned;
 use ooxml_base::Cancel;
@@ -20,7 +21,7 @@ use ooxml_word_pages::layout_facts::{Facts, PageReads, Scope};
 use ooxml_word_pages::page_read::PageRead;
 use ooxml_word_pages::{LaidVersion, PageEngine};
 use serde_json::{Map, Value};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, PoisonError};
 
 /// The layout facts' keys in the order docx-agent writes them (each `<key>_left_out` right
@@ -87,7 +88,7 @@ pub(super) fn laid(
     let mut settings = Map::new();
     page_facts_json(facts, asked.minimum, approximations, &mut parts, &mut settings);
     parts.insert("settings".into(), Value::Object(settings));
-    let placed = Placed::of(facts.version());
+    let placed = Placed::of(facts);
     paragraph_facts(facts, &placed, doc, &mut parts)?;
     if let Some(allowed) = asked.styles {
         style_list(facts, &placed, doc, allowed, &mut parts)?;
@@ -111,11 +112,11 @@ pub(super) fn laid(
 /// `punctuation_spacing` and `text_language`.
 fn paragraph_facts(
     facts: &Facts<'_>,
-    placed: &Placed<'_>,
+    placed: &Placed<'_, '_>,
     doc: &WordDoc,
     parts: &mut Map<String, Value>,
 ) -> Result<(), ToolError> {
-    let pages_of = |id: &str| placed.pages(facts.version(), id);
+    let pages_of = |id: &str| placed.pages(id);
     let entries = facts::direct_formatting(doc).map_err(internal)?;
     let mut direct = Vec::new();
     for entry in &entries {
@@ -291,7 +292,7 @@ fn session_facts(owned: Owned<'_>, scope: Option<&Scope>, parts: &mut Map<String
 /// on the pages asked for) and `styles_unknown`.
 fn style_list(
     facts: &Facts<'_>,
-    placed: &Placed<'_>,
+    placed: &Placed<'_, '_>,
     doc: &WordDoc,
     allowed: &[String],
     parts: &mut Map<String, Value>,
@@ -310,7 +311,7 @@ fn style_list(
             .iter()
             .flat_map(|b| match entry.kind {
                 "table" => facts.table_pages_of(b),
-                _ => placed.pages(facts.version(), b),
+                _ => placed.pages(b),
             })
             .collect();
         if !pages.is_empty() && !facts.shown(pages.iter().copied()) {
@@ -333,31 +334,6 @@ fn style_list(
     );
     parts.insert("styles_unknown".into(), Value::from(found.unknown));
     Ok(())
-}
-
-/// The 1-based pages each paragraph of every story is drawn on, by its path (docx-agent's
-/// `placed`: a header's paragraph is on every page that draws it).
-struct Placed<'v>(HashMap<&'v str, BTreeSet<usize>>);
-
-impl<'v> Placed<'v> {
-    fn of(version: &'v LaidVersion) -> Self {
-        let mut drawn: HashMap<&str, BTreeSet<usize>> = HashMap::new();
-        for (index, page) in version.facts().pages.iter().enumerate() {
-            for line in &page.lines {
-                drawn.entry(&*line.path).or_default().insert(index + 1);
-            }
-        }
-        Placed(drawn)
-    }
-
-    /// The pages the paragraph `id` is drawn on, in order.
-    fn pages(&self, version: &LaidVersion, id: &str) -> Vec<usize> {
-        version
-            .path_of(id)
-            .and_then(|path| self.0.get(&*path))
-            .map(|pages| pages.iter().copied().collect())
-            .unwrap_or_default()
-    }
 }
 
 /// The table a cell address (`<table id>/c<row>,<column>`) is in.

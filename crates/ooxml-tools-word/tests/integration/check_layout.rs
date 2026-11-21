@@ -123,3 +123,18 @@ fn a_layout_past_the_limit_gives_the_facts_read_from_the_document_alone() {
     assert!(data["layout"].get("smallest_text").is_none(), "{reply}");
     assert_eq!(data["range"][0]["pages"], json!(null));
 }
+
+#[test]
+fn a_notes_paragraph_is_on_the_pages_that_draw_it() {
+    let (first, _) = versions();
+    let layout = EnginePages::new(Arc::new(Mutex::new(engine())));
+    let last = LastCheck::default();
+    let arguments = json!({"doc": "d1", "include": ["layout"], "styles": ["Normal"]});
+    let reply = checked(&first, 1, arguments, &last, Some(&layout));
+    let entries = reply["data"]["layout"]["styles_not_allowed"].as_array().unwrap();
+    let noted = entries
+        .iter()
+        .find(|e| e["blocks"][0].as_str().is_some_and(|b| b.starts_with("footnotes/")))
+        .expect("a footnote's style");
+    assert_eq!(noted["pages"], json!([1]), "{noted}");
+}
