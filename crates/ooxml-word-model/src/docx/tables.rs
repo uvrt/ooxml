@@ -217,6 +217,26 @@ pub fn cells_at(row: &Element, path: &[u32]) -> Vec<PlacedCell> {
     out
 }
 
+/// A table's own rows (inside row-level wrappers too, not its nested tables'), each with its
+/// place below the table (docx-agent's `own_table_rows`).
+#[must_use]
+pub fn own_rows(table: &Element) -> Vec<(Arc<Element>, Vec<u32>)> {
+    fn walk(element: &Element, at: &[u32], out: &mut Vec<(Arc<Element>, Vec<u32>)>) {
+        for (k, node) in element.children().iter().enumerate() {
+            let Some(child) = node.as_element() else { continue };
+            let place = [at, &[u32::try_from(k).unwrap_or(u32::MAX)]].concat();
+            if child.name().is(Some(W), "tr") {
+                out.push((Arc::clone(child), place));
+            } else if !child.name().is(Some(W), "tbl") {
+                walk(child, &place, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(table, &[], &mut out);
+    out
+}
+
 /// The cells of `table` (a table of `part`) Word's Accept All removes with their text, as
 /// `(row, cell)` (docx-agent's `cells_lost_on_accept`): in each row not itself deleted, a
 /// cell with no next cell kept in its row whose last paragraph mark is a pending deletion,

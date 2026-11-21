@@ -1,7 +1,8 @@
 //! Owns: `check`'s facts read from the document alone (docx-agent's `layout_facts.py`
 //! functions that need no layout): blank paragraphs used as space ([`empty_paragraphs`]),
-//! list levels whose labels show a level nothing uses ([`numbering_skips_level`]) and the
-//! cells Word's Accept All removes with their text ([`accept_loses_text`]) -- each as typed
+//! list levels whose labels show a level nothing uses ([`numbering_skips_level`]), tables off
+//! their grid or ragged ([`table_grid_mismatch`]) and the cells Word's Accept All removes
+//! with their text ([`accept_loses_text`]) -- each as typed
 //! entries in document order, with what fixes them.
 //!
 //! Must not: lay out, filter by pages or ranges, cap or word a reply (the tool layer does),
@@ -9,10 +10,13 @@
 
 mod accept;
 mod empty;
+mod grid;
 mod numbering;
+mod scratch;
 
 pub use accept::{accept_loses_text, LostCell};
 pub use empty::{empty_paragraphs, EmptyRun};
+pub use grid::{table_grid_mismatch, GridFix, GridMismatch, OffGridRow, RaggedRow};
 pub use numbering::{numbering_skips_level, SkippedLevel};
 
 /// Whether `c` is white space as Python's `str.strip` and `str.split` take it.
