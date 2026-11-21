@@ -25,7 +25,7 @@ pub use facts::{field_facts, FieldFacts};
 pub(crate) use insert::{place, put_back, Place};
 pub use insert::{InsertCrossReference, InsertField};
 pub use insert_toc::InsertToc;
-pub use pages::{FieldLayout, FieldPlace, LaidFields, PageReflow, PageShows, Unknown};
+pub use pages::{FieldLayout, FieldPlace, FieldRun, LaidFields, PageReflow, PageShows, Unknown};
 pub use story::{SetStoryNumbered, StoryNumber, StoryNumbered};
 pub use update::UpdateFields;
 pub use values::{format_date, Day};
@@ -73,7 +73,7 @@ pub struct FieldInfo {
 pub fn fields(doc: &WordDoc) -> Result<Vec<FieldInfo>> {
     let docx = doc.docx()?;
     let mut out = Vec::new();
-    for located in scan::all_fields(doc, &docx) {
+    for located in scan::all_fields(doc, &docx).iter() {
         let Some(part) = docx.part(&located.part) else { continue };
         let root = part.root();
         let paragraph = scan::paragraph_of(root, &located.found.begin)

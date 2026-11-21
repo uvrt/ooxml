@@ -52,11 +52,16 @@ pub struct Written {
     pub record: Map<String, Value>,
     /// What a reply says of it (`Fact.brief()`: the reference, the value, its sources).
     pub brief: Map<String, Value>,
+    /// The value's own Markdown, where its source holds one apart from its text (a workbook
+    /// cell's emphasis and list lines: docx-agent's `field_text.reference_markdown`, read by
+    /// the host); `word_insert_markdown` writes it as that.
+    pub markdown: Option<String>,
 }
 
 impl Written {
     /// The values a host hands over as JSON: a list of `{"field", "start", "end", "text",
-    /// "record", "brief"}`; `None` for anything else.
+    /// "record", "brief"}` (and the value's own `"markdown"`, where it has one); `None` for
+    /// anything else.
     #[must_use]
     pub fn list_from_json(value: &Value) -> Option<Vec<Written>> {
         value.as_array()?.iter().map(Written::from_json).collect()
@@ -71,6 +76,10 @@ impl Written {
             text: value.get("text")?.as_str()?.to_owned(),
             record: value.get("record")?.as_object()?.clone(),
             brief: value.get("brief")?.as_object()?.clone(),
+            markdown: match value.get("markdown") {
+                None | Some(Value::Null) => None,
+                Some(found) => Some(found.as_str()?.to_owned()),
+            },
         })
     }
 
@@ -417,6 +426,6 @@ fn common(a: &[char], b: &[char]) -> usize {
 
 /// Python's `str.isspace` for one character: Unicode white space and the four information
 /// separators.
-fn py_space(c: char) -> bool {
+pub(crate) fn py_space(c: char) -> bool {
     c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
 }

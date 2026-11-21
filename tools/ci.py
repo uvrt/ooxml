@@ -40,8 +40,8 @@ differences live here and nowhere else:
         On a free-threaded Python: importing the package, its modules and its extras' modules
         leaves the GIL off.
     python tools/ci.py build-check PACKAGE
-        The build job's checks: the version agrees with CHANGELOG.md, ruff, mypy where the
-        package type checks.
+        The build job's checks: the version agrees with CHANGELOG.md and the changelog
+        fragments (tools/changelog.py check), ruff, mypy where the package type checks.
 
 Standard library only, Python 3.10+.
 """
@@ -54,6 +54,8 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+
+import changelog
 
 ROOT = Path(__file__).resolve().parent.parent
 PY = ROOT / "python"
@@ -81,7 +83,6 @@ PACKAGES: dict[str, dict] = {
         "extras": "dev",
         "min_python": "3.10",
         "pytest": [],
-        "check_version": "tools/check_version.py",
         "mypy": True,
         # One leg (ubuntu, the newest Python) runs the suite under coverage instead, with
         # this floor: the suite is meant to hold the package by itself, not through the
@@ -99,7 +100,6 @@ PACKAGES: dict[str, dict] = {
         "min_python": "3.10",
         "pytest": [],
         "ft_pytest": ["-v", "-o", "faulthandler_timeout=300"],
-        "check_version": ".github/check_version.py",
         "mypy": True,
         "mypy_siblings": ["ooxml-common"],
         "lxml7": True,
@@ -119,7 +119,6 @@ PACKAGES: dict[str, dict] = {
         "pr_pytest": ["-m", "not long"],
         # Parallel as on the GIL leg (serial, it was the slowest free-threaded leg).
         "ft_pytest": ["-n", "auto"],
-        "check_version": "tools/check_version.py",
         "mypy": True,
         "mypy_siblings": ["ooxml-common"],
         "fonts": True,
@@ -134,7 +133,6 @@ PACKAGES: dict[str, dict] = {
         "extras": "dev",
         "min_python": "3.10",
         "pytest": [],
-        "check_version": "tools/check_version.py",
         "mypy": False,
         "gil_imports": "import resvg_py, pypdfium2, fontTools.ttLib, PIL.Image, numpy",
     },
@@ -151,7 +149,6 @@ PACKAGES: dict[str, dict] = {
         # on Linux (SHARDS below).
         "shards": 4,
         "compile": ["src", "tests", "tools", "examples"],
-        "check_version": "tools/check_version.py",
         "mypy": False,
         "fonts": True,
         "lxml7": True,
@@ -167,7 +164,6 @@ PACKAGES: dict[str, dict] = {
         "min_python": "3.10",
         "pytest": ["-n", "auto", "--durations=30"],
         "ft_pytest": [],
-        "check_version": "tools/check_version.py",
         "mypy": False,
         "lxml7": True,
         "gil_imports": "import lxml.etree, lxml.html, pptx2svg, resvg_py, PIL.Image",
@@ -191,7 +187,6 @@ PACKAGES: dict[str, dict] = {
         "pytest": ["-n", "auto"],
         "ft_pytest": ["-n", "auto"],
         "compile": ["src", "tests"],
-        "check_version": "tools/check_version.py",
         "mypy": True,
         "mypy_siblings": ["ooxml-common", "ooxml-edit"],
         "lxml7": True,
@@ -209,8 +204,10 @@ RUN_ALL_PREFIXES = tuple(f".github/workflows/{name}.yml" for name in
                          ("ci", "python-tests", "freethreading", "rust", "rust-wheels")) + (
                      ".github/actions/", "tools/ci.py", "tools/ci_durations.json")
 
-#: A package's notes, which no test reads: a change to them selects the package's build job
-#: (build-check compares CHANGELOG.md with the version), not its suite nor rust.yml's jobs.
+#: A package's notes, which no test reads: a change to them, or to its changelog fragments
+#: (python/<package>/changes/, tools/changelog.py), selects the package's build job
+#: (build-check compares CHANGELOG.md and the fragments with the version), not its suite nor
+#: rust.yml's jobs.
 NOTES = ("CHANGELOG.md", "ROADMAP.md", "CONTRIBUTING.md")
 
 #: The workspace's own files: a change to one rebuilds every crate (and fuzz/, whose crates
@@ -237,7 +234,8 @@ RUST_REFERENCE = ("ooxml-common", "ooxml-edit", "docx2svg", "docx-agent")
 
 def _is_notes(path: str) -> bool:
     parts = path.split("/")
-    return len(parts) == 3 and parts[0] == "python" and parts[2] in NOTES
+    return parts[0] == "python" and (len(parts) == 3 and parts[2] in NOTES
+                                     or len(parts) == 4 and parts[2] == changelog.CHANGES)
 
 
 def module_input(path: str) -> bool:
@@ -246,7 +244,7 @@ def module_input(path: str) -> bool:
         return True
     parts = path.split("/")
     if path.startswith("python/ooxml-core/"):
-        return parts[2] != "tests" and parts[2] not in NOTES
+        return parts[2] != "tests" and not _is_notes(path)
     return (len(parts) > 2 and parts[0] == "crates" and parts[1] not in NOT_MODULE_CRATES
             and parts[2] not in CRATE_TEST_FOLDERS and not path.endswith(".md"))
 
@@ -360,7 +358,10 @@ def affected(changed: list[str]) -> list[str]:
 
 def built(changed: list[str]) -> list[str]:
     """The packages whose build job a pull request runs: the tested ones, and those whose
-    notes alone changed (build-check reads CHANGELOG.md)."""
+    notes alone changed (build-check reads CHANGELOG.md); every one when the check itself
+    (tools/changelog.py) changed."""
+    if "tools/changelog.py" in changed:
+        return list(PACKAGES)
     names = set(affected(changed))
     names |= {path.split("/")[1] for path in changed if _is_notes(path) and path.split("/")[1] in PACKAGES}
     return [name for name in PACKAGES if name in names]
@@ -460,6 +461,20 @@ def plan(event: str, changed: list[str] | None) -> dict[str, str]:
         "build": {"include": [{"package": n} for n in builds]},
     }
     return {k: json.dumps(v) if not isinstance(v, bool) else str(v).lower() for k, v in out.items()}
+
+
+def changelog_refusal(event: str, changed: list[str] | None, head_ref: str | None) -> str | None:
+    """Why a pull request may not change ``changed``, or None: only a release branch
+    (tools/changelog.py, RELEASE_BRANCH) writes a package's CHANGELOG.md; any other pull
+    request adds a fragment, python/<package>/changes/<topic>.<kind>.md."""
+    if event != "pull_request" or changed is None or changelog.is_release_branch(head_ref):
+        return None
+    edited = changelog.direct_edits(changed)
+    if not edited:
+        return None
+    return (f"{', '.join(edited)}: CHANGELOG.md is written at release time only (tools/changelog.py). "
+            f"Put the entry in python/<package>/{changelog.CHANGES}/<topic>.<kind>.md instead, "
+            f"kind one of {', '.join(changelog.KINDS)}.")
 
 
 def _pip(*args: str) -> None:
@@ -652,7 +667,7 @@ sys.exit("the GIL is enabled" if sys._is_gil_enabled() else 0)
 def build_check(name: str) -> None:
     spec = PACKAGES[name]
     cwd = PY / name
-    subprocess.run([sys.executable, spec["check_version"]], cwd=cwd, check=True)
+    subprocess.run([sys.executable, str(ROOT / "tools" / "changelog.py"), "check", name], check=True)
     subprocess.run(["ruff", "check", "."], cwd=cwd, check=True)
     if spec["mypy"]:
         siblings = spec.get("mypy_siblings", [])
@@ -668,6 +683,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--event", default=os.environ.get("GITHUB_EVENT_NAME", "pull_request"))
     p.add_argument("--changed", action="append",
                    help="a changed path (repeat); default on a pull request and a push: git diff HEAD^1 HEAD")
+    p.add_argument("--head-ref", default=os.environ.get("GITHUB_HEAD_REF"),
+                   help="a pull request's branch (default $GITHUB_HEAD_REF): only a release branch writes CHANGELOG.md")
     a = sub.add_parser("affected")
     a.add_argument("files", nargs="+")
     sh = sub.add_parser("shard")
@@ -702,6 +719,10 @@ def main(argv: list[str] | None = None) -> int:
                                   capture_output=True, text=True, check=True)
             changed = [line for line in diff.stdout.splitlines() if line]
             print(f"{len(changed)} changed files", file=sys.stderr)
+        refused = changelog_refusal(args.event, changed, args.head_ref)
+        if refused:
+            print(refused, file=sys.stderr)
+            return 1
         result = plan(args.event, changed)
         target = os.environ.get("GITHUB_OUTPUT")
         if target:

@@ -23,14 +23,17 @@
 #![forbid(unsafe_code)]
 
 mod batch;
+mod call;
 mod changes;
 mod context;
 mod document;
 mod error;
+mod handlers;
 mod history;
 mod ids;
 mod memory;
 mod model;
+mod names;
 mod reading_edit;
 mod records;
 mod registry;
@@ -39,17 +42,21 @@ mod session;
 mod update;
 
 pub use batch::{ReadBatch, ReadOp, BATCH_TIMEOUT, MAX_READ_BATCH_CHARS, READ_BATCH};
+pub use call::Call;
 pub use changes::{ChangedPart, IdsSince};
 pub use context::{CallContext, CancelToken};
 pub use error::SessionError;
+pub use handlers::{EditHandler, ReadHandler, Tool};
 pub use history::Undone;
 pub use ids::{DocId, DocKind};
 pub use memory::{Account, MemoryBudget};
 pub use model::{ModelError, PackageDoc, PartChange, PartContent};
+pub use names::DocNames;
 pub use ooxml_store::Caller;
+pub use ooxml_tools_word::{EditFn, Hosting, ReadFn, TrackingFn};
 pub use ooxml_word_model::ids::HeldId;
 pub use reading_edit::ReadingEditHandler;
-pub use registry::{Call, EditFn, EditHandler, ReadFn, ReadHandler, Registry, Tool, TrackingFn};
+pub use registry::Registry;
 pub use retired::RetiredBy;
 pub use session::{CallMade, Opened, Session, SessionConfig, SessionStats};
 pub use update::{PartUpdate, Updated};

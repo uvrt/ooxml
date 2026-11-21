@@ -367,7 +367,7 @@ pub(crate) fn report<O>(opened: &Package, done: &Edited<O>, result: Value) -> Va
             (seed, json!(values))
         })
         .collect();
-    json!({
+    let mut out = json!({
         "result": result,
         "parts": parts,
         "order": doc.package().part_names(),
@@ -378,7 +378,13 @@ pub(crate) fn report<O>(opened: &Package, done: &Edited<O>, result: Value) -> Va
             .unwrap_or_default(),
         "next": next,
         "aliases": doc.ids().aliases().iter().map(|(k, v)| (k.clone(), json!(v))).collect::<Map<String, Value>>(),
-    })
+    });
+    let replaced = doc.ids().replaced();
+    if let (false, Some(fields)) = (replaced.is_empty(), out.as_object_mut()) {
+        let replaced: Map<String, Value> = replaced.iter().map(|(v, n)| (format!("{v:08X}"), json!(n))).collect();
+        fields.insert("replaced".into(), Value::Object(replaced));
+    }
+    out
 }
 
 fn touched_json(touched: &Touched) -> Value {

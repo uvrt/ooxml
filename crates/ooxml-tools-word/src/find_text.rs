@@ -223,3 +223,8 @@ fn try_call(args: &FindText) -> TryCall {
         fill: Vec::new(),
     }
 }
+
+/// Registers `find_text` (the crate's [`crate::register`]).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    r.read::<FindText>(find_text);
+}
