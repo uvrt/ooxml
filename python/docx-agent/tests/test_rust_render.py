@@ -93,6 +93,21 @@ def test_a_page_past_the_end_names_the_pages_there_are(box):
     assert not result.ok and result.error.code == "not_found"
 
 
+def test_a_sheet_too_tall_is_refused_before_the_pages_are_looked_for(box):
+    # docx-agent's order (lane RD3): thirty named pages in one column are too tall at the
+    # shortest page the sections declare -- said before anything is laid out, before
+    # whether the document has them; a sheet that fits is then told the pages there are.
+    session, doc = _served(box, _pages(3))
+    before = reads.served().get("render", 0)
+    tall = box.dispatch(session, "render", {"doc": doc, "pages": list(range(1, 31)),
+                                            "sheet": {"columns": 1, "width": 300}})
+    assert not tall.ok and tall.error.code == "limit" and "pages" in tall.error.message
+    past = box.dispatch(session, "render", {"doc": doc, "pages": [2, 5], "sheet": {"width": 200}})
+    assert not past.ok and past.error.code == "not_found"
+    assert past.error.message == "the document has 3 page(s)"
+    assert reads.served().get("render", 0) == before + 2, reads.fallbacks().get("render")
+
+
 def test_slides_are_read_as_pages_with_a_warning(box):
     session, doc = _served(box, _pages(2))
     result = _render(box, session, doc=doc, slides=["2"], width=300)

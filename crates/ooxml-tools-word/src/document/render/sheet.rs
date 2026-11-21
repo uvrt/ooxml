@@ -3,7 +3,9 @@
 //! first [`MAX_TILES`], or all there are. `sheet.width` is each tile's, `width` standing in
 //! for it. Tiles too wide or too tall for the image's edge are drawn narrower -- the widest
 //! that fit, from the pages' own shapes, before anything is drawn -- and `sheet.shrunk`
-//! says from what width and why; only tiles too tall even at the narrowest are refused. The
+//! says from what width and why; only tiles too tall even at the narrowest are refused.
+//! Pages named are refused so before anything is laid out, at the shortest page the
+//! sections declare (docx-agent's order: `limit` before `not_found`). The
 //! tiles are the images single renders keep (`cached_tiles` lists those held); the sheet is
 //! kept whole, one entry.
 //!
@@ -12,6 +14,7 @@
 use super::{draw, sheet_key, Drawer, RenderSheet, FINAL_VIEW};
 use ooxml_tools::tiles::{check_size, fit, tiled_svg, tiling_of, Tile, TileAsk, TileOptions, MAX_TILES};
 use ooxml_tools::{Done, File, ToolError};
+use ooxml_word_pages::LaidVersion;
 use serde_json::{json, Map, Value};
 use std::sync::{Arc, PoisonError};
 
@@ -24,12 +27,12 @@ fn base64(bytes: &[u8], out: &mut String) {
 /// docx-agent's `_shortest_ratio` reads it), for pages 1-based. Not the whole-pixel
 /// frame's: its rounding makes a tile look taller than it is drawn, and the fit a pixel
 /// narrower than docx-agent's.
-fn shapes(call: &Drawer<'_>, pages: &[usize]) -> Vec<f64> {
-    let sections = &call.laid.layout().sections;
+fn shapes(call: &Drawer<'_>, laid: &LaidVersion, pages: &[usize]) -> Vec<f64> {
+    let sections = &laid.layout().sections;
     let mut engine = call.layout.engine().lock().unwrap_or_else(PoisonError::into_inner);
     pages
         .iter()
-        .filter_map(|page| engine.paint(call.laid, page - 1))
+        .filter_map(|page| engine.paint(laid, page - 1))
         .map(|paint| {
             let frame = paint.geometry.frame;
             let declared = sections
@@ -54,7 +57,6 @@ pub(super) fn render_sheet(
     sheet: RenderSheet,
     warnings: &mut Vec<String>,
 ) -> Result<Done<Value>, ToolError> {
-    let count = call.laid.page_count();
     let ask = TileAsk {
         name: "sheet",
         what: "pages",
@@ -66,22 +68,34 @@ pub(super) fn render_sheet(
         asked.retain(|p| seen.insert(*p));
         asked
     });
-    let tiling = tiling_of(
-        options(sheet),
-        pages.as_ref().map_or(count.min(MAX_TILES), Vec::len),
-        ask,
-    )?;
     let numbers: Vec<usize> = match pages {
-        Some(asked) => asked
-            .iter()
-            .map(|p| usize::try_from(*p).ok().filter(|p| (1..=count).contains(p)))
-            .collect::<Option<_>>()
-            .ok_or_else(|| call.past_the_end())?,
-        None => (1..=count.min(MAX_TILES)).collect(),
+        Some(asked) => {
+            // Before laying out: the tiles fitted to the pages asked at the shortest page
+            // the sections declare (too tall even so is refused whatever the pages are),
+            // and the image budget; only then whether the pages exist.
+            let tiling = tiling_of(options(sheet), asked.len(), ask)?;
+            if let Some(shortest) = call.shortest_declared()? {
+                fit(&tiling, &vec![shortest; asked.len()], ask)?;
+            }
+            call.check_images(1)?;
+            let count = call.laid()?.page_count();
+            asked
+                .iter()
+                .map(|p| usize::try_from(*p).ok().filter(|p| (1..=count).contains(p)))
+                .collect::<Option<_>>()
+                .ok_or_else(|| call.past_the_end(count))?
+        }
+        None => {
+            let numbers: Vec<usize> = (1..=call.laid()?.page_count().min(MAX_TILES)).collect();
+            tiling_of(options(sheet), numbers.len(), ask)?;
+            call.check_images(1)?;
+            numbers
+        }
     };
-    let tiling = fit(&tiling, &shapes(call, &numbers), ask)?;
-    call.check_images(1)?;
-    let drawn = draw::draw(call.layout, call.laid, call.drawing, (&numbers, tiling.width), warnings)?;
+    let laid = call.laid()?;
+    let tiling = tiling_of(options(sheet), numbers.len(), ask)?;
+    let tiling = fit(&tiling, &shapes(call, laid, &numbers), ask)?;
+    let drawn = draw::draw(call.layout, laid, call.drawing, (&numbers, tiling.width), warnings)?;
     let heights: Vec<i64> = drawn.iter().map(|d| d.height).collect();
     check_size(&tiling, &heights, ask)?;
     let key = sheet_key(
@@ -90,12 +104,13 @@ pub(super) fn render_sheet(
         tiling.width,
     );
     let (png, cached) = sheet_png(call, &drawn, &numbers, &tiling, key)?;
-    Ok(reply(call, &drawn, &numbers, &tiling, (png, cached)))
+    Ok(reply(call, laid, &drawn, &numbers, &tiling, (png, cached)))
 }
 
 /// The sheet's reply: its data, summary and image.
 fn reply(
     call: &Drawer<'_>,
+    laid: &LaidVersion,
     drawn: &[draw::Drawn],
     numbers: &[usize],
     tiling: &ooxml_tools::tiles::Tiling,
@@ -124,7 +139,7 @@ fn reply(
     if !cached && !tiles_cached.is_empty() {
         data.insert("cached_tiles".into(), json!(tiles_cached));
     }
-    call.facts(&mut data);
+    call.facts(laid, &mut data);
     let mut done = Done::new(format!(
         "Rendered {} page(s) as one sheet, {} column(s) of {} px{}, labelled with page numbers {FINAL_VIEW}",
         numbers.len(),
