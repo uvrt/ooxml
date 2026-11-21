@@ -11,7 +11,7 @@
 use super::pages::FieldLayout;
 use super::scan::{all_fields, paragraph_of, Located};
 use super::toc::build::head;
-use super::update::{empty_tocs, settle};
+use super::update::{empty_tocs, settle, Inputs};
 use super::values::Day;
 use super::write::{green_path, run_of};
 use super::FieldEdited;
@@ -47,6 +47,9 @@ pub struct InsertToc<'l> {
     pub today: Day,
     /// The layout of the document's versions.
     pub layout: Option<&'l dyn FieldLayout>,
+    /// The locale its style names are read under (the host's document locale); `None`:
+    /// the document's own language.
+    pub locale: Option<&'l ooxml_numfmt::Locale>,
 }
 
 impl std::fmt::Debug for InsertToc<'_> {
@@ -142,7 +145,12 @@ impl InsertToc<'_> {
             .cloned()
             .ok_or_else(|| EditError::Path(main.clone()))?;
         let known = (main.clone(), position(sink.doc(), &docx, &toc));
-        let unknown = settle(&mut *sink, std::slice::from_ref(&known), self.layout, self.today)?;
+        let inputs = Inputs {
+            today: self.today,
+            layout: self.layout,
+            locale: self.locale,
+        };
+        let unknown = settle(&mut *sink, std::slice::from_ref(&known), inputs)?;
         let docx = sink.docx()?;
         let toc = find_toc(sink.doc(), &docx, &main, &holder)?;
         if let RevisionPolicy::Tracked(tracking) = sink.policy().clone() {

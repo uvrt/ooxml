@@ -106,6 +106,25 @@ def test_cancelled_and_late_calls_stop_with_timeout():
     assert call(session, "describe", {"doc": doc})["error"]["code"] == "timeout"
 
 
+def test_a_locale_is_a_tag_or_a_locale_with_its_five_fields():
+    from types import SimpleNamespace
+
+    dutch = SimpleNamespace(decimal_separator=",", thousands_separator=".", date_order="dmy", language="nl-NL",
+                            list_separator=";")
+    session = ooxml_core.Session(locale=dutch)
+    doc = session.open(docx(), name="a.docx")
+    for locale in (dutch, "nl_be", None):
+        context = ooxml_core.CallContext(locale=locale)
+        assert "error" not in call(session, "describe", {"doc": doc}, context=context)
+    tagged = ooxml_core.Session(locale="en-GB")
+    assert "error" not in call(tagged, "describe", {"doc": tagged.open(docx(), name="b.docx")})
+    with pytest.raises(ValueError):
+        ooxml_core.CallContext(locale="english")
+    with pytest.raises(ValueError):
+        ooxml_core.Session(locale=SimpleNamespace(**{**vars(dutch), "list_separator": ","}))
+    with pytest.raises(AttributeError):
+        ooxml_core.CallContext(locale=SimpleNamespace(language="nl-NL"))
+
 def test_tool_specs_are_the_exports():
     specs = json.loads(ooxml_core.tool_specs("docx"))
     # the registry's tools in registration order (ooxml-session's tests/integration/registry.rs holds each

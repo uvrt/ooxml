@@ -5,6 +5,7 @@
 //! Must not: do a session's work itself, or touch a Python object without the lock.
 
 use crate::adapters::{context, SessionStop};
+use crate::locale::locale_of;
 use crate::options::{context_of, PyCallOptions, PyHostIds};
 use ooxml_base::Locale;
 use ooxml_session::{
@@ -96,7 +97,10 @@ type EditMade = (u64, PyVersion, Option<String>, Validation);
 /// revision's, a comment's), UTC to the second (`2026-11-20T09:30:15Z`) -- the host's clock,
 /// as docx-agent dates them; `None`: the session's clock -- and whether the text it writes
 /// is spaced by its language (`typography`, docx-agent's `docx_format(typography=...)`;
-/// `False`: as given). One may serve many calls.
+/// `False`: as given), and the locale it reads its documents under (`locale`: ooxml-common's
+/// `Locale` or a BCP 47 tag, docx-agent's document locale -- a table of contents' style
+/// names and the separator between them; `None`: the session's, else each document's own
+/// language). One may serve many calls.
 #[pyclass(frozen, name = "CallContext", module = "ooxml_core")]
 pub struct PyCallContext {
     pub(crate) inner: CallContext,
@@ -105,15 +109,18 @@ pub struct PyCallContext {
 #[pymethods]
 impl PyCallContext {
     /// # Errors
-    /// `ValueError` for a negative `deadline`, or a `date` not of that form.
+    /// `ValueError` for a negative `deadline`, a `date` not of that form, or a locale
+    /// refused.
     #[new]
-    #[pyo3(signature = (*, caller = None, cancel = None, deadline = None, date = None, typography = true))]
+    #[pyo3(signature = (*, caller = None, cancel = None, deadline = None, date = None, typography = true,
+                        locale = None))]
     fn new(
         caller: Option<&str>,
         cancel: Option<PyRef<'_, PyCancelToken>>,
         deadline: Option<f64>,
         date: Option<&str>,
         typography: bool,
+        locale: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
         if date.is_some_and(|d| !is_utc_second(d)) {
             return Err(PyValueError::new_err("date is UTC to the second: 2026-11-20T09:30:15Z"));
@@ -131,6 +138,7 @@ impl PyCallContext {
                 deadline,
                 date: date.map(str::to_owned),
                 as_given: !typography,
+                locale: locale.map(locale_of).transpose()?,
                 ..CallContext::default()
             },
         })
@@ -311,20 +319,24 @@ type Reply = (String, Vec<Py<PyBytes>>, String);
 
 #[pymethods]
 impl PySession {
-    /// A session: each document keeps `history_depth` undo steps; `locale` is the BCP 47
-    /// tag the session's documents are read under.
+    /// A session: each document keeps `history_depth` undo steps; `locale` (ooxml-common's
+    /// `Locale` or a BCP 47 tag) is the one the session's documents are read under, unless
+    /// a call names its own; `None`: en-US, and each document's own language where a call
+    /// reads one (a table of contents' style names).
     #[new]
-    #[pyo3(signature = (*, history_depth = 50, locale = "en-US"))]
-    fn new(history_depth: usize, locale: &str) -> PyResult<Self> {
-        let locale = Locale::new(locale).map_err(|e| PyValueError::new_err(e.to_string()))?;
+    #[pyo3(signature = (*, history_depth = 50, locale = None))]
+    fn new(history_depth: usize, locale: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        let locale = locale.map(locale_of).transpose()?;
+        let tag = locale.as_ref().map(Locale::from).unwrap_or_default();
         let stop = Arc::new(SessionStop::default());
         let config = SessionConfig {
             store: StoreConfig {
                 history_depth,
                 ..StoreConfig::default()
             },
+            locale,
         };
-        let inner = Session::new(config, context(Arc::clone(&stop), locale));
+        let inner = Session::new(config, context(Arc::clone(&stop), tag));
         Ok(Self {
             inner: Arc::new(inner),
             stop,

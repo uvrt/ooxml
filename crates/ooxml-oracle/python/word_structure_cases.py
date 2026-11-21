@@ -625,6 +625,34 @@ def review_within_cases(document) -> list[dict]:
     return out
 
 
+#: A Dutch locale with its list separator (``;``), and one that names only the language (its
+#: list separator ooxml-common's default, ``,``), as a host's document locale.
+DUTCH = {"decimal_separator": ",", "thousands_separator": ".", "date_order": "dmy", "language": "nl-NL",
+         "list_separator": ";"}
+DUTCH_LANGUAGE = {"language": "nl-NL"}
+
+
+@CASES
+def toc_locale_cases(document) -> list[dict]:
+    """A table of contents' ``\\t`` styles read under the document's locale (lane P5q): its
+    style names split on the locale's list separator and found in its language -- a Dutch
+    locale with ``;``, one with the language only, and none (the document's own language) --
+    on a TOC inserted with Dutch and English names, and every field updated.  Registered
+    last: the other tools' case numbers stay."""
+    paragraphs = _words(document)
+    if not paragraphs:
+        return []
+    pid = paragraphs[0][0]
+    fonts = fonts_of(document)
+    out = []
+    for locale in (DUTCH, DUTCH_LANGUAGE, None):
+        for styles in ("Kop 1;1;Kop 2;2", "Heading 1,1,Heading 2,2"):
+            out.append({**call("word_fields", action="insert_field", at=pid,
+                               instruction=f'TOC \\h \\t "{styles}"'), "locale": locale})
+        if locale is not None:
+            out.append({**call("word_fields", action="update"), "locale": locale})
+    return [{**case, "fonts": fonts} for case in out]
+
 def cases(document) -> list[dict]:
     """Every structure case for ``document``."""
     found = CASES.of(document)

@@ -1,6 +1,7 @@
 //! Owns: the locale a number or date is written for -- its decimal, thousands and list
 //! separators, date order and language (a canonical BCP 47 tag) -- equal to ooxml-common's
-//! `locales.py`, with en-US the default ([`EN_US`]).
+//! `locales.py`, with en-US the default ([`EN_US`]); the BCP 47 tag a context carries
+//! ([`ooxml_base::Locale`]) is derived from one (its language).
 //!
 //! Must not: hold a table of every locale (a caller builds the one it wants), or read the
 //! machine's settings.
@@ -121,6 +122,14 @@ impl Locale {
     }
 }
 
+impl From<&Locale> for ooxml_base::Locale {
+    /// The locale's language as the tag a context carries.
+    fn from(locale: &Locale) -> Self {
+        // A canonical language is always a well-formed tag, so the default is never taken.
+        ooxml_base::Locale::new(&locale.language).unwrap_or_default()
+    }
+}
+
 fn alpha(part: &str, sizes: std::ops::RangeInclusive<usize>) -> bool {
     sizes.contains(&part.len()) && part.chars().all(|c| c.is_ascii_alphabetic())
 }
@@ -169,5 +178,8 @@ mod tests {
         assert_eq!(dutch.number_text("1,234.5"), "1.234,5");
         assert_eq!(EN_US.number_text("1,234.5"), "1,234.5");
         assert_eq!(EN_US.primary_language(), "en");
+        assert_eq!(ooxml_base::Locale::from(&dutch).tag(), "nl-NL");
+        let script = Locale::new('.', ',', "ymd", "zh_hant_tw", ',').unwrap();
+        assert_eq!(ooxml_base::Locale::from(&script).tag(), "zh-Hant-TW");
     }
 }

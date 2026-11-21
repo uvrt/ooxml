@@ -567,6 +567,7 @@ dependencies = [
 name = "ooxml-numfmt"
 version = "0.1.0"
 dependencies = [
+ "ooxml-base",
  "thiserror",
 ]
 
@@ -685,6 +686,7 @@ version = "0.1.0"
 dependencies = [
  "ooxml-base",
  "ooxml-derive",
+ "ooxml-numfmt",
  "ooxml-opc",
  "ooxml-store",
  "ooxml-tools",
@@ -764,6 +766,7 @@ dependencies = [
  "ooxml-chart",
  "ooxml-derive",
  "ooxml-fonts",
+ "ooxml-numfmt",
  "ooxml-opc",
  "ooxml-sheets",
  "ooxml-store",
@@ -798,6 +801,7 @@ dependencies = [
  "ooxml-derive",
  "ooxml-drawingml",
  "ooxml-markdown",
+ "ooxml-numfmt",
  "ooxml-opc",
  "ooxml-store",
  "ooxml-style-names",

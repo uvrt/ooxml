@@ -152,7 +152,7 @@ impl PyWordPages {
         let (thousands, date_order, list_separator) = numbers;
         let numbers = ooxml_numfmt::Locale::new(decimal, thousands, &date_order, locale, list_separator)
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        let locale = Locale::new(locale).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        let locale = Locale::from(&numbers);
         let glyph_size = match glyph_size {
             "device" => GlyphSize::Device,
             "exact" => GlyphSize::Exact,

@@ -23,6 +23,7 @@
 mod adapters;
 mod budget;
 mod layout;
+mod locale;
 mod options;
 mod raster;
 mod session;

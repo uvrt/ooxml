@@ -2,7 +2,9 @@
 //! `_toc_entries`, measured: `\o`'s range of style levels, `\t`'s named styles -- their
 //! names split on the list separator of the document's language and found in it and in
 //! English --, `\u`'s paragraph levels), a heading's text as an entry shows it
-//! (`_heading_text`), and the language field style names are read in (`_field_language`).
+//! (`_heading_text`), and the language field style names are read in and the separator
+//! `\t` is split on (`_field_language`, `_list_separator`): the call's locale's, else the
+//! document's own language's.
 //!
 //! Must not: write anything.
 
@@ -10,6 +12,7 @@ use super::super::switches::toc_options;
 use crate::names::W;
 use crate::text::paragraph_text;
 use crate::work::Work;
+use ooxml_numfmt::Locale;
 use ooxml_word_model::docx::outline::OutlineLevels;
 use ooxml_word_model::docx::text::{LINE_BREAK, OBJECT};
 use ooxml_word_model::docx::{find_path, style_name, Docx};
@@ -34,9 +37,13 @@ pub(crate) fn heading_text(paragraph: &Arc<Element>) -> String {
     text.replace([LINE_BREAK, '\u{c}'], " ").trim().to_owned()
 }
 
-/// The language field style names are read in: the settings' `w:themeFontLang`, else
-/// the default run language; `None` (English only) when neither says.
-pub(crate) fn field_language(docx: &Docx) -> Option<String> {
+/// The language field style names are read in: the call's locale's (`locale`, the host's
+/// document locale), else the settings' `w:themeFontLang`, else the default run language;
+/// `None` (English only) when none says.
+pub(crate) fn field_language(docx: &Docx, locale: Option<&Locale>) -> Option<String> {
+    if let Some(locale) = locale {
+        return Some(locale.language.clone().into_owned());
+    }
     let val = |root: Option<Arc<Element>>, path: &[&str]| {
         root.as_deref()
             .and_then(|r| find_path(r, path))
@@ -60,9 +67,19 @@ fn part_root(docx: &Docx, rel_type: &str) -> Option<Arc<Element>> {
     Some(Arc::clone(tree.root()))
 }
 
-/// The paragraph style ids `\t`'s names find, with their levels (a style named twice:
-/// the first).
-fn named_styles(docx: &Docx, styles: &[(String, i64)]) -> HashMap<String, i64> {
+/// What separates `\t`'s styles and levels (measured: Word splits them on its own
+/// locale's): the call's locale's list separator, else the one Word uses in the document's
+/// language (`language`; `,` for a language not measured).
+fn list_separator(locale: Option<&Locale>, language: Option<&str>) -> String {
+    match locale {
+        Some(locale) => locale.list_separator.to_string(),
+        None => ooxml_style_names::list_separator(language, ",").to_owned(),
+    }
+}
+
+/// The paragraph style ids `\t`'s names find in `language`, with their levels (a style
+/// named twice: the first).
+fn named_styles(docx: &Docx, styles: &[(String, i64)], language: Option<&str>) -> HashMap<String, i64> {
     let mut named = HashMap::new();
     if styles.is_empty() {
         return named;
@@ -86,9 +103,8 @@ fn named_styles(docx: &Docx, styles: &[(String, i64)]) -> HashMap<String, i64> {
         }
     }
     let pairs: Vec<(&str, String)> = stored.iter().map(|(n, i)| (n.as_str(), i.clone())).collect();
-    let language = field_language(docx);
     for (name, level) in styles {
-        if let Some(found) = ooxml_style_names::find_style(name, &pairs, language.as_deref(), true) {
+        if let Some(found) = ooxml_style_names::find_style(name, &pairs, language, true) {
             named.entry(found).or_insert(*level);
         }
     }
@@ -96,12 +112,13 @@ fn named_styles(docx: &Docx, styles: &[(String, i64)]) -> HashMap<String, i64> {
 }
 
 /// The body's paragraphs a TOC field with `instruction` lists, in order, with their
-/// levels.
-pub(crate) fn entries(docx: &Docx, instruction: &str) -> Vec<Heading> {
-    let language = field_language(docx);
-    let separator = ooxml_style_names::list_separator(language.as_deref(), ",");
-    let options = toc_options(instruction, separator);
-    let named = named_styles(docx, &options.styles);
+/// levels, its style names read under `locale` (the call's; `None`: the document's own
+/// language).
+pub(crate) fn entries(docx: &Docx, instruction: &str, locale: Option<&Locale>) -> Vec<Heading> {
+    let language = field_language(docx, locale);
+    let separator = list_separator(locale, language.as_deref());
+    let options = toc_options(instruction, &separator);
+    let named = named_styles(docx, &options.styles, language.as_deref());
     let levels = OutlineLevels::new(docx);
     let Some(body) = docx.body() else { return Vec::new() };
     let mut out = Vec::new();

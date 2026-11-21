@@ -105,6 +105,32 @@ fn case_tracking(case: &Value) -> Option<Tracking> {
     })
 }
 
+/// The host's document locale a case gives (`locale`: ooxml-common's `Locale` fields, each
+/// left out its default, as `Locale(**fields)` reads them), if any.
+fn case_locale(case: &Value) -> Result<Option<ooxml_numfmt::Locale>, String> {
+    let Some(fields) = case.get("locale").and_then(Value::as_object) else {
+        return Ok(None);
+    };
+    let en = ooxml_numfmt::EN_US;
+    let char_of = |key: &str, default: char| {
+        fields
+            .get(key)
+            .and_then(Value::as_str)
+            .and_then(|s| s.chars().next())
+            .unwrap_or(default)
+    };
+    let text_of = |key: &str, default: &str| fields.get(key).and_then(Value::as_str).unwrap_or(default).to_owned();
+    ooxml_numfmt::Locale::new(
+        char_of("decimal_separator", en.decimal_separator),
+        char_of("thousands_separator", en.thousands_separator),
+        &text_of("date_order", &en.date_order),
+        &text_of("language", &en.language),
+        char_of("list_separator", en.list_separator),
+    )
+    .map(Some)
+    .map_err(|e| e.to_string())
+}
+
 /// One tool case on a freshly opened document, the tool's reply given by `reply` (`None`:
 /// no such tool): the reply and what the document became. `d2`, which a call may name, is
 /// the document opened again (`reference_copy`) or the file `reference_file`.
@@ -133,6 +159,7 @@ pub(crate) fn tool_case(
         .and_then(Value::as_str)
         .unwrap_or("2026-11-17T10:00:00Z");
     let blobs = case_blobs(case);
+    let locale = case_locale(case)?;
     let copy = other_document(bytes, case);
     let copy_versions = Versions::new();
     let others: Vec<(&str, Version<'_>)> = copy
@@ -144,7 +171,8 @@ pub(crate) fn tool_case(
         .with_tracking(tracking.as_ref())
         .with_layout(layout.as_ref().map(|l| l as &dyn ooxml_word_edit::FieldLayout))
         .with_others(Others::new(&others))
-        .with_blobs(Some(&blobs));
+        .with_blobs(Some(&blobs))
+        .with_locale(locale.as_ref());
     let arguments = case.get("arguments").cloned().unwrap_or(Value::Object(Map::new()));
     let tool = case.get("tool").and_then(Value::as_str).unwrap_or("");
     let reply = reply(tool, &arguments, &editing).ok_or_else(|| format!("no tool {tool}"))?;

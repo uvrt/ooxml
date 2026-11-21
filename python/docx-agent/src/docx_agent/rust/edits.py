@@ -278,7 +278,9 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
     :meth:`~ooxml_edit.tools.owned.OwnedEntry.served`."""
     mirror = entry.handle
     tool = call.tool.name
-    context = context_of(call.caller, _date(call), typography=getattr(entry.held, "typography", True) is not False)
+    held = entry.held
+    typography = getattr(held, "typography", True) is not False
+    context = context_of(call.caller, _date(call), typography=typography, locale=getattr(held, "locale", None))
     _tracking(call, entry, context, counted)
     adapted = _served.arguments_for(call, tool, arguments)
     written = adapted.written if isinstance(adapted, Adapted) else _written(call)

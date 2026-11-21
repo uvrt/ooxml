@@ -92,6 +92,7 @@ impl SetStoryNumbered<'_> {
             policy: self.text.policy.clone(),
             today: self.today,
             layout: self.layout,
+            locale: None, // a page number reads no style names
         }
     }
 

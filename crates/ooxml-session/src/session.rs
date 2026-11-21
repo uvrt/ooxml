@@ -24,10 +24,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 /// A session's configuration, a value given when it is made.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct SessionConfig {
     /// Each document's store.
     pub store: StoreConfig,
+    /// The locale the host set for the session's calls (a call's own, in its
+    /// [`CallContext::locale`], comes first); `None`: the host set none, and a call that names
+    /// none reads each document in its own language.
+    pub locale: Option<ooxml_numfmt::Locale>,
 }
 
 /// A document at one version, as a call reads it: it stays readable, unchanged, while
@@ -610,6 +614,7 @@ impl Session {
             setup: ooxml_word_edit::Setup {
                 as_given: context.as_given,
             },
+            locale: context.locale.as_ref().or(self.config.locale.as_ref()),
             made: &state.made,
             layout: context.layout.as_deref(),
             blobs: context.blobs.as_deref(),

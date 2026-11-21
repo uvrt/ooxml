@@ -5,5 +5,6 @@
 mod common;
 
 mod editing;
+mod locale;
 mod registry;
 mod session;

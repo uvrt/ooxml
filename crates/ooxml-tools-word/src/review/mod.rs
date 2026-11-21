@@ -60,6 +60,10 @@ pub struct Editing<'a> {
     /// The values the host wrote into the call's arguments for references (`{{d:...}}`),
     /// which the call keeps on the paragraphs they went into; empty: none.
     pub written: &'a [crate::Written],
+    /// The locale the call reads its document under where the host names one (the host's
+    /// document locale): a table of contents' style names and the separator between them;
+    /// `None`: the document's own language.
+    pub locale: Option<&'a ooxml_numfmt::Locale>,
 }
 
 impl<'a> Editing<'a> {
@@ -89,6 +93,7 @@ impl<'a> Editing<'a> {
             others: crate::Others::default(),
             blobs: None,
             written: &[],
+            locale: None,
         }
     }
 
@@ -124,6 +129,13 @@ impl<'a> Editing<'a> {
     #[must_use]
     pub fn with_written(mut self, written: &'a [crate::Written]) -> Self {
         self.written = written;
+        self
+    }
+
+    /// The locale the call reads its document under, where the host names one.
+    #[must_use]
+    pub fn with_locale(mut self, locale: Option<&'a ooxml_numfmt::Locale>) -> Self {
+        self.locale = locale;
         self
     }
 }
