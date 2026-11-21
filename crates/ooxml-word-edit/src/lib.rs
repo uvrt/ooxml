@@ -138,9 +138,9 @@ pub use drawn::Drawn;
 pub use editor::{EditTiming, Edited, Editor};
 pub use error::{EditError, Result};
 pub use fields::{
-    field_facts, fields, format_date, CharAdvance, Day, FieldEdited, FieldFacts, FieldInfo, FieldLayout, FieldPlace,
-    FieldRun, InsertCaption, InsertCrossReference, InsertField, InsertToc, LaidFields, PageReflow, PageShows,
-    SetStoryNumbered, StoryNumber, StoryNumbered, Unknown, UpdateFields,
+    field_facts, fields, format_date, CharAdvance, Day, EditLayout, FieldEdited, FieldFacts, FieldInfo, FieldLayout,
+    FieldPlace, FieldRun, InsertCaption, InsertCrossReference, InsertField, InsertToc, LaidFields, LayOutError,
+    PageReflow, PageShows, SetStoryNumbered, StoryNumber, StoryNumbered, Unknown, UpdateFields,
 };
 pub use follow::{CopyFollowed, FollowSample, Followed};
 pub use format::{
@@ -187,6 +187,8 @@ pub use tables::{
     LikeTheColumn, Look, LookField, RowUnlike, TableChange, TableChanged, TableEdit, TableFormat, TableFormatted,
     TableKeeps, TableValues, TableWidth, TextLook, ROW_WINDOW,
 };
-pub use template::{compatibility_mode, UpgradeToModern, Upgraded, DEFAULT_COMPATIBILITY_MODE, MODERN_MODE};
+pub use template::{
+    compatibility_mode, Reflowed, UpgradeReflowed, UpgradeToModern, Upgraded, DEFAULT_COMPATIBILITY_MODE, MODERN_MODE,
+};
 pub use text::diff::ratio as text_ratio;
 pub use text_range::anchor;

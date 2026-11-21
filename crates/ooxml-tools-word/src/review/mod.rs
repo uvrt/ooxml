@@ -28,7 +28,7 @@ pub use tracking::{word_set_tracking, Tracked, WordSetTracking};
 use ooxml_base::Cancel;
 use ooxml_store::Caller;
 use ooxml_tools::{Failure, Refusal, ToolError, TryCall, WayOut};
-use ooxml_word_edit::{EditError, FieldLayout, Tracking, WordDoc};
+use ooxml_word_edit::{EditError, EditLayout, FieldLayout, Tracking, WordDoc};
 
 /// What an editing tool is handed: the document's editor and what the host keeps of it.
 pub struct Editing<'a> {
@@ -52,6 +52,9 @@ pub struct Editing<'a> {
     /// The layout of the document's versions, where the host keeps one (`word_fields`'
     /// results); `None`: a result that needs it is left to the host.
     pub layout: Option<&'a dyn FieldLayout>,
+    /// How long laying a version out may take in the call, where the host limits it
+    /// (`None`: only the call's cancellation stops it).
+    pub layout_limit: Option<crate::LayoutLimit<'a>>,
     /// The other open documents the call names, each at the version pinned for the call.
     pub others: crate::Others<'a>,
     /// The session's blobs, where the host hands them over (`word_drawings`' pictures);
@@ -91,6 +94,7 @@ impl<'a> Editing<'a> {
             cancel,
             date,
             layout: None,
+            layout_limit: None,
             others: crate::Others::default(),
             blobs: None,
             written: &[],
@@ -111,6 +115,32 @@ impl<'a> Editing<'a> {
     pub fn with_layout(mut self, layout: Option<&'a dyn FieldLayout>) -> Self {
         self.layout = layout;
         self
+    }
+
+    /// How long laying a version out may take in the call.
+    #[must_use]
+    pub fn with_layout_limit(mut self, limit: Option<crate::LayoutLimit<'a>>) -> Self {
+        self.layout_limit = limit;
+        self
+    }
+
+    /// The layout an edit reads, where the host keeps one: stopped by the call's limit on
+    /// laying out where it has one, else by its cancellation.
+    #[must_use]
+    pub fn edit_layout(&self) -> Option<EditLayout<'a>> {
+        let layout = self.layout?;
+        Some(match self.layout_limit {
+            Some(limit) => EditLayout {
+                layout,
+                stop: limit.cancel,
+                limit: Some(limit.timeout),
+            },
+            None => EditLayout {
+                layout,
+                stop: self.cancel,
+                limit: None,
+            },
+        })
     }
 
     /// The other open documents the call names.
@@ -170,8 +200,26 @@ pub(crate) fn edit_refusal(error: EditError, field: &str, call: TryCall) -> Tool
             };
             ToolError::refusal(Refusal::InvalidArguments, message, way_out).at(field)
         }
+        EditError::LayoutStopped(limit) => laying_out_stopped(limit),
         other => ToolError::internal(other.to_string(), "word:edit"),
     }
+}
+
+/// An edit stopped while laying a version out (docx-agent's deadline: `laying the document
+/// out did not finish within <limit> s`, with the limit in `details`): nothing changed.
+fn laying_out_stopped(limit: Option<std::time::Duration>) -> ToolError {
+    let Some(limit) = limit else {
+        return ToolError::failure(
+            Failure::Timeout,
+            "laying the document out was stopped before it finished (the call was cancelled); nothing changed",
+        );
+    };
+    let seconds = limit.as_secs_f64();
+    let message = format!(
+        "laying the document out did not finish within {} s",
+        crate::table_read::python_g(seconds)
+    );
+    ToolError::failure(Failure::Timeout, message).with_detail("timeout", serde_json::Value::from(seconds))
 }
 
 /// An argument a call needs and lacks (`need`), with the call that would work.

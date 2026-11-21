@@ -239,7 +239,7 @@ fn set(args: &WordHeadersFooters, editing: &Editing<'_>, story: &Story) -> ToolR
         text: command,
         number,
         today,
-        layout: editing.layout,
+        layout: editing.edit_layout(),
     };
     match editor.run(editing.caller, &numbered) {
         Ok(done) => {

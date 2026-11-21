@@ -20,7 +20,9 @@
 
 use ooxml_base::Cancel;
 use ooxml_opc::Package;
-use ooxml_word_edit::{CharAdvance, FieldLayout, FieldPlace, FieldRun, LaidFields, PageReflow, PageShows, Unknown};
+use ooxml_word_edit::{
+    CharAdvance, FieldLayout, FieldPlace, FieldRun, LaidFields, LayOutError, PageReflow, PageShows, Unknown,
+};
 use ooxml_word_layout::facts::LayoutFacts;
 use ooxml_word_layout::fields::update::{drawn_text, style_reference_known, PageNumbers};
 use ooxml_word_model::value::Text;
@@ -99,13 +101,18 @@ fn laid(found: Result<Result<Arc<LaidVersion>, Fallback>, PagesError>) -> Result
     }
 }
 
-/// `package` laid out and its pages summarised as docx-agent compares two layouts
-/// (`DocumentLayout.compare`: every line of text a page draws, its text boxes' too).
-fn summarised(engine: &mut PageEngine, package: &Package) -> Result<Summary, String> {
-    let version = laid(engine.lay_out(package))?;
+/// `package` laid out, stopped where `cancel` says so, and its pages summarised as
+/// docx-agent compares two layouts (`DocumentLayout.compare`: every line of text a page
+/// draws, its text boxes' too).
+fn summarised(engine: &mut PageEngine, package: &Package, cancel: &dyn Cancel) -> Result<Summary, LayOutError> {
+    let found = engine.lay_out_until(package, cancel);
+    if matches!(found, Err(PagesError::Stopped)) {
+        return Err(LayOutError::Stopped);
+    }
+    let version = laid(found).map_err(LayOutError::Unsupported)?;
     engine
         .contents(&version)
-        .ok_or_else(|| "the version laid out is not the engine's".to_owned())
+        .ok_or_else(|| LayOutError::Unsupported("the version laid out is not the engine's".to_owned()))
 }
 
 impl WordLayout for EnginePages {
@@ -115,18 +122,25 @@ impl WordLayout for EnginePages {
 }
 
 impl FieldLayout for EnginePages {
-    fn lay_out(&self, package: &Package) -> Result<Box<dyn LaidFields + '_>, String> {
+    fn lay_out(&self, package: &Package, cancel: &dyn Cancel) -> Result<Box<dyn LaidFields + '_>, LayOutError> {
         let found = {
             let mut engine = self.engine.lock().unwrap_or_else(PoisonError::into_inner);
-            engine.lay_out(package)
+            engine.lay_out_until(package, cancel)
         };
-        Ok(Box::new(Laid::new(laid(found)?, &self.engine)))
+        if matches!(found, Err(PagesError::Stopped)) {
+            return Err(LayOutError::Stopped);
+        }
+        let version = laid(found).map_err(LayOutError::Unsupported)?;
+        Ok(Box::new(Laid::new(version, &self.engine)))
     }
 
-    fn reflow(&self, before: &Package, after: &Package) -> Result<PageReflow, String> {
+    fn reflow(&self, before: &Package, after: &Package, cancel: &dyn Cancel) -> Result<PageReflow, LayOutError> {
         let (was, now) = {
             let mut engine = self.engine.lock().unwrap_or_else(PoisonError::into_inner);
-            (summarised(&mut engine, before)?, summarised(&mut engine, after)?)
+            (
+                summarised(&mut engine, before, cancel)?,
+                summarised(&mut engine, after, cancel)?,
+            )
         };
         let found = now.compare(&was, &std::collections::HashMap::new());
         Ok(PageReflow {
