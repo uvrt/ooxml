@@ -12,15 +12,13 @@
 //! `field_text.keep_in_paragraphs`).
 //!
 //! Must not: resolve a reference (the host's datasets do), or keep but through the edit
-//! core's command ([`KeepText`]), in the call's own versions.
+//! core's command ([`KeepText`]), in the transaction of the call's edit ([`run_keeping`]).
 
-use crate::review::edit_refusal;
 use crate::Editing;
 use ooxml_base::pystr::is_digit;
-use ooxml_store::Snapshot;
-use ooxml_tools::{Done, Outcome, ToolError, ToolResult, TryCall};
-use ooxml_word_edit::WordDoc;
-use ooxml_word_edit::{KeepText, TextKeep};
+use ooxml_store::{Command, Txn};
+use ooxml_tools::{Done, Outcome, ToolResult};
+use ooxml_word_edit::{EditError, KeepText, TextKeep, WordDoc};
 use ooxml_word_model::address::resolve::{direct, in_table, scope_paragraphs};
 use ooxml_word_model::docx::text::{paragraph_text, View};
 use ooxml_word_model::docx::Docx;
@@ -197,28 +195,21 @@ pub(crate) fn written_keeps(
         .collect()
 }
 
-/// Each value of `editing.written` kept on the paragraph it went into after the call's
-/// edit (`result` its reply; `targets` the targets it was given; `argument` each
-/// argument's text by its field): docx-agent's `keep_written`, as its wrapper runs it
-/// after a tool's handler.
-///
-/// # Errors
-/// The edit's refusal; a story part that is not XML.
-pub(crate) fn keep_written(
+/// The keeps of each value of `editing.written` found where the call's reply (`result`)
+/// says it wrote (`targets` the targets it was given; `argument` each argument's text by
+/// its field): docx-agent's `keep_written`, as its wrapper runs it after a tool's handler.
+#[must_use]
+pub(crate) fn reply_keeps(
+    after: &After,
     editing: &Editing<'_>,
     result: &ToolResult<Value>,
     targets: &[&str],
     argument: &dyn Fn(&str) -> Option<String>,
-    call: &TryCall,
-) -> Result<(), ToolError> {
-    let Outcome::Done(done) = &result.outcome else {
-        return Ok(());
-    };
-    if editing.written.is_empty() {
-        return Ok(());
+) -> Vec<TextKeep> {
+    match &result.outcome {
+        Outcome::Done(done) if !editing.written.is_empty() => written_keeps(after, editing, done, targets, argument),
+        _ => Vec::new(),
     }
-    let after = after_edit(editing)?;
-    keep(editing, written_keeps(&after, editing, done, targets, argument), call)
 }
 
 /// A place a value is found at: how much of the text around it matches the argument's,
@@ -293,49 +284,78 @@ fn chosen(found: Vec<Place>, copies: usize) -> Vec<(String, usize)> {
     picked.into_iter().map(|(_, _, id, at)| (id.clone(), *at)).collect()
 }
 
-/// `keeps` kept through the call's editor (one more version of the call's); nothing when
-/// there are none.
+/// `command` run through the call's editor with the values written by reference kept where
+/// they went, in the same transaction -- one commit, one history step, all or nothing:
+/// `finish` makes the call's reply of the command's out and the keeps of the version it
+/// made (none: nothing more is written). The command's out and the reply.
 ///
 /// # Errors
-/// The edit's refusal.
-pub(crate) fn keep(editing: &Editing<'_>, keeps: Vec<TextKeep>, call: &TryCall) -> Result<(), ToolError> {
-    if keeps.is_empty() {
-        return Ok(());
-    }
-    editing
-        .editor
-        .run(editing.caller, &KeepText { keeps })
-        .map(|_| ())
-        .map_err(|e| edit_refusal(e, "", call.clone()))
+/// The edit's refusal (the command's, or a keep's).
+pub(crate) fn run_keeping<C, F>(
+    editing: &Editing<'_>,
+    command: &C,
+    finish: F,
+) -> Result<(C::Out, ToolResult<Value>), EditError>
+where
+    C: Command<WordDoc, Error = EditError>,
+    F: Fn(&C::Out, &After) -> (ToolResult<Value>, Vec<TextKeep>),
+{
+    let keeping = Keeping { command, finish };
+    editing.editor.run(editing.caller, &keeping).map(|done| done.out)
 }
 
-/// The version the call's edits made last (the head where they made none), as the keeps
-/// read it.
-///
-/// # Errors
-/// When a story part is not XML.
-pub(crate) fn after_edit(editing: &Editing<'_>) -> Result<After, ToolError> {
-    let version = editing
-        .editor
-        .made()
-        .map_or_else(|| editing.editor.store().snapshot(), |m| m.last);
-    let docx = version
-        .doc()
-        .docx()
-        .map_err(|e| ToolError::internal(e.to_string(), "written:after_edit"))?;
-    Ok(After { version, docx })
+/// A command, then the keeps its out names, as one transaction ([`run_keeping`]).
+struct Keeping<'a, C, F> {
+    command: &'a C,
+    finish: F,
+}
+
+impl<C, F> Command<WordDoc> for Keeping<'_, C, F>
+where
+    C: Command<WordDoc, Error = EditError>,
+    F: Fn(&C::Out, &After) -> (ToolResult<Value>, Vec<TextKeep>),
+{
+    type Out = (C::Out, ToolResult<Value>);
+    type Error = EditError;
+
+    fn validate(&self, doc: &WordDoc) -> Result<(), EditError> {
+        self.command.validate(doc)
+    }
+
+    fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<Self::Out, EditError> {
+        let out = self.command.prepare(tx)?;
+        let after = After::of(tx.doc())?;
+        let (result, keeps) = (self.finish)(&out, &after);
+        if !keeps.is_empty() {
+            let keep = KeepText { keeps };
+            keep.validate(tx.doc())?;
+            keep.prepare(tx)?;
+        }
+        Ok((out, result))
+    }
 }
 
 /// A version the keeps read: its paragraphs, and the renames it keeps.
 pub(crate) struct After {
-    version: Snapshot<WordDoc>,
+    doc: WordDoc,
     docx: Arc<Docx>,
 }
 
 impl After {
+    /// The version `doc` (a transaction's working one, as the call's edit left it).
+    ///
+    /// # Errors
+    /// When a story part is not XML.
+    fn of(doc: &WordDoc) -> Result<Self, EditError> {
+        Ok(Self {
+            docx: doc.docx()?,
+            doc: doc.clone(),
+        })
+    }
+
     /// The id `name` leads to through the version's renames.
     fn follow(&self, name: &str) -> String {
-        self.version.doc().ids().follow(name)
+        self.doc.ids().follow(name)
     }
 }
 

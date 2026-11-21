@@ -17,7 +17,7 @@ use crate::structure::common::{outcome, Outcome};
 use crate::{written, Editing};
 use ooxml_store::Batch;
 use ooxml_tools::{Outcome as Replied, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
-use ooxml_word_edit::{SetStyledText, StyledRun, StyledTextSet};
+use ooxml_word_edit::{SetStyledText, StyledRun, StyledTextSet, TextKeep};
 use ooxml_word_model::address::resolve::resolve;
 use ooxml_word_model::ids::Entry;
 use serde_json::{json, Map, Value};
@@ -149,31 +149,35 @@ fn write(
             policy: policy.clone(),
         })
         .collect();
+    // the values written by reference kept in the same step
+    let finish = |out: &Vec<Result<StyledTextSet, _>>, after: &written::After| {
+        let items: Vec<StyledTextSet> = out.iter().filter_map(|item| item.as_ref().ok().cloned()).collect();
+        let wrote: Vec<Vec<String>> = items.iter().map(|item| item.written.clone()).collect();
+        let mut result = reply(work.len(), items);
+        let keeps = if editing.written.is_empty() {
+            Vec::new()
+        } else {
+            keep_facts(args, editing, work, &wrote, after, &mut result)
+        };
+        (result, keeps)
+    };
     // docx-agent names no field when the document refuses an address or a text
-    let done = editing
-        .editor
-        .run(editing.caller, &Batch::atomic(ops))
-        .map_err(|e| edit_refusal(e, "", try_call(args)))?;
-    let items: Vec<StyledTextSet> = done.out.into_iter().filter_map(Result::ok).collect();
-    let wrote: Vec<Vec<String>> = items.iter().map(|item| item.written.clone()).collect();
-    let mut result = reply(work.len(), items);
-    if !editing.written.is_empty() {
-        keep_facts(args, editing, work, &wrote, &mut result)?;
-    }
+    let (_, result) =
+        written::run_keeping(editing, &Batch::atomic(ops), finish).map_err(|e| edit_refusal(e, "", try_call(args)))?;
     Ok(result)
 }
 
-/// Round 45, R65: each value written by reference kept where it went (docx-agent's
-/// `_set_facts`, then `keep_written`) and listed in the reply's `facts` -- a value that is
+/// Round 45, R65: the keeps of each value written by reference where it went (docx-agent's
+/// `_set_facts`, then `keep_written`), each listed in the reply's `facts` -- a value that is
 /// an item's whole text with the paragraphs it went into (`blocks`), kept as their source.
 fn keep_facts(
     args: &WordSetText,
     editing: &Editing<'_>,
     work: &[(String, String, Option<String>, String)],
     wrote: &[Vec<String>],
+    after: &written::After,
     result: &mut ToolResult<Value>,
-) -> Result<(), ToolError> {
-    let after = written::after_edit(editing)?;
+) -> Vec<TextKeep> {
     let mut said = Vec::new();
     let mut keeps = Vec::new();
     for fact in editing.written {
@@ -184,14 +188,14 @@ fn keep_facts(
             _ => None,
         };
         if let Some(blocks) = &blocks {
-            keeps.extend(written::whole_keeps(&after, fact, blocks));
+            keeps.extend(written::whole_keeps(after, fact, blocks));
         }
         said.push(written::brief(fact, blocks.as_deref()));
     }
     if let Replied::Done(done) = &mut result.outcome {
         let targets: Vec<&str> = work.iter().map(|(target, ..)| target.as_str()).collect();
         let argument = |field: &str| argument(args, field);
-        keeps.extend(written::written_keeps(&after, editing, done, &targets, &argument));
+        keeps.extend(written::written_keeps(after, editing, done, &targets, &argument));
         let mut data = match done.data.take() {
             Some(Value::Object(data)) => data,
             _ => Map::new(),
@@ -199,7 +203,7 @@ fn keep_facts(
         data.insert("facts".into(), Value::Array(said));
         done.data = Some(Value::Object(data));
     }
-    written::keep(editing, keeps, &try_call(args))
+    keeps
 }
 
 /// The text of the argument `field` names (`text`, `items[0].text`).

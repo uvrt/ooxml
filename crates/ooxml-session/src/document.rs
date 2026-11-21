@@ -123,6 +123,15 @@ impl At {
         }
     }
 
+    /// The state's number, as the tool layer numbers the document's states
+    /// ([`ooxml_store::Version::number`]).
+    pub(crate) fn number(&self) -> u64 {
+        match self {
+            At::Package(v) => v.number(),
+            At::Word(v) => v.number(),
+        }
+    }
+
     /// The package at this version.
     pub(crate) fn package(&self) -> &Package {
         match self {

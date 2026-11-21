@@ -86,10 +86,15 @@ pub(crate) fn to_py(error: &SessionError) -> PyErr {
 /// the document opened with.
 type Validation = (Vec<String>, Vec<String>, usize);
 
+/// A step as `Session.numbers` lists it: `(before, after, seq, caller)`.
+type NumberedRow = (u64, u64, u64, Option<String>);
+/// `Session.numbers`: `(highest, steps, redo)`.
+type HistoryNumbers = (u64, Vec<NumberedRow>, Vec<NumberedRow>);
+
 /// What `Session.edit` says a call made: its first version's number, its last version,
-/// what it touched (JSON text; `None` where it made more than one version) and the last
-/// version's validation.
-type EditMade = (u64, PyVersion, Option<String>, Validation);
+/// what it touched (JSON text; `None` where it made more than one version), the last
+/// version's validation and the state number of the version its first edit was applied to.
+type EditMade = (u64, PyVersion, Option<String>, Validation, u64);
 
 /// What a call runs with (`ooxml_core.CallContext`): who calls, a token that stops it,
 /// how long laying a document out may take in it (`layout_timeout`, seconds), how long it
@@ -187,6 +192,13 @@ impl PyVersion {
     #[getter]
     fn number(&self) -> u64 {
         self.inner.version()
+    }
+
+    /// The state's number, as the tool layer numbers the document's states: a step a new
+    /// one, an undo or redo the number of the state it brings back (numbers repeat).
+    #[getter]
+    fn state(&self) -> u64 {
+        self.inner.number()
     }
 
     fn __repr__(&self) -> String {
@@ -417,7 +429,7 @@ impl PySession {
         let made = made.map(|m| {
             let touched = m.touched.map(|t| Value::Array(t).to_string());
             let validation = (m.validation.new, m.validation.fixed, m.validation.baseline);
-            (m.first, PyVersion { inner: m.last }, touched, validation)
+            (m.first, PyVersion { inner: m.last }, touched, validation, m.before)
         });
         Ok((text, app, made))
     }
@@ -592,6 +604,48 @@ impl PySession {
             .detach(|| session.undo(&id, steps, &context))
             .map_err(|e| to_py(&e))?;
         Ok((done.count, done.version))
+    }
+
+    /// The document's state numbered `number` (`Version.state`) its head reaches, held: the
+    /// head, else the newest such state undo or redo can bring back; `None` when none is kept.
+    fn numbered(&self, py: Python<'_>, doc: &str, number: u64) -> PyResult<Option<PyVersion>> {
+        let id = doc_id(doc, &self.inner)?;
+        let session = &self.inner;
+        let found = py.detach(|| session.numbered(&id, number)).map_err(|e| to_py(&e))?;
+        Ok(found.map(|inner| PyVersion { inner }))
+    }
+
+    /// Go on with the state numbers the host gave the document before it was opened again:
+    /// its head is the state `state`, the next step's number one more than `highest`. Only
+    /// before its first step (`ValueError` otherwise, or for a state above the highest).
+    fn continue_numbers(&self, py: Python<'_>, doc: &str, state: u64, highest: u64) -> PyResult<()> {
+        let id = doc_id(doc, &self.inner)?;
+        let session = &self.inner;
+        py.detach(|| session.continue_numbers(&id, state, highest))
+            .map_err(|e| to_py(&e))
+    }
+
+    /// The highest state number given on the document (`Version.state`). Never waits.
+    fn highest(&self, py: Python<'_>, doc: &str) -> PyResult<u64> {
+        let id = doc_id(doc, &self.inner)?;
+        let session = &self.inner;
+        py.detach(|| session.highest(&id)).map_err(|e| to_py(&e))
+    }
+
+    /// The document's history in state numbers, read at once: `(highest, steps, redo)` --
+    /// the highest number given, the steps undo can reach (oldest first) and those redo can
+    /// bring back (the next one last), each `(before, after, seq, caller)`.
+    fn numbers(&self, py: Python<'_>, doc: &str) -> PyResult<HistoryNumbers> {
+        let id = doc_id(doc, &self.inner)?;
+        let session = &self.inner;
+        let numbers = py.detach(|| session.numbers(&id)).map_err(|e| to_py(&e))?;
+        let rows = |steps: Vec<ooxml_session::NumberedStep>| {
+            steps
+                .into_iter()
+                .map(|s| (s.before, s.after, s.seq, s.caller))
+                .collect()
+        };
+        Ok((numbers.highest, rows(numbers.steps), rows(numbers.redo)))
     }
 
     /// Redo up to `steps` undone calls (with a caller, its own): `(count, version)`.

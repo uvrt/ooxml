@@ -149,16 +149,18 @@ fn run(args: &WordInsertText, editing: &Editing<'_>) -> Result<ToolResult<Value>
             policy: policy.clone(),
         });
     }
-    // docx-agent names no field when the document refuses a find or a range
-    let done = editing
-        .editor
-        .run(editing.caller, &Batch::atomic(ops))
-        .map_err(|e| edit_refusal(e, "", call))?;
-    let placed: Vec<Placed> = done.out.into_iter().filter_map(Result::ok).collect();
-    let result = reply(placed, &work, &sides);
     let targets: Vec<&str> = work.iter().filter_map(|item| item.target.as_deref()).collect();
     let argument = |field: &str| argument(args, field);
-    written::keep_written(editing, &result, &targets, &argument, &try_call(args))?;
+    // the values written by reference kept in the same step
+    let finish = |out: &Vec<Result<Placed, _>>, after: &written::After| {
+        let placed: Vec<Placed> = out.iter().filter_map(|p| p.as_ref().ok().cloned()).collect();
+        let result = reply(placed, &work, &sides);
+        let keeps = written::reply_keeps(after, editing, &result, &targets, &argument);
+        (result, keeps)
+    };
+    // docx-agent names no field when the document refuses a find or a range
+    let (_, result) =
+        written::run_keeping(editing, &Batch::atomic(ops), finish).map_err(|e| edit_refusal(e, "", call))?;
     Ok(result)
 }
 

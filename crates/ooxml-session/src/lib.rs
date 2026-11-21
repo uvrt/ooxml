@@ -50,7 +50,7 @@ pub use context::{CallContext, CancelToken};
 pub use error::SessionError;
 pub use group::GroupMark;
 pub use handlers::{EditHandler, ReadHandler, Tool};
-pub use history::Undone;
+pub use history::{NumberedStep, Numbers, Undone};
 pub use ids::{DocId, DocKind};
 pub use memory::{Account, MemoryBudget};
 pub use model::{ModelError, PackageDoc, PartChange, PartContent};

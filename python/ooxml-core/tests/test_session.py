@@ -162,10 +162,13 @@ def test_undo_redo_and_the_save_gate():
     session.update(doc, {"word/document.xml": docx_part(3)}, context=bo)
     with pytest.raises(ValueError, match="not the latest"):
         session.undo(doc, context=ann)             # bo changed it after ann
-    assert session.undo(doc, 5, context=bo) == (1, 3)
-    assert session.undo(doc) == (1, 4)
+    # (steps, state number): a plain undo or redo gives the number of the state it brings back,
+    # as docx-agent's undo replies number them (bo's undo restores ann's state 1, the next the
+    # opened state 0, the redo of both state 2) -- not a count of versions
+    assert session.undo(doc, 5, context=bo) == (1, 1)
+    assert session.undo(doc) == (1, 0)
     assert call(session, "describe", {"doc": doc})["data"]["controls"] == 1
-    assert session.redo(doc, 2) == (2, 6)
+    assert session.redo(doc, 2) == (2, 2)
     assert call(session, "describe", {"doc": doc})["data"]["controls"] == 3
     assert session.validation(doc)[:2] == ([], [])
     assert session.save(doc, checked=True) == session.save(doc)
