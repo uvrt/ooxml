@@ -21,6 +21,7 @@ members = [
     "crates/ooxml-numfmt",
     "crates/ooxml-style-names",
     "crates/ooxml-markdown",
+    "crates/ooxml-sheets",
     "crates/ooxml-chart",
     "crates/ooxml-tools-derive",
     "crates/ooxml-tools",

@@ -365,23 +365,18 @@ def _version_read(entry: Any) -> tuple["Mirror", Any]:
 
 
 def _with_others(call: Any, arguments: dict[str, Any], others: tuple[str, ...],
-                 session: Any) -> tuple[dict[str, Any], list[Any]]:
-    """``arguments`` with each other document the call names (at a path of ``others``,
-    ``reference.doc``: its tool's ``documents`` after the first) named as the session names
-    it, and the versions of them the call reads (lane P2c14; #103's ``Call::others``).  The
-    call's own document named again is left to the tool, as the host's id."""
+                 session: Any) -> tuple[dict[str, str], list[Any]]:
+    """The host's names of the other documents the call names (at a path of ``others``,
+    ``reference.doc``: its tool's ``documents`` after the first), each the session's id of
+    it (``Session.call``'s ``names``), and the versions of them the call reads (lane P2c14;
+    #103's ``Call::others``).  The call's own document named again is the tool's."""
     versions: list[Any] = []
-    out = dict(arguments)
+    names: dict[str, str] = {}
     for path in others:
         *parents, key = path.split(".")
-        holder: Any = out
+        holder: Any = arguments
         for name in parents:
-            found = holder.get(name) if isinstance(holder, dict) else None
-            if not isinstance(found, dict):
-                holder = None
-                break
-            holder[name] = found = dict(found)
-            holder = found
+            holder = holder.get(name) if isinstance(holder, dict) else None
         given = holder.get(key) if isinstance(holder, dict) else None
         if not isinstance(given, str) or given == getattr(call.entry, "doc_id", None):
             continue
@@ -391,9 +386,9 @@ def _with_others(call: Any, arguments: dict[str, Any], others: tuple[str, ...],
         mirror, version = _version_read(entry)
         if mirror.session is not session:
             raise _Fallback("a document in another session")
-        holder[key] = mirror.doc
+        names[given] = mirror.doc
         versions.append(version)
-    return out, versions
+    return names, versions
 
 
 def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | None" = None,
@@ -403,10 +398,13 @@ def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | 
     if _session() is None:
         raise _Fallback("no session")
     mirror, version = _version_read(call.entry)
-    arguments, pinned = _with_others(call, arguments, others, mirror.session)
-    arguments = {"doc": mirror.doc, **{k: v for k, v in arguments.items() if v is not None}}
+    names, pinned = _with_others(call, arguments, others, mirror.session)
+    # the documents named as the host names them: the reply says those names (lane P2c17)
+    names[call.entry.doc_id] = mirror.doc
+    arguments = {**{k: v for k, v in arguments.items() if v is not None}, "doc": call.entry.doc_id}
     reply, _images, app = mirror.session.call(tool, json.dumps(arguments), at=[version, *pinned],
-                                              placer=placer.place if placer is not None else None)
+                                              placer=placer.place if placer is not None else None,
+                                              names=names)
     if placer is not None and placer.error is not None:
         raise placer.error
     envelope = json.loads(reply)

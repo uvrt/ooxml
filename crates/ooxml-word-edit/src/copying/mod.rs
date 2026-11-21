@@ -16,14 +16,16 @@
 //! this document never had them ([`crate::imported`]).
 //!
 //! The notes and comments the copies hold are copied with them ([`notes`], [`comments`]),
-//! their content brought as the blocks' is ([`content`]).
+//! their content brought as the blocks' is ([`content`]); their bookmarks renamed where
+//! this document has the name, or dropped ([`BookmarkPolicy`], [`bookmarks`]).
 //!
 //! Not ported yet ([`EditError::Unsupported`]: the host copies such blocks its own way):
-//! the copy tracked, `replace:`, and copies holding bookmarks or content controls (in a
-//! block or a note), or a comment holding a drawing.
+//! the copy tracked, `replace:`, and copies holding content controls (in a block or a
+//! note), or a comment holding a drawing.
 //!
 //! Must not: write but through the sink, or know a tool's JSON.
 
+mod bookmarks;
 mod canonical;
 mod cascade;
 mod comments;
@@ -52,13 +54,17 @@ use ooxml_word_model::docx::Docx;
 use source::Selected;
 use std::sync::Arc;
 
-/// The markers of a note or a comment.
-const NOTED: [&str; 5] = [
+/// The markers of a note, a comment or a bookmark: a copy holding one reads the whole
+/// document (a note's number is one above the largest, a comment's or a bookmark's id the
+/// next annotation id, a bookmark's name one no story has).
+const NOTED: [&str; 7] = [
     "footnoteReference",
     "endnoteReference",
     "commentRangeStart",
     "commentRangeEnd",
     "commentReference",
+    "bookmarkStart",
+    "bookmarkEnd",
 ];
 
 /// The document the blocks are copied from.
@@ -114,6 +120,17 @@ pub enum ListPolicy {
     Continue,
 }
 
+/// What a copied bookmark whose name this document has becomes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BookmarkPolicy {
+    /// Renamed (`Name_1`, ...), the copies' links and fields to it following (a taken
+    /// `_GoBack` is dropped).
+    #[default]
+    Rename,
+    /// Dropped (Word's paste).
+    Drop,
+}
+
 /// Blocks copied here from a source document.
 #[derive(Debug, Clone)]
 pub struct CopyBlocks {
@@ -134,6 +151,8 @@ pub struct CopyBlocks {
     pub unmapped: UnmappedPolicy,
     /// Which list copied list paragraphs go into.
     pub lists: ListPolicy,
+    /// What a copied bookmark whose name this document has becomes.
+    pub bookmarks: BookmarkPolicy,
 }
 
 /// What a copy did.
@@ -145,7 +164,7 @@ pub struct BlocksCopied {
     pub created: Vec<String>,
     /// Ids the edit's stamping renamed, old to new.
     pub renamed: Vec<(String, String)>,
-    /// The styles imported.
+    /// The styles imported, the bookmarks renamed.
     pub warnings: Vec<String>,
     /// The top-level blocks made.
     pub blocks: Vec<String>,
@@ -248,19 +267,19 @@ impl CopyBlocks {
         let work = &mut stretch.work;
         let mut elements = copies(work, &selected)?;
         if view::holds(work, &elements, &NOTED) {
-            // a note's number is one above the largest, a comment's id the next annotation
-            // id: the copy reads the whole document
             sink.read_everything();
         }
         let mut bringer = content::Bringer {
             styles,
             space,
             parts: parts::Parts::new(&source.package, sink),
+            bookmarks: bookmarks::Bookmarks::new(self.bookmarks),
         };
         bringer.content(sink, work, &elements, (&selected.part, &place.part))?;
         let mut stories = Space::default();
         let notes = notes::bring(sink, &mut bringer, &mut stories, (source, work), &elements)?;
         let comments = comments::bring(sink, &mut bringer, &mut stories, (source, work), &elements)?;
+        bringer.bookmarks(sink, work, &elements)?;
         crate::imported::keep_or_renumber_drawings(sink, work, &elements)?;
         let root = work.root();
         for &element in &elements {

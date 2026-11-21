@@ -6,9 +6,6 @@ earlier ones were never tagged.
 
 ## 0.124.1 -- unreleased
 
-Phase P2, lane P2e1: `ToolError(try_call=...)`, the call that would work (tool rule 2), written
-as the error's `try_call` after `valid_options`, as the Rust tools write it.
-
 Phase P2, lane P2c4: `DocumentFormat.owner` holds a format's documents outright
 (`ooxml_edit.tools.owned`): an `OwnedEntry`'s version, steps (`OwnedHistory`), undo and redo
 and snapshot are the owner's, and its `document` is a view made current when read.

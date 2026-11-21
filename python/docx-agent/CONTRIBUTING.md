@@ -103,11 +103,13 @@ Python 3.10 to 3.15, with the siblings installed from their `main` branches.
 
 ## Versions
 
-`pyproject.toml`'s version is the one [CHANGELOG.md](CHANGELOG.md)'s top version section
-names, and `docx_agent.__version__` the same; CI's `build` job checks it
-(`tools/check_version.py`). Each version that reaches `main` is tagged `v<version>` on that
-commit by the tag workflow (`.github/workflows/tag.yml`). Raise the version with its
-CHANGELOG section; changes since the last one go under an `Unreleased` heading above it.
+Note a change in a changelog fragment, `changes/<topic>.<kind>.md` (kind `added`,
+`changed`, `fixed` or `removed`), never in [CHANGELOG.md](CHANGELOG.md): the release
+writes the fragments into it (`tools/changelog.py` at the repository root; its README,
+Development). Raise `pyproject.toml`'s version, and `docx_agent.__version__` with it, when a
+change needs a new version (a sibling's floor on it); CI's `build` job checks that the
+version is CHANGELOG.md's top version section's, or newer with a fragment
+(`tools/changelog.py check`).
 
 ## Dependencies
 
