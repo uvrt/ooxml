@@ -85,6 +85,8 @@ pub struct Call<'a> {
     pub(crate) layout: Option<&'a dyn ooxml_word_edit::FieldLayout>,
     /// The session's blobs, where the host hands them over.
     pub(crate) blobs: Option<&'a dyn ooxml_tools_word::Blobs>,
+    /// The values the host wrote into the call's arguments for references.
+    pub(crate) written: &'a [ooxml_tools_word::Written],
     /// The other documents the call names (`ooxml_tools::documents`), by id, each at the
     /// version pinned for the call when it was dispatched.
     pub(crate) others: &'a [(String, Opened)],
@@ -107,6 +109,18 @@ impl Call<'_> {
     #[must_use]
     pub fn cancel(&self) -> &dyn Cancel {
         self.cancel
+    }
+
+    /// The version the call reads as the session's editor holds it, with the problems the
+    /// document was opened with, where the session owns it as a Word document.
+    #[must_use]
+    pub fn owned(&self) -> Option<ooxml_tools_word::Owned<'_>> {
+        let doc = self.doc.word()?;
+        let word = self.word?;
+        Some(ooxml_tools_word::Owned {
+            doc,
+            baseline: word.editor.baseline(),
+        })
     }
 
     /// The other documents the call names, by id, at their pinned versions.
@@ -165,6 +179,7 @@ impl<T: ToolArgs> Tool for ReadHandler<T> {
                 let others = call.other_versions();
                 let version = Version {
                     others: Others::new(&others),
+                    owned: call.owned(),
                     ..call.doc.version_of()
                 };
                 (self.run)(&args, &version, call.cancel)
@@ -259,18 +274,12 @@ impl<T: ToolArgs> Tool for EditHandler<T> {
         let doc = call.name.to_owned();
         let editor = CallEditor::new(&word.editor);
         let others = call.other_versions();
-        let editing = Editing {
-            editor: &editor,
-            caller: call.caller,
-            opened: word.opened.doc(),
-            tracking,
-            doc: &doc,
-            cancel: call.cancel,
-            date: &call.date,
-            layout: call.layout,
-            others: Others::new(&others),
-            blobs: call.blobs,
-        };
+        let editing = Editing::new(&editor, call.caller, word.opened.doc(), &doc, call.cancel, &call.date)
+            .with_tracking(tracking)
+            .with_layout(call.layout)
+            .with_others(Others::new(&others))
+            .with_blobs(call.blobs)
+            .with_written(call.written);
         let result = match &self.run {
             EditRun::Plain(run) => run(&args, &editing),
             EditRun::Tracking(run) => {
@@ -402,6 +411,7 @@ impl Registry {
         ));
         registry.register(word_edit::<ooxml_tools_word::WordNotes>(ooxml_tools_word::word_notes));
         registry.register(word_edit::<ooxml_tools_word::WordLinks>(ooxml_tools_word::word_links));
+        registry.register(word_read::<ooxml_tools_word::Check>(ooxml_tools_word::check));
         registry
     }
 

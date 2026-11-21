@@ -218,6 +218,7 @@ impl PyWordPages {
         vec![
             ("full", n(s.full)),
             ("relaid", n(s.relaid)),
+            ("kept", n(s.kept)),
             ("fallbacks", n(s.fallbacks)),
             ("parts_read", n(s.parts_read)),
             ("parts_kept", n(s.parts_kept)),

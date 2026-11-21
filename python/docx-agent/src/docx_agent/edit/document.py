@@ -826,6 +826,10 @@ class Document(TrackingOps, RevisionOps, TextOps, FormatOps, ListOps, LinkOps, P
         #: an owner holds (``retired_ids() -> RetiredIds``: the Rust session's record);
         #: ``None``: the ledger's.
         self.retired_ids = None
+        #: Lane P2d1: the records of placed values as the document's owner reads them from
+        #: the version the view is (``owned_records() -> dict | None``: the Rust session's
+        #: ``Version.records``; ``None`` from it, or no hook: read here).
+        self.owned_records = None
         self.read_hint: str | None = None
         self._indexes: dict[str, PartIndex] = {}
         #: docx2svg's conversions of recent states, by their bytes' hash (layout.convert).

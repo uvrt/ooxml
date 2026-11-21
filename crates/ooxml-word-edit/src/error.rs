@@ -39,6 +39,10 @@ pub enum EditError {
     /// A style edit refused, with the field it names and the options that would do.
     #[error("{0}")]
     Style(crate::styles::StyleRefusal),
+    /// A table position refused as the table is accepted (past it, or in a cell Accept All
+    /// removes), at the argument it names.
+    #[error("{}", .0.error.message)]
+    Position(ooxml_word_model::docx::tables::Misplaced),
     /// What the edit would have to do is not ported yet.
     #[error("not supported yet: {0}")]
     Unsupported(String),

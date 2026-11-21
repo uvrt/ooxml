@@ -14,7 +14,7 @@ import os
 import struct
 import zlib
 
-from word_structure_cases import ToolCases, tracked
+from word_structure_cases import ToolCases, fonts_of, tracked
 
 CASES = ToolCases()
 
@@ -38,7 +38,12 @@ def _table_scope(table: str) -> list[dict]:
             fmt(borders="double", shading="FFF2CC"), fmt(header_rows=1), fmt(header_rows=0), fmt(header_rows=99),
             fmt(look=["header_row", "banded_rows"]), fmt(look=[]), fmt(look=["total_row", "last_column"]),
             fmt(style="Table Grid", look=["first_column"]), fmt(cant_split=True), fmt(cant_split=False),
-            fmt(width_of="body"), fmt(width_of="window", width=100), fmt(keep_together=True),
+            fmt(width_of="body"), fmt(width_of="body", width_percent=80), fmt(width_of="body", alignment="center"),
+            fmt(width_of="body", width_percent=50, alignment="right"), fmt(width_of="body", width_percent=0.01),
+            fmt(width_of="body", style="Table Grid", borders="single", cant_split=True),
+            fmt(width_of="window"), fmt(width_of="window", width=100), fmt(width_of="window", width_percent=80),
+            fmt(width_of="window", style="Table Grid"), fmt(width_of="window", borders="double", shading="DDEEFF"),
+            fmt(keep_together=True),
             fmt(keep_together=False, keep_with_next=True), fmt(), fmt(style="Table Grid", width=250,
                                                                      alignment="center", header_rows=1)]
 
@@ -75,6 +80,36 @@ def format_table_cases(document) -> list[dict]:
     out += [call("word_format_table", table="t:00000000", scope="table", shading="FFFFFF")]
     if paragraphs:
         out.append(call("word_format_table", table=paragraphs[0], scope="table", shading="FFFFFF"))
+    out = _laid(document, out)
+    return out + [tracked(case) for case in out]
+
+
+def _laid(document, out: list[dict]) -> list[dict]:
+    """``out`` with the fonts the layout reads on each case keeping a table together (its
+    taller-than-a-page warning reads the layout)."""
+    if not any(case["arguments"].get("keep_together") for case in out):
+        return out
+    fonts = fonts_of(document)
+    return [{**case, "fonts": fonts} if case["arguments"].get("keep_together") else case for case in out]
+
+
+@CASES
+def table_keep_cases(document) -> list[dict]:
+    """``word_format_table``'s keeps: ``keep_together`` and ``keep_with_next`` on and off,
+    alone and together, with a row's breaking or a table's shading beside them, on each of
+    the first eight tables -- untracked and tracked; ``keep_together`` on with the fonts the
+    layout reads (a table taller than a page is said so)."""
+    def fmt(table: str, **arguments) -> dict:
+        return call("word_format_table", table=table, scope="table", **arguments)
+
+    out = []
+    for table in _tables(document)[:8]:
+        out += [fmt(table, keep_together=False), fmt(table, keep_with_next=True), fmt(table, keep_with_next=False),
+                fmt(table, keep_together=False, keep_with_next=False), fmt(table, keep_together=True),
+                fmt(table, keep_together=True, keep_with_next=True),
+                fmt(table, keep_together=True, keep_with_next=False),
+                fmt(table, keep_with_next=False, cant_split=True), fmt(table, keep_together=False, shading="FFF2CC")]
+    out = _laid(document, out)
     return out + [tracked(case) for case in out]
 
 

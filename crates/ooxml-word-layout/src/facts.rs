@@ -24,6 +24,7 @@ use crate::px::Px;
 use ooxml_word_model::model::Block;
 use ooxml_word_model::value::Text;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 /// One line a page draws, as a check reads it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -145,7 +146,24 @@ pub struct LayoutFacts {
     pub stopped: Option<usize>,
     /// Each top-level body block laid out in the flow, by its index in the body.
     pub keeps: BTreeMap<usize, BlockKeeps>,
+    /// Each paragraph path's first page, made when first asked.
+    first: FirstPages,
 }
+
+/// Each paragraph path's first page (0-based), made once from the pages' lines when first
+/// asked: a field update and a check ask it for every field and reference (lane L4b: a
+/// walk of every page per field; lane L4a: made once per version, not once per reader).
+/// Derived from the pages, so two facts are equal whatever it holds yet.
+#[derive(Debug, Clone, Default)]
+struct FirstPages(std::sync::OnceLock<Arc<std::collections::HashMap<Text, usize>>>);
+
+impl PartialEq for FirstPages {
+    fn eq(&self, _: &FirstPages) -> bool {
+        true
+    }
+}
+
+impl Eq for FirstPages {}
 
 /// The body's blocks a body path is in, outermost first (`paths.block_keys`): every prefix
 /// ending at a paragraph, table, row or cell step, up to the first paragraph.
@@ -185,7 +203,7 @@ pub(crate) struct LinePaths {
 impl LinePaths {
     /// The paths of `layout`'s lines.
     pub(crate) fn of(layout: &DocumentLayout) -> LinePaths {
-        let (paragraphs, _) = body_paragraphs(&layout.document.body);
+        let paragraphs = layout.body_paragraphs();
         let opening = separator(&layout.document, "continuationSeparator", NotesPart::Endnotes)
             .iter()
             .find_map(|b| match b {
@@ -263,6 +281,7 @@ impl LayoutFacts {
             pages,
             stopped: stopped(layout),
             keeps: keeps(layout),
+            first: FirstPages::default(),
         }
     }
 
@@ -273,20 +292,31 @@ impl LayoutFacts {
     /// are made. Equal to [`LayoutFacts::of`] (an edit pays for the pages it moved).
     pub fn after(layout: &DocumentLayout, before: &DocumentLayout, known: &LayoutFacts) -> LayoutFacts {
         let same_paths = layout.mode15 == before.mode15 && layout.line_paths() == before.line_paths();
-        let pages = (0..layout.page_count())
+        let mut remade = Vec::new();
+        let pages: Vec<PageFacts> = (0..layout.page_count())
             .filter_map(|k| {
                 let kept = if same_paths {
                     kept_page(layout, before, known, k)
                 } else {
                     None
                 };
-                kept.or_else(|| PageFacts::of(layout, k))
+                kept.or_else(|| {
+                    remade.push(k);
+                    PageFacts::of(layout, k)
+                })
             })
             .collect();
+        let first = match known.first.0.get() {
+            Some(old) if same_paths && pages.len() == known.pages.len() => FirstPages(std::sync::OnceLock::from(
+                first_pages_after(old, &known.pages, &pages, &remade),
+            )),
+            _ => FirstPages::default(),
+        };
         LayoutFacts {
             pages,
             stopped: stopped(layout),
             keeps: keeps(layout),
+            first,
         }
     }
 
@@ -323,10 +353,20 @@ impl LayoutFacts {
 
     /// The 0-based page a paragraph's first line is drawn on.
     pub fn first_page(&self, path: &str) -> Option<usize> {
-        self.pages
-            .iter()
-            .find(|p| p.lines.iter().any(|l| &*l.path == path))
-            .map(|p| p.page)
+        self.first_pages().get(path).copied()
+    }
+
+    /// Each paragraph path's first page (0-based), made once.
+    pub fn first_pages(&self) -> &std::collections::HashMap<Text, usize> {
+        self.first.0.get_or_init(|| {
+            let mut first = std::collections::HashMap::new();
+            for page in &self.pages {
+                for line in &page.lines {
+                    first.entry(Text::clone(&line.path)).or_insert(page.page);
+                }
+            }
+            Arc::new(first)
+        })
     }
 
     /// Every 0-based page a block (its key: a paragraph's, table's, row's or cell's path)
@@ -338,6 +378,70 @@ impl LayoutFacts {
             .map(|p| p.page)
             .collect()
     }
+
+    /// [`LayoutFacts::pages_of`] for each of `keys`, in their order, in one pass over the
+    /// pages.
+    pub fn pages_of_each(&self, keys: &[&str]) -> Vec<Vec<usize>> {
+        let mut wanted: std::collections::HashMap<&str, Vec<usize>> = std::collections::HashMap::new();
+        for (k, key) in keys.iter().enumerate() {
+            wanted.entry(key).or_default().push(k);
+        }
+        let mut out = vec![Vec::new(); keys.len()];
+        for page in &self.pages {
+            for block in &page.blocks {
+                for &k in wanted.get(&**block).map_or(&[][..], Vec::as_slice) {
+                    if let Some(pages) = out.get_mut(k) {
+                        pages.push(page.page);
+                    }
+                }
+            }
+        }
+        out
+    }
+}
+
+/// The first pages of the facts `pages` (index = page), made from `old` (those of `was`, the
+/// facts of the version before, as many pages): every page but those `remade` is as it was,
+/// so only a path drawn on a remade page, before or now, can have another first page. Such a
+/// path's first page is searched for from the earlier of its old first page and the first
+/// page remade: a page before both is kept, and did not draw it then.
+fn first_pages_after(
+    old: &Arc<std::collections::HashMap<Text, usize>>,
+    was: &[PageFacts],
+    pages: &[PageFacts],
+    remade: &[usize],
+) -> Arc<std::collections::HashMap<Text, usize>> {
+    if remade.is_empty() {
+        return Arc::clone(old);
+    }
+    let draws = |page: &PageFacts, path: &Text| page.lines.iter().any(|l| l.path == *path);
+    let earliest = remade.first().copied().unwrap_or(0);
+    let mut asked: Vec<Text> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for &k in remade {
+        let (then, now) = (pages_from(was, k).first(), pages_from(pages, k).first());
+        for page in [then, now].into_iter().flatten().filter(|p| p.page == k) {
+            for line in &page.lines {
+                if seen.insert(Text::clone(&line.path)) {
+                    asked.push(Text::clone(&line.path));
+                }
+            }
+        }
+    }
+    let mut first = (**old).clone();
+    for path in asked {
+        let start = old.get(&path).copied().unwrap_or(usize::MAX).min(earliest);
+        match pages_from(pages, start).iter().find(|p| draws(p, &path)) {
+            Some(page) => first.insert(path, page.page),
+            None => first.remove(&path),
+        };
+    }
+    Arc::new(first)
+}
+
+/// The facts of page `k` and those after it (facts stand in page order).
+fn pages_from(facts: &[PageFacts], k: usize) -> &[PageFacts] {
+    facts.get(facts.partition_point(|p| p.page < k)..).unwrap_or_default()
 }
 
 /// The top-level body block `layout` stopped at, if it did.

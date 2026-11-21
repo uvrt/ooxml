@@ -11,7 +11,7 @@ use crate::labels::{item_lists, top_level, BlockItems, Counters};
 use crate::model::{Block, Paragraph};
 use crate::value::{text, Text};
 use ooxml_base::{Digest, DigestKey, Digester};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 /// The key of a block's list items: what decides each paragraph's resolved `numPr`.
@@ -54,6 +54,47 @@ fn label_key(key: DigestKey, block: &Block) -> Digest {
     d.finish()
 }
 
+/// The label keys of the last version's blocks by the block (its pointer, the block held):
+/// a block the next version shares is not digested again.
+#[derive(Default)]
+pub(super) struct LabelKeys {
+    last: HashMap<usize, (Block, Digest)>,
+    now: HashMap<usize, (Block, Digest)>,
+}
+
+fn block_pointer(block: &Block) -> usize {
+    match block {
+        Block::Paragraph(p) => Arc::as_ptr(p) as usize,
+        Block::Table(t) => Arc::as_ptr(t) as usize,
+    }
+}
+
+fn same_pointer(a: &Block, b: &Block) -> bool {
+    match (a, b) {
+        (Block::Paragraph(x), Block::Paragraph(y)) => Arc::ptr_eq(x, y),
+        (Block::Table(x), Block::Table(y)) => Arc::ptr_eq(x, y),
+        _ => false,
+    }
+}
+
+impl LabelKeys {
+    /// `block`'s label key, kept for the next version.
+    fn of(&mut self, key: DigestKey, block: &Block) -> Digest {
+        let at = block_pointer(block);
+        let d = match self.last.get(&at) {
+            Some((kept, d)) if same_pointer(kept, block) => *d,
+            _ => label_key(key, block),
+        };
+        self.now.insert(at, (block.clone(), d));
+        d
+    }
+
+    /// The version's blocks keyed: the next version is keyed from them.
+    fn finish(&mut self) {
+        self.last = std::mem::take(&mut self.now);
+    }
+}
+
 fn paragraphs_of<'a>(block: &'a Block, out: &mut Vec<&'a Arc<Paragraph>>) {
     match block {
         Block::Paragraph(p) => out.push(p),
@@ -91,7 +132,8 @@ impl Model {
     /// Bring the body's labels up to date: the blocks between the unchanged ones at either
     /// end are taken out and the new ones put in.
     pub(super) fn update_labels(&mut self, cx: &Context, body: &[Block]) {
-        let keys: Vec<Digest> = body.iter().map(|b| label_key(self.key, b)).collect();
+        let keys: Vec<Digest> = body.iter().map(|b| self.block_keys.of(self.key, b)).collect();
+        self.block_keys.finish();
         let old = std::mem::take(&mut self.label_keys);
         let prefix = old.iter().zip(&keys).take_while(|(a, b)| a == b).count();
         let rest = old.len().min(keys.len()) - prefix;

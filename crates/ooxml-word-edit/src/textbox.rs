@@ -12,7 +12,7 @@ use crate::names::{MC, W, W14, WP, WP14};
 use crate::sink::EditSink;
 use crate::work::{scope_above, Work};
 use crate::{EditError, Result};
-use ooxml_xml::{Element, Node};
+use ooxml_xml::{changed_runs, Element, Node};
 use std::sync::Arc;
 
 /// The first `w:txbxContent` at or below `element`, in document order.
@@ -50,51 +50,54 @@ fn story_blocks(root: &Arc<Element>) -> (Vec<u32>, Arc<Element>) {
 
 /// The top-level blocks of a story part (the main part's body's children, another
 /// part's root's) that are not the snapshot's: each one's path and the snapshot's block
-/// it took the place of (none for one inserted). Found from the stretch of children that
-/// differs (pointer comparisons), so the blocks the edit did not touch are not visited.
+/// it took the place of (none for one inserted). Found from the runs of children that
+/// differ ([`changed_runs`], by identity), so the blocks the edit did not touch -- moved
+/// past or not -- are not visited.
 pub(crate) fn changed_blocks(old: &Arc<Element>, new: &Arc<Element>) -> Vec<(Vec<u32>, Option<Arc<Element>>)> {
     let ((base, old), (_, new)) = (story_blocks(old), story_blocks(new));
-    let Some((start, old_end, new_end)) = old.children().changed_span(new.children()) else {
-        return Vec::new();
-    };
     let mut out = Vec::new();
-    for (k, node) in new.children().iter().enumerate().skip(start).take(new_end - start) {
-        let Node::Element(block) = node else { continue };
-        let before = (k < old_end)
-            .then(|| old.children().get(k).and_then(Node::as_element))
-            .flatten();
-        if before.is_some_and(|b| Arc::ptr_eq(b, block)) {
-            continue;
+    for run in changed_runs(old.children(), new.children()) {
+        for k in run.new.clone() {
+            let Some(Node::Element(block)) = new.children().get(k) else {
+                continue;
+            };
+            let place = run.old.start + (k - run.new.start);
+            let before = run
+                .old
+                .contains(&place)
+                .then(|| old.children().get(place).and_then(Node::as_element))
+                .flatten();
+            if before.is_some_and(|b| Arc::ptr_eq(b, block)) {
+                continue;
+            }
+            let mut path = base.clone();
+            path.push(u32::try_from(k).unwrap_or(u32::MAX));
+            out.push((path, before.cloned()));
         }
-        let mut path = base.clone();
-        path.push(u32::try_from(k).unwrap_or(u32::MAX));
-        out.push((path, before.cloned()));
     }
     out
 }
 
-/// The text boxes of the stretch of a story part's blocks that differs from the
-/// snapshot's: the snapshot's, in order, and the working version's, in order with their
-/// paths.
+/// The text boxes of the runs of a story part's blocks that differ from the snapshot's:
+/// the snapshot's, in order, and the working version's, in order with their paths.
 type SpanBoxes = (Vec<Arc<Element>>, Vec<(Vec<u32>, Arc<Element>)>);
 
 fn span_boxes(old: &Arc<Element>, new: &Arc<Element>) -> SpanBoxes {
     let ((base, old), (_, new)) = (story_blocks(old), story_blocks(new));
-    let Some((start, old_end, new_end)) = old.children().changed_span(new.children()) else {
-        return (Vec::new(), Vec::new());
-    };
     let mut before = Vec::new();
-    for node in old.children().iter().skip(start).take(old_end - start) {
-        if let Node::Element(block) = node {
-            holders(block, &mut Vec::new(), &mut before);
-        }
-    }
     let mut now = Vec::new();
-    for (k, node) in new.children().iter().enumerate().skip(start).take(new_end - start) {
-        if let Node::Element(block) = node {
-            let mut path = base.clone();
-            path.push(u32::try_from(k).unwrap_or(u32::MAX));
-            holders(block, &mut path, &mut now);
+    for run in changed_runs(old.children(), new.children()) {
+        for k in run.old {
+            if let Some(Node::Element(block)) = old.children().get(k) {
+                holders(block, &mut Vec::new(), &mut before);
+            }
+        }
+        for k in run.new {
+            if let Some(Node::Element(block)) = new.children().get(k) {
+                let mut path = base.clone();
+                path.push(u32::try_from(k).unwrap_or(u32::MAX));
+                holders(block, &mut path, &mut now);
+            }
         }
     }
     (before.into_iter().map(|(_, h)| h).collect(), now)

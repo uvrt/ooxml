@@ -1,19 +1,22 @@
 //! Owns: [`EnginePages`], the edit core's [`FieldLayout`] port over a Word page engine
 //! (`ooxml-word-pages`): a version laid out from the one the engine laid out last, its page
 //! numbers read as a field update reads them (`ooxml_word_layout::fields::update`), places
-//! named by the tool's block ids (each found from its id when asked); and the reflow
+//! named by the tool's block ids (each found from its id when asked), the pages a block is
+//! drawn on (`LayoutFacts::pages_of_each`), a `STYLEREF`'s text read from the page painted
+//! (the engine paints it when asked); and the reflow
 //! between two versions, each summarised as docx-agent's `LayoutSummary` is
 //! (`ooxml_word_pages::summary`).
 //!
 //! The host that keeps a document's engine (its fonts, its budgets) hands it in; the
-//! engine is locked while it lays out a version, never while a page number is read.
+//! engine is locked while it lays out a version or paints a page, never while a page number
+//! is read.
 //!
 //! Must not: hold anything but the engine, or lay out but through it.
 
 use ooxml_opc::Package;
-use ooxml_word_edit::{FieldLayout, FieldPlace, LaidFields, PageReflow, PageShows, Unknown};
+use ooxml_word_edit::{FieldLayout, FieldPlace, FieldRun, LaidFields, PageReflow, PageShows, Unknown};
 use ooxml_word_layout::facts::LayoutFacts;
-use ooxml_word_layout::fields::update::PageNumbers;
+use ooxml_word_layout::fields::update::{drawn_text, style_reference_known, PageNumbers};
 use ooxml_word_model::value::Text;
 use ooxml_word_pages::summary::Summary;
 use ooxml_word_pages::{Fallback, LaidVersion, PageEngine, PagesError};
@@ -63,7 +66,7 @@ impl FieldLayout for EnginePages {
             let mut engine = self.engine.lock().unwrap_or_else(PoisonError::into_inner);
             engine.lay_out(package)
         };
-        Ok(Box::new(Laid::new(laid(found)?)))
+        Ok(Box::new(Laid::new(laid(found)?, &self.engine)))
     }
 
     fn reflow(&self, before: &Package, after: &Package) -> Result<PageReflow, String> {
@@ -90,16 +93,22 @@ impl Borrow<LayoutFacts> for Facts {
     }
 }
 
-/// One version laid out: its page numbers, its blocks' paths found by id.
-struct Laid {
+/// One version laid out: its page numbers, its blocks' paths found by id, and the engine
+/// that paints its pages.
+struct Laid<'e> {
     version: Arc<LaidVersion>,
     numbers: PageNumbers<Facts>,
+    engine: &'e Mutex<PageEngine>,
 }
 
-impl Laid {
-    fn new(version: Arc<LaidVersion>) -> Laid {
+impl<'e> Laid<'e> {
+    fn new(version: Arc<LaidVersion>, engine: &'e Mutex<PageEngine>) -> Laid<'e> {
         let numbers = PageNumbers::new(version.layout(), Facts(Arc::clone(&version)));
-        Laid { version, numbers }
+        Laid {
+            version,
+            numbers,
+            engine,
+        }
     }
 
     fn path(&self, id: &str) -> Result<Text, Unknown> {
@@ -113,7 +122,7 @@ fn unknown(error: ooxml_word_layout::fields::update::Unknown) -> Unknown {
     Unknown(error.0)
 }
 
-impl LaidFields for Laid {
+impl LaidFields for Laid<'_> {
     fn page_field(&self, instruction: &str, keyword: &str, at: FieldPlace<'_>) -> Result<String, Unknown> {
         match at {
             FieldPlace::Body(id) => self
@@ -132,6 +141,40 @@ impl LaidFields for Laid {
                 .map_err(unknown),
             FieldPlace::Page(page) => Err(Unknown(format!("a reference to page {page}"))),
         }
+    }
+
+    fn style_reference(&self, instruction: &str, at: FieldPlace<'_>, run: FieldRun<'_>) -> Result<String, Unknown> {
+        let (page, story) = match at {
+            FieldPlace::Body(id) => {
+                let path = self.path(id)?;
+                let page = self
+                    .numbers
+                    .drawn_on(&path)
+                    .ok_or_else(|| Unknown(format!("{id} is not drawn")))?;
+                (page, None)
+            }
+            FieldPlace::Page(page) => (page, Some(run.part)),
+        };
+        let mut engine = self.engine.lock().unwrap_or_else(PoisonError::into_inner);
+        style_reference_known(&self.version.layout().document, engine.locale(), instruction).map_err(unknown)?;
+        let painted = engine
+            .paint(&self.version, page)
+            .ok_or_else(|| Unknown(format!("page {page} is not painted")))?;
+        Ok(drawn_text(&painted, story, run.path))
+    }
+
+    fn blocks_pages(&self, ids: &[&str]) -> Vec<Result<Vec<usize>, Unknown>> {
+        let paths: Vec<Option<Text>> = ids.iter().map(|id| self.version.path_of(id)).collect();
+        let keys: Vec<&str> = paths.iter().map(|p| p.as_deref().unwrap_or_default()).collect();
+        let found = self.version.facts().pages_of_each(&keys);
+        ids.iter()
+            .zip(paths.iter().zip(found))
+            .map(|(id, (path, pages))| match path {
+                Some(_) if !pages.is_empty() => Ok(pages),
+                Some(_) => Err(Unknown(format!("{id} is not drawn: the layout stops before it"))),
+                None => Err(Unknown(format!("{id} is not laid out"))),
+            })
+            .collect()
     }
 
     fn pages(&self) -> Vec<PageShows> {
