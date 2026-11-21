@@ -83,13 +83,46 @@ def new_document(call: Any, kind: str, template_blob: str | None = None, size: s
         raise ToolError("invalid_arguments", f"a document's size is a page size, not {size!r}", field="size",
                         valid_options=list(PAGE_SIZES))
     template = call.blob(template_blob).data if template_blob else None
-    document = Document.new(page=size, title=title, author=author, created=call.now(), template=template,
-                            keep_content=False, locale=call.locale)
+    if template is None and _rust_blank():
+        document = _blank(call, size, title, author)
+    else:
+        document = Document.new(page=size, title=title, author=author, created=call.now(), template=template,
+                                keep_content=False, locale=call.locale)
     doc_id = call.session.adopt(document, KIND, name or "new.docx", source=template_blob or "new",
                                 size=len(template or b""))
     entry = call.session.entry(doc_id)
     return Result(summary=f"Made {entry.name} as {doc_id}", created=[doc_id],
                   data={**entry.describe(), "summary": _summary(document)})
+
+
+def _rust_blank() -> bool:
+    """Whether the Rust core makes a new blank document (``ooxml_core.new_document``)."""
+    try:
+        import ooxml_core
+    except ImportError:
+        return False
+    return hasattr(ooxml_core, "new_document")
+
+
+def _blank(call: Any, size: str | None, title: str | None, author: str | None) -> Document:
+    """Lane LC1: a new blank document made by the Rust core, as ``Document.new`` makes one
+    (:func:`docx_agent.edit.blank.build`): the page, the call's locale's language and
+    separators (en-US without one), the properties and the call's clock."""
+    import ooxml_core
+
+    from ..edit import blank
+    from ..edit.properties import as_datetime, now, w3cdtf
+
+    locale = call.locale
+    created = as_datetime(call.now()) or now()
+    data = ooxml_core.new_document(
+        page=(size or "A4", False),
+        language=locale.language if locale is not None else blank.FALLBACK_LANGUAGE,
+        separators=blank.separators_of(locale),
+        properties=(title, author, w3cdtf(created.replace(microsecond=0))))
+    document = Document.open(data)
+    document.locale = locale
+    return document
 
 
 def _summary(document: Document) -> dict[str, Any]:
