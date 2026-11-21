@@ -19,6 +19,7 @@
 //! words it ([`refused`]); a heading's range is read, and named, as the span it is.
 
 mod args;
+mod edit_reflow;
 mod facts;
 mod laid_facts;
 mod laid_tables;
@@ -29,6 +30,7 @@ mod reflow;
 mod refused;
 
 pub use args::{Check, CheckCopy, CheckInclude, CheckScale, CopyLists, CopyReference, ScaleShow, ScaleStep, StepText};
+pub use edit_reflow::{reflow_after_edit, EditedFrom, REFLOW_PAGES, STALE};
 pub use facts::{
     direct_formatting_json, empty_run_json, grid_mismatch_json, lost_cell_json, lost_original_json, row_unlike_json,
     skipped_level_json, spacing_problem_json, style_use_json, text_language_json,

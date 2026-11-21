@@ -5,13 +5,15 @@
 //! document's last check with `reflow` ([`LastCheck`], kept per document by the session),
 //! ids followed through the version's aliases. A check keeps the version it saw, not its
 //! summary: the next compares the two page by page ([`Summarised::compare`]), painting
-//! only the pages an edit reached; a first check paints none.
+//! only the pages an edit reached; a first check paints none. A reflow is written as
+//! docx-agent's `reflow_json` writes it (also for an edit's checks: [`super::edit_reflow`]).
 //!
 //! Must not: lay out but through the host's engine ([`WordLayout`]).
 
 use crate::pages::{NotLaid, WordLayout};
 use ooxml_word_pages::coverage::Coverage;
 use ooxml_word_pages::summarised::Summarised;
+use ooxml_word_pages::summary::Reflow;
 use ooxml_word_pages::warnings::LayoutWarning;
 use ooxml_word_pages::LaidVersion;
 use serde_json::{Map, Value};
@@ -218,13 +220,20 @@ pub(super) fn since(
     let changed: Vec<usize> = match pages.filter(|p| !p.is_empty()) {
         Some(pages) => found
             .changed
-            .into_iter()
+            .iter()
+            .copied()
             .filter(|c| pages.iter().any(|p| usize::try_from(*p).ok() == Some(*c)))
             .collect(),
-        None => found.changed,
+        None => found.changed.clone(),
     };
+    Ok(Some(reflow_json(Reflow { changed, ..found })))
+}
+
+/// A reflow as docx-agent's `reflow_json` writes it: the pages changed, the page counts,
+/// and where present the first blocks that moved and the pages not compared.
+pub(super) fn reflow_json(found: Reflow) -> Value {
     let mut out = Map::new();
-    out.insert("changed".into(), Value::from(changed));
+    out.insert("changed".into(), Value::from(found.changed));
     out.insert(
         "pages".into(),
         Value::from(vec![found.page_count.0, found.page_count.1]),
@@ -241,7 +250,7 @@ pub(super) fn since(
     if !found.unknown.is_empty() {
         out.insert("unknown".into(), Value::from(found.unknown));
     }
-    Ok(Some(Value::Object(out)))
+    Value::Object(out)
 }
 
 #[cfg(test)]

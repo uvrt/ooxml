@@ -68,8 +68,9 @@ type HistoryNumbers = (u64, Vec<NumberedRow>, Vec<NumberedRow>);
 
 /// What `Session.edit` says a call made: its first version's number, its last version,
 /// what it touched (JSON text; `None` where it made more than one version), the last
-/// version's validation and the state number of the version its first edit was applied to.
-type EditMade = (u64, PyVersion, Option<String>, Validation, u64);
+/// version's validation, the state number of the version its first edit was applied to, and
+/// the reflow its checks report (JSON text; `None` where none was measured).
+type EditMade = (u64, PyVersion, Option<String>, Validation, u64, Option<String>);
 
 /// A call that panicked, as its failure.
 fn panicked(name: &str, panic: &(dyn std::any::Any + Send)) -> ToolResult<Value> {
@@ -223,12 +224,15 @@ impl PySession {
     /// Run the editing tool `name` as [`call`](Self::call) does, with `options` (a
     /// `CallOptions`: who calls, the page engine, the blobs, the values written by reference;
     /// no limit, no images): returns the envelope's JSON text, the application's JSON text
-    /// (`unported`), and what the call's edits made -- `(first, last, touched, validation)`:
-    /// the number of the version its first edit made, the version its last made (held), what
-    /// it touched as JSON text (`None` where it made more than one version) and the last
-    /// version's validation as [`validation`](Self::validation) gives it -- or `None` where it
-    /// changed nothing. A host that numbers the document's steps takes the call's step from
-    /// these, whatever other calls commit to the document meanwhile.
+    /// (`unported`), and what the call's edits made -- `(first, last, touched, validation,
+    /// before, reflow)`: the number of the version its first edit made, the version its last
+    /// made (held), what it touched as JSON text (`None` where it made more than one version),
+    /// the last version's validation as [`validation`](Self::validation) gives it, the state
+    /// number of the version its first edit was applied to, and the reflow its checks report as
+    /// JSON text (where the options' page engine laid out the version its first edit was
+    /// applied to; else `None`) -- or `None` where it changed nothing. A host that numbers the
+    /// document's steps takes the call's step from these, whatever other calls commit to the
+    /// document meanwhile.
     ///
     /// # Errors
     /// `ValueError` for options with a `limit` (an edit's reply is whole).
@@ -257,7 +261,15 @@ impl PySession {
         let made = made.map(|m| {
             let touched = m.touched.map(|t| Value::Array(t).to_string());
             let validation = (m.validation.new, m.validation.fixed, m.validation.baseline);
-            (m.first, PyVersion { inner: m.last }, touched, validation, m.before)
+            let reflow = m.reflow.map(|r| r.to_string());
+            (
+                m.first,
+                PyVersion { inner: m.last },
+                touched,
+                validation,
+                m.before,
+                reflow,
+            )
         });
         Ok((text, app, made))
     }

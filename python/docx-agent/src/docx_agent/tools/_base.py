@@ -418,12 +418,15 @@ def checks(entry: Any, touched: Sequence[Any]) -> dict[str, Any]:
     it was laid out) and after, for a document of :data:`REFLOW_PAGES` pages or fewer
     (``"stale: call check"`` beyond).  Lane P2c4: after an edit the Rust session made, the
     session's validation (:func:`docx_agent.rust.owner.owned_validation`) where no layout is
-    compared."""
+    compared.  Lane P5m: the reflow the session measured after the call's edits, where it
+    did (:attr:`docx_agent.rust.edits.Made.reflow`), is the call's."""
     before = next((t.layout for t in touched if isinstance(t, Before)), None)
+    made = next((t for t in touched if isinstance(t, Made)), None)
+    if made is not None and made.reflow is not None:
+        return _made_checks(entry, made, touched)
     if before is None or before.count > REFLOW_PAGES:
         # No layout to compare in Python: after an edit the Rust session made, its checks
         # (one served without the lock carries its version's own: lane P2c6).
-        made = next((t for t in touched if isinstance(t, Made)), None)
         timed = next((t for t in touched if isinstance(t, Timing)), None) or Timing()
         with timed.part("validate"):
             validated = made.validation if made is not None else owned_validation(entry)
@@ -458,6 +461,19 @@ def checks(entry: Any, touched: Sequence[Any]) -> dict[str, Any]:
         release([entry])
         document.__dict__.pop("_checks_engine", None)
     return out
+
+
+def _made_checks(entry: Any, made: Any, touched: Sequence[Any]) -> dict[str, Any]:
+    """:func:`checks` of a call the session served without the lock whose reflow it measured:
+    its validation and that reflow; the relayout on commit with the call's own engine (lane
+    P2c13)."""
+    from .owner import commit_relayout
+
+    timed = next((t for t in touched if isinstance(t, Timing)), None) or Timing()
+    with timed.part("validate"):
+        validated = made.validation
+    commit_relayout(entry, made.engine)
+    return {"validate": validated, "reflow": made.reflow}
 
 
 def _relayout_owned(entry: Any) -> None:

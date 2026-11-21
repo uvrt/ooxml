@@ -36,7 +36,7 @@ fn convert_on_a_long_document() {
     };
     let bytes: Arc<[u8]> = Arc::from(std::fs::read(path).unwrap());
     let engine = Arc::new(Mutex::new(engine()));
-    let layout = EnginePages::new(Arc::clone(&engine));
+    let layout = EnginePages::new(Arc::clone(&engine), engine.lock().unwrap().seed());
     let (args, _) = WordTemplate::accept(json!({"doc": "d1", "action": "upgrade_to_modern"}), Some("docx")).unwrap();
     let mut best = (Duration::MAX, Value::Null);
     for _ in 0..3 {

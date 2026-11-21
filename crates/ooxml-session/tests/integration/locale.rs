@@ -17,7 +17,7 @@ use ooxml_tools_word::EnginePages;
 use ooxml_word_pages::{DiskFonts, EngineBudgets, EngineOptions, FontSetup, PageEngine};
 use ooxml_zip::{Method, NewEntry, Writer};
 use serde_json::json;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 struct Fixed;
@@ -67,7 +67,7 @@ fn layout() -> Arc<EnginePages> {
         paint: Arc::new(Memos),
     };
     let engine = PageEngine::new(setup, EngineOptions::default(), budgets);
-    Arc::new(EnginePages::new(Arc::new(Mutex::new(engine))))
+    Arc::new(EnginePages::of(engine))
 }
 
 fn session(locale: Option<Locale>) -> Session {

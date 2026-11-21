@@ -12,7 +12,7 @@ use ooxml_tools::ToolArgs;
 use ooxml_tools_word::{word_fields, CallEditor, Editing, EnginePages, WordFields};
 use ooxml_word_edit::Editor;
 use serde_json::{json, Value};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 const FIXTURE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -25,7 +25,7 @@ fn fields_after(arguments: Value) -> (Value, Vec<(String, String)>) {
     let package = Package::open(Arc::from(std::fs::read(FIXTURE).unwrap()), &Limits::default()).unwrap();
     let editor = Editor::open(package, StoreConfig::default(), Arc::new(Still), Arc::new(Unlimited)).unwrap();
     let opened = editor.store().snapshot().doc().clone();
-    let layout = EnginePages::new(Arc::new(Mutex::new(engine())));
+    let layout = EnginePages::of(engine());
     let caller = Caller::anonymous();
     let reply = {
         let call_editor = CallEditor::new(&editor);

@@ -266,7 +266,7 @@ fn case_blobs(case: &Value) -> BlobList {
 
 /// A page engine over the fonts a case names, as the layout port the field tools read.
 pub(crate) fn engine_pages(fonts: &Value) -> EnginePages {
-    EnginePages::new(Arc::new(std::sync::Mutex::new(page_engine(fonts))))
+    EnginePages::of(page_engine(fonts))
 }
 
 /// A page engine over the fonts a case names (`folders`: `[location, path]` pairs as

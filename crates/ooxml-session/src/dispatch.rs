@@ -63,6 +63,11 @@ pub struct CallMade {
     pub touched: Option<Vec<Value>>,
     /// The validation delta of `last` against the problems the document opened with.
     pub validation: ooxml_word_edit::validate::Delta,
+    /// The reflow its checks report (docx-agent's `reflow_json` form, or `"stale: call
+    /// check"`, or a `"timeout: …"` where laying `last` out passed the call's limit), where
+    /// the call had the host's layout and the version its first edit was applied to was laid
+    /// out (a check saw it, or the engine laid it out last); else `None`.
+    pub reflow: Option<Value>,
 }
 
 /// The versions `context` names, by document.
@@ -177,6 +182,7 @@ impl Session {
             mut warnings,
             made,
             named,
+            layout_limit,
             ..
         } = state;
         let made = made.into_inner().unwrap_or_else(PoisonError::into_inner);
@@ -187,25 +193,17 @@ impl Session {
             // reading call's, the one read
             let mutates = self.registry.named(name).is_some_and(|t| t.spec().flags.mutates);
             let document = self.document(&opened.id).ok();
-            if let (Some(made), Some(word)) = (&made, document.as_deref().and_then(Document::word)) {
-                for (seq, delta) in &made.ids {
-                    let by = crate::retired::Made {
-                        seq: seq.0,
-                        caller: context.caller.name(),
-                        tool: Some(name),
-                        history: false,
-                    };
-                    word.retired.note(&by, delta);
-                }
-            }
             if let (Some(made), Some(document)) = (&made, &document) {
-                if !document.grouped() {
-                    document.stepped(made.last.number(), Some(name), context);
-                }
+                Self::noted(made, document, name, context);
             }
             call_made = made.zip(document.as_ref()).map(|(made, document)| {
                 let one = made.first.seq() == made.last.seq();
+                let reflow = context
+                    .layout
+                    .as_deref()
+                    .and_then(|layout| crate::reflowed::after_edit(layout, document, &made, (layout_limit, &cancel)));
                 CallMade {
+                    reflow,
                     first: made.first.seq().0,
                     before: made.before.number(),
                     touched: one.then(|| made.touched.iter().map(crate::changes::touched_json).collect()),
@@ -225,6 +223,25 @@ impl Session {
         result.warnings = warnings;
         result.app.tool = name.to_owned();
         (result, call_made)
+    }
+
+    /// What `name`'s edits `made` to `document` noted: the ids each version retired, by
+    /// whom, and the call's step and who made it (unless a step group holds it).
+    fn noted(made: &Made, document: &Document, name: &str, context: &CallContext) {
+        if let Some(word) = document.word() {
+            for (seq, delta) in &made.ids {
+                let by = crate::retired::Made {
+                    seq: seq.0,
+                    caller: context.caller.name(),
+                    tool: Some(name),
+                    history: false,
+                };
+                word.retired.note(&by, delta);
+            }
+        }
+        if !document.grouped() {
+            document.stepped(made.last.number(), Some(name), context);
+        }
     }
 
     fn dispatch(

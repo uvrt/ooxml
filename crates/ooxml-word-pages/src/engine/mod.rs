@@ -22,6 +22,7 @@
 mod beyond;
 mod changed;
 mod parts;
+mod seed;
 mod summaries;
 mod trial;
 
@@ -29,6 +30,7 @@ pub use beyond::Laid;
 pub use trial::Trial;
 
 use changed::{context_may_change, notes_or_stories_changed};
+pub use seed::EngineSeed;
 
 use crate::causes::{context_cause, part_reason, whole_cause, RelaidCause};
 use crate::error::{Fallback, PagesError};
@@ -214,6 +216,8 @@ pub struct PageEngine {
     /// The last version given, however it was given: what the next one changed is found
     /// from it.
     given: Option<Package>,
+    /// What it is made from, and the last version it laid out, published there.
+    seed: EngineSeed,
 }
 
 impl std::fmt::Debug for PageEngine {
@@ -255,6 +259,7 @@ impl Default for EngineOptions {
 impl PageEngine {
     /// An engine laying out with `setup`'s fonts, its memory counted in `budgets`.
     pub fn new(setup: Arc<FontSetup>, options: EngineOptions, budgets: EngineBudgets) -> PageEngine {
+        let seed = EngineSeed::new(Arc::clone(&setup), options.clone(), budgets.clone());
         PageEngine {
             setup,
             locale: options.locale,
@@ -273,7 +278,23 @@ impl PageEngine {
             watched: Vec::new(),
             digest_limit: crate::digest_cache::DIGEST_CACHE_BYTES,
             given: None,
+            seed,
         }
+    }
+
+    /// What it is made from, and what it laid out last, readable while another caller holds
+    /// it: a spare engine of the same kind is made from it.
+    pub fn seed(&self) -> EngineSeed {
+        self.seed.clone()
+    }
+
+    /// Its last version laid out, published to its seed.
+    fn publish(&self) {
+        let last = self
+            .generation
+            .as_ref()
+            .and_then(|g| Some((g.laid_from.clone()?, Arc::clone(g.last.as_ref()?))));
+        self.seed.publish(last);
     }
 
     /// What it did so far.
@@ -284,6 +305,13 @@ impl PageEngine {
     /// The last version laid out, if any.
     pub fn last(&self) -> Option<&Arc<LaidVersion>> {
         self.generation.as_ref().and_then(|g| g.last.as_ref())
+    }
+
+    /// The last version laid out, where it was laid out from `package`'s parts (what
+    /// [`PageEngine::lay_out`] answers it with, nothing laid out); else `None`. Nothing is
+    /// noted as given.
+    pub fn laid_last(&self, package: &Package) -> Option<Arc<LaidVersion>> {
+        self.generation.as_ref()?.last_for(package)
     }
 
     /// Lay out the version whose package is `bytes`: only the parts whose stored bytes
@@ -423,7 +451,19 @@ impl PageEngine {
         self.changed.sort();
     }
 
+    /// [`PageEngine::lay_out_until`] where `cancel` is given; the last version laid out
+    /// published to its seed, whatever the outcome.
     fn lay_out_within(
+        &mut self,
+        package: &Package,
+        cancel: Option<&dyn Cancel>,
+    ) -> Result<Result<Arc<LaidVersion>, Fallback>, PagesError> {
+        let laid = self.lay_out_given(package, cancel);
+        self.publish();
+        laid
+    }
+
+    fn lay_out_given(
         &mut self,
         package: &Package,
         cancel: Option<&dyn Cancel>,
@@ -505,6 +545,8 @@ impl PageEngine {
         drop(previous);
         generation.last = Some(Arc::clone(&version));
         generation.laid_from = Some(package.clone());
+        // Published before the sweep: the version before, no longer held there, is swept.
+        self.seed.publish(Some((package.clone(), Arc::clone(&version))));
         let swept = generation.model.sweep() + generation.layout.sweep();
         self.stats.swept += swept as u64;
         Ok(Ok(version))
@@ -567,6 +609,7 @@ impl PageEngine {
         self.generation = None;
         self.source = None;
         self.painted.clear();
+        self.publish();
     }
 
     /// What its memos hold now (bytes counted on its `held` budget) and what its pages

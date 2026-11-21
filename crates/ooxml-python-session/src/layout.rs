@@ -104,6 +104,8 @@ impl PyWordFonts {
 #[pyclass(frozen, name = "WordPages", module = "ooxml_core")]
 pub struct PyWordPages {
     engine: Arc<Mutex<PageEngine>>,
+    /// The engine's seed, taken when it was made: read without waiting for the engine.
+    seed: ooxml_word_pages::EngineSeed,
 }
 
 fn lock(engine: &Mutex<PageEngine>) -> std::sync::MutexGuard<'_, PageEngine> {
@@ -126,7 +128,7 @@ fn laid_or_raise(engine: &Arc<Mutex<PageEngine>>, laid: Laid) -> PyResult<PyLaid
 impl PyWordPages {
     /// The edit core's layout port over this engine (a call's `layout`).
     pub(crate) fn port(&self) -> ooxml_tools_word::EnginePages {
-        ooxml_tools_word::EnginePages::new(Arc::clone(&self.engine))
+        ooxml_tools_word::EnginePages::new(Arc::clone(&self.engine), self.seed.clone())
     }
 }
 
@@ -170,8 +172,10 @@ impl PyWordPages {
             held: budget.holding(),
             paint: budget.account(),
         };
+        let engine = PageEngine::new(Arc::clone(&fonts.inner), options, budgets);
         Ok(Self {
-            engine: Arc::new(Mutex::new(PageEngine::new(Arc::clone(&fonts.inner), options, budgets))),
+            seed: engine.seed(),
+            engine: Arc::new(Mutex::new(engine)),
         })
     }
 
