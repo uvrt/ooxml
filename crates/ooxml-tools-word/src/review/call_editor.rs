@@ -32,6 +32,8 @@ pub struct Made {
 pub struct CallEditor<'a> {
     editor: &'a Editor,
     made: Mutex<Option<Made>>,
+    /// The stand-ins its edits drew that were drawn as other values where they landed.
+    moved: Mutex<Vec<(String, String)>>,
 }
 
 impl<'a> CallEditor<'a> {
@@ -41,6 +43,7 @@ impl<'a> CallEditor<'a> {
         Self {
             editor,
             made: Mutex::new(None),
+            moved: Mutex::new(Vec::new()),
         }
     }
 
@@ -54,6 +57,10 @@ impl<'a> CallEditor<'a> {
         C: Command<WordDoc, Error = EditError>,
     {
         let edited = self.editor.run(caller, command)?;
+        if edited.drawn.moved().next().is_some() {
+            let mut moved = self.moved.lock().unwrap_or_else(PoisonError::into_inner);
+            moved.extend(edited.drawn.moved().map(|(s, v)| (s.to_owned(), v.to_owned())));
+        }
         if edited.changed {
             let mut made = self.made.lock().unwrap_or_else(PoisonError::into_inner);
             let (first, mut ids) = made
@@ -81,6 +88,13 @@ impl<'a> CallEditor<'a> {
     #[must_use]
     pub fn baseline(&self) -> &[Problem] {
         self.editor.baseline()
+    }
+
+    /// The stand-ins the call's edits drew that landed as other values: `(stand-in, value)`
+    /// ([`crate::resolve_drawn`] names them so in the reply).
+    #[must_use]
+    pub fn moved(&self) -> Vec<(String, String)> {
+        self.moved.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
     /// The versions the call's edits made so far; `None` while none changed the document.

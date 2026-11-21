@@ -17,6 +17,7 @@ use ooxml_base::Q;
 use ooxml_text::pieces::{LABEL_SHIFT, NOTE_CONTINUATION, NOTE_SEPARATOR, OBJECT_CHAR as PICTURE_BULLET};
 use ooxml_text::{FaceKey, Piece, PieceKind, Units, VerticalAlign};
 use ooxml_word_model::model::{InlineObject, Paragraph};
+use ooxml_word_model::resolve::CharacterFormat;
 use ooxml_word_model::value::{Props, Value};
 use ooxml_word_model::{ResolvedParagraph, WordDocument};
 use std::sync::Arc;
@@ -189,7 +190,9 @@ struct LinePainter<'a, 'c> {
     /// The last span takes the next glyph of its key (no tab, break or object between).
     open: bool,
     out: &'a mut PageOut,
-    label: Option<Props>,
+    label: Option<Arc<Props>>,
+    /// Each run's formats by slot, found once per line (not once per glyph).
+    formats: std::collections::HashMap<usize, RunFormatter<'a>>,
 }
 
 impl LinePainter<'_, '_> {
@@ -202,38 +205,54 @@ impl LinePainter<'_, '_> {
     }
 
     /// The label's properties: the mark's with the level's `w:rPr` on top.
-    fn label_props(&mut self) -> Props {
+    fn label_props(&mut self) -> Arc<Props> {
         if let Some(found) = &self.label {
-            return found.clone();
+            return Arc::clone(found);
         }
         let resolved = self.job.resolved;
         let props = match list_level(self.job.document, &resolved.paragraph) {
-            Some(level) => label_props(&resolved.mark, level),
-            None => (*resolved.mark).clone(),
+            Some(level) => Arc::new(label_props(&resolved.mark, level)),
+            None => Arc::clone(&resolved.mark),
         };
-        self.label = Some(props.clone());
+        self.label = Some(Arc::clone(&props));
         props
     }
 
-    /// What a piece is drawn as: its properties, path, kind and run (`None`: the label's).
-    fn source_of(&mut self, piece: &Piece) -> (Props, String, SpanKind, Option<usize>) {
+    /// What a piece is drawn as: its properties, kind and run (`None`: the label's).
+    fn source_of(&mut self, piece: &Piece) -> (Arc<Props>, SpanKind, Option<usize>) {
         if piece.source < 0 {
-            let props = self.label_props();
-            return (
-                props,
-                format!("{}/label", self.job.paragraph.path),
-                SpanKind::Label,
-                None,
-            );
+            return (self.label_props(), SpanKind::Label, None);
         }
         let k = usize::try_from(piece.run).unwrap_or(usize::MAX);
-        let props = self.job.resolved.runs.get(k).map(|p| (**p).clone()).unwrap_or_default();
+        let props = self.job.resolved.runs.get(k).map(Arc::clone).unwrap_or_default();
         let kind = if piece.kind == PieceKind::SoftHyphen {
             SpanKind::Hyphen
         } else {
             SpanKind::Text
         };
-        (props, self.run_path(k), kind, Some(k))
+        (props, kind, Some(k))
+    }
+
+    /// The path a span of `run` (`None`: the label) is drawn for.
+    fn source_path(&self, run: Option<usize>) -> String {
+        match run {
+            Some(k) => self.run_path(k),
+            None => format!("{}/label", self.job.paragraph.path),
+        }
+    }
+
+    /// The format `ch` of `run` (`None`: the label, of `props`) is drawn in, once per slot.
+    fn format_of(&mut self, run: Option<usize>, props: &Props, ch: char) -> CharacterFormat {
+        let job = self.job;
+        match run.and_then(|k| job.resolved.runs.get(k).map(|p| (k, &**p))) {
+            Some((k, resolved)) => self
+                .formats
+                .entry(k)
+                .or_insert_with(|| RunFormatter::new(job.document, resolved))
+                .format(ch)
+                .clone(),
+            None => RunFormatter::new(job.document, props).format(ch).clone(),
+        }
     }
 
     /// A new span of `key` from `x`, in `props`' colours and decorations.
@@ -267,15 +286,11 @@ impl LinePainter<'_, '_> {
 
     /// A text piece drawn at `x`.
     fn glyph(&mut self, piece: &Piece, x: Px) {
-        let document = self.job.document;
-        let (props, path, kind, run) = self.source_of(piece);
-        let ch = if piece.kind == PieceKind::SoftHyphen || piece.ch == '\u{2011}' {
-            '-'
-        } else {
-            piece.ch
-        };
+        let (props, kind, run) = self.source_of(piece);
+        let hyphen = piece.kind == PieceKind::SoftHyphen || piece.ch == '\u{2011}';
+        let ch = if hyphen { '-' } else { piece.ch };
         let measured_ch = if piece.source >= 0 { ch } else { piece.ch };
-        let format = RunFormatter::new(document, &props).format(measured_ch).clone();
+        let format = self.format_of(run, &props, measured_ch);
         let face: Text = piece
             .format()
             .as_ref()
@@ -302,6 +317,7 @@ impl LinePainter<'_, '_> {
             y,
         };
         if !self.open || self.spans.last().is_none_or(|(k, _)| *k != key) {
+            let path = self.source_path(run);
             self.open_span(key, &props, path, x);
             if let Some((_, span)) = self.spans.last_mut() {
                 span.vertical_align.clone_from(&format.vertical_align);
@@ -476,6 +492,7 @@ pub(super) fn paint_line(cx: &PaintContext<'_>, job: &LineJob<'_>, out: &mut Pag
         open: false,
         out,
         label: None,
+        formats: std::collections::HashMap::new(),
     };
     let left = job.line.left;
     let mut counts = std::collections::HashMap::new();

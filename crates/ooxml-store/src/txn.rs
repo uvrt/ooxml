@@ -18,6 +18,8 @@ pub struct Txn<'s, D: DocModel> {
     writes: KeySet<D::Key>,
     /// The written keys that are merges ([`DocModel::merged`]).
     merges: KeySet<D::Key>,
+    /// The keys its changes create under stand-ins ([`DocModel::created`]).
+    created: KeySet<D::Key>,
     changes: Vec<D::Change>,
     ids: &'s IdAllocator,
 }
@@ -28,12 +30,14 @@ pub struct Savepoint<D: DocModel> {
     work: D,
     writes: KeySet<D::Key>,
     merges: KeySet<D::Key>,
+    created: KeySet<D::Key>,
     changes: usize,
 }
 
 impl<'s, D: DocModel> Txn<'s, D> {
     pub(crate) fn new(base: Snapshot<D>, ids: &'s IdAllocator) -> Self {
-        let work = base.doc().clone();
+        let mut work = base.doc().clone();
+        work.begin();
         Self {
             base,
             work,
@@ -41,6 +45,7 @@ impl<'s, D: DocModel> Txn<'s, D> {
             predicates: Vec::new(),
             writes: KeySet::new(),
             merges: KeySet::new(),
+            created: KeySet::new(),
             changes: Vec::new(),
             ids,
         }
@@ -82,6 +87,7 @@ impl<'s, D: DocModel> Txn<'s, D> {
         self.work = next;
         D::written(&change, &mut self.writes);
         D::merged(&change, &mut self.merges);
+        D::created(&change, &mut self.created);
         self.changes.push(change);
         Ok(())
     }
@@ -113,6 +119,7 @@ impl<'s, D: DocModel> Txn<'s, D> {
             work: self.work.clone(),
             writes: self.writes.clone(),
             merges: self.merges.clone(),
+            created: self.created.clone(),
             changes: self.changes.len(),
         }
     }
@@ -122,6 +129,7 @@ impl<'s, D: DocModel> Txn<'s, D> {
         self.work = point.work;
         self.writes = point.writes;
         self.merges = point.merges;
+        self.created = point.created;
         self.changes.truncate(point.changes);
     }
 
@@ -133,6 +141,7 @@ impl<'s, D: DocModel> Txn<'s, D> {
             predicates: self.predicates,
             writes: self.writes,
             merges: self.merges,
+            created: self.created,
             changes: self.changes,
         }
     }
@@ -146,5 +155,6 @@ pub(crate) struct TxnParts<D: DocModel> {
     pub(crate) predicates: Vec<Arc<dyn ReadPredicate<D>>>,
     pub(crate) writes: KeySet<D::Key>,
     pub(crate) merges: KeySet<D::Key>,
+    pub(crate) created: KeySet<D::Key>,
     pub(crate) changes: Vec<D::Change>,
 }

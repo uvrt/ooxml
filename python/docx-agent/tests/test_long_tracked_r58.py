@@ -214,11 +214,17 @@ def test_every_result_says_where_its_time_went(report):
     with _box(workers=0) as box:
         session = box.session()
         doc = session.open(report, "report.docx")
+        from docx_agent.rust import edits
+
+        before = edits.served().get("word_set_tracking", 0)
         result = box.dispatch(session, "word_set_tracking", {"doc": doc, "on": True, "author": "Writer"})
         timing = result.timing
         assert set(timing) == {"total", "lock_wait", "work", "cpu", "held"}
         assert timing["total"] == pytest.approx(timing["lock_wait"] + timing["work"], abs=1e-3)
-        assert 0 < timing["held"] <= timing["total"]
+        if edits.served().get("word_set_tracking", 0) > before:
+            assert timing["held"] == 0.0    # (served by the Rust session: the document's lock is not taken)
+        else:
+            assert 0 < timing["held"] <= timing["total"]
         assert "timing" not in result.to_json()          # the application's, not the model's
         failed = box.dispatch(session, "word_format", {"doc": doc, "targets": ["p:NOPE"], "bold": True})
         assert not failed.ok and failed.timing is not None

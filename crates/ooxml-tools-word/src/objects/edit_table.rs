@@ -446,5 +446,5 @@ fn deleted_rows(table: &TableId) -> Vec<usize> {
 
 /// Registers `word_edit_table` (the crate's [`crate::register`]).
 pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.edit::<WordEditTable>(word_edit_table, crate::Hosting::HOST);
+    r.edit::<WordEditTable>(word_edit_table, crate::Hosting::SERVED);
 }

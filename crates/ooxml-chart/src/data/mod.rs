@@ -6,7 +6,8 @@
 //!
 //! Beside them, what ooxml-edit's `Chart` reads for `edit_chart`'s `read` beyond the model:
 //! how blanks draw, the gap width, dot charts, number formats, axis names and scales and a
-//! series' own look (`look`), and its point labels (`labels`).
+//! series' own look (`look`), and its point labels (`labels`); and each series' references,
+//! for a reader of the chart's workbook (`references`).
 //!
 //! **Why a second view beside [`crate::read`].** The render model reads what a chart looks
 //! like, as ooxml-common's `chart/read.py` does; this reads what an editor shows of its data,
@@ -28,6 +29,7 @@
 
 mod labels;
 mod look;
+mod references;
 mod serial;
 mod source;
 
@@ -36,6 +38,7 @@ pub use look::{
     axis_names, axis_scale, blanks, gap_width, is_dot, number_formats, series_look, Look, NumberFormats, Said, Scale,
     SeriesLook,
 };
+pub use references::{series_elements, series_references, Reference, SeriesReferences};
 pub use serial::iso_of_serial;
 pub use source::{decode_number, Point, Unreadable};
 

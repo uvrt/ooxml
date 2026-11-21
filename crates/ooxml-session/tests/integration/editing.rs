@@ -492,3 +492,50 @@ fn a_value_written_by_reference_is_kept_on_its_paragraph() {
     assert!(part_of(&s, &d, "customXml/item1.xml").is_none());
     assert!(part_of(&s, &d, "customXml/itemProps1.xml").is_none());
 }
+
+/// A read after an edit that stamped the document: an id by place (`p@body/1`, the table
+/// `t@body/0` and its cells) names the block it named before, as docx-agent's view follows
+/// its renames -- after a table's edit, then a paragraph's.
+#[test]
+fn a_read_follows_the_renames_an_edit_made() {
+    let s = session();
+    let cell = |text: &str| format!("<w:tc><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>");
+    let body = format!(
+        "<w:p><w:r><w:t>one</w:t></w:r></w:p><w:p><w:r><w:t>two</w:t></w:r></w:p><w:tbl><w:tblGrid><w:gridCol/><w:gridCol/></w:tblGrid><w:tr>{}{}</w:tr><w:tr>{}{}</w:tr></w:tbl><w:p/>",
+        cell("a"),
+        cell("b"),
+        cell("c"),
+        cell("d")
+    );
+    s.open(docx(&body), DocKind::Docx, "a.docx").unwrap();
+    let context = as_caller("w1");
+    let edits = [
+        json!({"tool": "word_edit_table", "doc": "d1", "table": "t@body/0", "action": "insert_row", "index": 1}),
+        json!({"tool": "word_set_text", "doc": "d1", "target": "p@body/0", "text": "first"}),
+    ];
+    for edit in edits {
+        let mut arguments = edit.clone();
+        let tool = arguments.as_object_mut().unwrap().remove("tool").unwrap();
+        let done = call(&s, tool.as_str().unwrap(), arguments, &context);
+        assert_eq!(done["ok"], json!(true), "{done}");
+        for (target, text) in [("p@body/1", "two"), ("t@body/0/c0,1", "b"), ("t@body/0", "a")] {
+            let reads = [
+                ("word_inspect", json!({"doc": "d1", "target": target})),
+                ("word_read", json!({"doc": "d1", "range": target})),
+                ("find_text", json!({"doc": "d1", "text": text, "range": target})),
+            ];
+            for (read_tool, arguments) in reads {
+                let read = call(&s, read_tool, arguments, &context);
+                assert_eq!(read["ok"], json!(true), "after {tool}, {read_tool} {target}: {read}");
+                assert!(read.to_string().contains(text), "{read_tool} {target}: {read}");
+            }
+        }
+        let span = call(
+            &s,
+            "word_read",
+            json!({"doc": "d1", "range": "p@body/1..t@body/0"}),
+            &context,
+        );
+        assert!(span.to_string().contains("two"), "after {tool}: {span}");
+    }
+}
