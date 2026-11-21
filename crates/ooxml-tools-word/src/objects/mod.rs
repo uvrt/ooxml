@@ -10,6 +10,8 @@
 //! document but through a command.
 
 mod cell_fills;
+mod chart_add;
+mod chart_add_plan;
 mod chart_block;
 mod chart_data;
 mod chart_fold;
