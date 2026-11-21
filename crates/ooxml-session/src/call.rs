@@ -42,6 +42,8 @@ pub struct Call<'a> {
     /// The other documents the call names (`ooxml_tools::documents`), by id, each at the
     /// version pinned for the call when it was dispatched.
     pub(crate) others: &'a [(String, Opened)],
+    /// The host's limits on the call's reply.
+    pub(crate) limits: ooxml_tools::Limits,
 }
 
 impl Call<'_> {
@@ -115,7 +117,8 @@ impl Call<'_> {
         .with_others(Others::new(&others))
         .with_blobs(self.blobs)
         .with_written(self.written)
-        .with_rows_written(Some(&word.rows_written));
+        .with_rows_written(Some(&word.rows_written))
+        .with_limits(self.limits);
         let mut result = run(&editing);
         *self.made.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = editor.made();
         ooxml_tools_word::resolve_drawn(&mut result, &editor.moved());
@@ -130,7 +133,8 @@ impl Call<'_> {
             .doc
             .version_of()
             .with_others(Others::new(&others))
-            .with_owned(self.owned());
+            .with_owned(self.owned())
+            .with_limits(self.limits);
         run(&version)
     }
 
