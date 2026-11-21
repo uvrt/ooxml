@@ -60,6 +60,8 @@ pub struct Editing<'a> {
     /// The values the host wrote into the call's arguments for references (`{{d:...}}`),
     /// which the call keeps on the paragraphs they went into; empty: none.
     pub written: &'a [crate::Written],
+    /// The host's limits on the call's reply (a listing's items per page).
+    pub limits: ooxml_tools::Limits,
 }
 
 impl<'a> Editing<'a> {
@@ -89,6 +91,7 @@ impl<'a> Editing<'a> {
             others: crate::Others::default(),
             blobs: None,
             written: &[],
+            limits: ooxml_tools::Limits::DEFAULT,
         }
     }
 
@@ -124,6 +127,13 @@ impl<'a> Editing<'a> {
     #[must_use]
     pub fn with_written(mut self, written: &'a [crate::Written]) -> Self {
         self.written = written;
+        self
+    }
+
+    /// The host's limits on the call's reply.
+    #[must_use]
+    pub fn with_limits(mut self, limits: ooxml_tools::Limits) -> Self {
+        self.limits = limits;
         self
     }
 }

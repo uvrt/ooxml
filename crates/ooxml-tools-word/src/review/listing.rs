@@ -15,9 +15,6 @@ use ooxml_word_model::docx::Docx;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeSet;
 
-/// Items on a page (`Limits.max_list_items`).
-const PAGE: usize = 50;
-
 /// A change as `word_changes` lists it (`change_json`).
 pub(crate) fn change_json(change: &LogicalChange) -> Value {
     let mut data = Map::new();
@@ -119,7 +116,12 @@ pub(crate) fn list(args: &WordChanges, editing: &Editing<'_>) -> Result<Done<Val
     super::stopped(editing.cancel)?;
     let mut first = args.clone();
     first.cursor = None;
-    let (shown, total, next) = page_list(&items, args.cursor.as_deref(), PAGE, try_call(&first))?;
+    let (shown, total, next) = page_list(
+        &items,
+        args.cursor.as_deref(),
+        editing.limits.list_items,
+        try_call(&first),
+    )?;
     let noun = if records_wanted { "record" } else { "change" };
     let mut done = Done::new(format!("{total} {noun}(s)"));
     done.data = Some(Value::Array(shown));

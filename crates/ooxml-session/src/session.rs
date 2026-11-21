@@ -598,6 +598,7 @@ impl Session {
             blobs: context.blobs.as_deref(),
             written: &context.written,
             others: &state.others,
+            limits: context.limits,
         };
         tool.run(arguments, &call)
     }

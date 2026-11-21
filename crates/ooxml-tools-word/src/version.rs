@@ -10,7 +10,7 @@
 
 use crate::placements::Placer;
 use ooxml_opc::Package;
-use ooxml_tools::ToolError;
+use ooxml_tools::{Limits, ToolError};
 use ooxml_word_edit::validate::Problem;
 use ooxml_word_edit::WordDoc;
 use ooxml_word_model::docx::{Docx, Versions};
@@ -44,13 +44,15 @@ pub struct Version<'a> {
     /// document (`None`: only its package): its ids and their renames, so that an address
     /// in it resolves as the document's own tools resolve it.
     pub word: Option<&'a WordDoc>,
+    /// The host's limits on the call's reply (a page's characters, a listing's items).
+    pub limits: Limits,
 }
 
 impl<'a> Version<'a> {
     /// What every version is: its document's name, its package, its number and the
     /// document's kept readings. The rest -- a placer, the session's own version, other
-    /// documents, the document as a Word document -- starts empty and is given with the
-    /// `with_*` setters.
+    /// documents, the document as a Word document -- starts empty, the limits at their
+    /// defaults, and is given with the `with_*` setters.
     #[must_use]
     pub fn new(name: &'a str, package: &'a Package, number: u64, versions: &'a Versions) -> Self {
         Self {
@@ -62,6 +64,7 @@ impl<'a> Version<'a> {
             owned: None,
             others: Others::default(),
             word: None,
+            limits: Limits::DEFAULT,
         }
     }
 
@@ -90,6 +93,13 @@ impl<'a> Version<'a> {
     #[must_use]
     pub fn with_word(mut self, word: Option<&'a WordDoc>) -> Self {
         self.word = word;
+        self
+    }
+
+    /// The host's limits on the call's reply.
+    #[must_use]
+    pub fn with_limits(mut self, limits: Limits) -> Self {
+        self.limits = limits;
         self
     }
 }
