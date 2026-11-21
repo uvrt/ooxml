@@ -44,7 +44,7 @@ def context_of(caller: Mapping[str, Any] | None, limits: Any = None,
     """An ``ooxml_core.CallContext`` for ``caller``: its key, and its context in the order
     given (as the session's replies name the caller: ``agent=b``); with the host's ``limits``
     on its reply (an :class:`ooxml_edit.tools.Limits`: ``max_result_chars``,
-    ``max_list_items``; the defaults where ``None``), how long laying the document out may
+    ``max_list_items``, as an ``ooxml_core.Limits``; the defaults where ``None``), how long laying the document out may
     take in it (``layout_timeout``, seconds; the session's own where ``None``) and ``more`` of
     its keywords (``layout_counts``: a save's)."""
     import ooxml_core
@@ -54,8 +54,8 @@ def context_of(caller: Mapping[str, Any] | None, limits: Any = None,
         given["caller"] = caller_key(caller)
         given["context"] = json.dumps(dict(caller), default=str)
     if limits is not None:
-        given["max_result_chars"] = limits.max_result_chars
-        given["max_list_items"] = limits.max_list_items
+        given["limits"] = ooxml_core.Limits(result_chars=limits.max_result_chars,
+                                            list_items=limits.max_list_items)
     return ooxml_core.CallContext(**given)
 
 

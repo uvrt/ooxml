@@ -1,4 +1,4 @@
-//! Owns: `ooxml_core.CancelToken` and `ooxml_core.CallContext` -- what a call runs with: who
+//! Owns: `ooxml_core.CancelToken`, `ooxml_core.Limits` and `ooxml_core.CallContext` -- what a call runs with: who
 //! calls (its key, and its context in the order given), a token that stops it, how long
 //! laying a document out may take in it and how long it may run -- and their conversion to the session's [`CallContext`].
 //!
@@ -40,14 +40,56 @@ impl PyCancelToken {
     }
 }
 
+/// The host's limits on a call's reply (`ooxml_core.Limits`, the session's `Limits`):
+/// `result_chars`, a page's characters (24,000 unless given), and `list_items`, a listing's
+/// items per page (50 unless given) -- docx-agent's `Limits.max_result_chars` and
+/// `Limits.max_list_items`. One may serve many calls.
+#[pyclass(frozen, name = "Limits", module = "ooxml_core")]
+pub struct PyLimits {
+    inner: ooxml_tools::Limits,
+}
+
+#[pymethods]
+impl PyLimits {
+    /// # Errors
+    /// `ValueError` for a limit of 0.
+    #[new]
+    #[pyo3(signature = (*, result_chars = None, list_items = None))]
+    fn new(result_chars: Option<usize>, list_items: Option<usize>) -> PyResult<Self> {
+        let mut inner = ooxml_tools::Limits::DEFAULT;
+        for (given, kept, name) in [
+            (result_chars, &mut inner.result_chars, "result_chars"),
+            (list_items, &mut inner.list_items, "list_items"),
+        ] {
+            match given {
+                Some(0) => return Err(PyValueError::new_err(format!("{name} is 1 or more"))),
+                Some(n) => *kept = n,
+                None => {}
+            }
+        }
+        Ok(Self { inner })
+    }
+
+    /// A page's characters.
+    #[getter]
+    fn result_chars(&self) -> usize {
+        self.inner.result_chars
+    }
+
+    /// A listing's items per page.
+    #[getter]
+    fn list_items(&self) -> usize {
+        self.inner.list_items
+    }
+}
+
 /// What a call runs with (`ooxml_core.CallContext`): who calls (`caller`, its key; and
 /// `context`, the caller's context as JSON in the order given, which replies name it by),
 /// a token that stops it, how long laying a document out may take in it (`layout_timeout`,
-/// seconds), how long it may run, in seconds, the limits on its reply -- `max_result_chars`
-/// (a page's characters; 24,000 unless given) and `max_list_items` (a listing's items per
-/// page; 50 unless given), as the host's `Limits` -- and `layout_counts`, `(pages, lines)` of
-/// the host's layout of the version the call reads where it has laid it out
-/// (`save_document`'s `app.xml` statistics). One may serve many calls.
+/// seconds), how long it may run, in seconds, the `limits` on its reply (a `Limits`; the
+/// defaults where none is given) and `layout_counts`, `(pages, lines)` of the host's layout
+/// of the version the call reads where it has laid it out (`save_document`'s `app.xml`
+/// statistics). One may serve many calls.
 #[pyclass(frozen, name = "CallContext", module = "ooxml_core")]
 pub struct PyCallContext {
     pub(crate) inner: CallContext,
@@ -56,37 +98,20 @@ pub struct PyCallContext {
 #[pymethods]
 impl PyCallContext {
     /// # Errors
-    /// `ValueError` for a negative deadline or layout timeout, a limit of 0, or a context
-    /// that is not a JSON object.
+    /// `ValueError` for a negative deadline or layout timeout, or a context that is not a
+    /// JSON object.
     #[new]
     #[pyo3(signature = (*, caller = None, cancel = None, deadline = None, layout_timeout = None,
-                        max_result_chars = None, max_list_items = None, context = None,
-                        layout_counts = None))]
-    // Keyword-only (`*`): each argument is one of the Python class's keywords, none is
-    // positional, so the many-arguments rule's concern (arguments mixed up by position)
-    // does not arise.
-    #[allow(clippy::too_many_arguments)]
+                        limits = None, context = None, layout_counts = None))]
     fn new(
         caller: Option<&str>,
         cancel: Option<PyRef<'_, PyCancelToken>>,
         deadline: Option<f64>,
         layout_timeout: Option<f64>,
-        max_result_chars: Option<usize>,
-        max_list_items: Option<usize>,
+        limits: Option<PyRef<'_, PyLimits>>,
         context: Option<&str>,
         layout_counts: Option<(u64, u64)>,
     ) -> PyResult<Self> {
-        let mut limits = ooxml_tools::Limits::DEFAULT;
-        for (given, kept, name) in [
-            (max_result_chars, &mut limits.result_chars, "max_result_chars"),
-            (max_list_items, &mut limits.list_items, "max_list_items"),
-        ] {
-            match given {
-                Some(0) => return Err(PyValueError::new_err(format!("{name} is 1 or more"))),
-                Some(n) => *kept = n,
-                None => {}
-            }
-        }
         let caller_context = match context.map(serde_json::from_str::<Value>).transpose() {
             Ok(None) => None,
             Ok(Some(Value::Object(fields))) => Some(Arc::new(fields)),
@@ -99,7 +124,7 @@ impl PyCallContext {
                 cancel: cancel.map(|t| Arc::clone(&t.inner)),
                 deadline: seconds(deadline, "deadline")?,
                 layout_timeout: seconds(layout_timeout, "layout_timeout")?,
-                limits,
+                limits: limits.map_or(ooxml_tools::Limits::DEFAULT, |l| l.inner),
                 counts: layout_counts.map(|(pages, lines)| ooxml_tools_word::LayoutCounts { pages, lines }),
                 ..CallContext::default()
             },

@@ -24,7 +24,7 @@ asked of the document's layout as :func:`docx_agent.tools.read._placed_by_worker
 Python path, counted by tool and reason (:func:`fallbacks`, ``read_fallbacks{tool,reason}``)
 and never silently: ``ooxml_core`` without a session; a document that is not a committed
 version's read copy (a batch's reads of its own changes); limits below 1 (the host's own
-limits are the Rust session's, ``CallContext(max_result_chars=, max_list_items=)``); an address naming an id this session renamed or deleted (the ledger and
+limits are the Rust session's, ``CallContext(limits=Limits(result_chars=, list_items=))``); an address naming an id this session renamed or deleted (the ledger and
 the aliases are Python's until P2); a regular expression Rust does not match as Python does;
 and what Rust says it does not give as Python does yet (its ``unported``: Accept All's cell
 ends).  A refusal goes to the Python
