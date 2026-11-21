@@ -18,7 +18,7 @@ SERVED = {"word_set_text", "replace_text", "word_insert_text", "word_delete", "w
           "word_format_table", "word_styles", "word_follow_sample", "word_insert_markdown", "word_fields",
           "word_headers_footers", "word_template", "word_move", "word_sections", "word_notes", "word_links",
           "word_drawings",
-          # p4-chart-e to g: edit_chart's data actions and the titles
+          # p4-chart-e to h: edit_chart's data, title and five style actions
           "edit_chart"}
 BLOBS = {"word_drawings"}
 LAID = {"word_fields", "word_headers_footers", "word_template"}
