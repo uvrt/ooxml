@@ -33,7 +33,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 /// engine, for a tool that reads the pages themselves (`check`).
 pub trait WordLayout: FieldLayout {
     /// The document's page engine: locked while a version is laid out or a page painted.
-    fn engine(&self) -> &Mutex<PageEngine>;
+    fn engine(&self) -> &Arc<Mutex<PageEngine>>;
 
     /// `package` (a version of the document) laid out by [`WordLayout::engine`], stopped
     /// where `cancel` says so.
@@ -108,7 +108,7 @@ fn summarised(engine: &mut PageEngine, package: &Package) -> Result<Summary, Str
 }
 
 impl WordLayout for EnginePages {
-    fn engine(&self) -> &Mutex<PageEngine> {
+    fn engine(&self) -> &Arc<Mutex<PageEngine>> {
         &self.engine
     }
 }

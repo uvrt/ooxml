@@ -39,6 +39,7 @@ use ooxml_base::Cancel;
 use ooxml_scene::python_g;
 use ooxml_tools::{ArgEnum, Done, ToolError};
 use ooxml_word_edit::validate::{problems, Delta};
+use ooxml_word_pages::summarised::Summarised;
 use serde_json::{Map, Value};
 use std::sync::{Arc, PoisonError};
 use std::time::Instant;
@@ -168,7 +169,7 @@ fn served(args: &Check) -> Result<Vec<CheckInclude>, &'static str> {
 /// the document's last check (which this one now is).
 fn reflow_facts(
     layout: &dyn crate::WordLayout,
-    laid: &ooxml_word_pages::LaidVersion,
+    laid: &Arc<ooxml_word_pages::LaidVersion>,
     version: &Version<'_>,
     owned: Owned<'_>,
     pages: Option<&[i64]>,
@@ -177,12 +178,13 @@ fn reflow_facts(
     let mut facts = found.facts;
     let last = owned.last_check.get();
     let aliases = owned.doc.ids().aliases();
-    if let Some(since) = reflow::since(last.as_ref(), &found.summary, version.number, aliases, pages) {
+    let now = Summarised::watched(Arc::clone(laid), Arc::clone(layout.engine()));
+    if let Some(since) = reflow::since(last.as_ref(), &now, version.number, aliases, pages).map_err(NotLaid::Other)? {
         facts.insert("since_last_check".into(), since);
     }
     owned.last_check.set(Some(Seen {
         version: Some(version.number),
-        summary: found.summary,
+        pages: now,
     }));
     if let Some(warnings) = found.warnings {
         facts.insert("layout_warnings".into(), warnings);

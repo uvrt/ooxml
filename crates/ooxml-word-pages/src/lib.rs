@@ -20,6 +20,9 @@
 //!   painted when asked;
 //! - how much of a document a version covers, and every warning it says, as docx2svg says
 //!   them ([`coverage`]);
+//! - a version's layout summary ([`summary`]) and the comparison of two versions page by
+//!   page ([`PageEngine::compare`], [`summarised`]): only the pages they do not share
+//!   painted, each page's digests kept across versions within a bound;
 //! - `check`'s layout facts of a version laid out ([`layout_facts`]: the text sizes, the
 //!   spacers, the keeps broken at a page's foot, the tables kept together and the tables
 //!   parted from their lead-in or the line after them), read with the version's reading;
@@ -34,6 +37,7 @@
 
 mod causes;
 pub mod coverage;
+mod digest_cache;
 mod digests;
 mod disk;
 mod drawing_said;
@@ -44,11 +48,13 @@ mod fonts;
 pub mod ids;
 pub mod layout_facts;
 pub mod line_text;
+mod page_context;
 pub mod page_read;
 pub mod page_said;
 mod pictures;
 pub mod png;
 mod stats;
+pub mod summarised;
 pub mod summary;
 pub mod support;
 mod text_boxes;

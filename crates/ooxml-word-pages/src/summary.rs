@@ -3,18 +3,14 @@
 //! in the version's bytes; a story's line by its path), whether it is the body's, and a
 //! digest of what it draws; and the comparison of two summaries ([`Summary::compare`],
 //! `LayoutSummary.compare`): the pages that differ and why, the blocks whose first page
-//! moved, ids followed through the caller's aliases.
-//!
-//! Each page's part is kept by the page as laid out ([`SummaryMemo`]) and taken as it was
-//! for a page the next version's relayout kept with the same items, page count, sections'
-//! page counts and field values: an edit digests the pages it reached (lane L4b).
+//! moved, ids followed through the caller's aliases -- made of the parts a comparison of
+//! two versions page by page makes too ([`page_change`], [`first_pages`], [`reflow_of`]),
+//! so that both answer alike.
 //!
 //! Must not: paint (the engine paints a page for its digests), or follow an alias
 //! anywhere but in a comparison.
 
 use ooxml_base::Digest;
-use ooxml_word_layout::flow::FlowItem;
-use ooxml_word_layout::paginate::LaidPage;
 use ooxml_word_model::value::Text;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -67,7 +63,7 @@ pub struct Reflow {
 }
 
 /// An id followed through `aliases` to its end.
-fn canon<'a>(aliases: &'a HashMap<String, String>, id: &'a str) -> &'a str {
+pub(crate) fn canon<'a>(aliases: &'a HashMap<String, String>, id: &'a str) -> &'a str {
     let mut at = id;
     let mut steps = 0;
     while let Some(next) = aliases.get(at) {
@@ -102,103 +98,135 @@ fn page_ids<'a>(page: &'a PageSummary, aliases: &'a HashMap<String, String>) -> 
         .collect()
 }
 
+/// How page `old` became `new` (`LayoutSummary.compare`'s reason): `None` where it draws
+/// the same, else `stories` (only its headers, footers or notes changed), `content` (the
+/// same body blocks, drawn otherwise) or `flow` (other blocks).
+pub(crate) fn page_change(
+    old: &PageSummary,
+    new: &PageSummary,
+    aliases: &HashMap<String, String>,
+) -> Option<&'static str> {
+    if old.rest == new.rest && content(old, false, aliases) == content(new, false, aliases) {
+        return None;
+    }
+    if old.rest == new.rest && content(old, true, aliases) == content(new, true, aliases) {
+        return Some("stories");
+    }
+    let mut a = page_ids(old, aliases);
+    let mut b = page_ids(new, aliases);
+    a.sort_unstable();
+    a.dedup();
+    b.sort_unstable();
+    b.dedup();
+    Some(if a == b { "content" } else { "flow" })
+}
+
+/// Each body id's first 1-based page, in the order first drawn, from each page's body ids
+/// (followed through the aliases already).
+pub(crate) fn first_pages<'a, P>(pages: impl Iterator<Item = P>) -> Vec<(&'a str, usize)>
+where
+    P: IntoIterator<Item = &'a str>,
+{
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for (index, ids) in pages.enumerate() {
+        for id in ids {
+            if seen.insert(id) {
+                out.push((id, index + 1));
+            }
+        }
+    }
+    out
+}
+
+/// The two sides of a comparison: each one's pages and pages known.
+pub(crate) struct Counts {
+    pub(crate) before: (usize, usize),
+    pub(crate) now: (usize, usize),
+}
+
+/// What changed between two versions (`LayoutSummary.compare`), from their `counts`, how
+/// each page both know changed (`change`, by 1-based number: `None` where one of them has
+/// no such page, `Some(None)` where it draws the same) and each one's first pages.
+pub(crate) fn reflow_of(
+    counts: &Counts,
+    mut change: impl FnMut(usize) -> Option<Option<&'static str>>,
+    first_before: &[(&str, usize)],
+    first_now: &[(&str, usize)],
+) -> Reflow {
+    let limit = counts.before.1.min(counts.now.1);
+    let count = counts.before.0.max(counts.now.0);
+    let mut out = Reflow {
+        page_count: (counts.before.0, counts.now.0),
+        ..Reflow::default()
+    };
+    for number in 1..=count.min(limit) {
+        match change(number) {
+            None => {
+                out.changed.push(number);
+                out.why
+                    .insert(number, if number > counts.before.0 { "added" } else { "removed" });
+            }
+            Some(None) => {}
+            Some(Some(why)) => {
+                out.changed.push(number);
+                out.why.insert(number, why);
+            }
+        }
+    }
+    out.unknown = (limit + 1..=count).collect();
+    let before: HashMap<&str, usize> = first_before.iter().copied().collect();
+    for (id, page) in first_now {
+        if let Some(was) = before.get(id).filter(|was| **was != *page) {
+            out.moved.push(((*id).to_owned(), (*was, *page)));
+        }
+    }
+    out
+}
+
 impl Summary {
     /// Its pages.
     pub fn count(&self) -> usize {
         self.pages.len()
     }
 
-    /// Each body id's first 1-based page, in the order first drawn.
-    fn first_pages<'a>(&'a self, aliases: &'a HashMap<String, String>) -> Vec<(&'a str, usize)> {
-        let mut seen = std::collections::HashSet::new();
-        let mut out = Vec::new();
-        for (index, page) in self.pages.iter().enumerate() {
-            for id in page_ids(page, aliases) {
-                if seen.insert(id) {
-                    out.push((id, index + 1));
-                }
-            }
-        }
-        out
-    }
-
     /// Which pages of this summary differ from `before`'s (`LayoutSummary.compare`), ids
     /// followed through `aliases`.
     pub fn compare(&self, before: &Summary, aliases: &HashMap<String, String>) -> Reflow {
-        let limit = before.known.min(self.known);
-        let count = before.count().max(self.count());
-        let mut out = Reflow {
-            page_count: (before.count(), self.count()),
-            ..Reflow::default()
+        let counts = Counts {
+            before: (before.count(), before.known),
+            now: (self.count(), self.known),
         };
-        for number in 1..=count.min(limit) {
-            let (Some(old), Some(new)) = (before.pages.get(number - 1), self.pages.get(number - 1)) else {
-                out.changed.push(number);
-                out.why
-                    .insert(number, if number > before.count() { "added" } else { "removed" });
-                continue;
-            };
-            if Arc::ptr_eq(old, new)
-                || (old.rest == new.rest && content(old, false, aliases) == content(new, false, aliases))
-            {
-                continue;
-            }
-            out.changed.push(number);
-            let why = if old.rest == new.rest && content(old, true, aliases) == content(new, true, aliases) {
-                "stories"
+        let change = |number: usize| {
+            let (old, new) = (before.pages.get(number - 1)?, self.pages.get(number - 1)?);
+            Some(if Arc::ptr_eq(old, new) {
+                None
             } else {
-                let mut a = page_ids(old, aliases);
-                let mut b = page_ids(new, aliases);
-                a.sort_unstable();
-                a.dedup();
-                b.sort_unstable();
-                b.dedup();
-                if a == b {
-                    "content"
-                } else {
-                    "flow"
-                }
-            };
-            out.why.insert(number, why);
-        }
-        out.unknown = (limit + 1..=count).collect();
-        let first_before: HashMap<&str, usize> = before.first_pages(aliases).into_iter().collect();
-        for (id, page) in self.first_pages(aliases) {
-            if let Some(was) = first_before.get(id).filter(|was| **was != page) {
-                out.moved.push((id.to_owned(), (*was, page)));
-            }
-        }
-        out
+                page_change(old, new, aliases)
+            })
+        };
+        let first_before = first_pages(before.pages.iter().map(|p| page_ids(p, aliases)));
+        let first_now = first_pages(self.pages.iter().map(|p| page_ids(p, aliases)));
+        reflow_of(&counts, change, &first_before, &first_now)
     }
 }
 
-/// What every page's summary of `layout` depends on beyond the page itself: the page
-/// count (`NUMPAGES`), each section's page count (`SECTIONPAGES`) and the page-number
-/// fields' values, digested under `key`.
-pub(crate) fn context_of(layout: &ooxml_word_layout::DocumentLayout, key: ooxml_base::DigestKey) -> Digest {
-    let mut sections: Vec<usize> = Vec::new();
-    for info in &layout.pagination.info {
-        if sections.len() <= info.section {
-            sections.resize(info.section + 1, 0);
-        }
-        if let Some(count) = sections.get_mut(info.section) {
-            *count += 1;
-        }
-    }
-    Digest::of(
-        key,
-        format!("{:?}", (layout.page_count(), sections, &layout.fields)).as_bytes(),
-    )
+/// The paths a header's, footer's or note's lines start with: a line of none of them,
+/// drawn with no story, is the body's.
+const STORIES: [&str; 4] = ["w:footnote[", "w:endnote[", "w:hdr", "w:ftr"];
+
+/// Whether a line of `path`, of `story` (a header's or footer's), is the body's.
+pub(crate) fn in_body(path: &str, story: bool) -> bool {
+    !story && !STORIES.iter().any(|p| path.starts_with(p))
 }
 
 /// A page's summary from its digests: each body line named by `version`'s id for it.
 pub(crate) fn page_summary(digests: crate::engine::PageDigests, version: &crate::version::LaidVersion) -> PageSummary {
-    const STORIES: [&str; 4] = ["w:footnote[", "w:endnote[", "w:hdr", "w:ftr"];
     let lines = digests
         .lines
         .into_iter()
         .map(|(path, story, drawn)| {
-            let body = story.is_none() && !STORIES.iter().any(|p| path.starts_with(p));
+            let body = in_body(&path, story.is_some());
             SummaryLine {
                 id: if body {
                     version.ids.all().get(&path).cloned()
@@ -217,59 +245,11 @@ pub(crate) fn page_summary(digests: crate::engine::PageDigests, version: &crate:
     }
 }
 
-/// What a page's summary was made of.
-struct Kept {
-    page: Arc<LaidPage>,
-    items: Vec<FlowItem>,
-    context: Digest,
-    summary: Arc<PageSummary>,
-}
-
-/// Each page's summary in the version summarised last, by its laid page.
-#[derive(Default)]
-pub struct SummaryMemo {
-    pages: HashMap<usize, Kept>,
-}
-
-impl std::fmt::Debug for SummaryMemo {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SummaryMemo").field("pages", &self.pages.len()).finish()
-    }
-}
-
-/// A page about to be summarised: its laid page and items, where it has a laid page.
-pub(crate) struct PageKey {
-    pub(crate) page: Arc<LaidPage>,
-    pub(crate) items: Vec<FlowItem>,
-}
-
-impl SummaryMemo {
-    /// The summary of page `key` kept from the last version, where its page, items and
-    /// `context` are the same.
-    pub(crate) fn take(&mut self, key: &PageKey, context: Digest) -> Option<Arc<PageSummary>> {
-        let ptr = Arc::as_ptr(&key.page) as usize;
-        let kept = self.pages.get(&ptr)?;
-        (Arc::ptr_eq(&kept.page, &key.page)
-            && kept.context == context
-            && crate::page_said::same_items(&kept.items, &key.items))
-        .then(|| Arc::clone(&kept.summary))
-    }
-
-    /// Keep `summaries` (each page's, with its key) as the version summarised last.
-    pub(crate) fn keep(&mut self, summaries: Vec<(PageKey, Arc<PageSummary>)>, context: Digest) {
-        self.pages = summaries
-            .into_iter()
-            .map(|(key, summary)| {
-                (
-                    Arc::as_ptr(&key.page) as usize,
-                    Kept {
-                        page: key.page,
-                        items: key.items,
-                        context,
-                        summary,
-                    },
-                )
-            })
-            .collect();
-    }
+/// Whether `page` (a summary made of another version's same page) names its body lines
+/// as `version` does.
+pub(crate) fn named_alike(page: &PageSummary, version: &crate::version::LaidVersion) -> bool {
+    page.lines
+        .iter()
+        .filter(|l| l.body)
+        .all(|l| version.ids.all().get(&l.path) == l.id.as_ref())
 }
