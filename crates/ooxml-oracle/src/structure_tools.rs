@@ -180,11 +180,7 @@ pub(crate) fn tool_case(
 }
 
 /// The other document a case names (`d2`), as a reading tool is handed it.
-fn other_version<'a>(
-    package: &'a Package,
-    word: Option<&'a WordDoc>,
-    versions: &'a Versions,
-) -> Version<'a> {
+fn other_version<'a>(package: &'a Package, word: Option<&'a WordDoc>, versions: &'a Versions) -> Version<'a> {
     Version {
         name: "copy.docx",
         package,

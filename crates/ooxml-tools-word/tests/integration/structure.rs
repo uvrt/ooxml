@@ -456,24 +456,44 @@ fn blocks_of_the_document_are_copied_with_fresh_ids() {
 
 #[test]
 fn what_the_copy_does_not_port_is_left_to_the_host() {
-    // a bookmark in the block, a tracked copy
-    for (arguments, tracking) in [
+    // a place given by reference: the host resolves it before it calls
+    let (reply, editor) = call(
+        json!({"doc": "d1", "source_doc": "d1", "range": "p:10000002", "at": "after:$mark"}),
+        word_copy_from,
+    );
+    // `unported` is the host's to read: the reply changes nothing and says nothing
+    assert_eq!(reply["summary"], json!(""), "{reply}");
+    assert_eq!(reply["changed"], json!([]), "{reply}");
+    let body = editor
+        .store()
+        .snapshot()
+        .doc()
+        .package()
+        .read("word/document.xml")
+        .unwrap()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&body).matches("Delta epsilon").count(), 1);
+}
+
+#[test]
+fn a_bookmarked_block_and_a_tracked_copy_are_copied_in_rust() {
+    for (arguments, tracked) in [
         (
             json!({"doc": "d1", "source_doc": "d1", "range": "p:10000001", "at": "end"}),
-            None,
+            false,
         ),
         (
             json!({"doc": "d1", "source_doc": "d1", "range": "p:10000002", "at": "end"}),
-            Some(()),
+            true,
         ),
     ] {
-        let tracking = tracking.map(|()| ooxml_word_edit::Tracking {
+        let tracking = tracked.then(|| ooxml_word_edit::Tracking {
             author: "A".to_owned(),
             date: "2026-11-17T10:00:00Z".to_owned(),
         });
         let (reply, editor) = call_tracking(arguments, tracking.as_ref(), word_copy_from);
-        assert!(reply.get("error").is_none(), "{reply}");
-        assert_eq!(editor.store().snapshot().doc().package().part_names().len(), 5);
+        assert_eq!(reply["summary"], json!("Copied 1 block(s) from d1"), "{reply}");
+        assert_eq!(reply["created"].as_array().map(Vec::len), Some(1), "{reply}");
         let body = editor
             .store()
             .snapshot()
@@ -482,7 +502,8 @@ fn what_the_copy_does_not_port_is_left_to_the_host() {
             .read("word/document.xml")
             .unwrap()
             .unwrap();
-        assert_eq!(String::from_utf8_lossy(&body).matches("Delta epsilon").count(), 1);
+        let text = String::from_utf8_lossy(&body);
+        assert_eq!(text.contains("<w:ins "), tracked, "{text}");
     }
 }
 
