@@ -4,12 +4,14 @@
 //! name; a name two share, a name nothing has and a position past the end refused, with the
 //! names there are.
 //!
-//! The loose comparison folds with Unicode's NFKC, which this port does not carry: where it
-//! would decide on text outside ASCII (where NFKC can change it), the call is left to the
-//! host ([`Named::Unported`]).
+//! The loose comparison folds as Python 3.12 does (`chart_fold`: NFKC, then `casefold`,
+//! Unicode 15.0); a text holding a character newer than that is left to the host
+//! ([`Named::Unported`]), as is a name of digits outside ASCII (Python's `isdigit` and
+//! `int` disagree on some).
 //!
 //! Must not: change the chart.
 
+use super::chart_fold::loose;
 use ooxml_base::pyfmt::repr_str;
 use ooxml_chart::data::{ChartData, Point};
 use ooxml_tools::{Failure, Refusal, ToolError, TryCall, WayOut};
@@ -22,7 +24,7 @@ pub(crate) enum Named {
     At(usize),
     /// Refused, as ooxml-edit refuses it.
     Refused(ToolError),
-    /// Left to the host (a comparison needing NFKC).
+    /// Left to the host (a character newer than Python's Unicode data).
     Unported(&'static str),
 }
 
@@ -90,21 +92,22 @@ pub(crate) fn resolve(
     if let Some(named) = decided(&hits, which, what, &refuse) {
         return named;
     }
-    // the loose pass: NFKC and case folded; only ASCII text is certain to keep its form
-    let ascii = which.is_ascii() && names.iter().all(|n| n.is_ascii());
-    if !ascii {
-        return Named::Unported("edit_chart: a series or category named outside ASCII");
+    // the loose pass: NFKC and case folded, as Python 3.12 folds
+    let unported = || Named::Unported("edit_chart: a series or category named with characters newer than Unicode 15.0");
+    let Some(wanted) = loose(&exact) else { return unported() };
+    let mut hits = Vec::new();
+    for (k, name) in names.iter().enumerate().filter(|(_, name)| !name.is_empty()) {
+        match loose(&py_flat(name)) {
+            Some(folded) if folded == wanted => hits.push(k),
+            Some(_) => {}
+            None => return unported(),
+        }
     }
-    let loose = |text: &str| py_flat(text).to_lowercase();
-    let wanted = loose(which);
-    let hits: Vec<usize> = names
-        .iter()
-        .enumerate()
-        .filter(|(_, name)| !name.is_empty() && loose(name) == wanted)
-        .map(|(k, _)| k)
-        .collect();
     if let Some(named) = decided(&hits, which, what, &refuse) {
         return named;
+    }
+    if !which.is_ascii() && which.chars().all(char::is_numeric) {
+        return Named::Unported("edit_chart: a series or category named with digits outside ASCII");
     }
     if !which.is_empty() && which.bytes().all(|b| b.is_ascii_digit()) {
         return match which.parse::<usize>() {
