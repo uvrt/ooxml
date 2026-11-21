@@ -382,3 +382,6 @@ fn qualified(like: &Element, local_name: &str) -> ooxml_xml::Name {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod style_tests;
