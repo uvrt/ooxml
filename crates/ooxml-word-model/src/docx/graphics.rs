@@ -126,12 +126,19 @@ pub fn diagram_json(data: &DiagramData) -> Value {
     Value::Object(out)
 }
 
+/// The chart part `frame` (a `wp:inline` or `wp:anchor`, or a group member) of the part
+/// `part` names: its first `c:chart`'s internal target (ooxml-edit's `chart_part`).
+#[must_use]
+pub fn chart_part(docx: &Docx, part: &str, frame: &Element) -> Option<String> {
+    let node = crate::parts::descendants(frame, C, "chart").into_iter().next()?;
+    related(docx, part, node.attribute(Some(NS_R), "id"))
+}
+
 /// The chart `frame` (a `wp:inline` or `wp:anchor`, or a group member) of the part `part`
 /// holds: `None` where it names none, or its part is missing or unreadable.
 #[must_use]
 pub fn chart_of(docx: &Docx, part: &str, frame: &Element) -> Option<ChartData> {
-    let node = crate::parts::descendants(frame, C, "chart").into_iter().next()?;
-    let target = related(docx, part, node.attribute(Some(NS_R), "id"))?;
+    let target = chart_part(docx, part, frame)?;
     let tree = docx.package.tree(&target).ok()??;
     chart_data(tree.root()).ok()
 }
@@ -146,23 +153,23 @@ pub fn chart_json(data: &ChartData) -> Value {
         "types".into(),
         data.types.iter().map(|t| Value::from(t.as_str())).collect(),
     );
-    out.insert("title".into(), point(data.title.as_ref()));
+    out.insert("title".into(), point_json(data.title.as_ref()));
     let axes: Map<String, Value> = data
         .axis_titles
         .iter()
-        .map(|(axis, title)| ((*axis).to_owned(), point(title.as_ref())))
+        .map(|(axis, title)| ((*axis).to_owned(), point_json(title.as_ref())))
         .collect();
     out.insert("axis_titles".into(), Value::Object(axes));
     out.insert("legend".into(), Value::Bool(data.legend));
     out.insert("format".into(), data.format.as_deref().map_or(Value::Null, Value::from));
-    out.insert("categories".into(), points(&data.categories));
+    out.insert("categories".into(), points_json(&data.categories));
     let series = data
         .series
         .iter()
         .map(|s| {
             let mut one = Map::new();
-            one.insert("name".into(), point(s.name.as_ref()));
-            one.insert("values".into(), points(&s.values));
+            one.insert("name".into(), point_json(s.name.as_ref()));
+            one.insert("values".into(), points_json(&s.values));
             Value::Object(one)
         })
         .collect();
@@ -181,11 +188,15 @@ pub fn chart_json(data: &ChartData) -> Value {
     Value::Object(out)
 }
 
-fn points(values: &[Option<Point>]) -> Value {
-    values.iter().map(Option::as_ref).map(point).collect()
+/// Points as JSON: text, integers and floats as written, `null` for a blank.
+#[must_use]
+pub fn points_json(values: &[Option<Point>]) -> Value {
+    values.iter().map(Option::as_ref).map(point_json).collect()
 }
 
-fn point(value: Option<&Point>) -> Value {
+/// A point as JSON (`null` for none).
+#[must_use]
+pub fn point_json(value: Option<&Point>) -> Value {
     match value {
         None => Value::Null,
         Some(Point::Text(t)) => Value::from(t.as_str()),
