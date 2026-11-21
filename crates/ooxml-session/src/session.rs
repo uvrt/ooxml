@@ -68,6 +68,13 @@ impl Opened {
         self.version.seq()
     }
 
+    /// The state's number, as the tool layer numbers the document's states: a step a new
+    /// number, an undo or redo the number of the state it brings back.
+    #[must_use]
+    pub fn number(&self) -> u64 {
+        self.version.number()
+    }
+
     /// The package at this version.
     #[must_use]
     pub fn package(&self) -> &Package {
