@@ -165,3 +165,25 @@ input = { tool = "word_design_facts", arguments = { include = ["theme", "declare
 cause = """#146: as above -- the Rust tool names the theme colour (background1) of a band \
 cell's edge drawn by a neighbouring place's border; docx-agent leaves the label out. Rust's \
 answer is the accurate one; docx-agent's code is deleted at P4e."""
+
+# Train 4b (#177 #203 #226): check's reflow and the laid facts on chart-places. The Rust layout
+# falls back on the body's text box (w:body/w:p[2], ooxml_word_pages::support::TEXT_BOX), so the
+# Rust check answers unported ("check: the layout falls back") and the laid items "falls back:
+# text box"; docx-agent lays the document out in Python. A reads case has no input to key on, so
+# these cover every check and laid case of this one document. NOT a release pass: lane P5n ports
+# this text box into the Rust layout and removes both entries.
+[[difference]]
+gate = "reads"
+mode = "check"
+file = "generated/charts/chart-places.docx"
+cause = """Train 4b: the Rust layout falls back on a body text box (support::TEXT_BOX), so the \
+Rust check answers unported where docx-agent lays the document out in Python. A release gap \
+owned by lane P5n, which removes this entry."""
+
+[[difference]]
+gate = "reads"
+mode = "laid"
+file = "generated/charts/chart-places.docx"
+cause = """Train 4b: the Rust layout falls back on a body text box (support::TEXT_BOX), so the \
+laid facts answer "falls back: text box" where docx-agent lays the document out in Python. A \
+release gap owned by lane P5n, which removes this entry."""
