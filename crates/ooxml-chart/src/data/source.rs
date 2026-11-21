@@ -76,6 +76,11 @@ impl<'a> Source<'a> {
         Source { reference }
     }
 
+    /// Its reference element, if any.
+    pub(crate) fn reference(&self) -> Option<&'a Element> {
+        self.reference
+    }
+
     /// Whether the source has a reference.
     pub(crate) fn is_some(&self) -> bool {
         self.reference.is_some()
@@ -112,7 +117,7 @@ impl<'a> Source<'a> {
     }
 
     /// The number of points: `c:ptCount` where it is digits, else the highest index plus one.
-    fn count(&self) -> Result<usize, Unreadable> {
+    pub(crate) fn count(&self) -> Result<usize, Unreadable> {
         if self.kind() == Some("v") {
             return Ok(1);
         }

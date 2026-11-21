@@ -45,6 +45,23 @@ def context_of(caller: Mapping[str, Any] | None) -> Any:
     return ooxml_core.CallContext(caller=caller_key(caller))
 
 
+def options(**given: Any) -> Any:
+    """An ``ooxml_core.CallOptions``: what one ``Session.call`` or ``Session.edit`` runs with
+    beside its name and arguments (``context``, ``documents``, ``placer``, ``layout``,
+    ``blobs``, ``written``, ``limit``)."""
+    import ooxml_core
+
+    return ooxml_core.CallOptions(**given)
+
+
+def documents(**given: Any) -> Any:
+    """An ``ooxml_core.CallDocuments``: what a call needs about the open documents it names
+    (``at``: the versions it reads; ``names``: the host's names for them)."""
+    import ooxml_core
+
+    return ooxml_core.CallDocuments(**given)
+
+
 class RustOwner:
     """The Rust session as the owner of docx-agent's documents in a toolbox session; its
     handle per document is the :class:`~.reads.Mirror` the reads use."""
@@ -62,6 +79,8 @@ class RustOwner:
         # The ids retired are the session's record (lane P2c10), from the state opened with on.
         _seed_retired(mirror, document._ledger)
         document.retired_ids = functools.partial(retired_ids, mirror)
+        # The records of placed values are read by the session too (lane P2d1).
+        document.owned_records = functools.partial(owned_records, mirror, weakref.ref(document))
         # The rows the table calls wrote are the session's record too (lane P2c19, R126).
         from ..tools.objects import ROWS_WRITTEN
 
@@ -222,6 +241,19 @@ class SessionRows:
         return len(self._ids())
 
 
+def owned_records(mirror: "reads.Mirror", document: Any) -> dict[str, Any] | None:
+    """The records of placed values of the version the view of a document the session owns
+    is, as the session reads them (``Version.records``: the tables' and charts' records, the
+    entries left out, the text facts and labels); ``None`` where the view is ahead of the
+    session (a Python step changed it) or not the session's."""
+    live = document()
+    head = mirror.view_head
+    if live is None or not mirror.owned or head is None or live.history.batch_changed:
+        return None
+    found = head.records()
+    return json.loads(found) if found is not None else None
+
+
 def owned_bytes(document: Any) -> bytes | None:
     """The bytes of the version a view of a document the session owns is, as the session
     writes them -- the view's ``to_bytes`` (``Document.held_by``), so every layout and copy of
@@ -243,6 +275,27 @@ def owned_validation(entry: Any) -> dict[str, Any] | None:
     if not isinstance(mirror, reads.Mirror) or entry.view_current:
         return None
     found = mirror.session.validation(mirror.doc)
+    if found is None:
+        return None
+    new, fixed, baseline = found
+    return {"new": list(new), "fixed": list(fixed), "baseline": baseline}
+
+
+def session_validation(entry: Any) -> dict[str, Any] | None:
+    """The save gate's comparison of a document the session owns (or of a read copy of one of
+    its committed versions), at the entry's version: the session's, against the problems it
+    opened with -- the format's :attr:`~ooxml_edit.tools.DocumentFormat.validation`, so
+    neither ``check``'s ``validation`` nor saving makes the Python view current to validate
+    it.  ``None`` for a document the session does not own, or a version it let go."""
+    owned = reads._owned(entry)
+    mirror = getattr(owned, "handle", None)
+    if not isinstance(mirror, reads.Mirror):
+        return None
+    with mirror.lock:
+        version = mirror.versions.get(entry.version)
+    if version is None:
+        return None
+    found = mirror.session.validation(mirror.doc, at=version)
     if found is None:
         return None
     new, fixed, baseline = found

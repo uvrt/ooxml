@@ -609,9 +609,18 @@ def definition_problems(tool: Tool) -> list[str]:
         if container is None:
             problems.append(f"aliases names {alias!r}, which is in no object parameter")
             continue
+        names = container.get("properties", {})
+        if isinstance(target, AliasWhen):
+            if key in names:
+                problems.append(f"aliases names {alias!r}, which is a parameter")
+            if target.name not in names:
+                problems.append(f"aliases reads {alias!r} as {target.name!r}, which is not a parameter")
+            if target.argument not in names:
+                problems.append(f"aliases reads {alias!r} while {target.argument!r} is "
+                                f"{target.value!r}, which is not a parameter")
+            continue
         if callable(target):
             continue
-        names = container.get("properties", {})
         if key in names:
             problems.append(f"aliases names {alias!r}, which is a parameter")
         if target not in names:
@@ -672,7 +681,7 @@ def definition_problems(tool: Tool) -> list[str]:
     if not callable(tool.documents):
         for name in tool.documents:
             if "." in name:
-                if not _path_exists(tool.schema, name) or "[]" in name:
+                if not _path_exists(tool.schema, name) or name.endswith("[]"):
                     problems.append(f"document path {name!r} names no string in an object")
             elif name in properties and properties[name].get("type") != "string":
                 problems.append(f"document argument {name!r} is not a string")
@@ -682,19 +691,31 @@ def definition_problems(tool: Tool) -> list[str]:
 def documents_named(documents: Sequence[str], arguments: Mapping[str, Any]) -> list[str]:
     """The documents a call's ``arguments`` name, by its tool's :attr:`Tool.documents`: an
     argument's value when it is a string; a path's (``reference.doc``) when it is a string
-    neither empty nor named before (``""`` is a placeholder for the call's own document)."""
+    neither empty nor named before (``""`` is a placeholder for the call's own document).  A
+    path's step ending in ``[]`` (``copies[].reference.doc``) is an array: each item's value
+    is read, in order."""
     out: list[str] = []
     for name in documents:
         if "." not in name:
             if isinstance(arguments.get(name), str):
                 out.append(arguments[name])
             continue
-        value: Any = arguments
-        for part in name.split("."):
-            value = value.get(part) if isinstance(value, Mapping) else None
-        if isinstance(value, str) and value and value not in out:
-            out.append(value)
+        for value in _values_at(arguments, name.split(".")):
+            if value and value not in out:
+                out.append(value)
     return out
+
+
+def _values_at(value: Any, steps: Sequence[str]) -> list[str]:
+    """The strings at the path ``steps`` below ``value`` (a step ``name[]``: each item of the
+    array ``name``)."""
+    if not steps:
+        return [value] if isinstance(value, str) else []
+    step, rest = steps[0], steps[1:]
+    array = step.endswith("[]")
+    found = value.get(step[:-2] if array else step) if isinstance(value, Mapping) else None
+    items = (found if isinstance(found, list) else []) if array else [found]
+    return [text for item in items for text in _values_at(item, rest)]
 
 
 def _object_at(schema: Mapping[str, Any], parts: Sequence[str]) -> Mapping[str, Any] | None:
@@ -775,6 +796,44 @@ def tool(name: str, description: str, params: Mapping[str, Param] | None = None,
                     defaults=dict(defaults or {}), retry_key=retry_key)
 
     return make
+
+
+@dataclass(frozen=True)
+class AliasWhen:
+    """A :attr:`Tool.aliases` entry read as the parameter ``name`` only while the argument
+    ``argument`` of the same object has ``value`` -- a format's tool may take an alias as
+    its ``target`` only when adding (where the target is the place the new object goes); in
+    another action the target is the object itself, so the alias stays an unknown argument::
+
+        AliasWhen("target", "action", "add")({"action": "add"})     # 'target'
+
+    A definition check (:func:`definition_problems`) holds ``name`` and ``argument`` to
+    parameters of that object; the Rust export writes it as ``{"name": name, "when":
+    {argument: value}}`` (:meth:`exported`, :meth:`of_export`)."""
+
+    name: str
+    argument: str
+    value: str
+
+    def __call__(self, arguments: Mapping[str, Any]) -> str | None:
+        return self.name if arguments.get(self.argument) == self.value else None
+
+    def exported(self) -> dict[str, Any]:
+        """The entry as the Rust export writes it."""
+        return {"name": self.name, "when": {self.argument: self.value}}
+
+    @classmethod
+    def of_export(cls, entry: Mapping[str, Any]) -> "AliasWhen":
+        """The entry the Rust export wrote (:meth:`exported`); ``ValueError`` for any other
+        shape."""
+        when = entry.get("when")
+        if (set(entry) != {"name", "when"} or not isinstance(entry.get("name"), str)
+                or not isinstance(when, Mapping) or len(when) != 1):
+            raise ValueError(f"an alias entry {dict(entry)!r} is not {{name, when: {{argument: value}}}}")
+        ((argument, value),) = when.items()
+        if not isinstance(argument, str) or not isinstance(value, str):
+            raise ValueError(f"an alias entry {dict(entry)!r} names its argument and value as text")
+        return cls(entry["name"], argument, value)
 
 
 def names_as(alias: str, name: str) -> Callable[[Mapping[str, Any]], str | None]:

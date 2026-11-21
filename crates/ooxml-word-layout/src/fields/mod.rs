@@ -191,34 +191,12 @@ impl<'a> Pages<'a> {
 
     /// `NUMPAGES`: every page, blank ones included; unknown past a stop.
     fn page_count(&self) -> Option<i64> {
-        let p = &self.layout.pagination;
-        if p.stopped.is_some() {
-            return None;
-        }
-        Some(i64::try_from(p.info.len().max(1)).unwrap_or(i64::MAX))
+        page_count(self.layout)
     }
 
     /// `SECTIONPAGES`: the pages a section has content on.
     fn section_pages(&self, section: usize) -> Option<i64> {
-        let p = &self.layout.pagination;
-        let items = &self.layout.flow.items;
-        if let Some(stopped) = &p.stopped {
-            if items.get(stopped.item).is_some_and(|i| section >= i.section()) {
-                return None;
-            }
-        }
-        let mut pages = BTreeSet::new();
-        for page in &p.pages {
-            let lines = page.lines.iter().map(|l| l.item);
-            let rows = page.rows.iter().map(|r| r.item);
-            if lines
-                .chain(rows)
-                .any(|item| items.get(item).is_some_and(|i| i.section() == section))
-            {
-                pages.insert(page.page);
-            }
-        }
-        i64::try_from(pages.len()).ok()
+        section_pages(self.layout, section)
     }
 }
 
@@ -273,9 +251,48 @@ pub(crate) fn occurrence_pages(
 /// `NUMPAGES` and section `section`'s `SECTIONPAGES` of a layout, `None` where unknown
 /// (`_page_count`, `_section_pages`): what a header's or footer's fields show.
 pub fn page_counts(layout: &DocumentLayout, section: usize) -> (Option<i64>, Option<i64>) {
-    // Neither count reads a paragraph's lines.
-    let pages = Pages::new(layout, Some(&BTreeSet::new()));
-    (pages.page_count(), pages.section_pages(section))
+    // Neither count reads a paragraph's lines: each is the layout's, made once (a page's
+    // header and footer ask for them on every page).
+    (page_count(layout), section_pages(layout, section))
+}
+
+/// `NUMPAGES`: the pages laid out (`None` where the layout stopped).
+fn page_count(layout: &DocumentLayout) -> Option<i64> {
+    let p = &layout.pagination;
+    if p.stopped.is_some() {
+        return None;
+    }
+    Some(i64::try_from(p.info.len().max(1)).unwrap_or(i64::MAX))
+}
+
+/// `SECTIONPAGES` of `section`: the pages it has content on (`None` where the layout
+/// stopped before or in it).
+fn section_pages(layout: &DocumentLayout, section: usize) -> Option<i64> {
+    let items = &layout.flow.items;
+    if let Some(stopped) = &layout.pagination.stopped {
+        if items.get(stopped.item).is_some_and(|i| section >= i.section()) {
+            return None;
+        }
+    }
+    let count = layout.section_page_counts().get(&section).copied().unwrap_or(0);
+    i64::try_from(count).ok()
+}
+
+/// Per section, the pages it has content on (a line or a table row of one of its flow
+/// items), in one walk of the pages.
+pub(crate) fn section_page_counts(layout: &DocumentLayout) -> BTreeMap<usize, usize> {
+    let items = &layout.flow.items;
+    let mut pages: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
+    for page in &layout.pagination.pages {
+        let lines = page.lines.iter().map(|l| l.item);
+        let rows = page.rows.iter().map(|r| r.item);
+        for item in lines.chain(rows) {
+            if let Some(found) = items.get(item) {
+                pages.entry(found.section()).or_default().insert(page.page);
+            }
+        }
+    }
+    pages.into_iter().map(|(section, on)| (section, on.len())).collect()
 }
 
 /// Bookmark name -> `(paragraph, run)` of its start, the first of a name winning.
@@ -303,12 +320,18 @@ pub fn field_values(document: &WordDocument, layout: &DocumentLayout, keys: &[Fi
     if keys.is_empty() {
         return out;
     }
-    let (paragraphs, _) = body_paragraphs(&document.body);
+    let walked;
+    let paragraphs: &[Arc<Paragraph>] = if Arc::ptr_eq(&document.body, &layout.document.body) {
+        layout.body_paragraphs()
+    } else {
+        walked = body_paragraphs(&document.body).0;
+        &walked
+    };
     let field_of = |(block, k): (usize, usize)| paragraphs.get(block)?.runs.get(k)?.field.clone();
     let refers = keys
         .iter()
         .any(|key| field_of(*key).is_some_and(|f| &*f.keyword == "PAGEREF"));
-    let targets: HashMap<String, (usize, usize)> = if refers { bookmarks(&paragraphs) } else { HashMap::new() };
+    let targets: HashMap<String, (usize, usize)> = if refers { bookmarks(paragraphs) } else { HashMap::new() };
     // Only the paragraphs holding fields, and the bookmarks PAGEREF points at, are looked up.
     let mut asked: BTreeSet<usize> = keys.iter().map(|(block, _)| *block).collect();
     asked.extend(targets.values().map(|(block, _)| *block));

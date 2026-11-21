@@ -56,19 +56,9 @@ fn convert_on_a_long_document() {
             started.elapsed().as_secs_f64() * 1000.0
         );
         let caller = Caller::anonymous();
-        let editing = Editing {
-            editor: &CallEditor::new(&editor),
-            caller: &caller,
-            opened: &opened,
-            tracking: None,
-            doc: "d1",
-            cancel: &Never,
-            date: "2026-11-17T10:00:00Z",
-            layout: Some(&layout),
-            others: ooxml_tools_word::Others::default(),
-            blobs: None,
-            rows_written: None,
-        };
+        let call_editor = CallEditor::new(&editor);
+        let editing = Editing::new(&call_editor, &caller, &opened, "d1", &Never, "2026-11-17T10:00:00Z")
+            .with_layout(Some(&layout));
         let started = Instant::now();
         let reply = Value::Object(word_template(&args, &editing).to_json());
         let took = started.elapsed();

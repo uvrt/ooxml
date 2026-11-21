@@ -58,7 +58,8 @@ pub fn word_inspect(args: &WordInspect, version: &Version<'_>, cancel: &dyn Canc
     let mut first = args.clone();
     first.target = "body".to_owned();
     let refuse = |e| address_refusal(e, "target", try_call(&first));
-    let selected = select(&mut reader, Some(&args.target)).map_err(refuse)?;
+    let target = version.follow(&args.target);
+    let selected = select(&mut reader, Some(&target)).map_err(refuse)?;
     cancel.check().map_err(cancelled)?;
     let mut writer = Writer::new(&docx);
     if placer.is_some() {
@@ -68,7 +69,7 @@ pub fn word_inspect(args: &WordInspect, version: &Version<'_>, cancel: &dyn Canc
     let mut all = Vec::new();
     let mut cell = false;
     // A cell's blocks are read in their table's style (today's model reads them so).
-    let style = ooxml_word_model::address::in_table(&docx, &args.target)
+    let style = ooxml_word_model::address::in_table(&docx, &target)
         .ok()
         .flatten()
         .filter(|found| found.column.is_some())
@@ -97,7 +98,7 @@ pub fn word_inspect(args: &WordInspect, version: &Version<'_>, cancel: &dyn Canc
     cancel.check().map_err(cancelled)?;
     let mut data = Map::new();
     if cell {
-        if let Some(found) = extras::cell(&docx, &args.target) {
+        if let Some(found) = extras::cell(&docx, &target) {
             data.insert("cell".into(), found);
         }
     }
@@ -180,4 +181,9 @@ fn try_call(args: &WordInspect) -> TryCall {
         arguments,
         fill: Vec::new(),
     }
+}
+
+/// Registers `word_inspect` (the crate's [`crate::register`]).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    r.read::<WordInspect>(word_inspect);
 }

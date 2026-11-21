@@ -6,23 +6,26 @@
 //! table as `table_json` gives it, a fill said by its range and counts (rule 4) with the
 //! table's paragraphs named by the table.
 //!
+//! Positions and labels count the table as accepting its tracked changes leaves it
+//! (docx-agent's `_Accepted`): the edit core resolves them as the earlier cells left the
+//! table, and the notes they make are said in the reply.
+//!
 //! The host's, said in `unported`: a value by reference (a cell's or the call's `from`, a
-//! `{{...}}` in a text), a table with pending tracked structure, a table placed from a
-//! source.
+//! `{{...}}` in a text), a table placed from a source.
 //!
 //! Must not: change the document but through the command.
 
 use super::cell_fills::{column_rows, count_fills, fill_brief, Fill};
 use super::edit_table::{table_json, unported};
 use super::edit_table_args::{CellArg, WordEditTable};
-use super::table_view::{table_view, TableView};
+use super::table_view::{table_view, AcceptedView, TableView};
 use crate::describe::short;
 use crate::review::{needed, Editing};
 use crate::structure::common::{outcome, policy, refused, Outcome};
 use ooxml_base::pyfmt::repr_str;
 use ooxml_tools::{Failure, Refusal, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::{CellAxis, CellEdit, CellWrite, EditError, SetCells};
-use ooxml_word_model::docx::tables::TableGrid;
+use ooxml_word_model::docx::tables::{Axis, TableGrid};
 use ooxml_word_model::docx::Docx;
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -51,18 +54,13 @@ pub(super) fn set_cells(
     editing: &Editing<'_>,
     docx: &Docx,
     view: &TableView,
+    accepted: &mut AcceptedView,
     retry: &TryCall,
 ) -> Result<ToolResult<Value>, ToolError> {
     let cells = args
         .cells
         .as_deref()
         .ok_or_else(|| needed("cells", "", retry.clone()))?;
-    if view.pending() {
-        return Ok(unported(
-            "word_edit_table set_cells positions in a table as accepted (pending tracked structure)",
-            retry,
-        ));
-    }
     let by_reference = |cell: &CellArg| {
         cell.from.as_deref().is_some_and(|f| !f.is_empty()) || cell.text.as_deref().is_some_and(|t| t.contains("{{"))
     };
@@ -76,7 +74,7 @@ pub(super) fn set_cells(
         .part(&view.part)
         .ok_or_else(|| ToolError::internal(format!("no part {}", view.part), "word:edit_table"))?;
     let grid = TableGrid::new(part, &view.table);
-    let (places, owners, mut fills) = column_rows(view, &grid, cells, retry)?;
+    let (places, owners, mut fills) = column_rows(view, &grid, accepted, cells, retry)?;
     let held = if fills.is_empty() {
         HashSet::new()
     } else {
@@ -97,7 +95,7 @@ pub(super) fn set_cells(
         .iter()
         .map(|k| values.get(*k).map(String::as_str).unwrap_or_default())
         .collect();
-    one_value_per_cell(view, &grid, &places, &owners, &texts)?;
+    one_value_per_cell(view, &grid, accepted, &places, &owners, &texts)?;
     let writes = places
         .iter()
         .zip(&texts)
@@ -112,10 +110,12 @@ pub(super) fn set_cells(
         writes,
         stamping: true,
         policy: policy(editing),
+        accepted: (accepted.table.active() || accepted.table.rows_active())
+            .then(|| std::sync::Arc::new(accepted.table.clone())),
     };
     let done = match editing.editor.run(editing.caller, &command) {
         Ok(done) => done,
-        Err(error @ (EditError::Address(_) | EditError::Argument { .. })) => {
+        Err(error @ (EditError::Address(_) | EditError::Argument { .. } | EditError::Position(_))) => {
             return Ok(ToolResult::failed(crate::review::edit_refusal(
                 error,
                 "",
@@ -127,7 +127,13 @@ pub(super) fn set_cells(
     count_fills(&mut fills, &values);
     // round 58 (R126): the rows written looked at against the rows around them
     let rows = super::rows_written::after(editing, &view.table.id, &done, None, retry);
-    let mut result = reply(editing, view, done.out.edits, &fills, &held, retry);
+    for note in done.out.notes {
+        if !accepted.notes.contains(&note) {
+            accepted.notes.push(note);
+        }
+    }
+    let notes = std::mem::take(&mut accepted.notes);
+    let mut result = reply(editing, view, done.out.edits, (&fills, notes), &held, retry);
     result.warnings.extend(rows);
     Ok(result)
 }
@@ -166,20 +172,20 @@ fn paragraphs_of(docx: &Docx, view: &TableView) -> HashSet<String> {
         .unwrap_or_default()
 }
 
-/// A cells entry's grid place on the table as it is, where it has one (`_locate`, its
-/// refusals left for the write).
-fn place_of(grid: &TableGrid<'_>, cell: &CellArg) -> Option<(usize, usize)> {
+/// A cells entry's grid place (document row, grid column) as the table is accepted, where
+/// it has one (`_locate`, its refusals left for the write; its notes made).
+fn place_of(grid: &TableGrid<'_>, accepted: &mut AcceptedView, cell: &CellArg) -> Option<(usize, usize)> {
     let row = match (cell.row, cell.row_label.as_deref()) {
-        (Some(row), _) => usize::try_from(row).ok()?,
-        (None, Some(label)) => grid.row_labelled(label).ok()?,
+        (Some(row), _) => Axis::At(row),
+        (None, Some(label)) => Axis::Label(label),
         (None, None) => return None,
     };
     let column = match (cell.col, cell.col_label.as_deref()) {
-        (Some(col), _) => usize::try_from(col).ok()?,
-        (None, Some(label)) => grid.column_labelled(0, label).ok()?,
+        (Some(col), _) => Axis::At(col),
+        (None, Some(label)) => Axis::Label(label),
         (None, None) => return None,
     };
-    Some((row, column))
+    accepted.table.locate(grid, (row, column), &mut accepted.notes).ok()
 }
 
 /// One origin's writes: (entry, position given, text).
@@ -201,13 +207,14 @@ struct Clash<'t> {
 fn one_value_per_cell(
     view: &TableView,
     grid: &TableGrid<'_>,
+    accepted: &mut AcceptedView,
     places: &[CellArg],
     owners: &[usize],
     texts: &[&str],
 ) -> Result<(), ToolError> {
     let mut found: Vec<((usize, usize), Hits<'_>)> = Vec::new();
     for ((cell, owner), text) in places.iter().zip(owners).zip(texts) {
-        let Some((row, col)) = place_of(grid, cell) else {
+        let Some((row, col)) = place_of(grid, accepted, cell) else {
             continue;
         };
         let Some(origin) = view.origin(row, col) else { continue };
@@ -308,7 +315,7 @@ fn reply(
     editing: &Editing<'_>,
     view: &TableView,
     edits: Vec<CellEdit>,
-    fills: &[Fill],
+    (fills, notes): (&[Fill], Vec<String>),
     held: &HashSet<String>,
     retry: &TryCall,
 ) -> ToolResult<Value> {
@@ -356,6 +363,7 @@ fn reply(
             }
         }
     }
+    result.warnings.extend(notes);
     for fill in fills {
         result.warnings.extend(fill.notes.iter().cloned());
     }

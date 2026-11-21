@@ -108,6 +108,17 @@ impl Package {
         named.into_iter().map(|(_, n)| n.to_owned()).collect()
     }
 
+    /// Whether `other` has the same parts as this package, each the same content by
+    /// identity ([`PartVersion::same`]): one version as far as any reader can tell, known
+    /// without reading a part.
+    pub fn same_parts(&self, other: &Package) -> bool {
+        self.slots.iter().count() == other.slots.iter().count()
+            && self
+                .slots
+                .iter()
+                .all(|(name, slot)| other.slots.get(name).is_some_and(|o| o.content.same(&slot.content)))
+    }
+
     /// Whether the package has the part `name` (any spelling of it).
     pub fn has_part(&self, name: &str) -> bool {
         self.slots.contains_key(&normalize(name))
@@ -126,6 +137,16 @@ impl Package {
             Some(PartVersion::Tree(tree)) => Some(tree.write().into()),
             Some(PartVersion::Bytes(bytes)) => Some(Arc::clone(bytes)),
         })
+    }
+
+    /// The size of the part's bytes where it is known without reading them: as stored (the
+    /// entry's uncompressed size) or as put; `None` for a tree, or no such part.
+    pub fn size(&self, name: &str) -> Option<u64> {
+        match self.part(name)? {
+            PartVersion::Raw(raw) => self.entry(raw.index).ok().map(|e| e.meta().size),
+            PartVersion::Bytes(bytes) => u64::try_from(bytes.len()).ok(),
+            PartVersion::Tree(_) => None,
+        }
     }
 
     /// The part's tree: parsed once for a raw part (and shared by every version that has

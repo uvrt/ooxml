@@ -8,19 +8,25 @@
 //! A row or column deleted says what of the file's own text it took out of the final view
 //! ([`crate::originals`]).
 //!
-//! Cells merged or split, a merge already made answered as changing nothing (rule 3), a
-//! split past a cell's span refused with the split that keeps the grid (rule 2).
+//! Positions count the table as accepting its tracked changes leaves it (docx-agent's
+//! `_Accepted`, [`super::table_view::AcceptedView`]): a row or column whose deletion is
+//! pending not counted, a cell taken into another answering as it; the notes they make
+//! said in the reply. Cells merged or split ([`super::edit_table_cells`]), a merge already
+//! made answered as changing nothing (rule 3).
 //!
 //! Cells written without a source ([`super::set_cells`]).
 //!
 //! Not ported yet, said in `unported` for the host to answer its own way: `sync` and `from`
 //! (a source the dispatcher resolves: the session's datasets and other documents' rows); a
-//! table with pending tracked structure or a placement record.
+//! change of the rows, columns or cells of a table with pending tracked structure or a
+//! placement record (refused so by the edit core); any call on a table with Accept All's
+//! cell ends (a cell's last paragraph mark deleted: the reply's Markdown joins cells across
+//! it, and names the cells Accept All loses with the changes that do it).
 //!
 //! Must not: change the document but through the command.
 
-use super::edit_table_args::{Position, Side, TableAction, WordEditTable};
-use super::table_view::{table_view, TableView};
+use super::edit_table_args::{Side, TableAction, WordEditTable};
+use super::table_view::{table_view, AcceptedView, TableView};
 use crate::originals::{add, Watch};
 use crate::review::{needed, Editing};
 use crate::structure::common::{call, outcome, policy, refused, Outcome};
@@ -183,174 +189,85 @@ fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<T
         return Ok(left);
     }
     check_arguments(args, retry)?;
-    if args.action == TableAction::SetCells {
-        return super::set_cells::set_cells(args, editing, &docx, &view, retry);
+    let mut accepted = view.accepted(&docx);
+    if accepted.table.cell_ends {
+        // the reply's Markdown joins cells across them, and says the cells Accept All loses
+        return Ok(unported(
+            &format!("word_edit_table on a table with {}", crate::CELL_ENDS),
+            retry,
+        ));
     }
+    if args.action == TableAction::SetCells {
+        return super::set_cells::set_cells(args, editing, &docx, &view, &mut accepted, retry);
+    }
+    let change = match change(args, editing.tracking.is_some(), &view, &mut accepted, retry)? {
+        Ok(change) => change,
+        Err(what) => return Ok(unported(&what, retry)),
+    };
+    Ok(finish(args, editing, &view, change, accepted.notes, retry))
+}
+
+/// The change a row, column, merge or split action names, positions as the table is
+/// accepted; `Err` with what `unported` says where it is not ported yet.
+fn change(
+    args: &WordEditTable,
+    tracked: bool,
+    view: &TableView,
+    accepted: &mut AcceptedView,
+    retry: &TryCall,
+) -> Result<Result<TableChange, String>, ToolError> {
     let below = args.side != Some(Side::Before);
-    let index = |value: Option<i64>| value.map(|v| usize::try_from(v).unwrap_or(usize::MAX));
+    let height = i64::try_from(accepted.table.height()).unwrap_or(0) - 1;
+    // a row named as accepted: one whose deletion is pending stays on its other side
+    let row = |accepted: &mut AcceptedView, value: Option<i64>| -> Result<Option<usize>, ToolError> {
+        match (accepted.table.rows_active(), value) {
+            (true, value) => accepted.document_row(value.unwrap_or(height), "index", retry).map(Some),
+            (false, value) => Ok(value.map(|v| usize::try_from(v).unwrap_or(usize::MAX))),
+        }
+    };
     let change = match args.action {
         TableAction::InsertRow => TableChange::InsertRow {
-            index: index(args.index),
+            index: row(accepted, args.index)?,
             below,
             plain: true,
         },
-        TableAction::DeleteRow => TableChange::DeleteRow {
-            index: index(Some(args.index.ok_or_else(|| needed("index", "", retry.clone()))?)).unwrap_or(usize::MAX),
-        },
+        TableAction::DeleteRow => {
+            let given = args.index.ok_or_else(|| needed("index", "", retry.clone()))?;
+            TableChange::DeleteRow {
+                index: row(accepted, Some(given))?.unwrap_or(usize::MAX),
+            }
+        }
         TableAction::DeleteColumn => {
             let given = args.index.ok_or_else(|| needed("index", "", retry.clone()))?;
-            match column(&view, &kept_columns(&docx, &view), given, retry) {
-                Column::Grid(index) => TableChange::DeleteColumn { index },
-                Column::Off(error) => return Err(error),
-                Column::Accepted => {
-                    return Ok(unported(
-                        "word_edit_table column positions in a table as accepted (a grid column no cell covers)",
-                        retry,
-                    ))
-                }
+            TableChange::DeleteColumn {
+                index: accepted.grid_column(given, "index", retry)?,
             }
         }
         TableAction::CopyRow => TableChange::CopyRow {
-            index: index(args.index),
+            index: row(accepted, args.index)?,
             below,
         },
         TableAction::InsertColumn => {
             // beside the column named, as accepted (the last by default)
-            let kept = kept_columns(&docx, &view);
-            let given = args.index.unwrap_or_else(|| i64::try_from(kept.len()).unwrap_or(0) - 1);
-            match column(&view, &kept, given, retry) {
-                Column::Grid(index) => TableChange::InsertColumn { index, right: below },
-                Column::Off(error) => return Err(error),
-                Column::Accepted => {
-                    return Ok(unported(
-                        "word_edit_table column positions in a table as accepted (a grid column no cell covers)",
-                        retry,
+            let last = i64::try_from(accepted.table.width()).unwrap_or(0) - 1;
+            TableChange::InsertColumn {
+                index: accepted.grid_column(args.index.unwrap_or(last), "index", retry)?,
+                right: below,
+            }
+        }
+        TableAction::Merge | TableAction::Split => {
+            match super::edit_table_cells::cells_change(args, view, accepted, tracked, retry)? {
+                Some(change) => change,
+                None => {
+                    return Ok(Err(
+                        "word_edit_table split tracked in a table with pending tracked structure".to_owned(),
                     ))
                 }
             }
         }
-        TableAction::Merge | TableAction::Split => match cells_change(args, &view, retry)? {
-            Some(change) => change,
-            None => {
-                return Ok(unported(
-                    "word_edit_table merge and split positions in a table as accepted (pending tracked structure)",
-                    retry,
-                ))
-            }
-        },
-        other => return Ok(unported(&format!("word_edit_table {}", other.as_str()), retry)),
+        other => return Ok(Err(format!("word_edit_table {}", other.as_str()))),
     };
-    Ok(finish(args, editing, &view, change, retry))
-}
-
-/// A merge's or split's change (`_corner`: positions as the table is, with no pending
-/// tracked structure); `None` where the table's accepted view counts otherwise.
-fn cells_change(args: &WordEditTable, view: &TableView, retry: &TryCall) -> Result<Option<TableChange>, ToolError> {
-    let place = |p: &Position| {
-        (
-            usize::try_from(p.row).unwrap_or(usize::MAX),
-            usize::try_from(p.col).unwrap_or(usize::MAX),
-        )
-    };
-    let count = |n: i64| usize::try_from(n).unwrap_or(usize::MAX);
-    if args.action == TableAction::Merge {
-        let first = args.first.as_ref().ok_or_else(|| needed("first", "", retry.clone()))?;
-        let last = args.last.as_ref().ok_or_else(|| needed("last", "", retry.clone()))?;
-        if view.pending() {
-            return Ok(None);
-        }
-        return Ok(Some(TableChange::Merge {
-            first: place(first),
-            last: place(last),
-        }));
-    }
-    let first = args
-        .first
-        .as_ref()
-        .ok_or_else(|| needed("first", " (the cell to split)", retry.clone()))?;
-    if view.pending() {
-        return Ok(None);
-    }
-    let (row, column) = place(first);
-    let columns = args.columns.filter(|c| *c != 0).map(count);
-    no_split_past_span(args, view, first, columns)?;
-    Ok(Some(TableChange::Split {
-        row,
-        column,
-        rows: args.rows.map_or(1, count),
-        columns,
-    }))
-}
-
-/// A cell over several grid columns split into more cells than it spans, refused
-/// (`_no_split_past_span`, round 57): Word would add grid columns, changing every other
-/// row's cells; into 2 up to its span keeps the grid.
-fn no_split_past_span(
-    args: &WordEditTable,
-    view: &TableView,
-    at: &Position,
-    columns: Option<usize>,
-) -> Result<(), ToolError> {
-    let Some(columns) = columns else { return Ok(()) };
-    let row = usize::try_from(at.row).unwrap_or(usize::MAX);
-    let column = usize::try_from(at.col).unwrap_or(usize::MAX);
-    let Some((_, span)) = view
-        .row_cells(row)
-        .into_iter()
-        .find(|(start, span)| *start <= column && column < start + span)
-    else {
-        return Ok(());
-    };
-    if span < 2 || columns <= span {
-        return Ok(());
-    }
-    let keeps: Vec<usize> = (2..=span).collect();
-    let listed: Vec<String> = keeps.iter().map(ToString::to_string).collect();
-    let message = format!(
-        "cell ({}, {}) of {} spans {span} grid columns: a split into {columns} would add grid columns, changing \
-         every other row's cells (Word's Split Cells does that); into {} keeps the grid ({span}: a cell per column). \
-         For {columns}, split into {span}, then split one of the new cells",
-        at.row,
-        at.col,
-        view.table.id,
-        listed.join(", ")
-    );
-    let options = WayOut::options(keeps.iter().map(|k| json!(k)).collect()).unwrap_or_else(|| WayOut::one(json!(span)));
-    let call = json!({"tool": "word_edit_table", "arguments": {"doc": args.doc, "table": view.table.id,
-        "action": "split", "first": {"row": at.row, "col": at.col}, "columns": span}});
-    Err(ToolError::refusal(Refusal::Refused, message, options)
-        .at("columns")
-        .with_detail("call", call))
-}
-
-/// A column position against the table (docx-agent's `_Accepted.to_grid`).
-enum Column {
-    Grid(usize),
-    Off(ToolError),
-    /// The table's columns as accepted differ from its grid's.
-    Accepted,
-}
-
-fn column(view: &TableView, kept: &[usize], given: i64, retry: &TryCall) -> Column {
-    let count = view.column_count();
-    if kept != (0..count).collect::<Vec<_>>() {
-        return Column::Accepted;
-    }
-    match usize::try_from(given).ok().filter(|c| *c < count) {
-        Some(index) => Column::Grid(index),
-        None => Column::Off(
-            ToolError::refusal(
-                Refusal::NotFound,
-                format!(
-                    "index {given}: {} has columns 0 to {}",
-                    view.table.id,
-                    i64::try_from(count).unwrap_or(0) - 1
-                ),
-                WayOut::names((0..count.min(50)).map(|c| c.to_string())).unwrap_or_else(|| WayOut::call(retry.clone())),
-            )
-            .at("index"),
-        ),
-    }
+    Ok(Ok(change))
 }
 
 /// The watch on the file's text a deletion takes out of the final view.
@@ -376,6 +293,7 @@ fn finish(
     editing: &Editing<'_>,
     view: &TableView,
     change: TableChange,
+    notes: Vec<String>,
     retry: &TryCall,
 ) -> ToolResult<Value> {
     let table = view.table.id.clone();
@@ -415,6 +333,7 @@ fn finish(
     if let Some(watched) = &mut watched {
         add(&mut result, watched.report(head.doc(), editing.doc));
     }
+    result.warnings.extend(notes);
     let off_now = head
         .doc()
         .docx()
@@ -536,4 +455,9 @@ fn deleted_rows(table: &TableId) -> Vec<usize> {
         })
         .map(|(k, _)| k)
         .collect()
+}
+
+/// Registers `word_edit_table` (the crate's [`crate::register`]).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    r.edit::<WordEditTable>(word_edit_table, crate::Hosting::SERVED);
 }

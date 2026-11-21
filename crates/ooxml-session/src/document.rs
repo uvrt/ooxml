@@ -153,10 +153,13 @@ impl Document {
                 let budget = Arc::new(Budget(Arc::clone(&context.budget)));
                 let editor = Editor::open_with(package, config, clock, budget, earlier)?;
                 let opened = editor.store().snapshot();
-                // the paragraph texts every find reads, read once as the document opens:
-                // each later version reads only the paragraphs it changed
+                // the paragraph texts every find reads and the facts the document-wide
+                // lookups read (bookmarks, controls, revisions, frames), read once as the
+                // document opens: each later version reads only the blocks it changed, and
+                // no edit call pays for the first reading of a long part
                 for part in &opened.doc().docx()?.parts {
                     part.texts();
+                    part.facts();
                 }
                 Held::Word(Box::new(Word {
                     editor,

@@ -68,7 +68,7 @@ from .. import dates, provenance
 from . import numbers, scales, sources
 from .savegate import summary_note, validation, validation_fact
 from .datasets import briefs
-from .registry import (ANY_ROLE, CORE, EDIT, RESOLVE, REVIEW, Param, Tool, ToolGroup, array,
+from .registry import (ANY_ROLE, CORE, EDIT, RESOLVE, REVIEW, AliasWhen, Param, Tool, ToolGroup, array,
                        boolean, build_schema, free_object, integer, number, obj, string)
 from .results import Result, ToolError, page_text
 
@@ -226,9 +226,10 @@ class Spec:
 _BLOCK_RANGES = array(string(), "Documents: blocks, spans p:A..t:B or sections s:2; their "
                       "facts, pages.", or_single=True, optional=True)
 #: ``check``'s ``copies`` (round 35, R19): each copy's blocks and what it was made from, in
-#: this document or another open one (:func:`_checked_documents` locks it too); round 43:
-#: ``lists`` -- ``run_on`` where the caller says the copies' numbered lists count on from copy
-#: to copy (never inferred: a copy that counts on looks the same as one that should not).
+#: this document or another open one (named in the tool's documents, ``copies[].reference.doc``,
+#: so it is locked too); round 43: ``lists`` -- ``run_on`` where the caller says the copies'
+#: numbered lists count on from copy to copy (never inferred: a copy that counts on looks the
+#: same as one that should not).
 _COPIES = array(obj({"blocks": string("The copy's block or span."),
                      "reference": obj({"doc": string("Its document. Default doc.",
                                                      optional=True),
@@ -279,25 +280,8 @@ _CHECK_SCALE = _scale("As style_by_value's: its values with the wrong step or no
                       optional=True, described=False)
 
 
-def _checked_documents(arguments: Mapping[str, Any]) -> list[str]:
-    """``check``'s documents: ``doc``, then each other one a copy's reference is in."""
-    found = [arguments["doc"]] if isinstance(arguments.get("doc"), str) else []
-    for item in arguments.get("copies") or []:
-        reference = item.get("reference") if isinstance(item, Mapping) else None
-        other = reference.get("doc") if isinstance(reference, Mapping) else None
-        if isinstance(other, str) and other and other not in found:
-            found.append(other)
-    return found
-
-
 def _no_documents(arguments: Mapping[str, Any]) -> list[str]:
     return []
-
-
-def _slide_on_add(arguments: Mapping[str, Any]) -> str | None:
-    """``edit_chart``'s ``slide``: its ``target`` when adding (a deck's slide); in another
-    action the target is the chart, so ``slide`` stays an unknown argument."""
-    return "target" if arguments.get("action") == "add" else None
 
 
 #: The roles of a comments tool's actions (``ppt_comments``, ``word_comments``): a reviewer
@@ -498,7 +482,7 @@ SPECS: dict[str, Spec] = {spec.name: spec for spec in [
           "copies": _COPIES,
           # Round 36, R31: values styled by a scale's steps or not (scales.with_scale).
           "scale": _CHECK_SCALE},
-         refs=("slides[]",), documents=_checked_documents,
+         refs=("slides[]",), documents=("doc", "copies[].reference.doc"),
          wrap=lambda fn: _with_validation(scales.with_scale(numbers.with_numbers(
              _with_layout_options(_with_taken(fn, "check", ("range", "copies"))),
              scope=("slides", "pages", "range"),
@@ -512,8 +496,9 @@ SPECS: dict[str, Spec] = {spec.name: spec for spec in [
          # that passes another's still gets that handler's refusal (kept, as before).
          # contrast stays a deck's: Word text against shading or a page colour is not
          # measured (docx-agent refuses it); add "docx" here when it is.
-         kind_fields={"slides": _SLIDES, "boxes": ("pptx",), "spacing": ("pptx",),
-                      "contrast": ("pptx",), "pages": _PAGES, "min_size": ("docx",),
+         # (In the parameters' order: the Rust definition's, lane P5a.)
+         kind_fields={"slides": _SLIDES, "pages": _PAGES, "boxes": ("pptx",),
+                      "spacing": ("pptx",), "contrast": ("pptx",), "min_size": ("docx",),
                       "styles": ("docx",), "range": ("docx",), "copies": ("docx",),
                       "scale": ("pptx", "docx")},
          # The facts each kind reports: a document's handler refuses a deck's; a deck's
@@ -618,7 +603,7 @@ SPECS: dict[str, Spec] = {spec.name: spec for spec in [
          group=MISC, mutates=True, refs=("target",), sources=("from",),
          reads=_reading_action, wrap=lambda fn: _chart_rows(fn),
          action_roles={"read": REVIEW},
-         aliases={"slide": _slide_on_add, "from_columns": "columns", "colours": "colors"}),
+         aliases={"slide": AliasWhen("target", "action", "add"), "from_columns": "columns", "colours": "colors"}),
     # S12
     Spec("edit_smartart",
          "Change a SmartArt diagram's node text, or add and remove nodes. Returns the nodes.",

@@ -11,7 +11,7 @@
 use super::{merge_renamed, text_unported, Unported};
 use crate::find_text::{literal_matches, match_context, story_ok};
 use crate::review::edit_refusal;
-use crate::Editing;
+use crate::{written, Editing};
 use ooxml_tools::pyfmt::repr;
 use ooxml_tools::{ArgEnum, Done, IntOrStr, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::find::Literal;
@@ -164,7 +164,10 @@ fn run(args: &ReplaceText, editing: &Editing<'_>) -> Result<ToolResult<Value>, T
     let listed: Vec<&String> = now.iter().take(LISTED).collect();
     reply.data = Some(json!({"count": count, "paragraphs": listed}));
     reply.changed = now;
-    Ok(ToolResult::done(reply))
+    let result = ToolResult::done(reply);
+    let argument = |field: &str| (field == "replace").then(|| args.replace.clone());
+    written::keep_written(editing, &result, &[], &argument, &find_call(args))?;
+    Ok(result)
 }
 
 /// A match: its paragraph's id, its range's address, its context.
@@ -212,4 +215,9 @@ fn find_call(args: &ReplaceText) -> TryCall {
         arguments,
         fill: Vec::new(),
     }
+}
+
+/// Registers `replace_text` (the crate's [`crate::register`]).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    r.edit::<ReplaceText>(replace_text, crate::Hosting::SERVED.keeps_written());
 }

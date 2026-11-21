@@ -6,9 +6,9 @@
 //! lock is held only to find or change an entry), or implement a tool.
 
 use crate::batch::{MAX_READ_BATCH_CHARS, READ_BATCH};
+use crate::call::Call;
 use crate::context::{revision_date, CallCancel};
 use crate::document::{At, Document};
-use crate::registry::Call;
 use crate::update::{PartUpdate, Updated};
 use crate::{CallContext, DocId, DocKind, DocNames, Registry, SessionError};
 use ooxml_base::{Cancel, Context};
@@ -92,7 +92,9 @@ impl Opened {
             number: self.version(),
             versions: &self.versions,
             placer: self.placer.as_deref(),
+            owned: None,
             others: ooxml_tools_word::Others::default(),
+            word: self.word(),
         }
     }
 }
@@ -601,6 +603,7 @@ impl Session {
             made: &state.made,
             layout: context.layout.as_deref(),
             blobs: context.blobs.as_deref(),
+            written: &context.written,
             others: &state.others,
         };
         tool.run(arguments, &call)

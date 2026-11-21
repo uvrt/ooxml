@@ -5,7 +5,8 @@
 //! is applied ([`marker_draws`]), and what one edit says it did ([`LinkEdited`]).
 //!
 //! Must not: write but through the sink, or read less than it records reading: a bookmark
-//! name is unique in the whole document, so these edits read every story.
+//! name is unique in the whole document, so these edits read every story -- or, adding one
+//! at a place named by id, every bookmark of its name by condition.
 
 mod bookmarks;
 mod hyperlinks;
@@ -13,6 +14,7 @@ mod rename;
 
 pub use bookmarks::AddBookmark;
 pub use hyperlinks::AddHyperlink;
+pub(crate) use rename::rename_in_instruction;
 pub use rename::{RemoveBookmark, RenameBookmark};
 
 use crate::doc::{Draw, DrawFrom};

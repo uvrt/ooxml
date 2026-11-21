@@ -123,3 +123,8 @@ fn converted(
         Some(json!({"mode": mode, "reflow": reflow})),
     )
 }
+
+/// Registers `word_template` (the crate's [`crate::register`]).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    r.edit::<WordTemplate>(word_template, crate::Hosting::SERVED.layout());
+}

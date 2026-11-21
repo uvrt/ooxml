@@ -144,7 +144,9 @@ pub fn run(args: &[String]) -> Result<(), String> {
         number: 1,
         versions: &versions,
         placer: None,
+        owned: None,
         others: ooxml_tools_word::Others::default(),
+        word: None,
     };
     let start = Instant::now();
     describe(&d, &v1, &Never).map_err(|e| e.message().to_owned())?;
@@ -281,7 +283,9 @@ fn after_edit(
             number: 1,
             versions: &versions,
             placer: None,
+            owned: None,
             others: ooxml_tools_word::Others::default(),
+            word: None,
         };
         describe(d, &v1, &Never).map_err(|e| e.message().to_owned())?;
         let v2 = Version {
@@ -290,7 +294,9 @@ fn after_edit(
             number: 2,
             versions: &versions,
             placer: None,
+            owned: None,
             others: ooxml_tools_word::Others::default(),
+            word: None,
         };
         let start = Instant::now();
         describe(d, &v2, &Never).map_err(|e| e.message().to_owned())?;

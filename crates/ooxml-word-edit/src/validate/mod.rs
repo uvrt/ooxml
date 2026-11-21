@@ -5,7 +5,9 @@
 //! counts that a new version takes from the previous one and changes by its changed
 //! blocks; the delta against a baseline as the save gate compares it ([`Delta`]); the
 //! largest annotation id in use (`annotation_ceiling`), which tracked edits number their
-//! revisions from; and who still has revisions or comments (`author_in_use`).
+//! revisions from; and who still has revisions or comments (`author_in_use`). Of a
+//! version's problems, those in some blocks ([`problems_in`]); and the problems only a save
+//! finds, of the file name written to ([`extension_problems`]).
 //!
 //! No block's XML is read again and no version folds every block. The full check from
 //! scratch ([`full_problems`]) is the test oracle.
@@ -13,15 +15,19 @@
 //! Must not: change a document, or hold anything but caches that belong to the document.
 
 mod counts;
+mod extension;
 mod facts;
 mod grid;
 mod kept;
 mod order;
 mod rules;
+mod scoped;
 mod tally;
 
+pub use extension::{extension_problems, WordKind, WORD_KINDS};
 pub(crate) use facts::{python_int, ElementFacts};
 pub(crate) use order::Orders;
+pub use scoped::{problems_in, Scoped};
 pub(crate) use tally::Tally;
 
 use crate::doc::WordDoc;
@@ -277,8 +283,9 @@ pub(crate) fn author_in_use(doc: &WordDoc, author: &str) -> Result<bool> {
     Ok(doc.tally()?.counts.author_in_use(author))
 }
 
-/// A budget with no limit, for the oracle's memo-free check.
-struct Unlimited;
+/// A budget with no limit, for the oracle's memo-free check and for scratch versions that
+/// are dropped after one reading (`facts`' settled table copies).
+pub(crate) struct Unlimited;
 
 impl CacheBudget for Unlimited {
     fn reserve(&self, _bytes: usize) -> bool {

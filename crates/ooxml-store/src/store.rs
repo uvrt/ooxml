@@ -241,8 +241,10 @@ impl<D: DocModel> Store<D> {
             });
         }
         // a key written only as a merge (made where the change is applied) is no conflict
-        // with another writer of it
-        let mut depends = parts.reads.clone();
+        // with another writer of it; the keys it creates under stand-ins are kept apart
+        // (`parts.created`) and none with anything: no other transaction can have read them,
+        // and its own reads of them are of its own work
+        let mut depends = parts.reads.without(&parts.created);
         depends.extend(&parts.writes.without(&parts.merges));
         let mut state = lock(&self.state);
         let entered = self.clock.monotonic();
@@ -274,8 +276,8 @@ impl<D: DocModel> Store<D> {
         };
         let body = Body {
             changes,
-            reads: history_reads(parts.reads, &parts.predicates),
-            writes: parts.writes,
+            reads: history_reads(parts.reads.without(&parts.created), &parts.predicates),
+            writes: resolved_writes(&doc, parts.writes, &parts.created),
             caller: caller.0.clone(),
         };
         let (version, writes, garbage) = self.publish(&mut state, Arc::clone(&head), doc, body);
@@ -320,8 +322,8 @@ impl<D: DocModel> Store<D> {
         }
         let body = Body {
             changes: parts.changes.into(),
-            reads: history_reads(parts.reads, &parts.predicates),
-            writes: parts.writes,
+            reads: history_reads(parts.reads.without(&parts.created), &parts.predicates),
+            writes: resolved_writes(&parts.work, parts.writes, &parts.created),
             caller: caller.0.clone(),
         };
         let (version, writes, garbage) = self.publish(&mut state, Arc::clone(&base), parts.work, body);
@@ -367,7 +369,7 @@ impl<D: DocModel> Store<D> {
             caller: body.caller,
         };
         let garbage = state.history.commit(step);
-        self.journal(state, seq, changes);
+        self.journal(state, seq, changes, writes.clone());
         (version, writes, garbage)
     }
 
@@ -434,7 +436,7 @@ impl<D: DocModel> Store<D> {
         let garbage = state
             .history
             .record(planned.target, head, Arc::clone(&version), changes.clone());
-        self.journal(&mut state, seq, changes);
+        self.journal(&mut state, seq, changes, planned.writes.clone());
         let held = self.clock.monotonic().saturating_sub(entered);
         drop(state);
         drop(garbage);
@@ -451,27 +453,40 @@ impl<D: DocModel> Store<D> {
 impl<D: DocModel> Store<D> {
     /// Keep the change set that made version `seq`: within the rebase window, and back to
     /// the oldest version the history may still move a change set from.
-    fn journal(&self, state: &mut State<D>, seq: Seq, changes: ChangeSet<D>) {
-        state.journal.push(seq, changes);
+    fn journal(&self, state: &mut State<D>, seq: Seq, changes: ChangeSet<D>, writes: KeySet<D::Key>) {
+        state.journal.push(seq, changes, writes);
         let needed = state.history.oldest_reach();
         state.journal.trim(self.config.rebase_window, needed);
     }
 }
 
-/// The reads a step keeps in the history: a read by condition counts there as a read of every
-/// key, so undo and redo find a step entangled exactly as they did before such reads (a
-/// condition is checked against the head only at commit).
-fn history_reads<D: DocModel>(reads: KeySet<D::Key>, predicates: &[Arc<dyn ReadPredicate<D>>]) -> KeySet<D::Key> {
-    if predicates.is_empty() {
-        reads
-    } else {
-        KeySet::Everything
+/// The reads a step keeps in the history: a read by condition counts there as a read of the
+/// keys it names ([`ReadPredicate::history_keys`]), or of every key when it names none, so
+/// undo and redo find a step entangled at least as they did before such reads (a condition
+/// is checked against the head only at commit).
+fn history_reads<D: DocModel>(mut reads: KeySet<D::Key>, predicates: &[Arc<dyn ReadPredicate<D>>]) -> KeySet<D::Key> {
+    for predicate in predicates {
+        match predicate.history_keys() {
+            Some(keys) => reads.extend(&KeySet::of(keys)),
+            None => return KeySet::Everything,
+        }
     }
+    reads
 }
 
-/// `changes` applied in order to `doc`.
+/// The keys a commit wrote, as `doc` (the version it made) has them: its written keys and
+/// the keys it created under stand-ins, resolved ([`DocModel::resolve`]).
+fn resolved_writes<D: DocModel>(doc: &D, mut writes: KeySet<D::Key>, created: &KeySet<D::Key>) -> KeySet<D::Key> {
+    if !created.is_empty() {
+        writes.extend(&doc.resolve(created));
+    }
+    writes
+}
+
+/// `changes` applied in order to `doc`, as a transaction of its own ([`DocModel::begin`]).
 fn replay<D: DocModel>(doc: &D, changes: &[D::Change]) -> Result<D, D::Error> {
     let mut doc = doc.clone();
+    doc.begin();
     for change in changes {
         doc.apply(change)?;
     }

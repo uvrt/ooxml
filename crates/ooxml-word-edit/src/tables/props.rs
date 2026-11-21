@@ -105,6 +105,8 @@ pub struct TableValues {
     pub width: Option<TableWidth>,
     /// `left`, `center` or `right`.
     pub alignment: Option<String>,
+    /// Its indent from the margin, points (`w:tblInd`).
+    pub indent: Option<f64>,
     /// How many rows from the top repeat on each page.
     pub header_rows: Option<usize>,
     /// A fill (`Some(None)`: none).
@@ -136,6 +138,12 @@ pub(crate) fn apply_table(
     }
     if let Some(alignment) = &values.alignment {
         set_alignment(work, table, properties, alignment, orders);
+    }
+    if let Some(indent) = values.indent {
+        drop_all(work, properties, "tblInd");
+        let twips = twips(indent).to_string();
+        let node = make(work, "tblInd", &[("w", twips.as_str()), ("type", "dxa")]);
+        insert_in_order(work, properties, node, orders);
     }
     if let Some(look) = values.look {
         drop_all(work, properties, "tblLook");

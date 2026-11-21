@@ -23,6 +23,7 @@ pub mod facts;
 pub mod fields;
 pub mod formatting;
 pub mod graphics;
+mod kept;
 pub mod numbering;
 pub mod outline;
 pub mod provenance;
@@ -35,7 +36,8 @@ mod versions;
 mod walk;
 
 pub use derived::Derived;
-pub use texts::{KeptTexts, PartTexts};
+pub use kept::Kept;
+pub use texts::PartTexts;
 pub use versions::Versions;
 
 pub use walk::{at_path, live_paths, Found};
@@ -62,27 +64,19 @@ pub struct StoryPart {
     /// Its paragraphs', tables' and rows' ids.
     pub ids: PartIds,
     facts: OnceLock<Arc<PartFacts>>,
-    /// The facts of the part's version before, where they were read: the blocks this one
-    /// shares with it are taken from them.
-    earlier: Option<Arc<PartFacts>>,
     texts: OnceLock<Arc<PartTexts>>,
-    /// The document's latest paragraph texts: the paragraphs this version shares with the
-    /// version that read them are taken from them.
-    kept: Arc<KeptTexts>,
+    /// The document's latest readings of the part: the paragraphs and blocks this version
+    /// shares with the version that read them are taken from them.
+    kept: Arc<Kept>,
 }
 
 impl StoryPart {
     /// The part `part` of the story `story`, whose tree is `tree`; `earlier`, the same
-    /// part of the same story in a version before (its ids and facts are taken for every
-    /// block the two share).
+    /// part of the same story in a version before (its ids are taken for every block the
+    /// two share); `kept`, the document's latest readings (texts and facts are taken from
+    /// them likewise).
     #[must_use]
-    pub fn new(
-        part: String,
-        story: String,
-        tree: Tree,
-        earlier: Option<&StoryPart>,
-        kept: &Arc<KeptTexts>,
-    ) -> StoryPart {
+    pub fn new(part: String, story: String, tree: Tree, earlier: Option<&StoryPart>, kept: &Arc<Kept>) -> StoryPart {
         // a part changed by a path copy (or handed over and shared again with the version
         // before): only what changed is walked again
         let ids = match earlier {
@@ -95,7 +89,6 @@ impl StoryPart {
             tree,
             ids,
             facts: OnceLock::new(),
-            earlier: earlier.and_then(|e| e.facts.get().cloned()),
             texts: OnceLock::new(),
             kept: Arc::clone(kept),
         }
@@ -110,16 +103,17 @@ impl StoryPart {
     /// Each paragraph's text in the current view ([`PartTexts`]), read once.
     pub fn texts(&self) -> &Arc<PartTexts> {
         self.texts.get_or_init(|| {
-            let made = Arc::new(PartTexts::read(&self.ids, self.kept.latest(&self.part).as_deref()));
-            self.kept.keep(&self.part, &made);
-            made
+            self.kept
+                .texts(&self.part, |earlier| PartTexts::read(&self.ids, earlier))
         })
     }
 
     /// What the document-wide lookups read of the part ([`PartFacts`]), read once.
     pub fn facts(&self) -> &Arc<PartFacts> {
-        self.facts
-            .get_or_init(|| Arc::new(PartFacts::read(self.root(), self.earlier.as_deref())))
+        self.facts.get_or_init(|| {
+            self.kept
+                .facts(&self.part, |earlier| PartFacts::read(self.root(), earlier))
+        })
     }
 }
 
@@ -139,8 +133,8 @@ pub struct Docx {
     style_order: Vec<Arc<Element>>,
     /// What is read from this version once, for every call on it.
     derived: Derived,
-    /// The document's latest paragraph texts, shared with its other versions.
-    kept: Arc<KeptTexts>,
+    /// The document's latest readings of its parts, shared with its other versions.
+    kept: Arc<Kept>,
 }
 
 impl Docx {
@@ -167,7 +161,7 @@ impl Docx {
         let main = main_part(package)?.ok_or_else(|| WordError::NoMainPart(String::new()))?;
         let mut names = vec![main.clone()];
         names.extend(story_parts(package, &main)?);
-        let latest = before.map_or_else(|| Arc::new(KeptTexts::default()), |b| Arc::clone(&b.kept));
+        let latest = before.map_or_else(|| Arc::new(Kept::default()), |b| Arc::clone(&b.kept));
         let mut parts = Vec::with_capacity(names.len());
         for part in names {
             let Some(tree) = package.tree(&part)? else { continue };
@@ -251,8 +245,22 @@ impl Docx {
     /// it: by `w:name` in any case, then an alias, then its id, then its id in any case.
     #[must_use]
     pub fn find_style(&self, name: &str, kind: &str) -> Option<&Arc<Element>> {
+        self.find_style_in(name, Some(kind))
+    }
+
+    /// The style `name` names among all of them, found as [`Docx::find_style`] finds it.
+    #[must_use]
+    pub fn find_any_style(&self, name: &str) -> Option<&Arc<Element>> {
+        self.find_style_in(name, None)
+    }
+
+    fn find_style_in(&self, name: &str, kind: Option<&str>) -> Option<&Arc<Element>> {
         let wanted = casefold(name);
-        let styles: Vec<&Arc<Element>> = self.style_order.iter().filter(|s| style_kind(s) == kind).collect();
+        let styles: Vec<&Arc<Element>> = self
+            .style_order
+            .iter()
+            .filter(|s| kind.is_none_or(|k| style_kind(s) == k))
+            .collect();
         let tests: [&dyn Fn(&Element) -> bool; 4] = [
             &|s| casefold(style_name(s).unwrap_or("")) == wanted,
             &|s| {

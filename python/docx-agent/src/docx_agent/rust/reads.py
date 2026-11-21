@@ -1,7 +1,8 @@
 """docx-agent's reading tools answered by the Rust session (phase P1, lane P1c): ``describe``,
 ``word_read``, ``word_inspect`` (``layout`` too), ``find_text``, ``word_compare_blocks`` and
 ``word_design_facts`` (lane P2c14) and, through them, the ops of ``read_batch``, each with the
-interpreter lock let go while Rust reads.
+interpreter lock let go while Rust reads; and (lane P5a) the checks of a document the session
+owns that read the document alone (:func:`serve_check`).
 
 **The versions.**  Python owns the document (until phase P2).  A reading call reads a
 committed version's read copy (ooxml-edit's ``DocumentFormat.read_copy``); the first one on
@@ -257,16 +258,18 @@ def mirror_of(live: Any, copy: Any = None) -> "Mirror | None":
         return made
 
 
-def _earlier_ids(document: Any) -> "tuple[list[int], list[tuple[str, int]], int] | None":
+def _earlier_ids(document: Any) -> "tuple[list[int], list[tuple[str, int]], int, list[int]] | None":
     """The ids ``document`` had before it was saved, where its id state was opened with it
-    (round 38: its ledger's pool, restored): every value, each seed's cursor and the highest
-    drawing number -- for the session never to give a retired id again.  ``None`` where its
-    pool is not read yet (the parts' ids are all it has)."""
+    (round 38: its ledger's pool, restored): every value, each seed's cursor, the highest
+    drawing number and the drawing numbers retired (``drawings_gone``) -- for the session
+    never to give a retired id again, nor keep a retired drawing number in a copy.  ``None``
+    where its pool is not read yet (the parts' ids are all it has)."""
     ledger = getattr(document, "_ledger", None)
     pool = getattr(ledger, "pool", None)
     if pool is None:
         return None
-    return list(pool), list(getattr(pool, "cursors", {}).items()), ledger.highest_drawing
+    return (list(pool), list(getattr(pool, "cursors", {}).items()), ledger.highest_drawing,
+            sorted(ledger.drawings_gone))
 
 
 # -- serving a call ---------------------------------------------------------------------------
@@ -398,9 +401,11 @@ def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | 
     # the documents named as the host names them: the reply says those names (lane P2c17)
     names[call.entry.doc_id] = mirror.doc
     arguments = {**{k: v for k, v in arguments.items() if v is not None}, "doc": call.entry.doc_id}
-    reply, _images, app = mirror.session.call(tool, json.dumps(arguments), at=[version, *pinned],
-                                              placer=placer.place if placer is not None else None,
-                                              names=names)
+    import ooxml_core
+
+    reply, _images, app = mirror.session.call(tool, json.dumps(arguments), ooxml_core.CallOptions(
+        documents=ooxml_core.CallDocuments(at=[version, *pinned], names=names),
+        placer=placer.place if placer is not None else None))
     if placer is not None and placer.error is not None:
         raise placer.error
     envelope = json.loads(reply)
@@ -438,6 +443,23 @@ def serve(call: Any, tool: str, arguments: dict[str, Any],
         return python()
     _served(tool)
     return result
+
+
+def serve_check(call: Any, arguments: dict[str, Any]) -> Result | None:
+    """Lane P5a: ``check`` answered by the Rust session where it answers it whole -- the
+    facts read from the document alone (``validate``, ``fields``) of a document it owns,
+    outside a batch -- else ``None`` (counted, with why), and the handler goes on.  What
+    needs the layout, copies, a scale and the application's ``min_text_size`` (which asks
+    for layout facts) are the handler's still (the session says which: ``unported``)."""
+    owned = _owned(call.entry)
+    why = None
+    if owned is None:
+        why = "not owned"
+    elif call.in_batch:
+        why = "in a batch"
+    elif getattr(owned.held, "min_text_size", None) is not None:
+        why = "min_text_size"
+    return serve(call, "check", arguments, lambda: None, why_not=why)
 
 
 def _result(envelope: dict[str, Any]) -> Result:

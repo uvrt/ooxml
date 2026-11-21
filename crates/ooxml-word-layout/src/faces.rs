@@ -58,6 +58,11 @@ impl WordGlyphs {
         }
     }
 
+    /// The fonts it adapts (asked through them, a lookup is not recorded in the coverage).
+    pub fn fonts(&self) -> &WordFonts {
+        &self.fonts
+    }
+
     /// What the lookups found so far.
     pub fn coverage(&self) -> Coverage {
         self.coverage.lock().unwrap_or_else(PoisonError::into_inner).clone()
