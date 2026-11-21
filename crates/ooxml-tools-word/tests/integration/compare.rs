@@ -44,27 +44,9 @@ fn package() -> Package {
 fn reply(arguments: Value) -> Value {
     let (mine, copy) = (package(), package());
     let versions = (Versions::new(), Versions::new());
-    let other = Version {
-        name: "b.docx",
-        package: &copy,
-        number: 1,
-        versions: &versions.1,
-        placer: None,
-        owned: None,
-        others: Others::default(),
-        word: None,
-    };
+    let other = Version::new("b.docx", &copy, 1, &versions.1);
     let others = [("d2", other)];
-    let version = Version {
-        name: "a.docx",
-        package: &mine,
-        number: 1,
-        versions: &versions.0,
-        placer: None,
-        owned: None,
-        others: Others::new(&others),
-        word: None,
-    };
+    let version = Version::new("a.docx", &mine, 1, &versions.0).with_others(Others::new(&others));
     let (args, _) = WordCompareBlocks::accept(arguments, Some("docx")).unwrap();
     match word_compare_blocks(&args, &version, &Never) {
         Ok(done) => json!({"summary": done.summary, "data": done.data, "total": done.total}),
@@ -105,16 +87,7 @@ fn compare_on_a_long_document() {
     let bytes: Arc<[u8]> = Arc::from(std::fs::read(path).unwrap());
     let package = Package::open(Arc::clone(&bytes), &Limits::default()).unwrap();
     let versions = Versions::new();
-    let version = Version {
-        name: "long.docx",
-        package: &package,
-        number: 1,
-        versions: &versions,
-        placer: None,
-        owned: None,
-        others: Others::default(),
-        word: None,
-    };
+    let version = Version::new("long.docx", &package, 1, &versions);
     let start = std::time::Instant::now();
     let docx = version.docx().unwrap();
     println!("the version read: {:.1} ms", start.elapsed().as_secs_f64() * 1000.0);

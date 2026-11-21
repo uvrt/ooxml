@@ -4,8 +4,7 @@
 //!
 //! Must not: change the document.
 
-use super::changes::{try_call, ChangeDetail, WordChanges};
-use super::Editing;
+use super::changes::{try_call, ChangeDetail, Reading, WordChanges};
 use crate::describe::short;
 use crate::paging::page_list;
 use ooxml_tools::{Done, ToolError};
@@ -14,9 +13,6 @@ use ooxml_word_model::docx::revisions::{describe_record, records};
 use ooxml_word_model::docx::Docx;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeSet;
-
-/// Items on a page (`Limits.max_list_items`).
-const PAGE: usize = 50;
 
 /// A change as `word_changes` lists it (`change_json`).
 pub(crate) fn change_json(change: &LogicalChange) -> Value {
@@ -57,11 +53,10 @@ fn paragraphs_within(docx: &Docx, within: &str, args: &WordChanges) -> Result<BT
         .map_err(|e| crate::refusal::address_refused(e, try_call(&call)))
 }
 
-/// `list`.
-pub(crate) fn list(args: &WordChanges, editing: &Editing<'_>) -> Result<Done<Value>, ToolError> {
-    let snapshot = editing.editor.store().snapshot();
-    let docx = snapshot
-        .doc()
+/// `list`, of the version `reading` reads.
+pub(crate) fn list(args: &WordChanges, reading: &Reading<'_>) -> Result<Done<Value>, ToolError> {
+    let docx = reading
+        .doc
         .docx()
         .map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
     let records_wanted = args.detail == Some(ChangeDetail::Records);
@@ -116,10 +111,15 @@ pub(crate) fn list(args: &WordChanges, editing: &Editing<'_>) -> Result<Done<Val
             .map(|c| change_json(&c))
             .collect()
     };
-    super::stopped(editing.cancel)?;
+    super::stopped(reading.cancel)?;
     let mut first = args.clone();
     first.cursor = None;
-    let (shown, total, next) = page_list(&items, args.cursor.as_deref(), PAGE, try_call(&first))?;
+    let (shown, total, next) = page_list(
+        &items,
+        args.cursor.as_deref(),
+        reading.limits.list_items,
+        try_call(&first),
+    )?;
     let noun = if records_wanted { "record" } else { "change" };
     let mut done = Done::new(format!("{total} {noun}(s)"));
     done.data = Some(Value::Array(shown));
