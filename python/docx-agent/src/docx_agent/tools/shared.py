@@ -146,12 +146,10 @@ def save_document(call: Any, doc: str, name: str, format: str, clean: bool = Fal
                        context=lambda: _save_context(call, format), files=files)
 
 
-def _save_context(call: Any, format: str) -> Any:
-    """The call context a save runs with: the pages and lines of the host's layout of the
-    version saved (:func:`~..edit.properties.layout_statistics`), where it has one and the
-    statistics are due -- the body changed since the document was opened."""
-    import ooxml_core
-
+def _save_context(call: Any, format: str) -> dict[str, Any]:
+    """What a save's call context adds: the pages and lines of the host's layout of the
+    version saved (:func:`~..edit.properties.layout_statistics`, ``layout_counts``), where it
+    has one and the statistics are due -- the body changed since the document was opened."""
     from ..edit.properties import layout_statistics
 
     counts = None
@@ -160,7 +158,7 @@ def _save_context(call: Any, format: str) -> Any:
         stats = layout_statistics(call.document)
         if "pages" in stats and "lines" in stats:
             counts = (stats["pages"], stats["lines"])
-    return ooxml_core.CallContext(layout_counts=counts)
+    return {"layout_counts": counts}
 
 
 def _python_save_document(call: Any, name: str, format: str, clean: bool) -> Result:

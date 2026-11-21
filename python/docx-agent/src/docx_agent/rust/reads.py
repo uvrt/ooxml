@@ -23,8 +23,8 @@ asked of the document's layout as :func:`docx_agent.tools.read._placed_by_worker
 **Falling back.**  Where the Rust answer is not yet the same, the call is answered by the
 Python path, counted by tool and reason (:func:`fallbacks`, ``read_fallbacks{tool,reason}``)
 and never silently: ``ooxml_core`` without a session; a document that is not a committed
-version's read copy (a batch's reads of its own changes); limits other than the defaults the
-Rust paging uses; an address naming an id this session renamed or deleted (the ledger and
+version's read copy (a batch's reads of its own changes); limits below 1 (the host's own
+limits are the Rust session's, ``CallContext(max_result_chars=, max_list_items=)``); an address naming an id this session renamed or deleted (the ledger and
 the aliases are Python's until P2); a regular expression Rust does not match as Python does;
 and what Rust says it does not give as Python does yet (its ``unported``: Accept All's cell
 ends).  A refusal goes to the Python
@@ -50,11 +50,6 @@ log = logging.getLogger("docx_agent.rust")
 
 #: The versions of a document kept for the calls reading them.
 KEPT = 4
-
-#: The defaults the Rust paging matches (``Limits().max_result_chars``,
-#: ``Limits().max_list_items``): other limits are answered by the Python path.
-_RESULT_CHARS = 24_000
-_LIST_ITEMS = 50
 
 _SESSION: list[Any] = []
 _SESSION_LOCK = threading.Lock()
@@ -400,15 +395,16 @@ def _with_others(call: Any, arguments: dict[str, Any], others: tuple[str, ...],
 
 def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | None" = None,
           others: tuple[str, ...] = (), layout: Any = None,
-          context: "Callable[[], Any] | None" = None,
+          context: "Callable[[], dict[str, Any]] | None" = None,
           files: "list[tuple[str, str, bytes]] | None" = None) -> dict[str, Any]:
     """The Rust envelope of ``tool`` with ``arguments`` on the version ``call`` reads (and
     of each other document named at a path of ``others``, :func:`_with_others`); ``layout``:
     the document's page engine (an ``ooxml_core.WordPages``), for a call that reads the
     pages (``check``'s ``reflow``), laying out within ``call.limits.layout_timeout`` (lane
     P5c: past it, ``reflow.error`` says so, as the Python path's does). Run with the
-    ``ooxml_core.CallContext`` that ``context`` makes where given -- made only once the
-    session serves the call, so a call answered in Python never builds it; the files it
+    ``ooxml_core.CallContext`` of the host's limits and the keywords ``context`` gives where
+    given -- asked only once the session serves the call, so a call answered in Python never
+    reads them; the files it
     gives the application appended to ``files`` as ``(name, format, bytes)``."""
     if _session() is None:
         raise _Fallback("no session")
@@ -419,12 +415,13 @@ def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | 
     arguments = {**{k: v for k, v in arguments.items() if v is not None}, "doc": call.entry.doc_id}
     import ooxml_core
 
-    if context is not None:
-        made = context()
-    elif layout is not None:
-        made = ooxml_core.CallContext(layout_timeout=call.limits.layout_timeout)
-    else:
-        made = None
+    from .owner import context_of
+
+    # the host's limits on the reply: the Rust session pages as the Python path would (lane
+    # H3); a call that lays the document out does so within the host's layout_timeout; what
+    # ``context`` adds, asked only now that the session serves the call
+    made = context_of(None, call.limits, call.limits.layout_timeout if layout is not None else None,
+                      **(context() if context is not None else {}))
     reply, given_files, app = mirror.session.call(tool, json.dumps(arguments), ooxml_core.CallOptions(
         context=made,
         documents=ooxml_core.CallDocuments(at=[version, *pinned], names=names),
@@ -453,7 +450,7 @@ def serve(call: Any, tool: str, arguments: dict[str, Any],
           answer: Callable[[dict[str, Any]], Result] | None = None,
           placer: "Placer | None" = None, why_not: str | None = None,
           others: tuple[str, ...] = (), layout: Any = None,
-          context: "Callable[[], Any] | None" = None,
+          context: "Callable[[], dict[str, Any]] | None" = None,
           files: "list[tuple[str, str, bytes]] | None" = None) -> Result:
     """``tool``'s answer from the Rust session (``answer`` makes the :class:`Result` of its
     envelope), or ``python()``'s where Rust's is not the same yet (counted, with why).
@@ -462,7 +459,7 @@ def serve(call: Any, tool: str, arguments: dict[str, Any],
     try:
         if why_not is not None:
             raise _Fallback(why_not)
-        if call.limits.max_result_chars != _RESULT_CHARS or call.limits.max_list_items != _LIST_ITEMS:
+        if call.limits.max_result_chars < 1 or call.limits.max_list_items < 1:
             raise _Fallback("limits")
         if _renamed_or_deleted(_named(call), *addresses):
             raise _Fallback("renamed or deleted id")

@@ -138,17 +138,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let other: WordRead = arg(json!({"doc": "d1", "range": other}))?;
     // Version 1: read cold once, then warm.
     let versions = Versions::new();
-    let v1 = Version {
-        name: "a.docx",
-        package: &package,
-        number: 1,
-        versions: &versions,
-        placer: None,
-        owned: None,
-        others: ooxml_tools_word::Others::default(),
-        word: None,
-        counts: None,
-    };
+    let v1 = Version::new("a.docx", &package, 1, &versions);
     let start = Instant::now();
     describe(&d, &v1, &Never).map_err(|e| e.message().to_owned())?;
     out.insert("describe_cold_ms".into(), json!(start.elapsed().as_secs_f64() * 1000.0));
@@ -278,29 +268,9 @@ fn after_edit(
     let mut best = (f64::MAX, f64::MAX, f64::MAX);
     for _ in 0..rounds {
         let versions = Versions::new();
-        let v1 = Version {
-            name: "a.docx",
-            package,
-            number: 1,
-            versions: &versions,
-            placer: None,
-            owned: None,
-            others: ooxml_tools_word::Others::default(),
-            word: None,
-            counts: None,
-        };
+        let v1 = Version::new("a.docx", package, 1, &versions);
         describe(d, &v1, &Never).map_err(|e| e.message().to_owned())?;
-        let v2 = Version {
-            name: "a.docx",
-            package: edited,
-            number: 2,
-            versions: &versions,
-            placer: None,
-            owned: None,
-            others: ooxml_tools_word::Others::default(),
-            word: None,
-            counts: None,
-        };
+        let v2 = Version::new("a.docx", edited, 2, &versions);
         let start = Instant::now();
         describe(d, &v2, &Never).map_err(|e| e.message().to_owned())?;
         let first = start.elapsed().as_secs_f64() * 1000.0;

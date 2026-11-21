@@ -20,4 +20,5 @@ mod review;
 mod structure;
 mod style;
 mod template_bench;
+mod text;
 mod word_read;
