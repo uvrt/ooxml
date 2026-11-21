@@ -21,4 +21,5 @@ mod structure;
 mod style;
 mod template_bench;
 mod text;
+mod text_box_fields;
 mod word_read;
