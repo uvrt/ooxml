@@ -48,7 +48,7 @@ pub struct SeriesFormat {
     /// A line series' line, the others' outline.
     pub line: Option<Option<String>>,
     /// The line's width in points.
-    pub line_width: Option<f64>,
+    pub line_width: Option<ooxml_base::pyfmt::PyNumber>,
     /// The line's dash (`ST_PresetLineDashVal`).
     pub dash: Option<String>,
     /// The marker's symbol (`ST_MarkerStyle`).

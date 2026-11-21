@@ -4,9 +4,10 @@
 //! the data actions (`apply_data_action`: points changed in place, categories and series
 //! added and removed, the titles, the legend, value labels and the gap width; their series
 //! and category named as `chart_names` resolves them, the edit `chart_data`'s, one
-//! [`EditGraphic`] command) through the editor.
+//! [`EditGraphic`] command) through the editor -- and the style actions (`chart_style`).
 //!
-//! Not here yet: `add` and the style actions answer `unported` (lane P4c's later parts);
+//! Not here yet: `add`, `set_series_type` and `set_point_labels` answer `unported` (lane
+//! P4c's later parts);
 //! so do values given `from` a table (its provenance records), new title or label text in a
 //! document whose defaults name no language (the session's locale decides it), and a read
 //! or edit ooxml-edit words as its own exception (a chart part that is missing or

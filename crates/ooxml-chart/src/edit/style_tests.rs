@@ -57,8 +57,8 @@ fn colours_read_as_ooxml_edit_reads_them() {
 fn a_scale_reversed_moves_the_crossing_axis() {
     let mut tree = bars();
     let change = ScaleChange {
-        maximum: Some(Some(5.0)),
-        major_unit: Some(Some(1.0)),
+        maximum: Some(Some(5.into())),
+        major_unit: Some(Some(1.into())),
         number_format: Some(None),
         ..ScaleChange::default()
     };
@@ -92,7 +92,7 @@ fn scales_refused_in_ooxml_edits_words() {
     let refuse =
         |tree: &mut ChartTree, axis: &str, change: ScaleChange| err(tree.set_axis_scale("d:1", axis, &change, None)).0;
     let bounds = ScaleChange {
-        minimum: Some(Some(1.0)),
+        minimum: Some(Some(1.into())),
         ..ScaleChange::default()
     };
     assert_eq!(
@@ -104,16 +104,26 @@ fn scales_refused_in_ooxml_edits_words() {
         "d:1: the x axis shows categories, which have no numeric bounds or units; give them for the value axis"
     );
     let crossed = ScaleChange {
-        minimum: Some(Some(9.0)),
-        maximum: Some(Some(3.5)),
+        minimum: Some(Some(9.into())),
+        maximum: Some(Some(3.5.into())),
         ..ScaleChange::default()
     };
     assert_eq!(
         refuse(&mut tree, "value", crossed),
         "d:1: the minimum (9) must be below the maximum (3.5)"
     );
+    // JSON's 9.0 is Python's float: written as one.
+    let floats = ScaleChange {
+        minimum: Some(Some(9.0.into())),
+        maximum: Some(Some(3.0.into())),
+        ..ScaleChange::default()
+    };
+    assert_eq!(
+        refuse(&mut tree, "value", floats),
+        "d:1: the minimum (9.0) must be below the maximum (3.0)"
+    );
     let unit = ScaleChange {
-        minor_unit: Some(Some(0.0)),
+        minor_unit: Some(Some(0.0.into())),
         ..ScaleChange::default()
     };
     assert_eq!(refuse(&mut tree, "value", unit), "minor unit must be greater than 0");
@@ -139,7 +149,7 @@ fn a_point_starts_from_its_series_look() {
     ok(tree.format_series("d:1", 0, None, &fill));
     let point = SeriesFormat {
         line: Some(None),
-        line_width: Some(1.5),
+        line_width: Some(1.5.into()),
         ..SeriesFormat::default()
     };
     ok(tree.format_series("d:1", 0, Some(1), &point));

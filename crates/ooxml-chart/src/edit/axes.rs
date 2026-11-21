@@ -7,12 +7,13 @@
 //! Must not: decide which axis a scale given without one is for (the tool's handler does,
 //! `scale_axis`).
 
-use super::format::{gridline, py_number};
+use super::format::gridline;
 use super::make::Make;
 use super::owned::{Order, Owned};
 use super::path::indexed;
 use super::{number_text, ChartTree, DataError};
 use crate::data::{axis_named, axis_scale, Point};
+use ooxml_base::pyfmt::PyNumber;
 use ooxml_xml::view::{attr, child, local};
 use ooxml_xml::Element;
 
@@ -127,17 +128,18 @@ pub(crate) fn axis_order(kind: &str) -> Order {
 }
 
 /// A change of an axis' scale (`set_axis_scale`'s keywords): `None` stays; a bound or unit
-/// `Some(None)` is automatic again, a number format `Some(None)` follows the values'.
+/// `Some(None)` is automatic again, a number format `Some(None)` follows the values'. A
+/// number keeps whether it was given as an integer or a float, as messages name it.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ScaleChange {
     /// The minimum.
-    pub minimum: Option<Option<f64>>,
+    pub minimum: Option<Option<PyNumber>>,
     /// The maximum.
-    pub maximum: Option<Option<f64>>,
+    pub maximum: Option<Option<PyNumber>>,
     /// The major unit.
-    pub major_unit: Option<Option<f64>>,
+    pub major_unit: Option<Option<PyNumber>>,
     /// The minor unit.
-    pub minor_unit: Option<Option<f64>>,
+    pub minor_unit: Option<Option<PyNumber>>,
     /// An Excel code.
     pub number_format: Option<Option<String>>,
     /// Whether it runs from its maximum.
@@ -146,7 +148,7 @@ pub struct ScaleChange {
 
 impl ScaleChange {
     /// The bounds and units with their names in a message.
-    fn numeric(&self) -> [(&'static str, Option<Option<f64>>); 4] {
+    fn numeric(&self) -> [(&'static str, Option<Option<PyNumber>>); 4] {
         [
             ("minimum", self.minimum),
             ("maximum", self.maximum),
@@ -250,7 +252,7 @@ impl ChartTree {
             )));
         }
         for (name, given) in numeric.iter().skip(2) {
-            if matches!(given, Some(Some(value)) if *value <= 0.0) {
+            if matches!(given, Some(Some(value)) if value.value() <= 0.0) {
                 return Err(DataError(format!("{name} must be greater than 0")));
             }
         }
@@ -262,7 +264,7 @@ impl ChartTree {
         let [low, high, major, minor]: [InForce; 4] = std::array::from_fn(|k| {
             let given = numeric.get(k).and_then(|(_, g)| *g);
             match given {
-                Some(given) => given.map(|v| (v, py_number(v))),
+                Some(given) => given.map(|v| (v.value(), v.to_string())),
                 None => current
                     .get(k)
                     .and_then(Option::as_ref)
@@ -379,7 +381,7 @@ fn write_scale(node: &mut Owned, make: &Make, order: Order, change: &ScaleChange
 
 /// `_set_value`: `parent`'s `name` given `val` (made where `order` puts it), or taken out
 /// for `None`.
-fn set_value(parent: &mut Owned, make: &Make, name: &str, value: Option<f64>, order: Order) {
+fn set_value(parent: &mut Owned, make: &Make, name: &str, value: Option<PyNumber>, order: Order) {
     match value {
         None => {
             if let Some(at) = parent.place(name) {
@@ -392,7 +394,7 @@ fn set_value(parent: &mut Owned, make: &Make, name: &str, value: Option<f64>, or
                 None => parent.insert_ordered(Some(order), make.c(name)),
             };
             if let Some(node) = parent.at(at) {
-                node.set_attr("val", &number_text(value));
+                node.set_attr("val", &number_text(value.value()));
             }
         }
     }
