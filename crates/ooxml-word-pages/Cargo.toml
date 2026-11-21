@@ -18,6 +18,7 @@ ooxml-text.workspace = true
 ooxml-metafile.workspace = true
 ooxml-word-model.workspace = true
 ooxml-word-layout.workspace = true
+ooxml-word-edit.workspace = true
 ooxml-colour.workspace = true
 ooxml-drawingml.workspace = true
 ooxml-chart.workspace = true

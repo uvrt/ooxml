@@ -27,15 +27,15 @@ use ooxml_xml::Element;
 
 /// One row's keep with the next, as Word decides it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RowKeep {
+pub struct RowKeep {
     /// The paragraph it is decided by, its steps below the table; `None`: a row with none.
-    lead: Option<Vec<u32>>,
+    pub lead: Option<Vec<u32>>,
     /// Whether it keeps with the next.
-    keeps: bool,
+    pub keeps: bool,
     /// Whether its styles alone would.
-    styled: bool,
+    pub styled: bool,
     /// Its direct `w:keepNext`: on, off, or none.
-    declared: Option<bool>,
+    pub declared: Option<bool>,
 }
 
 /// Whether a table's rows keep it together (every row but the last keeping with the next,
@@ -49,7 +49,9 @@ pub struct TableKeeps {
 }
 
 impl TableKeeps {
-    fn of(rows: &[RowKeep]) -> TableKeeps {
+    /// What `rows` (a table's, [`row_keeps_at`]) keep.
+    #[must_use]
+    pub fn of(rows: &[RowKeep]) -> TableKeeps {
         let leads = rows.iter().all(|r| r.lead.is_some());
         let but_last = rows.get(..rows.len().saturating_sub(1)).unwrap_or_default();
         TableKeeps {
@@ -281,6 +283,15 @@ pub fn table_keeps(doc: &WordDoc, table: &str) -> Result<TableKeeps> {
 /// A `part` or `path` that holds no table.
 pub fn table_keeps_at(docx: &Docx, part: &str, path: &[u32]) -> Result<TableKeeps> {
     Ok(TableKeeps::of(&rows_at(docx, part, path)?))
+}
+
+/// Per row of the table at `path` in the story part `part` of `docx`, its keep (docx-agent's
+/// `row_keeps`; a reader's: `check`'s layout facts).
+///
+/// # Errors
+/// A `part` or `path` that holds no table.
+pub fn row_keeps_at(docx: &Docx, part: &str, path: &[u32]) -> Result<Vec<RowKeep>> {
+    rows_at(docx, part, path)
 }
 
 /// A paragraph between a table and the next table that does not keep with the next

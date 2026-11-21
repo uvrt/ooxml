@@ -18,6 +18,9 @@
 //! - one version laid out ([`LaidVersion`]): its facts (made once, when first asked), its
 //!   pages' views (lines with their spans, rules, pictures and drawing slots) and SVG,
 //!   painted when asked;
+//! - `check`'s layout facts of a version laid out ([`layout_facts`]: the text sizes, the
+//!   spacers, the keeps broken at a page's foot, the tables kept together and the tables
+//!   parted from their lead-in or the line after them), read with the version's reading;
 //! - what a version alone holds, in bytes, roughly ([`LaidVersion::weight`]), and what the
 //!   engine keeps within its budgets ([`EngineBudgets`]: its memos, swept once a version is
 //!   laid out; its pages' paint, least recently used let go first).
@@ -36,6 +39,7 @@ mod engine;
 mod error;
 mod fonts;
 pub mod ids;
+pub mod layout_facts;
 pub mod line_text;
 pub mod page_said;
 mod pictures;
