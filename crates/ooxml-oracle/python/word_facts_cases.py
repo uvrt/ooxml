@@ -102,7 +102,7 @@ def made_up() -> dict[str, bytes]:
 def _grids(document, p) -> dict[str, bytes]:
     """Tables off their grid (widened, short, by tracked cells or a tracked grid) and ragged
     (now, or as Accept All leaves them), each with ``document``'s body (docx-agent's test
-    builder) around it."""
+    document maker) around it."""
     record = 'w:id="{}" w:author="Editor B" w:date="2026-11-13T09:00:00Z"'
 
     def tc(text: str, props: str = "") -> str:
