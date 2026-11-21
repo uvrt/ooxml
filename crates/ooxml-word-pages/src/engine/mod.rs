@@ -606,47 +606,24 @@ impl PageEngine {
     /// context, the rest painted and digested; `None` where `version` is not of this
     /// engine's generation.
     pub fn summary(&mut self, version: &LaidVersion) -> Option<Arc<crate::summary::Summary>> {
-        self.summary_until(version, None).ok().flatten()
-    }
-
-    /// [`PageEngine::summary`], stopped where `cancel` says so (asked before each page
-    /// painted for it).
-    ///
-    /// # Errors
-    /// [`PagesError::Stopped`] where `cancel` stopped it: the pages summarised so far are
-    /// kept for the next summary.
-    pub fn summary_until(
-        &mut self,
-        version: &LaidVersion,
-        cancel: Option<&dyn Cancel>,
-    ) -> Result<Option<Arc<crate::summary::Summary>>, PagesError> {
         if let Some(found) = version.summary.get() {
-            return Ok(Some(Arc::clone(found)));
+            return Some(Arc::clone(found));
         }
         if self.generation.as_ref().is_none_or(|g| g.number != version.generation) {
-            return Ok(None);
+            return None;
         }
         let layout = &version.layout;
         let context = crate::summary::context_of(layout, KEY);
         let mut pages = Vec::with_capacity(layout.page_count());
         let mut kept = Vec::new();
         for page in 0..layout.page_count() {
-            if cancel.is_some_and(Cancel::is_cancelled) {
-                if let Some(generation) = self.generation.as_mut() {
-                    generation.summaries.keep(kept, context);
-                }
-                return Err(PagesError::Stopped);
-            }
             let key = crate::page_said::page_key(layout, page);
             let found = key
                 .as_ref()
                 .and_then(|k| self.generation.as_mut().and_then(|g| g.summaries.take(k, context)));
             let summary = match found {
                 Some(found) => found,
-                None => match self.page_digests(version, page) {
-                    Some(digests) => Arc::new(crate::summary::page_summary(digests, version)),
-                    None => return Ok(None),
-                },
+                None => Arc::new(crate::summary::page_summary(self.page_digests(version, page)?, version)),
             };
             if let Some(key) = key {
                 kept.push((key, Arc::clone(&summary)));
@@ -660,7 +637,7 @@ impl PageEngine {
             known: pages.len(),
             pages,
         });
-        Ok(Some(Arc::clone(version.summary.get_or_init(|| made))))
+        Some(Arc::clone(version.summary.get_or_init(|| made)))
     }
 
     /// Page `page` of `version` as a reader sees it.

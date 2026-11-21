@@ -3,7 +3,8 @@
 //! document's last check saw. Its equality with docx-agent's is
 //! `crates/ooxml-oracle/python/word_reads_diff.py check`'s and docx-agent's
 //! `test_rust_check_reflow.py`'s. A layout past the call's limit on laying out is said as
-//! docx-agent says it, and the check goes on.
+//! docx-agent says it, and the check goes on; the limit holds the layout only, never the
+//! summary read from a version laid out.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
 use crate::common::{engine, Never, Still, Unlimited};
@@ -11,7 +12,9 @@ use ooxml_base::Limits;
 use ooxml_opc::Package;
 use ooxml_store::StoreConfig;
 use ooxml_tools::ArgType;
-use ooxml_tools_word::{check, Check, EnginePages, LastCheck, LayoutLimit, Others, Owned, Version, CHECK_NO_LAYOUT};
+use ooxml_tools_word::{
+    check, Check, EnginePages, LastCheck, LayoutLimit, Others, Owned, Version, WordLayout, CHECK_NO_LAYOUT,
+};
 use ooxml_word_edit::Editor;
 use ooxml_word_model::docx::Versions;
 use serde_json::{json, Value};
@@ -177,4 +180,23 @@ fn a_reflow_past_the_limit_on_laying_out_says_so_and_the_check_goes_on() {
         later["data"]["reflow"]["since_last_check"]["pages"][0], pages,
         "{later}"
     );
+}
+
+#[test]
+fn a_version_laid_out_is_summarised_whole_past_the_limit_on_laying_out() {
+    // docx-agent's deadline holds its layout, not the facts read from it: a version the
+    // engine laid out already is answered whatever the limit says, and its summary is made
+    // whole however long its pages take to paint
+    let (first, _) = versions();
+    let layout = EnginePages::new(Arc::new(Mutex::new(engine())));
+    layout.laid(&first, &Never).unwrap();
+    let limit = LayoutLimit {
+        cancel: &Past,
+        timeout: Duration::from_millis(1),
+    };
+    let reply = limited(&first, 1, json!({"doc": "d1"}), &LastCheck::default(), Some(&layout), Some(limit));
+    let reflow = &reply["data"]["reflow"];
+    assert!(reflow.get("error").is_none(), "{reply}");
+    assert_eq!(reflow["complete"], true);
+    assert!(reflow["pages"].as_u64().unwrap() >= 1, "{reply}");
 }

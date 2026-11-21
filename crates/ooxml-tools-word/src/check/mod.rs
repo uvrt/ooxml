@@ -86,7 +86,7 @@ pub fn check(args: &Check, version: &Version<'_>, cancel: &dyn Cancel) -> Result
             timing.insert("layout".into(), seconds(started));
         }
         let started = Instant::now();
-        let found = laid.and_then(|laid| reflow_facts(layout, &laid, version, owned, args.pages.as_deref(), stop));
+        let found = laid.and_then(|laid| reflow_facts(layout, &laid, version, owned, args.pages.as_deref()));
         timing.insert("facts".into(), seconds(started));
         let reflow = match found {
             Ok(facts) => facts,
@@ -151,16 +151,15 @@ fn served(args: &Check) -> Result<Vec<CheckInclude>, &'static str> {
 }
 
 /// `reflow`: the version's pages, coverage and first warnings, and the pages changed since
-/// the document's last check (which this one now is); its pages summarised until `cancel` says stop.
+/// the document's last check (which this one now is).
 fn reflow_facts(
     layout: &dyn crate::WordLayout,
     laid: &ooxml_word_pages::LaidVersion,
     version: &Version<'_>,
     owned: Owned<'_>,
     pages: Option<&[i64]>,
-    cancel: &dyn Cancel,
 ) -> Result<Value, NotLaid> {
-    let found = reflow::laid_facts(layout, laid, cancel)?;
+    let found = reflow::laid_facts(layout, laid)?;
     let mut facts = found.facts;
     let last = owned.last_check.get();
     let aliases = owned.doc.ids().aliases();

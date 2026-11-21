@@ -253,10 +253,7 @@ fn a_layout_stopped_lays_nothing_out_and_the_next_is_laid_out_from_the_one_befor
     assert!(!whole.relaid());
     assert_eq!(svgs(&mut kept, &second), svgs(&mut fresh, &whole));
     assert_eq!(second.facts(), whole.facts());
-    // a summary stopped after its first page lays nothing out; the next is the whole one
-    let stopped = fresh.summary_until(&whole, Some(&after(1)));
-    assert!(matches!(stopped, Err(ooxml_word_pages::PagesError::Stopped)));
-    let summary = fresh.summary_until(&whole, None).unwrap().unwrap();
+    let summary = fresh.summary(&whole).unwrap();
     assert_eq!(summary.pages.len(), whole.page_count());
     assert_eq!(summary.pages, kept.summary(&second).unwrap().pages);
 }
