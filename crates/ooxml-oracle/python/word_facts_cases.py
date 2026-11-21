@@ -109,7 +109,7 @@ def made_up() -> dict[str, bytes]:
     out["accept-unnamed"] = _document(_edge((0, 1)).replace('w:del w:id="95" ', "w:del "))
     out["accept-nested"] = _document(_tbl([[_p("Outer") + _edge((1, 1)) + _p("Below"), _p("Side")]]))
     # Rows written unlike the rows around them (row 2 red among blue ones), and alike.
-    from test_rows_r58 import ROWS, _shelf
+    from shelf_tables import ROWS, _shelf
 
     out["rows-unlike"] = _row_ids(_shelf(ROWS, colors=["1F4E79", "C00000", "1F4E79", "1F4E79"]))
     out["rows-banded"] = _row_ids(_shelf(ROWS, colors=["1F4E79", "7F7F7F", "1F4E79", "7F7F7F"]))
