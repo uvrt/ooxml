@@ -95,6 +95,7 @@ impl Opened {
             owned: None,
             others: ooxml_tools_word::Others::default(),
             word: self.word(),
+            counts: None,
         }
     }
 }
@@ -605,6 +606,7 @@ impl Session {
             blobs: context.blobs.as_deref(),
             written: &context.written,
             others: &state.others,
+            counts: context.counts,
         };
         tool.run(arguments, &call)
     }

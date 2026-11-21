@@ -9,6 +9,7 @@ mod history;
 mod object_bench;
 mod object_writers;
 mod review_writers;
+mod saving;
 mod structure_bench;
 mod structure_reads;
 mod structure_writers;

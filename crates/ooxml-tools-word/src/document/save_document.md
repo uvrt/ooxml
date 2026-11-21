@@ -1,0 +1,1 @@
+Give the document to the application as a file. Refuses new validation problems. Returns the name, format, size and validation report, never the content.

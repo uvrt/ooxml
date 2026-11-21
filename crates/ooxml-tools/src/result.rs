@@ -5,8 +5,8 @@
 //! and its text within a budget (`Result.to_text`): what did not fit is said, never cut
 //! silently, with the call that would ask for it where the tool gave one
 //! ([`Done::ask`]); a no-op as a success with a note, never an error (rule 3); and the
-//! application-only fields ([`AppOnly`]: `touched`, timing, memory, budget), never in the
-//! model's JSON.
+//! application-only fields ([`AppOnly`]: `touched`, timing, memory, budget, the files the
+//! call gives the application), never in the model's JSON.
 //!
 //! Must not: know providers (the adapters turn the text and images into content blocks)
 //! or describe images (their descriptors come from the renderer, as opaque JSON).
@@ -62,6 +62,21 @@ pub struct Done<T> {
     /// never in the model's JSON -- a host that owns the document answers such a call its
     /// own way meanwhile, so nothing reaches the model otherwise than before.
     pub unported: Vec<String>,
+    /// The files the call gives the application (`save_document`'s package): never in the
+    /// model's JSON; [`ToolResult::done`] moves them into [`AppOnly::files`].
+    pub files: Vec<File>,
+}
+
+/// A file a call gives the application, its bytes beside the reply (tool design rule 6:
+/// the model is told its name, format and size, never its content).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct File {
+    /// Its name, as the call gives it (`q3-review.docx`).
+    pub name: String,
+    /// Its format, as the call names it (`docx`, `markdown`).
+    pub format: String,
+    /// Its bytes.
+    pub bytes: Vec<u8>,
 }
 
 impl<T> Done<T> {
@@ -83,6 +98,7 @@ impl<T> Done<T> {
             images: Vec::new(),
             ask: None,
             unported: Vec::new(),
+            files: Vec::new(),
         }
     }
 }
@@ -120,6 +136,8 @@ pub struct AppOnly {
     pub budget: Option<usize>,
     /// Whether the call found what it asked already true (rule 3).
     pub unchanged: bool,
+    /// The files the call gives the application ([`Done::files`]).
+    pub files: Vec<File>,
 }
 
 /// How the call went.
@@ -152,13 +170,17 @@ pub const MAX_RESULT_CHARS: usize = 24_000;
 impl<T: ReplyData> ToolResult<T> {
     /// A success.
     #[must_use]
-    pub fn done(done: Done<T>) -> Self {
+    pub fn done(mut done: Done<T>) -> Self {
+        let files = std::mem::take(&mut done.files);
         Self {
             doc: None,
             version: None,
             outcome: Outcome::Done(Box::new(done)),
             warnings: Vec::new(),
-            app: AppOnly::default(),
+            app: AppOnly {
+                files,
+                ..AppOnly::default()
+            },
         }
     }
 

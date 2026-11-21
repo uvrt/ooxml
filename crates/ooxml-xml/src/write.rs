@@ -47,6 +47,17 @@ impl Tree {
     }
 }
 
+impl Element {
+    /// The element and everything in it, in the write contract's form, without a
+    /// declaration (lxml's `tostring(element)`): for a part whose writer gives the
+    /// declaration itself.
+    pub fn write(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        write_element(self, &mut out);
+        out
+    }
+}
+
 fn write_doctype(d: &Doctype, out: &mut Vec<u8>) {
     out.extend_from_slice(b"<!DOCTYPE ");
     out.extend_from_slice(d.name.as_bytes());

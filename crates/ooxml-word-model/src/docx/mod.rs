@@ -29,6 +29,7 @@ pub mod outline;
 pub mod provenance;
 pub mod revisions;
 pub mod sections;
+pub mod statistics;
 pub mod tables;
 pub mod text;
 mod texts;

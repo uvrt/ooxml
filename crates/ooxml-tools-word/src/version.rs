@@ -41,6 +41,20 @@ pub struct Version<'a> {
     /// document (`None`: only its package): its ids and their renames, so that an address
     /// in it resolves as the document's own tools resolve it.
     pub word: Option<&'a ooxml_word_edit::WordDoc>,
+    /// The pages and lines of this version's layout, where the host has laid it out (the
+    /// statistics `save_document` writes into `app.xml`; `None`: not laid out, left as they
+    /// are).
+    pub counts: Option<LayoutCounts>,
+}
+
+/// The pages and lines of a version's layout, as the host that laid it out counts them
+/// (docx-agent's `layout_statistics`: the pages known, the body's lines on them).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LayoutCounts {
+    /// The pages.
+    pub pages: u64,
+    /// The body's lines.
+    pub lines: u64,
 }
 
 impl Version<'_> {
@@ -63,6 +77,9 @@ pub struct Owned<'a> {
     pub doc: &'a WordDoc,
     /// The problems the document had when the session opened it.
     pub baseline: &'a [Problem],
+    /// The document as the session opened it (what changed since: `save_document`'s
+    /// `app.xml` refreshed only when the main part did).
+    pub opened: &'a WordDoc,
 }
 
 /// The other documents a call names, by id, each at the version the session pinned for the

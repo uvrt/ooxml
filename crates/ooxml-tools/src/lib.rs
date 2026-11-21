@@ -63,7 +63,9 @@ pub use error::{ErrorCode, Failure, Refusal, ToolError, TryCall, WayOut};
 pub use intent::Accepted;
 pub use ooxml_tools_derive::{ArgEnum, ToolArgs};
 pub use places::{PlaceKind, Places, NAMES as PLACE_NAMES};
-pub use result::{compact, python_dumps, AppOnly, Done, Outcome, ReplyData, Timing, ToolResult, MAX_RESULT_CHARS};
+pub use result::{
+    compact, python_dumps, AppOnly, Done, File, Outcome, ReplyData, Timing, ToolResult, MAX_RESULT_CHARS,
+};
 pub use spec::{Alias, Flags, Holding, ToolSpec};
 pub use types::{ArgEnum, ArgError, ArgType, IntOrStr, NumOrStr, ReadsWhen, ToolArgs};
 pub use validate::{validate, CallError, Problem, Retry};

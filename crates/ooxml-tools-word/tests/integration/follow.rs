@@ -65,6 +65,7 @@ fn follow(mut arguments: Value) -> Value {
         owned: None,
         others: Others::default(),
         word: None,
+        counts: None,
     };
     let others = [("d2", other)];
     let call_editor = CallEditor::new(&editor);

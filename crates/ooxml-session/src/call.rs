@@ -38,6 +38,8 @@ pub struct Call<'a> {
     /// The other documents the call names (`ooxml_tools::documents`), by id, each at the
     /// version pinned for the call when it was dispatched.
     pub(crate) others: &'a [(String, Opened)],
+    /// The pages and lines of the version's layout, where the host laid it out.
+    pub(crate) counts: Option<ooxml_tools_word::LayoutCounts>,
 }
 
 impl Call<'_> {
@@ -68,6 +70,7 @@ impl Call<'_> {
         Some(ooxml_tools_word::Owned {
             doc,
             baseline: word.editor.baseline(),
+            opened: word.opened.doc(),
         })
     }
 
@@ -118,6 +121,7 @@ impl Call<'_> {
         let version = Version {
             others: Others::new(&others),
             owned: self.owned(),
+            counts: self.counts,
             ..self.doc.version_of()
         };
         run(&version)

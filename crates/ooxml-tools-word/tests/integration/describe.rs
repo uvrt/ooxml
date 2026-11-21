@@ -125,6 +125,7 @@ fn describes_what_the_parts_say() {
             owned: None,
             others: ooxml_tools_word::Others::default(),
             word: None,
+            counts: None,
         },
         &Never,
     )
@@ -177,6 +178,7 @@ fn a_bare_package_has_the_defaults() {
             owned: None,
             others: ooxml_tools_word::Others::default(),
             word: None,
+            counts: None,
         },
         &Never,
     )
@@ -204,6 +206,7 @@ fn cancellation_stops_it_with_timeout() {
             owned: None,
             others: ooxml_tools_word::Others::default(),
             word: None,
+            counts: None,
         },
         &After(AtomicBool::new(false)),
     )
@@ -227,6 +230,7 @@ fn not_a_word_package_is_an_internal_error() {
             owned: None,
             others: ooxml_tools_word::Others::default(),
             word: None,
+            counts: None,
         },
         &Never,
     )

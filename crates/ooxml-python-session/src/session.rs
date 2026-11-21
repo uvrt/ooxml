@@ -92,7 +92,9 @@ type Validation = (Vec<String>, Vec<String>, usize);
 type EditMade = (u64, PyVersion, Option<String>, Validation);
 
 /// What a call runs with (`ooxml_core.CallContext`): who calls, a token that stops it,
-/// and how long it may run, in seconds. One may serve many calls.
+/// how long it may run, in seconds, and `layout_counts`, `(pages, lines)` of the host's
+/// layout of the version the call reads where it has laid it out (`save_document`'s
+/// `app.xml` statistics). One may serve many calls.
 #[pyclass(frozen, name = "CallContext", module = "ooxml_core")]
 pub struct PyCallContext {
     pub(crate) inner: CallContext,
@@ -101,8 +103,13 @@ pub struct PyCallContext {
 #[pymethods]
 impl PyCallContext {
     #[new]
-    #[pyo3(signature = (*, caller = None, cancel = None, deadline = None))]
-    fn new(caller: Option<&str>, cancel: Option<PyRef<'_, PyCancelToken>>, deadline: Option<f64>) -> PyResult<Self> {
+    #[pyo3(signature = (*, caller = None, cancel = None, deadline = None, layout_counts = None))]
+    fn new(
+        caller: Option<&str>,
+        cancel: Option<PyRef<'_, PyCancelToken>>,
+        deadline: Option<f64>,
+        layout_counts: Option<(u64, u64)>,
+    ) -> PyResult<Self> {
         let deadline = deadline
             .map(|seconds| {
                 Duration::try_from_secs_f64(seconds)
@@ -114,6 +121,7 @@ impl PyCallContext {
                 caller: caller.map_or_else(Caller::anonymous, Caller::named),
                 cancel: cancel.map(|t| Arc::clone(&t.inner)),
                 deadline,
+                counts: layout_counts.map(|(pages, lines)| ooxml_tools_word::LayoutCounts { pages, lines }),
                 ..CallContext::default()
             },
         })
@@ -328,26 +336,33 @@ impl PySession {
     /// Run the tool `name` with `arguments` (JSON text) on a snapshot, with `options` (a
     /// `CallOptions`: who calls, the versions read, the placer, the page engine, the reply's
     /// `limit`, ...): returns the reply as JSON text -- the whole envelope, or within the
-    /// limit as the model is sent it --, the images beside it (bytes), and what only the
-    /// application reads, as JSON text: `unported`, what of the answer is not yet given as
-    /// the Python tool gives it (a list of reasons). Never raises for the call's own failure:
-    /// that is the reply's `error`, with its way out.
+    /// limit as the model is sent it --, the files the call gives the application (bytes:
+    /// `save_document`'s), and what only the application reads, as JSON text: `unported`,
+    /// what of the answer is not yet given as the Python tool gives it (a list of reasons),
+    /// and `files`, each file's `name` and `format` in the order of the bytes. Never raises
+    /// for the call's own failure: that is the reply's `error`, with its way out.
     #[pyo3(signature = (name, arguments, options = None))]
     fn call(&self, py: Python<'_>, name: &str, arguments: String, options: Option<PyRef<'_, PyCallOptions>>) -> Reply {
         let context = context_of(options.as_deref());
         let limit = options.as_ref().and_then(|o| o.limit);
         let session = &self.inner;
-        let text = py.detach(|| {
+        let (text, files, app) = py.detach(|| {
             let run = || session.call(name, Value::String(arguments), &context);
-            let result = catch_unwind(AssertUnwindSafe(run)).unwrap_or_else(|panic| panicked(name, &*panic));
-            let app = serde_json::json!({"unported": result.unported()});
+            let mut result = catch_unwind(AssertUnwindSafe(run)).unwrap_or_else(|panic| panicked(name, &*panic));
+            let files = std::mem::take(&mut result.app.files);
+            let named: Vec<Value> = files
+                .iter()
+                .map(|f| serde_json::json!({"name": f.name, "format": f.format}))
+                .collect();
+            let app = serde_json::json!({"unported": result.unported(), "files": named});
             let text = match limit {
                 Some(limit) => result.to_text(Some(limit)),
                 None => compact(&Value::Object(result.to_json())),
             };
-            (text, compact(&app))
+            (text, files, compact(&app))
         });
-        (text.0, Vec::new(), text.1)
+        let files = files.iter().map(|f| PyBytes::new(py, &f.bytes).unbind()).collect();
+        (text, files, app)
     }
 
     /// Run the editing tool `name` as [`call`](Self::call) does, with `options` (a

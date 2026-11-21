@@ -61,6 +61,7 @@ fn registered(tool: &str, arguments: &Value, editing: &Editing<'_>) -> Option<To
         owned: None,
         others: editing.others,
         word: Some(editing.opened),
+        counts: None,
     };
     Some(tool.run_outside(arguments, editing, &version))
 }
@@ -190,6 +191,7 @@ fn other_version<'a>(package: &'a Package, word: Option<&'a WordDoc>, versions: 
         owned: None,
         others: Others::default(),
         word,
+        counts: None,
     }
 }
 

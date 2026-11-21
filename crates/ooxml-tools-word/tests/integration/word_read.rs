@@ -87,6 +87,7 @@ fn read(args: &WordRead) -> String {
             owned: None,
             others: ooxml_tools_word::Others::default(),
             word: None,
+            counts: None,
         },
         &Never,
     )
@@ -127,6 +128,7 @@ fn a_range_naming_nothing_is_refused_with_the_way_out() {
             owned: None,
             others: ooxml_tools_word::Others::default(),
             word: None,
+            counts: None,
         },
         &Never,
     )
@@ -155,6 +157,7 @@ fn a_range_with_every_story_is_refused_with_the_call_that_works() {
             owned: None,
             others: ooxml_tools_word::Others::default(),
             word: None,
+            counts: None,
         },
         &Never,
     )
@@ -182,6 +185,7 @@ fn a_long_document_is_paged_at_line_ends() {
             owned: None,
             others: ooxml_tools_word::Others::default(),
             word: None,
+            counts: None,
         },
         &Never,
     )
@@ -202,6 +206,7 @@ fn a_long_document_is_paged_at_line_ends() {
             owned: None,
             others: ooxml_tools_word::Others::default(),
             word: None,
+            counts: None,
         },
         &Never,
     )
@@ -219,6 +224,7 @@ fn a_long_document_is_paged_at_line_ends() {
             owned: None,
             others: ooxml_tools_word::Others::default(),
             word: None,
+            counts: None,
         },
         &Never,
     )
@@ -245,6 +251,7 @@ fn views_name_the_summary() {
             owned: None,
             others: ooxml_tools_word::Others::default(),
             word: None,
+            counts: None,
         },
         &Never,
     )

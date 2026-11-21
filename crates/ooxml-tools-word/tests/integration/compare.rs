@@ -53,6 +53,7 @@ fn reply(arguments: Value) -> Value {
         owned: None,
         others: Others::default(),
         word: None,
+        counts: None,
     };
     let others = [("d2", other)];
     let version = Version {
@@ -64,6 +65,7 @@ fn reply(arguments: Value) -> Value {
         owned: None,
         others: Others::new(&others),
         word: None,
+        counts: None,
     };
     let (args, _) = WordCompareBlocks::accept(arguments, Some("docx")).unwrap();
     match word_compare_blocks(&args, &version, &Never) {
@@ -114,6 +116,7 @@ fn compare_on_a_long_document() {
         owned: None,
         others: Others::default(),
         word: None,
+        counts: None,
     };
     let start = std::time::Instant::now();
     let docx = version.docx().unwrap();

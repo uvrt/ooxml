@@ -14,7 +14,7 @@ HERE = Path(__file__).resolve().parent
 GOLDEN = HERE.parents[2] / "crates" / "ooxml-tools-word" / "tests" / "golden"
 
 
-@pytest.mark.parametrize("name", ["set_properties"])
+@pytest.mark.parametrize("name", ["set_properties", "save_document"])
 def test_the_rust_definitions_are_todays_byte_for_byte(name):
     from test_rust_tool_specs import export, text
 

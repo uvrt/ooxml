@@ -111,6 +111,7 @@ fn reply(arguments: Value) -> Value {
         owned: None,
         others: Others::default(),
         word: None,
+        counts: None,
     };
     let (args, _) = WordDesignFacts::accept(arguments, Some("docx")).unwrap();
     match word_design_facts(&args, &version, &Never) {
@@ -213,6 +214,7 @@ fn design_facts_on_a_long_document() {
         owned: None,
         others: Others::default(),
         word: None,
+        counts: None,
     };
     let start = std::time::Instant::now();
     let _ = version.docx().unwrap();
