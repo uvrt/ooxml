@@ -16,6 +16,7 @@ mod chart_fold;
 mod chart_keeper;
 mod chart_names;
 mod chart_read;
+mod chart_style;
 mod chart_workbook;
 mod controls;
 mod drawings;

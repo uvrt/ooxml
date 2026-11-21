@@ -1,0 +1,453 @@
+//! Owns: `edit_chart`'s style actions (docx-agent's `_style_chart` through ooxml-edit's
+//! `apply_style_action`, `charts/actions.py`): `set_axis_scale` (the axis a scale given
+//! without one is for, `scale_axis`; its keys as keywords, `scale_arguments`),
+//! `set_gridlines`, `format_series`, `format_point` and `set_text_style` -- their arguments
+//! checked in ooxml-edit's order and the chart part changed (`ooxml_chart::edit`), one
+//! [`EditGraphic`](ooxml_word_edit::EditGraphic) command.
+//!
+//! Not here yet: `set_series_type` and `set_point_labels` (the handler answers them
+//! `unported`).
+//!
+//! Must not: resolve a series or category by name but through `chart_names`, or write but
+//! through the command.
+
+use super::chart_data::Warnings;
+use super::chart_keeper::{refused, unported};
+use super::chart_names::{category_names, choices, position, series_names, Stop};
+use super::{ChartAction, ChartAxis, EditChart, Gridlines, ScaleArg, ScaleKey, StyleArg};
+use ooxml_chart::data::{axis_names, ChartData, Point};
+use ooxml_chart::edit::{
+    text_size, ChartTree, Colour, DataError, ScaleChange, SeriesFormat, TextHost, TextLook, TextStop,
+};
+use ooxml_tools::{ArgEnum, Refusal, ToolError, TryCall, WayOut};
+use ooxml_word_edit::{EditError, GraphicEdit, GraphicParts, PartWrite};
+use ooxml_xml::view::{child, children};
+use ooxml_xml::Element;
+use std::sync::Arc;
+
+/// Word's look for text properties made new: axis labels' and the legend's, data labels'
+/// (`WORD_LOOK.labels`, `.data_labels`, hundredths of a point).
+const WORD_TEXT_SIZES: (u32, u32) = (900, 900);
+/// `format_series`' and `format_point`'s style keys (`_SERIES_STYLE`), and
+/// `set_text_style`'s (`_TEXT_STYLE`).
+const SERIES_STYLE: &str = "fill, line, line_width, dash, marker, marker_size, marker_fill";
+const TEXT_STYLE: &str = "font, size, bold, color";
+/// What a scale may hold (`_expected(chart, "scale")`).
+const SCALE_KEYS: &str = "min, max, major_unit, minor_unit, number_format, reverse or auto";
+
+/// A style action, its series and point resolved to positions.
+#[derive(Debug, Clone)]
+pub(crate) enum StyleAction {
+    /// An axis' scale; `values_format` is the values' number format.
+    Scale {
+        axis: &'static str,
+        change: ScaleChange,
+        values_format: Option<String>,
+    },
+    /// An axis' gridlines shown or taken away.
+    Gridlines {
+        axis: &'static str,
+        major: bool,
+        minor: bool,
+    },
+    /// A series' look, or one point's.
+    Format {
+        series: usize,
+        point: Option<usize>,
+        look: SeriesFormat,
+    },
+    /// The text's look, of one part or all; new text properties in `lang`.
+    Text {
+        part: Option<&'static str>,
+        look: TextLook,
+        lang: Option<String>,
+    },
+}
+
+/// A style action on the chart `address` (the target, as ooxml-edit's messages name it).
+#[derive(Debug, Clone)]
+pub(crate) struct ChartStyleEdit {
+    pub(crate) address: String,
+    pub(crate) action: StyleAction,
+}
+
+impl GraphicEdit for ChartStyleEdit {
+    type Out = Warnings;
+
+    fn edit(&self, package: &ooxml_opc::Package, part: &str) -> Result<GraphicParts<Warnings>, EditError> {
+        let tree = package.tree(part)?.ok_or_else(|| EditError::NoPart(part.to_owned()))?;
+        let mut chart = ChartTree::new(Arc::clone(tree.root()));
+        let address = self.address.as_str();
+        let refusal = |error: DataError| refused(&error.0);
+        match &self.action {
+            StyleAction::Scale {
+                axis,
+                change,
+                values_format,
+            } => chart
+                .set_axis_scale(address, axis, change, values_format.as_deref())
+                .map_err(refusal)?,
+            StyleAction::Gridlines { axis, major, minor } => chart
+                .set_gridlines(address, axis, Some(*major), Some(*minor))
+                .map_err(refusal)?,
+            StyleAction::Format { series, point, look } => {
+                chart.format_series(address, *series, *point, look).map_err(refusal)?;
+            }
+            StyleAction::Text { part, look, lang } => {
+                let host = TextHost {
+                    labels: Some(WORD_TEXT_SIZES.0),
+                    data_labels: Some(WORD_TEXT_SIZES.1),
+                    lang: lang.as_deref(),
+                };
+                chart
+                    .set_text_style(address, *part, look, &host)
+                    .map_err(|stop| match stop {
+                        TextStop::Refused(error) => refusal(error),
+                        TextStop::NeedsLanguage(_) => unported(
+                            "set_text_style: a document whose defaults name no language (the session's locale decides)",
+                        ),
+                    })?;
+            }
+        }
+        let writes = vec![PartWrite::Tree(
+            part.to_owned(),
+            tree.with_root(Arc::clone(chart.root())),
+        )];
+        Ok(GraphicParts {
+            read: Vec::new(),
+            writes,
+            out: Vec::new(),
+        })
+    }
+}
+
+/// The style action planned (`_style_chart`, then `apply_style_action`, in their order:
+/// the series and category, then what the action needs).
+pub(super) fn planned(
+    args: &EditChart,
+    data: &ChartData,
+    root: &Element,
+    read: &TryCall,
+    lang: Option<String>,
+) -> Result<StyleAction, Stop> {
+    let action = args.action.as_str();
+    let plan = Plan { args, data, root, read };
+    let hint = if data.category_dates.is_some() {
+        "; its categories are dates, named as YYYY-MM-DD"
+    } else {
+        ""
+    };
+    let series = match &args.series {
+        Some(which) => Some(position(
+            &series_names(data),
+            Some(which),
+            ("series", action, ""),
+            read,
+        )?),
+        None => None,
+    };
+    let category = match (&args.category, series) {
+        (Some(which), Some(_)) => Some(position(
+            &category_names(data),
+            Some(which),
+            ("category", action, hint),
+            read,
+        )?),
+        _ => None,
+    };
+    match args.action {
+        ChartAction::SetAxisScale => plan.scale(),
+        ChartAction::SetGridlines => plan.gridlines(),
+        ChartAction::FormatSeries | ChartAction::FormatPoint => plan.format(series, category),
+        ChartAction::SetTextStyle => Ok(StyleAction::Text {
+            part: args.part.map(ArgEnum::as_str),
+            look: text_look(args.style.as_ref()).map_err(|e| plan.refuse(e.0))?,
+            lang,
+        }),
+        _ => Err(Stop::Unported("edit_chart: this style action")),
+    }
+}
+
+/// What a style action is planned from.
+struct Plan<'a> {
+    args: &'a EditChart,
+    data: &'a ChartData,
+    root: &'a Element,
+    read: &'a TryCall,
+}
+
+impl Plan<'_> {
+    /// A `ChartDataError`, as docx-agent words it: `invalid_arguments`, the message
+    /// stripped of quotes at its ends.
+    fn refuse(&self, message: String) -> Stop {
+        let message = message.trim_matches(['\'', '"']).to_owned();
+        Stop::Refused(ToolError::refusal(
+            Refusal::InvalidArguments,
+            message,
+            WayOut::call(self.read.clone()),
+        ))
+    }
+
+    fn chart_type(&self) -> &str {
+        self.data.types.first().map_or("None", String::as_str)
+    }
+
+    /// `set_axis_scale`: the scale, the axis it is for, its keywords.
+    fn scale(&self) -> Result<StyleAction, Stop> {
+        let Some(scale) = &self.args.scale else {
+            return Err(self.refuse(format!("set_axis_scale needs scale: {SCALE_KEYS}")));
+        };
+        let axis = match self.args.axis {
+            Some(axis) => axis_name(axis),
+            None => {
+                let axes = axis_names(self.root);
+                scale_axis(&self.args.target, self.root, &axes, self.chart_type(), scale)
+                    .map_err(|e| self.refuse(e.0))?
+            }
+        };
+        Ok(StyleAction::Scale {
+            axis,
+            change: scale_arguments(scale).map_err(|e| self.refuse(e.0))?,
+            values_format: self.data.format.clone(),
+        })
+    }
+
+    /// `set_gridlines`: the axis, then which gridlines.
+    fn gridlines(&self) -> Result<StyleAction, Stop> {
+        let Some(axis) = self.args.axis else {
+            let axes = axis_names(self.root);
+            let expected = if axes.is_empty() {
+                format!("a {} chart has no axes", self.chart_type())
+            } else {
+                either(&axes)
+            };
+            return Err(self.refuse(format!("set_gridlines needs axis: {expected}")));
+        };
+        let Some(gridlines) = self.args.gridlines else {
+            return Err(self.refuse("set_gridlines needs gridlines: none, major, minor or both".to_owned()));
+        };
+        let (major, minor) = match gridlines {
+            Gridlines::None => (false, false),
+            Gridlines::Major => (true, false),
+            Gridlines::Minor => (false, true),
+            Gridlines::Both => (true, true),
+        };
+        Ok(StyleAction::Gridlines {
+            axis: axis_name(axis),
+            major,
+            minor,
+        })
+    }
+
+    /// `format_series`, `format_point`: the style, then the series and the point.
+    fn format(&self, series: Option<usize>, category: Option<usize>) -> Result<StyleAction, Stop> {
+        let action = self.args.action.as_str();
+        let look = series_format(self.args.style.as_ref(), action).map_err(|e| self.refuse(e.0))?;
+        let need = |name: &str, names: &[String]| self.refuse(format!("{action} needs {name}: {}", choices(names)));
+        let Some(series) = series else {
+            let names: Vec<String> = self
+                .data
+                .series
+                .iter()
+                .map(|s| s.name.as_ref().map_or_else(|| "None".to_owned(), Point::text))
+                .collect();
+            return Err(need("series", &names));
+        };
+        let point = match (self.args.action, category) {
+            (ChartAction::FormatPoint, None) => return Err(need("category", &category_names(self.data))),
+            (ChartAction::FormatPoint, at) => at,
+            _ => None,
+        };
+        Ok(StyleAction::Format { series, point, look })
+    }
+}
+
+/// An axis' name as the chart part's edit takes it.
+fn axis_name(axis: ChartAxis) -> &'static str {
+    axis.as_str()
+}
+
+/// `_either`: `a`, `a or b`, `a, b or c`.
+fn either(names: &[&str]) -> String {
+    match names.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} or {last}", rest.join(", ")),
+        Some((last, _)) => (*last).to_owned(),
+        None => String::new(),
+    }
+}
+
+/// The scale keys given (Python's `scale` dict keys), in the tool's order.
+fn given_keys(scale: &ScaleArg) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    for (key, given) in [
+        ("min", scale.min.is_some()),
+        ("max", scale.max.is_some()),
+        ("major_unit", scale.major_unit.is_some()),
+        ("minor_unit", scale.minor_unit.is_some()),
+        ("number_format", scale.number_format.is_some()),
+        ("reverse", scale.reverse.is_some()),
+    ] {
+        if given {
+            out.push(key);
+        }
+    }
+    out
+}
+
+/// `scale_axis`: the axis a scale given without `axis` is for -- the value axis, where it
+/// is the one axis that takes the scale's bounds or units.
+fn scale_axis(
+    address: &str,
+    root: &Element,
+    names: &[&str],
+    chart_type: &str,
+    scale: &ScaleArg,
+) -> Result<&'static str, DataError> {
+    const NUMERIC: [&str; 4] = ["min", "max", "major_unit", "minor_unit"];
+    let action = "set_axis_scale";
+    if names.is_empty() {
+        return Err(DataError(format!(
+            "{address}: a {chart_type} chart has no axes to scale"
+        )));
+    }
+    let auto = scale.auto.as_deref().unwrap_or_default();
+    let numeric =
+        given_keys(scale).iter().any(|k| NUMERIC.contains(k)) || auto.iter().any(|k| NUMERIC.contains(&k.as_str()));
+    if !numeric {
+        return Err(DataError(format!(
+            "{action} needs axis: {}; reverse and number_format suit either",
+            either(names)
+        )));
+    }
+    let area = child(root, "chart").and_then(|c| child(c, "plotArea"));
+    let values = area.map_or(0, |a| children(a, "valAx").count());
+    let dates = area.is_some_and(|a| children(a, "dateAx").next().is_some());
+    if names == ["category", "value"] && values == 1 && !dates {
+        return Ok("value");
+    }
+    if dates {
+        return Err(DataError(format!(
+            "{action} needs axis: category (its dates take bounds and units too) or value"
+        )));
+    }
+    if names == ["category", "value"] {
+        return Err(DataError(format!(
+            "{action} needs axis: {address} has a secondary value axis too, which edit_chart does not scale; give value for the primary one"
+        )));
+    }
+    Err(DataError(format!(
+        "{action} needs axis: {}; both take bounds and units",
+        either(names)
+    )))
+}
+
+/// `scale_arguments`: a scale as the chart's keywords, `auto` making bounds automatic again.
+fn scale_arguments(scale: &ScaleArg) -> Result<ScaleChange, DataError> {
+    let given = given_keys(scale);
+    let mut out = ScaleChange {
+        minimum: scale.min.map(Some),
+        maximum: scale.max.map(Some),
+        major_unit: scale.major_unit.map(Some),
+        minor_unit: scale.minor_unit.map(Some),
+        number_format: scale.number_format.clone().map(Some),
+        reverse: scale.reverse,
+    };
+    for key in scale.auto.as_deref().unwrap_or_default() {
+        let name = key.as_str();
+        if given.contains(&name) {
+            return Err(DataError(format!("scale: {name} is given and listed in auto")));
+        }
+        match key {
+            ScaleKey::Min => out.minimum = Some(None),
+            ScaleKey::Max => out.maximum = Some(None),
+            ScaleKey::MajorUnit => out.major_unit = Some(None),
+            ScaleKey::MinorUnit => out.minor_unit = Some(None),
+            ScaleKey::NumberFormat => out.number_format = Some(None),
+        }
+    }
+    if out == ScaleChange::default() {
+        return Err(DataError(format!("scale is empty: give {SCALE_KEYS}")));
+    }
+    Ok(out)
+}
+
+/// The style keys given, sorted (Python's `sorted(style)`), with whether each is a
+/// series' (else the text's).
+fn style_keys(style: &StyleArg) -> Vec<(&'static str, bool)> {
+    let mut out = Vec::new();
+    for (key, given, series) in [
+        ("bold", style.bold.is_some(), false),
+        ("color", style.color.is_some(), false),
+        ("dash", style.dash.is_some(), true),
+        ("fill", style.fill.is_some(), true),
+        ("font", style.font.is_some(), false),
+        ("line", style.line.is_some(), true),
+        ("line_width", style.line_width.is_some(), true),
+        ("marker", style.marker.is_some(), true),
+        ("marker_fill", style.marker_fill.is_some(), true),
+        ("marker_size", style.marker_size.is_some(), true),
+        ("size", style.size.is_some(), false),
+    ] {
+        if given {
+            out.push((key, series));
+        }
+    }
+    out
+}
+
+/// `"none"` is no colour (`_colour`).
+fn colour_given(value: Option<&String>) -> Option<Option<String>> {
+    value.map(|v| (v.trim().to_lowercase() != "none").then(|| v.clone()))
+}
+
+/// `format_series`' and `format_point`'s style, checked as `apply_style_action` checks it.
+fn series_format(style: Option<&StyleArg>, action: &str) -> Result<SeriesFormat, DataError> {
+    let keys = style.map(style_keys).unwrap_or_default();
+    if let Some((key, _)) = keys.iter().find(|(_, series)| !series) {
+        return Err(DataError(format!(
+            "style: '{key}' is not for {action}; give {SERIES_STYLE}"
+        )));
+    }
+    let Some(style) = style.filter(|_| !keys.is_empty()) else {
+        return Err(DataError(format!("{action} needs style: {SERIES_STYLE}")));
+    };
+    Ok(SeriesFormat {
+        fill: colour_given(style.fill.as_ref()),
+        line: colour_given(style.line.as_ref()),
+        line_width: style.line_width,
+        dash: style.dash.map(|d| dash_value(d.as_str()).to_owned()),
+        marker: style.marker.map(|m| m.as_str().to_owned()),
+        marker_size: style.marker_size,
+        marker_fill: colour_given(style.marker_fill.as_ref()),
+    })
+}
+
+/// A dash by its name (`DASHES`) as the schema names it.
+fn dash_value(dash: &str) -> &str {
+    match dash {
+        "dot" => "sysDot",
+        "dash_dot" => "dashDot",
+        "long_dash" => "lgDash",
+        other => other,
+    }
+}
+
+/// `set_text_style`'s style, checked as `apply_style_action` and `set_text_style` check it
+/// before anything changes (the size, then the colour).
+fn text_look(style: Option<&StyleArg>) -> Result<TextLook, DataError> {
+    let keys = style.map(style_keys).unwrap_or_default();
+    if let Some((key, _)) = keys.iter().find(|(_, series)| *series) {
+        return Err(DataError(format!(
+            "style: '{key}' is not for set_text_style; give {TEXT_STYLE}"
+        )));
+    }
+    let Some(style) = style.filter(|_| !keys.is_empty()) else {
+        return Err(DataError(format!("set_text_style needs style: {TEXT_STYLE}")));
+    };
+    Ok(TextLook {
+        font: style.font.clone(),
+        size: style.size.map(text_size).transpose()?,
+        bold: style.bold,
+        colour: style.color.as_deref().map(Colour::parse).transpose()?,
+    })
+}

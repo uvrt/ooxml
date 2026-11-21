@@ -28,6 +28,26 @@ pub(crate) enum Named {
     Unported(&'static str),
 }
 
+/// Why an action is not planned: refused, or left to the host.
+pub(crate) enum Stop {
+    Refused(ToolError),
+    Unported(&'static str),
+}
+
+/// What `which` names among `names` ([`resolve`]), as a position or why not.
+pub(crate) fn position(
+    names: &[String],
+    which: Option<&String>,
+    said: (&str, &str, &str),
+    read: &TryCall,
+) -> Result<usize, Stop> {
+    match resolve(names, which.map(String::as_str), said, read) {
+        Named::At(at) => Ok(at),
+        Named::Refused(error) => Err(Stop::Refused(error)),
+        Named::Unported(why) => Err(Stop::Unported(why)),
+    }
+}
+
 /// The series names a call is matched against: each one's name as Python's `str`, `""` for
 /// none.
 pub(crate) fn series_names(data: &ChartData) -> Vec<String> {
@@ -147,7 +167,7 @@ fn decided(hits: &[usize], which: &str, what: &str, refuse: &dyn Fn(Code, String
 
 /// What a refusal offers (`choices`): the names, a long list's first 12 and how many more,
 /// and the positions.
-fn choices(names: &[String]) -> String {
+pub(crate) fn choices(names: &[String]) -> String {
     if names.is_empty() {
         return "the chart has none".to_owned();
     }

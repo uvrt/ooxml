@@ -16,8 +16,10 @@
 //! Must not: change the document but through a command.
 
 use super::chart_data::{ChartDataEdit, DataAction};
-use super::chart_names::{category_names, resolve, series_names, Named};
-use super::chart_read::{chart_json, chart_read_json};
+use super::chart_names::{category_names, position, series_names, Stop};
+use super::chart_read::{chart_json, chart_read_json, style_json};
+use super::chart_style;
+use super::chart_style::{ChartStyleEdit, StyleAction};
 use super::{ChartAction, ChartAxis, ChartPosition, EditChart};
 use crate::structure::common::{call, policy, refused};
 use crate::{Editing, Version};
@@ -66,7 +68,10 @@ pub fn edit_chart(args: &EditChart, editing: &Editing<'_>) -> ToolResult<Value> 
     }
     let action = args.action.as_str();
     let summary = format!("{action} on {}", args.target);
-    let ported = !matches!(args.action, ChartAction::Read | ChartAction::Add) && !STYLE_ACTIONS.contains(&args.action);
+    let ported = !matches!(
+        args.action,
+        ChartAction::Read | ChartAction::Add | ChartAction::SetSeriesType | ChartAction::SetPointLabels
+    );
     if !ported {
         return ToolResult::done(unported(summary, &format!("edit_chart {action}")));
     }
@@ -74,13 +79,13 @@ pub fn edit_chart(args: &EditChart, editing: &Editing<'_>) -> ToolResult<Value> 
         // values from a table, with their provenance records: the host's (KeepText later)
         return ToolResult::done(unported(summary, &format!("edit_chart {action} from")));
     }
-    match data_action(args, editing, summary) {
+    match chart_action(args, editing, summary) {
         Ok(result) => result,
         Err(error) => ToolResult::failed(error),
     }
 }
 
-/// The style actions (ooxml-edit's `STYLE_ACTIONS`), not ported yet.
+/// The style actions (ooxml-edit's `STYLE_ACTIONS`): `chart_style` plans them.
 const STYLE_ACTIONS: [ChartAction; 7] = [
     ChartAction::SetAxisScale,
     ChartAction::SetGridlines,
@@ -96,9 +101,15 @@ const WORD_LABEL_SIZE: u32 = 900;
 /// Word's look for titles: a chart's and an axis' (`WORD_LOOK.title`, `.axis_title`).
 const WORD_TITLE_SIZES: (u32, u32) = (1400, 1000);
 
-/// A data action: the chart found and read on the head, its series and category resolved,
-/// then one command.
-fn data_action(args: &EditChart, editing: &Editing<'_>, summary: String) -> Result<ToolResult<Value>, ToolError> {
+/// A data or style action, planned.
+enum Planned {
+    Data(DataAction),
+    Style(StyleAction),
+}
+
+/// A data or style action: the chart found and read on the head, its series and category
+/// resolved, then one command.
+fn chart_action(args: &EditChart, editing: &Editing<'_>, summary: String) -> Result<ToolResult<Value>, ToolError> {
     let read = call(
         "edit_chart",
         &[
@@ -123,20 +134,37 @@ fn data_action(args: &EditChart, editing: &Editing<'_>, summary: String) -> Resu
         Ok(data) => data,
         Err(why) => return Ok(ToolResult::done(unported(summary, &why))),
     };
-    let action = match planned(args, &data.0, &read, &docx) {
+    let style = STYLE_ACTIONS.contains(&args.action);
+    let action = if style {
+        chart_style::planned(args, &data.0, &data.1, &read, default_language(&docx)).map(Planned::Style)
+    } else {
+        planned(args, &data.0, &read, &docx).map(Planned::Data)
+    };
+    let action = match action {
         Ok(action) => action,
         Err(Stop::Refused(error)) => return Err(error),
         Err(Stop::Unported(why)) => return Ok(ToolResult::done(unported(summary, why))),
     };
-    let command = EditGraphic {
-        drawing: args.target.clone(),
-        edit: ChartDataEdit {
-            address: args.target.clone(),
-            action,
-        },
-        policy: policy(editing),
+    let (drawing, address) = (args.target.clone(), args.target.clone());
+    let ran = match action {
+        Planned::Data(action) => editing.editor.run(
+            editing.caller,
+            &EditGraphic {
+                drawing,
+                edit: ChartDataEdit { address, action },
+                policy: policy(editing),
+            },
+        ),
+        Planned::Style(action) => editing.editor.run(
+            editing.caller,
+            &EditGraphic {
+                drawing,
+                edit: ChartStyleEdit { address, action },
+                policy: policy(editing),
+            },
+        ),
     };
-    let done = match editing.editor.run(editing.caller, &command) {
+    let done = match ran {
         Ok(done) => done,
         Err(error) => return Ok(refused(error, read)),
     };
@@ -146,7 +174,15 @@ fn data_action(args: &EditChart, editing: &Editing<'_>, summary: String) -> Resu
         .docx()
         .map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
     let data = match read_data(chart_of(args, &after, args.action.as_str())?) {
-        Ok((data, root)) => Value::Object(chart_json(&args.target, &root, &data)),
+        Ok((data, root)) => {
+            let mut out = chart_json(&args.target, &root, &data);
+            // (the look's point labels unreadable: no data, as for a chart the model cannot read)
+            if style && style_json(&root, &data, &mut out).is_err() {
+                Value::Null
+            } else {
+                Value::Object(out)
+            }
+        }
         Err(_) => Value::Null,
     };
     let mut out = Done::new(summary);
@@ -187,25 +223,12 @@ fn chart_of(args: &EditChart, docx: &Docx, what: &str) -> Result<Result<(String,
     Ok(Ok((part, Arc::clone(tree.root()))))
 }
 
-/// Why a data action is not planned: refused, or left to the host.
-enum Stop {
-    Refused(ToolError),
-    Unported(&'static str),
-}
-
 /// The action with its series and category resolved (`apply_data_action`, in its order:
 /// the series, the category, then what the action needs).
 fn planned(args: &EditChart, data: &ChartData, read: &TryCall, docx: &Docx) -> Result<DataAction, Stop> {
     let action = args.action.as_str();
-    let named = |names: Vec<String>, which: Option<&String>, what: &str, hint: &str| match resolve(
-        &names,
-        which.map(String::as_str),
-        (what, action, hint),
-        read,
-    ) {
-        Named::At(at) => Ok(at),
-        Named::Refused(error) => Err(Stop::Refused(error)),
-        Named::Unported(why) => Err(Stop::Unported(why)),
+    let named = |names: Vec<String>, which: Option<&String>, what: &str, hint: &str| {
+        position(&names, which, (what, action, hint), read)
     };
     let hint = if data.category_dates.is_some() {
         "; its categories are dates, named as YYYY-MM-DD"

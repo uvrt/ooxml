@@ -380,6 +380,7 @@ def chart_cases(document) -> list[dict]:
         out += _chart_data_edits(document, identifier)
         out += _chart_shape_edits(document, identifier)
         out += _chart_title_edits(document, identifier)
+        out += _chart_style_edits(document, identifier)
     return out
 
 
@@ -459,6 +460,62 @@ def _chart_title_edits(document, target: str) -> list[dict]:
            edit("set_axis_title", axis="category", text="Quarter"), edit("set_axis_title", axis="x", text="x"),
            edit("set_axis_title", text="x")]
     return out + [tracked(out[0])]
+
+
+def _chart_style_edits(document, target: str) -> list[dict]:
+    """The style actions (lane P4c19): an axis scaled (bounds, units, a format, reversed, back
+    to automatic; without an axis; bounds on a category axis; a minimum above the maximum; a
+    unit of 0; a key given and listed in auto; empty), gridlines (each kind; no axis; an axis
+    the chart lacks), a series and a point formatted (fill, line, dash, width, markers, a
+    theme colour with modifiers, none; a text key; a bad colour; a point past the end) and
+    the text styled (all of it, each part; a series key; a size past 400); ``format_point``
+    and ``set_axis_scale`` tracked too."""
+    def edit(action: str, **arguments) -> dict:
+        return call("edit_chart", action=action, target=target, **arguments)
+
+    try:
+        document.chart(target)
+    except Exception:  # noqa: BLE001 -- a chart docx-agent cannot read: the reads cover it
+        return []
+    out = [edit("set_axis_scale", axis="value", scale={"min": 0, "max": 50, "major_unit": 10, "minor_unit": 2}),
+           edit("set_axis_scale", scale={"max": 5}), edit("set_axis_scale", axis="value", scale={"number_format": "0.0"}),
+           edit("set_axis_scale", axis="value", scale={"auto": ["min", "max", "number_format"]}),
+           edit("set_axis_scale", axis="category", scale={"reverse": True}),
+           edit("set_axis_scale", axis="category", scale={"min": 1}), edit("set_axis_scale", axis="x", scale={"min": 1}),
+           edit("set_axis_scale", axis="value", scale={"min": 9, "max": 3}),
+           edit("set_axis_scale", axis="value", scale={"major_unit": 0}),
+           edit("set_axis_scale", axis="value", scale={"major_unit": 1, "minor_unit": 5}),
+           edit("set_axis_scale", axis="value", scale={"max": 4, "auto": ["max"]}),
+           edit("set_axis_scale", axis="value", scale={}), edit("set_axis_scale", scale={"reverse": True}),
+           edit("set_axis_scale"),
+           edit("set_gridlines", axis="value", gridlines="both"), edit("set_gridlines", axis="value", gridlines="none"),
+           edit("set_gridlines", axis="category", gridlines="major"), edit("set_gridlines", gridlines="minor"),
+           edit("set_gridlines", axis="value"), edit("set_gridlines", axis="y", gridlines="major"),
+           edit("format_series", series="0", style={"fill": "accent2 lumMod=75%", "line": "1F4E79", "line_width": 1.5,
+                                                    "dash": "dash"}),
+           edit("format_series", series="0", style={"fill": "none", "line": "none"}),
+           edit("format_series", series="0", style={"line": "Text 2", "marker": "diamond", "marker_size": 9,
+                                                    "marker_fill": "accent6"}),
+           edit("format_series", series="0", style={"line_width": 3}), edit("format_series", series="0", style={}),
+           edit("format_series", series="0", style={"font": "Arial"}),
+           edit("format_series", series="0", style={"fill": "not a colour"}),
+           edit("format_series", series="0", style={"line": "#12ab9z"}),
+           edit("format_series", series="0", style={"line": "accent1 lumMod=x"}),
+           edit("format_series", style={"fill": "tx2"}),
+           edit("format_point", series="0", category="0", style={"fill": "accent2"}),
+           edit("format_point", series="0", category="1", style={"line": "tx1", "marker": "circle"}),
+           edit("format_point", series="0", style={"fill": "accent2"}),
+           edit("format_point", series="0", category="999", style={"fill": "accent2"}),
+           edit("set_text_style", style={"size": 10}),
+           edit("set_text_style", part="title", style={"size": 14, "bold": True, "color": "tx2"}),
+           edit("set_text_style", part="axis_labels", style={"font": "+mj-lt", "color": "accent1 lumMod=50%"}),
+           edit("set_text_style", part="legend", style={"font": "Georgia"}),
+           edit("set_text_style", part="data_labels", style={"bold": False}),
+           edit("set_text_style", part="axis_titles", style={"size": 9}),
+           edit("set_text_style", style={"size": 401}), edit("set_text_style", style={"fill": "tx1"}),
+           edit("set_text_style", style={"font": "A typeface name longer than thirty-one"}),
+           edit("set_text_style")]
+    return out + [tracked(case) for case in (out[0], out[30])]
 
 
 def _chunk(kind: bytes, body: bytes) -> bytes:
