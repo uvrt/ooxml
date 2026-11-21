@@ -36,7 +36,7 @@ fn edit(editor: &Editor, text: &str) -> Made {
 
 /// The reflow `made` reports, laid out by `layout`.
 fn reflow(layout: &EnginePages, last: &LastCheck, made: &Made, limit: Option<LayoutLimit<'_>>) -> Option<Value> {
-    let before = made.before.as_ref().unwrap();
+    let before = &made.before;
     let from = EditedFrom {
         version: before.seq().0,
         package: before.doc().package(),
@@ -85,7 +85,7 @@ fn another_writer_s_commit_before_the_edit_is_in_the_version_before() {
     layout.laid(&package, &Never).unwrap();
     let theirs = edit(&editor, "Another writer's text");
     let made = edit(&editor, &"longer text ".repeat(400));
-    let before = made.before.as_ref().unwrap();
+    let before = &made.before;
     assert_eq!(before.seq(), theirs.last.seq(), "applied to the other writer's version");
     assert_eq!(reflow(&layout, &LastCheck::default(), &made, None), None);
     // laid out after their commit, the reflow is measured from their version
@@ -261,7 +261,7 @@ fn a_reflow_on_a_spare_engine_timed_against_the_engine_s_own() {
     let writer = editor(package);
     edit(&writer, &"longer text ".repeat(1900));
     let made = edit(&writer, &"longer text ".repeat(1890));
-    let before = made.before.as_ref().unwrap().doc().package().clone();
+    let before = made.before.doc().package().clone();
     for (name, busy) in [("own engine", false), ("spare engine", true)] {
         let mut times = Vec::new();
         for _ in 0..5 {

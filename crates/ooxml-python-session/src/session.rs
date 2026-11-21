@@ -445,7 +445,14 @@ impl PySession {
             let touched = m.touched.map(|t| Value::Array(t).to_string());
             let validation = (m.validation.new, m.validation.fixed, m.validation.baseline);
             let reflow = m.reflow.map(|r| r.to_string());
-            (m.first, PyVersion { inner: m.last }, touched, validation, m.before, reflow)
+            (
+                m.first,
+                PyVersion { inner: m.last },
+                touched,
+                validation,
+                m.before,
+                reflow,
+            )
         });
         Ok((text, app, made))
     }
