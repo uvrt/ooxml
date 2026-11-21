@@ -23,6 +23,7 @@ pub mod facts;
 pub mod fields;
 pub mod formatting;
 pub mod graphics;
+pub mod keeps;
 mod kept;
 pub mod numbering;
 pub mod outline;
@@ -245,8 +246,22 @@ impl Docx {
     /// it: by `w:name` in any case, then an alias, then its id, then its id in any case.
     #[must_use]
     pub fn find_style(&self, name: &str, kind: &str) -> Option<&Arc<Element>> {
+        self.find_style_in(name, Some(kind))
+    }
+
+    /// The style `name` names among all of them, found as [`Docx::find_style`] finds it.
+    #[must_use]
+    pub fn find_any_style(&self, name: &str) -> Option<&Arc<Element>> {
+        self.find_style_in(name, None)
+    }
+
+    fn find_style_in(&self, name: &str, kind: Option<&str>) -> Option<&Arc<Element>> {
         let wanted = casefold(name);
-        let styles: Vec<&Arc<Element>> = self.style_order.iter().filter(|s| style_kind(s) == kind).collect();
+        let styles: Vec<&Arc<Element>> = self
+            .style_order
+            .iter()
+            .filter(|s| kind.is_none_or(|k| style_kind(s) == k))
+            .collect();
         let tests: [&dyn Fn(&Element) -> bool; 4] = [
             &|s| casefold(style_name(s).unwrap_or("")) == wanted,
             &|s| {

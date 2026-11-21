@@ -223,3 +223,23 @@ fn a_restored_part_is_exactly_as_it_was() {
         Err(OpcError::OtherPackage(_))
     ));
 }
+
+#[test]
+fn the_parts_changed_are_found_by_identity_else_by_bytes() {
+    let bytes = made_up();
+    let first = open(&bytes);
+    // opened apart from the same bytes: no part is the same by identity, every one by bytes
+    assert!(open(&bytes).changed_parts(&first).is_empty());
+    let edited = first
+        .with_bytes("word/media/a.png", Arc::from(&b"\x89PNG\r\nnew"[..]))
+        .without("word/_rels/document.xml.rels")
+        .unwrap()
+        .with_bytes("word/media/b.png", Arc::from(&b"\x89PNG"[..]));
+    assert_eq!(
+        edited.changed_parts(&first),
+        ["word/media/a.png", "word/media/b.png", "word/_rels/document.xml.rels"]
+    );
+    // a part put anew with the same bytes is the same
+    let again = first.with_bytes("word/media/a.png", Arc::from(&b"\x89PNG\r\n"[..]));
+    assert!(again.changed_parts(&first).is_empty());
+}

@@ -12,7 +12,7 @@ use crate::describe::short;
 use crate::review::Editing;
 use crate::structure::common::{call, find_once, need, one_of, outcome, policy, refused, Outcome};
 use crate::structure::notes::end_of;
-use crate::style::round2;
+use ooxml_base::pyfmt::round2;
 use ooxml_tools::{ArgEnum, Done, Refusal, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::{
     DrawingEdited, DrawingValues, EditError, Edited, FloatDrawing, InlineDrawing, InsertShape, SetDrawing,

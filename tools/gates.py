@@ -83,7 +83,7 @@ EDIT_MODES = {
 #: word_reads_diff.py's checks (the ``reads`` gate) and the binary each runs.
 READ_MODES = {"ids": "word-ids", "describe": "word-reads", "read": "word-reads", "ranges": "word-reads",
               "inspect": "word-reads", "find": "word-reads", "batch": "word-reads",
-              "check": "word-reads", "facts": "word-reads"}
+              "check": "word-reads", "facts": "word-reads", "laid": "word-reads"}
 #: The tool modes' sampling knobs (word_*_cases.py).
 #: The corpus's cases per tool and document when the run gives none (a full corpus run of
 #: every case is hours of docx-agent).
@@ -98,8 +98,10 @@ ALL = frozenset([*EDIT_MODES, READS])
 #: word_style_cases.py take their helpers from word_structure_cases.py).
 CASE_MAKERS = {"word_structure_cases.py": {"structure", "objects", "style"}, "word_object_cases.py": {"objects"},
                "word_style_cases.py": {"style"}, "word_text_cases.py": {"text"}}
-#: The rest of the harness the gates run: the edits harness (it imports word_reads_diff.py).
-GATE_HARNESS = ("word_edits_", "word_tool_reference", "word_reads_", "reference_cache")
+#: The rest of the harness the gates run: the edits harness (it imports word_reads_diff.py), and
+#: what keeps the Rust core out of the reference (reference_guard.py and its no_core/ stand-in).
+GATE_HARNESS = ("word_edits_", "word_tool_reference", "word_reads_", "reference_cache", "reference_guard")
+GATE_HARNESS_FOLDERS = ("crates/ooxml-oracle/python/no_core/",)
 #: The oracle binaries the gates run, and what each answers.
 GATE_BINARIES = {"word-edits": set(EDIT_MODES), "word-reads": {READS}, "word-ids": {READS}}
 #: The packages the gates install (gates.yml: the reference and what makes the corpus).
@@ -334,7 +336,7 @@ def gate_effects(path: str, crates: set[str]) -> set[str]:
     if path.startswith("crates/ooxml-oracle/python/"):
         if parts[-1] in CASE_MAKERS:
             return set(CASE_MAKERS[parts[-1]])
-        return set(ALL) if parts[-1].startswith(GATE_HARNESS) else set()
+        return set(ALL) if parts[-1].startswith(GATE_HARNESS) or path.startswith(GATE_HARNESS_FOLDERS) else set()
     if parts[0] == "crates" and len(parts) > 2:
         if parts[1] not in crates or parts[2] in CRATE_TEST_FOLDERS or path.endswith(".md") and parts[2] != "src":
             return set()

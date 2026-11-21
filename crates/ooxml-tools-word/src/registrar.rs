@@ -118,5 +118,6 @@ pub fn register(r: &mut impl Registrar) {
     crate::objects::register(r);
     crate::style::register(r);
     crate::structure::register(r);
+    crate::document::register(r);
     crate::check::register(r);
 }

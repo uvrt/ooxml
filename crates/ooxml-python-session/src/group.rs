@@ -4,7 +4,7 @@
 //!
 //! Must not: close a group itself -- the host's guard does, on every path.
 
-use crate::session::{context_of, to_py, PyCallContext, PyVersion};
+use crate::session::{caller_context, to_py, PyCallContext, PyVersion};
 use ooxml_session::{DocId, GroupMark, Session};
 use pyo3::prelude::*;
 use std::sync::Arc;
@@ -58,7 +58,7 @@ impl PyStepGroup {
         context: Option<PyRef<'_, PyCallContext>>,
     ) -> PyResult<Option<PyVersion>> {
         let mark = mark.map_or_else(|| self.start.clone(), |m| m.inner.clone());
-        let context = context_of(context.as_deref());
+        let context = caller_context(context.as_deref());
         let made = py
             .detach(|| self.session.revert_group(&self.doc, &mark, &context))
             .map_err(|e| to_py(&e))?;
@@ -69,7 +69,7 @@ impl PyStepGroup {
     /// (`Version`) it ends at, or `None` when it committed nothing.
     #[pyo3(signature = (*, context = None))]
     fn close(&self, py: Python<'_>, context: Option<PyRef<'_, PyCallContext>>) -> PyResult<Option<PyVersion>> {
-        let context = context_of(context.as_deref());
+        let context = caller_context(context.as_deref());
         let made = py
             .detach(|| self.session.close_group(&self.doc, &context))
             .map_err(|e| to_py(&e))?;

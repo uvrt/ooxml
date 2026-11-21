@@ -10,6 +10,7 @@ mod drawing;
 pub(crate) mod fields;
 mod join;
 mod paragraph;
+pub mod paths;
 mod runs;
 mod sections;
 mod tables;
