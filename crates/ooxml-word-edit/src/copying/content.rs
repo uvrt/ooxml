@@ -1,15 +1,16 @@
 //! Owns: [`Bringer`], what a copy brings for each piece of copied content -- its styles,
 //! the lists it numbers with, the relationships it names and the parts they reach, and
-//! (for the blocks and their notes) its bookmarks -- as docx-agent's importer runs
-//! `_formatting`, `_lists`, `_relationships` and `_bookmarks_in` on the blocks, then on
-//! each note and each comment they hold, with one set of maps for the whole copy and one
-//! list of warnings in the order they arise.
+//! (for the blocks and their notes) its bookmarks and content-control ids -- as
+//! docx-agent's importer runs `_formatting`, `_lists`, `_relationships`, `_bookmarks_in`
+//! and `_control_ids` on the blocks, then on each note and each comment they hold, with
+//! one set of maps for the whole copy and one list of warnings in the order they arise.
 //!
 //! Must not: place the content; it works on copies the caller holds.
 
 use super::bookmarks::Bookmarks;
 use super::parts::Parts;
 use super::styles::Styles;
+use crate::imported::Controls;
 use crate::review::space::Space;
 use crate::sink::EditSink;
 use crate::work::{Id, Work};
@@ -25,6 +26,8 @@ pub(super) struct Bringer<'s> {
     pub(super) parts: Parts,
     /// The bookmarks' names and renames.
     pub(super) bookmarks: Bookmarks,
+    /// The content-control ids taken.
+    pub(super) controls: Controls,
 }
 
 impl Bringer<'_> {
@@ -59,6 +62,24 @@ impl Bringer<'_> {
         let warnings = self.bookmarks.bring(sink, work, elements)?;
         self.styles.warnings.extend(warnings);
         Ok(())
+    }
+
+    /// The content controls of `elements` (held in `work`) given ids no control has; each
+    /// id changed (`sdt#old`, `sdt#new`), in order.
+    ///
+    /// # Errors
+    /// When the document cannot be read.
+    pub(super) fn controls(
+        &mut self,
+        sink: &mut EditSink<'_, '_>,
+        work: &mut Work,
+        elements: &[Id],
+    ) -> Result<Vec<(String, String)>> {
+        let changed = self.controls.renumber(sink, work, elements)?;
+        Ok(changed
+            .into_iter()
+            .map(|(old, new)| (format!("sdt#{old}"), format!("sdt#{new}")))
+            .collect())
     }
 
     /// The styles and numbering parts put back; the warnings (the styles imported, the bookmarks renamed).

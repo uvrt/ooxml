@@ -63,6 +63,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
             placer: None,
             owned: None,
             others: ooxml_tools_word::Others::default(),
+            word: None,
         };
         let reply = if let Some(fact) = item.get("fact").and_then(Value::as_str) {
             crate::facts::reply(package, fact)

@@ -14,7 +14,7 @@ untracked and tracked, each case on the document as opened, and compares:
   (``new``, ``fixed``, ``baseline``), as the save gate compares them;
 * ``next``: the value the main part's sequence and its text-id sequence give next;
 * ``aliases``: the old ids the document still follows to new ones (renames, less those of
-  blocks removed).
+  blocks removed); ``replaced``, where a block was replaced by one, the block that did.
 
 Every difference is printed with its JSON path; the exit status is 1 when there is any.
 
@@ -592,7 +592,14 @@ def python_case(data: bytes, case: dict, baseline: list) -> dict:
         "problems": [str(p) for p in problems],
         "next": next_ids,
         "aliases": dict(sorted(document.aliases.items())),
+        **_replaced(document),
     }
+
+
+def _replaced(document) -> dict:
+    """The blocks replaced one by one (``replace:``) and what replaced each, where any was."""
+    replaced = document._ledger.replaced
+    return {"replaced": {f"{value:08X}": new for value, new in sorted(replaced.items())}} if replaced else {}
 
 
 def _touched(document, before: dict, after: dict, main: str) -> list[dict]:

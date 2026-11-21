@@ -2,19 +2,21 @@
 //! importer copies them (`_notes`, `_stamp_notes`): per kind, the references in document
 //! order, each given the next number of this document's notes part (made, with the other
 //! kind's, where it has none) and a copy of its note there -- the note's content as the
-//! source shows it now, with its styles, lists, relationships, bookmarks and drawing
-//! numbers brought like a block's -- and once the blocks are stamped, every paragraph and row of a copied
+//! source shows it now, with its styles, lists, relationships, bookmarks, drawing numbers
+//! and control ids brought like a block's -- and once the blocks are stamped, every paragraph and row of a copied
 //! note given new ids. A reference to a note the source lacks stays as it is; references
 //! of a kind the source has no part for are dropped.
 //!
-//! A note holding a content control or a comment is left to the host.
+//! As docx-agent's, a note's comment markers are copied as they are (`_notes` does not
+//! bring comments).
 //!
 //! Must not: write a notes part but through the copy's [`Space`].
 
 use super::content::Bringer;
-use super::view::{holds, records_view};
+use super::view::records_view;
 use crate::names::{W, W14, WP};
 use crate::notes::{ensure_notes_part, next_number, NoteKind};
+use crate::policy::RevisionPolicy;
 use crate::review::space::Space;
 use crate::sink::EditSink;
 use crate::work::{Id, Work};
@@ -32,7 +34,8 @@ type ById = HashMap<String, Arc<Element>>;
 pub(super) struct NotesCopied {
     /// Each note copied: its notes part and its copy there.
     made: Vec<(String, Id)>,
-    /// Each source note and its copy (`fn:2` -> `fn:5`), in order.
+    /// Each source note and its copy (`fn:2` -> `fn:5`), each after its controls' ids
+    /// changed (`sdt#7` -> `sdt#12`), in order.
     pub(super) copied: Vec<(String, String)>,
 }
 
@@ -40,8 +43,7 @@ pub(super) struct NotesCopied {
 /// notes parts, held in `stories`.
 ///
 /// # Errors
-/// [`EditError::Unsupported`] for a note left to the host; what bringing its content
-/// refuses; a part that is not XML.
+/// What bringing its content refuses; a part that is not XML.
 pub(super) fn bring(
     sink: &mut EditSink<'_, '_>,
     bringer: &mut Bringer<'_>,
@@ -93,12 +95,11 @@ pub(super) fn bring(
             for &child in &content {
                 records_view(into, child);
             }
-            if let Some(what) = left_to_host(into, &content) {
-                return Err(EditError::Unsupported(what.to_owned()));
-            }
             bringer.content(sink, into, &content, (&source_part, &part))?;
             bringer.bookmarks(sink, into, &content)?;
             crate::imported::keep_or_renumber_drawings(sink, into, &content)?;
+            let controls = bringer.controls(sink, into, &content)?;
+            out.copied.extend(controls);
             let root = into.root();
             into.append(root, copy);
             out.made.push((part.clone(), copy));
@@ -156,6 +157,49 @@ impl NotesCopied {
     }
 }
 
+impl NotesCopied {
+    /// Tracked, each copied note's content recorded as inserted as the importer's `_track`
+    /// records it: each paragraph's content, and its mark but the last's; each table's rows
+    /// and paragraphs. The notes parts a record is dated in.
+    ///
+    /// # Errors
+    /// When the annotation ids cannot be read.
+    pub(super) fn track(&self, sink: &mut EditSink<'_, '_>, stories: &mut Space) -> Result<Vec<String>> {
+        let RevisionPolicy::Tracked(tracking) = sink.policy().clone() else {
+            return Ok(Vec::new());
+        };
+        let shared = sink.doc().shared_handle();
+        let orders = shared.facts.orders();
+        let mut dated: Vec<String> = Vec::new();
+        for (part, note) in &self.made {
+            let work = stories.get_mut(part).ok_or_else(|| EditError::NoPart(part.clone()))?;
+            let content: Vec<Id> = work
+                .children(*note)
+                .iter()
+                .copied()
+                .filter(|c| work.is_element(*c))
+                .collect();
+            let ((), _, d) = sink.stamped(tracking.clone(), |stamp| {
+                for (k, &element) in content.iter().enumerate() {
+                    if work.is(element, W, "p") {
+                        crate::markdown::insert_content(work, element, stamp);
+                        if k + 1 < content.len() {
+                            crate::marks::mark(work, element, "ins", stamp, orders);
+                        }
+                    } else {
+                        crate::markdown::track_table(work, element, stamp, orders);
+                    }
+                }
+                Ok(())
+            })?;
+            if d && !dated.contains(part) {
+                dated.push(part.clone());
+            }
+        }
+        Ok(dated)
+    }
+}
+
 /// The source's notes part of `kind` and its notes by id (the last of an id), if it has
 /// one.
 fn source_notes(source: &Docx, kind: NoteKind) -> Result<Option<(String, ById)>> {
@@ -172,19 +216,4 @@ fn source_notes(source: &Docx, kind: NoteKind) -> Result<Option<(String, ById)>>
         .map(|n| (n.attribute(Some(W), "id").unwrap_or("").to_owned(), Arc::clone(n)))
         .collect();
     Ok(Some((part, notes)))
-}
-
-/// What in a copied note's content this port leaves to the host, if anything.
-fn left_to_host(work: &Work, content: &[Id]) -> Option<&'static str> {
-    let kinds: [(&[&str], &'static str); 2] = [
-        (&["sdt"], "a copied note holding a content control"),
-        (
-            &["commentRangeStart", "commentRangeEnd", "commentReference"],
-            "a copied note holding a comment",
-        ),
-    ];
-    kinds
-        .into_iter()
-        .find(|(locals, _)| holds(work, content, locals))
-        .map(|(_, what)| what)
 }

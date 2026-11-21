@@ -86,6 +86,7 @@ fn read(args: &WordRead) -> String {
             placer: None,
             owned: None,
             others: ooxml_tools_word::Others::default(),
+            word: None,
         },
         &Never,
     )
@@ -125,6 +126,7 @@ fn a_range_naming_nothing_is_refused_with_the_way_out() {
             placer: None,
             owned: None,
             others: ooxml_tools_word::Others::default(),
+            word: None,
         },
         &Never,
     )
@@ -152,6 +154,7 @@ fn a_range_with_every_story_is_refused_with_the_call_that_works() {
             placer: None,
             owned: None,
             others: ooxml_tools_word::Others::default(),
+            word: None,
         },
         &Never,
     )
@@ -178,6 +181,7 @@ fn a_long_document_is_paged_at_line_ends() {
             placer: None,
             owned: None,
             others: ooxml_tools_word::Others::default(),
+            word: None,
         },
         &Never,
     )
@@ -197,6 +201,7 @@ fn a_long_document_is_paged_at_line_ends() {
             placer: None,
             owned: None,
             others: ooxml_tools_word::Others::default(),
+            word: None,
         },
         &Never,
     )
@@ -213,6 +218,7 @@ fn a_long_document_is_paged_at_line_ends() {
             placer: None,
             owned: None,
             others: ooxml_tools_word::Others::default(),
+            word: None,
         },
         &Never,
     )
@@ -238,6 +244,7 @@ fn views_name_the_summary() {
             placer: None,
             owned: None,
             others: ooxml_tools_word::Others::default(),
+            word: None,
         },
         &Never,
     )
