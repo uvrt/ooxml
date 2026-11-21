@@ -11,6 +11,10 @@
 //! engine is locked while it lays out a version or paints a page, never while a page number
 //! is read.
 //!
+//! Also owns [`WordLayout`], the port Word's tools are handed a document's layout through:
+//! the edit core's [`FieldLayout`], and the page engine behind it for what a tool reads of
+//! the pages themselves (`check`'s reflow and layout facts).
+//!
 //! Must not: hold anything but the engine, or lay out but through it.
 
 use ooxml_opc::Package;
@@ -22,6 +26,23 @@ use ooxml_word_pages::summary::Summary;
 use ooxml_word_pages::{Fallback, LaidVersion, PageEngine, PagesError};
 use std::borrow::Borrow;
 use std::sync::{Arc, Mutex, PoisonError};
+
+/// The host's layout of a document's versions, as Word's tools are handed it: the edit
+/// core's port ([`FieldLayout`], what an edit reads of the pages), and the document's page
+/// engine, for a tool that reads the pages themselves (`check`).
+pub trait WordLayout: FieldLayout {
+    /// The document's page engine: locked while a version is laid out or a page painted.
+    fn engine(&self) -> &Mutex<PageEngine>;
+
+    /// `package` (a version of the document) laid out by [`WordLayout::engine`].
+    ///
+    /// # Errors
+    /// Why it was not laid out (a version the engine does not lay out yet, in its words).
+    fn laid(&self, package: &Package) -> Result<Arc<LaidVersion>, String> {
+        let mut engine = self.engine().lock().unwrap_or_else(PoisonError::into_inner);
+        laid(engine.lay_out(package))
+    }
+}
 
 /// The edit core's layout port over a page engine.
 pub struct EnginePages {
@@ -58,6 +79,12 @@ fn summarised(engine: &mut PageEngine, package: &Package) -> Result<Summary, Str
     engine
         .contents(&version)
         .ok_or_else(|| "the version laid out is not the engine's".to_owned())
+}
+
+impl WordLayout for EnginePages {
+    fn engine(&self) -> &Mutex<PageEngine> {
+        &self.engine
+    }
 }
 
 impl FieldLayout for EnginePages {

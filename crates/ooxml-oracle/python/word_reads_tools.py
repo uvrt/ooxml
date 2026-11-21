@@ -2,10 +2,12 @@
 for ``word_reads_diff.py``: docx-agent's toolbox against the Rust tools (``word-reads``), case
 by case.  ``describe``'s fields the Rust core does not give yet
 (``ooxml_tools_word::NOT_DESCRIBED``) and the application-only ``memory`` are left out of the
-comparison, as are ``check``'s seconds (``timing``: its parts' names are compared) and its
-``validation`` (the save gate's comparison, which the tool layer adds around either); every other
-field must be equal.  ``check``'s cases are the facts the Rust session gives whole (``validate``,
-``fields``, ``app``); one it leaves to the host fails as ``unported``.
+comparison, as are ``check``'s seconds (``timing``: its parts' names are compared, but
+for laying out and waiting, :data:`LAYING_OUT`) and its ``validation`` (the save gate's
+comparison, which the tool layer adds around either); every other field must be equal.
+``check``'s cases are the facts the Rust session gives whole (``validate``, ``fields``,
+``app``, and ``reflow`` laid out by a page engine with docx-agent's fonts); one it leaves to
+the host fails as ``unported``.
 
 The addressed cases (``ranges``, ``inspect``, ``find``, ``batch``) are made per document from
 what it holds: its first, a middle and its last body paragraph, a span of five blocks, its
@@ -14,7 +16,9 @@ section, its first bookmark, a text range in its first paragraph with text, and 
 
 from __future__ import annotations
 
+import functools
 import json
+from pathlib import Path
 
 #: describe's data keys the Rust core does not give (and why: ooxml_tools_word::NOT_DESCRIBED).
 NOT_DESCRIBED = {"pages", "problems"}
@@ -23,9 +27,13 @@ NOT_DESCRIBED = {"pages", "problems"}
 READS = (("final", {}), ("markup", {"view": "markup"}), ("original", {"view": "original"}),
          ("all", {"stories": "all"}))
 
-#: check's cases: (name, include).
+#: check's cases: (name, include; ``None``: the default, which has ``reflow``).
 CHECKS = (("validate", ["validate"]), ("fields", ["fields"]),
-          ("validate fields app", ["validate", "fields", "app"]))
+          ("validate fields app", ["validate", "fields", "app"]), ("reflow", ["reflow"]), ("default", None))
+
+#: Where a check's time went to lay out and to wait (lane P5b): what each side had laid out
+#: before and the Python path's waits for its workers -- left out of ``timing``'s names.
+LAYING_OUT = {"layout", "worker_wait", "document_wait"}
 
 
 def _toolbox():
@@ -85,7 +93,8 @@ def cases_of(path, what: str) -> list[tuple[str, str, dict]]:
     if what == "read":
         return [(name, "word_read", arguments) for name, arguments in READS]
     if what == "check":
-        return [(f"check {name}", "check", {"include": include}) for name, include in CHECKS]
+        return [(f"check {name}", "check", {} if include is None else {"include": include})
+                for name, include in CHECKS]
     if what == "ranges":
         return [(f"read {t}", "word_read", {"range": t}) for t in targets(path)]
     if what == "inspect":
@@ -139,13 +148,22 @@ def comparable(tool: str, reply: dict) -> dict:
     if tool == "check" and isinstance(data, dict):
         data = {k: v for k, v in data.items() if k != "validation"}
         if isinstance(data.get("timing"), dict):
-            data["timing"] = sorted(k for k in data["timing"] if k != "validation")
+            data["timing"] = sorted(k for k in data["timing"] if k != "validation" and k not in LAYING_OUT)
     out = {"summary": reply.get("summary"), "data": data}
     if tool in ("word_read", "find_text"):
         out["total"] = reply.get("total")
     if tool in ("word_read", "find_text"):
         out["next_cursor"] = reply.get("next_cursor")
     return out
+
+
+@functools.lru_cache(maxsize=8)
+def _fonts(path) -> dict:
+    """The fonts docx-agent lays the document at ``path`` out with (``fonts_of``)."""
+    from docx_agent import Document
+    from word_structure_cases import fonts_of
+
+    return fonts_of(Document.open(Path(path).read_bytes()))
 
 
 def check_tools(args, run_rust, report, files_of) -> int:
@@ -159,7 +177,10 @@ def check_tools(args, run_rust, report, files_of) -> int:
             continue
         for case, (tool, arguments, reply) in replies.items():
             expected[(str(path), case)] = comparable(tool, reply)
-            manifest.append({"file": str(path), "case": case, "tool": tool, "arguments": {"doc": "d1", **arguments}})
+            item = {"file": str(path), "case": case, "tool": tool, "arguments": {"doc": "d1", **arguments}}
+            if tool == "check" and "reflow" in (arguments.get("include") or ["reflow"]):
+                item["fonts"] = _fonts(path)          # the session lays out as docx-agent does
+            manifest.append(item)
     rust = {}
     for key, line in run_rust(args.rust, manifest).items():
         reply = line["reply"]

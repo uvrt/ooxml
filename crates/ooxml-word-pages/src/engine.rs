@@ -512,7 +512,7 @@ impl PageEngine {
     /// Page `page` of `version` painted, taken from the pages kept painted where it is one;
     /// kept for the next reader where `keep` (a reader's page), not where it is painted to
     /// be read once (a scan of every page: [`PageEngine::page_digests`]).
-    fn painted_page(&mut self, version: &LaidVersion, page: usize, keep: bool) -> Option<Arc<PagePaint>> {
+    pub(crate) fn painted_page(&mut self, version: &LaidVersion, page: usize, keep: bool) -> Option<Arc<PagePaint>> {
         let key = (version.serial, page);
         if let Some(Painted(found)) = self.painted.get(&key) {
             self.stats.paint_hits += 1;

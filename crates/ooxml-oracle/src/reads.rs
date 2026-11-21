@@ -68,7 +68,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         let reply = if let Some(fact) = item.get("fact").and_then(Value::as_str) {
             crate::facts::reply(package, fact)
         } else if matches!(tool, "read_batch" | "check") {
-            through_session(tool, &arguments, file, name)
+            through_session(tool, &arguments, file, name, item.get("fonts"))
         } else {
             call(tool, &arguments, &version)
         };
@@ -100,9 +100,10 @@ fn call(tool: &str, arguments: &Value, version: &Version<'_>) -> Value {
 }
 
 /// `tool` (`read_batch`, `check`) through a session holding the document as `d1`, which
-/// owns it (a check's validation compares with the problems it opened with). A reply that
-/// says part of it is not given yet (`unported`) is an error naming what.
-fn through_session(tool: &str, arguments: &Value, file: &str, name: &str) -> Value {
+/// owns it (a check's validation compares with the problems it opened with), handed a page
+/// engine laying out with `fonts` (docx-agent's, as the case gives them) where given. A
+/// reply that says part of it is not given yet (`unported`) is an error naming what.
+fn through_session(tool: &str, arguments: &Value, file: &str, name: &str, fonts: Option<&Value>) -> Value {
     let Ok(bytes) = std::fs::read(file) else {
         return json!({"error": {"code": "internal", "message": "unreadable"}});
     };
@@ -110,7 +111,13 @@ fn through_session(tool: &str, arguments: &Value, file: &str, name: &str) -> Val
     if let Err(e) = session.open(Arc::from(bytes), DocKind::Docx, name) {
         return json!({"error": {"code": "internal", "message": e.to_string()}});
     }
-    let result = session.call(tool, arguments.clone(), &CallContext::default());
+    let context = CallContext {
+        layout: fonts.map(|fonts| {
+            Arc::new(crate::structure_tools::engine_pages(fonts)) as Arc<dyn ooxml_tools_word::WordLayout>
+        }),
+        ..CallContext::default()
+    };
+    let result = session.call(tool, arguments.clone(), &context);
     if let Some(why) = result.unported().first() {
         return json!({"error": {"code": "unported", "message": why}});
     }
