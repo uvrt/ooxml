@@ -183,6 +183,8 @@ pub use tables::{
     RowUnlike, TableChange, TableChanged, TableEdit, TableFormat, TableFormatted, TableKeeps, TableValues, TableWidth,
     TextLook, ROW_WINDOW,
 };
-pub use template::{compatibility_mode, UpgradeToModern, Upgraded, DEFAULT_COMPATIBILITY_MODE, MODERN_MODE};
+pub use template::{
+    compatibility_mode, Reflowed, UpgradeReflowed, UpgradeToModern, Upgraded, DEFAULT_COMPATIBILITY_MODE, MODERN_MODE,
+};
 pub use text::diff::ratio as text_ratio;
 pub use text_range::anchor;

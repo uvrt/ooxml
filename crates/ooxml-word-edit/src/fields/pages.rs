@@ -167,14 +167,18 @@ pub trait FieldLayout: Send + Sync {
     fn lay_out(&self, package: &Package, cancel: &dyn Cancel) -> Result<Box<dyn LaidFields + '_>, LayOutError>;
 
     /// Which pages of `after` differ from `before`'s (two versions of the document,
-    /// `after` made from `before`), ids as the versions' bytes name them.
+    /// `after` made from `before`), ids as the versions' bytes name them; laying either out
+    /// stopped where `cancel` says so.
     ///
     /// # Errors
-    /// Why the pages cannot be compared (a version the layout does not lay out, or a
-    /// layout that does not compare versions: the default).
-    fn reflow(&self, before: &Package, after: &Package) -> Result<PageReflow, String> {
-        let _ = (before, after);
-        Err("this layout does not compare versions".to_owned())
+    /// [`LayOutError::Stopped`] where `cancel` stopped it; why the pages cannot be compared
+    /// (a version the layout does not lay out, or a layout that does not compare versions:
+    /// the default).
+    fn reflow(&self, before: &Package, after: &Package, cancel: &dyn Cancel) -> Result<PageReflow, LayOutError> {
+        let _ = (before, after, cancel);
+        Err(LayOutError::Unsupported(
+            "this layout does not compare versions".to_owned(),
+        ))
     }
 }
 
@@ -218,5 +222,20 @@ impl<'l> EditLayout<'l> {
             LayOutError::Stopped => EditError::LayoutStopped(self.limit),
             LayOutError::Unsupported(why) => EditError::Unsupported(format!("the layout of this version: {why}")),
         })
+    }
+
+    /// Which pages of `after` differ from `before`'s ([`FieldLayout::reflow`]), as an edit
+    /// says why not: inside, why the layout cannot compare them (the edit goes on and says
+    /// so).
+    ///
+    /// # Errors
+    /// [`EditError::LayoutStopped`] where laying either version out was stopped (nothing
+    /// changes).
+    pub fn reflow(&self, before: &Package, after: &Package) -> Result<Result<PageReflow, String>, EditError> {
+        match self.layout.reflow(before, after, self.stop) {
+            Ok(found) => Ok(Ok(found)),
+            Err(LayOutError::Stopped) => Err(EditError::LayoutStopped(self.limit)),
+            Err(LayOutError::Unsupported(why)) => Ok(Err(why)),
+        }
     }
 }

@@ -4,12 +4,14 @@
 //! `compatibilityMode` becomes 15 with the five settings Word writes beside it, the ten
 //! legacy options Word 2013's layout still honours stay (and `w:useFELayout`, which a save
 //! drops, not Convert), the other legacy options go -- and [`compatibility_mode`], the mode
-//! a document is in.
+//! a document is in; and [`UpgradeReflowed`], Convert with the reflow it makes, measured
+//! in the edit's transaction so that a stop laying out changes nothing.
 //!
 //! Must not: lay out (the reflow the tool reports is the host's layout's, through the
 //! layout port), or touch any part but the settings.
 
 use crate::doc::{Key, WordDoc};
+use crate::fields::{EditLayout, PageReflow};
 use crate::names::W;
 use crate::policy::RevisionPolicy;
 use crate::review::space::Space;
@@ -207,6 +209,49 @@ impl Command<WordDoc> for UpgradeToModern {
         space.mark_dirty(&part);
         space.finish(&mut sink)?;
         Ok(Upgraded { changed: true, removed })
+    }
+}
+
+/// [`UpgradeToModern`] with the reflow it makes: the pages of the version before against
+/// the version Convert made, laid out by the call's layout (docx-agent's `upgrade_to_modern`
+/// lays out before and after). Measured in the transaction, so a stop laying out refuses the
+/// edit and nothing changes; the reflow reads the whole document, so another writer's
+/// commit makes it again on the newer version.
+#[derive(Debug, Clone, Copy)]
+pub struct UpgradeReflowed<'l> {
+    /// The call's layout (`None`: no reflow is measured).
+    pub layout: Option<EditLayout<'l>>,
+}
+
+/// What Convert did, and its reflow.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Reflowed {
+    /// What Convert did.
+    pub upgraded: Upgraded,
+    /// The reflow, where the document changed and a layout measured it; inside, why the
+    /// layout cannot say.
+    pub reflow: Option<std::result::Result<PageReflow, String>>,
+}
+
+impl Command<WordDoc> for UpgradeReflowed<'_> {
+    type Out = Reflowed;
+    type Error = EditError;
+
+    fn validate(&self, doc: &WordDoc) -> Result<()> {
+        UpgradeToModern.validate(doc)
+    }
+
+    fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<Reflowed> {
+        let upgraded = UpgradeToModern.prepare(tx)?;
+        let Some(layout) = self.layout.filter(|_| upgraded.changed) else {
+            return Ok(Reflowed { upgraded, reflow: None });
+        };
+        tx.read_everything();
+        let reflow = layout.reflow(tx.base().doc().package(), tx.doc().package())?;
+        Ok(Reflowed {
+            upgraded,
+            reflow: Some(reflow),
+        })
     }
 }
 

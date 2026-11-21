@@ -290,7 +290,7 @@ impl FieldLayout for OnePage {
         Err(LayOutError::Unsupported("not needed".to_owned()))
     }
 
-    fn reflow(&self, before: &Package, after: &Package) -> Result<PageReflow, String> {
+    fn reflow(&self, before: &Package, after: &Package, _cancel: &dyn Cancel) -> Result<PageReflow, LayOutError> {
         self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         assert!(
             before.part_names().len() < after.part_names().len(),
@@ -347,6 +347,46 @@ fn convert_writes_mode_fifteen_and_reports_the_reflow_then_is_a_no_op() {
     assert_eq!(reply["data"], json!({"mode": 15, "reflow": null}));
     assert_eq!(reply["changed"], json!([]));
     assert_eq!(layout.asked.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+/// A layout whose every reflow is stopped, as the call's limit on laying out stops it.
+struct StoppedReflow;
+
+impl FieldLayout for StoppedReflow {
+    fn lay_out(&self, _package: &Package, _cancel: &dyn Cancel) -> Result<Box<dyn LaidFields + '_>, LayOutError> {
+        Err(LayOutError::Unsupported("not needed".to_owned()))
+    }
+
+    fn reflow(&self, _before: &Package, _after: &Package, cancel: &dyn Cancel) -> Result<PageReflow, LayOutError> {
+        assert!(cancel.is_cancelled(), "the call's limit is what stops it");
+        Err(LayOutError::Stopped)
+    }
+}
+
+#[test]
+fn convert_whose_reflow_is_stopped_is_a_timeout_that_changes_nothing() {
+    let editor = Editor::open(package(), StoreConfig::default(), Arc::new(Still), Arc::new(Unlimited)).unwrap();
+    let before = editor.store().snapshot().seq();
+    let opened = editor.store().snapshot().doc().clone();
+    let caller = Caller::anonymous();
+    let limit = ooxml_tools_word::LayoutLimit {
+        cancel: &crate::check::Past,
+        timeout: std::time::Duration::from_millis(1500),
+    };
+    let reply = {
+        let call_editor = CallEditor::new(&editor);
+        let editing = Editing::new(&call_editor, &caller, &opened, "d1", &Never, "2026-11-17T10:00:00Z")
+            .with_layout(Some(&StoppedReflow))
+            .with_layout_limit(Some(limit));
+        let (args, _) =
+            WordTemplate::accept(json!({"doc": "d1", "action": "upgrade_to_modern"}), Some("docx")).unwrap();
+        Value::Object(word_template(&args, &editing).to_json())
+    };
+    let error = &reply["error"];
+    assert_eq!(error["code"], "timeout", "{reply}");
+    assert_eq!(error["message"], "laying the document out did not finish within 1.5 s");
+    assert_eq!(error["details"]["timeout"], json!(1.5));
+    assert_eq!(editor.store().snapshot().seq(), before, "nothing changed");
 }
 
 #[test]
