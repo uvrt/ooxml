@@ -120,11 +120,11 @@ impl Call<'_> {
     /// names and the session's own reading of the version.
     pub(crate) fn read<R>(&self, run: impl FnOnce(&Version<'_>) -> R) -> R {
         let others = self.other_versions();
-        let version = Version {
-            others: Others::new(&others),
-            owned: self.owned(),
-            ..self.doc.version_of()
-        };
+        let version = self
+            .doc
+            .version_of()
+            .with_others(Others::new(&others))
+            .with_owned(self.owned());
         run(&version)
     }
 
