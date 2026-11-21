@@ -13,9 +13,11 @@
 //! not lay out.
 
 mod args;
+mod facts;
 mod reflow;
 
 pub use args::{Check, CheckCopy, CheckInclude, CheckScale, CopyLists, CopyReference, ScaleShow, ScaleStep, StepText};
+pub use facts::{empty_run_json, grid_mismatch_json, lost_cell_json, skipped_level_json};
 pub use reflow::{LastCheck, Seen};
 
 use crate::describe::cancelled;
@@ -206,4 +208,9 @@ fn fields(owned: Owned<'_>) -> Result<Value, ToolError> {
     }
     out.insert("note".into(), Value::from(FIELDS_NOTE));
     Ok(Value::Object(out))
+}
+
+/// Registers `check` (the crate's [`crate::register`]).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    r.read::<Check>(check);
 }

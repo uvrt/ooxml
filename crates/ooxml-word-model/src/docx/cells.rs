@@ -3,7 +3,8 @@
 //! paragraphs' cell (table style and regions), each cell's resolved properties (its
 //! shading as drawn) and the tables as the model reads them; and the layout model's
 //! structural path of an element of the table ([`model_path`]), by which the two are
-//! matched.
+//! matched -- or of a story part ([`story_model_path`]: a field's run, as the layout names
+//! what it draws).
 //!
 //! Must not: read anything outside its table, or keep anything between versions.
 
@@ -103,13 +104,70 @@ impl TableFacts {
     }
 }
 
+/// The cells of one part's paragraphs as the layout model reads them: the outermost table
+/// holding a paragraph read once ([`TableFacts`]), each paragraph's cell found by its place.
+pub struct PartCells<'a> {
+    formatting: &'a Formatting,
+    root: &'a Arc<Element>,
+    tables: HashMap<Vec<u32>, Arc<TableFacts>>,
+}
+
+impl<'a> PartCells<'a> {
+    /// The cells of the part whose root is `root`, read with `formatting`.
+    #[must_use]
+    pub fn new(formatting: &'a Formatting, root: &'a Arc<Element>) -> PartCells<'a> {
+        PartCells {
+            formatting,
+            root,
+            tables: HashMap::new(),
+        }
+    }
+
+    /// The cell of the paragraph at `place` (child indexes from the root), in the outermost
+    /// table holding it; `None` outside tables.
+    pub fn cell(&mut self, place: &[u32]) -> Option<Cell> {
+        let depth = (1..place.len()).find(|d| {
+            place
+                .get(..*d)
+                .and_then(|prefix| super::at_path(self.root, prefix))
+                .is_some_and(|e| e.name().is(Some(W), "tbl"))
+        })?;
+        let (table_at, below) = place.split_at(depth);
+        let table = super::at_path(self.root, table_at)?;
+        let formatting = self.formatting;
+        let facts = self
+            .tables
+            .entry(table_at.to_vec())
+            .or_insert_with(|| Arc::new(TableFacts::read(formatting, table)));
+        facts.cell(&model_path(table, below)?).cloned()
+    }
+}
+
 /// The layout model's path of the element at `below` under the `w:tbl` `table`: each step
 /// `w:<name>[k]`, `k` counting siblings of that name from 1 -- rows among a table's rows and
 /// cells among a row's cells wherever wrappers (content controls, custom XML) hold them.
 #[must_use]
 pub fn model_path(table: &Arc<Element>, below: &[u32]) -> Option<String> {
-    let mut out = String::from(ROOT);
-    let mut node = Arc::clone(table);
+    path_from(table, String::from(ROOT), below)
+}
+
+/// The layout model's path of the element at child indexes `place` in the story part whose
+/// root is `root`, as the model names a story's blocks and runs: the main part's from its
+/// body (`w:body/w:p[3]/w:r[2]`), any other part's from its root (`w:hdr/w:p[1]/w:r[1]`);
+/// rows and cells counted as [`model_path`] counts them.
+#[must_use]
+pub fn story_model_path(root: &Arc<Element>, place: &[u32]) -> Option<String> {
+    let (first, rest) = place.split_first()?;
+    match root.children().get(*first as usize)?.as_element() {
+        Some(body) if body.name().is(Some(W), "body") => path_from(body, String::from("w:body"), rest),
+        _ => path_from(root, format!("w:{}", root.name().local()), place),
+    }
+}
+
+/// The steps from `start` to the element at `below`, after `prefix`.
+fn path_from(start: &Arc<Element>, prefix: String, below: &[u32]) -> Option<String> {
+    let mut out = prefix;
+    let mut node = Arc::clone(start);
     let mut steps = below.iter().peekable();
     while let Some(k) = steps.next() {
         let parent_name = node.name().local().to_owned();

@@ -98,28 +98,24 @@ fn changed(
     }
     held.old.extend(held_id(a));
     held.new.extend(held_id(b));
-    for (start, old_end, new_end) in a.children().changed_spans(b.children()) {
-        let pair = (old_end - start == 1 && new_end - start == 1)
-            .then(|| (a.children().get(start), b.children().get(start)))
+    for run in ooxml_xml::changed_runs(a.children(), b.children()) {
+        let pair = (run.old.len() == 1 && run.new.len() == 1)
+            .then(|| (a.children().get(run.old.start), b.children().get(run.new.start)))
             .and_then(|(x, y)| Some((x?.as_element()?, y?.as_element()?)))
             .filter(|(x, y)| x.name() == y.name());
         if let Some((x, y)) = pair {
             changed(x, y, held, old, new);
             continue;
         }
-        old.extend(elements(a, start, old_end));
-        new.extend(elements(b, start, new_end));
+        old.extend(elements(a, run.old));
+        new.extend(elements(b, run.new));
     }
 }
 
-/// The elements among `parent`'s children in places `from..to`.
-fn elements(parent: &Element, from: usize, to: usize) -> Vec<Arc<Element>> {
-    parent
-        .children()
-        .iter()
-        .skip(from)
-        .take(to - from)
-        .filter_map(|n| n.as_element().cloned())
+/// The elements among `parent`'s children in `places`.
+fn elements(parent: &Element, places: std::ops::Range<usize>) -> Vec<Arc<Element>> {
+    places
+        .filter_map(|k| parent.children().get(k).and_then(Node::as_element).cloned())
         .collect()
 }
 

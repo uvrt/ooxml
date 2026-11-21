@@ -1,6 +1,7 @@
 //! `word-objects-bench <document.docx> [table]`: what the object tools cost on a long
 //! document. Each call -- `word_edit_table`'s rows and columns inserted, copied and deleted (with their
-//! report of the file's text removed), cells merged and split; `word_controls`' insert, fill, remove
+//! report of the file's text removed), cells merged and split; `word_format_table`'s keeps and
+//! `width_of: "body"`; `word_controls`' insert, fill, remove
 //! and list; `word_drawings`' text box and shape inserted, a drawing moved, resized and set, and
 //! the list -- untracked and tracked -- runs as a whole tool call on a fresh
 //! editor of the document, on its middle body table (or `table`); the best of three wall
@@ -14,7 +15,8 @@ use ooxml_opc::Package;
 use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools::ArgType;
 use ooxml_tools_word::{
-    word_controls, word_drawings, word_edit_table, CallEditor, Editing, WordControls, WordDrawings, WordEditTable,
+    word_controls, word_drawings, word_edit_table, word_format_table, CallEditor, Editing, WordControls, WordDrawings,
+    WordEditTable, WordFormatTable,
 };
 use ooxml_word_edit::{Editor, Tracking};
 use serde_json::{json, Value};
@@ -55,18 +57,10 @@ fn best_of(
         opened.docx().map_err(|e| e.to_string())?;
         let caller = Caller::anonymous();
         let blobs = picture_blobs();
-        let editing = Editing {
-            editor: &CallEditor::new(&editor),
-            caller: &caller,
-            opened: &opened,
-            tracking,
-            doc: "d1",
-            cancel: &Never,
-            date: "2026-11-17T10:00:00Z",
-            layout: None,
-            others: ooxml_tools_word::Others::default(),
-            blobs: Some(&blobs),
-        };
+        let call_editor = CallEditor::new(&editor);
+        let editing = Editing::new(&call_editor, &caller, &opened, "d1", &Never, "2026-11-17T10:00:00Z")
+            .with_tracking(tracking)
+            .with_blobs(Some(&blobs));
         for call in setup {
             call(&editing);
         }
@@ -116,6 +110,46 @@ fn best(bytes: &Arc<[u8]>, arguments: &Value, tracking: Option<&Tracking>) -> Re
 
 fn summary_of(reply: &Value) -> String {
     reply.get("summary").and_then(Value::as_str).unwrap_or("").to_owned()
+}
+
+/// `word_format_table`'s keeps and `width_of: "body"` on the table: released (a table not
+/// kept together: said, not written), its last row released beside `cant_split`, put on the
+/// body's lines (whole, and 80% centred).
+fn formats(
+    bytes: &Arc<[u8]>,
+    table: &str,
+    tracking: &Tracking,
+    out: &mut serde_json::Map<String, Value>,
+) -> Result<(), String> {
+    let calls = [
+        ("format_table keep_together false", json!({"keep_together": false})),
+        (
+            "format_table keep_with_next false, cant_split",
+            json!({"keep_with_next": false, "cant_split": true}),
+        ),
+        ("format_table width_of body", json!({"width_of": "body"})),
+        (
+            "format_table width_of body 80% centred",
+            json!({"width_of": "body", "width_percent": 80, "alignment": "center"}),
+        ),
+    ];
+    for (name, arguments) in calls {
+        let mut call = json!({"doc": "d1", "table": table, "scope": "table"});
+        if let (Some(call), Some(arguments)) = (call.as_object_mut(), arguments.as_object()) {
+            call.extend(arguments.clone());
+        }
+        let args = WordFormatTable::from_arg(&call, "").map_err(|e| e.to_string())?;
+        for (label, tracked) in [(name.to_owned(), None), (format!("{name}, tracked"), Some(tracking))] {
+            let (ms, reply) = best_of(
+                bytes,
+                &[],
+                &|editing| Value::Object(word_format_table(&args, editing).to_json()),
+                tracked,
+            )?;
+            out.insert(label, json!({"ms": ms, "summary": summary_of(&reply)}));
+        }
+    }
+    Ok(())
 }
 
 /// `word_controls`' actions on the document's middle body paragraph: a control inserted
@@ -296,6 +330,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
             out.insert(name, json!({"ms": ms, "summary": summary}));
         }
     }
+    formats(&bytes, &table, &tracking, &mut out)?;
     let paragraphs: Vec<String> = docx
         .body()
         .map(|b| b.ids.paragraphs().iter().map(|p| p.id.clone()).collect())

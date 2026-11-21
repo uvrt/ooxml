@@ -17,6 +17,7 @@ ooxml-word-model.workspace = true
 ooxml-drawingml.workspace = true
 ooxml-style-names.workspace = true
 ooxml-markdown.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 
 [lints]

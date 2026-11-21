@@ -38,7 +38,12 @@ def _table_scope(table: str) -> list[dict]:
             fmt(borders="double", shading="FFF2CC"), fmt(header_rows=1), fmt(header_rows=0), fmt(header_rows=99),
             fmt(look=["header_row", "banded_rows"]), fmt(look=[]), fmt(look=["total_row", "last_column"]),
             fmt(style="Table Grid", look=["first_column"]), fmt(cant_split=True), fmt(cant_split=False),
-            fmt(width_of="body"), fmt(width_of="window", width=100), fmt(keep_together=True),
+            fmt(width_of="body"), fmt(width_of="body", width_percent=80), fmt(width_of="body", alignment="center"),
+            fmt(width_of="body", width_percent=50, alignment="right"), fmt(width_of="body", width_percent=0.01),
+            fmt(width_of="body", style="Table Grid", borders="single", cant_split=True),
+            fmt(width_of="window"), fmt(width_of="window", width=100), fmt(width_of="window", width_percent=80),
+            fmt(width_of="window", style="Table Grid"), fmt(width_of="window", borders="double", shading="DDEEFF"),
+            fmt(keep_together=True),
             fmt(keep_together=False, keep_with_next=True), fmt(), fmt(style="Table Grid", width=250,
                                                                      alignment="center", header_rows=1)]
 

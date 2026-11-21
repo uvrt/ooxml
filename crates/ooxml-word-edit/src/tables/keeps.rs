@@ -21,6 +21,7 @@ use crate::sink::EditSink;
 use crate::validate::Orders;
 use crate::work::{Id, Work};
 use crate::{EditError, Result, WordDoc};
+use ooxml_word_model::docx::formatting::Formatting;
 use ooxml_word_model::docx::{at_path, Docx};
 use ooxml_xml::Element;
 
@@ -67,7 +68,8 @@ pub(crate) fn row_keeps(docx: &Docx, found: &Found) -> Result<Vec<RowKeep>> {
 fn rows_at(docx: &Docx, part: &str, path: &[u32]) -> Result<Vec<RowKeep>> {
     let story = docx.part(part).ok_or_else(|| EditError::NoPart(part.to_owned()))?;
     let table = at_path(story.root(), path).ok_or_else(|| EditError::Path(part.to_owned()))?;
-    let mut look = Keeps::new(docx, story);
+    let formatting = Formatting::read(docx);
+    let mut look = Keeps::new(&formatting, story);
     let mut out = Vec::new();
     for lead in row_leads(table, path) {
         let paragraph = lead.as_ref().and_then(|l| Some((l, at_path(story.root(), l)?)));
@@ -317,7 +319,8 @@ pub fn loose_paragraph_after(doc: &WordDoc, table: &str) -> Result<Option<(Strin
     if !is(paragraph, "p") || !is(next, "tbl") {
         return Ok(None);
     }
-    let mut look = Keeps::new(&docx, story);
+    let formatting = Formatting::read(&docx);
+    let mut look = Keeps::new(&formatting, story);
     if look.effective(paragraph, p_at, true).keep_with_next {
         return Ok(None);
     }

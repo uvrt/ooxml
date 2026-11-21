@@ -25,3 +25,15 @@ pub use links::{word_links, LinkAction, WordLinks};
 pub use moving::{word_move, WordMove};
 pub use notes::{word_notes, NoteAction, NoteKind, WordNotes};
 pub use sections::{word_sections, Margins, Orientation, SectionAction, SectionStart, WordSections};
+
+/// Registers the group's tools, in the order a model is shown them (the crate's
+/// [`crate::register`]).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    fields::register(r);
+    headers_footers::register(r);
+    copy_from::register(r);
+    moving::register(r);
+    sections::register(r);
+    notes::register(r);
+    links::register(r);
+}

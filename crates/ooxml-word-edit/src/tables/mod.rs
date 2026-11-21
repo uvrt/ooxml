@@ -9,6 +9,7 @@
 //! Must not: write but through the sink, or decide what a tool's arguments mean (the tool
 //! does).
 
+mod body_lines;
 mod columns;
 mod copy_row;
 mod keeps;
@@ -20,9 +21,11 @@ mod rows;
 pub(crate) mod shape;
 mod split;
 pub(crate) mod tracker;
+mod window;
 
 pub(crate) use rows::placed;
 
+pub use body_lines::{body_lines, body_width, BodyLines, BodyWidth};
 pub use keeps::{loose_paragraph_after, table_keeps, table_keeps_at, TableKeeps};
 pub use props::{CellValues, Look, TableValues, TableWidth};
 pub use rows::{pending_structure, EditTable, TableChange, TableChanged};
@@ -40,6 +43,7 @@ use crate::work::{scope_above, Id, Work};
 use crate::{EditError, Result, WordDoc};
 use ooxml_store::{Command, Txn};
 use ooxml_word_model::address::direct;
+use ooxml_word_model::docx::formatting::Formatting;
 use ooxml_word_model::docx::{at_path, find_path, Docx};
 use ooxml_word_model::ids::Entry;
 use ooxml_xml::Element;
@@ -75,6 +79,11 @@ pub enum TableFormat {
         column: usize,
         /// What to set.
         values: CellValues,
+    },
+    /// Word's AutoFit to Window at `percent` of the room (`fit_table_to_window`; [`window`]).
+    Window {
+        /// Percent, above 0 and at most 100.
+        percent: f64,
     },
     /// The rows' keeps: `keep_together` and `keep_with_next` as `word_format_table` gives
     /// them (`set_keep_together`, `set_table_keep_with_next`; [`keeps::plan`]).
@@ -230,6 +239,14 @@ impl FormatTable<'_> {
                         ));
                     }
                 }
+                TableFormat::Window { .. } if columns == 0 => {
+                    return Err(EditError::Refused("the table has no grid of columns to fit".to_owned()));
+                }
+                TableFormat::Window { percent } if !(*percent > 0.0 && *percent <= 100.0) => {
+                    return Err(EditError::Refused(
+                        "a width in percent is above 0 and at most 100".to_owned(),
+                    ));
+                }
                 TableFormat::ColumnWidth { column, .. } if *column >= columns => {
                     return Err(EditError::Refused(format!("{} has no column {column}", found.id)));
                 }
@@ -354,23 +371,14 @@ impl FormatTable<'_> {
             .ok_or_else(|| EditError::NoPart(found.part.clone()))?;
         let element = at_path(tree.root(), &found.path).ok_or_else(|| EditError::Path(found.part.clone()))?;
         let mut work = Work::of(element, scope_above(tree.root(), &found.path));
-        let written = match sink.policy().clone() {
-            RevisionPolicy::Tracked(tracking) => {
-                let (warnings, numbered, dated) = sink.stamped(tracking, |stamp| {
-                    Ok(self.apply(&mut work, Some(stamp), &style_ids, room, orders, &plans))
-                })?;
-                Written {
-                    numbered: Some(numbered),
-                    dated,
-                    warnings,
-                }
-            }
-            RevisionPolicy::Untracked => Written {
-                numbered: None,
-                dated: false,
-                warnings: self.apply(&mut work, None, &style_ids, room, orders, &plans),
-            },
+        let inputs = Inputs {
+            style_ids: &style_ids,
+            room,
+            orders,
+            plans: &plans,
+            window: self.window_inputs(sink, &found, room)?,
         };
+        let (written, unchanged) = self.applied(sink, &mut work, &inputs)?;
         sink.keep_written(&found.part, None, &work);
         let new = work.build().ok_or_else(|| EditError::Path(found.part.clone()))?;
         let docx = sink.docx()?;
@@ -383,7 +391,7 @@ impl FormatTable<'_> {
         if new.as_ref() != element.as_ref() {
             write(sink, &found, &id, new, &written)?;
         }
-        let edits = self.outcomes(written.warnings, &plans, &id, &renamed);
+        let edits = self.outcomes((written.warnings, &unchanged), &plans, &id, &renamed);
         Ok(TableFormatted { edits, pages: None })
     }
 
@@ -392,7 +400,7 @@ impl FormatTable<'_> {
     /// table (a keep already as asked did not).
     fn outcomes(
         &self,
-        warnings: Vec<Vec<String>>,
+        (warnings, unchanged): (Vec<Vec<String>>, &[bool]),
         plans: &[Option<KeepPlan>],
         id: &str,
         renamed: &[(String, String)],
@@ -407,9 +415,13 @@ impl FormatTable<'_> {
                     warnings.push(keeps::released_note(id));
                 }
                 let kept = plan.is_some_and(|p| !p.write.changes.is_empty());
+                let fits = unchanged.get(k).copied().unwrap_or(false);
+                if fits {
+                    warnings.push(format!("{id} already fits the window: nothing changed"));
+                }
                 TableEdit {
                     id: id.to_owned(),
-                    changed: !matches!(format, TableFormat::Keeps { .. }) || kept,
+                    changed: !fits && (!matches!(format, TableFormat::Keeps { .. }) || kept),
                     renamed: if k == 0 { renamed.to_vec() } else { Vec::new() },
                     warnings,
                 }
@@ -423,11 +435,16 @@ impl FormatTable<'_> {
         &self,
         work: &mut Work,
         mut stamp: Option<&mut Stamp>,
-        style_ids: &[String],
-        room: i64,
-        orders: &Orders,
-        plans: &[Option<KeepPlan>],
-    ) -> Vec<Vec<String>> {
+        inputs: &Inputs<'_>,
+    ) -> (Vec<Vec<String>>, Vec<bool>) {
+        let Inputs {
+            style_ids,
+            room,
+            orders,
+            plans,
+            ..
+        } = *inputs;
+        let mut unchanged = vec![false; self.formats.len()];
         let table = work.root();
         // the rows' paragraphs found before any edit moves them (a row's new `w:trPr`)
         let leads: Vec<Vec<(Id, Option<bool>)>> = plans
@@ -444,28 +461,13 @@ impl FormatTable<'_> {
             match format {
                 TableFormat::Keeps { .. } => {
                     if let (Some(plan), Some(leads)) = (plans.get(k).and_then(Option::as_ref), leads.get(k)) {
-                        let roots: Vec<Id> = leads.iter().map(|l| l.0).collect();
-                        let tracker = stamp.is_some().then(|| PropertyTracker::start(work, &roots));
-                        keeps::write(work, leads, orders);
-                        if let (Some(tracker), Some(stamp)) = (tracker, stamp.as_deref_mut()) {
-                            tracker.record(work, stamp, orders);
-                        }
+                        write_keeps(work, stamp.as_deref_mut(), leads, orders);
                         warnings.extend(plan.write.warnings.iter().cloned());
                     }
                 }
                 TableFormat::Table(values) => {
                     let style = values.style.as_ref().and_then(|_| styles.next()).map(String::as_str);
-                    let tracker = stamp.is_some().then(|| TableTracker::new(work, table, true));
-                    props::apply_table(work, table, values, style, room, orders);
-                    if let (Some(tracker), Some(stamp)) = (tracker, stamp.as_deref_mut()) {
-                        tracker.record(work, stamp, true, true, orders);
-                    }
-                    if let Some(count) = values.header_rows {
-                        props::set_header_rows(work, table, count, orders);
-                        if stamp.is_some() {
-                            warnings.push("Word does not track header rows: they are applied untracked".to_owned());
-                        }
-                    }
+                    warnings.extend(set_table(work, stamp.as_deref_mut(), values, (style, room), orders));
                 }
                 TableFormat::ColumnWidth { column, width } => {
                     let tracker = stamp.is_some().then(|| TableTracker::new(work, table, true));
@@ -497,10 +499,18 @@ impl FormatTable<'_> {
                         tracker.record(work, stamp, false, true, orders);
                     }
                 }
+                TableFormat::Window { percent } => {
+                    if let Some(window) = &inputs.window {
+                        let fits = fit_window(work, stamp.as_deref_mut(), window, *percent, orders);
+                        if let Some(flag) = unchanged.get_mut(k) {
+                            *flag = fits;
+                        }
+                    }
+                }
             }
             out.push(warnings);
         }
-        out
+        (out, unchanged)
     }
 }
 
@@ -533,6 +543,134 @@ impl FormatTable<'_> {
             out.push(Some(KeepPlan { rows, write, released }));
         }
         Ok(out)
+    }
+}
+
+/// What every edit of one [`FormatTable`] reads.
+struct Inputs<'a> {
+    style_ids: &'a [String],
+    room: i64,
+    orders: &'a Orders,
+    plans: &'a [Option<KeepPlan>],
+    window: Option<WindowInputs>,
+}
+
+/// What AutoFit to Window reads beside the table: the room it fits, whether the document
+/// lays tables out as mode 15 does, and the styles (a style given in the same call too).
+struct WindowInputs {
+    room: window::Room,
+    modern: bool,
+    formatting: Formatting,
+}
+
+/// The table's properties (`set_table`), its style as `style`, a percent width of `room`
+/// (tracked: recorded; header rows applied untracked, said).
+fn set_table(
+    work: &mut Work,
+    stamp: Option<&mut Stamp>,
+    values: &TableValues,
+    (style, room): (Option<&str>, i64),
+    orders: &Orders,
+) -> Vec<String> {
+    let table = work.root();
+    let tracked = stamp.is_some();
+    let tracker = tracked.then(|| TableTracker::new(work, table, true));
+    props::apply_table(work, table, values, style, room, orders);
+    if let (Some(tracker), Some(stamp)) = (tracker, stamp) {
+        tracker.record(work, stamp, true, true, orders);
+    }
+    let mut warnings = Vec::new();
+    if let Some(count) = values.header_rows {
+        props::set_header_rows(work, table, count, orders);
+        if tracked {
+            warnings.push("Word does not track header rows: they are applied untracked".to_owned());
+        }
+    }
+    warnings
+}
+
+/// The rows' keeps written on their paragraphs `leads` (tracked: each paragraph's old
+/// properties recorded).
+fn write_keeps(work: &mut Work, stamp: Option<&mut Stamp>, leads: &[(Id, Option<bool>)], orders: &Orders) {
+    let roots: Vec<Id> = leads.iter().map(|l| l.0).collect();
+    let tracker = stamp.is_some().then(|| PropertyTracker::start(work, &roots));
+    keeps::write(work, leads, orders);
+    if let (Some(tracker), Some(stamp)) = (tracker, stamp) {
+        tracker.record(work, stamp, orders);
+    }
+}
+
+/// AutoFit to Window on the table of `work` (tracked: its properties, cells and grid
+/// recorded); whether it was already so (nothing changed).
+fn fit_window(
+    work: &mut Work,
+    stamp: Option<&mut Stamp>,
+    inputs: &WindowInputs,
+    percent: f64,
+    orders: &Orders,
+) -> bool {
+    let table = work.root();
+    let before = work.build_element(table);
+    let tracker = stamp.is_some().then(|| TableTracker::new(work, table, false));
+    #[allow(clippy::cast_possible_truncation)]
+    let pct = (percent * 50.0).round_ties_even() as i64;
+    // a table with no grid is refused before (check)
+    let _ = window::write(
+        work,
+        table,
+        (pct, inputs.room, inputs.modern),
+        &inputs.formatting,
+        orders,
+    );
+    if let (Some(tracker), Some(stamp)) = (tracker, stamp) {
+        tracker.record(work, stamp, true, true, orders);
+    }
+    before == work.build_element(table)
+}
+
+impl FormatTable<'_> {
+    /// What AutoFit to Window reads, where the call fits the table to the window.
+    fn window_inputs(&self, sink: &EditSink<'_, '_>, found: &Found, room: i64) -> Result<Option<WindowInputs>> {
+        if !self.formats.iter().any(|f| matches!(f, TableFormat::Window { .. })) {
+            return Ok(None);
+        }
+        let docx = sink.docx()?;
+        Ok(Some(WindowInputs {
+            room: window::window_room(sink.doc(), &docx, found, room),
+            modern: crate::template::compatibility_mode(sink.doc())? >= 15,
+            formatting: Formatting::read(&docx),
+        }))
+    }
+
+    /// The edits on `work`, recorded when tracked: what they wrote, and per edit whether
+    /// it fit a table already fitting the window.
+    fn applied(
+        &self,
+        sink: &mut EditSink<'_, '_>,
+        work: &mut Work,
+        inputs: &Inputs<'_>,
+    ) -> Result<(Written, Vec<bool>)> {
+        Ok(match sink.policy().clone() {
+            RevisionPolicy::Tracked(tracking) => {
+                let ((warnings, unchanged), numbered, dated) =
+                    sink.stamped(tracking, |stamp| Ok(self.apply(work, Some(stamp), inputs)))?;
+                let written = Written {
+                    numbered: Some(numbered),
+                    dated,
+                    warnings,
+                };
+                (written, unchanged)
+            }
+            RevisionPolicy::Untracked => {
+                let (warnings, unchanged) = self.apply(work, None, inputs);
+                let written = Written {
+                    numbered: None,
+                    dated: false,
+                    warnings,
+                };
+                (written, unchanged)
+            }
+        })
     }
 }
 
