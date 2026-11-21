@@ -139,6 +139,9 @@ impl ToolSpec {
                 alias.path.split('.').collect()
             };
             walk(&mut arguments, &parts, "", &mut |node, where_| {
+                if !applies(node, alias.when.as_ref()) {
+                    return Ok(());
+                }
                 renamed(node, &alias.alias, &alias.name, where_, notes)
             })?;
         }
@@ -331,6 +334,12 @@ fn names_meant(arguments: &Value, alias: &str, name: &str) -> bool {
         && items
             .iter()
             .all(|item| item.as_str().is_some_and(|text| !crate::pyfmt::is_float(text)))
+}
+
+/// Whether an alias read only while an argument has a value applies to `node`, the object
+/// it is written in (an alias with no condition always does).
+fn applies(node: &Value, when: Option<&(String, String)>) -> bool {
+    when.is_none_or(|(argument, value)| node.get(argument).and_then(Value::as_str) == Some(value))
 }
 
 fn renamed(node: &mut Value, alias: &str, name: &str, where_: &str, notes: &mut Vec<String>) -> Result<(), ToolError> {

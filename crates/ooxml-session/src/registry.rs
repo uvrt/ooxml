@@ -18,8 +18,9 @@
 //! handlers; [`crate::handlers`] runs them, [`crate::call`] hands them the call).
 
 use crate::handlers::{EditHandler, ReadHandler, Tool};
+use crate::reading_edit::ReadingEditHandler;
 use crate::DocKind;
-use ooxml_tools::{ToolArgs, ToolSpec};
+use ooxml_tools::{ReadsWhen, ToolArgs, ToolSpec};
 use ooxml_tools_word::{EditFn, Hosting, ReadFn, Registrar, TrackingFn};
 use serde_json::{Map, Value};
 use std::sync::Arc;
@@ -144,6 +145,12 @@ impl Registrar for Registry {
     fn tracking<T: ToolArgs + 'static>(&mut self, run: TrackingFn<T>, hosting: Hosting) {
         self.register(Arc::new(
             EditHandler::<T>::tracking(&[DocKind::Docx], run).hosted(hosting),
+        ));
+    }
+
+    fn reading_edit<T: ToolArgs + ReadsWhen + 'static>(&mut self, read: ReadFn<T>, edit: EditFn<T>, hosting: Hosting) {
+        self.register(Arc::new(
+            ReadingEditHandler::<T>::new(&[DocKind::Docx], read, edit).hosted(hosting),
         ));
     }
 }

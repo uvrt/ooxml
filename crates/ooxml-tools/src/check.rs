@@ -85,9 +85,24 @@ impl ToolSpec {
             {
                 out.push(format!("{where_}: no description"));
             }
-            for alias in property.intent.aliases.iter().chain(&property.intent.refused_aliases) {
+            let conditional = property.intent.aliases_when.iter().map(|rule| &rule.alias);
+            for alias in property
+                .intent
+                .aliases
+                .iter()
+                .chain(&property.intent.refused_aliases)
+                .chain(conditional)
+            {
                 if object.property(alias).is_some() {
                     out.push(format!("{where_}: the alias {alias:?} is a parameter"));
+                }
+            }
+            for rule in &property.intent.aliases_when {
+                if object.property(&rule.argument).is_none() {
+                    out.push(format!(
+                        "{where_}: the alias {:?} depends on {:?}, which is not a parameter",
+                        rule.alias, rule.argument
+                    ));
                 }
             }
             self.node_problems(&property.schema, &where_, depth + 1, enums, out);
@@ -176,6 +191,12 @@ impl ToolSpec {
         for path in &self.paths_first {
             if !holding.iter().any(|what| self.paths(*what).contains(path)) {
                 out.push(format!("paths_first names {path:?}, which holds nothing"));
+            }
+        }
+        let keys: Vec<String> = self.aliases().iter().map(crate::Alias::key).collect();
+        for key in &self.aliases_first {
+            if !keys.contains(key) {
+                out.push(format!("aliases_first names {key:?}, which is no alias"));
             }
         }
     }

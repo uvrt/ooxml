@@ -12,7 +12,7 @@
 
 use crate::{Editing, Tracked, Version};
 use ooxml_base::Cancel;
-use ooxml_tools::{Done, ToolArgs, ToolError, ToolResult};
+use ooxml_tools::{Done, ReadsWhen, ToolArgs, ToolError, ToolResult};
 use serde_json::{Map, Value};
 
 /// A reading tool's handler: the typed arguments, the version read (its package, name,
@@ -99,6 +99,11 @@ pub trait Registrar {
 
     /// The editing tool `T` that also sets the document's tracking mode.
     fn tracking<T: ToolArgs + 'static>(&mut self, run: TrackingFn<T>, hosting: Hosting);
+
+    /// The editing tool `T` some of whose calls only read ([`ReadsWhen`]: `edit_chart`'s
+    /// `action: "read"`): `read` answers those on the version the call pins, `edit` the
+    /// others, hosted as `hosting` says.
+    fn reading_edit<T: ToolArgs + ReadsWhen + 'static>(&mut self, read: ReadFn<T>, edit: EditFn<T>, hosting: Hosting);
 }
 
 /// Every Word tool, in the order a model is shown them: `describe` first, then the other

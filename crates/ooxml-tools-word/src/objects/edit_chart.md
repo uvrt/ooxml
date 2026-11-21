@@ -1,0 +1,1 @@
+Add, read or change a chart. add: a new chart, styled as Office inserts one. read: type, data, formats, scales, and what Edit Data holds. Others change data, titles, legend, labels, axes, colours, series type, text or gridlines; values and workbook change together. Batch several changes.
