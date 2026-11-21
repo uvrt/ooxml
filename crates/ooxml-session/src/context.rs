@@ -1,6 +1,6 @@
 //! Owns: a call's context ([`CallContext`]: who calls, its cancellation token, its
 //! deadline, the versions it reads, where it may ask where blocks are laid out, the host's
-//! names for its documents), the token a host cancels a call with ([`CancelToken`]), the [`Cancel`] a call
+//! names for its documents, the limits on its reply), the token a host cancels a call with ([`CancelToken`]), the [`Cancel`] a call
 //! runs under (its token, its deadline read from the session's [`Clock`], and the
 //! session's own [`Cancel`]), and the store's clock read through the session's.
 //!
@@ -75,6 +75,16 @@ pub struct CallContext {
     /// resolved against its datasets), which an editing call keeps on the paragraphs they
     /// went into; empty: none.
     pub written: Vec<ooxml_tools_word::Written>,
+    /// The tables of the open documents the host holds itself (a workbook's `t:stock`), as a
+    /// `from` names them: a call refused for a table not in its document says it is one of
+    /// those (asked only then); `None`: none.
+    pub tables: Option<Arc<dyn ooxml_tools_word::HostTables>>,
+    /// The pages and lines of the host's layout of the version the call reads, where it
+    /// has laid it out (`save_document`'s `app.xml` statistics); `None`: not laid out.
+    pub counts: Option<ooxml_tools_word::LayoutCounts>,
+    /// The host's limits on the call's reply: a page's characters, a listing's items
+    /// (docx-agent's `Limits.max_result_chars`, `Limits.max_list_items`).
+    pub limits: ooxml_tools::Limits,
     /// The moment the host dates the call's writes by (a revision's and a comment's date,
     /// `2026-11-20T09:30:15Z`): the host's clock, to the second, as docx-agent dates them;
     /// `None`: the session's clock.
@@ -96,6 +106,7 @@ impl std::fmt::Debug for CallContext {
             .field("deadline", &self.deadline)
             .field("layout_timeout", &self.layout_timeout)
             .field("locale", &self.locale)
+            .field("limits", &self.limits)
             .field(
                 "at",
                 &self

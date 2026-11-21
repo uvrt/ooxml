@@ -3,12 +3,14 @@
 //! the range then starts and ends, how much of the page before it is left blank (then and
 //! now), the document's page count now and then, and the page what follows starts on now
 //! and then ([`KeepEffect::of`]). The blocks are found by their layout paths, which a keep
-//! (a paragraph's properties) does not change.
+//! (a paragraph's properties) does not change. The blank is measured with the lines the
+//! facts leave out -- the page's text boxes' and footnotes' ([`BeyondFacts`]), which
+//! docx-agent counts -- asked of the caller for the two pages measured only ([`Side`]).
 //!
 //! Must not: lay out (the engine makes the trial, [`crate::PageEngine::trial`]), word a
 //! reply, or change the document.
 
-use super::ranges::room;
+use super::ranges::{room, BeyondFacts};
 use super::tree::block_keys_top;
 use super::Facts;
 use ooxml_word_layout::facts::{LayoutFacts, PageFacts};
@@ -27,6 +29,15 @@ pub struct Blank {
     pub now_pt: f64,
     /// That blank's share.
     pub now_share: f64,
+}
+
+/// Which layout a page measured is of: the one checked, or the trial's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Side {
+    /// The layout checked.
+    Now,
+    /// The trial's.
+    Then,
 }
 
 /// What one trial found.
@@ -118,9 +129,15 @@ impl Placed {
 
 impl KeepEffect {
     /// What keeping (`on`) or releasing `blocks` did, `now` the layout checked and `then`
-    /// the trial's: `None` where the range is drawn in neither.
-    #[must_use]
-    pub fn of(now: &LayoutFacts, then: &LayoutFacts, blocks: &TrialBlocks, on: bool) -> Option<KeepEffect> {
+    /// the trial's: `None` where the range is drawn in neither. `foot` gives what a page
+    /// (of that side's layout) draws beyond its facts, asked only of the two pages whose
+    /// blank is measured.
+    pub fn of(
+        (now, then): (&LayoutFacts, &LayoutFacts),
+        blocks: &TrialBlocks,
+        on: bool,
+        foot: &mut dyn FnMut(Side, &PageFacts) -> BeyondFacts,
+    ) -> Option<KeepEffect> {
         let (was, will) = (Placed::of(&now.pages, blocks), Placed::of(&then.pages, blocks));
         let (now_start, then_start) = (was.start?, will.start?);
         let ends = will.end?;
@@ -132,18 +149,13 @@ impl KeepEffect {
         let mut blank = None;
         if kept_start > free_start && kept_start > 1 {
             let page = kept_start - 1;
-            let (kept_pages, free_pages) = if on {
-                (&then.pages, &now.pages)
-            } else {
-                (&now.pages, &then.pages)
+            let measured = |side: Side, foot: &mut dyn FnMut(Side, &PageFacts) -> BeyondFacts| {
+                let pages = if side == Side::Then { &then.pages } else { &now.pages };
+                let at = pages.get(page - 1)?;
+                Some(room(at, &foot(side, at)))
             };
-            let kept_room = room(kept_pages.get(page - 1)?);
-            let free_room = room(free_pages.get(page - 1)?);
-            let (room_then, room_now) = if on {
-                (kept_room, free_room)
-            } else {
-                (free_room, kept_room)
-            };
+            let room_then = measured(Side::Then, foot)?;
+            let room_now = measured(Side::Now, foot)?;
             blank = Some(Blank {
                 page,
                 pt: room_then.0,

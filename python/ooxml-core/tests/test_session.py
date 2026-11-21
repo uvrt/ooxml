@@ -114,16 +114,16 @@ def test_a_locale_is_a_tag_or_a_locale_with_its_five_fields():
     session = ooxml_core.Session(locale=dutch)
     doc = session.open(docx(), name="a.docx")
     for locale in (dutch, "nl_be", None):
-        context = ooxml_core.CallContext(locale=locale)
+        context = ooxml_core.CallContext(writing=ooxml_core.CallWriting(locale=locale))
         assert "error" not in call(session, "describe", {"doc": doc}, context=context)
     tagged = ooxml_core.Session(locale="en-GB")
     assert "error" not in call(tagged, "describe", {"doc": tagged.open(docx(), name="b.docx")})
     with pytest.raises(ValueError):
-        ooxml_core.CallContext(locale="english")
+        ooxml_core.CallWriting(locale="english")
     with pytest.raises(ValueError):
         ooxml_core.Session(locale=SimpleNamespace(**{**vars(dutch), "list_separator": ","}))
     with pytest.raises(AttributeError):
-        ooxml_core.CallContext(locale=SimpleNamespace(language="nl-NL"))
+        ooxml_core.CallWriting(locale=SimpleNamespace(language="nl-NL"))
 
 def test_tool_specs_are_the_exports():
     specs = json.loads(ooxml_core.tool_specs("docx"))
@@ -181,10 +181,13 @@ def test_undo_redo_and_the_save_gate():
     session.update(doc, {"word/document.xml": docx_part(3)}, context=bo)
     with pytest.raises(ValueError, match="not the latest"):
         session.undo(doc, context=ann)             # bo changed it after ann
-    assert session.undo(doc, 5, context=bo) == (1, 3)
-    assert session.undo(doc) == (1, 4)
+    # (steps, state number): a plain undo or redo gives the number of the state it brings back,
+    # as docx-agent's undo replies number them (bo's undo restores ann's state 1, the next the
+    # opened state 0, the redo of both state 2) -- not a count of versions
+    assert session.undo(doc, 5, context=bo) == (1, 1)
+    assert session.undo(doc) == (1, 0)
     assert call(session, "describe", {"doc": doc})["data"]["controls"] == 1
-    assert session.redo(doc, 2) == (2, 6)
+    assert session.redo(doc, 2) == (2, 2)
     assert call(session, "describe", {"doc": doc})["data"]["controls"] == 3
     assert session.validation(doc)[:2] == ([], [])
     assert session.save(doc, checked=True) == session.save(doc)

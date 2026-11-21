@@ -10,8 +10,9 @@
 //! Must not: plan an undo itself (the store does), or say anything in a tool's words.
 
 use crate::retired::Made;
+use crate::session::Opened;
 use crate::{CallContext, DocId, Session, SessionError};
-use ooxml_store::{DocModel, Error, HistoryOutcome, Store, StoreError};
+use ooxml_store::{DocModel, Error, HistoryOutcome, Listed, StepInfo, Store, StoreError};
 use ooxml_word_edit::WordDoc;
 
 /// What an undo or redo through the session did.
@@ -19,8 +20,32 @@ use ooxml_word_edit::WordDoc;
 pub struct Undone {
     /// How many calls it took back or brought back (0: none was there).
     pub count: usize,
-    /// The document's version after it.
+    /// The state number of the document's head after it ([`Opened::number`]).
     pub version: u64,
+}
+
+/// One step of a document's history in the tool layer's state numbers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NumberedStep {
+    /// The state it was made on.
+    pub before: u64,
+    /// The state it made.
+    pub after: u64,
+    /// The version it made (the store's sequence number).
+    pub seq: u64,
+    /// Who made it (the caller's key; `None`: the session's own).
+    pub caller: Option<String>,
+}
+
+/// A document's history in the tool layer's state numbers, read at once.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Numbers {
+    /// The highest state number given: the next step's is one more.
+    pub highest: u64,
+    /// The steps undo can reach, oldest first.
+    pub steps: Vec<NumberedStep>,
+    /// The steps plain redo can bring back, the next one last.
+    pub redo: Vec<NumberedStep>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -46,6 +71,61 @@ impl Session {
     /// [`SessionError::NotOpen`].
     pub fn redo(&self, id: &DocId, steps: usize, context: &CallContext) -> Result<Undone, SessionError> {
         self.history(id, steps, context, Direction::Redo)
+    }
+
+    /// The document's history in state numbers: the highest given, the steps undo can
+    /// reach and those redo can bring back.
+    ///
+    /// # Errors
+    /// [`SessionError::NotOpen`].
+    pub fn numbers(&self, id: &DocId) -> Result<Numbers, SessionError> {
+        let document = self.document(id)?;
+        Ok(match &document.held {
+            crate::document::Held::Package(store) => numbers_of(store.listed()),
+            crate::document::Held::Word(word) => numbers_of(word.editor.store().listed()),
+        })
+    }
+
+    /// The highest state number given on the document: the next step's is one more.
+    ///
+    /// # Errors
+    /// [`SessionError::NotOpen`].
+    pub fn highest(&self, id: &DocId) -> Result<u64, SessionError> {
+        let document = self.document(id)?;
+        Ok(match &document.held {
+            crate::document::Held::Package(store) => store.highest(),
+            crate::document::Held::Word(word) => word.editor.store().highest(),
+        })
+    }
+
+    /// Go on with the state numbers the host gave the document before it was opened again:
+    /// its head is the state `state`, the next step's number one more than `highest`. Only
+    /// before the document's first step.
+    ///
+    /// # Errors
+    /// [`SessionError::NotOpen`]; [`SessionError::Store`] when the numbers are refused (a
+    /// state above the highest, or a step made already).
+    pub fn continue_numbers(&self, id: &DocId, state: u64, highest: u64) -> Result<(), SessionError> {
+        let document = self.document(id)?;
+        let done = match &document.held {
+            crate::document::Held::Package(store) => store.continue_numbers(state, highest),
+            crate::document::Held::Word(word) => word.editor.store().continue_numbers(state, highest),
+        };
+        done.map_err(|e| SessionError::Store(StoreError::Counters(e)))
+    }
+
+    /// The document's state numbered `number` ([`Opened::number`]) its head reaches: the
+    /// head, else the newest such state undo or redo can bring back; `None` when none is kept.
+    ///
+    /// # Errors
+    /// [`SessionError::NotOpen`].
+    pub fn numbered(&self, id: &DocId, number: u64) -> Result<Option<Opened>, SessionError> {
+        let document = self.document(id)?;
+        let at = match &document.held {
+            crate::document::Held::Package(store) => store.numbered(number).map(crate::document::At::Package),
+            crate::document::Held::Word(word) => word.editor.store().numbered(number).map(crate::document::At::Word),
+        };
+        Ok(at.map(|at| Self::opened(id, &document, at)))
     }
 
     fn history(
@@ -77,8 +157,22 @@ impl Session {
         };
         Ok(Undone {
             count,
-            version: document.head().seq(),
+            version: document.head().number(),
         })
+    }
+}
+
+fn numbers_of<K: Ord>(listed: Listed<K>) -> Numbers {
+    let step = |s: StepInfo<K>| NumberedStep {
+        before: s.from_number,
+        after: s.number,
+        seq: s.step.0,
+        caller: s.caller.as_deref().map(str::to_owned),
+    };
+    Numbers {
+        highest: listed.highest,
+        steps: listed.steps.into_iter().map(step).collect(),
+        redo: listed.redo.into_iter().map(step).collect(),
     }
 }
 

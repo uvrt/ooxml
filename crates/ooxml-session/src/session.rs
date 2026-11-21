@@ -72,6 +72,13 @@ impl Opened {
         self.version.seq()
     }
 
+    /// The state's number, as the tool layer numbers the document's states: a step a new
+    /// number, an undo or redo the number of the state it brings back.
+    #[must_use]
+    pub fn number(&self) -> u64 {
+        self.version.number()
+    }
+
     /// The package at this version.
     #[must_use]
     pub fn package(&self) -> &Package {
@@ -90,16 +97,9 @@ impl Opened {
     /// This version as a Word reading tool is handed it.
     #[must_use]
     pub fn version_of(&self) -> Version<'_> {
-        Version {
-            name: &self.name,
-            package: self.package(),
-            number: self.version(),
-            versions: &self.versions,
-            placer: self.placer.as_deref(),
-            owned: None,
-            others: ooxml_tools_word::Others::default(),
-            word: self.word(),
-        }
+        Version::new(&self.name, self.package(), self.version(), &self.versions)
+            .with_placer(self.placer.as_deref())
+            .with_word(self.word())
     }
 }
 
@@ -135,6 +135,9 @@ pub(crate) struct CallState<'p> {
 pub struct CallMade {
     /// The number of the version its first edit made.
     pub first: u64,
+    /// The state number of the version its first edit was applied to ([`Opened::number`]):
+    /// the state its step goes from.
+    pub before: u64,
     /// The version its last edit made.
     pub last: Opened,
     /// What the call's edit touched (`touched` entries), where it made one version (else
@@ -578,16 +581,18 @@ impl Session {
                 let one = made.first.seq() == made.last.seq();
                 CallMade {
                     first: made.first.seq().0,
+                    before: made.before.number(),
                     touched: one.then(|| made.touched.iter().map(crate::changes::touched_json).collect()),
                     validation: made.validation,
                     last: Self::opened(&opened.id, document, At::Word(made.last)),
                 }
             });
-            let head = || document.as_ref().map(|d| d.head().seq());
-            let left = call_made.as_ref().map(|m| m.last.version());
+            // (state numbers, as the tool layer numbers the document's states)
+            let head = || document.as_ref().map(|d| d.head().number());
+            let left = call_made.as_ref().map(|m| m.last.number());
             result.version = Some(
                 left.or_else(|| if mutates { head() } else { None })
-                    .unwrap_or_else(|| opened.version()),
+                    .unwrap_or_else(|| opened.number()),
             );
         }
         warnings.append(&mut result.warnings);
@@ -634,6 +639,9 @@ impl Session {
             blobs: context.blobs.as_deref(),
             written: &context.written,
             others: &state.others,
+            tables: context.tables.as_deref(),
+            counts: context.counts,
+            limits: context.limits,
         };
         let result = tool.run(arguments, &call);
         // An id a version removed, refused as one the document lacks: said as such.

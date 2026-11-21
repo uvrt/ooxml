@@ -54,7 +54,7 @@ pub use review::*;
 pub use structure::*;
 pub use style::*;
 pub use text::*;
-pub use version::{Others, Owned, Version};
+pub use version::{HostTable, HostTables, LayoutCounts, Others, Owned, Version};
 pub use word_inspect::{word_inspect, WordInspect};
 pub use word_read::{word_read, Story, View, WordRead};
 pub use written::Written;

@@ -24,6 +24,7 @@ from ooxml_edit.tools import Dataset, Result, Toolbox, string, tool  # noqa: E40
 from docx_agent import Document  # noqa: E402
 from docx_agent import blocks as _blocks  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
+from view_edits import edited  # noqa: E402
 
 CLOCK = lambda: dt.datetime(2026, 11, 10, 9, 0, tzinfo=dt.timezone.utc)  # noqa: E731
 HEAD = "| code | name | state |\n|---|---|---|\n"
@@ -135,13 +136,14 @@ def test_a_range_naming_the_header_writes_it_and_says_so(toolbox):
 
 def test_header_rows_marked_to_repeat_or_none(toolbox):
     session, table = _table(toolbox)
-    session.entry("d1").document.set_table(table, header_rows=2)
+    with edited(session) as document:
+        document.set_table(table, header_rows=2)
     result = _fill(toolbox, session, table, [{"col": 2, "rows": "*", "text": "Yes"}])
     assert result.ok and _column(session, table, 2)[:3] == ["state", "", "Yes"]
     assert result.data["filled"][0]["header_rows"] == 2
     # none marked and the look's header row off: every row is the column's
-    document = session.entry("d1").document
-    document.set_table(table, header_rows=0, look={"first_row": False})
+    with edited(session) as document:
+        document.set_table(table, header_rows=0, look={"first_row": False})
     result = _fill(toolbox, session, table, [{"col": 0, "rows": "*", "text": "z"}])
     assert result.ok and _column(session, table, 0) == ["z"] * 7
     assert "header_rows" not in result.data["filled"][0]
@@ -159,10 +161,11 @@ def test_a_column_by_its_header_text_and_beside_single_cells(toolbox):
 
 def test_a_merged_cell_is_written_once_and_a_missing_one_is_said(toolbox):
     session, table = _table(toolbox, 5)
-    document = session.entry("d1").document
-    document.merge_cells(table, (2, 2), (3, 2))
+    with edited(session) as document:
+        document.merge_cells(table, (2, 2), (3, 2))
     result = _fill(toolbox, session, table, [{"col": 2, "rows": "*", "text": "Yes"}])
     assert result.ok and result.data["filled"][0]["cells"] == 4
+    document = session.entry("d1").document
     assert document.table(table).cell(2, 2).text == "Yes"
     view = document.table(table)
     assert view.cell(3, 2).id == view.cell(2, 2).id
@@ -248,19 +251,20 @@ def test_a_refusal_says_the_table_and_the_rows_that_work(toolbox, cell, said, op
 def test_rows_without_a_cell_are_said_not_failed(toolbox):
     # rule 5: the cells there are written; a row without one at that column is listed
     session, table = _table(toolbox, 4)
-    document = session.entry("d1").document
     from docx_agent.edit.document import qn
 
-    row = document._resolve(table)[1].rows[2][0]
-    cells = row.findall(qn("w:tc"))
-    row.remove(cells[-1])                          # row 2 ends a column early
-    trpr = row.find(qn("w:trPr"))
-    if trpr is None:
-        trpr = row.makeelement(qn("w:trPr"), {})
-        row.insert(0, trpr)
-    after = trpr.makeelement(qn("w:gridAfter"), {qn("w:val"): "1"})
-    trpr.append(after)
-    document._invalidate()
+    with edited(session) as document:
+        row = document._resolve(table)[1].rows[2][0]
+        cells = row.findall(qn("w:tc"))
+        row.remove(cells[-1])                          # row 2 ends a column early
+        trpr = row.find(qn("w:trPr"))
+        if trpr is None:
+            trpr = row.makeelement(qn("w:trPr"), {})
+            row.insert(0, trpr)
+        after = trpr.makeelement(qn("w:gridAfter"), {qn("w:val"): "1"})
+        trpr.append(after)
+        document.package.mark_dirty("word/document.xml")   # (an edit by hand: the step has it)
+        document._invalidate()
     result = _fill(toolbox, session, table, [{"col": 2, "rows": "*", "text": "Yes"}])
     assert result.ok, result.to_json()
     assert result.data["filled"][0]["cells"] == 3 and result.data["filled"][0]["no_cell"] == 1

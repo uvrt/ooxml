@@ -143,7 +143,7 @@ impl DocModel for WordDoc {
         match keys.keys() {
             // a block is compared through its part: conservative, never a false agreement
             Some(keys) => keys.iter().all(|key| match key {
-                Key::Block { part, .. } | Key::Part(part) | Key::Root(part) => same_part(part),
+                Key::Block { part, .. } | Key::Part(part) | Key::Root(part) | Key::StyleUse(part) => same_part(part),
                 Key::Seq(_) | Key::Annotations | Key::People => true,
             }),
             None => {
@@ -161,11 +161,15 @@ impl DocModel for WordDoc {
                 }
             }
             Change::Put { part, .. } | Change::Bytes { part, .. } | Change::Remove { part } => {
-                into.insert(Key::Part(Arc::from(normalize(part))));
+                let part: Arc<str> = Arc::from(normalize(part));
+                into.insert(Key::StyleUse(Arc::clone(&part)));
+                into.insert(Key::Part(part));
             }
             Change::Restore { parts, .. } => {
                 for part in parts.iter() {
-                    into.insert(Key::Part(Arc::from(normalize(part))));
+                    let part: Arc<str> = Arc::from(normalize(part));
+                    into.insert(Key::StyleUse(Arc::clone(&part)));
+                    into.insert(Key::Part(part));
                 }
             }
             Change::People { keys, .. } => {
@@ -226,6 +230,12 @@ impl DocModel for WordDoc {
     fn kept(key: &Key) -> bool {
         // ids drawn stay drawn: undoing a step gives none of them back
         matches!(key, Key::Seq(_) | Key::Annotations)
+    }
+
+    fn derived(key: &Key) -> bool {
+        // what a part's paragraphs show a reader of style uses is a function of its tree,
+        // whose blocks (or the part) the writer keys as well
+        matches!(key, Key::StyleUse(_))
     }
 
     fn carry(&mut self, head: &Self) {

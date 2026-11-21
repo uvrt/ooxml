@@ -47,6 +47,62 @@ cause = """#84: docx-agent's _write_result takes as the old result only runs wit
 in a text box every run has one, so it writes the value as a new run beside the empty result run. \
 Rust writes the value into the result run, as docx-agent does everywhere outside a text box."""
 
+# Lane P5s (#240): page numbers inserted in chart-places' text box (at, after, before its first
+# paragraph), untracked and tracked: both write the result now (the Rust layout lays the box out,
+# lane P5n); docx-agent writes it as #84's SEQ above.
+[[difference]]
+gate = "fixtures"
+mode = "structure"
+file = "generated/charts/chart-places.docx"
+input = { tool = "word_fields", arguments = { action = "insert_field", at = "p@body/2@2", instruction = "PAGE" } }
+cause = """#240 as #84: in a text box docx-agent's _write_result finds no old result run (every run \
+has a w:r ancestor) and writes the value as a new run beside the empty result run; Rust writes \
+the value into the result run, as docx-agent does outside a text box. Same value (Word's: the \
+page the box is drawn on); Word sees no difference but the empty run."""
+
+[[difference]]
+gate = "fixtures"
+mode = "structure"
+file = "generated/charts/chart-places.docx"
+input = { tool = "word_fields", arguments = { action = "insert_field", at = "p@body/2", instruction = "NUMPAGES" } }
+cause = """#240 as #84: in a text box docx-agent's _write_result finds no old result run (every run \
+has a w:r ancestor) and writes the value as a new run beside the empty result run; Rust writes \
+the value into the result run, as docx-agent does outside a text box. Same value (Word's: the \
+page the box is drawn on); Word sees no difference but the empty run."""
+
+[[difference]]
+gate = "fixtures"
+mode = "structure"
+file = "generated/charts/chart-places.docx"
+input = { tool = "word_fields", arguments = { action = "insert_field", after = "p@body/2", instruction = "PAGE" } }
+cause = """#240 as #84: in a text box docx-agent's _write_result finds no old result run (every run \
+has a w:r ancestor) and writes the value as a new run beside the empty result run; Rust writes \
+the value into the result run, as docx-agent does outside a text box. Same value (Word's: the \
+page the box is drawn on); Word sees no difference but the empty run."""
+
+[[difference]]
+gate = "fixtures"
+mode = "structure"
+file = "generated/charts/chart-places.docx"
+input = { tool = "word_fields", arguments = { action = "insert_field", before = "p@body/2", instruction = "PAGE" } }
+cause = """#240 as #84: in a text box docx-agent's _write_result finds no old result run (every run \
+has a w:r ancestor) and writes the value as a new run beside the empty result run; Rust writes \
+the value into the result run, as docx-agent does outside a text box. Same value (Word's: the \
+page the box is drawn on); Word sees no difference but the empty run."""
+
+# Lane P5s (#240): a header's page number set on chart-places, untracked and tracked.
+[[difference]]
+gate = "fixtures"
+mode = "structure"
+file = "generated/charts/chart-places.docx"
+input = { tool = "word_headers_footers", arguments = { action = "set", which = "header", text = "", page_number = "after_text" } }
+cause = """#240: the Rust layout lays out chart-places' body text box (lane P5n) and writes the \
+header's PAGE result for the first page that shows it: 1. docx-agent in the gate leaves the \
+result empty and warns, its layout falling back on the text box (its own Python layout writes 1 \
+too). Word shows the number of the page a header is drawn on (docx2svg ROADMAP, "Headers, \
+footers and fields -- measured", tests/fixtures/story-observations.json fields-computed, Word \
+16.106): 1 on page 1. Rust is Word's answer; listed in python-quirks.md."""
+
 # #84: a fields update that changes nothing, on a template saved as .docx (all fields, and the
 # footer's).
 [[difference]]
@@ -165,25 +221,3 @@ input = { tool = "word_design_facts", arguments = { include = ["theme", "declare
 cause = """#146: as above -- the Rust tool names the theme colour (background1) of a band \
 cell's edge drawn by a neighbouring place's border; docx-agent leaves the label out. Rust's \
 answer is the accurate one; docx-agent's code is deleted at P4e."""
-
-# Train 4b (#177 #203 #226): check's reflow and the laid facts on chart-places. The Rust layout
-# falls back on the body's text box (w:body/w:p[2], ooxml_word_pages::support::TEXT_BOX), so the
-# Rust check answers unported ("check: the layout falls back") and the laid items "falls back:
-# text box"; docx-agent lays the document out in Python. A reads case has no input to key on, so
-# these cover every check and laid case of this one document. NOT a release pass: lane P5n ports
-# this text box into the Rust layout and removes both entries.
-[[difference]]
-gate = "reads"
-mode = "check"
-file = "generated/charts/chart-places.docx"
-cause = """Train 4b: the Rust layout falls back on a body text box (support::TEXT_BOX), so the \
-Rust check answers unported where docx-agent lays the document out in Python. A release gap \
-owned by lane P5n, which removes this entry."""
-
-[[difference]]
-gate = "reads"
-mode = "laid"
-file = "generated/charts/chart-places.docx"
-cause = """Train 4b: the Rust layout falls back on a body text box (support::TEXT_BOX), so the \
-laid facts answer "falls back: text box" where docx-agent lays the document out in Python. A \
-release gap owned by lane P5n, which removes this entry."""

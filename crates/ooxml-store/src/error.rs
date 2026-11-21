@@ -63,4 +63,15 @@ pub enum CountersError {
     /// A sequence has given every position.
     #[error("id sequence {} has given every position", .0 .0)]
     Exhausted(IdSeq),
+    /// The state number to go on from is above the highest number given.
+    #[error("the state number {state} is above the highest number given, {highest}")]
+    StateAboveHighest {
+        /// The state number.
+        state: u64,
+        /// The highest number given.
+        highest: u64,
+    },
+    /// The store numbered a state already: its numbers go on from its own.
+    #[error("the store numbered a state already")]
+    AlreadyNumbered,
 }

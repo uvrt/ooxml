@@ -149,16 +149,18 @@ fn run(args: &WordInsertText, editing: &Editing<'_>) -> Result<ToolResult<Value>
             policy: policy.clone(),
         });
     }
-    // docx-agent names no field when the document refuses a find or a range
-    let done = editing
-        .editor
-        .run(editing.caller, &Batch::atomic(ops))
-        .map_err(|e| edit_refusal(e, "", call))?;
-    let placed: Vec<Placed> = done.out.into_iter().filter_map(Result::ok).collect();
-    let result = reply(placed, &work, &sides);
     let targets: Vec<&str> = work.iter().filter_map(|item| item.target.as_deref()).collect();
     let argument = |field: &str| argument(args, field);
-    written::keep_written(editing, &result, &targets, &argument, &try_call(args))?;
+    // the values written by reference kept in the same step
+    let finish = |out: &Vec<Result<Placed, _>>, after: &written::After| {
+        let placed: Vec<Placed> = out.iter().filter_map(|p| p.as_ref().ok().cloned()).collect();
+        let result = reply(placed, &work, &sides);
+        let keeps = written::reply_keeps(after, editing, &result, &targets, &argument);
+        (result, keeps)
+    };
+    // docx-agent names no field when the document refuses a find or a range
+    let (_, result) =
+        written::run_keeping(editing, &Batch::atomic(ops), finish).map_err(|e| edit_refusal(e, "", call))?;
     Ok(result)
 }
 
@@ -197,7 +199,14 @@ fn planned(
     )?;
     let side = item.side.unwrap_or(Where::After);
     Ok(match key.as_str() {
-        "find" => (side, TextPlace::Once(item.find.clone().unwrap_or_default())),
+        // within is one insertion's: items' finds search every story, as docx-agent's do
+        "find" => (
+            side,
+            TextPlace::Once {
+                text: item.find.clone().unwrap_or_default(),
+                within: args.items.is_none().then(|| args.within.clone()).flatten(),
+            },
+        ),
         "target" => (side, TextPlace::Range(item.target.clone().unwrap_or_default())),
         _ => {
             let (side, address) = text_at(item.at.as_deref().unwrap_or_default(), item.side, call)?;
@@ -233,11 +242,10 @@ fn reply(placed: Vec<Placed>, work: &[InsertItem], sides: &[Where]) -> ToolResul
     result
 }
 
-/// What of the call is not ported: a find within a block or span, values or addresses by
-/// reference.
+/// What of the call is not ported: values or addresses by reference.
 fn unported(args: &WordInsertText, work: &[InsertItem]) -> Option<Unported> {
-    if args.within.is_some() {
-        return Some(Unported::Form);
+    if args.within.as_deref().is_some_and(by_reference) {
+        return Some(Unported::Reference);
     }
     let by_ref = |v: &Option<String>| v.as_deref().is_some_and(by_reference);
     work.iter()
@@ -288,6 +296,13 @@ fn ref_as_place(args: &WordInsertText, item: &InsertItem, place: &str, index: Op
     if index.is_none() {
         meant.insert("doc".into(), Value::from(args.doc.as_str()));
     }
+    // docx-agent's details: the item as meant, or the call that places it (its redo)
+    let detail = if index.is_some() {
+        ("item", Value::Object(meant.clone()))
+    } else {
+        let call = serde_json::json!({"tool": "word_insert_text", "arguments": meant.clone()});
+        ("call", call)
+    };
     let way = WayOut::names(["at"]).map_or_else(
         || WayOut::call(try_call(args)),
         |w| {
@@ -298,7 +313,9 @@ fn ref_as_place(args: &WordInsertText, item: &InsertItem, place: &str, index: Op
             })
         },
     );
-    ToolError::refusal(Refusal::InvalidArguments, message, way).at(field)
+    ToolError::refusal(Refusal::InvalidArguments, message, way)
+        .at(field)
+        .with_detail(detail.0, detail.1)
 }
 
 /// `inserted_range`: the id of text just inserted before or after the range `place` (its

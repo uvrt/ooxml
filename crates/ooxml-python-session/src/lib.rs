@@ -2,7 +2,7 @@
 //! sections 3 and 9; layer 6).
 //!
 //! Owns: the PyO3 handles -- [`PySession`] (`ooxml_core.Session`), [`PyCancelToken`]
-//! (`ooxml_core.CancelToken`) and [`PyCallContext`] (`ooxml_core.CallContext`), [`PyCallOptions`] (`ooxml_core.CallOptions`, what one call runs with) and [`PyCallDocuments`] (`ooxml_core.CallDocuments`, the open documents it names) -- and `ooxml_core.tool_specs(kind)` and `tool_hosting(kind)` (`tools`);
+//! (`ooxml_core.CancelToken`) and [`PyCallContext`] (`ooxml_core.CallContext`), [`PyCallOptions`] (`ooxml_core.CallOptions`, what one call runs with) [`PyCallDocuments`] (`ooxml_core.CallDocuments`, the open documents it names) and [`PyCallWriting`] (`ooxml_core.CallWriting`, how it writes) -- and `ooxml_core.tool_specs(kind)` and `tool_hosting(kind)` (`tools`);
 //! the Word layout's handles (`layout`: `WordFonts`, `WordPages`, `LaidPages`, lane L4); the conversion of their
 //! arguments and results (bytes copied in while the interpreter lock is held, then every
 //! Rust call made with it released, `py.detach`); the mapping of session errors to Python
@@ -35,12 +35,12 @@ use pyo3::prelude::*;
 
 pub use budget::{PyBudgetAccount, PyMemoryBudget};
 pub use layout::{LayoutFallback, PyLaidPages, PyWordFonts, PyWordPages};
-pub use options::{PyCallDocuments, PyCallOptions, PyHostIds};
+pub use options::{PyCallDocuments, PyCallOptions, PyCallWriting, PyHostIds};
 pub use raster::PyPageRaster;
 pub use session::{PyCallContext, PyCancelToken, PySession, PyVersion};
 
 /// Add the session API to the module `m`: `Session`, `CancelToken`, `CallContext`, `CallOptions`, `Version` and
-/// `tool_specs`, `tool_hosting`; and the Word layout's handles: `WordFonts`, `WordPages`, `LaidPages`,
+/// `tool_specs`, `tool_hosting`, `new_document`; and the Word layout's handles: `WordFonts`, `WordPages`, `LaidPages`,
 /// `LayoutFallback`, `LayoutSummary`, `MemoryBudget` and `BudgetAccount`.
 ///
 /// # Errors
@@ -52,11 +52,13 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCallOptions>()?;
     m.add_class::<PyCallDocuments>()?;
     m.add_class::<PyHostIds>()?;
+    m.add_class::<PyCallWriting>()?;
     m.add_class::<PyVersion>()?;
     m.add_class::<group::PyStepGroup>()?;
     m.add_class::<group::PyGroupMark>()?;
     m.add_function(wrap_pyfunction!(tools::tool_specs, m)?)?;
     m.add_function(wrap_pyfunction!(tools::tool_hosting, m)?)?;
+    m.add_function(wrap_pyfunction!(tools::new_document, m)?)?;
     m.add_class::<PyWordFonts>()?;
     m.add_class::<PyWordPages>()?;
     m.add_class::<PyLaidPages>()?;

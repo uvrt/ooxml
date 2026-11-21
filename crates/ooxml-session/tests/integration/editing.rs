@@ -125,14 +125,76 @@ fn the_tracking_mode_is_kept_and_review_tools_edit() {
     assert_eq!(accepted["ok"], json!(true), "{accepted}");
     assert_eq!(accepted["version"], json!(1));
     assert!(!body_of(&s, &d).contains("w:ins"));
-    // the session's undo takes the accept back
+    // the session's undo takes the accept back: the state opened, numbered 0 again
     assert_eq!(
         s.undo(&d, 1, &CallContext::default()).unwrap(),
-        Undone { count: 1, version: 2 }
+        Undone { count: 1, version: 0 }
     );
     assert!(body_of(&s, &d).contains("w:ins"));
     let off = call(&s, "word_set_tracking", json!({"doc": "d1", "on": false}), &context);
     assert_eq!(off["data"]["tracking"], json!(false), "{off}");
+}
+
+#[test]
+fn change_listings_read_the_pinned_version_and_count_this_sessions_records() {
+    let s = session();
+    let tracked = format!(
+        r#"{}<w:p w14:paraId="22222222" w14:textId="77777777"><w:ins w:id="1" w:author="Ann" w:date="2026-01-01T00:00:00Z"><w:r><w:t>new</w:t></w:r></w:ins></w:p>"#,
+        paragraph("11111111", "one")
+    );
+    let d = s.open(docx(&tracked), DocKind::Docx, "a.docx").unwrap();
+    let bo = as_caller("w1");
+    call(
+        &s,
+        "word_set_tracking",
+        json!({"doc": "d1", "on": true, "author": "Bo"}),
+        &bo,
+    );
+    let edited = call(
+        &s,
+        "word_set_text",
+        json!({"doc": "d1", "target": "p:11111111", "text": "one more"}),
+        &bo,
+    );
+    assert_eq!(edited["ok"], json!(true), "{edited}");
+    let pinned = s.snapshot(&d).unwrap();
+    // a later accept of everything: the head has no change left, the pinned version has
+    call(
+        &s,
+        "word_changes",
+        json!({"doc": "d1", "action": "accept", "all": true}),
+        &bo,
+    );
+    let at = CallContext {
+        at: vec![pinned],
+        ..CallContext::default()
+    };
+    let listed = call(&s, "word_changes", json!({"doc": "d1", "action": "list"}), &at);
+    let authors: Vec<&Value> = listed["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| &c["author"])
+        .collect();
+    assert!(
+        authors.contains(&&json!("Ann")) && authors.contains(&&json!("Bo")),
+        "{listed}"
+    );
+    // what accepting all would settle: Ann's record was there when the document was opened,
+    // Bo's were written by this session
+    let preview = call(
+        &s,
+        "word_changes",
+        json!({"doc": "d1", "action": "preview", "all": true}),
+        &at,
+    );
+    let accept = &preview["data"]["accept"];
+    let records = accept["records"].as_u64().unwrap();
+    assert!(records >= 2, "{preview}");
+    assert_eq!(accept["this_session"].as_u64(), Some(records - 1), "{preview}");
+    assert_eq!(accept["changes_left"], json!(0));
+    let head = call(&s, "word_changes", json!({"doc": "d1", "action": "list"}), &bo);
+    assert_eq!(head["data"], json!([]), "{head}");
 }
 
 #[test]
@@ -213,13 +275,13 @@ fn a_check_of_the_document_alone_is_the_sessions() {
     assert_eq!(validate["new"].as_array().unwrap().len(), 1);
     assert!(validate["new"][0].as_str().unwrap().starts_with("[paraid-repeated]"));
     assert_eq!(validate["problems"], validate["new"]);
-    // what needs the layout's facts is the host's; a reflow, where it hands no layout
+    // what needs the layout's facts is the host's where it hands no layout; a reflow too
     for asked in [
         json!({"doc": "d1", "include": ["validate", "layout"]}),
         json!({"doc": "d1", "include": ["validate"], "range": "p:11111111"}),
     ] {
         let result = s.call("check", asked, &CallContext::default());
-        assert_eq!(result.unported(), [ooxml_tools_word::CHECK_LAYOUT.to_owned()]);
+        assert_eq!(result.unported(), [ooxml_tools_word::CHECK_NO_LAYOUT.to_owned()]);
     }
     for asked in [
         json!({"doc": "d1"}),
@@ -638,4 +700,43 @@ fn a_step_group_is_one_undo_step_and_a_revert_takes_its_edits_back() {
     assert!(body_of(&s, &d).contains(">five<"));
     assert_eq!(s.undo(&d, 1, &context).unwrap().count, 1);
     assert!(body_of(&s, &d).contains(">two<"));
+}
+
+#[test]
+fn the_history_is_listed_in_state_numbers() {
+    let s = session();
+    let d = s
+        .open(docx(&paragraph("11111111", "one")), DocKind::Docx, "a.docx")
+        .unwrap();
+    let (ann, bo) = (as_caller("ann"), as_caller("bo"));
+    put(&s, &d, &paragraph("11111111", "by ann"), &ann);
+    put(&s, &d, &paragraph("11111111", "by bo"), &bo);
+    let numbers = s.numbers(&d).unwrap();
+    assert_eq!(numbers.highest, 2);
+    let steps: Vec<_> = numbers
+        .steps
+        .iter()
+        .map(|s| (s.before, s.after, s.caller.clone()))
+        .collect();
+    assert_eq!(
+        steps,
+        vec![(0, 1, Some("ann".to_owned())), (1, 2, Some("bo".to_owned()))]
+    );
+    // an undo brings back state 1 (its number again); redo would bring back 2
+    let undone = s.undo(&d, 1, &CallContext::default()).unwrap();
+    assert_eq!((undone.count, undone.version), (1, 1));
+    assert_eq!(s.snapshot(&d).unwrap().number(), 1);
+    let numbers = s.numbers(&d).unwrap();
+    assert_eq!((numbers.highest, numbers.steps.len()), (2, 1));
+    assert_eq!(numbers.redo.last().map(|r| r.after), Some(2));
+    assert_eq!(s.highest(&d).unwrap(), 2);
+    // a state found by its number: the head, an earlier one, none once let go
+    assert_eq!(s.numbered(&d, 1).unwrap().map(|o| o.number()), Some(1));
+    assert!(s.numbered(&d, 0).unwrap().is_some_and(|o| o.number() == 0));
+    // a new step takes the next number; redo is gone
+    put(&s, &d, &paragraph("11111111", "by ann again"), &ann);
+    let numbers = s.numbers(&d).unwrap();
+    assert_eq!((numbers.highest, numbers.redo.len()), (3, 0));
+    assert_eq!(numbers.steps.last().map(|s| (s.before, s.after)), Some((1, 3)));
+    assert!(s.numbered(&d, 2).unwrap().is_none(), "state 2 is out of reach");
 }

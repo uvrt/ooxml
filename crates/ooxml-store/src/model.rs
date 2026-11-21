@@ -46,6 +46,16 @@ pub trait DocModel: Clone + Send + Sync + 'static {
         false
     }
 
+    /// Whether `key` names what is derived from content the writer keys as well (a summary
+    /// of a part's tree, say, whose blocks a change of the tree writes): recomputed where a
+    /// change is applied, so it is commutative bookkeeping, not an exclusive write. A
+    /// transaction or step that read it conflicts with, or is entangled by, a writer of it;
+    /// two writers of it do neither (the content keys they write decide). None by default.
+    fn derived(key: &Self::Key) -> bool {
+        let _ = key;
+        false
+    }
+
     /// Derive now what a version keeps beside its content (its indexes), from the version
     /// before it. The store calls it on each version it publishes, so every head has them
     /// and a version's cost is that of its own change: a change applied to the head (an id

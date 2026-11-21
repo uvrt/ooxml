@@ -17,8 +17,10 @@
 use ooxml_base::Cancel;
 use ooxml_scene::python_g;
 use ooxml_word_edit::{keep_writes, kept_blocks, kept_package, WordDoc};
+use ooxml_word_layout::facts::PageFacts;
 use ooxml_word_model::docx::Docx;
-use ooxml_word_pages::layout_facts::{Break, Facts, KeepEffect, Range};
+use ooxml_word_pages::layout_facts::{Break, Facts, KeepEffect, Range, Side};
+use ooxml_word_pages::Laid;
 use ooxml_word_pages::PageEngine;
 use serde_json::{json, Map, Value};
 use std::sync::{Mutex, PoisonError};
@@ -246,16 +248,23 @@ fn trial(
         return Ok(None);
     };
     let version = facts.version();
-    let then = {
-        let mut engine = trials.engine.lock().unwrap_or_else(PoisonError::into_inner);
-        match engine.trial(&package, version, trials.cancel) {
-            Ok(Some(then)) => then,
-            Ok(None) => return Err("not laid out by this engine"),
-            Err(ooxml_word_pages::PagesError::Stopped) => return Err("stopped"),
-            Err(_) => return Err("the document does not open"),
-        }
+    let mut engine = trials.engine.lock().unwrap_or_else(PoisonError::into_inner);
+    let then = match engine.trial(&package, version, trials.cancel) {
+        Ok(Some(then)) => then,
+        Ok(None) => return Err("not laid out by this engine"),
+        Err(ooxml_word_pages::PagesError::Stopped) => return Err("stopped"),
+        Err(_) => return Err("the document does not open"),
     };
-    Ok(KeepEffect::of(version.facts(), &then, &placed, on))
+    // The blank is measured with what the facts leave out (text boxes, footnotes), for the
+    // two pages measured only.
+    let mut foot = |side: Side, page: &PageFacts| {
+        let laid = match side {
+            Side::Now => Laid::Version(version),
+            Side::Then => Laid::Trial(&then),
+        };
+        engine.beyond_facts(laid, page.page)
+    };
+    Ok(KeepEffect::of((version.facts(), then.facts()), &placed, on, &mut foot))
 }
 
 /// A trial's effect as docx-agent says it, with what it says in words (`said`) and, for a

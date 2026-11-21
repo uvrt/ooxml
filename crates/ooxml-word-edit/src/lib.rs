@@ -95,6 +95,7 @@ mod ranges_across;
 mod release;
 pub mod review;
 mod revision_ids;
+mod saving;
 mod sections;
 mod set_cells;
 mod set_text;
@@ -137,9 +138,9 @@ pub use drawn::Drawn;
 pub use editor::{EditTiming, Edited, Editor};
 pub use error::{EditError, Result};
 pub use fields::{
-    field_facts, fields, format_date, CharAdvance, Day, FieldEdited, FieldFacts, FieldInfo, FieldLayout, FieldPlace,
-    FieldRun, InsertCaption, InsertCrossReference, InsertField, InsertToc, LaidFields, PageReflow, PageShows,
-    SetStoryNumbered, StoryNumber, StoryNumbered, Unknown, UpdateFields,
+    field_facts, fields, format_date, CharAdvance, Day, EditLayout, FieldEdited, FieldFacts, FieldInfo, FieldLayout,
+    FieldPlace, FieldRun, InsertCaption, InsertCrossReference, InsertField, InsertToc, LaidFields, LayOutError,
+    PageReflow, PageShows, SetStoryNumbered, StoryNumber, StoryNumbered, Unknown, UpdateFields,
 };
 pub use follow::{CopyFollowed, FollowSample, Followed};
 pub use format::{
@@ -162,6 +163,7 @@ pub use pool::{EarlierIds, Ids, IdsChange, Sequences};
 pub use provenance::{KeepText, TextKeep};
 pub use ranges::{DeleteText, InsertText, RangesEdited, ReplaceText};
 pub use review::{record_marks, Mark, RemovedBlocks, Review, Reviewed, RowGone, Selection, TableGone, Typed};
+pub use saving::{clean, has_macros, serialise, AppStatistics, Cleaned, FileKind};
 pub use sections::{
     InsertSectionBreak, LinkToPrevious, RemoveSectionBreak, SectionEdited, SectionValues, SetSection, SetStoryText,
     StoryEdited, UnlinkFromPrevious,
@@ -185,6 +187,8 @@ pub use tables::{
     LikeTheColumn, Look, LookField, RowUnlike, TableChange, TableChanged, TableEdit, TableFormat, TableFormatted,
     TableKeeps, TableValues, TableWidth, TextLook, ROW_WINDOW,
 };
-pub use template::{compatibility_mode, UpgradeToModern, Upgraded, DEFAULT_COMPATIBILITY_MODE, MODERN_MODE};
+pub use template::{
+    compatibility_mode, Reflowed, UpgradeReflowed, UpgradeToModern, Upgraded, DEFAULT_COMPATIBILITY_MODE, MODERN_MODE,
+};
 pub use text::diff::ratio as text_ratio;
 pub use text_range::anchor;

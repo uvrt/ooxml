@@ -221,19 +221,30 @@ fn unmarked_run(run: &Run, taken: &mut bool) -> Run {
 
 /// Whether a text box's blocks hold what this layout does not lay out in one: a floating
 /// drawing text wraps around (docx2svg stops the box's text there), or an inline drawing
-/// that is not a picture (docx2svg paints it with the box).
+/// holding text of its own (docx2svg lays that text out on the box's scratch page). An
+/// inline drawing that is not a picture otherwise -- a chart, a shape -- is painted with
+/// the box (`crate::paint::text_box`).
 pub fn unsupported_in(blocks: &[Block]) -> Option<&'static str> {
     for paragraph in body_paragraphs(blocks).0 {
         for run in paragraph.runs.iter() {
             if run.anchors.iter().any(crate::floating::moves_text) {
                 return Some("a floating drawing text wraps around in a text box");
             }
-            if run.drawings.iter().any(|d| matches!(d, InlineObject::Graphic(_))) {
-                return Some("a drawing that is not a picture in a text box");
+            if run
+                .drawings
+                .iter()
+                .any(|d| matches!(d, InlineObject::Graphic(g) if holds_text(g)))
+            {
+                return Some("a drawing holding text in a text box");
             }
         }
     }
     None
+}
+
+/// Whether a drawing, or a member of its group, holds text (`w:txbxContent`).
+fn holds_text(graphic: &Graphic) -> bool {
+    !graphic.text.is_empty() || graphic.children.iter().any(|g| holds_text(g))
 }
 
 /// A `wps:bodyPr` setting.

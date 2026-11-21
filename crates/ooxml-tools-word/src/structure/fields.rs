@@ -130,7 +130,7 @@ fn today(editing: &Editing<'_>) -> Day {
 }
 
 fn run(args: &WordFields, editing: &Editing<'_>, list: &TryCall) -> Result<ToolResult<Value>, ToolError> {
-    let (today, layout, editor) = (today(editing), editing.layout, editing.editor);
+    let (today, layout, editor) = (today(editing), editing.edit_layout(), editing.editor);
     Ok(match args.action {
         FieldAction::List => listed(editing)?,
         FieldAction::Update => {
@@ -192,7 +192,7 @@ fn run(args: &WordFields, editing: &Editing<'_>, list: &TryCall) -> Result<ToolR
 
 /// A cross-reference, a date or another field put at a position.
 fn insert(args: &WordFields, editing: &Editing<'_>, list: &TryCall) -> Result<ToolResult<Value>, ToolError> {
-    let (today, layout, editor) = (today(editing), editing.layout, editing.editor);
+    let (today, layout, editor) = (today(editing), editing.edit_layout(), editing.editor);
     let at = position(args, editing, list)?;
     let summary = |out: &FieldEdited| format!("Inserted field {}", out.id.as_deref().unwrap_or(""));
     let done = match args.action {

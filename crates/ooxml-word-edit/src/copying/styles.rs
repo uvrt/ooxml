@@ -370,8 +370,8 @@ impl<'s> Styles<'s> {
             space.put_part(sink, part)?;
         }
         let docx = sink.docx()?;
-        // which style the body's paragraphs use: any of them
-        sink.read(Key::Part(Arc::from(docx.main.as_str())));
+        // which style the body's paragraphs use: what any of them shows (style, list, text)
+        sink.read(Key::StyleUse(Arc::from(docx.main.as_str())));
         let best = body_style_of(sink, &docx)?;
         self.body = Some(best.clone());
         Ok(best)

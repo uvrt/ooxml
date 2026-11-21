@@ -8,7 +8,7 @@
 //!
 //! Must not: write but through the sink.
 
-use super::pages::FieldLayout;
+use super::pages::EditLayout;
 use super::scan::{all_fields, paragraph_of, Located};
 use super::toc::build::head;
 use super::update::{empty_tocs, settle, Inputs};
@@ -46,7 +46,7 @@ pub struct InsertToc<'l> {
     /// The day a `DATE` shows (an update's).
     pub today: Day,
     /// The layout of the document's versions.
-    pub layout: Option<&'l dyn FieldLayout>,
+    pub layout: Option<EditLayout<'l>>,
     /// The locale its style names are read under (the host's document locale); `None`:
     /// the document's own language.
     pub locale: Option<&'l ooxml_numfmt::Locale>,

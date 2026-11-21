@@ -1,4 +1,4 @@
-**A call's locale (lane P5q).** `CallContext(locale=...)` and `Session(locale=...)` take
+**A call's locale (lane P5q).** `CallWriting(locale=...)` (a `CallContext`'s `writing`) and `Session(locale=...)` take
 ooxml-common's `Locale` (or a BCP 47 tag, read as `Locale(language=tag)`): a table of
 contents' `\t` styles are split on its list separator and found in its language, in
 docx-agent's order -- the call's locale, then the session's where the host set one, then

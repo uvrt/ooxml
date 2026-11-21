@@ -10,9 +10,9 @@
 //! table of contents being rebuilt holds aside (they are made anew each pass, as docx-agent
 //! knows a field by its element).
 //!
-//! Must not: lay out (the [`FieldLayout`] port does), or write but through the sink.
+//! Must not: lay out (the [`FieldLayout`](super::pages::FieldLayout) port does), or write but through the sink.
 
-use super::pages::{FieldLayout, LaidFields};
+use super::pages::{EditLayout, LaidFields};
 use super::scan::{all_fields, paragraph_of, result_text, same_result, Located, Marks};
 use super::toc::build::EMPTY_TOC;
 use super::values::{sequence_values, value, Day};
@@ -42,7 +42,7 @@ pub struct UpdateFields<'l> {
     /// The day `DATE` fields show.
     pub today: Day,
     /// The layout of the document's versions.
-    pub layout: Option<&'l dyn FieldLayout>,
+    pub layout: Option<EditLayout<'l>>,
     /// The locale a table of contents' style names are read under (the host's document
     /// locale); `None`: the document's own language.
     pub locale: Option<&'l Locale>,
@@ -65,7 +65,7 @@ pub(crate) struct Inputs<'l> {
     /// The day a `DATE` shows.
     pub(crate) today: Day,
     /// The layout of the document's versions.
-    pub(crate) layout: Option<&'l dyn FieldLayout>,
+    pub(crate) layout: Option<EditLayout<'l>>,
     /// The call's locale (`None`: the document's own language).
     pub(crate) locale: Option<&'l Locale>,
 }
@@ -191,11 +191,7 @@ fn pass(sink: &mut EditSink<'_, '_>, held: &[Known], inputs: Inputs<'_>) -> Resu
                 "a field update that needs the layout".to_owned(),
             ))
         }
-        (true, Some(layout)) => Some(
-            layout
-                .lay_out(sink.doc().package())
-                .map_err(|why| EditError::Unsupported(format!("the layout of this version: {why}")))?,
-        ),
+        (true, Some(layout)) => Some(layout.lay_out(sink.doc().package())?),
     };
     let pass = Pass { laid, today, locale };
     let mut unknown = Vec::new();

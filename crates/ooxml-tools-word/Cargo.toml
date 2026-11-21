@@ -22,10 +22,10 @@ ooxml-scene.workspace = true
 ooxml-store.workspace = true
 ooxml-chart.workspace = true
 ooxml-sheets.workspace = true
+ooxml-zip.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
-ooxml-zip.workspace = true
 ooxml-derive.workspace = true
 
 [lints]

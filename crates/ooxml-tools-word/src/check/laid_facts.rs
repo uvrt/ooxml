@@ -191,14 +191,14 @@ fn set(value: &mut Value, key: &str, to: Value) {
 }
 
 /// Entries per fact, most telling first (docx-agent's `CAP`).
-const CAP: usize = 20;
+pub(super) const CAP: usize = 20;
 
 /// The keys of an entry that name what it is about (docx-agent's `SUBJECT_KEYS`).
 const SUBJECT_KEYS: [&str; 6] = ["para", "paras", "ids", "table", "drawing", "blocks"];
 
 /// Whether an entry is about `scope` (docx-agent's `Scope.about`): one of its subjects is
 /// held, or it names none.
-fn about(scope: &Scope, entry: &Value) -> bool {
+pub(super) fn about(scope: &Scope, entry: &Value) -> bool {
     let mut named = false;
     for key in SUBJECT_KEYS {
         let Some(value) = entry.get(key).filter(|v| !v.is_null()) else {
@@ -217,10 +217,14 @@ fn about(scope: &Scope, entry: &Value) -> bool {
 /// of them, and how many are left out (`<name>_left_out`) where any are (docx-agent's
 /// `capped`).
 fn capped<T>(facts: &Facts<'_>, out: &mut Map<String, Value>, name: &str, entries: &[T], each: impl Fn(&T) -> Value) {
+    capped_values(facts.scope(), out, name, entries.iter().map(each).collect());
+}
+
+/// [`capped`] of entries already worded, those about `scope` (`None`: all).
+pub(super) fn capped_values(scope: Option<&Scope>, out: &mut Map<String, Value>, name: &str, entries: Vec<Value>) {
     let entries: Vec<Value> = entries
-        .iter()
-        .map(each)
-        .filter(|e| facts.scope().is_none_or(|s| about(s, e)))
+        .into_iter()
+        .filter(|e| scope.is_none_or(|s| about(s, e)))
         .collect();
     let left = entries.len().saturating_sub(CAP);
     out.insert(name.into(), entries.into_iter().take(CAP).collect());

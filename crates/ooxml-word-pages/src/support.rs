@@ -24,8 +24,8 @@ use ooxml_word_model::WordDocument;
 /// estimated stand-in, which the Rust layout does not draw.
 pub const TEXT_BESIDE_DRAWING: &str = "text beside a drawing";
 /// A text box holding what the layout does not lay out in one: a floating drawing text
-/// wraps around (docx2svg stops the box's text there), or an inline drawing that is not a
-/// picture (docx2svg paints it with the box).
+/// wraps around (docx2svg stops the box's text there), or an inline drawing holding text
+/// of its own (docx2svg lays it out on the box's scratch page).
 pub const TEXT_BOX: &str = "text box";
 /// A `STYLEREF` field in a footnote or an endnote (the body's and the headers' and
 /// footers' are laid out).

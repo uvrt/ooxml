@@ -85,8 +85,9 @@ pub(super) fn unported(what: &str, retry: &TryCall) -> ToolResult<Value> {
 }
 
 /// No table `table` in the document (docx-agent's `_no_table`): its body's tables are the
-/// options.
-fn no_table(docx: &Docx, doc: &str, table: &str, retry: &TryCall) -> ToolError {
+/// options, and a table of another open document the host holds (a workbook's `t:stock`)
+/// is said to be one, with the call that keeps a table here in step with its rows.
+fn no_table(docx: &Docx, doc: &str, table: &str, others: crate::Others<'_>, retry: &TryCall) -> ToolError {
     // docx-agent's `Document.tables()`: the body's
     let ids: Vec<String> = docx
         .body()
@@ -102,12 +103,24 @@ fn no_table(docx: &Docx, doc: &str, table: &str, retry: &TryCall) -> ToolError {
         format!("{doc}'s tables: {}", shown.join(", "))
     };
     let way_out = WayOut::names(ids.iter().take(12).cloned()).unwrap_or_else(|| WayOut::call(retry.clone()));
-    ToolError::refusal(
-        Refusal::NotFound,
-        format!("no table {} in {doc}; {listed}", repr_str(table)),
-        way_out,
-    )
-    .at("table")
+    let message = match others.host_table(table) {
+        // docx-agent's example call, as Python writes a dict
+        Some(elsewhere) => format!(
+            "{table} is a table of {} ({}), not of {doc}: word_edit_table changes a table of {doc} ({}); to keep \
+             one in step with its rows, e.g. {{'table': {}, 'action': 'sync', 'from': {}}}",
+            elsewhere.doc,
+            elsewhere.kind,
+            if shown.is_empty() {
+                "it has none".to_owned()
+            } else {
+                shown.join(", ")
+            },
+            repr_str(ids.first().map_or("<id>", String::as_str)),
+            repr_str(&elsewhere.name),
+        ),
+        None => format!("no table {} in {doc}; {listed}", repr_str(table)),
+    };
+    ToolError::refusal(Refusal::NotFound, message, way_out).at("table")
 }
 
 /// The arguments for another action refused, as docx-agent refuses them before it edits.
@@ -177,7 +190,7 @@ fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<T
     let view = match table_view(head.doc(), &docx, &args.table, retry) {
         Ok(view) => view,
         Err(error) if error.code() == ErrorCode::Refusal(Refusal::NotFound) => {
-            return Err(no_table(&docx, &args.doc, &args.table, retry))
+            return Err(no_table(&docx, &args.doc, &args.table, editing.others, retry))
         }
         Err(error) => return Err(error),
     };
@@ -305,17 +318,20 @@ fn finish(
         change,
         policy: policy(editing),
     };
-    let done = match editing.editor.run(editing.caller, &command) {
+    // round 58 (R126): a row added looked at against the rows around it, in the call's
+    // transaction
+    let adds_row = matches!(change, TableChange::InsertRow { .. } | TableChange::CopyRow { .. });
+    let look = |out: &TableChanged, _: &WordDoc| adds_row.then(|| (out.table.clone(), out.id.clone()));
+    let (done, rows) = match super::rows_written::run_writing_rows(editing, &command, &table, look, retry) {
         Ok(done) => done,
         Err(EditError::Refused(message)) if matches!(change, TableChange::CopyRow { .. }) => {
             return ToolResult::failed(uncopied(args, view, message, change));
         }
         Err(error) => return refused(error, retry.clone()),
     };
-    let now = done.out.table.clone();
-    let made_row = done.out.id.clone();
+    let now = done.table.clone();
     // round 55 (R115, rule 3): a merge already made changes nothing
-    let unchanged = done.out.unchanged && matches!(change, TableChange::Merge { .. });
+    let unchanged = done.unchanged && matches!(change, TableChange::Merge { .. });
     let head = editing.editor.store().snapshot();
     let data = head
         .doc()
@@ -323,7 +339,7 @@ fn finish(
         .ok()
         .and_then(|docx| table_json(&docx, &now, head.doc(), true, retry));
     let summary = format!("{} on {table}", args.action.as_str());
-    let mut result = outcome(&[Outcome::from(done.out)], summary, data);
+    let mut result = outcome(&[Outcome::from(done)], summary, data);
     if unchanged {
         result.warnings.insert(
             0,
@@ -358,18 +374,7 @@ fn finish(
             }
         }
     }
-    if matches!(change, TableChange::InsertRow { .. } | TableChange::CopyRow { .. }) {
-        // round 58 (R126): the row added looked at against the rows around it
-        result.warnings.extend(super::rows_written::rows_written(
-            editing,
-            &table,
-            &now,
-            done.previous.as_ref(),
-            &done.version,
-            made_row.as_deref(),
-            retry,
-        ));
-    }
+    result.warnings.extend(rows);
     result
 }
 

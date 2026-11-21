@@ -9,7 +9,7 @@
 //!
 //! Must not: write but through the sink.
 
-use super::pages::{FieldLayout, FieldPlace};
+use super::pages::{EditLayout, FieldPlace};
 use super::scan::all_fields;
 use super::update::{pass_on, Inputs};
 use super::values::Day;
@@ -52,7 +52,7 @@ pub struct InsertField<'l> {
     /// The day a `DATE` shows.
     pub today: Day,
     /// The layout of the document's versions.
-    pub layout: Option<&'l dyn FieldLayout>,
+    pub layout: Option<EditLayout<'l>>,
     /// The locale a table of contents' style names are read under (the host's document
     /// locale); `None`: the document's own language.
     pub locale: Option<&'l ooxml_numfmt::Locale>,
@@ -426,7 +426,7 @@ pub struct InsertCrossReference<'l> {
     /// Untracked or tracked.
     pub policy: RevisionPolicy,
     /// The layout of the document's versions.
-    pub layout: Option<&'l dyn FieldLayout>,
+    pub layout: Option<EditLayout<'l>>,
 }
 
 impl std::fmt::Debug for InsertCrossReference<'_> {
@@ -456,9 +456,7 @@ impl InsertCrossReference<'_> {
             let layout = self
                 .layout
                 .ok_or_else(|| EditError::Unsupported("a page cross-reference without the layout".to_owned()))?;
-            let laid = layout
-                .lay_out(sink.doc().package())
-                .map_err(|why| EditError::Unsupported(format!("the layout of this version: {why}")))?;
+            let laid = layout.lay_out(sink.doc().package())?;
             let start = span.first().map(|f| f.id.clone()).unwrap_or_default();
             let at = if span.part == docx.main { Some(start) } else { None };
             match at.map(|a| laid.page_reference(" PAGEREF x ", FieldPlace::Body(&a))) {

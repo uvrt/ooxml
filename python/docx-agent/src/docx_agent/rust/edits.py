@@ -26,7 +26,7 @@ the session does not answer as it yet: values written by reference in a tool tha
 keep them yet (``Hosting.keeps_written``), and what the session says it leaves to the host
 (its ``unported``: a find within a block, a picture, regex, ...).  A format whose writes are
 not spaced by their language (``docx_format(typography=False)``) is served: the call's
-context says so (``CallContext(typography=False)``, lane P2e7).  The Rust handler changes
+context says so (``CallContext(writing=CallWriting(typography=False))``, lane P2e7).  The Rust handler changes
 nothing in each of those.
 
 A refusal is not a fallback (lane P2e1): the session's is the call's answer, in docx-agent's
@@ -201,8 +201,9 @@ def _tracking(call: Any, entry: Any, context: Any, counted: bool) -> None:
                             valid_options=error.get("valid_options"), details=error.get("details"))
         mirror.tracking = wanted
     if made is not None:
-        first, head, _touched, _validation = made
-        entry.served(first, head, StepOwner(dict(call.caller), "word_set_tracking"), counted=counted)
+        first, head, _touched, _validation, before = made
+        entry.served(first, head, StepOwner(dict(call.caller), "word_set_tracking"), counted=counted,
+                     before=before)
 
 
 def _set_mode(entry: Any, given: dict[str, Any], context: Any, names: dict[str, str]) -> tuple[str, str, Any]:
@@ -218,6 +219,31 @@ def _set_mode(entry: Any, given: dict[str, Any], context: Any, names: dict[str, 
             entry.tracking = wanted
             mirror.tracking = wanted
     return reply, app, made
+
+
+def _host_tables(session: Any) -> Callable[[], list[tuple[str, str, str]]]:
+    """The tables of the open documents the host holds itself (a workbook's ``t:stock``), as
+    ``CallDocuments``' ``tables`` asks them: ``(name, doc, kind)``, the name as a ``from``
+    takes it (:func:`ooxml_edit.tools.sources.offered`).  Called by the session only where a
+    refusal names one (round 56, R120: a table not in the document), as docx-agent's
+    ``_no_table`` reads them only then: reading another document may wait for it."""
+
+    def tables() -> list[tuple[str, str, str]]:
+        from ooxml_edit.tools import sources
+
+        held = dict(session.documents)
+        if len(held) < 2:
+            return []
+        found = []
+        for name in sources.offered(session)[1]:
+            try:
+                handle = sources.qualify(name, held, session.formats)[0]
+            except ToolError:
+                continue
+            found.append((name, handle, held[handle].kind))
+        return found
+
+    return tables
 
 
 def _names(call: Any, entry: Any, arguments: dict[str, Any]) -> dict[str, str]:
@@ -299,14 +325,17 @@ def _timing(call: Any, arguments: dict[str, Any]) -> Any:
 
 def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tuple[Result, Any, list[Any]]:
     """The call's edit made by the session: its result, what it made (``Session.edit``'s
-    ``(first, head, touched, validation)``, ``None`` where it changed nothing), and the
+    ``(first, head, touched, validation, before)``, ``None`` where it changed nothing), and the
     markers its checks get (its ``Timing``, :func:`_timing`).  ``counted``: as for
     :meth:`~ooxml_edit.tools.owned.OwnedEntry.served`."""
     mirror = entry.handle
     tool = call.tool.name
     held = entry.held
-    typography = getattr(held, "typography", True) is not False
-    context = context_of(call.caller, _date(call), typography=typography, locale=getattr(held, "locale", None))
+    # the host's limit on laying the document out holds in an edit as in a read (a field's
+    # page numbers, a reflow): past it the call is a timeout that changes nothing
+    context = context_of(call.caller, call.limits, call.limits.layout_timeout, date=_date(call),
+                         typography=getattr(held, "typography", True) is not False,
+                         locale=getattr(held, "locale", None))
     arguments, folded = _kept_refs(call, arguments)
     entry.flush_view()        # (in a batch: the Python ops' changes before it, the session's)
     _tracking(call, entry, context, counted)
@@ -322,7 +351,8 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
         reply, app, made = _set_mode(entry, given, context, names)
     else:
         reply, app, made = mirror.session.edit(tool, json.dumps(given), options(
-            context=context, layout=layout, blobs=blobs, written=written, documents=documents(names=names)))
+            context=context, layout=layout, blobs=blobs, written=written,
+            documents=documents(names=names, tables=_host_tables(call.session))))
     if timing is not None:
         timing.add("update", time.perf_counter() - started)
     envelope = json.loads(reply)
@@ -398,9 +428,9 @@ def serve_owned(call: Any, arguments: dict[str, Any]) -> Any:
     touched: list[Any] = [*([_before(before)] if current else []), *markers]
     if made is None:
         return Served(result, None, None, touched)
-    first, head, step, validation = made
+    first, head, step, validation, before = made
     return Served(result, first, head, [*touched, Made(head, validation, _engine(call, entry))],
-                  None if step is None else json.loads(step))
+                  None if step is None else json.loads(step), before)
 
 
 def _before(layout: Any) -> Any:
@@ -430,7 +460,7 @@ def serve(call: Any, arguments: dict[str, Any], python: Callable[[], Any]) -> An
             for marker in markers:
                 call.touch(marker)
             if made is not None:
-                entry.served(made[0], made[1])
+                entry.served(made[0], made[1], before=made[4])
         _hand_engine(call, entry, before, made is not None)
     except Fallback as fallback:
         _count(tool, str(fallback))
@@ -443,7 +473,11 @@ def serve(call: Any, arguments: dict[str, Any], python: Callable[[], Any]) -> An
 
 
 def _result(envelope: dict[str, Any]) -> Result:
-    result = Result(summary=envelope.get("summary", ""), data=envelope.get("data"))
+    # a listing's page too (word_comments list, lane H3): its cursor and its total
+    result = Result(summary=envelope.get("summary", ""), data=envelope.get("data"),
+                    next_cursor=envelope.get("next_cursor"))
+    if envelope.get("total") is not None:
+        result.total = envelope["total"]
     for key in ("changed", "created", "removed"):
         getattr(result, key).extend(envelope.get(key) or [])
     result.renamed.update(envelope.get("renamed") or {})
