@@ -290,3 +290,20 @@ impl CacheBudget for Unlimited {
         0
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::rules::bookmark_name_ok;
+
+    #[test]
+    fn bookmark_names_as_pythons_re_reads_them() {
+        // `[^\W\d][\w]{0,39}` in a `str` pattern: `\d` is a decimal digit, `\w` `isalnum` or `_`
+        for name in ["_a", "a1", "\u{b2}a", "\u{2170}x", "x\u{2170}", "\u{4e94}"] {
+            assert!(bookmark_name_ok(name), "{name:?}");
+        }
+        for name in ["", "1a", "\u{663}a", "a\u{93e}", "\u{93e}a", &"a".repeat(41)] {
+            assert!(!bookmark_name_ok(name), "{name:?}");
+        }
+        assert!(bookmark_name_ok(&"a".repeat(40)));
+    }
+}
