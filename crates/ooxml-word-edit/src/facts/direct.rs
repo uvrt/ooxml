@@ -11,6 +11,7 @@ use super::style_names;
 use crate::format::keeps::{row_leads, Keeps};
 use crate::names::W;
 use crate::{Result, WordDoc};
+use ooxml_base::pyfmt::round2;
 use ooxml_word_model::docx::formatting::{Cell, EffectiveParagraph, EffectiveRun, Formatting};
 use ooxml_word_model::docx::text::{text_runs, View};
 use ooxml_word_model::docx::{at_path, StoryPart};
@@ -273,11 +274,6 @@ fn run_value(run: &EffectiveRun, name: &str) -> FormatValue {
         "color" => FormatValue::Name(run.color.clone()),
         _ => optional(run.highlight.as_ref()),
     }
-}
-
-/// Python's `round(value, 2)`: the nearest of two decimals, ties to even on the exact value.
-fn round2(value: f64) -> f64 {
-    format!("{value:.2}").parse().unwrap_or(value)
 }
 
 /// `(word_format's name, direct, styles')` for each paragraph property compared

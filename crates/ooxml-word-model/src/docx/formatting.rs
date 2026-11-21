@@ -213,7 +213,13 @@ impl Formatting {
     /// direct formatting: what its styles give it (docx-agent's `effective.run`, `direct`
     /// false).
     #[must_use]
-    pub fn run_styled(&self, paragraph: &Element, style: Option<&str>, first: char, cell: Option<&Cell>) -> EffectiveRun {
+    pub fn run_styled(
+        &self,
+        paragraph: &Element,
+        style: Option<&str>,
+        first: char,
+        cell: Option<&Cell>,
+    ) -> EffectiveRun {
         self.resolved_run(paragraph, None, style.map(str::to_owned), first, cell)
     }
 

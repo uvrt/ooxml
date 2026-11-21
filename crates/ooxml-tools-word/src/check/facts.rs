@@ -144,8 +144,16 @@ pub fn direct_formatting_json(entry: &DirectFormatting) -> Value {
     let mut out = Map::new();
     out.insert("para".into(), Value::from(entry.para.clone()));
     out.insert("style".into(), entry.style.clone().map_or(Value::Null, Value::from));
-    let props: Map<String, Value> = entry.props.iter().map(|(n, v, _)| ((*n).to_owned(), format_value(v))).collect();
-    let base: Map<String, Value> = entry.props.iter().map(|(n, _, b)| ((*n).to_owned(), format_value(b))).collect();
+    let props: Map<String, Value> = entry
+        .props
+        .iter()
+        .map(|(n, v, _)| ((*n).to_owned(), format_value(v)))
+        .collect();
+    let base: Map<String, Value> = entry
+        .props
+        .iter()
+        .map(|(n, _, b)| ((*n).to_owned(), format_value(b)))
+        .collect();
     out.insert("props".into(), Value::Object(props));
     out.insert("style_has".into(), Value::Object(base));
     if !entry.in_part.is_empty() {
