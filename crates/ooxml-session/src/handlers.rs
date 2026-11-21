@@ -42,7 +42,10 @@ pub trait Tool: Send + Sync {
 
 /// `handler`'s reply to `arguments` taken as meant for a Word document (a refusal of the
 /// arguments is the reply), the notes on what was read as what first among its warnings.
-fn accepted<T: ToolArgs>(arguments: &Value, handler: impl FnOnce(&T) -> ToolResult<Value>) -> ToolResult<Value> {
+pub(crate) fn accepted<T: ToolArgs>(
+    arguments: &Value,
+    handler: impl FnOnce(&T) -> ToolResult<Value>,
+) -> ToolResult<Value> {
     match T::accept(arguments.clone(), Some(DocKind::Docx.as_str())) {
         Ok((args, notes)) => {
             let mut reply = handler(&args);

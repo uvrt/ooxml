@@ -71,6 +71,9 @@ pub struct ToolSpec {
     /// Paths of [`ToolSpec::paths`] listed before the others, in this order, as today's
     /// tool declares them (`sources=("from", "cells[].from")`).
     pub paths_first: Vec<String>,
+    /// Aliases (by [`Alias::key`]) listed, and read, before the others, in this order, as
+    /// today's tool declares them (`aliases={"slide": ..., "from_columns": "columns", ...}`).
+    pub aliases_first: Vec<String>,
 }
 
 /// Which strings a path list is for.
@@ -96,6 +99,8 @@ pub struct Alias {
     pub alias: String,
     /// The tool's own name.
     pub name: String,
+    /// Read so only while this argument of the same object has this value; `None`: always.
+    pub when: Option<(String, String)>,
 }
 
 impl Alias {
@@ -103,6 +108,24 @@ impl Alias {
     #[must_use]
     pub fn key(&self) -> String {
         crate::validate::join(&self.path, &self.alias)
+    }
+
+    /// What the export writes it reads as: the name, or for an alias read only while an
+    /// argument has a value (ooxml-edit's `AliasWhen` in today's `Tool.aliases`),
+    /// `{"name": <name>, "when": {<argument>: <value>}}`.
+    #[must_use]
+    pub fn export(&self) -> Value {
+        match &self.when {
+            None => Value::from(self.name.as_str()),
+            Some((argument, value)) => {
+                let mut when = Map::new();
+                when.insert(argument.clone(), Value::from(value.as_str()));
+                let mut out = Map::new();
+                out.insert("name".into(), Value::from(self.name.as_str()));
+                out.insert("when".into(), Value::Object(when));
+                Value::Object(out)
+            }
+        }
     }
 }
 
@@ -127,6 +150,7 @@ impl ToolSpec {
             arguments,
             places: None,
             paths_first: Vec::new(),
+            aliases_first: Vec::new(),
         }
     }
 
@@ -152,8 +176,8 @@ impl ToolSpec {
         found
     }
 
-    /// The argument aliases: the arguments' own first, then each nested object's, level
-    /// by level, each in field order.
+    /// The argument aliases: those of `aliases_first` first, then the arguments' own, then
+    /// each nested object's, level by level, each in field order.
     #[must_use]
     pub fn aliases(&self) -> Vec<Alias> {
         let mut found = Vec::new();
@@ -167,6 +191,15 @@ impl ToolSpec {
                             path: path.clone(),
                             alias: alias.clone(),
                             name: property.name.clone(),
+                            when: None,
+                        });
+                    }
+                    for rule in &property.intent.aliases_when {
+                        found.push(Alias {
+                            path: path.clone(),
+                            alias: rule.alias.clone(),
+                            name: property.name.clone(),
+                            when: Some((rule.argument.clone(), rule.value.clone())),
                         });
                     }
                     if let Some((child, child_path)) = nested_object(property, &path) {
@@ -176,6 +209,14 @@ impl ToolSpec {
             }
             level = next;
         }
+        let rank = |alias: &Alias| {
+            let key = alias.key();
+            self.aliases_first
+                .iter()
+                .position(|first| *first == key)
+                .unwrap_or(self.aliases_first.len())
+        };
+        found.sort_by_key(rank);
         found
     }
 
@@ -269,11 +310,7 @@ impl ToolSpec {
         ] {
             out.insert(key.into(), strings(&self.paths(what)));
         }
-        let mut aliases: Map<String, Value> = self
-            .aliases()
-            .into_iter()
-            .map(|a| (a.key(), Value::from(a.name)))
-            .collect();
+        let mut aliases: Map<String, Value> = self.aliases().into_iter().map(|a| (a.key(), a.export())).collect();
         for property in self.arguments.properties() {
             if let Some(name) = &property.intent.names_as {
                 // a function in today's `Tool.aliases` (`names_as`): written as what it reads
