@@ -264,6 +264,8 @@ impl NewBook {
 #[cfg(test)]
 mod tests {
     use super::{quoteattr, NewBook, NewCell, NewValue};
+    use ooxml_zip::{Archive, Limits};
+    use std::sync::Arc;
 
     #[test]
     fn attribute_quotes_as_quoteattr() {
@@ -290,5 +292,65 @@ mod tests {
         let strings = parts.last().map(|(_, xml)| xml.as_str()).unwrap_or_default();
         assert!(strings.contains("count=\"3\" uniqueCount=\"2\""));
         assert!(strings.contains("<si><t xml:space=\"preserve\"> a</t></si>"));
+    }
+
+    #[test]
+    fn entries_as_chart_workbook_writes_them() {
+        // ooxml-edit's chart_workbook("column", ["North", " South", "East & West"], two series,
+        // number_format='0.0"x"'): golden/chart_column.xlsx
+        let cell = |column, value, style| NewCell { column, value, style };
+        let text = |t: &str| NewValue::Text(t.to_owned());
+        let number = NewValue::Number;
+        let book = NewBook {
+            sheet: "Sheet1".to_owned(),
+            rows: vec![
+                (1, vec![cell(2, text("2024"), 0), cell(3, text("2025"), 0)]),
+                (
+                    2,
+                    vec![
+                        cell(1, text("North"), 0),
+                        cell(2, number(1.0), 1),
+                        cell(3, number(3.0), 1),
+                    ],
+                ),
+                (
+                    3,
+                    vec![
+                        cell(1, text(" South"), 0),
+                        cell(2, number(2.5), 1),
+                        cell(3, number(4.0), 1),
+                    ],
+                ),
+                (4, vec![cell(1, text("East & West"), 0), cell(3, number(5.0), 1)]),
+            ],
+            dimension: "A1:C4".to_owned(),
+            formats: vec!["0.0\"x\"".to_owned()],
+        };
+        let written = book.write().unwrap_or_default();
+        // the same entries and contents (the deflated bytes are zlib's own choice)
+        let entries = |bytes: &[u8]| -> Vec<(String, Vec<u8>)> {
+            let archive = Archive::read(Arc::from(bytes), &Limits::default()).ok();
+            let archive = archive.as_ref();
+            let entries = archive.map(Archive::entries).unwrap_or_default();
+            entries
+                .iter()
+                .map(|e| {
+                    let data = archive.and_then(|a| a.read_entry(e).ok()).unwrap_or_default();
+                    let m = e.meta();
+                    let made = (
+                        m.version_made_by,
+                        m.version_needed,
+                        m.flags,
+                        m.method,
+                        m.dos_time,
+                        m.dos_date,
+                    );
+                    (format!("{} {made:?}", m.name), data)
+                })
+                .collect()
+        };
+        let golden = entries(include_bytes!("golden/chart_column.xlsx"));
+        assert_eq!(golden.len(), 7);
+        assert_eq!(entries(&written), golden);
     }
 }
