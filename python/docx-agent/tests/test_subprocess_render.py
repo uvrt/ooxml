@@ -16,9 +16,9 @@ from docx_agent import Document
 from docx_agent.layout import convert_bytes, lay_out_bytes
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from docx_agent.tools.shared import render_pages
+from pixels import pixels
 
 import docx2svg
-from pixels import pixels
 
 
 def _document() -> bytes:
@@ -69,5 +69,6 @@ def test_a_daemonic_process_works_in_subprocess_workers():
     assert got["ok"], got["error"]
     assert got["runner"] == "subprocesses"
     assert got["pids"] and got["pid"] not in got["pids"]
-    # the same pixels (two rasterisers' encoders compress them differently: pixels.py)
+    # The worker rasterises in Rust (ooxml_core.PageRaster), render_pages with resvg-py: the
+    # same pixels, which their encoders compress differently.
     assert pixels(got["image"]) == pixels(render_pages(data, [1], 300, [])[0][0])
