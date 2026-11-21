@@ -14,8 +14,9 @@
 //! Must not: lay out but through the host's engine. Copies, a scale and a deck's arguments
 //! are not given here yet: such a call is answered `unported`, and the host answers it; so
 //! is a check needing the layout without the host's layout, or of a version its engine
-//! does not lay out, a range refused (the host words why), a `min_size` that is not one,
-//! and `pages` holding none of the ranges' blocks (the host warns of it).
+//! does not lay out, a `min_size` that is not one, and `pages` holding none of the
+//! ranges' blocks (the host warns of it). A range refused is refused here, as docx-agent
+//! words it ([`refused`]); a heading's range is read, and named, as the span it is.
 
 mod args;
 mod facts;
@@ -25,6 +26,7 @@ mod layout;
 mod placed;
 mod ranges;
 mod reflow;
+mod refused;
 
 pub use args::{Check, CheckCopy, CheckInclude, CheckScale, CopyLists, CopyReference, ScaleShow, ScaleStep, StepText};
 pub use facts::{
@@ -46,6 +48,7 @@ use ooxml_base::Cancel;
 use ooxml_scene::python_g;
 use ooxml_tools::{ArgEnum, Done, ToolError};
 use ooxml_word_edit::validate::{problems, problems_in, Delta};
+use ooxml_word_model::address::{expand_heading, AddressError};
 use ooxml_word_pages::layout_facts::sizes::Minimum;
 use ooxml_word_pages::layout_facts::{Facts, Scope};
 use ooxml_word_pages::summarised::Summarised;
@@ -64,8 +67,6 @@ const FIELDS_NOTE: &str = "results are caches: after moving headings or text, wo
 pub const CHECK_LAYOUT: &str = "check: layout facts";
 /// What `unported` says of a check whose arguments this handler does not take yet.
 pub const CHECK_ARGUMENTS: &str = "check: arguments";
-/// What `unported` says of a check whose `range` is refused (the host words why).
-pub const CHECK_RANGE: &str = "check: a range refused";
 /// What `unported` says of a check whose `pages` hold none of its ranges' blocks.
 pub const CHECK_PAGES_OUTSIDE: &str = "check: pages outside the ranges";
 /// The ranges a check takes at most (docx-agent's `MAX_RANGES`).
@@ -102,7 +103,11 @@ pub fn check(args: &Check, version: &Version<'_>, cancel: &dyn Cancel) -> Result
     };
     let mut data = Map::new();
     let mut timing = Map::new();
-    let ranges = ranges_of(args.range.as_deref(), version);
+    let docx = if layout_wanted { Some(version.docx()?) } else { None };
+    let ranges = match &docx {
+        Some(docx) => ranges_of(args.range.as_deref(), version, docx).map_err(|e| heading_refused(e, &args.doc))?,
+        None => Vec::new(),
+    };
     if ranges.len() > MAX_RANGES {
         return Err(ToolError::failure(
             ooxml_tools::Failure::Limit,
@@ -113,13 +118,10 @@ pub fn check(args: &Check, version: &Version<'_>, cancel: &dyn Cancel) -> Result
         )
         .at("range"));
     }
-    let docx = if layout_wanted { Some(version.docx()?) } else { None };
     let scope = match (&docx, ranges.is_empty()) {
         (Some(docx), false) => {
             let started = Instant::now();
-            let Ok(scope) = Scope::of(docx, &ranges) else {
-                return Ok(unported(CHECK_RANGE));
-            };
+            let scope = Scope::of(docx, &ranges).map_err(|e| refused::range_refused(e, docx, &args.doc))?;
             timing.insert("resolve".into(), seconds(started));
             Some(scope)
         }
@@ -339,17 +341,35 @@ fn finish(
     Ok(done)
 }
 
-/// `range` as a list of addresses (docx-agent's `ranges_of`): each stripped, blanks and
-/// repeats left out, each as it names a block now.
-fn ranges_of(range: Option<&[String]>, version: &Version<'_>) -> Vec<String> {
+/// `range` as a list of addresses (docx-agent's `ranges_of(resolve(...))`): each stripped,
+/// blanks left out, each as it names a block now, a heading's range as the span of blocks
+/// it is (`h:p:A` -> `p:A..p:C`), repeats left out.
+///
+/// # Errors
+/// A heading's range that names no heading of the body.
+fn ranges_of(
+    range: Option<&[String]>,
+    version: &Version<'_>,
+    docx: &ooxml_word_model::docx::Docx,
+) -> Result<Vec<String>, AddressError> {
     let mut out: Vec<String> = Vec::new();
     for address in range.unwrap_or_default() {
         let address = address.trim();
-        if !address.is_empty() && !out.iter().any(|a| a == address) {
-            out.push(address.to_owned());
+        if address.is_empty() {
+            continue;
+        }
+        let address = expand_heading(docx, &version.follow(address))?;
+        if !out.contains(&address) {
+            out.push(address);
         }
     }
-    out.iter().map(|a| version.follow(a)).collect()
+    Ok(out)
+}
+
+/// A heading's range refused (docx-agent's `_heading_range`: at no field, the body's
+/// headings as the ways in).
+fn heading_refused(error: AddressError, doc: &str) -> ToolError {
+    crate::refusal::address_refused(error, crate::word_read::try_call(serde_json::json!({"doc": doc})))
 }
 
 /// What the check reports, in the order asked (as given: a part named twice is said twice),

@@ -36,8 +36,8 @@ pub enum ScopeError {
         number: usize,
         /// The address as given.
         address: String,
-        /// The story's part.
-        part: String,
+        /// The story's name (`header1`, `footnotes`...).
+        story: String,
     },
     /// Range `number` holds no paragraph.
     Empty {
@@ -100,7 +100,7 @@ impl Scope {
                 return Err(ScopeError::NotBody {
                     number,
                     address: address.clone(),
-                    part: part.part.clone(),
+                    story: part.story.clone(),
                 });
             }
             if indexes.is_empty() {
