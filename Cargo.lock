@@ -567,6 +567,7 @@ dependencies = [
 name = "ooxml-numfmt"
 version = "0.1.0"
 dependencies = [
+ "ooxml-base",
  "thiserror",
 ]
 
@@ -782,6 +783,7 @@ dependencies = [
  "num-integer",
  "num-rational",
  "num-traits",
+ "ooxml-base",
  "ooxml-core",
  "rayon",
  "serde",
