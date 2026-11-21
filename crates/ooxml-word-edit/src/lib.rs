@@ -129,9 +129,9 @@ pub use drawings::{
 pub use editor::{EditTiming, Edited, Editor};
 pub use error::{EditError, Result};
 pub use fields::{
-    field_facts, fields, format_date, Day, FieldEdited, FieldFacts, FieldInfo, FieldLayout, FieldPlace, InsertCaption,
-    InsertCrossReference, InsertField, InsertToc, LaidFields, PageReflow, PageShows, SetStoryNumbered, StoryNumber,
-    StoryNumbered, Unknown, UpdateFields,
+    field_facts, fields, format_date, Day, FieldEdited, FieldFacts, FieldInfo, FieldLayout, FieldPlace, FieldRun,
+    InsertCaption, InsertCrossReference, InsertField, InsertToc, LaidFields, PageReflow, PageShows, SetStoryNumbered,
+    StoryNumber, StoryNumbered, Unknown, UpdateFields,
 };
 pub use follow::{CopyFollowed, FollowSample, Followed};
 pub use format::{
