@@ -196,6 +196,7 @@ def test_text_targets_take_a_cell_a_bookmark_and_a_paragraph(box, session):
     document = session.entry(doc).document       # (the view as the served call left it)
     assert document.tables()[0].cell(1, 1).text == "right side"
     ok(box, session, "word_comments", doc=doc, action="add", items=[{"target": cell, "text": "Check."}])
+    document = session.entry(doc).document       # (the view as the served call left it)
     assert document.comments()[0].anchor.text == "right side"
     ok(box, session, "word_notes", doc=doc, action="insert", at=ids["Alpha"], text="A note.")
     ok(box, session, "word_notes", doc=doc, action="insert", at="bm:Spot", text="Another.")

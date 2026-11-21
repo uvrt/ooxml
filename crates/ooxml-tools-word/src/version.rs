@@ -8,6 +8,8 @@
 //! Must not: hold documents or sessions (`ooxml-session` does, and makes a `Version` per
 //! call).
 
+use crate::check::LastCheck;
+use crate::pages::WordLayout;
 use crate::placements::Placer;
 use ooxml_opc::Package;
 use ooxml_tools::ToolError;
@@ -58,6 +60,15 @@ pub struct LayoutCounts {
 }
 
 impl Version<'_> {
+    /// `address` as it names a block now: through the renames the session's edits made
+    /// (`p@body/1` once stamped `p:X`; a row's or cell's table), as docx-agent's view reads
+    /// an address; as given on a version the session only reads.
+    #[must_use]
+    pub fn follow(&self, address: &str) -> String {
+        self.owned
+            .map_or_else(|| address.to_owned(), |owned| owned.doc.ids().follow_address(address))
+    }
+
     /// This version's reading.
     ///
     /// # Errors
@@ -70,7 +81,9 @@ impl Version<'_> {
 }
 
 /// A version of a document the session owns, as its editor holds it: what validation
-/// reads, and the problems the document was opened with (the save gate's baseline).
+/// reads, the problems the document was opened with (the save gate's baseline), what the
+/// document's last check saw, and the host's layout of its versions where the call was
+/// handed one.
 #[derive(Clone, Copy)]
 pub struct Owned<'a> {
     /// The version.
@@ -80,6 +93,12 @@ pub struct Owned<'a> {
     /// The document as the session opened it (what changed since: `save_document`'s
     /// `app.xml` refreshed only when the main part did).
     pub opened: &'a WordDoc,
+    /// What the document's last check with `reflow` saw.
+    pub last_check: &'a LastCheck,
+    /// The host's layout of the document's versions (`None`: the call was handed none).
+    pub layout: Option<&'a dyn WordLayout>,
+    /// How long laying a version out may take in the call (`None`: as long as the call).
+    pub layout_limit: Option<crate::LayoutLimit<'a>>,
 }
 
 /// The other documents a call names, by id, each at the version the session pinned for the

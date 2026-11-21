@@ -85,10 +85,11 @@ pub fn word_read(args: &WordRead, version: &Version<'_>, cancel: &dyn Cancel) ->
     cancel.check().map_err(cancelled)?;
     let docx = version.docx()?;
     // A heading's range is read, and named, as the span it is (today's `resolve`).
+    // ... through the session's renames (a place id stamping renamed), as docx-agent's view
     let range = args
         .range
         .as_deref()
-        .map(|r| expand_heading(&docx, r))
+        .map(|r| expand_heading(&docx, &version.follow(r)))
         .transpose()
         .map_err(|e| range_refusal(e, &args.doc))?;
     let markdown = to_markdown(&docx, range.as_deref(), view, stories).map_err(|e| range_refusal(e, &args.doc))?;

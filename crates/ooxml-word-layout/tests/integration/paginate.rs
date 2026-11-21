@@ -1,7 +1,8 @@
 //! Pagination's rules on made-up documents over one face (support::Mono, 12 pt lines of
 //! 2355/2048 em; a page of 2160 twips holds seven): widow and orphan control, a
 //! `keepNext` paragraph going with a `keepLines` one, a page break, and an `oddPage`
-//! section's blank page and numbers. Every line holds one 17-character word.
+//! section's blank page and numbers, and each section's `SECTIONPAGES`. Every line holds one
+//! 17-character word.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
 use crate::support;
@@ -85,4 +86,29 @@ fn an_odd_page_section_after_an_odd_page_gets_a_blank_page() {
     let layout = lay_out(&body);
     let info: Vec<(i64, bool)> = layout.pagination.info.iter().map(|i| (i.number, i.blank)).collect();
     assert_eq!(info, vec![(1, false), (2, true), (3, false)]);
+}
+
+#[test]
+fn each_section_counts_the_pages_it_has_content_on() {
+    // Nine lines (two pages), sixteen on a page of its own (three), three (one).
+    let body = [
+        para(&sect("nextPage", 1), &run(&words(9))),
+        para(&sect("nextPage", 1), &run(&words(16))),
+        para("", &run(&words(3))),
+        sect("nextPage", 1),
+    ]
+    .concat();
+    let layout = lay_out(&body);
+    let counts: Vec<_> = (0..4)
+        .map(|s| ooxml_word_layout::fields::page_counts(&layout, s))
+        .collect();
+    assert_eq!(
+        counts,
+        vec![
+            (Some(6), Some(2)),
+            (Some(6), Some(3)),
+            (Some(6), Some(1)),
+            (Some(6), Some(0))
+        ]
+    );
 }

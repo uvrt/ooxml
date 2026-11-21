@@ -4,6 +4,7 @@
 
 mod common;
 
+mod check;
 mod compare;
 mod controls;
 mod describe;

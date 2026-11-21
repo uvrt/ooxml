@@ -61,6 +61,7 @@ impl<D: DocModel> ChangeSet<D> {
 /// The inverses of `changes`, made on `on`, in the order they apply (newest first).
 pub(crate) fn inverses<D: DocModel>(on: &D, changes: &[D::Change]) -> Result<Vec<D::Change>, Error<D>> {
     let mut at = on.clone();
+    at.begin();
     let mut inverses = Vec::with_capacity(changes.len());
     for change in changes {
         inverses.push(at.inverse(change).map_err(StoreError::Model)?);

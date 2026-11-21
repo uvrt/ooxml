@@ -4,7 +4,9 @@
 //! as its `Document` method writes it, in order, as one step -- with what they share: a
 //! table's shape on an editable copy ([`shape`]), its properties ([`props`]) and Word's
 //! records of them when tracked ([`tracker`]); and [`EditTable`], a table's rows and
-//! columns inserted, copied and deleted, its cells merged and split.
+//! columns inserted, copied and deleted, its cells merged and split; rows written against
+//! the rows around them ([`rows_unlike`]) and empty cells written given their column's
+//! formatting ([`LikeTheColumn`]).
 //!
 //! Must not: write but through the sink, or decide what a tool's arguments mean (the tool
 //! does).
@@ -13,10 +15,12 @@ mod body_lines;
 mod columns;
 mod copy_row;
 mod keeps;
+mod like_column;
 mod merge;
 mod new_column;
 mod new_row;
 mod props;
+mod row_look;
 mod rows;
 pub(crate) mod shape;
 mod split;
@@ -27,7 +31,11 @@ pub(crate) use rows::placed;
 
 pub use body_lines::{body_lines, body_width, BodyLines, BodyWidth};
 pub use keeps::{loose_paragraph_after, table_keeps, table_keeps_at, TableKeeps};
+pub use like_column::{ColumnCopy, LikeTheColumn};
 pub use props::{CellValues, Look, TableValues, TableWidth};
+pub use row_look::{
+    row_cells, row_shown, rows_unlike, CellUnlike, FormatCall, LookField, RowUnlike, TextLook, ROW_WINDOW,
+};
 pub use rows::{pending_structure, EditTable, TableChange, TableChanged};
 
 use crate::doc::Key;
