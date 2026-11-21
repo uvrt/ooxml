@@ -407,19 +407,24 @@ impl PageEngine {
         self.lay_out_within(package, Some(cancel))
     }
 
-    fn lay_out_within(
-        &mut self,
-        package: &Package,
-        cancel: Option<&dyn Cancel>,
-    ) -> Result<Result<Arc<LaidVersion>, Fallback>, PagesError> {
-        // What changed from the version given before, by identity: a session's edit gives
-        // its parts untouched as they were, its edited ones anew.
+    /// Keep `package` as the version given last, and what it changed from the one given
+    /// before, by identity (a session's edit gives its parts untouched as they were, its
+    /// edited ones anew), sorted.
+    fn note_given(&mut self, package: &Package) {
         self.changed = self
             .given
             .replace(package.clone())
             .map(|before| package.changed_parts(&before))
             .unwrap_or_default();
         self.changed.sort();
+    }
+
+    fn lay_out_within(
+        &mut self,
+        package: &Package,
+        cancel: Option<&dyn Cancel>,
+    ) -> Result<Result<Arc<LaidVersion>, Fallback>, PagesError> {
+        self.note_given(package);
         let fonts = self.setup.document(package);
         let (generation, mut cause) = self.generation_for(fonts, package);
         let generation = self.generation.insert(generation);
