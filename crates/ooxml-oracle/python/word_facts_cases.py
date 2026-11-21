@@ -7,10 +7,11 @@ For each document, docx-agent's ``layout_facts`` functions that need no layout -
 and the style list (``styles``: ``styles_not_allowed`` and ``styles_unknown`` for
 :data:`ALLOWED`), their ``pages`` left out -- ``tools.originals``' ``accept_loses_original``,
 and ``validate``'s ``problems_in`` (each of the body's blocks alone, and all of them) and
-``extension_problems`` (for some file names), and ``row_text_format`` (with made-up rows
-written, :func:`_written`) -- one case each,
+``extension_problems`` (for some file names), ``row_text_format`` (with made-up rows
+written, :func:`_written`), ``punctuation_spacing`` and ``text_language`` (whole, with the
+body's top-level paragraphs as ranges, and as of some pages' words) -- one case each,
 against the ``word-reads`` binary's fact cases (``crates/ooxml-oracle/src/facts.rs``: the
-Rust library functions of ``ooxml_word_edit::facts`` as ``check`` words them).  Uncapped and unfiltered:
+Rust library functions of ``ooxml_word_edit::facts`` as ``check`` words them).  Uncapped and unfiltered (``text_language`` capped as ``check`` caps it):
 the cap and the page and range filters are ``check``'s.
 
 Besides the documents given, made-up ones that hold each fact (:func:`made_up`, from
@@ -37,8 +38,8 @@ if str(TESTS) not in sys.path:
 
 from docx_agent import Document
 from docx_agent.layout_facts import (
-    _PARA_ID, _Facts, accept_loses_text, empty_paragraphs, numbering_skips_level, row_text_format,
-    table_grid_mismatch)
+    CAP, _PARA_ID, _Facts, accept_loses_text, empty_paragraphs, numbering_skips_level, punctuation_spacing,
+    row_text_format, table_grid_mismatch, text_language_facts)
 from docx_agent.tools.originals import accept_loses_original
 from docx_agent.validate import check, extension_problems, problems_in
 
@@ -164,6 +165,14 @@ def _written(document) -> frozenset:
                      if row.get(_PARA_ID))
 
 
+def _top_level(document: Document):
+    """The body's top-level blocks as ``check``'s layout facts read them (``_Facts._top_level``,
+    which reads only the document and its main part)."""
+    from types import SimpleNamespace
+
+    return _Facts._top_level(SimpleNamespace(document=document, main=document.package.document_part()))
+
+
 FACTS = {
     "empty_paragraphs": empty_paragraphs,
     "numbering_skips_level": numbering_skips_level,
@@ -175,6 +184,10 @@ FACTS = {
     "problems_in": problems_in_blocks,
     "extension": extension,
     "row_text_format": lambda document: row_text_format(document, _written(document)),
+    "punctuation_spacing": punctuation_spacing,
+    "text_language": lambda document: text_language_facts(document, cap=CAP),
+    "text_language_ranges": lambda document: text_language_facts(document, top_level=_top_level(document), cap=CAP),
+    "text_language_checked": lambda document: text_language_facts(document, whole=False, cap=CAP),
 }
 
 
@@ -235,6 +248,7 @@ def made_up() -> dict[str, bytes]:
     out.update(_grids(_document, _p))
     out.update(_formatting(_document, _p, _tbl))
     out.update(_validity(_document, _p, _tbl))
+    out.update(_languages(_document))
     # A mark deleted without an id (no change to name: the reject within the cell), and a
     # cell lost in a nested table.
     out["accept-unnamed"] = _document(_edge((0, 1)).replace('w:del w:id="95" ', "w:del "))
@@ -366,6 +380,75 @@ def _validity(document, p, tbl) -> dict[str, bytes]:
            'Target="vbaProject.bin"/></Relationships>')
     return {"problems-mixed": problems, "kind-template": _replaced(data, types, document_type, template_type),
             "kind-macros": _replaced(data, rels, "</Relationships>", vba)}
+
+
+def _languages(document) -> dict[str, bytes]:
+    """Text in each spacing rule's language and in another language than its tag: French
+    spacing missing, breakable and in guillemets (Canadian French, a code style, a field's
+    result, marks between words, more marks than an entry shows, text a fix's find must
+    widen), French spacing tagged English by the default, a style and a run, paragraphs in
+    French, German and Dutch under English (one listed, consecutive ones a range, a short one
+    between, one in a table, one tagged by its runs), text too short or unclear, text not
+    proofed, a text box's paragraph; and more mismatched paragraphs than an entry lists."""
+
+    def run(text: str, lang: str | None = None, extra: str = "") -> str:
+        props = (f"<w:lang w:val='{lang}'/>" if lang else "") + extra
+        return f"<w:r>{f'<w:rPr>{props}</w:rPr>' if props else ''}<w:t xml:space='preserve'>{text}</w:t></w:r>"
+
+    def para(*runs: str, style: str | None = None) -> str:
+        return f"<w:p>{f'<w:pPr><w:pStyle w:val={chr(39)}{style}{chr(39)}/></w:pPr>' if style else ''}{''.join(runs)}</w:p>"
+
+    def table(*cells: str) -> str:
+        return ("<w:tbl><w:tblGrid><w:gridCol w:w='3000'/></w:tblGrid>"
+                + "".join(f"<w:tr><w:tc>{cell}</w:tc></w:tr>" for cell in cells) + "</w:tbl>")
+
+    styles = ("<w:style w:type='character' w:styleId='Allemand'><w:name w:val='Allemand'/>"
+              "<w:rPr><w:lang w:val='de-DE'/></w:rPr></w:style>"
+              "<w:style w:type='character' w:styleId='HTMLCode'><w:name w:val='HTML Code'/></w:style>"
+              "<w:style w:type='paragraph' w:styleId='Francais'><w:name w:val='Francais'/>"
+              "<w:rPr><w:lang w:val='fr-BE'/></w:rPr></w:style>")
+    field = ("<w:r><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:instrText> TITLE </w:instrText></w:r>"
+             "<w:r><w:fldChar w:fldCharType='separate'/></w:r>" + run("Titre:", "fr-FR")
+             + "<w:r><w:fldChar w:fldCharType='end'/></w:r>")
+    box = ("<w:r><w:pict><v:shape xmlns:v='urn:schemas-microsoft-com:vml'><v:textbox><w:txbxContent>"
+           + para(run("Der Hund ist nicht in dem Haus und er wird auch nicht kommen.", "de-DE"))
+           + "</w:txbxContent></v:textbox></v:shape></w:pict></w:r>")
+    french = "Le chat est sur la table et il dort dans le soleil du matin avec les autres."
+    german = "Der Hund ist nicht in dem Haus und er wird auch nicht mit uns kommen."
+    dutch = "De hond is niet in het huis en hij zal ook niet met ons komen vandaag."
+    english = "The cat is on the table and it sleeps in the sun of the morning with the others."
+    spacing = document(
+        para(run("Bonjour: le monde ! Fin?", "fr-FR"))
+        + para(run("«oui» et « non » puis «peut-être »", "fr-FR"))
+        + para(run("«oui» : non!", "fr-CA"))
+        + para(run("Il est 12:30 et x?y reste; voir http://exemple", "fr-FR"))
+        + para(run("code:", "fr-FR", "<w:rStyle w:val='HTMLCode'/>"), run(" et sans:", "fr-FR", "<w:noProof/>"))
+        + para(field, run(" puis fin:", "fr-FR"))
+        + para(run("a: b: c: d: e: f: g: h: i: j: k: l: fin:", "fr-FR"))
+        + para(run("oui: non oui: non oui:", "fr-FR"))
+        + para(run("Mixed: ", "fr-FR"), run("then English: done", "en-US"))
+        + para(run("Quoi ?! Vraiment!! « dit-il»", "fr-FR"), style="Francais")
+        + table(para(run("Dans la table:", "fr-FR")))
+        + para(run("Bonjour : tagged English by the default ; really ?"))
+        + para(run("Guten Tag : im Stil ; ja ?", extra="<w:rStyle w:val='Allemand'/>"))
+        + para(run("Hello : tagged by the run !", "en-GB"))
+        + para(run("Hola : « sí » ?", "es-ES"))
+        )
+    language = document(
+        para(run(french)) + para(run(french)) + para(run(german, "en-US")) + para(run("Kurz."))
+        + para(run(german)) + para(run(dutch, "nl-NL")) + para(run(dutch)) + table(para(run(german)))
+        + para(run(german, "en-GB")) + para(run(german, "en-GB")) + para(run(english))
+        + para(run("Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor"))
+        + para(run(french, extra="<w:noProof/>")) + para(run("Too short.")) + para(box)
+        + para(run(french[:40]), run(french[40:], "fr-FR")))
+    many = document("".join(para(run(german if k % 2 else english)) for k in range(50)))
+    french_doc = document("".join(para(run(french)) for _ in range(6)) + para(run(english)) + para(run(german)))
+    return {
+        "spacing-french": _replaced(spacing, "word/styles.xml", "</w:styles>", styles + "</w:styles>"),
+        "language-mixed": language,
+        "language-many": many,
+        "language-mostly-french": french_doc,
+    }
 
 
 def check_facts(args, run_rust, report, files_of) -> int:

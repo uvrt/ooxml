@@ -11,8 +11,9 @@ use ooxml_base::Limits;
 use ooxml_opc::Package;
 use ooxml_tools_word::{
     direct_formatting_json, empty_run_json, grid_mismatch_json, lost_cell_json, lost_original_json, row_unlike_json,
-    skipped_level_json, style_use_json,
+    skipped_level_json, spacing_problem_json, style_use_json, text_language_json,
 };
+use ooxml_word_edit::facts::LanguageScope;
 use ooxml_word_edit::validate::{extension_problems, problems, problems_in};
 use ooxml_word_edit::{facts, EditError, WordDoc};
 use ooxml_word_model::docx::at_path;
@@ -28,11 +29,16 @@ const BLOCKS: usize = 200;
 /// The file names an `extension` case writes to (`python/word_facts_cases.py`'s `TARGETS`).
 const TARGETS: [&str; 6] = ["out.docx", "out.DOCM", "out.dotx", "out.dotm", "out.txt", ".docx"];
 
-/// The fact `fact` of `package`'s first version, uncapped; `opened`, where given, is the
-/// file as the session opened it (`accept_loses_original`; else the package itself).
+/// The paragraphs a `text_language` entry lists at most (docx-agent's `CAP`).
+const CAP: usize = 20;
+
+/// The fact `fact` of `package`'s first version, uncapped (`text_language`: capped as
+/// `check` caps it; `text_language_ranges` with consecutive top-level paragraphs as ranges,
+/// `text_language_checked` as of some pages' words); `opened`, where given, is the file as
+/// the session opened it (`accept_loses_original`; else the package itself).
 #[must_use]
 pub fn reply(package: &Package, fact: &str, opened: Option<&str>) -> Value {
-    let found = (|| -> Result<Option<Vec<Value>>, String> {
+    let found = (|| -> Result<Option<Value>, String> {
         let doc = WordDoc::open(package.clone(), Arc::new(Unlimited)).map_err(|e| e.to_string())?;
         let opened = match opened {
             Some(file) => open(file)?,
@@ -54,7 +60,16 @@ fn open(file: &str) -> Result<WordDoc, String> {
     WordDoc::open(package, Arc::new(Unlimited)).map_err(|e| e.to_string())
 }
 
-fn entries(doc: &WordDoc, opened: &WordDoc, fact: &str) -> Result<Option<Vec<Value>>, EditError> {
+fn entries(doc: &WordDoc, opened: &WordDoc, fact: &str) -> Result<Option<Value>, EditError> {
+    let language = |whole: bool, ranges: bool| -> Result<Value, EditError> {
+        let scope = LanguageScope {
+            keep: None,
+            whole,
+            ranges,
+            locale: None,
+        };
+        Ok(facts::text_language(doc, scope)?.map_or(Value::Null, |found| text_language_json(&found, CAP)))
+    };
     Ok(Some(match fact {
         "empty_paragraphs" => facts::empty_paragraphs(doc)?.iter().map(empty_run_json).collect(),
         "numbering_skips_level" => facts::numbering_skips_level(doc)?
@@ -73,13 +88,13 @@ fn entries(doc: &WordDoc, opened: &WordDoc, fact: &str) -> Result<Option<Vec<Val
         "styles" => {
             let found = facts::style_list(doc, &ALLOWED.map(str::to_owned))?;
             let entries: Vec<Value> = found.not_allowed.iter().map(style_use_json).collect();
-            vec![json!({"styles_not_allowed": entries, "styles_unknown": found.unknown})]
+            json!([{"styles_not_allowed": entries, "styles_unknown": found.unknown}])
         }
         "accept_loses_original" => facts::accept_loses_original(doc, opened.docx()?)?
             .iter()
             .map(lost_original_json)
             .collect(),
-        "problems_in" => problems_in_blocks(doc)?,
+        "problems_in" => Value::Array(problems_in_blocks(doc)?),
         "extension" => TARGETS
             .iter()
             .map(|target| {
@@ -92,6 +107,13 @@ fn entries(doc: &WordDoc, opened: &WordDoc, fact: &str) -> Result<Option<Vec<Val
             .iter()
             .map(row_unlike_json)
             .collect(),
+        "punctuation_spacing" => facts::punctuation_spacing(doc, None)?
+            .iter()
+            .map(spacing_problem_json)
+            .collect(),
+        "text_language" => language(true, false)?,
+        "text_language_ranges" => language(true, true)?,
+        "text_language_checked" => language(false, false)?,
         _ => return Ok(None),
     }))
 }
