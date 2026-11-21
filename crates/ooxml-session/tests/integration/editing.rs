@@ -136,6 +136,68 @@ fn the_tracking_mode_is_kept_and_review_tools_edit() {
 }
 
 #[test]
+fn change_listings_read_the_pinned_version_and_count_this_sessions_records() {
+    let s = session();
+    let tracked = format!(
+        r#"{}<w:p w14:paraId="22222222" w14:textId="77777777"><w:ins w:id="1" w:author="Ann" w:date="2026-01-01T00:00:00Z"><w:r><w:t>new</w:t></w:r></w:ins></w:p>"#,
+        paragraph("11111111", "one")
+    );
+    let d = s.open(docx(&tracked), DocKind::Docx, "a.docx").unwrap();
+    let bo = as_caller("w1");
+    call(
+        &s,
+        "word_set_tracking",
+        json!({"doc": "d1", "on": true, "author": "Bo"}),
+        &bo,
+    );
+    let edited = call(
+        &s,
+        "word_set_text",
+        json!({"doc": "d1", "target": "p:11111111", "text": "one more"}),
+        &bo,
+    );
+    assert_eq!(edited["ok"], json!(true), "{edited}");
+    let pinned = s.snapshot(&d).unwrap();
+    // a later accept of everything: the head has no change left, the pinned version has
+    call(
+        &s,
+        "word_changes",
+        json!({"doc": "d1", "action": "accept", "all": true}),
+        &bo,
+    );
+    let at = CallContext {
+        at: vec![pinned],
+        ..CallContext::default()
+    };
+    let listed = call(&s, "word_changes", json!({"doc": "d1", "action": "list"}), &at);
+    let authors: Vec<&Value> = listed["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| &c["author"])
+        .collect();
+    assert!(
+        authors.contains(&&json!("Ann")) && authors.contains(&&json!("Bo")),
+        "{listed}"
+    );
+    // what accepting all would settle: Ann's record was there when the document was opened,
+    // Bo's were written by this session
+    let preview = call(
+        &s,
+        "word_changes",
+        json!({"doc": "d1", "action": "preview", "all": true}),
+        &at,
+    );
+    let accept = &preview["data"]["accept"];
+    let records = accept["records"].as_u64().unwrap();
+    assert!(records >= 2, "{preview}");
+    assert_eq!(accept["this_session"].as_u64(), Some(records - 1), "{preview}");
+    assert_eq!(accept["changes_left"], json!(0));
+    let head = call(&s, "word_changes", json!({"doc": "d1", "action": "list"}), &bo);
+    assert_eq!(head["data"], json!([]), "{head}");
+}
+
+#[test]
 fn a_caller_undoes_only_its_own_latest_change() {
     let s = session();
     let d = s

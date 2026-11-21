@@ -60,7 +60,8 @@ def _text_tool_cases(document, targets: list[str]) -> list[dict]:
 
 def _insert_delete_cases(document, targets: list[str]) -> list[dict]:
     """``word_insert_text`` and ``word_delete`` called as tools (``--text``): text beside a
-    paragraph, a range, a position and a word found once, several items, refs; text, a range,
+    paragraph, a range, a position and a word found once (in the document or within a block or
+    span), several items, refs; text, a range,
     a block and a span deleted, the space a deletion leaves doubled, a heading whose content
     stays; and the refusals (no place, both forms, an address as ref, an at that is no side)."""
     call = _call
@@ -85,14 +86,48 @@ def _insert_delete_cases(document, targets: list[str]) -> list[dict]:
             out += [call("word_insert_text", find=word, text=" (more)"),
                     call("word_insert_text", find=word, where="before", text="very "),
                     call("word_delete", find=word), call("word_delete", find=word, collapse_space=True),
-                    call("word_delete", find=word, target=target)]
+                    call("word_delete", find=word, target=target),
+                    call("word_insert_text", find=word, within=target, text=" (within)"),
+                    call("word_delete", find=word, within=target),
+                    call("word_delete", find=word, within=target, target=target)]
     if len(targets) > 1:
         out += [call("word_insert_text", items=[{"target": targets[0], "text": "One "},
                                                  {"at": f"{targets[-1]}@0", "text": "Two ", "ref": "two"}]),
                 call("word_insert_text", items=[{"target": targets[0], "text": "One"}, {"text": "Two"}]),
                 call("word_delete", target=f"{targets[0]}..{targets[1]}"),
                 call("word_delete", target=f"{targets[0]}..{targets[-1]}", force=True)]
+        out += _within_cases(document, targets)
     return out
+
+
+def _within_cases(document, targets: list[str]) -> list[dict]:
+    """A find searched within a span, within one paragraph where the word is not, and
+    ``within`` and ``target`` naming other blocks (refused)."""
+    call = _call
+    words = [w for w in document.paragraph(targets[0]).text.split() if w.isalpha() and len(w) > 3]
+    if not words:
+        return []
+    word, span = words[0], f"{targets[0]}..{targets[1]}"
+    return [call("word_delete", find=word, within=span),
+            call("word_insert_text", find=word, within=span, where="before", text="span "),
+            call("word_delete", find=word, within=span, target=span),
+            call("word_delete", find=word, within=targets[-1]),
+            call("word_insert_text", find=word, within=targets[-1], text="x"),
+            call("word_delete", find=word, within=targets[-1], target=targets[0])] + _twice_cases(document, targets)
+
+
+def _twice_cases(document, targets: list[str]) -> list[dict]:
+    """A word two paragraphs hold, found within the later one: by ``target`` and by
+    ``within`` (the other paragraph keeps it)."""
+    call = _call
+    texts = [document.paragraph(t).text.split() for t in targets]
+    for k, words in enumerate(texts[1:], start=1):
+        shared = [w for w in words if w.isalpha() and len(w) > 3 and w in texts[0] and words.count(w) == 1]
+        if shared:
+            return [call("word_delete", find=shared[0], target=targets[k]),
+                    call("word_delete", find=shared[0], within=targets[k]),
+                    call("word_insert_text", find=shared[0], within=targets[k], text=" (here)")]
+    return []
 
 
 #: insert_markdown's Markdown called as the tool (raw HTML refused, emphasis in its styles).

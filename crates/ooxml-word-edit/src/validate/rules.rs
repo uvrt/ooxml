@@ -14,6 +14,7 @@
 use crate::names::{W, W15};
 use crate::validate::facts::{python_int, ElementFacts, Local};
 use crate::validate::Problem;
+use ooxml_base::pystr::{is_decimal, is_word};
 use ooxml_opc::{name::normalize, Package, CONTENT_TYPES_PART};
 use ooxml_word_model::parts::{related, REL_COMMENTS, REL_COMMENTS_EXTENDED, REL_COMMENTS_IDS};
 use ooxml_xml::Element;
@@ -280,12 +281,12 @@ pub(super) fn py_str(value: Option<&str>) -> String {
     value.unwrap_or("None").to_owned()
 }
 
-/// `[^\W\d][\w]{0,39}`, whole: a letter or underscore, then up to 39 word characters.
+/// `[^\W\d][\w]{0,39}`, whole, as Python's `re` reads it in a `str` pattern: a word
+/// character not a decimal digit, then up to 39 word characters.
 pub(super) fn bookmark_name_ok(name: &str) -> bool {
-    let word = |c: char| c.is_alphanumeric() || c == '_';
     let mut chars = name.chars();
     let Some(first) = chars.next() else { return false };
-    word(first) && !first.is_numeric() && name.chars().count() <= 40 && chars.all(word)
+    is_word(first) && !is_decimal(first) && name.chars().count() <= 40 && chars.all(is_word)
 }
 
 /// Every `r:` attribute names a relationship of its own part.

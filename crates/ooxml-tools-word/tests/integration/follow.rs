@@ -56,16 +56,7 @@ fn follow(mut arguments: Value) -> Value {
     let caller = Caller::anonymous();
     let copy = package();
     let versions = Versions::new();
-    let other = Version {
-        name: "b.docx",
-        package: &copy,
-        number: 1,
-        versions: &versions,
-        placer: None,
-        owned: None,
-        others: Others::default(),
-        word: None,
-    };
+    let other = Version::new("b.docx", &copy, 1, &versions);
     let others = [("d2", other)];
     let call_editor = CallEditor::new(&editor);
     let editing = Editing::new(&call_editor, &caller, &opened, "d1", &Never, "2026-11-17T10:00:00Z")

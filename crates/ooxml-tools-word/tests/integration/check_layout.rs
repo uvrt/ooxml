@@ -58,6 +58,9 @@ fn a_check_of_the_layout_reports_its_facts_in_docx_agents_order() {
     // no reflow asked: none said, and the next check's since is not measured from this one
     assert!(reply["data"].get("reflow").is_none());
     assert!(last.get().is_none());
+    // but its pages are kept as the version's, for a changing call to measure from
+    let laid = last.laid().expect("the version laid out is kept");
+    assert_eq!(laid.version, Some(1));
 }
 
 #[test]

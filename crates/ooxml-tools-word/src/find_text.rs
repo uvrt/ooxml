@@ -69,9 +69,6 @@ pub struct FindText {
     pub cursor: Option<String>,
 }
 
-/// Matches on a page, as `Limits.max_list_items`.
-const PAGE: usize = 50;
-
 /// Characters of context on each side of a match.
 const CONTEXT: usize = 20;
 
@@ -142,7 +139,12 @@ pub fn find_text(args: &FindText, version: &Version<'_>, cancel: &dyn Cancel) ->
     }
     let mut first = args.clone();
     first.cursor = None;
-    let (shown, total, next) = page_list(&rows, args.cursor.as_deref(), PAGE, try_call(&first))?;
+    let (shown, total, next) = page_list(
+        &rows,
+        args.cursor.as_deref(),
+        version.limits.list_items,
+        try_call(&first),
+    )?;
     let mut done = Done::new(format!("{total} match(es)"));
     done.data = Some(Value::Array(shown));
     done.next_cursor = next;
