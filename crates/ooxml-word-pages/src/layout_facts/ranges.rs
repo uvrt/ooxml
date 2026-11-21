@@ -8,12 +8,13 @@
 //! Must not: say whether a range is kept or what fixes it (the tool layer reads the keeps
 //! a call would write), or cap a list.
 
-use super::tree::{block_keys_top, is_w, page_break_at, paragraphs_below, W};
+use super::tree::{block_keys_top, is_w, page_break_at, paragraphs_below, BlockKind, W};
 use super::{points, Block, Facts, Range};
 use ooxml_word_layout::facts::PageFacts;
 use ooxml_word_layout::px::Px;
 use ooxml_word_model::docx::at_path;
 use ooxml_word_model::docx::sections::sections;
+use ooxml_word_model::ids::Entry;
 use ooxml_word_model::xmlread::py_int;
 use ooxml_xml::Element;
 use std::collections::{BTreeSet, HashSet};
@@ -36,6 +37,15 @@ pub struct Extent {
     pub body: f64,
     /// Where the body is laid out on the page, `(top, bottom)` in points.
     pub area: (f64, f64),
+}
+
+/// What of some blocks a text box may draw ([`Facts::extent`]).
+#[derive(Debug, Default)]
+struct Boxed {
+    /// The place of each text box's paragraph (`false`) or table (`true`) among them.
+    places: Vec<(Vec<u32>, bool)>,
+    /// The 1-based pages the blocks holding them are drawn on.
+    pages: BTreeSet<usize>,
 }
 
 /// A page break in a range of whole blocks.
@@ -78,7 +88,9 @@ pub struct RangeLayout {
 impl Facts<'_> {
     /// How much of each page the body content of the paragraphs and tables `ids` takes,
     /// one [`Extent`] per page any of them draws a line on, in page order, on the 1-based
-    /// `pages` (`None`: every page): a table by its cells' lines.
+    /// `pages` (`None`: every page): a table by its cells' lines, a text box's paragraph by
+    /// the lines the box draws (a table's boxes too; a paragraph's own lines only, not its
+    /// boxes': `DocumentLayout.extent` reads every line docx2svg draws, by its id).
     #[must_use]
     pub fn extent(&self, ids: &[String], pages: Option<&[usize]>) -> Vec<Extent> {
         let version = self.version();
@@ -95,22 +107,25 @@ impl Facts<'_> {
             Some(pages) => pages.iter().copied().filter(|n| (1..=all.len()).contains(n)).collect(),
         };
         let bodies = section_bodies(self);
+        let boxed = self.boxed(ids);
         let mut out = Vec::new();
         for number in numbers {
             let Some(page) = all.get(number - 1) else { continue };
-            let mine: Vec<_> = page
+            let mut mine: Vec<(Px, Px, usize)> = page
                 .lines
                 .iter()
                 .filter(|l| super::story_kind(&l.path) == "body" && version.id_of(&l.path).is_some())
                 .filter(|l| held(&l.path))
+                .map(|l| (l.top, l.pitch, l.column.unwrap_or(0)))
                 .collect();
-            let (Some(top), Some(bottom)) = (
-                mine.iter().map(|l| l.top).min(),
-                mine.iter().map(|l| l.top + l.pitch).max(),
-            ) else {
+            if boxed.pages.contains(&number) {
+                mine.extend(self.box_lines(&boxed, number));
+            }
+            let (Some(top), Some(bottom)) = (mine.iter().map(|l| l.0).min(), mine.iter().map(|l| l.0 + l.1).max())
+            else {
                 continue;
             };
-            let columns: HashSet<usize> = mine.iter().map(|l| l.column.unwrap_or(0)).collect();
+            let columns: HashSet<usize> = mine.iter().map(|l| l.2).collect();
             let (body, area) = body_of(page, &bodies);
             out.push(Extent {
                 page: number,
@@ -125,27 +140,84 @@ impl Facts<'_> {
         out
     }
 
+    /// What of `ids` a text box may draw: the places of those that are a text box's
+    /// paragraph, of the tables among them (a cell's boxes are the table's), and the
+    /// 1-based pages the blocks holding them are drawn on (only they are painted for it).
+    fn boxed(&self, ids: &[String]) -> Boxed {
+        let mut boxed = Boxed::default();
+        let Some(body) = self.docx().body() else {
+            return boxed;
+        };
+        let version = self.version();
+        for id in ids {
+            let (place, held_by, table) = match body.ids.get(id) {
+                Some(Entry::Paragraph(_)) => match version.ids.in_paragraph(id) {
+                    Some((host, place)) => (place, host.to_string(), false),
+                    None => continue,
+                },
+                Some(Entry::Table(k)) => match (body.ids.tables().get(k), version.path_of(id)) {
+                    (Some(table), Some(path)) => (table.path.to_vec(), path.to_string(), true),
+                    _ => continue,
+                },
+                None => continue,
+            };
+            let top = super::tree::top_block_path(&held_by).unwrap_or(&held_by);
+            boxed.pages.extend(self.block_pages(top));
+            boxed.places.push((place, table));
+        }
+        boxed
+    }
+
+    /// `(top, pitch, column)` of each line the body's text boxes draw on the 1-based page
+    /// `number` of the paragraphs (or inside the tables) `boxed` holds.
+    fn box_lines(&self, boxed: &Boxed, number: usize) -> Vec<(Px, Px, usize)> {
+        let version = self.version();
+        self.read(number - 1)
+            .map(|read| {
+                read.box_texts
+                    .iter()
+                    .filter(|l| l.story.is_none() && super::story_kind(&l.path) == "body")
+                    .filter(|l| {
+                        version.ids.place_of_path(&l.path).is_some_and(|at| {
+                            boxed
+                                .places
+                                .iter()
+                                .any(|(place, table)| if *table { at.starts_with(place) } else { at == *place })
+                        })
+                    })
+                    .map(|l| (l.top, l.pitch, l.column.unwrap_or(0)))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// Where the range `range` of whole blocks -- `blocks`, the ids of the body's blocks
-    /// its address names (a control's blocks in its place) -- is drawn: `None` where it is
-    /// not whole blocks (a cell, a text range: a block holds a paragraph the range does
-    /// not) or not drawn whole.
+    /// its address names (a control's blocks in its place; a paragraph of a cell, named
+    /// alone, is its own block) -- is drawn: `None` where it is not whole blocks (a cell, a
+    /// text range: a table holds a paragraph the range does not) or not drawn whole.
     #[must_use]
     pub fn range_layout(&self, range: &Range, blocks: &[String]) -> Option<RangeLayout> {
         let held: HashSet<&str> = range.paragraphs.iter().map(String::as_str).collect();
         let body = self.docx().body()?;
-        let mut found: Vec<&Block<'_>> = Vec::new();
+        let mut owned: Vec<Block<'_>> = Vec::new();
         for id in blocks {
-            let block = self.blocks().iter().find(|b| b.id == *id)?;
-            let whole = paragraphs_below(block.element, &block.place).iter().all(|(_, place)| {
-                body.ids
-                    .paragraph_at(place)
-                    .is_some_and(|p| held.contains(p.id.as_str()))
-            });
+            let block = self.body_block(id)?;
+            // A paragraph is whole where it is held (what its text boxes hold is its own); a
+            // table where every paragraph in it is (`range_keeps`).
+            let whole = match block.kind {
+                BlockKind::Paragraph => held.contains(block.id.as_str()),
+                BlockKind::Table => paragraphs_below(block.element, &block.place).iter().all(|(_, place)| {
+                    body.ids
+                        .paragraph_at(place)
+                        .is_some_and(|p| held.contains(p.id.as_str()))
+                }),
+            };
             if !whole {
                 return None;
             }
-            found.push(block);
+            owned.push(block);
         }
+        let found: Vec<&Block<'_>> = owned.iter().collect();
         let drawn: Vec<Vec<usize>> = found.iter().map(|b| self.block_pages(&b.path)).collect();
         if found.is_empty() || drawn.iter().any(Vec::is_empty) {
             return None;
@@ -189,6 +261,26 @@ impl Facts<'_> {
             breaks,
             height,
             room,
+        })
+    }
+
+    /// The body's block `id` names -- a top-level one, or a paragraph or table inside one
+    /// (a cell's) -- with its place and layout path.
+    fn body_block(&self, id: &str) -> Option<Block<'_>> {
+        if let Some(top) = self.blocks().iter().find(|b| b.id == id) {
+            return Some(top.clone());
+        }
+        let body = self.docx().body()?;
+        let (kind, place) = match body.ids.get(id)? {
+            Entry::Paragraph(k) => (BlockKind::Paragraph, body.ids.paragraphs().get(k)?.path),
+            Entry::Table(k) => (BlockKind::Table, body.ids.tables().get(k)?.path),
+        };
+        Some(Block {
+            kind,
+            element: at_path(body.root(), &place)?,
+            place: place.to_vec(),
+            path: self.version().path_of(id)?.to_string(),
+            id: id.to_owned(),
         })
     }
 
@@ -307,14 +399,27 @@ fn body_of(page: &PageFacts, bodies: &[Option<f64>]) -> (f64, (f64, f64)) {
     (body, area)
 }
 
+/// What a page draws that its facts leave out, as the blank at its foot is measured
+/// (`PageEngine::beyond_facts`): lines docx-agent's `Page.text_lines` counts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BeyondFacts {
+    /// The bottom of the lowest line its body's text boxes draw.
+    pub text_boxes: Option<Px>,
+    /// The top of its footnotes' first line (their separator's).
+    pub notes: Option<Px>,
+}
+
 /// The blank at the foot of a page's body (`keep_trials._room`): from the bottom of its
-/// last body line to the bottom of where the body may be drawn (or to the first note line
-/// drawn above it), in points (one place) and as a share of that height (two places).
+/// last body line (its text boxes' included, `beyond`) to the bottom of where the body may
+/// be drawn (or to the first note line drawn above it), in points (one place) and as a
+/// share of that height (two places).
 #[must_use]
-pub fn room(page: &PageFacts) -> (f64, f64) {
+pub fn room(page: &PageFacts, beyond: &BeyondFacts) -> (f64, f64) {
     let top = page.frame.top;
-    let mut bottom = page.frame.bottom;
-    let mut lowest = top;
+    let mut bottom = beyond
+        .notes
+        .map_or(page.frame.bottom, |notes| page.frame.bottom.min(notes));
+    let mut lowest = beyond.text_boxes.map_or(top, |foot| top.max(foot));
     for line in &page.lines {
         if super::story_kind(&line.path) == "body" {
             lowest = lowest.max(line.top + line.pitch);

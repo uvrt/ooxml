@@ -1,10 +1,13 @@
 //! Owns: a text box's text painted where its story was laid out (docx2svg's
 //! `_Placer._text_box` walking its scratch page): its lines' spans, its paragraphs' and
-//! tables' rules and its pictures, as a page's are painted; its automatic text in the
-//! colour its shape gives it; what of it is not drawn.
+//! tables' rules, its pictures and its inline drawings that are not pictures (a chart, a
+//! shape: for their painters, drawn with the box as the scratch page's floats are), as a
+//! page's are painted; its automatic text in the colour its shape gives it; what of it is
+//! not drawn.
 //!
 //! Must not: lay the text out (`crate::geometry::text_box` has), or paint the shape.
 
+use super::drawings::DrawingSlot;
 use super::{body_paragraphs, paint_set, LineSet, PaintContext, PaintOut, PaintedLine, Rule};
 use crate::engine::DocumentLayout;
 use crate::geometry::text_box::TextBoxStory;
@@ -23,6 +26,10 @@ pub struct TextBoxPaint {
     pub rules: Vec<Rule>,
     /// Its inline pictures.
     pub pictures: Vec<Drawn>,
+    /// Its inline drawings that are not pictures, in the order met, for their painters:
+    /// drawn in the box's drawing after its pictures (docx2svg's scratch page's floats,
+    /// whose primitives go with the text box), their story the box's drawing's.
+    pub drawings: Vec<DrawingSlot>,
     /// What is not drawn as docx2svg draws it.
     pub unpainted: Vec<String>,
 }
@@ -42,6 +49,7 @@ pub fn paint_text_box(
         lines: Vec::new(),
         rules: Vec::new(),
         pictures: Vec::new(),
+        drawings: Vec::new(),
         unpainted: Vec::new(),
     };
     let Some(laid) = &story.story else {
@@ -84,9 +92,17 @@ pub fn paint_text_box(
             }
         }
     }
-    if !page_out.drawings.is_empty() {
-        out.unpainted.push("a drawing in a text box".into());
-    }
+    // A floating drawing in the box is not drawn (its mark was taken out as it was laid
+    // out, and said so); its inline ones are.
+    out.drawings = page_out
+        .drawings
+        .into_iter()
+        .filter(|slot| slot.inline)
+        .map(|slot| DrawingSlot {
+            story: drawn_in.cloned(),
+            ..slot
+        })
+        .collect();
     out.unpainted.extend(page_out.unpainted);
     out.rules = page_out.rules;
     out.pictures = page_out.pictures;

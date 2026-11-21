@@ -42,6 +42,8 @@ pub struct Call<'a> {
     /// The other documents the call names (`ooxml_tools::documents`), by id, each at the
     /// version pinned for the call when it was dispatched.
     pub(crate) others: &'a [(String, Opened)],
+    /// The pages and lines of the version's layout, where the host laid it out.
+    pub(crate) counts: Option<ooxml_tools_word::LayoutCounts>,
     /// The host's limits on the call's reply.
     pub(crate) limits: ooxml_tools::Limits,
 }
@@ -74,11 +76,11 @@ impl Call<'_> {
         let word = self.word?;
         Some(ooxml_tools_word::Owned {
             doc,
+            opened: word.opened.doc(),
             baseline: word.editor.baseline(),
             last_check: &word.last_check,
             layout: self.layout,
             layout_limit: self.layout_limit,
-            opened: word.opened.doc(),
         })
     }
 
@@ -116,6 +118,7 @@ impl Call<'_> {
         )
         .with_tracking(tracking)
         .with_layout(self.layout.map(|layout| layout as &dyn ooxml_word_edit::FieldLayout))
+        .with_layout_limit(self.layout_limit)
         .with_others(Others::new(&others))
         .with_blobs(self.blobs)
         .with_written(self.written)
@@ -143,7 +146,8 @@ impl Call<'_> {
             .version_of()
             .with_others(Others::new(&others))
             .with_owned(self.owned())
-            .with_limits(self.limits);
+            .with_limits(self.limits)
+            .with_counts(self.counts);
         run(&version)
     }
 

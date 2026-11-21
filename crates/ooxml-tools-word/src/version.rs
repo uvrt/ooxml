@@ -48,6 +48,20 @@ pub struct Version<'a> {
     pub word: Option<&'a WordDoc>,
     /// The host's limits on the call's reply (a page's characters, a listing's items).
     pub limits: Limits,
+    /// The pages and lines of this version's layout, where the host has laid it out (the
+    /// statistics `save_document` writes into `app.xml`; `None`: not laid out, left as they
+    /// are).
+    pub counts: Option<LayoutCounts>,
+}
+
+/// The pages and lines of a version's layout, as the host that laid it out counts them
+/// (docx-agent's `layout_statistics`: the pages known, the body's lines on them).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LayoutCounts {
+    /// The pages.
+    pub pages: u64,
+    /// The body's lines.
+    pub lines: u64,
 }
 
 impl<'a> Version<'a> {
@@ -67,6 +81,7 @@ impl<'a> Version<'a> {
             others: Others::default(),
             word: None,
             limits: Limits::DEFAULT,
+            counts: None,
         }
     }
 
@@ -104,6 +119,13 @@ impl<'a> Version<'a> {
         self.limits = limits;
         self
     }
+
+    /// The pages and lines of this version's layout, where the host has laid it out.
+    #[must_use]
+    pub fn with_counts(mut self, counts: Option<LayoutCounts>) -> Self {
+        self.counts = counts;
+        self
+    }
 }
 
 impl Version<'_> {
@@ -136,6 +158,10 @@ impl Version<'_> {
 pub struct Owned<'a> {
     /// The version.
     pub doc: &'a WordDoc,
+    /// The document as the session opened it: what a pending change of the session's takes
+    /// out of the file is read against, and what changed since (`save_document`'s `app.xml`
+    /// refreshed only when the main part did).
+    pub opened: &'a WordDoc,
     /// The problems the document had when the session opened it.
     pub baseline: &'a [Problem],
     /// What the document's last check with `reflow` saw.
@@ -144,8 +170,6 @@ pub struct Owned<'a> {
     pub layout: Option<&'a dyn WordLayout>,
     /// How long laying a version out may take in the call (`None`: as long as the call).
     pub layout_limit: Option<crate::LayoutLimit<'a>>,
-    /// The document as the session opened it.
-    pub opened: &'a WordDoc,
 }
 
 /// The other documents a call names, by id, each at the version the session pinned for the

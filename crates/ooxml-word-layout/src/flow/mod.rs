@@ -24,7 +24,7 @@ use crate::table::{TableContext, TableFlow, TableJob, TableLayout, Unsupported};
 use crate::vertical::autospace_kept;
 use ooxml_base::Locale;
 use ooxml_text::Measurer;
-use ooxml_word_model::model::{Block, Paragraph, SectionProps, Table};
+use ooxml_word_model::model::{Block, Paragraph, Table};
 use ooxml_word_model::value::{Props, Text, Value};
 use ooxml_word_model::{Model, WordDocument};
 use std::collections::HashMap;
@@ -219,83 +219,6 @@ impl Flow {
     }
 }
 
-/// What a block's measure depends on beyond its content: its section's geometry, its list
-/// label and the parts it resolves against.
-#[derive(Debug, Clone)]
-struct Kept {
-    paragraph: Arc<Paragraph>,
-    section: Arc<SectionProps>,
-    label: Option<String>,
-    measured: Result<Arc<MeasuredParagraph>, Unmeasured>,
-}
-
-/// Measures kept per block by `Arc`: the model shares an unchanged block's `Arc`
-/// between versions, and each entry holds its block, so an address names one block for
-/// as long as it is kept. Valid for one set of parts (styles, numbering, settings, theme)
-/// and faces: [`MeasureCache::clear`] when they change.
-#[derive(Debug, Default)]
-pub struct MeasureCache {
-    blocks: HashMap<usize, Kept>,
-    tables: HashMap<usize, KeptTable>,
-}
-
-/// A table's flow and what it was measured from beyond the table: its section, the
-/// paragraph before it and its cells' list labels.
-#[derive(Debug, Clone)]
-struct KeptTable {
-    table: Arc<Table>,
-    section: Arc<SectionProps>,
-    previous: Option<Arc<Paragraph>>,
-    labels: Vec<Option<String>>,
-    flow: Arc<dyn TableFlow>,
-}
-
-impl MeasureCache {
-    /// Forget everything.
-    pub fn clear(&mut self) {
-        self.blocks.clear();
-        self.tables.clear();
-    }
-
-    /// How many blocks are kept.
-    pub fn len(&self) -> usize {
-        self.blocks.len()
-    }
-
-    /// Whether nothing is kept.
-    pub fn is_empty(&self) -> bool {
-        self.blocks.is_empty()
-    }
-
-    fn get(
-        &self,
-        paragraph: &Arc<Paragraph>,
-        section: &Arc<SectionProps>,
-        label: Option<&str>,
-    ) -> Option<Result<Arc<MeasuredParagraph>, Unmeasured>> {
-        let kept = self.blocks.get(&(Arc::as_ptr(paragraph) as usize))?;
-        let same = Arc::ptr_eq(&kept.paragraph, paragraph)
-            && (Arc::ptr_eq(&kept.section, section) || kept.section == *section)
-            && kept.label.as_deref() == label;
-        same.then(|| kept.measured.clone())
-    }
-
-    /// Keep only the top-level paragraphs of `bodies` (a new version's, each pass's):
-    /// the rest are dropped.
-    pub fn retain_blocks(&mut self, bodies: &[&[Block]]) {
-        let live: std::collections::HashSet<usize> = bodies
-            .iter()
-            .flat_map(|body| body.iter())
-            .map(|b| match b {
-                Block::Paragraph(p) => Arc::as_ptr(p) as usize,
-                Block::Table(t) => Arc::as_ptr(t) as usize,
-            })
-            .collect();
-        self.blocks.retain(|k, _| live.contains(k));
-        self.tables.retain(|k, _| live.contains(k));
-    }
-}
-
 /// Where a flow's list labels come from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Labels<'a> {
@@ -397,10 +320,13 @@ pub(crate) fn is_empty(paragraph: &Paragraph) -> bool {
 pub use crate::borders::paragraph_borders;
 
 mod again;
+mod cache;
 mod drop;
 mod notes;
 mod source;
 pub use again::OldFlow;
+pub use cache::MeasureCache;
+use cache::{Kept, KeptTable};
 pub use drop::DropCap;
 use notes::ParaNotes;
 pub use notes::{CellNotes, NoteForms};
