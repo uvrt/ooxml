@@ -17,7 +17,7 @@ use crate::structure::common::{outcome, Outcome};
 use crate::{written, Editing};
 use ooxml_store::Batch;
 use ooxml_tools::{Outcome as Replied, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
-use ooxml_word_edit::{SetStyledText, StyledRun, StyledTextSet};
+use ooxml_word_edit::{EditError, SetStyledText, StyleRefusal, StyleRefusalKind, StyledRun, StyledTextSet};
 use ooxml_word_model::address::resolve::resolve;
 use ooxml_word_model::ids::Entry;
 use serde_json::{json, Map, Value};
@@ -94,7 +94,9 @@ fn run(args: &WordSetText, editing: &Editing<'_>) -> Result<ToolResult<Value>, T
             .iter()
             .enumerate()
             .map(|(k, item)| {
-                let style = item.paragraph_style.clone().or_else(|| args.paragraph_style.clone());
+                // rule 1: a style beside items is each item's that names none (an empty name
+                // names none, as docx-agent's `or` reads it)
+                let style = named_style(&item.paragraph_style).or_else(|| named_style(&args.paragraph_style));
                 (item.target.clone(), item.text.clone(), style, format!("items[{k}]."))
             })
             .collect(),
@@ -103,7 +105,7 @@ fn run(args: &WordSetText, editing: &Editing<'_>) -> Result<ToolResult<Value>, T
                 return Err(needed("text", "", try_call(args)));
             };
             let target = args.target.clone().unwrap_or_default();
-            vec![(target, text.clone(), args.paragraph_style.clone(), String::new())]
+            vec![(target, text.clone(), named_style(&args.paragraph_style), String::new())]
         }
     };
     if work
@@ -140,7 +142,7 @@ fn write(
     work: &[(String, String, Option<String>, String)],
 ) -> Result<ToolResult<Value>, ToolError> {
     let policy = editing.policy();
-    let ops = work
+    let ops: Vec<SetStyledText> = work
         .iter()
         .map(|(target, text, style, _)| SetStyledText {
             target: target.clone(),
@@ -149,11 +151,10 @@ fn write(
             policy: policy.clone(),
         })
         .collect();
-    // docx-agent names no field when the document refuses an address or a text
     let done = editing
         .editor
-        .run(editing.caller, &Batch::atomic(ops))
-        .map_err(|e| edit_refusal(e, "", try_call(args)))?;
+        .run(editing.caller, &Batch::atomic(ops.clone()))
+        .map_err(|e| refusal(e, editing, &ops, work, args))?;
     let items: Vec<StyledTextSet> = done.out.into_iter().filter_map(Result::ok).collect();
     let wrote: Vec<Vec<String>> = items.iter().map(|item| item.written.clone()).collect();
     let mut result = reply(work.len(), items);
@@ -161,6 +162,43 @@ fn write(
         keep_facts(args, editing, work, &wrote, &mut result)?;
     }
     Ok(result)
+}
+
+/// A style name docx-agent reads as given: a non-empty one.
+fn named_style(style: &Option<String>) -> Option<String> {
+    style.clone().filter(|s| !s.is_empty())
+}
+
+/// The batch's refusal as docx-agent's: a style an item names not found, at that item's
+/// argument (`items[1].paragraph_style`, `text`) with the styles that would do -- the item
+/// the first of `ops` whose styles are not known, as the batch checked them in turn; docx-agent
+/// names no field when the document refuses an address or a text.
+fn refusal(
+    error: EditError,
+    editing: &Editing<'_>,
+    ops: &[SetStyledText],
+    work: &[(String, String, Option<String>, String)],
+    args: &WordSetText,
+) -> ToolError {
+    let EditError::Style(StyleRefusal {
+        kind: StyleRefusalKind::NotFound,
+        message,
+        field: Some(field),
+        options,
+    }) = error
+    else {
+        return edit_refusal(error, "", try_call(args));
+    };
+    let head = editing.editor.store().snapshot();
+    let k = head
+        .doc()
+        .docx()
+        .ok()
+        .and_then(|docx| ops.iter().position(|op| op.styles_known(&docx).is_err()))
+        .unwrap_or(0);
+    let prefix = work.get(k).map_or("", |(.., prefix)| prefix.as_str());
+    let way = WayOut::names(options).unwrap_or_else(|| WayOut::call(try_call(args)));
+    ToolError::refusal(Refusal::NotFound, message, way).at(format!("{prefix}{field}"))
 }
 
 /// Round 45, R65: each value written by reference kept where it went (docx-agent's
