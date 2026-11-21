@@ -166,7 +166,8 @@ def test_a_placer_callback_holds_no_rust_lock_another_thread_needs():
 
     def other() -> None:
         session.commit(doc, {"word/document.xml": _part(data, "word/document.xml")})
-        session.call("word_read", json.dumps({"doc": doc}), ooxml_core.CallOptions(at=[head]))
+        at_head = ooxml_core.CallOptions(documents=ooxml_core.CallDocuments(at=[head]))
+        session.call("word_read", json.dumps({"doc": doc}), at_head)
         session.call("read_batch", json.dumps({"ops": [{"tool": "describe", "arguments": {"doc": doc}},
                                                        {"tool": "word_read", "arguments": {"doc": doc}}]}))
         done.append("other")
@@ -181,7 +182,8 @@ def test_a_placer_callback_holds_no_rust_lock_another_thread_needs():
         return json.dumps([{"unknown": {"reason": "not-drawn", "after_page": None}} for _ in json.loads(asked)])
 
     reply, _images, _app = session.call("word_inspect", json.dumps({"doc": doc, "target": "body", "layout": True}),
-                                        ooxml_core.CallOptions(at=[head], placer=placer))
+                                        ooxml_core.CallOptions(documents=ooxml_core.CallDocuments(at=[head]),
+                                                                placer=placer))
     assert json.loads(reply)["ok"] and done == ["other"]
 
     # Two threads at once, one inspecting with a placer, one committing and reading.

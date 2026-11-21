@@ -1,20 +1,28 @@
 //! Owns: `word_insert_markdown` (docx-agent's `word_insert_markdown`): its definition and
 //! its Markdown written as the document's own blocks through the edit core's
 //! [`InsertMarkdown`] (one history step), the reply naming the blocks made (`data.blocks`),
-//! each named by the call's `ref`.
+//! each named by the call's `ref`. Values the host wrote by reference into the Markdown
+//! (`editing.written`, field `markdown`) -- or the one field of one row `from` named, which
+//! the host hands over as the Markdown with its value (field `from`) -- are kept as
+//! docx-agent's `_fields_placed` and `keep_written` keep them: a value with Markdown of its
+//! own written as it, the blocks each value standing alone made kept with it as their source
+//! and named in the reply's `data.facts` ([`super::fields`]), every value found in the
+//! paragraphs written kept on its place.
 //!
 //! Left to the host (`unported`, nothing changed): rows or a field as the content (`from`),
-//! a blob (`blob`), values written by reference (`{{...}}`) and a place given by reference
+//! a blob (`blob`), references not yet written (`{{...}}`) and a place given by reference
 //! (`$name`), list items or tables like given blocks (`like`, a style map naming a
 //! paragraph), and what the command does not write yet (pictures, footnotes, `replace:`).
 //!
 //! Must not: write the document but through the command, or answer a call it does not
 //! port otherwise than by saying so ([`Unported`]).
 
+use super::fields::{placed_blocks, with_markdown};
 use super::Unported;
 use crate::review::{edit_refusal, Editing};
 use crate::structure::common::{blocks_ref_as_place, is_place, name_blocks, outcome, refused, Outcome};
-use ooxml_tools::{ArgEnum, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
+use crate::written::{self, Written};
+use ooxml_tools::{ArgEnum, Outcome as Replied, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::{InsertMarkdown, MarkdownInserted, MarkdownOptions, WriteMap};
 use serde_json::{json, Map, Value};
 
@@ -160,19 +168,88 @@ fn run(args: &WordInsertMarkdown, editing: &Editing<'_>) -> Result<ToolResult<Va
     let style_map = WriteMap::from_pairs(&pairs).map_err(|message| {
         ToolError::refusal(Refusal::InvalidArguments, message, WayOut::call(call.clone())).at("style_map")
     })?;
+    let given = args.markdown.clone().unwrap_or_default();
+    let field = editing.written.iter().find(|f| f.field == "from");
+    let in_markdown: Vec<&Written> = editing.written.iter().filter(|f| f.field == "markdown").collect();
+    let (markdown, facts) = if field.is_none() && args.markdown.is_some() && !in_markdown.is_empty() {
+        with_markdown(&given, &in_markdown)
+    } else {
+        (given, Vec::new())
+    };
     let command = InsertMarkdown {
-        markdown: args.markdown.clone().unwrap_or_default(),
+        markdown: markdown.clone(),
         at: args.at.clone(),
         style_map,
         // docx-agent's tool refuses raw HTML and writes emphasis in its styles
         options: MarkdownOptions::default(),
         policy: editing.policy(),
     };
-    Ok(match editing.editor.run(editing.caller, &command) {
-        Ok(done) => reply(args, done.out),
-        Err(error @ ooxml_word_edit::EditError::Unsupported(_)) => refused(error, call),
-        Err(error) => ToolResult::failed(edit_refusal(error, "", call)),
-    })
+    let inserted = match editing.editor.run(editing.caller, &command) {
+        Ok(done) => done.out,
+        Err(error @ ooxml_word_edit::EditError::Unsupported(_)) => return Ok(refused(error, call)),
+        Err(error) => return Ok(ToolResult::failed(edit_refusal(error, "", call))),
+    };
+    let blocks = inserted.blocks.clone();
+    let mut result = reply(args, inserted);
+    if !editing.written.is_empty() {
+        keep_facts(args, editing, &markdown, field, &facts, &blocks, &mut result)?;
+    }
+    Ok(result)
+}
+
+/// The note when the values written by reference could not be lined up with the blocks.
+const NOT_LINED_UP: &str =
+    "the values written by reference could not be lined up with the blocks made: word_read the new blocks to see which is which";
+
+/// Round 45, R65: the reply's `facts` -- the `from` field, or each value in the Markdown
+/// (`facts`, their places in `markdown`, the text written) with the blocks a value
+/// standing alone made, kept as their source -- and a note first where they could not be
+/// lined up (docx-agent's `_fields_placed`); then every value found where it went
+/// (`keep_written`, on the call's own Markdown).
+fn keep_facts(
+    args: &WordInsertMarkdown,
+    editing: &Editing<'_>,
+    markdown: &str,
+    field: Option<&Written>,
+    facts: &[Written],
+    blocks: &[String],
+    result: &mut ToolResult<Value>,
+) -> Result<(), ToolError> {
+    let after = written::after_edit(editing)?;
+    let mut keeps = Vec::new();
+    let said = if let Some(field) = field {
+        keeps.extend(written::whole_keeps(&after, field, blocks));
+        Some(vec![written::brief(field, Some(blocks))])
+    } else if facts.is_empty() {
+        None
+    } else {
+        let (found, lined_up) = placed_blocks(markdown, facts, blocks);
+        let mut said = Vec::new();
+        for (k, fact) in facts.iter().enumerate() {
+            let made = found.get(&k);
+            if let Some(made) = made {
+                keeps.extend(written::whole_keeps(&after, fact, made));
+            }
+            said.push(written::brief(fact, made.map(Vec::as_slice)));
+        }
+        if !lined_up {
+            result.warnings.insert(0, NOT_LINED_UP.to_owned());
+        }
+        Some(said)
+    };
+    if let Replied::Done(done) = &mut result.outcome {
+        let argument = |name: &str| (name == "markdown").then(|| args.markdown.clone()).flatten();
+        keeps.extend(written::written_keeps(&after, editing, done, &[], &argument));
+        if let Some(said) = said {
+            let mut data = match done.data.take() {
+                Some(Value::Object(data)) => data,
+                _ => Map::new(),
+            };
+            data.insert("facts".into(), Value::Array(said));
+            done.data = Some(Value::Object(data));
+        }
+    }
+    written::keep(editing, keeps, &try_call(args))
 }
 
 /// What of the call is the host's: data it holds, values or places by reference, blocks
@@ -230,4 +307,9 @@ fn try_call(args: &WordInsertMarkdown) -> TryCall {
         arguments,
         fill: Vec::new(),
     }
+}
+
+/// Registers `word_insert_markdown` (the crate's [`crate::register`]).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    r.edit::<WordInsertMarkdown>(word_insert_markdown, crate::Hosting::SERVED.keeps_written());
 }

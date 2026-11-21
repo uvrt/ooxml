@@ -349,3 +349,8 @@ fn mark_place(side: &str, anchor: &str) -> Option<String> {
     let start = span.split(':').next().unwrap_or("").split("..").next().unwrap_or("");
     Some(format!("{head}@{start}"))
 }
+
+/// Registers `word_fields` (the crate's [`crate::register`]).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    r.edit::<WordFields>(word_fields, crate::Hosting::SERVED.layout());
+}
