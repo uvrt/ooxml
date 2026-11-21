@@ -52,16 +52,9 @@ fn registered(tool: &str, arguments: &Value, editing: &Editing<'_>) -> Option<To
     static REGISTRY: OnceLock<Registry> = OnceLock::new();
     let tool = REGISTRY.get_or_init(Registry::standard).named(tool)?;
     let versions = Versions::new();
-    let version = Version {
-        name: "case.docx",
-        package: editing.opened.package(),
-        number: 1,
-        versions: &versions,
-        placer: None,
-        owned: None,
-        others: editing.others,
-        word: Some(editing.opened),
-    };
+    let version = Version::new("case.docx", editing.opened.package(), 1, &versions)
+        .with_others(editing.others)
+        .with_word(Some(editing.opened));
     Some(tool.run_outside(arguments, editing, &version))
 }
 
@@ -181,16 +174,7 @@ pub(crate) fn tool_case(
 
 /// The other document a case names (`d2`), as a reading tool is handed it.
 fn other_version<'a>(package: &'a Package, word: Option<&'a WordDoc>, versions: &'a Versions) -> Version<'a> {
-    Version {
-        name: "copy.docx",
-        package,
-        number: 1,
-        versions,
-        placer: None,
-        owned: None,
-        others: Others::default(),
-        word,
-    }
+    Version::new("copy.docx", package, 1, versions).with_word(word)
 }
 
 /// The blobs a case registers (`blobs`: `{name, mime, hex}` each), as the session's
