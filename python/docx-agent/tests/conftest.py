@@ -224,6 +224,22 @@ def _skip_if_a_check_says_a_face_is_absent(coverage, warnings) -> None:
             pytest.skip(f"a face this document is laid out in is not installed here: {text}")
 
 
+def _skip_if_the_session_laid_a_face_absent(call) -> None:
+    # The version the session's check laid out, by the document's page engine (which laid it
+    # out just now: nothing is laid out again), read as docx2svg's layout.
+    from docx_agent import pages
+    from docx_agent.layout import layout_options, lineage
+    from docx_agent.rust import reads as rust_reads
+
+    owned = rust_reads._owned(call.entry)
+    if owned is None:
+        return
+    held = owned.held
+    laid = pages.lay_out(held.to_bytes(), layout_options(held, {}), lineage(held), make=False)
+    if laid is not None:
+        _skip_if_a_face_is_absent(laid.warnings, laid.coverage)
+
+
 @pytest.fixture(autouse=True)
 def _skip_where_faces_are_absent(request, monkeypatch):
     # ``any_faces``: a test that holds without Office's faces (it leaves what they measure out).
@@ -266,9 +282,14 @@ def _skip_where_faces_are_absent(request, monkeypatch):
         # Lane P5b: a check the Rust session answers lays out in Rust, through none of the
         # above: read the coverage and the warnings its reflow says.
         served = serve_check(call, arguments)
-        reflow = (served.data or {}).get("reflow") if served is not None and served.ok else None
+        data = (served.data or {}) if served is not None and served.ok else {}
+        reflow = data.get("reflow")
         if isinstance(reflow, dict):
-            _skip_if_a_check_says_a_face_is_absent(reflow.get("coverage"), served.data.get("layout_warnings"))
+            _skip_if_a_check_says_a_face_is_absent(reflow.get("coverage"), data.get("layout_warnings"))
+        elif "layout" in data or "range" in data:
+            # Lane P5k: a check of the layout or of ranges alone lays the version out with no
+            # reflow said: read the faces from that layout.
+            _skip_if_the_session_laid_a_face_absent(call)
         return served
 
     monkeypatch.setattr(docx2svg, "lay_out_docx", checked_lay_out)

@@ -7,8 +7,12 @@
 //!
 //! Comments are not revisions: they are written the same with tracking on or off.
 //!
-//! Must not: write a comment part but through the edit's copies; it reads every story
-//! (annotation ids are the whole document's).
+//! A comment added on a place named by id reads the largest annotation id in use (its id
+//! is one above it, and the comment part holds it as numbered on the edit's version) and
+//! writes the blocks it marks by key, the comment parts whole; a reply, or a place named by
+//! condition, reads the whole document.
+//!
+//! Must not: write a comment part but through the edit's copies.
 
 use super::anchors::{anchor, mark};
 use super::edits::{find, last_para_as_written, set_done, thread_root, CommentEdited};
@@ -16,6 +20,7 @@ use super::reply::{has_reference, mark_reply};
 use super::size::Sizes;
 pub use super::write::Who;
 use super::write::{complete, write_comment};
+use crate::address_keys::names_by_id;
 use crate::doc::WordDoc;
 use crate::policy::RevisionPolicy;
 use crate::review::space::Space;
@@ -77,7 +82,7 @@ impl Command<WordDoc> for AddComments {
 
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<Vec<CommentMade>> {
         let mut sink = EditSink::new(tx, RevisionPolicy::Untracked);
-        sink.read_everything();
+        self.reads(&mut sink)?;
         let mut out = Vec::with_capacity(self.items.len());
         for item in &self.items {
             let made = match item {
@@ -92,6 +97,24 @@ impl Command<WordDoc> for AddComments {
 }
 
 impl AddComments {
+    /// What the comments depend on besides what they write (the blocks they mark, the
+    /// comment parts): added on places named by id, the largest annotation id in use -- a
+    /// commit changing it meanwhile is a conflict, as the comment part, put whole, holds
+    /// the id as numbered here; a reply (its marks found beside its thread's) or a place
+    /// named by condition, the whole document.
+    fn reads(&self, sink: &mut EditSink<'_, '_>) -> Result<()> {
+        let by_id = self
+            .items
+            .iter()
+            .all(|item| matches!(item, CommentWrite::Add { place, .. } if names_by_id(place)));
+        if by_id {
+            sink.read_annotation_ceiling()
+        } else {
+            sink.read_everything();
+            Ok(())
+        }
+    }
+
     /// A new thread on `place`.
     fn add(&self, sink: &mut EditSink<'_, '_>, place: &str, text: &str) -> Result<CommentMade> {
         let docx = sink.docx()?;

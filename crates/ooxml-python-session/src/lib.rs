@@ -39,7 +39,7 @@ pub use raster::PyPageRaster;
 pub use session::{PyCallContext, PyCancelToken, PySession, PyVersion};
 
 /// Add the session API to the module `m`: `Session`, `CancelToken`, `CallContext`, `CallOptions`, `Version` and
-/// `tool_specs`, `tool_hosting`; and the Word layout's handles: `WordFonts`, `WordPages`, `LaidPages`,
+/// `tool_specs`, `tool_hosting`, `new_document`; and the Word layout's handles: `WordFonts`, `WordPages`, `LaidPages`,
 /// `LayoutFallback`, `LayoutSummary`, `MemoryBudget` and `BudgetAccount`.
 ///
 /// # Errors
@@ -57,6 +57,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<group::PyGroupMark>()?;
     m.add_function(wrap_pyfunction!(tools::tool_specs, m)?)?;
     m.add_function(wrap_pyfunction!(tools::tool_hosting, m)?)?;
+    m.add_function(wrap_pyfunction!(tools::new_document, m)?)?;
     m.add_class::<PyWordFonts>()?;
     m.add_class::<PyWordPages>()?;
     m.add_class::<PyLaidPages>()?;

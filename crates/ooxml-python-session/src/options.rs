@@ -13,7 +13,7 @@ use crate::adapters::PyBlobs;
 use crate::layout::PyWordPages;
 use crate::session::{PyCallContext, PyVersion};
 use ooxml_session::{CallContext, DocId, DocNames, HostIds, Opened};
-use ooxml_tools_word::{Blobs, HostTable, HostTables, Placer, Written};
+use ooxml_tools_word::{Blobs, HostTable, HostTables, LayoutCounts, Placer, Written};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use serde_json::{Map, Value};
@@ -64,11 +64,15 @@ impl PyCallDocuments {
 /// moment its writes are dated by (a revision's, a comment's), UTC to the second
 /// (`2026-11-20T09:30:15Z`) -- the host's clock, as docx-agent dates them; `None`: the
 /// session's clock. `typography`: whether the text it writes is spaced by its language
-/// (docx-agent's `docx_format(typography=...)`; `False`: as given). One may serve many calls.
+/// (docx-agent's `docx_format(typography=...)`; `False`: as given). `layout_counts`:
+/// `(pages, lines)` of the host's layout of the version the call reads, where it has laid it
+/// out -- the statistics a save writes into `app.xml` (`save_document`); `None`: not laid
+/// out. One may serve many calls.
 #[pyclass(frozen, name = "CallWriting", module = "ooxml_core")]
 pub struct PyCallWriting {
     pub(crate) date: Option<String>,
     pub(crate) as_given: bool,
+    pub(crate) counts: Option<LayoutCounts>,
 }
 
 #[pymethods]
@@ -76,14 +80,15 @@ impl PyCallWriting {
     /// # Errors
     /// `ValueError` for a `date` not of that form.
     #[new]
-    #[pyo3(signature = (*, date = None, typography = true))]
-    fn new(date: Option<&str>, typography: bool) -> PyResult<Self> {
+    #[pyo3(signature = (*, date = None, typography = true, layout_counts = None))]
+    fn new(date: Option<&str>, typography: bool, layout_counts: Option<(u64, u64)>) -> PyResult<Self> {
         if date.is_some_and(|d| !is_utc_second(d)) {
             return Err(PyValueError::new_err("date is UTC to the second: 2026-11-20T09:30:15Z"));
         }
         Ok(Self {
             date: date.map(str::to_owned),
             as_given: !typography,
+            counts: layout_counts.map(|(pages, lines)| LayoutCounts { pages, lines }),
         })
     }
 }

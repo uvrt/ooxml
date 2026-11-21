@@ -1,15 +1,16 @@
 //! Owns: `word_template` (docx-agent's `tools/style.py`, `word_template`): its definition
 //! (byte-equal to today's) and its handler: Word's Convert through the edit core's
-//! [`UpgradeToModern`] (one history step, never tracked), the legacy options it removed
+//! [`UpgradeReflowed`] (one history step, never tracked), the legacy options it removed
 //! said, and the reflow between the version it was applied to and the one it made, from
-//! the host's layout through the layout port ([`ooxml_word_edit::FieldLayout::reflow`]).
+//! the host's layout through the layout port ([`ooxml_word_edit::FieldLayout::reflow`]),
+//! held to the call's limit on laying out (a stop is a timeout that changes nothing).
 //!
 //! Must not: lay out but through the port, or change the document but through the command.
 
 use crate::review::{edit_refusal, Editing};
 use crate::structure::common::{call, outcome, refused, Outcome};
 use ooxml_tools::{ArgEnum, ToolArgs, ToolResult};
-use ooxml_word_edit::{compatibility_mode, EditError, PageReflow, UpgradeToModern, MODERN_MODE};
+use ooxml_word_edit::{compatibility_mode, EditError, EditLayout, PageReflow, Reflowed, UpgradeReflowed, MODERN_MODE};
 use serde_json::{json, Map, Value};
 
 /// What `word_template` does.
@@ -80,35 +81,29 @@ pub fn word_template(args: &WordTemplate, editing: &Editing<'_>) -> ToolResult<V
         let why = EditError::Unsupported("the reflow without the layout".to_owned());
         return refused(why, again);
     }
-    converted(editing, &again, editing.layout)
+    converted(editing, &again, editing.edit_layout())
 }
 
-/// Convert run, and its reply with the reflow `layout` reports.
-fn converted(
-    editing: &Editing<'_>,
-    again: &ooxml_tools::TryCall,
-    layout: Option<&dyn ooxml_word_edit::FieldLayout>,
-) -> ToolResult<Value> {
-    let done = match editing.editor.run(editing.caller, &UpgradeToModern) {
+/// Convert run, and its reply with the reflow `layout` reports (none without it: only a
+/// document already in mode 15 gets here so, which Convert leaves as it is).
+fn converted(editing: &Editing<'_>, again: &ooxml_tools::TryCall, layout: Option<EditLayout<'_>>) -> ToolResult<Value> {
+    let done = editing.editor.run(editing.caller, &UpgradeReflowed { layout });
+    let done = match done {
         Ok(done) => done,
         Err(error) => return ToolResult::failed(edit_refusal(error, "", again.clone())),
     };
     let mode = compatibility_mode(done.version.doc()).unwrap_or(MODERN_MODE);
-    let mut warnings: Vec<String> = done
-        .out
+    let Reflowed { upgraded, reflow } = done.out;
+    let mut warnings: Vec<String> = upgraded
         .removed
         .iter()
         .map(|name| format!("removed compatibility option {name}"))
         .collect();
-    let reflow = match (&done.previous, layout) {
-        (Some(previous), Some(layout)) if done.changed => {
-            match layout.reflow(previous.doc().package(), done.version.doc().package()) {
-                Ok(found) => reflow_json(&found),
-                Err(why) => {
-                    warnings.push(format!("the reflow ({why}): the layout cannot say"));
-                    Value::Null
-                }
-            }
+    let reflow = match reflow {
+        Some(Ok(found)) if done.changed => reflow_json(&found),
+        Some(Err(why)) if done.changed => {
+            warnings.push(format!("the reflow ({why}): the layout cannot say"));
+            Value::Null
         }
         _ => Value::Null,
     };

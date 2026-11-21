@@ -6,8 +6,8 @@ comparison, as are ``check``'s seconds (``timing``: its parts' names are compare
 for laying out and waiting, :data:`LAYING_OUT`) and its ``validation`` (the save gate's
 comparison, which the tool layer adds around either); every other field must be equal.
 ``check``'s cases are the facts the Rust session gives whole (``validate``, ``fields``,
-``app``, and ``reflow`` laid out by a page engine with docx-agent's fonts); one it leaves to
-the host fails as ``unported``.
+``app``, and ``reflow``, ``layout`` and ``range`` laid out by a page engine with docx-agent's
+fonts); one it leaves to the host fails as ``unported``.
 
 The addressed cases (``ranges``, ``inspect``, ``find``, ``batch``) are made per document from
 what it holds: its first, a middle and its last body paragraph, a span of five blocks, its
@@ -29,7 +29,16 @@ READS = (("final", {}), ("markup", {"view": "markup"}), ("original", {"view": "o
 
 #: check's cases: (name, include; ``None``: the default, which has ``reflow``).
 CHECKS = (("validate", ["validate"]), ("fields", ["fields"]),
-          ("validate fields app", ["validate", "fields", "app"]), ("reflow", ["reflow"]), ("default", None))
+          ("validate fields app", ["validate", "fields", "app"]), ("reflow", ["reflow"]), ("default", None),
+          ("layout", ["layout"]), ("validate layout", ["validate", "layout"]))
+
+#: Lane P5k: check's cases with the layout's facts' arguments: (name, arguments beyond doc).
+LAID = (("min_size", {"include": ["layout"], "min_size": 10}),
+        ("styles", {"include": ["layout"], "styles": ["Normal", "Heading 1", "No Such Style"]}),
+        ("layout pages", {"include": ["reflow", "layout"], "pages": [1]}))
+
+#: Lane P5k: the addressed cases a check reads by range (``targets``' first ones).
+CHECKED_RANGES = 4
 
 #: Lane P5e: check's sequences of versions, each case a check after the calls before it in
 #: the same session (checks and edits), measured from the check before (``since_last_check``):
@@ -126,7 +135,10 @@ def cases_of(path, what: str) -> list[tuple[str, str, dict]]:
     if what == "check":
         return [*((f"check {name}", "check", {} if include is None else {"include": include})
                   for name, include in CHECKS),
-                *((f"check {name}", "check", {"include": include}) for name, include, _ in LIMITED)]
+                *((f"check {name}", "check", {"include": include}) for name, include, _ in LIMITED),
+                *((f"check {name}", "check", arguments) for name, arguments in LAID),
+                *((f"check range {t}", "check", {"range": [t]})
+                  for t in targets(path)[:CHECKED_RANGES])]
     if what == "ranges":
         return [(f"read {t}", "word_read", {"range": t}) for t in targets(path)]
     if what == "inspect":
@@ -282,7 +294,8 @@ def check_tools(args, run_rust, report, files_of) -> int:
             item = {"file": str(path), "case": case, "tool": tool, "arguments": {"doc": "d1", **arguments}}
             if before:
                 item["before"] = [{"tool": t, "arguments": {"doc": "d1", **a}} for t, a in before[0]]
-            if tool == "check" and "reflow" in (arguments.get("include") or ["reflow"]):
+            if tool == "check" and (set(arguments.get("include") or ["reflow"]) & {"reflow", "layout"}
+                                    or arguments.get("range")):
                 item["fonts"] = _fonts(path)          # the session lays out as docx-agent does
             if layout_timeout(case) is not None:
                 item["layout_timeout"] = layout_timeout(case)

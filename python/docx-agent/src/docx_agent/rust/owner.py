@@ -40,19 +40,21 @@ def caller_key(caller: Mapping[str, Any] | None) -> str | None:
 
 def context_of(caller: Mapping[str, Any] | None, limits: Any = None,
                layout_timeout: float | None = None, *, date: str | None = None,
-               typography: bool = True) -> Any:
+               typography: bool = True, layout_counts: tuple[int, int] | None = None) -> Any:
     """An ``ooxml_core.CallContext`` for ``caller``, with the host's ``limits`` on its reply
     (an :class:`ooxml_edit.tools.Limits`: ``max_result_chars``, ``max_list_items``; the
     defaults where ``None``), how long laying the document out may take in it
     (``layout_timeout``, seconds; the session's own where ``None``), its writes dated ``date``
     (UTC to the second, the session clock's; ``None``: the Rust session's own clock) and spaced
     by their language unless ``typography`` is off (``docx_format(typography=False)``: as
-    given)."""
+    given), with the host's ``layout_counts`` (``(pages, lines)``: a save's ``app.xml``
+    statistics) where it has laid the version out."""
     import ooxml_core
 
     given: dict[str, Any] = {"caller": caller_key(caller), "layout_timeout": layout_timeout}
-    if date is not None or not typography:
-        given["writing"] = ooxml_core.CallWriting(date=date, typography=typography)
+    if date is not None or not typography or layout_counts is not None:
+        given["writing"] = ooxml_core.CallWriting(date=date, typography=typography,
+                                                  layout_counts=layout_counts)
     if limits is not None:
         given.update(max_result_chars=limits.max_result_chars, max_list_items=limits.max_list_items)
     return ooxml_core.CallContext(**given)
@@ -192,16 +194,32 @@ class RustOwner:
 
         return make
 
-    def keep(self, mirror: "reads.Mirror", number: int, head: Any, first: int | None = None) -> None:
+    def keep(self, mirror: "reads.Mirror", head: Any, first: int | None = None) -> None:
         from .check import owner_committed
 
         with mirror.lock:
-            mirror.keep(number, head, first)
-            # the session words a refusal of an id this version removed by the host's number
-            mirror.session.number_version(mirror.doc, head, number)
+            mirror.keep(head, first)
+            # the session words a refusal of an id this version removed by its state number
+            mirror.session.number_version(mirror.doc, head, head.state)
         live = mirror.live()
         if live is not None:
-            owner_committed(live, number)
+            owner_committed(live, head.state)
+
+    # -- the history's numbers: the session's (lane U3) ---------------------------------------
+
+    def continue_numbers(self, mirror: "reads.Mirror", state: int, highest: int) -> None:
+        with mirror.lock:
+            mirror.session.continue_numbers(mirror.doc, state, highest)
+            mirror.view_head = mirror.opened = mirror.session.head(mirror.doc)
+
+    def numbered(self, mirror: "reads.Mirror", number: int) -> Any:
+        return mirror.session.numbered(mirror.doc, number)
+
+    def highest(self, mirror: "reads.Mirror") -> int:
+        return mirror.session.highest(mirror.doc)
+
+    def numbers(self, mirror: "reads.Mirror") -> Any:
+        return mirror.session.numbers(mirror.doc)
 
     # -- step groups: a batch's ops as one step of the session's (lane H1) -------------------
 

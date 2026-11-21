@@ -450,7 +450,7 @@ fn finish(
         table: args.table.clone(),
         formats,
         policy: policy(editing),
-        layout: editing.layout,
+        layout: editing.edit_layout(),
     };
     let done = match editing.editor.run(editing.caller, &command) {
         Ok(done) => done,

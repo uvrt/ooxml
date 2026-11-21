@@ -3,22 +3,28 @@
 //! `commentsExtended`; `delete_comment` with its replies), several at once, one history
 //! step.
 //!
+//! Reads: resolving and reopening, the comment parts the threads are listed from and the
+//! main part's relationships to them (they write `commentsExtended` alone); deleting, the
+//! whole document (a comment's marks are wherever it was anchored).
+//!
 //! Must not: write a comment part but through the command's copies (a part it lacks is
 //! made through the sink first).
 
 use super::delete::{comment_part_relationships, delete, none_left};
-use super::{part_of, REL_EXTENDED, W15};
-use crate::doc::WordDoc;
+use super::{part_of, REL_COMMENTS, REL_EXTENDED, REL_IDS, W15};
+use crate::doc::{Key, WordDoc};
 use crate::policy::RevisionPolicy;
 use crate::review::space::Space;
 use crate::sink::EditSink;
 use crate::{EditError, Result};
 use ooxml_base::pyfmt::repr_str;
+use ooxml_opc::name::rels_for;
 use ooxml_store::{Command, Txn};
 use ooxml_word_model::address::AddressError;
 use ooxml_word_model::docx::comments::{comments, Comment};
 use ooxml_word_model::docx::Docx;
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 /// What to do to each comment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,8 +95,8 @@ impl Command<WordDoc> for CommentEdits {
 
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<Vec<CommentEdited>> {
         let mut sink = EditSink::new(tx, RevisionPolicy::Untracked);
-        sink.read_everything();
         let docx = sink.docx()?;
+        self.reads(&mut sink, &docx);
         let doc = sink.doc().clone();
         let listed = comments(&docx);
         let mut space = Space::default();
@@ -134,6 +140,26 @@ impl Command<WordDoc> for CommentEdits {
             }
         }
         Ok(out)
+    }
+}
+
+impl CommentEdits {
+    /// What the edits depend on (see the module's notes).
+    fn reads(&self, sink: &mut EditSink<'_, '_>, docx: &Docx) {
+        let package = sink.doc().package();
+        let listed = part_of(package, &docx.main, REL_COMMENTS);
+        if self.edit == CommentEdit::Delete || listed.is_none() {
+            sink.read_everything();
+            return;
+        }
+        let parts: Vec<String> = [REL_COMMENTS, REL_IDS, REL_EXTENDED]
+            .iter()
+            .filter_map(|rel| part_of(package, &docx.main, rel))
+            .chain(std::iter::once(rels_for(&docx.main)))
+            .collect();
+        for part in parts {
+            sink.read(Key::Part(Arc::from(part.as_str())));
+        }
     }
 }
 

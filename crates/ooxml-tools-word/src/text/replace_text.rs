@@ -15,7 +15,7 @@ use crate::{written, Editing};
 use ooxml_tools::pyfmt::repr;
 use ooxml_tools::{ArgEnum, Done, IntOrStr, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::find::Literal;
-use ooxml_word_edit::{Keep, ReplaceText as Replace};
+use ooxml_word_edit::{Keep, RangesEdited, ReplaceText as Replace};
 use ooxml_word_model::docx::Docx;
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
@@ -137,19 +137,29 @@ fn run(args: &ReplaceText, editing: &Editing<'_>) -> Result<ToolResult<Value>, T
         keep: Keep::First,
         policy: editing.policy(),
     };
-    let done = editing
-        .editor
-        .run(editing.caller, &command)
-        .map_err(|e| edit_refusal(e, "", find_call(args)))?;
-    let count = done.out.count;
+    let argument = |field: &str| (field == "replace").then(|| args.replace.clone());
+    // the values written by reference kept in the same step
+    let finish = |out: &RangesEdited, after: &written::After| {
+        let result = replied(out, &matches);
+        let keeps = written::reply_keeps(after, editing, &result, &[], &argument);
+        (result, keeps)
+    };
+    let (_, result) =
+        written::run_keeping(editing, &command, finish).map_err(|e| edit_refusal(e, "", find_call(args)))?;
+    Ok(result)
+}
+
+/// The reply of a replace that made `out` at `matches`.
+fn replied(out: &RangesEdited, matches: &[Match]) -> ToolResult<Value> {
+    let count = out.count;
     let mut paragraphs: Vec<String> = Vec::new();
-    for (id, ..) in &matches {
+    for (id, ..) in matches {
         if !paragraphs.contains(id) {
             paragraphs.push(id.clone());
         }
     }
     let mut reply = Done::new(format!("Replaced {count} occurrence(s)"));
-    merge_renamed(&mut reply.renamed, &done.out.renamed);
+    merge_renamed(&mut reply.renamed, &out.renamed);
     // the paragraphs by the ids they have now (a match's paragraph may have been stamped)
     let now: Vec<String> = paragraphs
         .iter()
@@ -164,10 +174,7 @@ fn run(args: &ReplaceText, editing: &Editing<'_>) -> Result<ToolResult<Value>, T
     let listed: Vec<&String> = now.iter().take(LISTED).collect();
     reply.data = Some(json!({"count": count, "paragraphs": listed}));
     reply.changed = now;
-    let result = ToolResult::done(reply);
-    let argument = |field: &str| (field == "replace").then(|| args.replace.clone());
-    written::keep_written(editing, &result, &[], &argument, &find_call(args))?;
-    Ok(result)
+    ToolResult::done(reply)
 }
 
 /// A match: its paragraph's id, its range's address, its context.

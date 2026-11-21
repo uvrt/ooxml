@@ -7,19 +7,19 @@
 //! name given with `ref` are left to the host, as is a call when the host hands over no
 //! blobs.
 //!
-//! Must not: change the document but through a command, or change it at all before every
-//! check the call can fail on has passed.
+//! Must not: change the document but through one transaction of its commands, or change it
+//! at all before every check the call can fail on has passed.
 
 use super::drawings_args::{WordDrawings, Wrap};
 use crate::blobs::blob;
 use crate::review::{needed, Editing};
 use crate::structure::common::{outcome, policy, refused, Outcome};
 use ooxml_base::pyfmt::round2;
-use ooxml_store::Command;
+use ooxml_store::{Command, Txn};
 use ooxml_tools::{ArgEnum, Refusal, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::{
     picture_size, written_size, DrawingValues, EditError, FloatDrawing, FormatEdit, FormatPlan, InsertParagraph,
-    InsertPicture, Property, Setting, Value as SettingValue,
+    InsertPicture, Property, RevisionPolicy, Setting, Value as SettingValue, WordDoc,
 };
 use serde_json::{json, Value};
 
@@ -177,7 +177,8 @@ fn checked(
 }
 
 /// `insert_picture`: every check first, then the paragraph of its own (aligned), the
-/// picture, its float -- each one command.
+/// picture, its float -- one transaction, so one step, and nothing changed where a later
+/// part refuses.
 pub(super) fn insert_picture(
     args: &WordDrawings,
     editing: &Editing<'_>,
@@ -187,8 +188,14 @@ pub(super) fn insert_picture(
         Ok(plan) => plan,
         Err(reply) => return Ok(reply),
     };
-    Ok(match made(args, editing, plan) {
-        Ok((edits, data)) => {
+    let command = Picture {
+        args,
+        plan,
+        policy: policy(editing),
+    };
+    Ok(match editing.editor.run(editing.caller, &command) {
+        Ok(done) => {
+            let (edits, data) = done.out;
             let summary = format!(
                 "Inserted picture {}",
                 data.get("id").and_then(Value::as_str).unwrap_or("")
@@ -199,82 +206,205 @@ pub(super) fn insert_picture(
     })
 }
 
-/// The commands a checked call runs: their outcomes and the reply's data.
-fn made(args: &WordDrawings, editing: &Editing<'_>, plan: Plan) -> Result<(Vec<Outcome>, Value), EditError> {
-    let (editor, caller) = (editing.editor, editing.caller);
-    let mut edits: Vec<Outcome> = Vec::new();
-    let mut own = None;
-    if let Some(command) = &plan.paragraph {
-        let done = editor.run(caller, command)?;
-        let id = done.out.id.clone();
-        edits.push(Outcome {
-            id: Some(id.clone()),
-            changed: true,
-            created: vec![id.clone()],
-            removed: Vec::new(),
-            renamed: done.out.renamed,
-            warnings: Vec::new(),
-        });
-        if plan.align_taken {
-            align(editing, &id, args, &mut edits)?;
-        }
-        own = Some(id);
-    }
-    let command = InsertPicture {
-        at: own
-            .as_ref()
-            .map_or_else(|| plan.at.clone().unwrap_or_default(), |p| format!("{p}@0")),
-        image: plan.data,
-        width: args.width,
-        alt_text: Some(plan.alt_text),
-        policy: policy(editing),
-    };
-    let inserted = editor.run(caller, &command)?.out;
-    let id = inserted.id.clone();
-    edits.push(inserted.into());
-    if let Some(values) = plan.float {
-        let command = FloatDrawing {
-            drawing: id.clone(),
-            values,
-            policy: policy(editing),
-        };
-        edits.push(editor.run(caller, &command)?.out.into());
-    }
-    let (width, height) = written_size(plan.size);
-    let mut data = serde_json::Map::new();
-    data.insert("id".into(), json!(id));
-    data.insert("size".into(), json!([round2(width), round2(height)]));
-    if let Some(paragraph) = own {
-        data.insert("paragraph".into(), json!(paragraph));
-    }
-    Ok((edits, Value::Object(data)))
+/// A checked call's commands, applied in order in one transaction: their outcomes and the
+/// reply's data.
+struct Picture<'a> {
+    args: &'a WordDrawings,
+    plan: Plan,
+    policy: RevisionPolicy,
 }
 
-/// The paragraph of the picture's own aligned (docx-agent's `format_paragraph`).
-fn align(editing: &Editing<'_>, id: &str, args: &WordDrawings, edits: &mut Vec<Outcome>) -> Result<(), EditError> {
-    let value = args.align.map_or("left", |a| a.as_str());
-    let command = FormatEdit {
-        targets: vec![id.to_owned()],
-        plan: FormatPlan {
-            paragraph: vec![Setting {
-                property: Property::Alignment,
-                value: Some(SettingValue::Text(value.to_owned())),
-            }],
-            ..FormatPlan::default()
-        },
-        cleared: false,
-        policy: policy(editing),
-    };
-    let done = editing.editor.run(editing.caller, &command)?;
-    for step in done.out.steps {
-        edits.push(Outcome {
-            id: Some(step.id),
-            changed: step.changed,
-            created: Vec::new(),
-            removed: step.removed,
-            renamed: step.renamed,
-            warnings: step.warnings,
-        });
+impl Command<WordDoc> for Picture<'_> {
+    type Out = (Vec<Outcome>, Value);
+    type Error = EditError;
+
+    fn validate(&self, _doc: &WordDoc) -> Result<(), EditError> {
+        Ok(())
     }
-    Ok(())
+
+    fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<Self::Out, EditError> {
+        let plan = &self.plan;
+        let mut edits: Vec<Outcome> = Vec::new();
+        let mut own = None;
+        if let Some(command) = &plan.paragraph {
+            let done = step(tx, command)?;
+            let id = done.id.clone();
+            edits.push(Outcome {
+                id: Some(id.clone()),
+                changed: true,
+                created: vec![id.clone()],
+                removed: Vec::new(),
+                renamed: done.renamed,
+                warnings: Vec::new(),
+            });
+            if plan.align_taken {
+                self.align(tx, &id, &mut edits)?;
+            }
+            own = Some(id);
+        }
+        let command = InsertPicture {
+            at: own
+                .as_ref()
+                .map_or_else(|| plan.at.clone().unwrap_or_default(), |p| format!("{p}@0")),
+            image: std::sync::Arc::clone(&plan.data),
+            width: self.args.width,
+            alt_text: Some(plan.alt_text.clone()),
+            policy: self.policy.clone(),
+        };
+        let inserted = step(tx, &command)?;
+        let id = inserted.id.clone();
+        edits.push(inserted.into());
+        if let Some(values) = &plan.float {
+            let command = FloatDrawing {
+                drawing: id.clone(),
+                values: values.clone(),
+                policy: self.policy.clone(),
+            };
+            edits.push(step(tx, &command)?.into());
+        }
+        let (width, height) = written_size(plan.size);
+        let mut data = serde_json::Map::new();
+        data.insert("id".into(), json!(id));
+        data.insert("size".into(), json!([round2(width), round2(height)]));
+        if let Some(paragraph) = own {
+            data.insert("paragraph".into(), json!(paragraph));
+        }
+        Ok((edits, Value::Object(data)))
+    }
+}
+
+impl Picture<'_> {
+    /// The paragraph of the picture's own aligned (docx-agent's `format_paragraph`).
+    fn align(&self, tx: &mut Txn<'_, WordDoc>, id: &str, edits: &mut Vec<Outcome>) -> Result<(), EditError> {
+        let value = self.args.align.map_or("left", |a| a.as_str());
+        let command = FormatEdit {
+            targets: vec![id.to_owned()],
+            plan: FormatPlan {
+                paragraph: vec![Setting {
+                    property: Property::Alignment,
+                    value: Some(SettingValue::Text(value.to_owned())),
+                }],
+                ..FormatPlan::default()
+            },
+            cleared: false,
+            policy: self.policy.clone(),
+        };
+        for done in step(tx, &command)?.steps {
+            edits.push(Outcome {
+                id: Some(done.id),
+                changed: done.changed,
+                created: Vec::new(),
+                removed: done.removed,
+                renamed: done.renamed,
+                warnings: done.warnings,
+            });
+        }
+        Ok(())
+    }
+}
+
+/// `command` checked and made in `tx`, one part of the call's transaction.
+fn step<C: Command<WordDoc, Error = EditError>>(tx: &mut Txn<'_, WordDoc>, command: &C) -> Result<C::Out, EditError> {
+    command.validate(tx.doc())?;
+    command.prepare(tx)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::*;
+    use ooxml_base::Limits;
+    use ooxml_derive::CacheBudget;
+    use ooxml_opc::Package;
+    use ooxml_store::{Caller, Clock, StoreConfig};
+    use ooxml_tools::ToolArgs;
+    use ooxml_word_edit::Editor;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    const FIXTURE: &[u8] =
+        include_bytes!("../../../../python/docx-agent/tests/fixtures/generated/charts/chart-places.docx");
+
+    struct Still;
+
+    impl Clock for Still {
+        fn monotonic(&self) -> Duration {
+            Duration::ZERO
+        }
+    }
+
+    struct Unlimited;
+
+    impl CacheBudget for Unlimited {
+        fn reserve(&self, _bytes: usize) -> bool {
+            true
+        }
+        fn release(&self, _bytes: usize) {}
+        fn used(&self) -> usize {
+            0
+        }
+    }
+
+    /// A part refusing after an earlier one was made (the picture after its own paragraph):
+    /// the call's one transaction changes nothing; where all apply, one step undo takes
+    /// back whole.
+    #[test]
+    fn a_later_part_refusing_leaves_nothing_and_a_call_is_one_step() {
+        let package = Package::open(Arc::from(FIXTURE), &Limits::default()).unwrap();
+        let editor = Editor::open(package, StoreConfig::default(), Arc::new(Still), Arc::new(Unlimited)).unwrap();
+        let before = editor.store().snapshot();
+        let (args, _) = WordDrawings::accept(
+            json!({"doc": "d1", "action": "insert_picture", "image": "b1", "at": "after:p@body/0",
+                   "alt_text": "x", "wrap": "square"}),
+            Some("docx"),
+        )
+        .unwrap();
+        let plan = |data: &[u8]| Plan {
+            paragraph: Some(InsertParagraph {
+                anchor: "p@body/0".to_owned(),
+                after: true,
+                text: String::new(),
+                style: None,
+                policy: RevisionPolicy::Untracked,
+            }),
+            align_taken: false,
+            at: None,
+            data: Arc::from(data),
+            alt_text: "x".to_owned(),
+            float: Some(DrawingValues {
+                wrap: Some("square".to_owned()),
+                ..DrawingValues::default()
+            }),
+            size: (72.0, 36.0),
+        };
+        let caller = Caller::anonymous();
+        let refused = Picture {
+            args: &args,
+            plan: plan(b"words"),
+            policy: RevisionPolicy::Untracked,
+        };
+        assert!(editor.run(&caller, &refused).is_err());
+        assert_eq!(editor.store().snapshot().seq(), before.seq(), "nothing committed");
+        assert!(editor.store().steps().is_empty());
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        png.extend_from_slice(&13u32.to_be_bytes());
+        png.extend_from_slice(b"IHDR");
+        png.extend_from_slice(&96u32.to_be_bytes());
+        png.extend_from_slice(&48u32.to_be_bytes());
+        png.extend_from_slice(&[8, 2, 0, 0, 0, 0, 0, 0, 0]);
+        let made = Picture {
+            args: &args,
+            plan: plan(&png),
+            policy: RevisionPolicy::Untracked,
+        };
+        let done = editor.run(&caller, &made).unwrap();
+        assert_eq!(done.out.0.len(), 3, "the paragraph, the picture, its float");
+        assert_eq!(editor.store().steps().len(), 1, "one step");
+        assert_eq!(done.version.number(), 1, "one state number");
+        editor.store().undo().unwrap();
+        let back = editor.store().snapshot();
+        let main = |v: &ooxml_store::Snapshot<WordDoc>| v.doc().package().read("word/document.xml").unwrap();
+        assert_eq!(main(&back), main(&before));
+    }
 }

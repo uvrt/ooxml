@@ -31,6 +31,13 @@ pub enum Key {
     Annotations,
     /// Who the people part lists.
     People,
+    /// What a part's paragraphs show a reader of their style uses: each paragraph with text
+    /// or in a list, in order, with its paragraph style, its list and whether its text is
+    /// blank (the body style a copy maps to, the list a copied list continues). Written
+    /// where a change alters one (`sink::style_use`), and with the part put or removed. It is
+    /// derived ([`ooxml_store::DocModel::derived`]): a reader of it conflicts with a writer,
+    /// two writers of it do not (their blocks decide).
+    StyleUse(Arc<str>),
 }
 
 /// One primitive of a change set.

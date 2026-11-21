@@ -47,6 +47,6 @@ pub use keys::KeySet;
 pub use model::DocModel;
 pub use predicate::ReadPredicate;
 pub use stats::StoreStats;
-pub use store::{Caller, CommitTiming, Committed, Store, StoreConfig};
+pub use store::{Caller, CommitTiming, Committed, Listed, Store, StoreConfig};
 pub use txn::{Savepoint, Txn};
 pub use version::{Seq, Snapshot, Version};

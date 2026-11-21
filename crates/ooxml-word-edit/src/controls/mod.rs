@@ -10,12 +10,13 @@
 //! says so.
 //!
 //! Must not: write but through the sink; read more than the control's paragraph, or block
-//! and its neighbours, except where docx-agent reads the whole document (a new control's
-//! number is unlike every control's).
+//! and its neighbours, except by condition (a new control's number is unlike every
+//! control's, [`number::NumbersControl`]) or for a place named by condition.
 
 mod bound;
 mod fill;
 mod insert;
+mod number;
 mod remove;
 mod sync;
 

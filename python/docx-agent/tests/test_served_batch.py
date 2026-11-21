@@ -210,10 +210,13 @@ def test_a_step_of_several_versions_numbers_each():
     class Head:
         number = 9
 
+        def __init__(self, state: int) -> None:
+            self.state = state
+
     mirror = Mirror(None, "d1", {})
-    mirror.keep(4, Head(), 7)
+    mirror.keep(Head(4), 7)
     assert mirror.numbers == {7: 4, 8: 4, 9: 4}
-    mirror.keep(5, Head())
+    mirror.keep(Head(5))
     assert mirror.numbers[9] == 5
 
 

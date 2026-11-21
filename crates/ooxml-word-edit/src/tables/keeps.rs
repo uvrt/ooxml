@@ -12,7 +12,7 @@
 //! (the paragraph after a table aside).
 
 use super::{find_table, Found};
-use crate::fields::{FieldLayout, Unknown};
+use crate::fields::{EditLayout, Unknown};
 use crate::format::values::write_paragraph;
 use crate::format::{Property, Setting, Value};
 use crate::names::W;
@@ -285,7 +285,7 @@ pub fn loose_paragraph_after(doc: &WordDoc, table: &str) -> Result<Option<(Strin
 /// out: the call is left to the host.
 pub(crate) fn table_pages(
     sink: &EditSink<'_, '_>,
-    layout: Option<&dyn FieldLayout>,
+    layout: Option<EditLayout<'_>>,
     table: &str,
 ) -> Result<Option<std::result::Result<Vec<usize>, Unknown>>> {
     let docx = sink.docx()?;
@@ -294,9 +294,7 @@ pub(crate) fn table_pages(
         return Ok(None);
     }
     let layout = layout.ok_or_else(|| EditError::Unsupported("keep_together's pages without a layout".to_owned()))?;
-    let laid = layout
-        .lay_out(sink.doc().package())
-        .map_err(|why| EditError::Unsupported(format!("the layout of this version: {why}")))?;
+    let laid = layout.lay_out(sink.doc().package())?;
     Ok(Some(laid.block_pages(&found.id)))
 }
 

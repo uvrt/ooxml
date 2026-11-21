@@ -1,5 +1,6 @@
 """Lane P2c6: edits the Rust session serves run side by side, without the document's lock --
-each its own step, numbered in the order the session made them, and undone one by one."""
+each its own step, numbered in the order the session made them (and counted so, whatever order
+they end in), and undone one by one."""
 
 import threading
 
@@ -51,6 +52,11 @@ def test_served_edits_side_by_side_are_one_step_each(toolbox, constructs_doc):
     assert all(result.timing["held"] == 0.0 for result in results)
     assert sorted(result.version for result in results) == list(range(start + 1, start + WRITERS * EDITS + 1))
     assert entry.version == start + WRITERS * EDITS
+    # Lane U3: counted as they ended, in any order -- never as a change outside the tools
+    assert entry.change_version == entry.version
+    assert entry.parts_changed_since(0) == {"word/document.xml"}
+    changes = entry.changes_between(start, entry.version)
+    assert changes is not None and len(changes) == WRITERS * EDITS and None not in changes
     for _ in range(WRITERS * EDITS):
         assert toolbox.dispatch(session, "undo", {"doc": doc}).ok
     assert entry.version == start

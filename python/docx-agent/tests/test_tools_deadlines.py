@@ -36,8 +36,6 @@ def test_a_reflow_check_on_a_36_page_document_stays_within_its_deadline():
         assert session.entry(d).document.converter is None
 
 
-@pytest.mark.xfail(reason="the served layout does not stop at layout_timeout yet: FieldLayout's Stop, "
-                          "branch p5-field-stop (lane P5l)", strict=False)
 def test_a_layout_past_its_deadline_is_a_timeout_and_changes_nothing():
     with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, limits=Limits(layout_timeout=0.05)) as box:
         session = box.session(clock=CLOCK)

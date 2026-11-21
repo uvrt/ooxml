@@ -15,6 +15,7 @@ mod media;
 mod numbering;
 mod stand_ins;
 mod stretch;
+mod style_use;
 mod written;
 
 pub(crate) use heads::{annotation_draws, ensured_head};
@@ -154,6 +155,15 @@ impl<'t, 's> EditSink<'t, 's> {
         if let Change::Splice { draws, .. } = &change {
             self.numbered.written(draws);
         }
+        let change = match &change {
+            // a tree change writes the part's style uses where it alters one (only the
+            // paragraphs it touches compared)
+            Change::Splice { part, .. } | Change::Head { part, .. } => match self.tx.doc().tree(part)? {
+                Some(tree) => style_use::keyed(&tree, change),
+                None => change,
+            },
+            _ => change,
+        };
         self.tx.write(change).map_err(EditError::from)
     }
 

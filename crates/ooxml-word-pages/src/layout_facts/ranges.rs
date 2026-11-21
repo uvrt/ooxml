@@ -307,14 +307,27 @@ fn body_of(page: &PageFacts, bodies: &[Option<f64>]) -> (f64, (f64, f64)) {
     (body, area)
 }
 
+/// What a page draws that its facts leave out, as the blank at its foot is measured
+/// (`PageEngine::beyond_facts`): lines docx-agent's `Page.text_lines` counts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BeyondFacts {
+    /// The bottom of the lowest line its body's text boxes draw.
+    pub text_boxes: Option<Px>,
+    /// The top of its footnotes' first line (their separator's).
+    pub notes: Option<Px>,
+}
+
 /// The blank at the foot of a page's body (`keep_trials._room`): from the bottom of its
-/// last body line to the bottom of where the body may be drawn (or to the first note line
-/// drawn above it), in points (one place) and as a share of that height (two places).
+/// last body line (its text boxes' included, `beyond`) to the bottom of where the body may
+/// be drawn (or to the first note line drawn above it), in points (one place) and as a
+/// share of that height (two places).
 #[must_use]
-pub fn room(page: &PageFacts) -> (f64, f64) {
+pub fn room(page: &PageFacts, beyond: &BeyondFacts) -> (f64, f64) {
     let top = page.frame.top;
-    let mut bottom = page.frame.bottom;
-    let mut lowest = top;
+    let mut bottom = beyond
+        .notes
+        .map_or(page.frame.bottom, |notes| page.frame.bottom.min(notes));
+    let mut lowest = beyond.text_boxes.map_or(top, |foot| top.max(foot));
     for line in &page.lines {
         if super::story_kind(&line.path) == "body" {
             lowest = lowest.max(line.top + line.pitch);

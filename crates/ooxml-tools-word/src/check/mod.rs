@@ -6,16 +6,23 @@
 //! Owns: the tool's definition ([`args`]), the facts read from the document alone, and
 //! those read from its pages as the host's engine lays them out ([`crate::WordLayout`]).
 //!
-//! Must not: lay out but through the host's engine. What needs the layout's facts
-//! (`layout`, a `range`'s facts, `min_size`, `styles`), copies, a scale and a deck's
-//! arguments are not given here yet: such a call is answered `unported`, and the host
-//! answers it; so is a `reflow` without the host's layout, or of a version its engine does
-//! not lay out.
+//! With the layout, its facts (`layout`, [`layout`]): those read from the pages and from
+//! the document alone, on the pages asked for, about the blocks a `range` names, with each
+//! range's extent and keeps (`range`), the minimum text size (`min_size`) and the styles
+//! allowed (`styles`).
+//!
+//! Must not: lay out but through the host's engine. Copies, a scale and a deck's arguments
+//! are not given here yet: such a call is answered `unported`, and the host answers it; so
+//! is a check needing the layout without the host's layout, or of a version its engine
+//! does not lay out, a range refused (the host words why), a `min_size` that is not one,
+//! and `pages` holding none of the ranges' blocks (the host warns of it).
 
 mod args;
 mod facts;
 mod laid_facts;
 mod laid_tables;
+mod layout;
+mod placed;
 mod ranges;
 mod reflow;
 
@@ -38,9 +45,12 @@ use crate::version::{Owned, Version};
 use ooxml_base::Cancel;
 use ooxml_scene::python_g;
 use ooxml_tools::{ArgEnum, Done, ToolError};
-use ooxml_word_edit::validate::{problems, Delta};
+use ooxml_word_edit::validate::{problems, problems_in, Delta};
+use ooxml_word_pages::layout_facts::sizes::Minimum;
+use ooxml_word_pages::layout_facts::{Facts, Scope};
 use ooxml_word_pages::summarised::Summarised;
 use serde_json::{Map, Value};
+use std::collections::BTreeSet;
 use std::sync::{Arc, PoisonError};
 use std::time::Instant;
 
@@ -54,6 +64,12 @@ const FIELDS_NOTE: &str = "results are caches: after moving headings or text, wo
 pub const CHECK_LAYOUT: &str = "check: layout facts";
 /// What `unported` says of a check whose arguments this handler does not take yet.
 pub const CHECK_ARGUMENTS: &str = "check: arguments";
+/// What `unported` says of a check whose `range` is refused (the host words why).
+pub const CHECK_RANGE: &str = "check: a range refused";
+/// What `unported` says of a check whose `pages` hold none of its ranges' blocks.
+pub const CHECK_PAGES_OUTSIDE: &str = "check: pages outside the ranges";
+/// The ranges a check takes at most (docx-agent's `MAX_RANGES`).
+pub const MAX_RANGES: usize = 20;
 /// What `unported` says of a check of a document the session does not own.
 pub const CHECK_NOT_OWNED: &str = "check: a document the session does not own";
 /// What `unported` says of a `reflow` the host hands no layout for.
@@ -73,49 +89,237 @@ pub fn check(args: &Check, version: &Version<'_>, cancel: &dyn Cancel) -> Result
     let Some(owned) = version.owned else {
         return Ok(unported(CHECK_NOT_OWNED));
     };
-    let mut data = Map::new();
-    let mut timing = Map::new();
-    let layout = match (wanted.contains(&CheckInclude::Reflow), owned.layout) {
+    let reflow_wanted = wanted.contains(&CheckInclude::Reflow);
+    let layout_wanted = wanted.contains(&CheckInclude::Layout);
+    let layout = match (reflow_wanted || layout_wanted, owned.layout) {
         (true, None) => return Ok(unported(CHECK_NO_LAYOUT)),
         (true, Some(layout)) => Some(layout),
         (false, _) => None,
     };
+    let minimum = match args.min_size.map(Value::from).as_ref().map(minimum_of).transpose() {
+        Ok(minimum) => minimum.flatten(),
+        Err(_) => return Ok(unported(CHECK_ARGUMENTS)),
+    };
+    let mut data = Map::new();
+    let mut timing = Map::new();
+    let ranges = ranges_of(args.range.as_deref(), version);
+    if ranges.len() > MAX_RANGES {
+        return Err(ToolError::failure(
+            ooxml_tools::Failure::Limit,
+            format!(
+                "{} ranges: at most {MAX_RANGES} per check; a span p:A..t:B covers many blocks",
+                ranges.len()
+            ),
+        )
+        .at("range"));
+    }
+    let docx = if layout_wanted { Some(version.docx()?) } else { None };
+    let scope = match (&docx, ranges.is_empty()) {
+        (Some(docx), false) => {
+            let started = Instant::now();
+            let Ok(scope) = Scope::of(docx, &ranges) else {
+                return Ok(unported(CHECK_RANGE));
+            };
+            timing.insert("resolve".into(), seconds(started));
+            Some(scope)
+        }
+        _ => None,
+    };
     if wanted.contains(&CheckInclude::Validate) {
         let started = Instant::now();
-        data.insert("validate".into(), validate(owned)?);
+        data.insert("validate".into(), validate(owned, scope.as_ref())?);
         timing.insert("validate".into(), seconds(started));
     }
     cancel.check().map_err(cancelled)?;
     if let Some(layout) = layout {
-        let started = Instant::now();
-        let last = layout
-            .engine()
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .last()
-            .cloned();
-        let stop = owned.layout_limit.map_or(cancel, |limit| limit.cancel);
-        let laid = layout.laid(version.package, stop);
-        // `layout`: the time laying the version out, where the engine had not laid it out last
-        if !matches!((&last, &laid), (Some(last), Ok(laid)) if Arc::ptr_eq(last, laid)) {
-            timing.insert("layout".into(), seconds(started));
-        }
-        let started = Instant::now();
-        let found = laid.and_then(|laid| reflow_facts(layout, &laid, version, owned, args.pages.as_deref()));
-        timing.insert("facts".into(), seconds(started));
-        let reflow = match found {
-            Ok(facts) => facts,
-            Err(NotLaid::Other(_)) => return Ok(unported(CHECK_NOT_LAID_OUT)),
-            Err(NotLaid::Stopped) => {
-                // The call's own stop ends it; the layout's limit passed is said, and the
-                // check goes on (docx-agent's `reflow.error`).
-                cancel.check().map_err(cancelled)?;
-                timed_out(owned.layout_limit.map(|limit| limit.timeout))
-            }
+        let checking = Checking {
+            args,
+            version,
+            owned,
+            scope: scope.as_ref(),
+            docx: docx.as_deref(),
+            minimum: minimum.as_ref(),
+            cancel,
         };
+        if let Some(why) = with_layout(
+            &checking,
+            layout,
+            (reflow_wanted, layout_wanted),
+            &mut data,
+            &mut timing,
+        )? {
+            return Ok(unported(why));
+        }
+    }
+    finish(owned, &wanted, scope.as_ref(), data, timing)
+}
+
+/// What a check with the layout reads, besides the layout.
+struct Checking<'c, 'v> {
+    args: &'c Check,
+    version: &'c Version<'v>,
+    owned: Owned<'v>,
+    scope: Option<&'c Scope>,
+    docx: Option<&'c ooxml_word_model::docx::Docx>,
+    minimum: Option<&'c Minimum>,
+    cancel: &'c dyn Cancel,
+}
+
+/// `reflow`, `layout` and `range` of the version laid out by `layout` into `data`
+/// (`wanted`: reflow, layout), their seconds into `timing`; else why the host answers.
+fn with_layout(
+    c: &Checking<'_, '_>,
+    layout: &dyn crate::WordLayout,
+    (reflow_wanted, layout_wanted): (bool, bool),
+    data: &mut Map<String, Value>,
+    timing: &mut Map<String, Value>,
+) -> Result<Option<&'static str>, ToolError> {
+    let started = Instant::now();
+    let last = layout
+        .engine()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .last()
+        .cloned();
+    let stop = c.owned.layout_limit.map_or(c.cancel, |limit| limit.cancel);
+    let laid = layout.laid(c.version.package, stop);
+    // `layout`: the time laying the version out, where the engine had not laid it out last
+    if !matches!((&last, &laid), (Some(last), Ok(laid)) if Arc::ptr_eq(last, laid)) {
+        timing.insert("layout".into(), seconds(started));
+    }
+    let started = Instant::now();
+    let laid = match laid {
+        Ok(laid) => laid,
+        Err(NotLaid::Other(_)) => return Ok(Some(CHECK_NOT_LAID_OUT)),
+        Err(NotLaid::Stopped) => {
+            // The call's own stop ends it; the layout's limit passed is said, and the
+            // check goes on (docx-agent's `reflow.error`), with the facts read from the
+            // document alone.
+            c.cancel.check().map_err(cancelled)?;
+            not_finished(c, (reflow_wanted, layout_wanted), data)?;
+            timing.insert("facts".into(), seconds(started));
+            return Ok(None);
+        }
+    };
+    // The ranges' pages, among those asked for: the pages the facts are read on.
+    let on: Option<BTreeSet<usize>> = c.scope.map(|s| s.pages(&laid).into_iter().flatten().collect());
+    let Some(pages) = pages_read(c.args.pages.as_deref(), on.as_ref()) else {
+        return Ok(Some(CHECK_PAGES_OUTSIDE));
+    };
+    let mut reflow = None;
+    if reflow_wanted {
+        let Ok(mut facts) = reflow_facts(layout, &laid, c.version, c.owned, c.args.pages.as_deref()) else {
+            return Ok(Some(CHECK_NOT_LAID_OUT));
+        };
+        if let (Some(pages), Some(Value::Array(changed))) = (
+            pages.as_ref().filter(|_| on.is_some()),
+            facts.pointer_mut("/since_last_check/changed"),
+        ) {
+            changed.retain(|n| n.as_u64().is_some_and(|n| pages.iter().any(|p| *p as u64 == n)));
+        }
+        reflow = Some(facts);
+    }
+    if let (true, Some(docx)) = (layout_wanted, c.docx) {
+        if !reflow_wanted {
+            // Laid out, no reflow: kept as the version's pages a changing call measures from.
+            c.owned.last_check.set_laid(Some(Seen {
+                version: Some(c.version.number),
+                pages: Summarised::watched(Arc::clone(&laid), Arc::clone(layout.engine())),
+            }));
+        }
+        let (found, range) = layout_facts(c, layout, &laid, docx, pages.as_deref(), stop)?;
+        if let Some(range) = range {
+            data.insert("range".into(), range);
+        }
+        if let Some(reflow) = reflow.take() {
+            data.insert("reflow".into(), reflow);
+        }
+        data.insert("layout".into(), found);
+    }
+    if let Some(reflow) = reflow {
         data.insert("reflow".into(), reflow);
     }
-    cancel.check().map_err(cancelled)?;
+    timing.insert("facts".into(), seconds(started));
+    Ok(None)
+}
+
+/// The pages a check reads its facts on: those `asked` for, and of them the ranges' pages
+/// (`on`) where scoped (`Some(None)`: every page); `None` where none of `asked` holds any of
+/// the ranges' blocks.
+fn pages_read(asked: Option<&[i64]>, on: Option<&BTreeSet<usize>>) -> Option<Option<Vec<usize>>> {
+    let asked: Option<Vec<usize>> = asked.map(|pages| pages.iter().filter_map(|p| usize::try_from(*p).ok()).collect());
+    match (on, asked) {
+        (Some(on), None) => Some(Some(on.iter().copied().collect())),
+        (Some(on), Some(asked)) => {
+            let kept: Vec<usize> = on.iter().copied().filter(|p| asked.contains(p)).collect();
+            (!kept.is_empty()).then_some(Some(kept))
+        }
+        (None, asked) => Some(asked),
+    }
+}
+
+/// `layout` and `range` of version `laid` (read as `docx`) on `pages`, its keeps tried by
+/// `layout`'s engine, stopped by `stop`.
+fn layout_facts(
+    c: &Checking<'_, '_>,
+    layout: &dyn crate::WordLayout,
+    laid: &Arc<ooxml_word_pages::LaidVersion>,
+    docx: &ooxml_word_model::docx::Docx,
+    pages: Option<&[usize]>,
+    stop: &dyn Cancel,
+) -> Result<(Value, Option<Value>), ToolError> {
+    let painted = layout::Painted {
+        engine: layout.engine(),
+        version: Arc::clone(laid),
+    };
+    let approximations = layout
+        .engine()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .coverage(laid)
+        .map(|found| found.approximations)
+        .unwrap_or_default();
+    let mut facts = Facts::new(laid, docx, pages, &painted);
+    if let Some(scope) = c.scope.cloned() {
+        facts = facts.scoped(scope);
+    }
+    let asked = layout::Asked {
+        minimum: c.minimum,
+        styles: c.args.styles.as_deref(),
+    };
+    layout::laid(&facts, c.owned, &asked, &approximations, (layout.engine(), stop))
+}
+
+/// What a check says where laying the version out did not finish within its limit: each
+/// range without pages, the facts read from the document alone, and the reflow's error.
+fn not_finished(
+    c: &Checking<'_, '_>,
+    (reflow_wanted, layout_wanted): (bool, bool),
+    data: &mut Map<String, Value>,
+) -> Result<(), ToolError> {
+    let reflow = timed_out(c.owned.layout_limit.map(|limit| limit.timeout));
+    if let Some(scope) = c.scope {
+        data.insert("range".into(), layout::unlaid_ranges(scope));
+    }
+    if layout_wanted {
+        let error = reflow.get("error").cloned().unwrap_or(Value::Null);
+        data.insert("layout".into(), layout::unlaid(c.owned, c.scope, error)?);
+    }
+    if reflow_wanted {
+        data.insert("reflow".into(), reflow);
+    }
+    Ok(())
+}
+
+/// The check's result: `fields` where asked, `app_findings`, `timing`, and the summary
+/// naming what it checked (and in how many ranges).
+fn finish(
+    owned: Owned<'_>,
+    wanted: &[CheckInclude],
+    scope: Option<&Scope>,
+    mut data: Map<String, Value>,
+    mut timing: Map<String, Value>,
+) -> Result<Done<Value>, ToolError> {
     if wanted.contains(&CheckInclude::Fields) {
         let started = Instant::now();
         data.insert("fields".into(), fields(owned)?);
@@ -126,9 +330,26 @@ pub fn check(args: &Check, version: &Version<'_>, cancel: &dyn Cancel) -> Result
     }
     data.insert("timing".into(), Value::Object(timing));
     let named: Vec<&str> = wanted.iter().map(|w| w.as_str()).collect();
-    let mut done = Done::new(format!("Checked {}", named.join(", ")));
+    let mut summary = format!("Checked {}", named.join(", "));
+    if let Some(scope) = scope {
+        summary.push_str(&format!(" in {} range(s)", scope.ranges.len()));
+    }
+    let mut done = Done::new(summary);
     done.data = Some(Value::Object(data));
     Ok(done)
+}
+
+/// `range` as a list of addresses (docx-agent's `ranges_of`): each stripped, blanks and
+/// repeats left out, each as it names a block now.
+fn ranges_of(range: Option<&[String]>, version: &Version<'_>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for address in range.unwrap_or_default() {
+        let address = address.trim();
+        if !address.is_empty() && !out.iter().any(|a| a == address) {
+            out.push(address.to_owned());
+        }
+    }
+    out.iter().map(|a| version.follow(a)).collect()
 }
 
 /// What the check reports, in the order asked (as given: a part named twice is said twice),
@@ -148,19 +369,23 @@ fn served(args: &Check) -> Result<Vec<CheckInclude>, &'static str> {
     {
         return Err(CHECK_ARGUMENTS);
     }
-    if args.min_size.is_some() || args.styles.is_some() || ranged {
-        return Err(CHECK_LAYOUT);
-    }
-    let wanted = args
+    let mut wanted = args
         .include
         .clone()
         .unwrap_or_else(|| vec![CheckInclude::Validate, CheckInclude::Reflow, CheckInclude::Fields]);
     for part in &wanted {
         match part {
-            CheckInclude::Validate | CheckInclude::Fields | CheckInclude::App | CheckInclude::Reflow => {}
-            CheckInclude::Layout => return Err(CHECK_LAYOUT),
+            CheckInclude::Validate
+            | CheckInclude::Fields
+            | CheckInclude::App
+            | CheckInclude::Reflow
+            | CheckInclude::Layout => {}
             _ => return Err(CHECK_ARGUMENTS),
         }
+    }
+    // What `min_size`, `styles` and a range measure: the layout's facts (round 16, F8).
+    if (args.min_size.is_some() || args.styles.is_some() || ranged) && !wanted.contains(&CheckInclude::Layout) {
+        wanted.push(CheckInclude::Layout);
     }
     Ok(wanted)
 }
@@ -219,16 +444,42 @@ fn internal(error: &ooxml_word_edit::EditError) -> ToolError {
 }
 
 /// `validate`: the problems now against those the document opened with (the save gate's
-/// comparison), and the first of them.
-fn validate(owned: Owned<'_>) -> Result<Value, ToolError> {
+/// comparison), and the first of them; in `scope`'s blocks only where scoped (with how
+/// many are elsewhere, and only its new ones).
+fn validate(owned: Owned<'_>, scope: Option<&Scope>) -> Result<Value, ToolError> {
     let now = problems(owned.doc).map_err(|e| internal(&e))?;
     let delta = Delta::of(owned.baseline, &now);
     let mut out = Map::new();
-    out.insert("new".into(), Value::from(delta.new));
+    let Some(scope) = scope else {
+        out.insert("new".into(), Value::from(delta.new));
+        out.insert("fixed".into(), Value::from(delta.fixed));
+        out.insert("baseline".into(), Value::from(delta.baseline));
+        let listed: Vec<String> = now.iter().take(LISTED).map(ToString::to_string).collect();
+        out.insert("problems".into(), Value::from(listed));
+        return Ok(Value::Object(out));
+    };
+    let docx = owned.doc.docx().map_err(|e| internal(&e))?;
+    let roots: Vec<Arc<ooxml_xml::Element>> = docx
+        .body()
+        .map(|body| {
+            scope
+                .roots
+                .iter()
+                .filter_map(|place| ooxml_word_model::docx::at_path(body.root(), place).cloned())
+                .collect()
+        })
+        .unwrap_or_default();
+    let scoped = problems_in(owned.doc, &now, &docx.main, &roots);
+    let inside: Vec<String> = scoped.inside.iter().map(ToString::to_string).collect();
+    let new: Vec<String> = delta.new.into_iter().filter(|p| inside.contains(p)).collect();
+    out.insert("new".into(), Value::from(new));
     out.insert("fixed".into(), Value::from(delta.fixed));
     out.insert("baseline".into(), Value::from(delta.baseline));
-    let listed: Vec<String> = now.iter().take(LISTED).map(ToString::to_string).collect();
-    out.insert("problems".into(), Value::from(listed));
+    out.insert(
+        "problems".into(),
+        Value::from(inside.into_iter().take(LISTED).collect::<Vec<_>>()),
+    );
+    out.insert("elsewhere".into(), Value::from(scoped.elsewhere));
     Ok(Value::Object(out))
 }
 
