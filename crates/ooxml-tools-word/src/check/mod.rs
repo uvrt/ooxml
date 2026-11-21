@@ -37,7 +37,7 @@ pub use laid_facts::{
 };
 pub use laid_tables::{column_fit_json, past_margins_json, split_row_json, uncertain_json, unrepeated_json};
 pub use ranges::{ranges_json, Trials, TRIALS, TRIAL_SECONDS};
-pub use reflow::{LastCheck, Seen};
+pub use reflow::{reflow_after_edit, EditedFrom, LastCheck, Seen, REFLOW_PAGES, STALE};
 
 use crate::describe::cancelled;
 use crate::pages::NotLaid;

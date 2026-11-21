@@ -282,6 +282,13 @@ impl PageEngine {
         self.generation.as_ref().and_then(|g| g.last.as_ref())
     }
 
+    /// The last version laid out, where it was laid out from `package`'s parts (what
+    /// [`PageEngine::lay_out`] answers it with, nothing laid out); else `None`. Nothing is
+    /// noted as given.
+    pub fn laid_last(&self, package: &Package) -> Option<Arc<LaidVersion>> {
+        self.generation.as_ref()?.last_for(package)
+    }
+
     /// Lay out the version whose package is `bytes`: only the parts whose stored bytes
     /// differ from the last version given are read again.
     ///

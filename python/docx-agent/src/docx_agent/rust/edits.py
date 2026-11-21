@@ -136,13 +136,16 @@ def _pages(entry: Any) -> Any:
     return word_pages(entry.held)[0]
 
 
-def _layout(call: Any, entry: Any) -> Any:
+def _layout(call: Any, entry: Any, measured: bool) -> Any:
     """The page engine a call of a tool whose edits read the pages
-    (:attr:`~docx_agent.rust.served.Hosting.laid`) edits with; ``None`` for the others."""
-    if call.tool.name not in _served.hosting().laid:
-        return None
+    (:attr:`~docx_agent.rust.served.Hosting.laid`) edits with; for the others, where the
+    call's checks take the reflow the session measures (``measured``: served without the
+    lock, lane P5m), the document's engine where this process has one already; else
+    ``None``."""
     from ..pages import word_pages
 
+    if call.tool.name not in _served.hosting().laid:
+        return word_pages(entry.held, make=False)[0] if measured else None
     found, why = word_pages(entry.held)
     if found is None:
         raise Fallback(f"the layout: {why}")
@@ -165,7 +168,7 @@ def _tracking(call: Any, entry: Any, context: Any, counted: bool) -> None:
             raise Fallback("tracking")
         mirror.tracking = wanted
     if made is not None:
-        first, head, _touched, _validation = made
+        first, head, _touched, _validation, _reflow = made
         entry.served(first, head, StepOwner(dict(call.caller), "word_set_tracking"), counted=counted)
 
 
@@ -272,7 +275,7 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
     written = adapted.written if isinstance(adapted, Adapted) else _written(call)
     given = {**{k: v for k, v in adapted.items() if v is not None}, "doc": entry.doc_id}
     names = _names(call, entry, arguments)
-    layout = _layout(call, entry)
+    layout = _layout(call, entry, measured=counted)
     timing = _timing(call, arguments)
     started = time.perf_counter()
     blobs = _Blobs(call.session) if tool in _served.hosting().blobs else None
@@ -313,13 +316,16 @@ class Made:
     """A check's marker (:attr:`~ooxml_edit.tools.served.Served.touched`): the version a
     call the session served made, and its validation (``(new, fixed, baseline)``, as
     ``Session.validation`` gives it), which its checks report; the ``engine`` its relayout on
-    commit lays the version out with (lane P2c13)."""
+    commit lays the version out with (lane P2c13).  Lane P5m: the ``reflow`` its checks
+    report, as the session measured it after the call's edits (JSON text), where it did."""
 
-    def __init__(self, head: Any, validation: tuple[list[str], list[str], int], engine: Any = None) -> None:
+    def __init__(self, head: Any, validation: tuple[list[str], list[str], int], engine: Any = None,
+                 reflow: str | None = None) -> None:
         self.head = head
         self.engine = engine
         new, fixed, baseline = validation
         self.validation = {"new": list(new), "fixed": list(fixed), "baseline": baseline}
+        self.reflow = json.loads(reflow) if reflow is not None else None
 
 
 def serve_owned(call: Any, arguments: dict[str, Any]) -> Any:
@@ -350,8 +356,8 @@ def serve_owned(call: Any, arguments: dict[str, Any]) -> Any:
     touched: list[Any] = [*([_before(before)] if current else []), *markers]
     if made is None:
         return Served(result, None, None, touched)
-    first, head, step, validation = made
-    return Served(result, first, head, [*touched, Made(head, validation, _engine(call, entry))],
+    first, head, step, validation, reflow = made
+    return Served(result, first, head, [*touched, Made(head, validation, _engine(call, entry), reflow)],
                   None if step is None else json.loads(step))
 
 

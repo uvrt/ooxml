@@ -16,6 +16,9 @@ use std::sync::{Mutex, PoisonError};
 /// editor works both out with each edit).
 #[derive(Debug, Clone)]
 pub struct Made {
+    /// The version the call's first changing edit was applied to (the head it was published
+    /// after: another writer's commit before the edit is in it).
+    pub before: Option<Snapshot<WordDoc>>,
     /// The version the call's first changing edit made.
     pub first: Snapshot<WordDoc>,
     /// The version its last changing edit made: the call's step ends there.
@@ -63,11 +66,13 @@ impl<'a> CallEditor<'a> {
         }
         if edited.changed {
             let mut made = self.made.lock().unwrap_or_else(PoisonError::into_inner);
-            let (first, mut ids) = made
-                .take()
-                .map_or_else(|| (edited.version.clone(), Vec::new()), |m| (m.first, m.ids));
+            let (before, first, mut ids) = made.take().map_or_else(
+                || (edited.previous.clone(), edited.version.clone(), Vec::new()),
+                |m| (m.before, m.first, m.ids),
+            );
             ids.push((edited.version.seq(), edited.ids.clone()));
             *made = Some(Made {
+                before,
                 first,
                 last: edited.version.clone(),
                 touched: edited.touched.clone(),

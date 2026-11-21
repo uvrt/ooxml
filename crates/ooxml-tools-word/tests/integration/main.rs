@@ -11,6 +11,7 @@ mod controls;
 mod describe;
 mod design;
 mod drawings;
+mod edit_reflow;
 mod edit_table;
 mod fields_bench;
 mod follow;

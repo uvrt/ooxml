@@ -138,6 +138,11 @@ pub struct CallMade {
     pub touched: Option<Vec<Value>>,
     /// The validation delta of `last` against the problems the document opened with.
     pub validation: ooxml_word_edit::validate::Delta,
+    /// The reflow its checks report (docx-agent's `reflow_json` form, or `"stale: call
+    /// check"`, or a `"timeout: …"` where laying `last` out passed the call's limit), where
+    /// the call had the host's layout and the version its first edit was applied to was laid
+    /// out (a check saw it, or the engine laid it out last); else `None`.
+    pub reflow: Option<Value>,
 }
 
 /// The versions `context` names, by document.
@@ -546,6 +551,7 @@ impl Session {
             mut warnings,
             made,
             named,
+            layout_limit,
             ..
         } = state;
         let made = made.into_inner().unwrap_or_else(PoisonError::into_inner);
@@ -569,7 +575,12 @@ impl Session {
             }
             call_made = made.zip(document.as_ref()).map(|(made, document)| {
                 let one = made.first.seq() == made.last.seq();
+                let reflow = context
+                    .layout
+                    .as_deref()
+                    .and_then(|layout| crate::reflowed::after_edit(layout, document, &made, (layout_limit, &cancel)));
                 CallMade {
+                    reflow,
                     first: made.first.seq().0,
                     touched: one.then(|| made.touched.iter().map(crate::changes::touched_json).collect()),
                     validation: made.validation,
