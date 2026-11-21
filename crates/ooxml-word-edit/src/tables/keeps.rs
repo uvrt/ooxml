@@ -13,7 +13,6 @@
 
 use super::{find_table, Found};
 use crate::fields::{FieldLayout, Unknown};
-use crate::format::keeps::{declared, row_leads, Keeps};
 use crate::format::values::write_paragraph;
 use crate::format::{Property, Setting, Value};
 use crate::names::W;
@@ -22,44 +21,11 @@ use crate::validate::Orders;
 use crate::work::{Id, Work};
 use crate::{EditError, Result, WordDoc};
 use ooxml_word_model::docx::formatting::Formatting;
+pub(crate) use ooxml_word_model::docx::keeps::RowKeep;
+pub use ooxml_word_model::docx::keeps::TableKeeps;
+use ooxml_word_model::docx::keeps::{row_keeps as row_keeps_in, Keeps};
 use ooxml_word_model::docx::{at_path, Docx};
 use ooxml_xml::Element;
-
-/// One row's keep with the next, as Word decides it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RowKeep {
-    /// The paragraph it is decided by, its steps below the table; `None`: a row with none.
-    pub lead: Option<Vec<u32>>,
-    /// Whether it keeps with the next.
-    pub keeps: bool,
-    /// Whether its styles alone would.
-    pub styled: bool,
-    /// Its direct `w:keepNext`: on, off, or none.
-    pub declared: Option<bool>,
-}
-
-/// Whether a table's rows keep it together (every row but the last keeping with the next,
-/// two rows at least) and with the next block (its last row keeping).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct TableKeeps {
-    /// docx-agent's `kept_together`.
-    pub together: bool,
-    /// docx-agent's `kept_with_next`.
-    pub with_next: bool,
-}
-
-impl TableKeeps {
-    /// What `rows` (a table's, [`row_keeps_at`]) keep.
-    #[must_use]
-    pub fn of(rows: &[RowKeep]) -> TableKeeps {
-        let leads = rows.iter().all(|r| r.lead.is_some());
-        let but_last = rows.get(..rows.len().saturating_sub(1)).unwrap_or_default();
-        TableKeeps {
-            together: rows.len() >= 2 && leads && but_last.iter().all(|r| r.keeps),
-            with_next: rows.last().is_some_and(|r| r.lead.is_some() && r.keeps),
-        }
-    }
-}
 
 /// Per row of the table at `found`, its keep (docx-agent's `row_keeps`).
 pub(crate) fn row_keeps(docx: &Docx, found: &Found) -> Result<Vec<RowKeep>> {
@@ -69,29 +35,7 @@ pub(crate) fn row_keeps(docx: &Docx, found: &Found) -> Result<Vec<RowKeep>> {
 /// Per row of the table at `path` in `part`, its keep.
 fn rows_at(docx: &Docx, part: &str, path: &[u32]) -> Result<Vec<RowKeep>> {
     let story = docx.part(part).ok_or_else(|| EditError::NoPart(part.to_owned()))?;
-    let table = at_path(story.root(), path).ok_or_else(|| EditError::Path(part.to_owned()))?;
-    let formatting = Formatting::read(docx);
-    let mut look = Keeps::new(&formatting, story);
-    let mut out = Vec::new();
-    for lead in row_leads(table, path) {
-        let paragraph = lead.as_ref().and_then(|l| Some((l, at_path(story.root(), l)?)));
-        let Some((lead, paragraph)) = paragraph else {
-            out.push(RowKeep {
-                lead: None,
-                keeps: false,
-                styled: false,
-                declared: None,
-            });
-            continue;
-        };
-        out.push(RowKeep {
-            lead: lead.get(path.len()..).map(<[u32]>::to_vec),
-            keeps: look.effective(paragraph, lead, true).keep_with_next,
-            styled: look.effective(paragraph, lead, false).keep_with_next,
-            declared: declared(paragraph, "keepNext"),
-        });
-    }
-    Ok(out)
+    row_keeps_in(&Formatting::read(docx), story, path).ok_or_else(|| EditError::Path(part.to_owned()))
 }
 
 /// What `keep_together` / `keep_with_next` write on a table: each row's direct keep
@@ -283,15 +227,6 @@ pub fn table_keeps(doc: &WordDoc, table: &str) -> Result<TableKeeps> {
 /// A `part` or `path` that holds no table.
 pub fn table_keeps_at(docx: &Docx, part: &str, path: &[u32]) -> Result<TableKeeps> {
     Ok(TableKeeps::of(&rows_at(docx, part, path)?))
-}
-
-/// Per row of the table at `path` in the story part `part` of `docx`, its keep (docx-agent's
-/// `row_keeps`; a reader's: `check`'s layout facts).
-///
-/// # Errors
-/// A `part` or `path` that holds no table.
-pub fn row_keeps_at(docx: &Docx, part: &str, path: &[u32]) -> Result<Vec<RowKeep>> {
-    rows_at(docx, part, path)
 }
 
 /// A paragraph between a table and the next table that does not keep with the next

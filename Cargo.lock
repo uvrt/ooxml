@@ -858,7 +858,6 @@ dependencies = [
  "ooxml-scene",
  "ooxml-schema",
  "ooxml-text",
- "ooxml-word-edit",
  "ooxml-word-layout",
  "ooxml-word-model",
  "ooxml-xml",

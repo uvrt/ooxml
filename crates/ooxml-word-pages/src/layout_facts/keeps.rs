@@ -12,8 +12,8 @@
 
 use super::tree::{is_w, page_break_at, row_of, W};
 use super::{story_kind, Block, BlockKind, Facts};
-use ooxml_word_edit::{row_keeps_at, RowKeep, TableKeeps};
 use ooxml_word_layout::facts::{BlockKeeps, LineFact};
+use ooxml_word_model::docx::keeps::{row_keeps, RowKeep, TableKeeps};
 use ooxml_word_model::docx::StoryPart;
 use ooxml_word_model::model::Block as ModelBlock;
 use ooxml_xml::Element;
@@ -103,7 +103,7 @@ pub fn kept_tables(facts: &Facts<'_>) -> KeptTables {
             if !pages.is_empty() && !facts.shown(pages.iter().copied()) {
                 continue;
             }
-            let Ok(rows) = row_keeps_at(docx, &story.part, &table.path) else {
+            let Some(rows) = row_keeps(facts.formatting(), story, &table.path) else {
                 continue;
             };
             if !TableKeeps::of(&rows).together {
@@ -206,8 +206,7 @@ fn table_end_at_foot(facts: &Facts<'_>, line: &LineFact, number: usize) -> Optio
     if block.kind != BlockKind::Table {
         return None;
     }
-    let part = facts.docx().body()?.part.clone();
-    let rows = row_keeps_at(facts.docx(), &part, &block.place).ok()?;
+    let rows = row_keeps(facts.formatting(), facts.docx().body()?, &block.place)?;
     let last = rows.last()?;
     if row + 1 != rows.len() || last.lead.is_none() || !last.keeps {
         return None;

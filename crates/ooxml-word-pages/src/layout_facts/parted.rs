@@ -10,7 +10,7 @@
 use super::keeps::new_page_after;
 use super::tree::{page_break_at, stripped_text};
 use super::{Block, BlockKind, Facts};
-use ooxml_word_edit::{row_keeps_at, TableKeeps};
+use ooxml_word_model::docx::keeps::{row_keeps, TableKeeps};
 
 /// Why a paragraph next to a table belongs with it (`PARTED_KINDS`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,7 +140,7 @@ fn line_after(facts: &Facts<'_>, table: &Block<'_>, after: &Block<'_>, pages: us
         return None;
     }
     let story = facts.docx().body()?;
-    let rows = row_keeps_at(facts.docx(), &story.part, &table.place).ok()?;
+    let rows = row_keeps(facts.formatting(), story, &table.place)?;
     let final_row = rows.last().filter(|r| !r.keeps)?;
     let fix = if pages == 1 {
         Some(AfterFix::Table {
