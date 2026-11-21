@@ -199,7 +199,14 @@ fn planned(
     )?;
     let side = item.side.unwrap_or(Where::After);
     Ok(match key.as_str() {
-        "find" => (side, TextPlace::Once(item.find.clone().unwrap_or_default())),
+        // within is one insertion's: items' finds search every story, as docx-agent's do
+        "find" => (
+            side,
+            TextPlace::Once {
+                text: item.find.clone().unwrap_or_default(),
+                within: args.items.is_none().then(|| args.within.clone()).flatten(),
+            },
+        ),
         "target" => (side, TextPlace::Range(item.target.clone().unwrap_or_default())),
         _ => {
             let (side, address) = text_at(item.at.as_deref().unwrap_or_default(), item.side, call)?;
@@ -235,11 +242,10 @@ fn reply(placed: Vec<Placed>, work: &[InsertItem], sides: &[Where]) -> ToolResul
     result
 }
 
-/// What of the call is not ported: a find within a block or span, values or addresses by
-/// reference.
+/// What of the call is not ported: values or addresses by reference.
 fn unported(args: &WordInsertText, work: &[InsertItem]) -> Option<Unported> {
-    if args.within.is_some() {
-        return Some(Unported::Form);
+    if args.within.as_deref().is_some_and(by_reference) {
+        return Some(Unported::Reference);
     }
     let by_ref = |v: &Option<String>| v.as_deref().is_some_and(by_reference);
     work.iter()

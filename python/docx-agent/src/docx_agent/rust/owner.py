@@ -38,11 +38,18 @@ def caller_key(caller: Mapping[str, Any] | None) -> str | None:
     return json.dumps(dict(caller), sort_keys=True, default=str, separators=(",", ":"))
 
 
-def context_of(caller: Mapping[str, Any] | None) -> Any:
-    """An ``ooxml_core.CallContext`` for ``caller``."""
+def context_of(caller: Mapping[str, Any] | None, limits: Any = None,
+               layout_timeout: float | None = None) -> Any:
+    """An ``ooxml_core.CallContext`` for ``caller``, with the host's ``limits`` on its reply
+    (an :class:`ooxml_edit.tools.Limits`: ``max_result_chars``, ``max_list_items``; the
+    defaults where ``None``) and how long laying the document out may take in it
+    (``layout_timeout``, seconds; the session's own where ``None``)."""
     import ooxml_core
 
-    return ooxml_core.CallContext(caller=caller_key(caller))
+    if limits is None:
+        return ooxml_core.CallContext(caller=caller_key(caller), layout_timeout=layout_timeout)
+    return ooxml_core.CallContext(caller=caller_key(caller), max_result_chars=limits.max_result_chars,
+                                  max_list_items=limits.max_list_items, layout_timeout=layout_timeout)
 
 
 def options(**given: Any) -> Any:
