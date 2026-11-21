@@ -74,6 +74,7 @@ fn limited(
             layout_limit: limit,
         }),
         others: Others::default(),
+        word: Some(&doc),
     };
     let args = Check::from_arg(&arguments, "").unwrap();
     let done = check(&args, &version, &Never).unwrap();
