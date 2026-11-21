@@ -5,7 +5,7 @@ A tool with a Rust editing handler (:data:`SERVED`: ``word_set_text``, ``replace
 ``word_insert_text``, ``word_delete``, ``word_format``, ``word_lists``, ``word_format_table``,
 ``word_styles``, ``word_follow_sample``, ``word_insert_markdown``, ``word_fields``,
 ``word_headers_footers``, ``word_template``, ``word_move``, ``word_sections``, ``word_notes``,
-``word_links``, ``word_drawings``, ``edit_chart`` (its data actions but the titles;
+``word_links``, ``word_drawings``, ``edit_chart`` (its data actions;
 the rest answer ``unported``), and each one ported after them)
 runs there, ahead of docx-agent's handler and its wrapper
 (:func:`docx_agent.tools._base.wrap`): the call's arguments, its ``$name`` refs resolved, go to

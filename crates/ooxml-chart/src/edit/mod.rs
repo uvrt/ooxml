@@ -16,10 +16,14 @@ mod make;
 mod owned;
 mod path;
 mod points;
+mod rich;
 mod series;
+mod title;
 
 pub use look::{labels_show_values, LabelLook};
+pub use rich::{paragraph_text, rebuild_paragraph, replace_body_text};
 pub use series::{Hash, POINT_SOURCES};
+pub use title::{NeedsLanguage, TitleEdit, TitleLook};
 
 use crate::data::{Point, Source, Unreadable};
 
