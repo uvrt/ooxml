@@ -46,7 +46,8 @@ def context_of(caller: Mapping[str, Any] | None, limits: Any = None,
     """An ``ooxml_core.CallContext`` for ``caller``: its key, and its context in the order
     given (as the session's replies name the caller: ``agent=b``); with the host's ``limits``
     on its reply (an :class:`ooxml_edit.tools.Limits`: ``max_result_chars``,
-    ``max_list_items``, as an ``ooxml_core.Limits``; the defaults where ``None``), how long
+    ``max_list_items``, ``max_images_per_call``, ``max_image_edge``, as an
+    ``ooxml_core.Limits``; the defaults where ``None``), how long
     laying the document out may take in it (``layout_timeout``, seconds; the session's own
     where ``None``), its writes dated ``date`` (UTC to the second, the session clock's;
     ``None``: the Rust session's own clock) and spaced by their language unless
@@ -67,7 +68,9 @@ def context_of(caller: Mapping[str, Any] | None, limits: Any = None,
                                                   layout_counts=layout_counts, locale=locale)
     if limits is not None:
         given["limits"] = ooxml_core.Limits(result_chars=limits.max_result_chars,
-                                            list_items=limits.max_list_items)
+                                            list_items=limits.max_list_items,
+                                            images_per_call=limits.max_images_per_call,
+                                            image_edge=limits.max_image_edge)
     return ooxml_core.CallContext(**given)
 
 
@@ -86,8 +89,8 @@ def host_ids(view: Any) -> Any:
 
 def options(**given: Any) -> Any:
     """An ``ooxml_core.CallOptions``: what one ``Session.call`` or ``Session.edit`` runs with
-    beside its name and arguments (``context``, ``documents``, ``placer``, ``layout``,
-    ``blobs``, ``written``, ``limit``)."""
+    beside its name and arguments (``context``, ``documents``, ``layout`` -- an
+    ``ooxml_core.CallLayout`` --, ``blobs``, ``written``, ``limit``)."""
     import ooxml_core
 
     return ooxml_core.CallOptions(**given)

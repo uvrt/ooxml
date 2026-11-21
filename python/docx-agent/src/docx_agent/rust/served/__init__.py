@@ -117,15 +117,17 @@ def blocks_at(call: Any, at: Any) -> Any:
 
 @dataclass(frozen=True)
 class Hosting:
-    """The editing tools the session serves, and what their edits read from the host."""
+    """The tools the session serves -- the editing tools, and the reading tools the host
+    hands over (``render``, :func:`docx_agent.rust.reads.serve_render`) -- and what their
+    calls read from the host."""
 
-    #: The tools the session edits with.
+    #: The tools the session serves.
     served: frozenset[str]
     #: Those that read the session's blobs (an inserted picture's bytes).
     blobs: frozenset[str]
-    #: Those whose edits read the document's pages (a field's result, a header's page number,
-    #: the upgrade's reflow): the session lays the versions out with the document's page
-    #: engine (lane P2c13).
+    #: Those whose calls read the document's pages (a field's result, a header's page number,
+    #: the upgrade's reflow, a page drawn): the session lays the versions out with the
+    #: document's page engine (lane P2c13).
     laid: frozenset[str]
     #: Those that keep the values written by reference on the paragraphs they went into
     #: (lane P2d2); another served tool given one is answered by the Python handler.

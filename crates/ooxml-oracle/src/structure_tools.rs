@@ -74,6 +74,7 @@ pub(crate) fn opened_version<'a>(
         layout: None,
         layout_limit: None,
         opened: editing.opened,
+        drawing: None,
     };
     Version::new("case.docx", editing.opened.package(), 1, versions)
         .with_others(editing.others)

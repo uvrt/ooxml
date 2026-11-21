@@ -1,8 +1,9 @@
 //! Owns: `ooxml_core.CallOptions`, everything a host gives one `Session.call` or
 //! `Session.edit` beside the tool's name and arguments -- who calls (a `CallContext`), the
 //! reply's limit, the other open documents it reads (`ooxml_core.CallDocuments`: their
-//! versions and the host's names for them), the placer of blocks, the page engine, the
-//! blobs, the values written by reference -- read into a [`CallContext`] once, while the
+//! versions and the host's names for them), the document's layout (`ooxml_core.CallLayout`:
+//! the page engine, the raster pages are drawn with, the placer of blocks), the blobs, the
+//! values written by reference -- read into a [`CallContext`] once, while the
 //! interpreter lock is held; and the adapter of a Python placer ([`PyPlacer`]: a `Placer` called with the
 //! lock taken back). A new kind of per-call input is one more keyword here, not one more
 //! argument of every call.
@@ -13,8 +14,10 @@ use crate::adapters::PyBlobs;
 use crate::context::PyCallContext;
 use crate::layout::PyWordPages;
 use crate::locale::locale_of;
+use crate::raster::PyPageRaster;
 use crate::version::PyVersion;
 use ooxml_session::{CallContext, DocId, DocNames, HostIds, Opened};
+use ooxml_tools::{BudgetSpan, ImageBudget};
 use ooxml_tools_word::{Blobs, HostTable, HostTables, LayoutCounts, Placer, Written};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -141,17 +144,65 @@ impl PyHostIds {
     }
 }
 
+/// What a call reads of the document's layout (`ooxml_core.CallLayout`). `pages`: the
+/// document's page engine (a `WordPages`, the host's kept one), which an edit whose results
+/// come from the pages (`word_fields`, a header's page number, `word_template`'s reflow)
+/// lays its versions out with, and `check` and `render` read the pages of. `raster`: the
+/// faces pages are drawn with (a `PageRaster` of the system's fonts and the font folders),
+/// from which `render` draws each document's pages; `None`: `render` is left to the host.
+/// `image_budgets`: the host's budgets of images kept across calls, as they stand when the
+/// call starts -- `(name, limit, used)`, `name` `"session"` or `"round"` -- which `render`
+/// refuses past, worded as the host words it (the call's own limit is the context's
+/// `Limits`).
+/// `placer`: where the call may ask where blocks are laid out -- called with the blocks
+/// asked as JSON text (a list, each an id then the ids it joins), it answers each one's
+/// `placements` or `unknown` as JSON text (a list of objects), or `None` where it cannot.
+/// One may serve many calls.
+#[pyclass(frozen, name = "CallLayout", module = "ooxml_core")]
+pub struct PyCallLayout {
+    pages: Option<Arc<dyn ooxml_tools_word::WordLayout>>,
+    raster: Option<Arc<ooxml_tools_word::PageRaster>>,
+    image_budgets: Vec<ImageBudget>,
+    placer: Option<Arc<dyn Placer>>,
+}
+
+#[pymethods]
+impl PyCallLayout {
+    /// # Errors
+    /// `ValueError` for a budget not named `"session"` or `"round"`.
+    #[new]
+    #[pyo3(signature = (pages = None, *, raster = None, image_budgets = None, placer = None))]
+    fn new(
+        pages: Option<PyRef<'_, PyWordPages>>,
+        raster: Option<PyRef<'_, PyPageRaster>>,
+        image_budgets: Option<Vec<(String, usize, usize)>>,
+        placer: Option<Py<PyAny>>,
+    ) -> PyResult<Self> {
+        let image_budgets = image_budgets
+            .into_iter()
+            .flatten()
+            .map(|(name, limit, used)| {
+                BudgetSpan::parse(&name)
+                    .map(|span| ImageBudget { span, limit, used })
+                    .ok_or_else(|| PyValueError::new_err(format!("image budget {name:?}: \"session\" or \"round\"")))
+            })
+            .collect::<PyResult<_>>()?;
+        Ok(Self {
+            pages: pages.map(|p| Arc::new(p.port()) as Arc<dyn ooxml_tools_word::WordLayout>),
+            raster: raster.map(|r| Arc::clone(&r.inner)),
+            image_budgets,
+            placer: placer.map(|p| Arc::new(PyPlacer(p)) as Arc<dyn Placer>),
+        })
+    }
+}
+
 /// What one call runs with beside its name and arguments (`ooxml_core.CallOptions`).
 /// `context`: who calls, a token that stops it, how long it may run (a `CallContext`).
 /// `limit`: the reply within so many characters, as the model is sent it (`call` only).
 /// `documents`: what the call needs about the open documents it names (a `CallDocuments`:
-/// the versions it reads and the host's names for them). `placer`: where it may ask where blocks are laid out -- called with the blocks
-/// asked as JSON text (a list, each an id then the ids it joins), it answers each one's
-/// `placements` or `unknown` as JSON text (a list of objects), or `None` where it cannot.
-/// `layout`: the document's page engine (a `WordPages`, the host's kept one), which an edit
-/// whose results come from the pages (`word_fields`, a header's page number,
-/// `word_template`'s reflow) lays its versions out with; `None`: such a result is left to the
-/// host. `blobs`: the host's blobs, an object with `blob(handle)` (`(name, mime, bytes)` or
+/// the versions it reads and the host's names for them). `layout`: what it reads of the
+/// document's layout (a `CallLayout`: the page engine, the raster, the placer); `None`:
+/// what needs them is left to the host. `blobs`: the host's blobs, an object with `blob(handle)` (`(name, mime, bytes)` or
 /// `None`) and `listed()` (`[(handle, name)]`), asked with the lock taken back
 /// (`word_drawings` insert_picture). `written`: the values the host wrote into the arguments
 /// for references, as JSON text (`[{"field", "start", "end", "text", "record", "brief"}]`,
@@ -168,14 +219,13 @@ impl PyCallOptions {
     /// # Errors
     /// `ValueError` for `written` that is not such a list.
     #[new]
-    #[pyo3(signature = (*, context = None, limit = None, documents = None, placer = None, layout = None,
-                        blobs = None, written = None))]
+    #[pyo3(signature = (*, context = None, limit = None, documents = None, layout = None, blobs = None,
+                        written = None))]
     fn new(
         context: Option<PyRef<'_, PyCallContext>>,
         limit: Option<usize>,
         documents: Option<PyRef<'_, PyCallDocuments>>,
-        placer: Option<Py<PyAny>>,
-        layout: Option<PyRef<'_, PyWordPages>>,
+        layout: Option<PyRef<'_, PyCallLayout>>,
         blobs: Option<Py<PyAny>>,
         written: Option<&str>,
     ) -> PyResult<Self> {
@@ -185,8 +235,12 @@ impl PyCallOptions {
             built.names = documents.names.clone();
             built.tables.clone_from(&documents.tables);
         }
-        built.placer = placer.map(|p| Arc::new(PyPlacer(p)) as Arc<dyn Placer>);
-        built.layout = layout.map(|pages| Arc::new(pages.port()) as Arc<dyn ooxml_tools_word::WordLayout>);
+        if let Some(layout) = layout {
+            built.placer.clone_from(&layout.placer);
+            built.layout.clone_from(&layout.pages);
+            built.raster.clone_from(&layout.raster);
+            built.image_budgets.clone_from(&layout.image_budgets);
+        }
         built.blobs = blobs.map(|b| Arc::new(PyBlobs(b)) as Arc<dyn Blobs>);
         if let Some(written) = written {
             built.written = serde_json::from_str::<Value>(written)

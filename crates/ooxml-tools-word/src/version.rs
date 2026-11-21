@@ -170,6 +170,8 @@ pub struct Owned<'a> {
     pub layout: Option<&'a dyn WordLayout>,
     /// How long laying a version out may take in the call (`None`: as long as the call).
     pub layout_limit: Option<crate::LayoutLimit<'a>>,
+    /// What the call draws pages with, where the host hands a raster (`render`).
+    pub drawing: Option<crate::Drawing<'a>>,
 }
 
 /// A table of another open document the host holds itself (a workbook's `t:stock`), as a

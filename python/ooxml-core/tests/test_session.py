@@ -127,14 +127,22 @@ def test_a_locale_is_a_tag_or_a_locale_with_its_five_fields():
 
 
 def test_limits_are_given_as_one_and_checked():
-    limits = ooxml_core.Limits(result_chars=3000)
-    assert (limits.result_chars, limits.list_items) == (3000, 50)
-    assert (ooxml_core.Limits().result_chars, ooxml_core.Limits().list_items) == (24_000, 50)
-    with pytest.raises(ValueError):
-        ooxml_core.Limits(list_items=0)
+    """``Limits``: the host's limits on a call's reply, carried by a ``CallContext``;
+    ``CallLayout(image_budgets=)``: the session's and the round's, by name."""
+    limits = ooxml_core.Limits(result_chars=3000, images_per_call=2, image_edge=1200)
+    assert (limits.result_chars, limits.list_items, limits.images_per_call, limits.image_edge) == (3000, 50, 2, 1200)
+    default = ooxml_core.Limits()
+    assert (default.result_chars, default.list_items, default.images_per_call,
+            default.image_edge) == (24_000, 50, 4, 2576)
+    for given in ({"list_items": 0}, {"images_per_call": 0}, {"image_edge": 0}):
+        with pytest.raises(ValueError, match=next(iter(given))):
+            ooxml_core.Limits(**given)
     ooxml_core.CallContext(limits=limits, caller="w1")
     with pytest.raises(TypeError):
         ooxml_core.CallContext(max_result_chars=3000)
+    ooxml_core.CallLayout(image_budgets=[("session", 10, 3), ("round", 4, 4)])
+    with pytest.raises(ValueError, match="week"):
+        ooxml_core.CallLayout(image_budgets=[("week", 1, 0)])
 
 
 def test_tool_specs_are_the_exports():
@@ -233,7 +241,7 @@ def page_docx(result: str) -> bytes:
 
 
 def test_a_field_update_lays_out_with_the_hosts_engine():
-    """``layout=``: the host's page engine for the document, which ``word_fields`` lays the
+    """``layout=CallLayout(pages)``: the host's page engine for the document, which ``word_fields`` lays the
     versions it updates out with; without it a page number is left to the host."""
     from pathlib import Path
 
@@ -243,6 +251,7 @@ def test_a_field_update_lays_out_with_the_hosts_engine():
     doc = session.open(page_docx("9"), name="a.docx")
     left = call(session, "word_fields", {"doc": doc, "action": "update"})
     assert call(session, "word_fields", {"doc": doc, "action": "list"})["data"][0]["result"] == "9", left
-    reply = call(session, "word_fields", {"doc": doc, "action": "update"}, layout=pages)
+    reply = call(session, "word_fields", {"doc": doc, "action": "update"}, layout=ooxml_core.CallLayout(pages))
     assert reply["ok"], reply
     assert call(session, "word_fields", {"doc": doc, "action": "list"})["data"][0]["result"] == "1"
+

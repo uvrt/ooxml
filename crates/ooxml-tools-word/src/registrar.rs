@@ -26,8 +26,11 @@ pub type EditFn<T> = fn(&T, &Editing<'_>) -> ToolResult<Value>;
 /// and the mode the session keeps from now on (`None`: unchanged).
 pub type TrackingFn<T> = fn(&T, &Editing<'_>) -> (ToolResult<Value>, Option<Tracked>);
 
-/// What a host (docx-agent) needs to know of an editing tool to hand its calls to the
-/// session that owns the document: exported with the registry (`ooxml_core.tool_hosting`).
+/// What a host (docx-agent) needs to know of a tool to hand its calls to the session that
+/// owns the document: exported with the registry (`ooxml_core.tool_hosting`). An editing
+/// tool declares it with its handler; a reading tool the host hands over (`render`, whose
+/// pages come from the host's page engine) with [`Registrar::hosted_read`], the others
+/// being the host's ([`Hosting::HOST`]).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[allow(clippy::struct_excessive_bools)] // independent facts, each exported by name
 pub struct Hosting {
@@ -35,7 +38,7 @@ pub struct Hosting {
     pub served: bool,
     /// Its edits read the session's blobs (an inserted picture's bytes).
     pub blobs: bool,
-    /// Its edits read the document's pages: the host hands the session its page engine.
+    /// Its calls read the document's pages: the host hands the session its page engine.
     pub layout: bool,
     /// It keeps the values the host wrote for references on the paragraphs they went into.
     pub keeps_written: bool,
@@ -91,8 +94,12 @@ impl Hosting {
 
 /// Where Word's tools register: a registry of the tools a session dispatches.
 pub trait Registrar {
-    /// The reading tool `T`, answered by `run`.
+    /// The reading tool `T`, answered by `run`; its calls are the host's to hand over
+    /// ([`Hosting::HOST`]).
     fn read<T: ToolArgs + 'static>(&mut self, run: ReadFn<T>);
+
+    /// The reading tool `T`, answered by `run`, hosted as `hosting` says.
+    fn hosted_read<T: ToolArgs + 'static>(&mut self, run: ReadFn<T>, hosting: Hosting);
 
     /// The editing tool `T`, answered by `run`, hosted as `hosting` says.
     fn edit<T: ToolArgs + 'static>(&mut self, run: EditFn<T>, hosting: Hosting);

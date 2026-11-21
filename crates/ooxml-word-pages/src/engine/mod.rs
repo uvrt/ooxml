@@ -531,6 +531,7 @@ impl PageEngine {
             pictures,
             glyphs: Arc::clone(&generation.fonts.glyphs),
             names: Arc::clone(&generation.fonts.names),
+            drawing: Arc::clone(&generation.fonts.drawing),
             relaid,
             generation: generation.number,
             serial: self.serial,

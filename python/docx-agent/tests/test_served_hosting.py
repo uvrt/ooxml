@@ -20,9 +20,11 @@ SERVED = {"word_set_text", "replace_text", "word_insert_text", "word_delete", "w
           "word_drawings",
           # p2-serve-i (#167): the review and object tools, word_copy_from
           "word_edit_table", "word_changes", "word_comments", "word_controls", "word_set_tracking",
-          "word_copy_from", "set_properties"}
+          "word_copy_from", "set_properties",
+          # lane RD2: render, a reading tool the host hands over with its page engine
+          "render"}
 BLOBS = {"word_drawings"}
-LAID = {"word_fields", "word_headers_footers", "word_template"}
+LAID = {"word_fields", "word_headers_footers", "word_template", "render"}
 KEEPS_WRITTEN = {"word_set_text", "word_insert_text", "replace_text", "word_insert_markdown"}
 
 

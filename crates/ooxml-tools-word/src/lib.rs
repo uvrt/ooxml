@@ -15,6 +15,7 @@
 
 mod blobs;
 mod check;
+mod coverage;
 mod describe;
 mod document;
 mod drawn_reply;

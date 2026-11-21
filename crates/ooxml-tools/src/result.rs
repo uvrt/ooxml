@@ -65,6 +65,9 @@ pub struct Done<T> {
     /// The files the call gives the application (`save_document`'s package): never in the
     /// model's JSON; [`ToolResult::done`] moves them into [`AppOnly::files`].
     pub files: Vec<File>,
+    /// What the model is warned of (an argument read otherwise than given);
+    /// [`ToolResult::done`] moves them into [`ToolResult::warnings`].
+    pub warnings: Vec<String>,
 }
 
 /// A file a call gives the application, its bytes beside the reply (tool design rule 6:
@@ -99,6 +102,7 @@ impl<T> Done<T> {
             ask: None,
             unported: Vec::new(),
             files: Vec::new(),
+            warnings: Vec::new(),
         }
     }
 }
@@ -172,11 +176,12 @@ impl<T: ReplyData> ToolResult<T> {
     #[must_use]
     pub fn done(mut done: Done<T>) -> Self {
         let files = std::mem::take(&mut done.files);
+        let warnings = std::mem::take(&mut done.warnings);
         Self {
             doc: None,
             version: None,
             outcome: Outcome::Done(Box::new(done)),
-            warnings: Vec::new(),
+            warnings,
             app: AppOnly {
                 files,
                 ..AppOnly::default()

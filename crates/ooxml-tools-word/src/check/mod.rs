@@ -71,7 +71,7 @@ pub const CHECK_LAYOUT: &str = "check: layout facts";
 pub const CHECK_ARGUMENTS: &str = "check: arguments";
 /// What `unported` says of a check whose `pages` hold none of its ranges' blocks.
 pub const CHECK_PAGES_OUTSIDE: &str = "check: pages outside the ranges";
-/// The ranges a check takes at most (docx-agent's `MAX_RANGES`).
+/// The ranges a check or a render takes at most (docx-agent's `scope.MAX_RANGES`).
 pub const MAX_RANGES: usize = 20;
 /// What `unported` says of a check of a document the session does not own.
 pub const CHECK_NOT_OWNED: &str = "check: a document the session does not own";

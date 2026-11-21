@@ -42,9 +42,11 @@ impl PyCancelToken {
 }
 
 /// The host's limits on a call's reply (`ooxml_core.Limits`, the session's `Limits`):
-/// `result_chars`, a page's characters (24,000 unless given), and `list_items`, a listing's
-/// items per page (50 unless given) -- docx-agent's `Limits.max_result_chars` and
-/// `Limits.max_list_items`. One may serve many calls.
+/// `result_chars`, a page's characters (24,000 unless given), `list_items`, a listing's
+/// items per page (50), `images_per_call`, the images one call gives at most (4), and
+/// `image_edge`, an image's longest edge in pixels (2,576) -- docx-agent's
+/// `Limits.max_result_chars`, `max_list_items`, `max_images_per_call` and `max_image_edge`.
+/// One may serve many calls.
 #[pyclass(frozen, name = "Limits", module = "ooxml_core")]
 pub struct PyLimits {
     inner: ooxml_tools::Limits,
@@ -55,18 +57,29 @@ impl PyLimits {
     /// # Errors
     /// `ValueError` for a limit of 0.
     #[new]
-    #[pyo3(signature = (*, result_chars = None, list_items = None))]
-    fn new(result_chars: Option<usize>, list_items: Option<usize>) -> PyResult<Self> {
+    #[pyo3(signature = (*, result_chars = None, list_items = None, images_per_call = None, image_edge = None))]
+    fn new(
+        result_chars: Option<usize>,
+        list_items: Option<usize>,
+        images_per_call: Option<usize>,
+        image_edge: Option<u32>,
+    ) -> PyResult<Self> {
         let mut inner = ooxml_tools::Limits::DEFAULT;
         for (given, kept, name) in [
             (result_chars, &mut inner.result_chars, "result_chars"),
             (list_items, &mut inner.list_items, "list_items"),
+            (images_per_call, &mut inner.images_per_call, "images_per_call"),
         ] {
             match given {
                 Some(0) => return Err(PyValueError::new_err(format!("{name} is 1 or more"))),
                 Some(n) => *kept = n,
                 None => {}
             }
+        }
+        match image_edge {
+            Some(0) => return Err(PyValueError::new_err("image_edge is 1 or more")),
+            Some(edge) => inner.image_edge = i64::from(edge),
+            None => {}
         }
         Ok(Self { inner })
     }
@@ -81,6 +94,18 @@ impl PyLimits {
     #[getter]
     fn list_items(&self) -> usize {
         self.inner.list_items
+    }
+
+    /// The images one call gives at most.
+    #[getter]
+    fn images_per_call(&self) -> usize {
+        self.inner.images_per_call
+    }
+
+    /// An image's longest edge, in pixels.
+    #[getter]
+    fn image_edge(&self) -> i64 {
+        self.inner.image_edge
     }
 }
 

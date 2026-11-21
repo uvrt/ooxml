@@ -34,6 +34,11 @@ def test_the_renderer_and_the_layout_are_registered_tasks():
 
 
 def work_in_a_daemonic_process(queue, data: bytes) -> None:
+    # The Python path's render and check, which draw and lay out in the pool's workers: the
+    # Rust session serves both without workers (lane RD1, test_rust_render.py).
+    from docx_agent.rust import reads
+
+    reads.serve_render = reads.serve_check = lambda call, arguments: None
     try:
         with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, font_dirs=[]) as box:
             session = box.session()

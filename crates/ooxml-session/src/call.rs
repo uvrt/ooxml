@@ -40,6 +40,10 @@ pub struct Call<'a> {
     pub(crate) layout: Option<&'a dyn ooxml_tools_word::WordLayout>,
     /// How long laying a version out may take in the call.
     pub(crate) layout_limit: Option<ooxml_tools_word::LayoutLimit<'a>>,
+    /// The host's raster, where it hands one (`render`).
+    pub(crate) raster: Option<&'a ooxml_tools_word::PageRaster>,
+    /// The host's budgets of images, as they stand when the call starts.
+    pub(crate) image_budgets: &'a [ooxml_tools::ImageBudget],
     /// The session's blobs, where the host hands them over.
     pub(crate) blobs: Option<&'a dyn ooxml_tools_word::Blobs>,
     /// The values the host wrote into the call's arguments for references.
@@ -88,6 +92,11 @@ impl Call<'_> {
             last_check: &word.last_check,
             layout: self.layout,
             layout_limit: self.layout_limit,
+            drawing: self.raster.map(|raster| ooxml_tools_word::Drawing {
+                raster,
+                images: &word.images,
+                budgets: self.image_budgets,
+            }),
         })
     }
 

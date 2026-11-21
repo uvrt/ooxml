@@ -26,6 +26,8 @@ pub struct LaidVersion {
     pub(crate) drawings: Option<crate::drawings::WordDrawings>,
     pub(crate) glyphs: Arc<WordGlyphs>,
     pub(crate) names: Arc<dyn FaceNames>,
+    /// The faces Word draws it with (what a rasteriser is handed).
+    pub(crate) drawing: Arc<ooxml_fonts::DrawingFonts>,
     pub(crate) relaid: bool,
     pub(crate) relaid_cause: Option<crate::causes::RelaidCause>,
     pub(crate) said: crate::warnings::Said,

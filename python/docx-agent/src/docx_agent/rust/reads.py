@@ -24,7 +24,7 @@ asked of the document's layout as :func:`docx_agent.tools.read._placed_by_worker
 Python path, counted by tool and reason (:func:`fallbacks`, ``read_fallbacks{tool,reason}``)
 and never silently: ``ooxml_core`` without a session; a document that is not a committed
 version's read copy (a batch's reads of its own changes); limits below 1 (the host's own
-limits are the Rust session's, ``CallContext(limits=Limits(result_chars=, list_items=))``); an address naming an id this session renamed or deleted (the ledger and
+limits are the Rust session's, ``CallContext(limits=ooxml_core.Limits(...))``); an address naming an id this session renamed or deleted (the ledger and
 the aliases are Python's until P2); a regular expression Rust does not match as Python does;
 and what Rust says it does not give as Python does yet (its ``unported``: Accept All's cell
 ends).  A refusal is not a fallback (lane P2e1): Rust's is the call's answer, in
@@ -403,14 +403,18 @@ def _at_path(value: Any, path: list[str]) -> list[Any]:
 
 
 def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | None" = None,
-          others: tuple[str, ...] = (), layout: Any = None,
+          others: tuple[str, ...] = (), layout: Any = None, raster: Any = None,
+          images: "list[tuple[str, int, int]] | None" = None,
           context: "Callable[[], dict[str, Any]] | None" = None,
           files: "list[tuple[str, str, bytes]] | None" = None) -> dict[str, Any]:
     """The Rust envelope of ``tool`` with ``arguments`` on the version ``call`` reads (and
     of each other document named at a path of ``others``, :func:`_with_others`); ``layout``:
     the document's page engine (an ``ooxml_core.WordPages``), for a call that reads the
-    pages (``check``'s ``reflow``), laying out within ``call.limits.layout_timeout`` (lane
-    P5c: past it, ``reflow.error`` says so, as the Python path's does). Run with the
+    pages (``check``'s ``reflow``, ``render``), laying out within
+    ``call.limits.layout_timeout`` (lane P5c: past it, ``reflow.error`` says so, as the
+    Python path's does); ``raster``: the faces ``render`` draws pages with (an
+    ``ooxml_core.PageRaster``, :func:`host_raster`) and ``images`` the session's and the
+    round's image budgets as they stand (:func:`image_budgets`). Run with the
     ``ooxml_core.CallContext`` of the host's limits and the keywords ``context`` gives where
     given -- asked only once the session serves the call, so a call answered in Python never
     reads them; the files it
@@ -431,10 +435,12 @@ def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | 
     # ``context`` adds, asked only now that the session serves the call
     made = context_of(None, call.limits, call.limits.layout_timeout if layout is not None else None,
                       **(context() if context is not None else {}))
+    laid = None
+    if layout is not None or raster is not None or placer is not None:
+        laid = ooxml_core.CallLayout(layout, raster=raster, image_budgets=images,
+                                     placer=placer.place if placer is not None else None)
     reply, given_files, app = mirror.session.call(tool, json.dumps(arguments), ooxml_core.CallOptions(
-        context=made,
-        documents=ooxml_core.CallDocuments(at=[version, *pinned], names=names),
-        placer=placer.place if placer is not None else None, layout=layout))
+        context=made, documents=ooxml_core.CallDocuments(at=[version, *pinned], names=names), layout=laid))
     if placer is not None and placer.error is not None:
         raise placer.error
     envelope = json.loads(reply)
@@ -458,13 +464,14 @@ def serve(call: Any, tool: str, arguments: dict[str, Any],
           python: Callable[[], Result], *, addresses: tuple = (),
           answer: Callable[[dict[str, Any]], Result] | None = None,
           placer: "Placer | None" = None, why_not: str | None = None,
-          others: tuple[str, ...] = (), layout: Any = None,
+          others: tuple[str, ...] = (), layout: Any = None, raster: Any = None,
+          images: "list[tuple[str, int, int]] | None" = None,
           context: "Callable[[], dict[str, Any]] | None" = None,
           files: "list[tuple[str, str, bytes]] | None" = None) -> Result:
     """``tool``'s answer from the Rust session (``answer`` makes the :class:`Result` of its
     envelope), or ``python()``'s where Rust's is not the same yet (counted, with why).
     ``others``: the paths of ``arguments`` naming another open document; ``layout``,
-    ``context``, ``files``: as :func:`_call` takes them."""
+    ``raster``, ``images``, ``context``, ``files``: as :func:`_call` takes them."""
     try:
         if why_not is not None:
             raise _Fallback(why_not)
@@ -473,7 +480,7 @@ def serve(call: Any, tool: str, arguments: dict[str, Any],
         if _renamed_or_deleted(_named(call), *addresses):
             raise _Fallback("renamed or deleted id")
         envelope = _call(call, tool, arguments, placer=placer, others=others, layout=layout,
-                         context=context, files=files)
+                         raster=raster, images=images, context=context, files=files)
         result = (answer or _result)(envelope)
     except _Fallback as why:
         _fell_back(tool, str(why))
@@ -554,6 +561,82 @@ def _laid_check(arguments: dict[str, Any]) -> bool:
 
     return bool(ranges_of(arguments.get("range"))) or any(
         arguments.get(name) is not None for name in ("min_size", "styles"))
+
+
+#: The faces pages are drawn with in Rust, by the font folders they were made with
+#: (``ooxml_core.PageRaster``: the system's fonts and the folders, read once).
+_RASTERS: dict[tuple[str, ...], Any] = {}
+_RASTERS_LOCK = threading.Lock()
+
+
+def host_raster(font_dirs: "list[str] | tuple[str, ...]") -> Any:
+    """Lane RD1: the ``ooxml_core.PageRaster`` ``render`` draws a document's pages from --
+    the system's fonts and ``font_dirs`` (the document's, as :func:`docx2svg.user_font_dirs`
+    reads them), read once per set of folders; the session makes each document's raster
+    from it, handed the faces its pages draw."""
+    import ooxml_core
+    from ooxml_common.fonts.office import user_font_dirs
+
+    dirs = tuple(str(path) for path in user_font_dirs(list(font_dirs) or None))
+    with _RASTERS_LOCK:
+        found = _RASTERS.get(dirs)
+    if found is None:
+        made = ooxml_core.PageRaster([], list(dirs))
+        with _RASTERS_LOCK:
+            found = _RASTERS.setdefault(dirs, made)
+    return found
+
+
+def image_budgets(call: Any) -> list[tuple[str, int, int]]:
+    """The session's and the round's image budgets as they stand for ``call``, each
+    ``(name, limit, used)`` where the host's limits set one: what the Rust session refuses
+    images past, worded as :meth:`ooxml_edit.tools.session.Session.check_images` words it
+    (the call's own limit, ``max_images_per_call``, goes with the context's limits)."""
+    limits, session = call.limits, call.session
+    budgets = []
+    if limits.image_budget is not None:
+        budgets.append(("session", limits.image_budget, session.images_used))
+    if limits.image_budget_per_round is not None:
+        budgets.append(("round", limits.image_budget_per_round, session.images_this_round))
+    return budgets
+
+
+def serve_render(call: Any, arguments: dict[str, Any]) -> Result | None:
+    """Lane RD1: ``render`` answered by the Rust session -- laid out by the document's page
+    engine (:func:`docx_agent.pages.word_pages`), its pages drawn in Rust and kept there --
+    for a document it owns, outside a batch; else ``None`` (counted, with why), and the
+    handler goes on.  Each image comes back as a file (``page 3``, ``sheet of pages 1-12``),
+    made an image of the reply here (``call.image``)."""
+    from . import served as _served
+
+    owned = _owned(call.entry)
+    why = None
+    layout = raster = None
+    hosting = _served.hosting()
+    if "render" not in hosting.served:
+        why = "not served"
+    elif owned is None:
+        why = "not owned"
+    elif call.in_batch:
+        why = "in a batch"
+    else:
+        from ..layout import font_dirs_of
+        from ..pages import word_pages
+
+        if "render" in hosting.laid:
+            layout, _ = word_pages(owned.held)     # none: the session says so (unported)
+        raster = host_raster(font_dirs_of(call.document))
+    files: list[tuple[str, str, bytes]] = []
+    served = serve(call, "render", arguments, lambda: None, why_not=why, layout=layout, raster=raster,
+                   images=image_budgets(call) if why is None else None, files=files)
+    if served is None:
+        return None
+    from ooxml_edit.tools.render import png_size
+
+    for name, _format, data in files:
+        width, height = png_size(data)
+        call.image(data, width, height, label=name)
+    return served
 
 
 def last_check(call: Any) -> tuple[bool, Any, int | None]:
