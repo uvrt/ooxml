@@ -41,6 +41,12 @@ for package in ("docx-agent", "docx2svg", "ooxml-edit", "ooxml-common"):
         sys.path.insert(0, str(source))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+# The reference is docx-agent in Python: the Rust core kept out of this process and its workers
+# (spawn imports this module there too) before docx-agent is imported (reference_guard.py).
+from reference_guard import guard  # noqa: E402
+
+guard()
+
 from docx_agent import Document  # noqa: E402
 from docx_agent import validate as _validate  # noqa: E402
 from docx_agent.edit import ids as _ids  # noqa: E402

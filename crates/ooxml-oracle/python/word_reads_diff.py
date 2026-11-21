@@ -43,6 +43,13 @@ for package in ("docx-agent", "docx2svg", "ooxml-edit", "ooxml-common"):
     if str(source) not in sys.path:
         sys.path.insert(0, str(source))
 
+# The reference is docx-agent in Python: the Rust core kept out of this process and its workers
+# before docx-agent is imported (reference_guard.py).
+from reference_guard import check as _core_check  # noqa: E402
+from reference_guard import guard as _core_guard  # noqa: E402
+
+_core_guard()
+
 from docx_agent import Document  # noqa: E402
 from docx_agent.edit import ids as _ids  # noqa: E402
 
@@ -162,6 +169,7 @@ def report(expected: dict, rust: dict, ignore: tuple = (), results: str | None =
     differences (its file, case key, input from ``inputs``, differences and each side's error,
     :func:`refusal`), then the totals
     with ``counts`` (e.g. the cases left to the host)."""
+    _core_check()      # a reference that loaded the Rust core compared Rust with Rust
     failed = 0
     lines = []
     for key, want in expected.items():
