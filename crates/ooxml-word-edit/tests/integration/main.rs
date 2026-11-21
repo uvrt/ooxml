@@ -5,6 +5,7 @@
 mod common;
 
 mod control_delete;
+mod copy_writers;
 mod history;
 mod object_bench;
 mod object_writers;
