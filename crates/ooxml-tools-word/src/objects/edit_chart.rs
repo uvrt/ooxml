@@ -431,3 +431,9 @@ fn unported(summary: String, what: &str) -> Done<Value> {
     done.unported.push(what.to_owned());
     done
 }
+
+/// Registers `edit_chart` (the group's [`super::register`]): the host asks the session first
+/// (its data actions that change points in place; the rest answer `unported`).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    r.reading_edit::<EditChart>(edit_chart_read, edit_chart, crate::Hosting::SERVED);
+}

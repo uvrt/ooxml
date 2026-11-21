@@ -64,6 +64,9 @@ pub struct IdsChange {
     /// Drawing numbers given now (drawn, kept by a copy, or brought by parts) that the
     /// document had not had ([`Ids::had_drawing`]).
     pub drawings: Vec<u64>,
+    /// Blocks replaced, one by one (docx-agent's `_note_replaced`): the old block id's
+    /// value and the id of the block that replaced it.
+    pub replaced: Vec<(u32, String)>,
 }
 
 impl IdsChange {
@@ -76,6 +79,7 @@ impl IdsChange {
             && self.forget.is_empty()
             && self.forget_targets.is_empty()
             && self.highest_drawing == 0
+            && self.replaced.is_empty()
             && self.drawings.is_empty()
     }
 }
@@ -109,6 +113,9 @@ pub struct Ids {
     /// Every drawing number any version had or a draw gave (docx-agent's ledger's drawing
     /// numbers in the document and `drawings_gone`): a copy keeps a number only outside it.
     drawings: Arc<BTreeSet<u64>>,
+    /// Each block id's value replaced by one block, and that block's id (docx-agent's
+    /// ledger's `replaced`: what a refusal naming the old id says replaced it).
+    replaced: Arc<BTreeMap<u32, String>>,
     /// The first annotation id of the edit being applied (one above the largest in use
     /// when it began numbering): its revision records' ids count from here.
     annotations: Option<i64>,
@@ -217,8 +224,17 @@ impl Ids {
         self.annotations = Some(first);
     }
 
+    /// Each block id's value replaced by one block, with that block's id.
+    #[must_use]
+    pub fn replaced(&self) -> &BTreeMap<u32, String> {
+        &self.replaced
+    }
+
     /// Add what `change` adds.
     pub fn apply(&mut self, change: &IdsChange) {
+        if !change.replaced.is_empty() {
+            Arc::make_mut(&mut self.replaced).extend(change.replaced.iter().cloned());
+        }
         self.highest_drawing = self.highest_drawing.max(change.highest_drawing);
         if change.drawings.iter().any(|n| !self.drawings.contains(n)) {
             Arc::make_mut(&mut self.drawings).extend(change.drawings.iter().copied());
@@ -285,6 +301,12 @@ impl Ids {
             let aliases = Arc::make_mut(&mut self.aliases);
             for (old, new) in head.aliases.iter() {
                 aliases.insert(old.clone(), new.clone());
+            }
+        }
+        if !Arc::ptr_eq(&self.replaced, &head.replaced) {
+            let replaced = Arc::make_mut(&mut self.replaced);
+            for (old, new) in head.replaced.iter() {
+                replaced.insert(*old, new.clone());
             }
         }
     }

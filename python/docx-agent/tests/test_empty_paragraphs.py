@@ -18,6 +18,7 @@ from ooxml_edit.tools import Toolbox  # noqa: E402
 from docx_agent import Document  # noqa: E402
 from docx_agent.layout_facts import _state, empty_paragraphs  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
+from facts_documents import empty_document as _document  # noqa: E402
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
@@ -32,26 +33,6 @@ def _ok(box, session, tool: str, /, **arguments):
     result = box.dispatch(session, tool, arguments)
     assert result.ok, json.dumps(result.to_json(), indent=1)
     return result
-
-
-def _document() -> tuple[Document, str, list[str]]:
-    """A made-up document: an opening line, then two blank lines (one a space only) before
-    the next, a table whose cell (1, 0) reads Title, a blank line, Body text, and a closing
-    line; an empty paragraph also opens the document and ends the cell (1, 1)."""
-    document = Document.new()
-    document.insert_markdown("Opening line.\n\nNext line.\n\n| Item | Note |\n| --- | --- |\n"
-                             "| x | y |\n\nClosing line.", at="end")
-    opening = document._index(document.package.document_part()).paragraphs[0].id
-    blanks = [document.paragraph(opening).insert_after(" ").id]
-    blanks.insert(0, document.paragraph(opening).insert_after("").id)
-    document.paragraph(opening).insert_before("")
-    table = document.tables()[0]
-    cell = table.cell(1, 0).paragraphs[0]
-    cell.insert_after("Body text")
-    blanks.append(cell.insert_after("").id)
-    cell.set_text("Title")
-    table.cell(1, 1).paragraphs[0].insert_after("")
-    return document, table.id, blanks
 
 
 def _texts(document: Document) -> list[str]:

@@ -1,9 +1,9 @@
 //! Owns: the numbers content copied into the document takes where its own are in use, as
 //! docx-agent's importer gives them (`edit/importing.py`, `Importer._drawing_ids` and
 //! `_control_ids`): a drawing's `wp:docPr/@id` past every number the document has and had,
-//! a content control's `w:sdtPr/w:id` a fresh value its old one and the document's count
-//! of controls seed; a copy from another document keeping its drawing numbers where the
-//! document never had them.
+//! a content control's `w:sdtPr/w:id` a fresh value its old one and the count of ids
+//! taken seed ([`Controls`], one per edit); a copy from another document keeping its
+//! drawing numbers where the document never had them.
 //!
 //! Must not: place the content, stamp its paragraph or drawing ids (the caller does), or
 //! read more of the document than the numbers it compares with.
@@ -59,21 +59,79 @@ pub(crate) fn keep_or_renumber_drawings(sink: &mut EditSink<'_, '_>, work: &mut 
 }
 
 /// Give every content control in `element` whose id another control of the document
-/// has (by absolute value) a new one (`_control_ids`): the first value of the sequence
-/// seeded by its old id and the number of ids taken so far, within Word's range, stepped
-/// past any taken. Reads every story part (the ids a control may not repeat).
+/// has (by absolute value) a new one (`_control_ids` of one piece of content).
 ///
 /// # Errors
 /// When the document cannot be read.
 pub(crate) fn renumber_controls(sink: &mut EditSink<'_, '_>, work: &mut Work, element: Id) -> Result<()> {
-    let nodes: Vec<Id> = work
-        .iter(element, W, &["id"])
-        .into_iter()
-        .filter(|n| work.parent(*n).is_some_and(|p| work.is(p, W, "sdtPr")))
-        .collect();
-    if nodes.is_empty() {
-        return Ok(());
+    Controls::default().renumber(sink, work, &[element]).map(|_| ())
+}
+
+/// The content-control ids one edit's copied content takes, as docx-agent's importer
+/// keeps them (`_control_ids`): the ids every story's controls have, read once the edit
+/// meets its first control, and each id the copies took since.
+#[derive(Default)]
+pub(crate) struct Controls {
+    /// The absolute values taken.
+    taken: Option<HashSet<i64>>,
+}
+
+impl Controls {
+    /// Give every content control in `elements` whose id is taken (by absolute value) a
+    /// new one: the first value of the sequence seeded by its old id and the number of ids
+    /// taken so far, within Word's range, stepped past any taken. Reads every story part
+    /// (the ids a control may not repeat). Each id changed, old to new, in order.
+    ///
+    /// # Errors
+    /// When the document cannot be read.
+    pub(crate) fn renumber(
+        &mut self,
+        sink: &mut EditSink<'_, '_>,
+        work: &mut Work,
+        elements: &[Id],
+    ) -> Result<Vec<(i64, i64)>> {
+        let nodes: Vec<Id> = elements
+            .iter()
+            .flat_map(|e| work.iter(*e, W, &["id"]))
+            .filter(|n| work.parent(*n).is_some_and(|p| work.is(p, W, "sdtPr")))
+            .collect();
+        let mut changed = Vec::new();
+        if nodes.is_empty() {
+            return Ok(changed);
+        }
+        if self.taken.is_none() {
+            self.taken = Some(taken_ids(sink)?);
+        }
+        let taken = self.taken.get_or_insert_with(HashSet::new);
+        for node in nodes {
+            let Some(mut value) = work.get(node, Some(W), "val").and_then(python_int) else {
+                continue;
+            };
+            if taken.contains(&value.abs()) {
+                let old = value;
+                let first = (0..)
+                    .map(|k| sequence_value(&format!("control\0{old}\0{}", taken.len()), k))
+                    .find(|v| *v != 0)
+                    .unwrap_or(1);
+                value = i64::from(first) % CONTROL_RANGE + 1;
+                while taken.contains(&value) {
+                    value = (value * 7 + 13) % CONTROL_RANGE + 1;
+                }
+                work.set(
+                    node,
+                    Arc::new(QName::new(Some("w"), "val", Some(W))),
+                    &value.to_string(),
+                );
+                changed.push((old, value));
+            }
+            taken.insert(value.abs());
+        }
+        Ok(changed)
     }
+}
+
+/// The absolute ids of every story's content controls (the whole document read).
+fn taken_ids(sink: &mut EditSink<'_, '_>) -> Result<HashSet<i64>> {
     sink.read_everything();
     let docx = sink.docx()?;
     let mut taken: HashSet<i64> = HashSet::new();
@@ -89,29 +147,7 @@ pub(crate) fn renumber_controls(sink: &mut EditSink<'_, '_>, work: &mut Work, el
             }
         }
     }
-    for node in nodes {
-        let Some(mut value) = work.get(node, Some(W), "val").and_then(python_int) else {
-            continue;
-        };
-        if taken.contains(&value.abs()) {
-            let old = value;
-            let first = (0..)
-                .map(|k| sequence_value(&format!("control\0{old}\0{}", taken.len()), k))
-                .find(|v| *v != 0)
-                .unwrap_or(1);
-            value = i64::from(first) % CONTROL_RANGE + 1;
-            while taken.contains(&value) {
-                value = (value * 7 + 13) % CONTROL_RANGE + 1;
-            }
-            work.set(
-                node,
-                Arc::new(QName::new(Some("w"), "val", Some(W))),
-                &value.to_string(),
-            );
-        }
-        taken.insert(value.abs());
-    }
-    Ok(())
+    Ok(taken)
 }
 
 /// A whole number as Python's `int` reads a string Word writes: surrounding white space

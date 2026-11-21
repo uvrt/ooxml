@@ -7,13 +7,14 @@
 //! its `commentEx` entry made from the source's (done, and its parent where that was
 //! copied too), and every comment then given its entries in the modern parts.
 //!
-//! A comment holding a drawing is left to the host.
+//! As docx-agent's, a copied comment's drawings keep their numbers and ids, and its
+//! bookmarks and controls theirs (`_comments` brings neither).
 //!
 //! Must not: write a comment part but through the copy's [`Space`].
 
 use super::content::Bringer;
 use crate::comments::{append, complete, ensure_part, last_para, part_of, Kind, REL_COMMENTS, REL_EXTENDED, W15};
-use crate::names::{W, W14, WP};
+use crate::names::{W, W14};
 use crate::review::space::Space;
 use crate::sink::EditSink;
 use crate::work::{Id, Work};
@@ -42,8 +43,7 @@ pub(super) struct CommentsCopied {
 /// comment parts, held in `stories`.
 ///
 /// # Errors
-/// [`EditError::Unsupported`] for a comment left to the host; what bringing its content
-/// refuses; a part that is not XML.
+/// What bringing its content refuses; a part that is not XML.
 pub(super) fn bring(
     sink: &mut EditSink<'_, '_>,
     bringer: &mut Bringer<'_>,
@@ -64,12 +64,6 @@ pub(super) fn bring(
     let Some(source_part) = source_part.filter(|_| !mapping.is_empty()) else {
         return Ok(CommentsCopied::default());
     };
-    if mapping
-        .iter()
-        .any(|(old, _)| by_id.get(old).is_some_and(|c| holds_drawing(c)))
-    {
-        return Err(EditError::Unsupported("a copied comment holding a drawing".to_owned()));
-    }
     let main = sink.docx()?.main.clone();
     let part = ensure_part(sink, &main, Kind::Comments)?;
     let mut copier = Copier {
@@ -264,9 +258,4 @@ fn drop_marker(work: &mut Work, node: Id) {
         }
     }
     work.remove(node);
-}
-
-/// Whether a comment holds a drawing (its number is not one this port renumbers).
-fn holds_drawing(comment: &Element) -> bool {
-    comment.name().is(Some(WP), "docPr") || comment.child_elements().any(|c| holds_drawing(c))
 }
