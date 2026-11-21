@@ -2,7 +2,9 @@
 //! ([`PageEngine::beyond_facts`]), for a version or a trial laid out from one ([`Laid`]):
 //! the lines its body's text boxes draw (laid out as a page is painted) and its footnotes'
 //! lines (laid out with the page's parts) -- lines docx-agent's `Page.text_lines` counts.
-//! A page none of whose paragraphs holds a text box is not painted.
+//! A page none of whose paragraphs holds a text box is not painted. And the first page a
+//! text box of the body draws one of its paragraphs on
+//! ([`PageEngine::first_page_in_text_box`]), which a field there is numbered by.
 //!
 //! Must not: keep what it paints for a trial (a version's page is taken from, not added to,
 //! the pages kept painted), or measure the blank (`layout_facts::room` does).
@@ -52,6 +54,28 @@ impl PageEngine {
             text_boxes: self.text_box_foot(laid, page),
             notes: self.notes_top(laid, page),
         }
+    }
+
+    /// The first page (0-based) a text box of the body draws the paragraph the tool's id
+    /// `id` names on -- a paragraph of a box, whose lines the facts leave out (docx-agent's
+    /// `layout().where` reads every line docx2svg draws, its text boxes' too): the pages the
+    /// body paragraph holding the box is drawn on are painted in order, until one draws it.
+    /// `None` for an id of no paragraph in a body paragraph's content, or one no page draws.
+    pub fn first_page_in_text_box(&mut self, version: &LaidVersion, id: &str) -> Option<usize> {
+        let (host, place) = version.ids.in_paragraph(id)?;
+        let drawn_in = |line: &ooxml_word_layout::paint::PaintedLine| {
+            version.ids.place_of_path(&line.path).as_deref() == Some(place.as_slice())
+        };
+        version.facts().pages_of(&host).into_iter().find(|&page| {
+            self.paint(version, page).is_some_and(|paint| {
+                paint
+                    .text_boxes
+                    .iter()
+                    .filter(|b| paint.drawings.get(b.slot).is_some_and(|s| s.story.is_none()))
+                    .flat_map(|b| &b.lines)
+                    .any(drawn_in)
+            })
+        })
     }
 
     /// The generation `version` was laid out in, while it is the engine's and in the same

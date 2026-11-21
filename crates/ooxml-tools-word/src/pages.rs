@@ -1,7 +1,8 @@
 //! Owns: [`EnginePages`], the edit core's [`FieldLayout`] port over a Word page engine
 //! (`ooxml-word-pages`): a version laid out from the one the engine laid out last, its page
 //! numbers read as a field update reads them (`ooxml_word_layout::fields::update`), places
-//! named by the tool's block ids (each found from its id when asked), the pages a block is
+//! named by the tool's block ids (each found from its id when asked; a text box's paragraph
+//! by the page the engine paints it on), the pages a block is
 //! drawn on (`LayoutFacts::pages_of_each`), a `STYLEREF`'s text read from the page painted
 //! (the engine paints it when asked), a character's advance in the version's fonts; and the
 //! reflow between two versions, each summarised as docx-agent's `LayoutSummary` is
@@ -169,6 +170,20 @@ impl<'e> Laid<'e> {
             .path_of(id)
             .ok_or_else(|| Unknown(format!("{id} is not laid out")))
     }
+
+    /// The 0-based page the paragraph `id` is first drawn on: its first body line's, or --
+    /// a paragraph of a text box, which the body's lines leave out -- the first page the
+    /// box draws it on (docx-agent's `layout().where` reads both).
+    fn first_page(&self, id: &str) -> Result<usize, Unknown> {
+        let path = self.path(id)?;
+        if let Some(page) = self.numbers.drawn_on(&path) {
+            return Ok(page);
+        }
+        let mut engine = self.engine.lock().unwrap_or_else(PoisonError::into_inner);
+        engine
+            .first_page_in_text_box(&self.version, id)
+            .ok_or_else(|| Unknown(format!("{path} is not drawn")))
+    }
 }
 
 fn unknown(error: ooxml_word_layout::fields::update::Unknown) -> Unknown {
@@ -180,7 +195,7 @@ impl LaidFields for Laid<'_> {
         match at {
             FieldPlace::Body(id) => self
                 .numbers
-                .page_field(instruction, keyword, &self.path(id)?)
+                .page_field_at(instruction, keyword, self.first_page(id)?)
                 .map_err(unknown),
             FieldPlace::Page(page) => self.numbers.page_field_at(instruction, keyword, page).map_err(unknown),
         }
@@ -190,7 +205,7 @@ impl LaidFields for Laid<'_> {
         match at {
             FieldPlace::Body(id) => self
                 .numbers
-                .page_reference(instruction, &self.path(id)?)
+                .page_reference_at(instruction, self.first_page(id)?)
                 .map_err(unknown),
             FieldPlace::Page(page) => Err(Unknown(format!("a reference to page {page}"))),
         }

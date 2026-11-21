@@ -158,13 +158,27 @@ impl<F: Borrow<LayoutFacts>> PageNumbers<F> {
     /// paragraph is first drawn on, in its section's format unless a switch formats it.
     pub fn page_reference(&self, instruction: &str, path: &str) -> Result<String, Unknown> {
         let info = self.first_page(path)?;
+        Self::page_reference_on(instruction, info, self.format_of(info.section))
+    }
+
+    /// [`PageNumbers::page_reference`] to a paragraph first drawn on page `page` (0-based):
+    /// one a text box draws, whose page the caller found.
+    ///
+    /// # Errors
+    /// [`Unknown`] where there is no such page or a switch is not computed.
+    pub fn page_reference_at(&self, instruction: &str, page: usize) -> Result<String, Unknown> {
+        let info = self.pages.get(page).ok_or_else(|| Unknown(format!("no page {page}")))?;
+        Self::page_reference_on(instruction, info, self.format_of(info.section))
+    }
+
+    fn page_reference_on(instruction: &str, info: &PageInfo, format: Option<&str>) -> Result<String, Unknown> {
         let instruction = instruction.replacen("PAGEREF", "PAGE", 1);
         field_text(
             &instruction,
             "PAGE",
             info.number,
             (None, None),
-            self.format_of(info.section),
+            format,
         )
         .map_err(|Uncomputable(why)| Unknown(why))
     }
