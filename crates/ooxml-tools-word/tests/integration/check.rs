@@ -73,6 +73,7 @@ fn limited(
             last_check: last,
             layout: layout.map(|l| l as &dyn ooxml_tools_word::WordLayout),
             layout_limit: limit,
+            drawing: None,
             opened: &doc,
         }),
         others: Others::default(),

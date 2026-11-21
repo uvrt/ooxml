@@ -47,8 +47,8 @@ def context_of(caller: Mapping[str, Any] | None) -> Any:
 
 def options(**given: Any) -> Any:
     """An ``ooxml_core.CallOptions``: what one ``Session.call`` or ``Session.edit`` runs with
-    beside its name and arguments (``context``, ``documents``, ``placer``, ``layout``,
-    ``blobs``, ``written``, ``limit``)."""
+    beside its name and arguments (``context``, ``documents``, ``layout`` -- an
+    ``ooxml_core.CallLayout`` --, ``blobs``, ``written``, ``limit``)."""
     import ooxml_core
 
     return ooxml_core.CallOptions(**given)

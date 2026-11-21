@@ -64,6 +64,13 @@ pub struct CallContext {
     /// the pages reads (`word_fields`), and `check` reads the pages of; `None`: such a
     /// result is left to the host.
     pub layout: Option<Arc<dyn ooxml_tools_word::WordLayout>>,
+    /// The faces the host draws pages with (the system's fonts and its font folders),
+    /// which `render` draws a document's pages from; `None`: such a call is left to the
+    /// host.
+    pub raster: Option<Arc<ooxml_tools_word::PageRaster>>,
+    /// How many images the call may still give within the host's budgets (per call, per
+    /// session, per round); `None`: no budget.
+    pub images_left: Option<usize>,
     /// The session's blobs as the host keeps them (an inserted picture's bytes); `None`: a
     /// call that reads one is left to the host.
     pub blobs: Option<Arc<dyn ooxml_tools_word::Blobs>>,
@@ -86,6 +93,7 @@ impl std::fmt::Debug for CallContext {
             .field("caller", &self.caller)
             .field("deadline", &self.deadline)
             .field("layout_timeout", &self.layout_timeout)
+            .field("images_left", &self.images_left)
             .field(
                 "at",
                 &self

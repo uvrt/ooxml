@@ -11,13 +11,14 @@ use ooxml_word_pages::DiskFonts;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
+use std::sync::Arc;
 
 /// The faces a document's pages are drawn with, read once: `font_files`, then the files
 /// under `font_dirs`, after the system's fonts unless `skip_system_fonts`;
 /// `sans_serif_family` the face the generic `sans-serif` names.
 #[pyclass(frozen, name = "PageRaster", module = "ooxml_core")]
 pub struct PyPageRaster {
-    inner: PageRaster,
+    pub(crate) inner: Arc<PageRaster>,
 }
 
 /// The system's fonts, read once per raster made with them.
@@ -79,7 +80,7 @@ impl PyPageRaster {
                 sans_serif_family.as_deref(),
             )
         });
-        Self { inner }
+        Self { inner: Arc::new(inner) }
     }
 
     /// `svg` as PNG bytes: at `width` or `height` pixels (the other in proportion), or

@@ -19,6 +19,15 @@ from docx_agent.tools.shared import render_pages  # noqa: E402
 from pixels import all_pixels
 
 
+@pytest.fixture(autouse=True)
+def python_pipeline(monkeypatch):
+    """The Python pipeline's fast images (lane RD1: the Rust session's render draws
+    exactly, fast or not; ``test_rust_render.py`` holds it), until P4e deletes them."""
+    from docx_agent.rust import reads
+
+    monkeypatch.setattr(reads, "serve_render", lambda call, arguments: None)
+
+
 def _pages(count: int = 3) -> bytes:
     """``count`` pages, a heading on each, whatever the fonts measure: each paragraph after
     the first starts a page, in Arial (every runner lays it out)."""

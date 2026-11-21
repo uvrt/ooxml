@@ -1,0 +1,1 @@
+Render slides or pages to PNG to look at them, at most 4 per call. Images cost tokens; the result states how many.

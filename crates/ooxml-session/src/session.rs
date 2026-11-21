@@ -617,6 +617,8 @@ impl Session {
             made: &state.made,
             layout: context.layout.as_deref(),
             layout_limit: state.layout_limit,
+            raster: context.raster.as_deref(),
+            images_left: context.images_left,
             blobs: context.blobs.as_deref(),
             written: &context.written,
             others: &state.others,

@@ -95,7 +95,8 @@ type EditMade = (u64, PyVersion, Option<String>, Validation);
 /// how long laying a document out may take in it (`layout_timeout`, seconds), how long
 /// it may run, in seconds, and `layout_counts`, `(pages, lines)` of the host's layout of
 /// the version the call reads where it has laid it out (`save_document`'s `app.xml`
-/// statistics). One may serve many calls.
+/// statistics), and `images_left`, how many images the call may still give within the
+/// host's budgets (`render`; `None`: no budget). One may serve many calls.
 #[pyclass(frozen, name = "CallContext", module = "ooxml_core")]
 pub struct PyCallContext {
     pub(crate) inner: CallContext,
@@ -104,13 +105,15 @@ pub struct PyCallContext {
 #[pymethods]
 impl PyCallContext {
     #[new]
-    #[pyo3(signature = (*, caller = None, cancel = None, deadline = None, layout_timeout = None, layout_counts = None))]
+    #[pyo3(signature = (*, caller = None, cancel = None, deadline = None, layout_timeout = None, layout_counts = None,
+                        images_left = None))]
     fn new(
         caller: Option<&str>,
         cancel: Option<PyRef<'_, PyCancelToken>>,
         deadline: Option<f64>,
         layout_timeout: Option<f64>,
         layout_counts: Option<(u64, u64)>,
+        images_left: Option<usize>,
     ) -> PyResult<Self> {
         Ok(Self {
             inner: CallContext {
@@ -119,6 +122,7 @@ impl PyCallContext {
                 deadline: seconds(deadline, "deadline")?,
                 layout_timeout: seconds(layout_timeout, "layout_timeout")?,
                 counts: layout_counts.map(|(pages, lines)| ooxml_tools_word::LayoutCounts { pages, lines }),
+                images_left,
                 ..CallContext::default()
             },
         })

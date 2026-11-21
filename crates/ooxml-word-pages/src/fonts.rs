@@ -72,7 +72,8 @@ impl FontSetup {
         DocumentFonts {
             glyphs: Arc::new(WordGlyphs::new(fonts)),
             names: Arc::new(Names(Arc::clone(&drawing))),
-            inks: Arc::new(Names(drawing)),
+            inks: Arc::new(Names(Arc::clone(&drawing))),
+            drawing,
             epoch,
         }
     }
@@ -87,6 +88,9 @@ pub struct DocumentFonts {
     pub names: Arc<dyn FaceNames>,
     /// A text path's outlines, in the faces Word draws with.
     pub inks: Arc<dyn Inks>,
+    /// The faces Word draws the document with, for a rasteriser to be handed
+    /// ([`crate::png::faces`]).
+    pub drawing: Arc<DrawingFonts>,
     /// What measures under these fonts are keyed by: a change means a new engine.
     pub epoch: Digest,
 }

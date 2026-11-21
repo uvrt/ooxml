@@ -381,6 +381,14 @@ def draw(call: Any, pages: list[int], width: int, relaid: list | None = None, fa
 def render(call: Any, doc: str, slides: list | None = None, pages: list[int] | None = None,
            width: int | None = None, sheet: dict | None = None, range: Any = None,
            fast: bool | None = None) -> Result:
+    # Lane RD1: the Rust session's render where it serves it (drawn exactly: in Rust the
+    # exact image costs less than the fast one here), else the pipeline below.
+    from ..rust.reads import serve_render
+
+    served = serve_render(call, {"slides": slides, "pages": pages, "width": width, "sheet": sheet,
+                                 "range": range, "fast": fast})
+    if served is not None:
+        return served
     fast = bool(fast)
     ranges = ranges_of(resolve(call, range))
     if ranges:

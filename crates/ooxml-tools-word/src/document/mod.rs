@@ -1,5 +1,6 @@
 //! The document's own tools (docx-agent's handlers of the shared tools in
-//! `tools/shared.py` that act on the document as a whole): `set_properties`, `save_document`.
+//! `tools/shared.py` that act on the document as a whole): `set_properties`, `save_document`,
+//! `render`.
 //!
 //! Owns: the tools' definitions (descriptions beside them) and their handlers, each a
 //! function of the typed arguments and an [`crate::Editing`] whose edit runs as one command
@@ -8,9 +9,15 @@
 //! Must not: hold sessions or documents by id, keep state between calls, or write the
 //! document but through a command.
 
+mod render;
 mod save_document;
 mod set_properties;
 
+pub use ooxml_word_pages::png::PageRaster;
+pub use render::{
+    page_key, render, sheet_key, Drawing, ImageKey, PageImages, Render, RenderSheet, DEFAULT_WIDTH, MAX_IMAGES,
+    MAX_IMAGES_PER_CALL, MAX_IMAGE_EDGE, MAX_RANGES, RENDER_NOT_OWNED, RENDER_NO_LAYOUT,
+};
 pub use save_document::{save_document, SaveDocument, SaveFormat};
 pub use set_properties::{set_properties, SetProperties};
 
@@ -19,4 +26,5 @@ pub use set_properties::{set_properties, SetProperties};
 pub(crate) fn register(r: &mut impl crate::Registrar) {
     set_properties::register(r);
     save_document::register(r);
+    render::register(r);
 }

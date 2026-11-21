@@ -13,7 +13,7 @@
 //! Must not: know any OOXML or metafile record, parse SVG, or hold state between calls.
 #![forbid(unsafe_code)]
 
-mod base64;
+pub mod base64;
 mod drawnum;
 pub mod exact;
 pub mod geometry;

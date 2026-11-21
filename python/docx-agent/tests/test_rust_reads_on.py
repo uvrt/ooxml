@@ -183,7 +183,7 @@ def test_a_placer_callback_holds_no_rust_lock_another_thread_needs():
 
     reply, _images, _app = session.call("word_inspect", json.dumps({"doc": doc, "target": "body", "layout": True}),
                                         ooxml_core.CallOptions(documents=ooxml_core.CallDocuments(at=[head]),
-                                                                placer=placer))
+                                                               layout=ooxml_core.CallLayout(placer=placer)))
     assert json.loads(reply)["ok"] and done == ["other"]
 
     # Two threads at once, one inspecting with a placer, one committing and reading.
@@ -193,8 +193,8 @@ def test_a_placer_callback_holds_no_rust_lock_another_thread_needs():
         try:
             for _ in range(5):
                 session.call("word_inspect", json.dumps({"doc": doc, "target": "body", "layout": True}),
-                             ooxml_core.CallOptions(placer=lambda asked: json.dumps(
-                                 [{"placements": []} for _ in json.loads(asked)])))
+                             ooxml_core.CallOptions(layout=ooxml_core.CallLayout(placer=lambda asked: json.dumps(
+                                 [{"placements": []} for _ in json.loads(asked)]))))
         except BaseException as error:  # noqa: BLE001
             errors.append(error)
 

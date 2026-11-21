@@ -303,8 +303,11 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
     if tool == "word_set_tracking":
         reply, app, made = _set_mode(entry, given, context, names)
     else:
+        import ooxml_core
+
+        laid = ooxml_core.CallLayout(layout) if layout is not None else None
         reply, app, made = mirror.session.edit(tool, json.dumps(given), options(
-            context=context, layout=layout, blobs=blobs, written=written, documents=documents(names=names)))
+            context=context, layout=laid, blobs=blobs, written=written, documents=documents(names=names)))
     if timing is not None:
         timing.add("update", time.perf_counter() - started)
     envelope = json.loads(reply)

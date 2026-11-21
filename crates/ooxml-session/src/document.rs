@@ -52,6 +52,8 @@ pub(crate) struct Word {
     pub(crate) retired: Retired,
     /// What its last check with `reflow` saw.
     pub(crate) last_check: Arc<ooxml_tools_word::LastCheck>,
+    /// Its pages drawn by `render`, kept within the session's memory budget.
+    pub(crate) images: ooxml_tools_word::PageImages,
     /// The rows this session's `word_edit_table` calls added or wrote into (round 58,
     /// R126): `check`'s `row_text_format` reads them.
     pub(crate) rows_written: RowsWritten,
@@ -174,6 +176,7 @@ impl Document {
                     tracking: RwLock::new(None),
                     retired: Retired::default(),
                     last_check: Arc::default(),
+                    images: ooxml_tools_word::PageImages::new(Some(Arc::clone(&context.budget))),
                     rows_written: RowsWritten::default(),
                 }))
             }

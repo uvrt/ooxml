@@ -56,6 +56,7 @@ pub mod schema;
 mod spec;
 #[doc(hidden)]
 pub mod support;
+pub mod tiles;
 mod types;
 mod validate;
 
