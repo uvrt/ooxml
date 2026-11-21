@@ -227,3 +227,8 @@ fn listed(editing: &Editing<'_>) -> ToolResult<Value> {
     done.data = Some(Value::Array(notes));
     ToolResult::done(done)
 }
+
+/// Registers `word_notes` (the crate's [`crate::register`]).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    r.edit::<WordNotes>(word_notes, crate::Hosting::SERVED);
+}

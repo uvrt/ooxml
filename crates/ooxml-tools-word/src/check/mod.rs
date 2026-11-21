@@ -9,8 +9,10 @@
 //! yet: such a call is answered `unported`, and the host answers it.
 
 mod args;
+mod facts;
 
 pub use args::{Check, CheckCopy, CheckInclude, CheckScale, CopyLists, CopyReference, ScaleShow, ScaleStep, StepText};
+pub use facts::{empty_run_json, lost_cell_json, skipped_level_json};
 
 use crate::describe::cancelled;
 use crate::version::{Owned, Version};
@@ -148,4 +150,9 @@ fn fields(owned: Owned<'_>) -> Result<Value, ToolError> {
     }
     out.insert("note".into(), Value::from(FIELDS_NOTE));
     Ok(Value::Object(out))
+}
+
+/// Registers `check` (the crate's [`crate::register`]).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    r.read::<Check>(check);
 }

@@ -476,3 +476,8 @@ fn finish(
     }
     Finished { result, changed, pages }
 }
+
+/// Registers `word_format_table` (the crate's [`crate::register`]).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    r.edit::<WordFormatTable>(word_format_table, crate::Hosting::SERVED);
+}

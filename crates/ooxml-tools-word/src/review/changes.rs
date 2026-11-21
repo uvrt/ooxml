@@ -172,3 +172,8 @@ pub(crate) fn try_call(args: &WordChanges) -> TryCall {
         fill: Vec::new(),
     }
 }
+
+/// Registers `word_changes` (the crate's [`crate::register`]).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    r.edit::<WordChanges>(word_changes, crate::Hosting::SERVED);
+}

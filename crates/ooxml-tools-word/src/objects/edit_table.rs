@@ -443,3 +443,8 @@ fn deleted_rows(table: &TableId) -> Vec<usize> {
         .map(|(k, _)| k)
         .collect()
 }
+
+/// Registers `word_edit_table` (the crate's [`crate::register`]).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    r.edit::<WordEditTable>(word_edit_table, crate::Hosting::SERVED);
+}
