@@ -7,6 +7,7 @@ mod common;
 
 mod carry;
 mod history;
+mod numbers;
 mod predicate;
 mod rebase;
 mod serial_replay;

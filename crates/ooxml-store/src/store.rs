@@ -1,7 +1,15 @@
 //! Owns: [`Store`], one document's versions: the lock-free head readers load, the commit
 //! (conflict detection by the keys a transaction read and wrote and by its reads by
 //! condition, checked on the head against the keys written since; redo, then a run under the
-//! commit lock), history operations, the id allocator and the reopen state.
+//! commit lock), history operations, the id allocator and the reopen state; the states'
+//! numbers ([`Version::number`]).
+//!
+//! **Numbers.**  Each published version is numbered as it is published, in publish order,
+//! as a tool layer numbers a document's states: the version opened is 0; a commit gets one
+//! more than the highest number given; a plain undo whose result is the step's "before"
+//! itself gets that version's number, a plain redo whose result is the step's "after" that
+//! version's; any other undo or redo (a scoped one, or one moved past later changes) makes
+//! a state that never was, a new number. A reopen starts at 0 again.
 //!
 //! Must not: run anything inside the commit lock beyond the check, the rebase and replay of
 //! a change set on a moved head and the publish, except a transaction that conflicted
@@ -116,6 +124,8 @@ struct Body<D: DocModel> {
 /// The state under the commit lock.
 struct State<D: DocModel> {
     last: Seq,
+    /// The highest state number given ([`Version::number`]).
+    numbered: u64,
     history: History<D>,
     /// The latest versions' change sets: within the rebase window, and back to the oldest
     /// version the history may still move a change set from.
@@ -157,6 +167,7 @@ impl<D: DocModel> Store<D> {
             head: HeadCell::new(Arc::new(Version::first(counters.version, doc))),
             state: Mutex::new(State {
                 last: counters.last,
+                numbered: 0,
                 history: History::new(config.history_depth),
                 journal: Journal::new(),
             }),
@@ -195,6 +206,17 @@ impl<D: DocModel> Store<D> {
     /// The steps plain redo can bring back, the next one last.
     pub fn redoable(&self) -> Vec<StepInfo<D::Key>> {
         lock(&self.state).history.redoable()
+    }
+
+    /// The version numbered `number` ([`Version::number`]) the head reaches: the head, else
+    /// the newest such state undo or redo can bring back (numbers repeat after an undo: the
+    /// head-most one); `None` when none is kept.
+    pub fn numbered(&self, number: u64) -> Option<Snapshot<D>> {
+        let head = self.head.load();
+        if head.number() == number {
+            return Some(head);
+        }
+        lock(&self.state).history.numbered(number)
     }
 
     /// The newest step `caller` made that undo can reach.
@@ -353,8 +375,9 @@ impl<D: DocModel> Store<D> {
     ) -> (Snapshot<D>, KeySet<D::Key>, Garbage<D>) {
         let seq = state.last.next();
         state.last = seq;
+        state.numbered += 1;
         doc.settle();
-        let version = Arc::new(before.succeed(seq, doc, &body.writes));
+        let version = Arc::new(before.succeed(seq, state.numbered, doc, &body.writes));
         self.head.store(Arc::clone(&version));
         let changes = ChangeSet::made(body.changes);
         let writes = body.writes.clone();
@@ -427,7 +450,11 @@ impl<D: DocModel> Store<D> {
         state.last = seq;
         planned.doc.carry(head.doc());
         planned.doc.settle();
-        let version = Arc::new(head.succeed(seq, planned.doc, &planned.writes));
+        let number = planned.number.unwrap_or_else(|| {
+            state.numbered += 1;
+            state.numbered
+        });
+        let version = Arc::new(head.succeed(seq, number, planned.doc, &planned.writes));
         let previous = Arc::clone(&head);
         self.head.store(Arc::clone(&version));
         let changes = planned.changes;

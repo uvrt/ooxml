@@ -77,6 +77,9 @@ pub(crate) enum Target {
 pub(crate) struct Planned<D: DocModel> {
     pub(crate) target: Target,
     pub(crate) step: Seq,
+    /// The state number of the content it brings back, when that is a state that was
+    /// ([`crate::Version::number`]); `None`: a new state, a new number.
+    pub(crate) number: Option<u64>,
     pub(crate) doc: D,
     /// The change set that makes `doc` from the head.
     pub(crate) changes: ChangeSet<D>,
@@ -125,6 +128,18 @@ impl<D: DocModel> History<D> {
 
     pub(crate) fn redoable(&self) -> Vec<StepInfo<D::Key>> {
         self.redo.iter().map(|undone| info(&undone.step)).collect()
+    }
+
+    /// The kept version numbered `number` nearest the head: the undo list's newest first
+    /// (each step's "after", then its "before"), then plain redo's next first.
+    pub(crate) fn numbered(&self, number: u64) -> Option<Snapshot<D>> {
+        let undo = self.undo.iter().rev().flat_map(|step| [&step.after, &step.before]);
+        let redo = self
+            .redo
+            .iter()
+            .rev()
+            .flat_map(|undone| [&undone.step.after, &undone.result]);
+        undo.chain(redo).find(|version| version.number() == number).cloned()
     }
 
     /// The newest step `caller` made that undo can reach.
@@ -203,6 +218,7 @@ impl<D: DocModel> History<D> {
                 exact,
             },
             step: step.after.seq(),
+            number: (at.is_none() && exact).then(|| step.before.number()),
             doc,
             changes,
             writes,
@@ -259,9 +275,11 @@ impl<D: DocModel> History<D> {
             });
         }
         let (doc, changes) = reapply(undone, head, journal)?;
+        let number = (linear && same(head, &undone.result)).then(|| step.after.number());
         Ok(Planned {
             target: Target::Redo { index, linear },
             step: step.after.seq(),
+            number,
             doc,
             changes,
             writes: step.writes.clone(),
