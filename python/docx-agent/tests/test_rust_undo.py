@@ -2,8 +2,12 @@
 shared one for a Word document (no ``scope``: a body is one scope every change shares), its
 replies today's, word for word: the session's own undo and redo, a caller's own (refused
 with the later change and who made it while it is not the latest), and a caller's own redo
-refused while another caller's undo is the next to redo."""
+refused while another caller's undo is the next to redo.  Lane U5: nothing (of the caller's)
+to take is refused with its way out (tool rule 2), which today's reply lacks: the document's
+steps and who made each, and the undo or redo the other way where that one works; a session
+with its own clock undoes through the same tool."""
 
+import datetime as dt
 import json
 from pathlib import Path
 
@@ -27,12 +31,15 @@ def test_the_rust_definition_is_todays_for_a_word_document_without_scope():
     assert GOLDEN.read_text(encoding="utf-8") == text(today)
 
 
-@pytest.fixture()
-def opened():
+CLOCK = lambda: dt.datetime(2026, 11, 20, 9, 41, 17, tzinfo=dt.timezone.utc)  # noqa: E731
+
+
+@pytest.fixture(params=["system clock", "own clock"])
+def opened(request):
     document = Document.new()
     document.paragraphs()[0].set_text("First")
     with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as box:
-        session = box.session()
+        session = box.session(clock=CLOCK) if request.param == "own clock" else box.session()
         doc = session.open(document.to_bytes(), "report.docx")
         if not isinstance(session.entry(doc), OwnedEntry):
             pytest.skip("no Rust session to own the document")
@@ -53,7 +60,8 @@ def test_a_callers_own_undo_names_the_later_change_and_who_made_it(opened):
     assert call("a", "undo")["error"]["message"] == (
         "nothing of yours to undo in d1: undo here takes back your own changes only")
     assert call(None, "undo", redo=True)["error"] == {
-        "code": "refused", "message": "nothing to redo in d1", "valid_options": []}
+        "code": "refused", "message": "nothing to redo in d1",
+        "valid_options": [{"version": 0, "oldest": True}]}
     call("a", "word_insert_text", at=f"{first}@0", text="A ")
     call("b", "word_insert_text", at=f"{first}@0", text="B ")
     refused = call("a", "undo")
@@ -101,3 +109,27 @@ def test_the_session_api_counts_and_a_batch_is_one_step_of_its_caller(opened):
     assert call("b", "undo")["data"]["steps"] == 1
     assert call("a", "undo")["data"] == {"steps": 1, "version": 0, "own": True}
     assert entry.document.paragraphs()[0].text == "First"
+
+
+def test_nothing_to_take_lists_the_steps_and_who_made_each_and_the_call_that_works(opened):
+    call, first, _entry = opened
+    call("a", "word_insert_text", at=f"{first}@0", text="A ")
+    call("b", "word_insert_text", at=f"{first}@0", text="B ")
+    by_a = {"version": 1, "tool": "word_insert_text", "context": {"agent": "a"}}
+    by_b = {"version": 2, "tool": "word_insert_text", "context": {"agent": "b"}}
+    oldest = {"version": 0, "oldest": True}
+    # c made none of them: the steps, who made each, and no call of c's that would work
+    error = call("c", "undo")["error"]
+    assert error["code"] == "refused" and "try_call" not in error
+    assert error["valid_options"] == [by_b, by_a, oldest]
+    # b's own undone: its redo is the way out of a second undo, its step marked
+    assert call("b", "undo")["ok"]
+    error = call("b", "undo")["error"]
+    assert error["message"] == "nothing of yours to undo in d1: undo here takes back your own changes only"
+    assert error["valid_options"] == [{**by_b, "yours": True, "undone": True}, by_a, oldest]
+    assert error["try_call"] == {"tool": "undo", "arguments": {"doc": "d1", "redo": True}}
+    assert call("b", "undo", redo=True)["ok"]
+    # the session's own redo with nothing to redo: its undo works
+    error = call(None, "undo", redo=True)["error"]
+    assert error["valid_options"] == [by_b, by_a, oldest]
+    assert error["try_call"] == {"tool": "undo", "arguments": {"doc": "d1"}}

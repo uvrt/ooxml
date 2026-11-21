@@ -194,7 +194,7 @@ fn the_undo_tool_answers_in_todays_words() {
     let nothing = undo(json!({"doc": "d1"}), &a);
     assert_eq!(
         nothing["error"],
-        json!({"code": "refused", "valid_options": [],
+        json!({"code": "refused", "valid_options": [{"version": 0, "oldest": true}],
                "message": "nothing of yours to undo in d1: undo here takes back your own changes only"})
     );
     assert_eq!(
@@ -246,6 +246,8 @@ fn the_undo_tool_answers_in_todays_words() {
     bridged(&s, &d, &paragraph("11111111", "again"), &a);
     let none = undo(json!({"doc": "d1", "redo": true}), &b);
     assert_eq!(none["error"]["code"], json!("refused"));
+    assert_eq!(none["error"]["valid_options"][0]["context"]["agent"], json!("a"));
+    assert!(none["error"].get("try_call").is_none(), "{none}");
     assert_eq!(
         undo(json!({"doc": "d1", "steps": 0}), &own)["error"]["message"],
         json!("steps is 0; at least 1")
@@ -710,4 +712,34 @@ fn the_history_is_listed_in_state_numbers() {
     assert_eq!((numbers.highest, numbers.redo.len()), (3, 0));
     assert_eq!(numbers.steps.last().map(|s| (s.before, s.after)), Some((1, 3)));
     assert!(s.numbered(&d, 2).unwrap().is_none(), "state 2 is out of reach");
+}
+
+#[test]
+fn nothing_to_undo_lists_the_steps_nearest_the_head_and_says_how_many_were_left_out() {
+    let s = session();
+    let d = s
+        .open(docx(&paragraph("11111111", "one")), DocKind::Docx, "a.docx")
+        .unwrap();
+    let a = as_writer("a");
+    for n in 0..12 {
+        bridged(&s, &d, &paragraph("11111111", &format!("step {n}")), &a);
+    }
+    let refused = call(&s, "undo", json!({"doc": "d1"}), &as_writer("c"));
+    let error = &refused["error"];
+    assert_eq!(error["code"], json!("refused"), "{refused}");
+    let listed = error["valid_options"].as_array().cloned().unwrap_or_default();
+    assert_eq!(listed.len(), 10, "{refused}");
+    assert_eq!(
+        listed[0],
+        json!({"version": 12, "tool": "word_rewrite", "context": {"turn": 1, "agent": "a"}})
+    );
+    assert_eq!(error["details"], json!({"left_out": {"undo": 2, "redo": 0}}));
+    assert!(error.get("try_call").is_none(), "{refused}");
+    // a's own redo with nothing to redo: a's undo works
+    let redo = call(&s, "undo", json!({"doc": "d1", "redo": true}), &a);
+    assert_eq!(
+        redo["error"]["try_call"],
+        json!({"tool": "undo", "arguments": {"doc": "d1"}})
+    );
+    assert_eq!(redo["error"]["valid_options"][0]["yours"], json!(true));
 }

@@ -3,16 +3,18 @@
 //! caller that caller's own ([`crate::history`]), answered in today's words -- what was
 //! undone or redone, and why not: nothing (of the caller's) to take, the caller's latest
 //! change not the latest (the later steps and who made each, [`crate::owners`]), its undone
-//! change not the next to redo. The session runs it itself, as `read_batch`: it moves the
-//! document's history, which no tool handler is handed.
+//! change not the next to redo. Nothing to take is a refusal with its way out (tool rule 2):
+//! the document's steps and who made each as its valid options, and the undo or redo the
+//! other way when that one would work. The session runs it itself, as `read_batch`: it moves
+//! the document's history, which no tool handler is handed.
 //!
 //! Must not: take a scope (a Word body is one scope every change shares: the definition has
 //! none), or run inside a batch.
 
-use crate::history::Direction;
+use crate::history::{Direction, NumberedStep, Numbers};
 use crate::owners::Owners;
 use crate::{CallContext, Session, SessionError, Undone};
-use ooxml_tools::{Accepted, Done, Failure, Refusal, ToolArgs, ToolError, ToolResult};
+use ooxml_tools::{Accepted, Done, Failure, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
 use serde_json::{json, Map, Value};
 
 /// `undo`'s arguments.
@@ -36,6 +38,9 @@ pub struct Undo {
 
 /// The tool's name.
 pub const UNDO: &str = "undo";
+
+/// Steps listed of each side of the head in a refusal's way out (tool rule 4).
+const LISTED: usize = 10;
 
 impl Session {
     /// `undo`: its arguments taken as meant and validated, then the document's history
@@ -72,7 +77,10 @@ impl Session {
                 result.version = Some(undone.version);
                 result
             }
-            Ok(_) => ToolResult::failed(asked.nothing()),
+            Ok(_) => ToolResult::failed(match (self.numbers(&id), self.document(&id)) {
+                (Ok(numbers), Ok(document)) => asked.nothing(&numbers, &document.owners, document.head().number()),
+                (Err(gone), _) | (_, Err(gone)) => gone.to_tool_error(),
+            }),
             Err(error) => ToolResult::failed(match self.document(&id) {
                 Ok(document) => asked.refused(&error, &document.owners),
                 Err(gone) => gone.to_tool_error(),
@@ -143,17 +151,88 @@ impl Asked<'_> {
         })
     }
 
-    /// Nothing (of the caller's) to take: a refusal no call could get past.
-    fn nothing(&self) -> ToolError {
+    /// Nothing (of the caller's) to take, in today's words; its way out: the document's
+    /// steps and who made each ([`Asked::steps`]), and the undo or redo the other way when
+    /// that one would work for the caller. `head`: the state the document is at.
+    fn nothing(&self, numbers: &Numbers, owners: &Owners, head: u64) -> ToolError {
         let (yours, why) = if self.caller.is_some() {
             (" of yours", ": undo here takes back your own changes only")
         } else {
             ("", "")
         };
-        ToolError::nothing_to_offer(
-            Refusal::Refused,
-            format!("nothing{yours} to {} in {}{why}", self.verb(), self.doc),
-        )
+        let message = format!("nothing{yours} to {} in {}{why}", self.verb(), self.doc);
+        let (steps, left_out) = self.steps(numbers, owners, head);
+        // (never empty: the oldest state kept, or the steps around the head, are always listed)
+        let mut way_out = WayOut::options(steps).unwrap_or_else(|| WayOut::one(json!({"version": head})));
+        if let Some(call) = self.other_way(numbers, owners) {
+            way_out = way_out.and_call(call);
+        }
+        let error = ToolError::refusal(Refusal::Refused, message, way_out);
+        match left_out {
+            Some(left_out) => error.with_detail("left_out", left_out),
+            None => error,
+        }
+    }
+
+    /// The document's steps, newest first, each with who made it (and `yours` for the
+    /// caller's own): those plain redo brings back (`undone`), then those undo takes back,
+    /// then the oldest state the history keeps (`oldest`). At most [`LISTED`] of each side,
+    /// the nearest the head; how many of each were left out, when any were (tool rule 4).
+    fn steps(&self, numbers: &Numbers, owners: &Owners, head: u64) -> (Vec<Value>, Option<Value>) {
+        let entry = |step: &NumberedStep, undone: bool| {
+            let mut out = Map::new();
+            out.insert("version".into(), Value::from(step.after));
+            if let Some(owner) = owners.of(step.after) {
+                out.extend(owner.to_json());
+            }
+            if self.caller.is_some() && step.caller.as_deref() == self.caller {
+                out.insert("yours".into(), Value::Bool(true));
+            }
+            if undone {
+                out.insert("undone".into(), Value::Bool(true));
+            }
+            Value::Object(out)
+        };
+        // (each side's next is its last)
+        let redo: Vec<&NumberedStep> = numbers.redo.iter().rev().take(LISTED).collect();
+        let undo: Vec<&NumberedStep> = numbers.steps.iter().rev().take(LISTED).collect();
+        let mut listed: Vec<Value> = redo.iter().rev().map(|s| entry(s, true)).collect();
+        listed.extend(undo.iter().map(|s| entry(s, false)));
+        let (redo_out, undo_out) = (numbers.redo.len() - redo.len(), numbers.steps.len() - undo.len());
+        if undo_out == 0 {
+            let oldest = numbers.steps.first().map_or(head, |s| s.before);
+            listed.push(json!({"version": oldest, "oldest": true}));
+        }
+        let left_out = (redo_out + undo_out > 0).then(|| json!({"undo": undo_out, "redo": redo_out}));
+        (listed, left_out)
+    }
+
+    /// The undo or redo the other way, when it would take or bring back a step: one of the
+    /// caller's, or any for the session's own.
+    fn other_way(&self, numbers: &Numbers, owners: &Owners) -> Option<TryCall> {
+        let works = match (self.direction, self.caller) {
+            (Direction::Redo, None) => !numbers.steps.is_empty(),
+            (Direction::Undo, None) => !numbers.redo.is_empty(),
+            (Direction::Redo, Some(caller)) => numbers
+                .steps
+                .last()
+                .is_some_and(|s| s.caller.as_deref() == Some(caller)),
+            (Direction::Undo, Some(caller)) => owners
+                .latest_undo(caller)
+                .is_some_and(|undo| numbers.redo.last().is_some_and(|next| next.after == undo.number)),
+        };
+        works.then(|| {
+            let mut arguments = Map::new();
+            arguments.insert("doc".into(), Value::from(self.doc));
+            if self.direction == Direction::Undo {
+                arguments.insert("redo".into(), Value::Bool(true));
+            }
+            TryCall {
+                tool: UNDO.to_owned(),
+                arguments,
+                fill: Vec::new(),
+            }
+        })
     }
 
     /// Why the history did not move, in today's words.

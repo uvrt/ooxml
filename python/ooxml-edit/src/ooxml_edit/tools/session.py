@@ -1629,7 +1629,7 @@ class Session:
             if error is not None:
                 raise ToolError(error["code"], error["message"], field=error.get("field"),
                                 valid_options=error.get("valid_options"),
-                                details=error.get("details"))
+                                details=error.get("details"), try_call=error.get("try_call"))
             entry.check_cache.clear()
             entry.restore_refs()
         result = Result(summary=reply["summary"], changed=list(reply.get("changed") or []),
