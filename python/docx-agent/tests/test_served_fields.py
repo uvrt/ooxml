@@ -18,7 +18,7 @@ from ooxml_edit.tools import Toolbox
 from ooxml_edit.tools.owned import OwnedEntry
 
 from test_dataset_markdown import ds_rich
-from test_served_records import FIXTURE
+from test_served_records import FIXTURE, _serve_none
 from test_served_written import _kept
 from test_tables_from_data import ds_put
 
@@ -74,7 +74,7 @@ CASES = {
 def test_served_fields_are_kept_as_docx_agent_keeps_them(toolbox, plain, case, monkeypatch):
     calls = CASES[case]
     rust = _run(toolbox, plain, calls, served=True)
-    monkeypatch.setattr(edits, "SERVED", {})
+    _serve_none(monkeypatch)
     python = _run(toolbox, plain, calls, served=False)
     for k, ((ours, our_facts, our_notes), (theirs, their_facts, their_notes)) in enumerate(zip(rust, python)):
         assert our_facts == their_facts, (case, k)
