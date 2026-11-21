@@ -37,6 +37,22 @@ pub struct LaidVersion {
     pub(crate) ids: crate::ids::VersionIds,
     /// Its summary, made once when first asked (its engine paints the pages it needs).
     pub(crate) summary: OnceLock<Arc<crate::summary::Summary>>,
+    /// The stories' epoch of its generation it was laid out in.
+    pub(crate) epoch: u64,
+    /// The model's context of its generation it was laid out in: it is painted only in it.
+    pub(crate) context: u64,
+    /// What a comparison reads of each page without painting it, made when first asked.
+    pub(crate) pages: OnceLock<Arc<VersionPages>>,
+}
+
+/// What a comparison reads of a version's pages without painting them.
+#[derive(Debug)]
+pub(crate) struct VersionPages {
+    /// Each page's context ([`crate::page_context`]).
+    pub(crate) contexts: Vec<ooxml_base::Digest>,
+    /// Each page's body lines' ids, in drawing order (`None`: a line of a paragraph the
+    /// version does not name).
+    pub(crate) ids: Vec<Vec<Option<Text>>>,
 }
 
 impl std::fmt::Debug for LaidVersion {

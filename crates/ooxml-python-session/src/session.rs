@@ -582,14 +582,15 @@ impl PySession {
 
     /// What the document's last check with `reflow` saw, which the session's next check
     /// measures `since_last_check` from: `(version, summary)` -- the number of the version
-    /// it saw (`None`: the host's check kept it without one) and its `LayoutSummary` -- or
-    /// `None`.
+    /// it saw (`None`: the host's check kept it without one) and its `LayoutSummary` (of a
+    /// check the session served, the version laid out: summarised when read or compared) --
+    /// or `None`.
     fn last_check(&self, doc: &str) -> PyResult<Option<(Option<u64>, crate::summary::PyLayoutSummary)>> {
         let id = doc_id(doc, &self.inner)?;
         let kept = self.inner.last_check(&id).map_err(|e| to_py(&e))?;
         Ok(kept
             .and_then(|kept| kept.get())
-            .map(|seen| (seen.version, crate::summary::PyLayoutSummary { inner: seen.summary })))
+            .map(|seen| (seen.version, crate::summary::PyLayoutSummary { inner: seen.pages })))
     }
 
     /// Keep `summary` (a `LayoutSummary` of the document's engine) as what the document's
@@ -605,7 +606,7 @@ impl PySession {
         let id = doc_id(doc, &self.inner)?;
         let seen = summary.map(|summary| ooxml_tools_word::Seen {
             version: at.map(|v| v.inner.version()),
-            summary: Arc::clone(&summary.inner),
+            pages: summary.inner.clone(),
         });
         if let Some(kept) = self.inner.last_check(&id).map_err(|e| to_py(&e))? {
             kept.set(seen);

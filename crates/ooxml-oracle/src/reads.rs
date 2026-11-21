@@ -4,7 +4,9 @@
 //!
 //! The manifest is a JSON list of `{"file": path, "case": name, "tool": name, "arguments": {...}}`,
 //! or `{"file", "case", "fact": name}` for one of `check`'s facts read from the document
-//! alone ([`crate::facts`]).
+//! alone ([`crate::facts`]). A `check` case may name the calls made before it in the same
+//! session (`"before": [{"tool", "arguments"}]`: checks and edits): a sequence of versions,
+//! each check measured from the one before (`since_last_check`).
 //!
 //! Must not: be used by any library; it is a test instrument.
 
@@ -68,7 +70,11 @@ pub fn run(args: &[String]) -> Result<(), String> {
         let reply = if let Some(fact) = item.get("fact").and_then(Value::as_str) {
             crate::facts::reply(package, fact)
         } else if matches!(tool, "read_batch" | "check") {
-            through_session(tool, &arguments, file, name, item.get("fonts"))
+            let before = item
+                .get("before")
+                .and_then(Value::as_array)
+                .map_or(&[][..], Vec::as_slice);
+            through_session(tool, &arguments, (file, name), item.get("fonts"), before)
         } else {
             call(tool, &arguments, &version)
         };
@@ -101,9 +107,17 @@ fn call(tool: &str, arguments: &Value, version: &Version<'_>) -> Value {
 
 /// `tool` (`read_batch`, `check`) through a session holding the document as `d1`, which
 /// owns it (a check's validation compares with the problems it opened with), handed a page
-/// engine laying out with `fonts` (docx-agent's, as the case gives them) where given. A
-/// reply that says part of it is not given yet (`unported`) is an error naming what.
-fn through_session(tool: &str, arguments: &Value, file: &str, name: &str, fonts: Option<&Value>) -> Value {
+/// engine laying out with `fonts` (docx-agent's, as the case gives them) where given, after
+/// the calls `before` (each `{"tool", "arguments"}`, through the same session and engine).
+/// A reply that says part of it is not given yet (`unported`) is an error naming what; a
+/// call before it that fails is an error naming that call.
+fn through_session(
+    tool: &str,
+    arguments: &Value,
+    (file, name): (&str, &str),
+    fonts: Option<&Value>,
+    before: &[Value],
+) -> Value {
     let Ok(bytes) = std::fs::read(file) else {
         return json!({"error": {"code": "internal", "message": "unreadable"}});
     };
@@ -117,6 +131,19 @@ fn through_session(tool: &str, arguments: &Value, file: &str, name: &str, fonts:
         }),
         ..CallContext::default()
     };
+    for (k, step) in before.iter().enumerate() {
+        let name = step.get("tool").and_then(Value::as_str).unwrap_or_default();
+        let args = step.get("arguments").cloned().unwrap_or_else(|| json!({}));
+        let done = session.call(name, args, &context);
+        let failed = done
+            .unported()
+            .first()
+            .cloned()
+            .or_else(|| done.to_json().get("error").map(Value::to_string));
+        if let Some(why) = failed {
+            return json!({"error": {"code": "before", "message": format!("call {k} ({name}): {why}")}});
+        }
+    }
     let result = session.call(tool, arguments.clone(), &context);
     if let Some(why) = result.unported().first() {
         return json!({"error": {"code": "unported", "message": why}});

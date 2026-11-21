@@ -3,18 +3,20 @@
 //! (`layout.coverage_facts`) and its first warnings (`layout_warnings`), read from the
 //! document's page engine; and `since_last_check`, the pages that changed since the
 //! document's last check with `reflow` ([`LastCheck`], kept per document by the session),
-//! ids followed through the version's aliases.
+//! ids followed through the version's aliases. A check keeps the version it saw, not its
+//! summary: the next compares the two page by page ([`Summarised::compare`]), painting
+//! only the pages an edit reached; a first check paints none.
 //!
 //! Must not: lay out but through the host's engine ([`WordLayout`]).
 
 use crate::pages::WordLayout;
 use ooxml_word_pages::coverage::Coverage;
-use ooxml_word_pages::summary::Summary;
+use ooxml_word_pages::summarised::Summarised;
 use ooxml_word_pages::warnings::LayoutWarning;
 use ooxml_word_pages::LaidVersion;
 use serde_json::{Map, Value};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Mutex, PoisonError};
 
 /// The approximations, story stops and placeholders a coverage lists at most.
 const LISTED: usize = 5;
@@ -25,14 +27,15 @@ const SHORT: usize = 160;
 /// The moved blocks a `since_last_check` lists at most.
 const MOVED: usize = 20;
 
-/// What a document's last check with `reflow` saw: the version and its layout summary.
+/// What a document's last check with `reflow` saw: the version and its pages (the
+/// version laid out, or a summary the host's check made).
 #[derive(Debug, Clone)]
 pub struct Seen {
     /// The version's number, where the session's check saw it (`None`: the host's check saw
     /// a version it names otherwise).
     pub version: Option<u64>,
-    /// Its layout summary.
-    pub summary: Arc<Summary>,
+    /// Its pages, summarised when compared.
+    pub pages: Summarised,
 }
 
 /// What a document's last check with `reflow` saw, which the next measures
@@ -140,10 +143,10 @@ fn coverage_facts(coverage: &Coverage) -> Value {
 pub(super) struct Laid {
     pub(super) facts: Map<String, Value>,
     pub(super) warnings: Option<Value>,
-    pub(super) summary: Arc<Summary>,
 }
 
-/// `version`'s reflow facts, and its summary, read from `layout`'s engine.
+/// `version`'s reflow facts, read from `layout`'s engine (no page painted for them but
+/// where its coverage needs it).
 ///
 /// # Errors
 /// Where the version is not the engine's (a version laid out by another generation).
@@ -151,7 +154,6 @@ pub(super) fn laid_facts(layout: &dyn WordLayout, version: &LaidVersion) -> Resu
     let mut engine = layout.engine().lock().unwrap_or_else(PoisonError::into_inner);
     let not_ours = || "the version laid out is not the engine's".to_owned();
     let coverage = engine.coverage(version).ok_or_else(not_ours)?;
-    let summary = engine.summary(version).ok_or_else(not_ours)?;
     drop(engine);
     let mut facts = Map::new();
     facts.insert("pages".into(), Value::from(version.page_count()));
@@ -166,29 +168,32 @@ pub(super) fn laid_facts(layout: &dyn WordLayout, version: &LaidVersion) -> Resu
             .collect();
         Value::from(listed)
     });
-    Ok(Laid {
-        facts,
-        warnings,
-        summary,
-    })
+    Ok(Laid { facts, warnings })
 }
 
 /// `since_last_check` of `now` (version `version`) against what `last` saw, ids followed
 /// through `aliases`; `None` where no check saw a version before, or the last saw this very
 /// one. `pages` (non-empty) keeps the changed pages among them.
+///
+/// # Errors
+/// Where either version can no longer be digested (its engine no longer paints it).
 pub(super) fn since(
     last: Option<&Seen>,
-    now: &Arc<Summary>,
+    now: &Summarised,
     version: u64,
     aliases: &std::collections::BTreeMap<String, String>,
     pages: Option<&[i64]>,
-) -> Option<Value> {
-    let before = last?;
-    if before.version == Some(version) || Arc::ptr_eq(&before.summary, now) {
-        return None;
+) -> Result<Option<Value>, String> {
+    let Some(before) = last else {
+        return Ok(None);
+    };
+    if before.version == Some(version) || before.pages.is(now) {
+        return Ok(None);
     }
     let aliases: HashMap<String, String> = aliases.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-    let found = now.compare(&before.summary, &aliases);
+    let found = now
+        .compare(&before.pages, &aliases)
+        .ok_or_else(|| "the version last checked is no longer laid out by the engine".to_owned())?;
     let changed: Vec<usize> = match pages.filter(|p| !p.is_empty()) {
         Some(pages) => found
             .changed
@@ -215,5 +220,5 @@ pub(super) fn since(
     if !found.unknown.is_empty() {
         out.insert("unknown".into(), Value::from(found.unknown));
     }
-    Some(Value::Object(out))
+    Ok(Some(Value::Object(out)))
 }

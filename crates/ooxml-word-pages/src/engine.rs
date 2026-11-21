@@ -13,13 +13,18 @@
 //! What it keeps is bounded (lane L4b, design section 6, Memory): its memos are swept once
 //! a version is laid out (what no version in use holds goes), and what it painted is kept
 //! by page within its budget's bounded account, the least recently used let go first
-//! ([`EngineBudgets`]).
+//! ([`EngineBudgets`]); what its pages digested to is kept within a bound of its own, with
+//! its generation ([`crate::digest_cache`]).
 //!
 //! Must not: be used by two callers at once (its owner locks it), or keep more than the
 //! last version laid out.
 
+mod changed;
+mod summaries;
+
+use changed::{context_may_change, notes_or_stories_changed};
+
 use crate::causes::{context_cause, part_reason, whole_cause, RelaidCause};
-use crate::digests::Lines;
 use crate::drawing_said::DrawingWarnings;
 use crate::drawings::WordDrawings;
 use crate::error::{Fallback, PagesError};
@@ -72,6 +77,9 @@ pub struct EngineStats {
     /// Versions asked again: the same parts as the last version laid out, which was
     /// answered (nothing laid out).
     pub kept: u64,
+    /// Pages painted for their digests (a summary's or a comparison's), and pages a
+    /// comparison took as digested before or as the same page in both versions.
+    pub pages_digested: (u64, u64),
 }
 
 impl EngineStats {
@@ -100,11 +108,34 @@ struct Generation {
     /// The main part's root and its ids as the last version read them, which the next
     /// version's ids are found from (only what changed walked again).
     ids: Option<(Arc<ooxml_xml::Element>, Arc<ooxml_word_model::ids::PartIds>)>,
-    /// What each page of the version summarised last digested to.
-    summaries: crate::summary::SummaryMemo,
+    /// What each page digested to, by the page as laid out and its context, across the
+    /// generation's versions.
+    digests: crate::digest_cache::DigestCache,
+    /// Moved on where a part beside the main one changed: a page laid out the same may
+    /// draw otherwise (its drawings, its stories).
+    epoch: u64,
+    /// Moved on where the model's context (its styles, numbering, settings, theme)
+    /// changed: a version laid out before is no longer painted in it.
+    context: u64,
+    /// The package the model opened last: what its context is of.
+    opened: Option<Package>,
 }
 
 impl Generation {
+    /// The model's context (its styles, numbering, settings or theme) changed: a version
+    /// laid out before is no longer painted, and what was measured under the old context is
+    /// not the next version's (the measures are keyed by content), so it is laid out whole,
+    /// with fresh memos. Whether there was a version to lay it out from.
+    fn new_context(&mut self, locale: &Locale, budget: &Arc<dyn CacheBudget>) -> bool {
+        self.context += 1;
+        if self.last.is_none() {
+            return false;
+        }
+        self.last = None;
+        self.layout = new_layout(&self.fonts, locale, budget);
+        true
+    }
+
     /// The last version laid out where `package` has its parts (the same version asked
     /// again).
     fn last_for(&self, package: &Package) -> Option<Arc<LaidVersion>> {
@@ -185,6 +216,11 @@ pub struct PageEngine {
     stats: EngineStats,
     /// The parts the version being laid out changed from the last one given.
     changed: Vec<String>,
+    /// The versions a comparison may yet read (a check's last), digested whole before the
+    /// engine can no longer paint them.
+    watched: Vec<std::sync::Weak<LaidVersion>>,
+    /// What a generation's page digests hold at most, bytes.
+    digest_limit: usize,
 }
 
 impl std::fmt::Debug for PageEngine {
@@ -241,6 +277,8 @@ impl PageEngine {
             generations: 0,
             stats: EngineStats::default(),
             changed: Vec::new(),
+            watched: Vec::new(),
+            digest_limit: crate::digest_cache::DIGEST_CACHE_BYTES,
         }
     }
 
@@ -367,7 +405,7 @@ impl PageEngine {
     pub fn lay_out(&mut self, package: &Package) -> Result<Result<Arc<LaidVersion>, Fallback>, PagesError> {
         self.changed.sort();
         let fonts = self.setup.document(package);
-        let (generation, mut cause) = self.generation_for(fonts);
+        let (generation, mut cause) = self.generation_for(fonts, package);
         let generation = self.generation.insert(generation);
         if let Some(last) = generation.last_for(package) {
             self.stats.kept += 1;
@@ -375,13 +413,9 @@ impl PageEngine {
         }
         let started = Instant::now();
         let document = generation.model.open(package)?;
+        let opened = generation.opened.replace(package.clone());
         self.stats.open_time += started.elapsed();
-        if generation.model.stats().context_changed && generation.last.is_some() {
-            // The styles, numbering, settings or theme changed: what was measured under the
-            // old ones is not this version's (the measures are keyed by content), so it is
-            // laid out whole, with fresh memos.
-            generation.last = None;
-            generation.layout = new_layout(&generation.fonts, &self.locale, &self.budgets.held);
+        if generation.model.stats().context_changed && generation.new_context(&self.locale, &self.budgets.held) {
             cause = Some(context_cause(&self.changed));
         }
         if let Some(why) = support::unsupported(&document) {
@@ -415,6 +449,7 @@ impl PageEngine {
             glyph_size: self.glyph_size,
             decimal: self.decimal,
             others_changed,
+            drawn_changed: notes_or_stories_changed(opened.as_ref(), package),
         };
         let facts = carried_facts(previous.as_deref(), &laid);
         let said = say(generation, &laid, drawings.as_ref(), &with, &facts);
@@ -435,6 +470,9 @@ impl PageEngine {
             serial: self.serial,
             ids,
             summary: std::sync::OnceLock::new(),
+            epoch: generation.epoch,
+            context: generation.context,
+            pages: std::sync::OnceLock::new(),
         });
         // The version before is no longer the one laid out from: what only it and the
         // memos held goes now, not with every version kept.
@@ -457,7 +495,16 @@ impl PageEngine {
 
     /// The generation `fonts` lay out in: the current one where its fonts are the same,
     /// else a new one, with the cause of laying out whole where the old had a version.
-    fn generation_for(&mut self, fonts: DocumentFonts) -> (Generation, Option<RelaidCause>) {
+    fn generation_for(&mut self, fonts: DocumentFonts, package: &Package) -> (Generation, Option<RelaidCause>) {
+        // What a version laid out before is painted with goes with a new generation or
+        // context: the versions a comparison may yet read are digested first.
+        let leaving = self
+            .generation
+            .as_ref()
+            .is_some_and(|g| g.fonts.epoch != fonts.epoch || context_may_change(g.opened.as_ref(), package));
+        if leaving {
+            self.settle_watched();
+        }
         match self.generation.take() {
             Some(g) if g.fonts.epoch == fonts.epoch => (g, None),
             Some(g) => {
@@ -479,13 +526,17 @@ impl PageEngine {
             laid_from: None,
             said: crate::page_said::PageMemo::default(),
             ids: None,
-            summaries: crate::summary::SummaryMemo::default(),
+            digests: crate::digest_cache::DigestCache::new(self.digest_limit),
+            epoch: 0,
+            context: 0,
+            opened: None,
         }
     }
 
     /// Let go of the last version laid out and the memos: the next version is laid out
     /// whole.
     pub fn forget(&mut self) {
+        self.settle_watched();
         self.generation = None;
         self.source = None;
         self.painted.clear();
@@ -566,73 +617,12 @@ impl PageEngine {
         Some(ooxml_word_layout::facts::story_line_facts(&parts))
     }
 
-    /// What page `page` of `version` paints, digested: what besides its lines (its frame,
-    /// rules, pictures and drawings), and each line by its paragraph's path and story --
-    /// what tells two versions' pages apart without a reader reading them.
-    pub fn page_digests(&mut self, version: &LaidVersion, page: usize) -> Option<PageDigests> {
-        let paint = self.painted_page(version, page, false)?;
-        Some(crate::digests::digests(&paint, KEY, Lines::Page))
-    }
-
-    /// `version`'s pages compared as the layouts themselves are (docx-agent's
-    /// `DocumentLayout.compare`, over `Page.text_lines`): its summary with every line of
-    /// text a page draws, its text boxes' too; made whole, never kept.
-    pub fn contents(&mut self, version: &LaidVersion) -> Option<crate::summary::Summary> {
-        let mut pages = Vec::with_capacity(version.layout.page_count());
-        for page in 0..version.layout.page_count() {
-            let paint = self.painted_page(version, page, false)?;
-            let digests = crate::digests::digests(&paint, KEY, Lines::WithTextBoxes);
-            pages.push(Arc::new(crate::summary::page_summary(digests, version)));
-        }
-        let known = pages.len();
-        Some(crate::summary::Summary { pages, known })
-    }
-
     /// Page `page` of `version`'s lines' text, as a check reads it ([`crate::line_text`]):
     /// from its paint, taken from the pages kept painted where it is one, not kept itself (a
     /// check reads every page's text once: its reader keeps the text, not the paint).
     pub fn line_texts(&mut self, version: &LaidVersion, page: usize) -> Option<Vec<crate::line_text::LineText>> {
         let paint = self.painted_page(version, page, false)?;
         Some(paint.lines.iter().map(crate::line_text::LineText::of).collect())
-    }
-
-    /// `version`'s summary (docx-agent's `LayoutSummary`): each page's taken from the
-    /// version summarised before where the relayout kept that page with the same items and
-    /// context, the rest painted and digested; `None` where `version` is not of this
-    /// engine's generation.
-    pub fn summary(&mut self, version: &LaidVersion) -> Option<Arc<crate::summary::Summary>> {
-        if let Some(found) = version.summary.get() {
-            return Some(Arc::clone(found));
-        }
-        if self.generation.as_ref().is_none_or(|g| g.number != version.generation) {
-            return None;
-        }
-        let layout = &version.layout;
-        let context = crate::summary::context_of(layout, KEY);
-        let mut pages = Vec::with_capacity(layout.page_count());
-        let mut kept = Vec::new();
-        for page in 0..layout.page_count() {
-            let key = crate::page_said::page_key(layout, page);
-            let found = key
-                .as_ref()
-                .and_then(|k| self.generation.as_mut().and_then(|g| g.summaries.take(k, context)));
-            let summary = match found {
-                Some(found) => found,
-                None => Arc::new(crate::summary::page_summary(self.page_digests(version, page)?, version)),
-            };
-            if let Some(key) = key {
-                kept.push((key, Arc::clone(&summary)));
-            }
-            pages.push(summary);
-        }
-        if let Some(generation) = self.generation.as_mut() {
-            generation.summaries.keep(kept, context);
-        }
-        let made = Arc::new(crate::summary::Summary {
-            known: pages.len(),
-            pages,
-        });
-        Some(Arc::clone(version.summary.get_or_init(|| made)))
     }
 
     /// Page `page` of `version` as a reader sees it.
@@ -727,6 +717,9 @@ struct SayWith<'a> {
     decimal: char,
     /// A part beside the main one changed since the version before.
     others_changed: bool,
+    /// A notes', header's or footer's part is not the one the model opened before (read
+    /// from the packages, not from what the caller said changed).
+    drawn_changed: bool,
 }
 
 /// What `laid` says (its warnings and approximations), its facts made into `facts` where
@@ -742,7 +735,10 @@ fn say(
         // A part beside the main one changed (a chart's, a picture's, a story's): what a
         // kept page's drawings said may have changed with it.
         generation.said = crate::page_said::PageMemo::default();
-        generation.summaries = crate::summary::SummaryMemo::default();
+        generation.epoch += 1;
+    } else if with.drawn_changed {
+        // A page laid out the same may draw other notes or stories.
+        generation.epoch += 1;
     }
     let mut painter = DrawingWarnings {
         layout: &mut generation.layout,

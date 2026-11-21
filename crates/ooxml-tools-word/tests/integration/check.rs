@@ -2,7 +2,9 @@
 //! pages, coverage and warnings read there, and `since_last_check` measured from what the
 //! document's last check saw. Its equality with docx-agent's is
 //! `crates/ooxml-oracle/python/word_reads_diff.py check`'s and docx-agent's
-//! `test_rust_check_reflow.py`'s.
+//! `test_rust_check_reflow.py`'s. Many writers checking one document at once share its
+//! engine's page digests: each page is digested once, and every check answers as one alone
+//! does (lane P5e).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
 use crate::common::{engine, Never, Still, Unlimited};
@@ -56,6 +58,7 @@ fn checked(package: &Package, number: u64, arguments: Value, last: &LastCheck, l
             layout: layout.map(|l| l as &dyn ooxml_tools_word::WordLayout),
         }),
         others: Others::default(),
+        word: None,
     };
     let args = Check::from_arg(&arguments, "").unwrap();
     let done = check(&args, &version, &Never).unwrap();
@@ -119,4 +122,61 @@ fn a_reflow_without_the_hosts_layout_is_the_hosts() {
     let (first, _) = versions();
     let reply = checked(&first, 1, json!({"doc": "d1"}), &LastCheck::default(), None);
     assert_eq!(reply["unported"], CHECK_NO_LAYOUT);
+}
+
+/// The engine's pages painted for their digests.
+fn digested(engine: &Mutex<ooxml_word_pages::PageEngine>) -> u64 {
+    engine.lock().unwrap().stats().pages_digested.0
+}
+
+#[test]
+fn many_writers_checking_at_once_digest_each_page_once_and_answer_as_one_alone() {
+    let (first, edited) = versions();
+    let reflow = json!({"doc": "d1", "include": ["reflow"]});
+    // One writer alone: a check of the first version, then of the edited one.
+    let alone = Arc::new(Mutex::new(engine()));
+    let layout = EnginePages::new(Arc::clone(&alone));
+    let last = LastCheck::default();
+    let opened = checked(&first, 1, reflow.clone(), &last, Some(&layout));
+    assert!(opened["data"]["reflow"].get("since_last_check").is_none());
+    assert_eq!(digested(&alone), 0, "a first check digests no page");
+    let expected = checked(&edited, 2, reflow.clone(), &last, Some(&layout))["data"]["reflow"].clone();
+    assert!(expected.get("since_last_check").is_some(), "{expected}");
+    let once = digested(&alone);
+    // Four writers, each having checked the first version, check the edited one at once.
+    let shared = Arc::new(Mutex::new(engine()));
+    let layout = EnginePages::new(Arc::clone(&shared));
+    let lasts: Vec<LastCheck> = (0..4).map(|_| LastCheck::default()).collect();
+    for last in &lasts {
+        checked(&first, 1, reflow.clone(), last, Some(&layout));
+    }
+    let replies: Vec<Value> = std::thread::scope(|scope| {
+        let running: Vec<_> = lasts
+            .iter()
+            .map(|last| scope.spawn(|| checked(&edited, 2, reflow.clone(), last, Some(&layout))))
+            .collect();
+        running.into_iter().map(|r| r.join().unwrap()).collect()
+    });
+    for reply in &replies {
+        assert_eq!(reply["data"]["reflow"], expected);
+    }
+    assert_eq!(digested(&shared), once, "each page digested once among the writers");
+    // Writers sharing one last check at once: one measures from the first version, the
+    // others from the version it then saw (nothing since).
+    let last = LastCheck::default();
+    checked(&first, 1, reflow.clone(), &last, Some(&layout));
+    let replies: Vec<Value> = std::thread::scope(|scope| {
+        let running: Vec<_> = (0..4)
+            .map(|_| scope.spawn(|| checked(&edited, 2, reflow.clone(), &last, Some(&layout))))
+            .collect();
+        running.into_iter().map(|r| r.join().unwrap()).collect()
+    });
+    let measured: Vec<&Value> = replies
+        .iter()
+        .filter_map(|r| r["data"]["reflow"].get("since_last_check"))
+        .collect();
+    assert!(
+        !measured.is_empty() && measured.iter().all(|m| **m == expected["since_last_check"]),
+        "{replies:?}"
+    );
 }

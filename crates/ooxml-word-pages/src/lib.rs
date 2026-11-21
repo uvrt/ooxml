@@ -20,6 +20,9 @@
 //!   painted when asked;
 //! - how much of a document a version covers, and every warning it says, as docx2svg says
 //!   them ([`coverage`]);
+//! - a version's layout summary ([`summary`]) and the comparison of two versions page by
+//!   page ([`PageEngine::compare`], [`summarised`]): only the pages they do not share
+//!   painted, each page's digests kept across versions within a bound;
 //! - what a version alone holds, in bytes, roughly ([`LaidVersion::weight`]), and what the
 //!   engine keeps within its budgets ([`EngineBudgets`]: its memos, swept once a version is
 //!   laid out; its pages' paint, least recently used let go first).
@@ -31,6 +34,7 @@
 
 mod causes;
 pub mod coverage;
+mod digest_cache;
 mod digests;
 mod disk;
 mod drawing_said;
@@ -40,9 +44,11 @@ mod error;
 mod fonts;
 pub mod ids;
 pub mod line_text;
+mod page_context;
 pub mod page_said;
 mod pictures;
 pub mod png;
+pub mod summarised;
 pub mod summary;
 pub mod support;
 mod text_boxes;

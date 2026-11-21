@@ -31,6 +31,25 @@ READS = (("final", {}), ("markup", {"view": "markup"}), ("original", {"view": "o
 CHECKS = (("validate", ["validate"]), ("fields", ["fields"]),
           ("validate fields app", ["validate", "fields", "app"]), ("reflow", ["reflow"]), ("default", None))
 
+#: Lane P5e: check's sequences of versions, each case a check after the calls before it in
+#: the same session (checks and edits), measured from the check before (``since_last_check``):
+#: (name, calls before as (tool, arguments) with ``{first}`` / ``{middle}`` the first and middle
+#: body paragraphs' ids, the check's include, its pages).
+SEQUENCES = (
+    ("check after an edit", [("check", {"include": ["reflow"]}),
+                             ("word_insert_text", {"target": "{first}", "text": " checked" * 40})],
+     ["reflow"], None),
+    ("check after two edits", [("check", {"include": ["reflow"]}),
+                               ("word_insert_text", {"target": "{middle}", "text": " checked" * 40}),
+                               ("word_insert_text", {"target": "{first}", "text": " more" * 20})],
+     ["reflow"], [1, 2]),
+    ("checks between edits", [("check", {"include": ["reflow"]}),
+                              ("word_insert_text", {"target": "{middle}", "text": " checked" * 40}),
+                              ("check", {"include": ["reflow"]}),
+                              ("word_insert_text", {"target": "{first}", "text": " more" * 20})],
+     None, None),
+)
+
 #: Where a check's time went to lay out and to wait (lane P5b): what each side had laid out
 #: before and the Python path's waits for its workers -- left out of ``timing``'s names.
 LAYING_OUT = {"layout", "worker_wait", "document_wait"}
@@ -117,6 +136,50 @@ def cases_of(path, what: str) -> list[tuple[str, str, dict]]:
     return [("batch", "read_batch", {"ops": ops})]
 
 
+def sequences_of(path) -> list[tuple[str, list[tuple[str, dict]], dict]]:
+    """:data:`SEQUENCES` for the document at ``path``: (name, the calls before, the check's
+    arguments); none for a document without a paragraph."""
+    from docx_agent import Document
+
+    paragraphs = [p.id for p in Document.open(path.read_bytes()).paragraphs()]
+    if not paragraphs:
+        return []
+    ids = {"{first}": paragraphs[0], "{middle}": paragraphs[len(paragraphs) // 2]}
+
+    def filled(arguments: dict) -> dict:
+        return {k: ids.get(v, v) if isinstance(v, str) else v for k, v in arguments.items()}
+
+    out = []
+    for name, before, include, pages in SEQUENCES:
+        arguments = {} if include is None else {"include": include}
+        if pages is not None:
+            arguments["pages"] = pages
+        out.append((name, [(tool, filled(a)) for tool, a in before], arguments))
+    return out
+
+
+def sequence_replies(toolbox, path) -> dict:
+    """Each of :func:`sequences_of`'s cases through a session of its own: the check's reply
+    after the calls before it, or the failure of one of them."""
+    out = {}
+    for name, before, arguments in sequences_of(path):
+        session = toolbox.session()
+        doc = session.open(path.read_bytes(), name=path.name)
+        try:
+            reply = None
+            for k, (tool, step) in enumerate(before):
+                done = toolbox.dispatch(session, tool, {"doc": doc, **step})
+                if not done.ok:
+                    reply = {"error": {"code": "before", "message": f"call {k} ({tool}): {done.to_json()}"}}
+                    break
+            if reply is None:
+                reply = json.loads(json.dumps(toolbox.dispatch(session, "check", {"doc": doc, **arguments}).to_json()))
+            out[name] = ("check", arguments, reply, before)
+        finally:
+            session.close(doc)
+    return out
+
+
 def python_replies(toolbox, path, what: str) -> dict:
     session = toolbox.session()
     doc = session.open(path.read_bytes(), name=path.name)
@@ -175,9 +238,16 @@ def check_tools(args, run_rust, report, files_of) -> int:
         except Exception as error:  # noqa: BLE001 -- a test instrument: say what failed
             print(f"{path}: python failed: {error}")
             continue
-        for case, (tool, arguments, reply) in replies.items():
+        if args.what == "check":
+            try:
+                replies.update(sequence_replies(toolbox, path))
+            except Exception as error:  # noqa: BLE001 -- a test instrument: say what failed
+                print(f"{path}: python sequences failed: {error}")
+        for case, (tool, arguments, reply, *before) in replies.items():
             expected[(str(path), case)] = comparable(tool, reply)
             item = {"file": str(path), "case": case, "tool": tool, "arguments": {"doc": "d1", **arguments}}
+            if before:
+                item["before"] = [{"tool": t, "arguments": {"doc": "d1", **a}} for t, a in before[0]]
             if tool == "check" and "reflow" in (arguments.get("include") or ["reflow"]):
                 item["fonts"] = _fonts(path)          # the session lays out as docx-agent does
             manifest.append(item)
