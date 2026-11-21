@@ -188,12 +188,15 @@ fn run<F: Format>(mut state: F, rx: Receiver<Msg>, shared: Arc<Shared<F>>) {
                             kept.pop_front();
                         }
                     }
+                    // the pass is in the log before any reader sees its snapshot: the log is
+                    // held while the snapshot is published, so a reader woken by it (or one
+                    // that reads the latest at once) finds the pass that made it
+                    let mut passes = shared.passes.lock().unwrap();
                     let previous = std::mem::replace(&mut *shared.snap.lock().unwrap(), snap);
                     F::retire(&previous);
                     shared.cv.notify_all();
                     let publish_ms = ms(tpub);
                     let waited = oldest.map_or(0.0, |o| o.elapsed().as_secs_f64() * 1000.0);
-                    let mut passes = shared.passes.lock().unwrap();
                     passes.push(Pass {
                         stat,
                         commits: n,
