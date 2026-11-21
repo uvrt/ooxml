@@ -59,6 +59,9 @@ pub enum Change {
         /// Ids drawn from the ledger where the change is applied, written into the
         /// inserted element (the ledger merged at commit: a draw is not a conflict).
         draws: Arc<[Draw]>,
+        /// The keys of the blocks it makes under stand-ins ([`DocModel::created`]): kept
+        /// apart from `keys`, resolved at commit.
+        created: Arc<[Key]>,
     },
     /// An element's head changed in place in a part's tree.
     Head {
@@ -111,6 +114,17 @@ pub enum Change {
     },
     /// Ids added to the ledger (never taken back: an id given is never given again).
     Ids(IdsChange),
+    /// Values drawn from `seed`'s sequence where the change is applied, one for each of
+    /// `stand_ins` (the values the version the edit was prepared on gave): each recorded as
+    /// what its stand-in was drawn as ([`crate::Drawn`]), for the splices after it
+    /// ([`DrawFrom::Drawn`]) and the keys and replies of the commit. Merged at commit: two
+    /// transactions drawing from one seed do not conflict.
+    Draw {
+        /// The seed.
+        seed: Arc<str>,
+        /// The values drawn where the edit was prepared, upper-case hex.
+        stand_ins: Arc<[Arc<str>]>,
+    },
     /// Where the edit's revision ids start: one above the largest annotation id in use in
     /// the version it is applied to (docx-agent's `Stamp`, made as the edit begins
     /// recording). The draws after it ([`DrawFrom::Annotation`]) count from there.
@@ -125,6 +139,8 @@ pub enum DrawFrom {
     /// An annotation id: the edit's first ([`Change::Number`]) plus this offset (its
     /// revision records, numbered in the order it made them).
     Annotation(u32),
+    /// What a stand-in was drawn as by a [`Change::Draw`] before it in the transaction.
+    Drawn(Arc<str>),
 }
 
 /// An id drawn when a splice is applied, into an attribute of the element it inserts: the
@@ -231,6 +247,8 @@ pub struct WordDoc {
     reading: Arc<Mutex<Lazy<Docx>>>,
     tally: Arc<Mutex<Lazy<Tally>>>,
     shared: Arc<Shared>,
+    /// What the transaction that made this version drew for its stand-ins.
+    drawn: crate::Drawn,
 }
 
 impl WordDoc {
@@ -261,6 +279,7 @@ impl WordDoc {
             ids,
             reading: Arc::new(Mutex::new(Lazy::Ready(docx))),
             tally: Arc::new(Mutex::new(Lazy::Pending(None))),
+            drawn: crate::Drawn::default(),
             shared: Arc::new(Shared {
                 sequences: Sequences::default(),
                 fields: crate::fields::scan::FieldScans::new(Arc::clone(&budget)),
@@ -332,12 +351,24 @@ impl WordDoc {
             reading: Arc::new(Mutex::new(Lazy::Pending(reading))),
             tally: Arc::new(Mutex::new(Lazy::Pending(tally))),
             shared: Arc::clone(&self.shared),
+            drawn: self.drawn.clone(),
         }
+    }
+
+    /// What the transaction that made this version drew for its stand-ins: a reply naming
+    /// ids the edit made resolves them through it.
+    #[must_use]
+    pub fn drawn(&self) -> &crate::Drawn {
+        &self.drawn
     }
 
     /// `patch` with `draws` made from this version's ledger: the values written into the one
     /// element it inserts, and the change that adds them to the ledger.
-    fn drawn(&self, patch: &Patch, draws: &[Draw]) -> Result<(Patch, IdsChange), ModelError> {
+    fn drawn_patch(&self, patch: &Patch, draws: &[Draw]) -> Result<(Patch, IdsChange), ModelError> {
+        debug_assert!(
+            !crate::drawn::uncovered(patch.inserted(), draws, &self.drawn),
+            "a stand-in in an id attribute no draw writes"
+        );
         let stale = || {
             ModelError::Patch(PatchError::Stale {
                 parent: patch.parent().0.clone(),
@@ -360,6 +391,7 @@ impl WordDoc {
                     let first = self.ids.annotations().ok_or_else(stale)?;
                     (first + i64::from(*offset)).to_string()
                 }
+                DrawFrom::Drawn(stand_in) => self.drawn.get(stand_in).ok_or_else(stale)?.to_owned(),
             };
             let slot = inserted.get_mut(draw.node as usize).ok_or_else(stale)?;
             let ooxml_xml::Node::Element(element) = slot else {
@@ -374,6 +406,25 @@ impl WordDoc {
             inserted,
         );
         Ok((patch, added))
+    }
+
+    /// `key` as this version drew it: a block key named by a stand-in its transaction drew,
+    /// named by the value drawn; any other key as it is.
+    fn resolved(&self, key: &Key) -> Key {
+        match key {
+            Key::Block { part, id } if !self.drawn.is_empty() => {
+                let resolved = self.drawn.resolve(id);
+                if *resolved == **id {
+                    key.clone()
+                } else {
+                    Key::Block {
+                        part: Arc::clone(part),
+                        id: Arc::from(resolved),
+                    }
+                }
+            }
+            _ => key.clone(),
+        }
     }
 
     /// The package with the people part kept (see [`Change::People`]).
@@ -415,7 +466,9 @@ impl Change {
             | Change::Put { part, .. }
             | Change::Bytes { part, .. }
             | Change::Remove { part } => Some(part),
-            Change::Restore { .. } | Change::Ids(_) | Change::Number | Change::People { .. } => None,
+            Change::Restore { .. } | Change::Ids(_) | Change::Draw { .. } | Change::Number | Change::People { .. } => {
+                None
+            }
         }
     }
 }
@@ -428,12 +481,18 @@ impl DocModel for WordDoc {
     fn apply(&mut self, change: &Change) -> Result<(), ModelError> {
         let (package, ids) = match change {
             Change::Splice { part, patch, draws, .. } if !draws.is_empty() => {
-                let (patch, added) = self.drawn(patch, draws)?;
+                let (patch, added) = self.drawn_patch(patch, draws)?;
                 let mut ids = self.ids.clone();
                 ids.apply(&added);
                 (self.with_tree(part, |t| patch.apply(t))?, ids)
             }
-            Change::Splice { part, patch, .. } => (self.with_tree(part, |t| patch.apply(t))?, self.ids.clone()),
+            Change::Splice { part, patch, .. } => {
+                debug_assert!(
+                    !crate::drawn::uncovered(patch.inserted(), &[], &self.drawn),
+                    "a stand-in in an id attribute no draw writes"
+                );
+                (self.with_tree(part, |t| patch.apply(t))?, self.ids.clone())
+            }
             Change::Head { part, patch, .. } => (self.with_tree(part, |t| patch.apply(t))?, self.ids.clone()),
             Change::Put { part, tree } => (self.package.with_new_tree(part, tree.clone()), self.ids.clone()),
             Change::Bytes { part, bytes } => (self.package.with_bytes(part, Arc::clone(bytes)), self.ids.clone()),
@@ -450,6 +509,17 @@ impl DocModel for WordDoc {
                 let mut ids = self.ids.clone();
                 ids.apply(added);
                 (self.package.clone(), ids)
+            }
+            Change::Draw { seed, stand_ins } => {
+                let (values, added) = self.ids.draw(seed, stand_ins.len(), &self.shared.sequences);
+                let mut ids = self.ids.clone();
+                ids.apply(&added);
+                // the package is as it was: its reading and tally stay this version's
+                self.ids = ids;
+                for (stand_in, value) in stand_ins.iter().zip(values) {
+                    self.drawn.insert(stand_in, seed, value);
+                }
+                return Ok(());
             }
             Change::Number => {
                 let ceiling =
@@ -470,18 +540,23 @@ impl DocModel for WordDoc {
                 patch,
                 keys,
                 draws,
+                created,
             } => {
-                // what was inserted is what the draws made of it here
+                // what was inserted is what the draws made of it here, the blocks made
+                // under stand-ins named as drawn here
                 let patch = if draws.is_empty() {
                     patch.clone()
                 } else {
-                    self.drawn(patch, draws)?.0
+                    self.drawn_patch(patch, draws)?.0
                 };
+                let mut all: Vec<Key> = keys.to_vec();
+                all.extend(created.iter().map(|key| self.resolved(key)));
                 Change::Splice {
                     part: Arc::clone(part),
                     patch: patch.inverse(),
-                    keys: Arc::clone(keys),
+                    keys: all.into(),
                     draws: Arc::from([]),
+                    created: Arc::from([]),
                 }
             }
             Change::Head { part, patch, keys } => Change::Head {
@@ -509,7 +584,7 @@ impl DocModel for WordDoc {
                 }
             }
             // ids given are never given again: nothing to take back
-            Change::Ids(_) | Change::Number => Change::Ids(IdsChange::default()),
+            Change::Ids(_) | Change::Draw { .. } | Change::Number => Change::Ids(IdsChange::default()),
         })
     }
 
@@ -569,6 +644,32 @@ impl DocModel for WordDoc {
             Change::Number => {
                 into.insert(Key::Annotations);
             }
+            // a draw moves its seed's sequence: a transaction that read it (a stand-in
+            // pinned, values chosen by it where prepared) conflicts with it
+            Change::Draw { seed, .. } => {
+                into.insert(Key::Seq(Arc::clone(seed)));
+            }
+        }
+    }
+
+    fn created(change: &Change, into: &mut KeySet<Key>) {
+        if let Change::Splice { created, .. } = change {
+            for key in created.iter() {
+                into.insert(key.clone());
+            }
+        }
+    }
+
+    fn resolve(&self, created: &KeySet<Key>) -> KeySet<Key> {
+        match created.keys() {
+            Some(keys) => KeySet::of(keys.iter().map(|key| self.resolved(key))),
+            None => KeySet::Everything,
+        }
+    }
+
+    fn begin(&mut self) {
+        if !self.drawn.is_empty() {
+            self.drawn = crate::Drawn::default();
         }
     }
 
@@ -607,6 +708,10 @@ impl DocModel for WordDoc {
             Change::Number => {
                 into.insert(Key::Annotations);
             }
+            // values drawn from the version the change lands on, likewise
+            Change::Draw { seed, .. } => {
+                into.insert(Key::Seq(Arc::clone(seed)));
+            }
             _ => {}
         }
     }
@@ -631,6 +736,7 @@ impl DocModel for WordDoc {
                     patch,
                     keys,
                     draws,
+                    created,
                 },
                 Change::Splice { patch: earlier, .. },
             ) => Change::Splice {
@@ -638,6 +744,7 @@ impl DocModel for WordDoc {
                 patch: patch.rebase(earlier)?,
                 keys: Arc::clone(keys),
                 draws: Arc::clone(draws),
+                created: Arc::clone(created),
             },
             (
                 Change::Splice {
@@ -645,6 +752,7 @@ impl DocModel for WordDoc {
                     patch,
                     keys,
                     draws,
+                    created,
                 },
                 Change::Head { patch: earlier, .. },
             ) => Change::Splice {
@@ -652,6 +760,7 @@ impl DocModel for WordDoc {
                 patch: patch.rebase_head(earlier)?,
                 keys: Arc::clone(keys),
                 draws: Arc::clone(draws),
+                created: Arc::clone(created),
             },
             (Change::Head { part, patch, keys }, Change::Splice { patch: earlier, .. }) => Change::Head {
                 part: Arc::clone(part),

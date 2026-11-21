@@ -437,4 +437,4 @@ mod joins;
 mod window;
 
 pub use describe::{changes, LogicalChange, CHANGE_KINDS};
-pub use window::changes_holding;
+pub use window::{authored_changes_holding, changes_holding};

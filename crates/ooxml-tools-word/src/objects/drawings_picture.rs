@@ -14,7 +14,7 @@ use super::drawings_args::{WordDrawings, Wrap};
 use crate::blobs::blob;
 use crate::review::{needed, Editing};
 use crate::structure::common::{outcome, policy, refused, Outcome};
-use crate::style::round2;
+use ooxml_base::pyfmt::round2;
 use ooxml_store::Command;
 use ooxml_tools::{ArgEnum, Refusal, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::{

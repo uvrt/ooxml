@@ -13,6 +13,7 @@ mod heads;
 mod kept;
 mod media;
 mod numbering;
+mod stand_ins;
 mod stretch;
 mod style_use;
 mod written;
@@ -150,6 +151,7 @@ impl<'t, 's> EditSink<'t, 's> {
     }
 
     fn write(&mut self, change: Change) -> Result<()> {
+        let change = self.placed(change);
         if let Change::Splice { draws, .. } = &change {
             self.numbered.written(draws);
         }
@@ -165,8 +167,11 @@ impl<'t, 's> EditSink<'t, 's> {
         self.tx.write(change).map_err(EditError::from)
     }
 
-    /// `count` new ids of `seed`, from the ledger (read and written: two transactions drawing
-    /// from one seed are ordered by their commits).
+    /// `count` new ids of `seed`: stand-ins, the values this version gives, drawn again
+    /// where the change is applied ([`Change::Draw`]), so two transactions drawing from one
+    /// seed do not conflict and each gets what the commit order gives. Written into the
+    /// splices after it, they are drawn there too; anywhere else they are pinned
+    /// ([`stand_ins`]).
     ///
     /// # Errors
     /// When the change cannot be applied.
@@ -176,9 +181,15 @@ impl<'t, 's> EditSink<'t, 's> {
             // writer drawing from it)
             return Ok(Vec::new());
         }
-        self.tx.read(Key::Seq(Arc::from(seed)));
-        let (values, change) = self.tx.doc().ids().draw(seed, count, &self.tx.doc().shared().sequences);
-        self.write(Change::Ids(change))?;
+        let (values, _) = self.tx.doc().ids().draw(seed, count, &self.tx.doc().shared().sequences);
+        let seed: Arc<str> = Arc::from(seed);
+        let stand_ins: Arc<[Arc<str>]> = values.iter().map(|v| Arc::from(v.to_uppercase())).collect();
+        self.tx
+            .write(Change::Draw {
+                seed,
+                stand_ins: Arc::clone(&stand_ins),
+            })
+            .map_err(EditError::from)?;
         Ok(values)
     }
 
@@ -503,6 +514,7 @@ impl<'t, 's> EditSink<'t, 's> {
             patch: Patch::splice(NodePath(parent_path), start, removed, nodes),
             keys: keys.into(),
             draws: draws.into(),
+            created: Arc::from([]),
         })
     }
 
@@ -638,6 +650,7 @@ impl<'t, 's> EditSink<'t, 's> {
             patch,
             keys: keys.into(),
             draws: draws.into(),
+            created: Arc::from([]),
         })
     }
 

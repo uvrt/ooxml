@@ -88,7 +88,8 @@ def test_a_reply_without_names_keeps_the_sessions_ids():
     doc = session.open(_report("A made-up report"), kind="docx", name="report.docx")
     reply, _images, _app = session.call("word_read", json.dumps({"doc": doc}))
     assert json.loads(reply)["doc"] == doc
-    named, _images, _app = session.call("word_read", json.dumps({"doc": "first"}), names={"first": doc})
+    first = ooxml_core.CallOptions(documents=ooxml_core.CallDocuments(names={"first": doc}))
+    named, _images, _app = session.call("word_read", json.dumps({"doc": "first"}), first)
     assert json.loads(named)["doc"] == "first"
-    refused, _images, _app = session.call("word_read", json.dumps({"doc": doc}), names={"first": doc})
+    refused, _images, _app = session.call("word_read", json.dumps({"doc": doc}), first)
     assert json.loads(refused)["error"]["code"] == "not_found"

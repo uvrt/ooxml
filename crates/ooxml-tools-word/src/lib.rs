@@ -16,6 +16,8 @@
 mod blobs;
 mod check;
 mod describe;
+mod document;
+mod drawn_reply;
 mod find_text;
 mod objects;
 mod originals;
@@ -37,8 +39,10 @@ mod written;
 pub use blobs::{Blob, BlobList, Blobs};
 pub use check::*;
 pub use describe::{describe, Describe, DESCRIBED, NOT_DESCRIBED};
+pub use document::*;
+pub use drawn_reply::resolve_drawn;
 pub use find_text::{find_text, FindStories, FindText};
-pub use pages::EnginePages;
+pub use pages::{EnginePages, LayoutLimit, NotLaid, WordLayout};
 pub use placements::Placer;
 pub use registrar::{register, EditFn, Hosting, ReadFn, Registrar, TrackingFn};
 // A tool group's module exports its tools (`pub use` in its `mod.rs`); the crate exports

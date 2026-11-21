@@ -9,7 +9,7 @@
 use super::EditSink;
 use crate::names::{MC, W, W14};
 use crate::set_text::block_key;
-use crate::spacing::{mark_places, marked_places, space_paragraph, Context};
+use crate::spacing::{mark_places, marked_places, space_paragraph, table_of, Context};
 use crate::work::{scope_above, Id, Work};
 use crate::Result;
 use ooxml_word_model::docx::{at_path, StoryPart};
@@ -256,17 +256,4 @@ fn by_para_id(element: &Arc<Element>, raw: &str, path: &mut Vec<u32>) -> Option<
         path.pop();
     }
     None
-}
-
-/// `Some` with the `w:tblPr` of the innermost table above the element at `path` of `root`
-/// when there is one.
-fn table_of(root: &Arc<Element>, path: &[u32]) -> Option<Option<Arc<Element>>> {
-    let mut table = None;
-    for k in 0..path.len() {
-        let at = at_path(root, path.get(..k).unwrap_or_default())?;
-        if at.name().is(Some(W), "tbl") {
-            table = Some(at.find(Some(W), "tblPr").cloned());
-        }
-    }
-    table
 }
