@@ -529,7 +529,7 @@ fn marker_shape(make: &Make, index: usize) -> Owned {
 }
 
 /// `series_color`: Office's automatic colour for series `index`.
-fn series_colour(make: &Make, index: usize) -> Owned {
+pub(crate) fn series_colour(make: &Make, index: usize) -> Owned {
     let accent = ACCENTS.get(index % ACCENTS.len()).copied().unwrap_or("accent1");
     let variation = VARIATIONS
         .get((index / ACCENTS.len()) % VARIATIONS.len())

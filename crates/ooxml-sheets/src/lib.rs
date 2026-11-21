@@ -9,7 +9,8 @@
 //! [`Value`]).
 //!
 //! Beside the reading, [`write`]: a workbook written cell by cell ([`WorkbookWriter`]), as
-//! ooxml-edit writes the cells a chart edit changes.
+//! ooxml-edit writes the cells a chart edit changes, and a new one-sheet workbook
+//! ([`NewBook`]), as ooxml-edit writes the one behind a new chart.
 //!
 //! Must not: evaluate a formula, or hold state beyond what one opened
 //! workbook memoises: every value is `Send + Sync`, and nothing here depends on an
@@ -29,7 +30,7 @@ pub use address::{
 pub use error::SheetsError;
 pub use sheet::{Value, Worksheet};
 pub use workbook::Workbook;
-pub use write::{Axis, Shift, WorkbookWriter, Write};
+pub use write::{Axis, NewBook, NewCell, NewValue, Shift, WorkbookWriter, Write};
 
 /// SpreadsheetML's main namespace (transitional), the one ooxml-edit reads.
 pub const SML_NS: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
