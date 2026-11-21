@@ -1,7 +1,9 @@
 //! Owns: [`CallEditor`], a document's editor as one call's handler is handed it: each edit
-//! runs through the editor as before (one command, one history step), and the versions the
-//! call made are kept ([`Made`]) for the host -- the call's own versions, whatever other
-//! calls commit to the document meanwhile (the head after the call may be theirs).
+//! runs through the editor as before (one command, one history step), and the version the
+//! call made is kept ([`Made`]) for the host -- the call's own, whatever other calls commit
+//! to the document meanwhile (the head after the call may be theirs). A call commits at most
+//! once, so it is one step and one state number: a handler with several commands runs them
+//! as one transaction (the session checks it in debug builds).
 //!
 //! Must not: change how an edit runs, or outlive the call.
 
@@ -16,6 +18,9 @@ use std::sync::{Mutex, PoisonError};
 /// editor works both out with each edit).
 #[derive(Debug, Clone)]
 pub struct Made {
+    /// The version the call's first changing edit was applied to (the head it was published
+    /// after): where the call's step begins.
+    pub before: Snapshot<WordDoc>,
     /// The version the call's first changing edit made.
     pub first: Snapshot<WordDoc>,
     /// The version its last changing edit made: the call's step ends there.
@@ -63,11 +68,16 @@ impl<'a> CallEditor<'a> {
         }
         if edited.changed {
             let mut made = self.made.lock().unwrap_or_else(PoisonError::into_inner);
-            let (first, mut ids) = made
-                .take()
-                .map_or_else(|| (edited.version.clone(), Vec::new()), |m| (m.first, m.ids));
+            let (before, first, mut ids) = made.take().map_or_else(
+                || {
+                    let before = edited.previous.clone().unwrap_or_else(|| edited.version.clone());
+                    (before, edited.version.clone(), Vec::new())
+                },
+                |m| (m.before, m.first, m.ids),
+            );
             ids.push((edited.version.seq(), edited.ids.clone()));
             *made = Some(Made {
+                before,
                 first,
                 last: edited.version.clone(),
                 touched: edited.touched.clone(),

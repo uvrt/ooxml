@@ -1,7 +1,8 @@
 //! The rows a session's `word_edit_table` calls wrote (round 58, R126) on a made-up "Shelf"
 //! table: kept in the session's record beside the versions -- two writers at once both
 //! land in it, an undone row stays named but is not found in the versions after -- and
-//! text written into an empty cell given its column's formatting, said in the reply.
+//! text written into an empty cell given its column's formatting in the same step, said in the
+//! reply.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
 use crate::editing::{as_caller, body_of, call, docx, session};
@@ -100,4 +101,17 @@ fn a_row_undone_stays_named_and_is_not_found() {
     // the host's own writes go into the same record
     s.note_rows_written(&d, vec!["0A000002".into()]).unwrap();
     assert_eq!(s.rows_written(&d).unwrap().len(), 2);
+}
+
+#[test]
+fn text_and_its_column_formatting_are_one_step() {
+    let s = session();
+    let d = s.open(docx(&shelf()), DocKind::Docx, "a.docx").unwrap();
+    let before = body_of(&s, &d);
+    let reply = call(&s, "word_edit_table", set(2, "Rug"), &as_caller("w1"));
+    assert!(reply.get("error").is_none(), "{reply}");
+    assert_eq!(body_of(&s, &d).matches(r#"<w:color w:val="1F4E79"/>"#).count(), 9);
+    // one undo takes back the text and the formatting it was given: the call was one commit
+    assert_eq!(s.undo(&d, 1, &as_caller("w1")).unwrap().count, 1);
+    assert_eq!(body_of(&s, &d), before);
 }

@@ -185,8 +185,9 @@ def _tracking(call: Any, entry: Any, context: Any, counted: bool) -> None:
                             valid_options=error.get("valid_options"), details=error.get("details"))
         mirror.tracking = wanted
     if made is not None:
-        first, head, _touched, _validation = made
-        entry.served(first, head, StepOwner(dict(call.caller), "word_set_tracking"), counted=counted)
+        first, head, _touched, _validation, before = made
+        entry.served(first, head, StepOwner(dict(call.caller), "word_set_tracking"), counted=counted,
+                     before=before)
 
 
 def _set_mode(entry: Any, given: dict[str, Any], context: Any, names: dict[str, str]) -> tuple[str, str, Any]:
@@ -283,7 +284,7 @@ def _timing(call: Any, arguments: dict[str, Any]) -> Any:
 
 def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tuple[Result, Any, list[Any]]:
     """The call's edit made by the session: its result, what it made (``Session.edit``'s
-    ``(first, head, touched, validation)``, ``None`` where it changed nothing), and the
+    ``(first, head, touched, validation, before)``, ``None`` where it changed nothing), and the
     markers its checks get (its ``Timing``, :func:`_timing`).  ``counted``: as for
     :meth:`~ooxml_edit.tools.owned.OwnedEntry.served`."""
     mirror = entry.handle
@@ -376,9 +377,9 @@ def serve_owned(call: Any, arguments: dict[str, Any]) -> Any:
     touched: list[Any] = [*([_before(before)] if current else []), *markers]
     if made is None:
         return Served(result, None, None, touched)
-    first, head, step, validation = made
+    first, head, step, validation, before = made
     return Served(result, first, head, [*touched, Made(head, validation, _engine(call, entry))],
-                  None if step is None else json.loads(step))
+                  None if step is None else json.loads(step), before)
 
 
 def _before(layout: Any) -> Any:
@@ -408,7 +409,7 @@ def serve(call: Any, arguments: dict[str, Any], python: Callable[[], Any]) -> An
             for marker in markers:
                 call.touch(marker)
             if made is not None:
-                entry.served(made[0], made[1])
+                entry.served(made[0], made[1], before=made[4])
         _hand_engine(call, entry, before, made is not None)
     except Fallback as fallback:
         _count(tool, str(fallback))

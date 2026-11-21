@@ -5,8 +5,8 @@ A document an owner holds (:class:`~.owned.OwnedEntry`) whose format edits with 
 runs such a call without the document's lock: the call holds the document's
 :class:`~.gate.Gate` shared, beside the others the owner serves, while the owner makes its
 edit (prepared on a snapshot, committed in a short section of the owner's own) and its step
-is numbered in the order the owner made the steps (:meth:`~.owned.OwnedEntry.served`, which
-also counts what the dispatcher counts per change).  Its checks run after, with nothing
+is kept as the owner numbered it, whatever order the calls end in
+(:meth:`~.owned.OwnedEntry.served`, which also counts what the dispatcher counts per change).  Its checks run after, with nothing
 held, on the version the call made.
 
 What the owner does not serve so -- a call it refuses or leaves to the format's Python
@@ -45,6 +45,8 @@ class Served:
     #: What the step touched, as the owner's ``touched`` says it, where the owner said it
     #: with the edit (``None``: asked of the owner between the step's versions).
     step_touched: list[dict[str, Any]] | None = None
+    #: The owner's number of the state the step went from (``None``: not said).
+    before: int | None = None
 
 
 class Declined:
@@ -91,7 +93,8 @@ def serve_unlocked(toolbox: "Toolbox", session: Session, tool: "Tool", arguments
                 entry.served_refs(refs, context.caller)
             else:
                 number, before = entry.served(served.first, served.head,
-                                              StepOwner(dict(caller), tool.name), counted=True, refs=refs)
+                                              StepOwner(dict(caller), tool.name), counted=True, refs=refs,
+                                              before=served.before)
     result = served.result
     result.warnings[:0] = tool.ignored_for(entry.kind, given) + read
     result.version = number
