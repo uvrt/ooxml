@@ -20,7 +20,8 @@ The Python handler answers instead -- on the view, committed through the bridge,
 tool and reason (:func:`fallbacks`, ``edit_fallbacks{tool,reason}``), never silently -- where
 the session does not answer as it yet: an op of a ``batch`` (one step), a call on a draft,
 values written by reference in a tool that does not keep them yet (``Hosting.keeps_written``), a
-ref name that would be folded, and what the session says it leaves to the host (its
+ref name that would be folded, a format whose writes are not spaced by their language
+(``docx_format(typography=False)``: the session has no such switch yet), and what the session says it leaves to the host (its
 ``unported``: a find within a block, a picture, regex, ...).  The Rust handler changes nothing
 in each of those.
 
@@ -125,6 +126,10 @@ def _why_not(call: Any, entry: Any, arguments: dict[str, Any]) -> str | None:
         return "batch op"
     if getattr(call, "facts", None) and call.tool.name not in _served.hosting().keeps_written:
         return "values by reference"
+    if getattr(entry.held, "typography", True) is False:
+        # docx_format(typography=False): the text as given; the session spaces what it writes
+        # by its language, and has no switch for it yet (unported, lane P2e6)
+        return "typography off"
     return None
 
 

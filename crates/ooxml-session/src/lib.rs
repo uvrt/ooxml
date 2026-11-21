@@ -60,4 +60,4 @@ pub use reading_edit::ReadingEditHandler;
 pub use registry::Registry;
 pub use retired::RetiredBy;
 pub use session::{CallMade, Opened, Session, SessionConfig, SessionStats};
-pub use update::{PartUpdate, Updated};
+pub use update::{HostIds, PartUpdate, Updated};

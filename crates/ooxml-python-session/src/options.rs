@@ -12,7 +12,7 @@
 use crate::adapters::PyBlobs;
 use crate::layout::PyWordPages;
 use crate::session::{PyCallContext, PyVersion};
-use ooxml_session::{CallContext, DocId, DocNames, Opened};
+use ooxml_session::{CallContext, DocId, DocNames, HostIds, Opened};
 use ooxml_tools_word::{Blobs, Placer, Written};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -45,6 +45,30 @@ impl PyCallDocuments {
         Self {
             at: at.iter().flatten().map(|v| v.inner.clone()).collect(),
             names: known,
+        }
+    }
+}
+
+/// What the host's id ledger of a Word document holds beside the parts it bridges
+/// (`ooxml_core.HostIds`, `Session.bridge`'s `ids`): `drawn`, where its tool's draws of new
+/// ids got to in each seed's sequence (`{seed: index}`, docx-agent's id pool cursors: an id
+/// it drew and did not write is not drawn again); `aliases`, its renames (`{old: new}`: a
+/// block it stamped is found by its old id too).
+#[pyclass(frozen, name = "HostIds", module = "ooxml_core")]
+pub struct PyHostIds {
+    pub(crate) inner: HostIds,
+}
+
+#[pymethods]
+impl PyHostIds {
+    #[new]
+    #[pyo3(signature = (*, drawn = None, aliases = None))]
+    fn new(drawn: Option<BTreeMap<String, usize>>, aliases: Option<BTreeMap<String, String>>) -> Self {
+        Self {
+            inner: HostIds {
+                drawn: drawn.unwrap_or_default().into_iter().collect(),
+                aliases: aliases.unwrap_or_default().into_iter().collect(),
+            },
         }
     }
 }

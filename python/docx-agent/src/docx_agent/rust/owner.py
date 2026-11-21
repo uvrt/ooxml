@@ -46,6 +46,19 @@ def context_of(caller: Mapping[str, Any] | None, date: str | None = None) -> Any
     return ooxml_core.CallContext(caller=caller_key(caller), date=date)
 
 
+def host_ids(view: Any) -> Any:
+    """An ``ooxml_core.HostIds`` of what ``view``'s id ledger holds beside the parts a Python
+    tool changed in it: where its draws of new ids got to (an id it drew and did not write is
+    given) and its renames (a block it stamped keeps its old id); ``None`` without a view."""
+    import ooxml_core
+
+    if view is None:
+        return None
+    pool = getattr(getattr(view, "_ledger", None), "pool", None)
+    drawn = {seed: k for seed, k in pool.cursors.items() if k > 0} if pool is not None else {}
+    return ooxml_core.HostIds(drawn=drawn, aliases=dict(getattr(view, "_aliases", None) or {}))
+
+
 def options(**given: Any) -> Any:
     """An ``ooxml_core.CallOptions``: what one ``Session.call`` or ``Session.edit`` runs with
     beside its name and arguments (``context``, ``documents``, ``placer``, ``layout``,
@@ -110,8 +123,11 @@ class RustOwner:
         # found under the session's bytes of the version too (only where it laid out).
         laid = live is not None and laid_mark(live) != mirror.laid
         own = live.package.to_bytes() if laid else None
+        # the view's ledger beside the parts: where its draws of new ids got to (an id it drew
+        # and did not write is given) and its renames (a block it stamped keeps its old id)
+        ids = host_ids(live)
         with mirror.lock:
-            made = mirror.session.bridge(mirror.doc, tool, parts, context=context_of(caller))
+            made = mirror.session.bridge(mirror.doc, tool, parts, context=context_of(caller), ids=ids)
             mirror.view_head = made
         if own is not None:
             same_state(live, own, bytes(made.save()))

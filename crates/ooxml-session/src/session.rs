@@ -9,7 +9,7 @@ use crate::batch::{MAX_READ_BATCH_CHARS, READ_BATCH};
 use crate::call::Call;
 use crate::context::{revision_date, CallCancel};
 use crate::document::{At, Document};
-use crate::update::{PartUpdate, Updated};
+use crate::update::{HostIds, PartUpdate, Updated};
 use crate::{CallContext, DocId, DocKind, DocNames, Registry, SessionError};
 use ooxml_base::{Cancel, Context};
 use ooxml_opc::Package;
@@ -346,7 +346,8 @@ impl Session {
 
     /// The bridge (section 13): commit the parts an unported tool `tool` changed, run by the
     /// host on the head's bytes, as one step made by `context.caller`, and count it in
-    /// `bridge_calls{tool}`. The version it leaves, held.
+    /// `bridge_calls{tool}`; `host`: what the host's ledger holds beside the parts (its
+    /// tool's draws of new ids and renames, [`HostIds`]). The version it leaves, held.
     ///
     /// # Errors
     /// As [`Session::update`]; a conflict with a commit since the head the tool ran on is
@@ -356,9 +357,10 @@ impl Session {
         id: &DocId,
         tool: &str,
         parts: Vec<(String, Option<Arc<[u8]>>)>,
+        host: HostIds,
         context: &CallContext,
     ) -> Result<(Updated, Opened), SessionError> {
-        let done = self.commit_by(id, Some(tool), parts, context)?;
+        let done = self.commit_by(id, Some(tool), parts, host, context)?;
         let mut counts = self.counts.bridged.lock().unwrap_or_else(PoisonError::into_inner);
         *counts.entry(tool.to_owned()).or_default() += 1;
         Ok(done)
@@ -387,7 +389,7 @@ impl Session {
         parts: Vec<(String, Option<Arc<[u8]>>)>,
         context: &CallContext,
     ) -> Result<(Updated, Opened), SessionError> {
-        self.commit_by(id, None, parts, context)
+        self.commit_by(id, None, parts, HostIds::default(), context)
     }
 
     /// [`Session::commit`] of the parts `tool` changed (`None`: no tool named).
@@ -396,11 +398,12 @@ impl Session {
         id: &DocId,
         tool: Option<&str>,
         parts: Vec<(String, Option<Arc<[u8]>>)>,
+        host: HostIds,
         context: &CallContext,
     ) -> Result<(Updated, Opened), SessionError> {
         let document = self.document(id)?;
         let cancel = CallCancel::new(context, &*self.context.cancel, &*self.context.clock);
-        let update = PartUpdate::new(parts, self.context.limits, &cancel);
+        let update = PartUpdate::new(parts, self.context.limits, &cancel).with_host(host);
         let (version, changed, attempts) = document.update(&context.caller, tool, &update).inspect_err(|e| {
             if matches!(e, SessionError::Base(ooxml_base::BaseError::Cancelled)) {
                 self.counts.cancelled.fetch_add(1, Ordering::Relaxed);

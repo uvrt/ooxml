@@ -5,7 +5,7 @@
 //! Must not: do a session's work itself, or touch a Python object without the lock.
 
 use crate::adapters::{context, SessionStop};
-use crate::options::{context_of, PyCallOptions};
+use crate::options::{context_of, PyCallOptions, PyHostIds};
 use ooxml_base::Locale;
 use ooxml_session::{
     CallContext, CancelToken, DocId, DocKind, HeldId, Opened, RetiredBy, Session, SessionConfig, SessionError,
@@ -459,8 +459,10 @@ impl PySession {
     }
 
     /// The bridge: commit the parts the unported tool `tool` changed (``None`` removes one)
-    /// and count the call in ``bridge_calls``; returns the version it leaves, held.
-    #[pyo3(signature = (doc, tool, parts, *, context = None))]
+    /// and count the call in ``bridge_calls``; ``ids``: what the host's id ledger holds
+    /// beside the parts (a ``HostIds``: its tool's draws and renames). Returns the version
+    /// it leaves, held.
+    #[pyo3(signature = (doc, tool, parts, *, context = None, ids = None))]
     fn bridge(
         &self,
         py: Python<'_>,
@@ -468,13 +470,15 @@ impl PySession {
         tool: &str,
         parts: &Bound<'_, PyDict>,
         context: Option<PyRef<'_, PyCallContext>>,
+        ids: Option<PyRef<'_, PyHostIds>>,
     ) -> PyResult<PyVersion> {
         let id = doc_id(doc, &self.inner)?;
         let context = caller_context(context.as_deref());
         let copied = copy_parts(parts)?;
+        let host = ids.map(|i| i.inner.clone()).unwrap_or_default();
         let session = &self.inner;
         let (_, opened) = py
-            .detach(|| session.bridge(&id, tool, copied, &context))
+            .detach(|| session.bridge(&id, tool, copied, host, &context))
             .map_err(|e| to_py(&e))?;
         Ok(PyVersion { inner: opened })
     }

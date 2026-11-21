@@ -23,6 +23,7 @@ from ooxml_edit.tools.limits import Limits  # noqa: E402
 from docx_agent import Document  # noqa: E402
 from docx_agent.rust import check as rust_check  # noqa: E402
 from docx_agent.rust import parser as rust_parser  # noqa: E402
+from python_handler import python_session  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS  # noqa: E402
 
 from test_rust_check import CLOCK, INCLUDE, TOOLS, _normal, _sequence, report  # noqa: E402,F401
@@ -53,8 +54,9 @@ def _run(data: bytes, parser: bool, monkeypatch, sequence=_sequence) -> tuple[li
     results = []
     limits = Limits(render_timeout=600, layout_timeout=600, batch_timeout=900)
     with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=1, limits=limits) as box:
-        session = box.session(clock=CLOCK)
-        doc = session.open(data, "report.docx")
+        # What the check's mirror (``check.RustDoc``) is handed: the view the Python handlers
+        # edit (lane P2e6; a document the session owns is not mirrored so).
+        session, doc = python_session(box, data, "report.docx", clock=CLOCK)
         assert box.dispatch(session, "ds_put", {"id": "values"}).ok
         for writer, tool, arguments in sequence(session, doc):
             view = session.view(context={"agent": writer})

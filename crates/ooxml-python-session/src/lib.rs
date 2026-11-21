@@ -33,7 +33,7 @@ use pyo3::prelude::*;
 
 pub use budget::{PyBudgetAccount, PyMemoryBudget};
 pub use layout::{LayoutFallback, PyLaidPages, PyWordFonts, PyWordPages};
-pub use options::{PyCallDocuments, PyCallOptions};
+pub use options::{PyCallDocuments, PyCallOptions, PyHostIds};
 pub use raster::PyPageRaster;
 pub use session::{PyCallContext, PyCancelToken, PySession, PyVersion};
 
@@ -49,6 +49,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCallContext>()?;
     m.add_class::<PyCallOptions>()?;
     m.add_class::<PyCallDocuments>()?;
+    m.add_class::<PyHostIds>()?;
     m.add_class::<PyVersion>()?;
     m.add_function(wrap_pyfunction!(tools::tool_specs, m)?)?;
     m.add_function(wrap_pyfunction!(tools::tool_hosting, m)?)?;
