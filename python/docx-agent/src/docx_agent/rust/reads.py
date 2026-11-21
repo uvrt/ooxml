@@ -372,13 +372,8 @@ def _with_others(call: Any, arguments: dict[str, Any], others: tuple[str, ...],
     #103's ``Call::others``).  The call's own document named again is the tool's."""
     versions: list[Any] = []
     names: dict[str, str] = {}
-    for path in others:
-        *parents, key = path.split(".")
-        holder: Any = arguments
-        for name in parents:
-            holder = holder.get(name) if isinstance(holder, dict) else None
-        given = holder.get(key) if isinstance(holder, dict) else None
-        if not isinstance(given, str) or given == getattr(call.entry, "doc_id", None):
+    for given in (found for path in others for found in _at_path(arguments, path.split("."))):
+        if not isinstance(given, str) or given == getattr(call.entry, "doc_id", None) or given in names:
             continue
         entry = call.entries.get(given)
         if entry is None:
@@ -389,6 +384,19 @@ def _with_others(call: Any, arguments: dict[str, Any], others: tuple[str, ...],
         names[given] = mirror.doc
         versions.append(version)
     return names, versions
+
+
+def _at_path(value: Any, path: list[str]) -> list[Any]:
+    """The values at ``path`` in ``value`` (``reference.doc``; a part ending ``[]`` is each
+    item of a list: ``copies[].reference.doc``)."""
+    if not path:
+        return [value]
+    head, rest = path[0], path[1:]
+    if head.endswith("[]"):
+        items = value.get(head[:-2]) if isinstance(value, dict) else None
+        return [found for item in items or () for found in _at_path(item, rest)] \
+            if isinstance(items, list) else []
+    return _at_path(value.get(head), rest) if isinstance(value, dict) else []
 
 
 def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | None" = None,
@@ -464,7 +472,7 @@ def serve_check(call: Any, arguments: dict[str, Any]) -> Result | None:
         why = "in a batch"
     elif getattr(owned.held, "min_text_size", None) is not None:
         why = "min_text_size"
-    return serve(call, "check", arguments, lambda: None, why_not=why)
+    return serve(call, "check", arguments, lambda: None, why_not=why, others=("copies[].reference.doc",))
 
 
 def _result(envelope: dict[str, Any]) -> Result:
