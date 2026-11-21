@@ -333,3 +333,23 @@ fn ratio(value: ooxml_base::Q) -> f64 {
 pub fn round(value: f64, places: usize) -> f64 {
     format!("{value:.places$}").parse().unwrap_or(value)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lengths_are_said_as_docx_agent_rounds_them() {
+        // 300 device px are 72 pt; 1 px is 0.24 pt
+        assert!((points(Px::int(300)) - 72.0).abs() < f64::EPSILON);
+        assert!((points(Px::int(1)) - 0.24).abs() < f64::EPSILON);
+        assert!(
+            (round(2.675, 2) - 2.67).abs() < f64::EPSILON,
+            "the binary value is below the tie"
+        );
+        assert!((round(0.25, 1) - 0.2).abs() < f64::EPSILON, "a tie goes to even");
+        assert_eq!(story_kind("w:hdr/w:p[1]"), "header");
+        assert_eq!(story_kind("w:footnote[2]/w:p[1]"), "footnotes");
+        assert_eq!(story_kind("w:body/w:p[1]"), "body");
+    }
+}
