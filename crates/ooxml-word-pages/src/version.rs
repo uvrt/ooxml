@@ -66,6 +66,15 @@ impl LaidVersion {
         self.ids.path_of(id)
     }
 
+    /// The advance of `ch` in the face this version lays `family` out with, and that face's
+    /// units per em (`ooxml_fonts::WordFonts::advance`: Word's glyph fallbacks included);
+    /// `None` where nothing answers. Not recorded in the fonts' coverage: a measure for an
+    /// edit, not a line of the layout.
+    pub fn advance(&self, family: &str, bold: bool, italic: bool, ch: char) -> Option<(u32, u32)> {
+        let found = self.glyphs.fonts().advance(family, bold, italic, ch)?;
+        Some((u32::from(found.advance), u32::from(found.units_per_em)))
+    }
+
     /// The layout.
     pub fn layout(&self) -> &DocumentLayout {
         &self.layout

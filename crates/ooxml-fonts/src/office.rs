@@ -280,6 +280,41 @@ pub fn office_metrics_for(family: &str) -> Option<&'static OfficeFace> {
     substitution_for(family).and_then(|row| office_face(&row.metrics))
 }
 
+/// The faces [`table_advance`] answers for, lowercased, with their tables (docx2svg's
+/// `measure.TABLES`).
+const ADVANCE_TABLES: [(&str, &str); 6] = [
+    ("calibri", "Carlito"),
+    ("arial", "Arimo"),
+    ("times new roman", "Tinos"),
+    ("courier new", "Cousine"),
+    ("cambria", "Cambria"),
+    ("aptos", "Aptos"),
+];
+
+/// Where the installed face (Word's bundle and the macOS copy agree) differs from its table:
+/// Arimo is a metric clone of Arial, not a copy (docx2svg's `measure._OVERRIDES`).
+const ADVANCE_OVERRIDES: [(&str, bool, char, u32); 2] =
+    [("arial", false, '\u{2c6}', 682), ("arial", true, '\u{b5}', 1180)];
+
+/// The advance of `ch` in `family` (upright or bold) from the measured tables, and their
+/// units per em, for the six faces they hold (docx2svg's `TableAdvances.advance`); `None`
+/// for another face, an italic one, or a character the table lacks.
+#[must_use]
+pub fn table_advance(family: &str, bold: bool, italic: bool, ch: char) -> Option<(u32, u32)> {
+    let key = family.to_lowercase();
+    let (_, name) = ADVANCE_TABLES.iter().find(|(face, _)| *face == key)?;
+    if italic {
+        return None;
+    }
+    let table = office_face(name)?;
+    let advance = ADVANCE_OVERRIDES
+        .iter()
+        .find(|(face, b, c, _)| *face == key && *b == bold && *c == ch)
+        .map(|(.., advance)| *advance)
+        .or_else(|| table.advance(ch, bold))?;
+    Some((advance, table.units_per_em))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -295,5 +330,13 @@ mod tests {
         assert!(carlito.kerns());
         assert_eq!(office_metrics_for("Calibri").unwrap().name, "Carlito");
         assert!(office_metrics_for("No Such Face").is_none());
+    }
+
+    #[test]
+    fn table_advances() {
+        assert_eq!(table_advance("Calibri", false, false, ' '), Some((463, 2048)));
+        assert_eq!(table_advance("ARIAL", true, false, '\u{b5}').map(|a| a.0), Some(1180));
+        assert_eq!(table_advance("Calibri", false, true, ' '), None);
+        assert_eq!(table_advance("Carlito", false, false, ' '), None);
     }
 }

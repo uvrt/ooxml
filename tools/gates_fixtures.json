@@ -86,6 +86,11 @@
   "tables",
   "tracked"
  ],
+ "generated/toc-numbered.docx": [
+  "fields",
+  "lists",
+  "tables"
+ ],
  "generated/trial/field-handbook.docx": [
   "lists",
   "notes",
