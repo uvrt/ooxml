@@ -85,10 +85,11 @@ pub fn word_read(args: &WordRead, version: &Version<'_>, cancel: &dyn Cancel) ->
     cancel.check().map_err(cancelled)?;
     let docx = version.docx()?;
     // A heading's range is read, and named, as the span it is (today's `resolve`).
+    // ... through the session's renames (a place id stamping renamed), as docx-agent's view
     let range = args
         .range
         .as_deref()
-        .map(|r| expand_heading(&docx, r))
+        .map(|r| expand_heading(&docx, &version.follow(r)))
         .transpose()
         .map_err(|e| range_refusal(e, &args.doc))?;
     let markdown = to_markdown(&docx, range.as_deref(), view, stories).map_err(|e| range_refusal(e, &args.doc))?;
@@ -135,4 +136,9 @@ pub(crate) fn try_call(arguments: Value) -> TryCall {
 /// A range refused: the ids that would do, and the call that reads the whole document.
 fn range_refusal(error: RangeError, doc: &str) -> ToolError {
     crate::refusal::address_refusal(error, "range", try_call(json!({"doc": doc})))
+}
+
+/// Registers `word_read` (the crate's [`crate::register`]).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    r.read::<WordRead>(word_read);
 }

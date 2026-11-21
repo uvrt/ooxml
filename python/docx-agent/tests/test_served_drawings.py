@@ -1,5 +1,5 @@
 """Lane P2c14: ``word_drawings`` served by the Rust session, an inserted picture's bytes
-asked of the host's blobs (``Session.edit(blobs=...)``); its replies as docx-agent's own
+asked of the host's blobs (``CallOptions(blobs=...)``); its replies as docx-agent's own
 handler gives them (a session with its own clock is answered by the Python handler).
 Made-up documents and pictures only."""
 

@@ -84,7 +84,9 @@ fn read(args: &WordRead) -> String {
             number: 1,
             versions: &Versions::new(),
             placer: None,
+            owned: None,
             others: ooxml_tools_word::Others::default(),
+            word: None,
         },
         &Never,
     )
@@ -122,7 +124,9 @@ fn a_range_naming_nothing_is_refused_with_the_way_out() {
             number: 1,
             versions: &Versions::new(),
             placer: None,
+            owned: None,
             others: ooxml_tools_word::Others::default(),
+            word: None,
         },
         &Never,
     )
@@ -148,7 +152,9 @@ fn a_range_with_every_story_is_refused_with_the_call_that_works() {
             number: 1,
             versions: &Versions::new(),
             placer: None,
+            owned: None,
             others: ooxml_tools_word::Others::default(),
+            word: None,
         },
         &Never,
     )
@@ -173,7 +179,9 @@ fn a_long_document_is_paged_at_line_ends() {
             number: 1,
             versions: &Versions::new(),
             placer: None,
+            owned: None,
             others: ooxml_tools_word::Others::default(),
+            word: None,
         },
         &Never,
     )
@@ -191,7 +199,9 @@ fn a_long_document_is_paged_at_line_ends() {
             number: 1,
             versions: &Versions::new(),
             placer: None,
+            owned: None,
             others: ooxml_tools_word::Others::default(),
+            word: None,
         },
         &Never,
     )
@@ -206,7 +216,9 @@ fn a_long_document_is_paged_at_line_ends() {
             number: 1,
             versions: &Versions::new(),
             placer: None,
+            owned: None,
             others: ooxml_tools_word::Others::default(),
+            word: None,
         },
         &Never,
     )
@@ -230,7 +242,9 @@ fn views_name_the_summary() {
             number: 1,
             versions: &Versions::new(),
             placer: None,
+            owned: None,
             others: ooxml_tools_word::Others::default(),
+            word: None,
         },
         &Never,
     )

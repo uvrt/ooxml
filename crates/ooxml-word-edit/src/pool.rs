@@ -5,10 +5,11 @@
 //! same edit writes the same bytes ([`Ids::draw`]); the sequences themselves, computed once
 //! per document ([`Sequences`]).
 //!
-//! A draw reads and writes its seed's key (`Key::Seq`): two transactions drawing from one
-//! seed conflict, and the later one draws again on the newer version, so values are those
-//! a serial run gives (design section 5's ledger, with the draw order fixed by the commit
-//! order).
+//! An edit draws stand-ins (`Change::Draw`, [`crate::Drawn`]): the values are drawn again
+//! where its change is applied, so two transactions drawing from one seed do not conflict
+//! and each gets what a serial run in commit order gives (design section 5's ledger, merged
+//! at commit). A stand-in written where no draw reaches is pinned: the edit reads its seed's
+//! key (`Key::Seq`), and conflicts with any draw from it since its snapshot.
 //!
 //! Must not: stamp a part (the sink does), read a package, or hold global state.
 
@@ -61,6 +62,12 @@ pub struct IdsChange {
     /// The highest drawing number given now (`wp:docPr/@id`), where a draw gave one or a
     /// part brought one above the version's ([`Ids::highest_drawing`]); 0 where neither.
     pub highest_drawing: u64,
+    /// Drawing numbers given now (drawn, kept by a copy, or brought by parts) that the
+    /// document had not had ([`Ids::had_drawing`]).
+    pub drawings: Vec<u64>,
+    /// Blocks replaced, one by one (docx-agent's `_note_replaced`): the old block id's
+    /// value and the id of the block that replaced it.
+    pub replaced: Vec<(u32, String)>,
 }
 
 impl IdsChange {
@@ -73,6 +80,8 @@ impl IdsChange {
             && self.forget.is_empty()
             && self.forget_targets.is_empty()
             && self.highest_drawing == 0
+            && self.replaced.is_empty()
+            && self.drawings.is_empty()
     }
 }
 
@@ -88,6 +97,8 @@ pub struct EarlierIds {
     pub cursors: Vec<(String, usize)>,
     /// The highest drawing number given.
     pub highest_drawing: u64,
+    /// The drawing numbers retired (docx-agent's `drawings_gone`): a copy keeps none of them.
+    pub drawings: Vec<u64>,
 }
 
 /// A version's ids: the pool, the sequences' cursors and the renames. Cloning shares.
@@ -100,6 +111,12 @@ pub struct Ids {
     /// The highest drawing number any version had or a draw gave (docx-agent's ledger's
     /// `highest_drawing`): every `wp:docPr/@id` written is at most this.
     highest_drawing: u64,
+    /// Every drawing number any version had or a draw gave (docx-agent's ledger's drawing
+    /// numbers in the document and `drawings_gone`): a copy keeps a number only outside it.
+    drawings: Arc<BTreeSet<u64>>,
+    /// Each block id's value replaced by one block, and that block's id (docx-agent's
+    /// ledger's `replaced`: what a refusal naming the old id says replaced it).
+    replaced: Arc<BTreeMap<u32, String>>,
     /// The first annotation id of the edit being applied (one above the largest in use
     /// when it began numbering): its revision records' ids count from here.
     annotations: Option<i64>,
@@ -107,12 +124,13 @@ pub struct Ids {
 
 impl Ids {
     /// The ids of a document as opened: `values`, every one its parts hold, and
-    /// `highest_drawing`, the highest drawing number they write.
+    /// `drawings`, the drawing numbers they write.
     #[must_use]
-    pub fn opened(values: HashSet<u32>, highest_drawing: u64) -> Ids {
+    pub fn opened(values: HashSet<u32>, drawings: HashSet<u64>) -> Ids {
         Ids {
             base: Arc::new(values),
-            highest_drawing,
+            highest_drawing: drawings.iter().copied().max().unwrap_or(0),
+            drawings: Arc::new(drawings.into_iter().collect()),
             ..Ids::default()
         }
     }
@@ -128,7 +146,16 @@ impl Ids {
             Arc::make_mut(&mut self.cursors).extend(earlier.cursors.iter().cloned());
         }
         self.highest_drawing = self.highest_drawing.max(earlier.highest_drawing);
+        if !earlier.drawings.is_empty() {
+            Arc::make_mut(&mut self.drawings).extend(earlier.drawings.iter().copied());
+        }
         self
+    }
+
+    /// Whether the document has or had the drawing number `number`, or a draw gave it.
+    #[must_use]
+    pub fn had_drawing(&self, number: u64) -> bool {
+        self.drawings.contains(&number)
     }
 
     /// The highest drawing number any version had or a draw gave.
@@ -147,6 +174,7 @@ impl Ids {
         let out: Vec<u64> = (0..count as u64).map(|k| first.saturating_add(k)).collect();
         let change = IdsChange {
             highest_drawing: out.last().copied().unwrap_or(0),
+            drawings: out.clone(),
             ..IdsChange::default()
         };
         (out, change)
@@ -186,6 +214,32 @@ impl Ids {
         target.to_owned()
     }
 
+    /// The address `address` names now, as docx-agent's view reads an address through its
+    /// renames: a block's id followed; the table of a row's or cell's id (`t@body/0/c2,2`
+    /// once the table is `t:X`: `t:X/c2,2`); a text range's paragraphs; a span's ends; any
+    /// other form as given.
+    #[must_use]
+    pub fn follow_address(&self, address: &str) -> String {
+        use ooxml_word_model::address::{inside_table, parse_range, span_ends};
+        if let Some(found) = parse_range(address) {
+            let range = ooxml_word_model::address::RangeText {
+                start_id: self.follow(&found.start_id),
+                end_id: self.follow(&found.end_id),
+                ..found
+            };
+            return crate::text_range::range_id(&range);
+        }
+        if let Ok(Some((first, last))) = span_ends(address) {
+            let end = |e: Option<&str>| e.map(|e| self.follow_address(e)).unwrap_or_default();
+            return format!("{}..{}", end(first), end(last));
+        }
+        if let Some((table, _)) = inside_table(address) {
+            let rest = address.get(table.len()..).unwrap_or_default();
+            return format!("{}{rest}", self.follow(table));
+        }
+        self.follow(address)
+    }
+
     /// The first annotation id of the edit being applied.
     #[must_use]
     pub fn annotations(&self) -> Option<i64> {
@@ -197,9 +251,21 @@ impl Ids {
         self.annotations = Some(first);
     }
 
+    /// Each block id's value replaced by one block, with that block's id.
+    #[must_use]
+    pub fn replaced(&self) -> &BTreeMap<u32, String> {
+        &self.replaced
+    }
+
     /// Add what `change` adds.
     pub fn apply(&mut self, change: &IdsChange) {
+        if !change.replaced.is_empty() {
+            Arc::make_mut(&mut self.replaced).extend(change.replaced.iter().cloned());
+        }
         self.highest_drawing = self.highest_drawing.max(change.highest_drawing);
+        if change.drawings.iter().any(|n| !self.drawings.contains(n)) {
+            Arc::make_mut(&mut self.drawings).extend(change.drawings.iter().copied());
+        }
         if !change.values.is_empty() {
             Arc::make_mut(&mut self.added).extend(change.values.iter().copied());
         }
@@ -238,6 +304,11 @@ impl Ids {
     /// never given again and an old id still names the block it was renamed to).
     pub fn carry(&mut self, head: &Ids) {
         self.highest_drawing = self.highest_drawing.max(head.highest_drawing);
+        if !Arc::ptr_eq(&self.drawings, &head.drawings) {
+            let mut drawings = (*self.drawings).clone();
+            drawings.extend(head.drawings.iter().copied());
+            self.drawings = Arc::new(drawings);
+        }
         if !Arc::ptr_eq(&self.added, &head.added) {
             let mut added = (*self.added).clone();
             added.extend(head.added.iter().copied());
@@ -257,6 +328,12 @@ impl Ids {
             let aliases = Arc::make_mut(&mut self.aliases);
             for (old, new) in head.aliases.iter() {
                 aliases.insert(old.clone(), new.clone());
+            }
+        }
+        if !Arc::ptr_eq(&self.replaced, &head.replaced) {
+            let replaced = Arc::make_mut(&mut self.replaced);
+            for (old, new) in head.replaced.iter() {
+                replaced.insert(*old, new.clone());
             }
         }
     }
@@ -320,7 +397,7 @@ mod tests {
     fn draws_continue_after_the_last_value_held() {
         let sequences = Sequences::default();
         let second = sequence_value("word/document.xml", 1);
-        let ids = Ids::opened([second].into_iter().collect(), 0);
+        let ids = Ids::opened([second].into_iter().collect(), HashSet::new());
         let (made, change) = ids.draw("word/document.xml", 1, &sequences);
         assert_eq!(made, vec![format!("{:08X}", sequence_value("word/document.xml", 2))]);
         let mut next = ids.clone();
@@ -335,11 +412,15 @@ mod tests {
         let sequences = Sequences::default();
         let seed = "word/document.xml";
         // the parts hold the first value; the second was given and deleted before the save
-        let opened = Ids::opened([sequence_value(seed, 1)].into_iter().collect(), 3);
+        let opened = Ids::opened(
+            [sequence_value(seed, 1)].into_iter().collect(),
+            [3].into_iter().collect(),
+        );
         let earlier = EarlierIds {
             values: vec![sequence_value(seed, 2)],
             cursors: Vec::new(),
             highest_drawing: 7,
+            drawings: vec![5],
         };
         let ids = opened.clone().with_earlier(&earlier);
         let (again, _) = opened.draw(seed, 1, &sequences);
@@ -347,6 +428,7 @@ mod tests {
         assert_eq!(again, vec![format!("{:08X}", sequence_value(seed, 2))]);
         assert_eq!(made, vec![format!("{:08X}", sequence_value(seed, 3))]);
         assert_eq!(ids.highest_drawing(), 7);
+        assert!(ids.had_drawing(5) && ids.had_drawing(3) && !ids.had_drawing(4));
         assert!(ids.added().is_empty());
     }
 }

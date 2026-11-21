@@ -14,9 +14,10 @@ use crate::page_stories::{page_stories, PageStoryJob, StoryMemo};
 use crate::paginate::{HyphenMove, PageContext, PageStories, Pagination, Paginator, Resume};
 use crate::rooms::{RoomSource, Rooms};
 use crate::sections::Sections;
+use crate::stop::Stop;
 use crate::stories::{StoryContext, StoryTable};
 use crate::table::TableLayout;
-use ooxml_base::{DigestKey, Locale};
+use ooxml_base::{BaseError, Cancel, DigestKey, Locale};
 use ooxml_derive::CacheBudget;
 use ooxml_text::Measurer;
 use ooxml_word_model::model::Block;
@@ -43,7 +44,7 @@ pub struct DocumentLayout {
     pub hyphen_at_page_end: HyphenMove,
     /// The version as laid out: its page-number fields holding [`DocumentLayout::fields`].
     pub document: WordDocument,
-    /// The page-number fields' values it was laid out with.
+    /// The page-number fields' values: the texts its fields draw.
     pub fields: FieldValues,
     /// Per top-level block of [`DocumentLayout::document`], what of the endnotes placed
     /// in the flow it is.
@@ -80,6 +81,10 @@ pub struct LayoutMemo {
     text_box_labels: std::sync::OnceLock<Arc<std::collections::HashMap<String, Option<String>>>>,
     /// Each page's facts, made when first asked.
     page_facts: std::sync::OnceLock<Arc<[std::sync::OnceLock<Option<crate::facts::PageFacts>>]>>,
+    /// Its body's paragraphs in document order, cells included.
+    paragraphs: std::sync::OnceLock<Arc<[Arc<ooxml_word_model::model::Paragraph>]>>,
+    /// Per section, the pages it has content on (`SECTIONPAGES`).
+    section_pages: std::sync::OnceLock<Arc<std::collections::BTreeMap<usize, usize>>>,
 }
 
 impl DocumentLayout {
@@ -89,6 +94,15 @@ impl DocumentLayout {
         self.memo
             .story_texts
             .get_or_init(|| Arc::new(crate::page_stories::story_texts(self, locale, &self.roles)))
+    }
+
+    /// Its body's paragraphs in document order, cells included
+    /// ([`crate::flow::body_paragraphs`]), made when first asked: its field values, facts
+    /// and warnings each read them.
+    pub fn body_paragraphs(&self) -> &Arc<[Arc<ooxml_word_model::model::Paragraph>]> {
+        self.memo
+            .paragraphs
+            .get_or_init(|| crate::flow::body_paragraphs(&self.document.body).0.into())
     }
 
     /// The paths its drawn lines can be of, made when first asked.
@@ -119,6 +133,14 @@ impl DocumentLayout {
                 .text_box_labels
                 .get_or_init(|| Arc::new(crate::geometry::text_box::text_box_labels(model, &self.document))),
         )
+    }
+
+    /// Per section, the number of pages it has content on ([`crate::fields::section_page_counts`]),
+    /// made when first asked: every page's header and footer reads its section's.
+    pub fn section_page_counts(&self) -> &std::collections::BTreeMap<usize, usize> {
+        self.memo
+            .section_pages
+            .get_or_init(|| Arc::new(crate::fields::section_page_counts(self)))
     }
 
     /// Where each page's line numbers count from (`w:lnNumType`), made when first asked.
@@ -206,6 +228,7 @@ impl DocumentLayout {
             },
             rooms: None,
             lines: std::cell::RefCell::default(),
+            stop: None,
         }
     }
 }
@@ -379,6 +402,7 @@ impl WordLayout {
             sections,
             labels,
             roles,
+            stop,
             ..
         } = *frame;
         let cx = FlowContext {
@@ -391,7 +415,7 @@ impl WordLayout {
             tables: self.tables.as_ref(),
             roles,
         };
-        FlowMaker::new(&cx, model, &mut self.body).build()
+        FlowMaker::new(&cx, model, &mut self.body).until(stop).build()
     }
 
     /// A version's flow made again from the same pass of the version before, and the
@@ -419,7 +443,7 @@ impl WordLayout {
             labels: old.labels,
             roles: old.roles,
         };
-        FlowMaker::new(&cx, model, &mut self.body).again(&old)
+        FlowMaker::new(&cx, model, &mut self.body).until(frame.stop).again(&old)
     }
 
     /// One pass: the flow of `version` and its pages, laid out again from `old` (the same
@@ -460,6 +484,10 @@ impl WordLayout {
             relaid: Vec::new(),
             memo: LayoutMemo::default(),
         };
+        if frame.stop.stopped() {
+            // A flow that ends early: never paginated, the caller drops it.
+            return layout;
+        }
         let found = match (old, found) {
             (Some(_), Some(found)) => Some(found),
             (Some(o), None) => Some(changes(&o.flow.items, &layout.flow.items)),
@@ -477,6 +505,7 @@ impl WordLayout {
         let rooms = Rooms::new(source, model, &mut self.body.measurer);
         let mut cx = layout.page_context(self.faces.as_ref(), &self.locale);
         cx.rooms = Some(&rooms);
+        cx.stop = Some(frame.stop);
         let (pages, stats) = match (old, found) {
             (Some(o), Some(found)) => {
                 let (pages, stats) = repaginate(&cx, (o.pagination, &o.flow.items), &found);
@@ -495,7 +524,33 @@ impl WordLayout {
     /// fields take until they are the ones it was laid out with (at most
     /// [`FIELD_PASSES`] times; `_Placer.run_full`).
     pub fn lay_out(&mut self, model: &mut Model, document: &WordDocument) -> DocumentLayout {
-        self.lay_out_from(model, document, None)
+        self.lay_out_from(model, document, None, &Stop::never())
+    }
+
+    /// [`WordLayout::lay_out`], or [`WordLayout::relayout`] from `previous` where given,
+    /// stopped where `cancel` says so -- asked before it starts (a limit passed already
+    /// lays nothing out, even a version of no blocks), before each top-level block of the
+    /// body's flow and before each page.
+    ///
+    /// # Errors
+    /// [`BaseError::Cancelled`] where it stopped: what it made is dropped; the measures it
+    /// kept are kept by content, as any layout's are, and the next layout reads them.
+    pub fn lay_out_until(
+        &mut self,
+        model: &mut Model,
+        document: &WordDocument,
+        previous: Option<&DocumentLayout>,
+        cancel: &dyn Cancel,
+    ) -> Result<DocumentLayout, BaseError> {
+        let stop = Stop::on(cancel);
+        if stop.now() {
+            return Err(BaseError::Cancelled);
+        }
+        let laid = self.lay_out_from(model, document, previous, &stop);
+        if stop.stopped() {
+            return Err(BaseError::Cancelled);
+        }
+        Ok(laid)
     }
 
     /// Drop the measures by content that no layout holds and nothing measured since the
@@ -514,7 +569,7 @@ impl WordLayout {
         document: &WordDocument,
         previous: &DocumentLayout,
     ) -> DocumentLayout {
-        self.lay_out_from(model, document, Some(previous))
+        self.lay_out_from(model, document, Some(previous), &Stop::never())
     }
 
     /// Whether the kept measures were made against `document`'s parts (styles,
@@ -554,6 +609,7 @@ impl WordLayout {
         model: &mut Model,
         document: &WordDocument,
         previous: Option<&DocumentLayout>,
+        stop: &Stop<'_>,
     ) -> DocumentLayout {
         let same_parts = self.keep_parts(document);
         let previous = previous.filter(|_| same_parts);
@@ -582,9 +638,13 @@ impl WordLayout {
                 page_stories: &overrides,
                 labels: &labels,
                 roles: &placed.roles,
+                stop,
             };
             let old = previous.and_then(|p| p.laid_pass(earlier.len()));
             let mut layout = self.pass(model, version, &frame, old);
+            if stop.stopped() {
+                return layout;
+            }
             relaid.append(&mut layout.relaid);
             let found = field_values(&layout.document, &layout, &keys);
             let found_pages = by_page.then(|| crate::notes::footnote_pages(&layout));
@@ -592,11 +652,16 @@ impl WordLayout {
             // shorter moves the page's body.
             let heights = self.page_stories(model, &layout, &placed.roles, &mut story_memo);
             let settled = found == values && found_pages == pages && heights == overrides;
-            if settled || earlier.len() + 1 == FIELD_PASSES {
-                layout.fields = values;
+            let last = earlier.len() + 1 == FIELD_PASSES;
+            // A pass whose fields already draw the values found: the next would lay the same
+            // document out in the same frame and find them again, so this pass is that one.
+            let drawn =
+                !settled && !last && found_pages == pages && heights == overrides && draws(&layout, &values, &found);
+            if settled || last || drawn {
+                layout.fields = if drawn { found } else { values };
                 layout.footnote_pages = pages;
                 layout.passes = earlier.len() + 1;
-                layout.settled = settled;
+                layout.settled = settled || drawn;
                 layout.relaid = relaid;
                 let mut bodies: Vec<&[ooxml_word_model::model::Block]> = vec![&document.body, &layout.document.body];
                 bodies.extend(earlier.iter().map(|r| &*r.body));
@@ -620,6 +685,22 @@ impl WordLayout {
     }
 }
 
+/// Whether `layout` (laid out with the field values `values`) draws the values `found`:
+/// each field run's text is the one `found` gives (`substitute` would change no run), and no
+/// field `values` gave a text loses it.
+fn draws(layout: &DocumentLayout, values: &FieldValues, found: &FieldValues) -> bool {
+    if !values.keys().all(|k| found.contains_key(k)) {
+        return false;
+    }
+    let paragraphs = layout.body_paragraphs();
+    found.iter().all(|(&(block, k), text)| {
+        paragraphs
+            .get(block)
+            .and_then(|p| p.runs.get(k))
+            .is_none_or(|run| run.field.is_none() || **text == *run.text)
+    })
+}
+
 /// What every pass of a version is laid out in: its sections, its stories' heights, its
 /// paragraphs' list labels, its top-level blocks' parts in the endnotes placed.
 #[derive(Debug, Clone, Copy)]
@@ -634,6 +715,8 @@ pub struct PassFrame<'f> {
     pub labels: &'f [Option<String>],
     /// Per top-level block, what of the endnotes placed it is.
     pub roles: &'f [Option<NoteRole>],
+    /// Whether to stop laying out (asked per top-level block and per page).
+    pub stop: &'f Stop<'f>,
 }
 
 /// Every page of a laid-out flow, from the start.

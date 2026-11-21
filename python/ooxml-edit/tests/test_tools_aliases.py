@@ -7,7 +7,7 @@ import datetime as dt
 
 import pytest
 
-from ooxml_edit.tools import (Result, SubsetError, Toolbox, array, check_subset, integer,
+from ooxml_edit.tools import (AliasWhen, Result, SubsetError, Toolbox, array, check_subset, integer,
                               names_as, number, obj, shared, string, tool, validate_call)
 from ooxml_edit.tools import fold_ref
 from ooxml_edit.tools.dispatch import ref_rule
@@ -74,6 +74,12 @@ def t_name(call, doc, ref=None, address=None, target=None):
     return Result(summary="named", data={"target": call.resolve_ref(target) if target else None})
 
 
+@tool("t_ref_name", "The ref name a name is kept as, before anything is made.",
+      {"doc": string("Document id."), "ref": string("Ref name.")}, kind="docx")
+def t_ref_name(call, doc, ref):
+    return Result(summary="asked", data={"kept": call.ref_name(ref)})
+
+
 @tool("t_style", "Style items.",
       {"doc": string("Document id."),
        "items": array(obj({"target": string("Item."),
@@ -87,7 +93,7 @@ def t_style(call, doc, items):
     return Result(summary="styled", data={"items": items})
 
 
-TOOLS = [t_fit, t_set, t_count, t_make, t_name, t_style, chart, *shared.SESSION_TOOLS]
+TOOLS = [t_fit, t_set, t_count, t_make, t_name, t_ref_name, t_style, chart, *shared.SESSION_TOOLS]
 
 
 @pytest.fixture
@@ -244,6 +250,31 @@ def test_alias_definitions_are_checked():
         tool("t_x", "X.", {"doc": string("Doc.")}, aliases={"b": "c"})(lambda call, doc: None)
 
 
+def test_a_conditional_alias_definition_names_parameters():
+    """An alias read only while an argument has a value (:class:`AliasWhen`) names a
+    parameter to read as and an argument to watch, both the tool's own; the Rust export
+    writes the same entry, and reading it back gives it again."""
+    params = {"doc": string("Doc."), "target": string("Target."),
+              "action": string("Action.", enum=["add", "read"])}
+    defined = tool("t_x", "X.", params, aliases={"slide": AliasWhen("target", "action", "add")})(
+        lambda call, doc, target, action: None)
+    when = defined.aliases["slide"]
+    assert when({"action": "add"}) == "target" and when({"action": "read"}) is None
+    assert when.exported() == {"name": "target", "when": {"action": "add"}}
+    assert AliasWhen.of_export(when.exported()) == when
+    with pytest.raises(ValueError):
+        AliasWhen.of_export({"name": "target", "when": {"action": "add", "kind": "x"}})
+    with pytest.raises(SubsetError, match="'slide' as 'chart', which is not a parameter"):
+        tool("t_x", "X.", params, aliases={"slide": AliasWhen("chart", "action", "add")})(
+            lambda call, doc, target, action: None)
+    with pytest.raises(SubsetError, match="while 'mode' is 'add', which is not a parameter"):
+        tool("t_x", "X.", params, aliases={"slide": AliasWhen("target", "mode", "add")})(
+            lambda call, doc, target, action: None)
+    with pytest.raises(SubsetError, match="which is a parameter"):
+        tool("t_x", "X.", params, aliases={"doc": AliasWhen("target", "action", "add")})(
+            lambda call, doc, target, action: None)
+
+
 def test_edit_chart_reads_slide_as_target_when_adding(toolbox, session):
     result = toolbox.dispatch(session, "edit_chart", {"doc": "d1", "action": "add",
                                                       "slide": "p:1"})
@@ -347,6 +378,23 @@ def test_a_folded_name_that_names_another_address_is_refused(toolbox, session):
     result = toolbox.dispatch(session, "t_name", {"doc": "d1", "ref": "recNow",
                                                   "address": "item:1"})
     assert result.ok and result.warnings == ["ref 'recNow' read as 'rec_now': write $rec_now"]
+
+
+def test_a_ref_name_is_asked_before_anything_is_made(toolbox, session):
+    """Lane H2 (``Call.ref_name``): what :meth:`define_ref` keeps a name as, asked before the
+    call makes what it names -- a folded name that names any address already is refused."""
+    def kept(name):
+        return toolbox.dispatch(session, "t_ref_name", {"doc": "d1", "ref": name})
+
+    assert kept("rec_now").data == {"kept": "rec_now"}
+    found = kept("recNow")
+    assert found.data == {"kept": "rec_now"} and not found.warnings
+    assert kept("big chart").error.field == "ref"
+    assert toolbox.dispatch(session, "t_name", {"doc": "d1", "ref": "rec_now", "address": "item:1"}).ok
+    refused = kept("recNow")
+    assert refused.error.message == ("ref 'recNow' reads as 'rec_now', which already names "
+                                     "item:1: give ref 'rec_now' to point it here instead, "
+                                     "or a name of its own")
 
 
 def test_folded_refs_in_a_batch(toolbox, session):

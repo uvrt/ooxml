@@ -57,6 +57,86 @@ pub struct Editing<'a> {
     /// The session's blobs, where the host hands them over (`word_drawings`' pictures);
     /// `None`: a call that reads one is left to the host.
     pub blobs: Option<&'a dyn crate::Blobs>,
+    /// The values the host wrote into the call's arguments for references (`{{d:...}}`),
+    /// which the call keeps on the paragraphs they went into; empty: none.
+    pub written: &'a [crate::Written],
+    /// The host's record of the rows the session's `word_edit_table` calls wrote (round 58,
+    /// R126), read and added to; `None`: the call's own rows only, none kept.
+    pub rows_written: Option<&'a crate::RowsWritten>,
+}
+
+impl<'a> Editing<'a> {
+    /// What every call is handed: the editor, the caller, the document as opened, its id,
+    /// the cancellation and the call's time. The host's optional context -- tracking, a
+    /// layout, other documents, blobs, values written by reference -- starts empty and is
+    /// given with the `with_*` setters, so a new kind of context adds a setter, not a
+    /// field to every caller's literal.
+    #[must_use]
+    pub fn new(
+        editor: &'a CallEditor<'a>,
+        caller: &'a Caller,
+        opened: &'a WordDoc,
+        doc: &'a str,
+        cancel: &'a dyn Cancel,
+        date: &'a str,
+    ) -> Self {
+        Self {
+            editor,
+            caller,
+            opened,
+            tracking: None,
+            doc,
+            cancel,
+            date,
+            layout: None,
+            others: crate::Others::default(),
+            blobs: None,
+            written: &[],
+            rows_written: None,
+        }
+    }
+
+    /// The tracking mode the host keeps for the document (`None`: off).
+    #[must_use]
+    pub fn with_tracking(mut self, tracking: Option<&'a Tracking>) -> Self {
+        self.tracking = tracking;
+        self
+    }
+
+    /// The layout of the document's versions, where the host keeps one.
+    #[must_use]
+    pub fn with_layout(mut self, layout: Option<&'a dyn FieldLayout>) -> Self {
+        self.layout = layout;
+        self
+    }
+
+    /// The other open documents the call names.
+    #[must_use]
+    pub fn with_others(mut self, others: crate::Others<'a>) -> Self {
+        self.others = others;
+        self
+    }
+
+    /// The session's blobs, where the host hands them over.
+    #[must_use]
+    pub fn with_blobs(mut self, blobs: Option<&'a dyn crate::Blobs>) -> Self {
+        self.blobs = blobs;
+        self
+    }
+
+    /// The values the host wrote into the call's arguments for references.
+    #[must_use]
+    pub fn with_written(mut self, written: &'a [crate::Written]) -> Self {
+        self.written = written;
+        self
+    }
+
+    /// The host's record of the rows written ([`crate::RowsWritten`]).
+    #[must_use]
+    pub fn with_rows_written(mut self, rows_written: Option<&'a crate::RowsWritten>) -> Self {
+        self.rows_written = rows_written;
+        self
+    }
 }
 
 /// An edit's refusal as the tool's: an address refused with its way out, a refusal with
@@ -64,6 +144,8 @@ pub struct Editing<'a> {
 pub(crate) fn edit_refusal(error: EditError, field: &str, call: TryCall) -> ToolError {
     match error {
         EditError::Address(e) => crate::refusal::address_refusal(e, field, call),
+        // a table position as accepted names its own argument
+        EditError::Position(m) => crate::refusal::address_refusal(m.error, &m.field, call),
         EditError::Refused(m) | EditError::Text(m) | EditError::Span(m) => {
             ToolError::refusal(Refusal::Refused, m, WayOut::call(call)).at(field)
         }
@@ -100,4 +182,12 @@ pub(crate) fn stopped(cancel: &dyn Cancel) -> Result<(), ToolError> {
             "the call stopped before it finished (it was cancelled or ran past its deadline); nothing changed",
         )
     })
+}
+
+/// Registers the group's tools, in the order a model is shown them (the crate's
+/// [`crate::register`]).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    tracking::register(r);
+    changes::register(r);
+    comments::register(r);
 }

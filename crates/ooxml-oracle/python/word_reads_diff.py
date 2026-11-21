@@ -11,6 +11,13 @@ Runs docx-agent and the Rust core on the same documents and compares, field by f
 * ``describe`` and ``read``: the tools' replies (``word-reads``, the Rust session's
   ``describe`` and ``word_read``) against docx-agent's toolbox, ``word_read`` in every view
   and for ``stories=all``.
+* ``ranges``, ``inspect``, ``find``, ``batch`` and ``check``: the addressed reads, the batch,
+  and ``check``'s facts read from the document alone (lane P5a) and its reflow (lane P5b;
+  ``word_reads_tools.py``).
+* ``laid``: ``check``'s layout facts read from the pages, docx-agent's layout against a page
+  engine's (lane P5f; ``word-reads``' laid fact cases, ``word_laid_facts_cases.py``).
+* ``facts``: ``check``'s layout facts read from the document alone, as library functions
+  (lane P5a2; ``word-reads``' fact cases, ``word_facts_cases.py``).
 
 Every difference is printed with its JSON path; the exit status is 1 when there is any.
 
@@ -38,6 +45,13 @@ for package in ("docx-agent", "docx2svg", "ooxml-edit", "ooxml-common"):
     source = ROOT / "python" / package / "src"
     if str(source) not in sys.path:
         sys.path.insert(0, str(source))
+
+# The reference is docx-agent in Python: the Rust core kept out of this process and its workers
+# before docx-agent is imported (reference_guard.py).
+from reference_guard import check as _core_check  # noqa: E402
+from reference_guard import guard as _core_guard  # noqa: E402
+
+_core_guard()
 
 from docx_agent import Document  # noqa: E402
 from docx_agent.edit import ids as _ids  # noqa: E402
@@ -158,6 +172,7 @@ def report(expected: dict, rust: dict, ignore: tuple = (), results: str | None =
     differences (its file, case key, input from ``inputs``, differences and each side's error,
     :func:`refusal`), then the totals
     with ``counts`` (e.g. the cases left to the host)."""
+    _core_check()      # a reference that loaded the Rust core compared Rust with Rust
     failed = 0
     lines = []
     for key, want in expected.items():
@@ -184,7 +199,8 @@ def report(expected: dict, rust: dict, ignore: tuple = (), results: str | None =
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("what", choices=["ids", "describe", "read", "ranges", "inspect", "find", "batch"])
+    parser.add_argument("what", choices=["ids", "describe", "read", "ranges", "inspect", "find", "batch", "check",
+                                           "facts", "laid"])
     parser.add_argument("--rust", required=True, help="the word-ids or word-reads binary")
     parser.add_argument("--tree", action="append", help="every .docx below this folder")
     parser.add_argument("--results", help="also write the cases with differences here (JSON lines)")
@@ -192,6 +208,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.what == "ids":
         return check_ids(args)
+    if args.what == "laid":
+        from word_laid_facts_cases import check_laid
+
+        return check_laid(args, run_rust, functools.partial(report, results=args.results), files_of)
+    if args.what == "facts":
+        from word_facts_cases import check_facts
+
+        return check_facts(args, run_rust, functools.partial(report, results=args.results), files_of)
     from word_reads_tools import check_tools
 
     return check_tools(args, run_rust, functools.partial(report, results=args.results), files_of)

@@ -58,7 +58,9 @@ fn registered(tool: &str, arguments: &Value, editing: &Editing<'_>) -> Option<To
         number: 1,
         versions: &versions,
         placer: None,
+        owned: None,
         others: editing.others,
+        word: Some(editing.opened),
     };
     Some(tool.run_outside(arguments, editing, &version))
 }
@@ -79,8 +81,9 @@ fn unregistered(tool: &str, arguments: &Value, editing: &Editing<'_>) -> Option<
 }
 
 /// `d2`, which a call may name: the document opened again (`reference_copy`) or the file
-/// `reference_file`.
-fn other_package(bytes: &Arc<[u8]>, case: &Value) -> Option<Package> {
+/// `reference_file`; its package, and the document as a session opens one (its ids
+/// stamped, their renames kept) where it opens.
+fn other_document(bytes: &Arc<[u8]>, case: &Value) -> Option<(Package, Option<WordDoc>)> {
     let other: Option<Arc<[u8]>> = match case.get("reference_file").and_then(Value::as_str) {
         Some(path) => std::fs::read(path).ok().map(Arc::from),
         None => case
@@ -89,7 +92,17 @@ fn other_package(bytes: &Arc<[u8]>, case: &Value) -> Option<Package> {
             .unwrap_or(false)
             .then(|| Arc::clone(bytes)),
     };
-    other.and_then(|b| Package::open(b, &Limits::default()).ok())
+    let package = other.and_then(|b| Package::open(b, &Limits::default()).ok())?;
+    let word = WordDoc::open(package.clone(), Arc::new(Unlimited)).ok();
+    Some((package, word))
+}
+
+/// The tracking mode a case gives (`tracked`: its author and date), if any.
+fn case_tracking(case: &Value) -> Option<Tracking> {
+    case.get("tracked").and_then(Value::as_object).map(|t| Tracking {
+        author: t.get("author").and_then(Value::as_str).unwrap_or("").to_owned(),
+        date: t.get("date").and_then(Value::as_str).unwrap_or("").to_owned(),
+    })
 }
 
 /// One tool case on a freshly opened document, the tool's reply given by `reply` (`None`:
@@ -113,49 +126,48 @@ pub(crate) fn tool_case(
     .map_err(|e| e.to_string())?;
     let opened = editor.store().snapshot().doc().clone();
     let caller = Caller::anonymous();
-    let tracking = case.get("tracked").and_then(Value::as_object).map(|t| Tracking {
-        author: t.get("author").and_then(Value::as_str).unwrap_or("").to_owned(),
-        date: t.get("date").and_then(Value::as_str).unwrap_or("").to_owned(),
-    });
+    let tracking = case_tracking(case);
     let layout = case.get("fonts").map(engine_pages);
     let date = case
         .get("date")
         .and_then(Value::as_str)
         .unwrap_or("2026-11-17T10:00:00Z");
     let blobs = case_blobs(case);
-    let copy = other_package(bytes, case);
+    let copy = other_document(bytes, case);
     let copy_versions = Versions::new();
     let others: Vec<(&str, Version<'_>)> = copy
         .iter()
-        .map(|package| {
-            let version = Version {
-                name: "copy.docx",
-                package,
-                number: 1,
-                versions: &copy_versions,
-                placer: None,
-                others: Others::default(),
-            };
-            ("d2", version)
-        })
+        .map(|(package, word)| ("d2", other_version(package, word.as_ref(), &copy_versions)))
         .collect();
-    let editing = Editing {
-        editor: &CallEditor::new(&editor),
-        caller: &caller,
-        opened: &opened,
-        tracking: tracking.as_ref(),
-        doc: "d1",
-        cancel: &Never,
-        date,
-        layout: layout.as_ref().map(|l| l as &dyn ooxml_word_edit::FieldLayout),
-        others: Others::new(&others),
-        blobs: Some(&blobs),
-    };
+    let call_editor = CallEditor::new(&editor);
+    let editing = Editing::new(&call_editor, &caller, &opened, "d1", &Never, date)
+        .with_tracking(tracking.as_ref())
+        .with_layout(layout.as_ref().map(|l| l as &dyn ooxml_word_edit::FieldLayout))
+        .with_others(Others::new(&others))
+        .with_blobs(Some(&blobs));
     let arguments = case.get("arguments").cloned().unwrap_or(Value::Object(Map::new()));
     let tool = case.get("tool").and_then(Value::as_str).unwrap_or("");
     let reply = reply(tool, &arguments, &editing).ok_or_else(|| format!("no tool {tool}"))?;
     let head = editor.store().snapshot();
     let doc = head.doc();
+    let parts = changed_parts(&package, doc);
+    let found = touched(&opened, doc).map_err(|e| e.to_string())?;
+    let now = problems(doc).map_err(|e| e.to_string())?;
+    let delta = Delta::of(editor.baseline(), &now);
+    Ok(json!({
+        "reply": Value::Object(reply.to_json()),
+        "unported": reply.unported(),
+        "parts": parts,
+        "order": doc.package().part_names(),
+        "touched": found.iter().map(touched_json).collect::<Vec<_>>(),
+        "validation": {"new": delta.new, "fixed": delta.fixed, "baseline": delta.baseline},
+        "problems": now.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        "next": next_ids(doc),
+    }))
+}
+
+/// The parts of `doc` that differ from `package`'s, by name, as text.
+fn changed_parts(package: &Package, doc: &ooxml_word_edit::WordDoc) -> Map<String, Value> {
     let mut parts = Map::new();
     for name in doc.package().part_names() {
         let same = matches!((package.part(&name), doc.package().part(&name)), (Some(a), Some(b)) if a.same(b));
@@ -170,19 +182,21 @@ pub(crate) fn tool_case(
             .unwrap_or_else(|| Arc::from(Vec::new()));
         parts.insert(name, json!(String::from_utf8_lossy(&bytes)));
     }
-    let found = touched(&opened, doc).map_err(|e| e.to_string())?;
-    let now = problems(doc).map_err(|e| e.to_string())?;
-    let delta = Delta::of(editor.baseline(), &now);
-    Ok(json!({
-        "reply": Value::Object(reply.to_json()),
-        "unported": reply.unported(),
-        "parts": parts,
-        "order": doc.package().part_names(),
-        "touched": found.iter().map(touched_json).collect::<Vec<_>>(),
-        "validation": {"new": delta.new, "fixed": delta.fixed, "baseline": delta.baseline},
-        "problems": now.iter().map(ToString::to_string).collect::<Vec<_>>(),
-        "next": next_ids(doc),
-    }))
+    parts
+}
+
+/// The other document a case names (`d2`), as a reading tool is handed it.
+fn other_version<'a>(package: &'a Package, word: Option<&'a WordDoc>, versions: &'a Versions) -> Version<'a> {
+    Version {
+        name: "copy.docx",
+        package,
+        number: 1,
+        versions,
+        placer: None,
+        owned: None,
+        others: Others::default(),
+        word,
+    }
 }
 
 /// The blobs a case registers (`blobs`: `{name, mime, hex}` each), as the session's
@@ -215,10 +229,14 @@ fn case_blobs(case: &Value) -> BlobList {
     )
 }
 
+/// A page engine over the fonts a case names, as the layout port the field tools read.
+pub(crate) fn engine_pages(fonts: &Value) -> EnginePages {
+    EnginePages::new(Arc::new(std::sync::Mutex::new(page_engine(fonts))))
+}
+
 /// A page engine over the fonts a case names (`folders`: `[location, path]` pairs as
-/// docx2svg hands them to `ooxml_core.WordFonts`, `substitutes`, `substitute`), as the
-/// layout port the field tools read.
-fn engine_pages(fonts: &Value) -> EnginePages {
+/// docx2svg hands them to `ooxml_core.WordFonts`, `substitutes`, `substitute`).
+pub(crate) fn page_engine(fonts: &Value) -> ooxml_word_pages::PageEngine {
     use ooxml_fonts::{Folder, Location, WordFontOptions};
     use ooxml_word_pages::{DiskFonts, EngineBudgets, EngineOptions, FontSetup, PageEngine};
     let pairs = |key: &str| -> Vec<(String, String)> {
@@ -255,8 +273,7 @@ fn engine_pages(fonts: &Value) -> EnginePages {
         held: Arc::new(Unlimited),
         paint: Arc::new(Unlimited),
     };
-    let engine = PageEngine::new(setup, EngineOptions::default(), budgets);
-    EnginePages::new(Arc::new(std::sync::Mutex::new(engine)))
+    PageEngine::new(setup, EngineOptions::default(), budgets)
 }
 
 /// The tool's reply to `arguments` taken as its intent rules take them (a refusal of the

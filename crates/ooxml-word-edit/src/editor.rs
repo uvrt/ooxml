@@ -50,6 +50,10 @@ pub struct Edited<O> {
     pub previous: Option<Snapshot<WordDoc>>,
     /// Whether it changed the document.
     pub changed: bool,
+    /// What its stand-ins were drawn as where it was applied: ids the command returned that
+    /// it drew are named through it ([`crate::Drawn::resolve`]). Empty when it changed
+    /// nothing.
+    pub drawn: crate::Drawn,
     /// What it touched, per part.
     pub touched: Vec<Touched>,
     /// The block ids and drawing numbers it removed and brought.
@@ -133,9 +137,15 @@ impl Editor {
         let found = self.clock.monotonic();
         let validation = Delta::of(&self.baseline, &problems(committed.version.doc())?);
         let validated = self.clock.monotonic();
+        let drawn = if committed.changed {
+            committed.version.doc().drawn().clone()
+        } else {
+            crate::Drawn::default()
+        };
         Ok(Edited {
             out: committed.out,
             changed: committed.changed,
+            drawn,
             version: committed.version,
             previous: committed.previous,
             touched,

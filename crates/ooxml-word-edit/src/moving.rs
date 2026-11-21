@@ -14,7 +14,7 @@
 
 use crate::address_keys::names_by_id;
 use crate::blocks::{blocks_of, resolve_block, BlockAt, BlockKind};
-use crate::delete::{editable, stretch_keys};
+use crate::delete::{editable_opening, Opening};
 use crate::names::W;
 use crate::policy::RevisionPolicy;
 use crate::set_text::block_key;
@@ -408,7 +408,9 @@ impl MoveBlocks {
         paths.push(anchor.path.clone());
         let wanted: Vec<&[u32]> = paths.iter().map(Vec::as_slice).collect();
         let path_error = || EditError::Path(part.to_owned());
-        let (mut work, parent, stretch, nodes) = editable(root, &paths, &wanted).ok_or_else(path_error)?;
+        // the blocks and the target are read whole, the stretch between passed sealed
+        let (mut work, parent, stretch, nodes) =
+            editable_opening(root, &paths, &wanted, Opening::Ends).ok_or_else(path_error)?;
         let outside = outside_blocks(root, &parent, stretch);
         let (&target, moving) = nodes.split_last().ok_or_else(path_error)?;
         let after = self.after.is_some();
@@ -502,7 +504,7 @@ impl MoveBlocks {
         let (part, blocks, ids, anchor) = self.plan(sink.doc(), &docx)?;
         self.read_planned(sink, by_id, &docx, (&part, &ids, &anchor));
         let before = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
-        if self.arrange(before.root(), &part, (&blocks, &ids, &anchor))?.is_none() {
+        let Some(arranged) = self.arrange(before.root(), &part, (&blocks, &ids, &anchor))? else {
             return Ok(BlocksMoved {
                 id: ids.first().cloned(),
                 changed: false,
@@ -511,23 +513,10 @@ impl MoveBlocks {
                 renamed: Vec::new(),
                 warnings: Vec::new(),
             });
-        }
+        };
         let (tracked, warnings) = self.tracked_blocks(&docx, &part, &blocks)?;
         let renamed = stamp_document(sink, &docx)?;
-        // docx-agent moves the blocks one by one, the first stamping the document: a later
-        // block's warning names it by its stamped id
-        let warnings: Vec<String> = warnings
-            .into_iter()
-            .map(|(k, said)| {
-                let id = ids.get(k).cloned().unwrap_or_default();
-                let id = if k == 0 {
-                    id
-                } else {
-                    crate::ranges::renamed_id(&renamed, &id)
-                };
-                format!("{id} {said}")
-            })
-            .collect();
+        let warnings = named_warnings(warnings, &ids, &renamed);
         if let (RevisionPolicy::Tracked(tracking), true) = (&self.policy, tracked.contains(&true)) {
             let stamped: Vec<String> = ids.iter().map(|id| crate::ranges::renamed_id(&renamed, id)).collect();
             let story = docx.part(&part).map_or_else(|| "body".to_owned(), |s| s.story.clone());
@@ -551,15 +540,25 @@ impl MoveBlocks {
         }
         let docx = sink.docx()?;
         let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
-        let (work, parent, stretch) = self
-            .arrange(tree.root(), &part, (&blocks, &ids, &anchor))?
-            .ok_or_else(|| EditError::Path(part.clone()))?;
+        // arranged again only where the stamping changed the part (its tree is another)
+        let (work, parent, stretch) = if Arc::ptr_eq(tree.root(), before.root()) {
+            arranged
+        } else {
+            self.arrange(tree.root(), &part, (&blocks, &ids, &anchor))?
+                .ok_or_else(|| EditError::Path(part.clone()))?
+        };
         let built = work
             .build_content(work.root())
             .ok_or_else(|| EditError::Path(part.clone()))?;
-        let keys = stretch_keys(&docx, &part, &parent, stretch);
         let count = (stretch.1 - stretch.0) as usize + 1;
-        sink.splice_children(&part, (&parent, stretch.0 as usize, count), built, keys, Vec::new())?;
+        sink.splice_stretch(
+            &docx,
+            &part,
+            (&parent, stretch.0 as usize, count),
+            built,
+            &[],
+            Vec::new(),
+        )?;
         let moved: Vec<String> = ids.iter().map(|id| crate::ranges::renamed_id(&renamed, id)).collect();
         Ok(BlocksMoved {
             id: moved.first().cloned(),
@@ -570,4 +569,21 @@ impl MoveBlocks {
             warnings,
         })
     }
+}
+
+/// Each block's warning, named by the block's id: docx-agent moves the blocks one by one,
+/// the first stamping the document, so a later block's warning names it by its stamped id.
+fn named_warnings(warnings: Vec<(usize, String)>, ids: &[String], renamed: &[(String, String)]) -> Vec<String> {
+    warnings
+        .into_iter()
+        .map(|(k, said)| {
+            let id = ids.get(k).cloned().unwrap_or_default();
+            let id = if k == 0 {
+                id
+            } else {
+                crate::ranges::renamed_id(renamed, &id)
+            };
+            format!("{id} {said}")
+        })
+        .collect()
 }

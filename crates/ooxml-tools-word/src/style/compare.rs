@@ -382,3 +382,8 @@ fn not_open(id: &str, doc: &str) -> ToolError {
         None => ToolError::internal(message, "word_compare_blocks:reference"),
     }
 }
+
+/// Registers `word_compare_blocks` (the crate's [`crate::register`]).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    r.read::<WordCompareBlocks>(word_compare_blocks);
+}

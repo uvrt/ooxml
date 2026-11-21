@@ -108,6 +108,57 @@ impl Package {
         named.into_iter().map(|(_, n)| n.to_owned()).collect()
     }
 
+    /// Whether `other` has the same parts as this package, each the same content by
+    /// identity ([`PartVersion::same`]): one version as far as any reader can tell, known
+    /// without reading a part.
+    pub fn same_parts(&self, other: &Package) -> bool {
+        self.slots.iter().count() == other.slots.iter().count()
+            && self
+                .slots
+                .iter()
+                .all(|(name, slot)| other.slots.get(name).is_some_and(|o| o.content.same(&slot.content)))
+    }
+
+    /// The parts that differ from `before`: each part added or whose content is not the
+    /// same, in archive order, then each part removed, in `before`'s. A part is the same by
+    /// identity ([`PartVersion::same`]), else by its bytes -- two archive entries by their
+    /// stored bytes, without inflating them; else as each reads -- so that two packages
+    /// opened from bytes apart agree on the parts they share.
+    pub fn changed_parts(&self, before: &Package) -> Vec<String> {
+        let mut changed: Vec<String> = self
+            .part_names()
+            .into_iter()
+            .filter(|name| !self.same_content(name, before))
+            .collect();
+        changed.extend(
+            before
+                .part_names()
+                .into_iter()
+                .filter(|name| self.slots.get(name).is_none()),
+        );
+        changed
+    }
+
+    /// Whether the part `name` (normalised) holds the same content here and in `other`.
+    fn same_content(&self, name: &str, other: &Package) -> bool {
+        let (Some(mine), Some(theirs)) = (self.slots.get(name), other.slots.get(name)) else {
+            return false;
+        };
+        if mine.content.same(&theirs.content) {
+            return true;
+        }
+        if let (PartVersion::Raw(a), PartVersion::Raw(b)) = (&mine.content, &theirs.content) {
+            if let (Ok(x), Ok(y)) = (self.entry(a.index), other.entry(b.index)) {
+                let (m, n) = (x.meta(), y.meta());
+                return m.crc32 == n.crc32
+                    && m.size == n.size
+                    && m.method == n.method
+                    && self.archive.stored_data(x) == other.archive.stored_data(y);
+            }
+        }
+        matches!((self.read(name), other.read(name)), (Ok(Some(x)), Ok(Some(y))) if x == y)
+    }
+
     /// Whether the package has the part `name` (any spelling of it).
     pub fn has_part(&self, name: &str) -> bool {
         self.slots.contains_key(&normalize(name))
@@ -126,6 +177,16 @@ impl Package {
             Some(PartVersion::Tree(tree)) => Some(tree.write().into()),
             Some(PartVersion::Bytes(bytes)) => Some(Arc::clone(bytes)),
         })
+    }
+
+    /// The size of the part's bytes where it is known without reading them: as stored (the
+    /// entry's uncompressed size) or as put; `None` for a tree, or no such part.
+    pub fn size(&self, name: &str) -> Option<u64> {
+        match self.part(name)? {
+            PartVersion::Raw(raw) => self.entry(raw.index).ok().map(|e| e.meta().size),
+            PartVersion::Bytes(bytes) => u64::try_from(bytes.len()).ok(),
+            PartVersion::Tree(_) => None,
+        }
     }
 
     /// The part's tree: parsed once for a raw part (and shared by every version that has

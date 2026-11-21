@@ -12,11 +12,11 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Mutex;
 
 /// `command`, held after its first prepare until told to go on.
-struct Paused<C> {
-    command: C,
-    prepared: Sender<()>,
-    go: Mutex<Receiver<()>>,
-    first: AtomicBool,
+pub(crate) struct Paused<C> {
+    pub(crate) command: C,
+    pub(crate) prepared: Sender<()>,
+    pub(crate) go: Mutex<Receiver<()>>,
+    pub(crate) first: AtomicBool,
 }
 
 impl<C: Command<WordDoc, Error = EditError>> Command<WordDoc> for Paused<C> {

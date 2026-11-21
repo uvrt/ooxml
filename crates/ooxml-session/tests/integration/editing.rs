@@ -28,7 +28,7 @@ impl Clock for Fixed {
     }
 }
 
-fn session() -> Session {
+pub(crate) fn session() -> Session {
     let context = Context {
         fonts: Arc::new(NoFonts),
         parts: Arc::new(NoParts),
@@ -51,7 +51,7 @@ fn document(body: &str) -> String {
     format!("<w:document {NS}><w:body>{body}</w:body></w:document>")
 }
 
-fn docx(body: &str) -> Arc<[u8]> {
+pub(crate) fn docx(body: &str) -> Arc<[u8]> {
     let rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
     let types = r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
     let mut w = Writer::new();
@@ -73,14 +73,14 @@ fn docx(body: &str) -> Arc<[u8]> {
     Arc::from(w.finish(b"").unwrap())
 }
 
-fn as_caller(name: &str) -> CallContext {
+pub(crate) fn as_caller(name: &str) -> CallContext {
     CallContext {
         caller: Caller::named(name),
         ..CallContext::default()
     }
 }
 
-fn call(session: &Session, name: &str, arguments: Value, context: &CallContext) -> Value {
+pub(crate) fn call(session: &Session, name: &str, arguments: Value, context: &CallContext) -> Value {
     Value::Object(session.call(name, arguments, context).to_json())
 }
 
@@ -92,7 +92,7 @@ fn put(session: &Session, doc: &DocId, body: &str, context: &CallContext) -> u64
     session.update(doc, parts, context).unwrap().version
 }
 
-fn body_of(session: &Session, doc: &DocId) -> String {
+pub(crate) fn body_of(session: &Session, doc: &DocId) -> String {
     let saved = session.save(doc).unwrap();
     let package = ooxml_opc::Package::open(Arc::from(saved), &Limits::default()).unwrap();
     String::from_utf8(package.read("word/document.xml").unwrap().unwrap().to_vec()).unwrap()
@@ -186,6 +186,48 @@ fn the_save_gate_refuses_new_problems_and_the_bridge_feeds_the_ledger() {
     let head = s.snapshot(&d).unwrap();
     assert_eq!(head.version(), 4);
     assert!(head.word().unwrap().ids().contains(0x3A3A_3A3A));
+}
+
+#[test]
+fn a_check_of_the_document_alone_is_the_sessions() {
+    let s = session();
+    let d = s
+        .open(docx(&paragraph("11111111", "one")), DocKind::Docx, "a.docx")
+        .unwrap();
+    let asked = json!({"doc": "d1", "include": ["validate", "fields", "app"]});
+    let reply = call(&s, "check", asked.clone(), &CallContext::default());
+    assert_eq!(reply["summary"], "Checked validate, fields, app");
+    let data = &reply["data"];
+    assert_eq!(
+        data["validate"],
+        json!({"new": [], "fixed": [], "baseline": 0, "problems": []})
+    );
+    assert_eq!(data["fields"]["counts"], json!({}));
+    assert_eq!(data["app_findings"], Value::Null);
+    let parts: Vec<&String> = data["timing"].as_object().unwrap().keys().collect();
+    assert_eq!(parts, ["validate", "fields"]);
+    // a repeated paragraph id: a new problem, against the problems the document opened with
+    let twice = format!("{}{}", paragraph("11111111", "one"), paragraph("11111111", "two"));
+    put(&s, &d, &twice, &CallContext::default());
+    let validate = &call(&s, "check", asked, &CallContext::default())["data"]["validate"];
+    assert_eq!(validate["new"].as_array().unwrap().len(), 1);
+    assert!(validate["new"][0].as_str().unwrap().starts_with("[paraid-repeated]"));
+    assert_eq!(validate["problems"], validate["new"]);
+    // what needs the layout's facts is the host's; a reflow, where it hands no layout
+    for asked in [
+        json!({"doc": "d1", "include": ["validate", "layout"]}),
+        json!({"doc": "d1", "include": ["validate"], "range": "p:11111111"}),
+    ] {
+        let result = s.call("check", asked, &CallContext::default());
+        assert_eq!(result.unported(), [ooxml_tools_word::CHECK_LAYOUT.to_owned()]);
+    }
+    for asked in [
+        json!({"doc": "d1"}),
+        json!({"doc": "d1", "include": ["validate", "reflow"]}),
+    ] {
+        let result = s.call("check", asked, &CallContext::default());
+        assert_eq!(result.unported(), [ooxml_tools_word::CHECK_NO_LAYOUT.to_owned()]);
+    }
 }
 
 #[test]
@@ -400,4 +442,140 @@ fn retired_ids_say_who_removed_them_and_an_undone_deletion_is_back() {
     s.seed_retired(&d, vec![(HeldId::Drawing(4), 3, Some("word_delete (agent=a)".into()))])
         .unwrap();
     assert_eq!(s.retired(&d).unwrap().len(), 2);
+}
+
+fn part_of(session: &Session, doc: &DocId, name: &str) -> Option<String> {
+    let saved = session.save(doc).unwrap();
+    let package = ooxml_opc::Package::open(Arc::from(saved), &Limits::default()).unwrap();
+    package
+        .read(name)
+        .unwrap()
+        .map(|data| String::from_utf8(data.to_vec()).unwrap())
+}
+
+#[test]
+fn a_value_written_by_reference_is_kept_on_its_paragraph() {
+    let s = session();
+    let d = s
+        .open(docx(&paragraph("22222222", "two word there")), DocKind::Docx, "a.docx")
+        .unwrap();
+    // the host wrote "3.5" for {{d:scores/Alpha/rating}} at characters 6..9 of the text
+    let record = json!({"source": "d:scores/Alpha/rating", "text": "3.5"});
+    let mut context = as_caller("w1");
+    context.written = ooxml_tools_word::Written::list_from_json(&json!([{
+        "field": "text", "start": 6, "end": 9, "text": "3.5", "record": record,
+        "brief": {"from": "d:scores/Alpha/rating", "text": "3.5"},
+    }]))
+    .unwrap();
+    let reply = call(
+        &s,
+        "word_set_text",
+        json!({"doc": "d1", "target": "p:22222222", "text": "Rated 3.5 today"}),
+        &context,
+    );
+    assert_eq!(
+        reply["data"]["facts"],
+        json!([{"from": "d:scores/Alpha/rating", "text": "3.5"}]),
+        "{reply}"
+    );
+    let item = part_of(&s, &d, "customXml/item1.xml").expect("the item is made");
+    assert!(
+        item.ends_with(
+            r#"<prov:source kind="text" key="p:22222222">{"v":1,"paragraph":"Rated 3.5 today","facts":[{"source":"d:scores/Alpha/rating","text":"3.5","p":0,"at":6}]}</prov:source></prov:sources>"#
+        ),
+        "{item}"
+    );
+    let props = part_of(&s, &d, "customXml/itemProps1.xml").unwrap();
+    assert!(props.contains("ds:itemID=\"{"), "{props}");
+    assert!(part_of(&s, &d, "word/_rels/document.xml.rels").is_some_and(|r| r.contains("customXml/item1.xml")));
+    // the value edited by hand: its fact goes, and with the last entry the item
+    call(
+        &s,
+        "word_set_text",
+        json!({"doc": "d1", "target": "p:22222222", "text": "Rated 4 today"}),
+        &as_caller("w1"),
+    );
+    assert!(part_of(&s, &d, "customXml/item1.xml").is_none());
+    assert!(part_of(&s, &d, "customXml/itemProps1.xml").is_none());
+}
+
+/// A read after an edit that stamped the document: an id by place (`p@body/1`, the table
+/// `t@body/0` and its cells) names the block it named before, as docx-agent's view follows
+/// its renames -- after a table's edit, then a paragraph's.
+#[test]
+fn a_read_follows_the_renames_an_edit_made() {
+    let s = session();
+    let cell = |text: &str| format!("<w:tc><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>");
+    let body = format!(
+        "<w:p><w:r><w:t>one</w:t></w:r></w:p><w:p><w:r><w:t>two</w:t></w:r></w:p><w:tbl><w:tblGrid><w:gridCol/><w:gridCol/></w:tblGrid><w:tr>{}{}</w:tr><w:tr>{}{}</w:tr></w:tbl><w:p/>",
+        cell("a"),
+        cell("b"),
+        cell("c"),
+        cell("d")
+    );
+    s.open(docx(&body), DocKind::Docx, "a.docx").unwrap();
+    let context = as_caller("w1");
+    let edits = [
+        json!({"tool": "word_edit_table", "doc": "d1", "table": "t@body/0", "action": "insert_row", "index": 1}),
+        json!({"tool": "word_set_text", "doc": "d1", "target": "p@body/0", "text": "first"}),
+    ];
+    for edit in edits {
+        let mut arguments = edit.clone();
+        let tool = arguments.as_object_mut().unwrap().remove("tool").unwrap();
+        let done = call(&s, tool.as_str().unwrap(), arguments, &context);
+        assert_eq!(done["ok"], json!(true), "{done}");
+        for (target, text) in [("p@body/1", "two"), ("t@body/0/c0,1", "b"), ("t@body/0", "a")] {
+            let reads = [
+                ("word_inspect", json!({"doc": "d1", "target": target})),
+                ("word_read", json!({"doc": "d1", "range": target})),
+                ("find_text", json!({"doc": "d1", "text": text, "range": target})),
+            ];
+            for (read_tool, arguments) in reads {
+                let read = call(&s, read_tool, arguments, &context);
+                assert_eq!(read["ok"], json!(true), "after {tool}, {read_tool} {target}: {read}");
+                assert!(read.to_string().contains(text), "{read_tool} {target}: {read}");
+            }
+        }
+        let span = call(
+            &s,
+            "word_read",
+            json!({"doc": "d1", "range": "p@body/1..t@body/0"}),
+            &context,
+        );
+        assert!(span.to_string().contains("two"), "after {tool}: {span}");
+    }
+}
+
+#[test]
+fn a_step_group_is_one_undo_step_and_a_revert_takes_its_edits_back() {
+    let s = session();
+    let d = s
+        .open(docx(&paragraph("11111111", "one")), DocKind::Docx, "a.docx")
+        .unwrap();
+    let context = as_caller("w1");
+    put(&s, &d, &paragraph("11111111", "two"), &context);
+    // a batch that fails: its edits and its tracking mode taken back, redo as it was
+    let start = s.open_group(&d).unwrap();
+    let on = call(
+        &s,
+        "word_set_tracking",
+        json!({"doc": "d1", "on": true, "author": "Bo"}),
+        &context,
+    );
+    assert_eq!(on["ok"], json!(true), "{on}");
+    put(&s, &d, &paragraph("11111111", "three"), &context);
+    let reverted = s.revert_group(&d, &start, &context).unwrap();
+    assert_eq!(reverted, Some(s.snapshot(&d).unwrap().version()));
+    assert_eq!(s.close_group(&d, &context).unwrap(), None);
+    assert!(body_of(&s, &d).contains(">two<"));
+    assert!(!body_of(&s, &d).contains("w:ins"));
+    // a batch that applies: one step, which one undo takes back
+    s.open_group(&d).unwrap();
+    put(&s, &d, &paragraph("11111111", "four"), &context);
+    put(&s, &d, &paragraph("11111111", "five"), &context);
+    let made = s.close_group(&d, &context).unwrap();
+    assert_eq!(made, Some(s.snapshot(&d).unwrap().version()));
+    assert!(body_of(&s, &d).contains(">five<"));
+    assert_eq!(s.undo(&d, 1, &context).unwrap().count, 1);
+    assert!(body_of(&s, &d).contains(">two<"));
 }

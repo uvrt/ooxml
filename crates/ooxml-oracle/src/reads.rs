@@ -2,7 +2,12 @@
 //! `word_read`) on documents, in the form `python/word_reads_diff.py` writes docx-agent's:
 //! the summary, data, next cursor and total, or the refusal.
 //!
-//! The manifest is a JSON list of `{"file": path, "case": name, "tool": name, "arguments": {...}}`.
+//! The manifest is a JSON list of `{"file": path, "case": name, "tool": name, "arguments": {...}}`,
+//! or `{"file", "case", "fact": name}` for one of `check`'s facts read from the document
+//! alone ([`crate::facts`]; `"opened"`: the file as the session opened it, where the fact
+//! compares with it). A `check` case may name the calls made before it in the same
+//! session (`"before": [{"tool", "arguments"}]`: checks and edits): a sequence of versions,
+//! each check measured from the one before (`since_last_check`).
 //!
 //! Must not: be used by any library; it is a test instrument.
 
@@ -59,10 +64,22 @@ pub fn run(args: &[String]) -> Result<(), String> {
             number: 1,
             versions,
             placer: None,
+            owned: None,
             others: ooxml_tools_word::Others::default(),
+            word: None,
         };
-        let reply = if tool == "read_batch" {
-            batch(&arguments, file, name)
+        let reply = if let Some(fact) = item.get("fact").and_then(Value::as_str) {
+            crate::facts::reply(package, fact, item.get("opened").and_then(Value::as_str))
+        } else if item.get("laid").is_some() {
+            let fonts = item.get("fonts").unwrap_or(&Value::Null);
+            crate::laid_facts::reply(package, fonts, item.get("min_size"), item.get("range"))
+        } else if matches!(tool, "read_batch" | "check") {
+            let before = item
+                .get("before")
+                .and_then(Value::as_array)
+                .map_or(&[][..], Vec::as_slice);
+            let limit = item.get("layout_timeout").and_then(Value::as_f64);
+            through_session(tool, &arguments, (file, name), (item.get("fonts"), limit), before)
         } else {
             call(tool, &arguments, &version)
         };
@@ -93,8 +110,20 @@ fn call(tool: &str, arguments: &Value, version: &Version<'_>) -> Value {
     }
 }
 
-/// `read_batch` through a session holding the document as `d1`.
-fn batch(arguments: &Value, file: &str, name: &str) -> Value {
+/// `tool` (`read_batch`, `check`) through a session holding the document as `d1`, which
+/// owns it (a check's validation compares with the problems it opened with), handed a page
+/// engine laying out with `fonts` (docx-agent's, as the case gives them) where given, within
+/// `layout_timeout` seconds where given, after the calls `before` (each `{"tool",
+/// "arguments"}`, through the same session and engine). A reply that says part of it is not
+/// given yet (`unported`) is an error naming what; a call before it that fails is an error
+/// naming that call.
+fn through_session(
+    tool: &str,
+    arguments: &Value,
+    (file, name): (&str, &str),
+    (fonts, layout_timeout): (Option<&Value>, Option<f64>),
+    before: &[Value],
+) -> Value {
     let Ok(bytes) = std::fs::read(file) else {
         return json!({"error": {"code": "internal", "message": "unreadable"}});
     };
@@ -102,7 +131,29 @@ fn batch(arguments: &Value, file: &str, name: &str) -> Value {
     if let Err(e) = session.open(Arc::from(bytes), DocKind::Docx, name) {
         return json!({"error": {"code": "internal", "message": e.to_string()}});
     }
-    let result = session.call("read_batch", arguments.clone(), &CallContext::default());
+    let context = CallContext {
+        layout: fonts.map(|fonts| {
+            Arc::new(crate::structure_tools::engine_pages(fonts)) as Arc<dyn ooxml_tools_word::WordLayout>
+        }),
+        layout_timeout: layout_timeout.and_then(|s| std::time::Duration::try_from_secs_f64(s).ok()),
+        ..CallContext::default()
+    };
+    for (k, step) in before.iter().enumerate() {
+        let name = step.get("tool").and_then(Value::as_str).unwrap_or_default();
+        let args = step.get("arguments").cloned().unwrap_or_else(|| json!({}));
+        let done = session.call(name, args, &context);
+        // A call left to the host leaves the case to it, as the case's own call would.
+        if let Some(why) = done.unported().first() {
+            return json!({"error": {"code": "unported", "message": why}});
+        }
+        if let Some(error) = done.to_json().get("error") {
+            return json!({"error": {"code": "before", "message": format!("call {k} ({name}): {error}")}});
+        }
+    }
+    let result = session.call(tool, arguments.clone(), &context);
+    if let Some(why) = result.unported().first() {
+        return json!({"error": {"code": "unported", "message": why}});
+    }
     let envelope = result.to_json();
     match envelope.get("error") {
         Some(error) => json!({"error": error}),

@@ -14,7 +14,7 @@ untracked and tracked, each case on the document as opened, and compares:
   (``new``, ``fixed``, ``baseline``), as the save gate compares them;
 * ``next``: the value the main part's sequence and its text-id sequence give next;
 * ``aliases``: the old ids the document still follows to new ones (renames, less those of
-  blocks removed).
+  blocks removed); ``replaced``, where a block was replaced by one, the block that did.
 
 Every difference is printed with its JSON path; the exit status is 1 when there is any.
 
@@ -40,6 +40,12 @@ for package in ("docx-agent", "docx2svg", "ooxml-edit", "ooxml-common"):
     if str(source) not in sys.path:
         sys.path.insert(0, str(source))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+# The reference is docx-agent in Python: the Rust core kept out of this process and its workers
+# (spawn imports this module there too) before docx-agent is imported (reference_guard.py).
+from reference_guard import guard  # noqa: E402
+
+guard()
 
 from docx_agent import Document  # noqa: E402
 from docx_agent import validate as _validate  # noqa: E402
@@ -592,7 +598,14 @@ def python_case(data: bytes, case: dict, baseline: list) -> dict:
         "problems": [str(p) for p in problems],
         "next": next_ids,
         "aliases": dict(sorted(document.aliases.items())),
+        **_replaced(document),
     }
+
+
+def _replaced(document) -> dict:
+    """The blocks replaced one by one (``replace:``) and what replaced each, where any was."""
+    replaced = document._ledger.replaced
+    return {"replaced": {f"{value:08X}": new for value, new in sorted(replaced.items())}} if replaced else {}
 
 
 def _touched(document, before: dict, after: dict, main: str) -> list[dict]:

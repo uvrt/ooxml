@@ -14,7 +14,7 @@ use ooxml_tools_word::{
     word_copy_from, word_fields, word_links, word_notes, CallEditor, Editing, WordHeadersFooters, WordLinks, WordMove,
     WordNotes, WordSections, KIND,
 };
-use ooxml_word_edit::{Editor, FieldLayout, FieldPlace, LaidFields, PageShows, Unknown};
+use ooxml_word_edit::{Editor, FieldLayout, FieldPlace, FieldRun, LaidFields, PageShows, Unknown};
 use ooxml_zip::{Method, NewEntry, Writer};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -26,13 +26,34 @@ fn package() -> Package {
         r#"<w:r><w:t>Alpha</w:t></w:r><w:bookmarkEnd w:id="0"/><w:r><w:t xml:space="preserve"> beta gamma</w:t></w:r></w:p>"#,
         r#"<w:p w14:paraId="10000002" w14:textId="20000002"><w:r><w:t>Delta epsilon</w:t></w:r></w:p>"#,
     );
-    let parts = [
+    package_of(body, "")
+}
+
+/// A made-up document of `body`, its styles Normal and `styles`.
+fn package_of(body: &str, styles: &str) -> Package {
+    package_numbered(body, styles, "")
+}
+
+/// [`package_of`] with a numbering part holding `numbering` (none where empty).
+fn package_numbered(body: &str, styles: &str, numbering: &str) -> Package {
+    let numbering_rel = if numbering.is_empty() {
+        String::new()
+    } else {
+        format!(r#"<Relationship Id="rId2" Type="{R}numbering" Target="numbering.xml"/>"#)
+    };
+    let mut parts = vec![
         ("[Content_Types].xml".to_owned(), r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>"#.to_owned()),
-        ("word/_rels/document.xml.rels".to_owned(), format!(r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{R}styles" Target="styles.xml"/></Relationships>"#)),
-        ("word/styles.xml".to_owned(), format!(r#"<w:styles {W}><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style></w:styles>"#)),
+        ("word/_rels/document.xml.rels".to_owned(), format!(r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{R}styles" Target="styles.xml"/>{numbering_rel}</Relationships>"#)),
+        ("word/styles.xml".to_owned(), format!(r#"<w:styles {W}><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>{styles}</w:styles>"#)),
         ("_rels/.rels".to_owned(), format!(r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{R}officeDocument" Target="word/document.xml"/></Relationships>"#)),
         ("word/document.xml".to_owned(), format!("<w:document {W}><w:body>{body}</w:body></w:document>")),
     ];
+    if !numbering.is_empty() {
+        parts.push((
+            "word/numbering.xml".to_owned(),
+            format!("<w:numbering {W}>{numbering}</w:numbering>"),
+        ));
+    }
     let mut w = Writer::new();
     for (name, data) in parts {
         let entry = NewEntry {
@@ -72,6 +93,10 @@ impl LaidFields for LaidTwo {
         self.page_field(instruction, "PAGE", at)
     }
 
+    fn style_reference(&self, _: &str, _: FieldPlace<'_>, _: FieldRun<'_>) -> Result<String, Unknown> {
+        Err(Unknown("not drawn".into()))
+    }
+
     fn pages(&self) -> Vec<PageShows> {
         vec![
             PageShows {
@@ -105,22 +130,24 @@ fn call_tracking<A: ToolArgs>(
     tracking: Option<&ooxml_word_edit::Tracking>,
     tool: impl Fn(&A, &Editing<'_>) -> ToolResult<Value>,
 ) -> (Value, Editor) {
-    let editor = Editor::open(package(), StoreConfig::default(), Arc::new(Still), Arc::new(Unlimited)).unwrap();
+    call_on(package(), arguments, tracking, tool)
+}
+
+/// [`call_tracking`] on `package`.
+fn call_on<A: ToolArgs>(
+    package: Package,
+    arguments: Value,
+    tracking: Option<&ooxml_word_edit::Tracking>,
+    tool: impl Fn(&A, &Editing<'_>) -> ToolResult<Value>,
+) -> (Value, Editor) {
+    let editor = Editor::open(package, StoreConfig::default(), Arc::new(Still), Arc::new(Unlimited)).unwrap();
     let opened = editor.store().snapshot().doc().clone();
     let caller = Caller::anonymous();
     let reply = {
-        let editing = Editing {
-            editor: &CallEditor::new(&editor),
-            caller: &caller,
-            opened: &opened,
-            tracking,
-            doc: "d1",
-            cancel: &Never,
-            date: "2026-11-17T10:00:00Z",
-            layout: Some(&TwoPages),
-            others: ooxml_tools_word::Others::default(),
-            blobs: None,
-        };
+        let call_editor = CallEditor::new(&editor);
+        let editing = Editing::new(&call_editor, &caller, &opened, "d1", &Never, "2026-11-17T10:00:00Z")
+            .with_tracking(tracking)
+            .with_layout(Some(&TwoPages));
         let (args, _) = A::accept(arguments, Some("docx")).unwrap();
         Value::Object(tool(&args, &editing).to_json())
     };
@@ -338,6 +365,122 @@ fn a_table_of_contents_with_no_headings_says_so() {
 }
 
 #[test]
+fn a_table_of_contents_numbers_its_new_bookmarks_on_from_the_largest() {
+    // Three headings: the second has a `_Toc` bookmark of its own (kept), the others get new
+    // ones numbered one above the largest in the document, in order.
+    let heading = |id: u32, inside: &str| {
+        format!(
+            r#"<w:p w14:paraId="{id:08X}" w14:textId="20000001"><w:pPr><w:pStyle w:val="Heading1"/></w:pPr>{inside}</w:p>"#
+        )
+    };
+    let body = [
+        heading(0x1000_0001, "<w:r><w:t>One</w:t></w:r>"),
+        heading(
+            0x1000_0002,
+            r#"<w:bookmarkStart w:id="5" w:name="_Toc100000041"/><w:r><w:t>Two</w:t></w:r><w:bookmarkEnd w:id="5"/>"#,
+        ),
+        heading(0x1000_0003, "<w:r><w:t>Three</w:t></w:r>"),
+        r#"<w:p w14:paraId="10000004" w14:textId="20000001"><w:bookmarkStart w:id="6" w:name="_Toc100000007"/><w:r><w:t>Body</w:t></w:r><w:bookmarkEnd w:id="6"/></w:p>"#.to_owned(),
+    ]
+    .concat();
+    let styles = concat!(
+        r#"<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/>"#,
+        r#"<w:pPr><w:outlineLvl w:val="0"/></w:pPr></w:style>"#,
+    );
+    let (reply, editor) = call_on(
+        package_of(&body, styles),
+        json!({"doc": "d1", "action": "insert_toc", "after": "p:10000004"}),
+        None,
+        word_fields,
+    );
+    assert_eq!(
+        reply["summary"],
+        json!("Inserted a table of contents fld:body/0"),
+        "{reply}"
+    );
+    let head = editor.store().snapshot();
+    let xml = String::from_utf8(
+        head.doc()
+            .package()
+            .read("word/document.xml")
+            .unwrap()
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    let names: Vec<&str> = xml
+        .split(r#"w:name="_Toc"#)
+        .skip(1)
+        .map(|rest| rest.split('"').next().unwrap())
+        .collect();
+    assert_eq!(names, ["100000042", "100000041", "100000043", "100000007"], "{xml}");
+    // Their annotation ids one above the document's largest (6), one after another.
+    let ids: Vec<&str> = xml
+        .split("<w:bookmarkStart ")
+        .skip(1)
+        .map(|rest| rest.split(r#"w:id=""#).nth(1).unwrap().split('"').next().unwrap())
+        .collect();
+    assert_eq!(ids, ["7", "5", "8", "6"], "{xml}");
+}
+
+#[test]
+fn a_numbered_heading_s_entry_shows_its_number() {
+    // Level 1 is followed by a tab (Word's default): the number in its own run, a tab run,
+    // the text, with a left stop after the number; level 2 by a space: one run.
+    let heading = |id: u32, level: u32, text: &str| {
+        format!(
+            r#"<w:p w14:paraId="{id:08X}" w14:textId="20000001"><w:pPr><w:pStyle w:val="Heading{level}"/></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#
+        )
+    };
+    let body = [
+        heading(0x1000_0001, 1, "One"),
+        heading(0x1000_0002, 2, "Two"),
+        r#"<w:p w14:paraId="10000004" w14:textId="20000001"><w:r><w:t>Body</w:t></w:r></w:p>"#.to_owned(),
+    ]
+    .concat();
+    let style = |level: u32| {
+        format!(
+            r#"<w:style w:type="paragraph" w:styleId="Heading{level}"><w:name w:val="heading {level}"/><w:basedOn w:val="Normal"/><w:pPr><w:numPr><w:ilvl w:val="{}"/><w:numId w:val="1"/></w:numPr><w:outlineLvl w:val="{}"/></w:pPr></w:style>"#,
+            level - 1,
+            level - 1
+        )
+    };
+    let numbering = concat!(
+        r#"<w:abstractNum w:abstractNumId="0"><w:multiLevelType w:val="multilevel"/>"#,
+        r#"<w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:pStyle w:val="Heading1"/><w:lvlText w:val="%1."/></w:lvl>"#,
+        r#"<w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:pStyle w:val="Heading2"/><w:suff w:val="space"/><w:lvlText w:val="%1.%2"/></w:lvl>"#,
+        r#"</w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>"#,
+    );
+    let (reply, editor) = call_on(
+        package_numbered(&body, &[style(1), style(2)].concat(), numbering),
+        json!({"doc": "d1", "action": "insert_toc", "after": "p:10000004"}),
+        None,
+        word_fields,
+    );
+    assert_eq!(
+        reply["summary"],
+        json!("Inserted a table of contents fld:body/0"),
+        "{reply}"
+    );
+    let head = editor.store().snapshot();
+    let xml = String::from_utf8(
+        head.doc()
+            .package()
+            .read("word/document.xml")
+            .unwrap()
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(xml.contains(r#"<w:tab w:val="left" w:pos=""#), "{xml}");
+    assert!(
+        xml.contains("<w:t>1.</w:t></w:r><w:r><w:rPr><w:noProof/></w:rPr><w:tab/></w:r>"),
+        "{xml}"
+    );
+    assert!(xml.contains("<w:t>1.1 Two</w:t>"), "{xml}");
+}
+
+#[test]
 fn field_refusals_carry_their_way_out() {
     let (reply, _) = call(
         json!({"doc": "d1", "action": "update", "ids": ["fld:body/9"]}),
@@ -390,24 +533,44 @@ fn blocks_of_the_document_are_copied_with_fresh_ids() {
 
 #[test]
 fn what_the_copy_does_not_port_is_left_to_the_host() {
-    // a bookmark in the block, a tracked copy
-    for (arguments, tracking) in [
+    // a place given by reference: the host resolves it before it calls
+    let (reply, editor) = call(
+        json!({"doc": "d1", "source_doc": "d1", "range": "p:10000002", "at": "after:$mark"}),
+        word_copy_from,
+    );
+    // `unported` is the host's to read: the reply changes nothing and says nothing
+    assert_eq!(reply["summary"], json!(""), "{reply}");
+    assert_eq!(reply["changed"], json!([]), "{reply}");
+    let body = editor
+        .store()
+        .snapshot()
+        .doc()
+        .package()
+        .read("word/document.xml")
+        .unwrap()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&body).matches("Delta epsilon").count(), 1);
+}
+
+#[test]
+fn a_bookmarked_block_and_a_tracked_copy_are_copied_in_rust() {
+    for (arguments, tracked) in [
         (
             json!({"doc": "d1", "source_doc": "d1", "range": "p:10000001", "at": "end"}),
-            None,
+            false,
         ),
         (
             json!({"doc": "d1", "source_doc": "d1", "range": "p:10000002", "at": "end"}),
-            Some(()),
+            true,
         ),
     ] {
-        let tracking = tracking.map(|()| ooxml_word_edit::Tracking {
+        let tracking = tracked.then(|| ooxml_word_edit::Tracking {
             author: "A".to_owned(),
             date: "2026-11-17T10:00:00Z".to_owned(),
         });
         let (reply, editor) = call_tracking(arguments, tracking.as_ref(), word_copy_from);
-        assert!(reply.get("error").is_none(), "{reply}");
-        assert_eq!(editor.store().snapshot().doc().package().part_names().len(), 5);
+        assert_eq!(reply["summary"], json!("Copied 1 block(s) from d1"), "{reply}");
+        assert_eq!(reply["created"].as_array().map(Vec::len), Some(1), "{reply}");
         let body = editor
             .store()
             .snapshot()
@@ -416,7 +579,8 @@ fn what_the_copy_does_not_port_is_left_to_the_host() {
             .read("word/document.xml")
             .unwrap()
             .unwrap();
-        assert_eq!(String::from_utf8_lossy(&body).matches("Delta epsilon").count(), 1);
+        let text = String::from_utf8_lossy(&body);
+        assert_eq!(text.contains("<w:ins "), tracked, "{text}");
     }
 }
 

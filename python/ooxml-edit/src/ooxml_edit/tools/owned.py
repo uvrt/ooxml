@@ -19,16 +19,33 @@ its own.
   the view (bytes, ``None`` removes one) as the step of ``tool`` and ``caller``;
 - ``undo(handle) -> head | None`` and ``redo(handle) -> head | None``: one step of the
   document's history, ``None`` when there is none (refused: ``ValueError``);
-- ``keep(handle, number, head)``: the head is the document's version ``number`` (reads find it);
+- ``keep(handle, number, head, first)``: the head is the document's version ``number`` (reads find it);
+  ``first``: the owner's number of the step's first version, where it made several (each is ``number``);
 - ``reader(handle, head, number) -> make``: what makes a Python reader of the version ``head``
   (numbered ``number``) from its bytes, for the reads of a committed version (``head.save()``);
-- ``save(handle) -> bytes`` and ``close(handle)``.
+- ``save(handle) -> bytes`` and ``close(handle)``;
+- optionally, step groups (a ``batch``'s ops as one step of the owner's): ``open_group(handle) ->
+  group``, ``group_mark(handle, group) -> mark``, ``revert_group(handle, group, mark, caller) -> head |
+  None`` (what the group committed after ``mark`` -- ``None``: since it opened -- taken back, no
+  redo of it; the new head, ``None`` when nothing was committed since) and ``close_group(handle,
+  group, caller) -> head | None`` (one step of ``caller``'s; ``None`` when it committed nothing).
 
 **The view.**  :attr:`OwnedEntry.document` is a Python document of the format, made current
 lazily: only when something reads it -- a Python tool (whose change the owner commits through
 ``bridge``), a check only Python makes -- and only when the head moved since it was last
 made current.  A call the owner serves itself (a Rust editing tool, :meth:`OwnedEntry.served`)
 never reads it.
+
+**Batches** (lane H1).  Where the owner has step groups, a batch on the document opens one
+(:meth:`OwnedEntry.batch`) and each of its ops is a sub-step of it (:meth:`OwnedEntry.op_step`):
+a call the owner serves commits there, the Python tools' changes to the view before it
+committed through ``bridge`` first (:meth:`OwnedEntry.flush_view`: so it edits them too; a
+read of the owner's head flushes the same way), the rest when the batch ends -- a batch of
+Python tools alone is one step of the view's, as before -- and a failed op is taken back to
+where it began.  The batch ends as one step (``close_group``), or none where it
+fails (the whole group taken back; undo and redo as they were).  The group is closed on every
+path, an exception's too.  While it is open the view and the batch's reads follow the group's
+head (:meth:`OwnedHistory.reading_head`).
 
 **Numbers.**  :class:`OwnedHistory` numbers the document's states as
 :class:`~ooxml_edit.history.History` does (a step a new number, undo and redo back to the
@@ -82,6 +99,8 @@ class OwnedHistory:
         self._cond = threading.Condition()
         #: The calls the owner is serving now (:meth:`serving`).
         self._serving = 0
+        #: While a step group is open (a batch's): the owner's head its ops left.
+        self._group_head: Any = None
 
     @property
     def version(self) -> int:
@@ -105,6 +124,38 @@ class OwnedHistory:
         """The owner's version numbered ``number`` (now: the latest), ``None`` when let go."""
         return self._heads.get(self._number if number is None else number)
 
+    def reading_head(self) -> Any:
+        """The owner's version the calls on the document read now: within a step group, the
+        one its ops left; else the latest numbered one."""
+        return self._group_head if self._group_head is not None else self.head()
+
+    @property
+    def grouped(self) -> bool:
+        return self._group_head is not None
+
+    def open_group(self) -> None:
+        """A step group opened at the head."""
+        with self._cond:
+            self._group_head = self.head()
+
+    def group_moved(self, head: Any) -> None:
+        """An op of the open group left the owner's head at ``head``."""
+        with self._cond:
+            self._group_head = head
+
+    def close_group(self, head: Any, first: int | None, view: Any = None) -> int | None:
+        """The open group closed: ``head`` (the owner's versions from ``first`` on, ``None``
+        where it made no step) numbered as one step, which is returned; else the version as
+        it was, its head the owner's ``reading`` one now (a revert's, of the same content)."""
+        with self._cond:
+            now, self._group_head = self._group_head, None
+            if head is not None:
+                return self._committed(head, view, first)
+            if now is not None and now is not self.head():
+                self._heads[self._number] = now
+                self._entry.owner.keep(self._entry.handle, self._number, now, None)
+            return None
+
     @contextmanager
     def serving(self) -> Iterator[None]:
         """A call the owner serves (its edit made side by side with others', lane P2c6),
@@ -125,6 +176,15 @@ class OwnedHistory:
         before)`` runs as it is numbered (what is counted per step, in that order).  The
         step's number and the number before it.  Within :meth:`serving`."""
         with self._cond:
+            if self._group_head is not None:
+                # (within a batch's group: the op's versions are the group's, numbered with it)
+                if self._group_head.number + 1 != first:
+                    raise OwnerDisagrees(f"{self._entry.doc_id}: a served step from the owner's "
+                                         f"version {first} where the group is at "
+                                         f"{self._group_head.number}")
+                self._group_head = head
+                self._cond.notify_all()
+                return self._number, self._number
             while True:
                 at = self._heads[self._number].number
                 if at + 1 == first:
@@ -135,7 +195,7 @@ class OwnedHistory:
                                          f"version {first} where the history is at {at}")
                 self._cond.wait()
             before = self._number
-            number = self.committed(head)
+            number = self._committed(head, None, first)
             if then is not None:
                 then(number, before)
             self._cond.notify_all()
@@ -145,9 +205,9 @@ class OwnedHistory:
         """A step the owner made: its new head numbered, redo dropped; ``view``: the view
         that made it (a Python step), numbered as the head before the owner keeps it."""
         with self._cond:
-            return self._committed(head, view)
+            return self._committed(head, view, None)
 
-    def _committed(self, head: Any, view: Any) -> int:
+    def _committed(self, head: Any, view: Any, first: int | None) -> int:
         self._undo.append(self._number)
         if len(self._undo) > DEPTH:
             del self._undo[0]
@@ -156,15 +216,15 @@ class OwnedHistory:
         self._number = self._last
         if view is not None:
             view.history.follow(self._number, self._last)
-        self._keep(head)
+        self._keep(head, first)
         return self._number
 
-    def _keep(self, head: Any) -> None:
+    def _keep(self, head: Any, first: int | None = None) -> None:
         self._heads[self._number] = head
         kept = set(self._undo) | set(self._redo) | {self._number}
         for number in [n for n in self._heads if n not in kept]:
             del self._heads[number]
-        self._entry.owner.keep(self._entry.handle, self._number, head)
+        self._entry.owner.keep(self._entry.handle, self._number, head, first)
 
     def steps(self) -> list[Step]:
         versions = [*self._undo, self._number]
@@ -263,7 +323,16 @@ class OwnedEntry(DocumentEntry):
     #: Held shared by each call the owner serves, alone with the document's lock (:meth:`own`).
     gate: Gate = field(default_factory=Gate, repr=False)
     batch_depth: int = field(default=0, repr=False)
-    _view_number: int | None = field(default=None, repr=False)
+    #: The owner's number of the version the view is (``None``: none yet).
+    _view_seq: int | None = field(default=None, repr=False)
+    #: The owner's step group open for the batch now (``open_group``'s), else ``None``.
+    _group: Any = field(default=None, repr=False)
+    #: The batch's step owner while its group is open.
+    _group_owner: StepOwner | None = field(default=None, repr=False)
+    #: The op running in the group now: where a failure takes the owner back to, and the
+    #: view's savepoint (:meth:`op_step`).
+    _op_mark: Any = field(default=None, repr=False)
+    _op_point: ExitStack | None = field(default=None, repr=False)
     _owned: OwnedHistory | None = field(default=None, repr=False)
     _step: ExitStack | None = field(default=None, repr=False)
     _view_change: Any = field(default=None, repr=False)
@@ -282,8 +351,9 @@ class OwnedEntry(DocumentEntry):
         history = getattr(document, "history", None)
         version = getattr(history, "version", 0)
         last = getattr(history, "last_version", version)
-        self._owned = OwnedHistory(self, owner.head(self.handle), version, last)
-        self._view_number = version
+        head = owner.head(self.handle)
+        self._owned = OwnedHistory(self, head, version, last)
+        self._view_seq = head.number
 
     # -- the view ---------------------------------------------------------------------------
 
@@ -291,12 +361,13 @@ class OwnedEntry(DocumentEntry):
     def document(self) -> Any:
         """The view at the head, made current now if the head moved since it last was."""
         owned = self._owned
-        if owned is not None and self._view_number != owned.version:
+        if owned is not None and self._view_seq != owned.reading_head().number:
             with self.lock:     # (a read that came before the lock: no edit meanwhile)
-                if self._view_number != owned.version:
-                    self.owner.follow(self.handle, self.held, owned.head(), owned.version,
+                head = owned.reading_head()
+                if self._view_seq != head.number:
+                    self.owner.follow(self.handle, self.held, head, owned.version,
                                       owned.last_version)
-                    self._view_number = owned.version
+                    self._view_seq = head.number
         if self.batch_depth and self._step is not None and self._view_change is None \
                 and id(self) in _IN_STEP.get():
             self._open_view_step()
@@ -309,7 +380,7 @@ class OwnedEntry(DocumentEntry):
     @property
     def view_current(self) -> bool:
         """Whether the view is the head's (reading it costs nothing now)."""
-        return self._owned is None or self._view_number == self._owned.version
+        return self._owned is None or self._view_seq == self._owned.reading_head().number
 
     @property
     def history(self) -> Any:
@@ -345,13 +416,17 @@ class OwnedEntry(DocumentEntry):
     def batch(self, owner: StepOwner | None = None) -> Iterator[None]:
         """One step around a call: what a Python tool changed in the view is committed by the
         owner as the step of ``owner``'s tool and caller; a served call's step is the
-        owner's already."""
+        owner's already.  Where the owner has step groups, a step group of the owner's
+        (see the module docstring), closed on every path."""
         outer = self.batch_depth == 0
         before = self.version
         self.batch_depth += 1
         try:
             if not outer:
                 yield
+            elif self._groups():
+                with self._grouped(owner):
+                    yield
             else:
                 with ExitStack() as stack:
                     self._step = stack
@@ -373,19 +448,134 @@ class OwnedEntry(DocumentEntry):
             self.owners[self.version] = owner
             self.own_undos = [undo for undo in self.own_undos if undo.kind != "plain"]
 
+    def _groups(self) -> bool:
+        """Whether the owner makes a batch one step of its own (step groups)."""
+        return self._owned is not None and getattr(self.owner, "open_group", None) is not None
+
+    @contextmanager
+    def _grouped(self, owner: StepOwner | None) -> Iterator[None]:
+        """The batch as one step group of the owner's: opened here, closed as one step where
+        the batch ends, taken back whole where it raises -- the group closed either way."""
+        owned = self._owned
+        assert owned is not None
+        group = self.owner.open_group(self.handle)
+        first = owned.reading_head().number + 1
+        caller = dict(owner.caller) if owner is not None else None
+        self._group, self._group_owner = group, owner
+        owned.open_group()
+        token = _IN_STEP.set(_IN_STEP.get() | {id(self)})
+        closed = False
+        try:
+            self._step = ExitStack()
+            try:
+                yield
+                self._flush(owner)
+            except BaseException as error:
+                self._unwind(error)
+                self._group_moved(self.owner.revert_group(self.handle, group, None, caller))
+                raise
+            finally:
+                _IN_STEP.reset(token)
+            head = self.owner.close_group(self.handle, group, caller)
+            closed = True
+            view = self.held if head is not None and self._view_seq == head.number else None
+            owned.close_group(head, first, view)
+        finally:
+            self._group = self._group_owner = None
+            if not closed:
+                # (taken back, or the revert failed: the group closes so the document is not
+                # left in it; the error that brought us here goes on)
+                try:
+                    owned.close_group(self.owner.close_group(self.handle, group, caller), first)
+                except Exception:  # noqa: BLE001 -- the batch's own error is the one raised
+                    owned.close_group(None, first)
+
+    @contextmanager
+    def op_step(self, owner: StepOwner | None = None) -> Iterator[None]:
+        """One op of a batch, as a sub-step of the batch's step group (where it has one):
+        everything the op committed, and what it changed in the view, taken back where it
+        raises.  A Python tool's change stays in the view's step, which the batch's later
+        Python ops go on in, as in a batch without the owner's tools; a call the owner
+        serves, or a read of the owner's head, has it committed first (:meth:`flush_view`)."""
+        group = self._group
+        if group is None:
+            yield
+            return
+        self._op_mark = self.owner.group_mark(self.handle, group)
+        point = ExitStack()
+        saved = self._view_change is not None
+        if saved:
+            # (the view's step is open, so the view is current: its savepoint is cheap)
+            view = self.held
+            savepoint = getattr(view, "savepoint", None)
+            point.enter_context(savepoint() if savepoint is not None else view.history.savepoint())
+        self._op_point = point
+        try:
+            yield
+        except BaseException as error:
+            if self._op_point is point and saved:
+                point.__exit__(type(error), error, error.__traceback__)
+            elif self._view_change is not None:
+                self._unwind(error)       # (a view step this op opened)
+            self._group_moved(self.owner.revert_group(
+                self.handle, group, self._op_mark, dict(owner.caller) if owner is not None else None))
+            raise
+        else:
+            if self._op_point is point:
+                point.close()
+        finally:
+            self._op_point = None
+
+    def flush_view(self) -> None:
+        """Within a batch's step group: the view's changes so far committed in the group, so
+        a call the owner serves edits them, or a read of the owner's head reads them; the
+        op running now takes back only what it does from here on."""
+        if self._group is None or self._view_change is None:
+            return
+        point, self._op_point = self._op_point, None
+        if point is not None:
+            point.close()         # (what the op changed so far stays: the step goes on)
+        self._flush(self._group_owner)
+        self._op_mark = self.owner.group_mark(self.handle, self._group)
+
+    def _flush(self, owner: StepOwner | None) -> None:
+        """Within a step group: the view's step closed and what it changed committed in the
+        group (as ``owner``'s); a new one opens when the view is next read."""
+        stack, self._step = self._step, ExitStack()
+        if stack is None:
+            return
+        stack.close()
+        self._end_step(owner)
+        self._view_change = None
+
+    def _unwind(self, error: BaseException) -> None:
+        """Within a step group: the view's step taken back (its batch rolls back as it
+        closes with ``error``), so the view is the version it followed last."""
+        stack, self._step = self._step, ExitStack()
+        self._view_change = None
+        if stack is not None:
+            stack.__exit__(type(error), error, error.__traceback__)
+
+    def _group_moved(self, head: Any) -> None:
+        if head is not None and self._owned is not None:
+            self._owned.group_moved(head)
+
     def _end_step(self, owner: StepOwner | None) -> None:
         change, owned = self._view_change, self._owned
         if change is None or not change.changed or not change.parts or owned is None:
             return
-        if self.owner.head(self.handle).number != owned.head().number:
+        if self.owner.head(self.handle).number != owned.reading_head().number:
             raise OwnerDisagrees(f"{self.doc_id}: the owner's head moved during a Python step")
         package = self.held.package
         parts = {part: (package.read(part) if package.has_part(part) else None)
                  for part in change.parts}
         head = self.owner.bridge(self.handle, owner.tool if owner is not None else "library",
                                  dict(owner.caller) if owner is not None else None, parts)
-        owned.committed(head, self.held)
-        self._view_number = owned.version
+        self._view_seq = head.number
+        if owned.grouped:
+            owned.group_moved(head)
+        else:
+            owned.committed(head, self.held)
 
     @contextmanager
     def serving(self) -> Iterator[None]:
@@ -429,6 +619,9 @@ class OwnedEntry(DocumentEntry):
 
     @contextmanager
     def savepoint(self, start: Any = None) -> Iterator[bool]:
+        if self._group is not None:
+            yield True      # (the op's sub-step of the group takes it back: :meth:`op_step`)
+            return
         view = self.document
         savepoint = getattr(view, "savepoint", None)
         with (savepoint() if savepoint is not None else view.history.savepoint(start)):

@@ -65,6 +65,32 @@ pub trait DocModel: Clone + Send + Sync + 'static {
         let _ = (change, into);
     }
 
+    /// Begin a transaction on `self`: what a version keeps of the transaction that made it
+    /// (the values its stand-ins were drawn as, [`DocModel::resolve`]) is let go, so the
+    /// transaction's own draws start afresh. The store calls it on a transaction's working
+    /// version, on the head a commit is replayed on, and before it replays a step's changes
+    /// or their inverses (undo, redo). Nothing by default.
+    fn begin(&mut self) {}
+
+    /// Add to `into` the keys `change` creates under stand-ins: keys of what did not exist
+    /// before, named by a value drawn where the change is applied (a new block named by its
+    /// new id). They are kept apart from [`DocModel::written`] end to end: a stand-in may
+    /// equal a key another transaction has just published for real, so it is never compared
+    /// as a key. No other transaction can have read one on its snapshot, so they are no
+    /// conflict; at commit they are resolved to the keys drawn ([`DocModel::resolve`]) and
+    /// only then stamped, kept in the history and journaled. None by default.
+    fn created(change: &Self::Change, into: &mut KeySet<Self::Key>) {
+        let _ = (change, into);
+    }
+
+    /// The keys `created` (stand-ins, [`DocModel::created`]) name in `self`, the version a
+    /// transaction made: each as the value drawn where its change was applied. None by
+    /// default (a model that creates none).
+    fn resolve(&self, created: &KeySet<Self::Key>) -> KeySet<Self::Key> {
+        let _ = created;
+        KeySet::new()
+    }
+
     /// `change`, made on a version `past` had not been applied to, moved to apply after
     /// `past` (design section 5: a commit's patches rebased through those committed since
     /// its snapshot). Called only when the two transactions' keys are disjoint; an error

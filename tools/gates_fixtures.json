@@ -1,0 +1,153 @@
+{
+ "docx2svg/layout-sweep.docx": [
+  "sections"
+ ],
+ "docx2svg/style-document.docx": [],
+ "generated/charts/chart-places.docx": [
+  "charts",
+  "drawings",
+  "notes",
+  "sections",
+  "styles",
+  "textboxes"
+ ],
+ "generated/charts/charts.docx": [
+  "charts",
+  "drawings",
+  "styles"
+ ],
+ "generated/charts/smartart.docx": [
+  "drawings",
+  "smartart",
+  "styles"
+ ],
+ "generated/controls.docx": [
+  "controls",
+  "links",
+  "sections",
+  "tables",
+  "tracked"
+ ],
+ "generated/ids-and-markup.docx": [
+  "comments",
+  "controls",
+  "fields",
+  "links",
+  "notes",
+  "sections",
+  "tables",
+  "tracked"
+ ],
+ "generated/lists-and-styles.docx": [
+  "drawings",
+  "links",
+  "lists"
+ ],
+ "generated/markdown/blank.docx": [],
+ "generated/markdown/constructs.docx": [
+  "controls",
+  "drawings",
+  "fields",
+  "links",
+  "lists",
+  "notes",
+  "sections",
+  "tables",
+  "textboxes"
+ ],
+ "generated/markdown/dutch-template.docx": [],
+ "generated/markdown/review.docx": [
+  "comments",
+  "tables",
+  "tracked"
+ ],
+ "generated/mode14.docx": [
+  "legacy"
+ ],
+ "generated/own-tracked-note.docx": [
+  "notes",
+  "tracked"
+ ],
+ "generated/pilot/agreement-summary.docx": [
+  "comments",
+  "styles"
+ ],
+ "generated/review-follow.docx": [
+  "comments",
+  "controls",
+  "tables",
+  "tracked"
+ ],
+ "generated/table-keeps.docx": [
+  "styles",
+  "tables"
+ ],
+ "generated/tables-accepted.docx": [
+  "tables",
+  "tracked"
+ ],
+ "generated/toc-numbered.docx": [
+  "fields",
+  "lists",
+  "tables"
+ ],
+ "generated/trial/field-handbook.docx": [
+  "lists",
+  "notes",
+  "styles"
+ ],
+ "generated/trial/safety-bulletin.docx": [
+  "drawings",
+  "lists",
+  "notes",
+  "styles"
+ ],
+ "generated/trial/template-saved-as-docx.docx": [
+  "fields",
+  "sections",
+  "styles"
+ ],
+ "samplelib/sample-blank.docx": [
+  "legacy",
+  "styles"
+ ],
+ "samplelib/sample-long.docx": [
+  "drawings",
+  "legacy",
+  "styles"
+ ],
+ "samplelib/sample-resume.docx": [
+  "legacy",
+  "styles"
+ ],
+ "samplelib/sample-simple.docx": [
+  "drawings",
+  "legacy",
+  "styles",
+  "tables"
+ ],
+ "wordto/sample-10pages.docx": [
+  "legacy",
+  "styles",
+  "tables"
+ ],
+ "wordto/sample-1page.docx": [
+  "legacy",
+  "styles"
+ ],
+ "wordto/sample-5pages.docx": [
+  "legacy",
+  "styles",
+  "tables"
+ ],
+ "wordto/sample-with-images.docx": [
+  "drawings",
+  "legacy",
+  "styles"
+ ],
+ "wordto/sample-with-table.docx": [
+  "legacy",
+  "styles",
+  "tables"
+ ]
+}

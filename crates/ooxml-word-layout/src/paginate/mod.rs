@@ -384,6 +384,8 @@ pub struct PageContext<'a> {
     /// The paragraphs broken again so far: the paginator's state, which every layout of a
     /// page reads and breaks again (`Para.set_lines`), carried from page to page.
     pub lines: RefCell<LineStore>,
+    /// Asked before each page: the pages end there where it says stop (none: never).
+    pub stop: Option<&'a crate::stop::Stop<'a>>,
 }
 
 /// Flow index -> a paragraph's lines as the paginator last broke them again.
@@ -466,7 +468,8 @@ impl<'a> Paginator<'a> {
         });
         cx.lines.replace(lines);
         let mut first = true;
-        while position.item < cx.items.len() {
+        // Where told to stop: pages the layout's caller drops, no state to go on from.
+        while position.item < cx.items.len() && !cx.stop.is_some_and(crate::stop::Stop::now) {
             // What is broken again before the page's first item is never read again.
             cx.lines.borrow_mut().retain(|k, _| *k >= position.item);
             let lines_before = cx.lines.borrow().clone();

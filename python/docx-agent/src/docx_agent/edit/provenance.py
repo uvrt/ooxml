@@ -139,6 +139,11 @@ class ProvenanceOps:
             for address, record in doc.provenance().items():
                 print(address, record["source"], record.get("document"))"""
         out = Provenance()
+        owned = self._owned_records()
+        if owned is not None:
+            out.update((key, record) for key, record in owned["provenance"])
+            out.ignored = owned["ignored"]
+            return out
         item = self._provenance_item()
         if item is None:
             return out
@@ -156,6 +161,13 @@ class ProvenanceOps:
                 continue
             out[key] = found
         return out
+
+    def _owned_records(self: "Document") -> dict[str, Any] | None:
+        """Lane P2d1: the records as the document's owner reads them from the version this
+        view is (:attr:`~docx_agent.Document.owned_records`), ``None`` where they are read
+        here."""
+        hook = self.__dict__.get("owned_records")
+        return hook() if hook is not None else None
 
     def store_provenance(self: "Document", address: str, record: Mapping[str, Any] | None) -> bool:
         """Keep ``record`` (an :mod:`ooxml_edit.provenance` record) for the table or chart
@@ -205,6 +217,9 @@ class ProvenanceOps:
             for paragraph, facts in doc.text_facts().items():
                 for fact in facts:
                     print(paragraph, fact["at"], fact["text"], fact["source"])"""
+        owned = self._owned_records()
+        if owned is not None:
+            return {paragraph: facts for paragraph, facts in owned["facts"]}
         out: dict[str, list[dict[str, Any]]] = {}
         item = self._provenance_item()
         if item is None:
@@ -230,6 +245,9 @@ class ProvenanceOps:
         :mod:`ooxml_edit.provenance` label (``at`` its character in the paragraph's text,
         ``text`` the label as it reads now, ``value``, ``source``...), in order.  A label
         edited elsewhere since is followed as an edit here follows it."""
+        owned = self._owned_records()
+        if owned is not None:
+            return {paragraph: labels for paragraph, labels in owned["labels"]}
         out: dict[str, list[dict[str, Any]]] = {}
         item = self._provenance_item()
         if item is None:

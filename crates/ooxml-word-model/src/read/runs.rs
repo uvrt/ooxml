@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 const RUN_MARKS: &[&str] = &["tab", "br", "cr", "noBreakHyphen", "softHyphen"];
-const RUN_OBJECTS: &[&str] = &["drawing", "pict", "object", "AlternateContent"];
+pub(super) const RUN_OBJECTS: &[&str] = &["drawing", "pict", "object", "AlternateContent"];
 const RUN_CONTAINERS: &[&str] = &[
     "hyperlink",
     "ins",

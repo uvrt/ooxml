@@ -3,14 +3,16 @@
 //! part's tree, its instruction and the fields nested in it, those inside a deletion left
 //! out; a field's id (`fld:<story>/<n>`, its place among its story's fields), the paragraph
 //! it begins in, its cached result as text (`_result_text`), and the document's fields in
-//! story order (`_all_fields`). A block's fields are scanned once while it is unchanged
-//! ([`FieldScans`], the document's).
+//! story order (`_all_fields`). A block's fields are scanned once while it is unchanged,
+//! and a version's fields once while its parts are ([`FieldScans`], the document's); the
+//! bookmarks the fields refer to, a few looked up by name, more listed ([`Marks`]).
 //!
 //! Must not: change a field or compute its value.
 
 use crate::names::W;
 use crate::WordDoc;
 use ooxml_derive::{CacheBudget, Memo, Weigh};
+use ooxml_word_model::address::marks::{bookmark_named, Bookmark, Bookmarks};
 use ooxml_word_model::docx::text::leading_text;
 use ooxml_word_model::docx::{at_path, Docx};
 use ooxml_xml::{Element, Node};
@@ -92,9 +94,27 @@ impl Weigh for Held {
 
 /// The fields of one document's blocks (a part root's children, the body's), memoised by
 /// the block (an element's identity: green nodes are immutable): a version's scan walks
-/// only the blocks its edits made.
+/// only the blocks its edits made; and the last version's fields, by its parts' roots.
 pub struct FieldScans {
     blocks: Mutex<Memo<usize, Held>>,
+    last: Mutex<Option<Scanned>>,
+}
+
+/// A version's fields, held with the story parts they were scanned from (each part's name,
+/// story and root: the roots held, so their addresses are not given to others).
+struct Scanned {
+    parts: Vec<(String, String, Arc<Element>)>,
+    fields: Arc<[Located]>,
+}
+
+impl Scanned {
+    /// Whether `docx` has these parts, each with the same root.
+    fn of(&self, docx: &Docx) -> bool {
+        self.parts.len() == docx.parts.len()
+            && self.parts.iter().zip(&docx.parts).all(|((part, story, root), now)| {
+                *part == now.part && *story == now.story && Arc::ptr_eq(root, now.root())
+            })
+    }
 }
 
 impl std::fmt::Debug for FieldScans {
@@ -109,6 +129,7 @@ impl FieldScans {
     pub fn new(budget: Arc<dyn CacheBudget>) -> FieldScans {
         FieldScans {
             blocks: Mutex::new(Memo::new(budget)),
+            last: Mutex::new(None),
         }
     }
 }
@@ -265,9 +286,13 @@ fn found(number: usize, simple: bool, instruction: &str, path: &[u32]) -> Found 
 }
 
 /// Every field of the document `docx` (a reading of `doc`), story by story in the
-/// reading's order.
-pub(crate) fn all_fields(doc: &WordDoc, docx: &Docx) -> Vec<Located> {
+/// reading's order; scanned once while its parts are the same.
+pub(crate) fn all_fields(doc: &WordDoc, docx: &Docx) -> Arc<[Located]> {
     let scans = &doc.shared().fields;
+    let mut last = scans.last.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(known) = last.as_ref().filter(|l| l.of(docx)) {
+        return Arc::clone(&known.fields);
+    }
     let mut out = Vec::new();
     for part in &docx.parts {
         for found in scan(scans, part.root()) {
@@ -278,7 +303,50 @@ pub(crate) fn all_fields(doc: &WordDoc, docx: &Docx) -> Vec<Located> {
             });
         }
     }
-    out
+    let fields: Arc<[Located]> = Arc::from(out);
+    *last = Some(Scanned {
+        parts: docx
+            .parts
+            .iter()
+            .map(|p| (p.part.clone(), p.story.clone(), Arc::clone(p.root())))
+            .collect(),
+        fields: Arc::clone(&fields),
+    });
+    fields
+}
+
+/// How many bookmark names a pass looks up one by one before it lists every bookmark of the
+/// version: a lookup alone reads the parts' facts (kept per block across versions); the
+/// list copies out every bookmark, which a long document's table of contents makes
+/// thousands.
+const LOOKED_UP_ALONE: usize = 4;
+
+/// A version's bookmarks as a pass asks for them by name: a few looked up alone, more from
+/// one list of every bookmark.
+pub(crate) enum Marks<'d> {
+    /// Every bookmark, listed once.
+    Listed(Bookmarks<'d>),
+    /// Each name looked up alone.
+    Alone(&'d Docx),
+}
+
+impl<'d> Marks<'d> {
+    /// The bookmarks of `docx` for a pass that looks up `names` names.
+    pub(crate) fn of(docx: &'d Docx, names: usize) -> Marks<'d> {
+        if names <= LOOKED_UP_ALONE {
+            Marks::Alone(docx)
+        } else {
+            Marks::Listed(Bookmarks::of(docx))
+        }
+    }
+
+    /// The bookmark `name` names (as [`Bookmarks::get`] finds it).
+    pub(crate) fn get(&self, name: &str) -> Option<Bookmark<'d>> {
+        match self {
+            Marks::Listed(all) => all.get(name).ok().cloned(),
+            Marks::Alone(docx) => bookmark_named(docx, name).ok(),
+        }
+    }
 }
 
 /// The path of the paragraph holding the node at `path` (its nearest `w:p` above it).
@@ -302,6 +370,30 @@ pub(crate) fn run_of(root: &Arc<Element>, path: &[u32]) -> Vec<u32> {
         Some(parent) if !above.is_empty() && parent.name().is(Some(W), "r") => above.to_vec(),
         _ => path.to_vec(),
     }
+}
+
+/// The path of the run a field's text is drawn for (`_style_reference`'s target): a simple
+/// field's `w:fldSimple`, a complex one's run holding its instruction's first piece (the
+/// first `w:instrText` after its begin and before its separator, else its end); `None`
+/// where it has none.
+pub(crate) fn instruction_run(root: &Arc<Element>, found: &Found) -> Option<Vec<u32>> {
+    if found.simple {
+        return Some(found.begin.clone());
+    }
+    let stop = found.separate.as_ref().or(found.end.as_ref())?;
+    let mut first = None;
+    between(
+        root,
+        &mut Vec::new(),
+        false,
+        (&found.begin, stop),
+        &mut |node, path, _, _| {
+            if first.is_none() && node.name().is(Some(W), "instrText") {
+                first = Some(path.to_vec());
+            }
+        },
+    );
+    first.map(|path| run_of(root, &path))
 }
 
 /// Whether `a` comes before `b` in document order (an ancestor before what it holds).
@@ -339,6 +431,61 @@ pub(crate) fn result_text(root: &Arc<Element>, found: &Found) -> String {
         },
     );
     out.trim_matches('\n').to_owned()
+}
+
+/// Whether the result of the field `found` (at the same paths in both parts) is read from
+/// the same elements of `old` and `new`: the elements `result_text` visits, below the
+/// deepest element holding both its separator's and its end's runs, and that element's
+/// ancestors' names (a deletion above it, a run).
+pub(crate) fn same_result(old: &Arc<Element>, new: &Arc<Element>, found: &Found) -> bool {
+    let (first, last) = if found.simple {
+        (found.begin.clone(), found.begin.clone())
+    } else {
+        let (Some(separate), Some(end)) = (&found.separate, &found.end) else {
+            return true;
+        };
+        let first = run_of(new, separate);
+        let last = run_of(new, end);
+        if run_of(old, separate) != first || run_of(old, end) != last {
+            return false;
+        }
+        (first, last)
+    };
+    let shared = first.iter().zip(&last).take_while(|(a, b)| a == b).count();
+    let depth = shared.min(first.len().min(last.len()).saturating_sub(1));
+    let (mut a, mut b) = (Arc::clone(old), Arc::clone(new));
+    for step in first.iter().take(depth) {
+        if Arc::ptr_eq(&a, &b) {
+            return true;
+        }
+        if a.name() != b.name() {
+            return false;
+        }
+        let child = |e: &Arc<Element>| e.children().get(*step as usize).and_then(|n| n.as_element()).cloned();
+        let (Some(x), Some(y)) = (child(&a), child(&b)) else {
+            return false;
+        };
+        a = x;
+        b = y;
+    }
+    if Arc::ptr_eq(&a, &b) {
+        return true;
+    }
+    if a.name() != b.name() {
+        return false;
+    }
+    let (Some(from), Some(to)) = (first.get(depth), last.get(depth)) else {
+        return false;
+    };
+    (*from..=*to).all(|k| {
+        let (x, y) = (a.children().get(k as usize), b.children().get(k as usize));
+        match (x, y) {
+            (Some(Node::Element(x)), Some(Node::Element(y))) => Arc::ptr_eq(x, y),
+            // `result_text` reads elements only
+            (Some(Node::Element(_)), _) | (_, Some(Node::Element(_))) => false,
+            _ => true,
+        }
+    })
 }
 
 /// Every `w:t`'s text below `element`, in order.
@@ -510,5 +657,27 @@ mod tests {
         let again = replaced(&edited, 0, block(4));
         assert_eq!(scan(&scans, &again), fresh(&again));
         assert_ne!(fresh(&again), first);
+    }
+
+    #[test]
+    fn a_result_read_from_the_same_elements_is_the_same_result() {
+        let root = root();
+        let block = |k: usize| {
+            Node::Element(Arc::clone(
+                root.find(Some(W), "body").unwrap().child_elements().nth(k).unwrap(),
+            ))
+        };
+        let fields = fresh(&root);
+        assert!(fields.iter().all(|f| same_result(&root, &root, f)));
+        // The PAGE's paragraph (body child 2, inside the REF) replaced: the REF and the PAGE
+        // are read anew; the first PAGE and the NUMPAGES in the cell are not.
+        let edited = replaced(&root, 2, block(0));
+        let same: Vec<bool> = fields.iter().map(|f| same_result(&root, &edited, f)).collect();
+        assert_eq!(same, vec![true, false, false, true]);
+        for (field, same) in fields.iter().zip(same) {
+            if same {
+                assert_eq!(result_text(&root, field), result_text(&edited, field));
+            }
+        }
     }
 }

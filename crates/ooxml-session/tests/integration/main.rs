@@ -6,4 +6,5 @@ mod common;
 
 mod editing;
 mod registry;
+mod rows_written;
 mod session;

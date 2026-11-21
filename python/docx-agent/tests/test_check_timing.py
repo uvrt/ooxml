@@ -106,6 +106,14 @@ def test_a_check_answered_from_what_the_version_had_lays_nothing_out(made):
         session, doc, _document = _open(box, made)
         first = _timing(box.dispatch(session, "check", {"doc": doc, "include": ["reflow"]}))
         again = _timing(box.dispatch(session, "check", {"doc": doc, "include": ["reflow"]}))
+        from docx_agent.rust import reads
+
+        if reads.served().get("check"):
+            # Lane P5b: answered by the session, laid out by the document's page engine here:
+            # no worker; ``layout`` only where the engine laid the version out.
+            assert "layout" in first and "worker_wait" not in first
+            assert "worker_wait" not in again and "facts" in again
+            return
         assert "layout" in first and "worker_wait" in first
         # The same check of the same version: its facts kept, no worker asked.
         assert "layout" not in again and "worker_wait" not in again and "facts" in again

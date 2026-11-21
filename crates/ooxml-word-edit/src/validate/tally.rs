@@ -283,17 +283,20 @@ impl Reader<'_> {
         }
         let mut items = old.items.clone();
         let (_, ranks) = self.ranks(Some(now));
-        for (start, old_end, new_end) in was.children().changed_spans(now.children()) {
+        // the last run first: the places before it are still the old version's
+        for run in ooxml_xml::changed_runs(was.children(), now.children())
+            .into_iter()
+            .rev()
+        {
+            let (start, old_end) = (run.old.start, run.old.end);
             for k in start..old_end {
                 if let Some(item) = old.items.get(k) {
                     counts.apply(name, &old.role, &item.facts, -1);
                 }
             }
-            let fresh: Vec<Item> = now
-                .children()
-                .iter()
-                .skip(start)
-                .take(new_end - start)
+            let fresh: Vec<Item> = run
+                .new
+                .filter_map(|k| now.children().get(k))
                 .map(|n| self.item(n, ranks))
                 .collect();
             for item in &fresh {

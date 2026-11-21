@@ -4,7 +4,10 @@
 //! the style has stops of its own), a `w:noProof` mark, the first opening with the field's
 //! begin, instruction and separator; with `\h` a hyperlink to the heading's bookmark
 //! holding its text, a tab and a `PAGEREF` field (`w:webHidden` with `\z`); with no
-//! headings, Word's "No table of contents entries found.".
+//! headings, Word's "No table of contents entries found.". A numbered heading's entry
+//! (round 32, R12): the number in its own run, a tab run in the paragraph mark's
+//! formatting, then the text, with a left stop after the number in the entry; a number
+//! followed by a space or by nothing is the number, a space and the text in one run.
 //!
 //! Must not: decide what is listed or where a heading is (the rebuild does), or write
 //! but into the copy it is given.
@@ -29,6 +32,17 @@ pub(crate) struct Entry<'a> {
     pub(crate) bookmark: &'a str,
     /// Its page's text (empty where the layout cannot say), `None` when `\n` omits it.
     pub(crate) page: Option<&'a str>,
+    /// The heading's list number, where it draws one.
+    pub(crate) number: Option<Number<'a>>,
+}
+
+/// A numbered heading's number in its entry.
+#[derive(Clone, Copy)]
+pub(crate) struct Number<'a> {
+    /// The number as the heading draws it.
+    pub(crate) label: &'a str,
+    /// The left stop after it, where a tab follows it (`None`: a space follows it).
+    pub(crate) stop: Option<i64>,
 }
 
 /// How the entries are written: the instruction, `\h`, `\z`, and the Hyperlink style.
@@ -127,15 +141,22 @@ pub(crate) fn paragraphs(work: &mut Work, parent: Id, looks: &Looks<'_>, entries
         let properties = new_w(work, paragraph, "pPr", &[]);
         let style = new_w(work, properties, "pStyle", &[("val", entry.style)]);
         work.append(properties, style);
-        if let Some(stop) = entry.right_stop {
+        let left = entry.number.as_ref().and_then(|n| n.stop);
+        if left.is_some() || entry.right_stop.is_some() {
             let tabs = new_w(work, properties, "tabs", &[]);
-            let tab = new_w(
-                work,
-                tabs,
-                "tab",
-                &[("val", "right"), ("leader", "dot"), ("pos", &stop.to_string())],
-            );
-            work.append(tabs, tab);
+            if let Some(stop) = left {
+                let tab = new_w(work, tabs, "tab", &[("val", "left"), ("pos", &stop.to_string())]);
+                work.append(tabs, tab);
+            }
+            if let Some(stop) = entry.right_stop {
+                let tab = new_w(
+                    work,
+                    tabs,
+                    "tab",
+                    &[("val", "right"), ("leader", "dot"), ("pos", &stop.to_string())],
+                );
+                work.append(tabs, tab);
+            }
             work.append(properties, tabs);
         }
         let mark = no_proof(work, properties, None, false);
@@ -158,7 +179,22 @@ pub(crate) fn paragraphs(work: &mut Work, parent: Id, looks: &Looks<'_>, entries
         } else {
             paragraph
         };
-        let run = text_run(work, container, entry.text, looks.link_style);
+        let text = match &entry.number {
+            Some(Number { label, stop: Some(_) }) => {
+                let run = text_run(work, container, label, looks.link_style);
+                work.append(container, run);
+                let tab_run = new_w(work, container, "r", &[]);
+                let properties = no_proof(work, tab_run, None, false);
+                work.append(tab_run, properties);
+                let tab = new_w(work, tab_run, "tab", &[]);
+                work.append(tab_run, tab);
+                work.append(container, tab_run);
+                entry.text.to_owned()
+            }
+            Some(Number { label, stop: None }) => format!("{label} {}", entry.text),
+            None => entry.text.to_owned(),
+        };
+        let run = text_run(work, container, &text, looks.link_style);
         work.append(container, run);
         if let Some(page) = entry.page {
             for run in page_runs(work, container, entry.bookmark, page, looks.hidden) {

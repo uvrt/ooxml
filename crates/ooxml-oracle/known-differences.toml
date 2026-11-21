@@ -4,7 +4,9 @@
 # the keys it gives matches:
 #   gate   fixtures, corpus or reads (any gate when left out);
 #   file   a glob on the document's path below the gate's tree (any document when left out);
-#   input  a subset of the case's input as the harness made it (word_edits_diff.py's case).
+#   input  a subset of the case's input as the harness made it (word_edits_diff.py's case);
+#   document  a condition on the case's document: { lacks_namespace = URI } -- the root of
+#          word/document.xml (or of `part` when given) does not declare that namespace.
 # A case's number within its document is no key: it changes with the run's sampling
 # (per_tool, every) and with every case maker added, so an entry names the case by its input.
 # `cause` says why the difference is intended; an entry without one is refused.  Add an entry
@@ -87,12 +89,14 @@ Python's IndexError ('list index out of range', not_found); the Rust core refuse
 saying how many characters the paragraph has (as word_notes refuses one). A docx-agent crash, \
 not copied."""
 
-# P4c10: word_drawings float and inline of a frame in a part whose root does not declare
-# the wordprocessingDrawing namespace (docx-agent's own Markdown writer declares it on each
-# frame): 10 cases a fixture, untracked and tracked.
+# P4c10, P4c11, M3: a frame floated or inlined (word_drawings float, inline), or a picture
+# inserted floated (insert_picture with a wrap; the cases give such a picture the alt text
+# below), in a document whose root does not declare the wordprocessingDrawing namespace
+# (docx-agent's own Markdown writer declares it on each frame instead).  One rule by that
+# condition, not an entry per fixture: every new fixture without the declaration has them.
 [[difference]]
 mode = "objects"
-file = "generated/markdown/constructs.docx"
+document = { lacks_namespace = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" }
 input = { tool = "word_drawings", arguments = { action = "float" } }
 cause = """P4c10: docx-agent makes the new wp:anchor or wp:inline detached, so lxml names its \
 namespace ns0 (and wp14 ns1) and the frame's children ns0:...; the Rust core keeps the \
@@ -101,92 +105,15 @@ Both are the same XML; Word reads either."""
 
 [[difference]]
 mode = "objects"
-file = "generated/markdown/constructs.docx"
+document = { lacks_namespace = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" }
 input = { tool = "word_drawings", arguments = { action = "inline" } }
 cause = """P4c10: as the float entry above: docx-agent's ns0/ns1 prefixes on the new wp:inline."""
 
 [[difference]]
 mode = "objects"
-file = "generated/lists-and-styles.docx"
-input = { tool = "word_drawings", arguments = { action = "float" } }
-cause = """P4c10: as the constructs.docx float entry above: docx-agent's ns0 prefix on the new wp:anchor."""
-
-# P4c11: word_drawings insert_picture floated (wrap given; the cases give such a picture
-# the alt text below) in the fixtures whose root does not declare the wordprocessingDrawing
-# namespace: the float's new wp:anchor, as the P4c10 float entries above.
-[[difference]]
-mode = "objects"
-file = "generated/markdown/constructs.docx"
+document = { lacks_namespace = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" }
 input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
-cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
-
-[[difference]]
-mode = "objects"
-file = "generated/lists-and-styles.docx"
-input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
-cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
-
-[[difference]]
-mode = "objects"
-file = "generated/markdown/blank.docx"
-input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
-cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
-
-[[difference]]
-mode = "objects"
-file = "generated/markdown/dutch-template.docx"
-input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
-cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
-
-[[difference]]
-mode = "objects"
-file = "generated/markdown/review.docx"
-input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
-cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
-
-[[difference]]
-mode = "objects"
-file = "generated/controls.docx"
-input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
-cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
-
-# P4b10: the fixtures #133 and #135 added (their roots do not declare wordprocessingDrawing
-# either): the same floated picture.
-[[difference]]
-mode = "objects"
-file = "generated/review-follow.docx"
-input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
-cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
-
-[[difference]]
-mode = "objects"
-file = "generated/own-tracked-note.docx"
-input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
-cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
-
-[[difference]]
-mode = "objects"
-file = "generated/ids-and-markup.docx"
-input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
-cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
-
-[[difference]]
-mode = "objects"
-file = "generated/mode14.docx"
-input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
-cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
-
-[[difference]]
-mode = "objects"
-file = "docx2svg/layout-sweep.docx"
-input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
-cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
-
-[[difference]]
-mode = "objects"
-file = "docx2svg/style-document.docx"
-input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
-cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
+cause = """P4c11: as the float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
 
 # P4c10: a set that leaves the frame as it was (square wrapping on a frame wrapped square,
 # one step back or forward with no drawing there) in a fixture lxml did not write.
@@ -210,6 +137,17 @@ file = "generated/markdown/constructs.docx"
 input = { tool = "word_drawings", arguments = { action = "set", z_order = "forward" } }
 cause = """P4c10: as the set wrap square entry above: no drawing above, the frame keeps its order."""
 
+# Lane P4f7: an untracked copy at replace: of blocks the document never stamped (positional
+# addresses), in a document whose stamping gives them ids first (chart-places: 2 cases).
+[[difference]]
+mode = "structure"
+input = { tool = "word_copy_from", replaces_unstamped = true }
+cause = """Lane P4f7: docx-agent's copy_blocks reads the ids the document had (_known_ids) before \
+_prepare stamps it, so a paraId or drawing id its stamping gave a replaced block, deleted before \
+the copy is stamped, is given again to the copy (the id is both removed and created). The Rust \
+core never gives an id twice (the ledger's rule); its copy takes the next id. A docx-agent \
+leftover, not copied."""
+
 # Lane P2c15 (found in #146, lane P2c14): declared table styles in Word's Dark List and Colorful
 # List families (and their accents), where a case pages that far.
 [[difference]]
@@ -227,3 +165,25 @@ input = { tool = "word_design_facts", arguments = { include = ["theme", "declare
 cause = """#146: as above -- the Rust tool names the theme colour (background1) of a band \
 cell's edge drawn by a neighbouring place's border; docx-agent leaves the label out. Rust's \
 answer is the accurate one; docx-agent's code is deleted at P4e."""
+
+# Train 4b (#177 #203 #226): check's reflow and the laid facts on chart-places. The Rust layout
+# falls back on the body's text box (w:body/w:p[2], ooxml_word_pages::support::TEXT_BOX), so the
+# Rust check answers unported ("check: the layout falls back") and the laid items "falls back:
+# text box"; docx-agent lays the document out in Python. A reads case has no input to key on, so
+# these cover every check and laid case of this one document. NOT a release pass: lane P5n ports
+# this text box into the Rust layout and removes both entries.
+[[difference]]
+gate = "reads"
+mode = "check"
+file = "generated/charts/chart-places.docx"
+cause = """Train 4b: the Rust layout falls back on a body text box (support::TEXT_BOX), so the \
+Rust check answers unported where docx-agent lays the document out in Python. A release gap \
+owned by lane P5n, which removes this entry."""
+
+[[difference]]
+gate = "reads"
+mode = "laid"
+file = "generated/charts/chart-places.docx"
+cause = """Train 4b: the Rust layout falls back on a body text box (support::TEXT_BOX), so the \
+laid facts answer "falls back: text box" where docx-agent lays the document out in Python. A \
+release gap owned by lane P5n, which removes this entry."""

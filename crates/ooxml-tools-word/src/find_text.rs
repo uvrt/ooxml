@@ -100,7 +100,9 @@ pub fn find_text(args: &FindText, version: &Version<'_>, cancel: &dyn Cancel) ->
         Some(range) => {
             let mut call = args.clone();
             call.range = None;
-            vec![scope_paragraphs(docx, range).map_err(|e| address_refusal(e, "range", try_call(&call)))?]
+            // the range read through the session's renames, as docx-agent's view reads it
+            let range = version.follow(range);
+            vec![scope_paragraphs(docx, &range).map_err(|e| address_refusal(e, "range", try_call(&call)))?]
         }
     };
     let every = args.stories == Some(FindStories::All);
@@ -222,4 +224,9 @@ fn try_call(args: &FindText) -> TryCall {
         arguments,
         fill: Vec::new(),
     }
+}
+
+/// Registers `find_text` (the crate's [`crate::register`]).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    r.read::<FindText>(find_text);
 }

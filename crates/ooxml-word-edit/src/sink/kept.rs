@@ -1,6 +1,7 @@
 //! Owns: the ids a copy keeps ([`EditSink::keep_or_draw`]): a copied element's own
 //! paraIds, textIds and drawing ids kept where the document does not use them and never
-//! did, the others drawn, as docx-agent's `_stamp` keeps or issues them.
+//! did, the others drawn, as docx-agent's `_stamp` keeps or issues them; and the drawing
+//! numbers a copy keeps ([`EditSink::keep_or_draw_drawings`], `_drawing_ids`).
 //!
 //! Must not: write anything but the ledger.
 
@@ -49,5 +50,42 @@ impl EditSink<'_, '_> {
             .into_iter()
             .map(|v| v.unwrap_or_else(|| drawn.next().unwrap_or_default()))
             .collect())
+    }
+
+    /// Drawing numbers for a copy's drawings, in document order (docx-agent's
+    /// `Importer._drawing_ids`): each of `values` (`None`: none a whole number) kept where
+    /// the document never had it and the copy has not given it yet, else the number after
+    /// every one given ([`crate::Ids::highest_drawing`], raised by the kept ones). Read and
+    /// written under the drawing numbers' key, as a draw is.
+    ///
+    /// # Errors
+    /// When the change cannot be applied.
+    pub(crate) fn keep_or_draw_drawings(&mut self, values: &[Option<i64>]) -> Result<Vec<i64>> {
+        if values.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.tx.read(Key::Seq(Arc::from(crate::pool::DRAWING_NUMBERS)));
+        let ids = self.tx.doc().ids();
+        let mut highest = i64::try_from(ids.highest_drawing()).unwrap_or(i64::MAX);
+        let mut given: Vec<i64> = Vec::with_capacity(values.len());
+        for value in values {
+            let had = |v: i64| u64::try_from(v).is_ok_and(|n| ids.had_drawing(n)) || given.contains(&v);
+            let number = match *value {
+                Some(v) if !had(v) => v,
+                _ => highest.saturating_add(1),
+            };
+            highest = highest.max(number);
+            given.push(number);
+        }
+        let mut drawings: Vec<u64> = given.iter().filter_map(|v| u64::try_from(*v).ok()).collect();
+        drawings.sort_unstable();
+        drawings.dedup();
+        let change = crate::pool::IdsChange {
+            highest_drawing: u64::try_from(highest).unwrap_or(0),
+            drawings,
+            ..Default::default()
+        };
+        self.write(Change::Ids(change))?;
+        Ok(given)
     }
 }

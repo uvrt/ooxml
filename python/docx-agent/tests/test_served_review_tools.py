@@ -3,10 +3,11 @@
 that write no rows) and ``word_copy_from`` (from the document itself or another the session
 holds); their replies as docx-agent's own handler gives them, refs they define and use
 included.  Both sides date with the system's clock (the Python side with the tools taken
-out of ``SERVED``), so dates are compared blanked.  Made-up documents only."""
+out of the served set), so dates are compared blanked.  Made-up documents only."""
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 
@@ -14,6 +15,7 @@ import pytest
 
 from docx_agent import Document
 from docx_agent.rust import edits
+from docx_agent.rust import served as served_tools
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from ooxml_edit.tools import Toolbox
 from ooxml_edit.tools.owned import OwnedEntry
@@ -58,7 +60,9 @@ def _calls(toolbox, monkeypatch, data: bytes, other: bytes, served: bool, calls)
     ``None`` for a reading call, which is not an edit)."""
     with monkeypatch.context() as patched:
         if not served:
-            patched.setattr(edits, "SERVED", {k: v for k, v in edits.SERVED.items() if k not in GROUP})
+            hosting = served_tools.hosting()
+            fewer = dataclasses.replace(hosting, served=hosting.served - set(GROUP))
+            patched.setattr(served_tools, "_HOSTING", [fewer])
         session = toolbox.session()
         doc = session.open(data, "report.docx")
         second = session.open(other, "other.docx")
@@ -118,8 +122,11 @@ def _table_calls(session, doc, second):
                               "last": {"row": 1, "col": 1}}, False
     yield "word_edit_table", {"table": table, "action": "split", "first": {"row": 1, "col": 0}}, False
     yield "word_edit_table", {"table": table, "action": "delete_column", "index": 3}, False
-    # rows written: looked at against the rows around them by the Python handler (R126)
-    yield "word_edit_table", {"table": table, "action": "insert_row", "index": 0}, True
+    # rows written, looked at against the rows around them in the session too (R126)
+    yield "word_edit_table", {"table": table, "action": "insert_row", "index": 0}, False
+    yield "word_edit_table", {"table": table, "action": "copy_row", "index": 2}, False
+    yield "word_edit_table", {"table": table, "action": "set_cells",
+                              "cells": [{"row": 1, "col": 0, "text": "Pebble"}, {"row": 3, "col": 1, "text": "7"}]}, False
     their = _ids(session, second)
     yield "word_copy_from", {"source_doc": second, "range": their["Part 2"] + ".." + their["River stone number 2."],
                              "at": "after:" + ids["Part 1"], "ref": "copied"}, False

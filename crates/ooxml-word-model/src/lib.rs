@@ -56,4 +56,4 @@ pub mod xmlread;
 
 pub use document::{Context, Notes, ResolvedParagraph, WordDocument};
 pub use error::WordError;
-pub use open::{read_context, Model, OpenStats};
+pub use open::{context_parts, read_context, Model, OpenStats};

@@ -161,6 +161,11 @@ def fold_ref(name: Any) -> str | None:
     return folded if REF.match(folded) else None
 
 
+def folded_warning(name: str, folded: str) -> str:
+    """The warning of a call whose ref ``name`` is kept as ``folded`` (:func:`fold_ref`)."""
+    return f"ref {name!r} read as {folded!r}: write ${folded}"
+
+
 def _folded_use(value: Any, known: Mapping[str, str],
                 failed: Mapping[str, int] | None = None) -> str | None:
     """``$recNow`` (or ``$recNow/rest``) as ``$rec_now`` when it folds (:func:`fold_ref`)
@@ -208,6 +213,12 @@ class DocumentFormat:
     problems: Callable[[Any], Sequence[Any]] | None = None
     #: How a problem is compared with the baseline; ``str`` by default.
     problem_key: Callable[[Any], Hashable] = str
+    #: The save gate's comparison (:func:`.savegate.validation`: ``{"new", "fixed",
+    #: "baseline"}``) of an entry's version, where the format keeps the document itself (a
+    #: Rust owner) and compares there; ``None`` (the hook or its answer): the problems are
+    #: found here (``problems``) and compared with the baseline.  Not asked inside a batch,
+    #: whose ops change the document before its version moves.
+    validation: Callable[[Any], dict[str, Any] | None] | None = None
     #: Warning categories the library raises; collected into results, never printed.
     warnings: tuple[type[Warning], ...] = ()
     #: The format's system-prompt fragment, appended after the shared one.
@@ -960,6 +971,13 @@ class DocumentEntry:
                 yield True
             return
         yield False
+
+    @contextmanager
+    def op_step(self, owner: "StepOwner | None" = None) -> Iterator[None]:
+        """Around one op of a :meth:`batch` that changes the document: nothing here (an
+        owned document's op is a sub-step of the owner's step group,
+        :meth:`~.owned.OwnedEntry.op_step`)."""
+        yield
 
     @contextmanager
     def watch(self) -> Iterator[Any]:

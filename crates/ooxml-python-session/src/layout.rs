@@ -209,15 +209,16 @@ impl PyWordPages {
     /// bytes its memos and its pages' paint hold now).
     fn stats(&self, py: Python<'_>) -> Vec<(&'static str, f64)> {
         let engine = &self.engine;
-        let (s, (held, painted)) = py.detach(|| {
+        let (s, (held, painted), digests) = py.detach(|| {
             let engine = lock(engine);
-            (engine.stats(), engine.memory())
+            (engine.stats(), engine.memory(), engine.digest_cache())
         });
         #[allow(clippy::cast_precision_loss)]
         let n = |v: u64| v as f64;
         vec![
             ("full", n(s.full)),
             ("relaid", n(s.relaid)),
+            ("kept", n(s.kept)),
             ("fallbacks", n(s.fallbacks)),
             ("parts_read", n(s.parts_read)),
             ("parts_kept", n(s.parts_kept)),
@@ -228,6 +229,10 @@ impl PyWordPages {
             ("pages_walked", n(s.pages_said.1)),
             ("memo_bytes", held as f64),
             ("paint_bytes", painted as f64),
+            ("pages_digested", n(s.pages_digested.0)),
+            ("pages_taken_digested", n(s.pages_digested.1)),
+            ("digest_pages", digests.0 as f64),
+            ("digest_bytes", digests.1 as f64),
             ("open_seconds", s.open_time.as_secs_f64()),
             ("layout_seconds", s.layout_time.as_secs_f64()),
         ]
@@ -530,7 +535,9 @@ impl PyLaidPages {
         let (version, engine) = (&self.version, &self.engine);
         let made = py.detach(|| lock(engine).summary(version));
         let inner = made.ok_or_else(|| PyRuntimeError::new_err("a version of another engine generation"))?;
-        Ok(crate::summary::PyLayoutSummary { inner })
+        Ok(crate::summary::PyLayoutSummary {
+            inner: ooxml_word_pages::summarised::Summarised::Made(inner),
+        })
     }
 
     /// Page `page` (0-based) as SVG, byte for byte docx2svg's where the list beside it is
