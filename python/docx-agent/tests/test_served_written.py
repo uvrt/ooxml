@@ -20,7 +20,7 @@ from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from ooxml_edit.tools import Toolbox
 from ooxml_edit.tools.owned import OwnedEntry
 
-from test_served_records import FIXTURE, recorded  # noqa: F401 -- a fixture
+from test_served_records import FIXTURE, _serve_none, recorded  # noqa: F401 -- a fixture
 from test_tables_from_data import ds_put
 
 
@@ -112,7 +112,7 @@ def test_served_values_by_reference_are_kept_as_docx_agent_keeps_them(toolbox, r
     calls = CASES[case]
     data = request.getfixturevalue("recorded" if case in ON_RECORDED else "plain")
     rust = _run(toolbox, data, calls, served=True)
-    monkeypatch.setattr(edits, "SERVED", {})
+    _serve_none(monkeypatch)
     python = _run(toolbox, data, calls, served=False)
     for k, ((ours, our_facts), (theirs, their_facts)) in enumerate(zip(rust, python)):
         assert our_facts == their_facts, (case, k)

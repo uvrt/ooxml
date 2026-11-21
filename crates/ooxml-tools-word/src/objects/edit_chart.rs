@@ -76,3 +76,9 @@ fn unported(summary: String, what: &str) -> Done<Value> {
     done.unported.push(what.to_owned());
     done
 }
+
+/// Registers `edit_chart` (the group's [`super::register`]): every answer is `unported`, so
+/// the host answers its calls.
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    r.reading_edit::<EditChart>(edit_chart_read, edit_chart, crate::Hosting::HOST);
+}

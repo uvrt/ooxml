@@ -801,9 +801,9 @@ def tool(name: str, description: str, params: Mapping[str, Param] | None = None,
 @dataclass(frozen=True)
 class AliasWhen:
     """A :attr:`Tool.aliases` entry read as the parameter ``name`` only while the argument
-    ``argument`` of the same object has ``value`` -- ``edit_chart``'s ``slide``, its
-    ``target`` when adding (a deck's slide); in another action the target is the chart, so
-    ``slide`` stays an unknown argument::
+    ``argument`` of the same object has ``value`` -- a format's tool may take an alias as
+    its ``target`` only when adding (where the target is the place the new object goes); in
+    another action the target is the object itself, so the alias stays an unknown argument::
 
         AliasWhen("target", "action", "add")({"action": "add"})     # 'target'
 

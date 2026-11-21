@@ -10,10 +10,10 @@
 use crate::common::{editor, fixture, policy, written, Rng, WORDS};
 use ooxml_store::{Caller, Command, KeySet, Seq, Snapshot, Txn};
 use ooxml_word_edit::{
-    AddBookmark, AddHyperlink, CopyBlocks, CopyRange, CopySource, Day, DeleteNote, EditError, EditNote, Editor,
-    InsertCaption, InsertField, InsertNote, InsertSectionBreak, InsertText, Key, ListPolicy, MoveBlocks, MoveNote,
-    Moving, NoteKind, RemoveBookmark, RevisionPolicy, SectionValues, SetSection, SetStoryText, SetText, StylePolicy,
-    Tracking, UnmappedPolicy, UpdateFields, WordDoc,
+    AddBookmark, AddHyperlink, BookmarkPolicy, CopyBlocks, CopyRange, CopySource, Day, DeleteNote, EditError, EditNote,
+    Editor, InsertCaption, InsertField, InsertNote, InsertSectionBreak, InsertText, Key, ListPolicy, MoveBlocks,
+    MoveNote, Moving, NoteKind, RemoveBookmark, RevisionPolicy, SectionValues, SetSection, SetStoryText, SetText,
+    StylePolicy, Tracking, UnmappedPolicy, UpdateFields, WordDoc,
 };
 
 /// One edit of the mix.
@@ -562,6 +562,7 @@ fn a_copied_list_item_starts_a_list_or_continues_the_one_before_it() {
             style_map: Vec::new(),
             unmapped: UnmappedPolicy::Import,
             lists,
+            bookmarks: BookmarkPolicy::Rename,
         };
         let out = editor.store().run(&Caller::anonymous(), &command).unwrap().out;
         let made = out.blocks[0].trim_start_matches("p:").to_owned();
@@ -596,6 +597,7 @@ fn a_copied_picture_reuses_its_part_and_takes_a_new_drawing_number() {
         style_map: Vec::new(),
         unmapped: UnmappedPolicy::Import,
         lists: ListPolicy::Separate,
+        bookmarks: BookmarkPolicy::Rename,
     };
     for _ in 0..2 {
         editor.store().run(&Caller::anonymous(), &command).unwrap();
@@ -642,6 +644,7 @@ fn copy_own(name: &str, block: &str) -> (Snapshot<WordDoc>, Snapshot<WordDoc>, o
         style_map: Vec::new(),
         unmapped: UnmappedPolicy::Import,
         lists: ListPolicy::Separate,
+        bookmarks: BookmarkPolicy::Rename,
     };
     let out = editor.store().run(&Caller::anonymous(), &command).unwrap().out;
     (before, editor.store().snapshot(), out)
@@ -700,5 +703,52 @@ fn a_copied_comment_comes_with_its_block() {
     assert!(
         body.contains(&format!("<w:commentRangeStart w:id=\"{id}\"/>")),
         "{comment:?}"
+    );
+}
+
+/// docx-agent's importer (`_bookmarks_in`): a bookmark copied from the document itself is
+/// renamed (its name is taken), with a warning, on the next annotation id; the copy's link
+/// to it follows the rename, the original's does not.
+#[test]
+fn a_copied_bookmark_is_renamed_and_its_link_follows() {
+    let (before, head, out) = copy_own("generated/lists-and-styles.docx", "p:5A00000B..p:5A00000C");
+    let body = "word/document.xml";
+    assert_eq!(count_in(&before, body, "w:name=\"target_1\""), 0);
+    assert_eq!(
+        count_in(&head, body, "<w:bookmarkStart w:id=\"1\" w:name=\"target_1\"/>"),
+        1
+    );
+    assert_eq!(count_in(&head, body, "<w:bookmarkEnd w:id=\"1\"/>"), 1);
+    assert_eq!(
+        count_in(&head, body, "w:name=\"target\""),
+        1,
+        "the original keeps its name"
+    );
+    assert_eq!(count_in(&head, body, "w:anchor=\"target_1\""), 1);
+    assert_eq!(count_in(&head, body, "w:anchor=\"target\""), 1);
+    assert!(
+        out.warnings
+            .contains(&"bookmark 'target' renamed 'target_1': the destination has one".to_owned()),
+        "{:?}",
+        out.warnings
+    );
+}
+
+/// docx-agent's importer (`_control_ids`, `copy_blocks`' top blocks): a block-level content
+/// control copied from the document itself takes an id no control has (its id is taken),
+/// and is a top-level block of its own, named by its new id.
+#[test]
+fn a_copied_block_control_takes_a_new_id_and_is_a_block_of_its_own() {
+    let (_, head, out) = copy_own("generated/controls.docx", "cc:311");
+    let pair = |old: &str| out.copied.iter().find(|(o, _)| o == old).map(|(_, n)| n.clone());
+    let new = pair("sdt#311").expect("the control's id changed");
+    assert_ne!(new, "sdt#311");
+    let number = new.trim_start_matches("sdt#");
+    assert_eq!(out.blocks, vec![format!("cc:{number}")]);
+    assert_eq!(out.id.as_deref(), Some(format!("cc:{number}").as_str()));
+    assert_eq!(pair("cc:311"), Some(format!("cc:{number}")));
+    assert_eq!(
+        count_in(&head, "word/document.xml", &format!("<w:id w:val=\"{number}\"/>")),
+        1
     );
 }
