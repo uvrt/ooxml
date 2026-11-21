@@ -161,6 +161,11 @@ def fold_ref(name: Any) -> str | None:
     return folded if REF.match(folded) else None
 
 
+def folded_warning(name: str, folded: str) -> str:
+    """The warning of a call whose ref ``name`` is kept as ``folded`` (:func:`fold_ref`)."""
+    return f"ref {name!r} read as {folded!r}: write ${folded}"
+
+
 def _folded_use(value: Any, known: Mapping[str, str],
                 failed: Mapping[str, int] | None = None) -> str | None:
     """``$recNow`` (or ``$recNow/rest``) as ``$rec_now`` when it folds (:func:`fold_ref`)
