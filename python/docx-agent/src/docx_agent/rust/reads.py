@@ -391,12 +391,13 @@ def _with_others(call: Any, arguments: dict[str, Any], others: tuple[str, ...],
 
 
 def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | None" = None,
-          others: tuple[str, ...] = (), context: Any = None,
+          others: tuple[str, ...] = (), context: "Callable[[], Any] | None" = None,
           files: "list[tuple[str, str, bytes]] | None" = None) -> dict[str, Any]:
     """The Rust envelope of ``tool`` with ``arguments`` on the version ``call`` reads (and
     of each other document named at a path of ``others``, :func:`_with_others`), run with
-    ``context`` (an ``ooxml_core.CallContext``) where given; the files it gives the
-    application appended to ``files`` as ``(name, format, bytes)``."""
+    the ``ooxml_core.CallContext`` that ``context`` makes where given -- made only once the
+    session serves the call, so a call answered in Python never builds it; the files it
+    gives the application appended to ``files`` as ``(name, format, bytes)``."""
     if _session() is None:
         raise _Fallback("no session")
     mirror, version = _version_read(call.entry)
@@ -407,7 +408,7 @@ def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | 
     import ooxml_core
 
     reply, given_files, app = mirror.session.call(tool, json.dumps(arguments), ooxml_core.CallOptions(
-        context=context, documents=ooxml_core.CallDocuments(at=[version, *pinned], names=names),
+        context=context() if context is not None else None, documents=ooxml_core.CallDocuments(at=[version, *pinned], names=names),
         placer=placer.place if placer is not None else None))
     if placer is not None and placer.error is not None:
         raise placer.error
@@ -432,7 +433,7 @@ def serve(call: Any, tool: str, arguments: dict[str, Any],
           python: Callable[[], Result], *, addresses: tuple = (),
           answer: Callable[[dict[str, Any]], Result] | None = None,
           placer: "Placer | None" = None, why_not: str | None = None,
-          others: tuple[str, ...] = (), context: Any = None,
+          others: tuple[str, ...] = (), context: "Callable[[], Any] | None" = None,
           files: "list[tuple[str, str, bytes]] | None" = None) -> Result:
     """``tool``'s answer from the Rust session (``answer`` makes the :class:`Result` of its
     envelope), or ``python()``'s where Rust's is not the same yet (counted, with why).

@@ -103,3 +103,33 @@ def test_the_rust_save_is_todays_as_word_reads_it(path):
 
 def test_a_cleaned_save_takes_out_what_todays_does():
     _compare(bloated())
+
+
+def test_a_served_save_still_refuses_a_new_validation_problem(monkeypatch):
+    """The save gate is the host's on the served path too: the session writes the file, and
+    ``call.output`` refuses it when the version has a problem the document did not open
+    with -- compared by the session, which holds the version saved -- and hands the
+    application nothing."""
+    from docx_agent.rust import owner, reads
+
+    asked: list = []
+
+    def problem(entry):
+        asked.append(entry.version)
+        return {"new": ["word/document.xml: bad"], "fixed": [], "baseline": 0}
+
+    monkeypatch.setattr(owner, "session_validation", problem)
+    before = reads.use_session(reads._session())
+    fell_back = dict(reads.fallbacks())
+    try:
+        with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as box:
+            session = box.session()
+            d = session.open(FIXTURES[0].read_bytes(), "old.docx")
+            result = box.dispatch(session, "save_document", {"doc": d, "name": "a.docx", "format": "docx"})
+            assert not result.ok and result.error.code == "refused", result
+            assert result.error.valid_options == ["word/document.xml: bad"]
+            assert session.take_outputs() == []
+    finally:
+        reads.use_session(before)
+    assert asked, "the gate did not compare the version"
+    assert reads.fallbacks() == fell_back, "the save was not asked of the session"

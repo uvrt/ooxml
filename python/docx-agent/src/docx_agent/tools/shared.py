@@ -143,7 +143,7 @@ def save_document(call: Any, doc: str, name: str, format: str, clean: bool = Fal
 
     return reads.serve(call, "save_document", {"name": name, "format": format, "clean": clean or None},
                        lambda: _python_save_document(call, name, format, clean), answer=answer,
-                       context=_save_context(call, format), files=files)
+                       context=lambda: _save_context(call, format), files=files)
 
 
 def _save_context(call: Any, format: str) -> Any:
