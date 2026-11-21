@@ -11,6 +11,7 @@
 
 use crate::adapters::PyBlobs;
 use crate::layout::PyWordPages;
+use crate::locale::locale_of;
 use crate::session::{PyCallContext, PyVersion};
 use ooxml_session::{CallContext, DocId, DocNames, HostIds, Opened};
 use ooxml_tools_word::{Blobs, HostTable, HostTables, LayoutCounts, Placer, Written};
@@ -66,22 +67,30 @@ impl PyCallDocuments {
 /// the session's clock. `typography`: whether the text it writes is spaced by its language
 /// (docx-agent's `docx_format(typography=...)`; `False`: as given). `layout_counts`:
 /// `(pages, lines)` of the host's layout of the version the call reads, the statistics a
-/// save writes into `docProps/app.xml` (`save_document`); `None`: not laid out. One may
-/// serve many calls.
+/// save writes into `docProps/app.xml` (`save_document`); `None`: not laid out. `locale`:
+/// the locale of the table of contents' style names and the separator between them the call
+/// writes (ooxml-common's `Locale` or a BCP 47 tag, docx-agent's document locale); `None`:
+/// the session's, else each document's own language. One may serve many calls.
 #[pyclass(frozen, name = "CallWriting", module = "ooxml_core")]
 pub struct PyCallWriting {
     pub(crate) date: Option<String>,
     pub(crate) as_given: bool,
     pub(crate) counts: Option<LayoutCounts>,
+    pub(crate) locale: Option<ooxml_numfmt::Locale>,
 }
 
 #[pymethods]
 impl PyCallWriting {
     /// # Errors
-    /// `ValueError` for a `date` not of that form.
+    /// `ValueError` for a `date` not of that form, or a locale refused.
     #[new]
-    #[pyo3(signature = (*, date = None, typography = true, layout_counts = None))]
-    fn new(date: Option<&str>, typography: bool, layout_counts: Option<(u64, u64)>) -> PyResult<Self> {
+    #[pyo3(signature = (*, date = None, typography = true, layout_counts = None, locale = None))]
+    fn new(
+        date: Option<&str>,
+        typography: bool,
+        layout_counts: Option<(u64, u64)>,
+        locale: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Self> {
         if date.is_some_and(|d| !is_utc_second(d)) {
             return Err(PyValueError::new_err("date is UTC to the second: 2026-11-20T09:30:15Z"));
         }
@@ -89,6 +98,7 @@ impl PyCallWriting {
             date: date.map(str::to_owned),
             as_given: !typography,
             counts: layout_counts.map(|(pages, lines)| LayoutCounts { pages, lines }),
+            locale: locale.map(locale_of).transpose()?,
         })
     }
 }

@@ -31,6 +31,9 @@ pub struct Call<'a> {
     pub(crate) date: String,
     /// How its edits write (text as given, or spaced by its language: the host's setting).
     pub(crate) setup: ooxml_word_edit::Setup,
+    /// The locale it reads under: the call's, else the session's where the host set one;
+    /// `None`: each document's own language.
+    pub(crate) locale: Option<&'a ooxml_numfmt::Locale>,
     /// The versions the call's edits made (an editing tool's: [`CallEditor::made`]).
     pub(crate) made: &'a Mutex<Option<Made>>,
     /// The host's layout of the document's versions.
@@ -128,7 +131,8 @@ impl Call<'_> {
         .with_blobs(self.blobs)
         .with_written(self.written)
         .with_rows_written(Some(&word.rows_written))
-        .with_limits(self.limits);
+        .with_limits(self.limits)
+        .with_locale(self.locale);
         let mut result = run(&editing);
         let made = editor.made();
         // a call is one history step and one state number: a handler with several commands

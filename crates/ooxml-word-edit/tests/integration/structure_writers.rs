@@ -184,6 +184,7 @@ fn field_edit(rng: &mut Rng, target: String, writer: u64, words: &[&str]) -> Edi
             policy: policy(rng, writer),
             today,
             layout: None,
+            locale: None,
         }),
         15 => Edit::Caption(InsertCaption {
             anchor: target,
@@ -198,6 +199,7 @@ fn field_edit(rng: &mut Rng, target: String, writer: u64, words: &[&str]) -> Edi
             ids: None,
             today,
             layout: None,
+            locale: None,
         }),
     }
 }
@@ -457,6 +459,7 @@ fn a_tracked_field_writes_the_annotation_ids() {
             day: 17,
         },
         layout: None,
+        locale: None,
     });
     let done = shared.store().run(&Caller::anonymous(), &field).unwrap();
     assert!(done.changed);

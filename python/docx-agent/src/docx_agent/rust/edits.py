@@ -330,10 +330,12 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
     :meth:`~ooxml_edit.tools.owned.OwnedEntry.served`."""
     mirror = entry.handle
     tool = call.tool.name
+    held = entry.held
     # the host's limit on laying the document out holds in an edit as in a read (a field's
     # page numbers, a reflow): past it the call is a timeout that changes nothing
     context = context_of(call.caller, call.limits, call.limits.layout_timeout, date=_date(call),
-                         typography=getattr(entry.held, "typography", True) is not False)
+                         typography=getattr(held, "typography", True) is not False,
+                         locale=getattr(held, "locale", None))
     arguments, folded = _kept_refs(call, arguments)
     entry.flush_view()        # (in a batch: the Python ops' changes before it, the session's)
     _tracking(call, entry, context, counted)

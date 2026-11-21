@@ -5,6 +5,7 @@
 //! Must not: do a session's work itself, or touch a Python object without the lock.
 
 use crate::adapters::{context, SessionStop};
+use crate::locale::locale_of;
 use crate::options::{context_of, PyCallOptions, PyCallWriting, PyHostIds};
 use ooxml_base::Locale;
 use ooxml_session::{
@@ -101,9 +102,10 @@ type EditMade = (u64, PyVersion, Option<String>, Validation, u64);
 /// (`layout_timeout`, seconds), the limits on its reply -- `max_result_chars` (a page's
 /// characters; 24,000 unless given) and `max_list_items` (a listing's items per page; 50
 /// unless given), as the host's `Limits` -- and how it writes (`writing`, a `CallWriting`:
-/// the moment its writes are dated by, whether its text is spaced by its language, the
-/// host's layout statistics a save writes; the session's clock, spaced and none unless
-/// given). One may serve many calls.
+/// the settings that decide what it writes: its date, its typography, the host's layout
+/// statistics a save writes and the locale of a table of contents' style names; the
+/// session's clock, spaced, none and the session's locale unless given). One may serve
+/// many calls.
 #[pyclass(frozen, name = "CallContext", module = "ooxml_core")]
 pub struct PyCallContext {
     pub(crate) inner: CallContext,
@@ -145,6 +147,7 @@ impl PyCallContext {
                 limits,
                 date: writing.as_ref().and_then(|w| w.date.clone()),
                 counts: writing.as_ref().and_then(|w| w.counts),
+                locale: writing.as_ref().and_then(|w| w.locale.clone()),
                 as_given: writing.is_some_and(|w| w.as_given),
                 ..CallContext::default()
             },
@@ -330,20 +333,24 @@ type Reply = (String, Vec<Py<PyBytes>>, String);
 
 #[pymethods]
 impl PySession {
-    /// A session: each document keeps `history_depth` undo steps; `locale` is the BCP 47
-    /// tag the session's documents are read under.
+    /// A session: each document keeps `history_depth` undo steps; `locale` (ooxml-common's
+    /// `Locale` or a BCP 47 tag) is the one the session's documents are read under, unless
+    /// a call names its own; `None`: en-US, and each document's own language where a call
+    /// reads one (a table of contents' style names).
     #[new]
-    #[pyo3(signature = (*, history_depth = 50, locale = "en-US"))]
-    fn new(history_depth: usize, locale: &str) -> PyResult<Self> {
-        let locale = Locale::new(locale).map_err(|e| PyValueError::new_err(e.to_string()))?;
+    #[pyo3(signature = (*, history_depth = 50, locale = None))]
+    fn new(history_depth: usize, locale: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        let locale = locale.map(locale_of).transpose()?;
+        let tag = locale.as_ref().map(Locale::from).unwrap_or_default();
         let stop = Arc::new(SessionStop::default());
         let config = SessionConfig {
             store: StoreConfig {
                 history_depth,
                 ..StoreConfig::default()
             },
+            locale,
         };
-        let inner = Session::new(config, context(Arc::clone(&stop), locale));
+        let inner = Session::new(config, context(Arc::clone(&stop), tag));
         Ok(Self {
             inner: Arc::new(inner),
             stop,

@@ -45,6 +45,10 @@ def python_case(data: bytes, case: dict, baseline: list, toolbox, parts_of, orde
         session.open(other, name="copy.docx")
     if case.get("tracked"):
         session.entry(doc).tracking = {"on": True, "author": case["tracked"]["author"]}
+    if case.get("locale"):                              # the host's document locale
+        from ooxml_common.locales import Locale
+
+        session.entry(doc).document.locale = Locale(**case["locale"])
     for blob in case.get("blobs") or []:                # b1, b2, ... as the session numbers them
         session.add_blob(bytes.fromhex(blob["hex"]), blob["name"], blob["mime"])
     arguments = {**case["arguments"], "doc": doc}

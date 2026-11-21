@@ -79,6 +79,7 @@ impl InsertCaption<'_> {
             policy: self.policy.clone(),
             today: self.today,
             layout: self.layout,
+            locale: None, // a SEQ field reads no style names
         };
         let made = field.edit(&mut *sink)?;
         if !self.text.is_empty() {

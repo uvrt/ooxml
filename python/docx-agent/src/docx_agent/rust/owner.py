@@ -40,7 +40,8 @@ def caller_key(caller: Mapping[str, Any] | None) -> str | None:
 
 def context_of(caller: Mapping[str, Any] | None, limits: Any = None,
                layout_timeout: float | None = None, *, date: str | None = None,
-               typography: bool = True, layout_counts: tuple[int, int] | None = None) -> Any:
+               typography: bool = True, layout_counts: tuple[int, int] | None = None,
+               locale: Any = None) -> Any:
     """An ``ooxml_core.CallContext`` for ``caller``, with the host's ``limits`` on its reply
     (an :class:`ooxml_edit.tools.Limits`: ``max_result_chars``, ``max_list_items``; the
     defaults where ``None``), how long laying the document out may take in it
@@ -48,13 +49,16 @@ def context_of(caller: Mapping[str, Any] | None, limits: Any = None,
     (UTC to the second, the session clock's; ``None``: the Rust session's own clock) and spaced
     by their language unless ``typography`` is off (``docx_format(typography=False)``: as
     given), with the host's ``layout_counts`` (``(pages, lines)``: a save's ``app.xml``
-    statistics) where it has laid the version out."""
+    statistics) where it has laid the version out, and read under ``locale`` (the document's
+    :attr:`~docx_agent.Document.locale`: a table of contents' style names and the separator
+    between them; ``None``: the document's own language, as ``Document._field_language``
+    reads it)."""
     import ooxml_core
 
     given: dict[str, Any] = {"caller": caller_key(caller), "layout_timeout": layout_timeout}
-    if date is not None or not typography or layout_counts is not None:
+    if date is not None or not typography or layout_counts is not None or locale is not None:
         given["writing"] = ooxml_core.CallWriting(date=date, typography=typography,
-                                                  layout_counts=layout_counts)
+                                                  layout_counts=layout_counts, locale=locale)
     if limits is not None:
         given.update(max_result_chars=limits.max_result_chars, max_list_items=limits.max_list_items)
     return ooxml_core.CallContext(**given)

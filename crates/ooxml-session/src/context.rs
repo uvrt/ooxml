@@ -92,6 +92,11 @@ pub struct CallContext {
     /// The text the call writes is written as given, none of the spacing its language wants
     /// (docx-agent's `docx_format(typography=False)`); `false`: spaced by its language.
     pub as_given: bool,
+    /// The locale the call reads its documents under (docx-agent's document locale: a table
+    /// of contents' style names and the separator between them); `None`: the session's,
+    /// where the host set one ([`crate::SessionConfig::locale`]), else each document's own
+    /// language (`w:themeFontLang`, then the default run language).
+    pub locale: Option<ooxml_numfmt::Locale>,
 }
 
 impl std::fmt::Debug for CallContext {
@@ -100,6 +105,7 @@ impl std::fmt::Debug for CallContext {
             .field("caller", &self.caller)
             .field("deadline", &self.deadline)
             .field("layout_timeout", &self.layout_timeout)
+            .field("locale", &self.locale)
             .field("limits", &self.limits)
             .field(
                 "at",

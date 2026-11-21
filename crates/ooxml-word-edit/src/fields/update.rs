@@ -24,6 +24,7 @@ use crate::set_text::block_key;
 use crate::sink::EditSink;
 use crate::work::{scope_above, Work};
 use crate::{EditError, Result, WordDoc};
+use ooxml_numfmt::Locale;
 use ooxml_store::{Command, Txn};
 use ooxml_word_model::docx::{at_path, Docx};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -42,6 +43,9 @@ pub struct UpdateFields<'l> {
     pub today: Day,
     /// The layout of the document's versions.
     pub layout: Option<EditLayout<'l>>,
+    /// The locale a table of contents' style names are read under (the host's document
+    /// locale); `None`: the document's own language.
+    pub locale: Option<&'l Locale>,
 }
 
 impl std::fmt::Debug for UpdateFields<'_> {
@@ -49,8 +53,21 @@ impl std::fmt::Debug for UpdateFields<'_> {
         f.debug_struct("UpdateFields")
             .field("ids", &self.ids)
             .field("today", &self.today)
+            .field("locale", &self.locale)
             .finish_non_exhaustive()
     }
+}
+
+/// What a field update reads beside the document: the day a `DATE` shows, the layout of
+/// the document's versions, and the locale a table of contents' style names are read under.
+#[derive(Clone, Copy)]
+pub(crate) struct Inputs<'l> {
+    /// The day a `DATE` shows.
+    pub(crate) today: Day,
+    /// The layout of the document's versions.
+    pub(crate) layout: Option<EditLayout<'l>>,
+    /// The call's locale (`None`: the document's own language).
+    pub(crate) locale: Option<&'l Locale>,
 }
 
 /// A field as passes know it: its part and its place among the part's fields that are
@@ -99,6 +116,7 @@ fn identified(doc: &WordDoc, docx: &Docx, held: &[Known]) -> Vec<(Known, Located
 struct Pass<'p> {
     laid: Option<Box<dyn LaidFields + 'p>>,
     today: Day,
+    locale: Option<&'p Locale>,
 }
 
 /// The results of the fields `held` computed in passes until they hold: the fields the
@@ -107,17 +125,12 @@ struct Pass<'p> {
 /// # Errors
 /// [`EditError::Unsupported`] where a field needs the layout and there is none, or the
 /// layout does not lay the version out.
-pub(crate) fn settle(
-    sink: &mut EditSink<'_, '_>,
-    held: &[Known],
-    layout: Option<EditLayout<'_>>,
-    today: Day,
-) -> Result<Vec<String>> {
+pub(crate) fn settle(sink: &mut EditSink<'_, '_>, held: &[Known], inputs: Inputs<'_>) -> Result<Vec<String>> {
     // A pass that changes nothing has settled: the next would lay out the same version.
     let mut previous: Option<Vec<(String, String)>> = Some(state(sink.doc(), &*sink.docx()?, held));
     let mut unknown = Vec::new();
     for _ in 0..PASSES {
-        unknown = pass(sink, held, layout, today)?;
+        unknown = pass(sink, held, inputs)?;
         let state: Vec<(String, String)> = state(sink.doc(), &*sink.docx()?, held);
         if previous.as_ref() == Some(&state) {
             return Ok(unknown);
@@ -133,12 +146,7 @@ pub(crate) fn settle(
 ///
 /// # Errors
 /// As [`settle`].
-pub(crate) fn pass_on(
-    sink: &mut EditSink<'_, '_>,
-    located: &Located,
-    layout: Option<EditLayout<'_>>,
-    today: Day,
-) -> Result<Vec<String>> {
+pub(crate) fn pass_on(sink: &mut EditSink<'_, '_>, located: &Located, inputs: Inputs<'_>) -> Result<Vec<String>> {
     let docx = sink.docx()?;
     let mut known = None;
     each_known(&all_fields(sink.doc(), &docx), &HashSet::new(), &mut |ordinal, l| {
@@ -147,7 +155,7 @@ pub(crate) fn pass_on(
         }
     });
     match known {
-        Some(known) => pass(sink, &[known], layout, today),
+        Some(known) => pass(sink, &[known], inputs),
         None => Ok(Vec::new()),
     }
 }
@@ -170,12 +178,8 @@ fn state(doc: &WordDoc, docx: &Docx, held: &[Known]) -> Vec<(String, String)> {
 
 /// One pass (`_compute`): the results written from one layout; the ids of the fields it
 /// could not say.
-fn pass(
-    sink: &mut EditSink<'_, '_>,
-    held: &[Known],
-    layout: Option<EditLayout<'_>>,
-    today: Day,
-) -> Result<Vec<String>> {
+fn pass(sink: &mut EditSink<'_, '_>, held: &[Known], inputs: Inputs<'_>) -> Result<Vec<String>> {
+    let Inputs { today, layout, locale } = inputs;
     let docx = sink.docx()?;
     let fields = identified(sink.doc(), &docx, held);
     let current: Vec<&Located> = fields.iter().map(|(_, l)| l).collect();
@@ -189,7 +193,7 @@ fn pass(
         }
         (true, Some(layout)) => Some(layout.lay_out(sink.doc().package())?),
     };
-    let pass = Pass { laid, today };
+    let pass = Pass { laid, today, locale };
     let mut unknown = Vec::new();
     let writes = sequence_writes(sink.doc(), &docx, &current, &mut unknown);
     apply(sink, &writes)?;
@@ -224,7 +228,7 @@ fn pass(
                 .as_deref()
                 .ok_or_else(|| EditError::Unsupported("no layout".to_owned()))?;
             if let Some((_, toc)) = fresh {
-                super::toc::rebuild(sink, &toc, laid, &mut unknown)?;
+                super::toc::rebuild(sink, &toc, laid, pass.locale, &mut unknown)?;
             }
             docx = sink.docx()?;
             now = identified(sink.doc(), &docx, held).into_iter().collect();
@@ -434,7 +438,12 @@ impl Command<WordDoc> for UpdateFields<'_> {
         let before = sink.docx()?;
         let fields_before = all_fields(sink.doc(), &before);
         let held = self.held(sink.doc(), &before)?;
-        let unknown = settle(&mut sink, &held, self.layout, self.today)?;
+        let inputs = Inputs {
+            today: self.today,
+            layout: self.layout,
+            locale: self.locale,
+        };
+        let unknown = settle(&mut sink, &held, inputs)?;
         let docx = sink.docx()?;
         let count = changed_results(sink.doc(), (&before, &fields_before), &docx);
         let mut warnings: Vec<String> = unknown.iter().map(|u| format!("{u}: the layout cannot say")).collect();
