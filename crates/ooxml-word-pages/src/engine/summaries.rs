@@ -189,17 +189,41 @@ impl PageEngine {
         let generation = self.generation.as_mut()?;
         let layout = &version.layout;
         let contexts = crate::page_context::page_contexts(layout, &mut generation.model, &self.locale, KEY);
-        let ids = (0..layout.page_count())
-            .map(|page| {
+        let donor = generation.read_before.take();
+        let mut pages = Vec::with_capacity(layout.page_count());
+        let mut paths = Vec::with_capacity(layout.page_count());
+        for page in 0..layout.page_count() {
+            let key = crate::page_said::page_key(layout, page);
+            // A page laid out the same as the version read before's same page draws the
+            // same body lines: their paths are taken, not read from its geometry again.
+            let taken = donor.as_ref().zip(key.as_ref()).and_then(|(donor, key)| {
+                let same = donor.pages.get(page)?.as_ref()?.is(key);
+                same.then(|| donor.paths.get(page).cloned()).flatten()
+            });
+            let found = taken.unwrap_or_else(|| {
                 ooxml_word_layout::paint::body_line_paths(layout, page)
                     .into_iter()
                     .filter(|path| in_body(path, false))
-                    .map(|path| version.ids.all().get(&path).cloned())
                     .collect()
-            })
+            });
+            pages.push(key.as_ref().map(crate::digest_cache::PageRef::of));
+            paths.push(found);
+        }
+        let ids = paths
+            .iter()
+            .map(|page| page.iter().map(|path| version.ids.all().get(path).cloned()).collect())
             .collect();
-        let made = Arc::new(VersionPages { contexts, ids });
-        Some(Arc::clone(version.pages.get_or_init(|| made)))
+        let made = Arc::new(VersionPages {
+            contexts,
+            pages,
+            paths,
+            ids,
+        });
+        let made = Arc::clone(version.pages.get_or_init(|| made));
+        if let Some(generation) = self.generation.as_mut() {
+            generation.read_before = Some(Arc::clone(&made));
+        }
+        Some(made)
     }
 
     /// Page `page`'s summary of `version`: from its summary where made, else as digested
@@ -255,17 +279,11 @@ fn same_page(
     (now, is): (&LaidVersion, &VersionPages),
     page: usize,
 ) -> bool {
-    if before.epoch != now.epoch
-        || was.contexts.get(page) != is.contexts.get(page)
-        || was.ids.get(page) != is.ids.get(page)
-    {
-        return false;
-    }
-    let (Some(a), Some(b)) = (
-        crate::page_said::page_key(&before.layout, page),
-        crate::page_said::page_key(&now.layout, page),
-    ) else {
-        return false;
-    };
-    Arc::ptr_eq(&a.page, &b.page) && crate::page_said::same_items(&a.items, &b.items)
+    before.epoch == now.epoch
+        && was.contexts.get(page) == is.contexts.get(page)
+        && was.ids.get(page) == is.ids.get(page)
+        && matches!(
+            (was.pages.get(page), is.pages.get(page)),
+            (Some(Some(a)), Some(Some(b))) if a.same(b)
+        )
 }

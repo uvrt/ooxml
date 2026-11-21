@@ -119,6 +119,9 @@ struct Generation {
     context: u64,
     /// The package the model opened last: what its context is of.
     opened: Option<Package>,
+    /// What a comparison read of the pages of the version it read last: a page the next
+    /// version lays out the same has its body lines' paths taken from it.
+    read_before: Option<Arc<crate::version::VersionPages>>,
 }
 
 impl Generation {
@@ -530,6 +533,7 @@ impl PageEngine {
             epoch: 0,
             context: 0,
             opened: None,
+            read_before: None,
         }
     }
 

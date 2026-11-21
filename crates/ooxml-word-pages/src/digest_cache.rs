@@ -55,13 +55,70 @@ impl WeakItem {
             _ => false,
         }
     }
+
+    /// Whether it is `other`.
+    fn same(&self, other: &WeakItem) -> bool {
+        match (self, other) {
+            (WeakItem::Para(a), WeakItem::Para(b)) => std::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (WeakItem::Table(a), WeakItem::Table(b)) => std::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (WeakItem::Stop(a), WeakItem::Stop(b)) => std::ptr::eq(a.as_ptr(), b.as_ptr()),
+            _ => false,
+        }
+    }
+}
+
+/// A page as laid out, held weakly: its laid page and the flow items it draws, by
+/// identity.
+#[derive(Clone)]
+pub(crate) struct PageRef {
+    page: Weak<LaidPage>,
+    items: Arc<[WeakItem]>,
+}
+
+impl std::fmt::Debug for PageRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PageRef")
+            .field("items", &self.items.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl PageRef {
+    /// `key`'s page, held weakly.
+    pub(crate) fn of(key: &PageKey) -> PageRef {
+        PageRef {
+            page: Arc::downgrade(&key.page),
+            items: key.items.iter().map(WeakItem::of).collect(),
+        }
+    }
+
+    /// Whether it is `key`'s page: the very laid page drawing the very items.
+    pub(crate) fn is(&self, key: &PageKey) -> bool {
+        std::ptr::eq(self.page.as_ptr(), Arc::as_ptr(&key.page))
+            && self.items.len() == key.items.len()
+            && self.items.iter().zip(&key.items).all(|(w, item)| w.is(item))
+    }
+
+    /// Whether it is the same page as `other`.
+    pub(crate) fn same(&self, other: &PageRef) -> bool {
+        std::ptr::eq(self.page.as_ptr(), other.page.as_ptr())
+            && self.items.len() == other.items.len()
+            && self.items.iter().zip(other.items.iter()).all(|(a, b)| a.same(b))
+    }
+
+    /// What it holds besides itself: a weak reference holds its value's allocation (not
+    /// what the value holds).
+    fn weight(&self) -> usize {
+        std::mem::size_of::<LaidPage>()
+            + self.items.len()
+                * (std::mem::size_of::<WeakItem>() + std::mem::size_of::<ooxml_word_layout::flow::ParaItem>())
+    }
 }
 
 /// One page as digested.
 #[derive(Clone)]
 struct Kept {
-    page: Weak<LaidPage>,
-    items: Arc<[WeakItem]>,
+    page: PageRef,
     summary: Arc<PageSummary>,
 }
 
@@ -73,11 +130,7 @@ impl Weigh for Kept {
             .iter()
             .map(|l| std::mem::size_of_val(l) + l.path.len() + l.id.as_ref().map_or(0, |id| id.len()))
             .sum();
-        // A weak reference holds its value's allocation (not what the value holds).
-        let held = std::mem::size_of::<LaidPage>()
-            + self.items.len()
-                * (std::mem::size_of::<WeakItem>() + std::mem::size_of::<ooxml_word_layout::flow::ParaItem>());
-        std::mem::size_of::<Kept>() + std::mem::size_of::<PageSummary>() + lines + held
+        std::mem::size_of::<Kept>() + std::mem::size_of::<PageSummary>() + lines + self.page.weight()
     }
 }
 
@@ -137,17 +190,13 @@ impl DigestCache {
     /// The summary of the page `key` in `context` and `epoch`, where it was digested.
     pub(crate) fn get(&mut self, key: &PageKey, context: Digest, epoch: u64) -> Option<Arc<PageSummary>> {
         let found = self.memo.get(&(Arc::as_ptr(&key.page) as usize, context, epoch))?;
-        let same = std::ptr::eq(found.page.as_ptr(), Arc::as_ptr(&key.page))
-            && found.items.len() == key.items.len()
-            && found.items.iter().zip(&key.items).all(|(w, item)| w.is(item));
-        same.then_some(found.summary)
+        found.page.is(key).then_some(found.summary)
     }
 
     /// Keep `summary` as the page `key`'s in `context` and `epoch`.
     pub(crate) fn insert(&mut self, key: &PageKey, context: Digest, epoch: u64, summary: Arc<PageSummary>) {
         let kept = Kept {
-            page: Arc::downgrade(&key.page),
-            items: key.items.iter().map(WeakItem::of).collect(),
+            page: PageRef::of(key),
             summary,
         };
         self.memo

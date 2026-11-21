@@ -50,6 +50,10 @@ pub struct LaidVersion {
 pub(crate) struct VersionPages {
     /// Each page's context ([`crate::page_context`]).
     pub(crate) contexts: Vec<ooxml_base::Digest>,
+    /// Each page as laid out (`None`: a page with no laid page of its own).
+    pub(crate) pages: Vec<Option<crate::digest_cache::PageRef>>,
+    /// Each page's body lines' paragraph paths, in drawing order.
+    pub(crate) paths: Vec<Arc<[Text]>>,
     /// Each page's body lines' ids, in drawing order (`None`: a line of a paragraph the
     /// version does not name).
     pub(crate) ids: Vec<Vec<Option<Text>>>,
