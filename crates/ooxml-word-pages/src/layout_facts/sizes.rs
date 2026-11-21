@@ -100,7 +100,7 @@ pub fn text_sizes(facts: &Facts<'_>, minimum: Option<&Minimum>) -> TextSizes {
         if !facts.shown([number]) {
             continue;
         }
-        for line in facts.texts(number - 1).unwrap_or_default() {
+        for line in facts.text_lines(number - 1) {
             let part = part_of(facts, &line.path, line.story.as_ref().map(|(_, p)| p.as_str()));
             let owner = owners
                 .entry((part.clone(), line.path.clone()))

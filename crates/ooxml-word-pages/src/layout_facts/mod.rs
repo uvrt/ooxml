@@ -286,6 +286,14 @@ impl<'a> Facts<'a> {
         self.read(page).map(|r| r.texts.as_slice())
     }
 
+    /// Every line of text the 0-based page `page` draws, its text boxes' after its own
+    /// (docx2svg's `Page.text_lines`, which docx-agent's text sizes read), painted once.
+    pub fn text_lines(&self, page: usize) -> impl Iterator<Item = &LineText> {
+        self.read(page)
+            .into_iter()
+            .flat_map(|r| r.texts.iter().chain(&r.box_texts))
+    }
+
     /// What the 0-based page `page` draws beside its lines, painted once.
     #[must_use]
     pub fn boxes(&self, page: usize) -> Option<&PageBoxes> {

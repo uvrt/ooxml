@@ -190,26 +190,10 @@ fn indexed(step: &str, name: &str) -> Option<usize> {
 }
 
 /// The element a layout path names in `story` and its place (child indexes from the
-/// root): the path's first step the root itself where it names the root's kind.
+/// root), by docx2svg's path rules (`ooxml_word_model::read::paths`): a text box's
+/// paragraphs, rows in content controls and notes by id too.
 pub(crate) fn resolve<'a>(story: &'a StoryPart, path: &str) -> Option<(&'a Arc<Element>, Vec<u32>)> {
-    let mut node = story.root();
-    let mut place = Vec::new();
-    let mut steps = path.split('/').peekable();
-    let first = steps.peek()?.split('[').next().unwrap_or_default();
-    if first.strip_prefix("w:") == Some(node.name().local()) {
-        steps.next();
-    }
-    for step in steps {
-        let (name, count) = match step.split_once('[') {
-            Some((name, count)) => (name, count.strip_suffix(']')?.parse::<u32>().ok()?),
-            None => (step, 1),
-        };
-        let local = name.strip_prefix("w:")?;
-        let (k, _, child) = children(node).find(|(_, n, e)| e.name().local() == local && *n == count)?;
-        place.push(k);
-        node = child;
-    }
-    Some((node, place))
+    ooxml_word_model::read::paths::resolve_path(story.root(), path)
 }
 
 /// A paragraph's `w:pStyle`: `None` where it has none, `Some(None)` where it names no

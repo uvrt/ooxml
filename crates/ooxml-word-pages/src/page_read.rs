@@ -1,5 +1,5 @@
 //! Owns: what a check reads of one painted page ([`PageRead`]): its lines' text
-//! ([`LineText`]) and the boxes of what it draws beside them ([`PageBoxes`]) -- each rule's
+//! ([`LineText`]), its text boxes' apart, and the boxes of what it draws beside them ([`PageBoxes`]) -- each rule's
 //! path and horizontal extent, and the body's inline pictures and drawings as placed --
 //! taken from one paint, so that a check paints a page once for all it reads of it
 //! (docx-agent's `layout_facts` reading `page.rules`, `page.pictures` and `page.floats`).
@@ -50,8 +50,11 @@ pub struct PageBoxes {
 /// One painted page as a check reads it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PageRead {
-    /// Its lines' text, in paint order.
+    /// Its lines' text, in paint order (docx2svg's `Page.lines`).
     pub texts: Vec<LineText>,
+    /// Its text boxes' lines' text, box by box (with [`PageRead::texts`], docx2svg's
+    /// `Page.text_lines`: every line of text the page draws).
+    pub box_texts: Vec<LineText>,
     /// What it draws beside them.
     pub boxes: PageBoxes,
 }
@@ -63,6 +66,12 @@ impl PageRead {
         let body = |path: &str| path.starts_with("w:body");
         PageRead {
             texts: paint.lines.iter().map(LineText::of).collect(),
+            box_texts: paint
+                .text_boxes
+                .iter()
+                .flat_map(|b| b.lines.iter())
+                .map(LineText::of)
+                .collect(),
             boxes: PageBoxes {
                 rules: paint
                     .rules
