@@ -8,8 +8,8 @@
 //! Must not: change a document, or read tables (`super::compare_tables` does).
 
 use super::compare::{difference, fix, Block, Difference, Groups, Para, Side};
-use super::compare_tables::round2;
 use crate::table_read::python_g;
+use ooxml_base::pyfmt::round2;
 use ooxml_word_edit::pairing::{self, Signature};
 use ooxml_word_model::docx::at_path;
 use ooxml_word_model::docx::find_path;
