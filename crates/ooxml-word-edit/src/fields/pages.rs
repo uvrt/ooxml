@@ -13,11 +13,18 @@
 //! the host hands a command an adapter over its page engine, which answers in the words a
 //! field's result is written in.
 //!
+//! An edit asks the port through [`EditLayout`]: the port with what stops laying a version
+//! out (the call's limit on laying out, or its cancellation); a stop is a timeout that
+//! changes nothing ([`EditError::LayoutStopped`]).
+//!
 //! Must not: lay out, or name anything of the layout's own (pages' structures): a place is a
 //! block's id as the edit core names it, or a page's number; a run, its path as the Word
 //! model names it (`ooxml_word_model::docx::cells::story_model_path`).
 
+use crate::error::EditError;
+use ooxml_base::Cancel;
 use ooxml_opc::Package;
+use std::time::Duration;
 
 /// Where a field is, or where a reference points: a body paragraph by its id (as the
 /// version's bytes name it), or a page (0-based: a header's or footer's field, on the
@@ -151,12 +158,13 @@ pub struct PageReflow {
 /// The layout of a document's versions, for the field updates of one call, and the
 /// reflow an edit reports.
 pub trait FieldLayout: Send + Sync {
-    /// `package` (a version of the document the call edits) laid out.
+    /// `package` (a version of the document the call edits) laid out, stopped where
+    /// `cancel` says so.
     ///
     /// # Errors
-    /// Why it was not laid out (a version the layout does not lay out yet): the update is
-    /// left to the host.
-    fn lay_out(&self, package: &Package) -> Result<Box<dyn LaidFields + '_>, String>;
+    /// [`LayOutError::Stopped`] where `cancel` stopped it; why it was not laid out (a
+    /// version the layout does not lay out yet: the update is left to the host).
+    fn lay_out(&self, package: &Package, cancel: &dyn Cancel) -> Result<Box<dyn LaidFields + '_>, LayOutError>;
 
     /// Which pages of `after` differ from `before`'s (two versions of the document,
     /// `after` made from `before`), ids as the versions' bytes name them.
@@ -167,5 +175,48 @@ pub trait FieldLayout: Send + Sync {
     fn reflow(&self, before: &Package, after: &Package) -> Result<PageReflow, String> {
         let _ = (before, after);
         Err("this layout does not compare versions".to_owned())
+    }
+}
+
+/// Why [`FieldLayout::lay_out`] laid no version out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LayOutError {
+    /// What stops it said stop (the call's limit on laying out passed, or it was cancelled).
+    Stopped,
+    /// The layout does not lay the version out (in its words).
+    Unsupported(String),
+}
+
+/// The layout an edit reads: the host's port, with what stops laying a version out and
+/// the limit that stop keeps, as a stop is said.
+#[derive(Clone, Copy)]
+pub struct EditLayout<'l> {
+    /// The host's layout.
+    pub layout: &'l dyn FieldLayout,
+    /// Says stop where the call's limit on laying out passed or the call is cancelled.
+    pub stop: &'l dyn Cancel,
+    /// That limit, where the call has one.
+    pub limit: Option<Duration>,
+}
+
+impl std::fmt::Debug for EditLayout<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EditLayout")
+            .field("limit", &self.limit)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<'l> EditLayout<'l> {
+    /// `package` laid out, as an edit says why not.
+    ///
+    /// # Errors
+    /// [`EditError::LayoutStopped`] where laying it out was stopped (nothing changed);
+    /// [`EditError::Unsupported`] where the layout does not lay it out.
+    pub fn lay_out(&self, package: &Package) -> Result<Box<dyn LaidFields + 'l>, EditError> {
+        self.layout.lay_out(package, self.stop).map_err(|error| match error {
+            LayOutError::Stopped => EditError::LayoutStopped(self.limit),
+            LayOutError::Unsupported(why) => EditError::Unsupported(format!("the layout of this version: {why}")),
+        })
     }
 }

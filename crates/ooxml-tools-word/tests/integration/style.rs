@@ -5,14 +5,14 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
 use crate::common::{Never, Still, Unlimited, R, W};
-use ooxml_base::Limits;
+use ooxml_base::{Cancel, Limits};
 use ooxml_opc::Package;
 use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools::{ToolArgs, ToolResult};
 use ooxml_tools_word::{
     word_format, word_lists, word_styles, word_template, CallEditor, Editing, WordCompareBlocks, WordTemplate,
 };
-use ooxml_word_edit::{Editor, FieldLayout, LaidFields, PageReflow};
+use ooxml_word_edit::{Editor, FieldLayout, LaidFields, LayOutError, PageReflow};
 use ooxml_zip::{Method, NewEntry, Writer};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -286,8 +286,8 @@ struct OnePage {
 }
 
 impl FieldLayout for OnePage {
-    fn lay_out(&self, _package: &Package) -> Result<Box<dyn LaidFields + '_>, String> {
-        Err("not needed".to_owned())
+    fn lay_out(&self, _package: &Package, _cancel: &dyn Cancel) -> Result<Box<dyn LaidFields + '_>, LayOutError> {
+        Err(LayOutError::Unsupported("not needed".to_owned()))
     }
 
     fn reflow(&self, before: &Package, after: &Package) -> Result<PageReflow, String> {

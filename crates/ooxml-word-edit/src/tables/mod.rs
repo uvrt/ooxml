@@ -35,7 +35,7 @@ pub use row_look::{
 pub use rows::{pending_structure, EditTable, TableChange, TableChanged};
 
 use crate::doc::Key;
-use crate::fields::{FieldLayout, Unknown};
+use crate::fields::{EditLayout, Unknown};
 use crate::names::{W, W16DU};
 use crate::policy::{RevisionPolicy, Stamp};
 use crate::props::PropertyTracker;
@@ -112,7 +112,7 @@ pub struct FormatTable<'l> {
     /// ([`TableFormat::Keeps`], `keep_together` on) is laid out after the edits, for the
     /// pages it is drawn on ([`TableFormatted::pages`]); without one, that is
     /// [`EditError::Unsupported`].
-    pub layout: Option<&'l dyn FieldLayout>,
+    pub layout: Option<EditLayout<'l>>,
 }
 
 impl std::fmt::Debug for FormatTable<'_> {

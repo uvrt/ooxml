@@ -113,6 +113,7 @@ impl Call<'_> {
         )
         .with_tracking(tracking)
         .with_layout(self.layout.map(|layout| layout as &dyn ooxml_word_edit::FieldLayout))
+        .with_layout_limit(self.layout_limit)
         .with_others(Others::new(&others))
         .with_blobs(self.blobs)
         .with_written(self.written);
