@@ -15,8 +15,7 @@ use ooxml_word_edit::Editor;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-const FIXTURE: &[u8] =
-    include_bytes!("../../../../python/docx-agent/tests/fixtures/generated/lists-and-styles.docx");
+const FIXTURE: &[u8] = include_bytes!("../../../../python/docx-agent/tests/fixtures/generated/lists-and-styles.docx");
 
 /// Each of `calls` (`(tool, arguments)`) in turn on a fresh copy of the fixture: the replies.
 fn calls(calls: &[(&str, Value)]) -> Vec<Value> {
@@ -47,7 +46,11 @@ fn a_find_within_a_block_deletes_the_one_there() {
         ("word_delete", json!({"find": "item", "within": "p:5A000004"})),
     ]);
     assert_eq!(replies[0]["summary"], "Deleted 'item'", "{}", replies[0]);
-    assert!(replies[0]["warnings"].as_array().is_none_or(Vec::is_empty), "{}", replies[0]);
+    assert!(
+        replies[0]["warnings"].as_array().is_none_or(Vec::is_empty),
+        "{}",
+        replies[0]
+    );
     assert_eq!(replies[1]["error"]["code"], "not_found", "{}", replies[1]);
     assert!(
         replies[1]["error"]["message"]
@@ -89,7 +92,10 @@ fn within_and_another_target_are_refused_with_the_way_out() {
 
 #[test]
 fn a_span_holding_several_is_ambiguous() {
-    let replies = calls(&[("word_delete", json!({"find": "item", "within": "p:5A000003..p:5A000005"}))]);
+    let replies = calls(&[(
+        "word_delete",
+        json!({"find": "item", "within": "p:5A000003..p:5A000005"}),
+    )]);
     assert_eq!(replies[0]["error"]["code"], "ambiguous", "{}", replies[0]);
     assert_eq!(replies[0]["error"]["valid_options"].as_array().unwrap().len(), 3);
 }
@@ -98,13 +104,19 @@ fn a_span_holding_several_is_ambiguous() {
 fn a_heading_range_is_searched_as_its_span() {
     let replies = calls(&[("word_delete", json!({"find": "absent", "within": "h:p:5A000001"}))]);
     let message = replies[0]["error"]["message"].as_str().unwrap();
-    assert!(message.contains("occurs nowhere in p:5A000001..p:5A00000E"), "{message}");
+    assert!(
+        message.contains("occurs nowhere in p:5A000001..p:5A00000E"),
+        "{message}"
+    );
 }
 
 #[test]
 fn an_insertion_beside_a_find_within_a_block() {
     let replies = calls(&[
-        ("word_insert_text", json!({"find": "item", "within": "p:5A000004", "text": " two"})),
+        (
+            "word_insert_text",
+            json!({"find": "item", "within": "p:5A000004", "text": " two"}),
+        ),
         ("word_delete", json!({"find": "item two", "within": "p:5A000004"})),
     ]);
     assert_eq!(replies[0]["summary"], "Inserted text at 1 place(s)", "{}", replies[0]);
