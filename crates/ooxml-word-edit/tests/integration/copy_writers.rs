@@ -134,7 +134,9 @@ fn open(package: Package) -> Editor {
 /// A paragraph with id `id`, style `style` (none: the default) and text `text` (none: blank).
 fn paragraph(id: &str, style: Option<&str>, text: Option<&str>) -> String {
     let properties = style.map_or(String::new(), |s| format!(r#"<w:pPr><w:pStyle w:val="{s}"/></w:pPr>"#));
-    let run = text.map_or(String::new(), |t| format!(r#"<w:r><w:t xml:space="preserve">{t}</w:t></w:r>"#));
+    let run = text.map_or(String::new(), |t| {
+        format!(r#"<w:r><w:t xml:space="preserve">{t}</w:t></w:r>"#)
+    });
     format!(r#"<w:p w14:paraId="{id}" w14:textId="77777777">{properties}{run}</w:p>"#)
 }
 
@@ -182,7 +184,11 @@ fn a_copy_reads_the_body_style_a_paragraph_given_text_changes() {
     before.store().run(&Caller::anonymous(), &copy).unwrap();
     after.store().run(&Caller::anonymous(), &set).unwrap();
     after.store().run(&Caller::anonymous(), &copy).unwrap();
-    assert_eq!((styled(&before), styled(&after)), (2, 1), "the edit changes the body style");
+    assert_eq!(
+        (styled(&before), styled(&after)),
+        (2, 1),
+        "the edit changes the body style"
+    );
     interleaved(&open(destination()), &open(destination()), &set, &copy);
 }
 
@@ -233,15 +239,26 @@ fn a_copy_reads_the_list_before_the_place_an_edit_takes_away() {
     // the list the copy goes into: the first one before the edit, a new one after it
     let listed = |editor: &Editor, made: &str| {
         let body = body(editor);
-        let at = body.find(&format!("w14:paraId=\"{}\"", made.trim_start_matches("p:"))).unwrap();
+        let at = body
+            .find(&format!("w14:paraId=\"{}\"", made.trim_start_matches("p:")))
+            .unwrap();
         let copy = &body[at..at + body[at..].find("</w:p>").unwrap()];
-        copy.split("<w:numId w:val=\"").nth(1).unwrap().split('"').next().unwrap().to_owned()
+        copy.split("<w:numId w:val=\"")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap()
+            .to_owned()
     };
     let (before, after) = (destination(), destination());
     let made = before.store().run(&Caller::anonymous(), &copy).unwrap().out.blocks[0].clone();
     after.store().run(&Caller::anonymous(), &remove).unwrap();
     let made_after = after.store().run(&Caller::anonymous(), &copy).unwrap().out.blocks[0].clone();
     let numbers = (listed(&before, &made), listed(&after, &made_after));
-    assert!(numbers.0 == "1" && numbers.1 != "1", "the edit changes the list it joins: {numbers:?}");
+    assert!(
+        numbers.0 == "1" && numbers.1 != "1",
+        "the edit changes the list it joins: {numbers:?}"
+    );
     interleaved(&destination(), &destination(), &remove, &copy);
 }
