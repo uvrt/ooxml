@@ -275,13 +275,13 @@ fn a_check_of_the_document_alone_is_the_sessions() {
     assert_eq!(validate["new"].as_array().unwrap().len(), 1);
     assert!(validate["new"][0].as_str().unwrap().starts_with("[paraid-repeated]"));
     assert_eq!(validate["problems"], validate["new"]);
-    // what needs the layout's facts is the host's; a reflow, where it hands no layout
+    // what needs the layout's facts is the host's where it hands no layout; a reflow too
     for asked in [
         json!({"doc": "d1", "include": ["validate", "layout"]}),
         json!({"doc": "d1", "include": ["validate"], "range": "p:11111111"}),
     ] {
         let result = s.call("check", asked, &CallContext::default());
-        assert_eq!(result.unported(), [ooxml_tools_word::CHECK_LAYOUT.to_owned()]);
+        assert_eq!(result.unported(), [ooxml_tools_word::CHECK_NO_LAYOUT.to_owned()]);
     }
     for asked in [
         json!({"doc": "d1"}),

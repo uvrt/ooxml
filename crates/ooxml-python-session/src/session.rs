@@ -576,6 +576,17 @@ impl PySession {
             .map(|seen| (seen.version, crate::summary::PyLayoutSummary { inner: seen.pages })))
     }
 
+    /// What the document's last check that laid it out saw, with `reflow` or not (a check
+    /// of the layout alone, of ranges): `(version, summary)` as [`Self::last_check`] gives
+    /// it, or `None` -- what a changing call is measured against before its change.
+    fn last_laid(&self, doc: &str) -> PyResult<Option<(Option<u64>, crate::summary::PyLayoutSummary)>> {
+        let id = doc_id(doc, &self.inner)?;
+        let kept = self.inner.last_check(&id).map_err(|e| to_py(&e))?;
+        Ok(kept
+            .and_then(|kept| kept.laid())
+            .map(|seen| (seen.version, crate::summary::PyLayoutSummary { inner: seen.pages })))
+    }
+
     /// Keep `summary` (a `LayoutSummary` of the document's engine) as what the document's
     /// last check saw -- a check the host made itself -- of the version `at` where given;
     /// `None`: forget what the last check saw.

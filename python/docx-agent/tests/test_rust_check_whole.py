@@ -121,12 +121,17 @@ def test_the_made_up_fields_are_told(toolbox):
         "PAGEREF to a missing bookmark 'bm:Missing'", "NOTEREF to a missing bookmark 'Gone'"]
 
 
-def test_a_check_that_needs_the_layout_is_pythons_counted(toolbox, monkeypatch):
+def test_a_check_that_needs_the_layout_is_the_sessions(toolbox):
+    # Lane P5l serves the layout's facts: a check asking for them is the session's, counted
+    # served, with no fallback.
     session = toolbox.session()
     doc = session.open(FIXTURES[0].read_bytes(), name=FIXTURES[0].name)
     if not _owned(session, doc):
         pytest.skip("the session does not own this document")
-    before = dict(reads.fallbacks().get("check", {}))
-    toolbox.dispatch(session, "check", {"doc": doc, "include": ["validate", "layout"]})
-    after = reads.fallbacks().get("check", {})
-    assert after.get("check: layout facts", 0) == before.get("check: layout facts", 0) + 1
+    fell_back = sum(reads.fallbacks().get("check", {}).values())
+    served = reads.served().get("check", 0)
+    reply = toolbox.dispatch(session, "check", {"doc": doc, "include": ["validate", "layout"]}).to_json()
+    assert "error" not in reply, reply
+    assert "layout" in reply["data"], reply
+    assert sum(reads.fallbacks().get("check", {}).values()) == fell_back
+    assert reads.served().get("check", 0) == served + 1
