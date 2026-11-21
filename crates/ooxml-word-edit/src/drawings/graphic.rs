@@ -4,7 +4,7 @@
 //! the version the edit is prepared on -- parts put whole, as trees or as bytes (a chart
 //! part, its embedded workbook) -- written through the sink, with the parts it read
 //! recorded. Word tracks no chart data: tracked, the edit is applied untracked, and the
-//! result says so (docx-agent's `UntrackedChartEdit`).
+//! result says so as docx-agent's warning does (its category, `UntrackedChartEdit`, first).
 //!
 //! Must not: know what a chart holds (the [`GraphicEdit`] does), or write but through the
 //! sink.
@@ -121,7 +121,7 @@ impl<E: GraphicEdit> Command<WordDoc> for EditGraphic<E> {
         let warnings = (changed && tracked)
             .then(|| {
                 format!(
-                    "{}: Word does not track a chart's data or a diagram's text: the edit is applied untracked",
+                    "UntrackedChartEdit: {}: Word does not track a chart's data or a diagram's text: the edit is applied untracked",
                     self.drawing
                 )
             })

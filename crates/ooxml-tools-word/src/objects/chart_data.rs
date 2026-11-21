@@ -78,7 +78,7 @@ impl GraphicEdit for ChartDataEdit {
         let warnings = if edit.ran {
             warnings
                 .map(|why| {
-                    format!("{part}: only the chart's cached data was changed, because {why}; {APPLICATION}'s Edit Data will show the old values")
+                    format!("ChartDataWarning: {part}: only the chart's cached data was changed, because {why}; {APPLICATION}'s Edit Data will show the old values")
                 })
                 .into_iter()
                 .collect()

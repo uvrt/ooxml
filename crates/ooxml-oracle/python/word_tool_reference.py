@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import copy
 import datetime
+import io
 import json
+import zipfile
 
 from docx_agent import validate as _validate
 from docx_agent.edit import ids as _ids
@@ -36,6 +38,24 @@ def reply(reply: dict) -> dict:
                                       "total", "next_cursor") if reply.get(k) not in (None, [], {})}
 
 
+def part_texts(name: str, body: bytes) -> dict[str, str]:
+    """A changed part as the harness reports it (the Rust side's ``part_texts.rs``): its bytes
+    as text, or -- an embedded package (a chart's workbook) -- each entry's content under
+    ``<part>!<entry>`` and the entries' order under its own name.  Two writers' deflate
+    streams differ for the same content, so an archive is compared by what it holds."""
+    if body.startswith(b"PK\x03\x04"):
+        try:
+            with zipfile.ZipFile(io.BytesIO(body)) as archive:
+                names = [n for n in archive.namelist() if not n.endswith("/")]
+                out = {f"{name}!{n}": archive.read(n).decode("utf-8", "replace") for n in names}
+        except (zipfile.BadZipFile, ValueError, OSError, NotImplementedError):
+            names, out = [], {}
+        if names:
+            out[name] = "archive: " + ", ".join(names)
+            return out
+    return {name: body.decode("utf-8", "replace")}
+
+
 def python_case(data: bytes, case: dict, baseline: list, toolbox, parts_of, order_of, touched_of) -> dict:
     """One case through docx-agent's toolbox: the reply and what the document became."""
     session = toolbox.session(clock=lambda: _NOW)
@@ -52,7 +72,10 @@ def python_case(data: bytes, case: dict, baseline: list, toolbox, parts_of, orde
     document = session.entry(doc).document
     out = session.save(doc).data
     before, after = parts_of(data), parts_of(out)
-    parts = {name: body.decode("utf-8", "replace") for name, body in after.items() if before.get(name) != body}
+    parts: dict = {}
+    for name, body in after.items():
+        if before.get(name) != body:
+            parts.update(part_texts(name, body))
     main = document.package.document_part()
     problems = _validate.check(document.package)
     rewritten = dict(before)

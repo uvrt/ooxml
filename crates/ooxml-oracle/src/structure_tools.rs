@@ -158,7 +158,7 @@ pub(crate) fn tool_case(
             .ok()
             .flatten()
             .unwrap_or_else(|| Arc::from(Vec::new()));
-        parts.insert(name, json!(String::from_utf8_lossy(&bytes)));
+        crate::part_texts::insert_part(&mut parts, name, &bytes);
     }
     let found = touched(&opened, doc).map_err(|e| e.to_string())?;
     let now = problems(doc).map_err(|e| e.to_string())?;

@@ -109,9 +109,10 @@ fn data_action(args: &EditChart, editing: &Editing<'_>, summary: String) -> Resu
         Ok(data) => data,
         Err(why) => return Ok(ToolResult::done(unported(summary, &why))),
     };
-    let action = match planned(args, &data.0, &read)? {
+    let action = match planned(args, &data.0, &read) {
         Ok(action) => action,
-        Err(why) => return Ok(ToolResult::done(unported(summary, why))),
+        Err(Stop::Refused(error)) => return Err(error),
+        Err(Stop::Unported(why)) => return Ok(ToolResult::done(unported(summary, why))),
     };
     let command = EditGraphic {
         drawing: args.target.clone(),
@@ -172,9 +173,15 @@ fn chart_of(args: &EditChart, docx: &Docx, what: &str) -> Result<Result<(String,
     Ok(Ok((part, Arc::clone(tree.root()))))
 }
 
+/// Why a data action is not planned: refused, or left to the host.
+enum Stop {
+    Refused(ToolError),
+    Unported(&'static str),
+}
+
 /// The action with its series and category resolved (`apply_data_action`, in its order:
 /// the series, the category, then what the action needs).
-fn planned(args: &EditChart, data: &ChartData, read: &TryCall) -> Result<Result<DataAction, &'static str>, ToolError> {
+fn planned(args: &EditChart, data: &ChartData, read: &TryCall) -> Result<DataAction, Stop> {
     let action = args.action.as_str();
     let named = |names: Vec<String>, which: Option<&String>, what: &str, hint: &str| match resolve(
         &names,
@@ -182,9 +189,9 @@ fn planned(args: &EditChart, data: &ChartData, read: &TryCall) -> Result<Result<
         (what, action, hint),
         read,
     ) {
-        Named::At(at) => Ok(Ok(at)),
-        Named::Refused(error) => Err(error),
-        Named::Unported(why) => Ok(Err(why)),
+        Named::At(at) => Ok(at),
+        Named::Refused(error) => Err(Stop::Refused(error)),
+        Named::Unported(why) => Err(Stop::Unported(why)),
     };
     let hint = if data.category_dates.is_some() {
         "; its categories are dates, named as YYYY-MM-DD"
@@ -193,74 +200,44 @@ fn planned(args: &EditChart, data: &ChartData, read: &TryCall) -> Result<Result<
     };
     let series = || named(series_names(data), args.series.as_ref(), "series", "");
     let category = || named(category_names(data), args.category.as_ref(), "category", hint);
-    let want = |name: &str, given: bool, expected: String| {
+    let want = |name: &str, given: bool, expected: &str| {
         if given {
             return Ok(());
         }
         let message = format!("{action} needs {name}: {expected}");
-        Err(ToolError::refusal(Refusal::InvalidArguments, message, WayOut::call(read.clone())).at(name))
+        let refusal = ToolError::refusal(Refusal::InvalidArguments, message, WayOut::call(read.clone()));
+        Err(Stop::Refused(refusal.at(name)))
     };
-    let new_name = if args.action == ChartAction::RenameCategory {
-        "the new label"
-    } else {
-        "the new name"
-    };
-    Ok(Ok(match args.action {
+    let text = || args.text.clone().unwrap_or_default();
+    Ok(match args.action {
         ChartAction::SetValues => {
-            let series = match series()? {
-                Ok(at) => at,
-                Err(why) => return Ok(Err(why)),
-            };
-            let count = data.categories.len();
-            want(
-                "values",
-                args.values.is_some(),
-                format!("one number per category ({count})"),
-            )?;
-            DataAction::SetValues {
-                series,
-                values: args.values.clone().unwrap_or_default(),
-            }
+            let series = series()?;
+            let expected = format!("one number per category ({})", data.categories.len());
+            want("values", args.values.is_some(), &expected)?;
+            let values = args.values.clone().unwrap_or_default();
+            DataAction::SetValues { series, values }
         }
         ChartAction::SetValue => {
-            let series = match series()? {
-                Ok(at) => at,
-                Err(why) => return Ok(Err(why)),
-            };
-            let category = match category()? {
-                Ok(at) => at,
-                Err(why) => return Ok(Err(why)),
-            };
-            want("value", args.value.is_some(), "the number".to_owned())?;
+            let (series, category) = (series()?, category()?);
+            want("value", args.value.is_some(), "the number")?;
+            let value = args.value.unwrap_or_default();
             DataAction::SetValue {
                 series,
                 category,
-                value: args.value.unwrap_or_default(),
+                value,
             }
         }
         ChartAction::RenameSeries => {
-            let series = match series()? {
-                Ok(at) => at,
-                Err(why) => return Ok(Err(why)),
-            };
-            want("text", args.text.is_some(), new_name.to_owned())?;
-            DataAction::RenameSeries {
-                series,
-                text: args.text.clone().unwrap_or_default(),
-            }
+            let series = series()?;
+            want("text", args.text.is_some(), "the new name")?;
+            DataAction::RenameSeries { series, text: text() }
         }
         _ => {
-            let category = match category()? {
-                Ok(at) => at,
-                Err(why) => return Ok(Err(why)),
-            };
-            want("text", args.text.is_some(), new_name.to_owned())?;
-            DataAction::RenameCategory {
-                category,
-                text: args.text.clone().unwrap_or_default(),
-            }
+            let category = category()?;
+            want("text", args.text.is_some(), "the new label")?;
+            DataAction::RenameCategory { category, text: text() }
         }
-    }))
+    })
 }
 
 fn unported(summary: String, what: &str) -> Done<Value> {

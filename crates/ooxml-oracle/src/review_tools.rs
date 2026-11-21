@@ -74,7 +74,7 @@ pub fn tool_case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
             .ok()
             .flatten()
             .unwrap_or_else(|| Arc::from(Vec::new()));
-        parts.insert(name, json!(String::from_utf8_lossy(&bytes)));
+        crate::part_texts::insert_part(&mut parts, name, &bytes);
     }
     Ok(json!({
         "reply": Value::Object(reply.to_json()),

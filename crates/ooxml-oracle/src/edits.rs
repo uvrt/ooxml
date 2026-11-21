@@ -357,7 +357,7 @@ pub(crate) fn report<O>(opened: &Package, done: &Edited<O>, result: Value) -> Va
             .ok()
             .flatten()
             .unwrap_or_else(|| Arc::from(Vec::new()));
-        parts.insert(name, json!(String::from_utf8_lossy(&bytes)));
+        crate::part_texts::insert_part(&mut parts, name, &bytes);
     }
     let main = doc.docx().map(|d| d.main.clone()).unwrap_or_default();
     let next: Map<String, Value> = [main.clone(), format!("{main}\0text")]
