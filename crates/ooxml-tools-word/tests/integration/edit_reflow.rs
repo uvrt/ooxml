@@ -255,19 +255,18 @@ fn edits_with_their_reflow_timed_alone_and_with_twenty_four_writers() {
 #[test]
 #[ignore = "a timing: cargo test --release -- --ignored edit_reflow"]
 fn a_reflow_on_a_spare_engine_timed_against_the_engine_s_own() {
+    // A version before of about 19 pages, one edit after it (texts alike: the edit's text diff is quadratic in unlike text): the measure on the engine itself
+    // (it laid the version before out) and on a spare, the engine held by another call.
     let (package, _) = versions();
-    let layout = EnginePages::of(engine());
+    let writer = editor(package);
+    edit(&writer, &"longer text ".repeat(1900));
+    let made = edit(&writer, &"longer text ".repeat(1890));
+    let before = made.before.as_ref().unwrap().doc().package().clone();
     for (name, busy) in [("own engine", false), ("spare engine", true)] {
         let mut times = Vec::new();
-        for i in 0..10 {
-            let editor = editor(package.clone());
-            let before = edit(&editor, &"before text ".repeat(1800 + i))
-                .last
-                .doc()
-                .package()
-                .clone();
+        for _ in 0..5 {
+            let layout = EnginePages::of(engine());
             layout.laid(&before, &Never).unwrap();
-            let made = edit(&editor, &"after text ".repeat(1790 + i));
             let held = busy.then(|| layout.engine().lock().unwrap());
             let started = Instant::now();
             let found = reflow(&layout, &LastCheck::default(), &made, None).expect("measured");
@@ -277,7 +276,7 @@ fn a_reflow_on_a_spare_engine_timed_against_the_engine_s_own() {
         }
         times.sort();
         println!(
-            "{name}: reflow of a ~19-page version p50 {:.1} ms max {:.1} ms",
+            "{name}: reflow from a ~19-page version p50 {:.1} ms max {:.1} ms",
             quantile(&times, 0.5),
             quantile(&times, 1.0)
         );
