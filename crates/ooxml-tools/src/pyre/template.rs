@@ -4,7 +4,7 @@
 //!
 //! Must not: expand anything (the pattern's matches do), or accept what Python refuses.
 
-use super::Unsupported;
+use super::PatternError;
 use std::collections::HashMap;
 
 /// One piece of a template: text, or a group's match (empty when it took no part).
@@ -14,8 +14,8 @@ pub(super) enum Piece {
     Group(usize),
 }
 
-fn refuse(why: &str) -> Unsupported {
-    Unsupported(format!("bad replacement template: {why}"))
+fn refuse(why: &str) -> PatternError {
+    PatternError::Invalid(format!("bad replacement template: {why}"))
 }
 
 fn octal(c: Option<&char>) -> bool {
@@ -29,7 +29,7 @@ enum Escape {
 }
 
 /// `\g<...>` after the `g`, from `k`; the group and where the escape ends.
-fn named(chars: &[char], k: usize, names: &HashMap<String, usize>) -> Result<(usize, usize), Unsupported> {
+fn named(chars: &[char], k: usize, names: &HashMap<String, usize>) -> Result<(usize, usize), PatternError> {
     if chars.get(k) != Some(&'<') {
         return Err(refuse("missing <"));
     }
@@ -49,7 +49,7 @@ fn named(chars: &[char], k: usize, names: &HashMap<String, usize>) -> Result<(us
 }
 
 /// `\` then a digit `first`, from `k` (after it): an octal escape, or a group number.
-fn numbered(chars: &[char], first: char, k: usize) -> Result<(Escape, usize), Unsupported> {
+fn numbered(chars: &[char], first: char, k: usize) -> Result<(Escape, usize), PatternError> {
     if first == '0' {
         let mut value = 0u32;
         let mut at = k;
@@ -85,7 +85,7 @@ fn numbered(chars: &[char], first: char, k: usize) -> Result<(Escape, usize), Un
 }
 
 /// The escape `\` `c`, the next character at `k`; what it stands for and where it ends.
-fn escape(chars: &[char], c: char, k: usize, names: &HashMap<String, usize>) -> Result<(Escape, usize), Unsupported> {
+fn escape(chars: &[char], c: char, k: usize, names: &HashMap<String, usize>) -> Result<(Escape, usize), PatternError> {
     let text = |s: &str| Ok((Escape::Text(s.to_owned()), k));
     match c {
         'g' => named(chars, k, names).map(|(n, at)| (Escape::Group(n), at)),
@@ -104,7 +104,7 @@ fn escape(chars: &[char], c: char, k: usize, names: &HashMap<String, usize>) -> 
 }
 
 /// `template` read into pieces, against a pattern of `groups` groups named `names`.
-pub(super) fn parse(template: &str, groups: usize, names: &HashMap<String, usize>) -> Result<Vec<Piece>, Unsupported> {
+pub(super) fn parse(template: &str, groups: usize, names: &HashMap<String, usize>) -> Result<Vec<Piece>, PatternError> {
     let chars: Vec<char> = template.chars().collect();
     let mut out: Vec<Piece> = Vec::new();
     let mut text = String::new();

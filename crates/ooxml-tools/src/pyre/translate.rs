@@ -1,34 +1,44 @@
-//! Owns: reading a Python pattern as `re`'s parser (`sre_parse`) reads it and writing it in
-//! `fancy-regex`'s syntax with the same meaning, with the shortest match it can make.
+//! Owns: reading a Python pattern as `re`'s parser (`re._parser`) reads it and writing it
+//! in `fancy-regex`'s syntax with the same meaning: flags (global at the start, or scoped),
+//! the verbose flag's white space and comments, groups, lookaround, conditionals, repeats,
+//! back references and Python's refusals.
 //!
 //! Must not: write any construct whose meaning in `fancy-regex` is not Python's: such a
-//! pattern is [`Unsupported`].
+//! pattern is [`PatternError::Unported`].
 
-use super::Unsupported;
+use super::class::{category, literal, word};
+use super::PatternError;
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
-/// Python's `\w` on `str`: `str.isalnum()` (letters and numbers) or `_`.
-const WORD: &str = r"\p{L}\p{N}_";
-/// Python's `\s` on `str`: `str.isspace()`, Unicode's white space and the four
-/// information separators.
-const SPACE: &str = r"\s\x{1C}-\x{1F}";
-
-/// `pattern` written in `fancy-regex`'s syntax, meaning what Python's `re` means by it.
-///
-/// # Errors
-/// [`Unsupported`] with why: Python refuses it, its meaning would differ, or it can match
-/// the empty string.
-pub fn translate(pattern: &str) -> Result<String, Unsupported> {
-    translate_named(pattern).map(|(out, _, _)| out)
+/// The flags in force at a point of a pattern.
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct Scope {
+    pub(super) multiline: bool,
+    pub(super) verbose: bool,
+    pub(super) ascii: bool,
+    pub(super) ignore_case: bool,
 }
 
-/// [`translate`], with the pattern's group count and its named groups' numbers (Python's
-/// numbering, which the translation keeps).
+/// A pattern in `fancy-regex`'s syntax: the text, its capturing groups' count, and its
+/// named groups' numbers (Python's numbering, which the translation keeps).
+#[derive(Debug, Clone)]
+pub struct Translated {
+    /// The pattern as `fancy-regex` reads it.
+    pub source: String,
+    /// How many capturing groups it has.
+    pub groups: usize,
+    /// Its named groups' numbers.
+    pub names: HashMap<String, usize>,
+}
+
+/// `pattern` written in `fancy-regex`'s syntax, meaning what Python's `re` means by it
+/// (`ignore_case`: compiled with `re.IGNORECASE`).
 ///
 /// # Errors
-/// As [`translate`].
-pub fn translate_named(pattern: &str) -> Result<(String, usize, HashMap<String, usize>), Unsupported> {
+/// [`PatternError::Invalid`] where Python refuses the pattern, [`PatternError::Unported`]
+/// where its meaning here would differ.
+pub fn translate(pattern: &str, ignore_case: bool) -> Result<Translated, PatternError> {
     let mut parser = Parser {
         chars: pattern.chars().collect(),
         at: 0,
@@ -36,65 +46,82 @@ pub fn translate_named(pattern: &str) -> Result<(String, usize, HashMap<String, 
         groups: 0,
         open: Vec::new(),
         names: HashMap::new(),
-        multiline: Vec::new(),
+        scopes: vec![Scope {
+            ignore_case,
+            ..Scope::default()
+        }],
+        conditions: Vec::new(),
     };
-    parser.leading_flags()?;
-    let shortest = parser.alternation()?;
+    parser.alternation(true)?;
     if parser.at < parser.chars.len() {
-        return Err(refuse("unbalanced parenthesis"));
+        return Err(parser.error("unbalanced parenthesis"));
     }
-    if shortest == 0 {
-        return Err(refuse(
-            "the pattern can match nothing (empty), and Python's matches after an empty one may differ",
-        ));
+    if let Some((n, pos)) = parser.conditions.iter().find(|(n, _)| *n > parser.groups) {
+        return Err(parser.error_at(&format!("invalid group reference {n}"), *pos));
     }
-    Ok((parser.out, parser.groups, parser.names))
+    Ok(Translated {
+        source: parser.out,
+        groups: parser.groups,
+        names: parser.names,
+    })
 }
 
-fn refuse(why: &str) -> Unsupported {
-    Unsupported(why.to_owned())
-}
-
-struct Parser {
+pub(super) struct Parser {
     chars: Vec<char>,
-    at: usize,
-    out: String,
+    pub(super) at: usize,
+    pub(super) out: String,
     /// Capturing groups opened so far.
     groups: usize,
     /// The groups open now.
     open: Vec<usize>,
     names: HashMap<String, usize>,
-    /// Whether `$` means a line's end, innermost last (the leading flags first).
-    multiline: Vec<bool>,
+    /// The flags in force, innermost last.
+    scopes: Vec<Scope>,
+    /// The groups conditionals test, with where their numbers start (Python checks them at
+    /// the end).
+    conditions: Vec<(usize, usize)>,
 }
 
-/// What one atom is: its shortest match, and whether it matches no character at all (an
-/// anchor or a lookaround), which Python does not repeat.
-struct Atom {
-    shortest: usize,
-    zero_width: bool,
+/// What one item of a sequence is, for the repeat after it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Item {
+    /// Matches text (or is a group): repeatable.
+    Text,
+    /// An anchor (`^`, `$`, `\A`, `\Z`, `\b`, `\B`): Python refuses to repeat it.
+    Anchor,
+    /// A lookaround: repeatable in Python; written in a group so that it is here too.
+    Look,
+    /// Nothing at all (a comment, the global flags).
+    Nothing,
 }
+
+/// Python's `MAXREPEAT`: a repeat's counts must be below it.
+const MAX_REPEAT: u128 = 4_294_967_295;
+/// Python's verbose white space.
+const WHITESPACE: &str = " \t\n\r\x0B\x0C";
+/// Python's flag letters.
+const FLAGS: &str = "iLmsxatu";
 
 impl Parser {
-    fn rest(&self, from: usize) -> &[char] {
+    pub(super) fn rest(&self, from: usize) -> &[char] {
         self.chars.get(from..).unwrap_or(&[])
     }
 
-    fn peek(&self) -> Option<char> {
+    pub(super) fn peek(&self) -> Option<char> {
         self.chars.get(self.at).copied()
     }
 
-    fn peek_at(&self, k: usize) -> Option<char> {
+    pub(super) fn peek_at(&self, k: usize) -> Option<char> {
         self.chars.get(self.at + k).copied()
     }
 
-    fn next(&mut self) -> Option<char> {
+    pub(super) fn next(&mut self) -> Option<char> {
         let c = self.peek();
         self.at += usize::from(c.is_some());
         c
     }
 
-    fn eat(&mut self, text: &str) -> bool {
+    pub(super) fn eat(&mut self, text: &str) -> bool {
         let n = text.chars().count();
         let found = self
             .chars
@@ -106,69 +133,103 @@ impl Parser {
         found
     }
 
-    fn multiline(&self) -> bool {
-        self.multiline.last().copied().unwrap_or(false)
+    pub(super) fn scope(&self) -> Scope {
+        self.scopes.last().copied().unwrap_or_default()
     }
 
-    /// Global flags at the start (`(?im)`): Python takes them only there.
-    fn leading_flags(&mut self) -> Result<(), Unsupported> {
-        let mut multiline = false;
-        while self.peek() == Some('(') && self.peek_at(1) == Some('?') {
-            let flags: String = self
-                .rest(self.at + 2)
-                .iter()
-                .take_while(|c| c.is_ascii_alphabetic())
-                .collect();
-            let end = self.at + 2 + flags.chars().count();
-            if flags.is_empty() || self.chars.get(end) != Some(&')') {
+    /// Python's refusal of the pattern (`re.error`) where the next token starts, saying why.
+    pub(super) fn error(&self, why: &str) -> PatternError {
+        self.error_at(why, self.at)
+    }
+
+    /// Python's refusal of the pattern at `pos` (a character index), worded as `re.error`
+    /// words it: the position, and the line and column in a pattern of several lines.
+    pub(super) fn error_at(&self, why: &str, pos: usize) -> PatternError {
+        let mut message = format!("{why} at position {pos}");
+        if self.chars.contains(&'\n') {
+            let before = self.chars.get(..pos).unwrap_or(&self.chars);
+            let line = before.iter().filter(|c| **c == '\n').count() + 1;
+            let column = pos - before.iter().rposition(|c| *c == '\n').map_or(0, |k| k + 1) + 1;
+            let _ = write!(message, " (line {line}, column {column})");
+        }
+        PatternError::Invalid(message)
+    }
+
+    /// Under the verbose flag: white space and `#` comments skipped.
+    fn skip_space(&mut self) {
+        if !self.scope().verbose {
+            return;
+        }
+        while let Some(c) = self.peek() {
+            if WHITESPACE.contains(c) {
+                self.next();
+            } else if c == '#' {
+                while let Some(c) = self.next() {
+                    if c == '\n' {
+                        break;
+                    }
+                }
+            } else {
                 break;
             }
-            check_flags(&flags)?;
-            multiline |= flags.contains('m');
-            let _ = write!(self.out, "(?{flags})");
-            self.at = end + 1;
         }
-        self.multiline.push(multiline);
-        Ok(())
     }
 
-    /// Branches separated by `|`, up to a `)` or the end: the shortest of their shortest.
-    fn alternation(&mut self) -> Result<usize, Unsupported> {
-        let mut shortest = self.sequence()?;
+    /// Branches separated by `|`, up to a `)` or the end; `top`: the pattern's own (its
+    /// first branch may start with global flags).
+    fn alternation(&mut self, top: bool) -> Result<(), PatternError> {
+        self.sequence(top)?;
         while self.peek() == Some('|') {
             self.next();
             self.out.push('|');
-            shortest = shortest.min(self.sequence()?);
+            self.sequence(false)?;
         }
-        Ok(shortest)
+        Ok(())
     }
 
-    fn sequence(&mut self) -> Result<usize, Unsupported> {
-        let mut total: usize = 0;
-        while let Some(c) = self.peek() {
-            if c == '|' || c == ')' {
-                break;
+    /// Items up to a `|`, a `)` or the end, each with its repeat; `first`: the pattern's
+    /// first branch, where global flags may come before any item.
+    fn sequence(&mut self, first: bool) -> Result<(), PatternError> {
+        // the last item: where it is written from, what it is, and whether it is repeated
+        let mut last: Option<(usize, Item, bool)> = None;
+        let mut items = 0usize;
+        loop {
+            self.skip_space();
+            match self.peek() {
+                None | Some('|' | ')') => break,
+                Some('*' | '+' | '?') => {}
+                Some('{') if braces(self.rest(self.at)).is_some() => {}
+                Some(_) => {
+                    let start = self.out.len();
+                    let item = self.atom(first && items == 0)?;
+                    if item != Item::Nothing {
+                        items += 1;
+                        last = Some((start, item, false));
+                    }
+                    continue;
+                }
             }
-            let start = self.out.len();
-            let atom = self.atom()?;
-            total = total.saturating_add(self.repeat(start, atom)?);
+            match last {
+                None | Some((_, Item::Anchor | Item::Nothing, _)) => return Err(self.error("nothing to repeat")),
+                Some((_, _, true)) => return Err(self.error("multiple repeat")),
+                Some((start, item, false)) => {
+                    self.repeat(start, item)?;
+                    last = Some((start, item, true));
+                }
+            }
         }
-        Ok(total)
+        Ok(())
     }
 
-    /// The repeat after an atom written from `start`, if any: the shortest it makes.
-    fn repeat(&mut self, start: usize, atom: Atom) -> Result<usize, Unsupported> {
-        let Some((low, written)) = self.quantifier()? else {
-            return Ok(atom.shortest);
-        };
-        if atom.zero_width {
-            return Err(refuse("nothing to repeat"));
+    /// The quantifier here, applied to the item written from `start`.
+    fn repeat(&mut self, start: usize, item: Item) -> Result<(), PatternError> {
+        let written = self.quantifier()?;
+        if item == Item::Look {
+            self.out.insert_str(start, "(?:");
+            self.out.push(')');
         }
-        let lazy = self.peek() == Some('?');
-        let possessive = !lazy && self.peek() == Some('+');
-        if lazy || possessive {
-            self.next();
-        }
+        let lazy = self.eat("?");
+        let possessive = !lazy && self.eat("+");
         if possessive {
             self.out.insert_str(start, "(?>");
             self.out.push_str(&written);
@@ -179,393 +240,461 @@ impl Parser {
                 self.out.push('?');
             }
         }
-        if self.quantifier_ahead() {
-            return Err(refuse("multiple repeat"));
+        Ok(())
+    }
+
+    /// The quantifier here (one is), taken: how it is written.
+    fn quantifier(&mut self) -> Result<String, PatternError> {
+        if let Some(c @ ('*' | '+' | '?')) = self.peek() {
+            self.next();
+            return Ok(c.to_string());
         }
-        Ok(atom.shortest.saturating_mul(low))
-    }
-
-    fn quantifier_ahead(&self) -> bool {
-        match self.peek() {
-            Some('*' | '+' | '?') => true,
-            Some('{') => braces(self.rest(self.at)).is_some(),
-            _ => false,
+        let Some((low, high, len)) = braces(self.rest(self.at)) else {
+            return Err(self.error("nothing to repeat"));
+        };
+        if low >= MAX_REPEAT || high.is_some_and(|h| h >= MAX_REPEAT) {
+            return Err(PatternError::Overflow("the repetition number is too large".to_owned()));
         }
+        if high.is_some_and(|h| h < low) {
+            return Err(self.error_at("min repeat greater than max repeat", self.at + 1));
+        }
+        self.at += len;
+        Ok(match high {
+            Some(h) if h == low => format!("{{{low}}}"),
+            Some(h) => format!("{{{low},{h}}}"),
+            None => format!("{{{low},}}"),
+        })
     }
 
-    /// A quantifier here, taken: its least count and how it is written.
-    fn quantifier(&mut self) -> Result<Option<(usize, String)>, Unsupported> {
-        let found = match self.peek() {
-            Some('*') => (0, "*".to_owned(), 1),
-            Some('+') => (1, "+".to_owned(), 1),
-            Some('?') => (0, "?".to_owned(), 1),
-            Some('{') => match braces(self.rest(self.at)) {
-                Some((low, high, len)) => {
-                    if high.is_some_and(|h| h < low) {
-                        return Err(refuse("min repeat greater than max repeat"));
-                    }
-                    let written = match high {
-                        Some(h) if h == low => format!("{{{low}}}"),
-                        Some(h) => format!("{{{low},{h}}}"),
-                        None => format!("{{{low},}}"),
-                    };
-                    (low, written, len)
-                }
-                None => return Ok(None),
-            },
-            _ => return Ok(None),
-        };
-        self.at += found.2;
-        Ok(Some((found.0, found.1)))
-    }
-
-    fn atom(&mut self) -> Result<Atom, Unsupported> {
-        let one = Atom {
-            shortest: 1,
-            zero_width: false,
-        };
-        let anchor = Atom {
-            shortest: 0,
-            zero_width: true,
-        };
+    /// One item; `flags_allowed`: global flags may be here.
+    fn atom(&mut self, flags_allowed: bool) -> Result<Item, PatternError> {
         let Some(c) = self.next() else {
-            return Err(refuse("unexpected end of pattern"));
+            return Err(self.error("unexpected end of pattern"));
         };
         match c {
-            '(' => self.group(),
+            '(' => self.group(flags_allowed),
             '[' => {
+                self.cased()?;
                 self.class()?;
-                Ok(one)
+                Ok(Item::Text)
             }
             '.' => {
                 self.out.push('.');
-                Ok(one)
+                Ok(Item::Text)
             }
             '^' => {
                 self.out.push('^');
-                Ok(anchor)
+                Ok(Item::Anchor)
             }
             '$' => {
-                self.out.push_str(if self.multiline() { "$" } else { r"(?=\n?\z)" });
-                Ok(anchor)
+                self.out
+                    .push_str(if self.scope().multiline { "$" } else { r"(?=\n?\z)" });
+                Ok(Item::Anchor)
             }
-            '*' | '+' | '?' => Err(refuse("nothing to repeat")),
-            '{' if braces(self.rest(self.at - 1)).is_some() => Err(refuse("nothing to repeat")),
             '\\' => self.escape(),
             other => {
+                self.cased()?;
                 literal(&mut self.out, other);
-                Ok(one)
+                Ok(Item::Text)
             }
         }
     }
 
-    fn group(&mut self) -> Result<Atom, Unsupported> {
+    /// Refused where Python's matching ignores case by ASCII only (`a` with `i`), which
+    /// this engine does not do.
+    fn cased(&self) -> Result<(), PatternError> {
+        let scope = self.scope();
+        if scope.ascii && scope.ignore_case {
+            return Err(PatternError::Unported(
+                "the flags a and i together are not read here".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn group(&mut self, flags_allowed: bool) -> Result<Item, PatternError> {
+        let start = self.at - 1;
         if !self.eat("?") {
-            self.groups += 1;
-            self.open.push(self.groups);
-            self.out.push('(');
-            return self.close_group(Some(self.groups));
+            return self.capture(None, start);
         }
-        if self.eat(":") {
-            self.out.push_str("(?:");
-            return self.close_group(None);
-        }
-        if self.eat("P<") {
-            let name = self.name('>')?;
-            if self.names.contains_key(&name) {
-                return Err(refuse("redefinition of group name"));
+        let question = self.at - 1;
+        let Some(c) = self.next() else {
+            return Err(self.error("unexpected end of pattern"));
+        };
+        match c {
+            ':' => {
+                self.out.push_str("(?:");
+                self.close_group(None, start).map(|()| Item::Text)
             }
-            self.groups += 1;
-            self.names.insert(name, self.groups);
-            self.open.push(self.groups);
-            self.out.push('(');
-            return self.close_group(Some(self.groups));
+            'P' => self.python_group(start, question),
+            '=' | '!' => self.look(c, "", start),
+            '<' => match self.next() {
+                Some(d @ ('=' | '!')) => self.look(d, "<", start),
+                Some(d) => Err(self.error_at(&format!("unknown extension ?<{}", self.token(d)), question)),
+                None => Err(self.error("unexpected end of pattern")),
+            },
+            '>' => {
+                self.out.push_str("(?>");
+                self.close_group(None, start).map(|()| Item::Text)
+            }
+            '#' => {
+                while let Some(c) = self.next() {
+                    if c == ')' {
+                        return Ok(Item::Nothing);
+                    }
+                }
+                Err(self.error_at("missing ), unterminated comment", start))
+            }
+            '(' => self.conditional(start),
+            c if FLAGS.contains(c) || c == '-' => {
+                self.at -= 1;
+                self.flags(flags_allowed, start)
+            }
+            c => Err(self.error_at(&format!("unknown extension ?{}", self.token(c)), question)),
         }
-        if self.eat("P=") {
-            let name = self.name(')')?;
-            let n = *self.names.get(&name).ok_or_else(|| refuse("unknown group name"))?;
+    }
+
+    /// The token that starts with `c`, just read: an escape is two characters (Python's
+    /// tokens), the second taken.
+    fn token(&mut self, c: char) -> String {
+        if c == '\\' {
+            if let Some(d) = self.next() {
+                return format!("\\{d}");
+            }
+        }
+        c.to_string()
+    }
+
+    /// `(?P<name>...)` or `(?P=name)` after the `P`.
+    fn python_group(&mut self, start: usize, question: usize) -> Result<Item, PatternError> {
+        if self.eat("<") {
+            let (name, at) = self.name('>')?;
+            if let Some(was) = self.names.get(&name) {
+                let why = format!(
+                    "redefinition of group name {} as group {}; was group {was}",
+                    py_repr(&name),
+                    self.groups + 1
+                );
+                return Err(self.error_at(&why, at));
+            }
+            return self.capture(Some(name), start);
+        }
+        if self.eat("=") {
+            let (name, at) = self.name(')')?;
+            let Some(&n) = self.names.get(&name) else {
+                return Err(self.error_at(&format!("unknown group name {}", py_repr(&name)), at));
+            };
+            if self.open.contains(&n) {
+                return Err(self.error_at("cannot refer to an open group", at));
+            }
             return self.back_reference(n);
         }
-        for look in ["=", "!", "<=", "<!"] {
-            if self.eat(look) {
-                let _ = write!(self.out, "(?{look}");
-                self.close_group(None)?;
-                return Ok(Atom {
-                    shortest: 0,
-                    zero_width: true,
-                });
-            }
+        match self.next() {
+            Some(c) => Err(self.error_at(&format!("unknown extension ?P{}", self.token(c)), question)),
+            None => Err(self.error("unexpected end of pattern")),
         }
-        if self.eat(">") {
-            self.out.push_str("(?>");
-            return self.close_group(None);
-        }
-        if self.eat("#") {
-            while let Some(c) = self.next() {
-                if c == ')' {
-                    return Ok(Atom {
-                        shortest: 0,
-                        zero_width: false,
-                    });
-                }
-            }
-            return Err(refuse("missing ), unterminated comment"));
-        }
-        self.scoped_flags()
     }
 
-    /// `(?i:...)`, `(?-i:...)`, `(?s-i:...)`; a global flag past the start is refused, as
-    /// Python refuses it.
-    fn scoped_flags(&mut self) -> Result<Atom, Unsupported> {
-        let on: String = self
-            .rest(self.at)
-            .iter()
-            .take_while(|c| c.is_ascii_alphabetic())
-            .collect();
-        self.at += on.chars().count();
-        let mut off = String::new();
-        if self.eat("-") {
-            off = self
-                .rest(self.at)
-                .iter()
-                .take_while(|c| c.is_ascii_alphabetic())
-                .collect();
-            self.at += off.chars().count();
-            if off.is_empty() {
-                return Err(refuse("missing flag"));
+    /// A lookaround after its `(?=`, `(?!`, `(?<=` or `(?<!`.
+    fn look(&mut self, kind: char, behind: &str, start: usize) -> Result<Item, PatternError> {
+        let _ = write!(self.out, "(?{behind}{kind}");
+        self.close_group(None, start).map(|()| Item::Look)
+    }
+
+    /// A capturing group after its `(` (and name); `start`, where its `(` is.
+    fn capture(&mut self, name: Option<String>, start: usize) -> Result<Item, PatternError> {
+        self.groups += 1;
+        let n = self.groups;
+        if let Some(name) = name {
+            self.names.insert(name, n);
+        }
+        self.open.push(n);
+        self.out.push('(');
+        self.close_group(Some(n), start)?;
+        Ok(Item::Text)
+    }
+
+    /// `(?(group)yes|no)` after its `(?(`; `start`, where its `(` is.
+    fn conditional(&mut self, start: usize) -> Result<Item, PatternError> {
+        let (name, at) = self.until(')')?;
+        let n = if name.chars().all(|c| c.is_ascii_digit()) {
+            let n: usize = name
+                .parse()
+                .map_err(|_| self.error_at(&format!("invalid group reference {name}"), at))?;
+            if n == 0 {
+                return Err(self.error_at("bad group number", at));
+            }
+            n
+        } else if is_identifier(&name) {
+            *self
+                .names
+                .get(&name)
+                .ok_or_else(|| self.error_at(&format!("unknown group name {}", py_repr(&name)), at))?
+        } else {
+            return Err(self.error_at(&format!("bad character in group name {}", py_repr(&name)), at));
+        };
+        self.conditions.push((n, at));
+        let _ = write!(self.out, "(?({n})");
+        self.sequence(false)?;
+        self.out.push('|');
+        if self.eat("|") {
+            self.sequence(false)?;
+            if self.peek() == Some('|') {
+                return Err(self.error("conditional backref with more than two branches"));
             }
         }
-        if on.is_empty() && off.is_empty() {
-            return Err(refuse("unknown extension"));
+        if !self.eat(")") {
+            return Err(self.error_at("missing ), unterminated subpattern", start));
         }
-        check_flags(&on)?;
-        check_flags(&off)?;
-        if self.peek() == Some(')') {
-            return Err(refuse("global flags not at the start of the expression"));
+        self.out.push(')');
+        Ok(Item::Text)
+    }
+
+    /// Flags after `(?`: global ones (`(?im)`, only before any item of the pattern), or
+    /// scoped ones (`(?i:...)`, `(?-i:...)`), read as Python's `_parse_flags` reads them.
+    fn flags(&mut self, flags_allowed: bool, start: usize) -> Result<Item, PatternError> {
+        let mut on = String::new();
+        let mut off = String::new();
+        let mut c = self.next();
+        if c != Some('-') {
+            loop {
+                let Some(flag) = c else {
+                    return Err(self.error("missing -, : or )"));
+                };
+                if flag == 'L' {
+                    return Err(self.error("bad inline flags: cannot use 'L' flag with a str pattern"));
+                }
+                on.push(flag);
+                if is_type(flag) && on.chars().any(|f| is_type(f) && f != flag) {
+                    return Err(self.error("bad inline flags: flags 'a', 'u' and 'L' are incompatible"));
+                }
+                c = self.next();
+                match c {
+                    None => return Err(self.error("missing -, : or )")),
+                    Some(')' | '-' | ':') => break,
+                    Some(x) if !FLAGS.contains(x) => {
+                        let why = if x.is_alphabetic() {
+                            "unknown flag"
+                        } else {
+                            "missing -, : or )"
+                        };
+                        return Err(self.error_at(why, self.at - 1));
+                    }
+                    Some(_) => {}
+                }
+            }
         }
-        if !self.eat(":") {
-            return Err(refuse("missing :"));
+        if on.contains('t') {
+            return Err(PatternError::Unported("the flag t is not read here".to_owned()));
         }
-        let multiline = if on.contains('m') {
-            true
-        } else if off.contains('m') {
-            false
-        } else {
-            self.multiline()
-        };
-        let dash = if off.is_empty() { "" } else { "-" };
-        let _ = write!(self.out, "(?{on}{dash}{off}:");
-        self.multiline.push(multiline);
-        let atom = self.close_group(None);
-        self.multiline.pop();
-        atom
+        if c == Some(')') {
+            if !flags_allowed {
+                return Err(self.error_at("global flags not at the start of the expression", start));
+            }
+            for scope in &mut self.scopes {
+                apply(scope, &on, "");
+            }
+            self.write_flags(&on, "", ")");
+            return Ok(Item::Nothing);
+        }
+        if c == Some('-') {
+            c = self.next();
+            loop {
+                match c {
+                    None => return Err(self.error(if off.is_empty() { "missing flag" } else { "missing :" })),
+                    Some(':') if !off.is_empty() => break,
+                    Some(x) if !FLAGS.contains(x) => {
+                        let why = match (x.is_alphabetic(), off.is_empty()) {
+                            (true, _) => "unknown flag",
+                            (false, true) => "missing flag",
+                            (false, false) => "missing :",
+                        };
+                        return Err(self.error_at(why, self.at - 1));
+                    }
+                    Some(flag) => {
+                        if is_type(flag) {
+                            return Err(self.error("bad inline flags: cannot turn off flags 'a', 'u' and 'L'"));
+                        }
+                        off.push(flag);
+                    }
+                }
+                c = self.next();
+            }
+        }
+        if on.chars().any(|f| off.contains(f)) {
+            return Err(self.error_at("bad inline flags: flag turned on and off", self.at - 1));
+        }
+        let mut scope = self.scope();
+        apply(&mut scope, &on, &off);
+        self.write_flags(&on, &off, ":");
+        self.scopes.push(scope);
+        let closed = self.close_group(None, start);
+        self.scopes.pop();
+        closed.map(|()| Item::Text)
+    }
+
+    /// The flags `fancy-regex` takes (`i`, `m`, `s`) written as a group's start, `end` its
+    /// `)` or `:`; the others are Python's that the translation itself carries out.
+    fn write_flags(&mut self, on: &str, off: &str, end: &str) {
+        let keep = |flags: &str| -> String { flags.chars().filter(|f| "ims".contains(*f)).collect() };
+        let (on, off) = (keep(on), keep(off));
+        match (on.is_empty() && off.is_empty(), end) {
+            (true, ")") => {}
+            (true, _) => self.out.push_str("(?:"),
+            (false, _) => {
+                let dash = if off.is_empty() { "" } else { "-" };
+                let _ = write!(self.out, "(?{on}{dash}{off}{end}");
+            }
+        }
     }
 
     /// A group's content and its `)`; `capture`, the number of the capturing group it
-    /// closes (no longer open after it).
-    fn close_group(&mut self, capture: Option<usize>) -> Result<Atom, Unsupported> {
-        let shortest = self.alternation()?;
+    /// closes (no longer open after it); `start`, where its `(` is.
+    fn close_group(&mut self, capture: Option<usize>, start: usize) -> Result<(), PatternError> {
+        self.alternation(false)?;
         if self.next() != Some(')') {
-            return Err(refuse("missing ), unterminated subpattern"));
+            return Err(self.error_at("missing ), unterminated subpattern", start));
         }
         self.out.push(')');
         if let Some(n) = capture {
             self.open.retain(|k| *k != n);
         }
-        Ok(Atom {
-            shortest,
-            zero_width: false,
-        })
-    }
-
-    fn name(&mut self, end: char) -> Result<String, Unsupported> {
-        let mut name = String::new();
-        loop {
-            match self.next() {
-                Some(c) if c == end => break,
-                Some(c) => name.push(c),
-                None => return Err(refuse("missing group name end")),
-            }
-        }
-        let mut chars = name.chars();
-        let ok = chars.next().is_some_and(|c| c == '_' || c.is_alphabetic())
-            && chars.all(|c| c == '_' || c.is_alphanumeric());
-        if ok {
-            Ok(name)
-        } else {
-            Err(refuse("bad character in group name"))
-        }
-    }
-
-    fn back_reference(&mut self, n: usize) -> Result<Atom, Unsupported> {
-        if self.open.contains(&n) || n > self.groups {
-            return Err(refuse("cannot refer to an open or unknown group"));
-        }
-        let _ = write!(self.out, r"(?:\{n})");
-        Ok(Atom {
-            shortest: 0,
-            zero_width: false,
-        })
-    }
-
-    fn escape(&mut self) -> Result<Atom, Unsupported> {
-        let one = Atom {
-            shortest: 1,
-            zero_width: false,
-        };
-        let anchor = Atom {
-            shortest: 0,
-            zero_width: true,
-        };
-        let Some(c) = self.next() else {
-            return Err(refuse("bad escape (end of pattern)"));
-        };
-        let written = match c {
-            'A' => return self.write(r"\A", anchor),
-            'Z' => return self.write(r"\z", anchor),
-            'b' => {
-                let b = format!("(?:(?<=[{WORD}])(?![{WORD}])|(?<![{WORD}])(?=[{WORD}]))");
-                return self.write(&b, anchor);
-            }
-            'B' => {
-                let b = format!("(?:(?<=[{WORD}])(?=[{WORD}])|(?<![{WORD}])(?![{WORD}]))");
-                return self.write(&b, anchor);
-            }
-            'd' => r"\d".to_owned(),
-            'D' => r"\D".to_owned(),
-            's' => format!("[{SPACE}]"),
-            'S' => format!("[^{SPACE}]"),
-            'w' => format!("[{WORD}]"),
-            'W' => format!("[^{WORD}]"),
-            '1'..='9' => {
-                if self.peek().is_some_and(|d| d.is_ascii_digit()) {
-                    return Err(refuse("two-digit and octal escapes are not read here"));
-                }
-                return self.back_reference(c as usize - '0' as usize);
-            }
-            other => {
-                let value = self.character_escape(other)?;
-                let mut s = String::new();
-                literal(&mut s, value);
-                s
-            }
-        };
-        self.out.push_str(&written);
-        Ok(one)
-    }
-
-    fn write(&mut self, text: &str, atom: Atom) -> Result<Atom, Unsupported> {
-        self.out.push_str(text);
-        Ok(atom)
-    }
-
-    /// The character an escape that stands for one character means (`\n`, `\x41`, `\.`).
-    fn character_escape(&mut self, c: char) -> Result<char, Unsupported> {
-        let hex = |p: &mut Parser, n: usize| -> Result<char, Unsupported> {
-            let digits: String = p.chars.get(p.at..p.at + n).unwrap_or(&[]).iter().collect();
-            if digits.chars().count() != n || !digits.chars().all(|d| d.is_ascii_hexdigit()) {
-                return Err(refuse("incomplete escape"));
-            }
-            p.at += n;
-            u32::from_str_radix(&digits, 16)
-                .ok()
-                .and_then(char::from_u32)
-                .ok_or_else(|| refuse("bad escape"))
-        };
-        match c {
-            'a' => Ok('\u{7}'),
-            'f' => Ok('\u{c}'),
-            'n' => Ok('\n'),
-            'r' => Ok('\r'),
-            't' => Ok('\t'),
-            'v' => Ok('\u{b}'),
-            'x' => hex(self, 2),
-            'u' => hex(self, 4),
-            'U' => hex(self, 8),
-            c if c.is_ascii_alphanumeric() => Err(refuse("this escape is Python's error or reads otherwise here")),
-            other => Ok(other),
-        }
-    }
-
-    /// A class after its `[`, written out element by element.
-    fn class(&mut self) -> Result<(), Unsupported> {
-        self.out.push('[');
-        if self.eat("^") {
-            self.out.push('^');
-        }
-        let mut first = true;
-        loop {
-            let Some(c) = self.next() else {
-                return Err(refuse("unterminated character set"));
-            };
-            if c == ']' && !first {
-                break;
-            }
-            first = false;
-            let low = self.class_item(c)?;
-            if self.peek() == Some('-') && self.peek_at(1).is_some() {
-                self.next();
-                let Some(that) = self.next() else {
-                    return Err(refuse("unterminated character set"));
-                };
-                if that == ']' {
-                    self.class_write(low);
-                    self.out.push_str(r"\-");
-                    break;
-                }
-                let high = self.class_item(that)?;
-                match (low, high) {
-                    (Item::Char(a), Item::Char(b)) if a <= b => {
-                        class_literal(&mut self.out, a);
-                        self.out.push('-');
-                        class_literal(&mut self.out, b);
-                    }
-                    _ => return Err(refuse("bad character range")),
-                }
-                continue;
-            }
-            self.class_write(low);
-        }
-        self.out.push(']');
         Ok(())
     }
 
-    fn class_item(&mut self, c: char) -> Result<Item, Unsupported> {
-        if c != '\\' {
-            return Ok(Item::Char(c));
+    /// A group's name up to `end` (Python's `getuntil` and `checkgroupname`): the name
+    /// and where it starts.
+    fn name(&mut self, end: char) -> Result<(String, usize), PatternError> {
+        let (name, at) = self.until(end)?;
+        if is_identifier(&name) {
+            Ok((name, at))
+        } else {
+            Err(self.error_at(&format!("bad character in group name {}", py_repr(&name)), at))
         }
-        let Some(e) = self.next() else {
-            return Err(refuse("unterminated character set"));
-        };
-        Ok(match e {
-            'd' => Item::Set(r"\d".to_owned()),
-            'D' => Item::Set(r"\D".to_owned()),
-            's' => Item::Set(SPACE.to_owned()),
-            'S' => Item::Set(format!("[^{SPACE}]")),
-            'w' => Item::Set(WORD.to_owned()),
-            'W' => Item::Set(format!("[^{WORD}]")),
-            'b' => Item::Char('\u{8}'),
-            other => Item::Char(self.character_escape(other)?),
-        })
     }
 
-    fn class_write(&mut self, item: Item) {
-        match item {
-            Item::Char(c) => class_literal(&mut self.out, c),
-            Item::Set(s) => self.out.push_str(&s),
+    /// The text up to `end`, taken with it (Python's `getuntil`): the text and where it
+    /// starts.
+    fn until(&mut self, end: char) -> Result<(String, usize), PatternError> {
+        let at = self.at;
+        let mut text = String::new();
+        loop {
+            match self.next() {
+                Some(c) if c == end => {
+                    if text.is_empty() {
+                        return Err(self.error_at("missing group name", self.at - 1));
+                    }
+                    return Ok((text, at));
+                }
+                Some('\\') => {
+                    text.push('\\');
+                    if let Some(d) = self.next() {
+                        text.push(d);
+                    }
+                }
+                Some(c) => text.push(c),
+                None if text.is_empty() => return Err(self.error("missing group name")),
+                None => return Err(self.error_at(&format!("missing {end}, unterminated name"), at)),
+            }
+        }
+    }
+
+    /// A reference to group `n`, checked (open, unknown) where `\\n` or `(?P=` read it.
+    fn back_reference(&mut self, n: usize) -> Result<Item, PatternError> {
+        self.cased()?;
+        let _ = write!(self.out, r"(?:\{n})");
+        Ok(Item::Text)
+    }
+
+    fn escape(&mut self) -> Result<Item, PatternError> {
+        let start = self.at - 1;
+        let Some(c) = self.next() else {
+            return Err(self.error_at("bad escape (end of pattern)", start));
+        };
+        let ascii = self.scope().ascii;
+        match c {
+            'A' => self.out.push_str(r"\A"),
+            'Z' => self.out.push_str(r"\z"),
+            'b' | 'B' => {
+                let w = word(ascii);
+                let b = if c == 'b' {
+                    format!("(?:(?<=[{w}])(?![{w}])|(?<![{w}])(?=[{w}]))")
+                } else {
+                    format!("(?:(?<=[{w}])(?=[{w}])|(?<![{w}])(?![{w}]))")
+                };
+                self.out.push_str(&b);
+            }
+            _ => {
+                if let Some((set, negated)) = category(c, ascii) {
+                    let caret = if negated { "^" } else { "" };
+                    let _ = write!(self.out, "[{caret}{set}]");
+                    return Ok(Item::Text);
+                }
+                return match self.character_escape(c, start)? {
+                    Some(value) => {
+                        self.cased()?;
+                        literal(&mut self.out, value);
+                        Ok(Item::Text)
+                    }
+                    None => {
+                        // a group's number: one digit, or two
+                        let mut digits = c.to_string();
+                        if let Some(d) = self.peek().filter(char::is_ascii_digit) {
+                            digits.push(d);
+                            self.next();
+                        }
+                        let n: usize = digits.parse().unwrap_or(0);
+                        if n > self.groups {
+                            return Err(self.error_at(&format!("invalid group reference {n}"), start + 1));
+                        }
+                        if self.open.contains(&n) {
+                            return Err(self.error_at("cannot refer to an open group", start));
+                        }
+                        self.back_reference(n)
+                    }
+                };
+            }
+        }
+        Ok(Item::Anchor)
+    }
+}
+
+/// `text` as Python's `repr` writes a `str`.
+fn py_repr(text: &str) -> String {
+    crate::pyfmt::repr(&serde_json::Value::from(text))
+}
+
+/// The scope `on` and `off` (flag letters) make of `scope`.
+fn apply(scope: &mut Scope, on: &str, off: &str) {
+    for (flags, value) in [(on, true), (off, false)] {
+        for f in flags.chars() {
+            match f {
+                'i' => scope.ignore_case = value,
+                'm' => scope.multiline = value,
+                'x' => scope.verbose = value,
+                'a' => scope.ascii = true,
+                'u' => scope.ascii = false,
+                _ => {}
+            }
         }
     }
 }
 
-/// An element of a class: a character, or a set written out.
-enum Item {
-    Char(char),
-    Set(String),
+/// Python's type flags (`a`, `u`, `L`): one at most.
+fn is_type(flag: char) -> bool {
+    matches!(flag, 'a' | 'u' | 'L')
+}
+
+/// Python's `str.isidentifier()`, near enough for group names: a letter or `_`, then
+/// letters, digits or `_`.
+fn is_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|c| c == '_' || c.is_alphabetic()) && chars.all(|c| c == '_' || c.is_alphanumeric())
 }
 
 /// `{m}`, `{m,}`, `{,n}`, `{m,n}`, `{,}` at the start of `chars`, as Python reads a repeat:
 /// its least and most counts and its length; `None` where Python reads `{` as itself.
-fn braces(chars: &[char]) -> Option<(usize, Option<usize>, usize)> {
+fn braces(chars: &[char]) -> Option<(u128, Option<u128>, usize)> {
     if chars.first() != Some(&'{') || chars.get(1) == Some(&'}') {
         return None;
     }
@@ -588,37 +717,8 @@ fn braces(chars: &[char]) -> Option<(usize, Option<usize>, usize)> {
     if chars.get(k) != Some(&'}') {
         return None;
     }
-    let low_n = if low.is_empty() { 0 } else { low.parse().ok()? };
-    let high_n = if high.is_empty() {
-        None
-    } else {
-        Some(high.parse().ok()?)
-    };
+    let count = |digits: &str| digits.parse::<u128>().unwrap_or(u128::MAX);
+    let low_n = if low.is_empty() { 0 } else { count(&low) };
+    let high_n = if high.is_empty() { None } else { Some(count(&high)) };
     Some((low_n, high_n, k + 1))
-}
-
-/// Flags this engine reads as Python does.
-fn check_flags(flags: &str) -> Result<(), Unsupported> {
-    match flags.chars().find(|f| !matches!(f, 'i' | 'm' | 's')) {
-        None => Ok(()),
-        Some(f) => Err(Unsupported(format!(
-            "the flag {f} is not read here (only i, m and s are)"
-        ))),
-    }
-}
-
-/// `c` as a literal outside a class.
-fn literal(out: &mut String, c: char) {
-    if r"\.+*?()|[]{}^$#&-~".contains(c) {
-        out.push('\\');
-    }
-    out.push(c);
-}
-
-/// `c` as a literal inside a class.
-fn class_literal(out: &mut String, c: char) {
-    if r"\[]^-&~".contains(c) {
-        out.push('\\');
-    }
-    out.push(c);
 }

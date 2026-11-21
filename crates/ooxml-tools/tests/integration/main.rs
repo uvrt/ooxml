@@ -8,5 +8,6 @@ mod budgets;
 mod calls;
 mod equality;
 mod intent_rules;
+mod pyre;
 mod refusals;
 mod results;

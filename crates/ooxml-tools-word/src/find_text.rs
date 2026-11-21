@@ -86,7 +86,7 @@ pub fn find_text(args: &FindText, version: &Version<'_>, cancel: &dyn Cancel) ->
         return Err(ToolError::failure(Failure::Unit, "nothing to find").at("text"));
     }
     let pattern = match args.regex {
-        Some(true) => Some(PyRegex::new(&args.text, false).map_err(|why| regex_refusal(args, &why.0))?),
+        Some(true) => Some(PyRegex::new(&args.text, false).map_err(|why| regex_refusal(args, why.message()))?),
         _ => None,
     };
     let docx = version.docx()?;
@@ -107,7 +107,7 @@ pub fn find_text(args: &FindText, version: &Version<'_>, cancel: &dyn Cancel) ->
     let needle: Vec<char> = args.text.chars().collect();
     let found_in = |text: &[char], line: &str| -> Result<Vec<(usize, usize)>, ToolError> {
         match &pattern {
-            Some(regex) => regex.find(line).map_err(|why| regex_refusal(args, &why.0)),
+            Some(regex) => regex.find(line).map_err(|why| regex_refusal(args, why.message())),
             None => Ok(literal_matches(text, &needle)
                 .into_iter()
                 .map(|start| (start, start + needle.len()))
