@@ -1,4 +1,5 @@
-//! Owns: the listed changes holding given records ([`changes_holding`]), grouped over the
+//! Owns: the listed changes holding given records ([`changes_holding`], with their authors
+//! [`authored_changes_holding`]), grouped over the
 //! stretch of their part around them rather than the whole part: what [`super::change_groups`]
 //! gives of those changes, at the cost of the blocks they reach.
 //!
@@ -30,6 +31,16 @@ const MARGIN: usize = 2;
 /// those groups reach.
 #[must_use]
 pub fn changes_holding(docx: &Docx, wanted: &[(String, Vec<u32>)]) -> Vec<String> {
+    authored_changes_holding(docx, wanted)
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect()
+}
+
+/// [`changes_holding`] with each change's author: its first record's that names one (as a
+/// [`super::LogicalChange`]'s).
+#[must_use]
+pub fn authored_changes_holding(docx: &Docx, wanted: &[(String, Vec<u32>)]) -> Vec<(String, Option<String>)> {
     let wanted: HashSet<(&str, &[u32])> = wanted.iter().map(|(p, w)| (p.as_str(), w.as_slice())).collect();
     let all = records(docx);
     let mut out = Vec::new();
@@ -91,8 +102,9 @@ impl<'r> Stretch<'r> {
         }
     }
 
-    /// The ids of the changes holding the records `mine` (indexes into the part's records).
-    fn changes(&self, mine: &[usize]) -> Vec<String> {
+    /// The ids and authors of the changes holding the records `mine` (indexes into the
+    /// part's records).
+    fn changes(&self, mine: &[usize]) -> Vec<(String, Option<String>)> {
         let last = self.blocks.len().saturating_sub(1);
         let blocks: Vec<usize> = mine.iter().filter_map(|k| self.block_of.get(*k).copied()).collect();
         let (low, high) = (
@@ -112,7 +124,7 @@ impl<'r> Stretch<'r> {
 
     /// The changes holding `mine`, grouped over blocks `a..=b`: `None` when one of them may
     /// reach past the stretch (the whole part is always enough).
-    fn read(&self, a: usize, b: usize, mine: &[usize]) -> Option<Vec<String>> {
+    fn read(&self, a: usize, b: usize, mine: &[usize]) -> Option<Vec<(String, Option<String>)>> {
         let whole = a == 0 && b + 1 >= self.blocks.len();
         let first = self.block_of.iter().position(|k| *k >= a).unwrap_or(self.held.len());
         let end = self.block_of.iter().position(|k| *k > b).unwrap_or(self.held.len());
@@ -137,7 +149,12 @@ impl<'r> Stretch<'r> {
                 return None;
             }
             if let Some(record) = group.members.first().and_then(|k| held.get(*k)) {
-                out.push(record.id.clone());
+                let author = group
+                    .members
+                    .iter()
+                    .filter_map(|k| held.get(*k))
+                    .find_map(|r| r.author().map(str::to_owned));
+                out.push((record.id.clone(), author));
             }
         }
         Some(out)

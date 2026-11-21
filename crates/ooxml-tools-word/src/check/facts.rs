@@ -1,11 +1,13 @@
 //! Owns: `check`'s facts read from the document alone as docx-agent words them in `layout`
-//! (`empty_paragraphs`, `numbering_skips_level`, `table_grid_mismatch`, `accept_loses_text`):
+//! (`empty_paragraphs`, `numbering_skips_level`, `table_grid_mismatch`, `accept_loses_text`,
+//! `accept_loses_original`):
 //! each entry's JSON, with the calls that fix it, an entry's own lists capped as docx-agent
 //! caps them.
 //!
 //! Must not: find the facts (`ooxml_word_edit::facts` does), filter or cap them.
 
-use ooxml_word_edit::facts::{EmptyRun, GridMismatch, LostCell, SkippedLevel};
+use crate::describe::short;
+use ooxml_word_edit::facts::{EmptyRun, GridMismatch, LostCell, LostOriginal, SkippedLevel};
 use serde_json::{json, Map, Value};
 
 /// The most of a list inside one entry (docx-agent's `CAP`).
@@ -120,4 +122,31 @@ pub fn lost_cell_json(cell: &LostCell) -> Value {
         "author": cell.author,
         "fix": {"tool": "word_changes", "calls": [call]},
     })
+}
+
+/// An `accept_loses_original` entry: the file's text one listed change of this session takes
+/// out of the final view (per table, or the body's paragraphs), with the reject that keeps it.
+#[must_use]
+pub fn lost_original_json(entry: &LostOriginal) -> Value {
+    let mut out = Map::new();
+    out.insert("change".into(), entry.change.clone().map_or(Value::Null, Value::from));
+    out.insert("author".into(), entry.author.clone().map_or(Value::Null, Value::from));
+    match &entry.table {
+        Some(table) => out.insert("table".into(), Value::from(table.clone())),
+        None => out.insert("paras".into(), Value::from(entry.paras.clone())),
+    };
+    out.insert("cells".into(), Value::from(entry.cells));
+    out.insert("paragraphs".into(), Value::from(entry.paragraphs));
+    let sample: Vec<Value> = entry
+        .sample
+        .iter()
+        .map(|(at, text)| json!({"at": at, "text": short(text, 60)}))
+        .collect();
+    out.insert("sample".into(), Value::from(sample));
+    let call = match &entry.change {
+        Some(change) => json!({"action": "reject", "ids": [change]}),
+        None => json!({"action": "reject", "within": entry.within()}),
+    };
+    out.insert("fix".into(), json!({"tool": "word_changes", "calls": [call]}));
+    Value::Object(out)
 }
