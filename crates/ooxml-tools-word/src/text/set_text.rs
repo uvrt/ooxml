@@ -168,7 +168,6 @@ fn write(
     Ok(result)
 }
 
-
 /// A style name docx-agent reads as given: a non-empty one.
 fn named_style(style: &Option<String>) -> Option<String> {
     style.clone().filter(|s| !s.is_empty())
