@@ -3,21 +3,21 @@
 //! added or whose text it changed, told from the version it was applied to and the one it
 //! made; their `w14:paraId`s kept in the host's record of the rows written this session
 //! ([`RowsWritten`], which `check`'s `row_text_format` reads); text written into a cell that
-//! was empty given its column's formatting ([`LikeTheColumn`], a second command of the
-//! call's step); and a warning for each written row whose text looks unlike the rows around
+//! was empty given its column's formatting ([`LikeTheColumn`], in the transaction of the
+//! call's command: one commit, one step); and a warning for each written row whose text looks unlike the rows around
 //! it, with the `word_format` call that makes it match.
 //!
 //! Only the main story's tables are looked at, as docx-agent looks at them.
 //!
-//! Must not: change the document but through a command, or read a row by its address
+//! Must not: change the document but through one transaction, or read a row by its address
 //! (rows are found by their places in the versions before and after).
 
 use super::table_view::table_view;
 use crate::review::Editing;
-use ooxml_store::Snapshot;
+use ooxml_store::{Command, Txn};
 use ooxml_tools::{python_dumps, TryCall};
 use ooxml_word_edit::{
-    row_shown, rows_unlike, ColumnCopy, Edited, LikeTheColumn, LookField, RowUnlike, TextLook, WordDoc,
+    row_shown, rows_unlike, ColumnCopy, EditError, LikeTheColumn, LookField, RowUnlike, TextLook, WordDoc,
 };
 use ooxml_word_model::docx::{at_path, Docx};
 use ooxml_word_model::ids::{TableId, W14};
@@ -87,42 +87,114 @@ fn written_rows(before: &[String], after: &[String], after_ids: &[String], made:
     )
 }
 
-/// [`rows_written`] after the command `done` wrote rows of `table` (its id after followed).
-pub(super) fn after<O>(
-    editing: &Editing<'_>,
-    table: &str,
-    done: &Edited<O>,
-    made: Option<&str>,
-    retry: &TryCall,
-) -> Vec<String> {
-    let now = done.version.doc().ids().follow(table);
-    rows_written(editing, table, &now, done.previous.as_ref(), &done.version, made, retry)
+/// What looking at the rows a call wrote gave: the reply's warnings, in order, and the rows
+/// to keep in the host's record once the call is committed (their `w14:paraId`s as its
+/// transaction holds them).
+#[derive(Debug, Default)]
+struct Looked {
+    warnings: Vec<String>,
+    rows: Vec<String>,
 }
 
-/// What the call did beyond its command (`_rows_written`): `table` the table as the
-/// call named it, `now` its id after, `previous` and `version` the versions its command
-/// was applied to and made, `made` the row it added. The warnings, in order.
-pub(super) fn rows_written(
+/// A table `command`, then the rows it wrote looked at -- text written into empty cells
+/// given its column's formatting in the same transaction: one commit, one history step, and
+/// the rows kept in the host's record only once it is committed (as drawn). `table` is the
+/// table as the call named it; `look` gives, from the command's out and the version it
+/// made, the table's id after and the row it added, `None` where the rows are not looked
+/// at. The command's out and the warnings.
+///
+/// # Errors
+/// The command's refusal.
+pub(super) fn run_writing_rows<C, F>(
     editing: &Editing<'_>,
+    command: &C,
     table: &str,
-    now: &str,
-    previous: Option<&Snapshot<WordDoc>>,
-    version: &Snapshot<WordDoc>,
+    look: F,
+    retry: &TryCall,
+) -> Result<(C::Out, Vec<String>), EditError>
+where
+    C: Command<WordDoc, Error = EditError>,
+    F: Fn(&C::Out, &WordDoc) -> Option<(String, Option<String>)>,
+{
+    let writing = WritingRows {
+        command,
+        editing,
+        table,
+        look,
+        retry,
+    };
+    let done = editing.editor.run(editing.caller, &writing)?;
+    let (out, looked) = done.out;
+    if let Some(record) = editing.rows_written {
+        record.note(looked.rows.iter().map(|row| done.drawn.resolve(row)));
+    }
+    Ok((out, looked.warnings))
+}
+
+/// A command, then the rows it wrote looked at, as one transaction ([`run_writing_rows`]).
+struct WritingRows<'a, 'e, C, F> {
+    command: &'a C,
+    editing: &'a Editing<'e>,
+    table: &'a str,
+    look: F,
+    retry: &'a TryCall,
+}
+
+impl<C, F> Command<WordDoc> for WritingRows<'_, '_, C, F>
+where
+    C: Command<WordDoc, Error = EditError>,
+    F: Fn(&C::Out, &WordDoc) -> Option<(String, Option<String>)>,
+{
+    type Out = (C::Out, Looked);
+    type Error = EditError;
+
+    fn validate(&self, doc: &WordDoc) -> Result<(), EditError> {
+        self.command.validate(doc)
+    }
+
+    fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<Self::Out, EditError> {
+        let before = tx.doc().clone();
+        let out = self.command.prepare(tx)?;
+        if tx.changes().is_empty() {
+            return Ok((out, Looked::default()));
+        }
+        let Some((now, made)) = (self.look)(&out, tx.doc()) else {
+            return Ok((out, Looked::default()));
+        };
+        let looked = rows_written(
+            self.editing,
+            tx,
+            &before,
+            (self.table, &now),
+            made.as_deref(),
+            self.retry,
+        );
+        Ok((out, looked))
+    }
+}
+
+/// What the call did beyond its command (`_rows_written`): `table` the table as the call
+/// named it and its id after, `previous` the version its command was applied to and `tx`
+/// the one it made, `made` the row it added.
+fn rows_written(
+    editing: &Editing<'_>,
+    tx: &mut Txn<'_, WordDoc>,
+    previous: &WordDoc,
+    (table, now): (&str, &str),
     made: Option<&str>,
     retry: &TryCall,
-) -> Vec<String> {
-    let Some(previous) = previous else { return Vec::new() };
-    let (Ok(old_docx), Ok(docx)) = (previous.doc().docx(), version.doc().docx()) else {
-        return Vec::new();
+) -> Looked {
+    let (Ok(old_docx), Ok(docx)) = (previous.docx(), tx.doc().docx()) else {
+        return Looked::default();
     };
     let (Ok(old), Ok(new)) = (
-        table_view(previous.doc(), &old_docx, table, retry),
-        table_view(version.doc(), &docx, now, retry),
+        table_view(previous, &old_docx, table, retry),
+        table_view(tx.doc(), &docx, now, retry),
     ) else {
-        return Vec::new();
+        return Looked::default();
     };
     if new.part != docx.main {
-        return Vec::new();
+        return Looked::default();
     }
     let row_ids: Vec<String> = new.table.rows.iter().map(|(_, id)| id.clone()).collect();
     let Some(now_rows) = written_rows(
@@ -131,10 +203,10 @@ pub(super) fn rows_written(
         &row_ids,
         made,
     ) else {
-        return Vec::new();
+        return Looked::default();
     };
     if now_rows.is_empty() {
-        return Vec::new();
+        return Looked::default();
     }
     let ids: Vec<Option<String>> = new
         .table
@@ -144,21 +216,17 @@ pub(super) fn rows_written(
         .collect();
     let mut kept = editing.rows_written.map(RowsWritten::ids).unwrap_or_default();
     let mine: Vec<String> = now_rows.iter().filter_map(|r| ids.get(*r).cloned().flatten()).collect();
-    if let Some(record) = editing.rows_written {
-        record.note(mine.iter().cloned());
-    }
-    kept.extend(mine);
+    kept.extend(mine.iter().cloned());
     let marked: Vec<bool> = (0..ids.len())
         .map(|r| now_rows.contains(&r) || ids.get(r).and_then(Option::as_ref).is_some_and(|i| kept.contains(i)))
         .collect();
     let ours =
         |found: Vec<RowUnlike>| -> Vec<RowUnlike> { found.into_iter().filter(|e| now_rows.contains(&e.row)).collect() };
     let mut unlike = ours(rows_unlike(&docx, &new.part, &new.table, &marked));
-    let mut out = like_the_column(editing, now, &unlike, &ids);
+    let mut out = like_the_column(tx, now, &unlike, &ids);
     if !out.is_empty() {
-        let head = editing.editor.store().snapshot();
-        if let Ok(docx) = head.doc().docx() {
-            if let Ok(view) = table_view(head.doc(), &docx, now, retry) {
+        if let Ok(docx) = tx.doc().docx() {
+            if let Ok(view) = table_view(tx.doc(), &docx, now, retry) {
                 unlike = ours(rows_unlike(&docx, &view.part, &view.table, &marked));
             }
         }
@@ -182,12 +250,20 @@ pub(super) fn rows_written(
             unlike.len() - ROWS_SAID
         ));
     }
-    out
+    Looked {
+        warnings: out,
+        rows: mine,
+    }
 }
 
-/// Text written into cells that were empty given its column's formatting, as one command;
-/// what it did, said per cell.
-fn like_the_column(editing: &Editing<'_>, table: &str, unlike: &[RowUnlike], ids: &[Option<String>]) -> Vec<String> {
+/// Text written into cells that were empty given its column's formatting, in the call's
+/// transaction (left out, the call going on, where it refuses); what it did, said per cell.
+fn like_the_column(
+    tx: &mut Txn<'_, WordDoc>,
+    table: &str,
+    unlike: &[RowUnlike],
+    ids: &[Option<String>],
+) -> Vec<String> {
     let cells: Vec<(ColumnCopy, String)> = unlike
         .iter()
         .flat_map(|found| {
@@ -217,10 +293,15 @@ fn like_the_column(editing: &Editing<'_>, table: &str, unlike: &[RowUnlike], ids
         table: table.to_owned(),
         cells: cells.iter().map(|(c, _)| c.clone()).collect(),
     };
-    let Ok(done) = editing.editor.run(editing.caller, &command) else {
-        return Vec::new();
+    let point = tx.savepoint();
+    let written = match command.validate(tx.doc()).and_then(|()| command.prepare(tx)) {
+        Ok(written) => written,
+        Err(_) => {
+            tx.rollback(point);
+            return Vec::new();
+        }
     };
-    done.out
+    written
         .iter()
         .zip(cells)
         .filter(|(written, _)| **written)
