@@ -4,7 +4,7 @@
 //!
 //! Must not: change the document but through a command.
 
-use ooxml_tools::{ArgEnum, ReadsWhen, ToolArgs};
+use ooxml_tools::{ArgEnum, PyNumber, ReadsWhen, ToolArgs};
 
 /// What `edit_chart` does.
 #[derive(ArgEnum, Debug, Clone, Copy, PartialEq, Eq)]
@@ -248,14 +248,14 @@ pub struct ChartBox {
     pub h: f64,
 }
 
-/// An axis' scale; keys left out stay.
+/// An axis' scale; keys left out stay. Numbers keep int or float, as messages name them.
 #[allow(missing_docs)]
 #[derive(ToolArgs, Debug, Clone, PartialEq)]
 pub struct ScaleArg {
-    pub min: Option<f64>,
-    pub max: Option<f64>,
-    pub major_unit: Option<f64>,
-    pub minor_unit: Option<f64>,
+    pub min: Option<PyNumber>,
+    pub max: Option<PyNumber>,
+    pub major_unit: Option<PyNumber>,
+    pub minor_unit: Option<PyNumber>,
     pub number_format: Option<String>,
     /// Categories top-down.
     pub reverse: Option<bool>,
@@ -269,14 +269,14 @@ pub struct ScaleArg {
 pub struct StyleArg {
     pub fill: Option<String>,
     pub line: Option<String>,
-    pub line_width: Option<f64>,
+    pub line_width: Option<PyNumber>,
     pub dash: Option<Dash>,
     pub marker: Option<Marker>,
     #[arg(minimum = 2, maximum = 72)]
     pub marker_size: Option<i64>,
     pub marker_fill: Option<String>,
     pub font: Option<String>,
-    pub size: Option<f64>,
+    pub size: Option<PyNumber>,
     pub bold: Option<bool>,
     pub color: Option<String>,
 }

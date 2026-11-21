@@ -361,6 +361,213 @@ def drawings_cases(document) -> list[dict]:
     return out + [tracked(case) for case in out]
 
 
+@CASES
+def chart_cases(document) -> list[dict]:
+    """``edit_chart``'s ``read``: every chart (group members too), a drawing that is not a
+    chart and a drawing that is not there; and the data actions that change points in place
+    on the first three charts (:func:`_chart_data_edits`)."""
+    def read(target: str) -> dict:
+        return call("edit_chart", action="read", target=target)
+
+    graphics = document._graphics()
+    charts = [identifier for _part, identifier, _frame, kind in graphics if kind == "chart"]
+    out = [read(identifier) for identifier in charts]
+    other = next((identifier for _part, identifier, _frame, kind in graphics if kind != "chart"), None)
+    if other is not None:
+        out.append(read(other))
+    out.append(read("d:999999"))
+    for identifier in charts[:3]:
+        out += _chart_data_edits(document, identifier)
+        out += _chart_shape_edits(document, identifier)
+        out += _chart_title_edits(document, identifier)
+        out += _chart_style_edits(document, identifier)
+        out += _chart_combine_edits(document, identifier)
+    return out
+
+
+def _chart_data_edits(document, target: str) -> list[dict]:
+    """``set_values`` (each value moved, a blank kept), ``set_value``, ``rename_series`` and
+    ``rename_category`` (to text, to nothing) by name and by position, the same value again,
+    and their refusals (a count that is not the categories', a name nothing has, a value
+    missing); ``set_value`` and ``rename_series`` tracked too."""
+    def edit(action: str, **arguments) -> dict:
+        return call("edit_chart", action=action, target=target, **arguments)
+
+    try:
+        chart = document.chart(target)
+        names = ["" if s.name is None else str(s.name) for s in chart.series]
+        values = list(chart.series[0].values) if chart.series else []
+    except Exception:  # noqa: BLE001 -- a chart docx-agent cannot read: the reads cover it
+        return []
+    first = names[0] if names and names[0] else "0"
+    moved = [None if v is None or isinstance(v, str) else v + 1.5 for v in values]
+    out = [edit("set_values", series=first, values=moved), edit("set_values", series="0", values=values),
+           edit("set_values", series="0", values=[*values, 1]), edit("set_value", series="0", category="0", value=42.5),
+           edit("set_value", series="0", category="0"), edit("set_value", series="No such series", category="0", value=1),
+           edit("rename_series", series=first, text="Renamed series"), edit("rename_series", series="0", text=first),
+           edit("rename_category", category="0", text="Renamed"), edit("rename_category", category="0", text=""),
+           edit("rename_category", category="999", text="x")]
+    return out + [tracked(case) for case in (out[3], out[6])]
+
+
+def _chart_shape_edits(document, target: str) -> list[dict]:
+    """The data actions that change the data's shape or how it shows (lane P4c18):
+    categories and series added (with values, blank, a count that is not the series' or
+    the categories') and removed (by position, by name), the legend moved, hidden and given
+    a label position, value labels shown (on one series, in a format) and hidden, the gap
+    width set (whole, not whole, past 500, missing); ``add_category`` and ``remove_series``
+    tracked too."""
+    def edit(action: str, **arguments) -> dict:
+        return call("edit_chart", action=action, target=target, **arguments)
+
+    try:
+        chart = document.chart(target)
+        names = ["" if s.name is None else str(s.name) for s in chart.series]
+        categories = [str(c) for c in chart.categories]
+        count = chart.point_count
+    except Exception:  # noqa: BLE001 -- a chart docx-agent cannot read: the reads cover it
+        return []
+    last = names[-1] if names and names[-1] else str(max(len(names) - 1, 0))
+    out = [edit("add_category", text="New", values=[1.5 + i for i in range(len(names))]),
+           edit("add_category", text="Blank"), edit("add_category", text="x", values=[1] * (len(names) + 1)),
+           edit("add_category"), edit("remove_category", category="0"),
+           edit("remove_category", category=categories[-1] if categories else "0"),
+           edit("add_series", text="New series", values=[2.5 + i for i in range(count)]),
+           edit("add_series", text="Blank series"), edit("add_series", text="x", values=[1] * (count + 1)),
+           edit("remove_series", series="0"), edit("remove_series", series=last),
+           edit("set_legend", position="bottom"), edit("set_legend", position="none"), edit("set_legend"),
+           edit("set_legend", position="inside_end"), edit("show_data_labels"),
+           edit("show_data_labels", series="0", number_format="0.0"), edit("show_data_labels", number_format=" "),
+           edit("hide_data_labels", number_format="0"), edit("hide_data_labels"),
+           edit("set_gap_width", value=80), edit("set_gap_width", value=80.5), edit("set_gap_width", value=600),
+           edit("set_gap_width")]
+    return out + [tracked(case) for case in (out[0], out[9])]
+
+
+def _chart_title_edits(document, target: str) -> list[dict]:
+    """The titles (lane P4c18, part b2): the chart's given new text (one line, two, the same
+    again), taken away; an axis' given text and taken away; an axis named that is not one
+    (``x``), an axis missing; ``set_title`` tracked too."""
+    def edit(action: str, **arguments) -> dict:
+        return call("edit_chart", action=action, target=target, **arguments)
+
+    try:
+        current = document.chart(target).title
+    except Exception:  # noqa: BLE001 -- a chart docx-agent cannot read: the reads cover it
+        return []
+    out = [edit("set_title", text="Sales by region"), edit("set_title", text="First line\nSecond line"),
+           edit("set_title", text="" if current is None else current), edit("set_title"),
+           edit("set_axis_title", axis="value", text="Amount"), edit("set_axis_title", axis="category"),
+           edit("set_axis_title", axis="category", text="Quarter"), edit("set_axis_title", axis="x", text="x"),
+           edit("set_axis_title", text="x")]
+    return out + [tracked(out[0])]
+
+
+def _chart_style_edits(document, target: str) -> list[dict]:
+    """The style actions (lane P4c19): an axis scaled (bounds, units, a format, reversed, back
+    to automatic; without an axis; bounds on a category axis; a minimum above the maximum; a
+    unit of 0; a key given and listed in auto; empty), gridlines (each kind; no axis; an axis
+    the chart lacks), a series and a point formatted (fill, line, dash, width, markers, a
+    theme colour with modifiers, none; a text key; a bad colour; a point past the end) and
+    the text styled (all of it, each part; a series key; a size past 400); ``format_point``
+    and ``set_axis_scale`` tracked too."""
+    def edit(action: str, **arguments) -> dict:
+        return call("edit_chart", action=action, target=target, **arguments)
+
+    try:
+        document.chart(target)
+    except Exception:  # noqa: BLE001 -- a chart docx-agent cannot read: the reads cover it
+        return []
+    out = [edit("set_axis_scale", axis="value", scale={"min": 0, "max": 50, "major_unit": 10, "minor_unit": 2}),
+           edit("set_axis_scale", scale={"max": 5}), edit("set_axis_scale", axis="value", scale={"number_format": "0.0"}),
+           edit("set_axis_scale", axis="value", scale={"auto": ["min", "max", "number_format"]}),
+           edit("set_axis_scale", axis="category", scale={"reverse": True}),
+           edit("set_axis_scale", axis="category", scale={"min": 1}), edit("set_axis_scale", axis="x", scale={"min": 1}),
+           edit("set_axis_scale", axis="value", scale={"min": 9, "max": 3}),
+           edit("set_axis_scale", axis="value", scale={"major_unit": 0}),
+           edit("set_axis_scale", axis="value", scale={"major_unit": 1, "minor_unit": 5}),
+           edit("set_axis_scale", axis="value", scale={"max": 4, "auto": ["max"]}),
+           edit("set_axis_scale", axis="value", scale={}), edit("set_axis_scale", scale={"reverse": True}),
+           edit("set_axis_scale"),
+           edit("set_gridlines", axis="value", gridlines="both"), edit("set_gridlines", axis="value", gridlines="none"),
+           edit("set_gridlines", axis="category", gridlines="major"), edit("set_gridlines", gridlines="minor"),
+           edit("set_gridlines", axis="value"), edit("set_gridlines", axis="y", gridlines="major"),
+           edit("format_series", series="0", style={"fill": "accent2 lumMod=75%", "line": "1F4E79", "line_width": 1.5,
+                                                    "dash": "dash"}),
+           edit("format_series", series="0", style={"fill": "none", "line": "none"}),
+           edit("format_series", series="0", style={"line": "Text 2", "marker": "diamond", "marker_size": 9,
+                                                    "marker_fill": "accent6"}),
+           edit("format_series", series="0", style={"line_width": 3}), edit("format_series", series="0", style={}),
+           edit("format_series", series="0", style={"font": "Arial"}),
+           edit("format_series", series="0", style={"fill": "not a colour"}),
+           edit("format_series", series="0", style={"line": "#12ab9z"}),
+           edit("format_series", series="0", style={"line": "accent1 lumMod=x"}),
+           edit("format_series", style={"fill": "tx2"}),
+           edit("format_point", series="0", category="0", style={"fill": "accent2"}),
+           edit("format_point", series="0", category="1", style={"line": "tx1", "marker": "circle"}),
+           edit("format_point", series="0", style={"fill": "accent2"}),
+           edit("format_point", series="0", category="999", style={"fill": "accent2"}),
+           edit("set_text_style", style={"size": 10}),
+           edit("set_text_style", part="title", style={"size": 14, "bold": True, "color": "tx2"}),
+           edit("set_text_style", part="axis_labels", style={"font": "+mj-lt", "color": "accent1 lumMod=50%"}),
+           edit("set_text_style", part="legend", style={"font": "Georgia"}),
+           edit("set_text_style", part="data_labels", style={"bold": False}),
+           edit("set_text_style", part="axis_titles", style={"size": 9}),
+           edit("set_text_style", style={"size": 401}), edit("set_text_style", style={"fill": "tx1"}),
+           edit("set_text_style", style={"font": "A typeface name longer than thirty-one"}),
+           edit("set_text_style"),
+           # lane P4c20: JSON's 9.0 is Python's float, named so in messages; a null key is
+           # left out, as the validator drops it (no fill, no automatic bound)
+           edit("set_axis_scale", axis="value", scale={"min": 9.0, "max": 3.0}),
+           edit("set_axis_scale", axis="value", scale={"major_unit": 5.0, "minor_unit": 10.0}),
+           edit("set_axis_scale", axis="value", scale={"min": 9, "max": 3.5}),
+           edit("format_series", series="0", style={"line_width": 2000.0}),
+           edit("set_text_style", style={"size": 401.0}), edit("set_text_style", style={"size": 12.0}),
+           edit("format_series", series="0", style={"fill": None}),
+           edit("format_series", series="0", style={"fill": None, "line": "none"}),
+           edit("set_axis_scale", axis="value", scale={"max": None}),
+           edit("set_axis_scale", axis="value", scale={"max": None, "min": 1}),
+           edit("set_text_style", style={"size": None, "bold": True})]
+    return out + [tracked(case) for case in (out[0], out[30])]
+
+
+def _chart_combine_edits(document, target: str) -> list[dict]:
+    """``set_series_type`` (lane P4c21): a series drawn as a line, on the secondary axes, back
+    as a column (columns on the secondary axis; a type that is not line or column; no
+    series), and ``set_point_labels``: a label per point (at a position, a position the
+    plot does not take, in the workbook too), taken away, and its refusals (a count that is
+    not the points', a label past 255 characters, no series); a line series and
+    ``set_point_labels`` tracked too."""
+    def edit(action: str, **arguments) -> dict:
+        return call("edit_chart", action=action, target=target, **arguments)
+
+    try:
+        chart = document.chart(target)
+        names = ["" if s.name is None else str(s.name) for s in chart.series]
+        count = len(chart.point_labels(0)) if names else 0
+    except Exception:  # noqa: BLE001 -- a chart docx-agent cannot read: the reads cover it
+        return []
+    last = names[-1] if names and names[-1] else str(max(len(names) - 1, 0))
+    labels = [f"R{i + 1}" for i in range(count)]
+    out = [edit("set_series_type", series=last, chart_type="line"),
+           edit("set_series_type", series=last, chart_type="line", secondary=True),
+           edit("set_series_type", series="0", chart_type="line", secondary=False),
+           edit("set_series_type", series="0", chart_type="column"),
+           edit("set_series_type", series="0", chart_type="column", secondary=True),
+           edit("set_series_type", series="0", chart_type="pie"), edit("set_series_type", chart_type="line"),
+           edit("set_series_type", series="0"),
+           edit("set_point_labels", series="0", labels=labels),
+           edit("set_point_labels", series="0", labels=labels, position="right"),
+           edit("set_point_labels", series="0", labels=labels, position="center"),
+           edit("set_point_labels", series="0", labels=labels, position="none"),
+           edit("set_point_labels", series="0", labels=labels, cells=True),
+           edit("set_point_labels", series=last, labels=labels, position="outside_end", cells=True),
+           edit("set_point_labels", series="0"), edit("set_point_labels", series="0", labels=[*labels, "x"]),
+           edit("set_point_labels", series="0", labels=["x" * 256] + labels[1:]),
+           edit("set_point_labels", labels=labels)]
+    return out + [tracked(case) for case in (out[1], out[12])]
+
+
 def _chunk(kind: bytes, body: bytes) -> bytes:
     return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
 

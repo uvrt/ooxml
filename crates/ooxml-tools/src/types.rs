@@ -1,7 +1,7 @@
 //! The Rust types an argument may have, and the schema node each stands for.
 //!
 //! Owns: [`ArgType`] (a type's schema node and how it is read from validated JSON) for
-//! strings, whole numbers, numbers, booleans, `Option` (an optional argument, or a null
+//! strings, whole numbers, numbers ([`PyNumber`] where a message names one), booleans, `Option` (an optional argument, or a null
 //! item: `orNull`), `Vec` (an array), a free-form object; [`IntOrStr`] (`orInteger`) and
 //! [`NumOrStr`] (`orNumber`); [`ArgEnum`] for the enums `#[derive(ArgEnum)]` makes; and
 //! [`ToolArgs`], a tool's arguments with its [`ToolSpec`].
@@ -13,6 +13,7 @@ use crate::error::ToolError;
 use crate::intent::Accepted;
 use crate::schema::{Kind, NumberNode, Schema, StringNode};
 use crate::spec::ToolSpec;
+use ooxml_base::pyfmt::PyNumber;
 use serde_json::{Map, Value};
 
 /// A validated value that does not have its type's shape: a fault in the contract.
@@ -166,6 +167,28 @@ impl ArgType for f64 {
 
     fn from_arg(value: &Value, at: &str) -> Result<Self, ArgError> {
         value.as_f64().ok_or_else(|| ArgError::new(at, "a number"))
+    }
+}
+
+/// A number that keeps whether JSON gave it as an integer or a float, as Python's `json`
+/// does: for a message that names it (`the minimum (9.0)`). Its schema is a number's.
+impl ArgType for PyNumber {
+    fn schema() -> Schema {
+        f64::schema()
+    }
+
+    fn from_arg(value: &Value, at: &str) -> Result<Self, ArgError> {
+        let number = value.as_number().ok_or_else(|| ArgError::new(at, "a number"))?;
+        if let Some(int) = number.as_i64() {
+            return Ok(Self::Int(int.into()));
+        }
+        if let Some(int) = number.as_u64() {
+            return Ok(Self::Int(int.into()));
+        }
+        number
+            .as_f64()
+            .map(Self::Float)
+            .ok_or_else(|| ArgError::new(at, "a number"))
     }
 }
 
