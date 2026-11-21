@@ -21,8 +21,8 @@ compare layouts (Python lays them out) it runs under the lock (:func:`serve`).
 
 The Python handler answers instead -- on the view, committed through the bridge, counted by
 tool and reason (:func:`fallbacks`, ``edit_fallbacks{tool,reason}``), never silently -- where
-the session does not answer as it yet: a call on a draft,
-values written by reference in a tool that does not keep them yet (``Hosting.keeps_written``), a ref name that would be folded, a refusal (the session's carries its own way out, tool rule 2,
+the session does not answer as it yet: values written by reference in a tool that does not
+keep them yet (``Hosting.keeps_written``), a ref name that would be folded, a refusal (the session's carries its own way out, tool rule 2,
 which today's does not), a session given its own clock (the Rust session dates revisions by
 the system's), and what the session says it leaves to the host (its ``unported``: a find
 within a block, a picture, regex, ...).  The Rust handler changes nothing in each of those.
@@ -106,8 +106,8 @@ def owned_entry(call: Any) -> Any:
 
 
 def _why_not(call: Any, entry: Any, arguments: dict[str, Any]) -> str | None:
-    if entry.live is not None or entry.pinned is not None:
-        return "a draft"
+    # (No draft: ooxml-edit prepares no call of a document the session owns on a draft, and
+    # ``entry`` -- an owner's -- is never a reader's copy; lane H2.)
     if any(not REF.match(name) for name in _ref_names(arguments)):
         # folded with a warning, or refused, by the tool layer as the Python handler names it
         return "a ref name to fold"
@@ -190,17 +190,19 @@ def _names(call: Any, entry: Any, arguments: dict[str, Any]) -> dict[str, str]:
     """The host's names for the documents a call names, each the session's id of it
     (``Session.edit``'s ``names``; lane P2c17): the arguments name documents as the host
     does, and so does the reply (an undo or way-out call, a summary).  The Python handler
-    answers where another document named is not the session's as it is."""
+    answers where another document named is not the session's as it is.  Another document
+    held as a reader of a committed version of one the session owns (``live``: the owner's
+    entry) is that document: the session reads its own committed head of it (lane H2)."""
     mirror = entry.handle
     names = {entry.doc_id: mirror.doc}
     for doc in call.tool.doc_ids(arguments):
         if doc in names:
             continue
         other = call.entries.get(doc)
+        if other is not None and getattr(other, "owner", None) is None:
+            other = getattr(other, "live", None)
         if other is None or getattr(other, "owner", None) is None:
             raise Fallback("a document the session does not own")
-        if other.live is not None or other.pinned is not None:
-            raise Fallback("a document with a draft")
         if other.handle.session is not mirror.session:
             raise Fallback("a document in another session")
         names[doc] = other.handle.doc
