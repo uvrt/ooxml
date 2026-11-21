@@ -108,7 +108,7 @@
    "expect": {
     "ok": true,
     "summary": "Saved annual-report-draft.docx for the application",
-    "data_sha": "b7575758933e3455",
+    "data_sha": "6cace8c32221e7c9",
     "data_keys": [
      "coverage",
      "coverage.blocks_laid_out",
@@ -130,6 +130,6 @@
  ],
  "output": {
   "name": "annual-report-draft.docx",
-  "sha256": "93006dc933e49dd68a4acce0cc727b6da10bdd83405ac865f2fe14a895a0cda3"
+  "parts_sha256": "c0a780c8e26bcaee1a8bf3bea501ccecf83b7f272becb2d98c123836d2024355"
  }
 }

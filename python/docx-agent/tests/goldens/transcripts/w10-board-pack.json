@@ -461,7 +461,7 @@
    "expect": {
     "ok": true,
     "summary": "Saved board-pack-q3.docx for the application",
-    "data_sha": "87bdf99d7149fe1f",
+    "data_sha": "359f921de34a792f",
     "data_keys": [
      "coverage",
      "coverage.blocks_laid_out",
@@ -483,6 +483,6 @@
  ],
  "output": {
   "name": "board-pack-q3.docx",
-  "sha256": "638cb38d546f80bfcf10296e5f7cf62e60f9d63dc7ed4abf554a8487457d05c4"
+  "parts_sha256": "df74c24ca7a723f277ed32accd86811bd41d5b7e27e60887be0ddc5e8ba23f16"
  }
 }

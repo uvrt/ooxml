@@ -271,7 +271,7 @@
    "expect": {
     "ok": true,
     "summary": "Saved field-handbook.docx for the application",
-    "data_sha": "00185e242cbfcdb3",
+    "data_sha": "4adc6139f426773a",
     "data_keys": [
      "coverage",
      "coverage.blocks_laid_out",
@@ -293,6 +293,6 @@
  ],
  "output": {
   "name": "field-handbook.docx",
-  "sha256": "8baa451cf356616f99d2a317de88369780f9f772cbb4364af4418a5c56ca99ac"
+  "parts_sha256": "0a96f4c4d101f9531fe14ed95cbaf813b29e724a4509b6dd3ffa05dac33ce1c7"
  }
 }
