@@ -492,6 +492,13 @@ def copy_cases(document) -> list[dict]:
             for block in _annotated(source, [b["id"] for b in source.blocks() if b["id"]])[:2]:
                 out += [{**call("word_copy_from", source_doc="d2", range=block, at=at),
                          "reference_file": str(other)} for at in ("end", f"before:{blocks[0]}")]
+    # Lane P4f6: blocks holding bookmarks (renamed: the document has the name; their links and
+    # fields following), with the block before them (a link to the bookmark).
+    for block in _bookmarked(document, blocks)[:3]:
+        at = blocks.index(block)
+        span = f"{blocks[at - 1]}..{block}" if at and blocks[at - 1][:2] == block[:2] == "p:" else block
+        out += [from_d2(range=span, at="end"),
+                call("word_copy_from", source_doc="d1", range=block, at=f"before:{blocks[0]}")]
     return out + [tracked(case) for case in out]
 
 
@@ -528,6 +535,19 @@ def _annotated(document, blocks: list[str]) -> list[str]:
         except (KeyError, ValueError):
             continue
         if any(isinstance(n.tag, str) and n.tag.endswith(_ANNOTATIONS) for n in element.iter()):
+            out.append(block)
+    return out
+
+
+def _bookmarked(document, blocks: list[str]) -> list[str]:
+    """The blocks of ``blocks`` holding a bookmark (lane P4f6)."""
+    out = []
+    for block in blocks:
+        try:
+            element = document._resolve(block)[1].element
+        except (KeyError, ValueError):
+            continue
+        if any(isinstance(n.tag, str) and n.tag.endswith("}bookmarkStart") for n in element.iter()):
             out.append(block)
     return out
 
