@@ -19,6 +19,7 @@ from ooxml_edit.tools import Toolbox  # noqa: E402
 
 from docx_agent import Document  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
+from view_edits import edited  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures"
 AGREEMENT = FIXTURES / "generated" / "pilot" / "agreement-summary.docx"
@@ -460,7 +461,8 @@ def test_s_body_reads_a_body_without_a_section_of_its_own(box, session):
 def test_block_tools_take_a_block_level_control(box, session):
     """Round 23, V2: word_delete, word_move and word_copy_from take a control's id."""
     d = open_doc(session)
-    control = document(session).insert_control(None, "rich-text", after="p:3B212964", text="Held text").id
+    with edited(session, d) as doc:
+        control = doc.insert_control(None, "rich-text", after="p:3B212964", text="Held text").id
     ok(box, session, "word_move", doc=d, blocks=control, after="p:4B50F4CD")
     copy = ok(box, session, "word_copy_from", doc=d, source_doc=d, range=control, at="end")
     assert copy.data["blocks"][0].startswith("cc:")
@@ -1448,12 +1450,12 @@ def test_cells_take_a_style_whose_indent_does_not_fit_and_say_so(box, session):
     """Round 21, T4: a cell style inheriting Normal's -170 pt right indent is written as it
     is -- no direct indent on the cells -- and the result names the style and the indent."""
     d = ok(box, session, "new_document", kind="docx").created[0]
-    doc = document(session, d)
-    doc.styles.modify("Normal", indent_right=-170)
-    doc.styles.add("Cell text", "paragraph", based_on="Normal")
+    with edited(session, d) as doc:
+        doc.styles.modify("Normal", indent_right=-170)
+        doc.styles.add("Cell text", "paragraph", based_on="Normal")
     result = ok(box, session, "word_insert_markdown", doc=d, at="end", markdown="| A | B |\n|---|---|\n| 1 | 2 |",
                 style_map=[{"element": "table_cell", "style": "Cell text"}])
-    with zipfile.ZipFile(io.BytesIO(doc.to_bytes())) as archive:
+    with zipfile.ZipFile(io.BytesIO(document(session, d).to_bytes())) as archive:
         assert b"<w:ind" not in archive.read("word/document.xml")
     warning = [w for w in result.warnings if "Cell text" in w]
     assert len(warning) == 1 and "indent_right -170 pt (from Normal)" in warning[0]
@@ -1465,22 +1467,22 @@ def test_a_table_as_wide_as_the_body_lines_is_not_past_the_margins(box, session)
     a table as wide as those lines, on their edges, and check has nothing past the margins
     -- while a table reaching beyond the lines still is."""
     d = ok(box, session, "new_document", kind="docx").created[0]
-    doc = document(session, d)
-    doc.styles.modify("Normal", indent_left=12, indent_right=-60)
+    with edited(session, d) as doc:
+        doc.styles.modify("Normal", indent_left=12, indent_right=-60)
     blocks = ok(box, session, "word_insert_markdown", doc=d, at="end",
                 markdown="Body text.\n\n| A | B |\n|---|---|\n| 1 | 2 |").data["blocks"]
     table = next(b for b in blocks if b.startswith("t:"))
-    lines = doc.body_lines(table)
+    lines = document(session, d).body_lines(table)
     assert (lines["left"], lines["right"]) == (12, -60) and lines["width"] == lines["text_width"] + 48
     ok(box, session, "word_format_table", doc=d, table=table, scope="table", width_of="body")
-    properties = doc.table_properties(table)
+    properties = document(session, d).table_properties(table)
     assert properties["width"] == lines["width"] and properties["indent"] == 12
     assert sum(properties["columns"]) == pytest.approx(lines["width"], abs=0.05)
     assert ok(box, session, "check", doc=d, include=["layout"]).data["layout"]["past_margins"] == []
     # Half as wide, centred between the lines' edges.
     ok(box, session, "word_format_table", doc=d, table=table, scope="table", width_of="body", width_percent=50,
        alignment="center")
-    properties = doc.table_properties(table)
+    properties = document(session, d).table_properties(table)
     assert properties["width"] == pytest.approx(lines["width"] / 2, abs=0.01)
     assert properties["indent"] == pytest.approx(12 + lines["width"] / 4, abs=0.01)
     # Past the lines: reported, by how far past the margin.
@@ -1500,17 +1502,17 @@ def test_a_tracked_format_leaves_other_paragraphs_as_they_were(box, session):
 
     w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
     d = open_doc(session)
-    doc = document(session)
-    root = doc.package.tree("word/document.xml")
-    other = next(p for p in root.iter(w + "p")
-                 if p.get("{http://schemas.microsoft.com/office/word/2010/wordml}paraId") == "12972045")
-    properties = other.find(w + "pPr")
-    if properties is None:
-        properties = other.makeelement(w + "pPr", {})
-        other.insert(0, properties)
-    for child in list(properties):
-        properties.remove(child)
-    doc.package.mark_dirty("word/document.xml")
+    with edited(session, d) as doc:
+        root = doc.package.tree("word/document.xml")
+        other = next(p for p in root.iter(w + "p")
+                     if p.get("{http://schemas.microsoft.com/office/word/2010/wordml}paraId") == "12972045")
+        properties = other.find(w + "pPr")
+        if properties is None:
+            properties = other.makeelement(w + "pPr", {})
+            other.insert(0, properties)
+        for child in list(properties):
+            properties.remove(child)
+        doc.package.mark_dirty("word/document.xml")
     pattern = rb'<w:p [^>]*w14:paraId="12972045".*?</w:p>'
     before = re.search(pattern, doc.package.read("word/document.xml")).group(0)
     assert b"<w:pPr/>" in before

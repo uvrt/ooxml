@@ -27,6 +27,7 @@ use crate::stamping::stamp_document;
 use crate::work::{Id, Work};
 use crate::{EditError, Result};
 use ooxml_store::{Command, Txn};
+use ooxml_word_model::address::resolve::refuse_inside_table;
 use ooxml_word_model::docx::{at_path, Docx};
 use ooxml_xml::{Element, Node};
 use std::collections::BTreeSet;
@@ -208,8 +209,12 @@ impl Command<WordDoc> for DeleteBlock {
 }
 
 /// The block `target` names: a paragraph or a table (a content control is
-/// [`crate::control_delete`]'s).
+/// [`crate::control_delete`]'s). A row or cell is no block: refused with its table and its
+/// paragraphs (docx-agent's `delete_block` resolves block ids only).
 fn resolve(doc: &WordDoc, docx: &Docx, target: &str) -> Result<Anchor> {
+    if let Some(error) = refuse_inside_table(docx, target, "a paragraph or table") {
+        return Err(EditError::Address(error));
+    }
     anchor(doc, docx, target)
 }
 

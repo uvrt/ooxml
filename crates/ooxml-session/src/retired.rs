@@ -6,10 +6,14 @@
 //! deletion) is no longer retired; one removed again (redone) is retired by the version that
 //! removed it again, its step's caller and tool kept. Ids retired before the document was
 //! saved and opened again are given by the host ([`Session::seed_retired`]), as their state
-//! says them. [`Session::retired`] reads the record.
+//! says them. [`Session::retired`] reads the record. The host's tool layer numbers the
+//! document's states (ooxml-edit's `OwnedHistory`: a step a new number, an undo or redo the
+//! number of the state it brings back) and tells the session each number it gives
+//! ([`Session::number_version`]), so a refusal of a retired id names the change as the host
+//! numbers it ([`crate::refused`] words it) -- until the tool layer's history is the
+//! session's own.
 //!
-//! Must not: number versions as a host does, or word a refusal (the host maps a version to
-//! its number and says who made it).
+//! Must not: number versions itself, or word a refusal.
 
 use crate::{DocId, Session, SessionError};
 use ooxml_word_edit::IdsDelta;
@@ -54,6 +58,8 @@ struct Record {
 #[derive(Debug, Default)]
 pub(crate) struct Retired {
     records: Mutex<BTreeMap<HeldId, Record>>,
+    /// The session's version -> the number the host gave it, for each version it numbered.
+    numbers: Mutex<BTreeMap<u64, u64>>,
 }
 
 /// What made a version, as the record keeps it.
@@ -124,6 +130,28 @@ impl Retired {
         }
     }
 
+    /// The host numbered the session's version `seq` as its version `number`.
+    fn number(&self, seq: u64, number: u64) {
+        self.numbers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(seq, number);
+    }
+
+    /// The number of the host's step a session version `seq` is part of: the first version
+    /// numbered from it on (a call that made several versions is one step, numbered at its
+    /// last); `None` before the host numbered it (its call still ending).
+    pub(crate) fn number_of(&self, seq: u64) -> Option<u64> {
+        let numbers = self.numbers.lock().unwrap_or_else(PoisonError::into_inner);
+        numbers.range(seq..).next().map(|(_, number)| *number)
+    }
+
+    /// Who retired `id`, where it is retired now.
+    pub(crate) fn by(&self, id: HeldId) -> Option<RetiredBy> {
+        let records = self.records.lock().unwrap_or_else(PoisonError::into_inner);
+        records.get(&id).filter(|r| r.retired).map(|r| r.by.clone())
+    }
+
     /// The ids retired now, in order.
     fn list(&self) -> Vec<(HeldId, RetiredBy)> {
         let records = self.records.lock().unwrap_or_else(PoisonError::into_inner);
@@ -157,6 +185,19 @@ impl Session {
         let document = self.document(id)?;
         if let Some(word) = document.word() {
             word.retired.seed(given);
+        }
+        Ok(())
+    }
+
+    /// The host numbered the Word document's version `seq` (the session's) as its version
+    /// `number`: a refusal of an id a version up to it retired names the change by it.
+    ///
+    /// # Errors
+    /// [`SessionError::NotOpen`].
+    pub fn number_version(&self, id: &DocId, seq: u64, number: u64) -> Result<(), SessionError> {
+        let document = self.document(id)?;
+        if let Some(word) = document.word() {
+            word.retired.number(seq, number);
         }
         Ok(())
     }

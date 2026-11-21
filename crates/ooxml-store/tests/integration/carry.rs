@@ -26,6 +26,7 @@ impl DocModel for Ledgered {
     type Key = ();
     type Change = i64;
     type Error = Never;
+    type Setup = ();
 
     fn apply(&mut self, change: &i64) -> Result<(), Never> {
         self.value = *change;

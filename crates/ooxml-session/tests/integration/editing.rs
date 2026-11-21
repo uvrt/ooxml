@@ -8,7 +8,7 @@ use crate::common::{Never, NoFonts, NoParts, Unlimited};
 use ooxml_base::context::Timestamp;
 use ooxml_base::{Clock, Context, Limits, Locale};
 use ooxml_session::{
-    CallContext, Caller, DocId, DocKind, HeldId, RetiredBy, Session, SessionConfig, SessionError, Undone,
+    CallContext, Caller, DocId, DocKind, HeldId, HostIds, RetiredBy, Session, SessionConfig, SessionError, Undone,
 };
 use ooxml_zip::{Method, NewEntry, Writer};
 use serde_json::{json, Value};
@@ -305,15 +305,74 @@ fn bridged_calls_are_counted_by_tool() {
         )]
     };
     let (updated, opened) = s
-        .bridge(&d, "word_format", parts("two"), &CallContext::default())
+        .bridge(
+            &d,
+            "word_format",
+            parts("two"),
+            HostIds::default(),
+            &CallContext::default(),
+        )
         .unwrap();
     assert_eq!((updated.version, opened.version()), (1, 1));
-    s.bridge(&d, "word_format", parts("three"), &CallContext::default())
-        .unwrap();
-    s.bridge(&d, "word_move", parts("four"), &CallContext::default())
-        .unwrap();
+    s.bridge(
+        &d,
+        "word_format",
+        parts("three"),
+        HostIds::default(),
+        &CallContext::default(),
+    )
+    .unwrap();
+    s.bridge(
+        &d,
+        "word_move",
+        parts("four"),
+        HostIds::default(),
+        &CallContext::default(),
+    )
+    .unwrap();
     let counts: Vec<(String, u64)> = s.bridge_calls().into_iter().collect();
     assert_eq!(counts, vec![("word_format".to_owned(), 2), ("word_move".to_owned(), 1)]);
+}
+
+#[test]
+fn the_hosts_renames_and_draws_beside_bridged_parts_are_the_documents() {
+    // the paragraph a session's next insert makes, after a bridge with `host`
+    let next = |host: HostIds| {
+        let s = session();
+        let d = s
+            .open(docx(&paragraph("11111111", "one")), DocKind::Docx, "a.docx")
+            .unwrap();
+        let parts = vec![(
+            "word/document.xml".to_owned(),
+            Some(Arc::from(document(&paragraph("11111111", "two")).as_bytes())),
+        )];
+        s.bridge(&d, "word_format", parts, host, &CallContext::default())
+            .unwrap();
+        // the block the host's tool renamed is found by its old id (no fifth paragraph here)
+        let read = s.call(
+            "word_read",
+            json!({"doc": "d1", "range": "p@body/5"}),
+            &CallContext::default(),
+        );
+        let found = !read.is_error();
+        let made = s.call(
+            "word_insert_markdown",
+            json!({"doc": "d1", "at": "after:p:11111111", "markdown": "three"}),
+            &CallContext::default(),
+        );
+        assert!(!made.is_error(), "{:?}", made.to_json());
+        (found, made.to_json()["created"].clone())
+    };
+    let (unknown, first) = next(HostIds::default());
+    let host = HostIds {
+        drawn: vec![("word/document.xml".to_owned(), 7)],
+        aliases: vec![("p@body/5".to_owned(), "p:11111111".to_owned())],
+    };
+    let (renamed, later) = next(host);
+    assert!(renamed && !unknown);
+    // the session's draw starts past the host's
+    assert!(first.as_array().is_some_and(|c| !c.is_empty()), "{first}");
+    assert_ne!(first, later);
 }
 
 #[test]
@@ -483,6 +542,7 @@ fn retired_ids_say_who_removed_them_and_an_undone_deletion_is_back() {
             "word/document.xml".to_owned(),
             Some(Arc::from(document(&paragraph("11111111", "one")).as_bytes())),
         )],
+        HostIds::default(),
         &as_caller("w2"),
     )
     .unwrap();

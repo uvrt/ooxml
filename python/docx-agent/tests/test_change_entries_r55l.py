@@ -196,7 +196,11 @@ def test_an_id_not_there_is_refused_with_the_ids_that_are(box):
     error = refused.to_json()["error"]
     assert error["code"] == "not_found" and "'rev:96'" in error["message"]
     assert error["valid_options"] == ["rev:95", "rev:95#2"]
-    assert error["details"]["call"] == {"tool": "word_changes", "arguments": {"doc": "d1", "action": "list"}}
+    # the way out: the call that lists the ids (the session's try_call, tool rule 2; docx-agent's
+    # own handler names it in details.call)
+    way_out = error.get("try_call") or error["details"]["call"]
+    assert {key: way_out[key] for key in ("tool", "arguments")} == \
+        {"tool": "word_changes", "arguments": {"doc": "d1", "action": "list"}}
     assert session.entry("d1").document.to_bytes() == before            # nothing accepted
 
 

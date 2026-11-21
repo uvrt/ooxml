@@ -281,13 +281,24 @@ impl<D: DocModel> Store<D> {
     /// [`StoreConfig::optimistic_tries`] conflicts (after one, for a command that read the
     /// whole document), run it under the commit lock.
     pub fn run<C: Command<D>>(&self, caller: &Caller, command: &C) -> Result<Committed<D, C::Out>, C::Error> {
+        self.run_with(caller, command, &D::Setup::default())
+    }
+
+    /// [`Store::run`], each transaction's working version set up with `setup`
+    /// ([`DocModel::set_up`]).
+    pub fn run_with<C: Command<D>>(
+        &self,
+        caller: &Caller,
+        command: &C,
+        setup: &D::Setup,
+    ) -> Result<Committed<D, C::Out>, C::Error> {
         let start = self.clock.monotonic();
         let mut attempts = 0;
         while attempts < self.config.optimistic_tries {
             attempts += 1;
             let base = self.snapshot();
             command.validate(base.doc())?;
-            let mut tx = Txn::new(base, &self.ids);
+            let mut tx = Txn::new(base, &self.ids, setup);
             let out = command.prepare(&mut tx)?;
             let whole = tx.reads().keys().is_none();
             if let Some(done) = self.try_commit(caller, tx.into_parts()) {
@@ -300,7 +311,7 @@ impl<D: DocModel> Store<D> {
                 break;
             }
         }
-        self.run_exclusive(caller, command, attempts + 1, start)
+        self.run_exclusive(caller, command, setup, attempts + 1, start)
     }
 
     /// The commit section: `None` on a conflict.
@@ -372,6 +383,7 @@ impl<D: DocModel> Store<D> {
         &self,
         caller: &Caller,
         command: &C,
+        setup: &D::Setup,
         attempts: u32,
         start: Duration,
     ) -> Result<Committed<D, C::Out>, C::Error> {
@@ -380,7 +392,7 @@ impl<D: DocModel> Store<D> {
         let entered = self.clock.monotonic();
         let base = self.head.load();
         command.validate(base.doc())?;
-        let mut tx = Txn::new(Arc::clone(&base), &self.ids);
+        let mut tx = Txn::new(Arc::clone(&base), &self.ids, setup);
         let out = command.prepare(&mut tx)?;
         let parts = tx.into_parts();
         if parts.changes.is_empty() {

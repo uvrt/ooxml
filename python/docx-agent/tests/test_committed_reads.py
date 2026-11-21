@@ -25,6 +25,7 @@ from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from docx_agent.tools._base import word_tool
 
 from gates import Gate
+from python_handler import python_session
 
 pytestmark = pytest.mark.any_faces
 
@@ -84,8 +85,10 @@ def _clock():
 
 
 def _session(box):
-    session = box.session(clock=_clock)
-    doc = session.open(made(), "report.docx")
+    # docx-agent's own reads, through a read copy of the committed version or under the lock,
+    # of the view the Python handlers edit (lane P2e6: what is compared is those two paths;
+    # a document the Rust session owns is read from its versions either way)
+    session, doc = python_session(box, made(), "report.docx", clock=_clock)
     ids = [p.id for p in session.entry(doc).document.paragraphs()]
     return session, doc, ids
 

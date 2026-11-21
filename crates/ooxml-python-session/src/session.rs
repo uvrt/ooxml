@@ -5,7 +5,7 @@
 //! Must not: do a session's work itself, or touch a Python object without the lock.
 
 use crate::adapters::{context, SessionStop};
-use crate::options::{context_of, PyCallOptions};
+use crate::options::{context_of, PyCallOptions, PyCallWriting, PyHostIds};
 use ooxml_base::Locale;
 use ooxml_session::{
     CallContext, CancelToken, DocId, DocKind, HeldId, Opened, RetiredBy, Session, SessionConfig, SessionError,
@@ -97,12 +97,13 @@ type HistoryNumbers = (u64, Vec<NumberedRow>, Vec<NumberedRow>);
 type EditMade = (u64, PyVersion, Option<String>, Validation, u64);
 
 /// What a call runs with (`ooxml_core.CallContext`): who calls, a token that stops it,
-/// how long laying a document out may take in it (`layout_timeout`, seconds), how long it
-/// may run, in seconds, the limits on its reply -- `max_result_chars` (a page's characters;
-/// 24,000 unless given) and `max_list_items` (a listing's items per page; 50 unless given),
-/// as the host's `Limits` -- and `layout_counts`, `(pages, lines)` of the host's layout of
-/// the version the call reads where it has laid it out (`save_document`'s `app.xml`
-/// statistics). One may serve many calls.
+/// how long it may run, in seconds, how long laying a document out may take in it
+/// (`layout_timeout`, seconds), the limits on its reply -- `max_result_chars` (a page's
+/// characters; 24,000 unless given) and `max_list_items` (a listing's items per page; 50
+/// unless given), as the host's `Limits` -- and how it writes (`writing`, a `CallWriting`:
+/// the moment its writes are dated by, whether its text is spaced by its language, the
+/// host's layout statistics a save writes; the session's clock, spaced and none unless
+/// given). One may serve many calls.
 #[pyclass(frozen, name = "CallContext", module = "ooxml_core")]
 pub struct PyCallContext {
     pub(crate) inner: CallContext,
@@ -111,10 +112,10 @@ pub struct PyCallContext {
 #[pymethods]
 impl PyCallContext {
     /// # Errors
-    /// `ValueError` for a negative deadline or layout timeout, or a limit of 0.
+    /// `ValueError` for a negative `deadline` or `layout_timeout`, or a limit of 0.
     #[new]
     #[pyo3(signature = (*, caller = None, cancel = None, deadline = None, layout_timeout = None,
-                        max_result_chars = None, max_list_items = None, layout_counts = None))]
+                        max_result_chars = None, max_list_items = None, writing = None))]
     fn new(
         caller: Option<&str>,
         cancel: Option<PyRef<'_, PyCancelToken>>,
@@ -122,7 +123,7 @@ impl PyCallContext {
         layout_timeout: Option<f64>,
         max_result_chars: Option<usize>,
         max_list_items: Option<usize>,
-        layout_counts: Option<(u64, u64)>,
+        writing: Option<PyRef<'_, PyCallWriting>>,
     ) -> PyResult<Self> {
         let mut limits = ooxml_tools::Limits::DEFAULT;
         for (given, kept, name) in [
@@ -142,7 +143,9 @@ impl PyCallContext {
                 deadline: seconds(deadline, "deadline")?,
                 layout_timeout: seconds(layout_timeout, "layout_timeout")?,
                 limits,
-                counts: layout_counts.map(|(pages, lines)| ooxml_tools_word::LayoutCounts { pages, lines }),
+                date: writing.as_ref().and_then(|w| w.date.clone()),
+                counts: writing.as_ref().and_then(|w| w.counts),
+                as_given: writing.is_some_and(|w| w.as_given),
                 ..CallContext::default()
             },
         })
@@ -486,8 +489,10 @@ impl PySession {
     }
 
     /// The bridge: commit the parts the unported tool `tool` changed (``None`` removes one)
-    /// and count the call in ``bridge_calls``; returns the version it leaves, held.
-    #[pyo3(signature = (doc, tool, parts, *, context = None))]
+    /// and count the call in ``bridge_calls``; ``ids``: what the host's id ledger holds
+    /// beside the parts (a ``HostIds``: its tool's draws and renames). Returns the version
+    /// it leaves, held.
+    #[pyo3(signature = (doc, tool, parts, *, context = None, ids = None))]
     fn bridge(
         &self,
         py: Python<'_>,
@@ -495,13 +500,15 @@ impl PySession {
         tool: &str,
         parts: &Bound<'_, PyDict>,
         context: Option<PyRef<'_, PyCallContext>>,
+        ids: Option<PyRef<'_, PyHostIds>>,
     ) -> PyResult<PyVersion> {
         let id = doc_id(doc, &self.inner)?;
         let context = caller_context(context.as_deref());
         let copied = copy_parts(parts)?;
+        let host = ids.map(|i| i.inner.clone()).unwrap_or_default();
         let session = &self.inner;
         let (_, opened) = py
-            .detach(|| session.bridge(&id, tool, copied, &context))
+            .detach(|| session.bridge(&id, tool, copied, host, &context))
             .map_err(|e| to_py(&e))?;
         Ok(PyVersion { inner: opened })
     }
@@ -709,6 +716,16 @@ impl PySession {
             .collect::<PyResult<Vec<_>>>()?;
         let session = &self.inner;
         py.detach(|| session.seed_retired(&id, given)).map_err(|e| to_py(&e))
+    }
+
+    /// The host numbered the Word document's `version` (a `Version` of it) as its version
+    /// `number`: a refusal of an id a version up to it removed names the change by it.
+    fn number_version(&self, py: Python<'_>, doc: &str, version: PyRef<'_, PyVersion>, number: u64) -> PyResult<()> {
+        let id = doc_id(doc, &self.inner)?;
+        let seq = version.inner.version();
+        let session = &self.inner;
+        py.detach(|| session.number_version(&id, seq, number))
+            .map_err(|e| to_py(&e))
     }
 
     /// The rows of the Word document this session's `word_edit_table` calls added or wrote

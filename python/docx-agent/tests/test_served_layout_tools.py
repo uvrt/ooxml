@@ -1,7 +1,7 @@
 """Lane P2c13: ``word_fields``, ``word_headers_footers`` and ``word_template`` served by the
 Rust session, which lays the versions out with the document's page engine
 (``docx_agent.pages.word_pages``, ``CallOptions(layout=...)``); their replies as docx-agent's
-own handler gives them (a session with its own clock is answered by the Python handler).
+own handler gives them (a session with the Rust session off is answered by the Python handler).
 Made-up documents only."""
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from docx_agent.rust import edits
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from ooxml_edit.tools import Toolbox
 from ooxml_edit.tools.owned import OwnedEntry
+from python_handler import python_session
 
 CLOCK = lambda: dt.datetime(2026, 11, 20, 9, 0, tzinfo=dt.timezone.utc)  # noqa: E731
 MODE14 = Path(__file__).parent / "fixtures" / "generated" / "mode14.docx"
@@ -38,8 +39,11 @@ def report() -> bytes:
 
 
 def _open(toolbox, data: bytes, served: bool):
-    """A session that serves (the system's clock) or one the Python handler answers (its own)."""
-    session = toolbox.session() if served else toolbox.session(clock=CLOCK)
+    """A session that serves, or one the Python handler answers (the Rust session off); both
+    date their writes by ``CLOCK``."""
+    if not served:
+        return python_session(toolbox, data, "report.docx", clock=CLOCK)
+    session = toolbox.session(clock=CLOCK)
     doc = session.open(data, "report.docx")
     if served and not isinstance(session.entry(doc), OwnedEntry):
         pytest.skip("no Rust session to own the document")

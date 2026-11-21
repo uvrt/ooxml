@@ -61,6 +61,11 @@ def _open(toolbox, data: bytes):
     return session, session.entry("d1").document
 
 
+def _now(session) -> Document:
+    """The document as it is now: a served edit makes a new version, read afresh."""
+    return session.entry("d1").document
+
+
 def _edit(toolbox, session, **arguments):
     result = toolbox.dispatch(session, "word_edit_table", {"doc": "d1", **arguments})
     assert result.ok, result.to_json()
@@ -116,6 +121,7 @@ def test_a_row_inserted_has_the_marks_word_gives_it(toolbox, key):
     above = key == "Above"
     _edit(toolbox, session, table=table, action="insert_row", index=0 if above else 1,
           side="before" if above else "after")
+    document = _now(session)
     rows = document._resolve(document.tables()[k].id)[1].element.findall(_W + "tr")
     new = rows[0 if above else 2]
     word = OBSERVED[key][0 if above else 2]["cells"]
@@ -182,6 +188,7 @@ def test_text_in_an_empty_cell_takes_its_columns_formatting_where_word_gives_the
         assert toolbox.dispatch(session, "word_set_tracking", {"doc": "d1", "on": True, "author": "Editor A"}).ok
     result = _edit(toolbox, session, table=table, action="set_cells",
                    cells=[{"row": 3, "col": 0, "text": "Rug"}, {"row": 3, "col": 2, "text": "7"}])
+    document = _now(session)
     table = document.tables()[0].id
     assert _look(document, f"{table}/c3,0") == ("Arial", 8.0, "1F4E79", False)
     assert _look(document, f"{table}/c3,2") == ("Arial", 8.0, "1F4E79", True)
@@ -193,7 +200,7 @@ def test_text_in_an_empty_cell_takes_its_columns_formatting_where_word_gives_the
     validate = toolbox.dispatch(session, "check", {"doc": "d1", "include": ["validate"]}).data["validate"]
     assert validate["new"] == [], validate
     if tracked:
-        rejected = Document.open(document.to_bytes())
+        rejected = Document.open(_now(session).to_bytes())
         rejected.reject()
         assert "Rug" not in rejected.to_markdown()
 
@@ -208,7 +215,7 @@ def test_a_row_unlike_its_table_the_fallback_does_not_cover_is_said_with_the_cal
     result = _edit(toolbox, session, table=table, action="set_cells", cells=[{"row": 3, "col": 0, "text": "Rug"}])
     assert any("row 3 of" in w and "colour C00000" in w and "word_format" in w for w in result.warnings), \
         result.warnings
-    table = document.tables()[0].id
+    table = _now(session).tables()[0].id
     entry, = _check(toolbox, session)["row_text_format"]
     assert entry["table"] == table and entry["row"] == 3
     cells = [f"{table}/c3,{c}" for c in range(3)]
@@ -227,6 +234,7 @@ def test_neighbours_that_disagree_give_no_formatting(toolbox):
     table = document.tables()[0].id
     result = _edit(toolbox, session, table=table, action="set_cells", cells=[{"row": 3, "col": 0, "text": "Rug"}])
     assert not [w for w in result.warnings if "column's formatting" in w]
+    document = _now(session)
     assert _look(document, f"{document.tables()[0].id}/c3,0")[0] == "Calibri"
 
 
@@ -248,6 +256,7 @@ def test_rows_written_one_after_another_each_take_the_unwritten_rows_formatting(
     table = document.tables()[0].id
     _edit(toolbox, session, table=table, action="set_cells", cells=[{"row": 2, "col": 0, "text": "Rug"}])
     _edit(toolbox, session, table=table, action="set_cells", cells=[{"row": 3, "col": 0, "text": "Vase"}])
+    document = _now(session)
     table = document.tables()[0].id
     assert _look(document, f"{table}/c2,0")[:3] == _look(document, f"{table}/c3,0")[:3] == ("Arial", 8.0, "1F4E79")
     assert _check(toolbox, session)["row_text_format"] == []
@@ -293,6 +302,7 @@ def test_copy_row_copies_a_row_with_its_content(toolbox, tracked):
         assert toolbox.dispatch(session, "word_set_tracking", {"doc": "d1", "on": True, "author": "Editor A"}).ok
     result = _edit(toolbox, session, table=table, action="copy_row", index=2)
     assert result.data["markdown"].count("| Kettle | kitchen | **1** |") == 2
+    document = _now(session)
     rows = _rows(document)
     assert len(rows) == 6
     ids = [row.get("{http://schemas.microsoft.com/office/word/2010/wordml}paraId") for row in rows]
@@ -307,6 +317,7 @@ def test_copy_row_copies_a_row_with_its_content(toolbox, tracked):
         changes = toolbox.dispatch(session, "word_changes", {"doc": "d1", "action": "list"}).data
         listed = changes["changes"] if isinstance(changes, dict) else changes
         assert [c.get("structure") for c in listed] == ["row insertion"]
+        document = _now(session)
         rejected = Document.open(document.to_bytes())
         rejected.reject()
         assert len(rejected.tables()[0].rows) == 5
@@ -320,7 +331,7 @@ def test_copy_row_before_and_by_default_the_last(toolbox):
     table = document.tables()[0].id
     _edit(toolbox, session, table=table, action="copy_row")
     _edit(toolbox, session, table=table, action="copy_row", index=1, side="before")
-    text = document.to_markdown()
+    text = _now(session).to_markdown()
     assert text.count("Chair") == 2 and text.count("Lamp") == 2
     assert text.index("Lamp") < text.index("Lamp", text.index("Lamp") + 1) < text.index("Kettle")
 
@@ -347,7 +358,7 @@ def test_copy_row_of_a_row_merged_down_joins_the_merge(toolbox):
     copied = toolbox.dispatch(session, "word_edit_table", {"doc": "d1", "table": table, "action": "copy_row",
                                                            "index": 1})
     assert copied.ok, copied.to_json()
-    rows = session.entry("d1").document._resolve(table)[1].element.findall(_W + "tr")
+    rows = _now(session)._resolve(table)[1].element.findall(_W + "tr")
     merges = [None if (m := row.find(f"{_W}tc/{_W}tcPr/{_W}vMerge")) is None else (m.get(_W + "val") or "continue")
               for row in rows]
     assert merges[1:4] == ["restart", "continue", "continue"]

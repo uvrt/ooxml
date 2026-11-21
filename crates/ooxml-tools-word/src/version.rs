@@ -172,18 +172,64 @@ pub struct Owned<'a> {
     pub layout_limit: Option<crate::LayoutLimit<'a>>,
 }
 
+/// A table of another open document the host holds itself (a workbook's `t:stock`), as a
+/// `from` names it: bare where one open document alone takes its prefix, else with its
+/// document (`d2/t:stock`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostTable {
+    /// The table as a `from` names it (`t:stock`, `d2/t:stock`).
+    pub name: String,
+    /// The host's name of its document (`d2`).
+    pub doc: String,
+    /// Its document's format (`xlsx`).
+    pub kind: String,
+}
+
+impl HostTable {
+    /// Whether `given` names this table: as a `from` names it, or with its document
+    /// (`d2/t:stock` for a bare `t:stock`).
+    #[must_use]
+    pub fn named_by(&self, given: &str) -> bool {
+        let prefix = format!("{}/", self.doc);
+        let address = self.name.strip_prefix(&prefix).unwrap_or(&self.name);
+        given == self.name || given.strip_prefix(&prefix) == Some(address)
+    }
+}
+
+/// The tables of the open documents the host holds itself, asked only where a call needs
+/// them (a refusal that names one): reading another document's tables may wait for it.
+pub trait HostTables: Send + Sync {
+    /// The tables there are now (none where the host cannot read them).
+    fn tables(&self) -> Vec<HostTable>;
+}
+
 /// The other documents a call names, by id, each at the version the session pinned for the
-/// call when it dispatched it (versions are immutable: nothing is locked).
+/// call when it dispatched it (versions are immutable: nothing is locked), and the tables
+/// of the open documents the host holds itself.
 #[derive(Clone, Copy, Default)]
 pub struct Others<'a> {
     versions: &'a [(&'a str, Version<'a>)],
+    tables: Option<&'a dyn HostTables>,
 }
 
 impl<'a> Others<'a> {
     /// The documents `versions` holds, by id.
     #[must_use]
     pub fn new(versions: &'a [(&'a str, Version<'a>)]) -> Self {
-        Self { versions }
+        Self { versions, tables: None }
+    }
+
+    /// The tables of the open documents the host holds itself (none unless given).
+    #[must_use]
+    pub fn with_tables(mut self, tables: Option<&'a dyn HostTables>) -> Self {
+        self.tables = tables;
+        self
+    }
+
+    /// The host's table `given` names (`t:stock`, `d2/t:stock`), where it holds one.
+    #[must_use]
+    pub fn host_table(&self, given: &str) -> Option<HostTable> {
+        self.tables?.tables().into_iter().find(|t| t.named_by(given))
     }
 
     /// The document `id` at its pinned version (`None`: the call names no such open
@@ -191,5 +237,28 @@ impl<'a> Others<'a> {
     #[must_use]
     pub fn get(&self, id: &str) -> Option<&Version<'a>> {
         self.versions.iter().find(|(named, _)| *named == id).map(|(_, v)| v)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HostTable;
+
+    fn table(name: &str) -> HostTable {
+        HostTable {
+            name: name.to_owned(),
+            doc: "d2".to_owned(),
+            kind: "xlsx".to_owned(),
+        }
+    }
+
+    #[test]
+    fn a_host_table_is_named_as_from_takes_it_or_with_its_document() {
+        let bare = table("t:stock");
+        assert!(bare.named_by("t:stock") && bare.named_by("d2/t:stock"));
+        assert!(!bare.named_by("d3/t:stock") && !bare.named_by("t:stocks"));
+        // a name shared by several documents is only named with its own
+        let shared = table("d2/t:stock");
+        assert!(shared.named_by("d2/t:stock") && !shared.named_by("t:stock"));
     }
 }

@@ -5,5 +5,5 @@ carry, the main part retyped, `app.xml`'s statistics refreshed when the main par
 since the document was opened -- cleaned when asked (orphaned parts, rsids, web divisions, an
 external template link), or as Markdown. `Session.call` returns the files a call gives the
 application in its second slot (bytes), each one's `name` and `format` in the application's
-JSON (`files`); `CallContext(layout_counts=(pages, lines))` hands a call the host's layout
-statistics.
+JSON (`files`); `CallContext(writing=CallWriting(layout_counts=(pages, lines)))` hands a call the
+host's layout statistics.

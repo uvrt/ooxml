@@ -322,6 +322,7 @@ def test_a_value_written_by_reference_inside_markup_is_kept_on_its_paragraph():
                      "[Gamma {{d:scores/Gamma/rating}}]{Strong} rated."):
             result = dispatch(toolbox, session, "word_set_text", doc="d1", target=target, text=text)
             assert result.ok and result.data["facts"][0]["text"] == "1.25" and result.data["styled"]
+            document = session.entry("d1").document      # (the view of the version now)
             kept = document.text_facts()[target]
             assert [(f["text"], document.paragraph(target).text[f["at"]:f["at"] + 4]) for f in kept] == \
                 [("1.25", "1.25")]

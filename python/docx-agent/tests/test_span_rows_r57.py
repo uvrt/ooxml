@@ -37,6 +37,7 @@ from docx_agent import Document
 from docx_agent.edit.tables import _cells, own_table_rows
 from docx_agent.layout_facts import table_grid_mismatch
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
+from python_handler import python_session
 
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 CLOCK = lambda: dt.datetime(2026, 11, 13, 9, 0, tzinfo=dt.timezone.utc)  # noqa: E731
@@ -68,10 +69,14 @@ def ok(box, session, name, /, **arguments):
     return result
 
 
-def _plan(box, *, tracked: bool = False, every_row_spanned: bool = False):
-    """The quarter plan: its session and table id (tracking on when ``tracked``)."""
-    session = box.session(clock=CLOCK)
-    session.open(Document.new().to_bytes(), "plan.docx")
+def _plan(box, *, tracked: bool = False, every_row_spanned: bool = False, python: bool = False):
+    """The quarter plan: its session and table id (tracking on when ``tracked``; ``python``:
+    its calls answered by docx-agent's Python handlers, no Rust session owning it)."""
+    if python:
+        session, _ = python_session(box, Document.new().to_bytes(), "plan.docx", clock=CLOCK)
+    else:
+        session = box.session(clock=CLOCK)
+        session.open(Document.new().to_bytes(), "plan.docx")
     first = session.entry("d1").document.paragraphs()[0].id
     markdown = "\n".join(["| " + " | ".join(ROWS[0]) + " |", "|---|---|---|---|"]
                          + ["| " + " | ".join(r) + " |" for r in ROWS[1:]])
@@ -286,7 +291,9 @@ def test_reject_all_after_a_column_deleted_through_a_split_gives_the_table_back(
 
 def _ragged_by_a_column_deletion(box, monkeypatch):
     """A table Accept All leaves ragged, by a call of this session: the column deletion through
-    a tracked split's cell as docx-agent 0.1.107 wrote it (the inserted mark left as it was)."""
+    a tracked split's cell as docx-agent 0.1.107 wrote it (the inserted mark left as it was) --
+    that old Python handler's way, so the session's calls are the Python handlers' (lane P2e6:
+    the Rust session's delete_column deletes the mark, as Word's does)."""
     from docx_agent.revisions import track
 
     real = track.mark
@@ -296,7 +303,7 @@ def _ragged_by_a_column_deletion(box, monkeypatch):
             return None
         return real(paragraph, kind, stamp, part, **kw)
 
-    session, table = _plan(box, tracked=True)
+    session, table = _plan(box, tracked=True, python=True)
     ok(box, session, "word_edit_table", doc="d1", table=table, action="split", first={"row": 4, "col": 1})
     monkeypatch.setattr(track, "mark", old_mark)
     result = ok(box, session, "word_edit_table", doc="d1", table=_table(session), action="delete_column", index=3)

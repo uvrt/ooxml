@@ -39,18 +39,38 @@ def caller_key(caller: Mapping[str, Any] | None) -> str | None:
 
 
 def context_of(caller: Mapping[str, Any] | None, limits: Any = None,
-               layout_timeout: float | None = None, **more: Any) -> Any:
+               layout_timeout: float | None = None, *, date: str | None = None,
+               typography: bool = True, layout_counts: tuple[int, int] | None = None) -> Any:
     """An ``ooxml_core.CallContext`` for ``caller``, with the host's ``limits`` on its reply
     (an :class:`ooxml_edit.tools.Limits`: ``max_result_chars``, ``max_list_items``; the
     defaults where ``None``), how long laying the document out may take in it
-    (``layout_timeout``, seconds; the session's own where ``None``) and ``more`` of its
-    keywords (``layout_counts``: a save's)."""
+    (``layout_timeout``, seconds; the session's own where ``None``), its writes dated ``date``
+    (UTC to the second, the session clock's; ``None``: the Rust session's own clock) and spaced
+    by their language unless ``typography`` is off (``docx_format(typography=False)``: as
+    given), with the host's ``layout_counts`` (``(pages, lines)``: a save's ``app.xml``
+    statistics) where it has laid the version out."""
     import ooxml_core
 
-    if limits is None:
-        return ooxml_core.CallContext(caller=caller_key(caller), layout_timeout=layout_timeout, **more)
-    return ooxml_core.CallContext(caller=caller_key(caller), max_result_chars=limits.max_result_chars,
-                                  max_list_items=limits.max_list_items, layout_timeout=layout_timeout, **more)
+    given: dict[str, Any] = {"caller": caller_key(caller), "layout_timeout": layout_timeout}
+    if date is not None or not typography or layout_counts is not None:
+        given["writing"] = ooxml_core.CallWriting(date=date, typography=typography,
+                                                  layout_counts=layout_counts)
+    if limits is not None:
+        given.update(max_result_chars=limits.max_result_chars, max_list_items=limits.max_list_items)
+    return ooxml_core.CallContext(**given)
+
+
+def host_ids(view: Any) -> Any:
+    """An ``ooxml_core.HostIds`` of what ``view``'s id ledger holds beside the parts a Python
+    tool changed in it: where its draws of new ids got to (an id it drew and did not write is
+    given) and its renames (a block it stamped keeps its old id); ``None`` without a view."""
+    import ooxml_core
+
+    if view is None:
+        return None
+    pool = getattr(getattr(view, "_ledger", None), "pool", None)
+    drawn = {seed: k for seed, k in pool.cursors.items() if k > 0} if pool is not None else {}
+    return ooxml_core.HostIds(drawn=drawn, aliases=dict(getattr(view, "_aliases", None) or {}))
 
 
 def options(**given: Any) -> Any:
@@ -64,7 +84,8 @@ def options(**given: Any) -> Any:
 
 def documents(**given: Any) -> Any:
     """An ``ooxml_core.CallDocuments``: what a call needs about the open documents it names
-    (``at``: the versions it reads; ``names``: the host's names for them)."""
+    (``at``: the versions it reads; ``names``: the host's names for them; ``tables``: the tables
+    of the documents the host holds itself, asked only where a refusal names one)."""
     import ooxml_core
 
     return ooxml_core.CallDocuments(**given)
@@ -121,8 +142,11 @@ class RustOwner:
         # found under the session's bytes of the version too (only where it laid out).
         laid = live is not None and laid_mark(live) != mirror.laid
         own = live.package.to_bytes() if laid else None
+        # the view's ledger beside the parts: where its draws of new ids got to (an id it drew
+        # and did not write is given) and its renames (a block it stamped keeps its old id)
+        ids = host_ids(live)
         with mirror.lock:
-            made = mirror.session.bridge(mirror.doc, tool, parts, context=context_of(caller))
+            made = mirror.session.bridge(mirror.doc, tool, parts, context=context_of(caller), ids=ids)
             mirror.view_head = made
         if own is not None:
             same_state(live, own, bytes(made.save()))
@@ -175,6 +199,8 @@ class RustOwner:
 
         with mirror.lock:
             mirror.keep(head, first)
+            # the session words a refusal of an id this version removed by its state number
+            mirror.session.number_version(mirror.doc, head, head.state)
         live = mirror.live()
         if live is not None:
             owner_committed(live, head.state)

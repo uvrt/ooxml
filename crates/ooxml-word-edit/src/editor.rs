@@ -8,7 +8,7 @@
 //! Must not: hold anything but the store and the baseline; read the clock but through the
 //! store's port; run a command's effects outside its transaction.
 
-use crate::doc::WordDoc;
+use crate::doc::{Setup, WordDoc};
 use crate::ids_delta::{ids_delta, IdsDelta};
 use crate::pool::EarlierIds;
 use crate::touched::{touched, Touched};
@@ -54,6 +54,9 @@ pub struct Edited<O> {
     /// it drew are named through it ([`crate::Drawn::resolve`]). Empty when it changed
     /// nothing.
     pub drawn: crate::Drawn,
+    /// How many spaces its language spacing wrote or made U+00A0 ([`crate::Change::Spaced`]);
+    /// 0 when it changed nothing.
+    pub spaced: usize,
     /// What it touched, per part.
     pub touched: Vec<Touched>,
     /// The block ids and drawing numbers it removed and brought.
@@ -124,8 +127,22 @@ impl Editor {
     where
         C: Command<WordDoc, Error = EditError>,
     {
+        self.run_with(caller, command, &Setup::default())
+    }
+
+    /// [`Editor::run`], its transactions writing as `setup` says (text as given, or spaced
+    /// by its language).
+    ///
+    /// # Errors
+    /// The command's refusal; nothing changed.
+    pub fn run_with<C>(&self, caller: &Caller, command: &C, setup: &Setup) -> Result<Edited<C::Out>>
+    where
+        C: Command<WordDoc, Error = EditError>,
+    {
         // docx-agent's records of placed values follow every edit, in its own step
-        let committed = self.store.run(caller, &crate::provenance::Followed(command))?;
+        let committed = self
+            .store
+            .run_with(caller, &crate::provenance::Followed(command), setup)?;
         let started = self.clock.monotonic();
         let (touched, ids) = match &committed.previous {
             Some(previous) if committed.changed => (
@@ -137,15 +154,17 @@ impl Editor {
         let found = self.clock.monotonic();
         let validation = Delta::of(&self.baseline, &problems(committed.version.doc())?);
         let validated = self.clock.monotonic();
-        let drawn = if committed.changed {
-            committed.version.doc().drawn().clone()
+        let (drawn, spaced) = if committed.changed {
+            let doc = committed.version.doc();
+            (doc.drawn().clone(), doc.spaced())
         } else {
-            crate::Drawn::default()
+            (crate::Drawn::default(), 0)
         };
         Ok(Edited {
             out: committed.out,
             changed: committed.changed,
             drawn,
+            spaced,
             version: committed.version,
             previous: committed.previous,
             touched,

@@ -31,6 +31,7 @@ impl DocModel for Items {
     type Key = u32;
     type Change = Change;
     type Error = Stale;
+    type Setup = ();
 
     fn apply(&mut self, change: &Change) -> Result<(), Stale> {
         let items = Arc::make_mut(&mut self.0);

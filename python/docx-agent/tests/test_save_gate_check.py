@@ -46,6 +46,8 @@ def name_styles(call, doc, paragraphs):
             node = etree.Element(W + "pStyle")
             properties.insert(0, node)
         node.set(W + "val", style)
+    # (a hand-made patch marks the part it changed: the tool layer commits the parts marked)
+    document.package.mark_dirty(document.package.document_part())
     document._invalidate()
     return Result(summary="styled", changed=True)
 

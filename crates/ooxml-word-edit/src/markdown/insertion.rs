@@ -17,6 +17,7 @@ use crate::stamping::{stamp_document, w14_prefix};
 use crate::validate::Orders;
 use crate::work::{Id, Work};
 use crate::{EditError, Result, WordDoc};
+use ooxml_word_model::docx::formatting::Formatting;
 use ooxml_word_model::docx::Docx;
 use ooxml_word_model::ids::valid_long_hex;
 use ooxml_word_model::markdown::model::Block;
@@ -133,6 +134,7 @@ pub(crate) fn insert(
         sink.forget_aliases(std::slice::from_ref(id))?;
     }
     close_tables(sink, work, &mut writer, &mut elements)?;
+    let cell_warnings = cell_indents(sink, work, &writer)?;
     let starts_paragraph = elements.first().is_some_and(|e| work.is(*e, W, "p"));
     let stamped = stamp(sink, work, &place, &elements, continued.filter(|_| starts_paragraph))?;
     let wrote = sink.track(work, |work, stamp, orders| {
@@ -141,6 +143,7 @@ pub(crate) fn insert(
     })?;
     crate::placing::commit(sink, &stretch, &place, &stamped.0, &wrote, false)?;
     let (created, top) = stamped;
+    writer.warnings.extend(cell_warnings);
     Ok(MarkdownInserted {
         first: created.first().cloned(),
         changed: true,
@@ -150,6 +153,23 @@ pub(crate) fn insert(
         warnings: writer.warnings,
         blocks: top,
     })
+}
+
+/// The tables the writer made whose cell styles' indents do not fit their cells
+/// ([`super::cell_indents`]), read with the styles as the edit leaves them.
+fn cell_indents(sink: &EditSink<'_, '_>, work: &Work, writer: &Writer<'_>) -> Result<Vec<String>> {
+    let tables: Vec<(Arc<Element>, Vec<i64>)> = writer
+        .tables
+        .iter()
+        .filter(|(node, _)| work.parent(*node).is_some())
+        .filter_map(|(node, shares)| Some((work.build_element(*node)?, shares.clone())))
+        .collect();
+    if tables.is_empty() {
+        return Ok(Vec::new());
+    }
+    let docx = sink.docx()?;
+    let formatting = Formatting::read(&docx);
+    Ok(super::cell_indents::cell_indent_warnings(&formatting, &tables))
 }
 
 /// The block (or section properties) after `node`.
