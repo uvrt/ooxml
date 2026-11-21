@@ -313,6 +313,7 @@ fn finish(
         Err(error) => return refused(error, retry.clone()),
     };
     let now = done.out.table.clone();
+    let made_row = done.out.id.clone();
     // round 55 (R115, rule 3): a merge already made changes nothing
     let unchanged = done.out.unchanged && matches!(change, TableChange::Merge { .. });
     let head = editing.editor.store().snapshot();
@@ -353,9 +354,21 @@ fn finish(
         if now != table {
             match found.renamed.iter_mut().find(|(old, _)| *old == table) {
                 Some(entry) => entry.1.clone_from(&now),
-                None => found.renamed.push((table, now)),
+                None => found.renamed.push((table.clone(), now.clone())),
             }
         }
+    }
+    if matches!(change, TableChange::InsertRow { .. } | TableChange::CopyRow { .. }) {
+        // round 58 (R126): the row added looked at against the rows around it
+        result.warnings.extend(super::rows_written::rows_written(
+            editing,
+            &table,
+            &now,
+            done.previous.as_ref(),
+            &done.version,
+            made_row.as_deref(),
+            retry,
+        ));
     }
     result
 }

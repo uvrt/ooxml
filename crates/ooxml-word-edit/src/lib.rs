@@ -181,9 +181,9 @@ pub use styles::{
 pub use switch::{tracks_changes, word_tracks_changes, SetWordTracking, WordTracking};
 pub use tables::{
     body_lines, body_width, loose_paragraph_after, pending_structure, row_cells, row_shown, rows_unlike, table_keeps,
-    table_keeps_at, BodyLines, BodyWidth, CellUnlike, CellValues, EditTable, FormatCall, FormatTable, Look, LookField,
-    RowUnlike, TableChange, TableChanged, TableEdit, TableFormat, TableFormatted, TableKeeps, TableValues, TableWidth,
-    TextLook, ROW_WINDOW,
+    table_keeps_at, BodyLines, BodyWidth, CellUnlike, CellValues, ColumnCopy, EditTable, FormatCall, FormatTable,
+    LikeTheColumn, Look, LookField, RowUnlike, TableChange, TableChanged, TableEdit, TableFormat, TableFormatted,
+    TableKeeps, TableValues, TableWidth, TextLook, ROW_WINDOW,
 };
 pub use template::{compatibility_mode, UpgradeToModern, Upgraded, DEFAULT_COMPATIBILITY_MODE, MODERN_MODE};
 pub use text::diff::ratio as text_ratio;
