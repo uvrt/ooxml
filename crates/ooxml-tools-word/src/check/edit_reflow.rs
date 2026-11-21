@@ -37,8 +37,8 @@ pub struct EditedFrom<'a> {
 }
 
 /// The reflow a changing call's checks report (docx-agent's `_base.checks`), measured from
-/// `before` -- where the document's last check saw it (`last`) or `layout`'s engine laid it
-/// out last, else `None`: no reflow is measured, as docx-agent measures none without a
+/// `before` -- where the document's last check that laid it out saw it (`last`, with
+/// `reflow` or not) or `layout`'s engine laid it out last, else `None`: no reflow is measured, as docx-agent measures none without a
 /// layout before -- to `after` (the version the call's last edit made), ids followed through
 /// `aliases`. More than [`REFLOW_PAGES`] before: [`STALE`]. The versions are laid out under
 /// the call's `limit` on laying out (else until `cancel`): a stop is said as docx-agent's
@@ -57,7 +57,7 @@ pub fn reflow_after_edit(
     aliases: &BTreeMap<String, String>,
     (limit, cancel): (Option<LayoutLimit<'_>>, &dyn Cancel),
 ) -> Option<Value> {
-    let seen = last.get().filter(|seen| seen.version == Some(before.version));
+    let seen = last.laid().filter(|seen| seen.version == Some(before.version));
     let stop = Stop { limit, cancel };
     let aliases: HashMap<String, String> = aliases.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
     let mut engine = match layout.engine().try_lock() {

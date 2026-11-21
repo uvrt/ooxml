@@ -26,6 +26,7 @@ from ooxml_edit.tools.limits import Limits  # noqa: E402
 
 from docx_agent import Document  # noqa: E402
 from docx_agent.rust import check as rust_check  # noqa: E402
+from docx_agent.rust import reads as rust_reads  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS as WORD_TOOLS  # noqa: E402
 
 from test_tables_from_data import ds_put  # noqa: E402
@@ -175,6 +176,7 @@ def _sequence(session, doc):
 def _run(data: bytes, rust: bool, monkeypatch) -> list:
     monkeypatch.setenv("DOCX_AGENT_RUST", "1" if rust else "0")
     rust_check.STATS.clear()
+    before = rust_reads.served().get("check", 0)
     out = []
     limits = Limits(render_timeout=600, layout_timeout=600, batch_timeout=900)
     with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=1, limits=limits) as box:
@@ -185,13 +187,22 @@ def _run(data: bytes, rust: bool, monkeypatch) -> list:
             view = session.view(context={"agent": writer})
             result = box.dispatch(view, tool, {"doc": doc, **arguments}).to_json()
             out.append((tool, arguments, result))
-    return out, dict(rust_check.STATS)
+    stats = dict(rust_check.STATS)
+    session = rust_reads.served().get("check", 0) - before
+    if session:
+        stats["session"] = session
+    return out, stats
 
 
 def test_checks_served_in_rust_say_what_docx_agent_says(report, monkeypatch):
     mine, stats = _run(report, True, monkeypatch)
     theirs, _ = _run(report, False, monkeypatch)
-    assert stats.get("served", 0) >= 6, stats            # most of them served there
+    # Served in Rust: by the session (lane P5k: what the layout's facts measure too), else
+    # by lane F; the checks after a table's rows were written here are the host's still
+    # ("rows written here"), and lane F leaves those whose table has a column that may fit
+    # to docx-agent (column_fit is not ported there; P4e deletes lane F).
+    assert stats.get("session", 0) + stats.get("served", 0) >= 9, stats
+    assert {k for k in stats if k.startswith("fallback")} <= {"fallback: column_fit: a column that may fit"}, stats
     compared = 0
     for (tool, arguments, a), (_, _, b) in zip(mine, theirs):
         assert a.get("ok", True) == b.get("ok", True), (tool, arguments, a, b)

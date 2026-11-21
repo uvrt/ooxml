@@ -222,6 +222,13 @@ fn with_layout(
         reflow = Some(facts);
     }
     if let (true, Some(docx)) = (layout_wanted, c.docx) {
+        if !reflow_wanted {
+            // Laid out, no reflow: kept as the version's pages a changing call measures from.
+            c.owned.last_check.set_laid(Some(Seen {
+                version: Some(c.version.number),
+                pages: Summarised::watched(Arc::clone(&laid), Arc::clone(layout.engine())),
+            }));
+        }
         let (found, range) = layout_facts(c, layout, &laid, docx, pages.as_deref(), stop)?;
         if let Some(range) = range {
             data.insert("range".into(), range);

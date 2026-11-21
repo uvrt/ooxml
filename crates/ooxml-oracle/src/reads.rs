@@ -58,16 +58,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
             continue;
         };
         let name = Path::new(file).file_name().and_then(|n| n.to_str()).unwrap_or(file);
-        let version = Version {
-            name,
-            package,
-            number: 1,
-            versions,
-            placer: None,
-            owned: None,
-            others: ooxml_tools_word::Others::default(),
-            word: None,
-        };
+        let version = Version::new(name, package, 1, versions);
         let reply = if let Some(fact) = item.get("fact").and_then(Value::as_str) {
             crate::facts::reply(package, fact, item.get("opened").and_then(Value::as_str))
         } else if item.get("laid").is_some() {

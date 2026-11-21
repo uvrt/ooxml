@@ -7,3 +7,6 @@ wrote with `word_edit_table` here (or made ragged), a refused range and `pages` 
 the ranges' blocks are still checked here.
 A header's, footer's or note's paragraph is placed on each page asked for that draws it (its
 `pages`, and whether `pages` keeps it), as here.
+A changing call measured against the version before it (`word_format`'s `keep_together` saying
+a span cannot be kept on one page, the reflow after an edit) reads the pages the session's last
+check laid out, a check of the layout or of ranges alone too.
