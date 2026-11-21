@@ -212,5 +212,5 @@ fn not_open(id: &str, doc: &str) -> ToolError {
 
 /// Registers `word_copy_from` (the crate's [`crate::register`]).
 pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.edit::<WordCopyFrom>(word_copy_from, crate::Hosting::HOST);
+    r.edit::<WordCopyFrom>(word_copy_from, crate::Hosting::SERVED);
 }
