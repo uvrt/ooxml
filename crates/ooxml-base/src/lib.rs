@@ -2,7 +2,7 @@
 //! other crate shares and nothing else.
 //!
 //! Owns: units and exact arithmetic ([`units`]), the compact form exact lengths are kept in
-//! ([`compact`]), content digests ([`digest`]), the limits on
+//! ([`compact`]), content digests ([`digest`]), Python's `difflib` opcodes ([`difflib`]), the limits on
 //! untrusted input and the locale as values ([`limits`], [`locale`]), a string as Python's `repr` writes it in messages ([`pyfmt`]), Python's `str.isdigit` exactly ([`pystr`]), SHA-1 and name-based UUIDs as
 //! Python makes them ([`sha1`], [`uuid`]), the ports the core is
 //! given its I/O through ([`context`]), and the error type for all of these ([`BaseError`]).
@@ -13,6 +13,7 @@
 
 pub mod compact;
 pub mod context;
+pub mod difflib;
 pub mod digest;
 mod error;
 pub mod limits;
