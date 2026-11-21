@@ -5,7 +5,7 @@
 //! Must not: do a session's work itself, or touch a Python object without the lock.
 
 use crate::adapters::{context, SessionStop};
-use crate::options::{context_of, PyCallOptions, PyHostIds};
+use crate::options::{context_of, PyCallOptions, PyCallWriting, PyHostIds};
 use ooxml_base::Locale;
 use ooxml_session::{
     CallContext, CancelToken, DocId, DocKind, HeldId, Opened, RetiredBy, Session, SessionConfig, SessionError,
@@ -93,11 +93,11 @@ type EditMade = (u64, PyVersion, Option<String>, Validation);
 
 /// What a call runs with (`ooxml_core.CallContext`): who calls, a token that stops it,
 /// how long it may run, in seconds, how long laying a document out may take in it
-/// (`layout_timeout`, seconds), the moment its writes are dated by (`date`: a revision's, a
-/// comment's), UTC to the second (`2026-11-20T09:30:15Z`) -- the host's clock, as
-/// docx-agent dates them; `None`: the session's clock -- and whether the text it writes is
-/// spaced by its language (`typography`, docx-agent's `docx_format(typography=...)`;
-/// `False`: as given). One may serve many calls.
+/// (`layout_timeout`, seconds), the limits on its reply -- `max_result_chars` (a page's
+/// characters; 24,000 unless given) and `max_list_items` (a listing's items per page; 50
+/// unless given), as the host's `Limits` -- and how it writes (`writing`, a `CallWriting`:
+/// the moment its writes are dated by, whether its text is spaced by its language; the
+/// session's clock and spaced unless given). One may serve many calls.
 #[pyclass(frozen, name = "CallContext", module = "ooxml_core")]
 pub struct PyCallContext {
     pub(crate) inner: CallContext,
@@ -106,20 +106,29 @@ pub struct PyCallContext {
 #[pymethods]
 impl PyCallContext {
     /// # Errors
-    /// `ValueError` for a negative `deadline` or `layout_timeout`, or a `date` not of that
-    /// form.
+    /// `ValueError` for a negative `deadline` or `layout_timeout`, or a limit of 0.
     #[new]
-    #[pyo3(signature = (*, caller = None, cancel = None, deadline = None, layout_timeout = None, date = None, typography = true))]
+    #[pyo3(signature = (*, caller = None, cancel = None, deadline = None, layout_timeout = None,
+                        max_result_chars = None, max_list_items = None, writing = None))]
     fn new(
         caller: Option<&str>,
         cancel: Option<PyRef<'_, PyCancelToken>>,
         deadline: Option<f64>,
         layout_timeout: Option<f64>,
-        date: Option<&str>,
-        typography: bool,
+        max_result_chars: Option<usize>,
+        max_list_items: Option<usize>,
+        writing: Option<PyRef<'_, PyCallWriting>>,
     ) -> PyResult<Self> {
-        if date.is_some_and(|d| !is_utc_second(d)) {
-            return Err(PyValueError::new_err("date is UTC to the second: 2026-11-20T09:30:15Z"));
+        let mut limits = ooxml_tools::Limits::DEFAULT;
+        for (given, kept, name) in [
+            (max_result_chars, &mut limits.result_chars, "max_result_chars"),
+            (max_list_items, &mut limits.list_items, "max_list_items"),
+        ] {
+            match given {
+                Some(0) => return Err(PyValueError::new_err(format!("{name} is 1 or more"))),
+                Some(n) => *kept = n,
+                None => {}
+            }
         }
         Ok(Self {
             inner: CallContext {
@@ -127,25 +136,13 @@ impl PyCallContext {
                 cancel: cancel.map(|t| Arc::clone(&t.inner)),
                 deadline: seconds(deadline, "deadline")?,
                 layout_timeout: seconds(layout_timeout, "layout_timeout")?,
-                date: date.map(str::to_owned),
-                as_given: !typography,
+                limits,
+                date: writing.as_ref().and_then(|w| w.date.clone()),
+                as_given: writing.is_some_and(|w| w.as_given),
                 ..CallContext::default()
             },
         })
     }
-}
-
-/// Whether `date` is a moment as a host dates writes: `YYYY-MM-DDTHH:MM:SSZ`.
-fn is_utc_second(date: &str) -> bool {
-    let b = date.as_bytes();
-    b.len() == 20
-        && b.iter().enumerate().all(|(i, c)| match i {
-            4 | 7 => *c == b'-',
-            10 => *c == b'T',
-            13 | 16 => *c == b':',
-            19 => *c == b'Z',
-            _ => c.is_ascii_digit(),
-        })
 }
 
 /// `value` seconds as a duration (`name` said where it is not 0 or more).

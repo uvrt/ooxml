@@ -658,7 +658,9 @@ impl Reader {
             })
         });
         let puncts = raw.chars().any(|c| ":;!?\u{AB}\u{BB}".contains(c));
-        let ascii = raw.is_ascii() && nt.chars().all(|c| c.is_ascii() || !c.is_numeric());
+        // `nd` reads ASCII digits: a paragraph with another character Python reads as a digit
+        // (`str.isdigit`) is left to Python
+        let ascii = raw.is_ascii() && nt.chars().all(|c| c.is_ascii() || !ooxml_base::pystr::is_digit(c));
         let words = if raw.is_ascii() {
             let mut n = 0usize;
             let mut in_word = false;

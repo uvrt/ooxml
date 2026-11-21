@@ -26,7 +26,7 @@ the session does not answer as it yet: values written by reference in a tool tha
 keep them yet (``Hosting.keeps_written``), and what the session says it leaves to the host
 (its ``unported``: a find within a block, a picture, regex, ...).  A format whose writes are
 not spaced by their language (``docx_format(typography=False)``) is served: the call's
-context says so (``CallContext(typography=False)``, lane P2e7).  The Rust handler changes
+context says so (``CallContext(writing=CallWriting(typography=False))``, lane P2e7).  The Rust handler changes
 nothing in each of those.
 
 A refusal is not a fallback (lane P2e1): the session's is the call's answer, in docx-agent's
@@ -304,7 +304,8 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
     :meth:`~ooxml_edit.tools.owned.OwnedEntry.served`."""
     mirror = entry.handle
     tool = call.tool.name
-    context = context_of(call.caller, _date(call), typography=getattr(entry.held, "typography", True) is not False)
+    context = context_of(call.caller, call.limits, date=_date(call),
+                         typography=getattr(entry.held, "typography", True) is not False)
     arguments, folded = _kept_refs(call, arguments)
     entry.flush_view()        # (in a batch: the Python ops' changes before it, the session's)
     _tracking(call, entry, context, counted)
@@ -441,7 +442,11 @@ def serve(call: Any, arguments: dict[str, Any], python: Callable[[], Any]) -> An
 
 
 def _result(envelope: dict[str, Any]) -> Result:
-    result = Result(summary=envelope.get("summary", ""), data=envelope.get("data"))
+    # a listing's page too (word_comments list, lane H3): its cursor and its total
+    result = Result(summary=envelope.get("summary", ""), data=envelope.get("data"),
+                    next_cursor=envelope.get("next_cursor"))
+    if envelope.get("total") is not None:
+        result.total = envelope["total"]
     for key in ("changed", "created", "removed"):
         getattr(result, key).extend(envelope.get(key) or [])
     result.renamed.update(envelope.get("renamed") or {})

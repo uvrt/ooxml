@@ -49,6 +49,47 @@ impl PyCallDocuments {
     }
 }
 
+/// How a call writes (`ooxml_core.CallWriting`, `CallContext`'s `writing`). `date`: the
+/// moment its writes are dated by (a revision's, a comment's), UTC to the second
+/// (`2026-11-20T09:30:15Z`) -- the host's clock, as docx-agent dates them; `None`: the
+/// session's clock. `typography`: whether the text it writes is spaced by its language
+/// (docx-agent's `docx_format(typography=...)`; `False`: as given). One may serve many calls.
+#[pyclass(frozen, name = "CallWriting", module = "ooxml_core")]
+pub struct PyCallWriting {
+    pub(crate) date: Option<String>,
+    pub(crate) as_given: bool,
+}
+
+#[pymethods]
+impl PyCallWriting {
+    /// # Errors
+    /// `ValueError` for a `date` not of that form.
+    #[new]
+    #[pyo3(signature = (*, date = None, typography = true))]
+    fn new(date: Option<&str>, typography: bool) -> PyResult<Self> {
+        if date.is_some_and(|d| !is_utc_second(d)) {
+            return Err(PyValueError::new_err("date is UTC to the second: 2026-11-20T09:30:15Z"));
+        }
+        Ok(Self {
+            date: date.map(str::to_owned),
+            as_given: !typography,
+        })
+    }
+}
+
+/// Whether `date` is a moment as a host dates writes: `YYYY-MM-DDTHH:MM:SSZ`.
+fn is_utc_second(date: &str) -> bool {
+    let b = date.as_bytes();
+    b.len() == 20
+        && b.iter().enumerate().all(|(i, c)| match i {
+            4 | 7 => *c == b'-',
+            10 => *c == b'T',
+            13 | 16 => *c == b':',
+            19 => *c == b'Z',
+            _ => c.is_ascii_digit(),
+        })
+}
+
 /// What the host's id ledger of a Word document holds beside the parts it bridges
 /// (`ooxml_core.HostIds`, `Session.bridge`'s `ids`): `drawn`, where its tool's draws of new
 /// ids got to in each seed's sequence (`{seed: index}`, docx-agent's id pool cursors: an id
