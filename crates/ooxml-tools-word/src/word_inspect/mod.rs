@@ -61,7 +61,7 @@ pub fn word_inspect(args: &WordInspect, version: &Version<'_>, cancel: &dyn Canc
     let target = followed(args, version);
     let selected = match select(&mut reader, Some(&target)) {
         Ok(selected) => selected,
-        Err(e) if e.code == "not_found" && names_place(&target) => return Ok(renamed_place()),
+        Err(e) if e.code == "not_found" && names_lost_place(&docx, &target) => return Ok(renamed_place()),
         Err(e) => return Err(refuse(e)),
     };
     cancel.check().map_err(cancelled)?;
@@ -169,10 +169,20 @@ fn renamed_place() -> Done<Value> {
     done
 }
 
-/// Whether `address` is, or is in, a block named by its place (`p@body/3`, `t@body/0/c1,1`).
-fn names_place(address: &str) -> bool {
-    let block = ooxml_word_model::address::inside_table(address).map_or(address, |(table, _)| table);
-    block.starts_with("p@") || block.starts_with("t@")
+/// Whether `address` is, is in, or has as an end of its span a block named by its place
+/// (`p@body/3`, `t@body/0/c1,1`) that this version lacks: one a stamping may have renamed.
+/// A place the version holds but the view leaves out (a paragraph in a text box) is refused
+/// as docx-agent's view refuses it.
+fn names_lost_place(docx: &ooxml_word_model::docx::Docx, address: &str) -> bool {
+    address
+        .split("..")
+        .map(str::trim)
+        .filter(|end| !end.is_empty())
+        .any(|end| {
+            let block = ooxml_word_model::address::inside_table(end).map_or(end, |(table, _)| table);
+            (block.starts_with("p@") || block.starts_with("t@"))
+                && ooxml_word_model::address::resolve(docx, block).is_err()
+        })
 }
 
 /// What docx-agent gives otherwise: the final view's cells whose end Accept All takes away.
