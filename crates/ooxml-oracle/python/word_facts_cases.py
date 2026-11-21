@@ -2,7 +2,8 @@
 lane P5a2): ``word_reads_diff.py facts``.
 
 For each document, docx-agent's ``layout_facts`` functions that need no layout --
-``empty_paragraphs``, ``numbering_skips_level``, ``accept_loses_text`` -- one case each,
+``empty_paragraphs``, ``numbering_skips_level``, ``accept_loses_text``, ``row_text_format`` (with
+made-up rows written, :func:`_written`) -- one case each,
 against the ``word-reads`` binary's fact cases (``crates/ooxml-oracle/src/facts.rs``: the
 Rust library functions of ``ooxml_word_edit::facts`` as ``check`` words them).  Uncapped and unfiltered:
 the cap and the page and range filters are ``check``'s.
@@ -27,13 +28,24 @@ if str(TESTS) not in sys.path:
     sys.path.insert(0, str(TESTS))
 
 from docx_agent import Document
-from docx_agent.layout_facts import accept_loses_text, empty_paragraphs, numbering_skips_level, table_grid_mismatch
+from docx_agent.layout_facts import (_PARA_ID, accept_loses_text, empty_paragraphs, numbering_skips_level,
+                                     row_text_format, table_grid_mismatch)
+
+def _written(document) -> frozenset:
+    """Made-up rows written for ``row_text_format`` (the session's record in check): each body
+    table's every third row from row 2, by ``w14:paraId`` (``crates/ooxml-oracle/src/facts.rs``
+    reads the same)."""
+    index = document._index(document.package.document_part())
+    return frozenset(row.get(_PARA_ID) for table in index.tables for row, _ in table.rows[2::3]
+                     if row.get(_PARA_ID))
+
 
 FACTS = {
     "empty_paragraphs": empty_paragraphs,
     "numbering_skips_level": numbering_skips_level,
     "table_grid_mismatch": table_grid_mismatch,
     "accept_loses_text": accept_loses_text,
+    "row_text_format": lambda document: row_text_format(document, _written(document)),
 }
 
 
@@ -96,7 +108,26 @@ def made_up() -> dict[str, bytes]:
     # cell lost in a nested table.
     out["accept-unnamed"] = _document(_edge((0, 1)).replace('w:del w:id="95" ', "w:del "))
     out["accept-nested"] = _document(_tbl([[_p("Outer") + _edge((1, 1)) + _p("Below"), _p("Side")]]))
+    # Rows written unlike the rows around them (row 2 red among blue ones), and alike.
+    from test_rows_r58 import ROWS, _shelf
+
+    out["rows-unlike"] = _row_ids(_shelf(ROWS, colors=["1F4E79", "C00000", "1F4E79", "1F4E79"]))
+    out["rows-banded"] = _row_ids(_shelf(ROWS, colors=["1F4E79", "7F7F7F", "1F4E79", "7F7F7F"]))
     return out
+
+
+def _row_ids(data: bytes) -> bytes:
+    """``data`` with each table row given a ``w14:paraId`` (``0A000001`` on)."""
+    out = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(data)) as source, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as target:
+        for item in source.infolist():
+            content = source.read(item.filename)
+            if item.filename == "word/document.xml":
+                parts = content.split(b"<w:tr>")
+                content = parts[0] + b"".join(b'<w:tr w14:paraId="0A%06X" w14:textId="77777777">' % k + part
+                                              for k, part in enumerate(parts[1:], 1))
+            target.writestr(item, content)
+    return out.getvalue()
 
 
 def _grids(document, p) -> dict[str, bytes]:
