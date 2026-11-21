@@ -36,7 +36,7 @@ pub fn uncertain(facts: &Facts<'_>, approximations: &[Approximation]) -> Vec<Unc
         let Some(page) = entry.page.filter(|p| facts.shown([*p])) else {
             continue;
         };
-        let reason = entry.code.split_once(':').map_or("", |(_, r)| r).to_owned();
+        let reason = entry.listed().0.to_owned();
         let at = entry.path.as_deref().map(|path| {
             path.starts_with("w:body")
                 .then(|| facts.version().id_of(path))
