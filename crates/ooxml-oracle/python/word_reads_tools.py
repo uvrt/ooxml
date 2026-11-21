@@ -284,7 +284,10 @@ def check_tools(args, run_rust, report, files_of) -> int:
                 print(f"{path}: python sequences failed: {error}")
         for case, (tool, arguments, reply, *before) in replies.items():
             expected[(str(path), case)] = comparable(tool, reply)
-            reflow = (expected[(str(path), case)].get("data") or {}).get("reflow")
+            # (a text reply -- read, ranges, find -- is compared as its text: no reflow in it)
+            answer = expected[(str(path), case)]
+            data = answer.get("data") if isinstance(answer, dict) else None
+            reflow = data.get("reflow") if isinstance(data, dict) else None
             if layout_timeout(case) == 0.0 and isinstance(reflow, dict) and "error" not in reflow:
                 expected[(str(path), case)]["data"]["reflow"] = {"error": PAST_LIMIT}
             item = {"file": str(path), "case": case, "tool": tool, "arguments": {"doc": "d1", **arguments}}

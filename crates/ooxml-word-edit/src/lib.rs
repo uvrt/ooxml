@@ -51,6 +51,7 @@ mod content_types;
 mod control_delete;
 mod controls;
 mod copying;
+mod core_properties;
 mod delete;
 mod delete_blocks;
 mod delete_write;
@@ -124,6 +125,7 @@ pub use controls::{ControlEdited, ControlKind, FillControl, Filling, InsertContr
 pub use copying::{
     BlocksCopied, BookmarkPolicy, CopyBlocks, CopyRange, CopySource, ListPolicy, StylePolicy, UnmappedPolicy,
 };
+pub use core_properties::{core_part, core_properties, CoreProperty, CoreSet, SetCoreProperties};
 pub use delete::{BlockDeleted, DeleteBlock};
 pub use delete_blocks::{blocks_named, BlocksDeleted, DeleteBlocks};
 pub use doc::{Change, Draw, DrawFrom, Key, ModelError, Shared, WordDoc};
@@ -179,9 +181,9 @@ pub use styles::{
 pub use switch::{tracks_changes, word_tracks_changes, SetWordTracking, WordTracking};
 pub use tables::{
     body_lines, body_width, loose_paragraph_after, pending_structure, row_cells, row_shown, rows_unlike, table_keeps,
-    table_keeps_at, BodyLines, BodyWidth, CellUnlike, CellValues, EditTable, FormatCall, FormatTable, Look, LookField,
-    RowUnlike, TableChange, TableChanged, TableEdit, TableFormat, TableFormatted, TableKeeps, TableValues, TableWidth,
-    TextLook, ROW_WINDOW,
+    table_keeps_at, BodyLines, BodyWidth, CellUnlike, CellValues, ColumnCopy, EditTable, FormatCall, FormatTable,
+    LikeTheColumn, Look, LookField, RowUnlike, TableChange, TableChanged, TableEdit, TableFormat, TableFormatted,
+    TableKeeps, TableValues, TableWidth, TextLook, ROW_WINDOW,
 };
 pub use template::{
     compatibility_mode, Reflowed, UpgradeReflowed, UpgradeToModern, Upgraded, DEFAULT_COMPATIBILITY_MODE, MODERN_MODE,
