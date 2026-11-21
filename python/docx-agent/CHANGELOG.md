@@ -7,9 +7,10 @@ snapshot commit; the development history before it is summarised here.
 
 ## 0.1.140 -- unreleased
 
-Phase P2, lane P2d3: the Rust session's calls and edits are given their options as one
-`ooxml_core.CallOptions` (`rust.owner.options`): context, versions read, placer, page engine,
-blobs, values written by reference.
+Phase P2, lane P2c17: a call the Rust session answers names documents as the host does
+(`Session.edit`/`Session.call` `names`): from the second session of a process on, a served
+reply named the Rust session's id of the document (an undo call `{"doc": "d3"}` for the
+host's `d1`, a way-out call, a summary).
 
 Phase P2, lane P2e1: a refusal is not a fallback. A served edit or read the Rust session
 refuses answers with that refusal -- docx-agent's code, message and field, with the session's

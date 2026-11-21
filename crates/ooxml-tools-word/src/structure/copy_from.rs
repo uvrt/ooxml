@@ -13,8 +13,8 @@ use crate::review::Editing;
 use ooxml_tools::pyfmt::repr_str;
 use ooxml_tools::{ArgEnum, Done, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::{
-    section_blocks, section_blocks_in, CopyBlocks, CopyRange, CopySource, EditError, Ids, ListPolicy, StylePolicy,
-    UnmappedPolicy,
+    section_blocks, section_blocks_in, BookmarkPolicy, CopyBlocks, CopyRange, CopySource, EditError, Ids, ListPolicy,
+    StylePolicy, UnmappedPolicy,
 };
 use serde_json::{json, Map, Value};
 
@@ -162,6 +162,8 @@ fn run(args: &WordCopyFrom, editing: &Editing<'_>, way: &TryCall) -> Result<Tool
         },
         // the tool copies lists as Word's paste does: each a new list
         lists: ListPolicy::Separate,
+        // and renames a bookmark whose name this document has
+        bookmarks: BookmarkPolicy::Rename,
     };
     Ok(match editing.editor.run(editing.caller, &command) {
         Ok(done) => reply(args, done.out),
@@ -206,4 +208,9 @@ fn not_open(id: &str, doc: &str) -> ToolError {
         Some(way_out) => ToolError::refusal(Refusal::NotFound, message, way_out).at("source_doc"),
         None => ToolError::internal(message, "word_copy_from:source_doc"),
     }
+}
+
+/// Registers `word_copy_from` (the crate's [`crate::register`]).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    r.edit::<WordCopyFrom>(word_copy_from, crate::Hosting::HOST);
 }

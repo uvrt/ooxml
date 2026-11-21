@@ -1,6 +1,5 @@
 //! Owns: `ooxml_core.Session`, `ooxml_core.CancelToken`, `ooxml_core.CallContext`,
-//! `ooxml_core.Version` (a document's version a call may be pinned to) and
-//! `ooxml_core.tool_specs`: their Python signatures, the copying of Python values into Rust ones while the interpreter
+//! `ooxml_core.Version` (a document's version a call may be pinned to): their Python signatures, the copying of Python values into Rust ones while the interpreter
 //! lock is held, every session call made with it released, and the mapping of errors.
 //!
 //! Must not: do a session's work itself, or touch a Python object without the lock.
@@ -9,7 +8,7 @@ use crate::adapters::{context, SessionStop};
 use crate::options::{context_of, PyCallOptions};
 use ooxml_base::Locale;
 use ooxml_session::{
-    CallContext, CancelToken, DocId, DocKind, HeldId, Opened, Registry, RetiredBy, Session, SessionConfig, SessionError,
+    CallContext, CancelToken, DocId, DocKind, HeldId, Opened, RetiredBy, Session, SessionConfig, SessionError,
 };
 use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools::{compact, ToolError, ToolResult};
@@ -58,7 +57,7 @@ pub struct PySession {
     stop: Arc<SessionStop>,
 }
 
-fn kind_of(kind: &str) -> PyResult<DocKind> {
+pub(crate) fn kind_of(kind: &str) -> PyResult<DocKind> {
     DocKind::parse(kind).ok_or_else(|| to_py(&SessionError::Kind(kind.to_owned())))
 }
 
@@ -165,8 +164,8 @@ fn caller_context(context: Option<&PyCallContext>) -> CallContext {
 }
 
 /// A document at one version (`ooxml_core.Version`), held while Python holds it: a call
-/// given it (`Session.call(..., at=[version])`) reads that version, whatever was
-/// committed since.
+/// given it (`CallDocuments(at=[version])` in its `CallOptions`) reads that version,
+/// whatever was committed since.
 #[pyclass(frozen, name = "Version", module = "ooxml_core")]
 pub struct PyVersion {
     pub(crate) inner: Opened,
@@ -672,12 +671,4 @@ fn copy_parts(parts: &Bound<'_, PyDict>) -> PyResult<Parts> {
         copied.push((name, data.map(Arc::<[u8]>::from)));
     }
     Ok(copied)
-}
-
-/// The tools' definitions for `kind` as JSON text (a list of `ToolSpec` exports): what a
-/// session made now would serve.
-#[pyfunction]
-pub fn tool_specs(py: Python<'_>, kind: &str) -> PyResult<String> {
-    let kind = kind_of(kind)?;
-    Ok(py.detach(|| compact(&Value::Array(Registry::standard().export(kind)))))
 }
