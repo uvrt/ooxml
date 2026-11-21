@@ -357,10 +357,22 @@ pub fn page_element(paint: &PagePaint, cx: &SvgContext<'_>) -> Element {
         .drawings
         .iter()
         .enumerate()
-        .map(|(k, slot)| Painted {
-            slot,
-            paint: cx.drawings.drawing(slot, &mut defs),
-            text: paint.text_boxes.iter().filter(|t| t.slot == k).collect(),
+        .map(|(k, slot)| {
+            // A text box's inline drawings are painted after its own (docx2svg draws them as
+            // it lays the box out), their resources' ids minted in that order.
+            let drawn = cx.drawings.drawing(slot, &mut defs);
+            let text: Vec<&TextBoxPaint> = paint.text_boxes.iter().filter(|t| t.slot == k).collect();
+            let inner = text
+                .iter()
+                .flat_map(|t| t.drawings.iter())
+                .map(|inner| cx.drawings.drawing(inner, &mut defs))
+                .collect();
+            Painted {
+                slot,
+                paint: drawn,
+                text,
+                inner,
+            }
         })
         .collect();
     let mut slots: Vec<&Painted<'_>> = painted.iter().collect();
@@ -421,15 +433,17 @@ fn over_rules(rules: &[Rule]) -> Vec<Element> {
         .collect()
 }
 
-/// A drawing's slot, its painter's paint, and its text boxes' paint.
+/// A drawing's slot, its painter's paint, its text boxes' paint, and the paint of their
+/// inline drawings.
 struct Painted<'a> {
     slot: &'a DrawingSlot,
     paint: Option<Vec<String>>,
     text: Vec<&'a TextBoxPaint>,
+    inner: Vec<Option<Vec<String>>>,
 }
 
-/// Drawings as groups of their painters' paint, then their text boxes' pictures, rules and
-/// lines (`_float`); one with no painter is not written.
+/// Drawings as groups of their painters' paint, then their text boxes' pictures, their
+/// inline drawings' paint, rules and lines (`_float`); one with no painter is not written.
 fn floats(slots: &[&Painted<'_>], cx: &SvgContext<'_>, defs: &mut PageDefs) -> Vec<Element> {
     let mut out = Vec::new();
     for painted in slots {
@@ -449,6 +463,9 @@ fn floats(slots: &[&Painted<'_>], cx: &SvgContext<'_>, defs: &mut PageDefs) -> V
         g.children = paint.iter().cloned().map(Element::raw).collect();
         for text in &painted.text {
             g.children.extend(text.pictures.iter().map(|d| picture(d, cx)));
+        }
+        for inner in painted.inner.iter().flatten() {
+            g.children.extend(inner.iter().cloned().map(Element::raw));
         }
         let rules: Vec<Rule> = painted.text.iter().flat_map(|t| t.rules.iter().cloned()).collect();
         let text_lines: Vec<PaintedLine> = painted.text.iter().flat_map(|t| t.lines.iter().cloned()).collect();
