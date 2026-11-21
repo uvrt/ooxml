@@ -113,7 +113,21 @@ def _within_cases(document, targets: list[str]) -> list[dict]:
             call("word_delete", find=word, within=span, target=span),
             call("word_delete", find=word, within=targets[-1]),
             call("word_insert_text", find=word, within=targets[-1], text="x"),
-            call("word_delete", find=word, within=targets[-1], target=targets[0])]
+            call("word_delete", find=word, within=targets[-1], target=targets[0])] + _twice_cases(document, targets)
+
+
+def _twice_cases(document, targets: list[str]) -> list[dict]:
+    """A word two paragraphs hold, found within the later one: by ``target`` and by
+    ``within`` (the other paragraph keeps it)."""
+    call = _call
+    texts = [document.paragraph(t).text.split() for t in targets]
+    for k, words in enumerate(texts[1:], start=1):
+        shared = [w for w in words if w.isalpha() and len(w) > 3 and w in texts[0] and words.count(w) == 1]
+        if shared:
+            return [call("word_delete", find=shared[0], target=targets[k]),
+                    call("word_delete", find=shared[0], within=targets[k]),
+                    call("word_insert_text", find=shared[0], within=targets[k], text=" (here)")]
+    return []
 
 
 #: insert_markdown's Markdown called as the tool (raw HTML refused, emphasis in its styles).
