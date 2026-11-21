@@ -23,7 +23,7 @@ import datetime as dt
 
 import pytest
 from ooxml_edit.tools import Toolbox
-from test_rows_joins_r54r import _document, _p
+from facts_documents import _document, _p
 
 from docx_agent import Document
 from docx_agent.tools import FORMAT, GROUPS, TOOLS

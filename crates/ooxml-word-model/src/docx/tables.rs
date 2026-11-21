@@ -179,12 +179,70 @@ impl<'a> TableGrid<'a> {
 /// A row's cells (row-level wrappers seen through) with the grid column each starts at and
 /// its span.
 fn placed_cells(row: &Element) -> Vec<(Arc<Element>, usize, usize)> {
+    cells_at(row, &[])
+        .into_iter()
+        .map(|cell| (cell.element, cell.column, cell.span))
+        .collect()
+}
+
+/// A cell of a row, placed.
+#[derive(Debug, Clone)]
+pub struct PlacedCell {
+    /// The `w:tc`.
+    pub element: Arc<Element>,
+    /// Its place in its part.
+    pub path: Box<[u32]>,
+    /// The grid column it starts at (`w:gridBefore` and the spans before it counted).
+    pub column: usize,
+    /// Its span (`w:gridSpan`, at least 1).
+    pub span: usize,
+}
+
+/// The cells of the row at `path` (row-level wrappers seen through), each with its place,
+/// the grid column it starts at and its span.
+#[must_use]
+pub fn cells_at(row: &Element, path: &[u32]) -> Vec<PlacedCell> {
     let mut column = usize::try_from(int_val(find_path(row, &["trPr", "gridBefore"]), 0)).unwrap_or(0);
     let mut out = Vec::new();
-    for (cell, _) in cells_of(row, &[]) {
-        let span = usize::try_from(int_val(find_path(&cell, &["tcPr", "gridSpan"]), 1).max(1)).unwrap_or(1);
-        out.push((cell, column, span));
+    for (element, path) in cells_of(row, path) {
+        let span = usize::try_from(int_val(find_path(&element, &["tcPr", "gridSpan"]), 1).max(1)).unwrap_or(1);
+        out.push(PlacedCell {
+            element,
+            path,
+            column,
+            span,
+        });
         column += span;
+    }
+    out
+}
+
+/// The cells of `table` (a table of `part`) Word's Accept All removes with their text, as
+/// `(row, cell)` (docx-agent's `cells_lost_on_accept`): in each row not itself deleted, a
+/// cell with no next cell kept in its row whose last paragraph mark is a pending deletion,
+/// not taken into a cell before it.
+#[must_use]
+pub fn cells_lost_on_accept(part: &StoryPart, table: &TableId) -> Vec<(usize, PlacedCell)> {
+    let mut out = Vec::new();
+    for (r, (path, _)) in table.rows.iter().enumerate() {
+        let Some(row) = at_path(part.root(), path) else {
+            continue;
+        };
+        if find_path(row, &["trPr", "del"]).is_some() {
+            continue;
+        }
+        let shown: Vec<PlacedCell> = cells_at(row, path)
+            .into_iter()
+            .filter(|cell| !cell_deleted(&cell.element))
+            .collect();
+        let cells: Vec<&Element> = shown.iter().map(|cell| &*cell.element).collect();
+        let (groups, gone) = crate::read::cell_ends(&cells);
+        let taken: std::collections::HashSet<usize> = groups.iter().flat_map(|g| g.iter().skip(1).copied()).collect();
+        for (n, cell) in shown.into_iter().enumerate() {
+            if gone.contains(&n) && !taken.contains(&n) {
+                out.push((r, cell));
+            }
+        }
     }
     out
 }
