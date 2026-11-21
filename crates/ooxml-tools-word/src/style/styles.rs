@@ -569,3 +569,8 @@ fn region(item: &RegionItem) -> RegionValues {
         clear: item.clear,
     }
 }
+
+/// Registers `word_styles` (the crate's [`crate::register`]).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    r.edit::<WordStyles>(word_styles, crate::Hosting::SERVED);
+}

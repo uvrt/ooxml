@@ -497,6 +497,11 @@ impl PageEngine {
         (self.budgets.held.used(), self.painted.stats().bytes)
     }
 
+    /// The locale it lays out in.
+    pub fn locale(&self) -> &Locale {
+        &self.locale
+    }
+
     /// Page `page` of `version` (0-based, blank pages counted) painted: `None` past its
     /// last page, or where `version` is not of this engine's generation. Kept for the
     /// next reader while the paint budget has room.

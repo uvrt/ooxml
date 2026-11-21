@@ -8,7 +8,7 @@ Rust library functions of ``ooxml_word_edit::facts`` as ``check`` words them).  
 the cap and the page and range filters are ``check``'s.
 
 Besides the documents given, made-up ones that hold each fact (:func:`made_up`, from
-docx-agent's tests' builders) are compared on every run.
+docx-agent's tests' document makers) are compared on every run.
 
 Python's behaviour is not changed: this only calls docx-agent's documented functions.
 """
@@ -102,7 +102,7 @@ def made_up() -> dict[str, bytes]:
 def _grids(document, p) -> dict[str, bytes]:
     """Tables off their grid (widened, short, by tracked cells or a tracked grid) and ragged
     (now, or as Accept All leaves them), each with ``document``'s body (docx-agent's test
-    builder) around it."""
+    document maker) around it."""
     record = 'w:id="{}" w:author="Editor B" w:date="2026-11-13T09:00:00Z"'
 
     def tc(text: str, props: str = "") -> str:

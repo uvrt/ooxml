@@ -258,6 +258,25 @@ pub fn names_language(document: &WordDocument, locale: &Locale) -> Option<String
         .filter(|v| !v.is_empty())
 }
 
+/// What the `STYLEREF` `instruction` searches for in `document` laid out in `locale`, and
+/// its reading, as [`StyleSearch::find`] finds it, without a search of the body (a field
+/// update asks it of one field); why not where it cannot be computed.
+pub fn target_in(
+    document: &WordDocument,
+    locale: &Locale,
+    instruction: &str,
+) -> Result<(StyleReference, Target), Uncomputable> {
+    let reference = style_reference(instruction)?;
+    let names = names_language(document, locale);
+    let found = target(
+        &reference,
+        document.context.styles.as_deref(),
+        &canonical(locale),
+        names.as_deref(),
+    )?;
+    Ok((reference, found))
+}
+
 /// What a `STYLEREF` searches for, or Word's error text where it finds no style
 /// (`style_reference_target`); `Uncomputable` for an error text not measured in the
 /// language and the default character style.
