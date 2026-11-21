@@ -124,8 +124,17 @@ pub(crate) fn resolve_block_with(ids: &crate::Ids, docx: &Docx, id: &str) -> Res
 /// The address's refusal; a span across containers or ending before it starts.
 pub(crate) fn blocks_of(doc: &WordDoc, docx: &Docx, address: &str) -> Result<(String, Vec<BlockAt>)> {
     let address = expand_heading(docx, address).map_err(EditError::Address)?;
-    let Some((first, last)) = span_ends(&address).map_err(EditError::Address)? else {
-        let (part, block) = resolve_block(doc, docx, &address)?;
+    span_or_block(doc, docx, &address)
+}
+
+/// The blocks a span of blocks (`_span_elements`) or one block id (`_resolve_block`)
+/// names, in document order, and their part.
+///
+/// # Errors
+/// The address's refusal; a span across containers or ending before it starts.
+pub(crate) fn span_or_block(doc: &WordDoc, docx: &Docx, address: &str) -> Result<(String, Vec<BlockAt>)> {
+    let Some((first, last)) = span_ends(address).map_err(EditError::Address)? else {
+        let (part, block) = resolve_block(doc, docx, address)?;
         return Ok((part, vec![block]));
     };
     let given = format!("{}..{}", first.unwrap_or(""), last.unwrap_or(""));

@@ -72,6 +72,14 @@ pub trait ArgType: Sized {
     }
 }
 
+/// The arguments of an editing tool some of whose calls only read (today's `Tool.reads`,
+/// `edit_chart`'s `action: "read"`): such a call reads the version it pins, changing
+/// nothing.
+pub trait ReadsWhen {
+    /// Whether this call only reads.
+    fn reads(&self) -> bool;
+}
+
 /// A tool's arguments: one struct, from which `#[derive(ToolArgs)]` makes the spec.
 pub trait ToolArgs: ArgType {
     /// The tool's definition.

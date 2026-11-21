@@ -12,7 +12,7 @@
 //! Must not: write but through the sink, or know a tool's JSON.
 
 mod insertion;
-pub(crate) use insertion::insert_content;
+pub(crate) use insertion::{insert_content, track, track_table};
 mod lists;
 mod parse;
 pub(crate) use parse::py_space;

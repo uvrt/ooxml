@@ -16,6 +16,7 @@
 mod blobs;
 mod check;
 mod describe;
+mod document;
 mod find_text;
 mod objects;
 mod originals;
@@ -37,6 +38,7 @@ mod written;
 pub use blobs::{Blob, BlobList, Blobs};
 pub use check::*;
 pub use describe::{describe, Describe, DESCRIBED, NOT_DESCRIBED};
+pub use document::*;
 pub use find_text::{find_text, FindStories, FindText};
 pub use pages::EnginePages;
 pub use placements::Placer;

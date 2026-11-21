@@ -83,7 +83,7 @@ from .logs import CallRecord
 from .numbers import NumberRules, NumberText
 from .scales import Scale, ScaleValue, Step
 from .prompts import SYSTEM, system_prompt
-from .registry import (ACCEPT, ANY_ROLE, CORE, EDIT, RESOLVE, REVIEW, ROLES, Param, Tool,
+from .registry import (ACCEPT, ANY_ROLE, CORE, EDIT, RESOLVE, REVIEW, ROLES, AliasWhen, Param, Tool,
                        ToolGroup, array, boolean, build_schema, free_object, integer, names_as,
                        number, obj, role_set, string, tool)
 from .results import (ERROR_CODES, Image, Result, ToolError, anthropic_image_tokens,
@@ -101,7 +101,7 @@ from .worker import (InProcess, SubprocessPool, ThreadRunner, WorkerPool, availa
 
 __all__ = [
     "compare_problems", "problems_now", "validation",
-    "ACCEPT", "ANY_ROLE", "EDIT", "RESOLVE", "REVIEW", "ROLES", "role_set",
+    "ACCEPT", "ANY_ROLE", "AliasWhen", "EDIT", "RESOLVE", "REVIEW", "ROLES", "role_set",
     "Asset", "AssetCatalogue", "Blob", "CACHE_EXTERNAL", "CACHE_STATUSES", "FolderCatalogue", "assets", "CORE", "Call", "CallContext", "CallError", "CallRecord", "DATASET_ID",
     "DATASET_PREFIX", "DEFAULT_LOCALE", "Dataset", "DatasetEntry", "DefaultLocale", "DocumentEntry", "DocumentFormat",
     "ERROR_CODES", "LOCALE_FIELDS", "NumberRules", "NumberText", "REF", "Image", "LimitError", "Limits", "Output", "Param",

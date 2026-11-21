@@ -68,7 +68,7 @@ from .. import dates, provenance
 from . import numbers, scales, sources
 from .savegate import summary_note, validation, validation_fact
 from .datasets import briefs
-from .registry import (ANY_ROLE, CORE, EDIT, RESOLVE, REVIEW, Param, Tool, ToolGroup, array,
+from .registry import (ANY_ROLE, CORE, EDIT, RESOLVE, REVIEW, AliasWhen, Param, Tool, ToolGroup, array,
                        boolean, build_schema, free_object, integer, number, obj, string)
 from .results import Result, ToolError, page_text
 
@@ -282,12 +282,6 @@ _CHECK_SCALE = _scale("As style_by_value's: its values with the wrong step or no
 
 def _no_documents(arguments: Mapping[str, Any]) -> list[str]:
     return []
-
-
-def _slide_on_add(arguments: Mapping[str, Any]) -> str | None:
-    """``edit_chart``'s ``slide``: its ``target`` when adding (a deck's slide); in another
-    action the target is the chart, so ``slide`` stays an unknown argument."""
-    return "target" if arguments.get("action") == "add" else None
 
 
 #: The roles of a comments tool's actions (``ppt_comments``, ``word_comments``): a reviewer
@@ -609,7 +603,7 @@ SPECS: dict[str, Spec] = {spec.name: spec for spec in [
          group=MISC, mutates=True, refs=("target",), sources=("from",),
          reads=_reading_action, wrap=lambda fn: _chart_rows(fn),
          action_roles={"read": REVIEW},
-         aliases={"slide": _slide_on_add, "from_columns": "columns", "colours": "colors"}),
+         aliases={"slide": AliasWhen("target", "action", "add"), "from_columns": "columns", "colours": "colors"}),
     # S12
     Spec("edit_smartart",
          "Change a SmartArt diagram's node text, or add and remove nodes. Returns the nodes.",
