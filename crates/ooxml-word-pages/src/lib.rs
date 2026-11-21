@@ -23,6 +23,9 @@
 //! - a version's layout summary ([`summary`]) and the comparison of two versions page by
 //!   page ([`PageEngine::compare`], [`summarised`]): only the pages they do not share
 //!   painted, each page's digests kept across versions within a bound;
+//! - `check`'s layout facts of a version laid out ([`layout_facts`]: the text sizes, the
+//!   spacers, the keeps broken at a page's foot, the tables kept together and the tables
+//!   parted from their lead-in or the line after them), read with the version's reading;
 //! - what a version alone holds, in bytes, roughly ([`LaidVersion::weight`]), and what the
 //!   engine keeps within its budgets ([`EngineBudgets`]: its memos, swept once a version is
 //!   laid out; its pages' paint, least recently used let go first).
@@ -43,8 +46,10 @@ mod engine;
 mod error;
 mod fonts;
 pub mod ids;
+pub mod layout_facts;
 pub mod line_text;
 mod page_context;
+pub mod page_read;
 pub mod page_said;
 mod pictures;
 pub mod png;

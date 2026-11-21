@@ -70,6 +70,9 @@ pub fn run(args: &[String]) -> Result<(), String> {
         };
         let reply = if let Some(fact) = item.get("fact").and_then(Value::as_str) {
             crate::facts::reply(package, fact, item.get("opened").and_then(Value::as_str))
+        } else if item.get("laid").is_some() {
+            let fonts = item.get("fonts").unwrap_or(&Value::Null);
+            crate::laid_facts::reply(package, fonts, item.get("min_size"), item.get("range"))
         } else if matches!(tool, "read_batch" | "check") {
             let before = item
                 .get("before")

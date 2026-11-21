@@ -36,6 +36,7 @@ pub mod facts;
 pub mod find_regex;
 pub mod glyphs;
 pub mod ids;
+pub mod laid_facts;
 pub mod layout;
 pub mod layout_bench;
 pub mod layout_svg;

@@ -223,10 +223,14 @@ fn case_blobs(case: &Value) -> BlobList {
     )
 }
 
-/// A page engine over the fonts a case names (`folders`: `[location, path]` pairs as
-/// docx2svg hands them to `ooxml_core.WordFonts`, `substitutes`, `substitute`), as the
-/// layout port the field tools read.
+/// A page engine over the fonts a case names, as the layout port the field tools read.
 pub(crate) fn engine_pages(fonts: &Value) -> EnginePages {
+    EnginePages::new(Arc::new(std::sync::Mutex::new(page_engine(fonts))))
+}
+
+/// A page engine over the fonts a case names (`folders`: `[location, path]` pairs as
+/// docx2svg hands them to `ooxml_core.WordFonts`, `substitutes`, `substitute`).
+pub(crate) fn page_engine(fonts: &Value) -> ooxml_word_pages::PageEngine {
     use ooxml_fonts::{Folder, Location, WordFontOptions};
     use ooxml_word_pages::{DiskFonts, EngineBudgets, EngineOptions, FontSetup, PageEngine};
     let pairs = |key: &str| -> Vec<(String, String)> {
@@ -263,8 +267,7 @@ pub(crate) fn engine_pages(fonts: &Value) -> EnginePages {
         held: Arc::new(Unlimited),
         paint: Arc::new(Unlimited),
     };
-    let engine = PageEngine::new(setup, EngineOptions::default(), budgets);
-    EnginePages::new(Arc::new(std::sync::Mutex::new(engine)))
+    PageEngine::new(setup, EngineOptions::default(), budgets)
 }
 
 /// The tool's reply to `arguments` taken as its intent rules take them (a refusal of the

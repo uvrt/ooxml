@@ -8,11 +8,11 @@
 //! Must not: write anything (the tool hands [`super::FormatTable`] the edits).
 
 use super::{find_table, room_for, shape};
-use crate::format::keeps::Keeps;
 use crate::names::W;
 use crate::work::Work;
 use crate::{EditError, Result, WordDoc};
 use ooxml_word_model::docx::formatting::Formatting;
+use ooxml_word_model::docx::keeps::Keeps;
 use ooxml_word_model::docx::{at_path, find_path};
 use ooxml_xml::Element;
 use std::sync::Arc;

@@ -14,6 +14,9 @@
 
 mod args;
 mod facts;
+mod laid_facts;
+mod laid_tables;
+mod ranges;
 mod reflow;
 
 pub use args::{Check, CheckCopy, CheckInclude, CheckScale, CopyLists, CopyReference, ScaleShow, ScaleStep, StepText};
@@ -21,6 +24,12 @@ pub use facts::{
     direct_formatting_json, empty_run_json, grid_mismatch_json, lost_cell_json, lost_original_json, row_unlike_json,
     skipped_level_json, spacing_problem_json, style_use_json, text_language_json,
 };
+pub use laid_facts::{
+    keep_at_foot_json, kept_together_json, minimum_of, page_facts_json, parted_json, small_text_json,
+    smallest_text_json, spacer_json,
+};
+pub use laid_tables::{column_fit_json, past_margins_json, split_row_json, uncertain_json, unrepeated_json};
+pub use ranges::{ranges_json, Trials, TRIALS, TRIAL_SECONDS};
 pub use reflow::{LastCheck, Seen};
 
 use crate::describe::cancelled;

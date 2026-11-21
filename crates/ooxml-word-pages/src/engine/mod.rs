@@ -22,6 +22,7 @@
 mod changed;
 mod parts;
 mod summaries;
+mod trial;
 
 use changed::{context_may_change, notes_or_stories_changed};
 
@@ -640,6 +641,13 @@ impl PageEngine {
     pub fn line_texts(&mut self, version: &LaidVersion, page: usize) -> Option<Vec<crate::line_text::LineText>> {
         let paint = self.painted_page(version, page, false)?;
         Some(paint.lines.iter().map(crate::line_text::LineText::of).collect())
+    }
+
+    /// Page `page` of `version` as a check reads it ([`crate::page_read`]): its lines' text
+    /// and the boxes beside them from one paint, not kept (as [`PageEngine::line_texts`]).
+    pub fn page_read(&mut self, version: &LaidVersion, page: usize) -> Option<crate::page_read::PageRead> {
+        let paint = self.painted_page(version, page, false)?;
+        Some(crate::page_read::PageRead::of(&paint))
     }
 
     /// Page `page` of `version` as a reader sees it.
