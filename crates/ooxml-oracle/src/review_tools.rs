@@ -10,13 +10,14 @@ use crate::edits::{Monotonic, Unlimited};
 use ooxml_base::{Cancel, Limits};
 use ooxml_opc::Package;
 use ooxml_store::{Caller, StoreConfig};
-use ooxml_tools::{ArgType, ToolArgs};
+use ooxml_tools::{ArgType, ReadsWhen, ToolArgs};
 use ooxml_tools_word::{
-    replace_text, word_changes, word_comments, word_delete, word_insert_markdown, word_insert_text, word_set_text,
-    word_set_tracking, CallEditor, Editing, ReplaceText, WordChanges, WordComments, WordDelete, WordInsertMarkdown,
-    WordInsertText, WordSetText, WordSetTracking,
+    replace_text, word_changes, word_changes_read, word_comments, word_delete, word_insert_markdown, word_insert_text,
+    word_set_text, word_set_tracking, CallEditor, Editing, ReplaceText, WordChanges, WordComments, WordDelete,
+    WordInsertMarkdown, WordInsertText, WordSetText, WordSetTracking,
 };
 use ooxml_word_edit::Editor;
+use ooxml_word_model::docx::Versions;
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
 
@@ -87,10 +88,21 @@ pub fn tool_case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
 /// `tool`'s handler run with `arguments` (taken as meant).
 fn run(tool: &str, arguments: &Value, editing: &Editing<'_>) -> Result<ooxml_tools::ToolResult<Value>, String> {
     Ok(match tool {
-        "word_changes" => word_changes(
-            &WordChanges::from_arg(arguments, "").map_err(|e| e.to_string())?,
-            editing,
-        ),
+        "word_changes" => {
+            let args = WordChanges::from_arg(arguments, "").map_err(|e| e.to_string())?;
+            if args.reads() {
+                // list and preview as a session serves them: on the version the call reads
+                let versions = Versions::new();
+                let last_check = ooxml_tools_word::LastCheck::default();
+                let version = crate::structure_tools::opened_version(editing, &versions, &last_check);
+                match word_changes_read(&args, &version, editing.cancel) {
+                    Ok(done) => ooxml_tools::ToolResult::done(done),
+                    Err(error) => ooxml_tools::ToolResult::failed(error),
+                }
+            } else {
+                word_changes(&args, editing)
+            }
+        }
         "word_comments" => word_comments(
             &WordComments::from_arg(arguments, "").map_err(|e| e.to_string())?,
             editing,
