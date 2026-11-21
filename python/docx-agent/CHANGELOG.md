@@ -7,14 +7,6 @@ snapshot commit; the development history before it is summarised here.
 
 ## 0.1.140 -- unreleased
 
-Phase P2, lane P2d3: `word_insert_markdown` given references in `markdown` or `from`
-naming one field of one row is served: the session writes a value whose source holds
-Markdown of its own as it (the host hands that Markdown over with the value), names the
-blocks each value standing alone made in `data.facts` (with the note where they do not line
-up), and keeps them as docx-agent's `_fields_placed` and `keep_written` do
-(`rust.edits.KEEPS_WRITTEN`, `rust.edits.Adapted`). `from` a table of rows stays with the
-Python handler.
-
 Phase P2, lane P2c17: a call the Rust session answers names documents as the host does
 (`Session.edit`/`Session.call` `names`): from the second session of a process on, a served
 reply named the Rust session's id of the document (an undo call `{"doc": "d3"}` for the
