@@ -88,9 +88,6 @@ pub struct WordComments {
     pub cursor: Option<String>,
 }
 
-/// Threads on a page (`Limits.max_list_items`).
-const PAGE: usize = 50;
-
 /// `word_comments` on the document `editing` names; a failed reply is its refusal.
 #[must_use]
 pub fn word_comments(args: &WordComments, editing: &Editing<'_>) -> ToolResult<Value> {
@@ -141,7 +138,12 @@ pub(super) fn list(args: &WordComments, editing: &Editing<'_>) -> Result<Done<Va
         .collect();
     let mut first = args.clone();
     first.cursor = None;
-    let (shown, total, next) = page_list(&items, args.cursor.as_deref(), PAGE, try_call(&first))?;
+    let (shown, total, next) = page_list(
+        &items,
+        args.cursor.as_deref(),
+        editing.limits.list_items,
+        try_call(&first),
+    )?;
     let mut done = Done::new(format!("{total} thread(s)"));
     done.data = Some(Value::Array(shown));
     done.next_cursor = next;
@@ -172,5 +174,5 @@ pub(crate) fn try_call(args: &WordComments) -> TryCall {
 
 /// Registers `word_comments` (the crate's [`crate::register`]).
 pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.edit::<WordComments>(word_comments, crate::Hosting::HOST);
+    r.edit::<WordComments>(word_comments, crate::Hosting::SERVED);
 }

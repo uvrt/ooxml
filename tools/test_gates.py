@@ -135,6 +135,8 @@ class AutoModes(unittest.TestCase):
                      "python/ooxml-edit/src/ooxml_edit/tools/served.py",
                      "python/docx-agent/tests/fixtures/generated/x.docx", "python/docx2svg/tools/make_lists.py",
                      "crates/ooxml-oracle/python/word_edits_diff.py", "crates/ooxml-oracle/known-differences.toml",
+                     "crates/ooxml-oracle/python/reference_guard.py",
+                     "crates/ooxml-oracle/python/no_core/ooxml_core/__init__.py",
                      "tools/gates.py", ".github/workflows/gates.yml", "Cargo.lock", "a/new/place.txt"):
             self.assertEqual(self.modes(path), (set(gates.EDIT_MODES), True), path)
 

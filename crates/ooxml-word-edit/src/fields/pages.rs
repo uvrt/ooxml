@@ -6,7 +6,8 @@
 //! layout cannot say; and, through the same port, the reflow between two versions
 //! ([`PageReflow`], docx-agent's `Reflow`), which `word_template` reports; and the pages a
 //! body block is drawn on ([`LaidFields::blocks_pages`]), which a table's warnings and
-//! `check` read.
+//! `check` read; and a character's advance in the fonts a version is laid out with
+//! ([`LaidFields::advance`]), which a table of contents' numbered entry is measured with.
 //!
 //! The edit core does not lay out (section 3: `ooxml-word-layout` is beside it, not below):
 //! the host hands a command an adapter over its page engine, which answers in the words a
@@ -52,6 +53,15 @@ pub struct PageShows {
     pub blank: bool,
 }
 
+/// A character's advance in a face: font units, and the face's units per em.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CharAdvance {
+    /// The advance, font units.
+    pub advance: u32,
+    /// The face's units per em.
+    pub units_per_em: u32,
+}
+
 /// Why the layout cannot say a field's result.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("the layout cannot say: {0}")]
@@ -86,6 +96,15 @@ pub trait LaidFields {
 
     /// Each page, in order.
     fn pages(&self) -> Vec<PageShows>;
+
+    /// The advance of `ch` in the face the fonts this version is laid out with measure
+    /// `family` (bold, italic) with -- a table of contents' list number is measured so
+    /// (docx-agent's `_TocLooks._width`); `None` where no font says (the default: a layout
+    /// that does not measure).
+    fn advance(&self, family: &str, bold: bool, italic: bool, ch: char) -> Option<CharAdvance> {
+        let _ = (family, bold, italic, ch);
+        None
+    }
 
     /// For each of `ids` (body blocks -- a paragraph, a table, a row -- by id, as the
     /// version's bytes name them), in their order, the 0-based pages it draws something on,

@@ -5,7 +5,9 @@
 //! counts that a new version takes from the previous one and changes by its changed
 //! blocks; the delta against a baseline as the save gate compares it ([`Delta`]); the
 //! largest annotation id in use (`annotation_ceiling`), which tracked edits number their
-//! revisions from; and who still has revisions or comments (`author_in_use`).
+//! revisions from; and who still has revisions or comments (`author_in_use`). Of a
+//! version's problems, those in some blocks ([`problems_in`]); and the problems only a save
+//! finds, of the file name written to ([`extension_problems`]).
 //!
 //! No block's XML is read again and no version folds every block. The full check from
 //! scratch ([`full_problems`]) is the test oracle.
@@ -13,15 +15,19 @@
 //! Must not: change a document, or hold anything but caches that belong to the document.
 
 mod counts;
+mod extension;
 mod facts;
 mod grid;
 mod kept;
 mod order;
 mod rules;
+mod scoped;
 mod tally;
 
+pub use extension::{extension_problems, WordKind, WORD_KINDS};
 pub(crate) use facts::{python_int, ElementFacts};
 pub(crate) use order::Orders;
+pub use scoped::{problems_in, Scoped};
 pub(crate) use tally::Tally;
 
 use crate::doc::WordDoc;
@@ -288,5 +294,22 @@ impl CacheBudget for Unlimited {
     fn release(&self, _bytes: usize) {}
     fn used(&self) -> usize {
         0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rules::bookmark_name_ok;
+
+    #[test]
+    fn bookmark_names_as_pythons_re_reads_them() {
+        // `[^\W\d][\w]{0,39}` in a `str` pattern: `\d` is a decimal digit, `\w` `isalnum` or `_`
+        for name in ["_a", "a1", "\u{b2}a", "\u{2170}x", "x\u{2170}", "\u{4e94}"] {
+            assert!(bookmark_name_ok(name), "{name:?}");
+        }
+        for name in ["", "1a", "\u{663}a", "a\u{93e}", "\u{93e}a", &"a".repeat(41)] {
+            assert!(!bookmark_name_ok(name), "{name:?}");
+        }
+        assert!(bookmark_name_ok(&"a".repeat(40)));
     }
 }

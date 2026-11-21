@@ -4,6 +4,7 @@
 
 mod common;
 
+mod check;
 mod compare;
 mod controls;
 mod describe;
@@ -19,4 +20,5 @@ mod review;
 mod structure;
 mod style;
 mod template_bench;
+mod text;
 mod word_read;

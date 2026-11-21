@@ -16,8 +16,10 @@
 //! Must not: identify text by pointer (equal elements share one allocation), write but
 //! through the sink, or space text the edit did not write.
 
+use crate::names::W;
 use crate::text::{atoms, AtomKind};
 use crate::work::{Id, Work};
+use ooxml_word_model::docx::at_path;
 use ooxml_word_model::typography::{find, Action, Cascade, RunContext, RunLanguage, NBSP};
 use ooxml_xml::Element;
 use std::collections::{BTreeMap, BTreeSet};
@@ -106,6 +108,19 @@ pub(crate) struct Context<'a> {
     pub(crate) table: Option<Option<Arc<Element>>>,
 }
 
+/// `Some` with the `w:tblPr` of the innermost table above the element at `path` of `root`
+/// when there is one.
+pub(crate) fn table_of(root: &Arc<Element>, path: &[u32]) -> Option<Option<Arc<Element>>> {
+    let mut table = None;
+    for k in 0..path.len() {
+        let at = at_path(root, path.get(..k).unwrap_or_default())?;
+        if at.name().is(Some(W), "tbl") {
+            table = Some(at.find(Some(W), "tblPr").cloned());
+        }
+    }
+    table
+}
+
 /// Give the paragraph `work` holds (its root) the spacing its text's language wants where
 /// the edit wrote (`written`, places in its text): the number of spaces written or made
 /// U+00A0 (docx-agent's `apply_written` for one paragraph).
@@ -113,16 +128,14 @@ pub(crate) fn space_paragraph(work: &mut Work, written: &BTreeSet<usize>, contex
     let paragraph = work.root();
     let items = atoms(work, paragraph);
     let text: Vec<char> = items.iter().map(|a| a.ch).collect();
-    let properties = work
-        .find(paragraph, crate::names::W, "pPr")
-        .and_then(|p| work.build_element(p));
+    let properties = work.find(paragraph, W, "pPr").and_then(|p| work.build_element(p));
     let mut runs: BTreeMap<Option<Id>, RunLanguage> = BTreeMap::new();
     let mut of = |i: usize| -> RunLanguage {
         let run = items.get(i).and_then(|a| a.run);
         runs.entry(run)
             .or_insert_with(|| {
                 let direct = run
-                    .and_then(|r| work.find(r, crate::names::W, "rPr"))
+                    .and_then(|r| work.find(r, W, "rPr"))
                     .and_then(|r| work.build_element(r));
                 context.cascade.of(&RunContext {
                     paragraph_properties: properties.as_deref(),

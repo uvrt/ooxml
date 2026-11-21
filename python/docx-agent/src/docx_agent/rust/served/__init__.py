@@ -99,6 +99,22 @@ def sided(call: Any, value: Any) -> Any:
     return reads._refs(call, value)
 
 
+def blocks_at(call: Any, at: Any) -> Any:
+    """A placing tool's ``at`` with its ``$name`` refs resolved as the tool resolves them
+    (``text._at``: a span's last block after it, its first before it); a ref naming a
+    heading's range is the Python view's to expand."""
+    if not isinstance(at, str) or "$" not in at:
+        return at
+    head, _, rest = at.partition(":")
+    if head not in ("after", "before", "replace"):
+        rest = at
+    if any("h:" in call.resolve_ref(part) for part in rest.split("..") if part.startswith("$")):
+        raise Fallback("a heading's range by reference")
+    from ...tools.text import _at
+
+    return _at(call, at)
+
+
 @dataclass(frozen=True)
 class Hosting:
     """The editing tools the session serves, and what their edits read from the host."""
@@ -148,6 +164,6 @@ def hosting() -> Hosting:
         return _HOSTING[0]
 
 
-from . import objects, structure, style, text  # noqa: E402,F401 -- the adapters register on import
+from . import objects, review, structure, style, text  # noqa: E402,F401 -- the adapters register on import
 
 hosting()  # an adapter of a tool the session does not serve is refused here, at import

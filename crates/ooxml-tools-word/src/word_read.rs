@@ -53,9 +53,8 @@ pub struct WordRead {
     pub cursor: Option<String>,
 }
 
-/// The reply budget a page is cut to: docx-agent's `max_result_chars` less room for the
-/// envelope.
-const PAGE: usize = 24_000 - 1_500;
+/// Room left for the envelope when a page is cut to the reply's characters.
+const MARGIN: usize = 1_500;
 
 /// `word_read` of a Word document `name` at one version of its package.
 ///
@@ -85,17 +84,23 @@ pub fn word_read(args: &WordRead, version: &Version<'_>, cancel: &dyn Cancel) ->
     cancel.check().map_err(cancelled)?;
     let docx = version.docx()?;
     // A heading's range is read, and named, as the span it is (today's `resolve`).
+    // ... through the session's renames (a place id stamping renamed), as docx-agent's view
     let range = args
         .range
         .as_deref()
-        .map(|r| expand_heading(&docx, r))
+        .map(|r| expand_heading(&docx, &version.follow(r)))
         .transpose()
         .map_err(|e| range_refusal(e, &args.doc))?;
     let markdown = to_markdown(&docx, range.as_deref(), view, stories).map_err(|e| range_refusal(e, &args.doc))?;
     let unported = unported(&docx, view);
     cancel.check().map_err(cancelled)?;
     let first_page = try_call(json!({"doc": args.doc}));
-    let (text, next) = page_text(&markdown, args.cursor.as_deref(), PAGE.max(2000), first_page)?;
+    let (text, next) = page_text(
+        &markdown,
+        args.cursor.as_deref(),
+        version.limits.result_chars.saturating_sub(MARGIN).max(2000),
+        first_page,
+    )?;
     let shown = range.unwrap_or_else(|| "the document".to_owned());
     let view_name = match view {
         ViewName::Final => "final",

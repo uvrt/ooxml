@@ -7,7 +7,7 @@
 
 use crate::batch::{MAX_READ_BATCH_CHARS, READ_BATCH};
 use crate::call::Call;
-use crate::context::{revision_date, CallCancel};
+use crate::context::{revision_date, CallCancel, LayoutCancel};
 use crate::document::{At, Document};
 use crate::update::{PartUpdate, Updated};
 use crate::{CallContext, DocId, DocKind, DocNames, Registry, SessionError};
@@ -86,16 +86,9 @@ impl Opened {
     /// This version as a Word reading tool is handed it.
     #[must_use]
     pub fn version_of(&self) -> Version<'_> {
-        Version {
-            name: &self.name,
-            package: self.package(),
-            number: self.version(),
-            versions: &self.versions,
-            placer: self.placer.as_deref(),
-            owned: None,
-            others: ooxml_tools_word::Others::default(),
-            word: self.word(),
-        }
+        Version::new(&self.name, self.package(), self.version(), &self.versions)
+            .with_placer(self.placer.as_deref())
+            .with_word(self.word())
     }
 }
 
@@ -121,6 +114,8 @@ pub(crate) struct CallState<'p> {
     placer: Option<Arc<dyn Placer>>,
     /// The versions an editing tool's edits made.
     made: Mutex<Option<Made>>,
+    /// The call's limit on laying a document out.
+    layout_limit: Option<ooxml_tools_word::LayoutLimit<'p>>,
 }
 
 /// The versions one changing call made ([`Session::edit`]): its first edit's number and its
@@ -297,6 +292,15 @@ impl Session {
             (Some(word), At::Word(version)) => Ok(Some(word.validation(&version)?)),
             _ => Ok(None),
         }
+    }
+
+    /// What the Word document's last check with `reflow` saw (`since_last_check` is
+    /// measured from it), read and kept by a host's own checks too; `None` for another kind.
+    ///
+    /// # Errors
+    /// [`SessionError::NotOpen`].
+    pub fn last_check(&self, id: &DocId) -> Result<Option<Arc<ooxml_tools_word::LastCheck>>, SessionError> {
+        Ok(self.document(id)?.word().map(|word| Arc::clone(&word.last_check)))
     }
 
     /// [`Session::validation`] of the version `at` (one a call made, say) instead of the head.
@@ -507,6 +511,7 @@ impl Session {
     ) -> (ToolResult<Value>, Option<CallMade>) {
         self.counts.calls.fetch_add(1, Ordering::Relaxed);
         let cancel = CallCancel::new(context, &*self.context.cancel, &*self.context.clock);
+        let layout_cancel = cancel.layout();
         let mut state = CallState {
             opened: None,
             warnings: Vec::new(),
@@ -516,6 +521,7 @@ impl Session {
             named: String::new(),
             placer: context.placer.clone(),
             made: Mutex::new(None),
+            layout_limit: layout_cancel.as_ref().map(LayoutCancel::limit),
         };
         let mut result = if within.is_empty() {
             self.dispatch(name, arguments, context, &cancel, &mut state)
@@ -602,9 +608,11 @@ impl Session {
             date: revision_date(self.context.clock.now()),
             made: &state.made,
             layout: context.layout.as_deref(),
+            layout_limit: state.layout_limit,
             blobs: context.blobs.as_deref(),
             written: &context.written,
             others: &state.others,
+            limits: context.limits,
         };
         tool.run(arguments, &call)
     }

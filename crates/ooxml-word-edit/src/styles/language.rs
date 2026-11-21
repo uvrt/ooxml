@@ -255,7 +255,7 @@ fn own_lang(style: &Element) -> Option<&Arc<Element>> {
 
 /// The template's own languages in `slot` (`own_languages`): `(tag, why)`, why one of
 /// `default`, `Normal`, `most styles`.
-fn own_languages(root: &Element, slot: &str) -> Vec<(String, &'static str)> {
+pub(crate) fn own_languages(root: &Element, slot: &str) -> Vec<(String, &'static str)> {
     let mut out = Vec::new();
     let default = slot_of(&attributes_of(default_lang(root).map(|l| &**l)), slot).map(str::to_owned);
     if let Some(d) = &default {

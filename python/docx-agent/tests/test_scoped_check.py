@@ -181,6 +181,12 @@ def test_problems_in_blocks_by_what_they_carry():
     assert not second & {"bookmark-unpaired", "cell-not-ending-in-paragraph"}
     in_table = {p.code for p in problems_in(problems, main, [table])}
     assert "cell-not-ending-in-paragraph" in in_table
+    # A table given as a block holds its own grid's problems.
+    row = table.find(f"{w}tr")
+    row.append(etree.fromstring(etree.tostring(row.find(f"{w}tc"))))   # the row past its grid
+    doc.package.mark_dirty(main)
+    widened = [p for p in validate_package(doc.package) if p.code.startswith("grid-")]
+    assert widened and set(widened) <= set(problems_in(widened, main, [table]))
     # A problem of another part, or of the package, is in no block.
     assert problems_in([Problem("orphaned-part", "word/media/x.png")], main, [paragraphs[0]]) == []
 

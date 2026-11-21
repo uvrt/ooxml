@@ -37,6 +37,26 @@ pub struct LaidVersion {
     pub(crate) ids: crate::ids::VersionIds,
     /// Its summary, made once when first asked (its engine paints the pages it needs).
     pub(crate) summary: OnceLock<Arc<crate::summary::Summary>>,
+    /// The stories' epoch of its generation it was laid out in.
+    pub(crate) epoch: u64,
+    /// The model's context of its generation it was laid out in: it is painted only in it.
+    pub(crate) context: u64,
+    /// What a comparison reads of each page without painting it, made when first asked.
+    pub(crate) pages: OnceLock<Arc<VersionPages>>,
+}
+
+/// What a comparison reads of a version's pages without painting them.
+#[derive(Debug)]
+pub(crate) struct VersionPages {
+    /// Each page's context ([`crate::page_context`]).
+    pub(crate) contexts: Vec<ooxml_base::Digest>,
+    /// Each page as laid out (`None`: a page with no laid page of its own).
+    pub(crate) pages: Vec<Option<crate::digest_cache::PageRef>>,
+    /// Each page's body lines' paragraph paths, in drawing order.
+    pub(crate) paths: Vec<Arc<[Text]>>,
+    /// Each page's body lines' ids, in drawing order (`None`: a line of a paragraph the
+    /// version does not name).
+    pub(crate) ids: Vec<Vec<Option<Text>>>,
 }
 
 impl std::fmt::Debug for LaidVersion {
@@ -64,6 +84,15 @@ impl LaidVersion {
     /// names in this version, found from the id alone.
     pub fn path_of(&self, id: &str) -> Option<Text> {
         self.ids.path_of(id)
+    }
+
+    /// The advance of `ch` in the face this version lays `family` out with, and that face's
+    /// units per em (`ooxml_fonts::WordFonts::advance`: Word's glyph fallbacks included);
+    /// `None` where nothing answers. Not recorded in the fonts' coverage: a measure for an
+    /// edit, not a line of the layout.
+    pub fn advance(&self, family: &str, bold: bool, italic: bool, ch: char) -> Option<(u32, u32)> {
+        let found = self.glyphs.fonts().advance(family, bold, italic, ch)?;
+        Some((u32::from(found.advance), u32::from(found.units_per_em)))
     }
 
     /// The layout.

@@ -411,7 +411,7 @@ def commented(document: Document) -> Document:
             {"target": row, "text": "Row two of table three"}, {"target": two, "text": "Table two"},
             {"target": one, "text": "Whole table one"}]}))
         assert len(result.data["comments"]) == 3
-        return Document.open(found.to_bytes())
+        return Document.open(session.entry("d1").document.to_bytes())   # (the view as the served call left it)
 
 
 def test_a_comment_on_a_table_or_row_is_anchored_as_word_anchors_one():

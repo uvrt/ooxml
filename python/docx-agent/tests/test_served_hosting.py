@@ -17,7 +17,10 @@ from docx_agent.rust import served  # noqa: E402
 SERVED = {"word_set_text", "replace_text", "word_insert_text", "word_delete", "word_format", "word_lists",
           "word_format_table", "word_styles", "word_follow_sample", "word_insert_markdown", "word_fields",
           "word_headers_footers", "word_template", "word_move", "word_sections", "word_notes", "word_links",
-          "word_drawings", "set_properties"}
+          "word_drawings",
+          # p2-serve-i (#167): the review and object tools, word_copy_from
+          "word_edit_table", "word_changes", "word_comments", "word_controls", "word_set_tracking",
+          "word_copy_from", "set_properties"}
 BLOBS = {"word_drawings"}
 LAID = {"word_fields", "word_headers_footers", "word_template"}
 KEEPS_WRITTEN = {"word_set_text", "word_insert_text", "replace_text", "word_insert_markdown"}

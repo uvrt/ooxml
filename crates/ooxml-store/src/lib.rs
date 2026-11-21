@@ -41,7 +41,7 @@ mod version;
 pub use clock::Clock;
 pub use command::{Batch, Command};
 pub use error::{CountersError, Error, StoreError};
-pub use history::{HistoryOutcome, StepInfo};
+pub use history::{GroupMark, HistoryOutcome, StepInfo};
 pub use ids::{Counters, IdSeq};
 pub use keys::KeySet;
 pub use model::DocModel;

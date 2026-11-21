@@ -6,10 +6,12 @@
 //! of the typed arguments and an [`crate::Editing`], whose edits run as one command per
 //! call through the editor (one history step).
 //!
-//! Must not: hold sessions or documents by id, keep state between calls, or write the
-//! document but through a command.
+//! Must not: hold sessions or documents by id, keep state between calls (the rows written
+//! are the host's record, handed in), or write the document but through a command.
 
 mod cell_fills;
+mod chart_read;
+mod chart_workbook;
 mod controls;
 mod drawings;
 mod drawings_args;
@@ -21,6 +23,7 @@ mod edit_table_args;
 mod edit_table_cells;
 mod format_table;
 mod format_table_args;
+mod rows_written;
 mod set_cells;
 mod table_view;
 
@@ -36,6 +39,7 @@ pub use edit_table::word_edit_table;
 pub use edit_table_args::{CellArg, KeyPair, Loose, Position, Side, TableAction, WordEditTable};
 pub use format_table::word_format_table;
 pub use format_table_args::{Across, BorderStyle, HeightRule, Look, Scope, Vertical, WidthOf, WordFormatTable};
+pub use rows_written::RowsWritten;
 pub(crate) use table_view::{read_look, LOOK_NAMES};
 
 /// Registers the group's tools, in the order a model is shown them (the crate's

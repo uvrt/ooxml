@@ -1,7 +1,9 @@
 //! The page engine over made-up packages: a version read again from its bytes keeps the
 //! parts whose stored bytes did not change and is laid out from the version before; a
 //! version given as its touched parts is the version given whole; a document the layout
-//! does not lay out yet is a fallback with its reason; columns with a line between them,
+//! does not lay out yet is a fallback with its reason; a layout stopped lays nothing out
+//! and the next is laid out from the version before; a trial is laid out from a version
+//! and kept nowhere; columns with a line between them,
 //! line numbers and a drop cap are laid out and painted in Rust; a floating shape is
 //! painted in Rust and said of as docx2svg says it. The faces are the open ones the repository ships.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -194,6 +196,94 @@ fn a_version_given_by_its_touched_parts_is_the_version_given_whole() {
         .unwrap()
         .unwrap();
     assert_eq!(svgs(&mut kept, &updated), svgs(&mut fresh, &whole));
+}
+
+/// Says stop from its `n`-th question on.
+struct After(AtomicUsize);
+
+impl ooxml_base::Cancel for After {
+    fn is_cancelled(&self) -> bool {
+        let left = self.0.load(Ordering::SeqCst);
+        if left == 0 {
+            return true;
+        }
+        self.0.store(left - 1, Ordering::SeqCst);
+        false
+    }
+}
+
+fn after(n: usize) -> After {
+    After(AtomicUsize::new(n))
+}
+
+#[test]
+fn a_layout_stopped_lays_nothing_out_and_the_next_is_laid_out_from_the_one_before() {
+    let opened = |bytes: Vec<u8>| ooxml_opc::Package::open(Arc::from(bytes), &ooxml_base::Limits::default()).unwrap();
+    let mut kept = engine();
+    let first = kept.lay_out(&opened(package(&paragraphs(120, None)))).unwrap().unwrap();
+    let edited = opened(package(&paragraphs(120, Some(60))));
+    for n in [0, 1] {
+        // stopped before its first block, and after it
+        let stopped = kept.lay_out_until(&edited, &after(n));
+        assert!(
+            matches!(stopped, Err(ooxml_word_pages::PagesError::Stopped)),
+            "after {n}"
+        );
+        assert!(
+            Arc::ptr_eq(kept.last().unwrap(), &first),
+            "the version before is still the last"
+        );
+    }
+    assert_eq!(kept.stats().stopped, 2);
+    let second = kept.lay_out_until(&edited, &after(usize::MAX)).unwrap().unwrap();
+    assert!(second.relaid(), "laid out from the version before");
+    // the version laid out last is answered, nothing laid out to stop
+    let again = kept.lay_out_until(&edited, &after(0)).unwrap().unwrap();
+    assert!(Arc::ptr_eq(&again, &second));
+    // asked once per block and once per page: stopped at its last page
+    let asked = after(usize::MAX);
+    engine().lay_out_until(&edited, &asked).unwrap().unwrap();
+    let asks = usize::MAX - asked.0.load(Ordering::SeqCst);
+    assert!(asks > 120, "{asks} asks");
+    let mut fresh = engine();
+    assert!(matches!(
+        fresh.lay_out_until(&edited, &after(asks - 1)),
+        Err(ooxml_word_pages::PagesError::Stopped)
+    ));
+    let whole = fresh.lay_out(&edited).unwrap().unwrap();
+    assert!(!whole.relaid());
+    assert_eq!(svgs(&mut kept, &second), svgs(&mut fresh, &whole));
+    assert_eq!(second.facts(), whole.facts());
+    let summary = fresh.summary(&whole).unwrap();
+    assert_eq!(summary.pages.len(), whole.page_count());
+    assert_eq!(summary.pages, kept.summary(&second).unwrap().pages);
+}
+
+#[test]
+fn a_trial_is_laid_out_from_the_version_checked_and_kept_nowhere() {
+    let opened = |bytes: Vec<u8>| ooxml_opc::Package::open(Arc::from(bytes), &ooxml_base::Limits::default()).unwrap();
+    let mut kept = engine();
+    let first = kept.lay_out(&opened(package(&paragraphs(120, None)))).unwrap().unwrap();
+    let edited = opened(package(&paragraphs(120, Some(60))));
+    let trial = kept.trial(&edited, &first, &after(usize::MAX)).unwrap().unwrap();
+    assert!(
+        Arc::ptr_eq(kept.last().unwrap(), &first),
+        "the version checked is still the last"
+    );
+    assert_eq!(kept.stats().trials, 1);
+    let mut fresh = engine();
+    let whole = fresh.lay_out(&edited).unwrap().unwrap();
+    assert_eq!(&trial, whole.facts(), "page for page the layout of those bytes alone");
+    // stopped: nothing laid out, the last version kept
+    assert!(matches!(
+        kept.trial(&edited, &first, &after(0)),
+        Err(ooxml_word_pages::PagesError::Stopped)
+    ));
+    assert!(Arc::ptr_eq(kept.last().unwrap(), &first));
+    // the next version is laid out from the one the engine had
+    let second = kept.lay_out(&edited).unwrap().unwrap();
+    assert!(second.relaid());
+    assert_eq!(second.facts(), whole.facts());
 }
 
 #[test]
@@ -627,4 +717,48 @@ fn the_layouts_compared_read_their_text_boxes_lines_and_the_summary_does_not() {
         engine.contents(&after).unwrap().compare(&contents, &aliases).changed,
         vec![1]
     );
+}
+
+/// `bytes` opened as a package, as a session holds a version.
+fn opened(bytes: Vec<u8>) -> ooxml_opc::Package {
+    ooxml_opc::Package::open(Arc::from(bytes), &ooxml_base::Limits::default()).unwrap()
+}
+
+#[test]
+fn a_version_given_as_a_package_says_which_part_it_changed() {
+    // A session lays out each version as its package: the parts changed are found from it.
+    let body = paragraphs(60, None);
+    let large = r#"<w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="40"/></w:rPr></w:rPrDefault></w:docDefaults>"#;
+    let first = opened(package_styled(&body, None));
+    let styles = format!(r#"<w:styles {W}>{large}</w:styles>"#);
+    let edited = first.with_bytes("word/styles.xml", Arc::from(styles.into_bytes()));
+    let mut kept = engine();
+    kept.lay_out(&first).unwrap().unwrap();
+    let again = kept.lay_out(&edited).unwrap().unwrap();
+    let cause = again.relaid_cause().expect("laid out whole from a version before");
+    assert_eq!(
+        (cause.reason, cause.part.as_deref()),
+        ("styles", Some("word/styles.xml"))
+    );
+}
+
+#[test]
+fn a_version_given_as_a_package_after_another_part_changed_says_what_a_fresh_layout_says() {
+    // SmartArt whose data model part is missing, then (a session's edit of the
+    // relationships, a part added) with one: the second version's warnings are its own,
+    // not the first's said again for the page the edit did not reach.
+    let body = r#"<w:p><w:r><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><wp:extent cx="914400" cy="457200"/><wp:docPr id="1" name="Diagram 1"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram"><dgm:relIds xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:dm="rId9" r:lo="rId10" r:qs="rId11" r:cs="rId12"/></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#;
+    let first = opened(package(body));
+    let rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId9" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/diagramData" Target="diagrams/data1.xml"/></Relationships>"#;
+    let data = r#"<dgm:dataModel xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram"><dgm:ptLst><dgm:pt modelId="0" type="doc"/></dgm:ptLst><dgm:cxnLst/></dgm:dataModel>"#;
+    let edited = first
+        .with_bytes("word/diagrams/data1.xml", Arc::from(data.as_bytes()))
+        .with_bytes("word/_rels/document.xml.rels", Arc::from(rels.as_bytes()));
+    let mut kept = engine();
+    let before = kept.lay_out(&first).unwrap().unwrap();
+    assert!(!before.said().warnings.is_empty());
+    let again = kept.lay_out(&edited).unwrap().unwrap();
+    let whole = engine().lay_out(&edited).unwrap().unwrap();
+    assert_ne!(before.said(), whole.said(), "the edit changes what is said");
+    assert_eq!(again.said(), whole.said());
 }

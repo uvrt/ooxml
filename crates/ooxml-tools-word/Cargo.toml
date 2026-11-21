@@ -16,13 +16,16 @@ ooxml-word-model.workspace = true
 ooxml-word-edit.workspace = true
 ooxml-word-layout.workspace = true
 ooxml-word-pages.workspace = true
+ooxml-fonts.workspace = true
+ooxml-scene.workspace = true
 ooxml-store.workspace = true
+ooxml-chart.workspace = true
+ooxml-sheets.workspace = true
 ooxml-zip.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
 ooxml-derive.workspace = true
-ooxml-fonts.workspace = true
 
 [lints]
 workspace = true

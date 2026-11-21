@@ -37,7 +37,7 @@ pub use cells::{
     Align, CellBlock, CellDrawings, CellFlow, Content, Merge, Positioned, RowFlow, RowHeight, StackedLine, StackedRoom,
 };
 pub use drawn::AnchoredLine;
-pub use grid::{inner_part, line_at as grid_line, twips_px as grid_twips_px, CellBox};
+pub use grid::{inner_part, line_at as grid_line, outer_part, twips_px as grid_twips_px, CellBox};
 pub use measured::{Approximated, MeasuredTable};
 pub use place::place_table;
 pub use place::MergeDown;

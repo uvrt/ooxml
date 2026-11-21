@@ -38,11 +38,18 @@ def caller_key(caller: Mapping[str, Any] | None) -> str | None:
     return json.dumps(dict(caller), sort_keys=True, default=str, separators=(",", ":"))
 
 
-def context_of(caller: Mapping[str, Any] | None) -> Any:
-    """An ``ooxml_core.CallContext`` for ``caller``."""
+def context_of(caller: Mapping[str, Any] | None, limits: Any = None,
+               layout_timeout: float | None = None) -> Any:
+    """An ``ooxml_core.CallContext`` for ``caller``, with the host's ``limits`` on its reply
+    (an :class:`ooxml_edit.tools.Limits`: ``max_result_chars``, ``max_list_items``; the
+    defaults where ``None``) and how long laying the document out may take in it
+    (``layout_timeout``, seconds; the session's own where ``None``)."""
     import ooxml_core
 
-    return ooxml_core.CallContext(caller=caller_key(caller))
+    if limits is None:
+        return ooxml_core.CallContext(caller=caller_key(caller), layout_timeout=layout_timeout)
+    return ooxml_core.CallContext(caller=caller_key(caller), max_result_chars=limits.max_result_chars,
+                                  max_list_items=limits.max_list_items, layout_timeout=layout_timeout)
 
 
 def options(**given: Any) -> Any:
@@ -81,6 +88,10 @@ class RustOwner:
         document.retired_ids = functools.partial(retired_ids, mirror)
         # The records of placed values are read by the session too (lane P2d1).
         document.owned_records = functools.partial(owned_records, mirror, weakref.ref(document))
+        # The rows the table calls wrote are the session's record too (lane P2c19, R126).
+        from ..tools.objects import ROWS_WRITTEN
+
+        document.__dict__[ROWS_WRITTEN] = SessionRows(mirror)
         return mirror
 
     def head(self, mirror: "reads.Mirror") -> Any:
@@ -158,14 +169,37 @@ class RustOwner:
 
         return make
 
-    def keep(self, mirror: "reads.Mirror", number: int, head: Any) -> None:
+    def keep(self, mirror: "reads.Mirror", number: int, head: Any, first: int | None = None) -> None:
         from .check import owner_committed
 
         with mirror.lock:
-            mirror.keep(number, head)
+            mirror.keep(number, head, first)
         live = mirror.live()
         if live is not None:
             owner_committed(live, number)
+
+    # -- step groups: a batch's ops as one step of the session's (lane H1) -------------------
+
+    def open_group(self, mirror: "reads.Mirror") -> "_Group":
+        with mirror.lock:
+            return _Group(mirror.session.open_group(mirror.doc), mirror.tracking)
+
+    def group_mark(self, mirror: "reads.Mirror", group: "_Group") -> tuple[Any, Any]:
+        with mirror.lock:
+            return group.steps.mark(), mirror.tracking
+
+    def revert_group(self, mirror: "reads.Mirror", group: "_Group", mark: tuple[Any, Any] | None,
+                     caller: Mapping[str, Any] | None) -> Any:
+        """What the group committed after ``mark`` taken back (the session's tracking mode
+        too, as it was then): the new head, or ``None``."""
+        with mirror.lock:
+            made = group.steps.revert(mark[0] if mark is not None else None, context=context_of(caller))
+            mirror.tracking = mark[1] if mark is not None else group.tracking
+            return made
+
+    def close_group(self, mirror: "reads.Mirror", group: "_Group", caller: Mapping[str, Any] | None) -> Any:
+        with mirror.lock:
+            return group.steps.close(context=context_of(caller))
 
     def save(self, mirror: "reads.Mirror") -> bytes:
         return bytes(mirror.session.save(mirror.doc))
@@ -175,6 +209,17 @@ class RustOwner:
         if live is not None:
             live.held_by(None)
         reads._close(mirror.session, mirror.doc)
+
+
+class _Group:
+    """A document's open step group: the session's (``ooxml_core.StepGroup``) and the
+    tracking mode the session edited under when it opened."""
+
+    __slots__ = ("steps", "tracking")
+
+    def __init__(self, steps: Any, tracking: Any) -> None:
+        self.steps = steps
+        self.tracking = tracking
 
 
 def _seed_retired(mirror: "reads.Mirror", ledger: Any) -> None:
@@ -207,6 +252,34 @@ def retired_ids(mirror: "reads.Mirror") -> Any:
             out.earlier[version] = said
         (out.gone if kind == "block" else out.drawings_gone)[value] = version
     return out
+
+
+class SessionRows:
+    """The rows written as the Rust session records them, for a document it owns (round 58,
+    R126; ``tools.objects.ROWS_WRITTEN``): the rows a table call adds or writes into, by
+    ``w14:paraId`` -- the session's own calls' and the Python handler's in one record, which
+    ``check``'s ``row_text_format`` reads.  Set-like: ``update`` keeps rows, ``in``, ``len``
+    and iteration read the record as it is now."""
+
+    def __init__(self, mirror: "reads.Mirror") -> None:
+        self._mirror = mirror
+
+    def _ids(self) -> list[str]:
+        return self._mirror.session.rows_written(self._mirror.doc)
+
+    def update(self, ids: Any) -> None:
+        given = [i for i in ids if i]
+        if given:
+            self._mirror.session.note_rows_written(self._mirror.doc, given)
+
+    def __contains__(self, value: object) -> bool:
+        return value in self._ids()
+
+    def __iter__(self) -> Any:
+        return iter(self._ids())
+
+    def __len__(self) -> int:
+        return len(self._ids())
 
 
 def owned_records(mirror: "reads.Mirror", document: Any) -> dict[str, Any] | None:

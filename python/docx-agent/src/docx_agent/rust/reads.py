@@ -1,8 +1,8 @@
 """docx-agent's reading tools answered by the Rust session (phase P1, lane P1c): ``describe``,
 ``word_read``, ``word_inspect`` (``layout`` too), ``find_text``, ``word_compare_blocks`` and
 ``word_design_facts`` (lane P2c14) and, through them, the ops of ``read_batch``, each with the
-interpreter lock let go while Rust reads; and (lane P5a) the checks of a document the session
-owns that read the document alone (:func:`serve_check`).
+interpreter lock let go while Rust reads; and (lanes P5a, P5b) the checks of a document the
+session owns that read the document alone or its pages (:func:`serve_check`).
 
 **The versions.**  Python owns the document (until phase P2).  A reading call reads a
 committed version's read copy (ooxml-edit's ``DocumentFormat.read_copy``); the first one on
@@ -23,8 +23,8 @@ asked of the document's layout as :func:`docx_agent.tools.read._placed_by_worker
 **Falling back.**  Where the Rust answer is not yet the same, the call is answered by the
 Python path, counted by tool and reason (:func:`fallbacks`, ``read_fallbacks{tool,reason}``)
 and never silently: ``ooxml_core`` without a session; a document that is not a committed
-version's read copy (a batch's reads of its own changes); limits other than the defaults the
-Rust paging uses; an address naming an id this session renamed or deleted (the ledger and
+version's read copy (a batch's reads of its own changes); limits below 1 (the host's own
+limits are the Rust session's, ``CallContext(max_result_chars=, max_list_items=)``); an address naming an id this session renamed or deleted (the ledger and
 the aliases are Python's until P2); a regular expression Rust does not match as Python does;
 and what Rust says it does not give as Python does yet (its ``unported``: Accept All's cell
 ends).  A refusal goes to the Python
@@ -50,11 +50,6 @@ log = logging.getLogger("docx_agent.rust")
 
 #: The versions of a document kept for the calls reading them.
 KEPT = 4
-
-#: The defaults the Rust paging matches (``Limits().max_result_chars``,
-#: ``Limits().max_list_items``): other limits are answered by the Python path.
-_RESULT_CHARS = 24_000
-_LIST_ITEMS = 50
 
 _SESSION: list[Any] = []
 _SESSION_LOCK = threading.Lock()
@@ -159,10 +154,13 @@ class Mirror:
         #: committed (:meth:`docx_agent.rust.owner.RustOwner.bridge`).
         self.laid: tuple | None = None
 
-    def keep(self, number: int, version: Any) -> None:
-        """Keep ``version`` (an ``ooxml_core.Version``) as the document's version ``number``."""
+    def keep(self, number: int, version: Any, first: int | None = None) -> None:
+        """Keep ``version`` (an ``ooxml_core.Version``) as the document's version ``number``;
+        ``first``: the session's first version of the step, where it made several (a call's
+        edits, a batch's ops), each numbered ``number`` too."""
         self.versions[number] = version
-        self.numbers[version.number] = number
+        for seq in range(first if first is not None else version.number, version.number + 1):
+            self.numbers[seq] = number
         self.versions.move_to_end(number)
         while len(self.versions) > KEPT:
             self.versions.popitem(last=False)
@@ -340,9 +338,14 @@ def _refs(call: Any, value: Any) -> Any:
 def _owned_version(entry: Any) -> tuple["Mirror | None", Any]:
     """Lane P2c4: the session's version a call reads of a document the session owns (the
     entry's version now), found without the Python view; ``(None, None)`` otherwise."""
-    mirror = getattr(_owned(entry), "handle", None)
+    owned = _owned(entry)
+    mirror = getattr(owned, "handle", None)
     if not isinstance(mirror, Mirror):
         return None, None
+    if owned is entry and getattr(entry.history, "grouped", False):
+        # Lane H1: a call of a batch reads what the batch's ops made so far.
+        entry.flush_view()
+        return mirror, entry.history.reading_head()
     with mirror.lock:
         found = mirror.versions.get(entry.version)
     if found is None:
@@ -391,9 +394,12 @@ def _with_others(call: Any, arguments: dict[str, Any], others: tuple[str, ...],
 
 
 def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | None" = None,
-          others: tuple[str, ...] = ()) -> dict[str, Any]:
+          others: tuple[str, ...] = (), layout: Any = None) -> dict[str, Any]:
     """The Rust envelope of ``tool`` with ``arguments`` on the version ``call`` reads (and
-    of each other document named at a path of ``others``, :func:`_with_others`)."""
+    of each other document named at a path of ``others``, :func:`_with_others`); ``layout``:
+    the document's page engine (an ``ooxml_core.WordPages``), for a call that reads the
+    pages (``check``'s ``reflow``), laying out within ``call.limits.layout_timeout`` (lane
+    P5c: past it, ``reflow.error`` says so, as the Python path's does)."""
     if _session() is None:
         raise _Fallback("no session")
     mirror, version = _version_read(call.entry)
@@ -403,9 +409,16 @@ def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | 
     arguments = {**{k: v for k, v in arguments.items() if v is not None}, "doc": call.entry.doc_id}
     import ooxml_core
 
+    from .owner import context_of
+
+    # the host's limits on the reply: the Rust session pages as the Python path would (lane
+    # H3); a call that lays the document out does so within the host's layout_timeout
+    context = context_of(None, call.limits,
+                         call.limits.layout_timeout if layout is not None else None)
     reply, _images, app = mirror.session.call(tool, json.dumps(arguments), ooxml_core.CallOptions(
+        context=context,
         documents=ooxml_core.CallDocuments(at=[version, *pinned], names=names),
-        placer=placer.place if placer is not None else None))
+        placer=placer.place if placer is not None else None, layout=layout))
     if placer is not None and placer.error is not None:
         raise placer.error
     envelope = json.loads(reply)
@@ -425,18 +438,19 @@ def serve(call: Any, tool: str, arguments: dict[str, Any],
           python: Callable[[], Result], *, addresses: tuple = (),
           answer: Callable[[dict[str, Any]], Result] | None = None,
           placer: "Placer | None" = None, why_not: str | None = None,
-          others: tuple[str, ...] = ()) -> Result:
+          others: tuple[str, ...] = (), layout: Any = None) -> Result:
     """``tool``'s answer from the Rust session (``answer`` makes the :class:`Result` of its
     envelope), or ``python()``'s where Rust's is not the same yet (counted, with why).
-    ``others``: the paths of ``arguments`` naming another open document (:func:`_call`)."""
+    ``others``: the paths of ``arguments`` naming another open document; ``layout``: the
+    document's page engine (:func:`_call`)."""
     try:
         if why_not is not None:
             raise _Fallback(why_not)
-        if call.limits.max_result_chars != _RESULT_CHARS or call.limits.max_list_items != _LIST_ITEMS:
+        if call.limits.max_result_chars < 1 or call.limits.max_list_items < 1:
             raise _Fallback("limits")
         if _renamed_or_deleted(_named(call), *addresses):
             raise _Fallback("renamed or deleted id")
-        envelope = _call(call, tool, arguments, placer=placer, others=others)
+        envelope = _call(call, tool, arguments, placer=placer, others=others, layout=layout)
         result = (answer or _result)(envelope)
     except _Fallback as why:
         _fell_back(tool, str(why))
@@ -449,17 +463,81 @@ def serve_check(call: Any, arguments: dict[str, Any]) -> Result | None:
     """Lane P5a: ``check`` answered by the Rust session where it answers it whole -- the
     facts read from the document alone (``validate``, ``fields``) of a document it owns,
     outside a batch -- else ``None`` (counted, with why), and the handler goes on.  What
-    needs the layout, copies, a scale and the application's ``min_text_size`` (which asks
-    for layout facts) are the handler's still (the session says which: ``unported``)."""
+    needs the layout's facts, copies, a scale and the application's ``min_text_size``
+    (which asks for layout facts) are the handler's still (the session says which:
+    ``unported``).
+
+    Lane P5b: ``reflow`` (asked, or by default) is answered there too, laid out by the
+    document's page engine (:func:`docx_agent.pages.word_pages`), handed to the call; the
+    session keeps what the check saw for the next one's ``since_last_check``
+    (:func:`last_check`)."""
     owned = _owned(call.entry)
     why = None
+    layout = None
     if owned is None:
         why = "not owned"
     elif call.in_batch:
         why = "in a batch"
     elif getattr(owned.held, "min_text_size", None) is not None:
         why = "min_text_size"
-    return serve(call, "check", arguments, lambda: None, why_not=why)
+    elif arguments.get("include") is None or "reflow" in arguments["include"]:
+        from ..pages import word_pages
+
+        layout, _ = word_pages(owned.held)     # none: the session says so (unported)
+    served = serve(call, "check", arguments, lambda: None, why_not=why, layout=layout)
+    if served is not None and layout is not None:
+        # Lane F's checks of ranges measure from what a check saw last: this one.
+        from .check import seen_by_python
+
+        seen_by_python(call, call.entry.version)
+    return served
+
+
+def last_check(call: Any) -> tuple[bool, Any, int | None]:
+    """Lane P5b: what the last check of the document ``call`` reads saw, kept by the session
+    where it owns the document (its own checks keep it there): ``(True, seen, number)`` --
+    ``seen`` ``(version, summary)``, the session's number of the version seen (``None``: one
+    a check here kept without one) and its ``LayoutSummary`` (Rust's), or ``None`` where no
+    check saw one yet; ``number`` the session's number of the version ``call`` reads (``None``
+    where it was let go) -- or ``(False, None, None)`` for a document the session does not
+    own (the check's own record holds)."""
+    mirror, version = _owned_now(call)
+    if mirror is None:
+        return False, None, None
+    return True, mirror.session.last_check(mirror.doc), None if version is None else version.number
+
+
+def checked_before(call: Any) -> Any:
+    """Lane P5b: what a changing call's reflow is measured from where no layout of the
+    document's current version was made here: the summary its last check saw, kept by the
+    session, where that check was of this very version (a ``LayoutSummary`` held in Rust);
+    else ``None``."""
+    owned, kept, number = last_check(call)
+    if not owned or kept is None or kept[0] is None or kept[0] != number:
+        return None
+    from ..layout import LayoutSummary
+
+    return LayoutSummary.held(kept[1])
+
+
+def keep_last_check(call: Any, summary: Any) -> None:
+    """Lane P5b: a check here saw the version ``call`` reads, ``summary`` its
+    ``LayoutSummary`` held in Rust (``None``: one made in Python, which the session cannot
+    compare -- it forgets what it kept): kept by the session for the next check, served or
+    not.  Nothing for a document the session does not own."""
+    mirror, version = _owned_now(call)
+    if mirror is not None:
+        mirror.session.set_last_check(mirror.doc, summary, at=version if summary is not None else None)
+
+
+def _owned_now(call: Any) -> tuple["Mirror | None", Any]:
+    """The session's mirror of the document ``call`` reads where it owns it (else ``None``),
+    and the version read there (``None`` where it was let go)."""
+    mirror = getattr(_owned(call.entry), "handle", None)
+    if not isinstance(mirror, Mirror):
+        return None, None
+    with mirror.lock:
+        return mirror, mirror.versions.get(call.entry.version)
 
 
 def _result(envelope: dict[str, Any]) -> Result:

@@ -191,6 +191,21 @@ fn tree_of(package: &Package, name: &str) -> Result<Option<Tree>, WordError> {
     Ok(package.tree(name)?)
 }
 
+/// The names of the parts a version's blocks resolve against -- its main part's styles,
+/// numbering, settings and theme -- as [`Model::open`] finds them: a change of any of them
+/// may change what the model resolves (its context).
+///
+/// # Errors
+/// The package's relationships do not read.
+pub fn context_parts(package: &Package) -> Result<Vec<String>, WordError> {
+    let main = main_part(package)?;
+    let rels = package.relationships(&main)?;
+    Ok(["styles", "numbering", "settings", "theme"]
+        .iter()
+        .filter_map(|kind| first_of_type(&rels, kind))
+        .collect())
+}
+
 fn parts(package: &Package) -> Result<Parts, WordError> {
     let main = main_part(package)?;
     let document = tree_of(package, &main)?.ok_or_else(|| WordError::NoMainPart(main.clone()))?;

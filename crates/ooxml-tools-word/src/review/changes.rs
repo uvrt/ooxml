@@ -1,11 +1,16 @@
 //! Owns: `word_changes`' definition and its dispatch by action (docx-agent's
-//! `word_changes`): `list` reads ([`super::listing`]), `accept`, `reject` and `preview`
-//! settle ([`super::settle`]); the refusals of arguments an action does not take.
+//! `word_changes`): `list` ([`super::listing`]) and `preview` only read -- in a session on
+//! the version the call pins ([`word_changes_read`]), outside one on the editor's head --
+//! `accept` and `reject` settle ([`super::settle`]); [`Reading`], what the reading actions
+//! read; the refusals of arguments an action does not take.
 //!
 //! Must not: settle or list itself.
 
 use super::Editing;
-use ooxml_tools::{ArgEnum, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
+use crate::Version;
+use ooxml_base::Cancel;
+use ooxml_tools::{ArgEnum, Done, Limits, ReadsWhen, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
+use ooxml_word_edit::WordDoc;
 use serde_json::{Map, Value};
 
 /// What `word_changes` does.
@@ -91,20 +96,89 @@ pub struct WordChanges {
     pub cursor: Option<String>,
 }
 
-/// `word_changes` on the document `editing` names; a failed reply is
-/// `invalid_arguments` for arguments the action does not take, a selection missing or
-/// both by ids and by filters; `not_found` for ids the document has no change or record
-/// of (the listed ids the way out); the address resolver's refusal of `within`;
-/// `timeout` when cancelled.
+impl ReadsWhen for WordChanges {
+    /// `list` and `preview` change nothing.
+    fn reads(&self) -> bool {
+        matches!(self.action, ChangeAction::List | ChangeAction::Preview)
+    }
+}
+
+/// What `list` and `preview` read: the document at the version read and as the session
+/// opened it (the records its own edits wrote are told from that), its id for the calls a
+/// reply offers, the host's limits and the call's cancellation.
+pub(crate) struct Reading<'a> {
+    /// The document at the version read.
+    pub(crate) doc: &'a WordDoc,
+    /// The document as the session opened it.
+    pub(crate) opened: &'a WordDoc,
+    /// The document's id, for the calls a reply offers.
+    pub(crate) name: &'a str,
+    /// The host's limits on the reply (a listing's items per page).
+    pub(crate) limits: Limits,
+    /// The call's cancellation.
+    pub(crate) cancel: &'a dyn Cancel,
+}
+
+/// `word_changes` on the document `editing` names (`list` and `preview` on the editor's
+/// head); a failed reply is `invalid_arguments` for arguments the action does not take, a
+/// selection missing or both by ids and by filters; `not_found` for ids the document has
+/// no change or record of (the listed ids the way out); the address resolver's refusal of
+/// `within`; `timeout` when cancelled.
 #[must_use]
 pub fn word_changes(args: &WordChanges, editing: &Editing<'_>) -> ToolResult<Value> {
     run(args, editing).unwrap_or_else(ToolResult::failed)
 }
 
+/// `word_changes`' `list` and `preview` on the version a session's call pins (the
+/// session's [`ReadsWhen`] calls), refused as [`word_changes`] refuses them; left to the
+/// host (`unported`) on a package the session does not own as a Word document.
+///
+/// # Errors
+/// As [`word_changes`]'.
+pub fn word_changes_read(
+    args: &WordChanges,
+    version: &Version<'_>,
+    cancel: &dyn Cancel,
+) -> Result<Done<Value>, ToolError> {
+    super::stopped(cancel)?;
+    let Some(owned) = version.owned else {
+        let mut reply = Done::new(String::new());
+        reply
+            .unported
+            .push("word_changes of a document the session does not own".to_owned());
+        return Ok(reply);
+    };
+    let reading = Reading {
+        doc: owned.doc,
+        opened: owned.opened,
+        name: &args.doc,
+        limits: version.limits,
+        cancel,
+    };
+    read(args, &reading)
+}
+
 fn run(args: &WordChanges, editing: &Editing<'_>) -> Result<ToolResult<Value>, ToolError> {
     super::stopped(editing.cancel)?;
-    let given = args.ids.as_ref().is_some_and(|i| !i.is_empty());
+    if args.reads() {
+        let head = editing.editor.store().snapshot();
+        let reading = Reading {
+            doc: head.doc(),
+            opened: editing.opened,
+            name: editing.doc,
+            limits: editing.limits,
+            cancel: editing.cancel,
+        };
+        return read(args, &reading).map(ToolResult::done);
+    }
+    only_list_fields(args)?;
+    super::settle::settle(args, editing)
+}
+
+/// `list` or `preview`.
+fn read(args: &WordChanges, reading: &Reading<'_>) -> Result<Done<Value>, ToolError> {
     if args.action == ChangeAction::List {
+        let given = args.ids.as_ref().is_some_and(|i| !i.is_empty());
         if given || args.all == Some(true) {
             let field = if given { "ids" } else { "all" };
             let mut call = args.clone();
@@ -112,21 +186,27 @@ fn run(args: &WordChanges, editing: &Editing<'_>) -> Result<ToolResult<Value>, T
             call.all = None;
             return Err(invalid("list filters by author, kind and within", field, &call));
         }
-        return super::listing::list(args, editing).map(ToolResult::done);
+        return super::listing::list(args, reading);
     }
+    only_list_fields(args)?;
+    super::settle::preview(args, reading)
+}
+
+/// The refusal of `detail` and `cursor` given to an action but `list`.
+fn only_list_fields(args: &WordChanges) -> Result<(), ToolError> {
     let detail = args.detail.unwrap_or(ChangeDetail::Grouped);
-    if detail != ChangeDetail::Grouped || args.cursor.is_some() {
-        let field = if detail == ChangeDetail::Grouped {
-            "cursor"
-        } else {
-            "detail"
-        };
-        let mut call = args.clone();
-        call.detail = None;
-        call.cursor = None;
-        return Err(invalid("detail and cursor are for list", field, &call));
+    if detail == ChangeDetail::Grouped && args.cursor.is_none() {
+        return Ok(());
     }
-    super::settle::settle(args, editing)
+    let field = if detail == ChangeDetail::Grouped {
+        "cursor"
+    } else {
+        "detail"
+    };
+    let mut call = args.clone();
+    call.detail = None;
+    call.cursor = None;
+    Err(invalid("detail and cursor are for list", field, &call))
 }
 
 /// `invalid_arguments` at `field`, `call` the call that would work.
@@ -175,5 +255,5 @@ pub(crate) fn try_call(args: &WordChanges) -> TryCall {
 
 /// Registers `word_changes` (the crate's [`crate::register`]).
 pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.edit::<WordChanges>(word_changes, crate::Hosting::HOST);
+    r.reading_edit::<WordChanges>(word_changes_read, word_changes, crate::Hosting::SERVED);
 }

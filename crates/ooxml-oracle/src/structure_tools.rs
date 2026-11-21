@@ -19,7 +19,7 @@ use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools::{ToolArgs, ToolResult};
 use ooxml_tools_word::{
     word_headers_footers, word_links, word_move, word_notes, word_sections, Blob, BlobList, CallEditor, Editing,
-    EnginePages, Others, Version, WordHeadersFooters, WordLinks, WordMove, WordNotes, WordSections,
+    EnginePages, LastCheck, Others, Owned, Version, WordHeadersFooters, WordLinks, WordMove, WordNotes, WordSections,
 };
 use ooxml_word_edit::touched::{touched, Touched};
 use ooxml_word_edit::validate::{problems, Delta};
@@ -47,22 +47,38 @@ pub fn case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
 }
 
 /// The tool the session registers as `tool`, run on the document as opened (`None`: no
-/// such tool): a reading tool reads it as `case.docx`, version 1.
+/// such tool): a reading tool reads it as `case.docx`, version 1, as a session owning it
+/// hands it over.
 fn registered(tool: &str, arguments: &Value, editing: &Editing<'_>) -> Option<ToolResult<Value>> {
     static REGISTRY: OnceLock<Registry> = OnceLock::new();
     let tool = REGISTRY.get_or_init(Registry::standard).named(tool)?;
     let versions = Versions::new();
-    let version = Version {
-        name: "case.docx",
-        package: editing.opened.package(),
-        number: 1,
-        versions: &versions,
-        placer: None,
-        owned: None,
-        others: editing.others,
-        word: Some(editing.opened),
-    };
+    let last_check = LastCheck::default();
+    let version = opened_version(editing, &versions, &last_check);
     Some(tool.run_outside(arguments, editing, &version))
+}
+
+/// The document as opened, version 1, as a reading tool is handed it by a session that
+/// owns it: its Word document, the problems it opened with, the other documents the call
+/// names; `last_check` the document's (no layout is handed: a check that needs one leaves
+/// the call to the host).
+pub(crate) fn opened_version<'a>(
+    editing: &Editing<'a>,
+    versions: &'a Versions,
+    last_check: &'a LastCheck,
+) -> Version<'a> {
+    let owned = Owned {
+        doc: editing.opened,
+        baseline: editing.editor.baseline(),
+        last_check,
+        layout: None,
+        layout_limit: None,
+        opened: editing.opened,
+    };
+    Version::new("case.docx", editing.opened.package(), 1, versions)
+        .with_others(editing.others)
+        .with_word(Some(editing.opened))
+        .with_owned(Some(owned))
 }
 
 /// The ported tools the session does not register yet (each leaves this list when it is
@@ -150,20 +166,7 @@ pub(crate) fn tool_case(
     let reply = reply(tool, &arguments, &editing).ok_or_else(|| format!("no tool {tool}"))?;
     let head = editor.store().snapshot();
     let doc = head.doc();
-    let mut parts = Map::new();
-    for name in doc.package().part_names() {
-        let same = matches!((package.part(&name), doc.package().part(&name)), (Some(a), Some(b)) if a.same(b));
-        if same {
-            continue;
-        }
-        let bytes = doc
-            .package()
-            .read(&name)
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| Arc::from(Vec::new()));
-        parts.insert(name, json!(String::from_utf8_lossy(&bytes)));
-    }
+    let parts = changed_parts(&package, doc);
     let found = touched(&opened, doc).map_err(|e| e.to_string())?;
     let now = problems(doc).map_err(|e| e.to_string())?;
     let delta = Delta::of(editor.baseline(), &now);
@@ -179,18 +182,28 @@ pub(crate) fn tool_case(
     }))
 }
 
+/// The parts of `doc` that differ from `package`'s, by name, as text.
+fn changed_parts(package: &Package, doc: &ooxml_word_edit::WordDoc) -> Map<String, Value> {
+    let mut parts = Map::new();
+    for name in doc.package().part_names() {
+        let same = matches!((package.part(&name), doc.package().part(&name)), (Some(a), Some(b)) if a.same(b));
+        if same {
+            continue;
+        }
+        let bytes = doc
+            .package()
+            .read(&name)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| Arc::from(Vec::new()));
+        parts.insert(name, json!(String::from_utf8_lossy(&bytes)));
+    }
+    parts
+}
+
 /// The other document a case names (`d2`), as a reading tool is handed it.
 fn other_version<'a>(package: &'a Package, word: Option<&'a WordDoc>, versions: &'a Versions) -> Version<'a> {
-    Version {
-        name: "copy.docx",
-        package,
-        number: 1,
-        versions,
-        placer: None,
-        owned: None,
-        others: Others::default(),
-        word,
-    }
+    Version::new("copy.docx", package, 1, versions).with_word(word)
 }
 
 /// The blobs a case registers (`blobs`: `{name, mime, hex}` each), as the session's
@@ -223,10 +236,14 @@ fn case_blobs(case: &Value) -> BlobList {
     )
 }
 
+/// A page engine over the fonts a case names, as the layout port the field tools read.
+pub(crate) fn engine_pages(fonts: &Value) -> EnginePages {
+    EnginePages::new(Arc::new(std::sync::Mutex::new(page_engine(fonts))))
+}
+
 /// A page engine over the fonts a case names (`folders`: `[location, path]` pairs as
-/// docx2svg hands them to `ooxml_core.WordFonts`, `substitutes`, `substitute`), as the
-/// layout port the field tools read.
-fn engine_pages(fonts: &Value) -> EnginePages {
+/// docx2svg hands them to `ooxml_core.WordFonts`, `substitutes`, `substitute`).
+pub(crate) fn page_engine(fonts: &Value) -> ooxml_word_pages::PageEngine {
     use ooxml_fonts::{Folder, Location, WordFontOptions};
     use ooxml_word_pages::{DiskFonts, EngineBudgets, EngineOptions, FontSetup, PageEngine};
     let pairs = |key: &str| -> Vec<(String, String)> {
@@ -263,8 +280,7 @@ fn engine_pages(fonts: &Value) -> EnginePages {
         held: Arc::new(Unlimited),
         paint: Arc::new(Unlimited),
     };
-    let engine = PageEngine::new(setup, EngineOptions::default(), budgets);
-    EnginePages::new(Arc::new(std::sync::Mutex::new(engine)))
+    PageEngine::new(setup, EngineOptions::default(), budgets)
 }
 
 /// The tool's reply to `arguments` taken as its intent rules take them (a refusal of the

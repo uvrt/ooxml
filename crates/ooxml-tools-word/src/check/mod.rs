@@ -1,25 +1,47 @@
-//! `check` for Word documents (lane P5a; docx-agent's `tools/shared.py` `check`): a
-//! version's facts -- its validation problems against those it opened with (`validate`) and
-//! its fields (`fields`) -- each part's seconds in `timing`, as docx-agent words them.
+//! `check` for Word documents (lanes P5a, P5b; docx-agent's `tools/shared.py` `check`): a
+//! version's facts -- its validation problems against those it opened with (`validate`),
+//! its pages since the last check (`reflow`, [`reflow`]) and its fields (`fields`) -- each
+//! part's seconds in `timing`, as docx-agent words them.
 //!
-//! Owns: the tool's definition ([`args`]) and the facts read from the document alone.
+//! Owns: the tool's definition ([`args`]), the facts read from the document alone, and
+//! those read from its pages as the host's engine lays them out ([`crate::WordLayout`]).
 //!
-//! Must not: lay out. What needs the layout (`reflow`, `layout`, a `range`'s or `pages`'
-//! facts, `min_size`, `styles`), copies, a scale and a deck's arguments are not given here
-//! yet: such a call is answered `unported`, and the host answers it.
+//! Must not: lay out but through the host's engine. What needs the layout's facts
+//! (`layout`, a `range`'s facts, `min_size`, `styles`), copies, a scale and a deck's
+//! arguments are not given here yet: such a call is answered `unported`, and the host
+//! answers it; so is a `reflow` without the host's layout, or of a version its engine does
+//! not lay out.
 
 mod args;
 mod facts;
+mod laid_facts;
+mod laid_tables;
+mod ranges;
+mod reflow;
 
 pub use args::{Check, CheckCopy, CheckInclude, CheckScale, CopyLists, CopyReference, ScaleShow, ScaleStep, StepText};
-pub use facts::{empty_run_json, grid_mismatch_json, lost_cell_json, skipped_level_json};
+pub use facts::{
+    direct_formatting_json, empty_run_json, grid_mismatch_json, lost_cell_json, lost_original_json, row_unlike_json,
+    skipped_level_json, spacing_problem_json, style_use_json, text_language_json,
+};
+pub use laid_facts::{
+    keep_at_foot_json, kept_together_json, minimum_of, page_facts_json, parted_json, small_text_json,
+    smallest_text_json, spacer_json,
+};
+pub use laid_tables::{column_fit_json, past_margins_json, split_row_json, uncertain_json, unrepeated_json};
+pub use ranges::{ranges_json, Trials, TRIALS, TRIAL_SECONDS};
+pub use reflow::{LastCheck, Seen};
 
 use crate::describe::cancelled;
+use crate::pages::NotLaid;
 use crate::version::{Owned, Version};
 use ooxml_base::Cancel;
+use ooxml_scene::python_g;
 use ooxml_tools::{ArgEnum, Done, ToolError};
 use ooxml_word_edit::validate::{problems, Delta};
+use ooxml_word_pages::summarised::Summarised;
 use serde_json::{Map, Value};
+use std::sync::{Arc, PoisonError};
 use std::time::Instant;
 
 /// The problems a check lists at most (the rest are in `new` and the count).
@@ -34,6 +56,10 @@ pub const CHECK_LAYOUT: &str = "check: layout facts";
 pub const CHECK_ARGUMENTS: &str = "check: arguments";
 /// What `unported` says of a check of a document the session does not own.
 pub const CHECK_NOT_OWNED: &str = "check: a document the session does not own";
+/// What `unported` says of a `reflow` the host hands no layout for.
+pub const CHECK_NO_LAYOUT: &str = "check: no layout";
+/// What `unported` says of a `reflow` of a version the host's engine does not lay out.
+pub const CHECK_NOT_LAID_OUT: &str = "check: the layout falls back";
 
 /// `check` of a Word document at one version.
 ///
@@ -49,10 +75,45 @@ pub fn check(args: &Check, version: &Version<'_>, cancel: &dyn Cancel) -> Result
     };
     let mut data = Map::new();
     let mut timing = Map::new();
+    let layout = match (wanted.contains(&CheckInclude::Reflow), owned.layout) {
+        (true, None) => return Ok(unported(CHECK_NO_LAYOUT)),
+        (true, Some(layout)) => Some(layout),
+        (false, _) => None,
+    };
     if wanted.contains(&CheckInclude::Validate) {
         let started = Instant::now();
         data.insert("validate".into(), validate(owned)?);
         timing.insert("validate".into(), seconds(started));
+    }
+    cancel.check().map_err(cancelled)?;
+    if let Some(layout) = layout {
+        let started = Instant::now();
+        let last = layout
+            .engine()
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .last()
+            .cloned();
+        let stop = owned.layout_limit.map_or(cancel, |limit| limit.cancel);
+        let laid = layout.laid(version.package, stop);
+        // `layout`: the time laying the version out, where the engine had not laid it out last
+        if !matches!((&last, &laid), (Some(last), Ok(laid)) if Arc::ptr_eq(last, laid)) {
+            timing.insert("layout".into(), seconds(started));
+        }
+        let started = Instant::now();
+        let found = laid.and_then(|laid| reflow_facts(layout, &laid, version, owned, args.pages.as_deref()));
+        timing.insert("facts".into(), seconds(started));
+        let reflow = match found {
+            Ok(facts) => facts,
+            Err(NotLaid::Other(_)) => return Ok(unported(CHECK_NOT_LAID_OUT)),
+            Err(NotLaid::Stopped) => {
+                // The call's own stop ends it; the layout's limit passed is said, and the
+                // check goes on (docx-agent's `reflow.error`).
+                cancel.check().map_err(cancelled)?;
+                timed_out(owned.layout_limit.map(|limit| limit.timeout))
+            }
+        };
+        data.insert("reflow".into(), reflow);
     }
     cancel.check().map_err(cancelled)?;
     if wanted.contains(&CheckInclude::Fields) {
@@ -87,20 +148,60 @@ fn served(args: &Check) -> Result<Vec<CheckInclude>, &'static str> {
     {
         return Err(CHECK_ARGUMENTS);
     }
-    if args.pages.is_some() || args.min_size.is_some() || args.styles.is_some() || ranged {
+    if args.min_size.is_some() || args.styles.is_some() || ranged {
         return Err(CHECK_LAYOUT);
     }
-    let Some(wanted) = &args.include else {
-        return Err(CHECK_LAYOUT); // the default reports reflow
-    };
-    for part in wanted {
+    let wanted = args
+        .include
+        .clone()
+        .unwrap_or_else(|| vec![CheckInclude::Validate, CheckInclude::Reflow, CheckInclude::Fields]);
+    for part in &wanted {
         match part {
-            CheckInclude::Validate | CheckInclude::Fields | CheckInclude::App => {}
-            CheckInclude::Reflow | CheckInclude::Layout => return Err(CHECK_LAYOUT),
+            CheckInclude::Validate | CheckInclude::Fields | CheckInclude::App | CheckInclude::Reflow => {}
+            CheckInclude::Layout => return Err(CHECK_LAYOUT),
             _ => return Err(CHECK_ARGUMENTS),
         }
     }
-    Ok(wanted.clone())
+    Ok(wanted)
+}
+
+/// `reflow`: the version's pages, coverage and first warnings, and the pages changed since
+/// the document's last check (which this one now is).
+fn reflow_facts(
+    layout: &dyn crate::WordLayout,
+    laid: &Arc<ooxml_word_pages::LaidVersion>,
+    version: &Version<'_>,
+    owned: Owned<'_>,
+    pages: Option<&[i64]>,
+) -> Result<Value, NotLaid> {
+    let found = reflow::laid_facts(layout, laid)?;
+    let mut facts = found.facts;
+    let last = owned.last_check.get();
+    let aliases = owned.doc.ids().aliases();
+    let now = Summarised::watched(Arc::clone(laid), Arc::clone(layout.engine()));
+    if let Some(since) = reflow::since(last.as_ref(), &now, version.number, aliases, pages).map_err(NotLaid::Other)? {
+        facts.insert("since_last_check".into(), since);
+    }
+    owned.last_check.set(Some(Seen {
+        version: Some(version.number),
+        pages: now,
+    }));
+    if let Some(warnings) = found.warnings {
+        facts.insert("layout_warnings".into(), warnings);
+    }
+    Ok(Value::Object(facts))
+}
+
+/// `reflow` where laying the version out passed the call's limit on it, as docx-agent says
+/// it (`f"timeout: laying the document out did not finish within {timeout:g} s"`).
+fn timed_out(timeout: Option<std::time::Duration>) -> Value {
+    let within = timeout.map_or_else(String::new, |t| format!(" within {} s", python_g(t.as_secs_f64())));
+    let mut out = Map::new();
+    out.insert(
+        "error".into(),
+        Value::from(format!("timeout: laying the document out did not finish{within}")),
+    );
+    Value::Object(out)
 }
 
 fn unported(why: &str) -> Done<Value> {
