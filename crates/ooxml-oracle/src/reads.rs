@@ -138,13 +138,12 @@ fn through_session(
         let name = step.get("tool").and_then(Value::as_str).unwrap_or_default();
         let args = step.get("arguments").cloned().unwrap_or_else(|| json!({}));
         let done = session.call(name, args, &context);
-        let failed = done
-            .unported()
-            .first()
-            .cloned()
-            .or_else(|| done.to_json().get("error").map(Value::to_string));
-        if let Some(why) = failed {
-            return json!({"error": {"code": "before", "message": format!("call {k} ({name}): {why}")}});
+        // A call left to the host leaves the case to it, as the case's own call would.
+        if let Some(why) = done.unported().first() {
+            return json!({"error": {"code": "unported", "message": why}});
+        }
+        if let Some(error) = done.to_json().get("error") {
+            return json!({"error": {"code": "before", "message": format!("call {k} ({name}): {error}")}});
         }
     }
     let result = session.call(tool, arguments.clone(), &context);
