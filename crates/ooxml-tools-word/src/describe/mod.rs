@@ -147,7 +147,6 @@ pub(super) fn cancelled(error: BaseError) -> ToolError {
     }
 }
 
-
 /// Registers `describe` (the crate's [`crate::register`]).
 pub(crate) fn register(r: &mut impl crate::Registrar) {
     r.read::<Describe>(describe);

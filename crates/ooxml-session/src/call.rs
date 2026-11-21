@@ -93,12 +93,19 @@ impl Call<'_> {
         };
         let editor = CallEditor::new(&word.editor);
         let others = self.other_versions();
-        let editing = Editing::new(&editor, self.caller, word.opened.doc(), self.name, self.cancel, &self.date)
-            .with_tracking(tracking)
-            .with_layout(self.layout)
-            .with_others(Others::new(&others))
-            .with_blobs(self.blobs)
-            .with_written(self.written);
+        let editing = Editing::new(
+            &editor,
+            self.caller,
+            word.opened.doc(),
+            self.name,
+            self.cancel,
+            &self.date,
+        )
+        .with_tracking(tracking)
+        .with_layout(self.layout)
+        .with_others(Others::new(&others))
+        .with_blobs(self.blobs)
+        .with_written(self.written);
         let result = run(&editing);
         *self.made.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = editor.made();
         result
@@ -124,4 +131,3 @@ impl Call<'_> {
             .collect()
     }
 }
-

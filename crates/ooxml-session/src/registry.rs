@@ -124,7 +124,10 @@ impl Registry {
             .map(|t| (t.spec().name.as_str(), t.hosting().export()))
             .collect();
         found.sort_by(|a, b| a.0.cmp(b.0));
-        found.into_iter().map(|(name, hosting)| (name.to_owned(), hosting)).collect()
+        found
+            .into_iter()
+            .map(|(name, hosting)| (name.to_owned(), hosting))
+            .collect()
     }
 }
 
@@ -139,6 +142,8 @@ impl Registrar for Registry {
     }
 
     fn tracking<T: ToolArgs + 'static>(&mut self, run: TrackingFn<T>, hosting: Hosting) {
-        self.register(Arc::new(EditHandler::<T>::tracking(&[DocKind::Docx], run).hosted(hosting)));
+        self.register(Arc::new(
+            EditHandler::<T>::tracking(&[DocKind::Docx], run).hosted(hosting),
+        ));
     }
 }

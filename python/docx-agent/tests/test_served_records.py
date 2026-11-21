@@ -28,7 +28,6 @@ CHARTS = GENERATED / "charts" / "charts.docx"
 RECORD = {"v": 1, "source": "d:scores", "columns": [{"column": "rating", "rows": "1-3"}]}
 
 
-@pytest.fixture(scope="module")
 def _serve_also(monkeypatch, tool: str, adapt) -> None:
     """The session serves ``tool`` too, its arguments taken by ``adapt`` (a tool it has a Rust
     handler for that docx-agent does not hand it yet)."""
@@ -42,6 +41,7 @@ def _serve_none(monkeypatch) -> None:
     monkeypatch.setattr(rust_served, "_HOSTING", [rust_served.NONE])
 
 
+@pytest.fixture(scope="module")
 def toolbox():
     with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as box:
         yield box

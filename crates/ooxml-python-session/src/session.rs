@@ -8,8 +8,7 @@
 use crate::adapters::{context, SessionStop};
 use ooxml_base::Locale;
 use ooxml_session::{
-    CallContext, CancelToken, DocId, DocKind, DocNames, HeldId, Opened, Registry, RetiredBy, Session, SessionConfig,
-    SessionError,
+    CallContext, CancelToken, DocId, DocKind, DocNames, HeldId, Opened, RetiredBy, Session, SessionConfig, SessionError,
 };
 use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools::{compact, ToolError, ToolResult};

@@ -197,4 +197,3 @@ impl<T: ToolArgs> Tool for EditHandler<T> {
         })
     }
 }
-
