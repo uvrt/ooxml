@@ -654,6 +654,7 @@ impl PySession {
         let seq = version.inner.version();
         let session = &self.inner;
         py.detach(|| session.number_version(&id, seq, number))
+            .map_err(|e| to_py(&e))
     }
 
     /// The rows of the Word document this session's `word_edit_table` calls added or wrote

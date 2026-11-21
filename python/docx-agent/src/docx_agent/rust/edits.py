@@ -109,12 +109,16 @@ def _kept_refs(call: Any, arguments: dict[str, Any]) -> tuple[dict[str, Any], di
     """``arguments`` with each ref name they give (``ref``, ``items[].ref``) as the call keeps it
     (ooxml-edit's ``Call.ref_name``: a camelCase or hyphenated name folded; one that folds to
     none, or to another address's ref, refused before the edit, so the refusal changes
-    nothing -- lane H2), and the names folded, ``{kept: given}``."""
+    nothing -- lane H2), and the names folded, ``{kept: given}``.  A ref that reads as an
+    address or a place (:func:`~docx_agent.tools.positions.is_place`) is left to the tool,
+    which refuses it naming the argument it belongs in (``at``), as docx-agent's handler does."""
+    from ..tools.positions import is_place
+
     folded: dict[str, str] = {}
 
     def kept(holder: dict[str, Any]) -> dict[str, Any]:
         name = holder.get("ref")
-        if not isinstance(name, str) or not name:
+        if not isinstance(name, str) or not name or is_place(name):
             return holder
         ref = call.ref_name(name)
         if ref == name:

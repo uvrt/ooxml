@@ -137,13 +137,19 @@ def test_a_mixed_batch_gives_the_results_it_gave_before(box, monkeypatch):
         read_alone.append(found is not None)
         return found
 
+    from docx_agent.rust import edits as _edits
+
+    served_before = sum(_edits.served().values())
     with monkeypatch.context() as patch:
         patch.setattr(Reader, "block", counted)
         fast = _run(box, data)
+    served = sum(_edits.served().values()) > served_before
     with monkeypatch.context() as patch:
         _unoptimised(patch, box)
         slow = _run(box, data)
-    assert any(read_alone)                         # the tables were read alone
+    # The tables were read alone -- where docx-agent's handler wrote them; ops the Rust
+    # session serves (its clock the session's: lane P2e1) read their tables there.
+    assert any(read_alone) or served
     assert json.dumps(fast, sort_keys=True, default=str) == json.dumps(slow, sort_keys=True, default=str)
     batch = fast["batch"]["result"]
     warnings = batch["warnings"]
