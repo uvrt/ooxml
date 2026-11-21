@@ -18,13 +18,12 @@ use super::design_tables::table_styles;
 use crate::paging::page_list;
 use crate::version::Version;
 use ooxml_base::Cancel;
-use ooxml_tools::{ArgEnum, Done, ToolError, TryCall, MAX_RESULT_CHARS};
+use ooxml_tools::{ArgEnum, Done, ToolError, TryCall};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 
-/// The reply budget the facts are fitted to: docx-agent's `max_result_chars` less room
-/// for the envelope.
-const LIMIT: usize = MAX_RESULT_CHARS - 1_500;
+/// Room left for the envelope when the facts are fitted to the reply's characters.
+const MARGIN: i64 = 1_500;
 
 /// How many entries of each list are reported; `omitted` counts the rest.
 fn cap(kind: DesignKind) -> usize {
@@ -168,10 +167,13 @@ pub fn word_design_facts(
     let mut caps: HashMap<DesignKind, usize> = DesignKind::ALL.iter().map(|k| (*k, cap(*k))).collect();
     caps.remove(&DesignKind::Theme);
     let mut data = Map::new();
-    let fits = if declared { LIMIT / 2 } else { LIMIT };
+    // The reply's characters less the envelope's room, as docx-agent's `max_result_chars -
+    // 1500` (below zero for a tiny limit: the caps then shrink to 1 each, as there).
+    let limit = i64::try_from(version.limits.result_chars).unwrap_or(i64::MAX) - MARGIN;
+    let fits = if declared { limit.div_euclid(2) } else { limit };
     while !others.is_empty() {
         data = facts.facts(&others, &caps, cancel)?;
-        let length = python_length(&Value::Object(data.clone()));
+        let length = i64::try_from(python_length(&Value::Object(data.clone()))).unwrap_or(i64::MAX);
         if length <= fits || caps.values().max().is_none_or(|m| *m <= 1) {
             break;
         }
@@ -188,7 +190,7 @@ pub fn word_design_facts(
         let all = facts.list(DesignKind::DeclaredStyles, cancel)?.clone();
         let (page, total, _) = page_list(&all, args.cursor.as_deref(), all.len(), first_page(args))?;
         let start = all.len() - page.len();
-        let mut room = LIMIT as i64 - python_length(&Value::Object(data.clone())) as i64;
+        let mut room = limit - python_length(&Value::Object(data.clone())) as i64;
         let mut kept = Vec::new();
         for entry in page {
             room -= python_length(&entry) as i64 + 2;

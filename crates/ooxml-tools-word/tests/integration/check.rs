@@ -14,7 +14,7 @@ use ooxml_opc::Package;
 use ooxml_store::StoreConfig;
 use ooxml_tools::ArgType;
 use ooxml_tools_word::{
-    check, Check, EnginePages, LastCheck, LayoutLimit, Others, Owned, Version, WordLayout, CHECK_NO_LAYOUT,
+    check, Check, EnginePages, LastCheck, LayoutLimit, Owned, Version, WordLayout, CHECK_NO_LAYOUT,
 };
 use ooxml_word_edit::Editor;
 use ooxml_word_model::docx::Versions;
@@ -61,22 +61,16 @@ fn limited(
     .unwrap();
     let doc = editor.store().snapshot().doc().clone();
     let versions = Versions::new();
-    let version = Version {
-        name: "a.docx",
-        package,
-        number,
-        versions: &versions,
-        placer: None,
-        owned: Some(Owned {
+    let version = Version::new("a.docx", package, number, &versions)
+        .with_owned(Some(Owned {
             doc: &doc,
             baseline: editor.baseline(),
             last_check: last,
             layout: layout.map(|l| l as &dyn ooxml_tools_word::WordLayout),
             layout_limit: limit,
-        }),
-        others: Others::default(),
-        word: Some(&doc),
-    };
+            opened: &doc,
+        }))
+        .with_word(Some(&doc));
     let args = Check::from_arg(&arguments, "").unwrap();
     let done = check(&args, &version, &Never).unwrap();
     if let Some(why) = done.unported.first() {
