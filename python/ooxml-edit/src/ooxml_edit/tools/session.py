@@ -656,9 +656,16 @@ class DocumentEntry:
     #: Lane P2c4: whether the format's owner holds the document (:mod:`.owned`): no call runs
     #: on a draft of it (round 45), and its view is not read where nothing needs it.
     owned = False
-    #: Lane U4: whether the owner keeps the document's history and undoes it in its own undo
-    #: tool (:meth:`~.owned.OwnedEntry.owned_history`): no steps or owners are kept here.
-    owns_history = False
+    @property
+    def owns_history(self) -> bool:
+        """Lane U4: whether the owner keeps the document's history and undoes it in its own
+        undo tool (:meth:`owned_history`): no steps or owners are kept here."""
+        return False
+
+    def owned_history(self, steps: int, redo: bool, caller: Mapping[str, Any] | None) -> dict[str, Any]:
+        """The owner's undo or redo of up to ``steps`` steps (``caller``'s own, with one): its
+        reply. Only an entry whose owner keeps the history has one (:attr:`owns_history`)."""
+        raise TypeError(f"{self.kind} documents keep their history here: undo them by their steps")
 
     def step_target(self, direction: str) -> Any:
         """What makes one plain undo or redo (``direction``): the document's own, else its
