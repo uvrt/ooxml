@@ -151,6 +151,42 @@ fn graded(found: &ooxml_word_layout::faces::Coverage) -> (Vec<Substituted>, Vec<
     (substituted, missing)
 }
 
+/// The code of a glyph measured with another face, an approximation the coverage adds to
+/// the layout's (docx2svg's `coverage_of`).
+pub const GLYPH: &str = "layout-approximate:glyph";
+
+/// The approximation of `family`'s `character` measured with `used` (`.notdef`: the face's
+/// missing glyph), as docx2svg's coverage says it.
+#[must_use]
+pub fn glyph_approximation(family: &str, character: char, used: &str) -> Approximation {
+    Approximation {
+        code: GLYPH.to_owned(),
+        message: format!(
+            "{} has no glyph for {}: measured with {}",
+            repr(family),
+            repr(&character.to_string()),
+            measured_with(used, "its missing glyph"),
+        ),
+        page: None,
+        path: None,
+    }
+}
+
+impl Approximation {
+    /// Its `(reason, message)` as docx2svg's coverage lists it (`StopInfo`): the reason the
+    /// part of its code after the colon (the whole code where it has none) and its message,
+    /// but for a glyph measured with another face ([`GLYPH`]), which docx2svg's
+    /// `coverage_of` records with its text as the reason and no message.
+    #[must_use]
+    pub fn listed(&self) -> (&str, &str) {
+        if self.code == GLYPH {
+            return (&self.message, "");
+        }
+        let reason = self.code.split_once(':').map_or(self.code.as_str(), |(_, r)| r);
+        (reason, &self.message)
+    }
+}
+
 /// Each glyph measured with another face: `(family, character, face used)`, in the order met.
 fn fallbacks(found: &ooxml_word_layout::faces::Coverage) -> Vec<(String, char, String)> {
     found
@@ -231,17 +267,11 @@ impl PageEngine {
         warnings.extend(fallback_warnings(&fallbacks));
         let said = version.said();
         let mut approximations = said.approximations.clone();
-        approximations.extend(fallbacks.iter().map(|(family, c, used)| Approximation {
-            code: "layout-approximate:glyph".to_owned(),
-            message: format!(
-                "{} has no glyph for {}: measured with {}",
-                repr(family),
-                repr(&c.to_string()),
-                measured_with(used, "its missing glyph"),
-            ),
-            page: None,
-            path: None,
-        }));
+        approximations.extend(
+            fallbacks
+                .iter()
+                .map(|(family, c, used)| glyph_approximation(family, *c, used)),
+        );
         warnings.extend(said.warnings.iter().cloned());
         Some(Coverage {
             complete: missing.is_empty(),

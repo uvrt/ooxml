@@ -407,9 +407,9 @@ impl PageEngine {
         self.lay_out_within(package, Some(cancel))
     }
 
-    /// `package` as the version given now, and what changed from the one given before, by
-    /// identity: a session's edit gives its parts untouched as they were, its edited ones
-    /// anew.
+    /// Keep `package` as the version given last, and what it changed from the one given
+    /// before, by identity (a session's edit gives its parts untouched as they were, its
+    /// edited ones anew), sorted.
     fn note_given(&mut self, package: &Package) {
         self.changed = self
             .given

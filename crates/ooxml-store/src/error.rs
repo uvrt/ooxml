@@ -35,6 +35,12 @@ pub enum StoreError<K: Ord + Debug, E: std::error::Error + 'static> {
         /// The keys it wrote that are in the way.
         overlap: KeySet<K>,
     },
+    /// No step group is open (or the mark is not the open group's).
+    #[error("no step group is open")]
+    NoGroup,
+    /// A step group is open: it closes before an undo or redo runs.
+    #[error("a step group is open")]
+    GroupOpen,
     /// An id sequence or the reopen state was refused.
     #[error(transparent)]
     Counters(#[from] CountersError),
