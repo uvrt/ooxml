@@ -60,14 +60,14 @@ impl PyCallDocuments {
     }
 }
 
-/// How a call writes (`ooxml_core.CallWriting`, `CallContext`'s `writing`). `date`: the
-/// moment its writes are dated by (a revision's, a comment's), UTC to the second
-/// (`2026-11-20T09:30:15Z`) -- the host's clock, as docx-agent dates them; `None`: the
-/// session's clock. `typography`: whether the text it writes is spaced by its language
+/// The settings that decide what a call writes (`ooxml_core.CallWriting`, `CallContext`'s
+/// `writing`). `date`: the moment its writes are dated by (a revision's, a comment's), UTC to
+/// the second (`2026-11-20T09:30:15Z`) -- the host's clock, as docx-agent dates them; `None`:
+/// the session's clock. `typography`: whether the text it writes is spaced by its language
 /// (docx-agent's `docx_format(typography=...)`; `False`: as given). `layout_counts`:
-/// `(pages, lines)` of the host's layout of the version the call reads, where it has laid it
-/// out -- the statistics a save writes into `app.xml` (`save_document`); `None`: not laid
-/// out. One may serve many calls.
+/// `(pages, lines)` of the host's layout of the version the call reads, the statistics a
+/// save writes into `docProps/app.xml` (`save_document`); `None`: not laid out. One may
+/// serve many calls.
 #[pyclass(frozen, name = "CallWriting", module = "ooxml_core")]
 pub struct PyCallWriting {
     pub(crate) date: Option<String>,
