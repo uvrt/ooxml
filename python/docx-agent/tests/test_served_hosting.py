@@ -36,7 +36,7 @@ def test_the_exported_sets_are_the_lists_they_replace():
 
 def test_every_tool_is_exported_with_its_hosting():
     exported = json.loads(ooxml_core.tool_hosting("docx"))
-    names = {s["name"] for s in json.loads(ooxml_core.tool_specs("docx"))} - {"read_batch"}
+    names = {s["name"] for s in json.loads(ooxml_core.tool_specs("docx"))} - {"read_batch", "undo"}
     assert set(exported) == names
     assert all(set(facts) == {"served", "blobs", "layout", "keeps_written"} for facts in exported.values())
     assert json.loads(ooxml_core.tool_hosting("pptx")) == {}

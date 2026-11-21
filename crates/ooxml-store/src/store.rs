@@ -492,6 +492,25 @@ impl<D: DocModel> Store<D> {
         self.history_op(|history, head, journal| history.plan_redo(None, head, journal))
     }
 
+    /// Undo the newest step when it is the one that made version `step`: a check and the
+    /// undo in one, so no commit lands between them. Refused as
+    /// [`crate::StoreError::NotNext`], changing nothing, when another step is newest.
+    pub fn undo_newest(&self, step: Seq) -> Result<HistoryOutcome<D>, Error<D>> {
+        self.history_op(|history, head, journal| {
+            history.newest_is(step)?;
+            history.plan_undo(None, &KeySet::new(), head, journal)
+        })
+    }
+
+    /// Redo the step plain redo would bring back next when it is the one that made version
+    /// `step` (as [`Store::undo_newest`]); [`crate::StoreError::NotNext`] otherwise.
+    pub fn redo_next(&self, step: Seq) -> Result<HistoryOutcome<D>, Error<D>> {
+        self.history_op(|history, head, journal| {
+            history.next_redo_is(step)?;
+            history.plan_redo(None, head, journal)
+        })
+    }
+
     /// Scoped undo: take back the step that made version `step`, wherever it is in the
     /// history, leaving the later steps in place. Refused as
     /// [`crate::StoreError::Entangled`], changing nothing, when a later step read or wrote

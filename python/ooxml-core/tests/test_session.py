@@ -125,6 +125,18 @@ def test_a_locale_is_a_tag_or_a_locale_with_its_five_fields():
     with pytest.raises(AttributeError):
         ooxml_core.CallWriting(locale=SimpleNamespace(language="nl-NL"))
 
+
+def test_limits_are_given_as_one_and_checked():
+    limits = ooxml_core.Limits(result_chars=3000)
+    assert (limits.result_chars, limits.list_items) == (3000, 50)
+    assert (ooxml_core.Limits().result_chars, ooxml_core.Limits().list_items) == (24_000, 50)
+    with pytest.raises(ValueError):
+        ooxml_core.Limits(list_items=0)
+    ooxml_core.CallContext(limits=limits, caller="w1")
+    with pytest.raises(TypeError):
+        ooxml_core.CallContext(max_result_chars=3000)
+
+
 def test_tool_specs_are_the_exports():
     specs = json.loads(ooxml_core.tool_specs("docx"))
     # the registry's tools in registration order (ooxml-session's tests/integration/registry.rs holds each

@@ -10,9 +10,10 @@
 //! Must not: run a call, or touch a Python object without the lock.
 
 use crate::adapters::PyBlobs;
+use crate::context::PyCallContext;
 use crate::layout::PyWordPages;
 use crate::locale::locale_of;
-use crate::session::{PyCallContext, PyVersion};
+use crate::version::PyVersion;
 use ooxml_session::{CallContext, DocId, DocNames, HostIds, Opened};
 use ooxml_tools_word::{Blobs, HostTable, HostTables, LayoutCounts, Placer, Written};
 use pyo3::exceptions::PyValueError;

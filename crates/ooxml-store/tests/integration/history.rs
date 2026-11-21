@@ -92,6 +92,23 @@ fn undo_makes_a_new_number_with_an_earlier_content() {
 }
 
 #[test]
+fn a_guarded_undo_or_redo_takes_only_the_step_named_and_changes_nothing_else() {
+    let store = fresh();
+    let first = put(&store, "a", &[(1, 1)]);
+    let second = put(&store, "b", &[(2, 2)]);
+    // a's step is no longer the newest: refused, nothing changed
+    assert!(matches!(store.undo_newest(first), Err(StoreError::NotNext { step }) if step == first));
+    assert_eq!(store.steps().len(), 2);
+    store.undo_newest(second).unwrap();
+    store.undo_newest(first).unwrap();
+    assert!(matches!(store.redo_next(second), Err(StoreError::NotNext { .. })));
+    store.redo_next(first).unwrap();
+    store.redo_next(second).unwrap();
+    let head = store.snapshot();
+    assert_eq!((head.doc().0.get(&1), head.doc().0.get(&2)), (Some(&1), Some(&2)));
+}
+
+#[test]
 fn scoped_undo_takes_out_one_step_and_keeps_the_later_ones() {
     let store = fresh();
     put(&store, "a", &[(1, 1)]);

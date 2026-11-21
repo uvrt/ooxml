@@ -35,6 +35,13 @@ pub enum StoreError<K: Ord + Debug, E: std::error::Error + 'static> {
         /// The keys it wrote that are in the way.
         overlap: KeySet<K>,
     },
+    /// The step asked for is no longer the one undo or redo would take next: another
+    /// commit, undo or redo came first ([`crate::Store::undo_newest`]).
+    #[error("the step that made version {step} is not the next to take any more")]
+    NotNext {
+        /// The step's version.
+        step: Seq,
+    },
     /// No step group is open (or the mark is not the open group's).
     #[error("no step group is open")]
     NoGroup,

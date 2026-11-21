@@ -46,8 +46,8 @@ class ToolError(Exception):
         self.valid_options = list(valid_options or ())
         self.field = field
         self.details = dict(details or {})
-        #: The call that would work, ``{"tool", "arguments"}`` (tool rule 2), where the
-        #: refusal names one: the Rust tools' refusals carry it (lane P2e1).
+        #: A call that would work (``{tool, arguments}``), where the error has one: a Rust
+        #: tool's refusal carries it (tool rule 2), and the reply keeps it.
         self.try_call = dict(try_call) if try_call else None
 
     def __reduce__(self) -> Any:

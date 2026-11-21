@@ -4,7 +4,9 @@
 //!
 //! Must not: close a group itself -- the host's guard does, on every path.
 
-use crate::session::{caller_context, to_py, PyCallContext, PyVersion};
+use crate::context::{caller_context, PyCallContext};
+use crate::session::to_py;
+use crate::version::PyVersion;
 use ooxml_session::{DocId, GroupMark, Session};
 use pyo3::prelude::*;
 use std::sync::Arc;
@@ -65,13 +67,18 @@ impl PyStepGroup {
         self.head(py, made)
     }
 
-    /// Close the group: what it committed one step of the context's caller; the head
-    /// (`Version`) it ends at, or `None` when it committed nothing.
-    #[pyo3(signature = (*, context = None))]
-    fn close(&self, py: Python<'_>, context: Option<PyRef<'_, PyCallContext>>) -> PyResult<Option<PyVersion>> {
+    /// Close the group: what it committed one step of the context's caller, made by `tool`
+    /// (the batch's); the head (`Version`) it ends at, or `None` when it committed nothing.
+    #[pyo3(signature = (*, context = None, tool = None))]
+    fn close(
+        &self,
+        py: Python<'_>,
+        context: Option<PyRef<'_, PyCallContext>>,
+        tool: Option<&str>,
+    ) -> PyResult<Option<PyVersion>> {
         let context = caller_context(context.as_deref());
         let made = py
-            .detach(|| self.session.close_group(&self.doc, &context))
+            .detach(|| self.session.close_group(&self.doc, &context, tool))
             .map_err(|e| to_py(&e))?;
         self.head(py, made)
     }
