@@ -40,20 +40,31 @@ def reply(reply: dict) -> dict:
 
 def part_texts(name: str, body: bytes) -> dict[str, str]:
     """A changed part as the harness reports it (the Rust side's ``part_texts.rs``): its bytes
-    as text, or -- an embedded package (a chart's workbook) -- each entry's content under
-    ``<part>!<entry>`` and the entries' order under its own name.  Two writers' deflate
-    streams differ for the same content, so an archive is compared by what it holds."""
+    as text, or -- an embedded package (a chart's workbook) -- each entry's content byte for
+    byte under ``<part>!<entry>`` (text where it is UTF-8, else hex) and the entries' names,
+    order and compression methods under its own name.  Two writers' deflate streams differ
+    for the same content, so an archive is compared by what it holds; nothing else is
+    loosened."""
     if body.startswith(b"PK\x03\x04"):
         try:
             with zipfile.ZipFile(io.BytesIO(body)) as archive:
-                names = [n for n in archive.namelist() if not n.endswith("/")]
-                out = {f"{name}!{n}": archive.read(n).decode("utf-8", "replace") for n in names}
+                infos = [i for i in archive.infolist() if not i.filename.endswith("/")]
+                names = [f"{i.filename} ({i.compress_type})" for i in infos]
+                out = {f"{name}!{i.filename}": _exact(archive.read(i.filename)) for i in infos}
         except (zipfile.BadZipFile, ValueError, OSError, NotImplementedError):
             names, out = [], {}
         if names:
             out[name] = "archive: " + ", ".join(names)
             return out
     return {name: body.decode("utf-8", "replace")}
+
+
+def _exact(data: bytes) -> str:
+    """An entry's content, exactly: its text where it is UTF-8, else ``hex:`` and its bytes."""
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return "hex:" + data.hex()
 
 
 def python_case(data: bytes, case: dict, baseline: list, toolbox, parts_of, order_of, touched_of) -> dict:
