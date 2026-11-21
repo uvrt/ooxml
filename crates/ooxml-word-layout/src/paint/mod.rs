@@ -294,8 +294,9 @@ struct LineSet<'a> {
     items: &'a [FlowItem],
     /// Its top-level blocks.
     blocks: &'a [Block],
-    /// Its paragraphs, cells included.
-    paragraphs: Vec<Arc<Paragraph>>,
+    /// Its paragraphs, cells included: the body's those its layout keeps (one walk of the
+    /// body, not one per page painted), a story's or text box's its own.
+    paragraphs: std::borrow::Cow<'a, [Arc<Paragraph>]>,
     /// The page that laid the body's lines out (its paragraphs broken again there).
     laid: Option<&'a LaidPage>,
     /// Its paragraphs broken again where they were placed (the page's, or a note area's).
@@ -652,7 +653,7 @@ fn story_set<'a>(
     LineSet {
         items: &story.flow.items,
         blocks: &story.blocks,
-        paragraphs: body_paragraphs(&story.blocks).0,
+        paragraphs: body_paragraphs(&story.blocks).0.into(),
         laid: None,
         broken: Some(&story.broken),
         lines: &story.walked.lines,
@@ -704,7 +705,7 @@ pub fn paint_page(
     let body = LineSet {
         items: &layout.flow.items,
         blocks: &document.body,
-        paragraphs: body_paragraphs(&document.body).0,
+        paragraphs: std::borrow::Cow::Borrowed(&**layout.body_paragraphs()),
         laid,
         broken: laid.map(|l| &l.broken),
         lines: &geometry.lines,
