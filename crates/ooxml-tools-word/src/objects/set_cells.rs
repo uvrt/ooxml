@@ -24,7 +24,7 @@ use crate::review::{needed, Editing};
 use crate::structure::common::{outcome, policy, refused, Outcome};
 use ooxml_base::pyfmt::repr_str;
 use ooxml_tools::{Failure, Refusal, ToolError, ToolResult, TryCall, WayOut};
-use ooxml_word_edit::{CellAxis, CellEdit, CellWrite, EditError, SetCells};
+use ooxml_word_edit::{CellAxis, CellEdit, CellWrite, EditError, SetCells, WordDoc};
 use ooxml_word_model::docx::tables::{Axis, TableGrid};
 use ooxml_word_model::docx::Docx;
 use serde_json::{json, Value};
@@ -113,7 +113,10 @@ pub(super) fn set_cells(
         accepted: (accepted.table.active() || accepted.table.rows_active())
             .then(|| std::sync::Arc::new(accepted.table.clone())),
     };
-    let done = match editing.editor.run(editing.caller, &command) {
+    // round 58 (R126): the rows written looked at against the rows around them, in the
+    // call's transaction
+    let look = |_: &_, doc: &WordDoc| Some((doc.ids().follow(&view.table.id), None));
+    let (done, rows) = match super::rows_written::run_writing_rows(editing, &command, &view.table.id, look, retry) {
         Ok(done) => done,
         Err(error @ (EditError::Address(_) | EditError::Argument { .. } | EditError::Position(_))) => {
             return Ok(ToolResult::failed(crate::review::edit_refusal(
@@ -125,13 +128,15 @@ pub(super) fn set_cells(
         Err(error) => return Ok(refused(error, retry.clone())),
     };
     count_fills(&mut fills, &values);
-    for note in done.out.notes {
+    for note in done.notes {
         if !accepted.notes.contains(&note) {
             accepted.notes.push(note);
         }
     }
     let notes = std::mem::take(&mut accepted.notes);
-    Ok(reply(editing, view, done.out.edits, (&fills, notes), &held, retry))
+    let mut result = reply(editing, view, done.edits, (&fills, notes), &held, retry);
+    result.warnings.extend(rows);
+    Ok(result)
 }
 
 /// A cells entry's row or column: its place, else its label, else missing.

@@ -28,7 +28,7 @@ impl Clock for Fixed {
     }
 }
 
-fn session() -> Session {
+pub(crate) fn session() -> Session {
     let context = Context {
         fonts: Arc::new(NoFonts),
         parts: Arc::new(NoParts),
@@ -51,7 +51,7 @@ fn document(body: &str) -> String {
     format!("<w:document {NS}><w:body>{body}</w:body></w:document>")
 }
 
-fn docx(body: &str) -> Arc<[u8]> {
+pub(crate) fn docx(body: &str) -> Arc<[u8]> {
     let rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
     let types = r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
     let mut w = Writer::new();
@@ -73,14 +73,14 @@ fn docx(body: &str) -> Arc<[u8]> {
     Arc::from(w.finish(b"").unwrap())
 }
 
-fn as_caller(name: &str) -> CallContext {
+pub(crate) fn as_caller(name: &str) -> CallContext {
     CallContext {
         caller: Caller::named(name),
         ..CallContext::default()
     }
 }
 
-fn call(session: &Session, name: &str, arguments: Value, context: &CallContext) -> Value {
+pub(crate) fn call(session: &Session, name: &str, arguments: Value, context: &CallContext) -> Value {
     Value::Object(session.call(name, arguments, context).to_json())
 }
 
@@ -92,7 +92,7 @@ fn put(session: &Session, doc: &DocId, body: &str, context: &CallContext) -> u64
     session.update(doc, parts, context).unwrap().version
 }
 
-fn body_of(session: &Session, doc: &DocId) -> String {
+pub(crate) fn body_of(session: &Session, doc: &DocId) -> String {
     let saved = session.save(doc).unwrap();
     let package = ooxml_opc::Package::open(Arc::from(saved), &Limits::default()).unwrap();
     String::from_utf8(package.read("word/document.xml").unwrap().unwrap().to_vec()).unwrap()
@@ -314,14 +314,20 @@ fn a_check_of_the_document_alone_is_the_sessions() {
     assert_eq!(validate["new"].as_array().unwrap().len(), 1);
     assert!(validate["new"][0].as_str().unwrap().starts_with("[paraid-repeated]"));
     assert_eq!(validate["problems"], validate["new"]);
-    // what needs the layout is the host's
+    // what needs the layout's facts is the host's; a reflow, where it hands no layout
     for asked in [
-        json!({"doc": "d1"}),
-        json!({"doc": "d1", "include": ["validate", "reflow"]}),
+        json!({"doc": "d1", "include": ["validate", "layout"]}),
         json!({"doc": "d1", "include": ["validate"], "range": "p:11111111"}),
     ] {
         let result = s.call("check", asked, &CallContext::default());
         assert_eq!(result.unported(), [ooxml_tools_word::CHECK_LAYOUT.to_owned()]);
+    }
+    for asked in [
+        json!({"doc": "d1"}),
+        json!({"doc": "d1", "include": ["validate", "reflow"]}),
+    ] {
+        let result = s.call("check", asked, &CallContext::default());
+        assert_eq!(result.unported(), [ooxml_tools_word::CHECK_NO_LAYOUT.to_owned()]);
     }
 }
 

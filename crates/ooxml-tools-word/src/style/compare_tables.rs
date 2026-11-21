@@ -10,6 +10,7 @@
 use super::compare::{difference, fix, Block, Difference, Groups, Para, Side};
 use super::compare_paragraphs::{align, described, paragraphs};
 use crate::table_read::{border, fill, grid_widths, own_rows, row_cells, width, Placed};
+use ooxml_base::pyfmt::round2;
 use ooxml_word_edit::pairing;
 use ooxml_word_model::docx::find_path;
 use ooxml_word_model::ids::W;
@@ -98,11 +99,6 @@ fn one(key: &str, value: Value) -> Map<String, Value> {
 /// Twips as points, rounded as docx-agent rounds them (`round(w / 20, 2)`).
 fn points_of(twips: &[i64]) -> Vec<f64> {
     twips.iter().map(|w| round2(*w as f64 / 20.0)).collect()
-}
-
-/// Python's `round(value, 2)`: the nearest of two decimals, ties to even on the exact value.
-pub(crate) fn round2(value: f64) -> f64 {
-    format!("{value:.2}").parse().unwrap_or(value)
 }
 
 fn header_rows(rows: &[Placed]) -> usize {

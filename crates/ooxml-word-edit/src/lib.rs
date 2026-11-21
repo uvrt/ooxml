@@ -29,6 +29,8 @@
 //! - how a copy's rows and paragraphs correspond to its sample's ([`pairing`]);
 //! - validation per change ([`validate`]: facts memoised by content, docx-agent's rules)
 //!   and what a change touched ([`touched`]);
+//! - which paragraphs were the file's when the session opened it, and which revision
+//!   records this session wrote ([`originals`]);
 //! - [`Editor`], which runs a command through the store and reports its result with
 //!   `touched` and the validation delta.
 //!
@@ -49,6 +51,7 @@ mod content_types;
 mod control_delete;
 mod controls;
 mod copying;
+mod core_properties;
 mod delete;
 mod delete_blocks;
 mod delete_write;
@@ -77,6 +80,7 @@ mod names;
 mod namespaces;
 mod new_part;
 mod notes;
+pub mod originals;
 pub mod pairing;
 mod paragraph_style;
 mod paragraphs;
@@ -121,6 +125,7 @@ pub use controls::{ControlEdited, ControlKind, FillControl, Filling, InsertContr
 pub use copying::{
     BlocksCopied, BookmarkPolicy, CopyBlocks, CopyRange, CopySource, ListPolicy, StylePolicy, UnmappedPolicy,
 };
+pub use core_properties::{core_part, core_properties, CoreProperty, CoreSet, SetCoreProperties};
 pub use delete::{BlockDeleted, DeleteBlock};
 pub use delete_blocks::{blocks_named, BlocksDeleted, DeleteBlocks};
 pub use doc::{Change, Draw, DrawFrom, Key, ModelError, Shared, WordDoc};
@@ -138,9 +143,9 @@ pub use fields::{
 };
 pub use follow::{CopyFollowed, FollowSample, Followed};
 pub use format::{
-    check as check_formatting, differs, known_style, occurrences, range_text, theme_color_name, FormatEdit, FormatPlan,
-    FormatStep, Formatted, Like, LikeDone, Occurrence, ParagraphLook, Property, Setting, Value, KEEPS_BLOCKS,
-    NOT_TAKEN, PARTS,
+    check as check_formatting, differs, keep_writes, kept_blocks, kept_package, known_style, occurrences, range_text,
+    theme_color_name, FormatEdit, FormatPlan, FormatStep, Formatted, Like, LikeDone, Occurrence, ParagraphLook,
+    Property, Setting, Value, KEEPS_BLOCKS, NOT_TAKEN, PARTS,
 };
 pub use ids_delta::{ids_delta, IdsDelta};
 pub use links::{hyperlink_span, AddBookmark, AddHyperlink, LinkEdited, RemoveBookmark, RenameBookmark};
@@ -175,9 +180,10 @@ pub use styles::{
 };
 pub use switch::{tracks_changes, word_tracks_changes, SetWordTracking, WordTracking};
 pub use tables::{
-    body_lines, body_width, loose_paragraph_after, pending_structure, table_keeps, table_keeps_at, BodyLines,
-    BodyWidth, CellValues, EditTable, FormatTable, Look, TableChange, TableChanged, TableEdit, TableFormat,
-    TableFormatted, TableKeeps, TableValues, TableWidth,
+    body_lines, body_width, loose_paragraph_after, pending_structure, row_cells, row_shown, rows_unlike, table_keeps,
+    table_keeps_at, BodyLines, BodyWidth, CellUnlike, CellValues, ColumnCopy, EditTable, FormatCall, FormatTable,
+    LikeTheColumn, Look, LookField, RowUnlike, TableChange, TableChanged, TableEdit, TableFormat, TableFormatted,
+    TableKeeps, TableValues, TableWidth, TextLook, ROW_WINDOW,
 };
 pub use template::{compatibility_mode, UpgradeToModern, Upgraded, DEFAULT_COMPATIBILITY_MODE, MODERN_MODE};
 pub use text::diff::ratio as text_ratio;

@@ -1,6 +1,6 @@
 //! Owns: `ooxml_core.CancelToken` and `ooxml_core.CallContext` -- what a call runs with: who
-//! calls (its key, and its context in the order given), a token that stops it, and how long
-//! it may run -- and their conversion to the session's [`CallContext`].
+//! calls (its key, and its context in the order given), a token that stops it, how long
+//! laying a document out may take in it and how long it may run -- and their conversion to the session's [`CallContext`].
 //!
 //! Must not: run a call, or touch a Python object without the lock.
 
@@ -42,28 +42,24 @@ impl PyCancelToken {
 
 /// What a call runs with (`ooxml_core.CallContext`): who calls (`caller`, its key; and
 /// `context`, the caller's context as JSON in the order given, which replies name it by),
-/// a token that stops it, and how long it may run, in seconds. One may serve many calls.
+/// a token that stops it, how long laying a document out may take in it (`layout_timeout`,
+/// seconds), and how long it may run, in seconds. One may serve many calls.
 #[pyclass(frozen, name = "CallContext", module = "ooxml_core")]
 pub struct PyCallContext {
-    inner: CallContext,
+    pub(crate) inner: CallContext,
 }
 
 #[pymethods]
 impl PyCallContext {
     #[new]
-    #[pyo3(signature = (*, caller = None, cancel = None, deadline = None, context = None))]
+    #[pyo3(signature = (*, caller = None, cancel = None, deadline = None, layout_timeout = None, context = None))]
     fn new(
         caller: Option<&str>,
         cancel: Option<PyRef<'_, PyCancelToken>>,
         deadline: Option<f64>,
+        layout_timeout: Option<f64>,
         context: Option<&str>,
     ) -> PyResult<Self> {
-        let deadline = deadline
-            .map(|seconds| {
-                Duration::try_from_secs_f64(seconds)
-                    .map_err(|_| PyValueError::new_err("deadline is seconds, 0 or more"))
-            })
-            .transpose()?;
         let caller_context = match context.map(serde_json::from_str::<Value>).transpose() {
             Ok(None) => None,
             Ok(Some(Value::Object(fields))) => Some(Arc::new(fields)),
@@ -74,13 +70,25 @@ impl PyCallContext {
                 caller: caller.map_or_else(Caller::anonymous, Caller::named),
                 caller_context,
                 cancel: cancel.map(|t| Arc::clone(&t.inner)),
-                deadline,
+                deadline: seconds(deadline, "deadline")?,
+                layout_timeout: seconds(layout_timeout, "layout_timeout")?,
                 ..CallContext::default()
             },
         })
     }
 }
 
-pub(crate) fn context_of(context: Option<&PyCallContext>) -> CallContext {
+/// `value` seconds as a duration (`name` said where it is not 0 or more).
+fn seconds(value: Option<f64>, name: &str) -> PyResult<Option<Duration>> {
+    value
+        .map(|seconds| {
+            Duration::try_from_secs_f64(seconds)
+                .map_err(|_| PyValueError::new_err(format!("{name} is seconds, 0 or more")))
+        })
+        .transpose()
+}
+
+/// The session's context of a call's `CallContext` (the default where none is given).
+pub(crate) fn caller_context(context: Option<&PyCallContext>) -> CallContext {
     context.map(|c| c.inner.clone()).unwrap_or_default()
 }

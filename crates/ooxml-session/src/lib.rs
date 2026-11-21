@@ -41,6 +41,7 @@ mod reading_edit;
 mod records;
 mod registry;
 mod retired;
+mod rows_written;
 mod session;
 mod undo;
 mod update;

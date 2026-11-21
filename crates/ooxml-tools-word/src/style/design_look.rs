@@ -6,7 +6,7 @@
 //!
 //! Must not: change a document, or choose what is reported (the kinds' modules do).
 
-use super::compare_tables::round2;
+use ooxml_base::pyfmt::round2;
 use ooxml_tools::pyfmt::repr_float;
 use ooxml_word_model::docx::formatting::{Cell, EffectiveRun, Formatting, StyleLook};
 use ooxml_word_model::docx::Docx;

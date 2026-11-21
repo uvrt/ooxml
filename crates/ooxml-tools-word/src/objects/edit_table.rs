@@ -305,16 +305,20 @@ fn finish(
         change,
         policy: policy(editing),
     };
-    let done = match editing.editor.run(editing.caller, &command) {
+    // round 58 (R126): a row added looked at against the rows around it, in the call's
+    // transaction
+    let adds_row = matches!(change, TableChange::InsertRow { .. } | TableChange::CopyRow { .. });
+    let look = |out: &TableChanged, _: &WordDoc| adds_row.then(|| (out.table.clone(), out.id.clone()));
+    let (done, rows) = match super::rows_written::run_writing_rows(editing, &command, &table, look, retry) {
         Ok(done) => done,
         Err(EditError::Refused(message)) if matches!(change, TableChange::CopyRow { .. }) => {
             return ToolResult::failed(uncopied(args, view, message, change));
         }
         Err(error) => return refused(error, retry.clone()),
     };
-    let now = done.out.table.clone();
+    let now = done.table.clone();
     // round 55 (R115, rule 3): a merge already made changes nothing
-    let unchanged = done.out.unchanged && matches!(change, TableChange::Merge { .. });
+    let unchanged = done.unchanged && matches!(change, TableChange::Merge { .. });
     let head = editing.editor.store().snapshot();
     let data = head
         .doc()
@@ -322,7 +326,7 @@ fn finish(
         .ok()
         .and_then(|docx| table_json(&docx, &now, head.doc(), true, retry));
     let summary = format!("{} on {table}", args.action.as_str());
-    let mut result = outcome(&[Outcome::from(done.out)], summary, data);
+    let mut result = outcome(&[Outcome::from(done)], summary, data);
     if unchanged {
         result.warnings.insert(
             0,
@@ -353,10 +357,11 @@ fn finish(
         if now != table {
             match found.renamed.iter_mut().find(|(old, _)| *old == table) {
                 Some(entry) => entry.1.clone_from(&now),
-                None => found.renamed.push((table, now)),
+                None => found.renamed.push((table.clone(), now.clone())),
             }
         }
     }
+    result.warnings.extend(rows);
     result
 }
 

@@ -264,6 +264,15 @@ impl Session {
         }
     }
 
+    /// What the Word document's last check with `reflow` saw (`since_last_check` is
+    /// measured from it), read and kept by a host's own checks too; `None` for another kind.
+    ///
+    /// # Errors
+    /// [`SessionError::NotOpen`].
+    pub fn last_check(&self, id: &DocId) -> Result<Option<Arc<ooxml_tools_word::LastCheck>>, SessionError> {
+        Ok(self.document(id)?.word().map(|word| Arc::clone(&word.last_check)))
+    }
+
     /// [`Session::validation`] of the version `at` (one a call made, say) instead of the head.
     ///
     /// # Errors

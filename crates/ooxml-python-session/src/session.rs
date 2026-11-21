@@ -1,25 +1,23 @@
-//! Owns: `ooxml_core.Session` (the handles a call runs with are [`crate::context`]'s, a
-//! document's version [`crate::version`]'s): its Python signatures, the adapter of a Python placer (a
-//! `Placer` called with the interpreter lock taken back), the copying of Python values into Rust ones while the interpreter
+//! Owns: `ooxml_core.Session` (the handles a call runs with are [`crate::context`]'s and
+//! [`crate::options`]'s, a document's version [`crate::version`]'s): its Python signatures, the
+//! copying of Python values into Rust ones while the interpreter
 //! lock is held, every session call made with it released, and the mapping of errors.
 //!
 //! Must not: do a session's work itself, or touch a Python object without the lock.
 
 use crate::adapters::{context, SessionStop};
-use crate::context::{context_of, PyCallContext};
+use crate::context::{caller_context, PyCallContext};
+use crate::options::{context_of, PyCallOptions};
 use crate::version::PyVersion;
 use ooxml_base::Locale;
-use ooxml_session::{DocId, DocKind, DocNames, HeldId, RetiredBy, Session, SessionConfig, SessionError};
+use ooxml_session::{DocId, DocKind, HeldId, RetiredBy, Session, SessionConfig, SessionError};
 use ooxml_store::StoreConfig;
 use ooxml_tools::{compact, ToolError, ToolResult};
-use ooxml_tools_word::Placer;
 use ooxml_word_edit::EarlierIds;
 use pyo3::exceptions::{PyKeyError, PyRuntimeError, PyTimeoutError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
-use serde_json::Map;
 use serde_json::Value;
-use std::collections::BTreeMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
@@ -42,18 +40,6 @@ pub(crate) fn doc_id(doc: &str, session: &Session) -> PyResult<DocId> {
             open: session.documents().iter().map(ToString::to_string).collect(),
         })
     })
-}
-
-/// The host's names for the documents a call names (`{name: the session's id}`); a name
-/// whose id is not one of the session's names nothing (the call then refuses it as not open).
-fn names_of(names: Option<BTreeMap<String, String>>) -> DocNames {
-    let mut out = DocNames::new();
-    for (name, id) in names.into_iter().flatten() {
-        if let Some(id) = DocId::parse(&id) {
-            out.insert(name, id);
-        }
-    }
-    out
 }
 
 pub(crate) fn to_py(error: &SessionError) -> PyErr {
@@ -151,28 +137,6 @@ fn held_id(kind: &str, value: u64) -> PyResult<HeldId> {
 /// application reads (JSON text).
 type Reply = (String, Vec<Py<PyBytes>>, String);
 
-/// Python's placer of blocks (`placer(asked_json) -> answers_json | None`), called with the
-/// interpreter lock taken back.
-struct PyPlacer(Py<PyAny>);
-
-impl Placer for PyPlacer {
-    fn place(&self, asked: &[Vec<String>]) -> Option<Vec<Map<String, Value>>> {
-        let asked = serde_json::to_string(asked).ok()?;
-        let answer = Python::attach(|py| {
-            let answer = self.0.call1(py, (asked,)).ok()?;
-            answer.extract::<Option<String>>(py).ok().flatten()
-        })?;
-        let answers: Vec<Value> = serde_json::from_str(&answer).ok()?;
-        answers
-            .into_iter()
-            .map(|a| match a {
-                Value::Object(map) => Some(map),
-                _ => None,
-            })
-            .collect()
-    }
-}
-
 #[pymethods]
 impl PySession {
     /// A session: each document keeps `history_depth` undo steps; `locale` is the BCP 47
@@ -219,41 +183,17 @@ impl PySession {
         Ok(id.to_string())
     }
 
-    /// Run the tool `name` with `arguments` (JSON text) on a snapshot, under `context`: returns the reply as
-    /// JSON text -- the whole envelope, or within `limit` characters as the model is sent
-    /// it --, the images beside it (bytes), and what only the application reads, as JSON
-    /// text: `unported`, what of the answer is not yet given as the Python tool gives it
-    /// (a list of reasons). Never raises for the call's own failure:
-    /// that is the reply's `error`, with its way out. `at`: the versions the call reads
-    /// (`Version`s; a document not among them is read at its head). `placer`: where it may
-    /// ask where blocks are laid out -- called with the blocks asked as JSON text (a list,
-    /// each an id then the ids it joins), it answers each one's `placements` or `unknown`
-    /// as JSON text (a list of objects), or `None` where it cannot. `layout`: the document's
-    /// page engine (a `WordPages`, the host's kept one), which an edit whose results come
-    /// from the pages (`word_fields`, a header's page number) lays its versions out with,
-    /// each from the one it laid out last; `None`: such a result is left to the host.
-    /// `names`: the host's names for the documents the call names (`{name: the session's
-    /// id}`): the arguments name documents by these, and the reply names them so.
-    #[pyo3(signature = (name, arguments, *, context = None, limit = None, at = None, placer = None, layout = None,
-                        names = None))]
-    #[allow(clippy::too_many_arguments)]
-    fn call(
-        &self,
-        py: Python<'_>,
-        name: &str,
-        arguments: String,
-        context: Option<PyRef<'_, PyCallContext>>,
-        limit: Option<usize>,
-        at: Option<Vec<PyRef<'_, PyVersion>>>,
-        placer: Option<Py<PyAny>>,
-        layout: Option<PyRef<'_, crate::layout::PyWordPages>>,
-        names: Option<BTreeMap<String, String>>,
-    ) -> Reply {
-        let mut context = context_of(context.as_deref());
-        context.names = names_of(names);
-        context.at = at.iter().flatten().map(|v| v.inner.clone()).collect();
-        context.placer = placer.map(|p| Arc::new(PyPlacer(p)) as Arc<dyn Placer>);
-        context.layout = layout.map(|pages| Arc::new(pages.port()) as Arc<dyn ooxml_word_edit::FieldLayout>);
+    /// Run the tool `name` with `arguments` (JSON text) on a snapshot, with `options` (a
+    /// `CallOptions`: who calls, the versions read, the placer, the page engine, the reply's
+    /// `limit`, ...): returns the reply as JSON text -- the whole envelope, or within the
+    /// limit as the model is sent it --, the images beside it (bytes), and what only the
+    /// application reads, as JSON text: `unported`, what of the answer is not yet given as
+    /// the Python tool gives it (a list of reasons). Never raises for the call's own failure:
+    /// that is the reply's `error`, with its way out.
+    #[pyo3(signature = (name, arguments, options = None))]
+    fn call(&self, py: Python<'_>, name: &str, arguments: String, options: Option<PyRef<'_, PyCallOptions>>) -> Reply {
+        let context = context_of(options.as_deref());
+        let limit = options.as_ref().and_then(|o| o.limit);
         let session = &self.inner;
         let text = py.detach(|| {
             let run = || session.call(name, Value::String(arguments), &context);
@@ -268,48 +208,32 @@ impl PySession {
         (text.0, Vec::new(), text.1)
     }
 
-    /// Run the editing tool `name` as [`call`](Self::call) does (no limit, no images):
-    /// returns the envelope's JSON text, the application's JSON text (`unported`), and what
-    /// the call's edits made -- `(first, last, touched, validation)`: the number of the
-    /// version its first edit made, the version its last made (held), what it touched as
-    /// JSON text (`None` where it made more than one version) and the last version's
-    /// validation as [`validation`](Self::validation) gives it -- or `None` where it changed
-    /// nothing. A host that numbers the document's steps takes the call's step from these,
-    /// whatever other calls commit to the document meanwhile. `layout`: the document's page
-    /// engine, as for [`call`](Self::call) (`word_fields` update, a header's page number,
-    /// `word_template`'s reflow). `blobs`: the host's blobs, an object with `blob(handle)`
-    /// (`(name, mime, bytes)` or `None`) and `listed()` (`[(handle, name)]`), asked with the
-    /// interpreter lock taken back (`word_drawings` insert_picture). `written`: the values the
-    /// host wrote into the arguments for references, as JSON text (`[{"field", "start", "end",
-    /// "text", "record", "brief"}]`, ooxml-edit's `call.facts`), which the call keeps on the
-    /// paragraphs they went into. `names`: as for [`call`](Self::call).
+    /// Run the editing tool `name` as [`call`](Self::call) does, with `options` (a
+    /// `CallOptions`: who calls, the page engine, the blobs, the values written by reference;
+    /// no limit, no images): returns the envelope's JSON text, the application's JSON text
+    /// (`unported`), and what the call's edits made -- `(first, last, touched, validation)`:
+    /// the number of the version its first edit made, the version its last made (held), what
+    /// it touched as JSON text (`None` where it made more than one version) and the last
+    /// version's validation as [`validation`](Self::validation) gives it -- or `None` where it
+    /// changed nothing. A host that numbers the document's steps takes the call's step from
+    /// these, whatever other calls commit to the document meanwhile.
     ///
     /// # Errors
-    /// `ValueError` for `written` that is not such a list.
-    #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (name, arguments, *, context = None, layout = None, blobs = None, written = None, names = None))]
+    /// `ValueError` for options with a `limit` (an edit's reply is whole).
+    #[pyo3(signature = (name, arguments, options = None))]
     fn edit(
         &self,
         py: Python<'_>,
         name: &str,
         arguments: String,
-        context: Option<PyRef<'_, PyCallContext>>,
-        layout: Option<PyRef<'_, crate::layout::PyWordPages>>,
-        blobs: Option<Py<PyAny>>,
-        written: Option<&str>,
-        names: Option<BTreeMap<String, String>>,
+        options: Option<PyRef<'_, PyCallOptions>>,
     ) -> PyResult<(String, String, Option<EditMade>)> {
-        let mut context = context_of(context.as_deref());
-        context.names = names_of(names);
-        context.layout = layout.map(|pages| Arc::new(pages.port()) as Arc<dyn ooxml_word_edit::FieldLayout>);
-        context.blobs = blobs.map(|b| Arc::new(crate::adapters::PyBlobs(b)) as Arc<dyn ooxml_tools_word::Blobs>);
-        if let Some(written) = written {
-            context.written = serde_json::from_str::<Value>(written)
-                .ok()
-                .as_ref()
-                .and_then(ooxml_tools_word::Written::list_from_json)
-                .ok_or_else(|| PyValueError::new_err("written is a JSON list of the values written by reference"))?;
+        if options.as_ref().is_some_and(|o| o.limit.is_some()) {
+            return Err(PyValueError::new_err(
+                "an edit's reply is whole: give its options no limit",
+            ));
         }
+        let context = context_of(options.as_deref());
         let session = &self.inner;
         let (text, app, made) = py.detach(|| {
             let run = || session.edit(name, Value::String(arguments), &context);
@@ -337,7 +261,7 @@ impl PySession {
         context: Option<PyRef<'_, PyCallContext>>,
     ) -> PyResult<(u64, bool, u32)> {
         let id = doc_id(doc, &self.inner)?;
-        let context = context_of(context.as_deref());
+        let context = caller_context(context.as_deref());
         let copied = copy_parts(parts)?;
         let session = &self.inner;
         let updated = py
@@ -357,7 +281,7 @@ impl PySession {
         context: Option<PyRef<'_, PyCallContext>>,
     ) -> PyResult<PyVersion> {
         let id = doc_id(doc, &self.inner)?;
-        let context = context_of(context.as_deref());
+        let context = caller_context(context.as_deref());
         let copied = copy_parts(parts)?;
         let session = &self.inner;
         let (_, opened) = py
@@ -378,7 +302,7 @@ impl PySession {
         context: Option<PyRef<'_, PyCallContext>>,
     ) -> PyResult<PyVersion> {
         let id = doc_id(doc, &self.inner)?;
-        let context = context_of(context.as_deref());
+        let context = caller_context(context.as_deref());
         let copied = copy_parts(parts)?;
         let session = &self.inner;
         let (_, opened) = py
@@ -444,6 +368,40 @@ impl PySession {
         Ok(delta.map(|d| (d.new, d.fixed, d.baseline)))
     }
 
+    /// What the document's last check with `reflow` saw, which the session's next check
+    /// measures `since_last_check` from: `(version, summary)` -- the number of the version
+    /// it saw (`None`: the host's check kept it without one) and its `LayoutSummary` (of a
+    /// check the session served, the version laid out: summarised when read or compared) --
+    /// or `None`.
+    fn last_check(&self, doc: &str) -> PyResult<Option<(Option<u64>, crate::summary::PyLayoutSummary)>> {
+        let id = doc_id(doc, &self.inner)?;
+        let kept = self.inner.last_check(&id).map_err(|e| to_py(&e))?;
+        Ok(kept
+            .and_then(|kept| kept.get())
+            .map(|seen| (seen.version, crate::summary::PyLayoutSummary { inner: seen.pages })))
+    }
+
+    /// Keep `summary` (a `LayoutSummary` of the document's engine) as what the document's
+    /// last check saw -- a check the host made itself -- of the version `at` where given;
+    /// `None`: forget what the last check saw.
+    #[pyo3(signature = (doc, summary = None, *, at = None))]
+    fn set_last_check(
+        &self,
+        doc: &str,
+        summary: Option<PyRef<'_, crate::summary::PyLayoutSummary>>,
+        at: Option<PyRef<'_, PyVersion>>,
+    ) -> PyResult<()> {
+        let id = doc_id(doc, &self.inner)?;
+        let seen = summary.map(|summary| ooxml_tools_word::Seen {
+            version: at.map(|v| v.inner.version()),
+            pages: summary.inner.clone(),
+        });
+        if let Some(kept) = self.inner.last_check(&id).map_err(|e| to_py(&e))? {
+            kept.set(seen);
+        }
+        Ok(())
+    }
+
     /// Undo up to `steps` calls (with a caller in `context`, only its own, while its latest
     /// is the document's latest): `(count, version)`. A caller's latest change that others
     /// changed after raises `ValueError` when nothing was undone.
@@ -456,7 +414,7 @@ impl PySession {
         context: Option<PyRef<'_, PyCallContext>>,
     ) -> PyResult<(usize, u64)> {
         let id = doc_id(doc, &self.inner)?;
-        let context = context_of(context.as_deref());
+        let context = caller_context(context.as_deref());
         let session = &self.inner;
         let done = py
             .detach(|| session.undo(&id, steps, &context))
@@ -516,7 +474,7 @@ impl PySession {
         context: Option<PyRef<'_, PyCallContext>>,
     ) -> PyResult<(usize, u64)> {
         let id = doc_id(doc, &self.inner)?;
-        let context = context_of(context.as_deref());
+        let context = caller_context(context.as_deref());
         let session = &self.inner;
         let done = py
             .detach(|| session.redo(&id, steps, &context))
@@ -545,6 +503,24 @@ impl PySession {
             .collect::<PyResult<Vec<_>>>()?;
         let session = &self.inner;
         py.detach(|| session.seed_retired(&id, given)).map_err(|e| to_py(&e))
+    }
+
+    /// The rows of the Word document this session's `word_edit_table` calls added or wrote
+    /// into, by `w14:paraId`, sorted (round 58, R126: check's `row_text_format` reads them).
+    fn rows_written(&self, py: Python<'_>, doc: &str) -> PyResult<Vec<String>> {
+        let id = doc_id(doc, &self.inner)?;
+        let session = &self.inner;
+        let rows = py.detach(|| session.rows_written(&id)).map_err(|e| to_py(&e))?;
+        Ok(rows.into_iter().collect())
+    }
+
+    /// Keep `rows` (`w14:paraId`s) as written by a table call the host answered itself, in
+    /// the record the session's own calls keep theirs in.
+    fn note_rows_written(&self, py: Python<'_>, doc: &str, rows: Vec<String>) -> PyResult<()> {
+        let id = doc_id(doc, &self.inner)?;
+        let session = &self.inner;
+        py.detach(|| session.note_rows_written(&id, rows))
+            .map_err(|e| to_py(&e))
     }
 
     /// Close the document; its versions and history are let go.

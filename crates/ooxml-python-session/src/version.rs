@@ -12,8 +12,8 @@ use pyo3::types::{PyBytes, PyDict};
 use serde_json::Value;
 
 /// A document at one version (`ooxml_core.Version`), held while Python holds it: a call
-/// given it (`Session.call(..., at=[version])`) reads that version, whatever was
-/// committed since.
+/// given it (`CallDocuments(at=[version])` in its `CallOptions`) reads that version,
+/// whatever was committed since.
 #[pyclass(frozen, name = "Version", module = "ooxml_core")]
 pub struct PyVersion {
     pub(crate) inner: Opened,

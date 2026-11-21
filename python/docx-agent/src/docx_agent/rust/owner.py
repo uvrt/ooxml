@@ -50,6 +50,23 @@ def context_of(caller: Mapping[str, Any] | None) -> Any:
                                   context=json.dumps(dict(caller), default=str))
 
 
+def options(**given: Any) -> Any:
+    """An ``ooxml_core.CallOptions``: what one ``Session.call`` or ``Session.edit`` runs with
+    beside its name and arguments (``context``, ``documents``, ``placer``, ``layout``,
+    ``blobs``, ``written``, ``limit``)."""
+    import ooxml_core
+
+    return ooxml_core.CallOptions(**given)
+
+
+def documents(**given: Any) -> Any:
+    """An ``ooxml_core.CallDocuments``: what a call needs about the open documents it names
+    (``at``: the versions it reads; ``names``: the host's names for them)."""
+    import ooxml_core
+
+    return ooxml_core.CallDocuments(**given)
+
+
 class RustOwner:
     """The Rust session as the owner of docx-agent's documents in a toolbox session; its
     handle per document is the :class:`~.reads.Mirror` the reads use."""
@@ -69,6 +86,10 @@ class RustOwner:
         document.retired_ids = functools.partial(retired_ids, mirror)
         # The records of placed values are read by the session too (lane P2d1).
         document.owned_records = functools.partial(owned_records, mirror, weakref.ref(document))
+        # The rows the table calls wrote are the session's record too (lane P2c19, R126).
+        from ..tools.objects import ROWS_WRITTEN
+
+        document.__dict__[ROWS_WRITTEN] = SessionRows(mirror)
         return mirror
 
     def head(self, mirror: "reads.Mirror") -> Any:
@@ -110,8 +131,8 @@ class RustOwner:
                 caller: Mapping[str, Any] | None) -> dict[str, Any]:
         """The session's ``undo`` tool on the document, named ``name`` in its reply."""
         arguments = {"doc": name, "steps": steps, "redo": redo}
-        reply, _images, _app = mirror.session.call("undo", json.dumps(arguments), context=context_of(caller),
-                                                   names={name: mirror.doc})
+        reply, _images, _app = mirror.session.call("undo", json.dumps(arguments), options(
+            context=context_of(caller), documents=documents(names={name: mirror.doc})))
         return json.loads(reply)
 
     def reader(self, mirror: "reads.Mirror", head: Any, number: int) -> Any:
@@ -242,6 +263,34 @@ def retired_ids(mirror: "reads.Mirror") -> Any:
             out.earlier[version] = said
         (out.gone if kind == "block" else out.drawings_gone)[value] = version
     return out
+
+
+class SessionRows:
+    """The rows written as the Rust session records them, for a document it owns (round 58,
+    R126; ``tools.objects.ROWS_WRITTEN``): the rows a table call adds or writes into, by
+    ``w14:paraId`` -- the session's own calls' and the Python handler's in one record, which
+    ``check``'s ``row_text_format`` reads.  Set-like: ``update`` keeps rows, ``in``, ``len``
+    and iteration read the record as it is now."""
+
+    def __init__(self, mirror: "reads.Mirror") -> None:
+        self._mirror = mirror
+
+    def _ids(self) -> list[str]:
+        return self._mirror.session.rows_written(self._mirror.doc)
+
+    def update(self, ids: Any) -> None:
+        given = [i for i in ids if i]
+        if given:
+            self._mirror.session.note_rows_written(self._mirror.doc, given)
+
+    def __contains__(self, value: object) -> bool:
+        return value in self._ids()
+
+    def __iter__(self) -> Any:
+        return iter(self._ids())
+
+    def __len__(self) -> int:
+        return len(self._ids())
 
 
 def owned_records(mirror: "reads.Mirror", document: Any) -> dict[str, Any] | None:

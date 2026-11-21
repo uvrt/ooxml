@@ -2,7 +2,7 @@
 //! sections 3 and 9; layer 6).
 //!
 //! Owns: the PyO3 handles -- [`PySession`] (`ooxml_core.Session`), [`PyCancelToken`]
-//! (`ooxml_core.CancelToken`) and [`PyCallContext`] (`ooxml_core.CallContext`) -- and `ooxml_core.tool_specs(kind)` and `tool_hosting(kind)` (`tools`);
+//! (`ooxml_core.CancelToken`) and [`PyCallContext`] (`ooxml_core.CallContext`), [`PyCallOptions`] (`ooxml_core.CallOptions`, what one call runs with) and [`PyCallDocuments`] (`ooxml_core.CallDocuments`, the open documents it names) -- and `ooxml_core.tool_specs(kind)` and `tool_hosting(kind)` (`tools`);
 //! the Word layout's handles (`layout`: `WordFonts`, `WordPages`, `LaidPages`, lane L4); the conversion of their
 //! arguments and results (bytes copied in while the interpreter lock is held, then every
 //! Rust call made with it released, `py.detach`); the mapping of session errors to Python
@@ -25,6 +25,7 @@ mod budget;
 mod context;
 mod group;
 mod layout;
+mod options;
 mod raster;
 mod session;
 mod summary;
@@ -36,11 +37,12 @@ use pyo3::prelude::*;
 pub use budget::{PyBudgetAccount, PyMemoryBudget};
 pub use context::{PyCallContext, PyCancelToken};
 pub use layout::{LayoutFallback, PyLaidPages, PyWordFonts, PyWordPages};
+pub use options::{PyCallDocuments, PyCallOptions};
 pub use raster::PyPageRaster;
 pub use session::PySession;
 pub use version::PyVersion;
 
-/// Add the session API to the module `m`: `Session`, `CancelToken`, `CallContext`, `Version` and
+/// Add the session API to the module `m`: `Session`, `CancelToken`, `CallContext`, `CallOptions`, `Version` and
 /// `tool_specs`, `tool_hosting`; and the Word layout's handles: `WordFonts`, `WordPages`, `LaidPages`,
 /// `LayoutFallback`, `LayoutSummary`, `MemoryBudget` and `BudgetAccount`.
 ///
@@ -50,6 +52,8 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySession>()?;
     m.add_class::<PyCancelToken>()?;
     m.add_class::<PyCallContext>()?;
+    m.add_class::<PyCallOptions>()?;
+    m.add_class::<PyCallDocuments>()?;
     m.add_class::<PyVersion>()?;
     m.add_class::<group::PyStepGroup>()?;
     m.add_class::<group::PyGroupMark>()?;

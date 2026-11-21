@@ -74,6 +74,12 @@ def t_name(call, doc, ref=None, address=None, target=None):
     return Result(summary="named", data={"target": call.resolve_ref(target) if target else None})
 
 
+@tool("t_ref_name", "The ref name a name is kept as, before anything is made.",
+      {"doc": string("Document id."), "ref": string("Ref name.")}, kind="docx")
+def t_ref_name(call, doc, ref):
+    return Result(summary="asked", data={"kept": call.ref_name(ref)})
+
+
 @tool("t_style", "Style items.",
       {"doc": string("Document id."),
        "items": array(obj({"target": string("Item."),
@@ -87,7 +93,7 @@ def t_style(call, doc, items):
     return Result(summary="styled", data={"items": items})
 
 
-TOOLS = [t_fit, t_set, t_count, t_make, t_name, t_style, chart, *shared.SESSION_TOOLS]
+TOOLS = [t_fit, t_set, t_count, t_make, t_name, t_ref_name, t_style, chart, *shared.SESSION_TOOLS]
 
 
 @pytest.fixture
@@ -372,6 +378,23 @@ def test_a_folded_name_that_names_another_address_is_refused(toolbox, session):
     result = toolbox.dispatch(session, "t_name", {"doc": "d1", "ref": "recNow",
                                                   "address": "item:1"})
     assert result.ok and result.warnings == ["ref 'recNow' read as 'rec_now': write $rec_now"]
+
+
+def test_a_ref_name_is_asked_before_anything_is_made(toolbox, session):
+    """Lane H2 (``Call.ref_name``): what :meth:`define_ref` keeps a name as, asked before the
+    call makes what it names -- a folded name that names any address already is refused."""
+    def kept(name):
+        return toolbox.dispatch(session, "t_ref_name", {"doc": "d1", "ref": name})
+
+    assert kept("rec_now").data == {"kept": "rec_now"}
+    found = kept("recNow")
+    assert found.data == {"kept": "rec_now"} and not found.warnings
+    assert kept("big chart").error.field == "ref"
+    assert toolbox.dispatch(session, "t_name", {"doc": "d1", "ref": "rec_now", "address": "item:1"}).ok
+    refused = kept("recNow")
+    assert refused.error.message == ("ref 'recNow' reads as 'rec_now', which already names "
+                                     "item:1: give ref 'rec_now' to point it here instead, "
+                                     "or a name of its own")
 
 
 def test_folded_refs_in_a_batch(toolbox, session):

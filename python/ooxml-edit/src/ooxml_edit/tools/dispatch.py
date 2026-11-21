@@ -119,7 +119,7 @@ from .results import (Image, Result, ToolError, anthropic_image_tokens,
                       openai_image_tokens)
 from .schema import CallError, validate_call
 from .session import (NO_CONTEXT, REF, REF_USE, Clock, Committed, DocumentEntry, DocumentFormat, Output,
-                      Session, SessionView, StepOwner, doc_order, fold_ref, font_dirs_of,
+                      Session, SessionView, StepOwner, doc_order, fold_ref, folded_warning, font_dirs_of,
                       locale_of, narrowed, part_entries)
 from .session import _folded_use, _misspelt_ref
 from .sources import Rows, qualify, refusal, resolve as resolve_rows
@@ -316,30 +316,46 @@ class Call:
             if scope not in seen:
                 seen.append(scope)
 
-    def define_ref(self, name: str, address: str, *, doc: str | None = None) -> None:
-        """Name ``address`` ``name``, so later calls on the document may write ``$name``.
+    def ref_name(self, name: str, address: str | None = None, *, doc: str | None = None) -> str:
+        """The ref name ``name`` is kept as (:meth:`define_ref`): itself, or the name a
+        camelCase or hyphenated name (``recNow``, ``scale-note``) folds to (:func:`fold_ref`).
+        Refused where it folds to none, or to a name that already names an address other
+        than ``address`` -- ``None``: any address, for a call that has not made what the ref
+        names yet (lane H2: a call its document's owner serves asks before the edit, so a
+        refusal changes nothing)."""
+        if REF.match(name):
+            return name
+        folded = fold_ref(name)
+        if folded is None:
+            raise ToolError("invalid_arguments", ref_rule(name), field="ref")
+        doc = doc or (self.entry.doc_id if self.entry else None)
+        taken = self.refs(doc).get(folded) if doc is not None else None
+        if taken is not None and taken != address:
+            raise ToolError("invalid_arguments", f"ref {name!r} reads as {folded!r}, which "
+                            f"already names {taken}: give ref {folded!r} to point it here "
+                            "instead, or a name of its own", field="ref",
+                            details={"ref": folded, "address": taken})
+        return folded
+
+    def define_ref(self, name: str, address: str, *, doc: str | None = None) -> str:
+        """Name ``address`` ``name``, so later calls on the document may write ``$name``; the
+        name kept.
 
         A camelCase or hyphenated name (``recNow``, ``scale-note``) is kept as the ref name
-        it folds to (:func:`fold_ref`), with a warning -- unless that name already names
-        another address: then the call is refused rather than moving that ref."""
+        it folds to (:meth:`ref_name`), with a warning (:func:`~.session.folded_warning`) --
+        unless that name already names another address: then the call is refused rather
+        than moving that ref."""
         doc = doc or (self.entry.doc_id if self.entry else None)
-        if not REF.match(name):
-            folded = fold_ref(name)
-            if folded is None:
-                raise ToolError("invalid_arguments", ref_rule(name), field="ref")
-            taken = self.refs(doc).get(folded) if doc is not None else None
-            if taken is not None and taken != address:
-                raise ToolError("invalid_arguments", f"ref {name!r} reads as {folded!r}, which "
-                                f"already names {taken}: give ref {folded!r} to point it here "
-                                "instead, or a name of its own", field="ref",
-                                details={"ref": folded, "address": taken})
-            self.result.warnings.append(f"ref {name!r} read as {folded!r}: write ${folded}")
-            name = folded
+        kept = self.ref_name(name, address, doc=doc)
+        if kept != name:
+            self.result.warnings.append(folded_warning(name, kept))
+            name = kept
         if doc is None:
             raise ToolError("invalid_arguments", "a ref needs a document")
         self._own_ref(doc, name, address)
         self.context.refs.setdefault(doc, {})[name] = address
         self.result.refs[name] = address
+        return name
 
     def _own_refs_first(self, arguments: Mapping[str, Any]) -> None:
         """Before a changing call's handler runs: refuse a ref name it is given (``ref``, or

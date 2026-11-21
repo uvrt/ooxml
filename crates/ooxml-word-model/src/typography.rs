@@ -84,6 +84,21 @@ pub struct RunLanguage {
     pub proofed: bool,
     /// Whether it is in a code style.
     pub code: bool,
+    /// Where `language` comes from: `run` (the run's own `w:lang`), `style:<name>` (a
+    /// style's, by name, else id) or `default` (`w:docDefaults`'); `None` with no language.
+    pub source: Option<String>,
+}
+
+/// The styles a run's language comes through (its paragraph's, table's and character
+/// style's ids): what [`Cascade::styled`] reads, the same for many runs.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct StyleKey {
+    /// The paragraph's style (its default where it names none).
+    pub paragraph: Option<String>,
+    /// The table's style, where the paragraph is in a table.
+    pub table: Option<String>,
+    /// The run's character style.
+    pub character: Option<String>,
 }
 
 /// A run's language, proofing and code-ness through the styles (docx-agent's `Cascade`):
@@ -175,45 +190,60 @@ impl Cascade {
         out
     }
 
-    /// The language, proofing and code-ness of a run under `context`.
+    /// The language, proofing and code-ness of a run under `context`, and where its language
+    /// comes from.
     #[must_use]
     pub fn of(&self, context: &RunContext<'_>) -> RunLanguage {
-        let paragraph_style = match context.paragraph_properties.and_then(|p| child(p, "pStyle")) {
+        self.styled(&self.key(context)).with_direct(context.run_properties)
+    }
+
+    /// The styles a run under `context` takes its language through.
+    #[must_use]
+    pub fn key(&self, context: &RunContext<'_>) -> StyleKey {
+        let paragraph = match context.paragraph_properties.and_then(|p| child(p, "pStyle")) {
             Some(node) => val(node).map(str::to_owned),
             None => self.default_paragraph.clone(),
         };
-        let table_style = context
+        let table = context
             .table
             .and_then(|table| match table.and_then(|t| child(t, "tblStyle")) {
                 Some(node) => val(node).map(str::to_owned),
                 None => self.default_table.clone(),
             });
-        let direct = context.run_properties;
-        let character_style = direct
+        let character = context
+            .run_properties
             .and_then(|r| child(r, "rStyle"))
             .and_then(|n| val(n))
             .map(str::to_owned);
-        let mut levels: Vec<Option<&Element>> = vec![self.defaults.as_deref()];
-        for id in [&table_style, &paragraph_style, &character_style] {
-            levels.extend(
-                self.chain(id.as_deref())
-                    .into_iter()
-                    .rev()
-                    .map(|s| child(s, "rPr").map(|r| &**r)),
-            );
+        StyleKey {
+            paragraph,
+            table,
+            character,
         }
-        levels.push(direct);
+    }
+
+    /// What the styles `key` names give a run, before its own properties
+    /// ([`RunLanguage::with_direct`]): `w:docDefaults`', then each of the table's, the
+    /// paragraph's and the character style's `w:basedOn` chain, its root first.
+    #[must_use]
+    pub fn styled(&self, key: &StyleKey) -> RunLanguage {
         let mut out = RunLanguage {
             language: None,
             proofed: true,
             code: false,
+            source: None,
         };
-        for level in levels.into_iter().flatten() {
-            if let Some(language) = child(level, "lang").and_then(|l| val(l)).filter(|v| !v.is_empty()) {
-                out.language = Some(language.to_owned());
-            }
-            if let Some(node) = child(level, "noProof") {
-                out.proofed = off(node);
+        out.apply(self.defaults.as_deref(), || "default".to_owned());
+        for id in [&key.table, &key.paragraph, &key.character] {
+            for style in self.chain(id.as_deref()).into_iter().rev() {
+                let name = || {
+                    let shown = child(style, "name")
+                        .and_then(|n| val(n))
+                        .filter(|n| !n.is_empty())
+                        .or_else(|| style.attribute(Some(W), "styleId"));
+                    format!("style:{}", shown.unwrap_or(""))
+                };
+                out.apply(child(style, "rPr").map(|r| &**r), name);
             }
         }
         let ids = |id: &Option<String>| -> Vec<String> {
@@ -222,11 +252,33 @@ impl Cascade {
                 .filter_map(|s| s.attribute(Some(W), "styleId").map(str::to_owned))
                 .collect()
         };
-        out.code = ids(&paragraph_style)
+        out.code = ids(&key.paragraph)
             .iter()
-            .chain(ids(&character_style).iter())
+            .chain(ids(&key.character).iter())
             .any(|id| self.code.contains(id));
         out
+    }
+}
+
+impl RunLanguage {
+    /// What a run whose styles give `self` has with its own `w:rPr` (`direct`).
+    #[must_use]
+    pub fn with_direct(mut self, direct: Option<&Element>) -> RunLanguage {
+        self.apply(direct, || "run".to_owned());
+        self
+    }
+
+    /// `level`'s `w:lang` (not empty) and `w:noProof` over what is found so far, `source`
+    /// where the language comes from.
+    fn apply(&mut self, level: Option<&Element>, source: impl FnOnce() -> String) {
+        let Some(level) = level else { return };
+        if let Some(language) = child(level, "lang").and_then(|l| val(l)).filter(|v| !v.is_empty()) {
+            self.language = Some(language.to_owned());
+            self.source = Some(source());
+        }
+        if let Some(node) = child(level, "noProof") {
+            self.proofed = off(node);
+        }
     }
 }
 
@@ -445,5 +497,49 @@ mod tests {
         let found = find(&chars, &mut |_| Some("it-IT".to_owned()), &mut |_| true, true);
         let kinds: Vec<SpotKind> = found.iter().map(|s| s.kind).collect();
         assert_eq!(kinds, vec![SpotKind::SpaceBefore, SpotKind::SpaceInside]);
+    }
+
+    #[test]
+    fn the_cascade_says_where_a_language_comes_from() {
+        #![allow(clippy::unwrap_used)]
+        let xml = format!(
+            r#"<w:styles xmlns:w="{W}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="character" w:styleId="De"><w:name w:val=""/><w:rPr><w:lang w:val="de-DE"/></w:rPr></w:style><w:docDefaults><w:rPrDefault><w:rPr><w:lang w:val="en-US"/></w:rPr></w:rPrDefault></w:docDefaults><w:rPr><w:rStyle w:val="De"/></w:rPr><w:rPr><w:lang w:val="fr-FR"/><w:noProof/></w:rPr></w:styles>"#
+        );
+        let tree = ooxml_xml::parse(xml.as_bytes(), &ooxml_xml::Limits::default()).unwrap();
+        let root = tree.root();
+        let styles: Vec<Arc<Element>> = root
+            .child_elements()
+            .filter(|e| e.name().local() == "style")
+            .cloned()
+            .collect();
+        let defaults = root
+            .find(Some(W), "docDefaults")
+            .and_then(|d| d.find(Some(W), "rPrDefault"))
+            .and_then(|d| d.find(Some(W), "rPr"))
+            .cloned();
+        let cascade = Cascade::new(&styles, defaults);
+        let direct: Vec<&Arc<Element>> = root.child_elements().filter(|e| e.name().local() == "rPr").collect();
+        let of = |run: Option<&Element>| {
+            cascade.of(&RunContext {
+                run_properties: run,
+                ..RunContext::default()
+            })
+        };
+        let plain = of(None);
+        assert_eq!(
+            (plain.language.as_deref(), plain.source.as_deref()),
+            (Some("en-US"), Some("default"))
+        );
+        let styled = of(direct.first().map(|r| &***r));
+        // a style named "" is said by its id
+        assert_eq!(
+            (styled.language.as_deref(), styled.source.as_deref()),
+            (Some("de-DE"), Some("style:De"))
+        );
+        let own = of(direct.get(1).map(|r| &***r));
+        assert_eq!(
+            (own.language.as_deref(), own.source.as_deref(), own.proofed),
+            (Some("fr-FR"), Some("run"), false)
+        );
     }
 }

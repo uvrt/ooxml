@@ -4,7 +4,7 @@
 //! as its package ([`PackageDoc`]) --, a version of either as a call reads it ([`At`]), and
 //! what the host keeps of a Word document beside its versions: the version it was opened as
 //! (what a session's own edits are told from) and its tracking mode (each later edit's
-//! revision policy).
+//! revision policy), the ids its versions retired and the rows its table calls wrote.
 //!
 //! Must not: dispatch calls or hold the session's table; parse or write a package beyond
 //! opening it; read the clock but through the store's port.
@@ -18,7 +18,7 @@ use crate::{DocKind, SessionError};
 use ooxml_base::Context;
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Committed, Snapshot, Store, StoreConfig, StoreStats};
-use ooxml_tools_word::Tracked;
+use ooxml_tools_word::{RowsWritten, Tracked};
 use ooxml_word_edit::validate::Delta;
 use ooxml_word_edit::{EarlierIds, Editor, RevisionPolicy, Tracking, WordDoc};
 use ooxml_word_model::docx::Versions;
@@ -51,6 +51,11 @@ pub(crate) struct Word {
     tracking: RwLock<Option<String>>,
     /// The ids its versions removed, and who removed each.
     pub(crate) retired: Retired,
+    /// What its last check with `reflow` saw.
+    pub(crate) last_check: Arc<ooxml_tools_word::LastCheck>,
+    /// The rows this session's `word_edit_table` calls added or wrote into (round 58,
+    /// R126): `check`'s `row_text_format` reads them.
+    pub(crate) rows_written: RowsWritten,
 }
 
 impl Word {
@@ -180,6 +185,8 @@ impl Document {
                     opened,
                     tracking: RwLock::new(None),
                     retired: Retired::default(),
+                    last_check: Arc::default(),
+                    rows_written: RowsWritten::default(),
                 }))
             }
             DocKind::Pptx | DocKind::Xlsx => {
