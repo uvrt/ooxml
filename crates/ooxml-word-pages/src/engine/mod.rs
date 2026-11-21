@@ -18,72 +18,30 @@
 //! Must not: be used by two callers at once (its owner locks it), or keep more than the
 //! last version laid out.
 
+mod parts;
+
 use crate::causes::{context_cause, part_reason, whole_cause, RelaidCause};
 use crate::digests::Lines;
-use crate::drawing_said::DrawingWarnings;
-use crate::drawings::WordDrawings;
 use crate::error::{Fallback, PagesError};
 use crate::fonts::{DocumentFonts, FontSetup};
-use crate::pictures::PackagePictures;
+use crate::stats::EngineStats;
 use crate::support;
 use crate::text_boxes::{text_boxes, TextBoxJob};
 use crate::version::{LaidVersion, PageView};
-use ooxml_base::{DigestKey, Limits, Locale};
+use ooxml_base::{Cancel, DigestKey, Limits, Locale};
 use ooxml_derive::{CacheBudget, Memo, Weigh};
 use ooxml_opc::Package;
 use ooxml_word_layout::paint::svg::{page_svg, Drawings, Pictures, SvgContext};
 use ooxml_word_layout::paint::{paint_page, GlyphSize, PagePaint, PaintContext};
-use ooxml_word_layout::tables::WordTables;
 use ooxml_word_layout::WordLayout;
 use ooxml_word_model::Model;
 use ooxml_zip::Archive;
+use parts::{carried_facts, new_layout, pictures_of, say, version_ids, SayWith};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 /// The key the engine digests content under.
 const KEY: DigestKey = DigestKey::new(0x6f6f_786d_6c2d_7061, 0x6765_732d_4c34_0001);
-
-/// What an engine did, since it was made.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct EngineStats {
-    /// Versions laid out whole.
-    pub full: u64,
-    /// Versions laid out again from the version before.
-    pub relaid: u64,
-    /// Versions answered with a fallback.
-    pub fallbacks: u64,
-    /// Parts read again (their stored bytes changed), over every version.
-    pub parts_read: u64,
-    /// Parts taken as they were.
-    pub parts_kept: u64,
-    /// Pages painted.
-    pub pages_painted: u64,
-    /// Time spent opening versions (the model).
-    pub open_time: Duration,
-    /// Time spent laying out.
-    pub layout_time: Duration,
-    /// Memo entries swept (no version in use held them).
-    pub swept: u64,
-    /// Pages painted that were kept painted already.
-    pub paint_hits: u64,
-    /// Pages whose warnings were said again as the version before's same page said them,
-    /// and pages walked for them.
-    pub pages_said: (u64, u64),
-    /// Versions asked again: the same parts as the last version laid out, which was
-    /// answered (nothing laid out).
-    pub kept: u64,
-}
-
-impl EngineStats {
-    /// Count a version laid out: from the one before (`relaid`) or whole.
-    fn count_laid(&mut self, relaid: bool) {
-        if relaid {
-            self.relaid += 1;
-        } else {
-            self.full += 1;
-        }
-    }
-}
 
 /// What a generation holds: the fonts, the model, the layout's memos, the last version.
 struct Generation {
@@ -110,6 +68,34 @@ impl Generation {
     fn last_for(&self, package: &Package) -> Option<Arc<LaidVersion>> {
         let from = self.laid_from.as_ref()?;
         from.same_parts(package).then(|| self.last.clone()).flatten()
+    }
+
+    /// `document` laid out, from `previous` where given, stopped where `cancel` says so.
+    fn lay_out(
+        &mut self,
+        document: &ooxml_word_model::WordDocument,
+        previous: Option<&LaidVersion>,
+        cancel: Option<&dyn Cancel>,
+    ) -> Result<ooxml_word_layout::DocumentLayout, ooxml_base::BaseError> {
+        let (layout, model) = (&mut self.layout, &mut self.model);
+        match (cancel, previous) {
+            (Some(cancel), _) => layout.lay_out_until(model, document, previous.map(|p| &p.layout), cancel),
+            (None, Some(previous)) => Ok(layout.relayout(model, document, &previous.layout)),
+            (None, None) => Ok(layout.lay_out(model, document)),
+        }
+    }
+
+    /// A layout stopped: the version laid out before (`last`, laid out from `from`) is
+    /// still the one the next is laid out from. Where a part beside the main one changed
+    /// (`others_changed`), what its pages said goes: the next version, read against the
+    /// stopped one's parts, would not see that change.
+    fn stopped(&mut self, last: Option<Arc<LaidVersion>>, from: Option<Package>, others_changed: bool) {
+        self.last = last;
+        self.laid_from = from;
+        if others_changed {
+            self.said = crate::page_said::PageMemo::default();
+            self.summaries = crate::summary::SummaryMemo::default();
+        }
     }
 }
 
@@ -365,6 +351,29 @@ impl PageEngine {
     /// # Errors
     /// Its Word parts do not open.
     pub fn lay_out(&mut self, package: &Package) -> Result<Result<Arc<LaidVersion>, Fallback>, PagesError> {
+        self.lay_out_within(package, None)
+    }
+
+    /// [`PageEngine::lay_out`], stopped where `cancel` says so (asked before each top-level
+    /// block of the body's flow and before each page). The version laid out last, the same
+    /// parts asked again, is answered whatever `cancel` says: nothing is laid out.
+    ///
+    /// # Errors
+    /// Its Word parts do not open; [`PagesError::Stopped`] where `cancel` stopped it: the
+    /// engine then lays the next version out from the one it laid out before.
+    pub fn lay_out_until(
+        &mut self,
+        package: &Package,
+        cancel: &dyn Cancel,
+    ) -> Result<Result<Arc<LaidVersion>, Fallback>, PagesError> {
+        self.lay_out_within(package, Some(cancel))
+    }
+
+    fn lay_out_within(
+        &mut self,
+        package: &Package,
+        cancel: Option<&dyn Cancel>,
+    ) -> Result<Result<Arc<LaidVersion>, Fallback>, PagesError> {
         self.changed.sort();
         let fonts = self.setup.document(package);
         let (generation, mut cause) = self.generation_for(fonts);
@@ -391,12 +400,13 @@ impl PageEngine {
         }
         let started = Instant::now();
         let previous = generation.last.take();
-        generation.laid_from = None;
-        let laid = match &previous {
-            Some(previous) => generation
-                .layout
-                .relayout(&mut generation.model, &document, &previous.layout),
-            None => generation.layout.lay_out(&mut generation.model, &document),
+        let laid_from = generation.laid_from.take();
+        let Ok(laid) = generation.lay_out(&document, previous.as_deref(), cancel) else {
+            self.stats.layout_time += started.elapsed();
+            self.stats.stopped += 1;
+            let others_changed = self.changed.iter().any(|name| *name != *document.main_part);
+            generation.stopped(previous, laid_from, others_changed);
+            return Err(PagesError::Stopped);
         };
         if let (Some(previous), true) = (&previous, laid.relaid.is_empty()) {
             cause = whole_cause(&previous.layout, &laid, &self.changed);
@@ -686,98 +696,4 @@ impl PageEngine {
         };
         Some((page_svg(&paint, &cx), missing))
     }
-}
-
-/// The version's body ids: the main part's ids found from the last version's
-/// (`PartIds::after`), its blocks named when asked.
-fn version_ids(generation: &mut Generation, package: &Package, main: &str) -> crate::ids::VersionIds {
-    let Ok(Some(tree)) = package.tree(main) else {
-        generation.ids = None;
-        return crate::ids::VersionIds::default();
-    };
-    let root = Arc::clone(tree.root());
-    let ids = match generation.ids.take() {
-        Some((old, ids)) if Arc::ptr_eq(&old, &root) => ids,
-        Some((old, ids)) => Arc::new(ids.after(&old, &root)),
-        None => Arc::new(ooxml_word_model::ids::PartIds::new("body", &root)),
-    };
-    generation.ids = Some((Arc::clone(&root), Arc::clone(&ids)));
-    crate::ids::VersionIds::new(root, ids)
-}
-
-/// A version's pictures (its package less its text parts) and its drawings' painter.
-fn pictures_of(
-    package: &Package,
-    document: &ooxml_word_model::WordDocument,
-    fonts: &DocumentFonts,
-    numbers: &ooxml_numfmt::Locale,
-) -> (Option<PackagePictures>, Option<WordDrawings>) {
-    let pictures = PackagePictures::new(package);
-    let drawings = pictures.clone().map(|p| {
-        let inks: Arc<dyn crate::drawings::vml::Inks> = Arc::clone(&fonts.inks);
-        WordDrawings::new(document, p, numbers.clone(), Some(inks))
-    });
-    (pictures, drawings)
-}
-
-/// What a version's warnings are said with, beyond its engine generation.
-struct SayWith<'a> {
-    locale: &'a Locale,
-    glyph_size: GlyphSize,
-    decimal: char,
-    /// A part beside the main one changed since the version before.
-    others_changed: bool,
-}
-
-/// What `laid` says (its warnings and approximations), its facts made into `facts` where
-/// saying them needs them; the pages the version before kept said again as they were.
-fn say(
-    generation: &mut Generation,
-    laid: &ooxml_word_layout::DocumentLayout,
-    drawings: Option<&WordDrawings>,
-    with: &SayWith<'_>,
-    facts: &std::sync::OnceLock<ooxml_word_layout::facts::LayoutFacts>,
-) -> crate::warnings::Said {
-    if with.others_changed {
-        // A part beside the main one changed (a chart's, a picture's, a story's): what a
-        // kept page's drawings said may have changed with it.
-        generation.said = crate::page_said::PageMemo::default();
-        generation.summaries = crate::summary::SummaryMemo::default();
-    }
-    let mut painter = DrawingWarnings {
-        layout: &mut generation.layout,
-        fonts: &generation.fonts,
-        drawings,
-        glyph_size: with.glyph_size,
-        decimal: with.decimal,
-        text_paths: Vec::new(),
-    };
-    crate::warnings::said(
-        &mut generation.model,
-        laid,
-        &mut painter,
-        with.locale,
-        facts,
-        &mut generation.said,
-    )
-}
-
-/// The facts of `laid`, made from the version it was laid out from where that one's were
-/// made (the pages it kept take theirs), else left to be made when first asked.
-fn carried_facts(
-    previous: Option<&LaidVersion>,
-    laid: &ooxml_word_layout::DocumentLayout,
-) -> std::sync::OnceLock<ooxml_word_layout::facts::LayoutFacts> {
-    match previous.and_then(|p| Some((&p.layout, p.facts.get()?))) {
-        Some((before, known)) => {
-            std::sync::OnceLock::from(ooxml_word_layout::facts::LayoutFacts::after(laid, before, known))
-        }
-        None => std::sync::OnceLock::new(),
-    }
-}
-
-/// A layout engine with no memos, measuring with `fonts`.
-fn new_layout(fonts: &DocumentFonts, locale: &Locale, budget: &Arc<dyn CacheBudget>) -> WordLayout {
-    let faces: Arc<dyn ooxml_word_layout::Faces> = Arc::clone(&fonts.glyphs) as Arc<dyn ooxml_word_layout::Faces>;
-    WordLayout::new(faces, Arc::new(WordTables), locale.clone(), budget, KEY)
 }

@@ -67,6 +67,8 @@ pub struct Owned<'a> {
     pub last_check: &'a LastCheck,
     /// The host's layout of the document's versions (`None`: the call was handed none).
     pub layout: Option<&'a dyn WordLayout>,
+    /// How long laying a version out may take in the call (`None`: as long as the call).
+    pub layout_limit: Option<crate::LayoutLimit<'a>>,
 }
 
 /// The other documents a call names, by id, each at the version the session pinned for the

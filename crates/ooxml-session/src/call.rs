@@ -31,6 +31,8 @@ pub struct Call<'a> {
     pub(crate) made: &'a Mutex<Option<Made>>,
     /// The host's layout of the document's versions.
     pub(crate) layout: Option<&'a dyn ooxml_tools_word::WordLayout>,
+    /// How long laying a version out may take in the call.
+    pub(crate) layout_limit: Option<ooxml_tools_word::LayoutLimit<'a>>,
     /// The session's blobs, where the host hands them over.
     pub(crate) blobs: Option<&'a dyn ooxml_tools_word::Blobs>,
     /// The values the host wrote into the call's arguments for references.
@@ -70,6 +72,7 @@ impl Call<'_> {
             baseline: word.editor.baseline(),
             last_check: &word.last_check,
             layout: self.layout,
+            layout_limit: self.layout_limit,
         })
     }
 
