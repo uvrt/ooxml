@@ -22,19 +22,23 @@
 
 mod adapters;
 mod budget;
+mod context;
 mod group;
 mod layout;
 mod raster;
 mod session;
 mod summary;
 mod tools;
+mod version;
 
 use pyo3::prelude::*;
 
 pub use budget::{PyBudgetAccount, PyMemoryBudget};
+pub use context::{PyCallContext, PyCancelToken};
 pub use layout::{LayoutFallback, PyLaidPages, PyWordFonts, PyWordPages};
 pub use raster::PyPageRaster;
-pub use session::{PyCallContext, PyCancelToken, PySession, PyVersion};
+pub use session::PySession;
+pub use version::PyVersion;
 
 /// Add the session API to the module `m`: `Session`, `CancelToken`, `CallContext`, `Version` and
 /// `tool_specs`, `tool_hosting`; and the Word layout's handles: `WordFonts`, `WordPages`, `LaidPages`,

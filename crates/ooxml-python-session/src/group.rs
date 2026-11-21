@@ -4,7 +4,9 @@
 //!
 //! Must not: close a group itself -- the host's guard does, on every path.
 
-use crate::session::{context_of, to_py, PyCallContext, PyVersion};
+use crate::context::{context_of, PyCallContext};
+use crate::session::to_py;
+use crate::version::PyVersion;
 use ooxml_session::{DocId, GroupMark, Session};
 use pyo3::prelude::*;
 use std::sync::Arc;

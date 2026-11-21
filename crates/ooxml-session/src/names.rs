@@ -8,7 +8,8 @@
 //! a host whose names are not the session's ids (many host sessions over one session)
 //! gets its own names back.
 
-use crate::session::{Pinned, Session};
+use crate::dispatch::Pinned;
+use crate::Session;
 use crate::{DocId, Opened, SessionError};
 use ooxml_tools::{ToolError, ToolSpec};
 use serde_json::{Map, Value};
