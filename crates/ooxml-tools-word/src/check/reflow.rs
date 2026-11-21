@@ -118,12 +118,12 @@ fn coverage_facts(coverage: &Coverage) -> Value {
             .iter()
             .take(LISTED)
             .map(|a| {
-                let reason = a.code.split_once(':').map_or("", |(_, r)| r);
+                let (reason, message) = a.listed();
                 let mut entry = Map::new();
                 entry.insert("page".into(), a.page.map_or(Value::Null, Value::from));
                 entry.insert("reason".into(), Value::from(reason));
                 entry.insert("path".into(), a.path.clone().map_or(Value::Null, Value::from));
-                entry.insert("message".into(), Value::from(short(&a.message, SHORT)));
+                entry.insert("message".into(), Value::from(short(message, SHORT)));
                 Value::Object(entry)
             })
             .collect();
@@ -222,4 +222,68 @@ pub(super) fn since(
         out.insert("unknown".into(), Value::from(found.unknown));
     }
     Ok(Some(Value::Object(out)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ooxml_word_pages::coverage::glyph_approximation;
+    use ooxml_word_pages::warnings::Approximation;
+
+    fn coverage(approximations: Vec<Approximation>) -> Coverage {
+        Coverage {
+            complete: true,
+            pages: 1,
+            blocks: 1,
+            substituted: Vec::new(),
+            missing: Vec::new(),
+            approximations,
+            warnings: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_glyph_a_face_lacks_is_listed_as_docx_agent_lists_it() {
+        // A face with no glyph for the character (no MS Gothic on Linux: simulated).
+        let facts = coverage_facts(&coverage(vec![glyph_approximation("MS Gothic", '\u{2612}', ".notdef")]));
+        assert_eq!(facts["status"], "approximate");
+        assert_eq!(
+            facts["approximations"][0],
+            serde_json::json!({
+                "page": null,
+                "reason": "'MS Gothic' has no glyph for '\u{2612}': measured with its missing glyph",
+                "path": null,
+                "message": "",
+            })
+        );
+        let other = coverage_facts(&coverage(vec![glyph_approximation("Calibri", 'x', "Carlito")]));
+        assert_eq!(
+            other["approximations"][0]["reason"],
+            "'Calibri' has no glyph for 'x': measured with 'Carlito'"
+        );
+    }
+
+    #[test]
+    fn a_layout_approximation_is_listed_by_the_reason_its_code_gives() {
+        let approximation = |code: &str| Approximation {
+            code: code.to_owned(),
+            message: "a frame (w:framePr) is  laid out\nin the flow".to_owned(),
+            page: Some(2),
+            path: Some("w:body/w:p[3]".to_owned()),
+        };
+        let facts = coverage_facts(&coverage(vec![
+            approximation("layout-approximate:frame"),
+            approximation("odd"),
+        ]));
+        assert_eq!(
+            facts["approximations"][0],
+            serde_json::json!({
+                "page": 2,
+                "reason": "frame",
+                "path": "w:body/w:p[3]",
+                "message": "a frame (w:framePr) is laid out in the flow",
+            })
+        );
+        assert_eq!(facts["approximations"][1]["reason"], "odd");
+    }
 }
