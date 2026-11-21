@@ -14,6 +14,12 @@ const RELS: &str = r#"xmlns="http://schemas.openxmlformats.org/package/2006/rela
 const T: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 
 fn package() -> Vec<u8> {
+    package_with(false)
+}
+
+/// The made-up workbook, its table with an `autoFilter` over it where `filtered`.
+pub(crate) fn package_with(filtered: bool) -> Vec<u8> {
+    let filter = if filtered { r#"<autoFilter ref="A1:B3"/>"# } else { "" };
     let parts = [
         (
             "_rels/.rels".to_owned(),
@@ -52,7 +58,7 @@ fn package() -> Vec<u8> {
         (
             "xl/tables/table1.xml".to_owned(),
             format!(
-                r#"<table {NS} id="1" name="Table1" displayName="Table1" ref="A1:B3"><tableColumns count="2"><tableColumn id="1" name=" "/><tableColumn id="2" name="North"/></tableColumns></table>"#
+                r#"<table {NS} id="1" name="Table1" displayName="Table1" ref="A1:B3">{filter}<tableColumns count="2"><tableColumn id="1" name=" "/><tableColumn id="2" name="North"/></tableColumns></table>"#
             ),
         ),
     ];
@@ -71,11 +77,11 @@ fn package() -> Vec<u8> {
     w.finish(b"").unwrap()
 }
 
-fn at(reference: &str) -> Cell {
+pub(crate) fn at(reference: &str) -> Cell {
     Cell::parse(reference).unwrap()
 }
 
-fn part(bytes: &[u8], name: &str) -> String {
+pub(crate) fn part(bytes: &[u8], name: &str) -> String {
     let package = Package::open(Arc::from(bytes.to_vec()), &Limits::default()).unwrap();
     String::from_utf8(package.read(name).unwrap().unwrap().to_vec()).unwrap()
 }
