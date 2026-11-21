@@ -27,8 +27,11 @@ its own.
   ``head``, numbered ``number`` (``last``: the highest number given), its ids too;
 - ``bridge(handle, tool, caller, parts) -> head``: commit the parts a Python tool changed in
   the view (bytes, ``None`` removes one) as the step of ``tool`` and ``caller``;
-- ``undo(handle) -> head | None`` and ``redo(handle) -> head | None``: one step of the
-  document's history, ``None`` when there is none (refused: ``ValueError``);
+- ``history(handle, name, steps, redo, caller) -> reply``: undo (``redo``: redo) up to
+  ``steps`` steps of the document's history -- with a ``caller`` (a call's context), that
+  caller's own -- by the owner's own undo tool, the document named ``name`` in its words: the
+  tool's reply envelope (``summary``, ``changed``, ``data`` with ``steps`` and ``version``,
+  ``warnings``; or ``error``).  The owner keeps who made each step (lane U4);
 - ``keep(handle, head, first)``: the head is the document's version ``head.state`` (reads find it);
   ``first``: the owner's number of the step's first version, where it made several (each is that state);
 - ``reader(handle, head, number) -> make``: what makes a Python reader of the version ``head``
@@ -38,7 +41,8 @@ its own.
   group``, ``group_mark(handle, group) -> mark``, ``revert_group(handle, group, mark, caller) -> head |
   None`` (what the group committed after ``mark`` -- ``None``: since it opened -- taken back, no
   redo of it; the new head, ``None`` when nothing was committed since) and ``close_group(handle,
-  group, caller) -> head | None`` (one step of ``caller``'s; ``None`` when it committed nothing).
+  group, caller, tool) -> head | None`` (one step of ``caller``'s, made by ``tool``; ``None`` when it
+  committed nothing).
 
 **The view.**  :attr:`OwnedEntry.document` is a Python document of the format, made current
 lazily: only when something reads it -- a Python tool (whose change the owner commits through
@@ -232,20 +236,11 @@ class OwnedHistory:
         redo = self._entry.owner.numbers(self._entry.handle)[2]
         return redo[-1][1] if redo else None
 
-    def undo(self) -> bool:
-        return self._move(self._entry.owner.undo)
-
-    def redo(self) -> bool:
-        return self._move(self._entry.owner.redo)
-
-    def _move(self, step: Any) -> bool:
-        head = step(self._entry.handle)
-        if head is None:
-            return False
+    def moved(self, head: Any) -> None:
+        """The owner's undo or redo left the document at ``head``: kept as its state."""
         with self._lock:
             self._tell(head)
             self._entry.owner.keep(self._entry.handle, head, None)
-        return True
 
     def mark(self) -> Any:
         return None
@@ -381,8 +376,24 @@ class OwnedEntry(DocumentEntry):
     def bump(self) -> None:
         """(A step is counted by the owner's head.)"""
 
+    @property
+    def owns_history(self) -> bool:
+        return self._owned is not None
+
     def step_target(self, direction: str) -> Any:
-        return getattr(self.history, direction)
+        """(Undo and redo are the owner's: :meth:`owned_history`.)"""
+        return None
+
+    def owned_history(self, steps: int, redo: bool, caller: Mapping[str, Any] | None) -> dict[str, Any]:
+        """Undo or redo up to ``steps`` steps by the owner's undo tool (``caller``'s own, with
+        one), under the document's lock: its reply; the state it left kept as the head."""
+        assert self._owned is not None
+        reply = self.owner.history(self.handle, self.doc_id, steps, redo, caller)
+        if reply.get("ok"):
+            number = (reply.get("data") or {}).get("version")
+            head = self.owner.numbered(self.handle, number) if number is not None else None
+            self._owned.moved(head if head is not None else self.owner.head(self.handle))
+        return reply
 
     # -- a call's step ---------------------------------------------------------------------
 
@@ -405,7 +416,6 @@ class OwnedEntry(DocumentEntry):
         owner's already.  Where the owner has step groups, a step group of the owner's
         (see the module docstring), closed on every path."""
         outer = self.batch_depth == 0
-        before = self.version
         self.batch_depth += 1
         try:
             if not outer:
@@ -430,9 +440,6 @@ class OwnedEntry(DocumentEntry):
             if outer:
                 self._step = None
                 self._view_change = None
-        if owner is not None and self.version != before:
-            self.owners[self.version] = owner
-            self.own_undos = [undo for undo in self.own_undos if undo.kind != "plain"]
 
     def _groups(self) -> bool:
         """Whether the owner makes a batch one step of its own (step groups)."""
@@ -447,6 +454,7 @@ class OwnedEntry(DocumentEntry):
         group = self.owner.open_group(self.handle)
         first = owned.reading_head().number + 1
         caller = dict(owner.caller) if owner is not None else None
+        tool = owner.tool if owner is not None else None
         self._group, self._group_owner = group, owner
         owned.open_group()
         token = _IN_STEP.set(_IN_STEP.get() | {id(self)})
@@ -462,7 +470,7 @@ class OwnedEntry(DocumentEntry):
                 raise
             finally:
                 _IN_STEP.reset(token)
-            head = self.owner.close_group(self.handle, group, caller)
+            head = self.owner.close_group(self.handle, group, caller, tool)
             closed = True
             view = self.held if head is not None and self._view_seq == head.number else None
             owned.close_group(head, first, view)
@@ -472,7 +480,7 @@ class OwnedEntry(DocumentEntry):
                 # (taken back, or the revert failed: the group closes so the document is not
                 # left in it; the error that brought us here goes on)
                 try:
-                    owned.close_group(self.owner.close_group(self.handle, group, caller), first)
+                    owned.close_group(self.owner.close_group(self.handle, group, caller, tool), first)
                 except Exception:  # noqa: BLE001 -- the batch's own error is the one raised
                     owned.close_group(None, first)
 
@@ -586,9 +594,6 @@ class OwnedEntry(DocumentEntry):
             change = OwnedChange(self)
             change.start, change.end = before, number
             newest = self._count_at(seq, before, change)
-            if owner is not None:
-                self.owners[number] = owner
-                self.own_undos = [undo for undo in self.own_undos if undo.kind != "plain"]
             if newest:
                 if refs:
                     self.keep_refs(dict(refs), owner.caller if owner is not None else None)

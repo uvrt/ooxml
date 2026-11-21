@@ -39,12 +39,19 @@ pub enum SessionError {
     #[error(transparent)]
     Word(#[from] ooxml_word_edit::EditError),
     /// A caller's own latest change is not the document's latest: others changed it since.
-    #[error("the change that made version {step} is not the latest: {} later change(s)", later.len())]
+    #[error("the change that made state {step} is not the latest: {} later change(s)", later.len())]
     Entangled {
-        /// The version the caller's change made.
+        /// The state number the caller's change made.
         step: u64,
-        /// The later changes: the version each made and who made it.
-        later: Vec<(u64, Option<String>)>,
+        /// The later steps, oldest first: the state number each made.
+        later: Vec<u64>,
+    },
+    /// A caller's own latest undo is not the next redo brings back: another caller undid a
+    /// change since.
+    #[error("the undone change that made state {step} is not the next to redo")]
+    RedoNotNext {
+        /// The state number the undone change made.
+        step: u64,
     },
     /// Saving was refused: the document has validation problems it did not open with.
     #[error("{} new validation problem(s): {}", new.len(), new.join("; "))]

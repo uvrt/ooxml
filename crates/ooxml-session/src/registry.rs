@@ -31,6 +31,8 @@ pub struct Registry {
     tools: Vec<Arc<dyn Tool>>,
     /// `read_batch`'s definition: the session runs it over the others.
     batch: ToolSpec,
+    /// `undo`'s definition: the session runs it over the documents' histories.
+    undo: ToolSpec,
 }
 
 impl Default for Registry {
@@ -38,6 +40,7 @@ impl Default for Registry {
         Self {
             tools: Vec::new(),
             batch: crate::ReadBatch::spec(),
+            undo: crate::Undo::spec(),
         }
     }
 }
@@ -50,8 +53,9 @@ impl Registry {
     }
 
     /// The tools ported so far, each registered where it is defined
-    /// ([`ooxml_tools_word::register`]), and `read_batch` over the reading ones. The order is
-    /// the export's: the registration's, `describe` first.
+    /// ([`ooxml_tools_word::register`]), then `undo` over the documents' histories and
+    /// `read_batch` over the reading tools. The order is the export's: the registration's,
+    /// `describe` first.
     #[must_use]
     pub fn standard() -> Self {
         let mut registry = Self::empty();
@@ -69,6 +73,18 @@ impl Registry {
     #[must_use]
     pub fn batch_spec(&self) -> &ToolSpec {
         &self.batch
+    }
+
+    /// `undo`'s definition.
+    #[must_use]
+    pub fn undo_spec(&self) -> &ToolSpec {
+        &self.undo
+    }
+
+    /// The definitions of the tools the session runs itself (`undo`, `read_batch`), served
+    /// beside the registered ones.
+    fn own(&self) -> [&ToolSpec; 2] {
+        [&self.undo, &self.batch]
     }
 
     /// The first tool registered as `name` (tools of one name share the definition).
@@ -90,7 +106,7 @@ impl Registry {
     pub fn names(&self) -> Vec<String> {
         let mut names: Vec<String> = self.tools.iter().map(|t| t.spec().name.clone()).collect();
         if !self.tools.is_empty() {
-            names.push(self.batch.name.clone());
+            names.extend(self.own().map(|spec| spec.name.clone()));
         }
         names.sort();
         names.dedup();
@@ -109,7 +125,7 @@ impl Registry {
             .map(|t| t.spec().export(Some(&served)))
             .collect();
         if !out.is_empty() {
-            out.push(self.batch.export(Some(&served)));
+            out.extend(self.own().map(|spec| spec.export(Some(&served))));
         }
         out
     }

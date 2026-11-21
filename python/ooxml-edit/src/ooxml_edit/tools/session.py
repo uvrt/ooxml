@@ -133,7 +133,7 @@ from .memory import reclaim
 from ..opc import forget_joined
 from .numbers import NumberRules, rules_of
 from .registry import role_set
-from .results import ToolError
+from .results import Result, ToolError
 from .timing import TimedLock
 from .ownundo import OwnUndo, OwnUndoing
 from ..errors import ArgumentError, ArgumentTypeError
@@ -656,6 +656,9 @@ class DocumentEntry:
     #: Lane P2c4: whether the format's owner holds the document (:mod:`.owned`): no call runs
     #: on a draft of it (round 45), and its view is not read where nothing needs it.
     owned = False
+    #: Lane U4: whether the owner keeps the document's history and undoes it in its own undo
+    #: tool (:meth:`~.owned.OwnedEntry.owned_history`): no steps or owners are kept here.
+    owns_history = False
 
     def step_target(self, direction: str) -> Any:
         """What makes one plain undo or redo (``direction``): the document's own, else its
@@ -1611,9 +1614,47 @@ class Session:
         ``caller``, that caller's own undos (its latest first)."""
         return self._history(doc_id, steps, scope, "redo", caller)
 
+    def owned_history(self, doc_id: str, steps: int = 1, *, redo: bool = False,
+                      scope: str | None = None,
+                      caller: Mapping[str, Any] | None = None) -> Result | None:
+        """Lane U4: undo or redo (:meth:`undo`) of a document whose owner keeps its history
+        (:attr:`DocumentEntry.owns_history`), by the owner's own undo tool: its reply as a
+        :class:`Result`, its refusal raised; ``None`` for any other document.  What the tool
+        layer keeps beside the document follows: the refs of the state it is at, no checks
+        cached."""
+        entry = self.entry(doc_id)
+        if not entry.owns_history:
+            return None
+        if scope is not None:
+            raise ToolError("invalid_arguments", f"{doc_id} ({entry.kind}) undoes document-wide "
+                            "only: leave scope out", field="scope")
+        with entry.lock:
+            reply = entry.owned_history(steps, redo, dict(caller) if caller else None)
+            error = reply.get("error")
+            if error is not None:
+                raise ToolError(error["code"], error["message"], field=error.get("field"),
+                                valid_options=error.get("valid_options"),
+                                details=error.get("details"), try_call=error.get("try_call"))
+            entry.check_cache.clear()
+            entry.restore_refs()
+        result = Result(summary=reply["summary"], changed=list(reply.get("changed") or []),
+                        data=reply.get("data"))
+        result.warnings.extend(reply.get("warnings") or [])
+        return result
+
     def _history(self, doc_id: str, steps: int, scope: str | None, direction: str,
                  caller: Mapping[str, Any] | None) -> int:
-        """Undo or redo (:meth:`undo`): a caller's own, a scope's, or the session's."""
+        """Undo or redo (:meth:`undo`): the owner's (:meth:`owned_history`), else a caller's
+        own, a scope's, or the session's."""
+        if self.entry(doc_id).owns_history:
+            try:
+                done = self.owned_history(doc_id, steps, redo=direction == "redo", scope=scope,
+                                          caller=caller)
+            except ToolError as error:
+                if error.code == "refused":     # nothing (of the caller's) to take
+                    return 0
+                raise
+            return int(done.data["steps"]) if done is not None else 0
         if caller:
             return self._own(doc_id, steps, scope, direction, caller)
         if scope is not None:

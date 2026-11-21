@@ -9,7 +9,7 @@
 //! the batch's first op on it read, as today's batch holds its documents for all its ops;
 //! nothing is held after the batch.
 
-use crate::session::pinned_by;
+use crate::dispatch::pinned_by;
 use crate::{CallContext, Session};
 use ooxml_tools::{compact, Done, Failure, Outcome, ToolArgs, ToolError, ToolResult};
 use serde_json::{json, Map, Value};

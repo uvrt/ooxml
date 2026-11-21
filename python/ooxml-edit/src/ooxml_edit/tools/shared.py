@@ -1331,6 +1331,9 @@ def _undo(call: Any, doc: str, steps: int = 1, redo: bool = False,
           scope: str | None = None) -> Result:
     session = call.session
     caller = call.caller
+    owned = session.owned_history(doc, steps, redo=redo, scope=scope, caller=caller)
+    if owned is not None:
+        return owned            # (lane U4: the owner's undo tool answered)
     done = (session.redo(doc, steps, scope=scope, caller=caller) if redo
             else session.undo(doc, steps, scope=scope, caller=caller))
     verb = "Redid" if redo else "Undid"

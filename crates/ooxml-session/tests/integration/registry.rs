@@ -43,6 +43,7 @@ fn the_names_are_the_exports_sorted_each_once() {
     for name in registry.names() {
         let spec = match registry.named(&name) {
             Some(tool) => tool.spec(),
+            None if name == "undo" => registry.undo_spec(),
             None => registry.batch_spec(),
         };
         assert!(spec.problems().is_empty(), "{name}: {:?}", spec.problems());
@@ -55,7 +56,8 @@ fn every_tool_has_its_hosting_exported() {
     let registry = Registry::standard();
     let hosting = registry.hosting(DocKind::Docx);
     let mut names = registry.names();
-    names.retain(|n| n != "read_batch");
+    // (the session runs these itself)
+    names.retain(|n| n != "read_batch" && n != "undo");
     assert_eq!(hosting.keys().cloned().collect::<Vec<_>>(), names);
     for facts in hosting.values() {
         let keys: Vec<&str> = facts.as_object().unwrap().keys().map(String::as_str).collect();

@@ -1,16 +1,17 @@
-//! Owns: `ooxml_core.Session`, `ooxml_core.CancelToken`, `ooxml_core.CallContext`,
-//! `ooxml_core.Version` (a document's version a call may be pinned to): their Python signatures, the copying of Python values into Rust ones while the interpreter
+//! Owns: `ooxml_core.Session` (the handles a call runs with are [`crate::context`]'s and
+//! [`crate::options`]'s, a document's version [`crate::version`]'s): its Python signatures, the
+//! copying of Python values into Rust ones while the interpreter
 //! lock is held, every session call made with it released, and the mapping of errors.
 //!
 //! Must not: do a session's work itself, or touch a Python object without the lock.
 
 use crate::adapters::{context, SessionStop};
+use crate::context::{caller_context, PyCallContext};
 use crate::options::{context_of, PyCallOptions};
+use crate::version::PyVersion;
 use ooxml_base::Locale;
-use ooxml_session::{
-    CallContext, CancelToken, DocId, DocKind, HeldId, Opened, RetiredBy, Session, SessionConfig, SessionError,
-};
-use ooxml_store::{Caller, StoreConfig};
+use ooxml_session::{DocId, DocKind, HeldId, RetiredBy, Session, SessionConfig, SessionError};
+use ooxml_store::StoreConfig;
 use ooxml_tools::{compact, ToolError, ToolResult};
 use ooxml_word_edit::EarlierIds;
 use pyo3::exceptions::{PyKeyError, PyRuntimeError, PyTimeoutError, PyValueError};
@@ -19,35 +20,6 @@ use pyo3::types::{PyBytes, PyDict};
 use serde_json::Value;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
-use std::time::Duration;
-
-/// A token that stops the calls given it (`session.call(..., cancel=token)`): they stop at
-/// their next safe point with `timeout` and change nothing.
-#[pyclass(frozen, name = "CancelToken", module = "ooxml_core")]
-pub struct PyCancelToken {
-    inner: Arc<CancelToken>,
-}
-
-#[pymethods]
-impl PyCancelToken {
-    #[new]
-    fn new() -> Self {
-        Self {
-            inner: Arc::new(CancelToken::new()),
-        }
-    }
-
-    /// Stop the calls holding this token.
-    fn cancel(&self) {
-        self.inner.cancel();
-    }
-
-    /// Whether it was cancelled.
-    #[getter]
-    fn cancelled(&self) -> bool {
-        ooxml_base::Cancel::is_cancelled(&*self.inner)
-    }
-}
 
 /// Documents by id, their versions, and the tools that read them. Every method releases
 /// the interpreter lock for its Rust work; any number of threads may use one session.
@@ -77,7 +49,9 @@ pub(crate) fn to_py(error: &SessionError) -> PyErr {
         SessionError::Kind(_) | SessionError::PartName(_) | SessionError::Package(_) => PyValueError::new_err(message),
         SessionError::Base(ooxml_base::BaseError::Cancelled) => PyTimeoutError::new_err(message),
         SessionError::Word(_) => PyValueError::new_err(message),
-        SessionError::Entangled { .. } | SessionError::NewProblems { .. } => PyValueError::new_err(message),
+        SessionError::Entangled { .. } | SessionError::RedoNotNext { .. } | SessionError::NewProblems { .. } => {
+            PyValueError::new_err(message)
+        }
         SessionError::Store(_) | SessionError::WordStore(_) | SessionError::Base(_) => PyRuntimeError::new_err(message),
     }
 }
@@ -96,65 +70,6 @@ type HistoryNumbers = (u64, Vec<NumberedRow>, Vec<NumberedRow>);
 /// version's validation and the state number of the version its first edit was applied to.
 type EditMade = (u64, PyVersion, Option<String>, Validation, u64);
 
-/// What a call runs with (`ooxml_core.CallContext`): who calls, a token that stops it,
-/// how long laying a document out may take in it (`layout_timeout`, seconds), how long it
-/// may run, in seconds, and the limits on its reply -- `max_result_chars` (a page's
-/// characters; 24,000 unless given) and `max_list_items` (a listing's items per page; 50
-/// unless given), as the host's `Limits`. One may serve many calls.
-#[pyclass(frozen, name = "CallContext", module = "ooxml_core")]
-pub struct PyCallContext {
-    pub(crate) inner: CallContext,
-}
-
-#[pymethods]
-impl PyCallContext {
-    /// # Errors
-    /// `ValueError` for a negative deadline or layout timeout, or a limit of 0.
-    #[new]
-    #[pyo3(signature = (*, caller = None, cancel = None, deadline = None, layout_timeout = None,
-                        max_result_chars = None, max_list_items = None))]
-    fn new(
-        caller: Option<&str>,
-        cancel: Option<PyRef<'_, PyCancelToken>>,
-        deadline: Option<f64>,
-        layout_timeout: Option<f64>,
-        max_result_chars: Option<usize>,
-        max_list_items: Option<usize>,
-    ) -> PyResult<Self> {
-        let mut limits = ooxml_tools::Limits::DEFAULT;
-        for (given, kept, name) in [
-            (max_result_chars, &mut limits.result_chars, "max_result_chars"),
-            (max_list_items, &mut limits.list_items, "max_list_items"),
-        ] {
-            match given {
-                Some(0) => return Err(PyValueError::new_err(format!("{name} is 1 or more"))),
-                Some(n) => *kept = n,
-                None => {}
-            }
-        }
-        Ok(Self {
-            inner: CallContext {
-                caller: caller.map_or_else(Caller::anonymous, Caller::named),
-                cancel: cancel.map(|t| Arc::clone(&t.inner)),
-                deadline: seconds(deadline, "deadline")?,
-                layout_timeout: seconds(layout_timeout, "layout_timeout")?,
-                limits,
-                ..CallContext::default()
-            },
-        })
-    }
-}
-
-/// `value` seconds as a duration (`name` said where it is not 0 or more).
-fn seconds(value: Option<f64>, name: &str) -> PyResult<Option<Duration>> {
-    value
-        .map(|seconds| {
-            Duration::try_from_secs_f64(seconds)
-                .map_err(|_| PyValueError::new_err(format!("{name} is seconds, 0 or more")))
-        })
-        .transpose()
-}
-
 /// A call that panicked, as its failure.
 fn panicked(name: &str, panic: &(dyn std::any::Any + Send)) -> ToolResult<Value> {
     let what = panic
@@ -167,105 +82,6 @@ fn panicked(name: &str, panic: &(dyn std::any::Any + Send)) -> ToolResult<Value>
         &format!("call:{name}"),
     ))
 }
-
-pub(crate) fn caller_context(context: Option<&PyCallContext>) -> CallContext {
-    context.map(|c| c.inner.clone()).unwrap_or_default()
-}
-
-/// A document at one version (`ooxml_core.Version`), held while Python holds it: a call
-/// given it (`CallDocuments(at=[version])` in its `CallOptions`) reads that version,
-/// whatever was committed since.
-#[pyclass(frozen, name = "Version", module = "ooxml_core")]
-pub struct PyVersion {
-    pub(crate) inner: Opened,
-}
-
-#[pymethods]
-impl PyVersion {
-    /// The document's id.
-    #[getter]
-    fn doc(&self) -> String {
-        self.inner.id().to_string()
-    }
-
-    /// The version's number.
-    #[getter]
-    fn number(&self) -> u64 {
-        self.inner.version()
-    }
-
-    /// The state's number, as the tool layer numbers the document's states: a step a new
-    /// one, an undo or redo the number of the state it brings back (numbers repeat).
-    #[getter]
-    fn state(&self) -> u64 {
-        self.inner.number()
-    }
-
-    fn __repr__(&self) -> String {
-        format!("<ooxml_core.Version {} {}>", self.inner.id(), self.inner.version())
-    }
-
-    /// The parts whose content differs from `before` (a version of the same document):
-    /// ``{part: bytes here, or None where this version lacks it}`` -- what a copy of the
-    /// document kept beside the session takes to follow an edit made in it.
-    fn changed_since<'py>(&self, py: Python<'py>, before: PyRef<'_, PyVersion>) -> PyResult<Bound<'py, PyDict>> {
-        let (now, then) = (&self.inner, &before.inner);
-        let changed = py.detach(|| now.changed_since(then)).map_err(|e| to_py(&e))?;
-        let out = PyDict::new(py);
-        for (name, bytes) in changed {
-            match bytes {
-                Some(bytes) => out.set_item(name, PyBytes::new(py, &bytes))?,
-                None => out.set_item(name, py.None())?,
-            }
-        }
-        Ok(out)
-    }
-
-    /// The names of the parts whose content differs from `before`: what
-    /// [`changed_since`](Self::changed_since) gives, without their bytes.
-    fn parts_changed_since(&self, py: Python<'_>, before: PyRef<'_, PyVersion>) -> PyResult<Vec<String>> {
-        let (now, then) = (&self.inner, &before.inner);
-        py.detach(|| now.parts_changed_since(then)).map_err(|e| to_py(&e))
-    }
-
-    /// The document's bytes at this version (untouched entries copied raw): what a reader of
-    /// a version the host committed earlier is made from.
-    fn save<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-        let version = &self.inner;
-        let bytes = py
-            .detach(|| version.package().save())
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        Ok(PyBytes::new(py, &bytes))
-    }
-
-    /// The records of placed values this version keeps (JSON text, `Opened::records`): the
-    /// tables' and charts' records, the entries left out, the paragraphs' text facts and
-    /// labels; `None` for a document that is not a Word document.
-    fn records(&self, py: Python<'_>) -> PyResult<Option<String>> {
-        let version = &self.inner;
-        let found = py.detach(|| version.records()).map_err(|e| to_py(&e))?;
-        Ok(found.map(|v| v.to_string()))
-    }
-
-    /// What changed since `before`, as docx-agent's ``Result.touched`` entries (JSON text).
-    fn touched_since(&self, py: Python<'_>, before: PyRef<'_, PyVersion>) -> PyResult<String> {
-        let (now, then) = (&self.inner, &before.inner);
-        let found = py.detach(|| now.touched_since(then)).map_err(|e| to_py(&e))?;
-        Ok(Value::Array(found).to_string())
-    }
-
-    /// The ids this version gave that `before` had not, and its renames that `before`
-    /// lacks: ``(values, {old id: id now})`` -- what a view of the document kept beside the
-    /// session takes to give no id twice and follow renamed ids, without reading a part.
-    fn ids_since(&self, py: Python<'_>, before: PyRef<'_, PyVersion>) -> PyResult<IdsSince> {
-        let (now, then) = (&self.inner, &before.inner);
-        let found = py.detach(|| now.ids_since(then)).map_err(|e| to_py(&e))?;
-        Ok((found.given, found.renamed))
-    }
-}
-
-/// What `Version.ids_since` answers: the id values given, and the renames (old id, id now).
-type IdsSince = (Vec<u32>, Vec<(String, String)>);
 
 /// A Word document's ids before it was saved, as a host's state keeps them:
 /// `(values, cursors, highest_drawing, drawings)` ([`EarlierIds`]).

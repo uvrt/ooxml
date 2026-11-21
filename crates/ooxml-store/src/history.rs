@@ -190,6 +190,22 @@ impl<D: DocModel> History<D> {
             .map(|step| step.after.seq())
     }
 
+    /// Whether the newest step undo can reach made version `step`.
+    pub(crate) fn newest_is(&self, step: Seq) -> Result<(), Error<D>> {
+        match self.undo.back() {
+            Some(newest) if newest.after.seq() == step => Ok(()),
+            _ => Err(StoreError::NotNext { step }),
+        }
+    }
+
+    /// Whether the step plain redo brings back next made version `step`.
+    pub(crate) fn next_redo_is(&self, step: Seq) -> Result<(), Error<D>> {
+        match self.redo.last() {
+            Some(next) if next.step.after.seq() == step => Ok(()),
+            _ => Err(StoreError::NotNext { step }),
+        }
+    }
+
     /// A new commit: the step goes on the undo list and plain redo is dropped -- within a
     /// group, held by the group, and the depth not applied until it closes.
     pub(crate) fn commit(&mut self, step: Step<D>) -> Garbage<D> {
