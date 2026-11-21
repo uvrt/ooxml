@@ -58,7 +58,7 @@ pub fn word_inspect(args: &WordInspect, version: &Version<'_>, cancel: &dyn Canc
     let mut first = args.clone();
     first.target = "body".to_owned();
     let refuse = |e| address_refusal(e, "target", try_call(&first));
-    let target = followed(args, version);
+    let target = version.follow(&args.target);
     let selected = select(&mut reader, Some(&target)).map_err(refuse)?;
     cancel.check().map_err(cancelled)?;
     let mut writer = Writer::new(&docx);
@@ -147,14 +147,6 @@ fn placer_of<'v>(args: &WordInspect, version: &Version<'v>) -> Result<Option<&'v
         )
         .at("layout")
     })
-}
-
-/// The target read through the session's renames, as docx-agent's view reads it.
-fn followed(args: &WordInspect, version: &Version<'_>) -> String {
-    version.owned.map_or_else(
-        || args.target.clone(),
-        |owned| owned.doc.ids().follow_address(&args.target),
-    )
 }
 
 /// What docx-agent gives otherwise: the final view's cells whose end Accept All takes away.

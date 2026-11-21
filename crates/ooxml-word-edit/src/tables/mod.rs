@@ -17,6 +17,7 @@ mod merge;
 mod new_column;
 mod new_row;
 mod props;
+mod row_look;
 mod rows;
 pub(crate) mod shape;
 mod split;
@@ -28,6 +29,9 @@ pub(crate) use rows::placed;
 pub use body_lines::{body_lines, body_width, BodyLines, BodyWidth};
 pub use keeps::{loose_paragraph_after, table_keeps, table_keeps_at, TableKeeps};
 pub use props::{CellValues, Look, TableValues, TableWidth};
+pub use row_look::{
+    row_cells, row_shown, rows_unlike, CellUnlike, FormatCall, LookField, RowUnlike, TextLook, ROW_WINDOW,
+};
 pub use rows::{pending_structure, EditTable, TableChange, TableChanged};
 
 use crate::doc::Key;

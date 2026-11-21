@@ -624,6 +624,10 @@ def problems_in(problems: "list[Problem]", part: str, roots: "list[Element]") ->
     for root in roots:
         for name in _LOCAL_CHECKS:
             local |= {(p.code, p.detail) for p in globals()[name](part, root)}
+        if root.tag == _W + "tbl":
+            # A table given as a block holds its own grid's problems (the table check reads
+            # the tables below a root, not the root itself).
+            local |= set(grid_problems(root))
     values: dict[tuple[Any, Any], set[str]] = {}
     any_value: set[str] = set()
     styles: set[str] = set()

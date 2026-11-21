@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Any
 
 from .. import reads
-from . import Adapted, Fallback, adapter, own, written_json
+from . import Adapted, Fallback, adapter, blocks_at, own, written_json
 
 
 @adapter("word_set_text")
@@ -60,7 +60,7 @@ def _insert_markdown(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
         except UnicodeDecodeError:
             raise Fallback("a blob that is not UTF-8") from None
         del given["blob"]
-    given["at"] = _blocks_at(call, given.get("at"))
+    given["at"] = blocks_at(call, given.get("at"))
     source = given.get("from")
     if isinstance(source, str):
         return _field_given(call, given, source)
@@ -96,19 +96,3 @@ def _field_given(call: Any, given: dict[str, Any], source: str) -> dict[str, Any
     given["markdown"] = field.text
     del given["from"]
     return Adapted(given, written_json([field], {}))
-
-
-def _blocks_at(call: Any, at: Any) -> Any:
-    """A placing tool's ``at`` with its ``$name`` refs resolved as the tool resolves them
-    (``text._at``: a span's last block after it, its first before it); a ref naming a
-    heading's range is the Python view's to expand."""
-    if not isinstance(at, str) or "$" not in at:
-        return at
-    head, _, rest = at.partition(":")
-    if head not in ("after", "before", "replace"):
-        rest = at
-    if any("h:" in call.resolve_ref(part) for part in rest.split("..") if part.startswith("$")):
-        raise Fallback("a heading's range by reference")
-    from ...tools.text import _at
-
-    return _at(call, at)

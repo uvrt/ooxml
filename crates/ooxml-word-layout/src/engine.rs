@@ -82,6 +82,8 @@ pub struct LayoutMemo {
     page_facts: std::sync::OnceLock<Arc<[std::sync::OnceLock<Option<crate::facts::PageFacts>>]>>,
     /// Its body's paragraphs in document order, cells included.
     paragraphs: std::sync::OnceLock<Arc<[Arc<ooxml_word_model::model::Paragraph>]>>,
+    /// Per section, the pages it has content on (`SECTIONPAGES`).
+    section_pages: std::sync::OnceLock<Arc<std::collections::BTreeMap<usize, usize>>>,
 }
 
 impl DocumentLayout {
@@ -130,6 +132,14 @@ impl DocumentLayout {
                 .text_box_labels
                 .get_or_init(|| Arc::new(crate::geometry::text_box::text_box_labels(model, &self.document))),
         )
+    }
+
+    /// Per section, the number of pages it has content on ([`crate::fields::section_page_counts`]),
+    /// made when first asked: every page's header and footer reads its section's.
+    pub fn section_page_counts(&self) -> &std::collections::BTreeMap<usize, usize> {
+        self.memo
+            .section_pages
+            .get_or_init(|| Arc::new(crate::fields::section_page_counts(self)))
     }
 
     /// Where each page's line numbers count from (`w:lnNumType`), made when first asked.

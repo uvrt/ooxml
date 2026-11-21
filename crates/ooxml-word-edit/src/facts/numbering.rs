@@ -7,6 +7,7 @@
 //! Must not: count list items or draw labels (Word counts a level never used from its
 //! start: the label is worked out from the levels' starts alone).
 
+use super::{style_name, style_names};
 use crate::lists::style_list_of;
 use crate::names::W;
 use crate::{EditError, Result, WordDoc};
@@ -148,26 +149,6 @@ fn skipping(
 }
 
 /// Each style's name by its id (its id where it has no name; the last of an id).
-fn style_names(docx: &Docx) -> HashMap<String, String> {
-    let mut out = HashMap::new();
-    for style in docx.styles() {
-        if let Some(id) = style.attribute(Some(W), "styleId") {
-            let name = style_name(style).unwrap_or_else(|| id.to_owned());
-            out.insert(id.to_owned(), name);
-        }
-    }
-    out
-}
-
-/// A style's `w:name` (`None` where it has none or an empty one).
-fn style_name(style: &Element) -> Option<String> {
-    style
-        .find(Some(W), "name")
-        .and_then(|n| n.attribute(Some(W), "val"))
-        .filter(|n| !n.is_empty())
-        .map(str::to_owned)
-}
-
 /// The levels a label shows (`%1` is level 0's), from 0, in order.
 fn shown_levels(label: &str) -> Vec<i64> {
     let mut out = BTreeSet::new();

@@ -1,7 +1,7 @@
 //! Owns: a string as Python's `repr` writes it (`'one'`, `"it's"`), for messages that must
 //! read the same from the Rust core as from the Python code it replaces (the differentials
 //! compare them); and a float as Python's `repr` writes it (`0.06`, `1e-05`, `2.0`), which
-//! is also how Python's `json.dumps` writes one.
+//! is also how Python's `json.dumps` writes one; and Python's `round(value, 2)`.
 //!
 //! Must not: be used for anything but messages and JSON written as Python writes it.
 //! `str.isprintable` is approximated without Unicode tables: control characters, line and
@@ -94,6 +94,12 @@ pub fn repr_float(value: f64) -> String {
     format!("{sign}{head}{fraction}e{exp_sign}{:02}", exponent.abs())
 }
 
+/// Python's `round(value, 2)`: the nearest of two decimals, ties to even on the exact value.
+#[must_use]
+pub fn round2(value: f64) -> f64 {
+    format!("{value:.2}").parse().unwrap_or(value)
+}
+
 /// `digits` with the decimal point after `point` of them (it may fall before the first or
 /// after the last), always with a fraction (`2.0`).
 fn fixed_digits(digits: &str, point: i32) -> String {
@@ -113,7 +119,7 @@ fn fixed_digits(digits: &str, point: i32) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{repr_float, repr_str};
+    use super::{repr_float, repr_str, round2};
 
     #[test]
     fn strings_read_as_python_writes_them() {
@@ -130,5 +136,12 @@ mod tests {
         assert_eq!(repr_float(1e-5), "1e-05");
         assert_eq!(repr_float(1e16), "1e+16");
         assert_eq!(repr_float(-1.5), "-1.5");
+    }
+
+    #[test]
+    fn rounds_to_two_decimals_as_python() {
+        assert!((round2(1.005) - 1.0).abs() < 1e-12);
+        assert!((round2(2.675) - 2.67).abs() < 1e-12);
+        assert!((round2(12.3456) - 12.35).abs() < 1e-12);
     }
 }

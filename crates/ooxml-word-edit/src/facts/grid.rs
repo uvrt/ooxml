@@ -9,6 +9,7 @@
 //! the session's call that made a table so (`made_by` is the session's record).
 
 use super::scratch::settled;
+use super::shapes::{Kept, KEPT};
 use crate::names::W;
 use crate::{EditError, Result, WordDoc};
 use ooxml_word_model::docx::revisions::records;
@@ -17,7 +18,7 @@ use ooxml_word_model::docx::{at_path, find_path};
 use ooxml_word_model::xmlread::py_int;
 use ooxml_xml::Element;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 /// Tracked cell and grid records: a table holding one may be off its grid by Word's design
 /// until they are accepted.
@@ -50,6 +51,9 @@ pub struct RaggedRow {
     /// The first and last grid column its cells cover.
     pub covers: (usize, usize),
 }
+
+/// A ragged table's shape: the grid columns its widest rows cover, and its other rows.
+type Shape = (usize, Vec<RaggedRow>);
 
 /// The review that settles only the changes that put a table off its grid.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -154,7 +158,7 @@ pub fn table_grid_mismatch(doc: &WordDoc, keep: Option<&dyn Fn(&str) -> bool>) -
     for table in &tables {
         let after_accept = reshaped_on_accept(&table.element);
         let shape = if after_accept {
-            settled(doc, &table.element, true, None).and_then(|t| shape(&t))
+            accepted_shape(doc, &table.element)
         } else {
             shape(&table.element)
         };
@@ -299,9 +303,19 @@ fn reshaped_on_accept(table: &Element) -> bool {
     own(table)
 }
 
+/// A table's shape ([`shape`]) as Accept All leaves it: read from a copy with its tracked
+/// changes accepted, kept by the table's content ([`Kept`]) -- a table no edit touched is
+/// not settled again by every check (docx-agent's `ragged_rows`, round 57 R124).
+fn accepted_shape(doc: &WordDoc, table: &Arc<Element>) -> Option<Shape> {
+    static ACCEPTED: OnceLock<Kept<Option<Shape>>> = OnceLock::new();
+    ACCEPTED
+        .get_or_init(|| Kept::new(KEPT))
+        .get_or(table, || settled(doc, table, true, None).and_then(|t| shape(&t)))
+}
+
 /// A table's columns covered by its widest rows and the rows that cover others, or `None`
 /// where its rows line up (docx-agent's `_shape`).
-fn shape(table: &Element) -> Option<(usize, Vec<RaggedRow>)> {
+fn shape(table: &Element) -> Option<Shape> {
     let mut extents: Vec<(usize, usize, usize)> = Vec::new();
     for (r, (row, _)) in own_rows(table).into_iter().enumerate() {
         let cells = cells_at(&row, &[]);

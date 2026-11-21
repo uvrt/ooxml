@@ -275,7 +275,7 @@ def commented(body, tags: list[str]) -> bytes:
             {"target": by_tag[tag], "text": f"On {tag}"} for tag in tags]})
         assert result.ok, result.error
         assert len(result.data["comments"]) == len(tags)
-        return found.to_bytes()
+        return session.entry("d1").document.to_bytes()   # (the view as the served call left it)
 
 
 @pytest.mark.parametrize("case", sorted(CASES))

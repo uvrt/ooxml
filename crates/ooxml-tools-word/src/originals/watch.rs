@@ -8,10 +8,10 @@
 //! Must not: change the document. Units are found again after the edit by their first
 //! paragraph's id, followed through the renames the edit made.
 
-use super::{shown, Originals};
 use crate::describe::short;
 use ooxml_base::pyfmt::repr_str;
 use ooxml_tools::{Outcome, ToolResult};
+use ooxml_word_edit::originals::{shown, Originals};
 use ooxml_word_edit::WordDoc;
 use ooxml_word_model::address::resolve::resolve;
 use ooxml_word_model::docx::changes::changes_holding;
