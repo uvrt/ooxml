@@ -312,7 +312,7 @@ pub(crate) fn insert_content(work: &mut Work, paragraph: Id, stamp: &mut Stamp) 
 }
 
 /// `_track_table`: every row inserted (`w:trPr/w:ins`), then its paragraphs.
-fn track_table(work: &mut Work, table: Id, stamp: &mut Stamp, orders: &Orders) {
+pub(crate) fn track_table(work: &mut Work, table: Id, stamp: &mut Stamp, orders: &Orders) {
     for row in work.iter(table, W, &["tr"]) {
         let properties = match work.find(row, W, "trPr") {
             Some(p) => p,
@@ -331,15 +331,22 @@ fn track_table(work: &mut Work, table: Id, stamp: &mut Stamp, orders: &Orders) {
     }
 }
 
-/// The insertion as one revision group (`Writer.track`); `old_mark`: the properties of
-/// the empty paragraph typed into, whose mark the last new paragraph takes.
-fn track(work: &mut Work, elements: &[Id], stamp: &mut Stamp, orders: &Orders, old_mark: Option<Id>) {
+/// The insertion as one revision group (`Writer.track`, and the importer's `_track`):
+/// a paragraph's content and mark, a table's rows and paragraphs, each paragraph of any
+/// other block (a content control); `old_mark`: the properties of the empty paragraph
+/// typed into, whose mark the last new paragraph takes.
+pub(crate) fn track(work: &mut Work, elements: &[Id], stamp: &mut Stamp, orders: &Orders, old_mark: Option<Id>) {
     for &element in elements {
         if work.is(element, W, "p") {
             insert_content(work, element, stamp);
             mark(work, element, "ins", stamp, orders);
-        } else {
+        } else if work.is(element, W, "tbl") {
             track_table(work, element, stamp, orders);
+        } else {
+            for paragraph in work.iter(element, W, &["p"]) {
+                insert_content(work, paragraph, stamp);
+                mark(work, paragraph, "ins", stamp, orders);
+            }
         }
     }
     let (Some(&first), Some(&last)) = (elements.first(), elements.last()) else {

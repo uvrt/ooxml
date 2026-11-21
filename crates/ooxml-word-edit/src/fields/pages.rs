@@ -1,7 +1,8 @@
 //! Owns: [`FieldLayout`], the port a field update asks the pages through -- the layout of a
 //! version of the document being edited, as docx-agent's `word_fields` reads its layout
 //! (`_page_field`, `_page_text`, `_style_reference`; the first page showing a header or
-//! footer, `rust/fields.py`'s `_story_page`) -- and [`Unknown`], what it answers where the
+//! footer, `rust/fields.py`'s `_story_page`) -- the run a field's text is drawn for
+//! ([`FieldRun`]), and [`Unknown`], what it answers where the
 //! layout cannot say; and, through the same port, the reflow between two versions
 //! ([`PageReflow`], docx-agent's `Reflow`), which `word_template` reports; and the pages a
 //! body block is drawn on ([`LaidFields::blocks_pages`]), which a table's warnings and
@@ -11,8 +12,9 @@
 //! the host hands a command an adapter over its page engine, which answers in the words a
 //! field's result is written in.
 //!
-//! Must not: lay out, or name anything of the layout's own (paths, pages' structures): a
-//! place is a block's id as the edit core names it, or a page's number.
+//! Must not: lay out, or name anything of the layout's own (pages' structures): a place is a
+//! block's id as the edit core names it, or a page's number; a run, its path as the Word
+//! model names it (`ooxml_word_model::docx::cells::story_model_path`).
 
 use ooxml_opc::Package;
 
@@ -25,6 +27,17 @@ pub enum FieldPlace<'a> {
     Body(&'a str),
     /// A page.
     Page(usize),
+}
+
+/// The run a field's text is drawn for: its story part (`word/header1.xml`) and its path as
+/// the Word model names it (`w:body/w:p[3]/w:r[2]`: a complex field's, the run holding its
+/// instruction's first piece; a simple field's, its `w:fldSimple`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FieldRun<'a> {
+    /// Its story part.
+    pub part: &'a str,
+    /// Its model path.
+    pub path: &'a str,
 }
 
 /// What a page shows of its section: the section's index, the kind of header and footer
@@ -61,6 +74,15 @@ pub trait LaidFields {
     /// # Errors
     /// [`Unknown`] where that paragraph is not drawn or a switch is not computed.
     fn page_reference(&self, instruction: &str, at: FieldPlace<'_>) -> Result<String, Unknown>;
+
+    /// What a `STYLEREF` (`instruction` as written) whose run is `run` shows at `at`: the
+    /// text the layout draws for that run on the page its paragraph is first drawn on, or
+    /// (a header's or footer's) on the page `at` names; empty where it draws none.
+    ///
+    /// # Errors
+    /// [`Unknown`] where the instruction is not computed (a switch, a style not measured),
+    /// or the paragraph is not drawn.
+    fn style_reference(&self, instruction: &str, at: FieldPlace<'_>, run: FieldRun<'_>) -> Result<String, Unknown>;
 
     /// Each page, in order.
     fn pages(&self) -> Vec<PageShows>;

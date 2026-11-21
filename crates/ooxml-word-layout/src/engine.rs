@@ -43,7 +43,7 @@ pub struct DocumentLayout {
     pub hyphen_at_page_end: HyphenMove,
     /// The version as laid out: its page-number fields holding [`DocumentLayout::fields`].
     pub document: WordDocument,
-    /// The page-number fields' values it was laid out with.
+    /// The page-number fields' values: the texts its fields draw.
     pub fields: FieldValues,
     /// Per top-level block of [`DocumentLayout::document`], what of the endnotes placed
     /// in the flow it is.
@@ -603,11 +603,16 @@ impl WordLayout {
             // shorter moves the page's body.
             let heights = self.page_stories(model, &layout, &placed.roles, &mut story_memo);
             let settled = found == values && found_pages == pages && heights == overrides;
-            if settled || earlier.len() + 1 == FIELD_PASSES {
-                layout.fields = values;
+            let last = earlier.len() + 1 == FIELD_PASSES;
+            // A pass whose fields already draw the values found: the next would lay the same
+            // document out in the same frame and find them again, so this pass is that one.
+            let drawn =
+                !settled && !last && found_pages == pages && heights == overrides && draws(&layout, &values, &found);
+            if settled || last || drawn {
+                layout.fields = if drawn { found } else { values };
                 layout.footnote_pages = pages;
                 layout.passes = earlier.len() + 1;
-                layout.settled = settled;
+                layout.settled = settled || drawn;
                 layout.relaid = relaid;
                 let mut bodies: Vec<&[ooxml_word_model::model::Block]> = vec![&document.body, &layout.document.body];
                 bodies.extend(earlier.iter().map(|r| &*r.body));
@@ -629,6 +634,22 @@ impl WordLayout {
             version = substitute(&numbered, &values, &mut self.substitutions);
         }
     }
+}
+
+/// Whether `layout` (laid out with the field values `values`) draws the values `found`:
+/// each field run's text is the one `found` gives (`substitute` would change no run), and no
+/// field `values` gave a text loses it.
+fn draws(layout: &DocumentLayout, values: &FieldValues, found: &FieldValues) -> bool {
+    if !values.keys().all(|k| found.contains_key(k)) {
+        return false;
+    }
+    let paragraphs = layout.body_paragraphs();
+    found.iter().all(|(&(block, k), text)| {
+        paragraphs
+            .get(block)
+            .and_then(|p| p.runs.get(k))
+            .is_none_or(|run| run.field.is_none() || **text == *run.text)
+    })
 }
 
 /// What every pass of a version is laid out in: its sections, its stories' heights, its

@@ -215,6 +215,25 @@ impl<'t, 's> EditSink<'t, 's> {
         }))
     }
 
+    /// One block replaced by one block (docx-agent's `_note_replaced`): a refusal naming
+    /// `old`'s id says `new` replaced it. Anything else notes nothing.
+    ///
+    /// # Errors
+    /// When the change cannot be applied.
+    pub(crate) fn note_replaced(&mut self, old: &[String], new: &[String]) -> Result<()> {
+        let ([old], [new]) = (old, new) else { return Ok(()) };
+        let Some(value) = block_value(old) else {
+            return Ok(());
+        };
+        if new.is_empty() {
+            return Ok(());
+        }
+        self.write(Change::Ids(crate::pool::IdsChange {
+            replaced: vec![(value, new.clone())],
+            ..Default::default()
+        }))
+    }
+
     /// Forget every alias naming one of `ids` (paragraphs an edit joined away).
     ///
     /// # Errors
@@ -718,4 +737,15 @@ impl<'t, 's> EditSink<'t, 's> {
             }
         }
     }
+}
+
+/// The value of the block id `id` names (`p:`, `t:`, `tr:` or `s:` and eight hex digits,
+/// in a story or not), as docx-agent's `_GONE_BLOCK` reads one.
+fn block_value(id: &str) -> Option<u32> {
+    let own = id.rsplit('/').next()?;
+    let (kind, hex) = own.split_once(':')?;
+    if hex.len() != 8 || !matches!(kind, "p" | "t" | "tr" | "s") {
+        return None;
+    }
+    ooxml_word_model::ids::hex_value(hex)
 }

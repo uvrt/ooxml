@@ -1,13 +1,9 @@
 """docx-agent's editing tools answered by the Rust session that owns the document (phase P2;
 lane P2c4: the session is the only owner, :mod:`.owner`; lane P2c6: side by side).
 
-A tool with a Rust editing handler (:data:`SERVED`: ``word_set_text``, ``replace_text``,
-``word_insert_text``, ``word_delete``, ``word_format``, ``word_lists``, ``word_format_table``,
-``word_styles``, ``word_follow_sample``, ``word_insert_markdown``, ``word_fields``,
-``word_headers_footers``, ``word_template``, ``word_move``, ``word_sections``, ``word_notes``,
-``word_links``, ``word_drawings``, ``edit_chart`` (its data actions that change points in place;
-the rest answer ``unported``), and each one ported after them)
-runs there, ahead of docx-agent's handler and its wrapper
+A tool the Rust session serves (declared by the Rust tool and exported with the registry:
+:func:`docx_agent.rust.served.hosting`; its arguments as the session takes them:
+:func:`docx_agent.rust.served.arguments_for`) runs there, ahead of docx-agent's handler and its wrapper
 (:func:`docx_agent.tools._base.wrap`): the call's arguments, its ``$name`` refs resolved, go to
 ``Session.edit`` with the call's caller and the document's tracking mode; the versions the
 call's edits made are the call's step (:meth:`~ooxml_edit.tools.owned.OwnedEntry.served`,
@@ -22,7 +18,7 @@ compare layouts (Python lays them out) it runs under the lock (:func:`serve`).
 The Python handler answers instead -- on the view, committed through the bridge, counted by
 tool and reason (:func:`fallbacks`, ``edit_fallbacks{tool,reason}``), never silently -- where
 the session does not answer as it yet: an op of a ``batch`` (one step), a call on a draft,
-values written by reference in a tool that does not keep them yet (:data:`KEEPS_WRITTEN`), a ref name that would be folded, a refusal (the session's carries its own way out, tool rule 2,
+values written by reference in a tool that does not keep them yet (``Hosting.keeps_written``), a ref name that would be folded, a refusal (the session's carries its own way out, tool rule 2,
 which today's does not), a session given its own clock (the Rust session dates revisions by
 the system's), and what the session says it leaves to the host (its ``unported``: a find
 within a block, a picture, regex, ...).  The Rust handler changes nothing in each of those.
@@ -41,8 +37,9 @@ from ooxml_edit.tools.session import REF
 from ooxml_edit.tools.session import StepOwner
 from ooxml_edit.tools.session import utc_now
 
-from . import reads
+from . import served as _served
 from .owner import context_of
+from .served import Adapted, Fallback, written_json
 
 _COUNTS_LOCK = threading.Lock()
 _FALLBACKS: Counter = Counter()
@@ -65,174 +62,6 @@ def served() -> dict[str, int]:
         return dict(_SERVED)
 
 
-def _set_text(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-    items = arguments.get("items")
-    return {"target": reads._refs(call, arguments.get("target")), "text": arguments.get("text"),
-            "paragraph_style": arguments.get("paragraph_style"),
-            "items": None if items is None else [
-                {**item, "target": reads._refs(call, item.get("target"))} if isinstance(item, dict) else item
-                for item in items]}
-
-
-def _replace_text(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-    return {"find": arguments.get("find"), "replace": arguments.get("replace"),
-            "expect": arguments.get("expect"), "regex": arguments.get("regex") or None,
-            "slides": arguments.get("slides"), "range": reads._refs(call, arguments.get("range")),
-            "stories": arguments.get("stories", "body")}
-
-
-def _insert_text(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-    items = arguments.get("items")
-    return {**{k: arguments.get(k) for k in ("find", "where", "at", "text", "ref")},
-            "target": reads._refs(call, arguments.get("target")),
-            "within": reads._refs(call, arguments.get("within")),
-            "items": None if items is None else [
-                {**item, "target": reads._refs(call, item.get("target"))} if isinstance(item, dict) else item
-                for item in items]}
-
-
-def _delete(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-    return {"find": arguments.get("find"), "within": reads._refs(call, arguments.get("within")),
-            "target": reads._refs(call, arguments.get("target")),
-            "collapse_space": arguments.get("collapse_space"), "force": arguments.get("force")}
-
-
-def _refs_in(call: Any, value: Any) -> Any:
-    """A list of addresses (or one) with its ``$name`` refs resolved."""
-    if isinstance(value, list):
-        return [reads._refs(call, item) for item in value]
-    return reads._refs(call, value)
-
-
-def _own(arguments: dict[str, Any]) -> dict[str, Any]:
-    """The call's arguments but its document (the session's id goes in its place)."""
-    return {k: v for k, v in arguments.items() if k != "doc"}
-
-
-def _format(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-    if arguments.get("keep_together"):
-        # Blocks kept together are measured against a page (Python lays them out).
-        raise _Fallback("keep_together")
-    find = arguments.get("find")
-    finds = find if isinstance(find, list) else None if find is None else [find]
-    return {**_own(arguments), "targets": _refs_in(call, arguments.get("targets")),
-            "like": reads._refs(call, arguments.get("like")),
-            "find": None if finds is None else [
-                {**item, "within": reads._refs(call, item.get("within"))} if isinstance(item, dict) else item
-                for item in finds]}
-
-
-def _lists(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-    return {**_own(arguments), "targets": _refs_in(call, arguments.get("targets")),
-            "join": reads._refs(call, arguments.get("join"))}
-
-
-def _format_table(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-    return {**_own(arguments), "table": reads._refs(call, arguments.get("table"))}
-
-
-def _styles(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-    return _own(arguments)
-
-
-def _follow_sample(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-    sample = arguments.get("sample")
-    if isinstance(sample, dict):
-        if sample.get("doc") not in (None, arguments.get("doc")):
-            # (the session names its documents its own way: the host's ids are not its)
-            raise _Fallback("a sample in another document")
-        sample = {"block": reads._refs(call, sample.get("block"))}
-    return {**_own(arguments), "sample": sample, "copies": _refs_in(call, arguments.get("copies"))}
-
-
-def _insert_markdown(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-    if getattr(call.entry.held, "min_text_size", None) is not None:
-        # The text a call writes below the application's minimums is measured in Python
-        # (``note_small_text``); the session has no minimums.
-        raise _Fallback("a minimum text size")
-    given = _own(arguments)
-    blob = given.get("blob")
-    if isinstance(blob, str) and given.get("markdown") is None and given.get("from") is None:
-        # The blob is the host's: its text goes as the Markdown, read as the tool reads it.
-        try:
-            given["markdown"] = call.blob(blob).data.decode("utf-8")
-        except UnicodeDecodeError:
-            raise _Fallback("a blob that is not UTF-8") from None
-        del given["blob"]
-    given["at"] = _blocks_at(call, given.get("at"))
-    return given
-
-
-def _blocks_at(call: Any, at: Any) -> Any:
-    """A placing tool's ``at`` with its ``$name`` refs resolved as the tool resolves them
-    (``text._at``: a span's last block after it, its first before it); a ref naming a
-    heading's range is the Python view's to expand."""
-    if not isinstance(at, str) or "$" not in at:
-        return at
-    head, _, rest = at.partition(":")
-    if head not in ("after", "before", "replace"):
-        rest = at
-    if any("h:" in call.resolve_ref(part) for part in rest.split("..") if part.startswith("$")):
-        raise _Fallback("a heading's range by reference")
-    from ..tools.text import _at
-
-    return _at(call, at)
-
-
-def _fields(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-    return {**_own(arguments), **{k: reads._refs(call, arguments.get(k)) for k in ("after", "before", "at")},
-            "ids": _refs_in(call, arguments.get("ids"))}
-
-
-def _headers_footers(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-    return {**_own(arguments), "section": reads._refs(call, arguments.get("section"))}
-
-
-def _template(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-    return _own(arguments)
-
-
-def _sided(call: Any, value: Any) -> Any:
-    """A place that may say its side (``before:X``, ``after:X``; docx-agent's ``_place``)
-    with its ``$name`` refs resolved."""
-    if isinstance(value, str):
-        for side in ("after:", "before:"):
-            if value.startswith(side):
-                return side + reads._refs(call, value[len(side):])
-    return reads._refs(call, value)
-
-
-def _move(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-    return {**_own(arguments), "after": _sided(call, arguments.get("after")),
-            **{k: reads._refs(call, arguments.get(k)) for k in ("section_heading", "blocks", "before",
-                                                                 "after_section")}}
-
-
-def _sections(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-    return {**_own(arguments), "after": _sided(call, arguments.get("after")),
-            **{k: reads._refs(call, arguments.get(k)) for k in ("before", "section")}}
-
-
-def _notes(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-    return {**_own(arguments), **{k: reads._refs(call, arguments.get(k)) for k in ("at", "note")}}
-
-
-def _links(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-    return {**_own(arguments), "target": reads._refs(call, arguments.get("target"))}
-
-
-def _drawings(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-    if arguments.get("asset") is not None:
-        # The application's asset catalogue is the host's (ooxml_edit.tools.assets).
-        raise _Fallback("a catalogue asset")
-    return {**_own(arguments), "target": reads._refs(call, arguments.get("target")),
-            "at": _sided(call, arguments.get("at"))}
-
-
-def _chart(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-    return {**_own(arguments), "target": reads._refs(call, arguments.get("target"))}
-
-
 class _Blobs:
     """The session's blobs as ``Session.edit(blobs=...)`` asks them (lane P2c14): Rust calls
     back with the interpreter lock taken back, for the blob a call names."""
@@ -251,52 +80,10 @@ class _Blobs:
         return [(b["handle"], b["name"]) for b in self.session.describe()["blobs"]]
 
 
-#: The tools the session edits with, and each one's arguments as the session takes them.
-SERVED: dict[str, Callable[[Any, dict[str, Any]], dict[str, Any]]] = {
-    "word_set_text": _set_text,
-    "replace_text": _replace_text,
-    "word_insert_text": _insert_text,
-    "word_delete": _delete,
-    "word_format": _format,
-    "word_lists": _lists,
-    "word_format_table": _format_table,
-    "word_styles": _styles,
-    "word_follow_sample": _follow_sample,
-    "word_insert_markdown": _insert_markdown,
-    "word_fields": _fields,
-    "word_headers_footers": _headers_footers,
-    "word_template": _template,
-    "word_move": _move,
-    "word_sections": _sections,
-    "word_notes": _notes,
-    "word_links": _links,
-    "word_drawings": _drawings,
-    "edit_chart": _chart,
-}
-
-#: The served tools that read the session's blobs (an inserted picture's bytes).
-BLOBS = frozenset({"word_drawings"})
-
-#: The served tools whose edits read the document's pages (a field's result, a header's page
-#: number, the upgrade's reflow): the session lays the versions out with the document's page
-#: engine (lane P2c13, :func:`_pages`).
-LAID = frozenset({"word_fields", "word_headers_footers", "word_template"})
-
-
-#: The tools whose Rust handler keeps the values written by reference on the paragraphs
-#: they went into (lane P2d2: the host's ``call.facts`` handed over, :func:`_written`);
-#: another served tool given one is answered by the Python handler.
-KEEPS_WRITTEN = frozenset({"word_set_text", "word_insert_text", "replace_text"})
-
-
 def _written(call: Any) -> str | None:
     """The values the dispatcher wrote into the call's arguments for references
     (``call.facts``), as ``Session.edit`` takes them; ``None`` without any."""
-    facts = getattr(call, "facts", None)
-    if not facts:
-        return None
-    return json.dumps([{"field": f.field, "start": f.start, "end": f.end, "text": f.text,
-                        "record": f.record, "brief": f.brief()} for f in facts])
+    return written_json(getattr(call, "facts", None) or (), {})
 
 
 def _ref_names(arguments: dict[str, Any]) -> list[str]:
@@ -306,14 +93,10 @@ def _ref_names(arguments: dict[str, Any]) -> list[str]:
     return [name for name in names if isinstance(name, str) and name]
 
 
-class _Fallback(Exception):
-    """The call is answered by the Python handler, for this reason."""
-
-
 def owned_entry(call: Any) -> Any:
     """The call's document's entry when the session owns it and serves the call's tool."""
     entry = call.entry
-    if call.tool.name not in SERVED or entry is None or getattr(entry, "owner", None) is None:
+    if call.tool.name not in _served.hosting().served or entry is None or getattr(entry, "owner", None) is None:
         return None
     return entry
 
@@ -326,7 +109,7 @@ def _why_not(call: Any, entry: Any, arguments: dict[str, Any]) -> str | None:
         return "a ref name to fold"
     if call.in_batch:
         return "batch op"
-    if getattr(call, "facts", None) and call.tool.name not in KEEPS_WRITTEN:
+    if getattr(call, "facts", None) and call.tool.name not in _served.hosting().keeps_written:
         return "values by reference"
     if getattr(call.session, "clock", utc_now) is not utc_now:
         # Revisions are dated by the session's clock: the Rust session's is the system's.
@@ -343,7 +126,7 @@ def will_serve(call: Any, arguments: dict[str, Any]) -> bool:
         return False
     if _why_not(call, entry, arguments) is not None:
         return False
-    return call.tool.name not in LAID or _pages(entry) is not None
+    return call.tool.name not in _served.hosting().laid or _pages(entry) is not None
 
 
 def _pages(entry: Any) -> Any:
@@ -354,14 +137,15 @@ def _pages(entry: Any) -> Any:
 
 
 def _layout(call: Any, entry: Any) -> Any:
-    """The page engine a call of a :data:`LAID` tool edits with; ``None`` for the others."""
-    if call.tool.name not in LAID:
+    """The page engine a call of a tool whose edits read the pages
+    (:attr:`~docx_agent.rust.served.Hosting.laid`) edits with; ``None`` for the others."""
+    if call.tool.name not in _served.hosting().laid:
         return None
     from ..pages import word_pages
 
     found, why = word_pages(entry.held)
     if found is None:
-        raise _Fallback(f"the layout: {why}")
+        raise Fallback(f"the layout: {why}")
     return found
 
 
@@ -378,11 +162,32 @@ def _tracking(call: Any, entry: Any, context: Any, counted: bool) -> None:
             arguments["author"] = wanted["author"]
         reply, _app, made = mirror.session.edit("word_set_tracking", json.dumps(arguments), context=context)
         if made is None and json.loads(reply).get("error") is not None:
-            raise _Fallback("tracking")
+            raise Fallback("tracking")
         mirror.tracking = wanted
     if made is not None:
         first, head, _touched, _validation = made
         entry.served(first, head, StepOwner(dict(call.caller), "word_set_tracking"), counted=counted)
+
+
+def _names(call: Any, entry: Any, arguments: dict[str, Any]) -> dict[str, str]:
+    """The host's names for the documents a call names, each the session's id of it
+    (``Session.edit``'s ``names``; lane P2c17): the arguments name documents as the host
+    does, and so does the reply (an undo or way-out call, a summary).  The Python handler
+    answers where another document named is not the session's as it is."""
+    mirror = entry.handle
+    names = {entry.doc_id: mirror.doc}
+    for doc in call.tool.doc_ids(arguments):
+        if doc in names:
+            continue
+        other = call.entries.get(doc)
+        if other is None or getattr(other, "owner", None) is None:
+            raise Fallback("a document the session does not own")
+        if other.live is not None or other.pinned is not None:
+            raise Fallback("a document with a draft")
+        if other.handle.session is not mirror.session:
+            raise Fallback("a document in another session")
+        names[doc] = other.handle.doc
+    return names
 
 
 def _layout_before(call: Any, entry: Any) -> Any:
@@ -447,23 +252,25 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
     tool = call.tool.name
     context = context_of(call.caller)
     _tracking(call, entry, context, counted)
-    given = {"doc": mirror.doc, **{k: v for k, v in SERVED[tool](call, arguments).items()
-                                   if v is not None}}
+    adapted = _served.arguments_for(call, tool, arguments)
+    written = adapted.written if isinstance(adapted, Adapted) else _written(call)
+    given = {**{k: v for k, v in adapted.items() if v is not None}, "doc": entry.doc_id}
+    names = _names(call, entry, arguments)
     layout = _layout(call, entry)
     timing = _timing(call, arguments)
     started = time.perf_counter()
-    blobs = _Blobs(call.session) if tool in BLOBS else None
+    blobs = _Blobs(call.session) if tool in _served.hosting().blobs else None
     reply, app, made = mirror.session.edit(tool, json.dumps(given), context=context, layout=layout, blobs=blobs,
-                                           written=_written(call))
+                                           written=written, names=names)
     if timing is not None:
         timing.add("update", time.perf_counter() - started)
     envelope = json.loads(reply)
     error = envelope.get("error")
     unported = json.loads(app).get("unported") or []
     if made is None and error is not None:
-        raise _Fallback(f"refusal: {error.get('code')}")
+        raise Fallback(f"refusal: {error.get('code')}")
     if made is None and unported:
-        raise _Fallback(unported[0])
+        raise Fallback(unported[0])
     result = _result(envelope)
     for name, address in (envelope.get("refs") or {}).items():
         call.define_ref(name, address)        # the call's refs, as docx-agent's remember
@@ -515,7 +322,7 @@ def serve_owned(call: Any, arguments: dict[str, Any]) -> Any:
             return None
         try:
             result, made, markers = _edit(call, entry, arguments, counted=True)
-        except _Fallback as fallback:
+        except Fallback as fallback:
             why = str(fallback)
     if why is not None:
         _count(tool, why)
@@ -547,7 +354,7 @@ def serve(call: Any, arguments: dict[str, Any], python: Callable[[], Any]) -> An
     try:
         why = _why_not(call, entry, arguments)
         if why is not None:
-            raise _Fallback(why)
+            raise Fallback(why)
         before = _layout_before(call, entry)
         if entry.view_current:
             call.touch(_before(before))
@@ -558,7 +365,7 @@ def serve(call: Any, arguments: dict[str, Any], python: Callable[[], Any]) -> An
             if made is not None:
                 entry.served(made[0], made[1])
         _hand_engine(call, entry, before, made is not None)
-    except _Fallback as fallback:
+    except Fallback as fallback:
         _count(tool, str(fallback))
         return python()
     _count(tool, None)
