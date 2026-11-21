@@ -94,6 +94,7 @@ impl Opened {
             placer: self.placer.as_deref(),
             owned: None,
             others: ooxml_tools_word::Others::default(),
+            word: self.word(),
         }
     }
 }
