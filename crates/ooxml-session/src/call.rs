@@ -66,7 +66,8 @@ impl Call<'_> {
     }
 
     /// The version the call reads as the session's editor holds it, with the problems the
-    /// document was opened with, where the session owns it as a Word document.
+    /// document was opened with and the version it was opened as, where the session owns
+    /// it as a Word document.
     #[must_use]
     pub fn owned(&self) -> Option<ooxml_tools_word::Owned<'_>> {
         let doc = self.doc.word()?;
@@ -77,6 +78,7 @@ impl Call<'_> {
             last_check: &word.last_check,
             layout: self.layout,
             layout_limit: self.layout_limit,
+            opened: word.opened.doc(),
         })
     }
 

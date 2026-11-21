@@ -20,7 +20,7 @@ mod settle;
 mod tracking;
 
 pub use call_editor::{CallEditor, Made};
-pub use changes::{word_changes, ChangeAction, ChangeDetail, ChangeKind, WordChanges};
+pub use changes::{word_changes, word_changes_read, ChangeAction, ChangeDetail, ChangeKind, WordChanges};
 pub use comments::{word_comments, CommentAction, CommentItem, WordComments};
 pub(crate) use settle::Still;
 pub use tracking::{word_set_tracking, Tracked, WordSetTracking};
