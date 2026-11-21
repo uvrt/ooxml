@@ -14,10 +14,15 @@
 
 mod args;
 mod facts;
+mod laid_facts;
 mod reflow;
 
 pub use args::{Check, CheckCopy, CheckInclude, CheckScale, CopyLists, CopyReference, ScaleShow, ScaleStep, StepText};
 pub use facts::{empty_run_json, grid_mismatch_json, lost_cell_json, skipped_level_json};
+pub use laid_facts::{
+    keep_at_foot_json, kept_together_json, minimum_of, page_facts_json, parted_json, small_text_json,
+    smallest_text_json, spacer_json,
+};
 pub use reflow::{LastCheck, Seen};
 
 use crate::describe::cancelled;
