@@ -114,7 +114,8 @@ impl Call<'_> {
         .with_layout(self.layout.map(|layout| layout as &dyn ooxml_word_edit::FieldLayout))
         .with_others(Others::new(&others))
         .with_blobs(self.blobs)
-        .with_written(self.written);
+        .with_written(self.written)
+        .with_rows_written(Some(&word.rows_written));
         let mut result = run(&editing);
         *self.made.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = editor.made();
         ooxml_tools_word::resolve_drawn(&mut result, &editor.moved());
