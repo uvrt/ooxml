@@ -86,17 +86,9 @@ impl Opened {
     /// This version as a Word reading tool is handed it.
     #[must_use]
     pub fn version_of(&self) -> Version<'_> {
-        Version {
-            name: &self.name,
-            package: self.package(),
-            number: self.version(),
-            versions: &self.versions,
-            placer: self.placer.as_deref(),
-            owned: None,
-            others: ooxml_tools_word::Others::default(),
-            word: self.word(),
-            counts: None,
-        }
+        Version::new(&self.name, self.package(), self.version(), &self.versions)
+            .with_placer(self.placer.as_deref())
+            .with_word(self.word())
     }
 }
 
@@ -623,6 +615,7 @@ impl Session {
             written: &context.written,
             others: &state.others,
             counts: context.counts,
+            limits: context.limits,
         };
         tool.run(arguments, &call)
     }

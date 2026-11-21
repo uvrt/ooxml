@@ -48,6 +48,7 @@ mod difflib;
 pub mod documents;
 mod error;
 mod intent;
+mod limits;
 mod places;
 pub mod pyfmt;
 pub mod pyre;
@@ -62,6 +63,7 @@ mod validate;
 
 pub use error::{ErrorCode, Failure, Refusal, ToolError, TryCall, WayOut};
 pub use intent::Accepted;
+pub use limits::Limits;
 pub use ooxml_tools_derive::{ArgEnum, ToolArgs};
 pub use places::{PlaceKind, Places, NAMES as PLACE_NAMES};
 pub use result::{

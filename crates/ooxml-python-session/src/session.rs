@@ -92,11 +92,12 @@ type Validation = (Vec<String>, Vec<String>, usize);
 type EditMade = (u64, PyVersion, Option<String>, Validation);
 
 /// What a call runs with (`ooxml_core.CallContext`): who calls, a token that stops it,
-/// how long laying a document out may take in it (`layout_timeout`, seconds), how long
-/// it may run, in seconds, and `layout_counts`, `(pages, lines)` of the host's layout of
+/// how long laying a document out may take in it (`layout_timeout`, seconds), how long it
+/// may run, in seconds, the limits on its reply -- `max_result_chars` (a page's characters;
+/// 24,000 unless given) and `max_list_items` (a listing's items per page; 50 unless given),
+/// as the host's `Limits` -- and `layout_counts`, `(pages, lines)` of the host's layout of
 /// the version the call reads where it has laid it out (`save_document`'s `app.xml`
-/// statistics), and `images_left`, how many images the call may still give within the
-/// host's budgets (`render`; `None`: no budget). One may serve many calls.
+/// statistics). One may serve many calls.
 #[pyclass(frozen, name = "CallContext", module = "ooxml_core")]
 pub struct PyCallContext {
     pub(crate) inner: CallContext,
@@ -104,25 +105,39 @@ pub struct PyCallContext {
 
 #[pymethods]
 impl PyCallContext {
+    /// # Errors
+    /// `ValueError` for a negative deadline or layout timeout, or a limit of 0.
     #[new]
-    #[pyo3(signature = (*, caller = None, cancel = None, deadline = None, layout_timeout = None, layout_counts = None,
-                        images_left = None))]
+    #[pyo3(signature = (*, caller = None, cancel = None, deadline = None, layout_timeout = None,
+                        max_result_chars = None, max_list_items = None, layout_counts = None))]
     fn new(
         caller: Option<&str>,
         cancel: Option<PyRef<'_, PyCancelToken>>,
         deadline: Option<f64>,
         layout_timeout: Option<f64>,
+        max_result_chars: Option<usize>,
+        max_list_items: Option<usize>,
         layout_counts: Option<(u64, u64)>,
-        images_left: Option<usize>,
     ) -> PyResult<Self> {
+        let mut limits = ooxml_tools::Limits::DEFAULT;
+        for (given, kept, name) in [
+            (max_result_chars, &mut limits.result_chars, "max_result_chars"),
+            (max_list_items, &mut limits.list_items, "max_list_items"),
+        ] {
+            match given {
+                Some(0) => return Err(PyValueError::new_err(format!("{name} is 1 or more"))),
+                Some(n) => *kept = n,
+                None => {}
+            }
+        }
         Ok(Self {
             inner: CallContext {
                 caller: caller.map_or_else(Caller::anonymous, Caller::named),
                 cancel: cancel.map(|t| Arc::clone(&t.inner)),
                 deadline: seconds(deadline, "deadline")?,
                 layout_timeout: seconds(layout_timeout, "layout_timeout")?,
+                limits,
                 counts: layout_counts.map(|(pages, lines)| ooxml_tools_word::LayoutCounts { pages, lines }),
-                images_left,
                 ..CallContext::default()
             },
         })

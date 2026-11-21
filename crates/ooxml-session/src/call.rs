@@ -48,6 +48,8 @@ pub struct Call<'a> {
     pub(crate) others: &'a [(String, Opened)],
     /// The pages and lines of the version's layout, where the host laid it out.
     pub(crate) counts: Option<ooxml_tools_word::LayoutCounts>,
+    /// The host's limits on the call's reply.
+    pub(crate) limits: ooxml_tools::Limits,
 }
 
 impl Call<'_> {
@@ -70,7 +72,8 @@ impl Call<'_> {
     }
 
     /// The version the call reads as the session's editor holds it, with the problems the
-    /// document was opened with, where the session owns it as a Word document.
+    /// document was opened with and the version it was opened as, where the session owns
+    /// it as a Word document.
     #[must_use]
     pub fn owned(&self) -> Option<ooxml_tools_word::Owned<'_>> {
         let doc = self.doc.word()?;
@@ -127,7 +130,8 @@ impl Call<'_> {
         .with_others(Others::new(&others))
         .with_blobs(self.blobs)
         .with_written(self.written)
-        .with_rows_written(Some(&word.rows_written));
+        .with_rows_written(Some(&word.rows_written))
+        .with_limits(self.limits);
         let mut result = run(&editing);
         *self.made.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = editor.made();
         ooxml_tools_word::resolve_drawn(&mut result, &editor.moved());
@@ -138,12 +142,13 @@ impl Call<'_> {
     /// names and the session's own reading of the version.
     pub(crate) fn read<R>(&self, run: impl FnOnce(&Version<'_>) -> R) -> R {
         let others = self.other_versions();
-        let version = Version {
-            others: Others::new(&others),
-            owned: self.owned(),
-            counts: self.counts,
-            ..self.doc.version_of()
-        };
+        let version = self
+            .doc
+            .version_of()
+            .with_others(Others::new(&others))
+            .with_owned(self.owned())
+            .with_limits(self.limits)
+            .with_counts(self.counts);
         run(&version)
     }
 

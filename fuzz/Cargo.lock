@@ -484,6 +484,7 @@ dependencies = [
 name = "ooxml-numfmt"
 version = "0.1.0"
 dependencies = [
+ "ooxml-base",
  "thiserror",
 ]
 

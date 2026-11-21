@@ -57,6 +57,8 @@ impl PyCallDocuments {
 /// lays its versions out with, and `check` and `render` read the pages of. `raster`: the
 /// faces pages are drawn with (a `PageRaster` of the system's fonts and the font folders),
 /// from which `render` draws each document's pages; `None`: `render` is left to the host.
+/// `images_left`: how many images the call may still give within the host's budgets (per
+/// call, per session, per round; `None`: no budget), which `render` refuses past.
 /// `placer`: where the call may ask where blocks are laid out -- called with the blocks
 /// asked as JSON text (a list, each an id then the ids it joins), it answers each one's
 /// `placements` or `unknown` as JSON text (a list of objects), or `None` where it cannot.
@@ -65,21 +67,24 @@ impl PyCallDocuments {
 pub struct PyCallLayout {
     pages: Option<Arc<dyn ooxml_tools_word::WordLayout>>,
     raster: Option<Arc<ooxml_tools_word::PageRaster>>,
+    images_left: Option<usize>,
     placer: Option<Arc<dyn Placer>>,
 }
 
 #[pymethods]
 impl PyCallLayout {
     #[new]
-    #[pyo3(signature = (pages = None, *, raster = None, placer = None))]
+    #[pyo3(signature = (pages = None, *, raster = None, images_left = None, placer = None))]
     fn new(
         pages: Option<PyRef<'_, PyWordPages>>,
         raster: Option<PyRef<'_, PyPageRaster>>,
+        images_left: Option<usize>,
         placer: Option<Py<PyAny>>,
     ) -> Self {
         Self {
             pages: pages.map(|p| Arc::new(p.port()) as Arc<dyn ooxml_tools_word::WordLayout>),
             raster: raster.map(|r| Arc::clone(&r.inner)),
+            images_left,
             placer: placer.map(|p| Arc::new(PyPlacer(p)) as Arc<dyn Placer>),
         }
     }
@@ -127,6 +132,7 @@ impl PyCallOptions {
             built.placer.clone_from(&layout.placer);
             built.layout.clone_from(&layout.pages);
             built.raster.clone_from(&layout.raster);
+            built.images_left = layout.images_left;
         }
         built.blobs = blobs.map(|b| Arc::new(PyBlobs(b)) as Arc<dyn Blobs>);
         if let Some(written) = written {

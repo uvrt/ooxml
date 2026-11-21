@@ -10,7 +10,7 @@ use crate::common::{Never, R};
 use ooxml_base::Limits;
 use ooxml_opc::Package;
 use ooxml_tools::ToolArgs;
-use ooxml_tools_word::{word_design_facts, Others, Version, WordDesignFacts};
+use ooxml_tools_word::{word_design_facts, Version, WordDesignFacts};
 use ooxml_word_model::docx::Versions;
 use ooxml_zip::{Method, NewEntry, Writer};
 use serde_json::{json, Value};
@@ -102,17 +102,7 @@ fn package() -> Package {
 fn reply(arguments: Value) -> Value {
     let package = package();
     let versions = Versions::new();
-    let version = Version {
-        name: "a.docx",
-        package: &package,
-        number: 1,
-        versions: &versions,
-        placer: None,
-        owned: None,
-        others: Others::default(),
-        word: None,
-        counts: None,
-    };
+    let version = Version::new("a.docx", &package, 1, &versions);
     let (args, _) = WordDesignFacts::accept(arguments, Some("docx")).unwrap();
     match word_design_facts(&args, &version, &Never) {
         Ok(done) => json!({"summary": done.summary, "data": done.data, "total": done.total, "next": done.next_cursor}),
@@ -205,17 +195,7 @@ fn design_facts_on_a_long_document() {
     };
     let package = Package::open(Arc::from(std::fs::read(path).unwrap()), &Limits::default()).unwrap();
     let versions = Versions::new();
-    let version = Version {
-        name: "long.docx",
-        package: &package,
-        number: 1,
-        versions: &versions,
-        placer: None,
-        owned: None,
-        others: Others::default(),
-        word: None,
-        counts: None,
-    };
+    let version = Version::new("long.docx", &package, 1, &versions);
     let start = std::time::Instant::now();
     let _ = version.docx().unwrap();
     println!("the version read: {:.1} ms", start.elapsed().as_secs_f64() * 1000.0);
