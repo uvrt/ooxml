@@ -84,7 +84,10 @@ impl<E> EditGraphic<E> {
             return Err(EditError::Refused(format!("no drawing {}", self.drawing)));
         };
         if drawing.kind != "chart" {
-            return Err(EditError::Refused(format!("{} is a {}, not a chart", self.drawing, drawing.kind)));
+            return Err(EditError::Refused(format!(
+                "{} is a {}, not a chart",
+                self.drawing, drawing.kind
+            )));
         }
         chart_part(docx, &drawing.part, &drawing.element)
             .ok_or_else(|| EditError::Unsupported("edit_chart: a chart whose part is missing".to_owned()))

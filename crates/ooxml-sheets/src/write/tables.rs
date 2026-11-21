@@ -19,7 +19,11 @@ use std::sync::Arc;
 /// # Errors
 /// [`SheetsError::Unsupported`] for a reference that is not a plain area (ooxml-edit reads
 /// some of those leniently), or a header cell that cannot be read.
-pub(crate) fn synced(root: &Element, sheet: &SheetEdit, strings: Option<&Strings>) -> Result<Option<Element>, SheetsError> {
+pub(crate) fn synced(
+    root: &Element,
+    sheet: &SheetEdit,
+    strings: Option<&Strings>,
+) -> Result<Option<Element>, SheetsError> {
     let given = root.attribute(None, "ref").unwrap_or("");
     let area = Area::parse(given).map_err(|_| SheetsError::Unsupported(format!("a table's reference {given:?}")))?;
     if area.reference()? != given {
@@ -30,12 +34,11 @@ pub(crate) fn synced(root: &Element, sheet: &SheetEdit, strings: Option<&Strings
         Some(raw) => ooxml_xml::view::py_int(raw)
             .ok_or_else(|| SheetsError::Unsupported(format!("a table's header row count {raw:?}")))?,
     };
-    let Some((at, container)) = root
-        .children()
-        .iter()
-        .enumerate()
-        .find_map(|(i, n)| n.as_element().filter(|e| crate::items::is(e, "tableColumns")).map(|e| (i, e)))
-    else {
+    let Some((at, container)) = root.children().iter().enumerate().find_map(|(i, n)| {
+        n.as_element()
+            .filter(|e| crate::items::is(e, "tableColumns"))
+            .map(|e| (i, e))
+    }) else {
         return Ok(None);
     };
     if headers == 0 {
@@ -80,10 +83,13 @@ pub(crate) fn synced(root: &Element, sheet: &SheetEdit, strings: Option<&Strings
         let name = name.unwrap_or_default();
         taken.insert(name.to_lowercase());
         if own.as_deref() != Some(name.as_str()) {
-            columns = replace_child(&columns, place, Node::Element(Arc::new(with_attr(&column, "name", &name))));
+            columns = replace_child(
+                &columns,
+                place,
+                Node::Element(Arc::new(with_attr(&column, "name", &name))),
+            );
             changed = true;
         }
     }
     Ok(changed.then(|| replace_child(root, at, Node::Element(Arc::new(columns)))))
 }
-

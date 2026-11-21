@@ -24,7 +24,6 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use strings::Strings;
 
-
 const REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const REL_OFFICE_DOCUMENT: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument";
 const REL_SHARED_STRINGS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings";
@@ -139,7 +138,13 @@ impl WorkbookWriter {
     /// [`SheetsError::NoSheet`] for a sheet that is not there; [`SheetsError::Unsupported`]
     /// for a cell holding a formula or a table this does not read; a reference that cannot
     /// be read.
-    pub fn set_value(&mut self, name: &str, cell: Cell, value: &Write, style_from: Option<Cell>) -> Result<(), SheetsError> {
+    pub fn set_value(
+        &mut self,
+        name: &str,
+        cell: Cell,
+        value: &Write,
+        style_from: Option<Cell>,
+    ) -> Result<(), SheetsError> {
         if self.sheet(name)?.is_none() {
             return Err(SheetsError::NoSheet(name.to_owned()));
         }

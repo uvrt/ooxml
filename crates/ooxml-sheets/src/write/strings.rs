@@ -55,12 +55,19 @@ impl Strings {
 
     /// Item `index`'s text.
     pub(crate) fn text(&self, index: i64) -> Option<&str> {
-        usize::try_from(index).ok().and_then(|i| self.texts.get(i)).map(String::as_str)
+        usize::try_from(index)
+            .ok()
+            .and_then(|i| self.texts.get(i))
+            .map(String::as_str)
     }
 
     /// Whether item `index` is rich text.
     pub(crate) fn is_rich(&self, index: i64) -> bool {
-        usize::try_from(index).ok().and_then(|i| self.rich.get(i)).copied().unwrap_or(false)
+        usize::try_from(index)
+            .ok()
+            .and_then(|i| self.rich.get(i))
+            .copied()
+            .unwrap_or(false)
     }
 
     /// The index of `text`, appended as a new item when no plain item holds it.

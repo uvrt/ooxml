@@ -180,7 +180,13 @@ impl ChartTree {
     /// # Errors
     /// [`DataError`] for text in numeric data, a multi-level cache, or a source without a
     /// cache to write.
-    pub fn set_point(&mut self, series: usize, which: Which, index: usize, value: &PointValue) -> Result<bool, DataError> {
+    pub fn set_point(
+        &mut self,
+        series: usize,
+        which: Which,
+        index: usize,
+        value: &PointValue,
+    ) -> Result<bool, DataError> {
         let Some((path, reference)) = self.reference(series, which) else {
             return Err(DataError("this data has no cache to write".to_owned()));
         };
@@ -271,7 +277,9 @@ fn points_parent<'a>(reference: &'a Element, kind: &str) -> Result<(Vec<usize>, 
         "strLit" | "numLit" => Ok((Vec::new(), reference)),
         "strRef" | "numRef" => {
             let name = if kind == "strRef" { "strCache" } else { "numCache" };
-            let (at, cache) = indexed(reference).find(|(_, e)| local(e) == name).ok_or_else(no_cache)?;
+            let (at, cache) = indexed(reference)
+                .find(|(_, e)| local(e) == name)
+                .ok_or_else(no_cache)?;
             Ok((vec![at], cache))
         }
         "multiLvlStrRef" => {

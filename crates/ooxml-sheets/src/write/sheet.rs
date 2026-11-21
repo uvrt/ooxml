@@ -143,7 +143,9 @@ impl SheetEdit {
                     return Ok(());
                 }
                 let style = match style_from {
-                    Some(from) => self.find(from)?.and_then(|(_, _, n)| n.attribute(None, "s").map(str::to_owned)),
+                    Some(from) => self
+                        .find(from)?
+                        .and_then(|(_, _, n)| n.attribute(None, "s").map(str::to_owned)),
                     None => None,
                 };
                 let reference = cell.reference()?;
@@ -164,7 +166,12 @@ impl SheetEdit {
                     append_child(&with_attr(&written, "t", "s"), raw)
                 }
                 None => {
-                    let inline = element(&written, "is", &[], vec![Node::Element(Arc::new(text_element(&written, text)))]);
+                    let inline = element(
+                        &written,
+                        "is",
+                        &[],
+                        vec![Node::Element(Arc::new(text_element(&written, text)))],
+                    );
                     append_child(&with_attr(&written, "t", "inlineStr"), inline)
                 }
             },
@@ -173,12 +180,19 @@ impl SheetEdit {
                 append_child(&without_attr(&written, "t"), raw)
             }
         };
-        let emptied = matches!(value, Write::Blank) && written.attribute(None, "s").is_none() && written.children().is_empty();
-        let row = self.row(place).cloned().ok_or_else(|| SheetsError::NoSheetData(self.part.clone()))?;
+        let emptied =
+            matches!(value, Write::Blank) && written.attribute(None, "s").is_none() && written.children().is_empty();
+        let row = self
+            .row(place)
+            .cloned()
+            .ok_or_else(|| SheetsError::NoSheetData(self.part.clone()))?;
         if emptied {
             let row = remove_child(&row, at);
             let bare = row.child_elements().next().is_none()
-                && row.attributes().iter().all(|a| matches!(a.name.local(), "r" | "spans") && a.name.namespace().is_none());
+                && row
+                    .attributes()
+                    .iter()
+                    .all(|a| matches!(a.name.local(), "r" | "spans") && a.name.namespace().is_none());
             if bare {
                 self.set_data(remove_child(self.sheet_data(), place));
                 self.index()?;
@@ -207,9 +221,7 @@ impl SheetEdit {
                     Some("inlineStr") => child(node, "is").is_some_and(|item| child(item, "r").is_some()),
                     _ => false,
                 };
-                !rich
-                    && matches!(kind, Some("s" | "inlineStr" | "str"))
-                    && current == Some(Value::Text(text.clone()))
+                !rich && matches!(kind, Some("s" | "inlineStr" | "str")) && current == Some(Value::Text(text.clone()))
             }
             Write::Number(number) => {
                 matches!(node.attribute(None, "t").unwrap_or("n"), "n")
@@ -225,7 +237,10 @@ impl SheetEdit {
             Some(place) => place,
             None => self.new_row(i64::from(cell.row))?,
         };
-        let row = self.row(place).cloned().ok_or_else(|| SheetsError::NoSheetData(self.part.clone()))?;
+        let row = self
+            .row(place)
+            .cloned()
+            .ok_or_else(|| SheetsError::NoSheetData(self.part.clone()))?;
         let node = Arc::new(element(&row, "c", attributes, Vec::new()));
         let at = cells(&row)?
             .into_iter()
@@ -242,7 +257,8 @@ impl SheetEdit {
     /// document order otherwise), else after the last row: its place.
     fn new_row(&mut self, number: i64) -> Result<usize, SheetsError> {
         let data = Arc::clone(self.sheet_data());
-        let ascending = self.rows.iter().zip(self.rows.iter().skip(1)).all(|(a, b)| b.0 > a.0) && self.rows.first().is_none_or(|r| r.0 > 0);
+        let ascending = self.rows.iter().zip(self.rows.iter().skip(1)).all(|(a, b)| b.0 > a.0)
+            && self.rows.first().is_none_or(|r| r.0 > 0);
         let before = if ascending {
             self.rows.iter().find(|(n, _)| *n >= number)
         } else {

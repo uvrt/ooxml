@@ -21,19 +21,31 @@ fn points_are_written_in_index_order() {
     let mut chart = chart();
     assert_eq!(chart.set_point(0, Which::Values, 0, &PointValue::Number(1.5)), Ok(true));
     assert_eq!(chart.set_point(0, Which::Values, 1, &PointValue::Number(2.0)), Ok(true));
-    assert_eq!(chart.set_point(0, Which::Values, 2, &PointValue::Number(3.0)), Ok(false));
-    assert_eq!(chart.set_point(0, Which::Categories, 1, &PointValue::Text(String::new())), Ok(true));
+    assert_eq!(
+        chart.set_point(0, Which::Values, 2, &PointValue::Number(3.0)),
+        Ok(false)
+    );
+    assert_eq!(
+        chart.set_point(0, Which::Categories, 1, &PointValue::Text(String::new())),
+        Ok(true)
+    );
     assert_eq!(chart.set_point(0, Which::Categories, 0, &PointValue::Blank), Ok(true));
     let out = written(&chart);
     assert!(out.contains(r#"<c:ptCount val="3"/><c:pt idx="0"><c:v>1.5</c:v></c:pt><c:pt idx="1"><c:v>2</c:v></c:pt><c:pt idx="2"><c:v>3</c:v></c:pt><c:extLst/>"#), "{out}");
-    assert!(out.contains(r#"<c:strCache><c:ptCount val="3"/><c:pt idx="1"><c:v></c:v></c:pt><c:pt idx="2">"#), "{out}");
+    assert!(
+        out.contains(r#"<c:strCache><c:ptCount val="3"/><c:pt idx="1"><c:v></c:v></c:pt><c:pt idx="2">"#),
+        "{out}"
+    );
 }
 
 #[test]
 fn text_in_numbers_is_refused_and_a_name_is_given() {
     let mut chart = chart();
     let refused = chart.set_point(0, Which::Values, 0, &PointValue::Text("x".into()));
-    assert_eq!(refused.map_err(|e| e.0), Err("'x' is not a number, and this data is numeric".to_owned()));
+    assert_eq!(
+        refused.map_err(|e| e.0),
+        Err("'x' is not a number, and this data is numeric".to_owned())
+    );
     assert_eq!(chart.source(0, Which::Name), None);
     chart.give_name(0, "North");
     assert!(written(&chart).contains(r#"<c:order val="0"/><c:tx><c:v>North</c:v></c:tx><c:cat>"#));

@@ -116,7 +116,9 @@ impl<'w> Worksheet<'w> {
     }
 
     fn read(&self, node: &Element) -> Result<Option<Value>, SheetsError> {
-        read_cell(node, &self.part, &|index| self.workbook.shared_string(index).map(str::to_owned))
+        read_cell(node, &self.part, &|index| {
+            self.workbook.shared_string(index).map(str::to_owned)
+        })
     }
 }
 

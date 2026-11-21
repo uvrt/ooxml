@@ -88,7 +88,10 @@ pub(crate) fn append_child(parent: &Element, child: Element) -> Element {
 /// A new SpreadsheetML element `local`, named with the prefix `parent` uses for the
 /// namespace (an element lxml makes and then places takes the declaration in scope).
 pub(crate) fn element(parent: &Element, local: &str, attributes: &[(&str, &str)], children: Vec<Node>) -> Element {
-    let prefix = parent.name().prefix().filter(|_| parent.name().namespace() == Some(SML_NS));
+    let prefix = parent
+        .name()
+        .prefix()
+        .filter(|_| parent.name().namespace() == Some(SML_NS));
     let attributes = attributes
         .iter()
         .map(|(name, value)| Attribute {
@@ -96,7 +99,12 @@ pub(crate) fn element(parent: &Element, local: &str, attributes: &[(&str, &str)]
             value: Atom::from(*value),
         })
         .collect();
-    Element::new(Arc::new(QName::new(prefix, local, Some(SML_NS))), Vec::new(), attributes, children)
+    Element::new(
+        Arc::new(QName::new(prefix, local, Some(SML_NS))),
+        Vec::new(),
+        attributes,
+        children,
+    )
 }
 
 /// A text `t` under `parent`, holding `text`: `xml:space="preserve"` where Python's

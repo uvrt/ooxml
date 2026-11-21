@@ -58,13 +58,20 @@ impl GraphicEdit for ChartDataEdit {
         };
         match &self.action {
             DataAction::SetValues { series, values } => edit.set_values(&self.address, *series, values)?,
-            DataAction::SetValue { series, category, value } => edit.set_value(*series, *category, *value)?,
+            DataAction::SetValue {
+                series,
+                category,
+                value,
+            } => edit.set_value(*series, *category, *value)?,
             DataAction::RenameSeries { series, text } => edit.rename_series(*series, text)?,
             DataAction::RenameCategory { category, text } => edit.rename_category(*category, text)?,
         }
         let mut writes = Vec::new();
         if edit.changed {
-            writes.push(PartWrite::Tree(part.to_owned(), tree.with_root(Arc::clone(edit.chart.root()))));
+            writes.push(PartWrite::Tree(
+                part.to_owned(),
+                tree.with_root(Arc::clone(edit.chart.root())),
+            ));
         }
         let mut read = Vec::new();
         let warnings = edit.keeper.finish(&mut writes, &mut read)?;
@@ -134,7 +141,9 @@ impl Edit<'_> {
 
     fn set_value(&mut self, series: usize, category: usize, value: f64) -> Result<(), EditError> {
         let current = self.points(series, Which::Values)?;
-        let was = current.get(category).ok_or_else(|| refused("list index out of range"))?;
+        let was = current
+            .get(category)
+            .ok_or_else(|| refused("list index out of range"))?;
         if same(was.as_ref(), Some(value)) {
             return Ok(());
         }
@@ -243,12 +252,15 @@ impl<'p> Keeper<'p> {
                 .package
                 .tree(self.chart_part)?
                 .ok_or_else(|| EditError::NoPart(self.chart_part.to_owned()))?;
-            let found = workbook_part(self.package, self.chart_part, root.root(), DOCUMENT)
-                .map_err(|why| unported(why.0))?;
+            let found =
+                workbook_part(self.package, self.chart_part, root.root(), DOCUMENT).map_err(|why| unported(why.0))?;
             match found {
                 Err(reason) => self.cache_only = Some(reason),
                 Ok(part) => {
-                    let bytes = self.package.read(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
+                    let bytes = self
+                        .package
+                        .read(&part)?
+                        .ok_or_else(|| EditError::NoPart(part.clone()))?;
                     // ooxml-edit words a workbook it cannot open with the exception's text
                     let writer = WorkbookWriter::open(bytes, &Limits::default())
                         .map_err(|_| unported("an embedded workbook that cannot be read"))?;
@@ -281,9 +293,14 @@ impl<'p> Keeper<'p> {
             self.note(format!("its workbook has no sheet {}", repr_str(&range.sheet)));
             return Ok(());
         }
-        let cell = u32::try_from(index).ok().filter(|i| range.is_line() && *i < range.length()).and_then(|i| range.cell(i));
+        let cell = u32::try_from(index)
+            .ok()
+            .filter(|i| range.is_line() && *i < range.length())
+            .and_then(|i| range.cell(i));
         let Some(cell) = cell else {
-            let spelled = range.formula().map_err(|_| unported("a formula ooxml-sheets cannot spell"))?;
+            let spelled = range
+                .formula()
+                .map_err(|_| unported("a formula ooxml-sheets cannot spell"))?;
             self.note(format!("the formula {spelled} does not have a cell for point {index}"));
             return Ok(());
         };
@@ -293,7 +310,9 @@ impl<'p> Keeper<'p> {
             PointValue::Number(number) => Write::Number(*number),
         };
         match self.workbook.as_mut() {
-            Some((_, workbook)) => workbook.set_value(&range.sheet, cell, &given, None).map_err(sheets_error),
+            Some((_, workbook)) => workbook
+                .set_value(&range.sheet, cell, &given, None)
+                .map_err(sheets_error),
             None => Ok(()),
         }
     }

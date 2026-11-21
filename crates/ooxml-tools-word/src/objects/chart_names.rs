@@ -75,7 +75,10 @@ pub(crate) fn resolve(
         Named::Refused(error.at(what))
     };
     let Some(which) = which else {
-        return refuse(Code::Refusal(Refusal::InvalidArguments), format!("{action} needs {what}: {}", choices(names)));
+        return refuse(
+            Code::Refusal(Refusal::InvalidArguments),
+            format!("{action} needs {what}: {}", choices(names)),
+        );
     };
     let exact = py_flat(which);
     let hits: Vec<usize> = names

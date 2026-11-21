@@ -20,12 +20,12 @@ use super::chart_read::{chart_json, chart_read_json};
 use super::{ChartAction, EditChart};
 use crate::structure::common::{call, policy, refused};
 use crate::{Editing, Version};
-use ooxml_chart::data::{chart_data, ChartData};
-use ooxml_tools::TryCall;
-use ooxml_word_edit::EditGraphic;
 use ooxml_base::pyfmt::repr_str;
 use ooxml_base::Cancel;
+use ooxml_chart::data::{chart_data, ChartData};
+use ooxml_tools::TryCall;
 use ooxml_tools::{ArgEnum, Done, Refusal, ToolError, ToolResult, WayOut};
+use ooxml_word_edit::EditGraphic;
 use ooxml_word_model::docx::drawings::graphics;
 use ooxml_word_model::docx::graphics::chart_part;
 use ooxml_word_model::docx::Docx;
@@ -87,10 +87,17 @@ pub fn edit_chart(args: &EditChart, editing: &Editing<'_>) -> ToolResult<Value> 
 fn data_action(args: &EditChart, editing: &Editing<'_>, summary: String) -> Result<ToolResult<Value>, ToolError> {
     let read = call(
         "edit_chart",
-        &[("doc", json!(args.doc)), ("target", json!(args.target)), ("action", json!("read"))],
+        &[
+            ("doc", json!(args.doc)),
+            ("target", json!(args.target)),
+            ("action", json!("read")),
+        ],
     );
     let head = editing.editor.store().snapshot();
-    let docx = head.doc().docx().map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
+    let docx = head
+        .doc()
+        .docx()
+        .map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
     let read_data = |found: Result<(String, Arc<Element>), String>| {
         found.and_then(|(_, root)| {
             chart_data(&root)
@@ -118,7 +125,11 @@ fn data_action(args: &EditChart, editing: &Editing<'_>, summary: String) -> Resu
         Ok(done) => done,
         Err(error) => return Ok(refused(error, read)),
     };
-    let after = done.version.doc().docx().map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
+    let after = done
+        .version
+        .doc()
+        .docx()
+        .map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
     let data = match read_data(chart_of(args, &after, args.action.as_str())?) {
         Ok((data, root)) => Value::Object(chart_json(&args.target, &root, &data)),
         Err(_) => Value::Null,
@@ -154,7 +165,9 @@ fn chart_of(args: &EditChart, docx: &Docx, what: &str) -> Result<Result<(String,
         return Ok(Err(format!("edit_chart {what}: a chart whose part is missing")));
     };
     let Ok(Some(tree)) = docx.package.tree(&part) else {
-        return Ok(Err(format!("edit_chart {what}: a chart part that is missing or not XML")));
+        return Ok(Err(format!(
+            "edit_chart {what}: a chart part that is missing or not XML"
+        )));
     };
     Ok(Ok((part, Arc::clone(tree.root()))))
 }
@@ -163,12 +176,15 @@ fn chart_of(args: &EditChart, docx: &Docx, what: &str) -> Result<Result<(String,
 /// the series, the category, then what the action needs).
 fn planned(args: &EditChart, data: &ChartData, read: &TryCall) -> Result<Result<DataAction, &'static str>, ToolError> {
     let action = args.action.as_str();
-    let named = |names: Vec<String>, which: Option<&String>, what: &str, hint: &str| {
-        match resolve(&names, which.map(String::as_str), (what, action, hint), read) {
-            Named::At(at) => Ok(Ok(at)),
-            Named::Refused(error) => Err(error),
-            Named::Unported(why) => Ok(Err(why)),
-        }
+    let named = |names: Vec<String>, which: Option<&String>, what: &str, hint: &str| match resolve(
+        &names,
+        which.map(String::as_str),
+        (what, action, hint),
+        read,
+    ) {
+        Named::At(at) => Ok(Ok(at)),
+        Named::Refused(error) => Err(error),
+        Named::Unported(why) => Ok(Err(why)),
     };
     let hint = if data.category_dates.is_some() {
         "; its categories are dates, named as YYYY-MM-DD"
@@ -184,7 +200,11 @@ fn planned(args: &EditChart, data: &ChartData, read: &TryCall) -> Result<Result<
         let message = format!("{action} needs {name}: {expected}");
         Err(ToolError::refusal(Refusal::InvalidArguments, message, WayOut::call(read.clone())).at(name))
     };
-    let new_name = if args.action == ChartAction::RenameCategory { "the new label" } else { "the new name" };
+    let new_name = if args.action == ChartAction::RenameCategory {
+        "the new label"
+    } else {
+        "the new name"
+    };
     Ok(Ok(match args.action {
         ChartAction::SetValues => {
             let series = match series()? {
@@ -192,7 +212,11 @@ fn planned(args: &EditChart, data: &ChartData, read: &TryCall) -> Result<Result<
                 Err(why) => return Ok(Err(why)),
             };
             let count = data.categories.len();
-            want("values", args.values.is_some(), format!("one number per category ({count})"))?;
+            want(
+                "values",
+                args.values.is_some(),
+                format!("one number per category ({count})"),
+            )?;
             DataAction::SetValues {
                 series,
                 values: args.values.clone().unwrap_or_default(),
