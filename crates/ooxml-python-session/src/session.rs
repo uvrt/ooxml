@@ -591,6 +591,16 @@ impl PySession {
         py.detach(|| session.seed_retired(&id, given)).map_err(|e| to_py(&e))
     }
 
+    /// The host numbered the Word document's `version` (a `Version` of it) as its version
+    /// `number`: a refusal of an id a version up to it removed names the change by it.
+    fn number_version(&self, py: Python<'_>, doc: &str, version: PyRef<'_, PyVersion>, number: u64) -> PyResult<()> {
+        let id = doc_id(doc, &self.inner)?;
+        let seq = version.inner.version();
+        let session = &self.inner;
+        py.detach(|| session.number_version(&id, seq, number))
+            .map_err(|e| to_py(&e))
+    }
+
     /// Close the document; its versions and history are let go.
     fn close(&self, py: Python<'_>, doc: &str) -> PyResult<()> {
         let id = doc_id(doc, &self.inner)?;

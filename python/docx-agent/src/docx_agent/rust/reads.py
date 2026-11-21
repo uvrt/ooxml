@@ -33,7 +33,6 @@ docx-agent's words with its own way out (:mod:`.refusals`).
 
 from __future__ import annotations
 
-import functools
 import hashlib
 import json
 import logging
@@ -45,7 +44,7 @@ from typing import Any, Callable
 from ooxml_edit.tools import Result, ToolError
 
 from .. import finalizers
-from .refusals import describe_of, refusal
+from .refusals import refusal
 
 log = logging.getLogger("docx_agent.rust")
 
@@ -284,7 +283,7 @@ def _named(call: Any) -> Any:
     """The document whose ids an address of the call names: the call's; for one the session
     owns (or a read of a version of it), its view where that is current at the call's
     version, else none -- the session follows its renames and refuses a deleted id itself
-    (worded by :mod:`.refusals` as the view words it)."""
+    (worded as the view words it)."""
     entry = call.entry
     owned = _owned(entry)
     if owned is None:
@@ -417,10 +416,7 @@ def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | 
         if error.get("field") == "regex":
             raise _Fallback("regex")        # (a pattern Rust does not read as Python does)
         # A refusal is the call's answer, in docx-agent's words with Rust's way out (lane P2e1).
-        from .owner import retired_ids
-
-        raise refusal(error, functools.partial(retired_ids, mirror), arguments,
-                      describe_of(_owned(call.entry) or call.entry))
+        raise refusal(error)
     unported = json.loads(app).get("unported") or []
     if unported:
         raise _Fallback(unported[0])

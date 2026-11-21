@@ -2,7 +2,7 @@
 with that refusal -- docx-agent's code, message and field, with Rust's way out
 (``valid_options``, ``try_call``) -- never handed to the Python handler for its wording; an
 id a change removed is refused as docx-agent's view refuses it (which change removed it, and
-the way on), from the session's record.  Made-up documents only."""
+the way on), worded by the session from its retired-id record.  Made-up documents only."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from docx_agent.rust import edits, reads
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from ooxml_edit.tools import Toolbox, ToolError
 from ooxml_edit.tools.owned import OwnedEntry
+from python_handler import python_session
 
 CLOCK = lambda: dt.datetime(2026, 11, 20, 9, 0, tzinfo=dt.timezone.utc)  # noqa: E731
 GONE = "p:0BADF00D"
@@ -36,8 +37,10 @@ def report() -> bytes:
 
 
 def _open(toolbox, data: bytes, served: bool):
-    """A session that serves (the system's clock) or one the Python handler answers (its own)."""
-    session = toolbox.session() if served else toolbox.session(clock=CLOCK)
+    """A session that serves, or one the Python handler answers (the Rust session off)."""
+    if not served:
+        return python_session(toolbox, data, "report.docx", clock=CLOCK)
+    session = toolbox.session(clock=CLOCK)
     doc = session.open(data, "report.docx")
     if served and not isinstance(session.entry(doc), OwnedEntry):
         pytest.skip("no Rust session to own the document")

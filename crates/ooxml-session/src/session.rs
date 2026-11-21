@@ -14,7 +14,7 @@ use crate::{CallContext, DocId, DocKind, Registry, SessionError};
 use ooxml_base::{Cancel, Context};
 use ooxml_opc::Package;
 use ooxml_store::{StoreConfig, StoreStats};
-use ooxml_tools::{Accepted, Refusal, ToolError, ToolResult, ToolSpec, WayOut};
+use ooxml_tools::{Accepted, Outcome, Refusal, ToolError, ToolResult, ToolSpec, WayOut};
 use ooxml_tools_word::{Made, Placer, Version};
 use ooxml_word_edit::EarlierIds;
 use ooxml_word_model::docx::Versions;
@@ -580,6 +580,7 @@ impl Session {
             Ok(found) => found,
             Err(error) => return ToolResult::failed(error),
         };
+        let given = arguments.clone();
         let Some(doc) = state.opened.as_ref() else {
             return ToolResult::failed(ToolError::internal("no document", "session:dispatch"));
         };
@@ -599,7 +600,14 @@ impl Session {
             written: &context.written,
             others: &state.others,
         };
-        tool.run(arguments, &call)
+        let result = tool.run(arguments, &call);
+        // An id a version removed, refused as one the document lacks: said as such.
+        match (&result.outcome, call.word) {
+            (Outcome::Failed(error), Some(word)) => {
+                crate::refused::removed(&word.retired, &given, error).map_or(result, ToolResult::failed)
+            }
+            _ => result,
+        }
     }
 
     /// The tool a call names, its arguments as meant, and the document it reads (kept in

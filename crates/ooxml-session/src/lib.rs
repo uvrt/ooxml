@@ -32,6 +32,7 @@ mod ids;
 mod memory;
 mod model;
 mod records;
+mod refused;
 mod registry;
 mod retired;
 mod session;

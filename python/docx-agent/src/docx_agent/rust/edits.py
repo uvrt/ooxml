@@ -34,7 +34,6 @@ words, with its way out (:mod:`.refusals`).
 from __future__ import annotations
 
 import datetime as _dt
-import functools
 import json
 import threading
 import time
@@ -46,8 +45,8 @@ from ooxml_edit.tools.session import REF
 from ooxml_edit.tools.session import StepOwner
 
 from . import reads
-from .owner import context_of, options, retired_ids
-from .refusals import describe_of, refusal
+from .owner import context_of, options
+from .refusals import refusal
 
 _COUNTS_LOCK = threading.Lock()
 _FALLBACKS: Counter = Counter()
@@ -468,7 +467,7 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
     unported = json.loads(app).get("unported") or []
     if made is None and error is not None:
         # A refusal is the call's answer, in docx-agent's words with Rust's way out (lane P2e1).
-        raise refusal(error, functools.partial(retired_ids, mirror), arguments, describe_of(entry))
+        raise refusal(error)
     if made is None and unported:
         raise _Fallback(unported[0])
     result = _result(envelope)

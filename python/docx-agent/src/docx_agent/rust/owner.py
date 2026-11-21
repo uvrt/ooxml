@@ -156,6 +156,8 @@ class RustOwner:
 
         with mirror.lock:
             mirror.keep(number, head)
+            # the session words a refusal of an id this version removed by the host's number
+            mirror.session.number_version(mirror.doc, head, number)
         live = mirror.live()
         if live is not None:
             owner_committed(live, number)
