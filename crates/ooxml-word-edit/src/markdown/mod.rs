@@ -6,8 +6,11 @@
 //! block -- with a separator paragraph between two tables and a paragraph after a table
 //! that ends its container, stamped, and tracked as one revision group ([`insertion`]).
 //!
+//! Pictures are inline, as Word writes them, their bytes the ones the caller gives by
+//! source or a `data:` URI holds ([`pictures`]), wider than the text scaled to its width.
+//!
 //! Not ported yet ([`EditError::Unsupported`]: the host writes them its own way):
-//! pictures, footnotes, `replace:`, and the `like` and `table_like` looks.
+//! footnotes, `replace:`, and the `like` and `table_like` looks.
 //!
 //! Must not: write but through the sink, or know a tool's JSON.
 
@@ -16,6 +19,8 @@ pub(crate) use insertion::{insert_content, track, track_table};
 mod lists;
 mod parse;
 pub(crate) use parse::py_space;
+mod pictures;
+pub use pictures::{read_pictures, PictureRefusal, Pictures};
 mod shape;
 pub use shape::{markdown_shape, Made};
 mod table;
@@ -35,6 +40,9 @@ pub struct Options {
     pub html_as_text: bool,
     /// Emphasis and strong as direct `w:i`/`w:b` (`emphasis="direct"`); else their styles.
     pub emphasis_direct: bool,
+    /// The pictures' bytes by source (`images` as a mapping; [`read_pictures`] reads them):
+    /// a source neither here nor a `data:` URI is refused.
+    pub pictures: Pictures,
 }
 
 /// Write Markdown as blocks.
@@ -76,29 +84,51 @@ impl Command<WordDoc> for InsertMarkdown {
     type Error = EditError;
 
     fn validate(&self, doc: &WordDoc) -> Result<()> {
-        let blocks = self.read()?;
+        let (blocks, _) = self.read()?;
         let docx = doc.docx()?;
         insertion::locate(doc, &docx, &self.at, &blocks).map(|_| ())
     }
 
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<MarkdownInserted> {
         let mut sink = EditSink::new(tx, self.policy.clone());
-        let blocks = self.read()?;
+        let (blocks, pictures) = self.read()?;
         if !blocks.iter().any(produces) {
             return Ok(MarkdownInserted::default());
         }
-        let out = insertion::insert(&mut sink, self, &blocks)?;
+        let out = insertion::insert(&mut sink, self, &blocks, &pictures)?;
         crate::after::after_edit(&mut sink)?;
         Ok(out)
     }
 }
 
 impl InsertMarkdown {
-    /// The blocks to write, checked before anything changes (`_check`, `_pictures`).
-    fn read(&self) -> Result<Vec<Block>> {
-        let blocks: Vec<Block> = parse::parse_model(&self.markdown)?
-            .into_iter()
+    /// What the command checks before anything changes but its pictures (the Markdown, the
+    /// place): where reading the pictures was refused, a refusal docx-agent gives first.
+    ///
+    /// # Errors
+    /// The refusal of the Markdown or the place.
+    pub fn check_place(&self, doc: &WordDoc) -> Result<()> {
+        let (blocks, _) = self.blocks()?;
+        let docx = doc.docx()?;
+        insertion::locate(doc, &docx, &self.at, &blocks).map(|_| ())
+    }
+
+    /// The blocks to write and their pictures' bytes, checked before anything changes
+    /// (`_check`, `_pictures`).
+    fn read(&self) -> Result<(Vec<Block>, Pictures)> {
+        let (blocks, parsed) = self.blocks()?;
+        let pictures = pictures::given_pictures(&parsed, &self.options.pictures)?;
+        Ok((blocks, pictures))
+    }
+
+    /// The blocks to write (footnote definitions and comments left out) and all the
+    /// Markdown's, raw HTML refused but where kept as text.
+    fn blocks(&self) -> Result<(Vec<Block>, Vec<Block>)> {
+        let parsed = parse::parse_model(&self.markdown)?;
+        let blocks: Vec<Block> = parsed
+            .iter()
             .filter(|b| !matches!(b, Block::Footnote(..) | Block::Comment(_)))
+            .cloned()
             .collect();
         if !self.options.html_as_text {
             let mut all = Vec::new();
@@ -120,10 +150,7 @@ impl InsertMarkdown {
         if inline.iter().any(|i| matches!(i, Inline::NoteRef(_))) {
             return Err(EditError::Unsupported("a footnote in Markdown".to_owned()));
         }
-        if inline.iter().any(|i| matches!(i, Inline::Image { .. })) {
-            return Err(EditError::Unsupported("a picture in Markdown".to_owned()));
-        }
-        Ok(blocks)
+        Ok((blocks, parsed))
     }
 }
 

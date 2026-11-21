@@ -195,7 +195,7 @@ fn other_version<'a>(package: &'a Package, word: Option<&'a WordDoc>, versions: 
 
 /// The blobs a case registers (`blobs`: `{name, mime, hex}` each), as the session's
 /// `add_blob` numbers them: `b1`, `b2`, ...
-fn case_blobs(case: &Value) -> BlobList {
+pub(crate) fn case_blobs(case: &Value) -> BlobList {
     let hex = |text: &str| -> Vec<u8> {
         text.as_bytes()
             .chunks(2)

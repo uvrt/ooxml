@@ -131,13 +131,45 @@ fn quoted(text: &str) -> String {
     out
 }
 
-/// What the drawing's XML takes.
-struct Frame<'a> {
-    rid: &'a str,
-    number: u64,
-    size: (f64, f64),
-    anchor_id: &'a str,
-    edit_id: &'a str,
+/// What an inline picture's XML takes.
+pub(crate) struct PictureFrame<'a> {
+    /// The relationship to its media part.
+    pub(crate) rid: &'a str,
+    /// Its `docPr` number.
+    pub(crate) number: u64,
+    /// Its name (`Picture <number>` unless given).
+    pub(crate) name: &'a str,
+    /// Its text for screen readers; none or empty: no `descr`.
+    pub(crate) alt: Option<&'a str>,
+    /// Points.
+    pub(crate) size: (f64, f64),
+    pub(crate) anchor_id: &'a str,
+    pub(crate) edit_id: &'a str,
+}
+
+/// The `w:drawing` Word writes for an inline picture (docx-agent's `_drawing`).
+pub(crate) fn inline_xml(frame: &PictureFrame<'_>) -> String {
+    let (cx, cy) = (emu(frame.size.0), emu(frame.size.1));
+    let name = quoted(frame.name);
+    let descr = match frame.alt {
+        Some(alt) if !alt.is_empty() => format!(" descr={}", quoted(alt)),
+        _ => String::new(),
+    };
+    let (number, rid, a, e) = (frame.number, frame.rid, frame.anchor_id, frame.edit_id);
+    format!(
+        "<w:drawing xmlns:w=\"{W}\"><wp:inline xmlns:wp=\"{WP}\" xmlns:wp14=\"{WP14}\" distT=\"0\" distB=\"0\" \
+         distL=\"0\" distR=\"0\" wp14:anchorId=\"{a}\" wp14:editId=\"{e}\">\
+         <wp:extent cx=\"{cx}\" cy=\"{cy}\"/><wp:effectExtent l=\"0\" t=\"0\" r=\"0\" b=\"0\"/>\
+         <wp:docPr id=\"{number}\" name={name}{descr}/>\
+         <wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a=\"{A}\" noChangeAspect=\"1\"/></wp:cNvGraphicFramePr>\
+         <a:graphic xmlns:a=\"{A}\"><a:graphicData uri=\"{PIC}\">\
+         <pic:pic xmlns:pic=\"{PIC}\"><pic:nvPicPr><pic:cNvPr id=\"{number}\" name={name}{descr}/>\
+         <pic:cNvPicPr><a:picLocks noChangeAspect=\"1\" noChangeArrowheads=\"1\"/></pic:cNvPicPr></pic:nvPicPr>\
+         <pic:blipFill><a:blip xmlns:r=\"{R}\" r:embed=\"{rid}\"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>\
+         <pic:spPr bwMode=\"auto\"><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"{cx}\" cy=\"{cy}\"/></a:xfrm>\
+         <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>\
+         </a:graphicData></a:graphic></wp:inline></w:drawing>"
+    )
 }
 
 /// Whether `at` names a table cell (docx-agent's `_CELL`: `t:X/c<row>,<column>`).
@@ -175,31 +207,6 @@ fn no_cell(doc: &WordDoc, docx: &ooxml_word_model::docx::Docx, at: &str) -> Opti
 }
 
 impl InsertPicture {
-    /// The `w:drawing` Word writes for an inline picture (docx-agent's `_drawing`).
-    fn xml(&self, frame: &Frame<'_>) -> String {
-        let (cx, cy) = (emu(frame.size.0), emu(frame.size.1));
-        let name = quoted(&format!("Picture {}", frame.number));
-        let descr = match self.alt_text.as_deref() {
-            Some(alt) if !alt.is_empty() => format!(" descr={}", quoted(alt)),
-            _ => String::new(),
-        };
-        let (number, rid, a, e) = (frame.number, frame.rid, frame.anchor_id, frame.edit_id);
-        format!(
-            "<w:drawing xmlns:w=\"{W}\"><wp:inline xmlns:wp=\"{WP}\" xmlns:wp14=\"{WP14}\" distT=\"0\" distB=\"0\" \
-             distL=\"0\" distR=\"0\" wp14:anchorId=\"{a}\" wp14:editId=\"{e}\">\
-             <wp:extent cx=\"{cx}\" cy=\"{cy}\"/><wp:effectExtent l=\"0\" t=\"0\" r=\"0\" b=\"0\"/>\
-             <wp:docPr id=\"{number}\" name={name}{descr}/>\
-             <wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a=\"{A}\" noChangeAspect=\"1\"/></wp:cNvGraphicFramePr>\
-             <a:graphic xmlns:a=\"{A}\"><a:graphicData uri=\"{PIC}\">\
-             <pic:pic xmlns:pic=\"{PIC}\"><pic:nvPicPr><pic:cNvPr id=\"{number}\" name={name}{descr}/>\
-             <pic:cNvPicPr><a:picLocks noChangeAspect=\"1\" noChangeArrowheads=\"1\"/></pic:cNvPicPr></pic:nvPicPr>\
-             <pic:blipFill><a:blip xmlns:r=\"{R}\" r:embed=\"{rid}\"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>\
-             <pic:spPr bwMode=\"auto\"><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"{cx}\" cy=\"{cy}\"/></a:xfrm>\
-             <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>\
-             </a:graphicData></a:graphic></wp:inline></w:drawing>"
-        )
-    }
-
     fn edit(&self, sink: &mut EditSink<'_, '_>) -> Result<DrawingEdited> {
         let size = picture_size(&self.image, self.width)?;
         let format = image_format(&self.image)?;
@@ -213,14 +220,17 @@ impl InsertPicture {
         let rid = sink.media(&part, &self.image, format)?;
         let number = sink.draw_drawings(1)?.first().copied().unwrap_or(1);
         let ids = sink.draw(&format!("{part}\0picture"), 2)?;
-        let frame = Frame {
+        let name = format!("Picture {number}");
+        let frame = PictureFrame {
             rid: &rid,
             number,
+            name: &name,
+            alt: self.alt_text.as_deref(),
             size,
             anchor_id: ids.first().map_or("", String::as_str),
             edit_id: ids.get(1).map_or("", String::as_str),
         };
-        let parsed = ooxml_xml::parse(self.xml(&frame).as_bytes(), &Limits::default().xml)
+        let parsed = ooxml_xml::parse(inline_xml(&frame).as_bytes(), &Limits::default().xml)
             .map_err(|e| EditError::Refused(e.to_string()))?;
         let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
         let mut scope = scope_above(tree.root(), &found.path);

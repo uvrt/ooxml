@@ -17,7 +17,8 @@ mod settings;
 mod shape;
 
 pub use frame::{FloatDrawing, InlineDrawing, SetDrawing};
-pub use picture::{image_format, picture_size, written_size, InsertPicture};
+pub use picture::{image_format, natural_size, picture_size, written_size, InsertPicture};
+pub(crate) use picture::{inline_xml, PictureFrame};
 pub use settings::{DrawingValues, ZOrder};
 pub use shape::InsertShape;
 

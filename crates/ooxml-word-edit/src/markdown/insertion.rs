@@ -7,7 +7,7 @@
 //! Must not: write but through the sink.
 
 use super::writer::Writer;
-use super::{InsertMarkdown, MarkdownInserted};
+use super::{InsertMarkdown, MarkdownInserted, Pictures};
 use crate::marks::{clean_properties, insert_in_order, mark, mark_record, pass_mark};
 use crate::names::{W, W14};
 use crate::placing::{Place, Stretch, BLOCKS};
@@ -90,6 +90,7 @@ pub(crate) fn insert(
     sink: &mut EditSink<'_, '_>,
     command: &InsertMarkdown,
     blocks: &[Block],
+    pictures: &Pictures,
 ) -> Result<MarkdownInserted> {
     let docx = sink.docx()?;
     let Located { place, lone } = locate(sink.doc(), &docx, &command.at, blocks)?;
@@ -118,7 +119,8 @@ pub(crate) fn insert(
         work.remove(*node);
         removed.push(id.clone());
     }
-    let mut writer = Writer::new(&part, &command.style_map, command.options.clone());
+    let mut writer = Writer::new(&part, &command.style_map, command.options.clone(), pictures);
+    writer.scope = picture_scope(sink, &place)?;
     let mut elements = writer.blocks(sink, work, blocks)?;
     let root = work.root();
     for element in &elements {
@@ -139,7 +141,7 @@ pub(crate) fn insert(
         track(work, &elements, stamp, orders, old_mark);
         Vec::new()
     })?;
-    crate::placing::commit(sink, &stretch, &place, &stamped.0, &wrote, false)?;
+    crate::placing::commit(sink, &stretch, &place, &stamped.0, &wrote, writer.drew)?;
     let (created, top) = stamped;
     Ok(MarkdownInserted {
         first: created.first().cloned(),
@@ -150,6 +152,17 @@ pub(crate) fn insert(
         warnings: writer.warnings,
         blocks: top,
     })
+}
+
+/// The namespaces declared above the blocks of `place`'s container (the part's root and the
+/// container's ancestors and itself), which a picture's drawing does not declare again.
+fn picture_scope(sink: &EditSink<'_, '_>, place: &Place) -> Result<Vec<ooxml_xml::NamespaceDecl>> {
+    let tree = sink
+        .doc()
+        .tree(&place.part)?
+        .ok_or_else(|| EditError::NoPart(place.part.clone()))?;
+    let below: Vec<u32> = place.container.iter().copied().chain([0]).collect();
+    Ok(crate::work::scope_above(tree.root(), &below))
 }
 
 /// The block (or section properties) after `node`.

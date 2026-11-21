@@ -4,12 +4,12 @@
 //! style the document's default or the one its tables use most, a built-in style the
 //! document lacks added as Word writes it, the default paragraph style written as none),
 //! paragraphs, captions, code, quotes, thematic breaks, raw HTML as text, and the runs and
-//! hyperlinks of inline content.
+//! hyperlinks of inline content (a picture's run is [`super::pictures`]').
 //!
 //! Must not: put blocks in place, stamp or track them (the command does), or write but
 //! through the sink.
 
-use super::Options;
+use super::{Options, Pictures};
 use crate::names::{R, W};
 use crate::review::xml::make;
 use crate::sink::EditSink;
@@ -19,6 +19,7 @@ use crate::{EditError, Result};
 use ooxml_word_model::docx::{style_id, style_kind, style_name};
 use ooxml_word_model::markdown::model::{has_content, Block, Inline, Mark, Marks};
 use ooxml_word_model::markdown::stylemap::{construct_kind, WriteMap};
+use ooxml_xml::NamespaceDecl;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -46,10 +47,16 @@ pub(crate) struct Writer<'m> {
     pub(crate) linked: bool,
     /// Writing a code block: its text keeps its spacing (not marked written).
     verbatim: bool,
+    /// The pictures' bytes by source.
+    pub(crate) pictures: &'m Pictures,
+    /// The namespaces declared above the blocks written (a drawing does not repeat them).
+    pub(crate) scope: Vec<NamespaceDecl>,
+    /// A picture was written (the part's root declares `wp14`).
+    pub(crate) drew: bool,
 }
 
 impl<'m> Writer<'m> {
-    pub(crate) fn new(part: &str, map: &'m WriteMap, options: Options) -> Writer<'m> {
+    pub(crate) fn new(part: &str, map: &'m WriteMap, options: Options, pictures: &'m Pictures) -> Writer<'m> {
         Writer {
             part: part.to_owned(),
             map,
@@ -65,6 +72,9 @@ impl<'m> Writer<'m> {
             tables: Vec::new(),
             linked: false,
             verbatim: false,
+            pictures,
+            scope: Vec::new(),
+            drew: false,
         }
     }
 
@@ -387,7 +397,7 @@ impl<'m> Writer<'m> {
                 work.append(run, br);
                 vec![run]
             }
-            Inline::Image { .. } => return Err(EditError::Unsupported("a picture in Markdown".to_owned())),
+            Inline::Image { src, alt, title, .. } => vec![self.picture(sink, work, src, alt, title.as_deref())?],
             Inline::NoteRef(_) => return Err(EditError::Unsupported("a footnote in Markdown".to_owned())),
             Inline::Critic(_) => Vec::new(),
         })

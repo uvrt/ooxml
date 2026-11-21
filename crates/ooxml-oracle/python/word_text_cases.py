@@ -130,6 +130,7 @@ def _insert_markdown_cases(document, targets: list[str]) -> list[dict]:
            call("word_insert_markdown", at="end", blob="b1"),
            call("word_insert_markdown", at="end", markdown="![a](b1)\n"),
            call("word_insert_markdown", at="end", markdown="Text[^1]\n\n[^1]: note\n")]
+    out += _markdown_blob_cases(targets)
     for markdown in _MARKDOWN:
         out.append(call("word_insert_markdown", at="end", markdown=markdown))
     for target in targets[:2]:
@@ -143,4 +144,42 @@ def _insert_markdown_cases(document, targets: list[str]) -> list[dict]:
     tables = document._index(document.package.document_part()).tables
     if tables:
         out.append(call("word_insert_markdown", at=f"after:{tables[0].id}", markdown=_MARKDOWN[2]))
+    return out
+
+
+def _markdown_blob_cases(targets: list[str]) -> list[dict]:
+    """``word_insert_markdown`` with the session's blobs: the Markdown a blob holds (and one
+    that is not UTF-8), pictures by a blob's handle and by its name with a title, in a list
+    and a table, one wider than the text (scaled to it), from a ``data:`` URI, a remote
+    one, a blob that is no image, one the session lacks and bytes that are no picture, a
+    picture and a place the document lacks."""
+    import base64
+
+    from word_object_cases import _PICTURES, _blob, _png
+
+    png, wide = _PICTURES["png"], _blob(_png(1000, 10), "wide.png", "image/png")
+    text = _blob("# From a blob\n\nIts *text* -- caf\u00e9.\n".encode(), "notes.md", "text/markdown")
+
+    def with_blobs(blobs, **arguments) -> dict:
+        return {**_call("word_insert_markdown", **arguments), "blobs": blobs}
+
+    data = "data:image/png;base64," + base64.b64encode(bytes.fromhex(png["hex"])).decode()
+    out = [with_blobs([text], at="end", blob="b1"),
+           with_blobs([_blob(b"\xff\xfe bad", "bad.bin", "application/octet-stream")], at="end", blob="b1"),
+           with_blobs([text], at="end", blob="b2"),
+           with_blobs([png], at="end", markdown="A picture: ![a picture](b1)\n"),
+           with_blobs([png], at="end", markdown='![named](a.png "A title")\n\n- ![](b1) in a list\n'),
+           with_blobs([png], at="end", markdown="| A |\n|---|\n| ![cell](b1) |\n"),
+           with_blobs([wide], at="end", markdown="![wide](b1)\n"),
+           with_blobs([png], at="end", markdown=f"![inline]({data})\n"),
+           with_blobs([png], at="end", markdown="![x](data:;base64,a)\n"),
+           with_blobs([png], at="end", markdown="![far](https://example.com/a.png)\n"),
+           with_blobs([text], at="end", markdown="![text](b1)\n"),
+           with_blobs([png], at="end", markdown="![none](b7)\n"),
+           with_blobs([_PICTURES["text"]], at="end", markdown="![g](g.txt)\n"),
+           with_blobs([_PICTURES["headless"]], at="end", markdown="![h](b1)\n"),
+           with_blobs([png], at="after:p:7FFFFFFE", markdown="![none](b7)\n"),
+           with_blobs([png], at="end", markdown="[![linked](b1)](https://example.com/)\n")]
+    for target in targets[:1]:
+        out.append(with_blobs([png, wide], at=f"after:{target}", markdown="![one](b1) and ![two](b2)\n"))
     return out

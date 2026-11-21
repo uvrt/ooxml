@@ -1,13 +1,13 @@
 //! `word-edits`' `insert_markdown` cases ([`ooxml_word_edit::InsertMarkdown`]): `markdown`,
-//! `target` (the `at`), `html` (`text` keeps raw HTML as text), `emphasis` (`direct`) and
-//! `style_map` (pairs); the result in the form `python/word_edits_diff.py` writes
+//! `target` (the `at`), `html` (`text` keeps raw HTML as text), `emphasis` (`direct`),
+//! `style_map` (pairs) and `images` (each source's bytes in hex); the result in the form `python/word_edits_diff.py` writes
 //! docx-agent's `EditResult`.
 //!
 //! Must not: be used by any library; it is a test instrument.
 
 use ooxml_opc::Package;
 use ooxml_store::Caller;
-use ooxml_word_edit::{EditError, Editor, InsertMarkdown, MarkdownOptions, WriteMap};
+use ooxml_word_edit::{EditError, Editor, InsertMarkdown, MarkdownOptions, Pictures, WriteMap};
 use serde_json::{json, Value};
 
 /// Run the case on the document `package` opened; the case's JSON of the edit and its result.
@@ -33,6 +33,7 @@ pub fn insert_markdown(editor: &Editor, caller: &Caller, package: &Package, case
         options: MarkdownOptions {
             html_as_text: text("html") == "text",
             emphasis_direct: text("emphasis") == "direct",
+            pictures: images(case),
         },
         policy: crate::edits::policy(case),
     };
@@ -43,4 +44,24 @@ pub fn insert_markdown(editor: &Editor, caller: &Caller, package: &Package, case
                             "warnings": out.warnings, "blocks": out.blocks});
         crate::edits::report(package, &done, result)
     })
+}
+
+/// A case's `images`: each source's bytes, given in hex.
+fn images(case: &Value) -> Pictures {
+    let hex = |text: &str| -> Vec<u8> {
+        text.as_bytes()
+            .chunks(2)
+            .filter_map(|pair| {
+                std::str::from_utf8(pair)
+                    .ok()
+                    .and_then(|p| u8::from_str_radix(p, 16).ok())
+            })
+            .collect()
+    };
+    case.get("images")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .map(|(src, bytes)| (src.clone(), std::sync::Arc::from(hex(bytes.as_str().unwrap_or("")))))
+        .collect()
 }

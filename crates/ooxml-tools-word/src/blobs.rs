@@ -1,6 +1,7 @@
 //! Owns: the inputs a host registered for its session as a tool reads them ([`Blobs`]: a
-//! blob by its handle -- name, type, bytes -- and the handles there are), and the lookup a
-//! tool makes (docx-agent's `session.blob`: `not_found` listing the handles there are).
+//! blob by its handle -- name, type, bytes -- and the handles there are), and the lookups a
+//! tool makes (docx-agent's `session.blob`: `not_found` listing the handles there are; a
+//! Markdown picture's source, `images_from`: an image blob by its handle or name).
 //!
 //! Must not: keep blobs (the host keeps them, and checks their size and type when they are
 //! registered), or decode them.
@@ -55,4 +56,36 @@ pub(crate) fn blob(blobs: &dyn Blobs, handle: &str, call: &TryCall) -> Result<Bl
             way_out,
         )
     })
+}
+
+/// The bytes of the image blob a Markdown picture's `src` names, by its handle or name
+/// (docx-agent's `images_from`): `invalid_arguments` for a blob that is no image,
+/// `not_found` listing the image blobs there are.
+pub(crate) fn image(blobs: &dyn Blobs, src: &str, call: &TryCall) -> Result<Arc<[u8]>, ToolError> {
+    let listed = blobs.listed();
+    let found = listed
+        .iter()
+        .find(|(handle, name)| src == handle || src == name)
+        .and_then(|(handle, _)| blobs.blob(handle));
+    if let Some(found) = found {
+        if !found.mime.starts_with("image/") {
+            let message = format!("{src} is a {} blob, not an image", found.mime);
+            return Err(ToolError::refusal(
+                Refusal::InvalidArguments,
+                message,
+                WayOut::call(call.clone()),
+            ));
+        }
+        return Ok(found.data);
+    }
+    let images = listed.into_iter().filter_map(|(handle, name)| {
+        let blob = blobs.blob(&handle)?;
+        blob.mime.starts_with("image/").then(|| format!("{handle} ({name})"))
+    });
+    let way_out = WayOut::names(images).map_or_else(|| WayOut::call(call.clone()), |n| n.and_call(call.clone()));
+    let message = format!(
+        "no image blob {}: use a blob handle as the image source",
+        ooxml_base::pyfmt::repr_str(src)
+    );
+    Err(ToolError::refusal(Refusal::NotFound, message, way_out))
 }

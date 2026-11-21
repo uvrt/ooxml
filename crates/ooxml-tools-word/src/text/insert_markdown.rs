@@ -9,21 +9,28 @@
 //! and named in the reply's `data.facts` ([`super::fields`]), every value found in the
 //! paragraphs written kept on its place.
 //!
+//! The Markdown may be a blob's text (`blob`, UTF-8), and its pictures' sources blobs, by
+//! handle or name (docx-agent's `images_from`), read before anything changes in the order
+//! docx-agent reads them: a refusal of a picture comes after the place's.
+//!
 //! Left to the host (`unported`, nothing changed): rows or a field as the content (`from`),
-//! a blob (`blob`), references not yet written (`{{...}}`) and a place given by reference
-//! (`$name`), list items or tables like given blocks (`like`, a style map naming a
-//! paragraph), and what the command does not write yet (pictures, footnotes, `replace:`).
+//! a blob or a picture's blob where the host hands over none, references not yet written
+//! (`{{...}}`) and a place given by reference (`$name`), list items or tables like given
+//! blocks (`like`, a style map naming a paragraph), and what the command does not write yet
+//! (footnotes, `replace:`).
 //!
 //! Must not: write the document but through the command, or answer a call it does not
 //! port otherwise than by saying so ([`Unported`]).
 
 use super::fields::{placed_blocks, with_markdown};
 use super::Unported;
-use crate::review::{edit_refusal, Editing};
+use crate::review::Editing;
 use crate::structure::common::{blocks_ref_as_place, is_place, name_blocks, outcome, refused, Outcome};
 use crate::written::{self, Written};
 use ooxml_tools::{ArgEnum, Outcome as Replied, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
-use ooxml_word_edit::{InsertMarkdown, MarkdownInserted, MarkdownOptions, WriteMap};
+use ooxml_word_edit::{
+    read_pictures, InsertMarkdown, MarkdownInserted, MarkdownOptions, PictureRefusal, Pictures, WriteMap,
+};
 use serde_json::{json, Map, Value};
 
 /// A Markdown construct a style map names a style for.
@@ -155,10 +162,14 @@ fn run(args: &WordInsertMarkdown, editing: &Editing<'_>) -> Result<ToolResult<Va
     if let Some(name) = args.ref_name.as_deref().filter(|r| is_place(r)) {
         return Err(blocks_ref_as_place(name, &args.at));
     }
-    if let Some(unported) = unported(args) {
+    if let Some(unported) = unported(args, editing) {
         return Ok(unported.reply());
     }
     let call = try_call(args);
+    let given = match (&args.blob, editing.blobs) {
+        (Some(handle), Some(blobs)) => blob_text(blobs, handle, &call)?,
+        _ => args.markdown.clone().unwrap_or_default(),
+    };
     let pairs: Vec<(String, Option<String>)> = args
         .style_map
         .iter()
@@ -168,7 +179,6 @@ fn run(args: &WordInsertMarkdown, editing: &Editing<'_>) -> Result<ToolResult<Va
     let style_map = WriteMap::from_pairs(&pairs).map_err(|message| {
         ToolError::refusal(Refusal::InvalidArguments, message, WayOut::call(call.clone())).at("style_map")
     })?;
-    let given = args.markdown.clone().unwrap_or_default();
     let field = editing.written.iter().find(|f| f.field == "from");
     let in_markdown: Vec<&Written> = editing.written.iter().filter(|f| f.field == "markdown").collect();
     let (markdown, facts) = if field.is_none() && args.markdown.is_some() && !in_markdown.is_empty() {
@@ -176,7 +186,7 @@ fn run(args: &WordInsertMarkdown, editing: &Editing<'_>) -> Result<ToolResult<Va
     } else {
         (given, Vec::new())
     };
-    let command = InsertMarkdown {
+    let mut command = InsertMarkdown {
         markdown: markdown.clone(),
         at: args.at.clone(),
         style_map,
@@ -184,10 +194,14 @@ fn run(args: &WordInsertMarkdown, editing: &Editing<'_>) -> Result<ToolResult<Va
         options: MarkdownOptions::default(),
         policy: editing.policy(),
     };
+    match pictures(&command, editing, &call) {
+        Ok(Some(pictures)) => command.options.pictures = pictures,
+        Ok(None) => return Ok(Unported::HostData.reply()),
+        Err(reply) => return Ok(*reply),
+    }
     let inserted = match editing.editor.run(editing.caller, &command) {
         Ok(done) => done.out,
-        Err(error @ ooxml_word_edit::EditError::Unsupported(_)) => return Ok(refused(error, call)),
-        Err(error) => return Ok(ToolResult::failed(edit_refusal(error, "", call))),
+        Err(error) => return Ok(refused(error, call)),
     };
     let blocks = inserted.blocks.clone();
     let mut result = reply(args, inserted);
@@ -252,11 +266,56 @@ fn keep_facts(
     written::keep(editing, keeps, &try_call(args))
 }
 
-/// What of the call is the host's: data it holds, values or places by reference, blocks
-/// whose look new ones take.
-fn unported(args: &WordInsertMarkdown) -> Option<Unported> {
+/// The text of the blob `handle` names, refused where it is not UTF-8.
+fn blob_text(blobs: &dyn crate::Blobs, handle: &str, call: &TryCall) -> Result<String, ToolError> {
+    let found = crate::blobs::blob(blobs, handle, call)?;
+    String::from_utf8(found.data.to_vec()).map_err(|_| {
+        let message = format!("{handle} is not UTF-8 text");
+        ToolError::refusal(Refusal::InvalidArguments, message, WayOut::call(call.clone())).at("blob")
+    })
+}
+
+/// Why the host could not hand a picture over.
+enum Hosted {
+    /// It hands over no blobs: the call is the host's.
+    Unported,
+    /// Its refusal.
+    Refused(ToolError),
+}
+
+/// The bytes of the pictures the command's Markdown shows (`None`: a picture's blob, which
+/// the host hands over none of); a refusal of one is the reply, after the place's.
+fn pictures(
+    command: &InsertMarkdown,
+    editing: &Editing<'_>,
+    call: &TryCall,
+) -> Result<Option<Pictures>, Box<ToolResult<Value>>> {
+    // every picture's syntax starts `![`: Markdown without it shows none
+    if !command.markdown.contains("![") {
+        return Ok(Some(Pictures::new()));
+    }
+    let hosted = |src: &str| match editing.blobs {
+        Some(blobs) => crate::blobs::image(blobs, src, call).map_err(Hosted::Refused),
+        None => Err(Hosted::Unported),
+    };
+    let refusal = match read_pictures(&command.markdown, hosted) {
+        Ok(pictures) => return Ok(Some(pictures)),
+        Err(PictureRefusal::Host(Hosted::Unported)) => return Ok(None),
+        Err(PictureRefusal::Host(Hosted::Refused(error))) => ToolResult::failed(error),
+        Err(PictureRefusal::Edit(error)) => refused(error, call.clone()),
+    };
+    let first = command.check_place(editing.editor.store().snapshot().doc());
+    Err(Box::new(match first {
+        Err(error) => refused(error, call.clone()),
+        Ok(()) => refusal,
+    }))
+}
+
+/// What of the call is the host's: data it holds (a blob only where it hands over none),
+/// values or places by reference, blocks whose look new ones take.
+fn unported(args: &WordInsertMarkdown, editing: &Editing<'_>) -> Option<Unported> {
     let from_data = args.source.is_some()
-        || args.blob.is_some()
+        || (args.blob.is_some() && editing.blobs.is_none())
         || args.from_columns.is_some()
         || args.header.is_some()
         || args.date_format.is_some();
@@ -311,5 +370,5 @@ fn try_call(args: &WordInsertMarkdown) -> TryCall {
 
 /// Registers `word_insert_markdown` (the crate's [`crate::register`]).
 pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.edit::<WordInsertMarkdown>(word_insert_markdown, crate::Hosting::SERVED.keeps_written());
+    r.edit::<WordInsertMarkdown>(word_insert_markdown, crate::Hosting::SERVED.blobs().keeps_written());
 }

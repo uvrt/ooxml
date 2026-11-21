@@ -1,6 +1,6 @@
 //! The tool cases of `word-edits` (`op: "tool"`): `word_set_tracking`, `word_changes`,
 //! `word_comments`, `word_set_text`, `replace_text`, `word_insert_text` and `word_delete` called with JSON arguments on a document as opened,
-//! each reply as the tool writes it (`to_json`) and every part whose content changed (its
+//! with the blobs a case registers, each reply as the tool writes it (`to_json`) and every part whose content changed (its
 //! bytes as the package writes them), for `python/word_edits_diff.py --tools` to compare
 //! with docx-agent's toolbox.
 //!
@@ -44,7 +44,9 @@ pub fn tool_case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
     let opened = editor.store().snapshot().doc().clone();
     let caller = Caller::anonymous();
     let call_editor = CallEditor::new(&editor);
-    let editing = Editing::new(&call_editor, &caller, &opened, "d1", &Never, "2026-11-17T10:00:00Z");
+    let blobs = crate::structure_tools::case_blobs(case);
+    let editing =
+        Editing::new(&call_editor, &caller, &opened, "d1", &Never, "2026-11-17T10:00:00Z").with_blobs(Some(&blobs));
     let arguments = case.get("arguments").cloned().unwrap_or(Value::Object(Map::new()));
     let tool = case.get("tool").and_then(Value::as_str).unwrap_or("");
     let (arguments, mut notes) = match accepted(tool, arguments) {

@@ -171,8 +171,10 @@ def _run(document, case: dict):
     if op == "set_text_styled":
         return _styled(document, case)
     if op == "insert_markdown":
+        images = {src: bytes.fromhex(data) for src, data in (case.get("images") or {}).items()}
         return document.insert_markdown(case["markdown"], at=case["target"], html=case.get("html", "refuse"),
-                                        emphasis=case.get("emphasis", "styles"), style_map=case.get("style_map"))
+                                        emphasis=case.get("emphasis", "styles"), style_map=case.get("style_map"),
+                                        images=images)
     if op == "delete":
         return document.delete_block(case["target"])
     if op == "set_cells":
@@ -355,6 +357,8 @@ def python_tool_case(data: bytes, case: dict) -> dict:
     toolbox = _toolbox()
     session = toolbox.session()
     doc = session.open(data, name="case.docx")
+    for blob in case.get("blobs") or []:                # b1, b2, ... as the session numbers them
+        session.add_blob(bytes.fromhex(blob["hex"]), blob["name"], blob["mime"])
     arguments = {**case["arguments"], "doc": doc}
     reply = json.loads(json.dumps(toolbox.dispatch(session, case["tool"], arguments).to_json()))
     out = session.save(doc).data
@@ -478,8 +482,13 @@ def _french(data: bytes) -> bytes:
     return out.getvalue()
 
 
+#: A 4 x 2 black PNG, a picture's bytes for insert_markdown's ``images``.
+_PNG = ("89504e470d0a1a0a0000000d4948445200000004000000020802000000f0caea340000000b49444154789c"
+        "6360c00500001a0001bc3ce0410000000049454e44ae426082")
+
 #: insert_markdown's cases (``--markdown``): (Markdown, where, options); ``{t}`` is a
-#: paragraph's id. Pictures and footnotes are not ported (the host writes them).
+#: paragraph's id; ``images``: each picture source's bytes. Footnotes are not ported (the
+#: host writes them).
 _MARKDOWN = [
     ("# Title\n\nSome *em*, **strong**, `code`, [a link](https://example.com/a) and [an anchor](#top%20x).\n\n"
      "- one\n- two\n  - nested\n\n1. first\n2. second\n", "end", {}),
@@ -494,6 +503,8 @@ _MARKDOWN = [
     ("***both*** ~~strike~~ line<br>break\nsoft\n", "after:{t}", {"emphasis": "direct"}),
     ("<!-- only a comment -->\n", "end", {}),
     ("Plain line\n", "end:nowhere", {}),
+    ("A ![pic](p.png 'Its title') and ![](p.png)\n\n| ![c](p.png) |\n|---|\n", "after:{t}", {"images": {"p.png": _PNG}}),
+    ("![a](p.png) ![b](q.png)\n", "end", {"images": {"p.png": _PNG}}),
 ]
 
 
