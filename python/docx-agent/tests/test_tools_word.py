@@ -704,9 +704,14 @@ def test_save_refuses_a_new_validation_problem(box, session, monkeypatch):
     from docx_agent.validate import Problem
 
     from docx_agent import revalidate
+    from docx_agent.rust import owner
 
-    # Lane G: the tools find the problems per change (docx_agent.revalidate).
-    monkeypatch.setattr(revalidate, "problems", lambda document: [Problem("x", "word/document.xml", "bad")])
+    # Lane G: the tools find the problems per change (docx_agent.revalidate); a version the
+    # Rust session holds -- handed over by a served call, save_document's own (lane LC1) --
+    # the gate compares through the session (owner.session_validation).
+    bad = Problem("x", "word/document.xml", "bad")
+    monkeypatch.setattr(revalidate, "problems", lambda document: [bad])
+    monkeypatch.setattr(owner, "session_validation", lambda entry: {"new": [str(bad)], "fixed": [], "baseline": 0})
     error = fails(box, session, "save_document", "refused", doc=d, name="a.docx", format="docx")
     assert error.valid_options and session.take_outputs() == []
 

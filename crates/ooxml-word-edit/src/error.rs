@@ -46,6 +46,10 @@ pub enum EditError {
     /// What the edit would have to do is not ported yet.
     #[error("not supported yet: {0}")]
     Unsupported(String),
+    /// Laying a version out for the edit was stopped: the call's limit on laying out (the
+    /// duration, where it has one) passed, or it was cancelled. Nothing changed.
+    #[error("laying the document out did not finish{}", .0.map_or_else(String::new, |t| format!(" within {} s", t.as_secs_f64())))]
+    LayoutStopped(Option<std::time::Duration>),
     /// A part the edit needs is missing.
     #[error("no part {0}")]
     NoPart(String),

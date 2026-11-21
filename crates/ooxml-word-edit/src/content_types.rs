@@ -96,6 +96,52 @@ pub(crate) fn declare(package: &Package, part: &str, content_type: &str) -> Resu
     .map(Some)
 }
 
+/// `package` with `part` retyped as `content_type` as ooxml-edit's `content_types_with`
+/// (`declare_content_type(..., override=True)`) leaves the content types: the part's first
+/// `Override` given the type (any second one removed), else a new `Override` at the end --
+/// never a `Default`, which other parts share. `None` where its `Override` already names it.
+///
+/// # Errors
+/// When the package has no `[Content_Types].xml`, or it is not XML.
+pub(crate) fn retyped(package: &Package, part: &str, content_type: &str) -> Result<Option<Package>, ModelError> {
+    let part = normalize(part);
+    let tree = package
+        .tree(CONTENT_TYPES_PART)?
+        .ok_or_else(|| ModelError::NoPart(CONTENT_TYPES_PART.to_owned()))?;
+    let named = |e: &Element| {
+        e.name().is(Some(TYPES), "Override") && normalize(e.attribute(None, "PartName").unwrap_or_default()) == part
+    };
+    let first = tree.root().child_elements().find(|e| named(e));
+    if first.is_some_and(|e| e.attribute(None, "ContentType") == Some(content_type)) {
+        return Ok(None);
+    }
+    edit_part(package, CONTENT_TYPES_PART, |work| {
+        let root = work.root();
+        let found: Vec<Id> = work
+            .children(root)
+            .iter()
+            .copied()
+            .filter(|c| {
+                work.is(*c, TYPES, "Override") && normalize(work.get(*c, None, "PartName").unwrap_or_default()) == part
+            })
+            .collect();
+        let set = |work: &mut Work, node: Id, local: &str, value: &str| {
+            work.set(node, Arc::new(QName::new(None, local, None)), value);
+        };
+        if let Some((first, rest)) = found.split_first() {
+            set(work, *first, "ContentType", content_type);
+            rest.iter().for_each(|n| remove_keeping_layout(work, *n));
+            return;
+        }
+        let node = work.new_element(work.element_name(root, TYPES, "Override", ""));
+        work.append(root, node);
+        set(work, node, "PartName", &format!("/{part}"));
+        set(work, node, "ContentType", content_type);
+        match_tail(work, node);
+    })
+    .map(Some)
+}
+
 /// What declaring `part` (normalised) as `content_type` does to the content types `root`.
 fn what(root: &Element, part: &str, content_type: &str) -> Declaring {
     // `path.rsplit(".", 1)[-1].lower() if "." in path else ""`
@@ -146,7 +192,7 @@ fn what(root: &Element, part: &str, content_type: &str) -> Declaring {
 
 /// ooxml-edit's `_remove_keeping_layout`: the last child's tail (the parent's closing
 /// indentation) handed to the one before; the node's own tail gone with it.
-fn remove_keeping_layout(work: &mut Work, node: Id) {
+pub(crate) fn remove_keeping_layout(work: &mut Work, node: Id) {
     let tail = work.tail(node).to_owned();
     if let (None, Some(previous)) = (work.next(node), work.previous(node)) {
         work.set_tail(previous, &tail);

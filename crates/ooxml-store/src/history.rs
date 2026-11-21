@@ -407,7 +407,8 @@ impl<D: DocModel> History<D> {
         let mut overlap = step.writes.intersection(shared);
         for later in self.undo.iter().skip(index + 1) {
             overlap.extend(&step.writes.intersection(&later.reads));
-            overlap.extend(&step.writes.intersection(&later.writes));
+            // a derived key two steps write is recomputed where the undo lands: no tie
+            overlap.extend(&step.writes.intersection(&later.writes).without_where(D::derived));
         }
         let overlap = match overlap {
             KeySet::Keys(keys) => KeySet::Keys(keys.into_iter().filter(|key| !D::kept(key)).collect()),

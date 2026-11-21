@@ -28,7 +28,7 @@ const FIXTURE: &str = concat!(
 );
 
 /// The fixture, and a version of it whose first body text is much longer.
-fn versions() -> (Package, Package) {
+pub(crate) fn versions() -> (Package, Package) {
     let package = Package::open(Arc::from(std::fs::read(FIXTURE).unwrap()), &Limits::default()).unwrap();
     let xml = String::from_utf8(package.read("word/document.xml").unwrap().unwrap().to_vec()).unwrap();
     let at = xml.find("<w:t>").or_else(|| xml.find("<w:t ")).unwrap();
@@ -39,12 +39,18 @@ fn versions() -> (Package, Package) {
 }
 
 /// `check` with `arguments` of `package` (version `number`), `layout` handed to it.
-fn checked(package: &Package, number: u64, arguments: Value, last: &LastCheck, layout: Option<&EnginePages>) -> Value {
+pub(crate) fn checked(
+    package: &Package,
+    number: u64,
+    arguments: Value,
+    last: &LastCheck,
+    layout: Option<&EnginePages>,
+) -> Value {
     limited(package, number, arguments, last, layout, None)
 }
 
 /// [`checked`], laying out within `limit` where given.
-fn limited(
+pub(crate) fn limited(
     package: &Package,
     number: u64,
     arguments: Value,
@@ -64,11 +70,11 @@ fn limited(
     let version = Version::new("a.docx", package, number, &versions)
         .with_owned(Some(Owned {
             doc: &doc,
+            opened: &doc,
             baseline: editor.baseline(),
             last_check: last,
             layout: layout.map(|l| l as &dyn ooxml_tools_word::WordLayout),
             layout_limit: limit,
-            opened: &doc,
         }))
         .with_word(Some(&doc));
     let args = Check::from_arg(&arguments, "").unwrap();
@@ -193,7 +199,7 @@ fn many_writers_checking_at_once_digest_each_page_once_and_answer_as_one_alone()
 }
 
 /// A limit on laying out that has passed.
-struct Past;
+pub(crate) struct Past;
 
 impl ooxml_base::Cancel for Past {
     fn is_cancelled(&self) -> bool {

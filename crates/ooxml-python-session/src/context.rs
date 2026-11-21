@@ -43,10 +43,11 @@ impl PyCancelToken {
 /// What a call runs with (`ooxml_core.CallContext`): who calls (`caller`, its key; and
 /// `context`, the caller's context as JSON in the order given, which replies name it by),
 /// a token that stops it, how long laying a document out may take in it (`layout_timeout`,
-/// seconds), how long it may run, in seconds, and the limits on its reply --
-/// `max_result_chars` (a page's characters; 24,000 unless given) and `max_list_items` (a
-/// listing's items per page; 50 unless given), as the host's `Limits`. One may serve many
-/// calls.
+/// seconds), how long it may run, in seconds, the limits on its reply -- `max_result_chars`
+/// (a page's characters; 24,000 unless given) and `max_list_items` (a listing's items per
+/// page; 50 unless given), as the host's `Limits` -- and `layout_counts`, `(pages, lines)` of
+/// the host's layout of the version the call reads where it has laid it out
+/// (`save_document`'s `app.xml` statistics). One may serve many calls.
 #[pyclass(frozen, name = "CallContext", module = "ooxml_core")]
 pub struct PyCallContext {
     pub(crate) inner: CallContext,
@@ -59,7 +60,12 @@ impl PyCallContext {
     /// that is not a JSON object.
     #[new]
     #[pyo3(signature = (*, caller = None, cancel = None, deadline = None, layout_timeout = None,
-                        max_result_chars = None, max_list_items = None, context = None))]
+                        max_result_chars = None, max_list_items = None, context = None,
+                        layout_counts = None))]
+    // Keyword-only (`*`): each argument is one of the Python class's keywords, none is
+    // positional, so the many-arguments rule's concern (arguments mixed up by position)
+    // does not arise.
+    #[allow(clippy::too_many_arguments)]
     fn new(
         caller: Option<&str>,
         cancel: Option<PyRef<'_, PyCancelToken>>,
@@ -68,6 +74,7 @@ impl PyCallContext {
         max_result_chars: Option<usize>,
         max_list_items: Option<usize>,
         context: Option<&str>,
+        layout_counts: Option<(u64, u64)>,
     ) -> PyResult<Self> {
         let mut limits = ooxml_tools::Limits::DEFAULT;
         for (given, kept, name) in [
@@ -93,6 +100,7 @@ impl PyCallContext {
                 deadline: seconds(deadline, "deadline")?,
                 layout_timeout: seconds(layout_timeout, "layout_timeout")?,
                 limits,
+                counts: layout_counts.map(|(pages, lines)| ooxml_tools_word::LayoutCounts { pages, lines }),
                 ..CallContext::default()
             },
         })

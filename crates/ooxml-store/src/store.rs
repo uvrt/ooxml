@@ -314,12 +314,12 @@ impl<D: DocModel> Store<D> {
                 held: Duration::ZERO,
             });
         }
-        // a key written only as a merge (made where the change is applied) is no conflict
-        // with another writer of it; the keys it creates under stand-ins are kept apart
-        // (`parts.created`) and none with anything: no other transaction can have read them,
-        // and its own reads of them are of its own work
+        // a key written only as a merge (made where the change is applied), or a derived one
+        // (`DocModel::derived`), is no conflict with another writer of it; the keys it creates
+        // under stand-ins are kept apart (`parts.created`) and none with anything: no other
+        // transaction can have read them, and its own reads of them are of its own work
         let mut depends = parts.reads.without(&parts.created);
-        depends.extend(&parts.writes.without(&parts.merges));
+        depends.extend(&parts.writes.without(&parts.merges).without_where(D::derived));
         let mut state = lock(&self.state);
         let entered = self.clock.monotonic();
         let head = self.head.load();

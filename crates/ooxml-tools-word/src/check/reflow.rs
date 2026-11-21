@@ -40,20 +40,40 @@ pub struct Seen {
 
 /// What a document's last check with `reflow` saw, which the next measures
 /// `since_last_check` from; the session keeps one per document, and a host whose own
-/// checks still run reads and sets it.
+/// checks still run reads and sets it.  Beside it, what the last check that laid the
+/// document out saw, with `reflow` or not (`layout`, `range`, `min_size`, `styles`): the
+/// version a changing call is measured against before its change.  A check of the layout
+/// alone reports no reflow, so it is not what `since_last_check` measures from (docx-agent's
+/// rule), but its pages are the document's as they were.
 #[derive(Debug, Default)]
-pub struct LastCheck(Mutex<Option<Seen>>);
+pub struct LastCheck {
+    reflow: Mutex<Option<Seen>>,
+    laid: Mutex<Option<Seen>>,
+}
 
 impl LastCheck {
-    /// What the last check saw, if any.
+    /// What the last check with `reflow` saw, if any.
     #[must_use]
     pub fn get(&self) -> Option<Seen> {
-        self.0.lock().unwrap_or_else(PoisonError::into_inner).clone()
+        self.reflow.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
-    /// Keep `seen` (`None`: forget it).
+    /// Keep `seen` as what the last check with `reflow` saw (`None`: forget it); it is the
+    /// last check that laid the document out too.
     pub fn set(&self, seen: Option<Seen>) {
-        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = seen;
+        self.set_laid(seen.clone());
+        *self.reflow.lock().unwrap_or_else(PoisonError::into_inner) = seen;
+    }
+
+    /// What the last check that laid the document out saw, with `reflow` or not, if any.
+    #[must_use]
+    pub fn laid(&self) -> Option<Seen> {
+        self.laid.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    /// Keep `seen` as what the last check that laid the document out saw (`None`: forget it).
+    pub fn set_laid(&self, seen: Option<Seen>) {
+        *self.laid.lock().unwrap_or_else(PoisonError::into_inner) = seen;
     }
 }
 

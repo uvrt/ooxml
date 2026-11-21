@@ -192,6 +192,13 @@ impl PartIds {
         self.before.tables.len() + self.total().tables + self.after.tables.len()
     }
 
+    /// The place of the story's block container: the body's (one index), or none for a
+    /// story whose root holds its blocks.
+    #[must_use]
+    pub fn container(&self) -> &[u32] {
+        &self.container
+    }
+
     /// Whether every paragraph and row has a valid paraId of its own (nothing to stamp).
     #[must_use]
     pub fn fully_stamped(&self) -> bool {

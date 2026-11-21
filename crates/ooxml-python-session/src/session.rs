@@ -186,26 +186,33 @@ impl PySession {
     /// Run the tool `name` with `arguments` (JSON text) on a snapshot, with `options` (a
     /// `CallOptions`: who calls, the versions read, the placer, the page engine, the reply's
     /// `limit`, ...): returns the reply as JSON text -- the whole envelope, or within the
-    /// limit as the model is sent it --, the images beside it (bytes), and what only the
-    /// application reads, as JSON text: `unported`, what of the answer is not yet given as
-    /// the Python tool gives it (a list of reasons). Never raises for the call's own failure:
-    /// that is the reply's `error`, with its way out.
+    /// limit as the model is sent it --, the files the call gives the application (bytes:
+    /// `save_document`'s), and what only the application reads, as JSON text: `unported`,
+    /// what of the answer is not yet given as the Python tool gives it (a list of reasons),
+    /// and `files`, each file's `name` and `format` in the order of the bytes. Never raises
+    /// for the call's own failure: that is the reply's `error`, with its way out.
     #[pyo3(signature = (name, arguments, options = None))]
     fn call(&self, py: Python<'_>, name: &str, arguments: String, options: Option<PyRef<'_, PyCallOptions>>) -> Reply {
         let context = context_of(options.as_deref());
         let limit = options.as_ref().and_then(|o| o.limit);
         let session = &self.inner;
-        let text = py.detach(|| {
+        let (text, files, app) = py.detach(|| {
             let run = || session.call(name, Value::String(arguments), &context);
-            let result = catch_unwind(AssertUnwindSafe(run)).unwrap_or_else(|panic| panicked(name, &*panic));
-            let app = serde_json::json!({"unported": result.unported()});
+            let mut result = catch_unwind(AssertUnwindSafe(run)).unwrap_or_else(|panic| panicked(name, &*panic));
+            let files = std::mem::take(&mut result.app.files);
+            let named: Vec<Value> = files
+                .iter()
+                .map(|f| serde_json::json!({"name": f.name, "format": f.format}))
+                .collect();
+            let app = serde_json::json!({"unported": result.unported(), "files": named});
             let text = match limit {
                 Some(limit) => result.to_text(Some(limit)),
                 None => compact(&Value::Object(result.to_json())),
             };
-            (text, compact(&app))
+            (text, files, compact(&app))
         });
-        (text.0, Vec::new(), text.1)
+        let files = files.iter().map(|f| PyBytes::new(py, &f.bytes).unbind()).collect();
+        (text, files, app)
     }
 
     /// Run the editing tool `name` as [`call`](Self::call) does, with `options` (a
@@ -378,6 +385,17 @@ impl PySession {
         let kept = self.inner.last_check(&id).map_err(|e| to_py(&e))?;
         Ok(kept
             .and_then(|kept| kept.get())
+            .map(|seen| (seen.version, crate::summary::PyLayoutSummary { inner: seen.pages })))
+    }
+
+    /// What the document's last check that laid it out saw, with `reflow` or not (a check
+    /// of the layout alone, of ranges): `(version, summary)` as [`Self::last_check`] gives
+    /// it, or `None` -- what a changing call is measured against before its change.
+    fn last_laid(&self, doc: &str) -> PyResult<Option<(Option<u64>, crate::summary::PyLayoutSummary)>> {
+        let id = doc_id(doc, &self.inner)?;
+        let kept = self.inner.last_check(&id).map_err(|e| to_py(&e))?;
+        Ok(kept
+            .and_then(|kept| kept.laid())
             .map(|seen| (seen.version, crate::summary::PyLayoutSummary { inner: seen.pages })))
     }
 

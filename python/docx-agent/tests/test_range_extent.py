@@ -41,13 +41,13 @@ def _check(box, session, **arguments):
     return result
 
 
-def _record() -> tuple[Document, list[str]]:
+def _record(rows: int = 40) -> tuple[Document, list[str]]:
     """A heading, an opening paragraph, a table and an answer paragraph, after enough text
     that the table starts near a page's foot and goes on to the next page."""
     doc = Document.new()
     parts = [_text(k) for k in range(8)] + ["## A record", _text(3, 40),
                                              "| Item | Owner |\n|---|---|\n"
-                                             + "\n".join(f"| Item {k} | {WORDS[k % 10]} |" for k in range(40)),
+                                             + "\n".join(f"| Item {k} | {WORDS[k % 10]} |" for k in range(rows)),
                                              _text(5, 50)]
     doc.insert_markdown("\n\n".join(parts))
     blocks = [b["id"] for b in doc.blocks()][-4:]
@@ -151,14 +151,18 @@ def test_what_is_not_drawn_has_no_extent():
     assert layout.extent(doc.paragraphs()[0].id)[0].lines == 1
 
 
-def test_a_long_range_lists_its_first_pages_and_counts_the_rest(box, monkeypatch):
-    """Rule 4: the extent's pages are capped; the rest are counted, never cut silently."""
-    doc, record = _record()
-    monkeypatch.setattr(scoped, "EXTENT_PAGES", 1)
+def test_a_long_range_lists_its_first_pages_and_counts_the_rest(box):
+    """Rule 4: the extent's pages are capped; the rest are counted, never cut silently.  The
+    cap as it is (docx-agent's scoped.EXTENT_PAGES, the Rust session's check's: 12 each), on a
+    record whose table runs past it."""
+    doc, record = _record(rows=600)
     session = box.session()
     d1 = session.open(doc.to_bytes(), "record.docx")
     reported = _check(box, session, doc=d1, range=[f"{record[0]}..{record[-1]}"]).data["range"][0]
-    assert len(reported["extent"]) == 1 and reported["extent_more"] == 1
+    pages = len(reported["pages"])
+    assert pages > scoped.EXTENT_PAGES
+    assert len(reported["extent"]) == scoped.EXTENT_PAGES
+    assert reported["extent_more"] == pages - scoped.EXTENT_PAGES
     layout = session.entry(d1).document.layout()
     assert reported["height"] == round(sum(e.height for e in layout.extent(
         session.entry(d1).document.blocks_between(record[0], record[-1]))), 2)

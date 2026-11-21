@@ -6,7 +6,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
 use crate::common::{Never, Still, Unlimited, R, W};
-use ooxml_base::Limits;
+use ooxml_base::{Cancel, Limits};
 use ooxml_opc::Package;
 use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools::{ToolArgs, ToolResult};
@@ -14,7 +14,7 @@ use ooxml_tools_word::{
     word_copy_from, word_fields, word_links, word_notes, CallEditor, Editing, WordHeadersFooters, WordLinks, WordMove,
     WordNotes, WordSections, KIND,
 };
-use ooxml_word_edit::{Editor, FieldLayout, FieldPlace, FieldRun, LaidFields, PageShows, Unknown};
+use ooxml_word_edit::{Editor, FieldLayout, FieldPlace, FieldRun, LaidFields, LayOutError, PageShows, Unknown};
 use ooxml_zip::{Method, NewEntry, Writer};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -114,7 +114,7 @@ impl LaidFields for LaidTwo {
 }
 
 impl FieldLayout for TwoPages {
-    fn lay_out(&self, _: &Package) -> Result<Box<dyn LaidFields + '_>, String> {
+    fn lay_out(&self, _: &Package, _: &dyn Cancel) -> Result<Box<dyn LaidFields + '_>, LayOutError> {
         Ok(Box::new(LaidTwo))
     }
 }
@@ -305,6 +305,42 @@ fn a_page_number_is_inserted_with_its_result() {
     let found = ooxml_word_edit::fields(head.doc()).unwrap();
     assert_eq!(found.len(), 1);
     assert_eq!((found[0].keyword.as_str(), found[0].result.as_str()), ("PAGE", "2"));
+}
+
+/// A layout every lay-out of which is stopped, as the call's limit on laying out stops it.
+struct Stopping;
+
+impl FieldLayout for Stopping {
+    fn lay_out(&self, _: &Package, cancel: &dyn Cancel) -> Result<Box<dyn LaidFields + '_>, LayOutError> {
+        assert!(cancel.is_cancelled(), "the call's limit is what stops it");
+        Err(LayOutError::Stopped)
+    }
+}
+
+#[test]
+fn a_field_whose_layout_is_stopped_is_a_timeout_that_changes_nothing() {
+    let editor = Editor::open(package(), StoreConfig::default(), Arc::new(Still), Arc::new(Unlimited)).unwrap();
+    let before = editor.store().snapshot().seq();
+    let opened = editor.store().snapshot().doc().clone();
+    let caller = Caller::anonymous();
+    let limit = ooxml_tools_word::LayoutLimit {
+        cancel: &crate::check::Past,
+        timeout: std::time::Duration::from_millis(1500),
+    };
+    let reply = {
+        let call_editor = CallEditor::new(&editor);
+        let editing = Editing::new(&call_editor, &caller, &opened, "d1", &Never, "2026-11-17T10:00:00Z")
+            .with_layout(Some(&Stopping))
+            .with_layout_limit(Some(limit));
+        let arguments = json!({"doc": "d1", "action": "insert_field", "at": "p:10000002@5", "instruction": "PAGE"});
+        let (args, _) = <ooxml_tools_word::WordFields as ToolArgs>::accept(arguments, Some("docx")).unwrap();
+        Value::Object(word_fields(&args, &editing).to_json())
+    };
+    let error = &reply["error"];
+    assert_eq!(error["code"], "timeout", "{reply}");
+    assert_eq!(error["message"], "laying the document out did not finish within 1.5 s");
+    assert_eq!(error["details"]["timeout"], json!(1.5));
+    assert_eq!(editor.store().snapshot().seq(), before, "nothing changed");
 }
 
 /// docx-agent writes a `HYPERLINK` field as Word saves one: its text inserted and made a

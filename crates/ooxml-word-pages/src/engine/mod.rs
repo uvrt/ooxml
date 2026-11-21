@@ -19,10 +19,14 @@
 //! Must not: be used by two callers at once (its owner locks it), or keep more than the
 //! last version laid out.
 
+mod beyond;
 mod changed;
 mod parts;
 mod summaries;
 mod trial;
+
+pub use beyond::Laid;
+pub use trial::Trial;
 
 use changed::{context_may_change, notes_or_stories_changed};
 
@@ -38,7 +42,7 @@ use ooxml_derive::{CacheBudget, Memo, Weigh};
 use ooxml_opc::Package;
 use ooxml_word_layout::paint::svg::{page_svg, Drawings, Pictures, SvgContext};
 use ooxml_word_layout::paint::{paint_page, GlyphSize, PagePaint, PaintContext};
-use ooxml_word_layout::WordLayout;
+use ooxml_word_layout::{DocumentLayout, WordLayout};
 use ooxml_word_model::Model;
 use ooxml_zip::Archive;
 use parts::{carried_facts, new_layout, pictures_of, say, version_ids, SayWith};
@@ -593,28 +597,8 @@ impl PageEngine {
             return Some(found);
         }
         let generation = self.generation.as_mut().filter(|g| g.number == version.generation)?;
-        let parts = generation
-            .layout
-            .page_parts(&mut generation.model, &version.layout, page);
-        let cx = PaintContext {
-            faces: version.glyphs.as_ref(),
-            names: version.names.as_ref(),
-            glyph_size: self.glyph_size,
-            decimal: self.decimal,
-        };
-        let mut paint = paint_page(&version.layout, &mut generation.model, page, &parts, &cx)?;
-        if let Some(drawings) = &version.drawings {
-            let job = TextBoxJob {
-                layout: &mut generation.layout,
-                model: &mut generation.model,
-                laid: &version.layout,
-                cx: &cx,
-            };
-            paint.text_boxes = text_boxes(job, drawings, &paint, page);
-            let unpainted: Vec<String> = paint.text_boxes.iter().flat_map(|t| t.unpainted.clone()).collect();
-            paint.unpainted.extend(unpainted);
-        }
-        let paint = Arc::new(paint);
+        let with = (self.glyph_size, self.decimal);
+        let paint = Arc::new(paint_laid(generation, &version.layout, version, page, with)?);
         self.stats.pages_painted += 1;
         if keep {
             self.painted.insert(key, Painted(Arc::clone(&paint)));
@@ -706,4 +690,36 @@ impl PageEngine {
         };
         Some((page_svg(&paint, &cx), missing))
     }
+}
+
+/// Page `page` of `layout` (`version`'s, or a trial's laid out from it) painted, its text
+/// boxes laid out and painted: with `version`'s faces, pictures and drawings, in
+/// `generation`, its glyph size and decimal sign `with`.
+fn paint_laid(
+    generation: &mut Generation,
+    layout: &DocumentLayout,
+    version: &LaidVersion,
+    page: usize,
+    (glyph_size, decimal): (GlyphSize, char),
+) -> Option<PagePaint> {
+    let parts = generation.layout.page_parts(&mut generation.model, layout, page);
+    let cx = PaintContext {
+        faces: version.glyphs.as_ref(),
+        names: version.names.as_ref(),
+        glyph_size,
+        decimal,
+    };
+    let mut paint = paint_page(layout, &mut generation.model, page, &parts, &cx)?;
+    if let Some(drawings) = &version.drawings {
+        let job = TextBoxJob {
+            layout: &mut generation.layout,
+            model: &mut generation.model,
+            laid: layout,
+            cx: &cx,
+        };
+        paint.text_boxes = text_boxes(job, drawings, &paint, page);
+        let unpainted: Vec<String> = paint.text_boxes.iter().flat_map(|t| t.unpainted.clone()).collect();
+        paint.unpainted.extend(unpainted);
+    }
+    Some(paint)
 }
