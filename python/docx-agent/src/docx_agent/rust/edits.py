@@ -159,7 +159,40 @@ def _insert_markdown(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
             raise _Fallback("a blob that is not UTF-8") from None
         del given["blob"]
     given["at"] = _blocks_at(call, given.get("at"))
-    return given
+    source = given.get("from")
+    if isinstance(source, str):
+        return _field_given(call, given, source)
+    facts = call.facts_at("markdown") if getattr(call, "facts", None) else []
+    own = {id(fact): markdown for fact, markdown in zip(facts, _values_markdown(call, facts)) if markdown is not None}
+    return Adapted(given, _written_json(call.facts, own)) if own else given
+
+
+def _values_markdown(call: Any, facts: list[Any]) -> list[str | None]:
+    """Each value's own Markdown, read again from its source (``field_text.reference_markdown``:
+    a workbook cell's emphasis and list lines), ``None`` where it is its text."""
+    from ..tools import field_text
+
+    return [field_text.reference_markdown(call, fact) for fact in facts]
+
+
+def _field_given(call: Any, given: dict[str, Any], source: str) -> dict[str, Any]:
+    """``word_insert_markdown`` from one field of one row (``text._field_from``, the host's
+    data): the field's Markdown as the call's, the value handed over as written into
+    ``from`` (the session keeps it on every paragraph made).  Rows as a table stay ``from``
+    (the session leaves them to the host)."""
+    from ooxml_edit.tools import ToolError
+
+    from ..tools.text import _field_from
+
+    try:
+        field = _field_from(call, source, given.get("from_columns"), given.get("header"), given.get("date_format"))
+    except ToolError as error:
+        raise _Fallback(f"refusal: {error.code}") from None
+    if field is None:
+        return given
+    given["markdown"] = field.text
+    del given["from"]
+    return Adapted(given, _written_json([field], {}))
 
 
 def _blocks_at(call: Any, at: Any) -> Any:
@@ -280,17 +313,39 @@ LAID = frozenset({"word_fields", "word_headers_footers", "word_template"})
 #: The tools whose Rust handler keeps the values written by reference on the paragraphs
 #: they went into (lane P2d2: the host's ``call.facts`` handed over, :func:`_written`);
 #: another served tool given one is answered by the Python handler.
-KEEPS_WRITTEN = frozenset({"word_set_text", "word_insert_text", "replace_text"})
+KEEPS_WRITTEN = frozenset({"word_set_text", "word_insert_text", "replace_text", "word_insert_markdown"})
+
+
+class Adapted(dict):
+    """A served tool's arguments as the session takes them, with the values written by
+    reference the adapter handed over itself (``written``, :func:`_written_json`) in place of
+    the call's own (:func:`_written`): host data the session cannot read, such as a field
+    ``from`` names or a value's own Markdown."""
+
+    def __init__(self, given: dict[str, Any], written: str | None) -> None:
+        super().__init__(given)
+        self.written = written
 
 
 def _written(call: Any) -> str | None:
     """The values the dispatcher wrote into the call's arguments for references
     (``call.facts``), as ``Session.edit`` takes them; ``None`` without any."""
-    facts = getattr(call, "facts", None)
+    return _written_json(getattr(call, "facts", None) or (), {})
+
+
+def _written_json(facts: Any, markdown: dict[int, str | None]) -> str | None:
+    """``facts`` as ``Session.edit`` takes them, each with its own Markdown where
+    ``markdown`` (by the fact's ``id``) has one; ``None`` without any."""
     if not facts:
         return None
-    return json.dumps([{"field": f.field, "start": f.start, "end": f.end, "text": f.text,
-                        "record": f.record, "brief": f.brief()} for f in facts])
+    out = []
+    for f in facts:
+        item = {"field": f.field, "start": f.start, "end": f.end, "text": f.text, "record": f.record,
+                "brief": f.brief()}
+        if markdown.get(id(f)) is not None:
+            item["markdown"] = markdown[id(f)]
+        out.append(item)
+    return json.dumps(out)
 
 
 def _ref_names(arguments: dict[str, Any]) -> list[str]:
@@ -462,15 +517,16 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
     tool = call.tool.name
     context = context_of(call.caller)
     _tracking(call, entry, context, counted)
-    given = {**{k: v for k, v in SERVED[tool](call, arguments).items() if v is not None},
-             "doc": entry.doc_id}
+    adapted = SERVED[tool](call, arguments)
+    written = adapted.written if isinstance(adapted, Adapted) else _written(call)
+    given = {**{k: v for k, v in adapted.items() if v is not None}, "doc": entry.doc_id}
     names = _names(call, entry, arguments)
     layout = _layout(call, entry)
     timing = _timing(call, arguments)
     started = time.perf_counter()
     blobs = _Blobs(call.session) if tool in BLOBS else None
     reply, app, made = mirror.session.edit(tool, json.dumps(given), context=context, layout=layout, blobs=blobs,
-                                           written=_written(call), names=names)
+                                           written=written, names=names)
     if timing is not None:
         timing.add("update", time.perf_counter() - started)
     envelope = json.loads(reply)

@@ -144,7 +144,7 @@ pub use links::{hyperlink_span, AddBookmark, AddHyperlink, LinkEdited, RemoveBoo
 pub use lists::{
     numbered_by_style, paragraphs_of, unnumbered_styles_like, LevelFormat, ListAction, ListEdit, ListStep, ListsEdited,
 };
-pub use markdown::{InsertMarkdown, MarkdownInserted, Options as MarkdownOptions, WriteMap};
+pub use markdown::{markdown_shape, InsertMarkdown, Made, MarkdownInserted, Options as MarkdownOptions, WriteMap};
 pub use moving::{section_blocks, section_blocks_in, BlocksMoved, MoveBlocks, Moving};
 pub use notes::{DeleteNote, EditNote, InsertNote, MoveNote, NoteEdited, NoteKind};
 pub use paragraph_style::{SetParagraphStyle, StyleSet};
