@@ -472,9 +472,9 @@ def serve_check(call: Any, arguments: dict[str, Any]) -> Result | None:
         why = "not owned"
     elif call.in_batch:
         why = "in a batch"
-    elif getattr(owned.held, "min_text_size", None) is not None:
-        why = "min_text_size"
-    elif arguments.get("include") is None or "reflow" in arguments["include"]:
+    else:
+        why, arguments = _session_check(call, owned.held, arguments)
+    if why is None and _laid_check(arguments):
         from ..pages import word_pages
 
         layout, _ = word_pages(owned.held)     # none: the session says so (unported)
@@ -485,6 +485,42 @@ def serve_check(call: Any, arguments: dict[str, Any]) -> Result | None:
 
         seen_by_python(call, call.entry.version)
     return served
+
+
+def _session_check(call: Any, held: Any, arguments: dict[str, Any]) -> tuple[str | None, dict[str, Any]]:
+    """Lane P5k: why the session cannot answer this check of ``held`` (``None``: it may), and
+    the arguments it is asked with: the application's ``min_text_size`` (one number) as its
+    ``min_size`` where the check gives none.  What this session's table edits made here
+    (rows written, a ragged table's call) the session does not hold yet: such a document's
+    layout facts are the handler's."""
+    from ..tools._base import resolve
+    from ..tools.objects import RAGGED_BY, ROWS_WRITTEN
+
+    if arguments.get("range") is not None:
+        # a ``$name`` ref replaced, as the handler does (the session takes addresses)
+        arguments = {**arguments, "range": resolve(call, arguments["range"])}
+    minimum = getattr(held, "min_text_size", None)
+    if minimum is not None and arguments.get("min_size") is None:
+        if isinstance(minimum, bool) or not isinstance(minimum, (int, float)):
+            return "min_text_size by kind", arguments
+        arguments = {**arguments, "min_size": minimum}
+    live = call.document.__dict__.get("_live", call.document)
+    if _laid_check(arguments) and (live.__dict__.get(ROWS_WRITTEN) or live.__dict__.get(RAGGED_BY)):
+        return "rows written here", arguments
+    return None, arguments
+
+
+def _laid_check(arguments: dict[str, Any]) -> bool:
+    """Whether a check with these arguments reads the layout: ``reflow`` or ``layout``
+    asked (or the default), or what the layout's facts measure (``range``, ``min_size``,
+    ``styles``)."""
+    include = arguments.get("include")
+    if include is None or "reflow" in include or "layout" in include:
+        return True
+    from ..scope import ranges_of
+
+    return bool(ranges_of(arguments.get("range"))) or any(
+        arguments.get(name) is not None for name in ("min_size", "styles"))
 
 
 def last_check(call: Any) -> tuple[bool, Any, int | None]:

@@ -71,6 +71,7 @@ impl Call<'_> {
         let word = self.word?;
         Some(ooxml_tools_word::Owned {
             doc,
+            opened: word.opened.doc(),
             baseline: word.editor.baseline(),
             last_check: &word.last_check,
             layout: self.layout,

@@ -74,6 +74,9 @@ impl Version<'_> {
 pub struct Owned<'a> {
     /// The version.
     pub doc: &'a WordDoc,
+    /// The document as the session opened it (what a pending change of the session's takes
+    /// out of the file is read against).
+    pub opened: &'a WordDoc,
     /// The problems the document had when the session opened it.
     pub baseline: &'a [Problem],
     /// What the document's last check with `reflow` saw.

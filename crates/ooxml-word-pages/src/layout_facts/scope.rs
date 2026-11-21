@@ -70,6 +70,10 @@ pub struct Scope {
     pub tables: HashSet<String>,
     /// The ids of the drawings anchored in those paragraphs.
     pub drawings: HashSet<String>,
+    /// The body's places a problem is looked for in (docx-agent's `Scope.roots`): each
+    /// top-level block every paragraph of which is in the scope, and the paragraphs of a
+    /// block that is only partly (a cell's), in the order the ranges first reach them.
+    pub roots: Vec<Box<[u32]>>,
 }
 
 impl Scope {
@@ -85,6 +89,7 @@ impl Scope {
         let mut scope = Scope::default();
         let table_ids: HashMap<Box<[u32]>, String> = body.ids.tables().iter().map(|t| (t.path, t.id)).collect();
         let mut held: Vec<Box<[u32]>> = Vec::new();
+        let mut tops: Vec<Box<[u32]>> = Vec::new();
         for (number, address) in addresses.iter().enumerate() {
             let (part, indexes) = scope_paragraphs(docx, address).map_err(|error| ScopeError::Address {
                 number,
@@ -114,6 +119,9 @@ impl Scope {
                     continue;
                 };
                 let top = top_place(body, &paragraph.path);
+                if let Some(top) = top.filter(|t| !tops.iter().any(|seen| &**seen == *t)) {
+                    tops.push(top.into());
+                }
                 if let Some(id) = top.and_then(|t| block_id(body, t)) {
                     if !range.blocks.contains(&id) {
                         range.blocks.push(id);
@@ -132,6 +140,7 @@ impl Scope {
         }
         if !held.is_empty() {
             let held: HashSet<&[u32]> = held.iter().map(AsRef::as_ref).collect();
+            scope.roots = roots(body, &tops, &held);
             for drawing in all_drawings(docx).into_iter().filter(|d| d.part == body.part) {
                 if (1..drawing.path.len()).any(|end| drawing.path.get(..end).is_some_and(|above| held.contains(above)))
                 {
@@ -191,6 +200,27 @@ impl Scope {
             })
             .collect()
     }
+}
+
+/// Each of `tops` (top-level blocks' places) every paragraph of which is `held`, else the
+/// paragraphs of it that are.
+fn roots(story: &ooxml_word_model::docx::StoryPart, tops: &[Box<[u32]>], held: &HashSet<&[u32]>) -> Vec<Box<[u32]>> {
+    let mut out = Vec::new();
+    for top in tops {
+        let inside: Vec<Box<[u32]>> = story
+            .ids
+            .paragraphs()
+            .iter()
+            .map(|p| p.path)
+            .filter(|path| path.starts_with(top))
+            .collect();
+        if inside.iter().all(|path| held.contains(&**path)) {
+            out.push(top.clone());
+        } else {
+            out.extend(inside.into_iter().filter(|path| held.contains(&**path)));
+        }
+    }
+    out
 }
 
 /// The place of the top-level block a body paragraph at `place` is in: the first element

@@ -8,11 +8,11 @@
 //! row's deciding paragraph's keep with the next is the table's, `keep_together`'s).
 
 use super::style_names;
-use crate::format::keeps::{row_leads, Keeps};
 use crate::names::W;
 use crate::{Result, WordDoc};
 use ooxml_base::pyfmt::round2;
 use ooxml_word_model::docx::formatting::{Cell, EffectiveParagraph, EffectiveRun, Formatting};
+use ooxml_word_model::docx::keeps::{row_leads, Keeps};
 use ooxml_word_model::docx::text::{text_runs, View};
 use ooxml_word_model::docx::{at_path, StoryPart};
 use ooxml_xml::Element;

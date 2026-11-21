@@ -127,7 +127,7 @@ impl<'a> Keeps<'a> {
     }
 
     /// The cell of the outermost table holding the paragraph at `place`.
-    fn cell(&mut self, place: &[u32]) -> Option<Cell> {
+    pub fn cell(&mut self, place: &[u32]) -> Option<Cell> {
         self.cells.cell(place)
     }
 

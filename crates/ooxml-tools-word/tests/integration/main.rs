@@ -5,6 +5,7 @@
 mod common;
 
 mod check;
+mod check_layout;
 mod compare;
 mod controls;
 mod describe;

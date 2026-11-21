@@ -93,7 +93,7 @@ impl PyCallOptions {
             built.names = documents.names.clone();
         }
         built.placer = placer.map(|p| Arc::new(PyPlacer(p)) as Arc<dyn Placer>);
-        built.layout = layout.map(|pages| Arc::new(pages.port()) as Arc<dyn ooxml_word_edit::FieldLayout>);
+        built.layout = layout.map(|pages| Arc::new(pages.port()) as Arc<dyn ooxml_tools_word::WordLayout>);
         built.blobs = blobs.map(|b| Arc::new(PyBlobs(b)) as Arc<dyn Blobs>);
         if let Some(written) = written {
             built.written = serde_json::from_str::<Value>(written)
