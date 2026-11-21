@@ -36,6 +36,7 @@ mod model;
 mod names;
 mod reading_edit;
 mod records;
+mod refused;
 mod registry;
 mod retired;
 mod session;

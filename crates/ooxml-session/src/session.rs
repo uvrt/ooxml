@@ -14,7 +14,7 @@ use crate::{CallContext, DocId, DocKind, DocNames, Registry, SessionError};
 use ooxml_base::{Cancel, Context};
 use ooxml_opc::Package;
 use ooxml_store::{StoreConfig, StoreStats};
-use ooxml_tools::{Accepted, Refusal, ToolError, ToolResult, ToolSpec, WayOut};
+use ooxml_tools::{Accepted, Outcome, Refusal, ToolError, ToolResult, ToolSpec, WayOut};
 use ooxml_tools_word::{Made, Placer, Version};
 use ooxml_word_edit::EarlierIds;
 use ooxml_word_model::docx::Versions;
@@ -602,6 +602,7 @@ impl Session {
             Ok(found) => found,
             Err(error) => return ToolResult::failed(error),
         };
+        let given = arguments.clone();
         let Some(doc) = state.opened.as_ref() else {
             return ToolResult::failed(ToolError::internal("no document", "session:dispatch"));
         };
@@ -612,7 +613,10 @@ impl Session {
             word: document.as_deref().and_then(Document::word),
             caller: &context.caller,
             cancel,
-            date: revision_date(self.context.clock.now()),
+            date: context
+                .date
+                .clone()
+                .unwrap_or_else(|| revision_date(self.context.clock.now())),
             made: &state.made,
             layout: context.layout.as_deref(),
             layout_limit: state.layout_limit,
@@ -620,7 +624,17 @@ impl Session {
             written: &context.written,
             others: &state.others,
         };
-        tool.run(arguments, &call)
+        let result = tool.run(arguments, &call);
+        // An id a version removed, refused as one the document lacks: said as such.
+        match (&result.outcome, call.word) {
+            (Outcome::Failed(error), Some(word)) => {
+                let replaced = call.doc.word().map(|w| w.ids().replaced());
+                let none = std::collections::BTreeMap::new();
+                crate::refused::removed(&word.retired, replaced.unwrap_or(&none), &given, error)
+                    .map_or(result, ToolResult::failed)
+            }
+            _ => result,
+        }
     }
 
     /// The tool a call names, its arguments as meant, and the document it reads (kept in

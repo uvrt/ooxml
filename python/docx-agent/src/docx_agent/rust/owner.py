@@ -38,11 +38,12 @@ def caller_key(caller: Mapping[str, Any] | None) -> str | None:
     return json.dumps(dict(caller), sort_keys=True, default=str, separators=(",", ":"))
 
 
-def context_of(caller: Mapping[str, Any] | None) -> Any:
-    """An ``ooxml_core.CallContext`` for ``caller``."""
+def context_of(caller: Mapping[str, Any] | None, date: str | None = None) -> Any:
+    """An ``ooxml_core.CallContext`` for ``caller``, its writes dated ``date`` (UTC to the
+    second, the session clock's; ``None``: the Rust session's own clock)."""
     import ooxml_core
 
-    return ooxml_core.CallContext(caller=caller_key(caller))
+    return ooxml_core.CallContext(caller=caller_key(caller), date=date)
 
 
 def options(**given: Any) -> Any:
@@ -163,6 +164,8 @@ class RustOwner:
 
         with mirror.lock:
             mirror.keep(number, head)
+            # the session words a refusal of an id this version removed by the host's number
+            mirror.session.number_version(mirror.doc, head, number)
         live = mirror.live()
         if live is not None:
             owner_committed(live, number)

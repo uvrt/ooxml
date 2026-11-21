@@ -79,6 +79,16 @@ pub(crate) fn not_found(message: String) -> EditError {
     })
 }
 
+/// A style not found that an argument named (`field`), with the styles that would do.
+pub(crate) fn not_found_at(message: String, field: &str, options: Vec<String>) -> EditError {
+    EditError::Style(StyleRefusal {
+        kind: StyleRefusalKind::NotFound,
+        message,
+        field: Some(field.to_owned()),
+        options,
+    })
+}
+
 /// A value refused with its field and options (docx-agent's `RegionError`, `LanguageError`).
 pub(crate) fn invalid(message: String, field: Option<&str>, options: Vec<String>) -> EditError {
     EditError::Style(StyleRefusal {

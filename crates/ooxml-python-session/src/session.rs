@@ -92,8 +92,10 @@ type Validation = (Vec<String>, Vec<String>, usize);
 type EditMade = (u64, PyVersion, Option<String>, Validation);
 
 /// What a call runs with (`ooxml_core.CallContext`): who calls, a token that stops it,
-/// how long laying a document out may take in it (`layout_timeout`, seconds),
-/// and how long it may run, in seconds. One may serve many calls.
+/// how long laying a document out may take in it (`layout_timeout`, seconds), how long it
+/// may run, in seconds, and the moment its writes are dated by (`date`: a revision's, a
+/// comment's), UTC to the second (`2026-11-20T09:30:15Z`) -- the host's clock, as docx-agent
+/// dates them; `None`: the session's clock. One may serve many calls.
 #[pyclass(frozen, name = "CallContext", module = "ooxml_core")]
 pub struct PyCallContext {
     pub(crate) inner: CallContext,
@@ -101,20 +103,27 @@ pub struct PyCallContext {
 
 #[pymethods]
 impl PyCallContext {
+    /// # Errors
+    /// `ValueError` for a negative `deadline` or `layout_timeout`, or a `date` not of that form.
     #[new]
-    #[pyo3(signature = (*, caller = None, cancel = None, deadline = None, layout_timeout = None))]
+    #[pyo3(signature = (*, caller = None, cancel = None, deadline = None, layout_timeout = None, date = None))]
     fn new(
         caller: Option<&str>,
         cancel: Option<PyRef<'_, PyCancelToken>>,
         deadline: Option<f64>,
         layout_timeout: Option<f64>,
+        date: Option<&str>,
     ) -> PyResult<Self> {
+        if date.is_some_and(|d| !is_utc_second(d)) {
+            return Err(PyValueError::new_err("date is UTC to the second: 2026-11-20T09:30:15Z"));
+        }
         Ok(Self {
             inner: CallContext {
                 caller: caller.map_or_else(Caller::anonymous, Caller::named),
                 cancel: cancel.map(|t| Arc::clone(&t.inner)),
                 deadline: seconds(deadline, "deadline")?,
                 layout_timeout: seconds(layout_timeout, "layout_timeout")?,
+                date: date.map(str::to_owned),
                 ..CallContext::default()
             },
         })
@@ -129,6 +138,19 @@ fn seconds(value: Option<f64>, name: &str) -> PyResult<Option<Duration>> {
                 .map_err(|_| PyValueError::new_err(format!("{name} is seconds, 0 or more")))
         })
         .transpose()
+}
+
+/// Whether `date` is a moment as a host dates writes: `YYYY-MM-DDTHH:MM:SSZ`.
+fn is_utc_second(date: &str) -> bool {
+    let b = date.as_bytes();
+    b.len() == 20
+        && b.iter().enumerate().all(|(i, c)| match i {
+            4 | 7 => *c == b'-',
+            10 => *c == b'T',
+            13 | 16 => *c == b':',
+            19 => *c == b'Z',
+            _ => c.is_ascii_digit(),
+        })
 }
 
 /// A call that panicked, as its failure.
@@ -607,6 +629,16 @@ impl PySession {
             .collect::<PyResult<Vec<_>>>()?;
         let session = &self.inner;
         py.detach(|| session.seed_retired(&id, given)).map_err(|e| to_py(&e))
+    }
+
+    /// The host numbered the Word document's `version` (a `Version` of it) as its version
+    /// `number`: a refusal of an id a version up to it removed names the change by it.
+    fn number_version(&self, py: Python<'_>, doc: &str, version: PyRef<'_, PyVersion>, number: u64) -> PyResult<()> {
+        let id = doc_id(doc, &self.inner)?;
+        let seq = version.inner.version();
+        let session = &self.inner;
+        py.detach(|| session.number_version(&id, seq, number))
+            .map_err(|e| to_py(&e))
     }
 
     /// Close the document; its versions and history are let go.
