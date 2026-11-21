@@ -211,3 +211,34 @@ fn writers_side_by_side_are_numbered_in_publish_order() {
     // Every commit took one number, none twice.
     assert_eq!(store.snapshot().number(), 8 * 50);
 }
+
+/// A store opened again goes on with the numbers given before; never once it numbered.
+#[test]
+fn a_reopened_store_goes_on_with_the_numbers_given() {
+    let store = fresh();
+    assert!(matches!(
+        store.continue_numbers(5, 4),
+        Err(ooxml_store::CountersError::StateAboveHighest { state: 5, highest: 4 })
+    ));
+    store.continue_numbers(3, 4).unwrap();
+    assert_eq!((store.snapshot().number(), store.highest()), (3, 4));
+    let w = Caller::named("w");
+    store.run(&w, &Put(vec![(1, 1)])).unwrap();
+    assert_eq!(store.snapshot().number(), 5);
+    let listed = store.listed();
+    assert_eq!(
+        listed
+            .steps
+            .iter()
+            .map(|s| (s.from_number, s.number))
+            .collect::<Vec<_>>(),
+        vec![(3, 5)]
+    );
+    store.undo().unwrap();
+    assert_eq!(store.snapshot().number(), 3);
+    assert_eq!(listed.highest, 5);
+    assert!(matches!(
+        store.continue_numbers(0, 9),
+        Err(ooxml_store::CountersError::AlreadyNumbered)
+    ));
+}

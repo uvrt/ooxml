@@ -141,14 +141,30 @@ class RustOwner:
 
         return make
 
-    def keep(self, mirror: "reads.Mirror", number: int, head: Any, first: int | None = None) -> None:
+    def keep(self, mirror: "reads.Mirror", head: Any, first: int | None = None) -> None:
         from .check import owner_committed
 
         with mirror.lock:
-            mirror.keep(number, head, first)
+            mirror.keep(head, first)
         live = mirror.live()
         if live is not None:
-            owner_committed(live, number)
+            owner_committed(live, head.state)
+
+    # -- the history's numbers: the session's (lane U3) ---------------------------------------
+
+    def continue_numbers(self, mirror: "reads.Mirror", state: int, highest: int) -> None:
+        with mirror.lock:
+            mirror.session.continue_numbers(mirror.doc, state, highest)
+            mirror.view_head = mirror.opened = mirror.session.head(mirror.doc)
+
+    def numbered(self, mirror: "reads.Mirror", number: int) -> Any:
+        return mirror.session.numbered(mirror.doc, number)
+
+    def highest(self, mirror: "reads.Mirror") -> int:
+        return mirror.session.highest(mirror.doc)
+
+    def numbers(self, mirror: "reads.Mirror") -> Any:
+        return mirror.session.numbers(mirror.doc)
 
     # -- step groups: a batch's ops as one step of the session's (lane H1) -------------------
 

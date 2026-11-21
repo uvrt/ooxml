@@ -136,6 +136,9 @@ pub(crate) struct CallState<'p> {
 pub struct CallMade {
     /// The number of the version its first edit made.
     pub first: u64,
+    /// The state number of the version its first edit was applied to ([`Opened::number`]):
+    /// the state its step goes from.
+    pub before: u64,
     /// The version its last edit made.
     pub last: Opened,
     /// What the call's edit touched (`touched` entries), where it made one version (else
@@ -565,16 +568,18 @@ impl Session {
                 let one = made.first.seq() == made.last.seq();
                 CallMade {
                     first: made.first.seq().0,
+                    before: made.before.number(),
                     touched: one.then(|| made.touched.iter().map(crate::changes::touched_json).collect()),
                     validation: made.validation,
                     last: Self::opened(&opened.id, document, At::Word(made.last)),
                 }
             });
-            let head = || document.as_ref().map(|d| d.head().seq());
-            let left = call_made.as_ref().map(|m| m.last.version());
+            // (state numbers, as the tool layer numbers the document's states)
+            let head = || document.as_ref().map(|d| d.head().number());
+            let left = call_made.as_ref().map(|m| m.last.number());
             result.version = Some(
                 left.or_else(|| if mutates { head() } else { None })
-                    .unwrap_or_else(|| opened.version()),
+                    .unwrap_or_else(|| opened.number()),
             );
         }
         warnings.append(&mut result.warnings);

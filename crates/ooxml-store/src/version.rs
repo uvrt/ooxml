@@ -51,6 +51,17 @@ impl<D: DocModel> Version<D> {
         }
     }
 
+    /// The same version, its state numbered `number` (a store going on with numbers given
+    /// before it opened: [`crate::Store::continue_numbers`]).
+    pub(crate) fn renumbered(&self, number: u64) -> Self {
+        Self {
+            seq: self.seq,
+            number,
+            doc: self.doc.clone(),
+            stamps: self.stamps.clone(),
+        }
+    }
+
     /// The version after `self`: `doc` at `seq`, the state numbered `number`, with `writes`
     /// stamped.
     pub(crate) fn succeed(&self, seq: Seq, number: u64, doc: D, writes: &KeySet<D::Key>) -> Self {

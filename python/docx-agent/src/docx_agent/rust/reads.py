@@ -159,10 +159,11 @@ class Mirror:
         #: committed (:meth:`docx_agent.rust.owner.RustOwner.bridge`).
         self.laid: tuple | None = None
 
-    def keep(self, number: int, version: Any, first: int | None = None) -> None:
-        """Keep ``version`` (an ``ooxml_core.Version``) as the document's version ``number``;
-        ``first``: the session's first version of the step, where it made several (a call's
-        edits, a batch's ops), each numbered ``number`` too."""
+    def keep(self, version: Any, first: int | None = None) -> None:
+        """Keep ``version`` (an ``ooxml_core.Version``) as the document's version
+        ``version.state``; ``first``: the session's first version of the step, where it made
+        several (a batch's ops), each numbered so too."""
+        number = version.state
         self.versions[number] = version
         for seq in range(first if first is not None else version.number, version.number + 1):
             self.numbers[seq] = number

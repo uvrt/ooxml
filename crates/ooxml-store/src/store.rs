@@ -124,6 +124,17 @@ struct Body<D: DocModel> {
     caller: Option<Arc<str>>,
 }
 
+/// A store's history as [`Store::listed`] reads it, in one go.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Listed<K: Ord> {
+    /// The highest state number given: the next step's is one more.
+    pub highest: u64,
+    /// The steps undo can reach, oldest first.
+    pub steps: Vec<StepInfo<K>>,
+    /// The steps plain redo can bring back, the next one last.
+    pub redo: Vec<StepInfo<K>>,
+}
+
 /// The state under the commit lock.
 struct State<D: DocModel> {
     last: Seq,
@@ -181,6 +192,28 @@ impl<D: DocModel> Store<D> {
         }
     }
 
+    /// Go on with the numbers a tool layer gave the document's states before it was opened
+    /// again ([`Version::number`]): the head is the state numbered `state`, the next step's
+    /// number one more than `highest`. Only before the store numbered anything itself.
+    ///
+    /// # Errors
+    /// [`CountersError::StateAboveHighest`]; [`CountersError::AlreadyNumbered`] once the
+    /// store made a step or a group is open.
+    pub fn continue_numbers(&self, state: u64, highest: u64) -> Result<(), CountersError> {
+        if state > highest {
+            return Err(CountersError::StateAboveHighest { state, highest });
+        }
+        let mut locked = lock(&self.state);
+        let head = self.head.load();
+        if locked.numbered != 0 || head.number() != 0 || locked.history.grouped() || !locked.history.steps().is_empty()
+        {
+            return Err(CountersError::AlreadyNumbered);
+        }
+        locked.numbered = highest;
+        self.head.store(Arc::new(head.renumbered(state)));
+        Ok(())
+    }
+
     /// The head. Never waits for a writer.
     pub fn snapshot(&self) -> Snapshot<D> {
         self.head.load()
@@ -209,6 +242,22 @@ impl<D: DocModel> Store<D> {
     /// The steps plain redo can bring back, the next one last.
     pub fn redoable(&self) -> Vec<StepInfo<D::Key>> {
         lock(&self.state).history.redoable()
+    }
+
+    /// The highest state number given ([`Version::number`]): the next step's is one more.
+    pub fn highest(&self) -> u64 {
+        lock(&self.state).numbered
+    }
+
+    /// The highest state number given ([`Version::number`]), the steps undo can reach
+    /// (oldest first) and those plain redo can bring back (the next one last), read at once.
+    pub fn listed(&self) -> Listed<D::Key> {
+        let state = lock(&self.state);
+        Listed {
+            highest: state.numbered,
+            steps: state.history.steps(),
+            redo: state.history.redoable(),
+        }
     }
 
     /// The version numbered `number` ([`Version::number`]) the head reaches: the head, else

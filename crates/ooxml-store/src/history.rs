@@ -42,6 +42,10 @@ pub struct StepInfo<K: Ord> {
     pub step: Seq,
     /// The version it was made on.
     pub from: Seq,
+    /// The state number of the version it made ([`crate::Version::number`]).
+    pub number: u64,
+    /// The state number of the version it was made on.
+    pub from_number: u64,
     /// Who made it.
     pub caller: Option<Arc<str>>,
     /// What it read.
@@ -549,6 +553,8 @@ fn info<D: DocModel>(step: &Step<D>) -> StepInfo<D::Key> {
     StepInfo {
         step: step.after.seq(),
         from: step.before.seq(),
+        number: step.after.number(),
+        from_number: step.before.number(),
         caller: step.caller.clone(),
         reads: step.reads.clone(),
         writes: step.writes.clone(),
