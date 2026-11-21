@@ -29,6 +29,8 @@
 //! - how a copy's rows and paragraphs correspond to its sample's ([`pairing`]);
 //! - validation per change ([`validate`]: facts memoised by content, docx-agent's rules)
 //!   and what a change touched ([`touched`]);
+//! - which paragraphs were the file's when the session opened it, and which revision
+//!   records this session wrote ([`originals`]);
 //! - [`Editor`], which runs a command through the store and reports its result with
 //!   `touched` and the validation delta.
 //!
@@ -77,6 +79,7 @@ mod names;
 mod namespaces;
 mod new_part;
 mod notes;
+pub mod originals;
 pub mod pairing;
 mod paragraph_style;
 mod paragraphs;

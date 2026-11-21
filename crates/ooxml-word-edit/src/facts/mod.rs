@@ -3,8 +3,10 @@
 //! list levels whose labels show a level nothing uses ([`numbering_skips_level`]), tables off
 //! their grid or ragged ([`table_grid_mismatch`]), the cells Word's Accept All removes
 //! with their text ([`accept_loses_text`]), paragraphs whose direct formatting sets them
-//! apart from their styles ([`direct_formatting`]) and the styles in use that a list does
-//! not allow ([`style_list`]) -- each as typed entries, with what fixes them.
+//! apart from their styles ([`direct_formatting`]), the styles in use that a list does
+//! not allow ([`style_list`]) and the file's text a pending deletion this session made
+//! takes out of the final view ([`accept_loses_original`]) -- each as typed entries in
+//! document order, with what fixes them.
 //!
 //! Must not: lay out, filter by pages or ranges, cap or word a reply (the tool layer does),
 //! or change the document.
@@ -14,6 +16,7 @@ mod direct;
 mod empty;
 mod grid;
 mod numbering;
+mod original;
 mod scratch;
 mod shapes;
 mod styles;
@@ -23,6 +26,7 @@ pub use direct::{direct_formatting, DirectFormatting, FormatValue};
 pub use empty::{empty_paragraphs, EmptyRun};
 pub use grid::{table_grid_mismatch, GridFix, GridMismatch, OffGridRow, RaggedRow};
 pub use numbering::{numbering_skips_level, SkippedLevel};
+pub use original::{accept_loses_original, LostOriginal};
 pub use styles::{style_list, StyleList, StyleUse};
 
 use crate::names::W;
@@ -31,7 +35,7 @@ use ooxml_xml::Element;
 use std::collections::HashMap;
 
 /// Whether `c` is white space as Python's `str.strip` and `str.split` take it.
-fn py_space(c: char) -> bool {
+pub(crate) fn py_space(c: char) -> bool {
     c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
 }
 

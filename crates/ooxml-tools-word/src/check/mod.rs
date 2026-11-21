@@ -13,7 +13,8 @@ mod facts;
 
 pub use args::{Check, CheckCopy, CheckInclude, CheckScale, CopyLists, CopyReference, ScaleShow, ScaleStep, StepText};
 pub use facts::{
-    direct_formatting_json, empty_run_json, grid_mismatch_json, lost_cell_json, skipped_level_json, style_use_json,
+    direct_formatting_json, empty_run_json, grid_mismatch_json, lost_cell_json, lost_original_json, skipped_level_json,
+    style_use_json,
 };
 
 use crate::describe::cancelled;
