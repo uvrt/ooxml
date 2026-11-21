@@ -495,6 +495,7 @@ dependencies = [
 name = "ooxml-chart"
 version = "0.1.0"
 dependencies = [
+ "ooxml-base",
  "ooxml-colour",
  "ooxml-drawingml",
  "ooxml-fonts",
@@ -701,6 +702,7 @@ dependencies = [
 name = "ooxml-sheets"
 version = "0.1.0"
 dependencies = [
+ "ooxml-base",
  "ooxml-opc",
  "ooxml-xml",
  "ooxml-zip",

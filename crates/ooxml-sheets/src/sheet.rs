@@ -116,26 +116,39 @@ impl<'w> Worksheet<'w> {
     }
 
     fn read(&self, node: &Element) -> Result<Option<Value>, SheetsError> {
-        let kind = node.attribute(None, "t").unwrap_or("n");
-        if kind == "inlineStr" {
-            return Ok(child(node, "is").map(|item| Value::Text(item_text(item))));
-        }
-        let Some(text) = child(node, "v").and_then(leading_text) else {
-            return Ok(None);
-        };
-        Ok(Some(match kind {
-            "s" => {
-                let index = py_int(&text).ok_or_else(|| SheetsError::SharedStringIndex {
-                    part: self.part.clone(),
-                    text: text.clone(),
-                })?;
-                Value::Text(self.workbook.shared_string(index)?.to_owned())
-            }
-            "str" | "e" => Value::Text(text),
-            "b" => Value::Bool(matches!(text.trim_matches(py_space), "1" | "true")),
-            _ => number(text),
-        }))
+        read_cell(node, &self.part, &|index| self.workbook.shared_string(index).map(str::to_owned))
     }
+}
+
+/// What the cell `node` of the sheet `part` holds, its shared strings looked up with
+/// `string` (ooxml-edit's `Worksheet._read`).
+///
+/// # Errors
+/// A shared-string cell whose value is not an index, or `string`'s error for one.
+pub(crate) fn read_cell(
+    node: &Element,
+    part: &str,
+    string: &dyn Fn(i64) -> Result<String, SheetsError>,
+) -> Result<Option<Value>, SheetsError> {
+    let kind = node.attribute(None, "t").unwrap_or("n");
+    if kind == "inlineStr" {
+        return Ok(child(node, "is").map(|item| Value::Text(item_text(item))));
+    }
+    let Some(text) = child(node, "v").and_then(leading_text) else {
+        return Ok(None);
+    };
+    Ok(Some(match kind {
+        "s" => {
+            let index = py_int(&text).ok_or_else(|| SheetsError::SharedStringIndex {
+                part: part.to_owned(),
+                text: text.clone(),
+            })?;
+            Value::Text(string(index)?)
+        }
+        "str" | "e" => Value::Text(text),
+        "b" => Value::Bool(matches!(text.trim_matches(py_space), "1" | "true")),
+        _ => number(text),
+    }))
 }
 
 /// A numeric cell's value as Python's `float` reads it, whole when written without a point

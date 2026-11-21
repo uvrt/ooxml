@@ -49,7 +49,7 @@ pub(crate) fn chart_read_json(
 }
 
 /// ooxml-edit's `chart_json`, the chart by its `id`.
-fn chart_json(id: &str, root: &Element, data: &ChartData) -> Map<String, Value> {
+pub(crate) fn chart_json(id: &str, root: &Element, data: &ChartData) -> Map<String, Value> {
     let mut out = Map::new();
     out.insert("id".into(), Value::from(id));
     let kind = if is_dot(root) {

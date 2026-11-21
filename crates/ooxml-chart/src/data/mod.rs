@@ -48,7 +48,7 @@ use ooxml_drawingml::read::text::paragraph_text;
 use ooxml_numfmt::is_date_code;
 use ooxml_xml::view::{attr, child, children, elements, local, py_flat as flat, text};
 use ooxml_xml::Element;
-use source::Source;
+pub(crate) use source::Source;
 
 /// One series' name and values.
 #[derive(Debug, Clone, PartialEq)]

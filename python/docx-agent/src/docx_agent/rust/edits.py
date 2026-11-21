@@ -5,7 +5,8 @@ A tool with a Rust editing handler (:data:`SERVED`: ``word_set_text``, ``replace
 ``word_insert_text``, ``word_delete``, ``word_format``, ``word_lists``, ``word_format_table``,
 ``word_styles``, ``word_follow_sample``, ``word_insert_markdown``, ``word_fields``,
 ``word_headers_footers``, ``word_template``, ``word_move``, ``word_sections``, ``word_notes``,
-``word_links``, ``word_drawings``, and each one ported after them)
+``word_links``, ``word_drawings``, ``edit_chart`` (its data actions that change points in place;
+the rest answer ``unported``), and each one ported after them)
 runs there, ahead of docx-agent's handler and its wrapper
 (:func:`docx_agent.tools._base.wrap`): the call's arguments, its ``$name`` refs resolved, go to
 ``Session.edit`` with the call's caller and the document's tracking mode; the versions the
@@ -228,6 +229,10 @@ def _drawings(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
             "at": _sided(call, arguments.get("at"))}
 
 
+def _chart(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    return {**_own(arguments), "target": reads._refs(call, arguments.get("target"))}
+
+
 class _Blobs:
     """The session's blobs as ``Session.edit(blobs=...)`` asks them (lane P2c14): Rust calls
     back with the interpreter lock taken back, for the blob a call names."""
@@ -266,6 +271,7 @@ SERVED: dict[str, Callable[[Any, dict[str, Any]], dict[str, Any]]] = {
     "word_notes": _notes,
     "word_links": _links,
     "word_drawings": _drawings,
+    "edit_chart": _chart,
 }
 
 #: The served tools that read the session's blobs (an inserted picture's bytes).
