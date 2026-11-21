@@ -607,6 +607,9 @@ impl Session {
                 .date
                 .clone()
                 .unwrap_or_else(|| revision_date(self.context.clock.now())),
+            setup: ooxml_word_edit::Setup {
+                as_given: context.as_given,
+            },
             made: &state.made,
             layout: context.layout.as_deref(),
             blobs: context.blobs.as_deref(),

@@ -74,6 +74,9 @@ pub struct CallContext {
     /// `2026-11-20T09:30:15Z`): the host's clock, to the second, as docx-agent dates them;
     /// `None`: the session's clock.
     pub date: Option<String>,
+    /// The text the call writes is written as given, none of the spacing its language wants
+    /// (docx-agent's `docx_format(typography=False)`); `false`: spaced by its language.
+    pub as_given: bool,
 }
 
 impl std::fmt::Debug for CallContext {

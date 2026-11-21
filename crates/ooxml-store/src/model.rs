@@ -15,6 +15,10 @@ pub trait DocModel: Clone + Send + Sync + 'static {
     type Change: Clone + Debug + Send + Sync + 'static;
     /// Why a change could not be applied or inverted.
     type Error: std::error::Error + Send + Sync + 'static;
+    /// How one run's transaction prepares (a setting of the call it serves, not content:
+    /// nothing in it is a change), given to its working version ([`DocModel::set_up`]);
+    /// `()` for a model with none.
+    type Setup: Default + Send + Sync + 'static;
 
     /// Apply `change`. On an error the store discards the value, so it need not be left as
     /// it was. Applied to a version that agrees on every key the change's transaction read,
@@ -71,6 +75,14 @@ pub trait DocModel: Clone + Send + Sync + 'static {
     /// version, on the head a commit is replayed on, and before it replays a step's changes
     /// or their inverses (undo, redo). Nothing by default.
     fn begin(&mut self) {}
+
+    /// Set up a transaction's working version, after [`DocModel::begin`], with how its run
+    /// prepares ([`crate::Store::run_with`]). It may steer only what the transaction's
+    /// command decides while preparing: a commit replays the changes alone. Nothing by
+    /// default.
+    fn set_up(&mut self, setup: &Self::Setup) {
+        let _ = setup;
+    }
 
     /// Add to `into` the keys `change` creates under stand-ins: keys of what did not exist
     /// before, named by a value drawn where the change is applied (a new block named by its

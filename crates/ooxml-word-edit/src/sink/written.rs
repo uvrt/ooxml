@@ -11,7 +11,7 @@ use crate::names::{MC, W, W14};
 use crate::set_text::block_key;
 use crate::spacing::{mark_places, marked_places, space_paragraph, table_of, Context};
 use crate::work::{scope_above, Id, Work};
-use crate::Result;
+use crate::{Change, Result};
 use ooxml_word_model::docx::{at_path, StoryPart};
 use ooxml_word_model::ids::Entry;
 use ooxml_word_model::typography::{has_marks, Cascade};
@@ -103,7 +103,7 @@ impl EditSink<'_, '_> {
     /// # Errors
     /// When a part is not XML.
     pub(crate) fn space_written(&mut self) -> Result<usize> {
-        if self.written.is_empty() {
+        if self.written.is_empty() || self.doc().as_given() {
             return Ok(0);
         }
         let docx = self.docx()?;
@@ -162,6 +162,9 @@ impl EditSink<'_, '_> {
                 let holder = Arc::clone(holder);
                 crate::textbox::sync_holder(self, &part, above, &holder)?;
             }
+        }
+        if made > 0 {
+            self.write(Change::Spaced(made))?;
         }
         Ok(made)
     }

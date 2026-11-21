@@ -29,6 +29,8 @@ pub struct Call<'a> {
     pub(crate) cancel: &'a dyn Cancel,
     /// The date edits made now carry (the host's, else the session's clock; to the second).
     pub(crate) date: String,
+    /// How its edits write (text as given, or spaced by its language: the host's setting).
+    pub(crate) setup: ooxml_word_edit::Setup,
     /// The versions the call's edits made (an editing tool's: [`CallEditor::made`]).
     pub(crate) made: &'a Mutex<Option<Made>>,
     /// The host's layout of the document's versions.
@@ -88,14 +90,15 @@ impl Call<'_> {
     /// editor, the call's caller, tracking mode and host context; the versions its edits
     /// made are kept for the call (its `made`), and the ids its edits drew as stand-ins are
     /// named in the reply as they were drawn where the edits landed
-    /// ([`ooxml_tools_word::resolve_drawn`]).
+    /// ([`ooxml_tools_word::resolve_drawn`]); the spaces their language spacing wrote are
+    /// counted in it ([`ooxml_tools_word::note_spaced`]).
     pub(crate) fn edit(&self, word: &Word, run: impl FnOnce(&Editing<'_>) -> ToolResult<Value>) -> ToolResult<Value> {
         let policy = word.policy(&self.date);
         let tracking = match &policy {
             ooxml_word_edit::RevisionPolicy::Tracked(tracking) => Some(tracking),
             ooxml_word_edit::RevisionPolicy::Untracked => None,
         };
-        let editor = CallEditor::new(&word.editor);
+        let editor = CallEditor::new(&word.editor).with_setup(self.setup);
         let others = self.other_versions();
         let editing = Editing::new(
             &editor,
@@ -111,7 +114,9 @@ impl Call<'_> {
         .with_blobs(self.blobs)
         .with_written(self.written);
         let mut result = run(&editing);
-        *self.made.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = editor.made();
+        let made = editor.made();
+        ooxml_tools_word::note_spaced(&mut result, made.as_ref().map_or(0, |m| m.spaced));
+        *self.made.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = made;
         ooxml_tools_word::resolve_drawn(&mut result, &editor.moved());
         result
     }

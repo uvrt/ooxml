@@ -40,6 +40,7 @@ impl DocModel for Cells {
     type Key = u32;
     type Change = Change;
     type Error = Refused;
+    type Setup = ();
 
     fn apply(&mut self, change: &Change) -> Result<(), Refused> {
         match change {

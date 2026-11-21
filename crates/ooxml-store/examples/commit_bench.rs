@@ -69,6 +69,7 @@ impl DocModel for Blocks {
     type Key = u32;
     type Change = SetText;
     type Error = NoBlock;
+    type Setup = ();
 
     fn apply(&mut self, change: &SetText) -> Result<(), NoBlock> {
         if self.set(change.0 as usize, Arc::clone(&change.1)) {

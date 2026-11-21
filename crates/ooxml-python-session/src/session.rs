@@ -94,7 +94,9 @@ type EditMade = (u64, PyVersion, Option<String>, Validation);
 /// What a call runs with (`ooxml_core.CallContext`): who calls, a token that stops it,
 /// how long it may run, in seconds, and the moment its writes are dated by (`date`: a
 /// revision's, a comment's), UTC to the second (`2026-11-20T09:30:15Z`) -- the host's clock,
-/// as docx-agent dates them; `None`: the session's clock. One may serve many calls.
+/// as docx-agent dates them; `None`: the session's clock -- and whether the text it writes
+/// is spaced by its language (`typography`, docx-agent's `docx_format(typography=...)`;
+/// `False`: as given). One may serve many calls.
 #[pyclass(frozen, name = "CallContext", module = "ooxml_core")]
 pub struct PyCallContext {
     pub(crate) inner: CallContext,
@@ -105,12 +107,13 @@ impl PyCallContext {
     /// # Errors
     /// `ValueError` for a negative `deadline`, or a `date` not of that form.
     #[new]
-    #[pyo3(signature = (*, caller = None, cancel = None, deadline = None, date = None))]
+    #[pyo3(signature = (*, caller = None, cancel = None, deadline = None, date = None, typography = true))]
     fn new(
         caller: Option<&str>,
         cancel: Option<PyRef<'_, PyCancelToken>>,
         deadline: Option<f64>,
         date: Option<&str>,
+        typography: bool,
     ) -> PyResult<Self> {
         if date.is_some_and(|d| !is_utc_second(d)) {
             return Err(PyValueError::new_err("date is UTC to the second: 2026-11-20T09:30:15Z"));
@@ -127,6 +130,7 @@ impl PyCallContext {
                 cancel: cancel.map(|t| Arc::clone(&t.inner)),
                 deadline,
                 date: date.map(str::to_owned),
+                as_given: !typography,
                 ..CallContext::default()
             },
         })

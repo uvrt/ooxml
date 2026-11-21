@@ -330,6 +330,26 @@ impl Formatting {
         effective_paragraph(resolved)
     }
 
+    /// A paragraph's formatting, `cell` where it stands in a table, with where each of its
+    /// resolved values came from (docx2svg's `Resolved.origin`). Not memoised: a check asks
+    /// it of the few paragraphs it names.
+    #[must_use]
+    pub fn paragraph_traced(&self, paragraph: &Element, cell: Option<&Cell>) -> (EffectiveParagraph, Origins) {
+        let properties = paragraph.find(Some(W), "pPr").map(|e| &**e);
+        let style = paragraph_style(paragraph);
+        let direct = paragraph_properties(properties, &self.context.colours);
+        let (resolved, origins) = resolve_paragraph_traced::<Origins>(
+            &self.sources(),
+            &ParagraphInput {
+                style_id: style.as_deref(),
+                table_style: cell.map(|c| &*c.style),
+                conditions: cell.map_or(&[], |c| &c.conditions),
+                direct: &direct,
+            },
+        );
+        (effective_paragraph(Arc::new(resolved)), origins)
+    }
+
     /// A style's look after inheritance (docx-agent's `effective.style_look`): what a
     /// paragraph of the paragraph style `style` (`None`: the default) with no direct
     /// formatting gets, in `cell` where given, and a run in it with none, in the character

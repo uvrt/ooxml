@@ -38,12 +38,13 @@ def caller_key(caller: Mapping[str, Any] | None) -> str | None:
     return json.dumps(dict(caller), sort_keys=True, default=str, separators=(",", ":"))
 
 
-def context_of(caller: Mapping[str, Any] | None, date: str | None = None) -> Any:
+def context_of(caller: Mapping[str, Any] | None, date: str | None = None, *, typography: bool = True) -> Any:
     """An ``ooxml_core.CallContext`` for ``caller``, its writes dated ``date`` (UTC to the
-    second, the session clock's; ``None``: the Rust session's own clock)."""
+    second, the session clock's; ``None``: the Rust session's own clock) and spaced by their
+    language unless ``typography`` is off (``docx_format(typography=False)``: as given)."""
     import ooxml_core
 
-    return ooxml_core.CallContext(caller=caller_key(caller), date=date)
+    return ooxml_core.CallContext(caller=caller_key(caller), date=date, typography=typography)
 
 
 def host_ids(view: Any) -> Any:

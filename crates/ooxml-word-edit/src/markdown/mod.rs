@@ -4,13 +4,15 @@
 //! ([`writer`], [`lists`], [`table`]), put at its place -- a story's end (a body that is one
 //! empty paragraph typed into: the first new paragraph keeps its ids), after or before a
 //! block -- with a separator paragraph between two tables and a paragraph after a table
-//! that ends its container, stamped, and tracked as one revision group ([`insertion`]).
+//! that ends its container, stamped, and tracked as one revision group ([`insertion`]);
+//! a table cell style whose indents do not fit its cells said in a warning ([`cell_indents`]).
 //!
 //! Not ported yet ([`EditError::Unsupported`]: the host writes them its own way):
 //! pictures, footnotes, `replace:`, and the `like` and `table_like` looks.
 //!
 //! Must not: write but through the sink, or know a tool's JSON.
 
+mod cell_indents;
 mod insertion;
 pub(crate) use insertion::{insert_content, track, track_table};
 mod lists;
