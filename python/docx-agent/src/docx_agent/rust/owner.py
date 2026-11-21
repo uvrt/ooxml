@@ -13,7 +13,8 @@ its saved bytes are the session's.  :class:`RustOwner` is the format's
   read (:func:`.view.follow`: the changed parts, the ids and renames the session gave), and
   the parts it changed are committed through ``Session.bridge`` as the step of that tool and
   caller (``bridge_calls{tool}``);
-- undo and redo are the session's (``Session.undo``/``redo``); the save is the session's bytes;
+- undo and redo are the session's own ``undo`` tool (lane U4: who made each step is the
+  session's record too); the save is the session's bytes;
 - a changing call's checks read the session's validation (:func:`owned_validation`) unless
   the view is current anyway or a layout is compared.
 """
@@ -39,10 +40,14 @@ def caller_key(caller: Mapping[str, Any] | None) -> str | None:
 
 
 def context_of(caller: Mapping[str, Any] | None) -> Any:
-    """An ``ooxml_core.CallContext`` for ``caller``."""
+    """An ``ooxml_core.CallContext`` for ``caller``: its key, and its context in the order
+    given (as the session's replies name the caller: ``agent=b``)."""
     import ooxml_core
 
-    return ooxml_core.CallContext(caller=caller_key(caller))
+    if not caller:
+        return ooxml_core.CallContext()
+    return ooxml_core.CallContext(caller=caller_key(caller),
+                                  context=json.dumps(dict(caller), default=str))
 
 
 class RustOwner:
@@ -101,17 +106,13 @@ class RustOwner:
             mirror.laid = laid_mark(live)
         return made
 
-    def undo(self, mirror: "reads.Mirror") -> Any:
-        return self._step(mirror, mirror.session.undo)
-
-    def redo(self, mirror: "reads.Mirror") -> Any:
-        return self._step(mirror, mirror.session.redo)
-
-    @staticmethod
-    def _step(mirror: "reads.Mirror", step: Any) -> Any:
-        with mirror.lock:
-            done, _version = step(mirror.doc, 1)
-            return mirror.session.head(mirror.doc) if done else None
+    def history(self, mirror: "reads.Mirror", name: str, steps: int, redo: bool,
+                caller: Mapping[str, Any] | None) -> dict[str, Any]:
+        """The session's ``undo`` tool on the document, named ``name`` in its reply."""
+        arguments = {"doc": name, "steps": steps, "redo": redo}
+        reply, _images, _app = mirror.session.call("undo", json.dumps(arguments), context=context_of(caller),
+                                                   names={name: mirror.doc})
+        return json.loads(reply)
 
     def reader(self, mirror: "reads.Mirror", head: Any, number: int) -> Any:
         """What makes the Python reader of ``head`` (the document's version ``number``) from
@@ -185,9 +186,10 @@ class RustOwner:
             mirror.tracking = mark[1] if mark is not None else group.tracking
             return made
 
-    def close_group(self, mirror: "reads.Mirror", group: "_Group", caller: Mapping[str, Any] | None) -> Any:
+    def close_group(self, mirror: "reads.Mirror", group: "_Group", caller: Mapping[str, Any] | None,
+                    tool: str | None = None) -> Any:
         with mirror.lock:
-            return group.steps.close(context=context_of(caller))
+            return group.steps.close(context=context_of(caller), tool=tool)
 
     def save(self, mirror: "reads.Mirror") -> bytes:
         return bytes(mirror.session.save(mirror.doc))

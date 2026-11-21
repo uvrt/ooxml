@@ -203,6 +203,14 @@ impl ToolError {
         Self::make(ErrorCode::Refusal(code), message.into(), Some(way_out))
     }
 
+    /// A refusal with no way out to give: only where no call could do what was asked
+    /// (`undo` with nothing to undo, as today's words it). Every other refusal carries its
+    /// way out (tool rule 2): [`ToolError::refusal`].
+    #[must_use]
+    pub fn nothing_to_offer(code: Refusal, message: impl Into<String>) -> Self {
+        Self::make(ErrorCode::Refusal(code), message.into(), None)
+    }
+
     /// A failure that is not a refusal.
     #[must_use]
     pub fn failure(code: Failure, message: impl Into<String>) -> Self {

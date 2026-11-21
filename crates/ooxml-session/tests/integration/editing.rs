@@ -147,7 +147,7 @@ fn a_caller_undoes_only_its_own_latest_change() {
     match s.undo(&d, 1, &ann) {
         Err(SessionError::Entangled { step, later }) => {
             assert_eq!(step, 1);
-            assert_eq!(later, vec![(2, Some("bo".to_owned()))]);
+            assert_eq!(later, vec![2]);
         }
         other => panic!("{other:?}"),
     }
@@ -155,12 +155,111 @@ fn a_caller_undoes_only_its_own_latest_change() {
     assert_eq!(s.undo(&d, 5, &bo).unwrap().count, 1);
     assert_eq!(s.undo(&d, 1, &ann).unwrap().count, 1);
     assert!(body_of(&s, &d).contains(">one<"));
-    assert_eq!(s.redo(&d, 1, &bo).unwrap().count, 0, "ann's undo is the next to redo");
+    // ann's undo is the next to redo: bo's own redo is entangled, until ann's is redone
+    assert!(matches!(s.redo(&d, 1, &bo), Err(SessionError::RedoNotNext { step: 2 })));
     assert_eq!(s.redo(&d, 1, &ann).unwrap().count, 1);
     assert!(body_of(&s, &d).contains("by ann"));
     assert_eq!(s.redo(&d, 1, &CallContext::default()).unwrap().count, 1);
     assert!(body_of(&s, &d).contains("by bo"));
     assert_eq!(s.undo(&d, 0, &CallContext::default()).unwrap().count, 0);
+}
+
+/// A caller whose context the host gave in its own order (`{"turn": .., "agent": ..}`).
+fn as_writer(agent: &str) -> CallContext {
+    let given = json!({"turn": 1, "agent": agent});
+    let key = format!(r#"{{"agent":"{agent}","turn":1}}"#);
+    CallContext {
+        caller: Caller::named(&key),
+        caller_context: given.as_object().cloned().map(Arc::new),
+        ..CallContext::default()
+    }
+}
+
+fn bridged(s: &Session, d: &DocId, body: &str, context: &CallContext) {
+    let parts = vec![(
+        "word/document.xml".to_owned(),
+        Some(Arc::from(document(body).as_bytes())),
+    )];
+    s.bridge(d, "word_rewrite", parts, context).unwrap();
+}
+
+#[test]
+fn the_undo_tool_answers_in_todays_words() {
+    let s = session();
+    let d = s
+        .open(docx(&paragraph("11111111", "one")), DocKind::Docx, "a.docx")
+        .unwrap();
+    let (a, b) = (as_writer("a"), as_writer("b"));
+    let undo = |arguments: Value, context: &CallContext| call(&s, "undo", arguments, context);
+    let nothing = undo(json!({"doc": "d1"}), &a);
+    assert_eq!(
+        nothing["error"],
+        json!({"code": "refused", "valid_options": [],
+               "message": "nothing of yours to undo in d1: undo here takes back your own changes only"})
+    );
+    assert_eq!(
+        (nothing["doc"].clone(), nothing["version"].clone()),
+        (json!("d1"), json!(0))
+    );
+    bridged(&s, &d, &paragraph("11111111", "by a"), &a);
+    bridged(&s, &d, &paragraph("11111111", "by b"), &b);
+    let refused = undo(json!({"doc": "d1"}), &a);
+    assert_eq!(refused["version"], json!(2));
+    assert_eq!(refused["error"]["code"], json!("entangled"));
+    assert_eq!(
+        refused["error"]["message"],
+        json!(
+            "your latest change to d1 (word_rewrite, version 1) is not the latest: word_rewrite by turn=1, \
+             agent=b changed d1 after it (version 2), and undoing yours would take back what came after. \
+             Change it back with an edit, or ask whoever made the later change to undo it first"
+        )
+    );
+    assert_eq!(
+        refused["error"]["details"],
+        json!({"version": 1, "later": [{"version": 2, "tool": "word_rewrite", "context": {"turn": 1, "agent": "b"}}]})
+    );
+    let undone = undo(json!({"doc": "d1", "steps": 3}), &b);
+    assert_eq!(undone["summary"], json!("Undid 1 of your own step(s) of d1"));
+    assert_eq!(undone["data"], json!({"steps": 1, "version": 1, "own": true}));
+    assert_eq!(undone["version"], json!(1));
+    assert_eq!(undone["changed"], json!(["d1"]));
+    assert_eq!(
+        undone["warnings"],
+        json!(["1 of 3 step(s): no more of yours, or the next depends on a later change by another caller"])
+    );
+    assert_eq!(undo(json!({"doc": "d1"}), &a)["data"]["version"], json!(0));
+    let redo = undo(json!({"doc": "d1", "redo": true}), &b);
+    assert_eq!(
+        redo["error"]["message"],
+        json!(
+            "your undone change to d1 (version 2) is not the next to redo: another caller undid a change since. \
+             Make your change again instead"
+        )
+    );
+    let own = CallContext::default();
+    let redone = undo(json!({"doc": "d1", "redo": true, "steps": 5}), &own);
+    assert_eq!(redone["summary"], json!("Redid 2 step(s) of d1"));
+    assert_eq!(redone["warnings"], json!([]));
+    assert!(body_of(&s, &d).contains("by b"));
+    // a new step drops every own undo with plain redo
+    assert_eq!(undo(json!({"doc": "d1", "steps": 2}), &own)["data"]["steps"], json!(2));
+    bridged(&s, &d, &paragraph("11111111", "again"), &a);
+    let none = undo(json!({"doc": "d1", "redo": true}), &b);
+    assert_eq!(none["error"]["code"], json!("refused"));
+    assert_eq!(
+        undo(json!({"doc": "d1", "steps": 0}), &own)["error"]["message"],
+        json!("steps is 0; at least 1")
+    );
+    let within = call(
+        &s,
+        "read_batch",
+        json!({"ops": [{"tool": "undo", "arguments": {"doc": "d1"}}]}),
+        &own,
+    );
+    assert!(
+        within.to_string().contains("undo cannot run inside a read_batch"),
+        "{within}"
+    );
 }
 
 #[test]
@@ -560,14 +659,14 @@ fn a_step_group_is_one_undo_step_and_a_revert_takes_its_edits_back() {
     put(&s, &d, &paragraph("11111111", "three"), &context);
     let reverted = s.revert_group(&d, &start, &context).unwrap();
     assert_eq!(reverted, Some(s.snapshot(&d).unwrap().version()));
-    assert_eq!(s.close_group(&d, &context).unwrap(), None);
+    assert_eq!(s.close_group(&d, &context, Some("batch")).unwrap(), None);
     assert!(body_of(&s, &d).contains(">two<"));
     assert!(!body_of(&s, &d).contains("w:ins"));
     // a batch that applies: one step, which one undo takes back
     s.open_group(&d).unwrap();
     put(&s, &d, &paragraph("11111111", "four"), &context);
     put(&s, &d, &paragraph("11111111", "five"), &context);
-    let made = s.close_group(&d, &context).unwrap();
+    let made = s.close_group(&d, &context, Some("batch")).unwrap();
     assert_eq!(made, Some(s.snapshot(&d).unwrap().version()));
     assert!(body_of(&s, &d).contains(">five<"));
     assert_eq!(s.undo(&d, 1, &context).unwrap().count, 1);

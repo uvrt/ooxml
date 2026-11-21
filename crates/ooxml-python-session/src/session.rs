@@ -92,7 +92,9 @@ pub(crate) fn to_py(error: &SessionError) -> PyErr {
         SessionError::Kind(_) | SessionError::PartName(_) | SessionError::Package(_) => PyValueError::new_err(message),
         SessionError::Base(ooxml_base::BaseError::Cancelled) => PyTimeoutError::new_err(message),
         SessionError::Word(_) => PyValueError::new_err(message),
-        SessionError::Entangled { .. } | SessionError::NewProblems { .. } => PyValueError::new_err(message),
+        SessionError::Entangled { .. } | SessionError::RedoNotNext { .. } | SessionError::NewProblems { .. } => {
+            PyValueError::new_err(message)
+        }
         SessionError::Store(_) | SessionError::WordStore(_) | SessionError::Base(_) => PyRuntimeError::new_err(message),
     }
 }
@@ -111,8 +113,9 @@ type HistoryNumbers = (u64, Vec<NumberedRow>, Vec<NumberedRow>);
 /// version's validation and the state number of the version its first edit was applied to.
 type EditMade = (u64, PyVersion, Option<String>, Validation, u64);
 
-/// What a call runs with (`ooxml_core.CallContext`): who calls, a token that stops it,
-/// and how long it may run, in seconds. One may serve many calls.
+/// What a call runs with (`ooxml_core.CallContext`): who calls (`caller`, its key; and
+/// `context`, the caller's context as JSON in the order given, which replies name it by),
+/// a token that stops it, and how long it may run, in seconds. One may serve many calls.
 #[pyclass(frozen, name = "CallContext", module = "ooxml_core")]
 pub struct PyCallContext {
     inner: CallContext,
@@ -121,17 +124,28 @@ pub struct PyCallContext {
 #[pymethods]
 impl PyCallContext {
     #[new]
-    #[pyo3(signature = (*, caller = None, cancel = None, deadline = None))]
-    fn new(caller: Option<&str>, cancel: Option<PyRef<'_, PyCancelToken>>, deadline: Option<f64>) -> PyResult<Self> {
+    #[pyo3(signature = (*, caller = None, cancel = None, deadline = None, context = None))]
+    fn new(
+        caller: Option<&str>,
+        cancel: Option<PyRef<'_, PyCancelToken>>,
+        deadline: Option<f64>,
+        context: Option<&str>,
+    ) -> PyResult<Self> {
         let deadline = deadline
             .map(|seconds| {
                 Duration::try_from_secs_f64(seconds)
                     .map_err(|_| PyValueError::new_err("deadline is seconds, 0 or more"))
             })
             .transpose()?;
+        let caller_context = match context.map(serde_json::from_str::<Value>).transpose() {
+            Ok(None) => None,
+            Ok(Some(Value::Object(fields))) => Some(Arc::new(fields)),
+            _ => return Err(PyValueError::new_err("context is a JSON object")),
+        };
         Ok(Self {
             inner: CallContext {
                 caller: caller.map_or_else(Caller::anonymous, Caller::named),
+                caller_context,
                 cancel: cancel.map(|t| Arc::clone(&t.inner)),
                 deadline,
                 ..CallContext::default()

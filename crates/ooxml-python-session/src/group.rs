@@ -65,13 +65,18 @@ impl PyStepGroup {
         self.head(py, made)
     }
 
-    /// Close the group: what it committed one step of the context's caller; the head
-    /// (`Version`) it ends at, or `None` when it committed nothing.
-    #[pyo3(signature = (*, context = None))]
-    fn close(&self, py: Python<'_>, context: Option<PyRef<'_, PyCallContext>>) -> PyResult<Option<PyVersion>> {
+    /// Close the group: what it committed one step of the context's caller, made by `tool`
+    /// (the batch's); the head (`Version`) it ends at, or `None` when it committed nothing.
+    #[pyo3(signature = (*, context = None, tool = None))]
+    fn close(
+        &self,
+        py: Python<'_>,
+        context: Option<PyRef<'_, PyCallContext>>,
+        tool: Option<&str>,
+    ) -> PyResult<Option<PyVersion>> {
         let context = context_of(context.as_deref());
         let made = py
-            .detach(|| self.session.close_group(&self.doc, &context))
+            .detach(|| self.session.close_group(&self.doc, &context, tool))
             .map_err(|e| to_py(&e))?;
         self.head(py, made)
     }

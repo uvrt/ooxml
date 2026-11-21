@@ -9,6 +9,7 @@ use crate::batch::{MAX_READ_BATCH_CHARS, READ_BATCH};
 use crate::call::Call;
 use crate::context::{revision_date, CallCancel};
 use crate::document::{At, Document};
+use crate::undo::UNDO;
 use crate::update::{PartUpdate, Updated};
 use crate::{CallContext, DocId, DocKind, DocNames, Registry, SessionError};
 use ooxml_base::{Cancel, Context};
@@ -418,6 +419,9 @@ impl Session {
         })?;
         if changed {
             self.counts.updates.fetch_add(1, Ordering::Relaxed);
+            if !document.grouped() {
+                document.stepped(version.number(), tool, context);
+            }
         }
         let updated = Updated {
             version: version.seq(),
@@ -454,6 +458,14 @@ impl Session {
     pub fn call(&self, name: &str, arguments: Value, context: &CallContext) -> ToolResult<Value> {
         if name == READ_BATCH {
             return self.call_batch(arguments, context);
+        }
+        if name == UNDO {
+            self.counts.calls.fetch_add(1, Ordering::Relaxed);
+            let result = self.call_undo(arguments, context);
+            if result.is_error() {
+                self.counts.failed.fetch_add(1, Ordering::Relaxed);
+            }
+            return result;
         }
         let mut pinned = pinned_by(context);
         self.call_one(name, arguments, context, "", Some(&mut pinned))
@@ -564,6 +576,11 @@ impl Session {
                     word.retired.note(&by, delta);
                 }
             }
+            if let (Some(made), Some(document)) = (&made, &document) {
+                if !document.grouped() {
+                    document.stepped(made.last.number(), Some(name), context);
+                }
+            }
             call_made = made.zip(document.as_ref()).map(|(made, document)| {
                 let one = made.first.seq() == made.last.seq();
                 CallMade {
@@ -663,7 +680,7 @@ impl Session {
         within: &str,
     ) -> ToolResult<Value> {
         let runs = self.registry.named(name).map(|t| t.spec().flags);
-        if name == READ_BATCH || runs.is_some_and(|f| !(f.batchable || f.read_batchable)) {
+        if name == READ_BATCH || name == UNDO || runs.is_some_and(|f| !(f.batchable || f.read_batchable)) {
             let way_out = match WayOut::names([name]) {
                 Some(way_out) => way_out,
                 None => return ToolResult::failed(ToolError::internal("no name", "session:batch")),

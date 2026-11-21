@@ -11,6 +11,7 @@ use crate::{DocNames, Opened};
 use ooxml_base::{Cancel, Clock};
 use ooxml_store::Caller;
 use ooxml_tools_word::Placer;
+use serde_json::{Map, Value};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -44,6 +45,9 @@ impl Cancel for CancelToken {
 pub struct CallContext {
     /// Who calls (kept with the history step a changing call makes).
     pub caller: Caller,
+    /// The caller's context as the host gave it, its keys in the order given: how a reply
+    /// names who made a step (`agent=b`); `None`: the caller key's own fields.
+    pub caller_context: Option<Arc<Map<String, Value>>>,
     /// A token that stops the call.
     pub cancel: Option<Arc<CancelToken>>,
     /// How long the call may run; past it, it stops with `timeout`.
