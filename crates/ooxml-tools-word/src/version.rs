@@ -129,8 +129,9 @@ impl Version<'_> {
 
 /// A version of a document the session owns, as its editor holds it: what validation
 /// reads, the problems the document was opened with (the save gate's baseline), what the
-/// document's last check saw, and the host's layout of its versions where the call was
-/// handed one.
+/// document's last check saw, the host's layout of its versions where the call was
+/// handed one, and the document as opened (what the records this session wrote are told
+/// from).
 #[derive(Clone, Copy)]
 pub struct Owned<'a> {
     /// The version.
@@ -143,6 +144,8 @@ pub struct Owned<'a> {
     pub layout: Option<&'a dyn WordLayout>,
     /// How long laying a version out may take in the call (`None`: as long as the call).
     pub layout_limit: Option<crate::LayoutLimit<'a>>,
+    /// The document as the session opened it.
+    pub opened: &'a WordDoc,
 }
 
 /// The other documents a call names, by id, each at the version the session pinned for the
