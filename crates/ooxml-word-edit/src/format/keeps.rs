@@ -8,17 +8,23 @@
 //! where the styles do not give it (off: each direct keep the styles do not give
 //! removed).
 //!
-//! Must not: write anything (the command writes the plan), or read outside the body.
+//! Also owns what a check asks of a range's keep ([`kept_blocks`], [`keep_writes`]) and the
+//! package a trial lays out ([`kept_package`]: the plan written on a copy of the main part,
+//! nothing else changed).
+//!
+//! Must not: change the document (the command writes the plan), or read outside the body.
 
-use super::values::{Property, Setting, Value};
+use super::values::{write_paragraph, Property, Setting, Value};
 use crate::blocks::{blocks_of, resolve_block, BlockKind};
 use crate::names::W;
+use crate::work::{scope_above, Work};
 use crate::{EditError, Result, WordDoc};
+use ooxml_opc::Package;
 use ooxml_word_model::address::{expand_heading, scope_paragraphs, span_ends};
-use ooxml_word_model::docx::cells::PartCells;
-use ooxml_word_model::docx::formatting::{Cell, EffectiveParagraph, Formatting};
-use ooxml_word_model::docx::{at_path, Docx, StoryPart};
-use ooxml_xml::{Element, Node};
+use ooxml_word_model::docx::formatting::{EffectiveParagraph, Formatting};
+use ooxml_word_model::docx::keeps::{declared, row_leads, Keeps};
+use ooxml_word_model::docx::{at_path, Docx};
+use ooxml_xml::{Element, Node, NodePath, Patch};
 use std::sync::Arc;
 
 /// What keeping some blocks together writes.
@@ -178,7 +184,7 @@ pub(crate) fn keep_plan(doc: &WordDoc, docx: &Docx, address: &str, on: bool) -> 
             } else {
                 &[Property::KeepTogether]
             };
-            let values = look.values(element, place, wanted, on);
+            let values = keep_values(&mut look, element, place, wanted, on);
             if !values.is_empty() {
                 plan.changes.push((place.clone(), values));
             }
@@ -221,154 +227,83 @@ pub(crate) fn keep_plan(doc: &WordDoc, docx: &Docx, address: &str, on: bool) -> 
     Ok(plan)
 }
 
-/// A paragraph's direct toggle `w:{local}`: on, off, or not said.
-pub(crate) fn declared(paragraph: &Element, local: &str) -> Option<bool> {
-    let node = paragraph.find(Some(W), "pPr")?.find(Some(W), local)?;
-    Some(
-        node.attribute(Some(W), "val")
-            .is_none_or(|v| !matches!(v.to_lowercase().as_str(), "0" | "false" | "off")),
-    )
-}
-
-/// Per row of a table, the place of the paragraph Word decides the row's keep with the next
-/// by (docx2svg's `lead_paragraph`: its first cell's first paragraph, a nested table's
-/// first there).
-pub(crate) fn row_leads(table: &Element, place: &[u32]) -> Vec<Option<Vec<u32>>> {
-    let mut out = Vec::new();
-    for (k, row) in rows(table) {
-        let at = [place, k.as_slice()].concat();
-        let cell = contained(row, "tc").into_iter().next();
-        out.push(cell.and_then(|(j, tc)| first_paragraph(tc, &[at.as_slice(), j.as_slice()].concat())));
-    }
-    out
-}
-
-/// `parent`'s `w:{local}` children, through content controls and custom XML, each with its
-/// steps from `parent`.
-fn contained<'a>(parent: &'a Element, local: &str) -> Vec<(Vec<u32>, &'a Arc<Element>)> {
-    let mut out = Vec::new();
-    for (k, node) in elements(parent) {
-        if is_w(node, local) {
-            out.push((vec![k], node));
-        } else if is_w(node, "customXml") {
-            out.extend(
-                contained(node, local)
-                    .into_iter()
-                    .map(|(p, n)| ([&[k][..], &p].concat(), n)),
-            );
-        } else if is_w(node, "sdt") {
-            if let Some((j, content)) = child(node, "sdtContent") {
-                out.extend(
-                    contained(content, local)
-                        .into_iter()
-                        .map(|(p, n)| ([&[k, j][..], &p].concat(), n)),
-                );
-            }
-        }
-    }
-    out
-}
-
-/// A table's rows as the layout reads them: a row deleted as a tracked change is gone.
-fn rows(table: &Element) -> Vec<(Vec<u32>, &Arc<Element>)> {
-    let deleted = |row: &Element| {
-        row.find(Some(W), "trPr")
-            .is_some_and(|p| p.find(Some(W), "del").is_some())
+/// docx-agent's `_keep_values`: what keeping (`on`) or releasing writes on the paragraph at
+/// `place` for each of `names`, each written directly only where the styles do not give it.
+fn keep_values(look: &mut Keeps<'_>, paragraph: &Element, place: &[u32], names: &[Property], on: bool) -> Vec<Setting> {
+    let applied = look.effective(paragraph, place, true);
+    let styled = look.effective(paragraph, place, false);
+    let pick = |e: &EffectiveParagraph, p: Property| match p {
+        Property::KeepTogether => e.keep_together,
+        _ => e.keep_with_next,
     };
-    contained(table, "tr")
-        .into_iter()
-        .filter(|(_, r)| !deleted(r))
-        .collect()
-}
-
-fn first_paragraph(container: &Element, place: &[u32]) -> Option<Vec<u32>> {
-    let (k, node) = elements(container).find(|(_, e)| is_w(e, "p") || is_w(e, "tbl") || is_w(e, "sdt"))?;
-    let at = [place, &[k]].concat();
-    if is_w(node, "p") {
-        return Some(at);
-    }
-    if is_w(node, "sdt") {
-        let (j, content) = child(node, "sdtContent")?;
-        return first_paragraph(content, &[at.as_slice(), &[j]].concat());
-    }
-    let (r, row) = rows(node).into_iter().next()?;
-    let row_at = [at.as_slice(), r.as_slice()].concat();
-    let (c, cell) = contained(row, "tc").into_iter().next()?;
-    first_paragraph(cell, &[row_at.as_slice(), c.as_slice()].concat())
-}
-
-/// Paragraphs' keeps as Word applies them, with and without their direct formatting, in
-/// one story part.
-pub(crate) struct Keeps<'a> {
-    formatting: &'a Formatting,
-    cells: PartCells<'a>,
-}
-
-impl<'a> Keeps<'a> {
-    pub(crate) fn new(formatting: &'a Formatting, story: &'a StoryPart) -> Keeps<'a> {
-        Keeps {
-            formatting,
-            cells: PartCells::new(formatting, story.root()),
-        }
-    }
-
-    /// The cell of the outermost table holding the paragraph at `place`.
-    pub(crate) fn cell(&mut self, place: &[u32]) -> Option<Cell> {
-        self.cells.cell(place)
-    }
-
-    /// The paragraph's formatting as Word applies it; without `direct`, what its styles
-    /// (and its list) give it.
-    pub(crate) fn effective(&mut self, paragraph: &Element, place: &[u32], direct: bool) -> EffectiveParagraph {
-        let cell = self.cell(place);
-        if direct {
-            return self.formatting.paragraph(paragraph, cell.as_ref());
-        }
-        let styled = styled_only(paragraph);
-        self.formatting.paragraph(&styled, cell.as_ref())
-    }
-
-    /// docx-agent's `_keep_values`.
-    fn values(&mut self, paragraph: &Element, place: &[u32], names: &[Property], on: bool) -> Vec<Setting> {
-        let applied = self.effective(paragraph, place, true);
-        let styled = self.effective(paragraph, place, false);
-        let pick = |e: &EffectiveParagraph, p: Property| match p {
-            Property::KeepTogether => e.keep_together,
-            _ => e.keep_with_next,
+    let mut out = Vec::new();
+    for &name in names {
+        let local = if name == Property::KeepTogether {
+            "keepLines"
+        } else {
+            "keepNext"
         };
-        let mut out = Vec::new();
-        for &name in names {
-            let local = if name == Property::KeepTogether {
-                "keepLines"
-            } else {
-                "keepNext"
-            };
-            let value = if on && !pick(&applied, name) {
-                Some((!pick(&styled, name)).then_some(Value::Flag(true)))
-            } else if !on && declared(paragraph, local) == Some(true) && !pick(&styled, name) {
-                Some(None)
-            } else {
-                None
-            };
-            if let Some(value) = value {
-                out.push(Setting { property: name, value });
-            }
+        let value = if on && !pick(&applied, name) {
+            Some((!pick(&styled, name)).then_some(Value::Flag(true)))
+        } else if !on && declared(paragraph, local) == Some(true) && !pick(&styled, name) {
+            Some(None)
+        } else {
+            None
+        };
+        if let Some(value) = value {
+            out.push(Setting { property: name, value });
         }
-        out
     }
+    out
 }
 
-/// A copy of `paragraph` whose properties are only its style and its list.
-fn styled_only(paragraph: &Element) -> Element {
-    let mut work = crate::work::Work::of(&Arc::new(paragraph.clone()), Vec::new());
-    let root = work.root();
-    if let Some(properties) = work.find(root, W, "pPr") {
-        let children: Vec<_> = work.children(properties).to_vec();
-        for c in children {
-            if !work.is_any(c, W, &["pStyle", "numPr"]) {
-                work.remove(c);
-            }
-        }
+/// The ids of the body's blocks `address` names, in order (docx-agent's
+/// `copies.blocks_of`): those a keep of it writes on, a block-level control's blocks in its
+/// place.
+///
+/// # Errors
+/// An address naming nothing in the body.
+pub fn kept_blocks(doc: &WordDoc, docx: &Docx, address: &str) -> Result<Vec<String>> {
+    Ok(body_blocks(doc, docx, address)?.into_iter().map(|(id, _)| id).collect())
+}
+
+/// Whether keeping `address`'s blocks together (`on`) or releasing them writes anything:
+/// `false` where they are kept so (or free) already.
+///
+/// # Errors
+/// As [`keep_plan`]'s.
+pub fn keep_writes(doc: &WordDoc, docx: &Docx, address: &str, on: bool) -> Result<bool> {
+    Ok(!keep_plan(doc, docx, address, on)?.changes.is_empty())
+}
+
+/// The document's package with only what keeping (`on`) or releasing `address`'s blocks
+/// writes -- `word_format` `keep_together`'s paragraph settings, untracked and unstamped
+/// (docx-agent's `keep_trials._changed`): what a check lays out to say what the call would
+/// do. `None` where it writes nothing.
+///
+/// # Errors
+/// As [`keep_plan`]'s; the main part not XML.
+pub fn kept_package(doc: &WordDoc, docx: &Docx, address: &str, on: bool) -> Result<Option<Package>> {
+    let plan = keep_plan(doc, docx, address, on)?;
+    if plan.changes.is_empty() {
+        return Ok(None);
     }
-    work.build().map_or_else(|| paragraph.clone(), |e| (*e).clone())
+    let main = docx.main.clone();
+    let mut tree = doc.tree(&main)?.ok_or_else(|| EditError::NoPart(main.clone()))?;
+    let shared = doc.shared_handle();
+    let orders = shared.facts.orders();
+    for (place, settings) in &plan.changes {
+        let (&last, above) = place.split_last().ok_or_else(|| EditError::Path(main.clone()))?;
+        let element = at_path(tree.root(), place).ok_or_else(|| EditError::Path(main.clone()))?;
+        let mut work = Work::of(element, scope_above(tree.root(), place));
+        let root = work.root();
+        write_paragraph(&mut work, root, settings, orders);
+        let new = work.build().ok_or_else(|| EditError::Path(main.clone()))?;
+        let old = Node::Element(Arc::clone(element));
+        let mut parent = vec![0usize];
+        parent.extend(above.iter().map(|k| *k as usize));
+        let patch = Patch::splice(NodePath(parent), last as usize, vec![old], vec![Node::Element(new)]);
+        tree = patch.apply(&tree).map_err(|_| EditError::Path(main.clone()))?;
+    }
+    Ok(Some(doc.package().with_new_tree(&main, tree)))
 }

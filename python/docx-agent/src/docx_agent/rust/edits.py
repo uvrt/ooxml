@@ -10,6 +10,10 @@ call's edits made are the call's step (:meth:`~ooxml_edit.tools.owned.OwnedEntry
 numbered in the order the session made them), its reply the result.  The Python view of the
 document is not read.
 
+An op of a ``batch`` is served the same way, under the batch's locks, into the batch's step
+group of the session's (lane H1: ooxml-edit's ``OwnedEntry.op_step``): the batch is one step,
+the ops' versions numbered with it.
+
 Such a call runs without the document's lock (:func:`serve_owned`, the format's ``serve``:
 :mod:`ooxml_edit.tools.served`), beside the others the session serves -- the session prepares
 each edit on a snapshot and commits it in a short section of its own.  Where its checks
@@ -17,8 +21,8 @@ compare layouts (Python lays them out) it runs under the lock (:func:`serve`).
 
 The Python handler answers instead -- on the view, committed through the bridge, counted by
 tool and reason (:func:`fallbacks`, ``edit_fallbacks{tool,reason}``), never silently -- where
-the session does not answer as it yet: an op of a ``batch`` (one step), a call on a draft,
-values written by reference in a tool that does not keep them yet (``Hosting.keeps_written``), a ref name that would be folded, a refusal (the session's carries its own way out, tool rule 2,
+the session does not answer as it yet: values written by reference in a tool that does not
+keep them yet (``Hosting.keeps_written``), a refusal (the session's carries its own way out, tool rule 2,
 which today's does not), a session given its own clock (the Rust session dates revisions by
 the system's), and what the session says it leaves to the host (its ``unported``: a find
 within a block, a picture, regex, ...).  The Rust handler changes nothing in each of those.
@@ -32,9 +36,9 @@ import time
 from collections import Counter
 from typing import Any, Callable
 
-from ooxml_edit.tools import Result
-from ooxml_edit.tools.session import REF
+from ooxml_edit.tools import Result, ToolError
 from ooxml_edit.tools.session import StepOwner
+from ooxml_edit.tools.session import folded_warning
 from ooxml_edit.tools.session import utc_now
 
 from . import served as _served
@@ -86,11 +90,28 @@ def _written(call: Any) -> str | None:
     return written_json(getattr(call, "facts", None) or (), {})
 
 
-def _ref_names(arguments: dict[str, Any]) -> list[str]:
-    """The ref names a call gives (``ref``, ``items[].ref``)."""
-    items = arguments.get("items") if isinstance(arguments.get("items"), list) else []
-    names = [arguments.get("ref"), *(item.get("ref") for item in items if isinstance(item, dict))]
-    return [name for name in names if isinstance(name, str) and name]
+def _kept_refs(call: Any, arguments: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
+    """``arguments`` with each ref name they give (``ref``, ``items[].ref``) as the call keeps it
+    (ooxml-edit's ``Call.ref_name``: a camelCase or hyphenated name folded; one that folds to
+    none, or to another address's ref, refused before the edit, so the refusal changes
+    nothing -- lane H2), and the names folded, ``{kept: given}``."""
+    folded: dict[str, str] = {}
+
+    def kept(holder: dict[str, Any]) -> dict[str, Any]:
+        name = holder.get("ref")
+        if not isinstance(name, str) or not name:
+            return holder
+        ref = call.ref_name(name)
+        if ref == name:
+            return holder
+        folded[ref] = name
+        return {**holder, "ref": ref}
+
+    out = kept(arguments)
+    items = out.get("items")
+    if isinstance(items, list):
+        out = {**out, "items": [kept(item) if isinstance(item, dict) else item for item in items]}
+    return out, folded
 
 
 def owned_entry(call: Any) -> Any:
@@ -102,13 +123,8 @@ def owned_entry(call: Any) -> Any:
 
 
 def _why_not(call: Any, entry: Any, arguments: dict[str, Any]) -> str | None:
-    if entry.live is not None or entry.pinned is not None:
-        return "a draft"
-    if any(not REF.match(name) for name in _ref_names(arguments)):
-        # folded with a warning, or refused, by the tool layer as the Python handler names it
-        return "a ref name to fold"
-    if call.in_batch:
-        return "batch op"
+    # (No draft: ooxml-edit prepares no call of a document the session owns on a draft, and
+    # ``entry`` -- an owner's -- is never a reader's copy; lane H2.)
     if getattr(call, "facts", None) and call.tool.name not in _served.hosting().keeps_written:
         return "values by reference"
     if getattr(call.session, "clock", utc_now) is not utc_now:
@@ -161,8 +177,12 @@ def _tracking(call: Any, entry: Any, context: Any, counted: bool) -> None:
         if wanted and wanted.get("author"):
             arguments["author"] = wanted["author"]
         reply, _app, made = mirror.session.edit("word_set_tracking", json.dumps(arguments), options(context=context))
-        if made is None and json.loads(reply).get("error") is not None:
-            raise Fallback("tracking")
+        error = json.loads(reply).get("error")
+        if made is None and error is not None:
+            # (Never so: the host keeps only a mode word_set_tracking took, lane H2.)  The
+            # session's refusal is the call's: nothing is changed.
+            raise ToolError(error["code"], error["message"], field=error.get("field"),
+                            valid_options=error.get("valid_options"), details=error.get("details"))
         mirror.tracking = wanted
     if made is not None:
         first, head, _touched, _validation = made
@@ -188,17 +208,19 @@ def _names(call: Any, entry: Any, arguments: dict[str, Any]) -> dict[str, str]:
     """The host's names for the documents a call names, each the session's id of it
     (``Session.edit``'s ``names``; lane P2c17): the arguments name documents as the host
     does, and so does the reply (an undo or way-out call, a summary).  The Python handler
-    answers where another document named is not the session's as it is."""
+    answers where another document named is not the session's as it is.  Another document
+    held as a reader of a committed version of one the session owns (``live``: the owner's
+    entry) is that document: the session reads its own committed head of it (lane H2)."""
     mirror = entry.handle
     names = {entry.doc_id: mirror.doc}
     for doc in call.tool.doc_ids(arguments):
         if doc in names:
             continue
         other = call.entries.get(doc)
+        if other is not None and getattr(other, "owner", None) is None:
+            other = getattr(other, "live", None)
         if other is None or getattr(other, "owner", None) is None:
             raise Fallback("a document the session does not own")
-        if other.live is not None or other.pinned is not None:
-            raise Fallback("a document with a draft")
         if other.handle.session is not mirror.session:
             raise Fallback("a document in another session")
         names[doc] = other.handle.doc
@@ -210,11 +232,12 @@ def _layout_before(call: Any, entry: Any) -> Any:
     the view is current (the version before the edit; ``entry.held``: read as it is, no step
     of the view's opened for it); ``None`` where there is none."""
     from ..tools.laid import laid_before, seen_before, state_bytes
+    from .reads import checked_before
 
     if not entry.view_current:
         return None
     document = entry.held
-    return seen_before(document, state_bytes(call)) or laid_before(document)
+    return seen_before(document, state_bytes(call)) or checked_before(call) or laid_before(document)
 
 
 def _hand_engine(call: Any, entry: Any, before: Any, changed: bool) -> None:
@@ -266,6 +289,8 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
     mirror = entry.handle
     tool = call.tool.name
     context = context_of(call.caller)
+    arguments, folded = _kept_refs(call, arguments)
+    entry.flush_view()        # (in a batch: the Python ops' changes before it, the session's)
     _tracking(call, entry, context, counted)
     adapted = _served.arguments_for(call, tool, arguments)
     written = adapted.written if isinstance(adapted, Adapted) else _written(call)
@@ -290,9 +315,11 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
     if made is None and unported:
         raise Fallback(unported[0])
     result = _result(envelope)
-    for name, address in (envelope.get("refs") or {}).items():
-        call.define_ref(name, address)        # the call's refs, as docx-agent's remember
-        result.refs[name] = address
+    refs = envelope.get("refs") or {}
+    for name, address in refs.items():
+        result.refs[call.define_ref(name, address)] = address   # the call's refs, as docx-agent's remember
+    # (first, as the call's own warnings come before its handler's)
+    result.warnings[:0] = [folded_warning(given, ref) for ref, given in folded.items() if ref in refs]
     if timing is None:
         return result, made, []
     if isinstance(result.data, dict):

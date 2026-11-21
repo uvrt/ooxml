@@ -61,7 +61,7 @@ pub(crate) fn kind_of(kind: &str) -> PyResult<DocKind> {
     DocKind::parse(kind).ok_or_else(|| to_py(&SessionError::Kind(kind.to_owned())))
 }
 
-fn doc_id(doc: &str, session: &Session) -> PyResult<DocId> {
+pub(crate) fn doc_id(doc: &str, session: &Session) -> PyResult<DocId> {
     DocId::parse(doc).ok_or_else(|| {
         to_py(&SessionError::NotOpen {
             id: doc.to_owned(),
@@ -70,7 +70,7 @@ fn doc_id(doc: &str, session: &Session) -> PyResult<DocId> {
     })
 }
 
-fn to_py(error: &SessionError) -> PyErr {
+pub(crate) fn to_py(error: &SessionError) -> PyErr {
     let message = error.to_string();
     match error {
         SessionError::NotOpen { .. } => PyKeyError::new_err(message),
@@ -92,6 +92,7 @@ type Validation = (Vec<String>, Vec<String>, usize);
 type EditMade = (u64, PyVersion, Option<String>, Validation);
 
 /// What a call runs with (`ooxml_core.CallContext`): who calls, a token that stops it,
+/// how long laying a document out may take in it (`layout_timeout`, seconds),
 /// and how long it may run, in seconds. One may serve many calls.
 #[pyclass(frozen, name = "CallContext", module = "ooxml_core")]
 pub struct PyCallContext {
@@ -101,23 +102,33 @@ pub struct PyCallContext {
 #[pymethods]
 impl PyCallContext {
     #[new]
-    #[pyo3(signature = (*, caller = None, cancel = None, deadline = None))]
-    fn new(caller: Option<&str>, cancel: Option<PyRef<'_, PyCancelToken>>, deadline: Option<f64>) -> PyResult<Self> {
-        let deadline = deadline
-            .map(|seconds| {
-                Duration::try_from_secs_f64(seconds)
-                    .map_err(|_| PyValueError::new_err("deadline is seconds, 0 or more"))
-            })
-            .transpose()?;
+    #[pyo3(signature = (*, caller = None, cancel = None, deadline = None, layout_timeout = None))]
+    fn new(
+        caller: Option<&str>,
+        cancel: Option<PyRef<'_, PyCancelToken>>,
+        deadline: Option<f64>,
+        layout_timeout: Option<f64>,
+    ) -> PyResult<Self> {
         Ok(Self {
             inner: CallContext {
                 caller: caller.map_or_else(Caller::anonymous, Caller::named),
                 cancel: cancel.map(|t| Arc::clone(&t.inner)),
-                deadline,
+                deadline: seconds(deadline, "deadline")?,
+                layout_timeout: seconds(layout_timeout, "layout_timeout")?,
                 ..CallContext::default()
             },
         })
     }
+}
+
+/// `value` seconds as a duration (`name` said where it is not 0 or more).
+fn seconds(value: Option<f64>, name: &str) -> PyResult<Option<Duration>> {
+    value
+        .map(|seconds| {
+            Duration::try_from_secs_f64(seconds)
+                .map_err(|_| PyValueError::new_err(format!("{name} is seconds, 0 or more")))
+        })
+        .transpose()
 }
 
 /// A call that panicked, as its failure.
@@ -133,7 +144,7 @@ fn panicked(name: &str, panic: &(dyn std::any::Any + Send)) -> ToolResult<Value>
     ))
 }
 
-fn caller_context(context: Option<&PyCallContext>) -> CallContext {
+pub(crate) fn caller_context(context: Option<&PyCallContext>) -> CallContext {
     context.map(|c| c.inner.clone()).unwrap_or_default()
 }
 
@@ -459,6 +470,13 @@ impl PySession {
         py.detach(|| session.bridge_calls().into_iter().collect())
     }
 
+    /// Open a step group on the document (`StepGroup`): what is committed until it closes is
+    /// one undo step; the host closes or reverts it on every path.
+    fn open_group(&self, py: Python<'_>, doc: &str) -> PyResult<crate::group::PyStepGroup> {
+        let id = doc_id(doc, &self.inner)?;
+        crate::group::PyStepGroup::open(py, Arc::clone(&self.inner), id)
+    }
+
     /// The document's head version, held (`Version`). Never waits for a writer.
     fn head(&self, py: Python<'_>, doc: &str) -> PyResult<PyVersion> {
         let id = doc_id(doc, &self.inner)?;
@@ -501,6 +519,40 @@ impl PySession {
             })
             .map_err(|e| to_py(&e))?;
         Ok(delta.map(|d| (d.new, d.fixed, d.baseline)))
+    }
+
+    /// What the document's last check with `reflow` saw, which the session's next check
+    /// measures `since_last_check` from: `(version, summary)` -- the number of the version
+    /// it saw (`None`: the host's check kept it without one) and its `LayoutSummary` (of a
+    /// check the session served, the version laid out: summarised when read or compared) --
+    /// or `None`.
+    fn last_check(&self, doc: &str) -> PyResult<Option<(Option<u64>, crate::summary::PyLayoutSummary)>> {
+        let id = doc_id(doc, &self.inner)?;
+        let kept = self.inner.last_check(&id).map_err(|e| to_py(&e))?;
+        Ok(kept
+            .and_then(|kept| kept.get())
+            .map(|seen| (seen.version, crate::summary::PyLayoutSummary { inner: seen.pages })))
+    }
+
+    /// Keep `summary` (a `LayoutSummary` of the document's engine) as what the document's
+    /// last check saw -- a check the host made itself -- of the version `at` where given;
+    /// `None`: forget what the last check saw.
+    #[pyo3(signature = (doc, summary = None, *, at = None))]
+    fn set_last_check(
+        &self,
+        doc: &str,
+        summary: Option<PyRef<'_, crate::summary::PyLayoutSummary>>,
+        at: Option<PyRef<'_, PyVersion>>,
+    ) -> PyResult<()> {
+        let id = doc_id(doc, &self.inner)?;
+        let seen = summary.map(|summary| ooxml_tools_word::Seen {
+            version: at.map(|v| v.inner.version()),
+            pages: summary.inner.clone(),
+        });
+        if let Some(kept) = self.inner.last_check(&id).map_err(|e| to_py(&e))? {
+            kept.set(seen);
+        }
+        Ok(())
     }
 
     /// Undo up to `steps` calls (with a caller in `context`, only its own, while its latest
@@ -562,6 +614,24 @@ impl PySession {
             .collect::<PyResult<Vec<_>>>()?;
         let session = &self.inner;
         py.detach(|| session.seed_retired(&id, given)).map_err(|e| to_py(&e))
+    }
+
+    /// The rows of the Word document this session's `word_edit_table` calls added or wrote
+    /// into, by `w14:paraId`, sorted (round 58, R126: check's `row_text_format` reads them).
+    fn rows_written(&self, py: Python<'_>, doc: &str) -> PyResult<Vec<String>> {
+        let id = doc_id(doc, &self.inner)?;
+        let session = &self.inner;
+        let rows = py.detach(|| session.rows_written(&id)).map_err(|e| to_py(&e))?;
+        Ok(rows.into_iter().collect())
+    }
+
+    /// Keep `rows` (`w14:paraId`s) as written by a table call the host answered itself, in
+    /// the record the session's own calls keep theirs in.
+    fn note_rows_written(&self, py: Python<'_>, doc: &str, rows: Vec<String>) -> PyResult<()> {
+        let id = doc_id(doc, &self.inner)?;
+        let session = &self.inner;
+        py.detach(|| session.note_rows_written(&id, rows))
+            .map_err(|e| to_py(&e))
     }
 
     /// Close the document; its versions and history are let go.

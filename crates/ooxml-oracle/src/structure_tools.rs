@@ -150,6 +150,24 @@ pub(crate) fn tool_case(
     let reply = reply(tool, &arguments, &editing).ok_or_else(|| format!("no tool {tool}"))?;
     let head = editor.store().snapshot();
     let doc = head.doc();
+    let parts = changed_parts(&package, doc);
+    let found = touched(&opened, doc).map_err(|e| e.to_string())?;
+    let now = problems(doc).map_err(|e| e.to_string())?;
+    let delta = Delta::of(editor.baseline(), &now);
+    Ok(json!({
+        "reply": Value::Object(reply.to_json()),
+        "unported": reply.unported(),
+        "parts": parts,
+        "order": doc.package().part_names(),
+        "touched": found.iter().map(touched_json).collect::<Vec<_>>(),
+        "validation": {"new": delta.new, "fixed": delta.fixed, "baseline": delta.baseline},
+        "problems": now.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        "next": next_ids(doc),
+    }))
+}
+
+/// The parts of `doc` that differ from `package`'s, by name, as text.
+fn changed_parts(package: &Package, doc: &ooxml_word_edit::WordDoc) -> Map<String, Value> {
     let mut parts = Map::new();
     for name in doc.package().part_names() {
         let same = matches!((package.part(&name), doc.package().part(&name)), (Some(a), Some(b)) if a.same(b));
@@ -164,19 +182,7 @@ pub(crate) fn tool_case(
             .unwrap_or_else(|| Arc::from(Vec::new()));
         parts.insert(name, json!(String::from_utf8_lossy(&bytes)));
     }
-    let found = touched(&opened, doc).map_err(|e| e.to_string())?;
-    let now = problems(doc).map_err(|e| e.to_string())?;
-    let delta = Delta::of(editor.baseline(), &now);
-    Ok(json!({
-        "reply": Value::Object(reply.to_json()),
-        "unported": reply.unported(),
-        "parts": parts,
-        "order": doc.package().part_names(),
-        "touched": found.iter().map(touched_json).collect::<Vec<_>>(),
-        "validation": {"new": delta.new, "fixed": delta.fixed, "baseline": delta.baseline},
-        "problems": now.iter().map(ToString::to_string).collect::<Vec<_>>(),
-        "next": next_ids(doc),
-    }))
+    parts
 }
 
 /// The other document a case names (`d2`), as a reading tool is handed it.
@@ -223,10 +229,14 @@ fn case_blobs(case: &Value) -> BlobList {
     )
 }
 
+/// A page engine over the fonts a case names, as the layout port the field tools read.
+pub(crate) fn engine_pages(fonts: &Value) -> EnginePages {
+    EnginePages::new(Arc::new(std::sync::Mutex::new(page_engine(fonts))))
+}
+
 /// A page engine over the fonts a case names (`folders`: `[location, path]` pairs as
-/// docx2svg hands them to `ooxml_core.WordFonts`, `substitutes`, `substitute`), as the
-/// layout port the field tools read.
-fn engine_pages(fonts: &Value) -> EnginePages {
+/// docx2svg hands them to `ooxml_core.WordFonts`, `substitutes`, `substitute`).
+pub(crate) fn page_engine(fonts: &Value) -> ooxml_word_pages::PageEngine {
     use ooxml_fonts::{Folder, Location, WordFontOptions};
     use ooxml_word_pages::{DiskFonts, EngineBudgets, EngineOptions, FontSetup, PageEngine};
     let pairs = |key: &str| -> Vec<(String, String)> {
@@ -263,8 +273,7 @@ fn engine_pages(fonts: &Value) -> EnginePages {
         held: Arc::new(Unlimited),
         paint: Arc::new(Unlimited),
     };
-    let engine = PageEngine::new(setup, EngineOptions::default(), budgets);
-    EnginePages::new(Arc::new(std::sync::Mutex::new(engine)))
+    PageEngine::new(setup, EngineOptions::default(), budgets)
 }
 
 /// The tool's reply to `arguments` taken as its intent rules take them (a refusal of the
