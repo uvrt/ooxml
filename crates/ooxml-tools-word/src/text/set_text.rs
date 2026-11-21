@@ -359,3 +359,8 @@ fn try_call(args: &WordSetText) -> TryCall {
         fill: Vec::new(),
     }
 }
+
+/// Registers `word_set_text` (the crate's [`crate::register`]).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    r.edit::<WordSetText>(word_set_text, crate::Hosting::SERVED.keeps_written());
+}

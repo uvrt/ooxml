@@ -37,6 +37,10 @@ pub struct Version<'a> {
     /// The other open documents the call names (`ooxml_tools::documents`), each at the
     /// version the session pinned for the call.
     pub others: Others<'a>,
+    /// The document at this version as the session holds it, where it holds it as a Word
+    /// document (`None`: only its package): its ids and their renames, so that an address
+    /// in it resolves as the document's own tools resolve it.
+    pub word: Option<&'a ooxml_word_edit::WordDoc>,
 }
 
 impl Version<'_> {

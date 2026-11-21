@@ -7,6 +7,7 @@
 //!
 //! Must not: decide what the blocks are, or write but through the sink.
 
+use crate::blocks::BlockKind;
 use crate::doc::Key;
 use crate::names::{W, W16DU};
 use crate::policy::RevisionPolicy;
@@ -15,6 +16,7 @@ use crate::sink::{annotation_draws, EditSink, TextWrite};
 use crate::work::{Id, Work};
 use crate::{EditError, Result, WordDoc};
 use ooxml_base::pyfmt::repr_str;
+use ooxml_word_model::docx::controls::controls;
 use ooxml_word_model::docx::Docx;
 use ooxml_xml::{Element, Node};
 use std::sync::Arc;
@@ -41,7 +43,8 @@ pub(crate) fn is_block(e: &Element) -> bool {
 }
 
 /// The place `at` names (`_locate`): `end` or `end:<story>`, `after:<id>`, `before:<id>`,
-/// a bare id (after it). `doing` names the edit in the refusal of `replace:`.
+/// a bare id (after it). `doing` names the edit in the refusal of `replace:` (an edit that
+/// replaces blocks reads its place with [`replacing`]).
 ///
 /// # Errors
 /// A place that does not exist, `replace:` (not ported yet), a story of notes or comments.
@@ -66,6 +69,48 @@ pub(crate) fn locate(doc: &WordDoc, docx: &Docx, at: &str, doing: &str) -> Resul
             })
         }
     }
+}
+
+/// `replace:<id>` or `replace:<id>..<id>` (`_locate`'s): the place before the first block
+/// named, and each block's id in order (a content control's `cc:` id).
+///
+/// # Errors
+/// The address's refusal; a block neither a paragraph, a table nor a content control.
+pub(crate) fn replacing(doc: &WordDoc, docx: &Docx, blocks: &str) -> Result<(Place, Vec<String>)> {
+    let (part, found) = crate::blocks::span_or_block(doc, docx, blocks)?;
+    let story = docx.part(&part).ok_or_else(|| EditError::NoPart(part.clone()))?;
+    let mut ids = Vec::with_capacity(found.len());
+    let mut listed = None;
+    for block in &found {
+        let id = match block.kind {
+            BlockKind::Paragraph => story.ids.paragraph_at(&block.path).map(|p| p.id),
+            BlockKind::Table => story
+                .ids
+                .tables()
+                .iter()
+                .find(|t| *t.path == *block.path)
+                .map(|t| t.id.clone()),
+            BlockKind::Control => {
+                let all = listed.get_or_insert_with(|| controls(docx));
+                all.iter()
+                    .find(|c| c.part == part && *c.path == *block.path)
+                    .map(|c| c.id.clone())
+            }
+            BlockKind::Custom => None,
+        };
+        ids.push(id.ok_or_else(|| {
+            EditError::Refused("a block replaced must be a paragraph, a table or a content control".to_owned())
+        })?);
+    }
+    let first = found.first().ok_or_else(|| EditError::Path(part.clone()))?;
+    let (&index, container) = first.path.split_last().ok_or_else(|| EditError::Path(part.clone()))?;
+    let place = Place {
+        story: story.story.clone(),
+        container: container.to_vec(),
+        before: Some(index),
+        part,
+    };
+    Ok((place, ids))
 }
 
 /// A story's end: before a body's final section properties.

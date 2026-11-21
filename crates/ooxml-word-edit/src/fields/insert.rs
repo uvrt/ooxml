@@ -365,8 +365,9 @@ impl InsertField<'_> {
         path.extend(below);
         let docx = sink.docx()?;
         let located = all_fields(sink.doc(), &docx)
-            .into_iter()
+            .iter()
             .find(|l| l.part == here.part && l.found.begin == path)
+            .cloned()
             .ok_or_else(|| EditError::Path(here.part.clone()))?;
         let id = located.id();
         let unknown = if self.result.is_none() {

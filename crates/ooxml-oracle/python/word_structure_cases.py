@@ -507,7 +507,35 @@ def copy_cases(document) -> list[dict]:
         span = f"{blocks[at - 1]}..{block}" if at and blocks[at - 1][:2] == block[:2] == "p:" else block
         out += [from_d2(range=span, at="end"),
                 call("word_copy_from", source_doc="d1", range=block, at=f"before:{blocks[0]}")]
-    return out + [tracked(case) for case in out]
+    # Lane P4f7: blocks replaced (``replace:``): one, a span, the body's last, a cell's last
+    # paragraph (deleted after the copy is placed, untracked); never by a copy of themselves.
+    replacing = []
+    if len(blocks) > 3:
+        replacing += [from_d2(range=blocks[0], at=f"replace:{blocks[2]}"),
+                      from_d2(range=f"{blocks[0]}..{blocks[1]}", at=f"replace:{blocks[2]}..{blocks[3]}",
+                              ref="copied"),
+                      from_d2(range=blocks[1], at=f"replace:{blocks[-1]}"),
+                      call("word_copy_from", source_doc="d1", range=blocks[0], at=f"replace:{blocks[1]}")]
+        for paragraph in _cell_ends(document)[:2]:
+            replacing.append(from_d2(range=blocks[0], at=f"replace:{paragraph}"))
+    # Untracked, a replaced block the document never stamped (a positional address) is marked:
+    # docx-agent may give its copy the id its own stamping just gave that block (known-differences.toml).
+    marked = [{**case, "replaces_unstamped": True} if "@" in case["arguments"]["at"] else case
+              for case in replacing]
+    return out + [tracked(case) for case in out] + marked + [tracked(case) for case in replacing]
+
+
+_TC = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}tc"
+
+
+def _cell_ends(document) -> list[str]:
+    """The ids of paragraphs that end a table cell of the body (lane P4f7)."""
+    out = []
+    for entry in document._index(document.package.document_part()).paragraphs:
+        cell = entry.element.getparent()
+        if cell is not None and cell.tag == _TC and entry.element.getnext() is None:
+            out.append(entry.id)
+    return out
 
 
 _RELATIONSHIPS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"

@@ -30,7 +30,6 @@ import datetime as dt
 import pytest
 from docx2svg.model import Paragraph, Table
 from docx2svg.parse.document import parse_package
-from lxml import etree
 from ooxml_edit.tools import Dataset, Result, Toolbox, string, tool
 
 from docx_agent import Document
@@ -38,6 +37,7 @@ from docx_agent.layout_facts import accept_loses_text
 from docx_agent.markdown import to_markdown
 from docx_agent.markdown.read import ParagraphRecord, Reader, TableRecord
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
+from facts_documents import SHAPES, _document, _edge
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _W = "{%s}" % W
@@ -196,55 +196,6 @@ def test_sync_and_describe_count_the_rows_as_accepted(box):
 
 
 # -- the final view at a table's edge -----------------------------------------------------------
-
-
-def _p(text: str, deleted_mark: bool = False) -> str:
-    mark = f'<w:pPr><w:rPr><w:del w:id="9{len(text)}" w:author="Editor B" w:date="2026-11-13T09:00:00Z"/>' \
-           '</w:rPr></w:pPr>' if deleted_mark else ""
-    return f"<w:p>{mark}<w:r><w:t xml:space=\"preserve\">{text}</w:t></w:r></w:p>"
-
-
-def _tc(content: str) -> str:
-    return f'<w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/></w:tcPr>{content}</w:tc>'
-
-
-def _tbl(rows: list[list[str]]) -> str:
-    grid = "".join('<w:gridCol w:w="3000"/>' for _ in rows[0])
-    return (f'<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid>{grid}</w:tblGrid>'
-            + "".join("<w:tr>" + "".join(_tc(c) for c in row) + "</w:tr>" for row in rows) + "</w:tbl>")
-
-
-def _edge(at: tuple[int, int], rows: int = 2, columns: int = 2) -> str:
-    cells = [[_p(f"r{r + 1}c{c + 1}") for c in range(columns)] for r in range(rows)]
-    cells[at[0]][at[1]] = _p("Kept.") + _p("Last.", deleted_mark=True)
-    return _tbl(cells)
-
-
-SHAPES = {
-    "before a table": _p("Before. ", True) + _tbl([[_p("A1"), _p("B1")]]),
-    "chain into a nested table": _p("One. ", True) + _p("Two. ", True)
-    + _tbl([[_tbl([[_p("Inner"), _p("Side")]]) + _p("Under"), _p("B1")]]),
-    "a first cell's end": _edge((0, 0)),
-    "a later row's first cell": _edge((1, 0)),
-    "a middle cell's end": _edge((0, 1), rows=1, columns=3),
-    "a row's end": _edge((0, 1)),
-    "the table's last cell": _edge((1, 1)),
-}
-
-
-def _document(body: str) -> bytes:
-    document = Document.new()
-    tree = document.package.tree(document.package.document_part())
-    container = tree.find(_W + "body")
-    section = container.find(_W + "sectPr")
-    for child in list(container):
-        if child is not section:
-            container.remove(child)
-    wrapped = etree.fromstring(f'<w:body xmlns:w="{W}">{body}{_p("End.")}</w:body>')
-    for child in list(wrapped):
-        section.addprevious(child)
-    document.package.mark_dirty(document.package.document_part())
-    return document.to_bytes()
 
 
 def _ours(blocks):

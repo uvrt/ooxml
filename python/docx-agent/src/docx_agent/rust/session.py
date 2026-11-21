@@ -45,21 +45,24 @@ def _runs_in_rust(call: Any, **arguments: Any) -> Result:
     raise ToolError("internal", "this tool runs in the Rust session: RustTools.dispatch")
 
 
-def aliases_of(tool: str, exported: Mapping[str, str], parameters: Sequence[str] = ()) -> dict[str, Any]:
+def aliases_of(tool: str, exported: Mapping[str, Any], parameters: Sequence[str] = ()) -> dict[str, Any]:
     """A Rust tool's exported ``aliases`` as :attr:`Tool.aliases` takes them: a name stays a
-    name; ``names:<param>`` (a list of names given for a parameter that takes none can only
+    name; ``{"name", "when": {argument: value}}`` -- read only while an argument has a value
+    -- is an :class:`~ooxml_edit.tools.AliasWhen`; ``names:<param>`` (a list of names given for a parameter that takes none can only
     mean ``param``) and ``place:<kind>`` (a place said in another placing tool's words) are
     the functions today's Python tools have for them (``names_as``, :func:`.positions.alias`);
     ``refused:<param>`` a name refused as unknown, naming ``param`` (:func:`refused_as`; the
     options are the tool's ``parameters``)."""
-    from ooxml_edit.tools.registry import names_as
+    from ooxml_edit.tools.registry import AliasWhen, names_as
 
     from ..tools.positions import alias
 
     out: dict[str, Any] = {}
     for key, target in exported.items():
         where, _, name = key.rpartition(".")
-        if target.startswith("names:"):
+        if isinstance(target, Mapping):
+            out[key] = AliasWhen.of_export(target)
+        elif target.startswith("names:"):
             out[key] = names_as(name, target.removeprefix("names:"))
         elif target.startswith("place:"):
             out[key] = alias(tool, target.removeprefix("place:"), name, f"{where}." if where else "")
