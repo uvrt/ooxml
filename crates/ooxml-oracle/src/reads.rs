@@ -68,7 +68,8 @@ pub fn run(args: &[String]) -> Result<(), String> {
         let reply = if let Some(fact) = item.get("fact").and_then(Value::as_str) {
             crate::facts::reply(package, fact)
         } else if item.get("laid").is_some() {
-            crate::laid_facts::reply(package, item.get("fonts").unwrap_or(&Value::Null), item.get("min_size"))
+            let fonts = item.get("fonts").unwrap_or(&Value::Null);
+            crate::laid_facts::reply(package, fonts, item.get("min_size"), item.get("range"))
         } else if matches!(tool, "read_batch" | "check") {
             let limit = item.get("layout_timeout").and_then(Value::as_f64);
             through_session(tool, &arguments, file, name, item.get("fonts"), limit)

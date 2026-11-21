@@ -63,15 +63,18 @@ pub fn paragraph_text(paragraph: &Element, view: View) -> String {
 /// run); a run holding none is left out.
 #[must_use]
 pub fn text_runs(paragraph: &Element, view: View) -> Vec<TextRun> {
+    shown_runs(paragraph, view).into_iter().filter(|r| r.text > 0).collect()
+}
+
+/// The runs that show any character in `view`, of any kind, in document order (as
+/// [`text_runs`], a run of only a tab or an object included): what docx-agent's
+/// `run_text(paragraph, run)` is not empty for.
+#[must_use]
+pub fn shown_runs(paragraph: &Element, view: View) -> Vec<TextRun> {
     let mut state = Walk::new(view, None);
     state.runs = Some(Vec::new());
     container(paragraph, &mut state);
-    state
-        .runs
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|r| r.text > 0)
-        .collect()
+    state.runs.unwrap_or_default()
 }
 
 /// A run of a paragraph's text ([`text_runs`]).
@@ -83,6 +86,9 @@ pub struct TextRun {
     pub first: char,
     /// How many characters of `w:t` it holds in the view.
     pub text: usize,
+    /// Whether any of its characters in the view, of any kind, is not white space (its text
+    /// stripped is not empty).
+    pub inked: bool,
 }
 
 /// How many characters of the paragraph's text in `view` stand before the element at
@@ -235,10 +241,18 @@ fn count(runs: &mut Vec<TextRun>, path: &[u32], c: &Char, text: bool) {
             path: path.into(),
             first,
             text: 0,
+            inked: false,
         });
     }
-    if let (true, Some(last)) = (text, runs.last_mut()) {
-        last.text += length;
+    let inked = match c {
+        Char::One(c) => !py_space(*c),
+        Char::Text(t) => t.chars().any(|c| !py_space(c)),
+    };
+    if let Some(last) = runs.last_mut() {
+        last.inked |= inked;
+        if text {
+            last.text += length;
+        }
     }
 }
 
@@ -285,4 +299,10 @@ fn symbol(node: &Element) -> char {
 #[must_use]
 pub fn leading_text(element: &Element) -> String {
     element.children().iter().map_while(Node::as_text).collect()
+}
+
+/// White space as Python's `str.isspace` says it (Rust's `White_Space` and the four
+/// information separators).
+fn py_space(c: char) -> bool {
+    c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
 }

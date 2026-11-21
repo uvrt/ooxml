@@ -1,28 +1,38 @@
 //! Owns: `check`'s layout facts read from one laid version and the reading of the same
 //! version (docx-agent's `layout_facts._Facts`, the facts that read the pages): the
 //! smallest text and the text below a minimum ([`sizes`]), empty paragraphs used as space
-//! ([`spacers`]), keeps broken at a page's foot and tables kept together ([`keeps`]), and
-//! tables parted from the line that introduces or follows them ([`parted`]) -- each as
-//! typed entries, in docx-agent's order, with what fixes them; on the pages asked for.
+//! ([`spacers`]), keeps broken at a page's foot and tables kept together ([`keeps`]),
+//! tables parted from the line that introduces or follows them ([`parted`]), rows split
+//! over pages and header rows not repeated ([`tables`]), columns that fit badly
+//! ([`columns`]), what is drawn past the margins ([`margins`]) and the pages laid out by
+//! rules not measured ([`uncertain`]) -- each as typed entries, in docx-agent's order, with
+//! what fixes them; on the pages asked for, and about the blocks a `range` names where
+//! scoped ([`Scope`]).
 //!
 //! What every fact reads alike is made once per [`Facts`]: the body's lines by paragraph
 //! path and by top-level block (only lines of a paragraph the version names), the body's
-//! top-level blocks (block-level content controls opened), and each page's lines' text,
-//! read from its paint when first asked ([`PageTexts`]).
+//! top-level blocks (block-level content controls opened), and each page's lines' text and
+//! boxes, read from its paint when first asked ([`PageReads`]).
 //!
 //! Paths are the layout's (`w:body/w:tbl[1]/w:tr[2]/w:tc[1]/w:p[1]`); ids the tool's, as
 //! the version's bytes name its blocks.
 //!
-//! Must not: lay out or paint but through [`PageTexts`], word a reply (the tool layer
+//! Must not: lay out or paint but through [`PageReads`], word a reply (the tool layer
 //! does), cap a list, or change the document.
 
+pub mod columns;
 pub mod keeps;
+pub mod margins;
 pub mod parted;
+mod scope;
 pub mod sizes;
 pub mod spacers;
+pub mod tables;
 mod tree;
+pub mod uncertain;
 
 use crate::line_text::LineText;
+use crate::page_read::{PageBoxes, PageRead};
 use crate::LaidVersion;
 use ooxml_word_layout::facts::LineFact;
 use ooxml_word_layout::px::Px;
@@ -32,12 +42,13 @@ use ooxml_xml::Element;
 use std::cell::OnceCell;
 use std::collections::{BTreeSet, HashMap};
 
+pub use scope::{Range, Scope, ScopeError};
 pub use tree::{Block, BlockKind};
 
-/// Each page's lines' text, as the page engine paints them (`PageEngine::line_texts`).
-pub trait PageTexts {
-    /// The 0-based page `page`'s lines' text (`None`: the page is not painted).
-    fn line_texts(&self, page: usize) -> Option<Vec<LineText>>;
+/// Each page as a check reads its paint (`PageEngine::page_read`).
+pub trait PageReads {
+    /// The 0-based page `page`'s lines' text and boxes (`None`: the page is not painted).
+    fn page_read(&self, page: usize) -> Option<PageRead>;
 }
 
 /// One body line where it is drawn: its 1-based page and the line.
@@ -65,8 +76,10 @@ pub struct Facts<'a> {
     blocks: Vec<Block<'a>>,
     /// Each top-level block's place among them, by path.
     positions: HashMap<String, usize>,
-    texts: &'a dyn PageTexts,
-    painted: Vec<OnceCell<Option<Vec<LineText>>>>,
+    reads: &'a dyn PageReads,
+    painted: Vec<OnceCell<Option<PageRead>>>,
+    /// What `range` scopes the facts to (`None`: the whole document).
+    scope: Option<Scope>,
 }
 
 impl std::fmt::Debug for Facts<'_> {
@@ -79,13 +92,13 @@ impl std::fmt::Debug for Facts<'_> {
 
 impl<'a> Facts<'a> {
     /// The facts of `version`, whose reading is `docx`, on the 1-based `pages` (`None`:
-    /// every page), its pages' text read through `texts`.
+    /// every page), its pages' paint read through `reads`.
     #[must_use]
     pub fn new(
         version: &'a LaidVersion,
         docx: &'a Docx,
         pages: Option<&[usize]>,
-        texts: &'a dyn PageTexts,
+        reads: &'a dyn PageReads,
     ) -> Facts<'a> {
         let mut by_path: HashMap<&str, Vec<Drawn<'_>>> = HashMap::new();
         let mut by_block: HashMap<&str, Vec<Drawn<'_>>> = HashMap::new();
@@ -119,9 +132,31 @@ impl<'a> Facts<'a> {
             by_table,
             blocks,
             positions,
-            texts,
+            reads,
             painted: (0..facts.pages.len()).map(|_| OnceCell::new()).collect(),
+            scope: None,
         }
+    }
+
+    /// These facts scoped to `scope` (`check`'s `range`): the entries about its blocks
+    /// ([`Scope::about`]), the text sizes of its paragraphs only. The caller asks for the
+    /// scope's pages.
+    #[must_use]
+    pub fn scoped(mut self, scope: Scope) -> Facts<'a> {
+        self.scope = Some(scope);
+        self
+    }
+
+    /// What the facts are scoped to.
+    #[must_use]
+    pub fn scope(&self) -> Option<&Scope> {
+        self.scope.as_ref()
+    }
+
+    /// Whether an entry naming `subjects` is about the scope (always, unscoped).
+    #[must_use]
+    pub fn about(&self, subjects: &[&str]) -> bool {
+        self.scope.as_ref().is_none_or(|s| s.about(subjects))
     }
 
     /// The version.
@@ -237,13 +272,24 @@ impl<'a> Facts<'a> {
         &self.formatting
     }
 
+    /// The 0-based page `page` as a check reads it, painted once.
+    fn read(&self, page: usize) -> Option<&PageRead> {
+        self.painted
+            .get(page)?
+            .get_or_init(|| self.reads.page_read(page))
+            .as_ref()
+    }
+
     /// The 0-based page `page`'s lines' text, painted once.
     #[must_use]
     pub fn texts(&self, page: usize) -> Option<&[LineText]> {
-        self.painted
-            .get(page)?
-            .get_or_init(|| self.texts.line_texts(page))
-            .as_deref()
+        self.read(page).map(|r| r.texts.as_slice())
+    }
+
+    /// What the 0-based page `page` draws beside its lines, painted once.
+    #[must_use]
+    pub fn boxes(&self, page: usize) -> Option<&PageBoxes> {
+        self.read(page).map(|r| &r.boxes)
     }
 
     /// The style a paragraph is in, by name (its id where it has none; the default

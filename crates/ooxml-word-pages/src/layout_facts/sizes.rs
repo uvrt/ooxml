@@ -106,6 +106,12 @@ pub fn text_sizes(facts: &Facts<'_>, minimum: Option<&Minimum>) -> TextSizes {
                 .entry((part.clone(), line.path.clone()))
                 .or_insert_with(|| owner(facts, &part, &line.path))
                 .clone();
+            if let Some(scope) = facts.scope() {
+                // a range's facts: its paragraphs' text only
+                if owner.as_ref().is_none_or(|o| !scope.paragraphs.contains(&o.id)) {
+                    continue;
+                }
+            }
             let kind = kind_of(&line.path, line.story.as_ref().map(|(k, _)| *k));
             for &(half_points, chars) in &line.sizes {
                 #[allow(clippy::cast_precision_loss)]

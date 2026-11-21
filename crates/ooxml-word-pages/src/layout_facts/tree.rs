@@ -161,6 +161,25 @@ pub(crate) fn row_of(path: &str) -> Option<(&str, usize)> {
     }
 }
 
+/// A line of a paragraph right in a body table's cell (not a nested table's), as
+/// docx-agent's `_CELL_LINE` reads it: the table's path (as [`row_of`] reads it), the row
+/// and the cell (`w:tc`, among the row's own children) from 0, and the paragraph's steps
+/// below the cell (`w:p[n]`, or `w:sdt[n]/w:sdtContent/w:p[n]`).
+pub(crate) fn cell_line(path: &str) -> Option<(&str, usize, usize, &str)> {
+    let (table, row) = row_of(path)?;
+    let rest = path.get(table.len()..)?.strip_prefix('/')?;
+    let (_, rest) = rest.split_once('/')?;
+    let (cell, paragraph) = rest.split_once('/')?;
+    let cell = indexed(cell, "w:tc")?.checked_sub(1)?;
+    let steps: Vec<&str> = paragraph.split('/').collect();
+    let plain = match steps.as_slice() {
+        [p] => indexed(p, "w:p").is_some(),
+        [sdt, "w:sdtContent", p] => indexed(sdt, "w:sdt").is_some() && indexed(p, "w:p").is_some(),
+        _ => false,
+    };
+    plain.then_some((table, row, cell, paragraph))
+}
+
 /// The count `n` of a step `name[n]` (digits only).
 fn indexed(step: &str, name: &str) -> Option<usize> {
     let digits = step.strip_prefix(name)?.strip_prefix('[')?.strip_suffix(']')?;
@@ -207,6 +226,31 @@ pub(crate) fn descendants(element: &Arc<Element>) -> Vec<&Arc<Element>> {
     while let Some(node) = stack.pop() {
         out.push(node);
         let below: Vec<&Arc<Element>> = node.child_elements().collect();
+        stack.extend(below.into_iter().rev());
+    }
+    out
+}
+
+/// Every paragraph below `element` (nested ones too, `element` itself where it is one), in
+/// document order, each with its place (`place` being `element`'s).
+pub(crate) fn paragraphs_below<'e>(element: &'e Arc<Element>, place: &[u32]) -> Vec<(&'e Arc<Element>, Vec<u32>)> {
+    let mut out = Vec::new();
+    let mut stack: Vec<(&Arc<Element>, Vec<u32>)> = vec![(element, place.to_vec())];
+    while let Some((node, at)) = stack.pop() {
+        if is_w(node, "p") {
+            out.push((node, at.clone()));
+        }
+        let below: Vec<(&Arc<Element>, Vec<u32>)> = node
+            .children()
+            .iter()
+            .enumerate()
+            .filter_map(|(k, n)| {
+                let child = n.as_element()?;
+                let mut here = at.clone();
+                here.push(u32::try_from(k).unwrap_or(u32::MAX));
+                Some((child, here))
+            })
+            .collect();
         stack.extend(below.into_iter().rev());
     }
     out
@@ -300,5 +344,18 @@ mod tests {
             Some(("w:body/w:sdt[1]/w:sdtContent/w:tbl[1]", 0))
         );
         assert_eq!(row_of("w:body/w:p[1]"), None);
+        assert_eq!(
+            cell_line("w:body/w:tbl[2]/w:tr[3]/w:tc[1]/w:p[4]"),
+            Some(("w:body/w:tbl[2]", 2, 0, "w:p[4]"))
+        );
+        assert_eq!(
+            cell_line("w:body/w:tbl[1]/w:tr[1]/w:tc[2]/w:sdt[1]/w:sdtContent/w:p[1]"),
+            Some(("w:body/w:tbl[1]", 0, 1, "w:sdt[1]/w:sdtContent/w:p[1]"))
+        );
+        // a nested table's paragraph is not its outer cell's
+        assert_eq!(
+            cell_line("w:body/w:tbl[1]/w:tr[1]/w:tc[1]/w:tbl[1]/w:tr[1]/w:tc[1]/w:p[1]"),
+            None
+        );
     }
 }

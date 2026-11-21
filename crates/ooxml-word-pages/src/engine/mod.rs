@@ -606,6 +606,13 @@ impl PageEngine {
         Some(paint.lines.iter().map(crate::line_text::LineText::of).collect())
     }
 
+    /// Page `page` of `version` as a check reads it ([`crate::page_read`]): its lines' text
+    /// and the boxes beside them from one paint, not kept (as [`PageEngine::line_texts`]).
+    pub fn page_read(&mut self, version: &LaidVersion, page: usize) -> Option<crate::page_read::PageRead> {
+        let paint = self.painted_page(version, page, false)?;
+        Some(crate::page_read::PageRead::of(&paint))
+    }
+
     /// `version`'s summary (docx-agent's `LayoutSummary`): each page's taken from the
     /// version summarised before where the relayout kept that page with the same items and
     /// context, the rest painted and digested; `None` where `version` is not of this

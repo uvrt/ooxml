@@ -8,8 +8,8 @@
 
 use crate::edits::Unlimited;
 use ooxml_opc::Package;
-use ooxml_word_pages::layout_facts::{Facts, PageTexts};
-use ooxml_word_pages::line_text::LineText;
+use ooxml_word_pages::layout_facts::{Facts, PageReads, Scope, ScopeError};
+use ooxml_word_pages::page_read::PageRead;
 use ooxml_word_pages::{LaidVersion, PageEngine};
 use serde_json::{json, Map, Value};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -20,23 +20,24 @@ struct Painted<'e> {
     version: Arc<LaidVersion>,
 }
 
-impl PageTexts for Painted<'_> {
-    fn line_texts(&self, page: usize) -> Option<Vec<LineText>> {
+impl PageReads for Painted<'_> {
+    fn page_read(&self, page: usize) -> Option<PageRead> {
         let mut engine = self.engine.lock().unwrap_or_else(PoisonError::into_inner);
-        engine.line_texts(&self.version, page)
+        engine.page_read(&self.version, page)
     }
 }
 
-/// The layout facts of `package` laid out with `fonts`, `min_size` the minimum text size.
+/// The layout facts of `package` laid out with `fonts`, `min_size` the minimum text size,
+/// scoped to `range` (addresses) where given, on its pages.
 #[must_use]
-pub fn reply(package: &Package, fonts: &Value, min_size: Option<&Value>) -> Value {
-    match facts(package, fonts, min_size) {
+pub fn reply(package: &Package, fonts: &Value, min_size: Option<&Value>, range: Option<&Value>) -> Value {
+    match facts(package, fonts, min_size, range) {
         Ok(found) => json!({"facts": found}),
         Err(error) => json!({"error": error}),
     }
 }
 
-fn facts(package: &Package, fonts: &Value, min_size: Option<&Value>) -> Result<Value, String> {
+fn facts(package: &Package, fonts: &Value, min_size: Option<&Value>, range: Option<&Value>) -> Result<Value, String> {
     let minimum = ooxml_tools_word::minimum_of(min_size.unwrap_or(&Value::Null))?;
     let engine = Mutex::new(crate::structure_tools::page_engine(fonts));
     let version = {
@@ -52,10 +53,33 @@ fn facts(package: &Package, fonts: &Value, min_size: Option<&Value>) -> Result<V
         engine: &engine,
         version: Arc::clone(&version),
     };
-    let facts = Facts::new(&version, &docx, None, &painted);
+    let approximations = {
+        let mut held = engine.lock().unwrap_or_else(PoisonError::into_inner);
+        held.coverage(&version).map(|c| c.approximations).unwrap_or_default()
+    };
+    let scope = match range.and_then(Value::as_array) {
+        Some(addresses) => {
+            let addresses: Vec<String> = addresses.iter().filter_map(Value::as_str).map(str::to_owned).collect();
+            Some(Scope::of(&docx, &addresses).map_err(|e| refused(&e))?)
+        }
+        None => None,
+    };
+    let pages: Option<Vec<usize>> = scope.as_ref().map(|s| {
+        let all: std::collections::BTreeSet<usize> = s.pages(&version).into_iter().flatten().collect();
+        all.into_iter().collect()
+    });
+    let mut facts = Facts::new(&version, &docx, pages.as_deref(), &painted);
+    if let Some(scope) = scope {
+        facts = facts.scoped(scope);
+    }
     let mut out = Map::new();
     let mut settings = Map::new();
-    ooxml_tools_word::page_facts_json(&facts, minimum.as_ref(), &mut out, &mut settings);
+    ooxml_tools_word::page_facts_json(&facts, minimum.as_ref(), &approximations, &mut out, &mut settings);
     out.insert("settings".into(), Value::Object(settings));
     Ok(Value::Object(out))
+}
+
+/// A refused range, said briefly (the differential compares facts, not refusals).
+fn refused(error: &ScopeError) -> String {
+    format!("range refused: {error:?}")
 }

@@ -44,6 +44,7 @@ mod fonts;
 pub mod ids;
 pub mod layout_facts;
 pub mod line_text;
+pub mod page_read;
 pub mod page_said;
 mod pictures;
 pub mod png;

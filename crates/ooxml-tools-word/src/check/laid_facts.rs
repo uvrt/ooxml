@@ -2,18 +2,26 @@
 //! (`smallest_text`, `small_text`, `spacers`, `keep_with_next_at_foot`, `table_parted`,
 //! `settings.keep_together`): each entry's JSON, with the call that fixes it.
 //!
-//! Also owns [`page_facts_json`], those facts of one version capped as `check` lists them,
-//! and [`minimum_of`], a minimum text size read from its JSON.
+//! Also owns [`page_facts_json`], those facts and the table, margin and uncertainty ones
+//! ([`super::laid_tables`]) of one version, kept to the facts' scope (`range`: the
+//! entries about its blocks) and capped as `check` lists them, and [`minimum_of`], a
+//! minimum text size read from its JSON.
 //!
 //! Must not: find the facts (`ooxml_word_pages::layout_facts` does) or filter them.
 
+use super::laid_tables::{column_fit_json, past_margins_json, split_row_json, uncertain_json, unrepeated_json};
+use ooxml_word_pages::layout_facts::columns::column_fit;
 use ooxml_word_pages::layout_facts::keeps::{
     keep_together, keep_with_next_at_foot, kept_tables, KeepAtFoot, KeptTogether,
 };
+use ooxml_word_pages::layout_facts::margins::past_margins;
 use ooxml_word_pages::layout_facts::parted::{table_parted, AfterFix, Parted};
 use ooxml_word_pages::layout_facts::sizes::{text_sizes, Minimum, SmallText, TextSizes, TEXT_KINDS};
 use ooxml_word_pages::layout_facts::spacers::{spacers, Spacer};
-use ooxml_word_pages::layout_facts::Facts;
+use ooxml_word_pages::layout_facts::tables::{drawn_tables, tables};
+use ooxml_word_pages::layout_facts::uncertain::uncertain;
+use ooxml_word_pages::layout_facts::{Facts, Scope};
+use ooxml_word_pages::warnings::Approximation;
 use serde_json::{json, Map, Value};
 
 /// `smallest_text`: the smallest size per kind.
@@ -185,42 +193,85 @@ fn set(value: &mut Value, key: &str, to: Value) {
 /// Entries per fact, most telling first (docx-agent's `CAP`).
 const CAP: usize = 20;
 
-/// `entries` as `name`'s list in `out`, the first [`CAP`] of them, and how many are left
-/// out (`<name>_left_out`) where any are (docx-agent's `capped`).
-fn capped<T>(out: &mut Map<String, Value>, name: &str, entries: &[T], each: impl Fn(&T) -> Value) {
-    out.insert(name.into(), entries.iter().take(CAP).map(each).collect());
-    if entries.len() > CAP {
-        out.insert(format!("{name}_left_out"), Value::from(entries.len() - CAP));
+/// The keys of an entry that name what it is about (docx-agent's `SUBJECT_KEYS`).
+const SUBJECT_KEYS: [&str; 6] = ["para", "paras", "ids", "table", "drawing", "blocks"];
+
+/// Whether an entry is about `scope` (docx-agent's `Scope.about`): one of its subjects is
+/// held, or it names none.
+fn about(scope: &Scope, entry: &Value) -> bool {
+    let mut named = false;
+    for key in SUBJECT_KEYS {
+        let Some(value) = entry.get(key).filter(|v| !v.is_null()) else {
+            continue;
+        };
+        named = true;
+        let values = value.as_array().map_or_else(|| vec![value], |a| a.iter().collect());
+        if values.iter().any(|v| v.as_str().is_some_and(|s| scope.holds(s))) {
+            return true;
+        }
+    }
+    !named
+}
+
+/// `entries` as `name`'s list in `out`, those about the facts' scope, the first [`CAP`]
+/// of them, and how many are left out (`<name>_left_out`) where any are (docx-agent's
+/// `capped`).
+fn capped<T>(facts: &Facts<'_>, out: &mut Map<String, Value>, name: &str, entries: &[T], each: impl Fn(&T) -> Value) {
+    let entries: Vec<Value> = entries
+        .iter()
+        .map(each)
+        .filter(|e| facts.scope().is_none_or(|s| about(s, e)))
+        .collect();
+    let left = entries.len().saturating_sub(CAP);
+    out.insert(name.into(), entries.into_iter().take(CAP).collect());
+    if left > 0 {
+        out.insert(format!("{name}_left_out"), Value::from(left));
     }
 }
 
 /// The layout facts of `facts` this module words, capped as `check` lists them, into
-/// `out` (`settings`' `keep_together` into `settings`).
+/// `out` (`settings`' `keep_together` into `settings`); `approximations` the version's
+/// coverage's (`uncertain`).
 pub fn page_facts_json(
     facts: &Facts<'_>,
     minimum: Option<&Minimum>,
+    approximations: &[Approximation],
     out: &mut Map<String, Value>,
     settings: &mut Map<String, Value>,
 ) {
     let sizes = text_sizes(facts, minimum);
     out.insert("smallest_text".into(), smallest_text_json(&sizes));
     if let Some(small) = &sizes.small {
-        capped(out, "small_text", small, small_text_json);
+        capped(facts, out, "small_text", small, small_text_json);
     }
-    capped(out, "spacers", &spacers(facts), spacer_json);
+    capped(facts, out, "spacers", &spacers(facts), spacer_json);
     let kept = kept_tables(facts);
     capped(
+        facts,
         out,
         "keep_with_next_at_foot",
         &keep_with_next_at_foot(facts, &kept),
         keep_at_foot_json,
     );
-    capped(out, "table_parted", &table_parted(facts), parted_json);
+    capped(facts, out, "table_parted", &table_parted(facts), parted_json);
     capped(
+        facts,
         settings,
         "keep_together",
         &keep_together(facts, &kept),
         kept_together_json,
+    );
+    let (split, unrepeated) = tables(facts, &drawn_tables(facts));
+    capped(facts, out, "split_rows", &split, split_row_json);
+    capped(facts, out, "header_not_repeated", &unrepeated, unrepeated_json);
+    capped(facts, out, "column_fit", &column_fit(facts), column_fit_json);
+    capped(facts, out, "past_margins", &past_margins(facts), past_margins_json);
+    capped(
+        facts,
+        out,
+        "uncertain",
+        &uncertain(facts, approximations),
+        uncertain_json,
     );
 }
 

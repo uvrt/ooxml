@@ -22,9 +22,11 @@ if str(TESTS) not in sys.path:
 
 from docx_agent import Document
 from docx_agent.layout_facts import layout_facts
+from docx_agent.scope import Scope
 
 #: The facts compared, with their ``_left_out`` counts.
-KEYS = ("smallest_text", "small_text", "spacers", "keep_with_next_at_foot", "table_parted")
+KEYS = ("smallest_text", "small_text", "spacers", "keep_with_next_at_foot", "table_parted", "split_rows",
+        "header_not_repeated", "column_fit", "past_margins", "uncertain", "unknown_from")
 #: ``settings``' facts compared.
 SETTINGS = ("keep_together",)
 #: The minimum text sizes tried besides none: one number, and one per kind with a caption's.
@@ -36,6 +38,23 @@ def _picked(found: dict) -> dict:
     settings = found.get("settings") or {}
     out["settings"] = {k: v for k, v in settings.items() if k.removesuffix("_left_out") in SETTINGS}
     return out
+
+
+def _ranges(document) -> list[str]:
+    """The range tried: the body's first table, else its middle top-level block."""
+    from docx_agent.layout_facts import _W
+
+    main = document.package.document_part()
+    body = document.package.tree(main).find(_W + "body")
+    if body is None:
+        return []
+    index = document._index(main)
+    blocks = [index.entry_for(child) for child in body if child.tag in (_W + "p", _W + "tbl")]
+    blocks = [entry for entry in blocks if entry is not None]
+    tables = [entry.id for entry in blocks if entry.id.startswith("t")]
+    if tables:
+        return [tables[0]]
+    return [blocks[len(blocks) // 2].id] if blocks else []
 
 
 def check_laid(args, run_rust, report, files_of) -> int:
@@ -61,5 +80,18 @@ def check_laid(args, run_rust, report, files_of) -> int:
             if minimum is not None:
                 item["min_size"] = minimum
             manifest.append(item)
+        # One range: the body's first table, else its middle top-level block (check's
+        # range: the facts about its blocks, on its pages).
+        ranges = _ranges(document)
+        if ranges:
+            try:
+                scope = Scope(document, ranges)
+                pages = sorted({p for found in scope.pages(layout) for p in found})
+                found = json.loads(json.dumps(_picked(layout_facts(layout, pages=pages, scope=scope))))
+            except Exception as error:  # noqa: BLE001
+                print(f"{path} [range]: python failed: {error}")
+                continue
+            expected[(str(path), "range")] = {"facts": found}
+            manifest.append({"file": str(path), "case": "range", "laid": True, "fonts": fonts, "range": ranges})
     rust = {key: line["reply"] for key, line in run_rust(args.rust, manifest).items()}
     return report(expected, rust)
