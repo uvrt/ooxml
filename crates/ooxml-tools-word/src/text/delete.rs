@@ -1,5 +1,5 @@
-//! Owns: `word_delete` (docx-agent's `word_delete`): text found once or a range's
-//! ([`DeletePlaced`], with the space it would leave doubled when asked), a note
+//! Owns: `word_delete` (docx-agent's `word_delete`): text found once (in a scope, `within`
+//! or the target) or a range's ([`DeletePlaced`], with the space it would leave doubled when asked), a note
 //! ([`DeleteNote`]), or whole blocks -- a block, a span, a heading's range -- with the outline
 //! checked first ([`DeleteBlocks`]) and the file's original text they took out of the final
 //! view reported (`data.original_removed`, round 57).
@@ -15,7 +15,8 @@ use crate::structure::common::{outcome, Outcome};
 use crate::Editing;
 use ooxml_base::pyfmt::repr_str;
 use ooxml_tools::{Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
-use ooxml_word_edit::{blocks_named, DeleteBlocks, DeleteNote, DeletePlaced, TextPlace};
+use ooxml_word_edit::{blocks_named, DeleteBlocks, DeleteNote, DeletePlaced, EditError, TextPlace};
+use ooxml_word_model::address::expand_heading;
 use serde_json::{Map, Value};
 
 /// `word_delete`'s arguments.
@@ -44,7 +45,8 @@ pub struct WordDelete {
     pub force: Option<bool>,
 }
 
-/// `word_delete` on the document `editing` names. A failed reply is `invalid_arguments`
+/// `word_delete` on the document `editing` names. A find with a target searches within it
+/// (said in a warning). A failed reply is `invalid_arguments`
 /// for a call giving neither find nor target, or a within other than its target, and for
 /// a heading whose content would stay; the find's, range's or block's refusal; `unported`
 /// (nothing changed) for what the Rust core does not do yet.
@@ -73,14 +75,20 @@ fn run(args: &WordDelete, editing: &Editing<'_>) -> Result<ToolResult<Value>, To
     let collapse_space = args.collapse_space.unwrap_or(false);
     let refuse = |e| edit_refusal(e, "", call.clone());
     if let Some(find) = &args.find {
+        let (within, note) = searched(args, editing, &call)?;
         let command = DeletePlaced {
-            place: TextPlace::Once(find.clone()),
+            place: TextPlace::Once {
+                text: find.clone(),
+                within,
+            },
             collapse_space,
             policy,
         };
         let done = editing.editor.run(editing.caller, &command).map_err(refuse)?;
         let summary = format!("Deleted {}", repr_str(&short(&done.out.text, 60)));
-        return Ok(outcome(&[placed(done.out.edited)], summary, None));
+        let mut result = outcome(&[placed(done.out.edited)], summary, None);
+        result.warnings.extend(note);
+        return Ok(result);
     }
     let target = args.target.clone().unwrap_or_default();
     if target.contains('@') && !target.starts_with("p@") && !target.starts_with("cc@") {
@@ -103,17 +111,56 @@ fn run(args: &WordDelete, editing: &Editing<'_>) -> Result<ToolResult<Value>, To
     blocks(args, editing, &target, &call)
 }
 
-/// What of the call is not ported: a find within a block or span (or a target), a
-/// picture, a heading's range without its end, an address by reference.
+/// What of the call is not ported: a picture, a heading's range without its end, an
+/// address by reference.
 fn unported(args: &WordDelete) -> Option<Unported> {
     let target = args.target.as_deref().unwrap_or_default();
     if args.target.as_deref().is_some_and(by_reference) || args.within.as_deref().is_some_and(by_reference) {
         return Some(Unported::Reference);
     }
-    let within = args.find.is_some() && (args.within.is_some() || args.target.is_some());
     let picture = args.find.is_none() && target.starts_with("d:");
     let heading = args.find.is_none() && target.starts_with("h:") && !target.contains("..");
-    (within || picture || heading).then_some(Unported::Form)
+    (picture || heading).then_some(Unported::Form)
+}
+
+/// Where the find searches, and the note saying so: `within`, or the target given with it
+/// (docx-agent's round 31, R5a: the call meant find within it). Both given, they must name
+/// the same blocks (a heading's range as its span).
+fn searched(
+    args: &WordDelete,
+    editing: &Editing<'_>,
+    call: &TryCall,
+) -> Result<(Option<String>, Option<String>), ToolError> {
+    let Some(target) = &args.target else {
+        return Ok((args.within.clone(), None));
+    };
+    if let Some(within) = &args.within {
+        if !same_scope(editing, within, target, call)? {
+            let way = WayOut::names(["within", "target"])
+                .map_or_else(|| WayOut::call(call.clone()), |w| w.and_call(call.clone()));
+            return Err(ToolError::refusal(
+                Refusal::InvalidArguments,
+                "find searches within one block or span: give within or target with it, not both",
+                way,
+            )
+            .at("target"));
+        }
+    }
+    let note = format!("find was searched within target {target}: within names where to search");
+    Ok((Some(target.clone()), Some(note)))
+}
+
+/// Whether `within` and `target` name the same blocks on the current version, a heading's
+/// range taken as the span it is (docx-agent's `resolve` of each).
+fn same_scope(editing: &Editing<'_>, within: &str, target: &str, call: &TryCall) -> Result<bool, ToolError> {
+    if within == target {
+        return Ok(true);
+    }
+    let head = editing.editor.store().snapshot();
+    let refuse = |e| edit_refusal(e, "", call.clone());
+    let docx = head.doc().docx().map_err(refuse)?;
+    let expand = |address: &str| expand_heading(&docx, address).map_err(|e| refuse(EditError::Address(e)));
+    Ok(expand(within)? == expand(target)?)
 }
 
 /// Whole blocks deleted, the file's original text they held watched.

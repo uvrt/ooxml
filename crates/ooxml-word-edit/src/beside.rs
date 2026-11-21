@@ -1,5 +1,6 @@
 //! Owns: the text edits docx-agent's `word_insert_text` and `word_delete` make at a place
-//! named by a range or found as the one place a text occurs (`TextRange.insert_before`,
+//! named by a range or found as the one place a text occurs, in the document or within a
+//! scope (`TextRange.insert_before`,
 //! `insert_after`, `delete(collapse_space=)`): [`InsertBeside`] and [`DeletePlaced`], the
 //! place resolved on the transaction's own version -- a find reading the paragraphs that hold
 //! a match (section 5's read by condition), a range its paragraphs -- so the items of one
@@ -18,7 +19,7 @@ use crate::text_range::{anchor_range, range, range_id, Span};
 use crate::work::Work;
 use crate::{EditError, Result, WordDoc};
 use ooxml_store::{Command, Txn};
-use ooxml_word_model::address::RangeText;
+use ooxml_word_model::address::{expand_heading, RangeText};
 use ooxml_word_model::docx::Docx;
 use std::sync::Arc;
 
@@ -28,8 +29,14 @@ use std::sync::Arc;
 pub enum TextPlace {
     /// An address.
     Range(String),
-    /// Text occurring once in the document's stories (`Document.anchor`).
-    Once(String),
+    /// Text occurring once in the document's stories, or in the paragraphs a block, span,
+    /// heading's range or other scope holds (`Document.anchor(text, within=)`).
+    Once {
+        /// The text.
+        text: String,
+        /// Where to search it (every story when `None`).
+        within: Option<String>,
+    },
 }
 
 /// Which end of the place new text goes at.
@@ -81,13 +88,22 @@ pub struct Placed {
 fn located(sink: &mut EditSink<'_, '_>, docx: &Docx, place: &TextPlace) -> Result<RangeText> {
     match place {
         TextPlace::Range(address) => range(sink.doc(), docx, address),
-        TextPlace::Once(text) => {
+        TextPlace::Once { text, within } => {
             let pattern = Arc::new(Literal::new(text, true, false, "")?);
             let condition: Arc<dyn Pattern> = Arc::clone(&pattern) as Arc<dyn Pattern>;
             // the outcome depends on the paragraphs that hold a match: a write that makes
-            // one match, or stop matching, conflicts
+            // one match, or stop matching, conflicts. Within a scope, a paragraph moved in or
+            // out holding a match conflicts too; a scope's bounds moved by a write to
+            // paragraphs without one (a bookmark's end) do not -- as for a range target
             sink.read_where(Arc::new(HoldsMatch::new(condition)));
-            anchor_range(sink.doc(), docx, (&pattern, text), None)
+            // a heading's range searched as the span it is, and named so (docx-agent
+            // resolves `within` before the find)
+            let within = within
+                .as_deref()
+                .map(|w| expand_heading(docx, w))
+                .transpose()
+                .map_err(EditError::Address)?;
+            anchor_range(sink.doc(), docx, (&pattern, text), within.as_deref())
         }
     }
 }
