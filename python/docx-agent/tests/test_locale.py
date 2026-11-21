@@ -236,16 +236,29 @@ def test_a_subprocess_worker_gets_the_locale_from_its_arguments(chart_bytes):
 
 
 def test_the_layout_in_the_worker_takes_the_locale():
-    """``check``'s layout runs in the worker pool (``Engine``) with the document's options,
-    the locale among them."""
+    """``check``'s layout takes the document's options, the locale among them: in the
+    worker pool (``Engine``) on the Python path, or -- a check the Rust session serves
+    (lane P5b) -- by the document's page engine in this process, made for its options."""
     with _box(workers=1, locale=DUTCH) as box:
         session = box.session()
         session.open(_chart_document().to_bytes(), "chart.docx")
         result = box.dispatch(session, "check", {"doc": "d1", "include": ["reflow"]})
         assert result.ok, result.error
         document = session.entry("d1").document
-        # Kept by the options it was laid out with (round 38: by its token, in the worker).
-        assert repr(DUTCH) in document._layout_kept[0][1]
+        if document._layout_kept is not None:
+            # Kept by the options it was laid out with (round 38: by its token, in the worker).
+            assert repr(DUTCH) in document._layout_kept[0][1]
+            return
+        # Served: laid out by the page engine made for the document's options (its fonts and
+        # locale: docx2svg.rust's engine key), none other made for it.
+        from docx_agent import pages
+        from docx_agent.layout import layout_options, lineage
+
+        options = docx2svg.ConvertOptions(**layout_options(document, {}))
+        assert options.locale == DUTCH
+        made = [engine for (line, _), engine in pages._ENGINES.items() if line == lineage(document)]
+        assert made and all(engine.fits(options) for engine in made)
+        assert made[0].key[1] == "," and made[0].key[3] == "nl-NL"
 
 
 def test_new_document_takes_the_session_locale():

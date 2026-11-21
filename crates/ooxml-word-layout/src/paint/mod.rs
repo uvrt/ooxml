@@ -13,6 +13,7 @@
 //! Must not: place lines (the geometry has), measure (the text engine has), or read a
 //! drawing's or picture's bytes.
 
+mod body_paths;
 mod cell_floats;
 mod decorate;
 pub mod drawings;
@@ -25,6 +26,7 @@ pub mod svg;
 mod tables;
 pub mod text_box;
 
+pub use body_paths::body_line_paths;
 pub use line_numbers::{LineNumber, LineNumbers};
 pub use positions::{line_positions, Positions, Setting, TabSpan};
 
@@ -641,6 +643,32 @@ fn number_lines(
     }
 }
 
+/// The body's lines of the page `geometry` is of, to paint in `frame` (its frame).
+fn body_set<'a>(
+    layout: &'a DocumentLayout,
+    geometry: &'a PageGeometry,
+    frame: &'a crate::geometry::PageFrame,
+) -> LineSet<'a> {
+    let laid = layout.laid_page(geometry.page);
+    LineSet {
+        items: &layout.flow.items,
+        blocks: &layout.document.body,
+        paragraphs: std::borrow::Cow::Borrowed(&**layout.body_paragraphs()),
+        laid,
+        broken: laid.map(|l| &l.broken),
+        lines: &geometry.lines,
+        rows: laid
+            .map(|l| l.rows.iter().map(|r| (r.item, &r.row, r.room.as_ref())).collect())
+            .unwrap_or_default(),
+        story: None,
+        frame: Some(frame),
+        clip: None,
+        page: geometry.page,
+        paragraph_tops: &[],
+        layout,
+    }
+}
+
 /// The lines of a header, a footer, a page's footnotes or its opening line, to paint, on
 /// page `page` of frame `frame` (where a header's or footer's floating drawings are
 /// placed).
@@ -702,23 +730,7 @@ pub fn paint_page(
             },
         );
     }
-    let body = LineSet {
-        items: &layout.flow.items,
-        blocks: &document.body,
-        paragraphs: std::borrow::Cow::Borrowed(&**layout.body_paragraphs()),
-        laid,
-        broken: laid.map(|l| &l.broken),
-        lines: &geometry.lines,
-        rows: laid
-            .map(|l| l.rows.iter().map(|r| (r.item, &r.row, r.room.as_ref())).collect())
-            .unwrap_or_default(),
-        story: None,
-        frame: Some(&frame),
-        clip: None,
-        page,
-        paragraph_tops: &[],
-        layout,
-    };
+    let body = body_set(layout, &geometry, &frame);
     paint_set(
         &body,
         model,

@@ -370,6 +370,7 @@ impl PageContext<'_> {
             breaker: self.breaker,
             rooms: None,
             lines: std::cell::RefCell::default(),
+            stop: None,
         };
         let start = Position::default();
         let from = RegionStart {

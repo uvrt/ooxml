@@ -125,13 +125,17 @@ pub(super) fn set_cells(
         Err(error) => return Ok(refused(error, retry.clone())),
     };
     count_fills(&mut fills, &values);
+    // round 58 (R126): the rows written looked at against the rows around them
+    let rows = super::rows_written::after(editing, &view.table.id, &done, None, retry);
     for note in done.out.notes {
         if !accepted.notes.contains(&note) {
             accepted.notes.push(note);
         }
     }
     let notes = std::mem::take(&mut accepted.notes);
-    Ok(reply(editing, view, done.out.edits, (&fills, notes), &held, retry))
+    let mut result = reply(editing, view, done.out.edits, (&fills, notes), &held, retry);
+    result.warnings.extend(rows);
+    Ok(result)
 }
 
 /// A cells entry's row or column: its place, else its label, else missing.

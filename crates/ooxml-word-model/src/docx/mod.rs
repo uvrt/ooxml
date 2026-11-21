@@ -23,6 +23,7 @@ pub mod facts;
 pub mod fields;
 pub mod formatting;
 pub mod graphics;
+pub mod keeps;
 mod kept;
 pub mod numbering;
 pub mod outline;

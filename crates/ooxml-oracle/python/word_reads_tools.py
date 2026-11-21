@@ -2,10 +2,12 @@
 for ``word_reads_diff.py``: docx-agent's toolbox against the Rust tools (``word-reads``), case
 by case.  ``describe``'s fields the Rust core does not give yet
 (``ooxml_tools_word::NOT_DESCRIBED``) and the application-only ``memory`` are left out of the
-comparison, as are ``check``'s seconds (``timing``: its parts' names are compared) and its
-``validation`` (the save gate's comparison, which the tool layer adds around either); every other
-field must be equal.  ``check``'s cases are the facts the Rust session gives whole (``validate``,
-``fields``, ``app``); one it leaves to the host fails as ``unported``.
+comparison, as are ``check``'s seconds (``timing``: its parts' names are compared, but
+for laying out and waiting, :data:`LAYING_OUT`) and its ``validation`` (the save gate's
+comparison, which the tool layer adds around either); every other field must be equal.
+``check``'s cases are the facts the Rust session gives whole (``validate``, ``fields``,
+``app``, and ``reflow`` laid out by a page engine with docx-agent's fonts); one it leaves to
+the host fails as ``unported``.
 
 The addressed cases (``ranges``, ``inspect``, ``find``, ``batch``) are made per document from
 what it holds: its first, a middle and its last body paragraph, a span of five blocks, its
@@ -14,7 +16,9 @@ section, its first bookmark, a text range in its first paragraph with text, and 
 
 from __future__ import annotations
 
+import functools
 import json
+from pathlib import Path
 
 #: describe's data keys the Rust core does not give (and why: ooxml_tools_word::NOT_DESCRIBED).
 NOT_DESCRIBED = {"pages", "problems"}
@@ -23,9 +27,43 @@ NOT_DESCRIBED = {"pages", "problems"}
 READS = (("final", {}), ("markup", {"view": "markup"}), ("original", {"view": "original"}),
          ("all", {"stories": "all"}))
 
-#: check's cases: (name, include).
+#: check's cases: (name, include; ``None``: the default, which has ``reflow``).
 CHECKS = (("validate", ["validate"]), ("fields", ["fields"]),
-          ("validate fields app", ["validate", "fields", "app"]))
+          ("validate fields app", ["validate", "fields", "app"]), ("reflow", ["reflow"]), ("default", None))
+
+#: Lane P5e: check's sequences of versions, each case a check after the calls before it in
+#: the same session (checks and edits), measured from the check before (``since_last_check``):
+#: (name, calls before as (tool, arguments) with ``{first}`` / ``{middle}`` the first and middle
+#: body paragraphs' ids, the check's include, its pages).
+SEQUENCES = (
+    ("check after an edit", [("check", {"include": ["reflow"]}),
+                             ("word_insert_text", {"target": "{first}", "text": " checked" * 40})],
+     ["reflow"], None),
+    ("check after two edits", [("check", {"include": ["reflow"]}),
+                               ("word_insert_text", {"target": "{middle}", "text": " checked" * 40}),
+                               ("word_insert_text", {"target": "{first}", "text": " more" * 20})],
+     ["reflow"], [1, 2]),
+    ("checks between edits", [("check", {"include": ["reflow"]}),
+                              ("word_insert_text", {"target": "{middle}", "text": " checked" * 40}),
+                              ("check", {"include": ["reflow"]}),
+                              ("word_insert_text", {"target": "{first}", "text": " more" * 20})],
+     None, None),
+)
+
+#: check's cases laid out within a limit (lane P5c): (name, include, ``layout_timeout``, seconds)
+#: -- each on a document of its own, the limit passed before the layout starts.
+LIMITED = (("reflow past the layout limit", ["validate", "reflow", "fields"], 0.0),)
+
+#: What docx-agent's ``reflow`` says past a limit of 0 s.  Its check's facts are made by the
+#: document's layout owner (lane O), which on many documents lays the version out before the
+#: call's deadline holds it -- so docx-agent answers a limit of 0 s with the layout on some
+#: documents and with this on others.  The reference for a :data:`LIMITED` case is this,
+#: where its deadline held (the rest of the reply compared as it is).
+PAST_LIMIT = "timeout: laying the document out did not finish within 0 s"
+
+#: Where a check's time went to lay out and to wait (lane P5b): what each side had laid out
+#: before and the Python path's waits for its workers -- left out of ``timing``'s names.
+LAYING_OUT = {"layout", "worker_wait", "document_wait"}
 
 
 def _toolbox():
@@ -86,7 +124,9 @@ def cases_of(path, what: str) -> list[tuple[str, str, dict]]:
     if what == "read":
         return [(name, "word_read", arguments) for name, arguments in READS]
     if what == "check":
-        return [(f"check {name}", "check", {"include": include}) for name, include in CHECKS]
+        return [*((f"check {name}", "check", {} if include is None else {"include": include})
+                  for name, include in CHECKS),
+                *((f"check {name}", "check", {"include": include}) for name, include, _ in LIMITED)]
     if what == "ranges":
         return [(f"read {t}", "word_read", {"range": t}) for t in targets(path)]
     if what == "inspect":
@@ -109,14 +149,73 @@ def cases_of(path, what: str) -> list[tuple[str, str, dict]]:
     return [("batch", "read_batch", {"ops": ops})]
 
 
+def sequences_of(path) -> list[tuple[str, list[tuple[str, dict]], dict]]:
+    """:data:`SEQUENCES` for the document at ``path``: (name, the calls before, the check's
+    arguments); none for a document without a paragraph."""
+    from docx_agent import Document
+
+    paragraphs = [p.id for p in Document.open(path.read_bytes()).paragraphs()]
+    if not paragraphs:
+        return []
+    ids = {"{first}": paragraphs[0], "{middle}": paragraphs[len(paragraphs) // 2]}
+
+    def filled(arguments: dict) -> dict:
+        return {k: ids.get(v, v) if isinstance(v, str) else v for k, v in arguments.items()}
+
+    out = []
+    for name, before, include, pages in SEQUENCES:
+        arguments = {} if include is None else {"include": include}
+        if pages is not None:
+            arguments["pages"] = pages
+        out.append((name, [(tool, filled(a)) for tool, a in before], arguments))
+    return out
+
+
+def sequence_replies(toolbox, path) -> dict:
+    """Each of :func:`sequences_of`'s cases through a session of its own: the check's reply
+    after the calls before it, or the failure of one of them."""
+    out = {}
+    for name, before, arguments in sequences_of(path):
+        session = toolbox.session()
+        doc = session.open(path.read_bytes(), name=path.name)
+        try:
+            reply = None
+            for k, (tool, step) in enumerate(before):
+                done = toolbox.dispatch(session, tool, {"doc": doc, **step})
+                if not done.ok:
+                    reply = {"error": {"code": "before", "message": f"call {k} ({tool}): {done.to_json()}"}}
+                    break
+            if reply is None:
+                reply = json.loads(json.dumps(toolbox.dispatch(session, "check", {"doc": doc, **arguments}).to_json()))
+            out[name] = ("check", arguments, reply, before)
+        finally:
+            session.close(doc)
+    return out
+
+def layout_timeout(case: str) -> float | None:
+    """The limit on laying out ``case`` runs within (:data:`LIMITED`), if any."""
+    return next((seconds for name, _, seconds in LIMITED if f"check {name}" == case), None)
+
+
 def python_replies(toolbox, path, what: str) -> dict:
+    from ooxml_edit.tools import Limits
+
     session = toolbox.session()
     doc = session.open(path.read_bytes(), name=path.name)
     out = {}
     try:
         for name, tool, arguments in cases_of(path, what):
-            reply = json.loads(json.dumps(toolbox.dispatch(session, tool, {"doc": doc, **arguments}).to_json()))
-            out[name] = (tool, arguments, reply)
+            seconds = layout_timeout(name)
+            if seconds is None:
+                reply = toolbox.dispatch(session, tool, {"doc": doc, **arguments}).to_json()
+            else:
+                limited = toolbox.session(limits=Limits(layout_timeout=seconds))
+                own = limited.open(path.read_bytes(), name=path.name)
+                try:
+                    reply = toolbox.dispatch(limited, tool, {"doc": own, **arguments}).to_json()
+                finally:
+                    limited.close(own)
+            out[name] = (tool, arguments, json.loads(json.dumps(reply)))
     finally:
         session.close(doc)
     return out
@@ -140,13 +239,22 @@ def comparable(tool: str, reply: dict) -> dict:
     if tool == "check" and isinstance(data, dict):
         data = {k: v for k, v in data.items() if k != "validation"}
         if isinstance(data.get("timing"), dict):
-            data["timing"] = sorted(k for k in data["timing"] if k != "validation")
+            data["timing"] = sorted(k for k in data["timing"] if k != "validation" and k not in LAYING_OUT)
     out = {"summary": reply.get("summary"), "data": data}
     if tool in ("word_read", "find_text"):
         out["total"] = reply.get("total")
     if tool in ("word_read", "find_text"):
         out["next_cursor"] = reply.get("next_cursor")
     return out
+
+
+@functools.lru_cache(maxsize=8)
+def _fonts(path) -> dict:
+    """The fonts docx-agent lays the document at ``path`` out with (``fonts_of``)."""
+    from docx_agent import Document
+    from word_structure_cases import fonts_of
+
+    return fonts_of(Document.open(Path(path).read_bytes()))
 
 
 def check_tools(args, run_rust, report, files_of) -> int:
@@ -158,9 +266,27 @@ def check_tools(args, run_rust, report, files_of) -> int:
         except Exception as error:  # noqa: BLE001 -- a test instrument: say what failed
             print(f"{path}: python failed: {error}")
             continue
-        for case, (tool, arguments, reply) in replies.items():
+        if args.what == "check":
+            try:
+                replies.update(sequence_replies(toolbox, path))
+            except Exception as error:  # noqa: BLE001 -- a test instrument: say what failed
+                print(f"{path}: python sequences failed: {error}")
+        for case, (tool, arguments, reply, *before) in replies.items():
             expected[(str(path), case)] = comparable(tool, reply)
-            manifest.append({"file": str(path), "case": case, "tool": tool, "arguments": {"doc": "d1", **arguments}})
+            # (a text reply -- read, ranges, find -- is compared as its text: no reflow in it)
+            answer = expected[(str(path), case)]
+            data = answer.get("data") if isinstance(answer, dict) else None
+            reflow = data.get("reflow") if isinstance(data, dict) else None
+            if layout_timeout(case) == 0.0 and isinstance(reflow, dict) and "error" not in reflow:
+                expected[(str(path), case)]["data"]["reflow"] = {"error": PAST_LIMIT}
+            item = {"file": str(path), "case": case, "tool": tool, "arguments": {"doc": "d1", **arguments}}
+            if before:
+                item["before"] = [{"tool": t, "arguments": {"doc": "d1", **a}} for t, a in before[0]]
+            if tool == "check" and "reflow" in (arguments.get("include") or ["reflow"]):
+                item["fonts"] = _fonts(path)          # the session lays out as docx-agent does
+            if layout_timeout(case) is not None:
+                item["layout_timeout"] = layout_timeout(case)
+            manifest.append(item)
     rust = {}
     for key, line in run_rust(args.rust, manifest).items():
         reply = line["reply"]

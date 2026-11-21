@@ -23,6 +23,8 @@ thiserror.workspace = true
 
 [dev-dependencies]
 ooxml-zip.workspace = true
+ooxml-fonts.workspace = true
+ooxml-word-pages.workspace = true
 
 [lints]
 workspace = true

@@ -18,6 +18,7 @@ ooxml-word-layout.workspace = true
 ooxml-word-pages.workspace = true
 ooxml-numfmt.workspace = true
 ooxml-fonts.workspace = true
+ooxml-scene.workspace = true
 ooxml-store.workspace = true
 ooxml-chart.workspace = true
 ooxml-sheets.workspace = true

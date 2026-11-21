@@ -702,7 +702,10 @@ def wrap(handler: Callable[..., Any], *, mutates: bool, track: bool = True) -> C
         try:
             if mutates and call.entry is not None and call.changing:
                 if not any(isinstance(t, Before) for t in call.context.touched.get(call.entry.doc_id, [])):
-                    call.touch(Before(seen_before(call.document, state_bytes(call)) or laid_before(call.document)))
+                    from ..rust.reads import checked_before
+
+                    call.touch(Before(seen_before(call.document, state_bytes(call)) or checked_before(call)
+                                      or laid_before(call.document)))
                 if track:
                     with tracked(call, call.entry):
                         returned = handler(call, **arguments)

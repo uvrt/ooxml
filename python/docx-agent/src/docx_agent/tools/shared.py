@@ -907,6 +907,16 @@ def _layout_facts(call: Any, pages: list[int] | None, seen: bool = True, *, scop
         now = summary_for(document, key, layout)
         warnings = [short(str(w), 160) for w in layout.warnings[:10]] if layout.warnings else None
     before = getattr(document, "_tool_seen_layout", None)
+    # Lane P5b: of a document the session owns, what the last check saw is the session's
+    # (its checks are served there): compared with it, and this one kept there.
+    from ..rust.reads import keep_last_check, last_check
+
+    owned, kept, number = last_check(call)
+    if owned and kept is not None:
+        from ..layout import LayoutSummary
+
+        same = kept[0] is not None and kept[0] == number
+        before = now if same else LayoutSummary.held(kept[1])    # this very version: nothing since
     from ..rust.check import seen_by_python, since_for_python
 
     # Lane F: a check served by the document's Rust owner saw a later version than this
@@ -926,6 +936,8 @@ def _layout_facts(call: Any, pages: list[int] | None, seen: bool = True, *, scop
     if seen:
         document._tool_seen_layout = now
         seen_by_python(call, version)
+        if owned:
+            keep_last_check(call, getattr(now, "_rust", None))
     if warnings:
         facts["layout_warnings"] = warnings
     if made is not None:

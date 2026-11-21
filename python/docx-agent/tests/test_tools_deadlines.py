@@ -26,7 +26,7 @@ def test_a_reflow_check_on_a_36_page_document_stays_within_its_deadline():
         session = box.session(clock=CLOCK)
         d = session.open(LONG.read_bytes(), LONG.name)
         first = box.dispatch(session, "check", {"doc": d, "include": ["reflow"]})
-        assert first.ok and first.data["reflow"]["pages"] == 36
+        assert first.ok and first.data["reflow"]["pages"] == 36, first.data
         edit = box.dispatch(session, "word_insert_text", {"doc": d, "target": "p@body/3",
                                                           "text": " A sentence that reflows the first page."})
         assert edit.ok and edit.checks["reflow"] == "stale: call check"   # 36 pages: over the 20 for every edit
@@ -48,4 +48,5 @@ def test_a_layout_past_its_deadline_is_a_timeout_and_changes_nothing():
         assert not toc.ok and toc.error.code == "timeout"
         assert document.to_bytes() == before                   # rolled back whole
         facts = box.dispatch(session, "check", {"doc": d, "include": ["reflow"]})
-        assert facts.ok and facts.data["reflow"]["error"].startswith("timeout")
+        assert facts.ok and "error" in facts.data["reflow"], facts.data
+        assert facts.data["reflow"]["error"].startswith("timeout")

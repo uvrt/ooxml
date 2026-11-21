@@ -1,19 +1,23 @@
 //! The locale a call reads its documents under (lane P5q): a table of contents' `\t` styles
 //! split on the locale's list separator and found in its language -- the call's locale
 //! first, then the session's where the host set one, then the document's own language
-//! (`w:themeFontLang`), as docx-agent's `_list_separator` and `_field_language` read them.
+//! (`w:themeFontLang`), as docx-agent's `_list_separator` and `_field_language` read them;
+//! the pages from a page engine over the repository's test fonts.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
 use crate::common::{Never, NoFonts, NoParts, Unlimited};
 use ooxml_base::context::Timestamp;
 use ooxml_base::{Clock, Context, Limits};
+use ooxml_derive::CacheBudget;
+use ooxml_fonts::{Folder, Location, WordFontOptions};
 use ooxml_numfmt::{Locale, EN_US};
 use ooxml_opc::Package;
 use ooxml_session::{CallContext, DocId, DocKind, Session, SessionConfig};
-use ooxml_word_edit::{FieldLayout, FieldPlace, FieldRun, LaidFields, PageShows, Unknown};
+use ooxml_tools_word::EnginePages;
+use ooxml_word_pages::{DiskFonts, EngineBudgets, EngineOptions, FontSetup, PageEngine};
 use ooxml_zip::{Method, NewEntry, Writer};
 use serde_json::json;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 struct Fixed;
@@ -29,32 +33,41 @@ impl Clock for Fixed {
     }
 }
 
-/// A layout of one page: every field on page 1.
-struct OnePage;
+/// A memo budget that grants every reservation (the page engine's).
+struct Memos;
 
-impl LaidFields for OnePage {
-    fn page_field(&self, _: &str, _: &str, _: FieldPlace<'_>) -> Result<String, Unknown> {
-        Ok("1".to_owned())
+impl CacheBudget for Memos {
+    fn reserve(&self, _: usize) -> bool {
+        true
     }
-    fn page_reference(&self, _: &str, _: FieldPlace<'_>) -> Result<String, Unknown> {
-        Ok("1".to_owned())
-    }
-    fn style_reference(&self, _: &str, _: FieldPlace<'_>, _: FieldRun<'_>) -> Result<String, Unknown> {
-        Err(Unknown("not drawn".into()))
-    }
-    fn pages(&self) -> Vec<PageShows> {
-        vec![PageShows {
-            section: 0,
-            kind: "default",
-            blank: false,
-        }]
+    fn release(&self, _: usize) {}
+    fn used(&self) -> usize {
+        0
     }
 }
 
-impl FieldLayout for OnePage {
-    fn lay_out(&self, _: &Package) -> Result<Box<dyn LaidFields + '_>, String> {
-        Ok(Box::new(OnePage))
-    }
+/// The page engine the host lays the documents out with (the repository's test fonts).
+fn layout() -> Arc<EnginePages> {
+    let folder = Folder {
+        location: Location::Folder,
+        path: concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../python/pptx2svg/packages/pptx2svg-fonts/src/pptx2svg_fonts/files"
+        )
+        .to_owned(),
+    };
+    let options = WordFontOptions {
+        substitutes: Vec::new(),
+        recorded_faces: true,
+        fallbacks: true,
+    };
+    let setup = Arc::new(FontSetup::new(Arc::new(DiskFonts), &[folder], options));
+    let budgets = EngineBudgets {
+        held: Arc::new(Memos),
+        paint: Arc::new(Memos),
+    };
+    let engine = PageEngine::new(setup, EngineOptions::default(), budgets);
+    Arc::new(EnginePages::new(Arc::new(Mutex::new(engine))))
 }
 
 fn session(locale: Option<Locale>) -> Session {
@@ -152,7 +165,7 @@ fn dutch_language() -> Locale {
 fn listed(session: &Session, theme: Option<&str>, call: Option<Locale>) -> Vec<&'static str> {
     let doc: DocId = session.open(docx(theme), DocKind::Docx, "d.docx").unwrap();
     let context = CallContext {
-        layout: Some(Arc::new(OnePage)),
+        layout: Some(layout()),
         locale: call,
         ..CallContext::default()
     };

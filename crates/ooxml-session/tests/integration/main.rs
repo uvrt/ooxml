@@ -7,4 +7,5 @@ mod common;
 mod editing;
 mod locale;
 mod registry;
+mod rows_written;
 mod session;

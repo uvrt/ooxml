@@ -137,13 +137,19 @@ def test_a_mixed_batch_gives_the_results_it_gave_before(box, monkeypatch):
         read_alone.append(found is not None)
         return found
 
+    from docx_agent.rust import edits as _edits
+
+    served_before = sum(_edits.served().values())
     with monkeypatch.context() as patch:
         patch.setattr(Reader, "block", counted)
         fast = _run(box, data)
+    served = sum(_edits.served().values()) > served_before
     with monkeypatch.context() as patch:
         _unoptimised(patch, box)
         slow = _run(box, data)
-    assert any(read_alone)                         # the tables were read alone
+    # The tables were read alone -- where docx-agent's handler wrote them; ops the Rust
+    # session serves (its clock the session's: lane P2e1) read their tables there.
+    assert any(read_alone) or served
     assert json.dumps(fast, sort_keys=True, default=str) == json.dumps(slow, sort_keys=True, default=str)
     batch = fast["batch"]["result"]
     warnings = batch["warnings"]
@@ -164,6 +170,7 @@ def test_keep_together_lays_the_document_out_once_per_batch(box, monkeypatch):
     ops = [{"tool": "word_format_table", "arguments": {"doc": doc, "table": t, "scope": "table",
                                                        "keep_together": True}} for t in tables * 2]
     from docx_agent import layout as layout_module
+    from docx_agent import pages
 
     laid = []
     noted = layout_module.note_made
@@ -173,12 +180,21 @@ def test_keep_together_lays_the_document_out_once_per_batch(box, monkeypatch):
             laid.append(facts["made"])
         return noted(document, facts)
 
+    def rust_layouts() -> int:
+        """The versions the Rust page engines laid out so far, whole or again in part."""
+        return sum(int(s["full"] + s["relaid"]) for s in (e.stats() for e in list(pages._ENGINES.values())))
+
     # Round 59 (R134): each table's placements are read in the worker holding the layout
-    # (a task per table), the document laid out there once.
+    # (a task per table), the document laid out there once.  Where ooxml_core has the Rust
+    # layout (lane L4b) the document's engine lays it out in this process instead, counted
+    # by the engine: Python's layout is not asked at all.
     monkeypatch.setattr(layout_module, "note_made", counting)
+    before = rust_layouts()
     result = box.dispatch(session, "batch", {"ops": ops})
     assert result.ok and sum("taller than a page" in w for w in result.warnings) == 2
-    assert len(laid) == 1                          # after the last op; each op's own would be six
+    made = rust_layouts() - before if pages.available() else len(laid)
+    assert made == 1                               # after the last op; each op's own would be six
+    assert not pages.available() or not laid       # the one layout, in one place
 
 
 def test_a_batch_past_its_deadline_says_what_was_not_run(box):

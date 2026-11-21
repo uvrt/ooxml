@@ -1261,7 +1261,8 @@ def _keep_blocks(document: Any, address: str, on: bool, layout: Any) -> EditResu
 
 def _laid_before(call: Any, kept: list[str]) -> Any:
     """What the blocks kept together are measured in before the change, where the document's
-    current state was laid out already (:func:`cached_layout`): its layout here, or (round
+    current state was laid out already (:func:`cached_layout`, or by the session's check:
+    lane P5b): its layout here, or (round
     59, R134) -- laid out in the worker holding it -- each address's extents read there
     now, ``{address: [Extent]}`` (:func:`docx_agent.layout.held_answers`), so the layout
     never comes here for them.  ``None``: not laid out."""
@@ -1269,6 +1270,16 @@ def _laid_before(call: Any, kept: list[str]) -> Any:
 
     document = call.document
     found = cached_layout(document, fetch=False)
+    if found is None:
+        from ..rust.reads import checked_before
+
+        # Lane P5b: laid out by the session's check of this very version (by the document's
+        # page engine, which gives that version again): read where its layouts are held.
+        if checked_before(call) is None:
+            return None
+        found = checked = True
+    else:
+        checked = False
     if found is not True:
         return found
     groups: dict[str, list[str]] = {}
@@ -1281,7 +1292,9 @@ def _laid_before(call: Any, kept: list[str]) -> Any:
         answered = held_answers(document, {"extents": groups}, call.unlocked)
     except ToolError:
         return None
-    return answered["extents"] if answered is not None else cached_layout(document)
+    if answered is not None:
+        return answered["extents"]
+    return document.layout() if checked else cached_layout(document)
 
 
 def _taller_than_page(document: Any, address: str, layout: Any) -> tuple[float, float] | None:

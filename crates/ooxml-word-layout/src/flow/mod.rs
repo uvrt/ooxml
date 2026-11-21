@@ -19,6 +19,7 @@ use crate::notes::{NoteLines, NoteRole};
 use crate::paragraph::{measure_paragraph, MeasureContext, MeasuredParagraph, ParagraphJob, Unmeasured};
 use crate::px::Px;
 use crate::sections::Sections;
+use crate::stop::Stop;
 use crate::table::{TableContext, TableFlow, TableJob, TableLayout, Unsupported};
 use crate::vertical::autospace_kept;
 use ooxml_base::Locale;
@@ -446,6 +447,8 @@ pub struct FlowMaker<'a, 'm> {
     wraps: bool,
     /// The drop cap the next paragraph carries.
     pending_drop: Option<Arc<DropCap>>,
+    /// Asked before each top-level block: the flow ends there where it says stop.
+    stop: Option<&'a Stop<'a>>,
 }
 
 impl<'a, 'm> FlowMaker<'a, 'm> {
@@ -465,7 +468,16 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
             notes_at: NotesAt::new(),
             wraps: source::wraps(cx.blocks),
             pending_drop: None,
+            stop: None,
         }
+    }
+
+    /// The flow ended before the first top-level block `stop` says stop at (a flow its
+    /// layout's caller drops).
+    #[must_use]
+    pub fn until(mut self, stop: &'a Stop<'a>) -> FlowMaker<'a, 'm> {
+        self.stop = Some(stop);
+        self
     }
 
     fn props_of_block(&mut self, block: usize) -> Option<Arc<Props>> {
@@ -525,6 +537,9 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
             }
         }
         for (index, block) in body.iter().enumerate().take(range.end).skip(range.start) {
+            if self.stop.is_some_and(Stop::now) {
+                break;
+            }
             let first = self.firsts.get(index).copied().unwrap_or(0);
             let section = self.cx.sections.section_of(top_level);
             let section_start = !seen.get(section).copied().unwrap_or(true);

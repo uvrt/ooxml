@@ -686,6 +686,7 @@ version = "0.1.0"
 dependencies = [
  "ooxml-base",
  "ooxml-derive",
+ "ooxml-fonts",
  "ooxml-numfmt",
  "ooxml-opc",
  "ooxml-store",
@@ -693,6 +694,7 @@ dependencies = [
  "ooxml-tools-word",
  "ooxml-word-edit",
  "ooxml-word-model",
+ "ooxml-word-pages",
  "ooxml-xml",
  "ooxml-zip",
  "serde_json",
@@ -768,6 +770,7 @@ dependencies = [
  "ooxml-fonts",
  "ooxml-numfmt",
  "ooxml-opc",
+ "ooxml-scene",
  "ooxml-sheets",
  "ooxml-store",
  "ooxml-tools",
