@@ -13,6 +13,7 @@ mod empty;
 mod grid;
 mod numbering;
 mod scratch;
+mod shapes;
 
 pub use accept::{accept_loses_text, LostCell};
 pub use empty::{empty_paragraphs, EmptyRun};
