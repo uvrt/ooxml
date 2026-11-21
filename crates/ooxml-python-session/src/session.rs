@@ -92,7 +92,9 @@ type Validation = (Vec<String>, Vec<String>, usize);
 type EditMade = (u64, PyVersion, Option<String>, Validation);
 
 /// What a call runs with (`ooxml_core.CallContext`): who calls, a token that stops it,
-/// and how long it may run, in seconds. One may serve many calls.
+/// how long it may run, in seconds, and the limits on its reply -- `max_result_chars` (a
+/// page's characters; 24,000 unless given) and `max_list_items` (a listing's items per page;
+/// 50 unless given), as the host's `Limits`. One may serve many calls.
 #[pyclass(frozen, name = "CallContext", module = "ooxml_core")]
 pub struct PyCallContext {
     pub(crate) inner: CallContext,
@@ -100,20 +102,41 @@ pub struct PyCallContext {
 
 #[pymethods]
 impl PyCallContext {
+    /// # Errors
+    /// `ValueError` for a negative deadline, or a limit of 0.
     #[new]
-    #[pyo3(signature = (*, caller = None, cancel = None, deadline = None))]
-    fn new(caller: Option<&str>, cancel: Option<PyRef<'_, PyCancelToken>>, deadline: Option<f64>) -> PyResult<Self> {
+    #[pyo3(signature = (*, caller = None, cancel = None, deadline = None, max_result_chars = None,
+                        max_list_items = None))]
+    fn new(
+        caller: Option<&str>,
+        cancel: Option<PyRef<'_, PyCancelToken>>,
+        deadline: Option<f64>,
+        max_result_chars: Option<usize>,
+        max_list_items: Option<usize>,
+    ) -> PyResult<Self> {
         let deadline = deadline
             .map(|seconds| {
                 Duration::try_from_secs_f64(seconds)
                     .map_err(|_| PyValueError::new_err("deadline is seconds, 0 or more"))
             })
             .transpose()?;
+        let mut limits = ooxml_tools::Limits::DEFAULT;
+        for (given, kept, name) in [
+            (max_result_chars, &mut limits.result_chars, "max_result_chars"),
+            (max_list_items, &mut limits.list_items, "max_list_items"),
+        ] {
+            match given {
+                Some(0) => return Err(PyValueError::new_err(format!("{name} is 1 or more"))),
+                Some(n) => *kept = n,
+                None => {}
+            }
+        }
         Ok(Self {
             inner: CallContext {
                 caller: caller.map_or_else(Caller::anonymous, Caller::named),
                 cancel: cancel.map(|t| Arc::clone(&t.inner)),
                 deadline,
+                limits,
                 ..CallContext::default()
             },
         })

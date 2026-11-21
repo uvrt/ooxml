@@ -19,7 +19,7 @@ use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools::{ToolArgs, ToolResult};
 use ooxml_tools_word::{
     word_headers_footers, word_links, word_move, word_notes, word_sections, Blob, BlobList, CallEditor, Editing,
-    EnginePages, Others, Version, WordHeadersFooters, WordLinks, WordMove, WordNotes, WordSections,
+    EnginePages, Others, Owned, Version, WordHeadersFooters, WordLinks, WordMove, WordNotes, WordSections,
 };
 use ooxml_word_edit::touched::{touched, Touched};
 use ooxml_word_edit::validate::{problems, Delta};
@@ -47,22 +47,29 @@ pub fn case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
 }
 
 /// The tool the session registers as `tool`, run on the document as opened (`None`: no
-/// such tool): a reading tool reads it as `case.docx`, version 1.
+/// such tool): a reading tool reads it as `case.docx`, version 1, as a session owning it
+/// hands it over.
 fn registered(tool: &str, arguments: &Value, editing: &Editing<'_>) -> Option<ToolResult<Value>> {
     static REGISTRY: OnceLock<Registry> = OnceLock::new();
     let tool = REGISTRY.get_or_init(Registry::standard).named(tool)?;
     let versions = Versions::new();
-    let version = Version {
-        name: "case.docx",
-        package: editing.opened.package(),
-        number: 1,
-        versions: &versions,
-        placer: None,
-        owned: None,
-        others: editing.others,
-        word: Some(editing.opened),
-    };
+    let version = opened_version(editing, &versions);
     Some(tool.run_outside(arguments, editing, &version))
+}
+
+/// The document as opened, version 1, as a reading tool is handed it by a session that
+/// owns it: its Word document, the problems it opened with, the other documents the call
+/// names.
+pub(crate) fn opened_version<'a>(editing: &Editing<'a>, versions: &'a Versions) -> Version<'a> {
+    let owned = Owned {
+        doc: editing.opened,
+        baseline: editing.editor.baseline(),
+        opened: editing.opened,
+    };
+    Version::new("case.docx", editing.opened.package(), 1, versions)
+        .with_others(editing.others)
+        .with_word(Some(editing.opened))
+        .with_owned(Some(owned))
 }
 
 /// The ported tools the session does not register yet (each leaves this list when it is
@@ -181,16 +188,7 @@ pub(crate) fn tool_case(
 
 /// The other document a case names (`d2`), as a reading tool is handed it.
 fn other_version<'a>(package: &'a Package, word: Option<&'a WordDoc>, versions: &'a Versions) -> Version<'a> {
-    Version {
-        name: "copy.docx",
-        package,
-        number: 1,
-        versions,
-        placer: None,
-        owned: None,
-        others: Others::default(),
-        word,
-    }
+    Version::new("copy.docx", package, 1, versions).with_word(word)
 }
 
 /// The blobs a case registers (`blobs`: `{name, mime, hex}` each), as the session's
