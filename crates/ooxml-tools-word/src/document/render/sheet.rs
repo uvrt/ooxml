@@ -9,7 +9,7 @@
 //!
 //! Must not: draw a page but through [`super::draw`].
 
-use super::{draw, sheet_key, Drawer, RenderSheet, FINAL_VIEW, MAX_IMAGE_EDGE};
+use super::{draw, sheet_key, Drawer, RenderSheet, FINAL_VIEW};
 use ooxml_tools::tiles::{check_size, fit, tiled_svg, tiling_of, Tile, TileAsk, TileOptions, MAX_TILES};
 use ooxml_tools::{Done, File, ToolError};
 use serde_json::{json, Map, Value};
@@ -48,7 +48,7 @@ pub(super) fn render_sheet(
         name: "sheet",
         what: "pages",
         width,
-        max_edge: MAX_IMAGE_EDGE,
+        max_edge: call.limits.image_edge,
     };
     let pages = pages.map(|mut asked| {
         let mut seen = std::collections::HashSet::new();

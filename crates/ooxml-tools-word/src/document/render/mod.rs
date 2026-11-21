@@ -26,10 +26,6 @@ use serde_json::{json, Map, Value};
 
 /// A page's width when the call gives none.
 pub const DEFAULT_WIDTH: i64 = 1000;
-/// Images one call gives at most (docx-agent's `Limits.max_images_per_call`).
-pub const MAX_IMAGES_PER_CALL: usize = 4;
-/// An image's longest edge, in pixels (`Limits.max_image_edge`).
-pub const MAX_IMAGE_EDGE: i64 = 2576;
 /// Ranges one call names at most (`scope.MAX_RANGES`).
 pub const MAX_RANGES: usize = 20;
 /// What the summary says of the view drawn.
@@ -121,9 +117,10 @@ pub fn render(args: &Render, version: &Version<'_>, cancel: &dyn Cancel) -> Resu
         (asked, None)
     } else {
         let (on, scoped) = range_pages(&laid, &owned, &ranges, asked.as_deref(), &args.doc)?;
-        if sheet.is_none() && on.len() > MAX_IMAGES_PER_CALL {
+        let per_call = version.limits.images_per_call;
+        if sheet.is_none() && on.len() > per_call {
             warnings.push(format!(
-                "the range is on {} pages, more than {MAX_IMAGES_PER_CALL} images a call: drawn as one sheet",
+                "the range is on {} pages, more than {per_call} images a call: drawn as one sheet",
                 on.len()
             ));
             sheet = Some(RenderSheet {
@@ -137,6 +134,7 @@ pub fn render(args: &Render, version: &Version<'_>, cancel: &dyn Cancel) -> Resu
         layout,
         laid: &laid,
         drawing,
+        limits: version.limits,
         doc: &args.doc,
     };
     let mut done = match sheet {
@@ -150,26 +148,21 @@ pub fn render(args: &Render, version: &Version<'_>, cancel: &dyn Cancel) -> Resu
     Ok(done)
 }
 
-/// What a call draws with: the engine, the version laid out, the raster and store.
+/// What a call draws with: the engine, the version laid out, the raster and store, the
+/// host's limits on images.
 pub(super) struct Drawer<'a> {
     layout: &'a dyn crate::WordLayout,
     laid: &'a LaidVersion,
     drawing: Drawing<'a>,
+    limits: ooxml_tools::Limits,
     doc: &'a str,
 }
 
 impl Drawer<'_> {
-    /// `count` images more refused where the call's image budget has not room for them.
+    /// `count` images more refused, before anything is drawn, where the call's limit or
+    /// the host's budgets have not room for them (docx-agent's `call.check_images`).
     fn check_images(&self, count: usize) -> Result<(), ToolError> {
-        match self.drawing.images_left {
-            Some(left) if count > left => Err(ToolError::failure(
-                Failure::Limit,
-                format!(
-                    "{count} image(s) asked, {left} left in the image budget; work from text (describe, check) from here"
-                ),
-            )),
-            _ => Ok(()),
-        }
+        self.limits.check_images(count, self.drawing.budgets)
     }
 
     /// `not_found` for pages past the version's last, naming the pages there are.
@@ -332,11 +325,12 @@ fn render_pages(
     let mut seen = std::collections::HashSet::new();
     pages.retain(|p| seen.insert(*p));
     let width = width.unwrap_or(DEFAULT_WIDTH);
-    if pages.len() > MAX_IMAGES_PER_CALL {
+    let per_call = call.limits.images_per_call;
+    if pages.len() > per_call {
         return Err(ToolError::failure(
             Failure::Limit,
             format!(
-                "at most {MAX_IMAGES_PER_CALL} pages per call; sheet: {{}} tiles up to {} into one image",
+                "at most {per_call} pages per call; sheet: {{}} tiles up to {} into one image",
                 ooxml_tools::tiles::MAX_TILES
             ),
         )
@@ -371,7 +365,8 @@ fn render_pages(
     Ok(done)
 }
 
-/// Registers `render` (the group's [`super::register`]).
+/// Registers `render` (the group's [`super::register`]): the host hands its calls to the
+/// session with its page engine.
 pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.read::<Render>(render);
+    r.hosted_read::<Render>(render, crate::Hosting::SERVED.layout());
 }

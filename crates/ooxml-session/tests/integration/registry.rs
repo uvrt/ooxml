@@ -64,7 +64,10 @@ fn every_tool_has_its_hosting_exported() {
         let served = facts["served"].as_bool().unwrap();
         assert!(served || keys.iter().all(|k| !facts[*k].as_bool().unwrap()), "{facts}");
     }
-    // a reading tool is the host's to answer
+    // a reading tool is the host's to answer, unless it declares otherwise: render is handed
+    // over with the host's page engine
     assert_eq!(hosting["describe"]["served"], false);
+    assert_eq!(hosting["render"]["served"], true);
+    assert_eq!(hosting["render"]["layout"], true);
     assert!(registry.hosting(DocKind::Pptx).is_empty());
 }

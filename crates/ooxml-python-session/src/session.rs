@@ -93,9 +93,8 @@ type EditMade = (u64, PyVersion, Option<String>, Validation);
 
 /// What a call runs with (`ooxml_core.CallContext`): who calls, a token that stops it,
 /// how long laying a document out may take in it (`layout_timeout`, seconds), how long it
-/// may run, in seconds, the limits on its reply -- `max_result_chars` (a page's characters;
-/// 24,000 unless given) and `max_list_items` (a listing's items per page; 50 unless given),
-/// as the host's `Limits` -- and `layout_counts`, `(pages, lines)` of the host's layout of
+/// may run, in seconds, the host's limits on its reply (`limits`, an `ooxml_core.Limits`;
+/// its defaults where not given) and `layout_counts`, `(pages, lines)` of the host's layout of
 /// the version the call reads where it has laid it out (`save_document`'s `app.xml`
 /// statistics). One may serve many calls.
 #[pyclass(frozen, name = "CallContext", module = "ooxml_core")]
@@ -106,30 +105,19 @@ pub struct PyCallContext {
 #[pymethods]
 impl PyCallContext {
     /// # Errors
-    /// `ValueError` for a negative deadline or layout timeout, or a limit of 0.
+    /// `ValueError` for a negative deadline or layout timeout.
     #[new]
-    #[pyo3(signature = (*, caller = None, cancel = None, deadline = None, layout_timeout = None,
-                        max_result_chars = None, max_list_items = None, layout_counts = None))]
+    #[pyo3(signature = (*, caller = None, cancel = None, deadline = None, layout_timeout = None, limits = None,
+                        layout_counts = None))]
     fn new(
         caller: Option<&str>,
         cancel: Option<PyRef<'_, PyCancelToken>>,
         deadline: Option<f64>,
         layout_timeout: Option<f64>,
-        max_result_chars: Option<usize>,
-        max_list_items: Option<usize>,
+        limits: Option<PyRef<'_, crate::options::PyLimits>>,
         layout_counts: Option<(u64, u64)>,
     ) -> PyResult<Self> {
-        let mut limits = ooxml_tools::Limits::DEFAULT;
-        for (given, kept, name) in [
-            (max_result_chars, &mut limits.result_chars, "max_result_chars"),
-            (max_list_items, &mut limits.list_items, "max_list_items"),
-        ] {
-            match given {
-                Some(0) => return Err(PyValueError::new_err(format!("{name} is 1 or more"))),
-                Some(n) => *kept = n,
-                None => {}
-            }
-        }
+        let limits = limits.map_or(ooxml_tools::Limits::DEFAULT, |l| l.inner);
         Ok(Self {
             inner: CallContext {
                 caller: caller.map_or_else(Caller::anonymous, Caller::named),

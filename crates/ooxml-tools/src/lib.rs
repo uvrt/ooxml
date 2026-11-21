@@ -63,7 +63,7 @@ mod validate;
 
 pub use error::{ErrorCode, Failure, Refusal, ToolError, TryCall, WayOut};
 pub use intent::Accepted;
-pub use limits::Limits;
+pub use limits::{BudgetSpan, ImageBudget, Limits};
 pub use ooxml_tools_derive::{ArgEnum, ToolArgs};
 pub use places::{PlaceKind, Places, NAMES as PLACE_NAMES};
 pub use result::{

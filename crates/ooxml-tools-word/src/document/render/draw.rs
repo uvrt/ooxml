@@ -25,14 +25,14 @@ pub struct Drawing<'a> {
     pub raster: &'a PageRaster,
     /// The document's images kept between calls.
     pub images: &'a super::store::PageImages,
-    /// How many images the call may still give (`None`: no budget).
-    pub images_left: Option<usize>,
+    /// The host's budgets of images, as they stand when the call starts (empty: none).
+    pub budgets: &'a [ooxml_tools::ImageBudget],
 }
 
 impl std::fmt::Debug for Drawing<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Drawing")
-            .field("images_left", &self.images_left)
+            .field("budgets", &self.budgets)
             .finish_non_exhaustive()
     }
 }

@@ -34,11 +34,11 @@ use pyo3::prelude::*;
 
 pub use budget::{PyBudgetAccount, PyMemoryBudget};
 pub use layout::{LayoutFallback, PyLaidPages, PyWordFonts, PyWordPages};
-pub use options::{PyCallDocuments, PyCallLayout, PyCallOptions};
+pub use options::{PyCallDocuments, PyCallLayout, PyCallOptions, PyLimits};
 pub use raster::PyPageRaster;
 pub use session::{PyCallContext, PyCancelToken, PySession, PyVersion};
 
-/// Add the session API to the module `m`: `Session`, `CancelToken`, `CallContext`, `CallOptions`, `Version` and
+/// Add the session API to the module `m`: `Session`, `CancelToken`, `CallContext`, `Limits`, `CallOptions`, `Version` and
 /// `tool_specs`, `tool_hosting`; and the Word layout's handles: `WordFonts`, `WordPages`, `LaidPages`,
 /// `LayoutFallback`, `LayoutSummary`, `MemoryBudget` and `BudgetAccount`.
 ///
@@ -51,6 +51,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCallOptions>()?;
     m.add_class::<PyCallDocuments>()?;
     m.add_class::<PyCallLayout>()?;
+    m.add_class::<PyLimits>()?;
     m.add_class::<PyVersion>()?;
     m.add_class::<group::PyStepGroup>()?;
     m.add_class::<group::PyGroupMark>()?;

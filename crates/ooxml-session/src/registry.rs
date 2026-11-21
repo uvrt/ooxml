@@ -138,6 +138,10 @@ impl Registrar for Registry {
         self.register(Arc::new(ReadHandler::<T>::new(&[DocKind::Docx], run)));
     }
 
+    fn hosted_read<T: ToolArgs + 'static>(&mut self, run: ReadFn<T>, hosting: Hosting) {
+        self.register(Arc::new(ReadHandler::<T>::new(&[DocKind::Docx], run).hosted(hosting)));
+    }
+
     fn edit<T: ToolArgs + 'static>(&mut self, run: EditFn<T>, hosting: Hosting) {
         self.register(Arc::new(EditHandler::<T>::new(&[DocKind::Docx], run).hosted(hosting)));
     }

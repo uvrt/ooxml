@@ -4,7 +4,8 @@
 //! versions and the host's names for them), the document's layout (`ooxml_core.CallLayout`:
 //! the page engine, the raster pages are drawn with, the placer of blocks), the blobs, the
 //! values written by reference -- read into a [`CallContext`] once, while the
-//! interpreter lock is held; and the adapter of a Python placer ([`PyPlacer`]: a `Placer` called with the
+//! interpreter lock is held; `ooxml_core.Limits`, the host's limits on a call's reply that a
+//! `CallContext` carries ([`PyLimits`]); and the adapter of a Python placer ([`PyPlacer`]: a `Placer` called with the
 //! lock taken back). A new kind of per-call input is one more keyword here, not one more
 //! argument of every call.
 //!
@@ -15,12 +16,56 @@ use crate::layout::PyWordPages;
 use crate::raster::PyPageRaster;
 use crate::session::{PyCallContext, PyVersion};
 use ooxml_session::{CallContext, DocId, DocNames, Opened};
+use ooxml_tools::{BudgetSpan, ImageBudget};
 use ooxml_tools_word::{Blobs, Placer, Written};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::sync::Arc;
+
+/// The host's limits on a call's reply (`ooxml_core.Limits`, docx-agent's `Limits` of the
+/// same names): `max_result_chars` (a page's characters; 24,000 unless given),
+/// `max_list_items` (a listing's items per page; 50), `max_images_per_call` (4) and
+/// `max_image_edge` (an image's longest edge, pixels; 2,576). A `CallContext` carries them.
+#[pyclass(frozen, name = "Limits", module = "ooxml_core")]
+pub struct PyLimits {
+    pub(crate) inner: ooxml_tools::Limits,
+}
+
+#[pymethods]
+impl PyLimits {
+    /// # Errors
+    /// `ValueError` for a limit of 0.
+    #[new]
+    #[pyo3(signature = (*, max_result_chars = None, max_list_items = None, max_images_per_call = None,
+                        max_image_edge = None))]
+    fn new(
+        max_result_chars: Option<usize>,
+        max_list_items: Option<usize>,
+        max_images_per_call: Option<usize>,
+        max_image_edge: Option<u32>,
+    ) -> PyResult<Self> {
+        let mut inner = ooxml_tools::Limits::DEFAULT;
+        for (given, kept, name) in [
+            (max_result_chars, &mut inner.result_chars, "max_result_chars"),
+            (max_list_items, &mut inner.list_items, "max_list_items"),
+            (max_images_per_call, &mut inner.images_per_call, "max_images_per_call"),
+        ] {
+            match given {
+                Some(0) => return Err(PyValueError::new_err(format!("{name} is 1 or more"))),
+                Some(n) => *kept = n,
+                None => {}
+            }
+        }
+        match max_image_edge {
+            Some(0) => return Err(PyValueError::new_err("max_image_edge is 1 or more")),
+            Some(edge) => inner.image_edge = i64::from(edge),
+            None => {}
+        }
+        Ok(Self { inner })
+    }
+}
 
 /// What a call needs about the open documents it names (`ooxml_core.CallDocuments`).
 /// `at`: the versions it reads (`Version`s; a document not among them is read at its head).
@@ -57,8 +102,10 @@ impl PyCallDocuments {
 /// lays its versions out with, and `check` and `render` read the pages of. `raster`: the
 /// faces pages are drawn with (a `PageRaster` of the system's fonts and the font folders),
 /// from which `render` draws each document's pages; `None`: `render` is left to the host.
-/// `images_left`: how many images the call may still give within the host's budgets (per
-/// call, per session, per round; `None`: no budget), which `render` refuses past.
+/// `image_budgets`: the host's budgets of images kept across calls, as they stand when the
+/// call starts -- `(name, limit, used)`, `name` `"session"` or `"round"` -- which `render`
+/// refuses past, worded as the host words it (the call's own limit is the context's
+/// `Limits`).
 /// `placer`: where the call may ask where blocks are laid out -- called with the blocks
 /// asked as JSON text (a list, each an id then the ids it joins), it answers each one's
 /// `placements` or `unknown` as JSON text (a list of objects), or `None` where it cannot.
@@ -67,26 +114,37 @@ impl PyCallDocuments {
 pub struct PyCallLayout {
     pages: Option<Arc<dyn ooxml_tools_word::WordLayout>>,
     raster: Option<Arc<ooxml_tools_word::PageRaster>>,
-    images_left: Option<usize>,
+    image_budgets: Vec<ImageBudget>,
     placer: Option<Arc<dyn Placer>>,
 }
 
 #[pymethods]
 impl PyCallLayout {
+    /// # Errors
+    /// `ValueError` for a budget not named `"session"` or `"round"`.
     #[new]
-    #[pyo3(signature = (pages = None, *, raster = None, images_left = None, placer = None))]
+    #[pyo3(signature = (pages = None, *, raster = None, image_budgets = None, placer = None))]
     fn new(
         pages: Option<PyRef<'_, PyWordPages>>,
         raster: Option<PyRef<'_, PyPageRaster>>,
-        images_left: Option<usize>,
+        image_budgets: Option<Vec<(String, usize, usize)>>,
         placer: Option<Py<PyAny>>,
-    ) -> Self {
-        Self {
+    ) -> PyResult<Self> {
+        let image_budgets = image_budgets
+            .into_iter()
+            .flatten()
+            .map(|(name, limit, used)| {
+                BudgetSpan::parse(&name)
+                    .map(|span| ImageBudget { span, limit, used })
+                    .ok_or_else(|| PyValueError::new_err(format!("image budget {name:?}: \"session\" or \"round\"")))
+            })
+            .collect::<PyResult<_>>()?;
+        Ok(Self {
             pages: pages.map(|p| Arc::new(p.port()) as Arc<dyn ooxml_tools_word::WordLayout>),
             raster: raster.map(|r| Arc::clone(&r.inner)),
-            images_left,
+            image_budgets,
             placer: placer.map(|p| Arc::new(PyPlacer(p)) as Arc<dyn Placer>),
-        }
+        })
     }
 }
 
@@ -132,7 +190,7 @@ impl PyCallOptions {
             built.placer.clone_from(&layout.placer);
             built.layout.clone_from(&layout.pages);
             built.raster.clone_from(&layout.raster);
-            built.images_left = layout.images_left;
+            built.image_budgets.clone_from(&layout.image_budgets);
         }
         built.blobs = blobs.map(|b| Arc::new(PyBlobs(b)) as Arc<dyn Blobs>);
         if let Some(written) = written {
