@@ -158,14 +158,12 @@ impl Version<'_> {
 pub struct Owned<'a> {
     /// The version.
     pub doc: &'a WordDoc,
-    /// The document as the session opened it (what a pending change of the session's takes
-    /// out of the file is read against).
+    /// The document as the session opened it: what a pending change of the session's takes
+    /// out of the file is read against, and what changed since (`save_document`'s `app.xml`
+    /// refreshed only when the main part did).
     pub opened: &'a WordDoc,
     /// The problems the document had when the session opened it.
     pub baseline: &'a [Problem],
-    /// The document as the session opened it (what changed since: `save_document`'s
-    /// `app.xml` refreshed only when the main part did).
-    pub opened: &'a WordDoc,
     /// What the document's last check with `reflow` saw.
     pub last_check: &'a LastCheck,
     /// The host's layout of the document's versions (`None`: the call was handed none).
