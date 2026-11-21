@@ -159,14 +159,22 @@ fn moved(first: &str, after: &str) -> MoveBlocks {
 }
 
 #[test]
-fn a_move_commits_past_an_edit_outside_its_stretch_and_conflicts_inside_it() {
+fn a_move_commits_past_an_edit_outside_its_ends_and_conflicts_on_them() {
     let (shared, targets) = opened();
     let (done, conflicts) = interleaved(&shared, moved(&targets[0], &targets[2]), &set_text(&targets[6]));
     assert_eq!((done, conflicts), (true, 0));
-    // the paragraph between the block and its anchor is in the stretch the move rewrites
+    // the moved block is one of the stretch's ends, which the move reads and rewrites
+    let (shared, targets) = opened();
+    let (done, conflicts) = interleaved(&shared, moved(&targets[0], &targets[2]), &set_text(&targets[0]));
+    assert_eq!((done, conflicts), (true, 1));
+    // the paragraph between the block and its anchor is inside the stretch but not at its
+    // ends: the move opens only the ends and their neighbours (`Opening::Ends`) and writes
+    // back only the runs of children that changed (`EditSink::splice_stretch`), so the
+    // paragraph is neither read nor written -- no conflict, and the edit to it is kept, as
+    // in serial order
     let (shared, targets) = opened();
     let (done, conflicts) = interleaved(&shared, moved(&targets[0], &targets[2]), &set_text(&targets[1]));
-    assert_eq!((done, conflicts), (true, 1));
+    assert_eq!((done, conflicts), (true, 0));
     let serial = opened().0;
     serial
         .store()

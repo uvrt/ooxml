@@ -85,6 +85,13 @@ jobs:
         with:
           ref: ${{ inputs.ref || 'main' }}
           fetch-depth: 0
+      # This workflow's own local actions (the commit it runs from), not the checked-out ref's: a
+      # ref that has not merged main lacks the newer ones.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: .gates-ci
+          sparse-checkout: .github/actions
       # Warm or cold: whether the reference cache holds a store for the reference code this
       # checkout runs (its key computed as the differential jobs compute it).  Only for the edit
       # gates with shards auto.
@@ -97,7 +104,7 @@ jobs:
           if [ "$SHARDS" = auto ]; then case ",$GATES," in *,fixtures,*|*,corpus,*) lookup=true;; esac; fi
           echo "lookup=$lookup" >> "$GITHUB_OUTPUT"
       - if: steps.lookup.outputs.lookup == 'true'
-        uses: ./.github/actions/gates-reference
+        uses: ./.gates-ci/.github/actions/gates-reference
       - if: steps.lookup.outputs.lookup == 'true'
         id: chain
         run: echo "chain=$(python tools/gates.py cache-key)" >> "$GITHUB_OUTPUT"
@@ -216,9 +223,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.plan.outputs.sha }}
+      # This workflow's own local actions (the commit it runs from), not the checked-out ref's: a
+      # ref that has not merged main lacks the newer ones.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: .gates-ci
+          sparse-checkout: .github/actions
       # docx-agent is the reference: pure Python, so not ooxml-core (DOCX_AGENT_RUST=0 too).
-      - uses: ./.github/actions/gates-reference
-      - uses: ./.github/actions/substitute-fonts
+      - uses: ./.gates-ci/.github/actions/gates-reference
+      - uses: ./.gates-ci/.github/actions/substitute-fonts
       - uses: actions/download-artifact@v4
         with:
           name: oracles

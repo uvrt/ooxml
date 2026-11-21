@@ -25,7 +25,8 @@ from __future__ import annotations
 import pytest
 from docx2svg.parse.document import parse_package
 from ooxml_edit.tools import Toolbox
-from test_rows_joins_r54r import CLOCK, SHAPES, _document, _edge, _ours, _p, _render, _tbl, call, ok
+from facts_documents import SHAPES, _document, _edge, _p, _tbl
+from test_rows_joins_r54r import CLOCK, _ours, _render, call, ok
 
 from docx_agent import Document
 from docx_agent.layout_facts import accept_loses_text

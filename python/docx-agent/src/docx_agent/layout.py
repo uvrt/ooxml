@@ -2515,9 +2515,10 @@ _SHARED_LAYOUT = ("_layout_lock", "_layout_flights", "_layout_kept", "_layout_co
                   "_tool_copy_cache", "_tool_styles_digest", "_tool_render_coverage",
                   "_tool_settings_frame")
 #: A document's public attributes a read copy does not take as they are: its parts and
-#: history are its own, its layout engine is pointed at per call, and the count of spaces
-#: written is an edit's.
-_NOT_SETTINGS = ("package", "history", "converter", "typography_spaced")
+#: history are its own, its layout engine is pointed at per call, the count of spaces
+#: written is an edit's, and the owner's records are of the version the document's view is
+#: (a copy of another version reads its own).
+_NOT_SETTINGS = ("package", "history", "converter", "typography_spaced", "owned_records")
 #: The settings a read copy reads from its document whenever asked, so one the application
 #: changes after the version was committed (a locale, a minimum text size) holds for reads
 #: of it too, as it did when reads held the document's lock.

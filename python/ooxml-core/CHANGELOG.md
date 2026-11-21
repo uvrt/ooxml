@@ -5,15 +5,14 @@ ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python mod
 
 ## 0.10.0 -- unreleased
 
-- **New ids drawn where the change lands (lane D1, part a).** Writers that each make new
-  paragraphs or rows from one version (`word_insert_markdown`, new paragraphs, rows,
-  sections, notes) no longer conflict over the ids they draw: an edit's new ids are
-  stand-ins drawn again where its commit lands (`Change::Draw`, `ooxml_word_edit::Drawn`),
-  so each gets the ids the commit order gives, byte for byte as docx-agent in that order.
-  The store keeps keys created under stand-ins apart and resolves them at commit
-  (`DocModel::created`, `resolve`, `begin`); replies name the ids as drawn
-  (`ooxml_tools_word::resolve_drawn`). A stand-in written where no draw reaches is pinned
-  (its sequence read: a conflict, as before).
+- **A call names documents as its host does (lane P2c17).** `Session.call` and
+  `Session.edit` take `names` (`{the host's name: the session's id}`; `CallContext.names`,
+  `ooxml_session::DocNames`): the arguments name documents by these, the session finds them
+  by them (only by them, where a host gives any), and the reply names them so -- its `doc`,
+  its undo and way-out calls, its summary, a not-open refusal's way out. One session serves
+  every host session of a process and numbers documents across them, so a host's `d1` was
+  the session's `d3` from the second host session on, and a served reply named the
+  session's id.
 
 - **Charts and SmartArt in Word's reads (lane R1).** `word_read` writes a chart's or
   SmartArt diagram's one-line summary in its drawing's comment (` [chart: column; title:

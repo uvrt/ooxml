@@ -2,7 +2,9 @@
 //! `word_read`) on documents, in the form `python/word_reads_diff.py` writes docx-agent's:
 //! the summary, data, next cursor and total, or the refusal.
 //!
-//! The manifest is a JSON list of `{"file": path, "case": name, "tool": name, "arguments": {...}}`.
+//! The manifest is a JSON list of `{"file": path, "case": name, "tool": name, "arguments": {...}}`,
+//! or `{"file", "case", "fact": name}` for one of `check`'s facts read from the document
+//! alone ([`crate::facts`]).
 //!
 //! Must not: be used by any library; it is a test instrument.
 
@@ -59,10 +61,14 @@ pub fn run(args: &[String]) -> Result<(), String> {
             number: 1,
             versions,
             placer: None,
+            owned: None,
             others: ooxml_tools_word::Others::default(),
+            word: None,
         };
-        let reply = if tool == "read_batch" {
-            batch(&arguments, file, name)
+        let reply = if let Some(fact) = item.get("fact").and_then(Value::as_str) {
+            crate::facts::reply(package, fact)
+        } else if matches!(tool, "read_batch" | "check") {
+            through_session(tool, &arguments, file, name)
         } else {
             call(tool, &arguments, &version)
         };
@@ -93,8 +99,10 @@ fn call(tool: &str, arguments: &Value, version: &Version<'_>) -> Value {
     }
 }
 
-/// `read_batch` through a session holding the document as `d1`.
-fn batch(arguments: &Value, file: &str, name: &str) -> Value {
+/// `tool` (`read_batch`, `check`) through a session holding the document as `d1`, which
+/// owns it (a check's validation compares with the problems it opened with). A reply that
+/// says part of it is not given yet (`unported`) is an error naming what.
+fn through_session(tool: &str, arguments: &Value, file: &str, name: &str) -> Value {
     let Ok(bytes) = std::fs::read(file) else {
         return json!({"error": {"code": "internal", "message": "unreadable"}});
     };
@@ -102,7 +110,10 @@ fn batch(arguments: &Value, file: &str, name: &str) -> Value {
     if let Err(e) = session.open(Arc::from(bytes), DocKind::Docx, name) {
         return json!({"error": {"code": "internal", "message": e.to_string()}});
     }
-    let result = session.call("read_batch", arguments.clone(), &CallContext::default());
+    let result = session.call(tool, arguments.clone(), &CallContext::default());
+    if let Some(why) = result.unported().first() {
+        return json!({"error": {"code": "unported", "message": why}});
+    }
     let envelope = result.to_json();
     match envelope.get("error") {
         Some(error) => json!({"error": error}),

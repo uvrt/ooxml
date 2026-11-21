@@ -14,7 +14,7 @@ use ooxml_tools_word::{
     word_copy_from, word_fields, word_links, word_notes, CallEditor, Editing, WordHeadersFooters, WordLinks, WordMove,
     WordNotes, WordSections, KIND,
 };
-use ooxml_word_edit::{Editor, FieldLayout, FieldPlace, LaidFields, PageShows, Unknown};
+use ooxml_word_edit::{Editor, FieldLayout, FieldPlace, FieldRun, LaidFields, PageShows, Unknown};
 use ooxml_zip::{Method, NewEntry, Writer};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -77,6 +77,10 @@ impl LaidFields for LaidTwo {
         self.page_field(instruction, "PAGE", at)
     }
 
+    fn style_reference(&self, _: &str, _: FieldPlace<'_>, _: FieldRun<'_>) -> Result<String, Unknown> {
+        Err(Unknown("not drawn".into()))
+    }
+
     fn pages(&self) -> Vec<PageShows> {
         vec![
             PageShows {
@@ -124,18 +128,10 @@ fn call_on<A: ToolArgs>(
     let opened = editor.store().snapshot().doc().clone();
     let caller = Caller::anonymous();
     let reply = {
-        let editing = Editing {
-            editor: &CallEditor::new(&editor),
-            caller: &caller,
-            opened: &opened,
-            tracking,
-            doc: "d1",
-            cancel: &Never,
-            date: "2026-11-17T10:00:00Z",
-            layout: Some(&TwoPages),
-            others: ooxml_tools_word::Others::default(),
-            blobs: None,
-        };
+        let call_editor = CallEditor::new(&editor);
+        let editing = Editing::new(&call_editor, &caller, &opened, "d1", &Never, "2026-11-17T10:00:00Z")
+            .with_tracking(tracking)
+            .with_layout(Some(&TwoPages));
         let (args, _) = A::accept(arguments, Some("docx")).unwrap();
         Value::Object(tool(&args, &editing).to_json())
     };
@@ -464,24 +460,44 @@ fn blocks_of_the_document_are_copied_with_fresh_ids() {
 
 #[test]
 fn what_the_copy_does_not_port_is_left_to_the_host() {
-    // a bookmark in the block, a tracked copy
-    for (arguments, tracking) in [
+    // a place given by reference: the host resolves it before it calls
+    let (reply, editor) = call(
+        json!({"doc": "d1", "source_doc": "d1", "range": "p:10000002", "at": "after:$mark"}),
+        word_copy_from,
+    );
+    // `unported` is the host's to read: the reply changes nothing and says nothing
+    assert_eq!(reply["summary"], json!(""), "{reply}");
+    assert_eq!(reply["changed"], json!([]), "{reply}");
+    let body = editor
+        .store()
+        .snapshot()
+        .doc()
+        .package()
+        .read("word/document.xml")
+        .unwrap()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&body).matches("Delta epsilon").count(), 1);
+}
+
+#[test]
+fn a_bookmarked_block_and_a_tracked_copy_are_copied_in_rust() {
+    for (arguments, tracked) in [
         (
             json!({"doc": "d1", "source_doc": "d1", "range": "p:10000001", "at": "end"}),
-            None,
+            false,
         ),
         (
             json!({"doc": "d1", "source_doc": "d1", "range": "p:10000002", "at": "end"}),
-            Some(()),
+            true,
         ),
     ] {
-        let tracking = tracking.map(|()| ooxml_word_edit::Tracking {
+        let tracking = tracked.then(|| ooxml_word_edit::Tracking {
             author: "A".to_owned(),
             date: "2026-11-17T10:00:00Z".to_owned(),
         });
         let (reply, editor) = call_tracking(arguments, tracking.as_ref(), word_copy_from);
-        assert!(reply.get("error").is_none(), "{reply}");
-        assert_eq!(editor.store().snapshot().doc().package().part_names().len(), 5);
+        assert_eq!(reply["summary"], json!("Copied 1 block(s) from d1"), "{reply}");
+        assert_eq!(reply["created"].as_array().map(Vec::len), Some(1), "{reply}");
         let body = editor
             .store()
             .snapshot()
@@ -490,7 +506,8 @@ fn what_the_copy_does_not_port_is_left_to_the_host() {
             .read("word/document.xml")
             .unwrap()
             .unwrap();
-        assert_eq!(String::from_utf8_lossy(&body).matches("Delta epsilon").count(), 1);
+        let text = String::from_utf8_lossy(&body);
+        assert_eq!(text.contains("<w:ins "), tracked, "{text}");
     }
 }
 

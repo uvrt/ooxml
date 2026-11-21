@@ -3,7 +3,9 @@
 //! any two markers (a comment's) in a view, with its text.
 //!
 //! [`Bookmarks`] holds every bookmark by name, for a caller that looks many up in one
-//! version (a field update's `REF`s and `PAGEREF`s): one walk, not one per name.
+//! version (a field update's `REF`s and `PAGEREF`s): one walk, not one per name;
+//! [`bookmark_named`] finds one name without listing them all (a caller looking up a few
+//! names in a long document).
 //!
 //! Must not: resolve block ids (the resolver does) or change the document.
 
@@ -61,6 +63,34 @@ pub fn bookmark_markers(docx: &Docx) -> Vec<Bookmark<'_>> {
 /// `not_found` naming it.
 pub fn bookmark<'d>(docx: &'d Docx, name: &str) -> Result<Bookmark<'d>, AddressError> {
     Bookmarks::of(docx).get(name).cloned()
+}
+
+/// The bookmark `name` names, as [`Bookmarks::get`] finds it -- written as asked first,
+/// else in any case; the first start of a name in story and document order; the last end
+/// of its id in its part -- read from the parts' facts without listing every bookmark.
+///
+/// # Errors
+/// `not_found` naming it.
+pub fn bookmark_named<'d>(docx: &'d Docx, name: &str) -> Result<Bookmark<'d>, AddressError> {
+    let name = name.strip_prefix("bm:").unwrap_or(name);
+    let folded = std::cell::OnceCell::new();
+    let exact = |n: &str| n == name;
+    let any_case = |n: &str| crate::docx::casefold(n) == *folded.get_or_init(|| crate::docx::casefold(name));
+    for matches in [&exact as &dyn Fn(&str) -> bool, &any_case] {
+        for part in &docx.parts {
+            let facts = part.facts();
+            if let Some((found, id, start)) = facts.bookmark_start(matches) {
+                let end = facts.bookmark_end(&id);
+                return Ok(Bookmark {
+                    name: found,
+                    part,
+                    start,
+                    end,
+                });
+            }
+        }
+    }
+    Err(no_bookmark(name))
 }
 
 /// Every bookmark of a version by name, found as [`bookmark`] finds one.

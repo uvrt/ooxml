@@ -57,6 +57,7 @@ mod drawings;
 mod drawn;
 mod editor;
 mod error;
+pub mod facts;
 mod fields;
 pub mod find;
 mod follow;
@@ -117,7 +118,9 @@ pub use comments::{
     AddComments, CommentEdit, CommentEdited, CommentEdits, CommentMade, CommentWrite, EditCommentText, Who,
 };
 pub use controls::{ControlEdited, ControlKind, FillControl, Filling, InsertControl, RemoveControl};
-pub use copying::{BlocksCopied, CopyBlocks, CopyRange, CopySource, ListPolicy, StylePolicy, UnmappedPolicy};
+pub use copying::{
+    BlocksCopied, BookmarkPolicy, CopyBlocks, CopyRange, CopySource, ListPolicy, StylePolicy, UnmappedPolicy,
+};
 pub use delete::{BlockDeleted, DeleteBlock};
 pub use delete_blocks::{blocks_named, BlocksDeleted, DeleteBlocks};
 pub use doc::{Change, Draw, DrawFrom, Key, ModelError, Shared, WordDoc};
@@ -129,9 +132,9 @@ pub use drawn::Drawn;
 pub use editor::{EditTiming, Edited, Editor};
 pub use error::{EditError, Result};
 pub use fields::{
-    fields, format_date, Day, FieldEdited, FieldInfo, FieldLayout, FieldPlace, InsertCaption, InsertCrossReference,
-    InsertField, InsertToc, LaidFields, PageReflow, PageShows, SetStoryNumbered, StoryNumber, StoryNumbered, Unknown,
-    UpdateFields,
+    field_facts, fields, format_date, Day, FieldEdited, FieldFacts, FieldInfo, FieldLayout, FieldPlace, FieldRun,
+    InsertCaption, InsertCrossReference, InsertField, InsertToc, LaidFields, PageReflow, PageShows, SetStoryNumbered,
+    StoryNumber, StoryNumbered, Unknown, UpdateFields,
 };
 pub use follow::{CopyFollowed, FollowSample, Followed};
 pub use format::{
@@ -144,13 +147,14 @@ pub use links::{hyperlink_span, AddBookmark, AddHyperlink, LinkEdited, RemoveBoo
 pub use lists::{
     numbered_by_style, paragraphs_of, unnumbered_styles_like, LevelFormat, ListAction, ListEdit, ListStep, ListsEdited,
 };
-pub use markdown::{InsertMarkdown, MarkdownInserted, Options as MarkdownOptions, WriteMap};
+pub use markdown::{markdown_shape, InsertMarkdown, Made, MarkdownInserted, Options as MarkdownOptions, WriteMap};
 pub use moving::{section_blocks, section_blocks_in, BlocksMoved, MoveBlocks, Moving};
 pub use notes::{DeleteNote, EditNote, InsertNote, MoveNote, NoteEdited, NoteKind};
 pub use paragraph_style::{SetParagraphStyle, StyleSet};
 pub use paragraphs::{InsertParagraph, ParagraphInserted};
 pub use policy::{RevisionPolicy, Tracking};
 pub use pool::{EarlierIds, Ids, IdsChange, Sequences};
+pub use provenance::{KeepText, TextKeep};
 pub use ranges::{DeleteText, InsertText, RangesEdited, ReplaceText};
 pub use review::{record_marks, Mark, RemovedBlocks, Review, Reviewed, RowGone, Selection, TableGone, Typed};
 pub use sections::{

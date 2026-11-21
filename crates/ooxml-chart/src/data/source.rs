@@ -112,7 +112,7 @@ impl<'a> Source<'a> {
     }
 
     /// The number of points: `c:ptCount` where it is digits, else the highest index plus one.
-    fn count(&self) -> Result<usize, Unreadable> {
+    pub(crate) fn count(&self) -> Result<usize, Unreadable> {
         if self.kind() == Some("v") {
             return Ok(1);
         }

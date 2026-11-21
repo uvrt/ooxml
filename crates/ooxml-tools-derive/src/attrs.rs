@@ -32,6 +32,8 @@ pub struct ToolAttrs {
     pub place_items: Option<LitStr>,
     /// `paths_first("from", ...)`: holding paths listed before the others.
     pub paths_first: Vec<LitStr>,
+    /// `aliases_first("slide", ...)`: aliases listed and read before the others.
+    pub aliases_first: Vec<LitStr>,
 }
 
 /// One modifier of a field's property, in the order written: a call on `ooxml_tools::support::Field`.
@@ -46,6 +48,8 @@ pub enum Modifier {
     Str(String, LitStr),
     /// Two strings (`value_alias`, `kind_description`).
     Pair(String, LitStr, LitStr),
+    /// Three strings (`alias_when`: the alias, the argument, its value).
+    Triple(String, LitStr, LitStr, LitStr),
     /// A string and a list of strings (`kind_value`).
     Kinds(String, Option<LitStr>, Vec<LitStr>),
     /// A JSON literal (`default`, `kind_neutral`).
@@ -119,6 +123,7 @@ pub fn tool_attrs(attrs: &[Attribute]) -> syn::Result<Option<ToolAttrs>> {
             "places" => out.places = Some(meta.value()?.parse()?),
             "place_own" => out.place_own = string_list(&meta)?,
             "paths_first" => out.paths_first = string_list(&meta)?,
+            "aliases_first" => out.aliases_first = string_list(&meta)?,
             "place_find" => out.place_find = flag(&meta)?,
             "place_items" => out.place_items = Some(meta.value()?.parse()?),
             "mutates" | "strict" | "batchable" | "read_batchable" | "retry_key" => {
@@ -193,6 +198,10 @@ fn field_attr(meta: &ParseNestedMeta, out: &mut FieldAttrs) -> syn::Result<()> {
         "value_alias" | "kind_description" => match string_list(meta)?.as_slice() {
             [a, b] => Modifier::Pair(key, a.clone(), b.clone()),
             _ => return Err(meta.error(format!("`{key}` takes two strings"))),
+        },
+        "alias_when" => match string_list(meta)?.as_slice() {
+            [alias, argument, value] => Modifier::Triple(key, alias.clone(), argument.clone(), value.clone()),
+            _ => return Err(meta.error("`alias_when` takes the alias, an argument and its value")),
         },
         "kinds" => Modifier::Kinds(key, None, string_list(meta)?),
         "kind_value" => {

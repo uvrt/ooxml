@@ -592,6 +592,14 @@ def _check(call: Any, doc: str, slides: list | None, pages: list[int] | None, in
     # anything (laid out once for every check waiting then): said where the layout's parts
     # are (_layout_facts), else with the rest.
     timing.owner = layout_waited()
+    # Lane P5a: a check the Rust session answers whole (the facts read from the document alone).
+    from ..rust.reads import serve_check
+
+    whole = serve_check(call, {"slides": slides, "pages": pages, "include": include, "boxes": boxes,
+                               "spacing": spacing, "contrast": contrast, "min_size": min_size,
+                               "styles": styles, "range": range, "copies": copies})
+    if whole is not None:
+        return whole
     # Lane F: a check of some ranges answered by the document's Rust owner, where it can be.
     from ..rust.check import serve
 

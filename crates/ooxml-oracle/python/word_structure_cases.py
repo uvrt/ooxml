@@ -481,7 +481,53 @@ def copy_cases(document) -> list[dict]:
         for block in _related(source, [b["id"] for b in source.blocks() if b["id"]])[:2]:
             out += [{**call("word_copy_from", source_doc="d2", range=block, at=at),
                      "reference_file": str(_COPY_SOURCE)} for at in ("end", f"before:{blocks[0]}")]
-    return out + [tracked(case) for case in out]
+    # Lane P4f5: blocks holding notes or comments (the notes and comments copied with them,
+    # renumbered; the modern comment parts), from this document and from others.
+    for block in _annotated(document, blocks)[:3]:
+        out += [from_d2(range=block, at="end"),
+                call("word_copy_from", source_doc="d1", range=block, at=f"before:{blocks[0]}")]
+    for other in (_COPY_SOURCE, _COMMENTED_SOURCE):
+        if other.exists() and blocks:
+            source = Document.open(other.read_bytes())
+            for block in _annotated(source, [b["id"] for b in source.blocks() if b["id"]])[:2]:
+                out += [{**call("word_copy_from", source_doc="d2", range=block, at=at),
+                         "reference_file": str(other)} for at in ("end", f"before:{blocks[0]}")]
+    # Lane P4f6: blocks holding bookmarks (renamed: the document has the name; their links and
+    # fields following), with the block before them (a link to the bookmark).
+    for block in _bookmarked(document, blocks)[:3]:
+        at = blocks.index(block)
+        span = f"{blocks[at - 1]}..{block}" if at and blocks[at - 1][:2] == block[:2] == "p:" else block
+        out += [from_d2(range=span, at="end"),
+                call("word_copy_from", source_doc="d1", range=block, at=f"before:{blocks[0]}")]
+    # Lane P4f7: blocks replaced (``replace:``): one, a span, the body's last, a cell's last
+    # paragraph (deleted after the copy is placed, untracked); never by a copy of themselves.
+    replacing = []
+    if len(blocks) > 3:
+        replacing += [from_d2(range=blocks[0], at=f"replace:{blocks[2]}"),
+                      from_d2(range=f"{blocks[0]}..{blocks[1]}", at=f"replace:{blocks[2]}..{blocks[3]}",
+                              ref="copied"),
+                      from_d2(range=blocks[1], at=f"replace:{blocks[-1]}"),
+                      call("word_copy_from", source_doc="d1", range=blocks[0], at=f"replace:{blocks[1]}")]
+        for paragraph in _cell_ends(document)[:2]:
+            replacing.append(from_d2(range=blocks[0], at=f"replace:{paragraph}"))
+    # Untracked, a replaced block the document never stamped (a positional address) is marked:
+    # docx-agent may give its copy the id its own stamping just gave that block (known-differences.toml).
+    marked = [{**case, "replaces_unstamped": True} if "@" in case["arguments"]["at"] else case
+              for case in replacing]
+    return out + [tracked(case) for case in out] + marked + [tracked(case) for case in replacing]
+
+
+_TC = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}tc"
+
+
+def _cell_ends(document) -> list[str]:
+    """The ids of paragraphs that end a table cell of the body (lane P4f7)."""
+    out = []
+    for entry in document._index(document.package.document_part()).paragraphs:
+        cell = entry.element.getparent()
+        if cell is not None and cell.tag == _TC and entry.element.getnext() is None:
+            out.append(entry.id)
+    return out
 
 
 _RELATIONSHIPS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
@@ -498,6 +544,38 @@ def _related(document, blocks: list[str]) -> list[str]:
         if any(isinstance(n.tag, str) and (any(k.startswith(_RELATIONSHIPS) for k in n.attrib)
                                            or n.tag.endswith("}docPr"))
                for n in element.iter()):
+            out.append(block)
+    return out
+
+
+#: A document whose blocks hold comments with replies (lane P4f5).
+_COMMENTED_SOURCE = _COPY_SOURCE.parents[1] / "pilot" / "agreement-summary.docx"
+
+_ANNOTATIONS = ("}footnoteReference", "}endnoteReference", "}commentRangeStart", "}commentReference")
+
+
+def _annotated(document, blocks: list[str]) -> list[str]:
+    """The blocks of ``blocks`` holding a note reference or a comment (lane P4f5)."""
+    out = []
+    for block in blocks:
+        try:
+            element = document._resolve(block)[1].element
+        except (KeyError, ValueError):
+            continue
+        if any(isinstance(n.tag, str) and n.tag.endswith(_ANNOTATIONS) for n in element.iter()):
+            out.append(block)
+    return out
+
+
+def _bookmarked(document, blocks: list[str]) -> list[str]:
+    """The blocks of ``blocks`` holding a bookmark (lane P4f6)."""
+    out = []
+    for block in blocks:
+        try:
+            element = document._resolve(block)[1].element
+        except (KeyError, ValueError):
+            continue
+        if any(isinstance(n.tag, str) and n.tag.endswith("}bookmarkStart") for n in element.iter()):
             out.append(block)
     return out
 

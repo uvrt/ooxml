@@ -32,6 +32,7 @@ pub mod edits_markdown;
 pub mod edits_styled;
 pub mod export;
 mod export_parts;
+pub mod facts;
 pub mod find_regex;
 pub mod glyphs;
 pub mod ids;
