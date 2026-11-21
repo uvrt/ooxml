@@ -12,14 +12,15 @@ ooxml_core = pytest.importorskip("ooxml_core")
 
 from docx_agent.rust import served  # noqa: E402
 
-# docx-agent's lists before lane G8 (rust/edits.py SERVED, BLOBS, LAID, KEEPS_WRITTEN).
+# docx-agent's lists before lane G8 (rust/edits.py SERVED, BLOBS, LAID, KEEPS_WRITTEN, as of main
+# with lane P2d3 PR f: word_insert_markdown keeps written values).
 SERVED = {"word_set_text", "replace_text", "word_insert_text", "word_delete", "word_format", "word_lists",
           "word_format_table", "word_styles", "word_follow_sample", "word_insert_markdown", "word_fields",
           "word_headers_footers", "word_template", "word_move", "word_sections", "word_notes", "word_links",
           "word_drawings"}
 BLOBS = {"word_drawings"}
 LAID = {"word_fields", "word_headers_footers", "word_template"}
-KEEPS_WRITTEN = {"word_set_text", "word_insert_text", "replace_text"}
+KEEPS_WRITTEN = {"word_set_text", "word_insert_text", "replace_text", "word_insert_markdown"}
 
 
 def test_the_exported_sets_are_the_lists_they_replace():

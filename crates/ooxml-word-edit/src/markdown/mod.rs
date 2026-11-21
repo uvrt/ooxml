@@ -16,6 +16,8 @@ pub(crate) use insertion::insert_content;
 mod lists;
 mod parse;
 pub(crate) use parse::py_space;
+mod shape;
+pub use shape::{markdown_shape, Made};
 mod table;
 mod writer;
 

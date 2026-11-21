@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Any
 
 from .. import reads
-from . import Fallback, adapter, own
+from . import Adapted, Fallback, adapter, own, written_json
 
 
 @adapter("word_set_text")
@@ -61,7 +61,41 @@ def _insert_markdown(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
             raise Fallback("a blob that is not UTF-8") from None
         del given["blob"]
     given["at"] = _blocks_at(call, given.get("at"))
-    return given
+    source = given.get("from")
+    if isinstance(source, str):
+        return _field_given(call, given, source)
+    facts = call.facts_at("markdown") if getattr(call, "facts", None) else []
+    own_markdown = {id(fact): markdown for fact, markdown in zip(facts, _values_markdown(call, facts))
+                    if markdown is not None}
+    return Adapted(given, written_json(call.facts, own_markdown)) if own_markdown else given
+
+
+def _values_markdown(call: Any, facts: list[Any]) -> list[str | None]:
+    """Each value's own Markdown, read again from its source (``field_text.reference_markdown``:
+    a workbook cell's emphasis and list lines), ``None`` where it is its text."""
+    from ...tools import field_text
+
+    return [field_text.reference_markdown(call, fact) for fact in facts]
+
+
+def _field_given(call: Any, given: dict[str, Any], source: str) -> dict[str, Any]:
+    """``word_insert_markdown`` from one field of one row (``text._field_from``, the host's
+    data): the field's Markdown as the call's, the value handed over as written into
+    ``from`` (the session keeps it on every paragraph made).  Rows as a table stay ``from``
+    (the session leaves them to the host)."""
+    from ooxml_edit.tools import ToolError
+
+    from ...tools.text import _field_from
+
+    try:
+        field = _field_from(call, source, given.get("from_columns"), given.get("header"), given.get("date_format"))
+    except ToolError as error:
+        raise Fallback(f"refusal: {error.code}") from None
+    if field is None:
+        return given
+    given["markdown"] = field.text
+    del given["from"]
+    return Adapted(given, written_json([field], {}))
 
 
 def _blocks_at(call: Any, at: Any) -> Any:

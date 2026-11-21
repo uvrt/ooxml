@@ -32,6 +32,32 @@ class Fallback(Exception):
     """The call is answered by the Python handler, for this reason."""
 
 
+class Adapted(dict):
+    """A served tool's arguments as the session takes them, with the values written by
+    reference the adapter handed over itself (``written``, :func:`written_json`) in place of
+    the call's own: host data the session cannot read, such as a field ``from`` names or a
+    value's own Markdown."""
+
+    def __init__(self, given: dict[str, Any], written: str | None) -> None:
+        super().__init__(given)
+        self.written = written
+
+
+def written_json(facts: Any, markdown: dict[int, str | None]) -> str | None:
+    """``facts`` (values written by reference) as ``Session.edit`` takes them, each with its
+    own Markdown where ``markdown`` (by the fact's ``id``) has one; ``None`` without any."""
+    if not facts:
+        return None
+    out = []
+    for f in facts:
+        item = {"field": f.field, "start": f.start, "end": f.end, "text": f.text, "record": f.record,
+                "brief": f.brief()}
+        if markdown.get(id(f)) is not None:
+            item["markdown"] = markdown[id(f)]
+        out.append(item)
+    return json.dumps(out)
+
+
 def adapter(tool: str) -> Callable[[Adapter], Adapter]:
     """Registers the decorated function as ``tool``'s adapter: the call's arguments as the
     session takes them."""
