@@ -1,7 +1,9 @@
 //! Owns: [`CallEditor`], a document's editor as one call's handler is handed it: each edit
-//! runs through the editor as before (one command, one history step), and the versions the
-//! call made are kept ([`Made`]) for the host -- the call's own versions, whatever other
-//! calls commit to the document meanwhile (the head after the call may be theirs).
+//! runs through the editor as before (one command, one history step), and the version the
+//! call made is kept ([`Made`]) for the host -- the call's own, whatever other calls commit
+//! to the document meanwhile (the head after the call may be theirs). A call commits at most
+//! once, so it is one step and one state number: a handler with several commands runs them
+//! as one transaction (the session checks it in debug builds).
 //!
 //! Must not: change how an edit runs, or outlive the call.
 

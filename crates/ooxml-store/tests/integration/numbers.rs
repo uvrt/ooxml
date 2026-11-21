@@ -63,7 +63,31 @@ fn numbers_follow_the_tool_layers_rule_in_random_sequences() {
         let mut value = 0i64;
         assert_eq!(store.snapshot().number(), 0);
         for _ in 0..400 {
-            match rng.below(5) {
+            match rng.below(6) {
+                5 => {
+                    // a group: commits, perhaps all taken back, then closed: one step, one
+                    // number, or none
+                    let mark = store.open_group().unwrap();
+                    let before = store.snapshot().number();
+                    let mut made = 0;
+                    for _ in 0..rng.below(3) {
+                        value += 1;
+                        store
+                            .run(&Caller::named("w"), &Put(vec![(rng.below(10) as u32, value)]))
+                            .unwrap();
+                        made += 1;
+                        assert_eq!(store.snapshot().number(), model.last + 1, "seed {seed}");
+                    }
+                    if made > 0 && rng.below(3) == 0 {
+                        store.revert_group(mark).unwrap();
+                        assert_eq!(store.snapshot().number(), before, "seed {seed}");
+                        made = 0;
+                    }
+                    store.close_group(&Caller::named("w")).unwrap();
+                    if made > 0 {
+                        model.commit();
+                    }
+                }
                 0 | 1 => {
                     value += 1;
                     store
@@ -85,6 +109,35 @@ fn numbers_follow_the_tool_layers_rule_in_random_sequences() {
             assert_eq!(store.snapshot().number(), model.number, "seed {seed}");
         }
     }
+}
+
+#[test]
+fn a_group_is_one_number_given_when_it_closes_having_made_a_step() {
+    let store = fresh();
+    let w = Caller::named("w");
+    store.run(&w, &Put(vec![(1, 1)])).unwrap(); // 1
+                                                // all taken back: the number it opened on, and the next step gets 2
+    let mark = store.open_group().unwrap();
+    store.run(&w, &Put(vec![(1, 2)])).unwrap();
+    assert_eq!(store.snapshot().number(), 2);
+    store.revert_group(mark).unwrap();
+    assert_eq!(store.snapshot().number(), 1);
+    assert_eq!(store.close_group(&w).unwrap(), None);
+    // a joined group's revert keeps the outer group's number
+    store.open_group().unwrap();
+    store.run(&w, &Put(vec![(2, 1)])).unwrap();
+    let inner = store.open_group().unwrap();
+    store.run(&w, &Put(vec![(2, 2)])).unwrap();
+    store.revert_group(inner).unwrap();
+    assert_eq!(store.snapshot().number(), 2);
+    assert_eq!(store.close_group(&w).unwrap(), None);
+    assert!(store.close_group(&w).unwrap().is_some());
+    assert_eq!(store.snapshot().number(), 2);
+    store.run(&w, &Put(vec![(1, 3)])).unwrap();
+    assert_eq!(store.snapshot().number(), 3);
+    store.undo().unwrap();
+    store.undo().unwrap();
+    assert_eq!(store.snapshot().number(), 1);
 }
 
 #[test]

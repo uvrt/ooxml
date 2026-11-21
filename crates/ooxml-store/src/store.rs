@@ -9,7 +9,10 @@
 //! more than the highest number given; a plain undo whose result is the step's "before"
 //! itself gets that version's number, a plain redo whose result is the step's "after" that
 //! version's; any other undo or redo (a scoped one, or one moved past later changes) makes
-//! a state that never was, a new number. A reopen starts at 0 again.
+//! a state that never was, a new number. A reopen starts at 0 again. A step group is one
+//! step and one number: its commits all carry one more than the highest number given when
+//! it opened, which is given for good only when it closes having made a step; a revert that
+//! takes all its commits back brings the number it opened on back.
 //!
 //! Must not: run anything inside the commit lock beyond the check, the rebase and replay of
 //! a change set on a moved head and the publish, except a transaction that conflicted
@@ -377,9 +380,13 @@ impl<D: DocModel> Store<D> {
     ) -> (Snapshot<D>, KeySet<D::Key>, Garbage<D>) {
         let seq = state.last.next();
         state.last = seq;
-        state.numbered += 1;
+        // within a group, the group's number: given for good when it closes
+        let number = state.history.group_number().unwrap_or_else(|| {
+            state.numbered += 1;
+            state.numbered
+        });
         doc.settle();
-        let version = Arc::new(before.succeed(seq, state.numbered, doc, &body.writes));
+        let version = Arc::new(before.succeed(seq, number, doc, &body.writes));
         self.head.store(Arc::clone(&version));
         let changes = ChangeSet::made(body.changes);
         let writes = body.writes.clone();
@@ -498,7 +505,9 @@ impl<D: DocModel> Store<D> {
     /// None today; the store's own, should a group refuse.
     pub fn open_group(&self) -> Result<GroupMark, Error<D>> {
         let mut state = lock(&self.state);
-        state.history.open_group();
+        let start = self.head.load().number();
+        let number = state.numbered.saturating_add(1);
+        state.history.open_group(start, number);
         state.history.group_mark().ok_or(StoreError::NoGroup)
     }
 
@@ -521,13 +530,14 @@ impl<D: DocModel> Store<D> {
         let head = self.head.load();
         let seq = state.last.next();
         state.last = seq;
+        let number = state.history.revert_number(mark).unwrap_or(head.number());
         let mut doc = revert.doc;
         doc.carry(head.doc());
         doc.settle();
-        let version = Arc::new(head.succeed(seq, doc, &revert.writes));
+        let version = Arc::new(head.succeed(seq, number, doc, &revert.writes));
         self.head.store(Arc::clone(&version));
         let garbage = state.history.reverted(mark);
-        self.journal(&mut state, seq, revert.changes);
+        self.journal(&mut state, seq, revert.changes, revert.writes);
         let held = self.clock.monotonic().saturating_sub(entered);
         drop(state);
         drop(garbage);
@@ -545,9 +555,12 @@ impl<D: DocModel> Store<D> {
         let mut state = lock(&self.state);
         let head = self.head.load();
         let (made, garbage) = state.history.close_group(caller.0.clone(), &head)?;
+        if let Some((_, number)) = made {
+            state.numbered = state.numbered.max(number);
+        }
         drop(state);
         drop(garbage);
-        Ok(made)
+        Ok(made.map(|(seq, _)| seq))
     }
 }
 

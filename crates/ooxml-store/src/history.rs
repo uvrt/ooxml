@@ -123,7 +123,16 @@ struct Group<D: DocModel> {
     redo: Vec<Undone<D>>,
     /// How many opens it has not closed yet: a group opened within it joins it.
     depth: usize,
+    /// The number of the state it opened on: a revert that takes all its commits back
+    /// brings that state back ([`crate::Version::number`]).
+    start: u64,
+    /// The number its commits carry: one more than the highest given when it opened, given
+    /// for good only when it closes having made a step.
+    number: u64,
 }
+
+/// A closed group's step: the version it made and the state number it carries.
+pub(crate) type Closed = (Seq, u64);
 
 /// Where a step group was: how many steps it had made then.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -198,8 +207,9 @@ impl<D: DocModel> History<D> {
         self.group.is_some()
     }
 
-    /// Open a step group, or join the one open (its close then only ends the joining).
-    pub(crate) fn open_group(&mut self) {
+    /// Open a step group, or join the one open (its close then only ends the joining):
+    /// `start` the head's state number, `number` the one its commits are to carry.
+    pub(crate) fn open_group(&mut self, start: u64, number: u64) {
         if let Some(group) = self.group.as_mut() {
             group.depth += 1;
             return;
@@ -208,7 +218,22 @@ impl<D: DocModel> History<D> {
             made: 0,
             redo: std::mem::take(&mut self.redo),
             depth: 1,
+            start,
+            number,
         });
+    }
+
+    /// The state number a commit within the open group carries.
+    pub(crate) fn group_number(&self) -> Option<u64> {
+        self.group.as_ref().map(|group| group.number)
+    }
+
+    /// The state number of the content a revert to `mark` brings back: the group's start
+    /// when it takes back every commit the group made, else the group's own number.
+    pub(crate) fn revert_number(&self, mark: GroupMark) -> Option<u64> {
+        self.group
+            .as_ref()
+            .map(|group| if mark.0 == 0 { group.start } else { group.number })
     }
 
     /// Where the open group is now.
@@ -261,13 +286,14 @@ impl<D: DocModel> History<D> {
     }
 
     /// Close the open group: its steps one step of `caller`'s, `head` its "after" (a revert
-    /// after the group's last commit made it, of that commit's content); `None` when it made
-    /// none: plain redo is as it was when it opened.
+    /// after the group's last commit made it, of that commit's content), with the state
+    /// number its commits carried; `None` when it made none: plain redo is as it was when
+    /// it opened.
     pub(crate) fn close_group(
         &mut self,
         caller: Option<Arc<str>>,
         head: &Snapshot<D>,
-    ) -> Result<(Option<Seq>, Garbage<D>), Error<D>> {
+    ) -> Result<(Option<Closed>, Garbage<D>), Error<D>> {
         let mut garbage = Garbage {
             _steps: Vec::new(),
             _versions: Vec::new(),
@@ -319,7 +345,7 @@ impl<D: DocModel> History<D> {
         garbage._steps.extend(self.push(step)._steps);
         let mut redo = group.redo;
         garbage.take_redo(&mut redo);
-        Ok((Some(seq), garbage))
+        Ok((Some((seq, group.number)), garbage))
     }
 
     fn push(&mut self, step: Step<D>) -> Garbage<D> {
