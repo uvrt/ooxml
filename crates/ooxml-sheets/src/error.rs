@@ -39,4 +39,11 @@ pub enum SheetsError {
     /// A shared-string index the table does not have (or no table at all).
     #[error("shared string {0} does not exist")]
     NoSharedString(i64),
+    /// A sheet asked for by name that the workbook does not have.
+    #[error("its workbook has no sheet {0:?}")]
+    NoSheet(String),
+    /// What the writer does not do yet (a formula overwritten, a table whose reference
+    /// cannot be read): the caller leaves such a write to a host that does.
+    #[error("not supported yet: {0}")]
+    Unsupported(String),
 }
