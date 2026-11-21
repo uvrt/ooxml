@@ -8,8 +8,8 @@
 
 use crate::describe::short;
 use ooxml_word_edit::facts::{
-    DirectFormatting, EmptyRun, FormatValue, GridMismatch, LostCell, LostOriginal, Mistagged, SetLanguage, SkippedLevel,
-    SpacingMark, SpacingProblem, SpotKind, StyleUse, TextLanguage,
+    DirectFormatting, EmptyRun, FormatValue, GridMismatch, LostCell, LostOriginal, Mistagged, SetLanguage,
+    SkippedLevel, SpacingMark, SpacingProblem, SpotKind, StyleUse, TextLanguage,
 };
 use ooxml_word_edit::{LookField, RowUnlike, TextLook};
 use serde_json::{json, Map, Value};

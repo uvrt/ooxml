@@ -36,8 +36,8 @@ pub use language::{
     TextLanguage, LANGUAGES, MIN_CONFIDENCE, MIN_WORDS,
 };
 pub use numbering::{numbering_skips_level, SkippedLevel};
-pub use original::{accept_loses_original, LostOriginal};
 pub use ooxml_word_model::typography::SpotKind;
+pub use original::{accept_loses_original, LostOriginal};
 pub use rows::row_text_format;
 pub use spacing::{
     punctuation_spacing, LanguageMismatch, ReplaceCall, SetLanguage, Spacing, SpacingMark, SpacingProblem,
