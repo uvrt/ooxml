@@ -690,3 +690,47 @@ fn the_layouts_compared_read_their_text_boxes_lines_and_the_summary_does_not() {
         vec![1]
     );
 }
+
+/// `bytes` opened as a package, as a session holds a version.
+fn opened(bytes: Vec<u8>) -> ooxml_opc::Package {
+    ooxml_opc::Package::open(Arc::from(bytes), &ooxml_base::Limits::default()).unwrap()
+}
+
+#[test]
+fn a_version_given_as_a_package_says_which_part_it_changed() {
+    // A session lays out each version as its package: the parts changed are found from it.
+    let body = paragraphs(60, None);
+    let large = r#"<w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="40"/></w:rPr></w:rPrDefault></w:docDefaults>"#;
+    let first = opened(package_styled(&body, None));
+    let styles = format!(r#"<w:styles {W}>{large}</w:styles>"#);
+    let edited = first.with_bytes("word/styles.xml", Arc::from(styles.into_bytes()));
+    let mut kept = engine();
+    kept.lay_out(&first).unwrap().unwrap();
+    let again = kept.lay_out(&edited).unwrap().unwrap();
+    let cause = again.relaid_cause().expect("laid out whole from a version before");
+    assert_eq!(
+        (cause.reason, cause.part.as_deref()),
+        ("styles", Some("word/styles.xml"))
+    );
+}
+
+#[test]
+fn a_version_given_as_a_package_after_another_part_changed_says_what_a_fresh_layout_says() {
+    // SmartArt whose data model part is missing, then (a session's edit of the
+    // relationships, a part added) with one: the second version's warnings are its own,
+    // not the first's said again for the page the edit did not reach.
+    let body = r#"<w:p><w:r><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><wp:extent cx="914400" cy="457200"/><wp:docPr id="1" name="Diagram 1"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram"><dgm:relIds xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:dm="rId9" r:lo="rId10" r:qs="rId11" r:cs="rId12"/></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#;
+    let first = opened(package(body));
+    let rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId9" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/diagramData" Target="diagrams/data1.xml"/></Relationships>"#;
+    let data = r#"<dgm:dataModel xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram"><dgm:ptLst><dgm:pt modelId="0" type="doc"/></dgm:ptLst><dgm:cxnLst/></dgm:dataModel>"#;
+    let edited = first
+        .with_bytes("word/diagrams/data1.xml", Arc::from(data.as_bytes()))
+        .with_bytes("word/_rels/document.xml.rels", Arc::from(rels.as_bytes()));
+    let mut kept = engine();
+    let before = kept.lay_out(&first).unwrap().unwrap();
+    assert!(!before.said().warnings.is_empty());
+    let again = kept.lay_out(&edited).unwrap().unwrap();
+    let whole = engine().lay_out(&edited).unwrap().unwrap();
+    assert_ne!(before.said(), whole.said(), "the edit changes what is said");
+    assert_eq!(again.said(), whole.said());
+}
