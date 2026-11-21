@@ -1126,12 +1126,19 @@ def _add_chart(call: Any, target: str, chart_type: str | None, categories: list[
 
 
 def _edit_chart(call: Any, target: str, action: str, **arguments: Any) -> Result:
-    """``read`` and the data actions (ooxml-edit's ``apply_data_action``)."""
+    """``read`` (answered by the Rust session where it answers it whole, :func:`..rust.reads.serve`)
+    and the data actions (ooxml-edit's ``apply_data_action``)."""
     from ooxml_edit.charts.actions import apply_data_action, chart_read_json
 
-    chart = call.document.chart(target)
     if action == "read":
-        return Result(summary=f"Read {target}", data=chart_read_json(chart, "id"))
+        from ..rust import reads
+
+        given = reads._refs(call, target)
+        return reads.serve(call, "edit_chart", {"target": given, "action": "read"},
+                           lambda: Result(summary=f"Read {target}",
+                                          data=chart_read_json(call.document.chart(target), "id")),
+                           addresses=(given,))
+    chart = call.document.chart(target)
     apply_data_action(chart, action, **arguments)
     chart = call.document.chart(target)
     return Result(summary=f"{action} on {target}", changed=[target], data=chart_json(chart))

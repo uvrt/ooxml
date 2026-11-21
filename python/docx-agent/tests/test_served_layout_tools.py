@@ -1,6 +1,6 @@
 """Lane P2c13: ``word_fields``, ``word_headers_footers`` and ``word_template`` served by the
 Rust session, which lays the versions out with the document's page engine
-(``docx_agent.pages.word_pages``, ``Session.edit(layout=...)``); their replies as docx-agent's
+(``docx_agent.pages.word_pages``, ``CallOptions(layout=...)``); their replies as docx-agent's
 own handler gives them (a session with its own clock is answered by the Python handler).
 Made-up documents only."""
 

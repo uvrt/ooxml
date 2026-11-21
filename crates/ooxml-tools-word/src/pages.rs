@@ -3,8 +3,8 @@
 //! numbers read as a field update reads them (`ooxml_word_layout::fields::update`), places
 //! named by the tool's block ids (each found from its id when asked), the pages a block is
 //! drawn on (`LayoutFacts::pages_of_each`), a `STYLEREF`'s text read from the page painted
-//! (the engine paints it when asked); and the reflow
-//! between two versions, each summarised as docx-agent's `LayoutSummary` is
+//! (the engine paints it when asked), a character's advance in the version's fonts; and the
+//! reflow between two versions, each summarised as docx-agent's `LayoutSummary` is
 //! (`ooxml_word_pages::summary`).
 //!
 //! The host that keeps a document's engine (its fonts, its budgets) hands it in; the
@@ -19,7 +19,7 @@
 
 use ooxml_base::Cancel;
 use ooxml_opc::Package;
-use ooxml_word_edit::{FieldLayout, FieldPlace, FieldRun, LaidFields, PageReflow, PageShows, Unknown};
+use ooxml_word_edit::{CharAdvance, FieldLayout, FieldPlace, FieldRun, LaidFields, PageReflow, PageShows, Unknown};
 use ooxml_word_layout::facts::LayoutFacts;
 use ooxml_word_layout::fields::update::{drawn_text, style_reference_known, PageNumbers};
 use ooxml_word_model::value::Text;
@@ -228,6 +228,16 @@ impl LaidFields for Laid<'_> {
                 None => Err(Unknown(format!("{id} is not laid out"))),
             })
             .collect()
+    }
+
+    /// The engine's fonts for this version, then the measured tables of six faces (docx2svg's
+    /// `TableAdvances`, which docx-agent's `_TocLooks._width` asks after the installed fonts).
+    fn advance(&self, family: &str, bold: bool, italic: bool, ch: char) -> Option<CharAdvance> {
+        let (advance, units_per_em) = self
+            .version
+            .advance(family, bold, italic, ch)
+            .or_else(|| ooxml_fonts::table_advance(family, bold, italic, ch))?;
+        Some(CharAdvance { advance, units_per_em })
     }
 
     fn pages(&self) -> Vec<PageShows> {

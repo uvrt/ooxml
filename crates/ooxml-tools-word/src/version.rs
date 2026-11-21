@@ -46,6 +46,15 @@ pub struct Version<'a> {
 }
 
 impl Version<'_> {
+    /// `address` as it names a block now: through the renames the session's edits made
+    /// (`p@body/1` once stamped `p:X`; a row's or cell's table), as docx-agent's view reads
+    /// an address; as given on a version the session only reads.
+    #[must_use]
+    pub fn follow(&self, address: &str) -> String {
+        self.owned
+            .map_or_else(|| address.to_owned(), |owned| owned.doc.ids().follow_address(address))
+    }
+
     /// This version's reading.
     ///
     /// # Errors

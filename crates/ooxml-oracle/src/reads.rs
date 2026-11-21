@@ -4,7 +4,8 @@
 //!
 //! The manifest is a JSON list of `{"file": path, "case": name, "tool": name, "arguments": {...}}`,
 //! or `{"file", "case", "fact": name}` for one of `check`'s facts read from the document
-//! alone ([`crate::facts`]).
+//! alone ([`crate::facts`]; `"opened"`: the file as the session opened it, where the fact
+//! compares with it).
 //!
 //! Must not: be used by any library; it is a test instrument.
 
@@ -66,7 +67,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
             word: None,
         };
         let reply = if let Some(fact) = item.get("fact").and_then(Value::as_str) {
-            crate::facts::reply(package, fact)
+            crate::facts::reply(package, fact, item.get("opened").and_then(Value::as_str))
         } else if item.get("laid").is_some() {
             let fonts = item.get("fonts").unwrap_or(&Value::Null);
             crate::laid_facts::reply(package, fonts, item.get("min_size"), item.get("range"))

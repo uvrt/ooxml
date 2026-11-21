@@ -12,7 +12,9 @@ use crate::document::Word;
 use crate::session::Opened;
 use ooxml_base::Cancel;
 use ooxml_store::Caller;
+use ooxml_tools::ToolResult;
 use ooxml_tools_word::{CallEditor, Editing, Made, Others, Version};
+use serde_json::Value;
 use std::sync::Mutex;
 
 /// What a tool is handed: the document's version the call reads, who calls, the call's
@@ -89,8 +91,10 @@ impl Call<'_> {
 
     /// `run` with the editing state of the Word document `word` (the call's): the session's
     /// editor, the call's caller, tracking mode and host context; the versions its edits
-    /// made are kept for the call (its `made`).
-    pub(crate) fn edit<R>(&self, word: &Word, run: impl FnOnce(&Editing<'_>) -> R) -> R {
+    /// made are kept for the call (its `made`), and the ids its edits drew as stand-ins are
+    /// named in the reply as they were drawn where the edits landed
+    /// ([`ooxml_tools_word::resolve_drawn`]).
+    pub(crate) fn edit(&self, word: &Word, run: impl FnOnce(&Editing<'_>) -> ToolResult<Value>) -> ToolResult<Value> {
         let policy = word.policy(&self.date);
         let tracking = match &policy {
             ooxml_word_edit::RevisionPolicy::Tracked(tracking) => Some(tracking),
@@ -111,8 +115,9 @@ impl Call<'_> {
         .with_others(Others::new(&others))
         .with_blobs(self.blobs)
         .with_written(self.written);
-        let result = run(&editing);
+        let mut result = run(&editing);
         *self.made.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = editor.made();
+        ooxml_tools_word::resolve_drawn(&mut result, &editor.moved());
         result
     }
 
