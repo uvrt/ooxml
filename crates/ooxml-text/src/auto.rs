@@ -5,13 +5,12 @@
 //!
 //! Must not: decide whether a line takes a hyphen (that is [`crate::breaks`]).
 //!
-//! Python's `str.isalpha` and `str.isdigit` are read as Rust's `char::is_alphabetic` and
-//! `char::is_numeric`; they differ for combining vowel signs, letter numbers and
-//! fractions, which no measured hyphenated text holds.
+//! Python's `str.isalpha` and `str.isdigit` are read exactly ([`ooxml_base::pystr`]).
 
 use crate::hyphenate;
 use crate::pieces::{Piece, PieceKind};
 use crate::units::Units;
+use ooxml_base::pystr::{is_alpha, is_digit};
 use std::collections::BTreeMap;
 
 /// Per run: its language, `w:noProof`, and the width of its hyphen (`None`: unmeasurable).
@@ -81,7 +80,7 @@ impl Token<'_> {
 
     /// The automatic hyphens of `items[start..end]`, into `insert`.
     fn hyphens(&self, start: usize, end: usize, insert: &mut BTreeMap<usize, Piece>) {
-        let first = (start..end).find(|k| self.glyph_char(*k).is_some_and(char::is_alphabetic));
+        let first = (start..end).find(|k| self.glyph_char(*k).is_some_and(is_alpha));
         let language = first.and_then(|k| self.piece(k)).and_then(|p| self.runs.get(&p.run));
         let french = language
             .and_then(|l| l.0.as_deref())
@@ -89,7 +88,7 @@ impl Token<'_> {
         let joiner = |c: char| JOINERS.contains(&c) || (french && c == FRENCH_APOSTROPHE);
         let letter = |k: usize| {
             self.piece(k)
-                .is_some_and(|p| p.ch.is_alphabetic() || (french && p.ch == '\''))
+                .is_some_and(|p| is_alpha(p.ch) || (french && p.ch == '\''))
         };
         let mut segments: Vec<Vec<usize>> = vec![Vec::new()];
         for k in start..end {
@@ -137,7 +136,7 @@ impl Token<'_> {
         if before
             .into_iter()
             .chain(after)
-            .any(|k| self.piece(*k).is_some_and(|p| p.ch.is_numeric()))
+            .any(|k| self.piece(*k).is_some_and(|p| is_digit(p.ch)))
         {
             return;
         }

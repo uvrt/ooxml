@@ -11,7 +11,7 @@
 
 use crate::session::pinned_by;
 use crate::{CallContext, Session};
-use ooxml_tools::{compact, Done, Failure, Outcome, ToolArgs, ToolError, ToolResult, MAX_RESULT_CHARS};
+use ooxml_tools::{compact, Done, Failure, Outcome, ToolArgs, ToolError, ToolResult};
 use serde_json::{json, Map, Value};
 use std::time::Duration;
 
@@ -54,11 +54,19 @@ const MARGIN: usize = 2_000;
 /// How long a batch may take, as `Limits.batch_timeout`.
 pub const BATCH_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// An op's answer: its result as the model reads a lone call's -- within `limit` -- without
-/// the empty fields a reading call never fills, led by its index and tool; `next`, the call
-/// for its next page, where it has one and its tool takes a cursor.
-fn answer(index: usize, tool: &str, result: &ToolResult<Value>, op: &Value, paged: bool) -> Map<String, Value> {
-    let envelope: Value = serde_json::from_str(&result.to_text(Some(MAX_RESULT_CHARS))).unwrap_or(Value::Null);
+/// An op's answer: its result as the model reads a lone call's -- within `own`, the host's
+/// limit on one reply -- without the empty fields a reading call never fills, led by its
+/// index and tool; `next`, the call for its next page, where it has one and its tool takes
+/// a cursor.
+fn answer(
+    index: usize,
+    tool: &str,
+    result: &ToolResult<Value>,
+    op: &Value,
+    own: usize,
+    paged: bool,
+) -> Map<String, Value> {
+    let envelope: Value = serde_json::from_str(&result.to_text(Some(own))).unwrap_or(Value::Null);
     let mut out = Map::new();
     out.insert("op".into(), Value::from(index));
     out.insert("tool".into(), Value::from(tool));
@@ -113,7 +121,8 @@ impl Session {
             )
             .at("ops"));
         }
-        let cap = MAX_READ_BATCH_CHARS.max(MAX_RESULT_CHARS);
+        let own = context.limits.result_chars;
+        let cap = MAX_READ_BATCH_CHARS.max(own);
         let clock = &*self.context.clock;
         let started = clock.monotonic();
         let mut answers: Vec<(Map<String, Value>, usize, bool)> = Vec::new();
@@ -133,7 +142,7 @@ impl Session {
                 .registry()
                 .named(given)
                 .is_some_and(|t| t.spec().arguments.property("cursor").is_some());
-            let one = answer(index, given, &result, op, paged);
+            let one = answer(index, given, &result, op, own, paged);
             let size = compact(&Value::Object(one.clone())).chars().count();
             if used + size > cap {
                 left.push((index, Left::Budget));
