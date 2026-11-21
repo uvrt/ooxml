@@ -6,9 +6,12 @@
 //! deletion) is no longer retired; one removed again (redone) is retired by the version that
 //! removed it again, its step's caller and tool kept. Ids retired before the document was
 //! saved and opened again are given by the host ([`Session::seed_retired`]), as their state
-//! says them. [`Session::retired`] reads the record. The host tells the session the number
-//! it gave each version it numbered ([`Session::number_version`]), so a refusal of a retired
-//! id names the change as the host numbers it ([`crate::refused`] words it).
+//! says them. [`Session::retired`] reads the record. The host's tool layer numbers the
+//! document's states (ooxml-edit's `OwnedHistory`: a step a new number, an undo or redo the
+//! number of the state it brings back) and tells the session each number it gives
+//! ([`Session::number_version`]), so a refusal of a retired id names the change as the host
+//! numbers it ([`crate::refused`] words it) -- until the tool layer's history is the
+//! session's own.
 //!
 //! Must not: number versions itself, or word a refusal.
 
