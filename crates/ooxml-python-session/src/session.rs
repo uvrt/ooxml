@@ -64,7 +64,7 @@ pub(crate) fn kind_of(kind: &str) -> PyResult<DocKind> {
     DocKind::parse(kind).ok_or_else(|| to_py(&SessionError::Kind(kind.to_owned())))
 }
 
-fn doc_id(doc: &str, session: &Session) -> PyResult<DocId> {
+pub(crate) fn doc_id(doc: &str, session: &Session) -> PyResult<DocId> {
     DocId::parse(doc).ok_or_else(|| {
         to_py(&SessionError::NotOpen {
             id: doc.to_owned(),
@@ -85,7 +85,7 @@ fn names_of(names: Option<BTreeMap<String, String>>) -> DocNames {
     out
 }
 
-fn to_py(error: &SessionError) -> PyErr {
+pub(crate) fn to_py(error: &SessionError) -> PyErr {
     let message = error.to_string();
     match error {
         SessionError::NotOpen { .. } => PyKeyError::new_err(message),
@@ -148,7 +148,7 @@ fn panicked(name: &str, panic: &(dyn std::any::Any + Send)) -> ToolResult<Value>
     ))
 }
 
-fn context_of(context: Option<&PyCallContext>) -> CallContext {
+pub(crate) fn context_of(context: Option<&PyCallContext>) -> CallContext {
     context.map(|c| c.inner.clone()).unwrap_or_default()
 }
 
@@ -157,7 +157,7 @@ fn context_of(context: Option<&PyCallContext>) -> CallContext {
 /// committed since.
 #[pyclass(frozen, name = "Version", module = "ooxml_core")]
 pub struct PyVersion {
-    inner: Opened,
+    pub(crate) inner: Opened,
 }
 
 #[pymethods]
@@ -534,6 +534,13 @@ impl PySession {
     fn bridge_calls(&self, py: Python<'_>) -> Vec<(String, u64)> {
         let session = &self.inner;
         py.detach(|| session.bridge_calls().into_iter().collect())
+    }
+
+    /// Open a step group on the document (`StepGroup`): what is committed until it closes is
+    /// one undo step; the host closes or reverts it on every path.
+    fn open_group(&self, py: Python<'_>, doc: &str) -> PyResult<crate::group::PyStepGroup> {
+        let id = doc_id(doc, &self.inner)?;
+        crate::group::PyStepGroup::open(py, Arc::clone(&self.inner), id)
     }
 
     /// The document's head version, held (`Version`). Never waits for a writer.

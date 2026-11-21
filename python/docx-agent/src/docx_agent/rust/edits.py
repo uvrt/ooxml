@@ -10,6 +10,10 @@ call's edits made are the call's step (:meth:`~ooxml_edit.tools.owned.OwnedEntry
 numbered in the order the session made them), its reply the result.  The Python view of the
 document is not read.
 
+An op of a ``batch`` is served the same way, under the batch's locks, into the batch's step
+group of the session's (lane H1: ooxml-edit's ``OwnedEntry.op_step``): the batch is one step,
+the ops' versions numbered with it.
+
 Such a call runs without the document's lock (:func:`serve_owned`, the format's ``serve``:
 :mod:`ooxml_edit.tools.served`), beside the others the session serves -- the session prepares
 each edit on a snapshot and commits it in a short section of its own.  Where its checks
@@ -17,7 +21,7 @@ compare layouts (Python lays them out) it runs under the lock (:func:`serve`).
 
 The Python handler answers instead -- on the view, committed through the bridge, counted by
 tool and reason (:func:`fallbacks`, ``edit_fallbacks{tool,reason}``), never silently -- where
-the session does not answer as it yet: an op of a ``batch`` (one step), a call on a draft,
+the session does not answer as it yet: a call on a draft,
 values written by reference in a tool that does not keep them yet (``Hosting.keeps_written``), a ref name that would be folded, a refusal (the session's carries its own way out, tool rule 2,
 which today's does not), a session given its own clock (the Rust session dates revisions by
 the system's), and what the session says it leaves to the host (its ``unported``: a find
@@ -107,8 +111,6 @@ def _why_not(call: Any, entry: Any, arguments: dict[str, Any]) -> str | None:
     if any(not REF.match(name) for name in _ref_names(arguments)):
         # folded with a warning, or refused, by the tool layer as the Python handler names it
         return "a ref name to fold"
-    if call.in_batch:
-        return "batch op"
     if getattr(call, "facts", None) and call.tool.name not in _served.hosting().keeps_written:
         return "values by reference"
     if getattr(call.session, "clock", utc_now) is not utc_now:
@@ -266,6 +268,7 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
     mirror = entry.handle
     tool = call.tool.name
     context = context_of(call.caller)
+    entry.flush_view()        # (in a batch: the Python ops' changes before it, the session's)
     _tracking(call, entry, context, counted)
     adapted = _served.arguments_for(call, tool, arguments)
     written = adapted.written if isinstance(adapted, Adapted) else _written(call)

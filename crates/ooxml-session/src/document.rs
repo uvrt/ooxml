@@ -67,6 +67,11 @@ impl Word {
         *self.tracking.write().unwrap_or_else(PoisonError::into_inner) = author;
     }
 
+    /// The tracking author a step group's revert goes back to (`None`: untracked).
+    pub(crate) fn restore_tracking(&self, author: Option<String>) {
+        *self.tracking.write().unwrap_or_else(PoisonError::into_inner) = author;
+    }
+
     /// `version`'s problems against those the document opened with: what the save gate
     /// compares.
     pub(crate) fn validation(&self, version: &Snapshot<WordDoc>) -> Result<Delta, SessionError> {

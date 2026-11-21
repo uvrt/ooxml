@@ -539,3 +539,37 @@ fn a_read_follows_the_renames_an_edit_made() {
         assert!(span.to_string().contains("two"), "after {tool}: {span}");
     }
 }
+
+#[test]
+fn a_step_group_is_one_undo_step_and_a_revert_takes_its_edits_back() {
+    let s = session();
+    let d = s
+        .open(docx(&paragraph("11111111", "one")), DocKind::Docx, "a.docx")
+        .unwrap();
+    let context = as_caller("w1");
+    put(&s, &d, &paragraph("11111111", "two"), &context);
+    // a batch that fails: its edits and its tracking mode taken back, redo as it was
+    let start = s.open_group(&d).unwrap();
+    let on = call(
+        &s,
+        "word_set_tracking",
+        json!({"doc": "d1", "on": true, "author": "Bo"}),
+        &context,
+    );
+    assert_eq!(on["ok"], json!(true), "{on}");
+    put(&s, &d, &paragraph("11111111", "three"), &context);
+    let reverted = s.revert_group(&d, &start, &context).unwrap();
+    assert_eq!(reverted, Some(s.snapshot(&d).unwrap().version()));
+    assert_eq!(s.close_group(&d, &context).unwrap(), None);
+    assert!(body_of(&s, &d).contains(">two<"));
+    assert!(!body_of(&s, &d).contains("w:ins"));
+    // a batch that applies: one step, which one undo takes back
+    s.open_group(&d).unwrap();
+    put(&s, &d, &paragraph("11111111", "four"), &context);
+    put(&s, &d, &paragraph("11111111", "five"), &context);
+    let made = s.close_group(&d, &context).unwrap();
+    assert_eq!(made, Some(s.snapshot(&d).unwrap().version()));
+    assert!(body_of(&s, &d).contains(">five<"));
+    assert_eq!(s.undo(&d, 1, &context).unwrap().count, 1);
+    assert!(body_of(&s, &d).contains(">two<"));
+}
