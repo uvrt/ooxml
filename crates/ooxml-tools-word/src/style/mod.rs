@@ -47,3 +47,15 @@ pub use styles_args::{
     TabAlignment, TabItem, TabLeader, WordStyles,
 };
 pub use template::{word_template, TemplateAction, WordTemplate};
+
+/// Registers the group's tools, in the order a model is shown them (the crate's
+/// [`crate::register`]).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    lists::register(r);
+    format::register(r);
+    styles::register(r);
+    template::register(r);
+    compare::register(r);
+    follow::register(r);
+    design::register(r);
+}

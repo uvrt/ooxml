@@ -303,3 +303,8 @@ pub(crate) fn body_blocks(docx: &ooxml_word_model::docx::Docx) -> Vec<String> {
         .filter_map(|b| b.id)
         .collect()
 }
+
+/// Registers `word_sections` (the crate's [`crate::register`]).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    r.edit::<WordSections>(word_sections, crate::Hosting::SERVED);
+}

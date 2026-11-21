@@ -16,7 +16,9 @@ use ooxml_xml::Element;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+mod accepted;
 mod labels;
+pub use accepted::{Accepted, Axis, Misplaced};
 pub use labels::{collapse_space, no_cell_text};
 
 /// A cell element with its place in its part.
@@ -125,47 +127,7 @@ impl<'a> TableGrid<'a> {
     /// `accepted_columns`' first value).
     #[must_use]
     pub fn kept_columns(&self) -> Vec<usize> {
-        let count = self.column_count();
-        let mut covered: HashMap<usize, bool> = HashMap::new();
-        for row in &self.rows {
-            let deleted_row = find_path(row, &["trPr", "del"]).is_some();
-            let cells = placed_cells(row);
-            let shown: Vec<&(Arc<Element>, usize, usize)> = cells.iter().filter(|c| !cell_deleted(&c.0)).collect();
-            let elements: Vec<&Element> = shown.iter().map(|c| &*c.0).collect();
-            let (groups, gone) = crate::read::cell_ends(&elements);
-            let taken: Vec<*const Element> = groups
-                .iter()
-                .flat_map(|g| g.iter().skip(1))
-                .filter_map(|n| shown.get(*n).map(|c| Arc::as_ptr(&c.0)))
-                .collect();
-            let lost: Vec<*const Element> = gone
-                .iter()
-                .filter_map(|n| shown.get(*n).map(|c| Arc::as_ptr(&c.0)))
-                .filter(|p| !taken.contains(p))
-                .collect();
-            let mut before = false;
-            for (cell, start, span) in &cells {
-                let me = Arc::as_ptr(cell);
-                let mut deleted = cell_deleted(cell);
-                if deleted && before && content_kept(cell) {
-                    deleted = false;
-                } else if taken.contains(&me) || lost.contains(&me) {
-                    deleted = true;
-                } else if !deleted {
-                    before = true;
-                }
-                if deleted_row {
-                    continue;
-                }
-                for column in *start..start + span {
-                    let was = covered.get(&column).copied().unwrap_or(true);
-                    covered.insert(column, was && deleted);
-                }
-            }
-        }
-        (0..count)
-            .filter(|c| !covered.get(c).copied().unwrap_or(false))
-            .collect()
+        self.accepted_layout().kept
     }
 
     /// How many rows accepting the tracked changes keeps: every row not deleted as one.

@@ -24,7 +24,7 @@ pub fn collapse_space(text: &str) -> String {
 
 /// The one of `texts` equal to `label` with white space collapsed, else `not_found` (none)
 /// or `ambiguous` (several), the texts the options (`_locate`'s `labelled`).
-fn labelled(texts: &[String], label: &str, what: &str) -> Result<usize, AddressError> {
+pub(super) fn labelled(texts: &[String], label: &str, what: &str) -> Result<usize, AddressError> {
     let clean: Vec<String> = texts.iter().map(|t| collapse_space(t)).collect();
     let wanted = collapse_space(label);
     let hits: Vec<usize> = (0..clean.len())

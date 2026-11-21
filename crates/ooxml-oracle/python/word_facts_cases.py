@@ -8,7 +8,7 @@ Rust library functions of ``ooxml_word_edit::facts`` as ``check`` words them).  
 the cap and the page and range filters are ``check``'s.
 
 Besides the documents given, made-up ones that hold each fact (:func:`made_up`, from
-docx-agent's tests' builders) are compared on every run.
+docx-agent's tests' document makers) are compared on every run.
 
 Python's behaviour is not changed: this only calls docx-agent's documented functions.
 """

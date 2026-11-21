@@ -3,7 +3,8 @@
 //! pages ([`PageNumbers`]): a `PAGE`, `NUMPAGES` or `SECTIONPAGES` field's result on the
 //! page its paragraph is first drawn on (`_page_field`), and a `PAGEREF`'s -- and a table
 //! of contents entry's -- the number of the page its target paragraph is first drawn on, in
-//! that page's section's format (`_page_text`).
+//! that page's section's format (`_page_text`); and a `STYLEREF`'s, the text a painted page
+//! draws for its run (`_style_reference`: [`style_reference_known`], [`drawn_text`]).
 //!
 //! This is not what the layout draws for a field (`super::field_values`: the page of the
 //! line the field's run is on); it is what an update writes into the file.
@@ -11,11 +12,15 @@
 //! Must not: find a field's paragraph or a bookmark's (the caller names them by path), or
 //! write anything.
 
+use super::styleref::target_in;
 use crate::engine::DocumentLayout;
 use crate::facts::LayoutFacts;
 use crate::paginate::PageInfo;
+use crate::paint::PagePaint;
+use ooxml_base::Locale;
 use ooxml_word_model::fieldtext::{field_text, Uncomputable};
 use ooxml_word_model::value::Text;
+use ooxml_word_model::WordDocument;
 use std::borrow::Borrow;
 
 /// Why an update cannot say a field's result: the paragraph is not drawn, the layout
@@ -163,4 +168,32 @@ impl<F: Borrow<LayoutFacts>> PageNumbers<F> {
         )
         .map_err(|Uncomputable(why)| Unknown(why))
     }
+}
+
+/// Whether a `STYLEREF` (`instruction` as written) in `document`, laid out in `locale`, is
+/// computed (`_style_reference`'s first question): its switches read and its style found, or
+/// Word's error text for it known.
+///
+/// # Errors
+/// [`Unknown`] where it is not: the field keeps its result.
+pub fn style_reference_known(document: &WordDocument, locale: &Locale, instruction: &str) -> Result<(), Unknown> {
+    target_in(document, locale, instruction)
+        .map(|_| ())
+        .map_err(|Uncomputable(why)| Unknown(why))
+}
+
+/// The text `page` draws for the run whose model path is `run` (`w:body/w:p[3]/w:r[2]`):
+/// the characters of its spans, in drawing order, on the body's lines -- or, with `story`, on
+/// the lines of that header's or footer's part (`word/header1.xml`). Empty where it draws
+/// none (what Word stores for a `STYLEREF` that shows nothing).
+pub fn drawn_text(page: &PagePaint, story: Option<&str>, run: &str) -> String {
+    let part = |name: &str| name.trim_start_matches('/').to_owned();
+    let wanted = story.map(part);
+    page.lines
+        .iter()
+        .filter(|line| line.story.as_ref().map(|(_, p)| part(p)) == wanted)
+        .flat_map(|line| line.spans.iter())
+        .filter(|span| span.path == run)
+        .flat_map(|span| span.chars.iter())
+        .collect()
 }
