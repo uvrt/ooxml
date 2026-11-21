@@ -17,8 +17,8 @@ use ooxml_base::Q;
 use ooxml_text::pieces::{LABEL_SHIFT, NOTE_CONTINUATION, NOTE_SEPARATOR, OBJECT_CHAR as PICTURE_BULLET};
 use ooxml_text::{FaceKey, Piece, PieceKind, Units, VerticalAlign};
 use ooxml_word_model::model::{InlineObject, Paragraph};
-use ooxml_word_model::value::{Props, Value};
 use ooxml_word_model::resolve::CharacterFormat;
+use ooxml_word_model::value::{Props, Value};
 use ooxml_word_model::{ResolvedParagraph, WordDocument};
 use std::sync::Arc;
 

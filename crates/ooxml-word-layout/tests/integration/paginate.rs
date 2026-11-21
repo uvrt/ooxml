@@ -99,9 +99,16 @@ fn each_section_counts_the_pages_it_has_content_on() {
     ]
     .concat();
     let layout = lay_out(&body);
-    let counts: Vec<_> = (0..4).map(|s| ooxml_word_layout::fields::page_counts(&layout, s)).collect();
+    let counts: Vec<_> = (0..4)
+        .map(|s| ooxml_word_layout::fields::page_counts(&layout, s))
+        .collect();
     assert_eq!(
         counts,
-        vec![(Some(6), Some(2)), (Some(6), Some(3)), (Some(6), Some(1)), (Some(6), Some(0))]
+        vec![
+            (Some(6), Some(2)),
+            (Some(6), Some(3)),
+            (Some(6), Some(1)),
+            (Some(6), Some(0))
+        ]
     );
 }
