@@ -243,7 +243,7 @@
    "expect": {
     "ok": true,
     "summary": "Saved supplier-assessment.docx for the application",
-    "data_sha": "708a38549f2d7147",
+    "data_sha": "0299fdb98a33f908",
     "data_keys": [
      "coverage",
      "coverage.blocks_laid_out",
@@ -265,6 +265,6 @@
  ],
  "output": {
   "name": "supplier-assessment.docx",
-  "sha256": "1cadfb54a27d28ab992e2a1857cc35a48449a8e975123cd5427b62446877d5a4"
+  "parts_sha256": "5bbea575310843865590278cefd5e79ea67af565fb0d089f9fcd68e3adc1745f"
  }
 }

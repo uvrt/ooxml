@@ -265,7 +265,7 @@
    "expect": {
     "ok": true,
     "summary": "Saved operations-report.docx for the application",
-    "data_sha": "9483d5e1805dfbc9",
+    "data_sha": "27775a31bc1b65e0",
     "data_keys": [
      "coverage",
      "coverage.blocks_laid_out",
@@ -287,6 +287,6 @@
  ],
  "output": {
   "name": "operations-report.docx",
-  "sha256": "8a4f159e0130f451039e24bfe0655b0e16d9620e778b4100785f1619e3af6cc5"
+  "parts_sha256": "8e9d9778aee720259f7607225aba0562591f65addced927ac97e2e8ec41bf49e"
  }
 }

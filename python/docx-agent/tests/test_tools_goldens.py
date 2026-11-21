@@ -2,12 +2,19 @@
 
 Each transcript (``goldens/transcripts``) is the tool calls that do one task of the end-to-end
 trial -- the calls an agent with the tools makes, no Python -- with every call's normalised
-result.  Replaying one on the task's inputs must give the same results, an output that is
-byte for byte the one recorded (the session clock is fixed), and an output that passes the
+result.  Replaying one on the task's inputs must give the same results, an output whose parts
+are byte for byte the ones recorded (the session clock is fixed), and an output that passes the
 trial's own check (``goldens/trial/_grading/<task>/check.py``, recovered unchanged).  So
 "the tools can do every trial task without code" is a regression test.
 
-Byte for byte holds where Office's faces are installed (the Mac the transcripts were recorded
+The output is compared by its parts (names and uncompressed bytes, ``goldens_replay``'s
+``package_digest``), not by the zip's bytes: the same parts deflated by zlib (the Python save)
+and zlib-rs (the Rust session's) differ in compressed size, and the two write some parts in a
+different order; Word sees neither.  For the
+same reason ``save_document``'s ``size`` stays in its reply and in ``data_keys`` but out of
+``data_sha`` (``goldens_replay.ENCODING_FIELDS``).
+
+The parts byte for byte hold where Office's faces are installed (the Mac the transcripts were recorded
 on): the layout -- page counts, reflow, coverage, field page numbers -- is in the results and
 in the saved file.  Every other runner, CI's included, replays them too and compares what does
 not depend on the layout: each result's ok, summary, ids, warnings, the schema of its data
@@ -23,7 +30,6 @@ anchored on them by refs.
 from __future__ import annotations
 
 import functools
-import hashlib
 import json
 import os
 import subprocess
@@ -88,7 +94,8 @@ def test_a_golden_transcript_replays_to_the_same_results_and_bytes(path, tmp_pat
     assert outputs, "the transcript saved nothing"
     output = outputs[-1]
     assert output.name == transcript["output"]["name"]
-    assert hashlib.sha256(output.data).hexdigest() == transcript["output"]["sha256"]
+    # The parts Word reads, not the zip's compressed bytes (the module docstring says why).
+    assert goldens_replay.package_digest(output.data) == transcript["output"]["parts_sha256"]
     assert output.validate["new"] == []
     passes_its_check(transcript, output, tmp_path)
 

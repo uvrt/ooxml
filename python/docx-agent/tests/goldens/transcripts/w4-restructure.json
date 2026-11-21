@@ -216,7 +216,7 @@
    "expect": {
     "ok": true,
     "summary": "Saved security-policy.docx for the application",
-    "data_sha": "828574df70d6685e",
+    "data_sha": "d270ca3072561acd",
     "data_keys": [
      "coverage",
      "coverage.blocks_laid_out",
@@ -238,6 +238,6 @@
  ],
  "output": {
   "name": "security-policy.docx",
-  "sha256": "7aa465c411d29f5eaa9a2857396fbf01922374f8a62854f848d2d5b6db34cccd"
+  "parts_sha256": "1e13a725b427a438a3aeb059ba074b5444570ad90208c551c051b71f096f686c"
  }
 }

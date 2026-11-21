@@ -6,22 +6,27 @@ A transcript is JSON::
      "open": ["hosting-agreement-summary.docx"],      # opened by the app: d1, d2...
      "blobs": ["draft.md"],                           # registered by the app: b1, b2...
      "calls": [{"tool": ..., "arguments": {...}, "expect": {...}}],
-     "output": {"name": ..., "sha256": ...}}
+     "output": {"name": ..., "parts_sha256": ...}}
 
 ``expect`` is the normalised result: ok, summary, changed, created, removed, renamed, refs,
 warnings, the validate delta's new problems, and three things about data -- ``data_sha``, a
-digest of all of it; ``data_keys``, its schema (:func:`data_keys`); and ``data_sha_core``, a
-digest of what the layout does not measure (:func:`core_data`).  Replaying gives the same
-results and a byte-identical output (the session clock is fixed) where Office's faces are
-installed; elsewhere it gives the same results less what the layout measures
-(:func:`core_mismatches`).  ``tools/refresh_goldens.py`` records the fields.
+digest of all of it but :data:`ENCODING_FIELDS`; ``data_keys``, its schema (:func:`data_keys`);
+and ``data_sha_core``, a digest of what the layout does not measure (:func:`core_data`).
+``output.parts_sha256`` is the saved package's :func:`package_digest`: its parts' names and
+uncompressed bytes, what Word reads -- not the zip's compressed bytes, which differ between
+deflate implementations (zlib, zlib-rs) for the same parts, nor the order of its entries.  Replaying gives the same results
+and the same parts (the session clock is fixed) where Office's faces are installed; elsewhere
+it gives the same results less what the layout measures (:func:`core_mismatches`).
+``tools/refresh_goldens.py`` records the fields.
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import io
 import json
+import zipfile
 from pathlib import Path
 from typing import Any, Callable
 
@@ -70,7 +75,7 @@ def normalise(result: Any, tool: str) -> dict[str, Any]:
         # Round 45: where a call's time went (seconds of wall-clock time): never the same twice.
         data = {key: value for key, value in data.items() if key != "timing"}
     if data not in (None, {}, []):
-        out["data_sha"] = digest(data)
+        out["data_sha"] = digest(without_encoding(tool, data))
         keys = data_keys(data)
         if keys:
             out["data_keys"] = keys
@@ -82,6 +87,46 @@ def digest(data: Any) -> str:
     return hashlib.sha256(json.dumps(data, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:16]
 
 
+# -- What the file's encoding decides -------------------------------------------------------
+#
+# A saved document's ``size`` is the zip's: the same parts deflated by zlib (docx-agent's
+# Python) and by zlib-rs (the Rust session's save) come out some bytes apart, and Word reads
+# the parts, not their compressed bytes.  So ``size`` stays in the tool's reply (and its key in
+# ``data_keys``: a reply that loses it fails), but out of both digests; what was saved is
+# pinned by the output's :func:`package_digest` instead.
+
+#: Data fields about how the file is encoded, not what Word reads, by tool: out of
+#: ``data_sha`` and ``data_sha_core``, their keys kept in ``data_keys``.
+ENCODING_FIELDS: dict[str, frozenset[str]] = {
+    "save_document": frozenset({"size"}),
+}
+
+
+def without_encoding(tool: str, data: Any) -> Any:
+    """``data`` less the fields :data:`ENCODING_FIELDS` names for ``tool``."""
+    encoded = ENCODING_FIELDS.get(tool, frozenset())
+    if not encoded or not isinstance(data, dict):
+        return data
+    return {key: value for key, value in data.items() if key not in encoded}
+
+
+def package_digest(data: bytes) -> str:
+    """A saved package's parts as Word reads them: each part's name and uncompressed bytes,
+    by name, hashed (sha256, hex).  The compression, timestamps and other zip headers are left
+    out, and so is the entries' order: a package's parts are found by name, and the Python and
+    Rust saves write the same parts in different orders (a new part where docx-agent adds it,
+    or where the Rust session does)."""
+    sha = hashlib.sha256()
+    with zipfile.ZipFile(io.BytesIO(data)) as package:
+        names = package.namelist()
+        if len(set(names)) != len(names):
+            raise ValueError(f"a part is in the package twice: {sorted(names)}")
+        for name in sorted(names):
+            encoded, body = name.encode("utf-8"), package.read(name)
+            sha.update(len(encoded).to_bytes(4, "big") + encoded + len(body).to_bytes(8, "big") + body)
+    return sha.hexdigest()
+
+
 # -- What the layout measures ---------------------------------------------------------------
 #
 # The one place the expectations are split.  A transcript is recorded on a Mac with
@@ -89,8 +134,9 @@ def digest(data: Any) -> str:
 # documents out differently, or stops.  What depends on that layout is
 #
 # * the data fields in LAYOUT_FIELDS -- reflow and coverage facts, page counts, the pages
-#   rendered, and the size of a saved document (its app.xml carries the page count): left
-#   out of ``data_sha_core``, though their keys stay in ``data_keys``;
+#   rendered: left out of ``data_sha_core``, though their keys stay in ``data_keys``
+#   (a saved document's ``size`` is out of it too, as :data:`ENCODING_FIELDS`; the page
+#   count its app.xml carries is in the output's parts, compared where the faces are);
 # * the keys in CONDITIONAL_KEYS, which docx-agent adds to those fields only when the
 #   layout stopped, substituted or approximated (layout.coverage_facts and
 #   tools/shared._layout_facts): left out of ``data_keys``, so a runner where the layout
@@ -108,7 +154,6 @@ def digest(data: Any) -> str:
 #: Data fields the layout measures, by tool ("*": every tool).
 LAYOUT_FIELDS: dict[str, frozenset[str]] = {
     "*": frozenset({"reflow", "coverage", "pages", "pages_estimated"}),
-    "save_document": frozenset({"size"}),
 }
 #: Keys a layout field has only when the layout stopped, substituted or approximated.
 CONDITIONAL_KEYS: dict[str, frozenset[str]] = {
@@ -149,10 +194,11 @@ def data_keys(data: Any) -> list[str]:
 
 
 def core_data(tool: str, data: Any) -> Any:
-    """``data`` less the fields the layout measures (:data:`LAYOUT_FIELDS`)."""
+    """``data`` less the fields the layout measures (:data:`LAYOUT_FIELDS`) and those about
+    the file's encoding (:data:`ENCODING_FIELDS`)."""
     if not isinstance(data, dict):
         return data
-    measured = LAYOUT_FIELDS["*"] | LAYOUT_FIELDS.get(tool, frozenset())
+    measured = LAYOUT_FIELDS["*"] | LAYOUT_FIELDS.get(tool, frozenset()) | ENCODING_FIELDS.get(tool, frozenset())
     return {key: value for key, value in data.items() if key not in measured}
 
 
@@ -220,6 +266,6 @@ def run(transcript: dict[str, Any], inputs: Path, *, record: bool = False) -> tu
             mismatches.append((index, call["tool"], call.get("expect"), got))
     if record and outputs:
         last = outputs[-1]
-        transcript["output"] = {"name": last.name, "sha256": hashlib.sha256(last.data).hexdigest()}
+        transcript["output"] = {"name": last.name, "parts_sha256": package_digest(last.data)}
     transcript["_mismatches"] = mismatches
     return transcript, outputs

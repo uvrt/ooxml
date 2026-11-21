@@ -15,7 +15,8 @@ Mac with Office), and it refuses -- writing nothing -- unless, for every call,
 * ``data_sha`` is the one recorded, or -- with ``--new-keys`` naming keys a change added to
   the results (``size``, or nested one level, ``coverage.status``) -- the data less those
   keys hashes to it;
-and every saved output is byte for byte the one recorded.  So a refresh records what the code
+and every saved output's parts (names and uncompressed bytes: ``goldens_replay.package_digest``)
+are byte for byte the ones recorded.  So a refresh records what the code
 now returns *about* the same results; a change that alters a result or a saved document is a
 different change, to be reviewed as one, and is not something this tool waves through.
 """
@@ -23,7 +24,6 @@ different change, to be reviewed as one, and is not something this tool waves th
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import sys
 from pathlib import Path
@@ -88,7 +88,8 @@ def refresh(path: Path, new_keys: list[str]) -> tuple[dict, list[str], int]:
     else:
         output = outputs[-1]
         recorded = transcript.get("output", {})
-        if output.name != recorded.get("name") or hashlib.sha256(output.data).hexdigest() != recorded.get("sha256"):
+        if (output.name != recorded.get("name")
+                or goldens_replay.package_digest(output.data) != recorded.get("parts_sha256")):
             problems.append(f"{path.stem}: the saved output is not the one recorded")
     return transcript, problems, changed
 
