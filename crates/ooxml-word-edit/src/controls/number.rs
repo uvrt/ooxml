@@ -101,7 +101,7 @@ impl ReadPredicate<WordDoc> for NumbersControl {
             Key::Part(part) => docx
                 .part(part)
                 .is_some_and(|story| story.facts().controls().iter().any(|c| self.numbers(&c.element))),
-            Key::Root(_) | Key::Seq(_) | Key::Annotations | Key::People => false,
+            Key::Root(_) | Key::Seq(_) | Key::Annotations | Key::People | Key::StyleUse(_) => false,
         }
     }
 }
