@@ -97,6 +97,34 @@ def _listing(arguments: Any) -> bool:
 def word_changes(call: Any, doc: str, action: str, ids: list[str] | None = None, author: str | None = None,
                  kind: str | None = None, within: str | None = None, all: bool = False,
                  detail: str = "grouped", cursor: str | None = None) -> Result:
+    if action in ("list", "preview"):
+        return _served_reading(call, action, ids, author, kind, within, all, detail, cursor)
+    return _python_changes(call, action, ids, author, kind, within, all, detail, cursor)
+
+
+def _served_reading(call: Any, action: str, ids: list[str] | None, author: str | None, kind: str | None,
+                    within: str | None, all: bool, detail: str, cursor: str | None) -> Result:
+    """``list`` and ``preview`` answered by the Rust session (lane H4), on the version the
+    call reads, else by :func:`_python_changes` (counted, with why).  A preview of a
+    document the session does not own is the Python handler's: the copy the session reads
+    it from was opened later than the document, so its count of this session's records
+    would start there."""
+    from ..rust import reads
+    from ..rust.served import arguments_for
+
+    given = arguments_for(call, "word_changes", {"action": action, "ids": ids, "author": author, "kind": kind,
+                                                 "within": within, "all": all or None,
+                                                 "detail": None if detail == "grouped" else detail,
+                                                 "cursor": cursor})
+    why = "a preview of a document the session does not own" \
+        if action == "preview" and reads._owned(call.entry) is None else None
+    return reads.serve(call, "word_changes", given,
+                       lambda: _python_changes(call, action, ids, author, kind, within, all, detail, cursor),
+                       addresses=(given.get("within"), *(given.get("ids") or ())), why_not=why)
+
+
+def _python_changes(call: Any, action: str, ids: list[str] | None, author: str | None, kind: str | None,
+                    within: str | None, all: bool, detail: str, cursor: str | None) -> Result:
     if action == "list":
         if ids or all:
             raise ToolError("invalid_arguments", "list filters by author, kind and within",

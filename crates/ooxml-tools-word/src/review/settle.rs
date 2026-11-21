@@ -2,11 +2,11 @@
 //! `_review_changes`, `_preview_changes`, R121's wording): the selection refused as the
 //! call that would work, the review run as one command, and the reply -- the records
 //! settled, how many of them this session wrote, the changes left by author, the blocks
-//! removed; a preview runs both on a private copy of the head version.
+//! removed; a preview runs both on a private copy of the version it reads.
 //!
 //! Must not: settle a change but through the edit core's [`Review`].
 
-use super::changes::{invalid, try_call, ChangeAction, WordChanges};
+use super::changes::{invalid, try_call, ChangeAction, Reading, WordChanges};
 use super::listing::change_json;
 use super::Editing;
 use crate::paging::page_list;
@@ -77,12 +77,9 @@ fn refusal(error: ooxml_word_edit::EditError, args: &WordChanges) -> ToolError {
     super::edit_refusal(error, field, try_call(&list))
 }
 
-/// `accept`, `reject` or `preview`.
+/// `accept` or `reject`.
 pub(crate) fn settle(args: &WordChanges, editing: &Editing<'_>) -> Result<ToolResult<Value>, ToolError> {
     let selection = selection(args)?;
-    if args.action == ChangeAction::Preview {
-        return preview(args, editing, selection).map(ToolResult::done);
-    }
     let accept = args.action == ChangeAction::Accept;
     let by_ids = matches!(selection, Selection::Ids(_));
     let review = Review { accept, selection };
@@ -101,7 +98,7 @@ pub(crate) fn settle(args: &WordChanges, editing: &Editing<'_>) -> Result<ToolRe
         .doc()
         .docx()
         .map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
-    let opened = opened_docx(editing)?;
+    let opened = docx_of(editing.opened)?;
     let changed = changed_parts(editing.opened, done.version.doc());
     let out = &done.out;
     let session = this_session(&out.settled, &opened, &changed);
@@ -134,12 +131,9 @@ pub(crate) fn settle(args: &WordChanges, editing: &Editing<'_>) -> Result<ToolRe
     Ok(result)
 }
 
-/// The version the document was opened as, read.
-fn opened_docx(editing: &Editing<'_>) -> Result<Arc<Docx>, ToolError> {
-    editing
-        .opened
-        .docx()
-        .map_err(|e| ToolError::internal(e.to_string(), "word:model"))
+/// `doc` read.
+fn docx_of(doc: &WordDoc) -> Result<Arc<Docx>, ToolError> {
+    doc.docx().map_err(|e| ToolError::internal(e.to_string(), "word:model"))
 }
 
 /// The parts of `now` whose content differs from the document as opened.
@@ -379,20 +373,17 @@ impl Clock for Still {
 }
 
 /// `preview`: what accepting and what rejecting would settle and remove, each on a
-/// private store made from the head version; nothing changes.
-fn preview(args: &WordChanges, editing: &Editing<'_>, selection: Selection) -> Result<Done<Value>, ToolError> {
-    let head = editing.editor.store().snapshot();
-    let docx = head
-        .doc()
-        .docx()
-        .map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
+/// private store made from the version `reading` reads; nothing changes.
+pub(crate) fn preview(args: &WordChanges, reading: &Reading<'_>) -> Result<Done<Value>, ToolError> {
+    let selection = selection(args)?;
+    let docx = docx_of(reading.doc)?;
     let chosen = chosen(&docx, &selection).map_err(|e| refusal(e, args))?;
-    let opened = opened_docx(editing)?;
-    let changed = changed_parts(editing.opened, head.doc());
+    let opened = docx_of(reading.opened)?;
+    let changed = changed_parts(reading.opened, reading.doc);
     let mut data = Map::new();
     let mut parts = Vec::new();
     for accept in [true, false] {
-        let store = Store::new(head.doc().clone(), StoreConfig::default(), Arc::new(Still));
+        let store = Store::new(reading.doc.clone(), StoreConfig::default(), Arc::new(Still));
         let review = Review {
             accept,
             selection: selection.clone(),
@@ -428,14 +419,14 @@ fn preview(args: &WordChanges, editing: &Editing<'_>, selection: Selection) -> R
     let items: Vec<Value> = chosen.iter().map(change_json).collect();
     let mut first = args.clone();
     first.cursor = None;
-    let (shown, total, _) = page_list(&items, None, editing.limits.list_items, try_call(&first))?;
+    let (shown, total, _) = page_list(&items, None, reading.limits.list_items, try_call(&first))?;
     let count = shown.len();
     data.insert("changes".into(), Value::Array(shown));
     if total > count {
         data.insert(
             "changes_not_shown".into(),
             json!({"count": total - count,
-                   "call": {"tool": "word_changes", "arguments": {"doc": editing.doc, "action": "list"}}}),
+                   "call": {"tool": "word_changes", "arguments": {"doc": reading.name, "action": "list"}}}),
         );
     }
     let mut reply = Done::new(format!(

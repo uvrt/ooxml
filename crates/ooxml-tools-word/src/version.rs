@@ -126,13 +126,16 @@ impl Version<'_> {
 }
 
 /// A version of a document the session owns, as its editor holds it: what validation
-/// reads, and the problems the document was opened with (the save gate's baseline).
+/// reads, the problems the document was opened with (the save gate's baseline), and the
+/// document as opened (what the records this session wrote are told from).
 #[derive(Clone, Copy)]
 pub struct Owned<'a> {
     /// The version.
     pub doc: &'a WordDoc,
     /// The problems the document had when the session opened it.
     pub baseline: &'a [Problem],
+    /// The document as the session opened it.
+    pub opened: &'a WordDoc,
 }
 
 /// The other documents a call names, by id, each at the version the session pinned for the
