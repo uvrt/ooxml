@@ -589,6 +589,20 @@ def _bookmarked(document, blocks: list[str]) -> list[str]:
 
 
 @CASES
+def property_cases(document) -> list[dict]:
+    """``set_properties`` (lane L1): each property set, all four at once, a value the
+    document already has (no change), a non-ASCII title, and the refusal of none."""
+    current = document.properties
+    out = [call("set_properties", title="Quarterly review"), call("set_properties", author="Writer A"),
+           call("set_properties", language="nl-NL"), call("set_properties", subject="Budget"),
+           call("set_properties", title="Plan", author="Writer B", language="en-GB", subject="Q4"),
+           call("set_properties", title="Überblick — 2026"), call("set_properties")]
+    if isinstance(current.get("title"), str):
+        out.append(call("set_properties", title=current["title"]))
+    return out
+
+
+@CASES
 def review_within_cases(document) -> list[dict]:
     """``word_changes`` within text (lane P4b9, P4a's deferred ``within``): each of the
     first changes' paragraphs by a range at its start, one over its second half, a position

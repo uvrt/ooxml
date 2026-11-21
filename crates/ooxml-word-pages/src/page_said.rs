@@ -163,13 +163,13 @@ fn item_indices(laid: &LaidPage) -> Vec<usize> {
 
 /// Page `page`'s laid page and the flow items it draws, where it has a laid page: what
 /// a page's memo is kept by.
-pub(crate) fn page_key(layout: &DocumentLayout, page: usize) -> Option<crate::summary::PageKey> {
+pub(crate) fn page_key(layout: &DocumentLayout, page: usize) -> Option<crate::digest_cache::PageKey> {
     let laid = laid_page(layout, page)?;
     let items = item_indices(laid)
         .iter()
         .filter_map(|i| layout.flow.items.get(*i).cloned())
         .collect();
-    Some(crate::summary::PageKey {
+    Some(crate::digest_cache::PageKey {
         page: Arc::clone(laid),
         items,
     })

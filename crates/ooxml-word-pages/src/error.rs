@@ -1,5 +1,5 @@
 //! Owns: what laying out a version can answer instead of a layout -- a package that does
-//! not open ([`PagesError`]), or a document the layout cannot lay out yet ([`Fallback`]),
+//! not open or a layout stopped ([`PagesError`]), or a document the layout cannot lay out yet ([`Fallback`]),
 //! which its caller lays out another way and counts by reason.
 //!
 //! Must not: decide what the caller does with either.
@@ -13,6 +13,10 @@ pub enum PagesError {
     /// The Word model's reading of them.
     #[error("word: {0}")]
     Word(#[from] ooxml_word_model::WordError),
+    /// Laying it out was stopped (cancelled, or past its caller's deadline): nothing was
+    /// laid out, the version laid out before is still the one the next is laid out from.
+    #[error("laying the version out was stopped")]
+    Stopped,
 }
 
 /// A document the Rust layout does not lay out as docx2svg does yet: the reason, stable

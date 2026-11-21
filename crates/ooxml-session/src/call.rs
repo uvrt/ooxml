@@ -34,7 +34,9 @@ pub struct Call<'a> {
     /// The versions the call's edits made (an editing tool's: [`CallEditor::made`]).
     pub(crate) made: &'a Mutex<Option<Made>>,
     /// The host's layout of the document's versions.
-    pub(crate) layout: Option<&'a dyn ooxml_word_edit::FieldLayout>,
+    pub(crate) layout: Option<&'a dyn ooxml_tools_word::WordLayout>,
+    /// How long laying a version out may take in the call.
+    pub(crate) layout_limit: Option<ooxml_tools_word::LayoutLimit<'a>>,
     /// The session's blobs, where the host hands them over.
     pub(crate) blobs: Option<&'a dyn ooxml_tools_word::Blobs>,
     /// The values the host wrote into the call's arguments for references.
@@ -72,6 +74,9 @@ impl Call<'_> {
         Some(ooxml_tools_word::Owned {
             doc,
             baseline: word.editor.baseline(),
+            last_check: &word.last_check,
+            layout: self.layout,
+            layout_limit: self.layout_limit,
         })
     }
 
@@ -109,10 +114,11 @@ impl Call<'_> {
             &self.date,
         )
         .with_tracking(tracking)
-        .with_layout(self.layout)
+        .with_layout(self.layout.map(|layout| layout as &dyn ooxml_word_edit::FieldLayout))
         .with_others(Others::new(&others))
         .with_blobs(self.blobs)
-        .with_written(self.written);
+        .with_written(self.written)
+        .with_rows_written(Some(&word.rows_written));
         let mut result = run(&editing);
         let made = editor.made();
         ooxml_tools_word::note_spaced(&mut result, made.as_ref().map_or(0, |m| m.spaced));
