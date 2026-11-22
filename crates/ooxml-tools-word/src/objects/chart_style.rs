@@ -1,23 +1,25 @@
 //! Owns: `edit_chart`'s style actions (docx-agent's `_style_chart` through ooxml-edit's
 //! `apply_style_action`, `charts/actions.py`): `set_axis_scale` (the axis a scale given
 //! without one is for, `scale_axis`; its keys as keywords, `scale_arguments`),
-//! `set_gridlines`, `format_series`, `format_point` and `set_text_style` -- their arguments
-//! checked in ooxml-edit's order and the chart part changed (`ooxml_chart::edit`), one
-//! [`EditGraphic`](ooxml_word_edit::EditGraphic) command.
+//! `set_gridlines`, `format_series`, `format_point`, `set_series_type`, `set_text_style` and
+//! `set_point_labels` (Value From Cells: the labels written into the workbook too,
+//! `chart_block`) -- their arguments checked in ooxml-edit's order and the chart part
+//! changed (`ooxml_chart::edit`), one [`EditGraphic`](ooxml_word_edit::EditGraphic) command.
 //!
-//! Not here yet: `set_series_type` and `set_point_labels` (the handler answers them
-//! `unported`).
+//! Not here yet: point labels in a document whose defaults name no language (the session's
+//! locale decides it; the handler answers them `unported`).
 //!
 //! Must not: resolve a series or category by name but through `chart_names`, or write but
 //! through the command.
 
+use super::chart_block::{all_sources, Block};
 use super::chart_data::Warnings;
-use super::chart_keeper::{refused, unported};
+use super::chart_keeper::{refused, unported, Keeper};
 use super::chart_names::{category_names, choices, position, series_names, Stop};
-use super::{ChartAction, ChartAxis, EditChart, Gridlines, ScaleArg, ScaleKey, StyleArg};
+use super::{ChartAction, ChartAxis, ChartType, EditChart, Gridlines, ScaleArg, ScaleKey, StyleArg};
 use ooxml_chart::data::{axis_names, ChartData, Point};
 use ooxml_chart::edit::{
-    text_size, ChartTree, Colour, DataError, ScaleChange, SeriesFormat, TextHost, TextLook, TextStop,
+    text_size, ChartTree, Colour, DataError, PointLabels, ScaleChange, SeriesFormat, TextHost, TextLook, TextStop,
 };
 use ooxml_tools::{ArgEnum, Refusal, ToolError, TryCall, WayOut};
 use ooxml_word_edit::{EditError, GraphicEdit, GraphicParts, PartWrite};
@@ -56,6 +58,23 @@ pub(crate) enum StyleAction {
         point: Option<usize>,
         look: SeriesFormat,
     },
+    /// A series drawn as a line (on the secondary axes) or a column; `values_format` is
+    /// the values' number format.
+    SeriesType {
+        series: usize,
+        line: bool,
+        secondary: bool,
+        values_format: Option<String>,
+    },
+    /// A series' own point labels (`None`: taken away) at a position (by name), in the
+    /// workbook too with `cells`; their text in `lang`.
+    PointLabels {
+        series: usize,
+        labels: Option<Vec<String>>,
+        position: Option<&'static str>,
+        cells: bool,
+        lang: Option<String>,
+    },
     /// The text's look, of one part or all; new text properties in `lang`.
     Text {
         part: Option<&'static str>,
@@ -79,6 +98,8 @@ impl GraphicEdit for ChartStyleEdit {
         let mut chart = ChartTree::new(Arc::clone(tree.root()));
         let address = self.address.as_str();
         let refusal = |error: DataError| refused(&error.0);
+        let mut keeper = None;
+        let mut changed = true;
         match &self.action {
             StyleAction::Scale {
                 axis,
@@ -93,6 +114,18 @@ impl GraphicEdit for ChartStyleEdit {
             StyleAction::Format { series, point, look } => {
                 chart.format_series(address, *series, *point, look).map_err(refusal)?;
             }
+            StyleAction::SeriesType {
+                series,
+                line,
+                secondary,
+                values_format,
+            } => {
+                let hash = &ooxml_word_model::ids::sha256;
+                changed = chart
+                    .set_series_type(address, *series, *line, *secondary, values_format.as_deref(), hash)
+                    .map_err(refusal)?;
+            }
+            StyleAction::PointLabels { .. } => keeper = self.point_labels(&mut chart, package, part)?,
             StyleAction::Text { part, look, lang } => {
                 let host = TextHost {
                     labels: Some(WORD_TEXT_SIZES.0),
@@ -109,15 +142,69 @@ impl GraphicEdit for ChartStyleEdit {
                     })?;
             }
         }
-        let writes = vec![PartWrite::Tree(
-            part.to_owned(),
-            tree.with_root(Arc::clone(chart.root())),
-        )];
+        let mut writes = Vec::new();
+        if changed {
+            writes.push(PartWrite::Tree(
+                part.to_owned(),
+                tree.with_root(Arc::clone(chart.root())),
+            ));
+        }
+        let mut read = Vec::new();
+        if let Some(keeper) = keeper {
+            // a workbook kept in step has no reason to change the cache only
+            keeper.finish(&mut writes, &mut read)?;
+        }
         Ok(GraphicParts {
-            read: Vec::new(),
+            read,
             writes,
             out: Vec::new(),
         })
+    }
+}
+
+impl ChartStyleEdit {
+    /// `set_point_labels`: checked, the labels written into the workbook too for Value From
+    /// Cells (the workbook kept in step returned), then into the chart part.
+    fn point_labels<'p>(
+        &self,
+        chart: &mut ChartTree,
+        package: &'p ooxml_opc::Package,
+        part: &'p str,
+    ) -> Result<Option<Keeper<'p>>, EditError> {
+        let StyleAction::PointLabels {
+            series,
+            labels,
+            position,
+            cells,
+            lang,
+        } = &self.action
+        else {
+            return Ok(None);
+        };
+        let address = self.address.as_str();
+        let code = chart
+            .check_point_labels(address, *series, labels.as_deref(), *position)
+            .map_err(|error| refused(&error.0))?;
+        let mut keeper = None;
+        let formula = match labels {
+            Some(labels) if *cells => {
+                let mut workbook = Keeper::new(package, part);
+                let formula = label_cells(chart, &mut workbook, address, *series, labels)?;
+                keeper = Some(workbook);
+                Some(formula)
+            }
+            _ => None,
+        };
+        let look = PointLabels {
+            labels: labels.as_deref(),
+            position: code,
+            cells: formula.as_deref(),
+            size: Some(WORD_TEXT_SIZES.1),
+            lang: lang.as_deref(),
+            part,
+        };
+        chart.set_point_labels(*series, &look, &ooxml_word_model::ids::sha256);
+        Ok(keeper)
     }
 }
 
@@ -159,6 +246,34 @@ pub(super) fn planned(
         ChartAction::SetAxisScale => plan.scale(),
         ChartAction::SetGridlines => plan.gridlines(),
         ChartAction::FormatSeries | ChartAction::FormatPoint => plan.format(series, category),
+        ChartAction::SetSeriesType => {
+            let line = match args.chart_type {
+                Some(ChartType::Line) => true,
+                Some(ChartType::Column) => false,
+                _ => return Err(plan.refuse("set_series_type needs chart_type line or column".to_owned())),
+            };
+            Ok(StyleAction::SeriesType {
+                series: series.ok_or_else(|| plan.need_series())?,
+                line,
+                secondary: args.secondary.unwrap_or(false),
+                values_format: data.format.clone(),
+            })
+        }
+        ChartAction::SetPointLabels => {
+            let series = series.ok_or_else(|| plan.need_series())?;
+            if args.labels.is_some() && lang.is_none() {
+                return Err(Stop::Unported(
+                    "set_point_labels: a document whose defaults name no language (the session's locale decides)",
+                ));
+            }
+            Ok(StyleAction::PointLabels {
+                series,
+                labels: args.labels.clone(),
+                position: args.position.map(ArgEnum::as_str),
+                cells: args.cells.unwrap_or(false),
+                lang,
+            })
+        }
         ChartAction::SetTextStyle => Ok(StyleAction::Text {
             part: args.part.map(ArgEnum::as_str),
             look: text_look(args.style.as_ref()).map_err(|e| plan.refuse(e.0))?,
@@ -185,6 +300,21 @@ impl Plan<'_> {
             Refusal::InvalidArguments,
             message,
             WayOut::call(self.read.clone()),
+        ))
+    }
+
+    /// `need("series", ...)`: the action needs a series, one of the chart's.
+    fn need_series(&self) -> Stop {
+        let names: Vec<String> = self
+            .data
+            .series
+            .iter()
+            .map(|s| s.name.as_ref().map_or_else(|| "None".to_owned(), Point::text))
+            .collect();
+        self.refuse(format!(
+            "{} needs series: {}",
+            self.args.action.as_str(),
+            choices(&names)
         ))
     }
 
@@ -245,13 +375,7 @@ impl Plan<'_> {
         let look = series_format(self.args.style.as_ref(), action).map_err(|e| self.refuse(e.0))?;
         let need = |name: &str, names: &[String]| self.refuse(format!("{action} needs {name}: {}", choices(names)));
         let Some(series) = series else {
-            let names: Vec<String> = self
-                .data
-                .series
-                .iter()
-                .map(|s| s.name.as_ref().map_or_else(|| "None".to_owned(), Point::text))
-                .collect();
-            return Err(need("series", &names));
+            return Err(self.need_series());
         };
         let point = match (self.args.action, category) {
             (ChartAction::FormatPoint, None) => return Err(need("category", &category_names(self.data))),
@@ -450,4 +574,24 @@ fn text_look(style: Option<&StyleArg>) -> Result<TextLook, DataError> {
         bold: style.bold,
         colour: style.color.as_deref().map(Colour::parse).transpose()?,
     })
+}
+
+/// `_label_cells`: the series' labels written into the workbook line after the chart's data
+/// (its old range unlinked first); the formula of their range.
+fn label_cells(
+    chart: &mut ChartTree,
+    keeper: &mut Keeper<'_>,
+    address: &str,
+    series: usize,
+    labels: &[String],
+) -> Result<String, EditError> {
+    chart.drop_label_range(series);
+    let sources = all_sources(chart)?;
+    let Some(block) = Block::find(address, &sources, keeper, chart.point_count())? else {
+        let why = keeper.cache_only().unwrap_or("it has none");
+        return Err(refused(&format!(
+            "{address}: Value From Cells needs the chart's embedded workbook, and {why}; label the points without cells=True"
+        )));
+    };
+    block.label_cells(address, keeper, &sources, series, labels)
 }

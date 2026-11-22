@@ -156,7 +156,8 @@ impl ChartTree {
     }
 
     /// The most points any source of the series at `series` holds (`_Series.count`).
-    pub(crate) fn series_point_count(&self, series: usize) -> usize {
+    #[must_use]
+    pub fn series_point_count(&self, series: usize) -> usize {
         let Some((_, ser)) = self.series(series) else { return 0 };
         let mut owned = Owned::open(ser);
         POINT_SOURCES

@@ -158,7 +158,7 @@ pub struct LabelLook<'a> {
 }
 
 /// `_value_labels`: a series' `c:dLbls` showing its values, in Office's data-label style.
-fn value_labels(make: &Make, look: &LabelLook<'_>, pie: bool) -> Owned {
+pub(crate) fn value_labels(make: &Make, look: &LabelLook<'_>, pie: bool) -> Owned {
     let mut labels = make.c("dLbls");
     if let Some(format) = look.number_format {
         labels.push(

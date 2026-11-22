@@ -73,6 +73,11 @@ impl<'p> Keeper<'p> {
         Ok(())
     }
 
+    /// Why the edit changes the cache only, where it does (`_Editor.cache_only`).
+    pub(crate) fn cache_only(&self) -> Option<&str> {
+        self.cache_only.as_deref()
+    }
+
     /// Whether the sheet `range` points into is there to write (`_Editor.sheet`, for a
     /// source with a formula): the workbook opened, the reason noted where it is not.
     pub(crate) fn sheet(&mut self, range: &SheetRange) -> Result<bool, EditError> {

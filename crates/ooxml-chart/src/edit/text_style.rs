@@ -23,7 +23,7 @@ const AXES: [&str; 4] = ["valAx", "catAx", "dateAx", "serAx"];
 /// What a chart space's `c:txPr` goes before, in this order of preference.
 const SPACE_AFTER: [&str; 4] = ["externalData", "printSettings", "userShapes", "extLst"];
 /// `c:dLbls`' and `c:legend`'s sequences, as far as `c:txPr`.
-const DLBLS_ORDER: Order = &[
+pub(crate) const DLBLS_ORDER: Order = &[
     &["dLbl"],
     &["delete"],
     &["numFmt"],

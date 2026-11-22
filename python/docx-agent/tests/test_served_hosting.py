@@ -23,7 +23,7 @@ SERVED = {"word_set_text", "replace_text", "word_insert_text", "word_delete", "w
           "word_copy_from", "set_properties",
           # lane RD2: render, a reading tool the host hands over with its page engine
           "render",
-          # p4-chart-e to h: edit_chart's data, title and five style actions
+          # p4-chart-e to j: edit_chart's data, title and style actions
           "edit_chart"}
 BLOBS = {"word_drawings"}
 LAID = {"word_fields", "word_headers_footers", "word_template", "render"}

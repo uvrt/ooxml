@@ -381,6 +381,7 @@ def chart_cases(document) -> list[dict]:
         out += _chart_shape_edits(document, identifier)
         out += _chart_title_edits(document, identifier)
         out += _chart_style_edits(document, identifier)
+        out += _chart_combine_edits(document, identifier)
     return out
 
 
@@ -528,6 +529,43 @@ def _chart_style_edits(document, target: str) -> list[dict]:
            edit("set_axis_scale", axis="value", scale={"max": None, "min": 1}),
            edit("set_text_style", style={"size": None, "bold": True})]
     return out + [tracked(case) for case in (out[0], out[30])]
+
+
+def _chart_combine_edits(document, target: str) -> list[dict]:
+    """``set_series_type`` (lane P4c21): a series drawn as a line, on the secondary axes, back
+    as a column (columns on the secondary axis; a type that is not line or column; no
+    series), and ``set_point_labels``: a label per point (at a position, a position the
+    plot does not take, in the workbook too), taken away, and its refusals (a count that is
+    not the points', a label past 255 characters, no series); a line series and
+    ``set_point_labels`` tracked too."""
+    def edit(action: str, **arguments) -> dict:
+        return call("edit_chart", action=action, target=target, **arguments)
+
+    try:
+        chart = document.chart(target)
+        names = ["" if s.name is None else str(s.name) for s in chart.series]
+        count = len(chart.point_labels(0)) if names else 0
+    except Exception:  # noqa: BLE001 -- a chart docx-agent cannot read: the reads cover it
+        return []
+    last = names[-1] if names and names[-1] else str(max(len(names) - 1, 0))
+    labels = [f"R{i + 1}" for i in range(count)]
+    out = [edit("set_series_type", series=last, chart_type="line"),
+           edit("set_series_type", series=last, chart_type="line", secondary=True),
+           edit("set_series_type", series="0", chart_type="line", secondary=False),
+           edit("set_series_type", series="0", chart_type="column"),
+           edit("set_series_type", series="0", chart_type="column", secondary=True),
+           edit("set_series_type", series="0", chart_type="pie"), edit("set_series_type", chart_type="line"),
+           edit("set_series_type", series="0"),
+           edit("set_point_labels", series="0", labels=labels),
+           edit("set_point_labels", series="0", labels=labels, position="right"),
+           edit("set_point_labels", series="0", labels=labels, position="center"),
+           edit("set_point_labels", series="0", labels=labels, position="none"),
+           edit("set_point_labels", series="0", labels=labels, cells=True),
+           edit("set_point_labels", series=last, labels=labels, position="outside_end", cells=True),
+           edit("set_point_labels", series="0"), edit("set_point_labels", series="0", labels=[*labels, "x"]),
+           edit("set_point_labels", series="0", labels=["x" * 256] + labels[1:]),
+           edit("set_point_labels", labels=labels)]
+    return out + [tracked(case) for case in (out[1], out[12])]
 
 
 def _chunk(kind: bytes, body: bytes) -> bytes:

@@ -12,12 +12,15 @@ use ooxml_xml::Element;
 pub(crate) const A: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
 /// The chart namespace.
 pub(crate) const C: &str = "http://schemas.openxmlformats.org/drawingml/2006/chart";
+/// Office 2013's chart namespace (`c15`).
+pub(crate) const C15: &str = "http://schemas.microsoft.com/office/drawing/2012/chart";
 
 /// How a chart part's new elements are named.
 #[derive(Debug, Clone)]
 pub(crate) struct Make {
     c: Option<String>,
     a: Option<String>,
+    c15: Option<String>,
 }
 
 impl Make {
@@ -34,7 +37,11 @@ impl Make {
         } else {
             declared(C)
         };
-        Make { c, a: declared(A) }
+        Make {
+            c,
+            a: declared(A),
+            c15: declared(C15),
+        }
     }
 
     fn prefix(given: Option<&String>, fallback: &'static str) -> Option<String> {
@@ -53,6 +60,20 @@ impl Make {
     /// A new DrawingML element.
     pub(crate) fn a(&self, local: &str) -> Owned {
         Owned::named(Make::prefix(self.a.as_ref(), "a").as_deref(), local, Some(A))
+    }
+
+    /// A new Office 2013 chart element (`c15:`).
+    pub(crate) fn c15(&self, local: &str) -> Owned {
+        Owned::named(Make::prefix(self.c15.as_ref(), "c15").as_deref(), local, Some(C15))
+    }
+
+    /// `element`, an element given `nsmap={"c15": ...}`, with the namespace declared on it
+    /// where the root declares none (lxml leaves out a declaration an ancestor makes).
+    pub(crate) fn top15(&self, mut element: Owned) -> Owned {
+        if self.c15.is_none() {
+            element.declare("c15", C15);
+        }
+        element
     }
 
     /// `element`, the top of what is made, with DrawingML's prefix declared on it where the
