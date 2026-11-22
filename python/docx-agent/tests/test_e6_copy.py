@@ -24,7 +24,7 @@ from docx_agent import Document, copy_blocks
 from docx_agent.validate import check
 
 from canonical import canonical, difference, without_added_styles
-from conftest import fixture_id, fixture_paths
+from conftest import FIXTURE_DIR, fixture_id, fixture_paths
 from test_roundtrip import entries
 
 HERE = Path(__file__).parent
@@ -460,7 +460,7 @@ def test_every_fixture_copies_into_a_new_document_and_another(path, policy):
     if span is None:
         pytest.skip("the body has no paragraph or table")
     texts = [p.text for p in src.paragraphs() if p.text.strip()]
-    for target in (Document.new(), Document.open(HERE / "fixtures" / "generated" / "lists-and-styles.docx")):
+    for target in (Document.new(), Document.open(FIXTURE_DIR / "generated" / "lists-and-styles.docx")):
         before = set(check(target.package))
         original = target.to_bytes()
         result = target.copy_blocks(src, span, styles=policy)

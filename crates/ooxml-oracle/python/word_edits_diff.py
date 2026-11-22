@@ -35,11 +35,11 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-for package in ("docx-agent", "docx2svg", "ooxml-edit", "ooxml-common"):
-    source = ROOT / "python" / package / "src"
-    if str(source) not in sys.path:
-        sys.path.insert(0, str(source))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+# The reference's packages: installed from the frozen commit, or the checkout's (reference_packages.py).
+from reference_packages import use_sources  # noqa: E402
+
+use_sources("docx-agent", "docx2svg", "ooxml-edit", "ooxml-common")
 
 # The reference is docx-agent in Python: the Rust core kept out of this process and its workers
 # (spawn imports this module there too) before docx-agent is imported (reference_guard.py).

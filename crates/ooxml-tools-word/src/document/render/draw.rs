@@ -8,7 +8,7 @@
 //! Must not: hold the engine's lock while rasterising, or keep anything but in the store.
 
 use super::store::{page_key, ImageKey};
-use crate::{NotLaid, Owned, WordLayout};
+use crate::{LayoutLimit, NotLaid, Owned, WordLayout};
 use ooxml_base::Cancel;
 use ooxml_opc::Package;
 use ooxml_tools::{Failure, Refusal, ToolError, TryCall, WayOut};
@@ -54,8 +54,9 @@ pub(super) struct Drawn {
     pub key: ImageKey,
 }
 
-/// `save_document` and `word_read`'s way out of a version the page engine does not lay out.
-fn not_supported(doc: &str, why: &str) -> ToolError {
+/// `save_document` and `word_read`'s way out of a version the page engine does not lay out,
+/// `who` (`render`, the live view) named as what does not draw it.
+fn not_supported(who: &str, doc: &str, why: &str) -> ToolError {
     let call = TryCall {
         tool: "word_read".to_owned(),
         arguments: json!({"doc": doc}).as_object().cloned().unwrap_or_default(),
@@ -64,7 +65,7 @@ fn not_supported(doc: &str, why: &str) -> ToolError {
     ToolError::refusal(
         Refusal::Refused,
         format!(
-            "render does not draw this document yet ({why}): read it as text (word_read), or save it \
+            "{who} does not draw this document yet ({why}): read it as text (word_read), or save it \
              (save_document) and open it in Word"
         ),
         WayOut::call(call),
@@ -74,8 +75,7 @@ fn not_supported(doc: &str, why: &str) -> ToolError {
 /// The version `package` laid out by `layout` within the call's layout limit.
 ///
 /// # Errors
-/// `refused` where the engine does not lay it out yet (naming why, the way out a read or a
-/// save); `timeout` past the call's layout limit or when the call is stopped.
+/// As [`laid_to_draw`]'s, `render` named.
 pub(super) fn laid(
     layout: &dyn WordLayout,
     owned: &Owned<'_>,
@@ -83,15 +83,32 @@ pub(super) fn laid(
     doc: &str,
     cancel: &dyn Cancel,
 ) -> Result<Arc<LaidVersion>, ToolError> {
-    let stop = owned.layout_limit.map_or(cancel, |limit| limit.cancel);
+    laid_to_draw("render", layout, owned.layout_limit, (package, doc), cancel)
+}
+
+/// The version `package` (of the document `doc`) laid out by `layout` to draw its pages,
+/// within `limit` (the call's limit on laying out; `None`: as long as `cancel` lets it run):
+/// what `render` and the session's live view draw from.
+///
+/// # Errors
+/// `refused` where the engine does not lay it out yet (naming why and `who` does not draw
+/// it, the way out a read or a save); `timeout` past the limit or when the call is stopped.
+pub fn laid_to_draw(
+    who: &str,
+    layout: &dyn WordLayout,
+    limit: Option<LayoutLimit<'_>>,
+    (package, doc): (&Package, &str),
+    cancel: &dyn Cancel,
+) -> Result<Arc<LaidVersion>, ToolError> {
+    let stop = limit.map_or(cancel, |limit| limit.cancel);
     match layout.laid(package, stop) {
         Ok(laid) => Ok(laid),
-        Err(NotLaid::Other(why)) => Err(not_supported(doc, &why)),
+        Err(NotLaid::Other(why)) => Err(not_supported(who, doc, &why)),
         Err(NotLaid::Stopped) => {
             cancel
                 .check()
                 .map_err(|_| ToolError::failure(Failure::Timeout, "the call was stopped"))?;
-            let seconds = owned.layout_limit.map_or(0.0, |l| l.timeout.as_secs_f64());
+            let seconds = limit.map_or(0.0, |l| l.timeout.as_secs_f64());
             Err(ToolError::failure(
                 Failure::Timeout,
                 format!("laying the document out took longer than its {seconds:.0} s limit"),

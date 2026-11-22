@@ -20,8 +20,9 @@ from ooxml_edit.tools import Toolbox  # noqa: E402
 from docx_agent import Document  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
 from view_edits import edited  # noqa: E402
+from conftest import FIXTURE_DIR  # noqa: E402
 
-FIXTURES = Path(__file__).parent / "fixtures"
+FIXTURES = FIXTURE_DIR
 AGREEMENT = FIXTURES / "generated" / "pilot" / "agreement-summary.docx"
 CHARTS = FIXTURES / "generated" / "charts" / "charts.docx"
 SMARTART = FIXTURES / "generated" / "charts" / "smartart.docx"

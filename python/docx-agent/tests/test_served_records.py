@@ -11,7 +11,6 @@ from __future__ import annotations
 import dataclasses
 import io
 import zipfile
-from pathlib import Path
 
 import pytest
 
@@ -21,8 +20,9 @@ from docx_agent.rust import edits, served as rust_served
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from ooxml_edit.tools import Toolbox
 from ooxml_edit.tools.owned import OwnedEntry
+from conftest import FIXTURE_DIR  # noqa: E402
 
-GENERATED = Path(__file__).resolve().parent / "fixtures" / "generated"
+GENERATED = FIXTURE_DIR / "generated"
 FIXTURE = GENERATED / "markdown" / "constructs.docx"
 CHARTS = GENERATED / "charts" / "charts.docx"
 RECORD = {"v": 1, "source": "d:scores", "columns": [{"column": "rating", "rows": "1-3"}]}

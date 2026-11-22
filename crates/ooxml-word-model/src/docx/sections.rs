@@ -370,7 +370,7 @@ mod tests {
 
     #[test]
     fn breaks_found_where_they_can_stand_equal_a_whole_walk() {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../python/docx-agent/tests/fixtures");
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../crates/ooxml-oracle/fixtures");
         let mut paths = Vec::new();
         fixtures(&dir, &mut paths);
         let mut breaks = 0;

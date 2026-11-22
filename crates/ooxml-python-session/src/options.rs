@@ -216,6 +216,18 @@ impl PyCallLayout {
     }
 }
 
+impl PyCallLayout {
+    /// Its page engine, which the live view lays the document out with.
+    ///
+    /// # Errors
+    /// `ValueError` where it has none.
+    pub(crate) fn word_layout(&self) -> PyResult<Arc<dyn ooxml_tools_word::WordLayout>> {
+        self.pages.clone().ok_or_else(|| {
+            PyValueError::new_err("the live view lays the document out with a CallLayout(pages=WordPages)")
+        })
+    }
+}
+
 /// What one call runs with beside its name and arguments (`ooxml_core.CallOptions`).
 /// `context`: who calls, a token that stops it, how long it may run (a `CallContext`).
 /// `limit`: the reply within so many characters, as the model is sent it (`call` only).

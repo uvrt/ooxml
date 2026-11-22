@@ -21,10 +21,11 @@ from ooxml_edit.tools import Toolbox
 
 from docx_agent.rust.session import RustTools
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
+from conftest import FIXTURE_DIR  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 GOLDEN = HERE.parents[2] / "crates" / "ooxml-tools-word" / "tests" / "golden" / "word_read.json"
-FIXTURES = sorted((HERE / "fixtures").rglob("*.docx"))
+FIXTURES = sorted((FIXTURE_DIR).rglob("*.docx"))
 
 CASES = {"final": {}, "markup": {"view": "markup"}, "original": {"view": "original"}, "all": {"stories": "all"}}
 
@@ -51,7 +52,7 @@ def test_the_rust_definition_is_todays_byte_for_byte():
     assert json.loads(GOLDEN.read_text(encoding="utf-8")) in specs
 
 
-@pytest.mark.parametrize("path", FIXTURES, ids=lambda p: str(p.relative_to(HERE / "fixtures")))
+@pytest.mark.parametrize("path", FIXTURES, ids=lambda p: str(p.relative_to(FIXTURE_DIR)))
 def test_word_read_in_rust_equals_todays_on_the_fixtures(toolbox, path):
     session = toolbox.session()
     doc = session.open(path.read_bytes(), name=path.name)

@@ -10,7 +10,7 @@ run-name: Gates ${{ inputs.ref || 'main' }} [${{ inputs.gates || 'fixtures,corpu
 # changes against main can affect (tools/gates.py plan); `all` or a comma list names them.
 #   gh run watch --repo uvrt/ooxml $(gh run list --repo uvrt/ooxml --workflow gates.yml --limit 1 --json databaseId -q '.[0].databaseId')
 # - fixtures, corpus: crates/ooxml-oracle/python/word_edits_diff.py's modes, docx-agent (pure
-#   Python) against the release `word-edits`, on docx-agent's fixtures and on the documents
+#   Python) against the release `word-edits`, on the fixtures (crates/ooxml-oracle/fixtures) and on the documents
 #   docx2svg's tools/make_*.py make; each mode in `shards` jobs, or with shards `auto` (the
 #   default) as tools/gates_jobs.py sizes them: when the reference cache holds a store for the
 #   checkout (warm) one job per mode, the small modes of a gate sharing one; when cold three;
@@ -20,6 +20,8 @@ run-name: Gates ${{ inputs.ref || 'main' }} [${{ inputs.gates || 'fixtures,corpu
 # A case with differences fails its job unless crates/ooxml-oracle/known-differences.toml
 # covers it (with its cause).  The job summary has a table per gate; each job's logs are
 # uploaded.  Bench timings are a shared runner's: reported, never failed on.
+# docx-agent is frozen at the commit crates/ooxml-oracle/reference.toml names (P4e): the
+# gates-reference action installs it from that commit, not from the checkout.
 # docx-agent's results are kept between runs (crates/ooxml-oracle/python/reference_cache.py):
 # each edit-mode job restores the store for the reference code it runs, computes only the
 # cases it lacks, and reference-cache adds those to the store.  A new dispatch with the same
@@ -92,6 +94,11 @@ jobs:
           ref: ${{ github.sha }}
           path: .gates-ci
           sparse-checkout: .github/actions
+      # The harness at this ref names only what the frozen reference has (the reference's commit is
+      # in this full fetch): tools/gates_frozen.py.  A ref from before the freeze has no such check.
+      - name: Frozen reference API
+        run: |
+          if python3 tools/gates.py --help | grep -q frozen-api; then python3 tools/gates.py frozen-api; fi
       # Warm or cold: whether the reference cache holds a store for the reference code this
       # checkout runs (its key computed as the differential jobs compute it).  Only for the edit
       # gates with shards auto.
