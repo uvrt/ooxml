@@ -23,6 +23,7 @@ use ooxml_tools_word::{RowsWritten, Tracked};
 use ooxml_word_edit::validate::Delta;
 use ooxml_word_edit::{EarlierIds, Editor, RevisionPolicy, Tracking, WordDoc};
 use ooxml_word_model::docx::Versions;
+use ooxml_word_model::ids::LoadedState;
 use std::sync::{Arc, PoisonError, RwLock};
 
 /// The context's cache budget, as the edit core's caches reserve from it.
@@ -179,38 +180,64 @@ impl Document {
             DocKind::Docx => {
                 let budget = Arc::new(Budget(Arc::clone(&context.budget)));
                 let editor = Editor::open_with(package, config, clock, budget, earlier)?;
-                let opened = editor.store().snapshot();
-                // the paragraph texts every find reads and the facts the document-wide
-                // lookups read (bookmarks, controls, revisions, frames), read once as the
-                // document opens: each later version reads only the blocks it changed, and
-                // no edit call pays for the first reading of a long part
-                for part in &opened.doc().docx()?.parts {
-                    part.texts();
-                    part.facts();
-                }
-                Held::Word(Box::new(Word {
-                    editor,
-                    opened,
-                    tracking: RwLock::new(None),
-                    retired: Retired::default(),
-                    last_check: Arc::default(),
-                    images: ooxml_tools_word::PageImages::new(Some(Arc::clone(&context.budget))),
-                    rows_written: RowsWritten::default(),
-                    pages: crate::pages::DocPages::default(),
-                    views: crate::live_view::LiveViews::new(Arc::clone(&context.budget)),
-                }))
+                Self::word_held(editor, context)?
             }
             DocKind::Pptx | DocKind::Xlsx => {
                 Held::Package(Box::new(Store::new(PackageDoc::new(package), config, clock)))
             }
         };
-        Ok(Document {
+        Ok(Self::of_held(kind, name, held))
+    }
+
+    /// `package` opened as a Word document with the id state saved beside its bytes
+    /// (`docx-ids.1.`), read against its parts as they are parsed: its ids those it had
+    /// before it was saved; and what the state recorded (its versions, the ids it retired).
+    pub(crate) fn open_word_state(
+        package: Package,
+        name: &str,
+        config: StoreConfig,
+        context: &Context,
+        state: &str,
+    ) -> Result<(Document, LoadedState), SessionError> {
+        let clock = Arc::new(StoreClock(Arc::clone(&context.clock)));
+        let budget = Arc::new(Budget(Arc::clone(&context.budget)));
+        let (editor, loaded) = Editor::open_with_state(package, config, clock, budget, state)?;
+        let held = Self::word_held(editor, context)?;
+        Ok((Self::of_held(DocKind::Docx, name, held), loaded))
+    }
+
+    fn of_held(kind: DocKind, name: &str, held: Held) -> Document {
+        Document {
             kind,
             name: name.to_owned(),
             held,
             versions: Arc::new(Versions::new()),
             owners: Owners::default(),
-        })
+        }
+    }
+
+    /// A Word document's state as the session holds it, from its editor.
+    fn word_held(editor: Editor, context: &Context) -> Result<Held, SessionError> {
+        let opened = editor.store().snapshot();
+        // the paragraph texts every find reads and the facts the document-wide
+        // lookups read (bookmarks, controls, revisions, frames), read once as the
+        // document opens: each later version reads only the blocks it changed, and
+        // no edit call pays for the first reading of a long part
+        for part in &opened.doc().docx()?.parts {
+            part.texts();
+            part.facts();
+        }
+        Ok(Held::Word(Box::new(Word {
+            editor,
+            opened,
+            tracking: RwLock::new(None),
+            retired: Retired::default(),
+            last_check: Arc::default(),
+            images: ooxml_tools_word::PageImages::new(Some(Arc::clone(&context.budget))),
+            rows_written: RowsWritten::default(),
+            pages: crate::pages::DocPages::default(),
+            views: crate::live_view::LiveViews::new(Arc::clone(&context.budget)),
+        })))
     }
 
     /// The head version.

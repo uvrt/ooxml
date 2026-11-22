@@ -16,6 +16,7 @@ use ooxml_tools_word::{Placer, Version};
 use ooxml_word_edit::EarlierIds;
 use ooxml_word_model::docx::Versions;
 use std::collections::hash_map::RandomState;
+use ooxml_word_model::ids::{HeldId, LoadedState};
 use std::collections::BTreeMap;
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -215,6 +216,25 @@ impl Session {
         let id = DocId::nth(self.last_id.fetch_add(1, Ordering::Relaxed) + 1);
         self.write_table().insert(id.clone(), document);
         Ok(id)
+    }
+
+    /// A Word document opened from its bytes as `name`, with the id state saved beside them
+    /// (`docx-ids.1.`, docx-agent's `Document.id_state`): its ids are read against its parts
+    /// as they are parsed, so it never gives an id it had before it was saved again, and each
+    /// id the state retired is the session's record (who retired it, in the host's words).
+    /// Returns its id and the state's `(version, last)`: the version saved and the highest
+    /// its history gave, for the host's numbers to go on from.
+    ///
+    /// # Errors
+    /// As [`Session::open`]; [`SessionError::Word`] with
+    /// [`ooxml_word_edit::EditError::IdState`] when the state is not these bytes'.
+    pub fn open_state(&self, bytes: Arc<[u8]>, name: &str, state: &str) -> Result<(DocId, (i64, i64)), SessionError> {
+        let package = Package::open(bytes, &self.context.limits)?;
+        let (document, loaded) = Document::open_word_state(package, name, self.config.store, &self.context, state)?;
+        let id = DocId::nth(self.last_id.fetch_add(1, Ordering::Relaxed) + 1);
+        self.write_table().insert(id.clone(), Arc::new(document));
+        self.seed_retired(&id, retired_rows(&loaded))?;
+        Ok((id, (loaded.versions.version, loaded.versions.last)))
     }
 
     /// The document `id` at its head version. Never waits for a writer.
@@ -468,4 +488,20 @@ fn nonce(context: &Context) -> String {
     now.seconds.hash(&mut hasher);
     now.nanos.hash(&mut hasher);
     format!("{:016x}", hasher.finish())
+}
+
+/// What a loaded state retired, as the session's record takes it: each block id and drawing
+/// number with the version that retired it (the host's number) and who made that version.
+fn retired_rows(loaded: &LoadedState) -> Vec<(HeldId, u64, Option<String>)> {
+    let said = |step: i64| loaded.steps.get(&step).cloned().flatten();
+    let version = |step: i64| u64::try_from(step).unwrap_or_default();
+    let blocks = loaded
+        .gone
+        .iter()
+        .map(|(v, s)| (HeldId::Block(*v), version(*s), said(*s)));
+    let drawings = loaded
+        .drawings_gone
+        .iter()
+        .map(|(n, s)| (HeldId::Drawing(*n), version(*s), said(*s)));
+    blocks.chain(drawings).collect()
 }

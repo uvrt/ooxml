@@ -40,7 +40,7 @@ def _taller_after(call: Any, result: Any, table: str) -> None:
     table = result.renamed.get(table, table)
     engine, _why = word_pages(entry.held)
     laid = ooxml_core.CallLayout(engine) if engine is not None else None
-    context = call_context(call, entry.held)
+    context = call_context(call, entry)
     mirror = entry.handle
     found, _not_laid = mirror.session.block_pages(mirror.doc, [table], options(context=context, layout=laid))
     kind, pages = (found[0][0], found[0][1]) if found else ("unknown", None)

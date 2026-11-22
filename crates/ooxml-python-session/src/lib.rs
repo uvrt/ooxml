@@ -53,7 +53,7 @@ pub use version::PyVersion;
 /// `CallWriting`, `CallLayout`, `Version` and
 /// `tool_specs`, `tool_hosting`, `new_document`; and the Word layout's handles: `WordFonts`, `WordPages`, `LaidPages`,
 /// `LayoutFallback`, `LayoutSummary`, `MemoryBudget` and `BudgetAccount`; the live view's `UnknownToken` and
-/// `ViewRefused`.
+/// `ViewRefused`; and the refusals of an open, `StateRefused` and `NotWordPackage`.
 ///
 /// # Errors
 /// Python's, adding a name.
@@ -84,5 +84,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("LayoutFallback", m.py().get_type::<LayoutFallback>())?;
     m.add("UnknownToken", m.py().get_type::<view::UnknownToken>())?;
     m.add("ViewRefused", m.py().get_type::<view::ViewRefused>())?;
+    m.add("StateRefused", m.py().get_type::<session::StateRefused>())?;
+    m.add("NotWordPackage", m.py().get_type::<session::NotWordPackage>())?;
     Ok(())
 }

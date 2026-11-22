@@ -91,3 +91,23 @@ impl SessionError {
         }
     }
 }
+
+impl SessionError {
+    /// Whether it is the refusal of an id state given with a document's bytes (they open
+    /// alone, or with the state saved beside them).
+    #[must_use]
+    pub fn refuses_state(&self) -> bool {
+        matches!(self, SessionError::Word(ooxml_word_edit::EditError::IdState(_)))
+    }
+
+    /// Whether the bytes are a package without a Word document's main part.
+    #[must_use]
+    pub fn not_word(&self) -> bool {
+        matches!(
+            self,
+            SessionError::Word(ooxml_word_edit::EditError::Word(
+                ooxml_word_model::WordError::NoMainPart(_)
+            ))
+        )
+    }
+}

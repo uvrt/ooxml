@@ -13,7 +13,7 @@ use crate::options::{context_of, PyCallLayout, PyCallOptions, PyHostIds};
 use crate::pages::PyPageSetup;
 use crate::version::PyVersion;
 use ooxml_base::Locale;
-use ooxml_session::{BlockAt, DocId, DocKind, HeldId, RetiredBy, Session, SessionConfig, SessionError};
+use ooxml_session::{BlockAt, DocId, DocKind, HeldId, IdStateError, RetiredBy, Session, SessionConfig, SessionError};
 use ooxml_store::StoreConfig;
 use ooxml_tools::compact;
 use ooxml_word_edit::EarlierIds;
@@ -44,8 +44,29 @@ pub(crate) fn doc_id(doc: &str, session: &Session) -> PyResult<DocId> {
     })
 }
 
+pyo3::create_exception!(
+    ooxml_core,
+    StateRefused,
+    PyValueError,
+    "An id state refused as the state of other bytes, of a later form, damaged, or no state: \
+its message says what to pass instead (docx-agent's words)."
+);
+
+pyo3::create_exception!(
+    ooxml_core,
+    NotWordPackage,
+    PyValueError,
+    "A package opened as a Word document without a Word document's main part."
+);
+
 pub(crate) fn to_py(error: &SessionError) -> PyErr {
     let message = error.to_string();
+    if error.refuses_state() {
+        return StateRefused::new_err(message);
+    }
+    if error.not_word() {
+        return NotWordPackage::new_err(message);
+    }
     match error {
         SessionError::NotOpen { .. } => PyKeyError::new_err(message),
         SessionError::Kind(_) | SessionError::PartName(_) | SessionError::Package(_) => PyValueError::new_err(message),
@@ -56,6 +77,20 @@ pub(crate) fn to_py(error: &SessionError) -> PyErr {
         }
         SessionError::Store(_) | SessionError::WordStore(_) | SessionError::Base(_) => PyRuntimeError::new_err(message),
     }
+}
+
+/// A state's text as docx-agent's `load_state` reads it: a string, or bytes read as ASCII;
+/// any other value (bytes that are not ASCII too) refused, named by its type.
+fn state_text(state: &Bound<'_, PyAny>) -> PyResult<String> {
+    if let Ok(text) = state.extract::<String>() {
+        return Ok(text);
+    }
+    let type_name = match state.extract::<Vec<u8>>() {
+        Ok(bytes) if bytes.is_ascii() => return Ok(String::from_utf8(bytes).unwrap_or_default()),
+        Ok(_) => "NoneType".to_owned(),
+        Err(_) => state.get_type().name()?.to_string(),
+    };
+    Err(StateRefused::new_err(IdStateError::NotAState(type_name).to_string()))
 }
 
 /// The save gate's comparison as Python receives it: new problems, fixed ones, how many
@@ -181,6 +216,7 @@ impl PySession {
                 cursors,
                 highest_drawing,
                 drawings,
+                ..EarlierIds::default()
             }
         });
         let session = &self.inner;
@@ -188,6 +224,32 @@ impl PySession {
             .detach(|| session.open_with(bytes, kind, name, &earlier))
             .map_err(|e| to_py(&e))?;
         Ok(id.to_string())
+    }
+
+    /// Open a Word document's bytes, named `name`, with the id state saved beside them
+    /// (`docx-ids.1.`: docx-agent's `Document.id_state`, a save's `state`): its ids are read
+    /// against its parts once, so no id it had before it was saved is given again, and the ids
+    /// the state retired are this session's record (`retired`). Returns its id and the
+    /// state's `(version, last)`: the version it was saved at and the highest its history
+    /// gave (`continue_numbers` goes on from them). A state that is not these bytes' raises
+    /// `StateRefused`, with what to pass instead; bytes without a Word document's main part,
+    /// `NotWordPackage`.
+    /// A state given as bytes is read as ASCII text; one of another type is refused.
+    #[pyo3(signature = (data, state, *, name = "document.docx"))]
+    fn open_state(
+        &self,
+        py: Python<'_>,
+        data: &[u8],
+        state: &Bound<'_, PyAny>,
+        name: &str,
+    ) -> PyResult<(String, i64, i64)> {
+        let text = state_text(state)?;
+        let bytes: Arc<[u8]> = Arc::from(data);
+        let session = &self.inner;
+        let (id, (version, last)) = py
+            .detach(|| session.open_state(bytes, name, &text))
+            .map_err(|e| to_py(&e))?;
+        Ok((id.to_string(), version, last))
     }
 
     /// Run the tool `name` with `arguments` (JSON text) on a snapshot, with `options` (a

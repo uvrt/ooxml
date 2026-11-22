@@ -3,7 +3,7 @@
 
 use crate::editing::{docx, session};
 use ooxml_opc::Package;
-use ooxml_session::{DocKind, IdStateOf};
+use ooxml_session::{DocKind, HeldId, IdStateOf, RetiredBy};
 use ooxml_word_model::ids::load_state;
 use ooxml_word_model::parts::parts;
 
@@ -67,4 +67,51 @@ fn a_block_id_says_what_kind_of_block_it_names() {
     assert_eq!(kind("p:0A0000FF"), None);
     assert_eq!(kind("cc:9"), None);
     assert!(!version.has_drawing("d:1").unwrap());
+}
+
+#[test]
+fn a_document_opened_with_its_state_keeps_the_ids_it_retired_and_its_numbers() {
+    let s = session();
+    let d = s.open(docx(BODY), DocKind::Docx, "a.docx").unwrap();
+    let host = IdStateOf {
+        version: 3,
+        last: 5,
+        gone: vec![(0x0A00_0009, 2)],
+        said: vec![(2, "word_delete (agent=a)".into())],
+        ..IdStateOf::default()
+    };
+    let state = s.snapshot(&d).unwrap().id_state(&host).unwrap().unwrap();
+    let (again, numbers) = s.open_state(docx(BODY), "a.docx", &state).unwrap();
+    assert_eq!(numbers, (3, 5));
+    let retired = s.retired(&again).unwrap();
+    assert!(
+        retired.iter().any(|(id, by)| *id == HeldId::Block(0x0A00_0009)
+            && *by
+                == RetiredBy::Earlier {
+                    version: 2,
+                    said: Some("word_delete (agent=a)".into())
+                }),
+        "{retired:?}"
+    );
+}
+
+#[test]
+fn a_state_of_other_bytes_is_refused_in_docx_agent_s_words() {
+    let s = session();
+    let d = s.open(docx(BODY), DocKind::Docx, "a.docx").unwrap();
+    let state = s
+        .snapshot(&d)
+        .unwrap()
+        .id_state(&IdStateOf::default())
+        .unwrap()
+        .unwrap();
+    let other = docx(r#"<w:p w14:paraId="0B000001"/>"#);
+    let refused = s.open_state(other, "b.docx", &state).unwrap_err();
+    assert!(refused.refuses_state(), "{refused}");
+    assert!(
+        refused.to_string().contains("this id state is of other bytes"),
+        "{refused}"
+    );
+    let refused = s.open_state(docx(BODY), "a.docx", "not a state").unwrap_err();
+    assert!(refused.refuses_state(), "{refused}");
 }

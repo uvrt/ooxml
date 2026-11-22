@@ -27,6 +27,7 @@ import weakref
 from collections.abc import Mapping
 from typing import Any
 
+from .. import finalizers
 from . import reads
 from .view import follow
 
@@ -109,14 +110,58 @@ class RustOwner:
     """The Rust session as the owner of docx-agent's documents in a toolbox session; its
     handle per document is the :class:`~.reads.Mirror` the reads use."""
 
+    def open_data(self, data: bytes, state: Any, name: str) -> "reads.Mirror | None":
+        """Open ``data`` (a Word package's bytes; ``state`` the id state saved beside them,
+        or ``None``) in the Rust session alone, as ``name``: the session reads its parts once,
+        its ids against the state, and keeps the ids the state retired (lane H7c); no Python
+        ``Document`` is made.  ``None`` where there is no session (the tool layer opens the
+        Python document then).  A state that is not these bytes' is refused as
+        :meth:`Document.open` refuses it (an :class:`~docx_agent.edit.ids.IdStateError`, in
+        the session's words, which are docx-agent's); a package without a Word document's
+        main part too; a template warns (:class:`~docx_agent.edit.authoring.TemplateOpened`)."""
+        import ooxml_core
+
+        session = reads._session()
+        if session is None:
+            return None
+        try:
+            if state is None:
+                doc, numbers = session.open(data, kind="docx", name=name), (0, 0)
+            else:
+                doc, version, last = session.open_state(data, state, name=name)
+                numbers = (version, last)
+        except ooxml_core.StateRefused as exc:
+            from ..edit.ids import IdStateError
+
+            raise IdStateError(str(exc)) from None
+        except ooxml_core.NotWordPackage:
+            raise ValueError("not a Word package: no main document part") from None
+        mirror = reads.Mirror(session, doc, {})
+        weakref.finalize(mirror, finalizers.later, reads._close, session, doc)
+        with mirror.lock:
+            mirror.owned = True
+            mirror.view_head = mirror.opened = session.head(doc)
+            mirror.numbers_opened = numbers
+        kind = mirror.view_head.file_kind()
+        if kind in ("dotx", "dotm"):
+            _template_opened(kind)
+        return mirror
+
+    def opened(self, mirror: "reads.Mirror") -> tuple[int, int]:
+        """The version the document was opened at and the highest its history gave (its
+        state's, ``(0, 0)`` for bytes opened alone): the tool layer's numbers go on from them."""
+        return mirror.numbers_opened
+
     def open(self, document: Any) -> "reads.Mirror | None":
         mirror = reads.mirror_of(document)
         if mirror is None:
             return None             # no session (ooxml_core without one, or reads set to none)
+        history = document.history
         with mirror.lock:
             mirror.owned = True
             mirror.view_head = mirror.opened = mirror.session.head(mirror.doc)
             mirror.live = weakref.ref(document)
+            mirror.numbers_opened = (history.version, getattr(history, "last_version", history.version))
         # One set of bytes per version: the view's are the session's (owned_bytes).
         document.held_by(owned_bytes)
         # The ids retired are the session's record (lane P2c10), from the state opened with on.
@@ -257,6 +302,18 @@ class RustOwner:
         if live is not None:
             live.held_by(None)
         reads._close(mirror.session, mirror.doc)
+
+
+def _template_opened(kind: str) -> None:
+    """Warn that a template was opened to edit itself, as :meth:`Document.open` warns."""
+    import warnings
+
+    from ..edit.authoring import TemplateOpened
+
+    warnings.warn(TemplateOpened(
+        f"this file is a template (.{kind}): editing it edits the template. To make a document "
+        f"from it use Document.new(template=...); save('x.docx') writes a document either way"),
+        stacklevel=4)
 
 
 class _Group:

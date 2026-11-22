@@ -17,7 +17,7 @@ use crate::EditError;
 use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
 use ooxml_word_model::docx::Docx;
-use ooxml_word_model::ids::{drawing_numbers, used_long_hex};
+use ooxml_word_model::ids::{drawing_numbers, load_state, used_long_hex, LoadedState};
 use ooxml_xml::{Patch, PatchError, Tree};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -130,9 +130,34 @@ impl WordDoc {
         earlier: &EarlierIds,
     ) -> Result<WordDoc, EditError> {
         let docx = Arc::new(Docx::open(&package)?);
+        Ok(WordDoc::of_docx(package, docx, budget, earlier))
+    }
+
+    /// The document whose first version is `package`, opened again with the id state saved
+    /// beside its bytes (`docx-ids.1.`, docx-agent's round 38), read against its story
+    /// parts as they are parsed once: the ids it had and what the state recorded beside
+    /// them (the versions, each retired id and who retired it).
+    ///
+    /// # Errors
+    /// As [`WordDoc::open`]; [`EditError::IdState`] when the state is not these bytes'.
+    pub fn open_with_state(
+        package: Package,
+        budget: Arc<dyn CacheBudget>,
+        state: &str,
+    ) -> Result<(WordDoc, LoadedState), EditError> {
+        let docx = Arc::new(Docx::open(&package)?);
+        let loaded = {
+            let roots: Vec<&ooxml_xml::Element> = docx.parts.iter().map(|p| &**p.root()).collect();
+            load_state(state, &roots)?
+        };
+        let earlier = EarlierIds::of_state(&loaded);
+        Ok((WordDoc::of_docx(package, docx, budget, &earlier), loaded))
+    }
+
+    fn of_docx(package: Package, docx: Arc<Docx>, budget: Arc<dyn CacheBudget>, earlier: &EarlierIds) -> WordDoc {
         let roots: Vec<&ooxml_xml::Element> = docx.parts.iter().map(|p| &**p.root()).collect();
         let ids = Ids::opened(used_long_hex(&roots), drawing_numbers(&roots)).with_earlier(earlier);
-        Ok(WordDoc {
+        WordDoc {
             package,
             ids,
             reading: Arc::new(Mutex::new(Lazy::Ready(docx))),
@@ -145,7 +170,7 @@ impl WordDoc {
                 fields: crate::fields::scan::FieldScans::new(Arc::clone(&budget)),
                 facts: Facts::new(budget),
             }),
-        })
+        }
     }
 
     /// The package.

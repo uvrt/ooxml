@@ -95,6 +95,13 @@ impl PyVersion {
         Ok(found.map(|list| list.into_iter().map(|p| (p.code, p.part, p.detail)).collect()))
     }
 
+    /// The Word file kind of the version's package (``docx``, ``docm``, ``dotx``, ``dotm``:
+    /// its main part's content type); ``None`` for a document that is not a Word document.
+    fn file_kind(&self, py: Python<'_>) -> PyResult<Option<&'static str>> {
+        let version = &self.inner;
+        py.detach(|| version.file_kind()).map_err(|e| to_py(&e))
+    }
+
     /// What ``open_document`` says of the version (JSON text: ``title``, ``paragraphs``,
     /// ``tables``, ``headings``, ``comments``, ``revisions``, ``template``); ``None`` for a
     /// document that is not a Word document.

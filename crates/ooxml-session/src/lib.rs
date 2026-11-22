@@ -74,7 +74,7 @@ pub use model::{ModelError, PackageDoc, PartChange, PartContent};
 pub use names::DocNames;
 pub use ooxml_store::Caller;
 pub use ooxml_tools_word::{EditFn, Hosting, ReadFn, TrackingFn};
-pub use ooxml_word_model::ids::HeldId;
+pub use ooxml_word_model::ids::{HeldId, IdStateError};
 pub use pages::SessionPages;
 pub use reading_edit::ReadingEditHandler;
 pub use registry::Registry;
