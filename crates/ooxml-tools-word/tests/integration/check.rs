@@ -83,7 +83,7 @@ pub(crate) fn limited(
     if let Some(why) = done.unported.first() {
         return json!({"unported": why});
     }
-    json!({"summary": done.summary, "data": done.data})
+    json!({"summary": done.summary, "data": done.data, "warnings": done.warnings})
 }
 
 #[test]

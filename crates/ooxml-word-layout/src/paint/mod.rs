@@ -743,6 +743,11 @@ pub fn paint_page(
     );
     if let Some(laid) = laid {
         out.rules.extend(separators::column_separators(layout, laid));
+        // docx2svg draws a marked box of a placeholder's extent, which Word does not: not
+        // painted here.
+        for (_, placeholder) in crate::placeholder::placeholders_on(&layout.flow.items, laid) {
+            out.unpainted.push(format!("a placeholder of {}", placeholder.path));
+        }
     }
     number_lines(layout, model, (page, frame.left), cx, &mut lines);
     out.unpainted.extend(parts.unpainted.iter().cloned());

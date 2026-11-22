@@ -238,7 +238,10 @@ impl Drawer<'_> {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .coverage(laid);
         if let Some(coverage) = coverage {
-            data.insert("coverage".into(), crate::coverage::coverage_facts(&coverage));
+            data.insert(
+                "coverage".into(),
+                crate::coverage::coverage_facts(&coverage, |path| laid.id_of(path).map(str::to_owned)),
+            );
         }
         if let Some(relaid) = draw::relaid(laid) {
             data.insert("relaid".into(), relaid);

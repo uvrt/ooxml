@@ -177,7 +177,7 @@ fn walk_paragraph(
             if number == 0 { space_before } else { Px::ZERO },
             space_after,
         );
-        if !p.measured.undrawn.contains(&number) {
+        if p.draws(number) {
             out.lines.push(DrawnLine {
                 source: LineSource::Flow { item: index },
                 block: Some(p.block),
