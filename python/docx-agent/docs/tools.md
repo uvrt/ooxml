@@ -103,12 +103,6 @@ with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS) as toolbox:
   workers start with; 256 by default) for the layouts held -- about a megabyte a page -- and
   up to 1.75 times it with the measurements and pickled layouts kept beside them, the least
   recently used dropped first (`docx_agent.layout.LAYOUT_MEMORY`, round 39).
-- **A check of some ranges is answered by the Rust core** (0.1.114, ooxml-core): the first
-  such check of a document makes its Rust owner (about 10 s for a 300-page report, in the
-  calling process); from then on each committed version is handed to it as the blocks that
-  changed, and a check of a range reads its facts there -- the same results, in tens of
-  milliseconds. Requests and documents it does not model are checked as before
-  (`docx_agent.rust.check` lists them). `DOCX_AGENT_RUST=0` in the environment turns it off.
 - **An edit costs what it changed** (0.1.115, ooxml-edit 0.117.0): its validation is found
   from facts kept per block, again only where the bytes changed (`docx_agent.revalidate`,
   the same problems as `Document.validate()`); each version is written out once and its
@@ -118,14 +112,6 @@ with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS) as toolbox:
   of it off (validation per change, read copies from parts, the kept parse, the draft limit);
   `DOCX_AGENT_FULL_VALIDATE=1` runs the whole check beside it at every call and raises when
   they differ.
-- **`word_fields` update reads its pages from the Rust layout** (0.1.117, ooxml-core 0.4.0):
-  each round of the update hands the document as it is then to the document's Rust owner
-  (opened by a check of a range, or by the update itself) and reads the pages there, instead
-  of laying the document out in Python; the results, contents and bytes are the same.
-  What it does not read the same way -- a document of 20 pages or fewer, `SECTIONPAGES`,
-  `STYLEREF`, a page number format or switch other than decimal, more than one section, a
-  document the owner does not model -- is updated as before (`docx_agent.rust.fields`).
-  `DOCX_AGENT_RUST_FIELDS=0` turns it off (`DOCX_AGENT_RUST=0` turns every Rust path off).
 - **The rest of an edit's whole-document passes too** (0.1.116, ooxml-edit 0.118.0,
   ooxml-core 0.3.0): the ids ledger's reading of each version, the ids in use, the body's
   index, `touched`'s sections, the Rust owner's list labels and table records read only the

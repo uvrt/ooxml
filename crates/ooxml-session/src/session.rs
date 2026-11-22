@@ -388,7 +388,7 @@ impl Session {
         if changed {
             self.counts.updates.fetch_add(1, Ordering::Relaxed);
             if !document.grouped() {
-                document.stepped(version.number(), tool, context);
+                document.stepped(version.seq(), version.number(), tool, context);
             }
         }
         let updated = Updated {

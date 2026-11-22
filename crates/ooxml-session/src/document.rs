@@ -240,9 +240,13 @@ impl Document {
         }
     }
 
-    /// A step numbered `number` was made, by `tool` (`None`: none, a change from outside
-    /// the tools) as `context`'s caller: kept as its owner.
-    pub(crate) fn stepped(&self, number: u64, tool: Option<&str>, context: &crate::CallContext) {
+    /// A step numbered `number`, ended by the version `seq`, was made by `tool` (`None`:
+    /// none, a change from outside the tools) as `context`'s caller: kept as its owner, and
+    /// its number as a refusal of an id it retired names it.
+    pub(crate) fn stepped(&self, seq: u64, number: u64, tool: Option<&str>, context: &crate::CallContext) {
+        if let Some(word) = self.word() {
+            word.retired.number(seq, number);
+        }
         let owner = tool.map(|tool| StepOwner::of(tool, context));
         self.owners.stepped(number, owner, || self.held_numbers());
     }

@@ -1,7 +1,5 @@
 [workspace]
 members = [
-    "crates/core",
-    "crates/word",
     "crates/python",
     "crates/ooxml-base",
     "crates/ooxml-xml",

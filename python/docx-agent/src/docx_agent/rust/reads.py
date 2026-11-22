@@ -514,11 +514,6 @@ def serve_check(call: Any, arguments: dict[str, Any]) -> Result | None:
         layout, _ = word_pages(owned.held)     # none: the session refuses it (not supported yet)
     served = serve(call, "check", arguments, lambda: None, why_not=why, layout=layout,
                    others=("copies[].reference.doc",))
-    if served is not None and layout is not None:
-        # Lane F's checks of ranges measure from what a check saw last: this one.
-        from .check import seen_by_python
-
-        seen_by_python(call, call.entry.version)
     return served
 
 

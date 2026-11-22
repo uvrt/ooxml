@@ -3,8 +3,7 @@ passes (lane K, 0.1.123).
 
 Each pass that reads a version per change -- the touched sections (:mod:`.tools.touched`),
 revalidate's body facts (:mod:`.revalidate`), the ids note (:class:`.edit.ids.IdScan`), the
-body's index (:func:`.edit.ids.body_index`), the Rust owner's change set
-(:mod:`.rust.check`), an undo's restore (:mod:`.oxml.package`) -- finds the same blocks
+body's index (:func:`.edit.ids.body_index`), an undo's restore (:mod:`.oxml.package`) -- finds the same blocks
 from the same bytes: the bytes before the first that differs from the version before and
 after the last, the blocks kept on either side, the blocks between found by their tags.
 ``ooxml_core.BodySpans`` holds a version's spans in Rust (no Python object per block) and

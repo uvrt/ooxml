@@ -527,16 +527,6 @@ impl PySession {
         py.detach(|| session.seed_retired(&id, given)).map_err(|e| to_py(&e))
     }
 
-    /// The host numbered the Word document's `version` (a `Version` of it) as its version
-    /// `number`: a refusal of an id a version up to it removed names the change by it.
-    fn number_version(&self, py: Python<'_>, doc: &str, version: PyRef<'_, PyVersion>, number: u64) -> PyResult<()> {
-        let id = doc_id(doc, &self.inner)?;
-        let seq = version.inner.version();
-        let session = &self.inner;
-        py.detach(|| session.number_version(&id, seq, number))
-            .map_err(|e| to_py(&e))
-    }
-
     /// The rows of the Word document this session's `word_edit_table` calls added or wrote
     /// into, by `w14:paraId`, sorted (round 58, R126: check's `row_text_format` reads them).
     fn rows_written(&self, py: Python<'_>, doc: &str) -> PyResult<Vec<String>> {

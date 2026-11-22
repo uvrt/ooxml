@@ -175,12 +175,6 @@ def number_texts(call: Any, scope: Mapping[str, Any]) -> list[NumberText]:
 
     document = call.document
     pages = _pages_of(call, scope.get("slides"), scope.get("pages"))
-    # Lane F: a range's texts as the document's Rust owner keeps them, where it follows it.
-    from ..rust.check import number_texts as kept_texts
-
-    groups = kept_texts(call, scope)
-    if groups is not None:
-        return _number_texts_of(call, document, groups, pages)
     ranges = ranges_of(resolve(call, scope.get("range")))
     held = Scope(document, ranges) if ranges else None
     main = document.package.document_part()
@@ -307,11 +301,6 @@ def _layout(call: Any, ids: list[str], required: bool) -> Any:
 
     entry, document = call.entry, call.document
     version = entry.version
-    from ..rust.check import pages_of
-
-    found = pages_of(call, ids)          # lane F: the document's Rust owner, where it follows it
-    if found is not None:
-        return found
     try:
         if call.may_unlock:
             # Lane O (step 1): the check's own request with these pages besides, in one trip

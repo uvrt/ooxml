@@ -32,7 +32,7 @@ from ooxml_edit.tools.worker import takes_affinity, takes_lane
 from ..rust import edits
 from ..rust.edits import Made
 from ..rust.owner import owned_validation
-from .laid import laid_before, seen_before, state_bytes
+from .laid import seen_before, state_bytes
 from ..layout import (adopt, affinity, canon_of, layout_key, summary_for, convert_bytes, held_state, lay_out_bytes,
                       lay_out_unlocked, layout_options, remember_runner, twin, twin_of)
 
@@ -720,8 +720,7 @@ def wrap(handler: Callable[..., Any], *, mutates: bool, track: bool = True) -> C
                 if not any(isinstance(t, Before) for t in call.context.touched.get(call.entry.doc_id, [])):
                     from ..rust.reads import checked_before
 
-                    call.touch(Before(seen_before(call.document, state_bytes(call)) or checked_before(call)
-                                      or laid_before(call.document)))
+                    call.touch(Before(seen_before(call.document, state_bytes(call)) or checked_before(call)))
                 if track:
                     with tracked(call, call.entry):
                         returned = handler(call, **arguments)

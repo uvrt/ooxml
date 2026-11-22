@@ -1201,8 +1201,7 @@ class Document(TrackingOps, RevisionOps, TextOps, FormatOps, ListOps, LinkOps, P
                 held = self.__dict__.get("_body_summary")
                 if data is None and held is not None and held[0] == self.history.version and \
                         part in self.package.dirty_parts and self.__dict__.get("_body_summary_state") == self._state:
-                    # (the version's body as the tool layer read it after the call that made
-                    # it: the Rust owner's change sets read the same, docx_agent.rust.check)
+                    # (the version's body as the tool layer read it after the call that made it)
                     data = held[1].data
             last = self.__dict__.get("_index_last", {}).get(part) if _incremental.enabled() else None
             kept = data is None and last is not None and last.root is root and _ids.same_walk(last)

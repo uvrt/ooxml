@@ -102,8 +102,7 @@ def body_sections(document: Any, before: bytes | None, after: bytes | None, *,
         return None
     old = _summary(document, before)
     new = _summary(document, after, old)
-    # Lane F: the body as this version has it, for the change set its Rust owner is handed
-    # when the version is committed (docx_agent.rust.check.committed).
+    # The body as this version has it (Document._index reads it).
     history = getattr(document, "history", None)
     document.__dict__["_body_summary"] = (getattr(history, "version", None), new)
     # 0.1.116: and the edits made by then (Document._state): the body's index is made from

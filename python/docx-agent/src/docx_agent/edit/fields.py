@@ -592,9 +592,7 @@ class FieldOps:
         # Before a paragraph, Word's form (``tocfield``): the field's end opens that
         # paragraph; elsewhere an empty paragraph holds it (as one Word puts a TOC in).
         own_holder = not (before is not None and entry.element.tag == W_P)
-        from ..rust.fields import following
-
-        with following(self), self._edit():
+        with self._edit():
             if own_holder:
                 holder = self.insert_paragraph("", after=after, before=before, track=False)
                 renames = dict(holder.renamed)
@@ -693,13 +691,11 @@ class FieldOps:
         changed."""
         from .document import EditResult
 
-        from ..rust.fields import following
-
         before = {self._field_id(f): self._result_text(f) for f in self._all_fields()}
         # Each table of contents' entries as a round wrote them (:meth:`_rebuild_toc`).
         self.__dict__["_toc_built"] = {}
         try:
-            with following(self), self._edit():
+            with self._edit():
                 with self._untracked():
                     found = self._all_fields()
                     if identifiers is not None:
@@ -812,13 +808,8 @@ class FieldOps:
                     del item.begin.attrib[_W + "dirty"]
 
     def _update_layout(self: "Document"):
-        """The layout an update's round reads: the document's Rust owner's, where it serves
-        the document and its fields (:mod:`docx_agent.rust.fields`, 0.1.117), else
-        docx2svg's (:meth:`layout`) -- the same pages either way."""
-        from ..rust.fields import layout_for
-
-        found = layout_for(self, self._all_fields())
-        return found if found is not None else self.layout()
+        """The layout an update's round reads: docx2svg's (:meth:`layout`)."""
+        return self.layout()
 
     def _sequence_value(self: "Document", item: _Found, sequences: dict[str, int]) -> str | None:
         """A ``SEQ`` field's text, ``sequences`` counted on; ``None`` where Word draws an
@@ -946,29 +937,24 @@ class FieldOps:
 
     def page_label(self: "Document", identifier: str) -> str | None:
         """The page number Word shows for the page a block starts on (its section's start
-        and format), from docx2svg's layout (0.1.117: or the Rust owner's, as an update reads
-        it); ``None`` where the layout cannot say."""
-        from ..rust.fields import layout_for
+        and format), from docx2svg's layout; ``None`` where the layout cannot say."""
+        # Round 59 (R135): the page read in the worker holding the document's layouts
+        # (layout.held_answers), where there is one: a batch of page references brought
+        # the whole layout here once per reference.
+        from ..layout import held_answers
 
-        layout = layout_for(self, self._all_fields())
-        if layout is None:
-            # Round 59 (R135): the page read in the worker holding the document's layouts
-            # (layout.held_answers), where there is one: a batch of page references brought
-            # the whole layout here once per reference.
-            from ..layout import held_answers
-
-            told = held_answers(self, {"page_infos": [identifier]})
-            if told is not None:
-                info = told["page_infos"].get(identifier)
-                if info is None:
-                    return None
-                page = _ToldPage(info)
-                context = _Context(None, self.sections(), _dt.date.today())
-                try:
-                    return _page_text(" PAGEREF x ", page, context)
-                except _Unknown:
-                    return None
-            layout = self.layout()
+        told = held_answers(self, {"page_infos": [identifier]})
+        if told is not None:
+            info = told["page_infos"].get(identifier)
+            if info is None:
+                return None
+            page = _ToldPage(info)
+            context = _Context(None, self.sections(), _dt.date.today())
+            try:
+                return _page_text(" PAGEREF x ", page, context)
+            except _Unknown:
+                return None
+        layout = self.layout()
         context = _Context(layout, self.sections(), _dt.date.today())
         placed = context.layout.where(identifier)
         if not placed:

@@ -263,31 +263,26 @@ def _fields_ahead(call: Any, doc: str, action: str, kind: str | None = None,
     page cross-reference reads (:func:`~._base.lay_out_ahead`)."""
     if action == "update":
         started = time.perf_counter()
-        from ..rust import fields as rust_fields
-
-        if any(found.keyword in _LAID_OUT for found in call.document._all_fields()) and not rust_fields.ahead(call):
+        if any(found.keyword in _LAID_OUT for found in call.document._all_fields()):
             from .owner import layout_first
 
             layout_first(call)      # lane O: the layout its document's checks read, first
             update_fields_ahead(call, ids)
         ahead_timed(time.perf_counter() - started)    # round 45: the update's timing says it
     elif action == "insert_cross_reference" and kind == "page":
-        from ..rust import fields as rust_fields
+        from ..layout import BARE_REQUEST, check_facts, runner_of
 
-        if not rust_fields.ahead(call):     # 0.1.117: its page read from the Rust owner
-            from ..layout import BARE_REQUEST, check_facts, runner_of
-
-            if call.entry is not None and call.may_unlock and runner_of(call.document) is not None:
-                # Round 59 (R135): laid out in the worker holding the document's layouts, the
-                # lock let go; the reference's page is read there (Document.page_label), and
-                # the layout never comes here.
-                engage(call)
-                try:
-                    check_facts(call.document, call.unlocked, dict(BARE_REQUEST))
-                except Exception:  # noqa: BLE001 -- the handler meets it again and says so
-                    pass
-            else:
-                lay_out_ahead(call)
+        if call.entry is not None and call.may_unlock and runner_of(call.document) is not None:
+            # Round 59 (R135): laid out in the worker holding the document's layouts, the
+            # lock let go; the reference's page is read there (Document.page_label), and
+            # the layout never comes here.
+            engage(call)
+            try:
+                check_facts(call.document, call.unlocked, dict(BARE_REQUEST))
+            except Exception:  # noqa: BLE001 -- the handler meets it again and says so
+                pass
+        else:
+            lay_out_ahead(call)
 
 
 @word_tool("word_fields", "Fields: list; insert a TOC, caption, cross-reference, date or other field; update all results (TOC, page numbers, REF, SEQ) after changes.",

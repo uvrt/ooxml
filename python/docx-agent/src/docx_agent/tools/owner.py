@@ -90,10 +90,6 @@ def read_version(toolbox: Any, session: Any, entry: Any, tool: Any, arguments: A
         return None
     if entry.pinned is not None or getattr(entry, "kind", None) != "docx":
         return None
-    from ..rust.check import will_serve
-
-    if will_serve(entry, tool, arguments):
-        return None             # lane F: answered by the document's Rust owner, nothing laid out here
     document = entry.document
     engine = _engine(toolbox, session, document)
     if engine is None:

@@ -1,7 +1,7 @@
 [package]
 name = "ooxml-python"
 version = "0.10.0"
-description = "The Python module ooxml_core (PyO3): documents' owners by id, and Word's layout"
+description = "The Python module ooxml_core (PyO3): the Rust session"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -18,16 +18,9 @@ test = false
 doctest = false
 
 [dependencies]
-ooxml-core = { path = "../core" }
-ooxml-word = { path = "../word" }
-# Lane P0d: the session API (ooxml_core.Session, CancelToken, tool_specs), added to this
-# module so that one native module ships until ooxml-python-session replaces this crate.
+# The session API (ooxml_core.Session, CancelToken, tool_specs): everything the module holds.
 ooxml-python-session.workspace = true
 pyo3 = { workspace = true, features = ["extension-module"] }
-serde_json.workspace = true
-# Lane J: the digests of a tree's parts (tree.rs); already in the lock through hashbrown.
-foldhash = "0.2"
-rayon.workspace = true
 
 [features]
 # The stable ABI from 3.10: one wheel for every GIL build of CPython 3.10 and later.  Left

@@ -205,15 +205,9 @@ class RustOwner:
         return make
 
     def keep(self, mirror: "reads.Mirror", head: Any, first: int | None = None) -> None:
-        from .check import owner_committed
-
+        # (the session words a refusal of an id this version removed by its own state numbers)
         with mirror.lock:
             mirror.keep(head, first)
-            # the session words a refusal of an id this version removed by its state number
-            mirror.session.number_version(mirror.doc, head, head.state)
-        live = mirror.live()
-        if live is not None:
-            owner_committed(live, head.state)
 
     # -- the history's numbers: the session's (lane U3) ---------------------------------------
 

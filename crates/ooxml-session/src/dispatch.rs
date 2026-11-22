@@ -254,7 +254,7 @@ impl Session {
             }
         }
         if !document.grouped() {
-            document.stepped(made.last.number(), Some(name), context);
+            document.stepped(made.last.seq().0, made.last.number(), Some(name), context);
         }
     }
 

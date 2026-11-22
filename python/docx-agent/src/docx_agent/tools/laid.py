@@ -1,6 +1,6 @@
 """What a call reads of its document's layouts made already (moved out of
 :mod:`docx_agent.tools._base`, lane P2c5): the layout a change's reflow is measured from
-(:func:`seen_before`, :func:`laid_before`), the bytes of the call's version when the session
+(:func:`seen_before`), the bytes of the call's version when the session
 has them (:func:`state_bytes`), a check's facts made where the layouts are held
 (:func:`held_facts`) and the layout of the current state when it was made
 (:func:`cached_layout`).
@@ -33,24 +33,6 @@ def seen_before(document: Any, data: bytes | None = None) -> Any:
         return found
     conversion = document._layouts.get(cache_key(data, options))
     return summary_for(document, key, conversion.layout) if conversion is not None else None
-
-
-def laid_before(document: Any, version: int | None = None) -> Any:
-    """0.1.117: where a fields update read the layout of the document's current version (or
-    ``version``) from its Rust owner (:mod:`docx_agent.rust.fields`), what docx-agent's own
-    update would have kept of it for the reflow: its page count (always more than
-    :data:`REFLOW_PAGES`: the reflow says :data:`STALE`); else ``None``."""
-    from ..rust.fields import laid_count
-
-    count = laid_count(document, version)
-    return _Laid(count) if count is not None else None
-
-
-class _Laid:
-    """A layout's page count, as :func:`laid_before` knows it."""
-
-    def __init__(self, count: int) -> None:
-        self.count = count
 
 
 def state_bytes(call: Any) -> bytes | None:
@@ -94,4 +76,4 @@ def cached_layout(document: Any, *, fetch: bool = True) -> Any:
     return document.layout() if fetch else True
 
 
-__all__ = ["cached_layout", "held_facts", "laid_before", "seen_before", "state_bytes"]
+__all__ = ["cached_layout", "held_facts", "seen_before", "state_bytes"]

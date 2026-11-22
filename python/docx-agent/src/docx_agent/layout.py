@@ -2175,9 +2175,6 @@ def release_document(document: "Document") -> None:
         # documents need the room (the idle at once, the busy as their task ends).  Round 59:
         # not waited for -- the drop's collection took 1.2-6.0 s of a 340-page report's close.
         _tell_runners(document._layout_runners, document._layout_lineage, later=False, wait=False)
-    rust = document.__dict__.pop("_rust_doc", None)
-    if rust is not None:
-        rust.close()
     # Q3: the bodies read of its versions (kept by their bytes, for every document).
     from . import blocks
 
@@ -2522,8 +2519,6 @@ _SHARED_LAYOUT = ("_layout_lock", "_layout_flights", "_layout_kept", "_layout_co
                   "_layout_tickets", "_layout_lineage", "_layout_fresh", "_layout_summaries",
                   "_check_facts", "_layout_failures", "_layouts", "_layout_stats", "_tool_seen_layout",
                   "_layout_owner", "_layout_runners", "_layout_account", "_facts_layout",
-                  # Lane F: the document's Rust owner and what its checks saw (docx_agent.rust).
-                  "_rust_doc", "_rust_refused", "_rust_seen",
                   # The tools' caches keyed by content or by version, set whole (a tuple) or
                   # under a lock of their own: a check's copy comparisons, the styles' digest,
                   # a render's coverage, the settings read for a like.
@@ -2657,11 +2652,6 @@ def read_copy(document: "Document"):
     from . import revalidate
 
     revalidate.committed(document)
-    # Lane F: this version to the document's Rust owner, where it has one.
-    if document.__dict__.get("_rust_doc") is not None:
-        from .rust.check import committed
-
-        committed(document)
     # Its ids as they are now: the ledger copied (what id_state would write and the copy's
     # open read back, without either), the renames, and the version numbers.
     ledger = _ids.copy_ledger(document._ledger)

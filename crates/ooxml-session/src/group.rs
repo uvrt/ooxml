@@ -81,6 +81,7 @@ impl Session {
                         history: true,
                     };
                     word.retired.note(&made, &delta);
+                    word.retired.number(made.seq, version.number());
                 }
                 if let Some(tracking) = &mark.tracking {
                     word.restore_tracking(tracking.clone());
@@ -108,9 +109,9 @@ impl Session {
             Held::Package(store) => store.close_group(&context.caller)?,
             Held::Word(word) => word.editor.store().close_group(&context.caller)?,
         };
-        if made.is_some() && !document.grouped() {
+        if let Some(seq) = made.filter(|_| !document.grouped()) {
             // (the host holds the document alone while its group is open: the head is the step)
-            document.stepped(document.head().number(), tool, context);
+            document.stepped(seq.0, document.head().number(), tool, context);
         }
         Ok(made.map(|seq| seq.0))
     }
