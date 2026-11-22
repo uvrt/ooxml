@@ -9,26 +9,11 @@
 use super::make::Make;
 use super::owned::{Order, Owned};
 use super::series::SER_ORDER;
+use super::title::CHART_ORDER;
 use super::ChartTree;
 use ooxml_xml::view::{attr, child, children, local, py_int};
 use ooxml_xml::Element;
 
-/// `c:chart`'s sequence.
-const CHART_ORDER: Order = &[
-    &["title"],
-    &["autoTitleDeleted"],
-    &["pivotFmts"],
-    &["view3D"],
-    &["floor"],
-    &["sideWall"],
-    &["backWall"],
-    &["plotArea"],
-    &["legend"],
-    &["plotVisOnly"],
-    &["dispBlanksAs"],
-    &["showDLblsOverMax"],
-    &["extLst"],
-];
 /// `c:barChart`'s.
 const BAR_ORDER: Order = &[
     &["barDir"],

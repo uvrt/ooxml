@@ -1,9 +1,12 @@
-//! Owns: `edit_chart`'s data actions that change points in place (docx-agent's `_edit_chart`
-//! through ooxml-edit's `apply_data_action`): `set_values`, `set_value`, `rename_series` and
-//! `rename_category` -- the chart part's caches changed (`ooxml_chart::edit`) and the
-//! embedded workbook kept in step cell by cell (`_Editor.write`, with `ooxml-sheets`'
-//! writer), or, where it cannot be, the chart changed in its cache only and the result
-//! warned (`ChartDataWarning`, in ooxml-edit's words).
+//! Owns: `edit_chart`'s data actions (docx-agent's `_edit_chart` through ooxml-edit's
+//! `apply_data_action`): `set_values`, `set_value`, `rename_series` and `rename_category`
+//! (points changed in place), `add_category`, `remove_category`, `add_series` and
+//! `remove_series` (the data's shape: `chart_block` keeps the workbook's lines in step),
+//! `set_title` and `set_axis_title`, `set_legend`, `show_data_labels`, `hide_data_labels`
+//! and `set_gap_width` -- the chart part's caches changed (`ooxml_chart::edit`) and the
+//! embedded workbook kept in step (`_Editor`, with `ooxml-sheets`' writer), or, where it
+//! cannot be, the chart changed in its cache only and the result warned
+//! (`ChartDataWarning`, in ooxml-edit's words).
 //!
 //! Must not: resolve a series or category by name (the handler does, `chart_names`), or
 //! write but through the [`EditGraphic`](ooxml_word_edit::EditGraphic) command.
@@ -11,7 +14,7 @@
 use super::chart_block::{all_sources, Block};
 use super::chart_keeper::{refused, unported, Keeper};
 use ooxml_chart::data::Point;
-use ooxml_chart::edit::{ChartTree, DataError, LabelLook, PointValue, Which};
+use ooxml_chart::edit::{ChartTree, DataError, LabelLook, PointValue, TitleEdit, TitleLook, Which};
 use ooxml_opc::Package;
 use ooxml_word_edit::{EditError, GraphicEdit, GraphicParts, PartWrite};
 use std::sync::Arc;
@@ -57,6 +60,14 @@ pub(crate) enum DataAction {
     },
     /// The bar plots' gap width.
     GapWidth { percent: i64 },
+    /// The chart's title (`axis` none) or an axis' (`category`, `value`) given text or, with
+    /// `None`, taken away; new title text at the application's sizes in `lang`.
+    Title {
+        axis: Option<&'static str>,
+        text: Option<String>,
+        sizes: (u32, u32),
+        lang: Option<String>,
+    },
 }
 
 /// A data action on the chart `address` (the target, as ooxml-edit's messages name it).
@@ -114,6 +125,19 @@ impl GraphicEdit for ChartDataEdit {
                 edit.data_labels(&self.address, *show, *series, &look)?;
             }
             DataAction::GapWidth { percent } => edit.gap_width(&self.address, *percent)?,
+            DataAction::Title {
+                axis,
+                text,
+                sizes,
+                lang,
+            } => {
+                let look = TitleLook {
+                    title: sizes.0,
+                    axis_title: sizes.1,
+                    lang: lang.as_deref(),
+                };
+                edit.title(*axis, text.as_deref(), &look)?;
+            }
         }
         let mut writes = Vec::new();
         if edit.changed {
@@ -406,6 +430,32 @@ impl Edit<'_> {
         self.ran = true;
         self.chart.set_data_labels(show, &chosen, look);
         self.changed = true;
+        Ok(())
+    }
+
+    /// `set_title` (no `axis`) or `set_axis_title`: a title drawn from a cell has its cell
+    /// written too.
+    fn title(&mut self, axis: Option<&str>, text: Option<&str>, look: &TitleLook<'_>) -> Result<(), EditError> {
+        let done = match axis {
+            None => self.chart.set_title(text, look),
+            Some(axis) => self
+                .chart
+                .set_axis_title(axis, text, look)
+                .map(|found| found.unwrap_or_else(|| Ok(TitleEdit::default()))),
+        };
+        let edit = done
+            .map_err(|_| {
+                unported("a new title in a document whose defaults name no language (the session's locale decides)")
+            })?
+            .map_err(data_refusal)?;
+        if edit.changed {
+            self.ran = true;
+            self.changed = true;
+        }
+        if let (Some(source), Some(text)) = (edit.written, text) {
+            self.keeper
+                .write(Some(&source), 0, &PointValue::Text(text.to_owned()))?;
+        }
         Ok(())
     }
 

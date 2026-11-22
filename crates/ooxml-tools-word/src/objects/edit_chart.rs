@@ -1,23 +1,24 @@
 //! Owns: `edit_chart`'s handlers (docx-agent's `tools/shared.py`, `edit_chart`): `read` on
 //! the version the call pins -- the chart the target names (the first drawing or group
 //! member with that id, docx-agent's `Document.chart`) and its reply (`chart_read`) --
-//! the data actions that change points in place (`set_values`, `set_value`,
-//! `rename_series`, `rename_category`: their series and category named as `chart_names`
-//! resolves them, the edit `chart_data`'s, one [`EditGraphic`] command) through the editor.
+//! the data actions (`apply_data_action`: points changed in place, categories and series
+//! added and removed, the titles, the legend, value labels and the gap width; their series
+//! and category named as `chart_names` resolves them, the edit `chart_data`'s, one
+//! [`EditGraphic`] command) through the editor.
 //!
-//! Not here yet: `add`, the structural data actions (categories and series added or
-//! removed), the title, legend, label and gap actions, and the style actions answer
-//! `unported` (lane P4c's later parts); so do values given `from` a table (its provenance
-//! records), and a read or edit ooxml-edit words as its own exception (a chart part that
-//! is missing or unreadable, a workbook `ooxml-sheets` cannot read or write), so a host that
-//! owns the document answers those its own way meanwhile.
+//! Not here yet: `add` and the style actions answer `unported` (lane P4c's later parts);
+//! so do values given `from` a table (its provenance records), new title or label text in a
+//! document whose defaults name no language (the session's locale decides it), and a read
+//! or edit ooxml-edit words as its own exception (a chart part that is missing or
+//! unreadable, a workbook `ooxml-sheets` cannot read or write), so a host that owns the
+//! document answers those its own way meanwhile.
 //!
 //! Must not: change the document but through a command.
 
 use super::chart_data::{ChartDataEdit, DataAction};
 use super::chart_names::{category_names, resolve, series_names, Named};
 use super::chart_read::{chart_json, chart_read_json};
-use super::{ChartAction, ChartPosition, EditChart};
+use super::{ChartAction, ChartAxis, ChartPosition, EditChart};
 use crate::structure::common::{call, policy, refused};
 use crate::{Editing, Version};
 use ooxml_base::pyfmt::repr_str;
@@ -65,10 +66,7 @@ pub fn edit_chart(args: &EditChart, editing: &Editing<'_>) -> ToolResult<Value> 
     }
     let action = args.action.as_str();
     let summary = format!("{action} on {}", args.target);
-    let ported = !matches!(
-        args.action,
-        ChartAction::Read | ChartAction::Add | ChartAction::SetTitle | ChartAction::SetAxisTitle
-    ) && !STYLE_ACTIONS.contains(&args.action);
+    let ported = !matches!(args.action, ChartAction::Read | ChartAction::Add) && !STYLE_ACTIONS.contains(&args.action);
     if !ported {
         return ToolResult::done(unported(summary, &format!("edit_chart {action}")));
     }
@@ -95,6 +93,8 @@ const STYLE_ACTIONS: [ChartAction; 7] = [
 
 /// Word's look for value labels: their size (`WORD_LOOK.data_labels`, hundredths of a point).
 const WORD_LABEL_SIZE: u32 = 900;
+/// Word's look for titles: a chart's and an axis' (`WORD_LOOK.title`, `.axis_title`).
+const WORD_TITLE_SIZES: (u32, u32) = (1400, 1000);
 
 /// A data action: the chart found and read on the head, its series and category resolved,
 /// then one command.
@@ -251,13 +251,15 @@ fn planned(args: &EditChart, data: &ChartData, read: &TryCall, docx: &Docx) -> R
             want("text", args.text.is_some(), "the new label")?;
             DataAction::RenameCategory { category, text: text() }
         }
-        _ => shape_action(args, read, docx, &series, &category, &want)?,
+        _ => shape_action(args, data, read, docx, &series, &category, &want)?,
     })
 }
 
 /// The actions that change the data's shape or how it shows, planned.
+#[allow(clippy::too_many_arguments)]
 fn shape_action(
     args: &EditChart,
+    data: &ChartData,
     read: &TryCall,
     docx: &Docx,
     series: &dyn Fn() -> Result<usize, Stop>,
@@ -302,6 +304,18 @@ fn shape_action(
                 lang,
             }
         }
+        ChartAction::SetTitle => DataAction::Title {
+            axis: None,
+            text: args.text.clone(),
+            sizes: WORD_TITLE_SIZES,
+            lang: default_language(docx),
+        },
+        ChartAction::SetAxisTitle => DataAction::Title {
+            axis: Some(axis_of(args, data, read, want)?),
+            text: args.text.clone(),
+            sizes: WORD_TITLE_SIZES,
+            lang: default_language(docx),
+        },
         _ => {
             want(
                 "value",
@@ -318,6 +332,38 @@ fn shape_action(
             DataAction::GapWidth { percent: given as i64 }
         }
     })
+}
+
+/// `set_axis_title`'s axis: given (`need`: the chart's axes said), `category` or `value`
+/// (`_axis_of`), and one the chart has (`axis_title`).
+fn axis_of(
+    args: &EditChart,
+    data: &ChartData,
+    read: &TryCall,
+    want: &dyn Fn(&str, bool, &str) -> Result<(), Stop>,
+) -> Result<&'static str, Stop> {
+    let axes: Vec<&str> = data.axis_titles.iter().map(|(name, _)| *name).collect();
+    let expected = if axes.is_empty() {
+        "the chart has no axes".to_owned()
+    } else {
+        axes.join(" or ")
+    };
+    want("axis", args.axis.is_some(), &expected)?;
+    let axis = match args.axis {
+        Some(ChartAxis::Category) => "category",
+        Some(ChartAxis::Value) => "value",
+        _ => {
+            let message = "axis is 'category' or 'value'";
+            let refusal = ToolError::refusal(Refusal::InvalidArguments, message, WayOut::call(read.clone()));
+            return Err(Stop::Refused(refusal));
+        }
+    };
+    if !axes.contains(&axis) {
+        let message = format!("{}: the chart has no {axis} axis", args.target);
+        let refusal = ToolError::refusal(Refusal::NotFound, message, WayOut::call(read.clone()));
+        return Err(Stop::Refused(refusal));
+    }
+    Ok(axis)
 }
 
 /// `legend_position`: the legend's position as the chart names it (`None`: no legend; the

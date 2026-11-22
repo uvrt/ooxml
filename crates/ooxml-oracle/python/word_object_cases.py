@@ -379,6 +379,7 @@ def chart_cases(document) -> list[dict]:
     for identifier in charts[:3]:
         out += _chart_data_edits(document, identifier)
         out += _chart_shape_edits(document, identifier)
+        out += _chart_title_edits(document, identifier)
     return out
 
 
@@ -439,6 +440,25 @@ def _chart_shape_edits(document, target: str) -> list[dict]:
            edit("set_gap_width", value=80), edit("set_gap_width", value=80.5), edit("set_gap_width", value=600),
            edit("set_gap_width")]
     return out + [tracked(case) for case in (out[0], out[9])]
+
+
+def _chart_title_edits(document, target: str) -> list[dict]:
+    """The titles (lane P4c18, part b2): the chart's given new text (one line, two, the same
+    again), taken away; an axis' given text and taken away; an axis named that is not one
+    (``x``), an axis missing; ``set_title`` tracked too."""
+    def edit(action: str, **arguments) -> dict:
+        return call("edit_chart", action=action, target=target, **arguments)
+
+    try:
+        current = document.chart(target).title
+    except Exception:  # noqa: BLE001 -- a chart docx-agent cannot read: the reads cover it
+        return []
+    out = [edit("set_title", text="Sales by region"), edit("set_title", text="First line\nSecond line"),
+           edit("set_title", text="" if current is None else current), edit("set_title"),
+           edit("set_axis_title", axis="value", text="Amount"), edit("set_axis_title", axis="category"),
+           edit("set_axis_title", axis="category", text="Quarter"), edit("set_axis_title", axis="x", text="x"),
+           edit("set_axis_title", text="x")]
+    return out + [tracked(out[0])]
 
 
 def _chunk(kind: bytes, body: bytes) -> bytes:

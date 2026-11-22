@@ -37,5 +37,5 @@ def _controls(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
 
 @adapter("edit_chart")
 def _chart(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-    # (its data actions but the titles; the rest answer ``unported``)
+    # (its data actions and the titles; the rest answer ``unported``)
     return {**own(arguments), "target": reads._refs(call, arguments.get("target"))}
