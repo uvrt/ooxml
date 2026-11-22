@@ -131,6 +131,24 @@ impl<'a> Watch<'a> {
         }
     }
 
+    /// Row `index` of `table` (on `docx`, the version before the edit), its cells named as
+    /// row `at` of the table `named` (where an edit that also adds rows and stamps the
+    /// table has them when it deletes the row).
+    pub(crate) fn row_as(
+        &mut self,
+        docx: &Docx,
+        part: &str,
+        table: &TableId,
+        index: usize,
+        (named, at): (&str, usize),
+    ) {
+        let Some(story) = docx.part(part) else { return };
+        let Some((path, _)) = table.rows.get(index) else { return };
+        for (cell, start, _) in placed_cells(story, path) {
+            self.unit(story, format!("{named}/c{at},{start}"), &cell);
+        }
+    }
+
     /// Grid column `grid` of `table`: the cells only in it.
     pub(crate) fn column(&mut self, docx: &Docx, part: &str, table: &TableId, grid: usize) {
         let Some(story) = docx.part(part) else { return };

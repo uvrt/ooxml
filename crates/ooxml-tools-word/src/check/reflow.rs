@@ -47,9 +47,15 @@ pub struct Seen {
 pub struct LastCheck {
     reflow: Mutex<Option<Seen>>,
     laid: Mutex<Option<Seen>>,
+    copies: super::copies::CopyCache,
 }
 
 impl LastCheck {
+    /// The copies' comparisons the document's checks keep.
+    pub(crate) fn copies(&self) -> &super::copies::CopyCache {
+        &self.copies
+    }
+
     /// What the last check with `reflow` saw, if any.
     #[must_use]
     pub fn get(&self) -> Option<Seen> {

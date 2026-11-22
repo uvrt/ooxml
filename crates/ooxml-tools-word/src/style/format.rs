@@ -16,11 +16,12 @@ use crate::structure::common::{call, outcome, policy, Outcome};
 use ooxml_base::pyfmt::repr_str;
 use ooxml_tools::{ArgEnum, Refusal, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::{
-    known_style, paragraphs_of, EditError, FormatEdit, FormatPlan, FormatStep, Formatted, Like, ParagraphLook,
-    Property, Setting, Value as Set, WordDoc, KEEPS_BLOCKS, NOT_TAKEN,
+    keeps_blocks, known_style, paragraphs_of, EditError, FormatEdit, FormatPlan, FormatStep, Formatted, Like,
+    ParagraphLook, Property, Setting, Value as Set, WordDoc, KEEPS_BLOCKS, NOT_TAKEN,
 };
 use ooxml_word_model::docx::{style_kind, style_name, Docx};
 use serde_json::{json, Map, Value};
+use std::collections::BTreeMap;
 
 impl From<FormatStep> for Outcome {
     fn from(step: FormatStep) -> Self {
@@ -116,14 +117,7 @@ fn run(args: &WordFormat, editing: &Editing<'_>, again: &TryCall) -> Result<Tool
         let message = "say what to set: a style, a run or a paragraph property".to_owned();
         return Err(invalid(message, "", &SETTERS, again));
     }
-    for (name, kind, field) in [
-        (&args.paragraph_style, "paragraph", "paragraph_style"),
-        (&args.character_style, "character", "character_style"),
-    ] {
-        if let Some(name) = name {
-            known(&docx, name, kind, field)?;
-        }
-    }
+    known_styles(args, &docx)?;
     let found = found_ranges(doc, &finds, again)?;
     let mut addresses = targets;
     addresses.extend(found.iter().cloned());
@@ -134,6 +128,7 @@ fn run(args: &WordFormat, editing: &Editing<'_>, again: &TryCall) -> Result<Tool
     let plan = FormatPlan {
         like: like_plan,
         keep_together: args.keep_together,
+        taller: taller_before(editing, args.keep_together, (head.seq().0, doc, &docx), &addresses),
         clear_direct: args.clear_direct.unwrap_or(false),
         paragraph_style: args.paragraph_style.clone(),
         character_style: args.character_style.clone(),
@@ -159,6 +154,37 @@ fn run(args: &WordFormat, editing: &Editing<'_>, again: &TryCall) -> Result<Tool
         edit_refusal(e, field, again.clone())
     })?;
     Ok(reply(addresses.len(), &found, look.as_ref(), like, done.out))
+}
+
+/// With `keep_together` on, the targets it keeps on one page that the version before the change
+/// (`version`, read as `docx`) is drawn taller than a page in, where the document's last
+/// check laid that very version out (docx-agent's `_laid_before`: nothing is laid out for
+/// it).
+fn taller_before(
+    editing: &Editing<'_>,
+    keep_together: Option<bool>,
+    (version, doc, docx): (u64, &WordDoc, &Docx),
+    addresses: &[String],
+) -> BTreeMap<String, (f64, f64)> {
+    let (Some(true), Some(last)) = (keep_together, editing.last_check) else {
+        return BTreeMap::new();
+    };
+    let kept: Vec<(String, Vec<String>)> = addresses
+        .iter()
+        .filter(|a| keeps_blocks(doc, docx, a))
+        .filter_map(|a| {
+            let ids = paragraphs_of(doc, docx, a)
+                .ok()?
+                .iter()
+                .filter_map(|(part, k)| Some(docx.part(part)?.ids.paragraphs().get(*k)?.id.clone()))
+                .collect();
+            Some((a.clone(), ids))
+        })
+        .collect();
+    if kept.is_empty() {
+        return BTreeMap::new();
+    }
+    crate::check::taller_than_page(last, version, docx, &kept)
 }
 
 /// Whether the call sets anything (docx-agent's test, a style named by an empty string
@@ -327,6 +353,19 @@ fn explicit(args: &WordFormat, paragraph: &[Setting], clear: &[Cleared]) -> Vec<
         }
     }
     skip
+}
+
+/// [`known`] for the paragraph and character styles the call names.
+fn known_styles(args: &WordFormat, docx: &Docx) -> Result<(), ToolError> {
+    for (name, kind, field) in [
+        (&args.paragraph_style, "paragraph", "paragraph_style"),
+        (&args.character_style, "character", "character_style"),
+    ] {
+        if let Some(name) = name {
+            known(docx, name, kind, field)?;
+        }
+    }
+    Ok(())
 }
 
 /// `not_found` with the document's styles of `kind` unless `name` names one (docx-agent's

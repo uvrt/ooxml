@@ -222,7 +222,9 @@ def edit_table_cases(document) -> list[dict]:
     past the table, missing a place or text, one merged cell given two values, a column's
     rows filled and the ranges refused, references left to the host); cells set from a
     dataset (a header row or none, a run of rows, columns picked, dates in a pattern, rows
-    grown, the refusals of a block that does not fit or whose arguments are wrong);
+    grown, the refusals of a block that does not fit or whose arguments are wrong); the
+    table kept in step with a dataset by key (``sync``: of the cases' datasets and of one
+    made from the table's own text);
     arguments
     of another action refused; strict mode's empty values taken as none -- untracked and
     tracked."""
@@ -230,7 +232,7 @@ def edit_table_cases(document) -> list[dict]:
     for table in _tables(document)[:3]:
         out += _rows(table) + _columns(table) + _cells(table) + _set_cells(document, table)
     for table in _tables(document)[:2]:
-        out += _from_sources(table)
+        out += _from_sources(table) + _syncs(document, table)
     out += _held_rows(document)
     out += [call("word_edit_table", table="t:00000000", action="insert_row")]
     return out + [tracked(case) for case in out]
@@ -271,6 +273,62 @@ def _from_sources(table: str) -> list[dict]:
             edit(cells=[{"row": 0, "col": 0, "text": "x"}], **{"from": "d:sales"}),
             edit("insert_row", **{"from": "d:sales"}), edit(**{"from": "d:nothing"}),
             edit(grow=True, key="Region", **{"from": "d:sales"})]
+
+
+def _sync_dataset(document, table: str) -> dict | None:
+    """A dataset made from ``table``'s own text, for ``sync``: its first row's texts the
+    columns, its other rows the rows -- the second row's last value changed, the last row
+    left out, a new key added and one key spelled in capitals; ``None`` for a table too
+    small (two columns and three rows at least)."""
+    try:
+        grid = document.table(table).grid()
+    except Exception:  # noqa: BLE001 - a table it cannot read has no case
+        return None
+    texts = [[" ".join((cell.text if cell is not None else "").split()) for cell in line] for line in grid]
+    if len(texts) < 3 or min(len(line) for line in texts) < 2:
+        return None
+    width = min(len(line) for line in texts)
+    columns = [t or f"column {k}" for k, t in enumerate(texts[0][:width])]
+    if len(set(columns)) != width:
+        return None
+    rows = [line[:width] for line in texts[1:-1]]
+    if len(rows) > 1:
+        rows[1] = rows[1][:-1] + [rows[1][-1] + " (new)"]
+    rows.append(["K-NEW"] + ["x"] * (width - 1))
+    if rows and rows[0][0]:
+        rows.append([rows[0][0].upper() + "-2"] + [""] * (width - 1))
+    return {"id": "own", "columns": columns, "types": None, "rows": rows}
+
+
+def _syncs(document, table: str) -> list[dict]:
+    """``sync`` of ``table`` with a dataset of its own text (:func:`_sync_dataset`) and with
+    the cases' datasets: by labels, removing the keys gone, by another key column, keys
+    matched loosely and by pairs, columns named, and the refusals of arguments for other
+    actions."""
+    own = _sync_dataset(document, table)
+    sets = DATASETS + ([own] if own else [])
+
+    def edit(**arguments) -> dict:
+        return {**call("word_edit_table", table=table, action="sync", **arguments), "datasets": sets}
+
+    out = [edit(**{"from": "d:long"}), edit(from_columns=["Code", "Name"], **{"from": "d:long"}),
+           edit(from_columns=["Code", "Name"], remove=True, **{"from": "d:long"}),
+           edit(from_columns=["Name", "Code"], key="Code", **{"from": "d:long/#3:#9"}),
+           edit(from_columns=["Code"], key="Nope", **{"from": "d:long"}), edit(**{"from": "d:nothing"}),
+           edit(cells=[{"row": 0, "col": 0, "text": "x"}], **{"from": "d:long"}),
+           edit(header=["A"], **{"from": "d:long"}), edit(), edit(index=2, grow=True, from_columns=["Code"],
+                                                                  **{"from": "d:long"})]
+    if own:
+        first = own["rows"][0][0] if own["rows"] else ""
+        out += [edit(**{"from": "d:own"}), edit(remove=True, **{"from": "d:own"}),
+                edit(loose="table", **{"from": "d:own"}), edit(loose="data", remove=True, **{"from": "d:own"}),
+                edit(key="1", **{"from": "d:own"}), edit(key=own["columns"][0], **{"from": "d:own/#1:#2"}),
+                edit(match=[{"table": first, "data": "K-NEW"}], **{"from": "d:own"}),
+                edit(match=[{"table": "K-NEW", "data": first}], **{"from": "d:own"}),
+                edit(match=[{"table": "nope", "data": "K-NEW"}], **{"from": "d:own"}),
+                edit(from_columns=own["columns"][:1] + [""] * (len(own["columns"]) - 1), **{"from": "d:own"}),
+                edit(from_columns=own["columns"] + ["extra"], **{"from": "d:own"})]
+    return out
 
 
 def _control_values(kind: str) -> list[str]:
