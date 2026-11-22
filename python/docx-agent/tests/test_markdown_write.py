@@ -36,7 +36,7 @@ from docx_agent.markdown.stylemap import DEFAULT, Rule
 from docx_agent.validate import check
 
 from canonical import canonical, difference, without_added_definitions
-from conftest import MARKDOWN_DIR, NEW_CREATED, fixture_id, reading_paths
+from conftest import FIXTURE_DIR, MARKDOWN_DIR, NEW_CREATED, fixture_id, reading_paths
 
 ROOT = Path(__file__).resolve().parent
 CORPUS = json.loads((ROOT / "corpus" / "commonmark" / "examples.json").read_text(encoding="utf-8"))
@@ -235,7 +235,7 @@ def test_a_dutch_template_maps_headings_by_name_and_outline_level():
 
 
 def test_english_names_with_localised_ids_are_found_by_name():
-    document = Document.open((ROOT / "fixtures" / "generated" / "lists-and-styles.docx").read_bytes())
+    document = Document.open((FIXTURE_DIR / "generated" / "lists-and-styles.docx").read_bytes())
     result = document.insert_markdown("# Kop\n\n**zwaar**\n")
     assert _styles_of(document, result)[0] == "Kop1"
     assert document._resolve(result.blocks[1])[1].element.find(f".//{W}rStyle").get(W + "val") == "Zwaar"
@@ -256,7 +256,7 @@ def test_missing_styles_are_added_as_word_writes_them_and_said():
 
 
 def test_a_table_takes_the_style_the_document_tables_use_most():
-    document = Document.open((ROOT / "fixtures" / "wordto" / "sample-with-table.docx").read_bytes())
+    document = Document.open((FIXTURE_DIR / "wordto" / "sample-with-table.docx").read_bytes())
     used = [n.get(W + "val") for n in document.package.tree(document.package.document_part()).iter(W + "tblStyle")]
     result = document.insert_markdown("| a | b |\n| - | - |\n| 1 | 2 |\n")
     table = document._resolve(result.blocks[0])[1].element
@@ -317,7 +317,7 @@ def test_lists_nest_by_level_restart_and_start_where_markdown_says():
 
 
 def test_new_lists_do_not_share_the_document_definitions():
-    document = Document.open((ROOT / "fixtures" / "generated" / "lists-and-styles.docx").read_bytes())
+    document = Document.open((FIXTURE_DIR / "generated" / "lists-and-styles.docx").read_bytes())
     numbering = document.numbering
     before = set(numbering.abstracts())
     result = document.insert_markdown("1. a\n2. b\n")
@@ -497,7 +497,7 @@ def test_after_before_replace_and_ranges():
 
 
 def test_end_of_another_story():
-    document = Document.open((ROOT / "fixtures" / "generated" / "ids-and-markup.docx").read_bytes())
+    document = Document.open((FIXTURE_DIR / "generated" / "ids-and-markup.docx").read_bytes())
     result = document.insert_markdown("**Header** text", at="end:header1")
     assert result.blocks[0].startswith("header1/p:")
     assert document.paragraph(result.blocks[0]).text == "Header text"
@@ -508,7 +508,7 @@ def test_end_of_another_story():
 
 
 def test_a_range_must_be_blocks_of_one_container():
-    document = Document.open((ROOT / "fixtures" / "generated" / "ids-and-markup.docx").read_bytes())
+    document = Document.open((FIXTURE_DIR / "generated" / "ids-and-markup.docx").read_bytes())
     document._stamp_document()
     body = document.paragraphs()[0].id
     cell = document.tables()[0].cell(1, 1).paragraphs[0].id
@@ -651,7 +651,7 @@ def test_track_keyword_tracks_one_insertion():
 
 
 def test_a_reference_rejected_takes_its_note_with_it():
-    document = Document.open((ROOT / "fixtures" / "generated" / "ids-and-markup.docx").read_bytes())
+    document = Document.open((FIXTURE_DIR / "generated" / "ids-and-markup.docx").read_bytes())
     before = len(document.notes("footnote"))
     with document.tracking(author=AUTHOR, date=DATE):
         document.insert_markdown("New[^n].\n\n[^n]: A [linked](https://example.com/n) note.\n")
@@ -665,7 +665,7 @@ def test_a_reference_rejected_takes_its_note_with_it():
 
 
 def test_a_paragraph_in_a_cell_is_replaced_in_its_cell():
-    document = Document.open((ROOT / "fixtures" / "generated" / "ids-and-markup.docx").read_bytes())
+    document = Document.open((FIXTURE_DIR / "generated" / "ids-and-markup.docx").read_bytes())
     document._stamp_document()
     table = document.tables()[0]
     cell = table.cell(1, 1).paragraphs[0].id

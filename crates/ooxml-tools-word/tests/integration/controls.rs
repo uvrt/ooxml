@@ -17,7 +17,7 @@ use ooxml_word_edit::{Editor, Tracking};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-const FIXTURE: &[u8] = include_bytes!("../../../../python/docx-agent/tests/fixtures/generated/controls.docx");
+const FIXTURE: &[u8] = include_bytes!("../../../../crates/ooxml-oracle/fixtures/generated/controls.docx");
 
 /// Each of `calls` to `word_controls` in turn on a fresh copy of the fixture (tracked as
 /// `author` when given): the replies, and the custom XML item the last left.

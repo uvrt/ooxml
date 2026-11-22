@@ -17,10 +17,11 @@ import pytest
 from docx_agent import Document
 from docx_agent.edit.authoring import MacrosDropped, TemplateOpened
 from docx_agent.oxml.package import MAIN_CONTENT_TYPES
+from conftest import FIXTURE_DIR  # noqa: E402
 
 ROOT = Path(__file__).parent
-TRIAL = ROOT / "fixtures" / "generated" / "trial"
-TEMPLATES = ROOT / "fixtures" / "generated" / "templates"
+TRIAL = FIXTURE_DIR / "generated" / "trial"
+TEMPLATES = FIXTURE_DIR / "generated" / "templates"
 WORD = json.loads((ROOT / "observations" / "trial-word.json").read_text(encoding="utf-8"))
 
 
@@ -117,7 +118,7 @@ def test_opening_a_template_warns_and_points_to_new():
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         Document.new(template=TEMPLATES / "brand.dotx")       # making a document does not warn
-        Document.open(ROOT / "fixtures" / "generated" / "pilot" / "agreement-summary.docx")
+        Document.open(FIXTURE_DIR / "generated" / "pilot" / "agreement-summary.docx")
 
 
 def test_save_as_template_takes_the_template_extension(tmp_path):

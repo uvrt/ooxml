@@ -15,7 +15,7 @@ Rust library functions of ``ooxml_word_edit::facts`` as ``check`` words them).  
 the cap and the page and range filters are ``check``'s.
 
 Besides the documents given, made-up ones that hold each fact (:func:`made_up`, from
-docx-agent's tests' document makers) are compared on every run; for
+the oracle's document makers, facts_documents.py and shelf_tables.py) are compared on every run; for
 ``accept_loses_original``, made-up documents edited here through docx-agent's API
 (:func:`originals`), the edited version against the file as opened (``"opened"``).
 
@@ -26,15 +26,10 @@ from __future__ import annotations
 
 import io
 import json
-import sys
 import tempfile
 import zipfile
 from pathlib import Path
 from typing import Any
-
-TESTS = Path(__file__).resolve().parents[3] / "python" / "docx-agent" / "tests"
-if str(TESTS) not in sys.path:
-    sys.path.insert(0, str(TESTS))
 
 from docx_agent import Document
 from docx_agent.layout_facts import (

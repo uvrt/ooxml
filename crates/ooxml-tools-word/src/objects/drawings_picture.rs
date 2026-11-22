@@ -324,7 +324,7 @@ mod tests {
     use std::time::Duration;
 
     const FIXTURE: &[u8] =
-        include_bytes!("../../../../python/docx-agent/tests/fixtures/generated/charts/chart-places.docx");
+        include_bytes!("../../../../crates/ooxml-oracle/fixtures/generated/charts/chart-places.docx");
 
     struct Still;
 

@@ -2,7 +2,7 @@
 """Measure what Word does with charts and SmartArt that docx-agent wrote or edited.
 
 Probe documents are written here (``tools/chart_parts.py``) or edited from the committed
-fixtures (``tests/fixtures/generated/charts``) through docx-agent's own chart and diagram
+fixtures (``crates/ooxml-oracle/fixtures/generated/charts``) through docx-agent's own chart and diagram
 API, and Word -- through ``tests/oracle.py``'s machine-wide lock, no clipboard -- exports
 each to PDF and saves it again.  What it drew is read off the PDF (text, and the face,
 size, weight and colour of a title's characters), and what it wrote off the saved file:
@@ -66,7 +66,7 @@ import make_chart_fixtures as fixtures  # noqa: E402
 from docx_agent import Document  # noqa: E402
 
 OBSERVATIONS = ROOT / "tests" / "observations" / "charts-word.json"
-FIXTURES = ROOT / "tests" / "fixtures" / "generated" / "charts"
+FIXTURES = ROOT.parents[1] / "crates" / "ooxml-oracle" / "fixtures" / "generated" / "charts"
 C = "{http://schemas.openxmlformats.org/drawingml/2006/chart}"
 A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
 DGM = "{http://schemas.openxmlformats.org/drawingml/2006/diagram}"
