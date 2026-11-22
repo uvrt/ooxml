@@ -15,8 +15,9 @@ use crate::set_cells::{CellWrite, CellsSet, SetCells};
 use crate::sink::EditSink;
 use crate::{EditError, Result, WordDoc};
 use ooxml_store::{Command, Txn};
-use ooxml_word_model::docx::provenance::{kind_of, Kind};
+use ooxml_word_model::docx::provenance::{dumps, kind_of, Kind};
 use serde_json::{Map, Value};
+use std::time::Instant;
 
 /// A block of a source's rows written into a table, rows added for it first.
 #[derive(Debug, Clone, PartialEq)]
@@ -35,7 +36,7 @@ pub struct PlaceRows {
 }
 
 /// What a [`PlaceRows`] did.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RowsPlaced {
     /// The rows added, each as `insert_row` reports one, in order.
     pub added: Vec<TableChanged>,
@@ -43,6 +44,8 @@ pub struct RowsPlaced {
     pub cells: CellsSet,
     /// The table's id after the command.
     pub table: String,
+    /// Where its time went, in seconds: `rows` (where it added any), `cells`, `record`.
+    pub parts: Vec<(&'static str, f64)>,
 }
 
 impl Command<WordDoc> for PlaceRows {
@@ -56,6 +59,8 @@ impl Command<WordDoc> for PlaceRows {
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<RowsPlaced> {
         let mut table = self.table.clone();
         let mut added = Vec::with_capacity(self.grow);
+        let mut parts = Vec::new();
+        let mut started = Instant::now();
         if self.grow > 0 {
             let mut sink = EditSink::new(tx, self.policy.clone());
             for _ in 0..self.grow {
@@ -73,6 +78,8 @@ impl Command<WordDoc> for PlaceRows {
                 added.push(made);
             }
             crate::after::after_edit(&mut sink)?;
+            parts.push(("rows", started.elapsed().as_secs_f64()));
+            started = Instant::now();
         }
         let cells = SetCells {
             table: table.clone(),
@@ -82,16 +89,21 @@ impl Command<WordDoc> for PlaceRows {
             accepted: None,
         }
         .prepare_placing(tx)?;
+        parts.push(("cells", started.elapsed().as_secs_f64()));
+        let started = Instant::now();
         let mut sink = EditSink::new(tx, RevisionPolicy::Untracked);
         let docx = sink.docx()?;
         let Found { id, .. } = find_table(sink.doc(), &docx, &table)?;
         if kind_of(&id) == Some(Kind::Table) {
-            crate::provenance::store_table_record(&mut sink, &id, Some(&self.record))?;
+            let text = dumps(&Value::Object(self.record.clone()));
+            crate::provenance::store_record(&mut sink, "table", &id, Some(&text))?;
         }
+        parts.push(("record", started.elapsed().as_secs_f64()));
         Ok(RowsPlaced {
             added,
             cells,
             table: id,
+            parts,
         })
     }
 }

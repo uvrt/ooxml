@@ -18,7 +18,7 @@ use crate::raster::PyPageRaster;
 use crate::version::PyVersion;
 use ooxml_session::{CallContext, DocId, DocNames, HostIds, Opened};
 use ooxml_tools::{BudgetSpan, ImageBudget};
-use ooxml_tools_word::{Blobs, HostTable, HostTables, LayoutCounts, Placer, SourceRows, Written};
+use ooxml_tools_word::{Blobs, HostTable, HostTables, LayoutCounts, Placer, Sources, Written};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use serde_json::{Map, Value};
@@ -39,13 +39,15 @@ use std::sync::Arc;
 /// "version", "stale", "cache"}`: ooxml-edit's `Rows`, keyed by the value as the call gives
 /// it; a value `null`, a logical value, a number, text, `{"date": [y, m, d]}`, `{"datetime":
 /// [y, m, d, h, min, s, us]}`, `{"time": [h, min, s, us]}`, `{"int": "digits"}` or
-/// `{"other": kind}`). One may serve many calls.
+/// `{"other": kind}`), or the host's refusal of one (`{"given", "refused": {"message",
+/// "options"}}`, an unknown dataset, which the tool words with what its document says of the
+/// value). One may serve many calls.
 #[pyclass(frozen, name = "CallDocuments", module = "ooxml_core")]
 pub struct PyCallDocuments {
     at: Vec<Opened>,
     names: DocNames,
     tables: Option<Arc<dyn HostTables>>,
-    sources: Vec<SourceRows>,
+    sources: Sources,
 }
 
 #[pymethods]
@@ -67,11 +69,11 @@ impl PyCallDocuments {
             }
         }
         let sources = match sources {
-            None => Vec::new(),
+            None => Sources::default(),
             Some(given) => serde_json::from_str::<Value>(given)
                 .ok()
                 .as_ref()
-                .and_then(SourceRows::list_from_json)
+                .and_then(Sources::from_json)
                 .ok_or_else(|| PyValueError::new_err("sources is a JSON list of the rows the call's sources name"))?,
         };
         Ok(Self {

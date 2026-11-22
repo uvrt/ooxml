@@ -33,11 +33,12 @@ def _edit_table(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
 
     if not isinstance(source, str) or field_text.names_one_value(source):
         return given
-    # The rows the source names, as the dispatcher resolves them (its refusals the call's,
-    # a dataset that is none with the format's hint: a drawing's id is said to be one).
-    rows = _rows(call, source)
+    # The rows the source names, as the dispatcher resolves them (its refusals the call's); an
+    # unknown dataset is the session's to word (what the document says of the value: a
+    # drawing's id), with the datasets there are.
+    found = _rows(call, source)
     return Adapted(given, written_json(getattr(call, "facts", None) or (), {}),
-                   sources=sources_json([(source, rows)]))
+                   sources=sources_json([(source, found)]))
 
 
 @adapter("word_controls")
@@ -46,15 +47,13 @@ def _controls(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def _rows(call: Any, source: str) -> Any:
-    """``call.source`` of a ``from``, an unknown dataset refused as the dispatcher refuses it
-    (``Toolbox._with_datasets``: with the call's format's hint)."""
+    """``call.source`` of a ``from``; an unknown dataset as the host's refusal
+    (:func:`~docx_agent.rust.served.sources_json` hands it over)."""
     from ooxml_edit.tools import ToolError
-    from ooxml_edit.tools.dispatch import Toolbox, _with_hint
 
     try:
         return call.source(source, field="from")
     except ToolError as error:
         if error.code != "not_found" or not source.startswith("d:"):
             raise
-        primary = [call.entry.doc_id] if call.entry is not None else []
-        raise _with_hint(error, Toolbox._source_hint(call.session, primary, source)) from None
+        return error

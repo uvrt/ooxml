@@ -1,6 +1,6 @@
 use super::label::date_value;
 use super::*;
-use ooxml_numfmt::EN_US;
+use ooxml_numfmt::{Locale, EN_US};
 use serde_json::json;
 
 fn dutch() -> Locale {
@@ -102,7 +102,7 @@ fn rows_are_read_from_the_hosts_json() {
         "sources": [[["A2"], ["B2"], ["C2"]], [["A3"], ["B3"], ["C3"]]],
         "doc": "d2", "name": "sales.xlsx", "version": 4, "stale": false, "cache": null
     }]);
-    let rows = SourceRows::list_from_json(&given).unwrap().remove(0);
+    let rows = Sources::from_json(&given).unwrap().rows.remove(0);
     assert_eq!(rows.value(0, 1), &SourceValue::Date(Day::new(2026, 1, 20).unwrap()));
     assert_eq!(rows.value(1, 2), &SourceValue::Float(2.5));
     assert_eq!(rows.where_is(1, 2), "C3 (row 2 of d:sales, column 'n')");

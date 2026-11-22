@@ -25,11 +25,9 @@ mod item;
 mod keep;
 mod made;
 mod review;
-mod table;
 
 pub use keep::{KeepText, TextKeep};
 pub(crate) use review::follow_review;
-pub(crate) use table::store_table_record;
 
 use crate::doc::WordDoc;
 use crate::policy::RevisionPolicy;
@@ -62,6 +60,34 @@ impl<C: Command<WordDoc, Error = EditError>> Command<WordDoc> for Followed<'_, C
             follow(&mut EditSink::new(tx, RevisionPolicy::Untracked))?;
         }
         Ok(out)
+    }
+}
+
+/// The entry of `kind` keyed `key` holding `text` now, made (with the item, where the
+/// document has none) or replaced where it stands; with `None`, dropped (docx-agent's
+/// `store_provenance`). The edit's follow-up then prunes and releases as after every edit.
+///
+/// # Errors
+/// When the content types, the main part's relationships or the item are not XML.
+pub(crate) fn store_record(sink: &mut EditSink<'_, '_>, kind: &str, key: &str, text: Option<&str>) -> Result<()> {
+    let docx = sink.docx()?;
+    let mut draft = Draft::open(sink, &docx)?;
+    match (text, draft.as_mut()) {
+        (None, None) => return Ok(()),
+        (None, Some(found)) => found.drop_entry(kind, key),
+        (Some(text), Some(found)) => found.store(kind, key, text),
+        (Some(text), None) => {
+            made::make_item(sink, &docx, key)?;
+            let made = sink.docx()?;
+            draft = Draft::open(sink, &made)?;
+            if let Some(found) = draft.as_mut() {
+                found.store(kind, key, text);
+            }
+        }
+    }
+    match draft {
+        Some(found) => found.finish(sink, &docx),
+        None => Ok(()),
     }
 }
 

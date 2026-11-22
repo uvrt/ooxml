@@ -167,6 +167,7 @@ def test_rows_grow_and_sync_add_look_like_the_last_row(toolbox):
                 _edit(box, session, table=table, action="set_cells", **{"from": "d:next"}, index=1, grow=True)
             else:
                 _edit(box, session, table=table, action="sync", **{"from": "d:next"}, key="item")
+            document = _now(session)
             now = document.tables()[0].id
             for row in (2, 3):
                 assert _look(document, f"{now}/c{row},0") == ("Arial", 8.0, "1F4E79", False), how

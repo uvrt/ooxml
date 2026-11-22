@@ -46,12 +46,17 @@ class Adapted(dict):
 
 
 def sources_json(found: list[tuple[str, Any]]) -> str | None:
-    """The rows of sources (``(value as the call gives it, Rows)`` each: ``call.source``'s)
-    as ``CallDocuments(sources=...)`` takes them; ``None`` without any."""
+    """The rows of sources (``(value as the call gives it, Rows)`` each: ``call.source``'s, or
+    its refusal of the value) as ``CallDocuments(sources=...)`` takes them; ``None`` without
+    any."""
     if not found:
         return None
-    out = []
+    out: list[dict[str, Any]] = []
     for given, rows in found:
+        if isinstance(rows, Exception):      # the host's refusal (an unknown dataset)
+            out.append({"given": given, "refused": {"message": getattr(rows, "message", str(rows)),
+                                                    "options": list(getattr(rows, "valid_options", None) or [])}})
+            continue
         dataset = rows.dataset
         out.append({
             "given": given, "address": rows.address, "columns": [str(c) for c in dataset.columns],

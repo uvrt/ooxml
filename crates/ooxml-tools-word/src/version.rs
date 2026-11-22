@@ -212,7 +212,7 @@ pub trait HostTables: Send + Sync {
 pub struct Others<'a> {
     versions: &'a [(&'a str, Version<'a>)],
     tables: Option<&'a dyn HostTables>,
-    sources: &'a [crate::SourceRows],
+    sources: Option<&'a crate::Sources>,
 }
 
 impl<'a> Others<'a> {
@@ -222,7 +222,7 @@ impl<'a> Others<'a> {
         Self {
             versions,
             tables: None,
-            sources: &[],
+            sources: None,
         }
     }
 
@@ -236,8 +236,8 @@ impl<'a> Others<'a> {
     /// The rows of the sources the call names, as the host resolved them (none unless
     /// given).
     #[must_use]
-    pub fn with_sources(mut self, sources: &'a [crate::SourceRows]) -> Self {
-        self.sources = sources;
+    pub fn with_sources(mut self, sources: &'a crate::Sources) -> Self {
+        self.sources = Some(sources);
         self
     }
 
@@ -245,7 +245,13 @@ impl<'a> Others<'a> {
     /// them.
     #[must_use]
     pub fn source(&self, given: &str) -> Option<&'a crate::SourceRows> {
-        self.sources.iter().find(|s| s.given == given)
+        self.sources?.rows.iter().find(|s| s.given == given)
+    }
+
+    /// The host's refusal of the source `given`, where it refused it.
+    #[must_use]
+    pub fn refused_source(&self, given: &str) -> Option<&'a crate::SourceRefused> {
+        self.sources?.refused.iter().find(|s| s.given == given)
     }
 
     /// The host's table `given` names (`t:stock`, `d2/t:stock`), where it holds one.

@@ -158,6 +158,11 @@ fn from_rows<'e>(
     let Some(given) = args.from.as_deref().filter(|f| !f.is_empty()) else {
         return Ok(None);
     };
+    if let Some(refused) = editing.others.refused_source(given) {
+        let head = editing.editor.store().snapshot();
+        let docx = head.doc().docx().ok();
+        return Err(crate::sources::refused_source(refused, docx.as_deref(), retry));
+    }
     match editing.others.source(given) {
         Some(rows) => Ok(Some(rows)),
         None if names_one_value(given) => Ok(None),

@@ -239,12 +239,12 @@ fn other_version<'a>(package: &'a Package, word: Option<&'a WordDoc>, versions: 
 /// The rows the case's `from` names of the datasets it defines (`datasets`: `{id, columns,
 /// types, rows}` each), as a host hands them over: a whole dataset (`d:sales`) or a run of
 /// its rows (`d:sales/#2:#3`, `/#2:`, `/#2`); none for anything else.
-fn case_sources(case: &Value) -> Vec<ooxml_tools_word::SourceRows> {
+fn case_sources(case: &Value) -> ooxml_tools_word::Sources {
     let Some(given) = case.pointer("/arguments/from").and_then(Value::as_str) else {
-        return Vec::new();
+        return ooxml_tools_word::Sources::default();
     };
     let Some(rest) = given.strip_prefix("d:") else {
-        return Vec::new();
+        return ooxml_tools_word::Sources::default();
     };
     let (id, run) = rest.split_once('/').map_or((rest, None), |(id, run)| (id, Some(run)));
     let datasets = case.get("datasets").and_then(Value::as_array).into_iter().flatten();
@@ -252,7 +252,7 @@ fn case_sources(case: &Value) -> Vec<ooxml_tools_word::SourceRows> {
         .into_iter()
         .find(|d| d.get("id").and_then(Value::as_str) == Some(id))
     else {
-        return Vec::new();
+        return ooxml_tools_word::Sources::default();
     };
     let rows = found.get("rows").and_then(Value::as_array).cloned().unwrap_or_default();
     let (first, last) = match run.and_then(|r| r.strip_prefix('#')) {
@@ -273,7 +273,7 @@ fn case_sources(case: &Value) -> Vec<ooxml_tools_word::SourceRows> {
         map.insert("address".into(), json!(given));
         map.insert("rows".into(), Value::Array(taken));
     }
-    ooxml_tools_word::SourceRows::list_from_json(&json!([rows_json])).unwrap_or_default()
+    ooxml_tools_word::Sources::from_json(&json!([rows_json])).unwrap_or_default()
 }
 
 /// The blobs a case registers (`blobs`: `{name, mime, hex}` each), as the session's

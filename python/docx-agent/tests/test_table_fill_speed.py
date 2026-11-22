@@ -181,7 +181,8 @@ def test_the_result_says_where_the_time_went(toolbox):
     _, _, results, timings = _run(toolbox, {}, [{"grow": True}], {})
     timing = timings[0]
     assert list(timing)[:6] == ["resolve", "check", "rows", "cells", "record", "result"]
-    assert {"spacing", "validate"} <= set(timing)
+    # (the Rust session spaces the text as it writes the cells: its "spacing" is in "cells")
+    assert "validate" in timing
     assert all(isinstance(v, float) and v >= 0 for v in timing.values())
     assert len(json.dumps(timing)) < 300                       # a small part of the result's budget
 

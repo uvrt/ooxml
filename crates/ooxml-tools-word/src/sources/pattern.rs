@@ -108,41 +108,46 @@ fn parse(pattern: &str) -> Result<Vec<Part>, String> {
             "a date pattern is text of the tokens {TOKENS_TEXT}, e.g. d mmmm yyyy"
         ));
     }
-    let chars: Vec<char> = pattern.chars().collect();
     let mut parts = Vec::new();
-    let mut index = 0;
-    while index < chars.len() {
-        let c = chars[index];
+    let mut chars = pattern.chars().enumerate().peekable();
+    while let Some((index, c)) = chars.next() {
         if c == '"' {
-            let Some(close) = chars[index + 1..].iter().position(|x| *x == '"').map(|k| k + index + 1) else {
+            let mut text = String::new();
+            let mut closed = false;
+            for (_, x) in chars.by_ref() {
+                if x == '"' {
+                    closed = true;
+                    break;
+                }
+                text.push(x);
+            }
+            if !closed {
                 return Err(format!(
                     "{}: a quote opened at {} is not closed; quote text as \"de\"",
                     repr_str(pattern),
                     index + 1
                 ));
-            };
-            parts.push(Part::Literal(chars[index + 1..close].iter().collect()));
-            index = close + 1;
+            }
+            parts.push(Part::Literal(text));
         } else if c == '\\' {
             parts.push(Part::Literal(
-                chars.get(index + 1).map(char::to_string).unwrap_or_default(),
+                chars.next().map(|(_, x)| x.to_string()).unwrap_or_default(),
             ));
-            index += 2;
-        } else if matches!(c.to_ascii_lowercase(), 'd' | 'm' | 'y') && c.is_ascii() {
+        } else if c.is_ascii() && matches!(c.to_ascii_lowercase(), 'd' | 'm' | 'y') {
             let lower = c.to_ascii_lowercase();
-            let end = (index..chars.len())
-                .find(|k| chars[*k].to_ascii_lowercase() != lower || !chars[*k].is_ascii())
-                .unwrap_or(chars.len());
-            let run: String = chars[index..end].iter().collect::<String>().to_ascii_lowercase();
+            let mut given = c.to_string();
+            while let Some((_, x)) = chars.next_if(|(_, x)| x.is_ascii() && x.to_ascii_lowercase() == lower) {
+                given.push(x);
+            }
+            let run = given.to_ascii_lowercase();
             let Some(token) = TOKENS.iter().find(|t| **t == run) else {
                 return Err(format!(
                     "{}: {} is no date token; the tokens are {TOKENS_TEXT}",
                     repr_str(pattern),
-                    repr_str(&chars[index..end].iter().collect::<String>())
+                    repr_str(&given)
                 ));
             };
             parts.push(Part::Token(token));
-            index = end;
         } else if c.is_alphabetic() {
             return Err(format!(
                 "{}: {} is no date token; the tokens are {TOKENS_TEXT}, and other text goes in double quotes \
@@ -152,7 +157,6 @@ fn parse(pattern: &str) -> Result<Vec<Part>, String> {
             ));
         } else {
             parts.push(Part::Literal(c.to_string()));
-            index += 1;
         }
     }
     if !parts.iter().any(|p| matches!(p, Part::Token(_))) {

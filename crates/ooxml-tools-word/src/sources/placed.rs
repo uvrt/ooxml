@@ -134,11 +134,14 @@ pub(crate) fn placed<'r>(
         .enumerate()
         .map(|(i, name)| rows.column(name, &format!("from_columns[{i}]"), retry))
         .collect::<Result<Vec<usize>, ToolError>>()?;
-    if (1..at.len()).any(|k| at[..k].contains(&at[k])) {
+    if at.iter().enumerate().any(|(k, c)| at.iter().take(k).any(|d| d == c)) {
         return Err(invalid("a column is named twice".to_owned(), "from_columns"));
     }
     let header: Vec<String> = match header {
-        None => at.iter().map(|c| rows.columns[*c].clone()).collect(),
+        None => at
+            .iter()
+            .map(|c| rows.columns.get(*c).cloned().unwrap_or_default())
+            .collect(),
         Some(given) if !given.is_empty() && given.len() != at.len() => {
             return Err(invalid(
                 format!(
@@ -179,7 +182,7 @@ fn no_dates(rows: &SourceRows, columns: &[usize], retry: &TryCall) -> ToolError 
     let names = columns
         .iter()
         .take(5)
-        .map(|c| repr_str(&rows.columns[*c]))
+        .map(|c| repr_str(rows.columns.get(*c).map_or("", String::as_str)))
         .collect::<Vec<_>>()
         .join(", ");
     ToolError::refusal(
@@ -225,23 +228,24 @@ fn lines(text: &str) -> Vec<String> {
 
 /// Row positions from 0 as text from 1, consecutive ones as runs (`runs`): `1-4,7`.
 pub(crate) fn runs(rows: &[usize]) -> String {
-    let mut parts: Vec<String> = Vec::new();
-    let mut k = 0;
-    while k < rows.len() {
-        let start = rows[k];
-        let mut end = start;
-        while k + 1 < rows.len() && rows[k + 1] == end + 1 {
-            k += 1;
-            end = rows[k];
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    for row in rows {
+        match spans.last_mut() {
+            Some((_, end)) if *row == *end + 1 => *end = *row,
+            _ => spans.push((*row, *row)),
         }
-        parts.push(if end == start {
-            (start + 1).to_string()
-        } else {
-            format!("{}-{}", start + 1, end + 1)
-        });
-        k += 1;
     }
-    parts.join(",")
+    spans
+        .iter()
+        .map(|(start, end)| {
+            if start == end {
+                (start + 1).to_string()
+            } else {
+                format!("{}-{}", start + 1, end + 1)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// The first `count` rows of a source as a row range (`first_rows`): `t:sales/#1:#9` of
@@ -369,7 +373,7 @@ pub(crate) fn thousands(n: usize) -> String {
     let digits = n.to_string();
     let mut out = String::new();
     for (k, c) in digits.chars().enumerate() {
-        if k > 0 && (digits.len() - k) % 3 == 0 {
+        if k > 0 && (digits.len() - k).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);

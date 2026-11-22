@@ -40,11 +40,16 @@ pub(super) struct Timing {
 }
 
 impl Timing {
-    /// `seconds` added to the part `name`.
+    /// The time since `since` added to the part `name`.
     pub(super) fn add(&mut self, name: &str, since: Instant) {
+        self.seconds(name, since.elapsed().as_secs_f64());
+    }
+
+    /// `seconds` added to the part `name`.
+    pub(super) fn seconds(&mut self, name: &str, seconds: f64) {
         let before = self.parts.get(name).and_then(Value::as_f64).unwrap_or(0.0);
-        let seconds = ((before + since.elapsed().as_secs_f64()) * 1000.0).round() / 1000.0;
-        self.parts.insert(name.to_owned(), json!(seconds));
+        self.parts
+            .insert(name.to_owned(), json!(((before + seconds) * 1000.0).round() / 1000.0));
     }
 
     /// The parts, as a reply's `data.timing`.
@@ -97,8 +102,71 @@ pub(super) fn set_from(
     )?;
     timing.add("resolve", started);
     let started = Instant::now();
+    let plan = plan(args, view, &accepted.table, &block, retry)?;
+    let lines = block.lines(retry)?;
+    timing.add("check", started);
+    let placed_from = block.provenance(plan.top);
+    let command = PlaceRows {
+        table: args.table.clone(),
+        grow: plan.short_by,
+        writes: writes(&lines, &accepted.table, &plan),
+        record: record(&placed_from, rows.name.as_deref()),
+        policy: policy(editing),
+    };
+    let look = |out: &RowsPlaced, _: &WordDoc| {
+        Some((
+            out.table.clone(),
+            out.added.iter().filter_map(|r| r.id.clone()).collect::<Vec<_>>(),
+        ))
+    };
     let table = &view.table.id;
-    let shape = &accepted.table;
+    let (done, rows_said) = match super::rows_written::run_writing_rows(editing, &command, table, look, retry) {
+        Ok(done) => done,
+        Err(error @ (EditError::Address(_) | EditError::Argument { .. } | EditError::Position(_))) => {
+            return Ok(ToolResult::failed(crate::review::edit_refusal(
+                error,
+                "",
+                retry.clone(),
+            )));
+        }
+        Err(error) => return Ok(refused(error, retry.clone())),
+    };
+    for (name, seconds) in &done.parts {
+        timing.seconds(name, *seconds);
+    }
+    let started = Instant::now();
+    let mut result = reply(editing, (table, rows), &plan, done, placed_from, retry);
+    notes(&mut result, &accepted.table, &plan);
+    result.warnings.extend(rows_said);
+    timing.add("result", started);
+    if let ooxml_tools::Outcome::Done(found) = &mut result.outcome {
+        if let Some(Value::Object(map)) = &mut found.data {
+            map.insert("timing".into(), timing.json());
+        }
+    }
+    Ok(result)
+}
+
+/// Where the block goes and how far the table falls short.
+struct Plan {
+    top: usize,
+    height: usize,
+    width: usize,
+    need_rows: usize,
+    need_columns: usize,
+    short_by: usize,
+}
+
+/// The block checked against the table as accepted (`_set_from`'s checks, before anything
+/// changes): its first row, the rows it lacks; refused where it does not fit.
+fn plan(
+    args: &super::edit_table_args::WordEditTable,
+    view: &TableView,
+    shape: &Accepted,
+    block: &Placed<'_>,
+    retry: &TryCall,
+) -> Result<Plan, ToolError> {
+    let table = &view.table.id;
     let (height, width) = (shape.height(), shape.width());
     let top = usize::try_from(args.index.unwrap_or(0)).unwrap_or(usize::MAX);
     let grow = args.grow == Some(true);
@@ -126,7 +194,7 @@ pub(super) fn set_from(
     let asked = asked(args);
     let checks = Checks {
         table,
-        block: &block,
+        block,
         asked: &asked,
         retry,
     };
@@ -137,75 +205,70 @@ pub(super) fn set_from(
         return Err(checks.no_room(room, top, short_by));
     }
     if grow {
-        fits(
-            &block,
-            need_rows,
-            width,
-            Some(&format!("{table} has {width} columns")),
-            retry,
-        )?;
-        fits(&block, MAX_ROWS.saturating_sub(top), MAX_COLUMNS, None, retry)?;
+        let columns_said = format!("{table} has {width} columns");
+        fits(block, need_rows, width, Some(&columns_said), retry)?;
+        fits(block, MAX_ROWS.saturating_sub(top), MAX_COLUMNS, None, retry)?;
     } else {
         let room_said = format!("{table} has {room} rows from row {top}");
-        fits(&block, room, width, Some(&room_said), retry)?;
+        fits(block, room, width, Some(&room_said), retry)?;
     }
     checks.one_cell_each(&grid, (top, need_rows.min(room), need_columns), None, Some(need_rows))?;
     if short_by > 0 {
         let like = grown_like(view, shape, &grid);
         checks.one_cell_each(&vec![like; short_by], (0, short_by, need_columns), Some(height), None)?;
     }
-    let lines = block.lines(retry)?;
-    timing.add("check", started);
-    let started = Instant::now();
-    // the rows added are the last ones, after the document's rows
+    Ok(Plan {
+        top,
+        height,
+        width,
+        need_rows,
+        need_columns,
+        short_by,
+    })
+}
+
+/// The block's cells by document row and grid column: rows as accepted, the rows grown the
+/// last ones after the document's; columns as accepted.
+fn writes(lines: &[Vec<Vec<String>>], shape: &Accepted, plan: &Plan) -> Vec<CellWrite> {
     let document_row = |row: usize| -> usize {
         if !shape.rows_active() {
             row
-        } else if row < height {
-            shape.rows[row]
+        } else if row < plan.height {
+            shape.rows.get(row).copied().unwrap_or(row)
         } else {
-            shape.total_rows + (row - height)
+            shape.total_rows + (row - plan.height)
         }
     };
-    let grid_column = |col: usize| if shape.active() { shape.kept[col] } else { col };
-    let writes: Vec<CellWrite> = lines
+    let grid_column = |col: usize| {
+        if shape.active() {
+            shape.kept.get(col).copied().unwrap_or(col)
+        } else {
+            col
+        }
+    };
+    lines
         .iter()
         .enumerate()
         .flat_map(|(k, line)| {
             line.iter().enumerate().map(move |(col, cell)| CellWrite {
-                row: CellAxis::At(document_row(top + k)),
+                row: CellAxis::At(document_row(plan.top + k)),
                 column: CellAxis::At(grid_column(col)),
                 text: cell.join("\u{b}"),
             })
         })
-        .collect();
-    let placed_from = block.provenance(top);
-    let command = PlaceRows {
-        table: args.table.clone(),
-        grow: short_by,
-        writes,
-        record: record(&placed_from, rows.name.as_deref()),
-        policy: policy(editing),
-    };
-    let look = |out: &RowsPlaced, _: &WordDoc| {
-        Some((
-            out.table.clone(),
-            out.added.iter().filter_map(|r| r.id.clone()).collect::<Vec<_>>(),
-        ))
-    };
-    let (done, rows_said) = match super::rows_written::run_writing_rows(editing, &command, table, look, retry) {
-        Ok(done) => done,
-        Err(error @ (EditError::Address(_) | EditError::Argument { .. } | EditError::Position(_))) => {
-            return Ok(ToolResult::failed(crate::review::edit_refusal(
-                error,
-                "",
-                retry.clone(),
-            )));
-        }
-        Err(error) => return Ok(refused(error, retry.clone())),
-    };
-    timing.add(if short_by > 0 { "rows" } else { "cells" }, started);
-    let started = Instant::now();
+        .collect()
+}
+
+/// The reply (`_set_from`'s): the table as `table_json` gives it with `data.from`, the
+/// edits' ids, the table and its cells changed.
+fn reply(
+    editing: &Editing<'_>,
+    (table, rows): (&str, &SourceRows),
+    plan: &Plan,
+    done: RowsPlaced,
+    placed_from: Map<String, Value>,
+    retry: &TryCall,
+) -> ToolResult<Value> {
     let head = editing.editor.store().snapshot();
     let mut data = head
         .doc()
@@ -218,11 +281,16 @@ pub(super) fn set_from(
         map.insert("timing".into(), Value::Null);
     }
     let added = done.added.len();
+    // the table as named after the edit (its durable id where the edit stamped the document)
+    let now = done.table.clone();
     let summary = format!(
-        "set_cells on {table} from {}{}",
+        "set_cells on {now} from {}{}",
         rows.address,
         if added > 0 {
-            format!("; {added} row(s) added after row {}, each like it", height as i64 - 1)
+            format!(
+                "; {added} row(s) added after row {}, each like it",
+                i64::try_from(plan.height).unwrap_or(0) - 1
+            )
         } else {
             String::new()
         }
@@ -231,18 +299,33 @@ pub(super) fn set_from(
     edits.extend(done.cells.edits.into_iter().map(Outcome::from));
     let mut result = outcome(&edits, summary, Some(data));
     if let ooxml_tools::Outcome::Done(found) = &mut result.outcome {
-        for id in std::iter::once(table.clone()).chain(done.cells.ids) {
+        let cells = done.cells.ids.iter().map(|id| {
+            id.rsplit_once("/c")
+                .map_or_else(|| id.clone(), |(_, place)| format!("{now}/c{place}"))
+        });
+        // the table as the rows grown left it (docx-agent's `changed`, the table's id read
+        // after them: the call's own where none were), then its cells as the edit left them
+        let grown = if added > 0 { now.clone() } else { table.to_owned() };
+        for id in std::iter::once(grown).chain(cells) {
             if !found.changed.contains(&id) {
                 found.changed.push(id);
             }
         }
     }
-    let below = height as i64 - (top + need_rows) as i64;
+    result
+}
+
+/// What the block left alone, and where its columns went in a table whose columns'
+/// deletion is pending.
+fn notes(result: &mut ToolResult<Value>, shape: &Accepted, plan: &Plan) {
+    let (top, height, width) = (plan.top, plan.height, plan.width);
+    let (need_rows, need_columns) = (plan.need_rows, plan.need_columns);
+    let below = height.saturating_sub(top + need_rows);
     if below > 0 || need_columns < width {
         let mut line = format!(
             "from filled rows {top}-{}, columns 0-{} of a {height}x{width} table; the other cells keep their text",
-            top as i64 + need_rows as i64 - 1,
-            need_columns as i64 - 1
+            i64::try_from(top + need_rows).unwrap_or(0) - 1,
+            i64::try_from(need_columns).unwrap_or(0) - 1
         );
         if below > 0 {
             line.push_str(&format!(
@@ -261,14 +344,6 @@ pub(super) fn set_from(
             need_columns - 1
         ));
     }
-    result.warnings.extend(rows_said);
-    timing.add("result", started);
-    if let ooxml_tools::Outcome::Done(found) = &mut result.outcome {
-        if let Some(Value::Object(map)) = &mut found.data {
-            map.insert("timing".into(), timing.json());
-        }
-    }
-    Ok(result)
 }
 
 /// The record a document keeps of a placement (ooxml-edit's `provenance.record`): `data.from`

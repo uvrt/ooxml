@@ -54,7 +54,7 @@ pub struct Call<'a> {
     /// The tables of the open documents the host holds itself.
     pub(crate) tables: Option<&'a dyn ooxml_tools_word::HostTables>,
     /// The rows of the sources the call names, as the host resolved them.
-    pub(crate) sources: &'a [ooxml_tools_word::SourceRows],
+    pub(crate) sources: &'a ooxml_tools_word::Sources,
     /// The pages and lines of the version's layout, where the host laid it out.
     pub(crate) counts: Option<ooxml_tools_word::LayoutCounts>,
     /// The host's limits on the call's reply.

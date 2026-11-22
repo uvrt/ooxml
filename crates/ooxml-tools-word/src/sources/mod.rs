@@ -201,15 +201,10 @@ pub struct SourceRows {
 }
 
 impl SourceRows {
-    /// The rows a host hands over as JSON: a list of `{"given", "address", "columns",
-    /// "types", "rows", "sources", "doc", "name", "version", "stale", "cache"}`, values as
-    /// [`SourceValue`] reads them; `None` for anything else.
-    #[must_use]
-    pub fn list_from_json(value: &Value) -> Option<Vec<SourceRows>> {
-        value.as_array()?.iter().map(SourceRows::from_json).collect()
-    }
-
-    fn from_json(value: &Value) -> Option<SourceRows> {
+    /// One source's rows as a host hands them over in JSON: `{"given", "address",
+    /// "columns", "types", "rows", "sources", "doc", "name", "version", "stale", "cache"}`,
+    /// values as [`SourceValue`] reads them; `None` for anything else.
+    pub(crate) fn from_json(value: &Value) -> Option<SourceRows> {
         let text = |name: &str| -> Option<Option<String>> {
             match value.get(name) {
                 None | Some(Value::Null) => Some(None),
@@ -294,8 +289,12 @@ impl SourceRows {
             return Ok(k);
         }
         let folded = casefold(name);
-        let found: Vec<usize> = (0..self.columns.len())
-            .filter(|k| casefold(&self.columns[*k]) == folded)
+        let found: Vec<usize> = self
+            .columns
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| casefold(c) == folded)
+            .map(|(k, _)| k)
             .collect();
         if let [one] = found.as_slice() {
             return Ok(*one);
@@ -369,6 +368,90 @@ impl SourceRows {
             .and_then(|r| r.get(column))
             .unwrap_or(&SourceValue::Blank)
     }
+}
+
+/// The host's refusal of a source it resolved to no rows (an unknown dataset), which the
+/// tool words with what its document says of the value (the docx format's `source_hint`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceRefused {
+    /// The source as the call gives it.
+    pub given: String,
+    /// The host's message.
+    pub message: String,
+    /// The host's options (the datasets there are).
+    pub options: Vec<String>,
+}
+
+/// The sources a call names, as the host resolved them: their rows, or its refusals.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Sources {
+    /// The rows of each source resolved.
+    pub rows: Vec<SourceRows>,
+    /// The sources refused.
+    pub refused: Vec<SourceRefused>,
+}
+
+impl Sources {
+    /// The sources a host hands over as JSON: a list, each as [`SourceRows::list_from_json`]
+    /// reads one, or `{"given", "refused": {"message", "options"}}`; `None` for anything
+    /// else.
+    #[must_use]
+    pub fn from_json(value: &Value) -> Option<Sources> {
+        let mut out = Sources::default();
+        for item in value.as_array()? {
+            match item.get("refused") {
+                Some(refused) => out.refused.push(SourceRefused {
+                    given: item.get("given")?.as_str()?.to_owned(),
+                    message: refused.get("message")?.as_str()?.to_owned(),
+                    options: refused
+                        .get("options")
+                        .and_then(Value::as_array)
+                        .map(|o| o.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
+                        .unwrap_or_default(),
+                }),
+                None => out.rows.push(SourceRows::from_json(item)?),
+            }
+        }
+        Some(out)
+    }
+}
+
+/// The refusal of a source the host refused, as the dispatcher words it: with the hint of a
+/// drawing's id given for a dataset (the docx format's `source_hint`).
+pub(crate) fn refused_source(
+    refused: &SourceRefused,
+    docx: Option<&ooxml_word_model::docx::Docx>,
+    retry: &TryCall,
+) -> ToolError {
+    let given = &refused.given;
+    let drawing_like = given.strip_prefix("d:").is_some_and(|rest| {
+        let (number, member) = rest.split_once('#').map_or((rest, None), |(n, m)| (n, Some(m)));
+        let digits = |t: &str| !t.is_empty() && t.bytes().all(|c| c.is_ascii_digit());
+        digits(number) && member.is_none_or(digits)
+    });
+    let mut message = refused.message.clone();
+    if drawing_like {
+        let here = docx.is_some_and(|d| {
+            ooxml_word_model::docx::drawings::all_drawings(d)
+                .iter()
+                .any(|x| x.id == *given)
+        });
+        let what = if here {
+            "is a drawing in this document"
+        } else {
+            "is a drawing's id (none here)"
+        };
+        message.push_str(&format!(
+            "; {given} {what}, not a dataset: a source is a dataset d:<id>, its id starting with a letter, or a table \
+             t:<name>"
+        ));
+    }
+    ToolError::refusal(
+        Refusal::NotFound,
+        message,
+        WayOut::names(refused.options.iter().cloned()).unwrap_or_else(|| WayOut::call(retry.clone())),
+    )
+    .at("from")
 }
 
 /// The refusal of a source the host handed no rows for: a dataset as ooxml-edit's
