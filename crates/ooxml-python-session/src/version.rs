@@ -5,7 +5,8 @@
 //! Must not: change a document, or touch a Python object without the lock.
 
 use crate::session::to_py;
-use ooxml_session::Opened;
+use ooxml_session::{IdStateOf, Opened};
+use ooxml_tools_word::WordLayout;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
@@ -84,6 +85,103 @@ impl PyVersion {
         let version = &self.inner;
         let found = py.detach(|| version.records()).map_err(|e| to_py(&e))?;
         Ok(found.map(|v| v.to_string()))
+    }
+
+    /// The version's validation problems, each ``(code, part, detail)`` (docx-agent's
+    /// ``validate.Problem``); ``None`` for a document that is not a Word document.
+    fn problems(&self, py: Python<'_>) -> PyResult<Option<Vec<(String, String, String)>>> {
+        let version = &self.inner;
+        let found = py.detach(|| version.problems()).map_err(|e| to_py(&e))?;
+        Ok(found.map(|list| list.into_iter().map(|p| (p.code, p.part, p.detail)).collect()))
+    }
+
+    /// What ``open_document`` says of the version (JSON text: ``title``, ``paragraphs``,
+    /// ``tables``, ``headings``, ``comments``, ``revisions``, ``template``); ``None`` for a
+    /// document that is not a Word document.
+    fn summary(&self, py: Python<'_>) -> PyResult<Option<String>> {
+        let version = &self.inner;
+        let found = py
+            .detach(|| version.summary())
+            .map_err(|e| PyValueError::new_err(e.message().to_owned()))?;
+        Ok(found.map(|v| v.to_string()))
+    }
+
+    /// The version's id state (``Document.id_state``'s string), the version numbered
+    /// ``number`` of ``last`` by the host, with the retired ids as the host numbers them:
+    /// ``gone`` and ``drawings_gone`` (``{value: number}``), ``earlier`` (``{number: words or
+    /// None}``, the changes before the document was saved) and ``said`` (``{number: words}``,
+    /// who made the others); ``None`` for a document that is not a Word document.
+    #[pyo3(signature = (number, last, *, gone, drawings_gone, earlier, said))]
+    #[allow(clippy::too_many_arguments)]
+    fn id_state(
+        &self,
+        py: Python<'_>,
+        number: i64,
+        last: i64,
+        gone: Vec<(u32, i64)>,
+        drawings_gone: Vec<(u64, i64)>,
+        earlier: Vec<(i64, Option<String>)>,
+        said: Vec<(i64, String)>,
+    ) -> PyResult<Option<String>> {
+        let host = IdStateOf {
+            version: number,
+            last,
+            gone,
+            drawings_gone,
+            earlier,
+            said,
+        };
+        let version = &self.inner;
+        py.detach(|| version.id_state(&host)).map_err(|e| to_py(&e))
+    }
+
+    /// What kind of block ``id`` names in the version: ``"paragraph"``, ``"table"`` or
+    /// ``"content control"`` (a block-level one), a renamed id followed; ``None`` when it
+    /// names none of its blocks (or the document is not a Word document).
+    fn block_kind(&self, py: Python<'_>, id: &str) -> PyResult<Option<&'static str>> {
+        let version = &self.inner;
+        py.detach(|| version.block_kind(id)).map_err(|e| to_py(&e))
+    }
+
+    /// Whether the version has the drawing ``id`` (``d:3``, ``d:3#1``).
+    fn has_drawing(&self, py: Python<'_>, id: &str) -> PyResult<bool> {
+        let version = &self.inner;
+        py.detach(|| version.has_drawing(id)).map_err(|e| to_py(&e))
+    }
+
+    /// The texts a check of numbers reads in the version (JSON text: ``{"texts": [{"at",
+    /// "text", "written", "page"}], "warnings"}``, ``{"error": ...}`` for a refusal, ``null``
+    /// for a document that is not a Word document). ``request`` (JSON): ``range`` (a check's,
+    /// refs resolved) and ``pages``; ``doc``: the document as the host names it; ``pages``:
+    /// the engine its texts are placed with (``Session.pages``; ``None``: not placed).
+    #[pyo3(signature = (doc, request, pages = None))]
+    fn number_texts(
+        &self,
+        py: Python<'_>,
+        doc: &str,
+        request: &str,
+        pages: Option<PyRef<'_, crate::PyWordPages>>,
+    ) -> String {
+        let layout = pages.map(|p| p.port());
+        let version = &self.inner;
+        py.detach(|| crate::values::number_texts(version, doc, request, layout.as_ref().map(|l| l as &dyn WordLayout)))
+    }
+
+    /// The values a scale's targets hold in the version, each with the step it is styled as
+    /// now (JSON text: ``{"values": [...]}``, as ``number_texts`` answers). ``request``
+    /// (JSON): ``scale`` (``name``, ``steps`` with ``fill``, ``text`` and ``label``,
+    /// ``targets``, ``labels``), ``range`` and ``pages``.
+    #[pyo3(signature = (doc, request, pages = None))]
+    fn scale_values(
+        &self,
+        py: Python<'_>,
+        doc: &str,
+        request: &str,
+        pages: Option<PyRef<'_, crate::PyWordPages>>,
+    ) -> String {
+        let layout = pages.map(|p| p.port());
+        let version = &self.inner;
+        py.detach(|| crate::values::scale_values(version, doc, request, layout.as_ref().map(|l| l as &dyn WordLayout)))
     }
 
     /// What changed since `before`, as docx-agent's ``Result.touched`` entries (JSON text).

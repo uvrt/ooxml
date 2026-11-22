@@ -220,9 +220,10 @@ def edit_table_cases(document) -> list[dict]:
     last) and split (by default, across, down, both, into one, past the table, no first);
     cells set (by place, in lines, as they are, by labels, a label an earlier cell wrote,
     past the table, missing a place or text, one merged cell given two values, a column's
-    rows filled and the ranges refused, references left to the host); cells set from a
+    rows filled and the ranges refused, references to a dataset there is not); cells set from a
     dataset (a header row or none, a run of rows, columns picked, dates in a pattern, rows
-    grown, the refusals of a block that does not fit or whose arguments are wrong); the
+    grown, the refusals of a block that does not fit or whose arguments are wrong) and by
+    reference to its values (:func:`_values`); the
     table kept in step with a dataset by key (``sync``: of the cases' datasets and of one
     made from the table's own text);
     arguments
@@ -272,14 +273,39 @@ def _from_sources(table: str) -> list[dict]:
             edit(grow=True, **{"from": "d:long"}), edit(**{"from": "d:long"}), edit(header=[], **{"from": "d:long"}),
             edit(cells=[{"row": 0, "col": 0, "text": "x"}], **{"from": "d:sales"}),
             edit("insert_row", **{"from": "d:sales"}), edit(**{"from": "d:nothing"}),
-            edit(grow=True, key="Region", **{"from": "d:sales"})]
+            edit(grow=True, key="Region", **{"from": "d:sales"})] + _values(edit)
 
 
-def _sync_dataset(document, table: str) -> dict | None:
-    """A dataset made from ``table``'s own text, for ``sync``: its first row's texts the
-    columns, its other rows the rows -- the second row's last value changed, the last row
-    left out, a new key added and one key spelled in capitals; ``None`` for a table too
-    small (two columns and three rows at least)."""
+def _values(edit) -> list[dict]:
+    """``set_cells`` values by reference, the host standing in (the oracle's
+    ``case_values``): a cell's ``from``, a top-level one value filling the cells without their
+    own (alone, refused; beside ``header``, refused), a column's rows filled from one value,
+    references in a text (one cell's, a fill's), and the refusals: text and from, an unknown
+    dataset (in a ``from`` and in a text: the dispatcher's, first), a row or a column the
+    dataset lacks (after an earlier cell's refusal and a fill range's)."""
+    one = {"from": "d:sales/#1/Units"}
+    nothing = {"row": 0, "col": 0, "from": "d:nothing/#1/a"}
+    return [edit(cells=[{"row": 0, "col": 0, "from": "d:sales/#1/Region"},
+                        {"row": 1, "col": 0, "from": "d:sales/#2/Units"}]),
+            edit(cells=[{"row": 0, "col": 0}, {"row": 1, "col": 0, "text": "Own"}], **one),
+            edit(cells=[{"row": 0, "col": 0, "text": "Own"}], **one), edit(**one), edit(cells=[], **one),
+            edit(cells=[{"row": 0, "col": 0}], header=["A"], **one),
+            edit(cells=[{"col": 0, "rows": "*", "from": "d:long/#3/Name"}]),
+            edit(cells=[{"col": 0, "rows": "1..", "text": "N {{d:sales/#2/Units}} u"}]),
+            edit(cells=[{"row": 0, "col": 0, "text": "Line\nA {{d:sales/#1/Region}} b {{d:long/#2/Code}}"}]),
+            edit(cells=[{"row": 0, "col": 0, "text": "x", "from": "d:sales/#1/Region"}]),
+            edit(cells=[nothing]), edit(cells=[{"row": 0, "col": 0}, nothing]),
+            edit(cells=[{"row": 0, "col": 0, "text": "{{d:nothing/#1/a}}"}]),
+            edit(cells=[{**nothing, "row": 99}]), edit(cells=[{**nothing, "rows": "5..2"}]),
+            edit(cells=[{"row": 0, "col": 0, "from": "d:sales/#9/Region"}]),
+            edit(cells=[{"row": 0, "col": 0}, {"row": 0, "col": 0, "from": "d:sales/#1/Nope"}]),
+            edit(cells=[{"col": 0, "rows": "5..2", "from": "d:sales/#9/Region"}])]
+
+
+def _own_text(document, table: str) -> tuple[list[str], list[list[str]]] | None:
+    """``table``'s text as a dataset's: its first row's texts the columns, the rows between
+    its first and last row the rows; ``None`` for a table too small (two columns and three
+    rows at least)."""
     try:
         grid = document.table(table).grid()
     except Exception:  # noqa: BLE001 - a table it cannot read has no case
@@ -291,7 +317,18 @@ def _sync_dataset(document, table: str) -> dict | None:
     columns = [t or f"column {k}" for k, t in enumerate(texts[0][:width])]
     if len(set(columns)) != width:
         return None
-    rows = [line[:width] for line in texts[1:-1]]
+    return columns, [line[:width] for line in texts[1:-1]]
+
+
+def _sync_dataset(document, table: str) -> dict | None:
+    """A dataset made from ``table``'s own text, for ``sync`` (:func:`_own_text`) -- the
+    second row's last value changed, the last row left out, a new key added and one key
+    spelled in capitals."""
+    found = _own_text(document, table)
+    if found is None:
+        return None
+    columns, rows = found
+    width = len(columns)
     if len(rows) > 1:
         rows[1] = rows[1][:-1] + [rows[1][-1] + " (new)"]
     rows.append(["K-NEW"] + ["x"] * (width - 1))
@@ -300,12 +337,25 @@ def _sync_dataset(document, table: str) -> dict | None:
     return {"id": "own", "columns": columns, "types": None, "rows": rows}
 
 
+def _sync_gone_dataset(document, table: str) -> dict | None:
+    """``table``'s own text (:func:`_own_text`) with its second row gone and its last row's
+    last value changed: a row deleted above a row written (a tracked deletion of a row that
+    is the author's own pending insertion removes it outright); ``None`` under three rows."""
+    found = _own_text(document, table)
+    if found is None or len(found[1]) < 3:
+        return None
+    columns, rows = found
+    rows[-1] = rows[-1][:-1] + [rows[-1][-1] + " (again)"]
+    return {"id": "own_gone", "columns": columns, "types": None, "rows": rows[:1] + rows[2:]}
+
+
 def _syncs(document, table: str) -> list[dict]:
-    """``sync`` of ``table`` with a dataset of its own text (:func:`_sync_dataset`) and with
-    the cases' datasets: by labels, removing the keys gone, by another key column, keys
+    """``sync`` of ``table`` with a dataset of its own text (:func:`_sync_dataset`, and
+    :func:`_sync_gone_dataset` with the keys gone removed) and with the cases' datasets: by labels, removing the keys gone, by another key column, keys
     matched loosely and by pairs, columns named, and the refusals of arguments for other
     actions."""
     own = _sync_dataset(document, table)
+    gone = _sync_gone_dataset(document, table)
     sets = DATASETS + ([own] if own else [])
 
     def edit(**arguments) -> dict:
@@ -328,6 +378,8 @@ def _syncs(document, table: str) -> list[dict]:
                 edit(match=[{"table": "nope", "data": "K-NEW"}], **{"from": "d:own"}),
                 edit(from_columns=own["columns"][:1] + [""] * (len(own["columns"]) - 1), **{"from": "d:own"}),
                 edit(from_columns=own["columns"] + ["extra"], **{"from": "d:own"})]
+    if gone:      # its own dataset beside the others (the other cases' inputs unchanged)
+        out += [{**edit(remove=True, **{"from": "d:own_gone"}), "datasets": sets + [gone]}]
     return out
 
 

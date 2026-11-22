@@ -79,14 +79,14 @@ pub(super) fn laid(
     facts: &Facts<'_>,
     owned: Owned<'_>,
     asked: &Asked<'_>,
-    approximations: &[ooxml_word_pages::warnings::Approximation],
+    coverage: &ooxml_word_pages::coverage::Coverage,
     trials: (&Mutex<PageEngine>, &dyn Cancel),
 ) -> Result<(Value, Option<Value>), ToolError> {
     let doc = owned.doc;
     let docx = facts.docx();
     let mut parts = Map::new();
     let mut settings = Map::new();
-    page_facts_json(facts, asked.minimum, approximations, &mut parts, &mut settings);
+    page_facts_json(facts, asked.minimum, coverage, &mut parts, &mut settings);
     parts.insert("settings".into(), Value::Object(settings));
     let placed = Placed::of(facts);
     paragraph_facts(facts, &placed, doc, &mut parts)?;

@@ -6,17 +6,44 @@
 //! every warning in docx2svg's order -- the model's reading warnings, the substituted faces,
 //! the glyph fallbacks grouped by face, then what the layout said ([`crate::warnings`]).
 //!
-//! A version laid out here is never partial in docx2svg's sense but by a missing face: a
-//! layout that stops is a fallback ([`crate::Fallback`]), and nothing is drawn as a
-//! placeholder.
+//! A version laid out here is partial in docx2svg's sense by a missing face, or by a
+//! paragraph the layout carried on past as a placeholder (`Coverage.placeholders`: such a
+//! body block is not laid out); a layout that stops is a fallback ([`crate::Fallback`]).
 //!
 //! Must not: lay out, or word the report as a tool does (`check` compacts it).
 
 use crate::engine::PageEngine;
 use crate::version::LaidVersion;
-use crate::warnings::{Approximation, LayoutWarning};
+use crate::warnings::{Approximation, DrawnPlaceholder, LayoutWarning};
 use ooxml_fonts::{Grade, SubstitutionKind};
+use ooxml_word_model::model::Block;
 use ooxml_word_model::value::Text;
+
+/// `version`'s body blocks laid out, and its body blocks (its top-level blocks, the
+/// endnotes placed in the flow left out): all but those drawn as placeholders
+/// (`coverage_of`'s `skipped`).
+#[must_use]
+pub fn blocks_laid_out(version: &LaidVersion) -> (usize, usize) {
+    let layout = version.layout();
+    let blocks = layout.roles.iter().filter(|role| role.is_none()).count();
+    let said = version.said();
+    let skipped: Vec<&str> = said.placeholders.iter().filter_map(|p| p.path.as_deref()).collect();
+    let placeheld = layout
+        .document
+        .body
+        .iter()
+        .filter(|block| skipped.contains(&block_path(block)))
+        .count();
+    (blocks.saturating_sub(placeheld), blocks)
+}
+
+/// A top-level block's element path.
+fn block_path(block: &Block) -> &str {
+    match block {
+        Block::Paragraph(p) => &p.path,
+        Block::Table(t) => &t.path,
+    }
+}
 
 /// What docx2svg calls a recorded face's substitute (`fonts.RECORDED`).
 pub const RECORDED: &str = "recorded metrics";
@@ -87,14 +114,16 @@ impl Substituted {
 }
 
 /// How much of a document a version covers (docx2svg's `Coverage` of a Rust layout).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Coverage {
-    /// No face is missing.
+    /// No face is missing, and nothing is drawn as a placeholder.
     pub complete: bool,
     /// Its pages (all laid out).
     pub pages: usize,
-    /// The body's top-level blocks (all laid out).
+    /// The body's top-level blocks.
     pub blocks: usize,
+    /// Those laid out: all but the ones drawn as placeholders.
+    pub laid_out: usize,
     /// The faces laid out with another, in docx2svg's order.
     pub substituted: Vec<Substituted>,
     /// The faces found nowhere, sorted.
@@ -103,6 +132,8 @@ pub struct Coverage {
     pub approximations: Vec<Approximation>,
     /// Every warning, in docx2svg's order.
     pub warnings: Vec<LayoutWarning>,
+    /// Every placeholder drawn, in the order drawn.
+    pub placeholders: Vec<DrawnPlaceholder>,
 }
 
 fn repr(text: &str) -> String {
@@ -273,14 +304,17 @@ impl PageEngine {
                 .map(|(family, c, used)| glyph_approximation(family, *c, used)),
         );
         warnings.extend(said.warnings.iter().cloned());
+        let (laid_out, blocks) = blocks_laid_out(version);
         Some(Coverage {
-            complete: missing.is_empty(),
+            complete: missing.is_empty() && said.placeholders.is_empty(),
             pages: version.page_count(),
-            blocks: version.layout().roles.iter().filter(|role| role.is_none()).count(),
+            blocks,
+            laid_out,
             substituted,
             missing,
             approximations,
             warnings,
+            placeholders: said.placeholders.clone(),
         })
     }
 

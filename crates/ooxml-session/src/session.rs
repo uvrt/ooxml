@@ -30,6 +30,9 @@ pub struct SessionConfig {
     /// [`CallContext::locale`], comes first); `None`: the host set none, and a call that names
     /// none reads each document in its own language.
     pub locale: Option<ooxml_numfmt::Locale>,
+    /// What the session lays its Word documents out with, each document's engine its own
+    /// (fonts and memory budget); `None`: only with the layout a call's host gives.
+    pub pages: Option<crate::SessionPages>,
 }
 
 /// A document at one version, as a call reads it: it stays readable, unchanged, while

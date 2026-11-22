@@ -8,21 +8,22 @@ shard of the documents at a time:
     python tools/gates.py corpus OUT                      # docx2svg's tools/make_*.py, each in OUT/<name>
     python tools/gates.py report OUT 6 61                 # the 3k document: make_report 6, grown to 61 chapters
     python tools/gates.py diff --gate fixtures --mode styled --shard 2/4 --bin DIR --out DIR
-    python tools/gates.py matrix --gates fixtures,corpus --warm  # the differential jobs (JSON; tools/gates_jobs.py)
+    python tools/gates.py matrix --gates fixtures --store DIR  # the differential jobs (JSON; tools/gates_jobs.py)
     python tools/gates.py plan [--changed FILE]...        # the modes and fixtures a branch can affect (auto)
     python tools/gates.py fixtures --fixtures auto        # the fixtures a branch runs (all, or a comma list)
     python tools/gates.py summary DIR                     # the job summary's tables (Markdown)
     python tools/gates.py cache-key                       # the reference cache's chain digest
-    python tools/gates.py cache-merge STORE FILE...       # kept results added to a store
+    python tools/gates.py cache-merge STORE FILE...       # kept results and coverage added to a store
     python tools/gates.py frozen-api                      # the harness uses only the frozen reference's names
     python tools/gates.py durations DIR [--write]         # a run's warm times per mode (tools/gates_durations.json)
 
 The reference cache (crates/ooxml-oracle/python/reference_cache.py): with ``--cache STORE``
 a ``diff`` of an edit mode uses docx-agent's results kept in STORE where their key (the code
 the reference runs, its environment, the document and the case) still holds, runs docx-agent
-for the rest and writes those to ``--out``'s reference-new.jsonl.gz; ``cache-merge`` adds
-them to the store.  Verdicts are the same as without it: a kept result whose comparison
-finds a difference is computed again in full.
+for the rest and writes those to ``--out``'s reference-new.jsonl.gz, with each document's case
+keys (its coverage: tools/gates_store.py); ``cache-merge`` adds both to the store, and the plan
+(``matrix --store``) runs warm only the modes the store covers.  Verdicts are the same as
+without it: a kept result whose comparison finds a difference is computed again in full.
 
 A ``diff`` writes the harness's log, its cases with differences (JSON lines) and a summary
 (JSON) into ``--out``.  It fails when a case differs and no entry of the known differences
@@ -70,11 +71,14 @@ from xml.etree import ElementTree
 import gates_fixtures
 import gates_hunks
 import gates_jobs
+import gates_store
 
 ROOT = Path(__file__).resolve().parents[1]
 HARNESS = ROOT / "crates" / "ooxml-oracle" / "python"
 KNOWN = ROOT / "crates" / "ooxml-oracle" / "known-differences.toml"
 REPORT = ROOT / "python" / "ooxml-core" / "tests" / "harness"
+#: The edits harness's case keys per document (--cache-used), in a diff's --out.
+USED = "reference-used.json"
 
 #: The trees a gate reads by default (the corpus: the folder ``corpus`` made, given as --tree).
 FIXTURES = gates_fixtures.FIXTURES
@@ -241,12 +245,32 @@ def harness_command(args, out: Path, results: Path, files: list[Path]) -> tuple[
         (out / "french").mkdir(exist_ok=True)    # --spacing's folder for the French copies
         command.insert(command.index("--spacing") + 1, str(out / "french"))
     if args.cache:
-        command += ["--cache", args.cache, "--cache-new", str(out / "reference-new.jsonl.gz")]
+        command += ["--cache", args.cache, "--cache-new", str(out / "reference-new.jsonl.gz"),
+                    "--cache-used", str(out / USED)]
     if args.per_tool and args.mode in PER_TOOL:
         env[PER_TOOL[args.mode]] = str(args.per_tool)
     elif args.per_tool:
         command += ["--limit", str(args.per_tool)]
     return [*command, "--results", str(results), *map(str, files)], env
+
+
+def _relative(path: str, tree: Path) -> str:
+    return str(Path(path).resolve().relative_to(tree.resolve()))
+
+
+def write_coverage(args, out: Path, tree: Path, only: list[str] | None) -> None:
+    """The shard's coverage of the store (tools/gates_store.py) from the harness's case keys;
+    the corpus's with its tree's documents (the plan job does not make the corpus)."""
+    used = json.loads((out / USED).read_text())
+    documents = {_relative(path, tree): keys for path, keys in used.items()}
+    whole = None if args.gate in TREES else [str(f.relative_to(tree)) for f in documents_of(tree, only)]
+    shard = gates_store.coverage(args.gate, args.mode, args.per_tool, documents, whole)
+    (out / gates_store.COVERAGE_NEW).write_text(json.dumps(shard))
+
+
+def documents_of(tree: Path, only: list[str] | None, every: int = 1) -> list[Path]:
+    """Every ``every``-th document of ``tree`` (``only``: of those names), in one shard."""
+    return documents(tree, every, (1, 1), only)
 
 
 def run_diff(args) -> int:
@@ -278,6 +302,8 @@ def run_diff(args) -> int:
                                               "cause": entry and entry["cause"],
                                               **({"errors": case["errors"]} if case.get("errors") else {})})
     crashed = done is not None and done.returncode not in (0, 1) or (files and not totals)
+    if args.cache and not crashed and (out / USED).is_file():
+        write_coverage(args, out, tree, only)
     forms = totals.get("not_supported_forms", {})
     unlisted = unlisted_forms(forms, allowed_forms())
     summary = {"gate": args.gate, "mode": args.mode, "shard": args.shard, "every": args.every,
@@ -324,10 +350,13 @@ def run_frozen_api(args) -> int:  # noqa: ARG001 -- every command takes its argu
 
 
 def run_cache_merge(args) -> int:
-    sys.path.insert(0, str(HARNESS))
-    from reference_cache import merge
-
-    print(merge(args.store, args.files), "results added")
+    """Adds the results and coverage files (by name: reference-new.jsonl.gz, COVERAGE_NEW)
+    to the store; prints the changes first (0: nothing to save)."""
+    results = [f for f in args.files if not f.endswith(gates_store.COVERAGE_NEW)]
+    coverages = [f for f in args.files if f.endswith(gates_store.COVERAGE_NEW)]
+    n = gates_store.merge(args.store, results, coverages)
+    print(f"{n['added'] + n['dropped'] + n['recorded']} changes: {n['added']} results added, {n['dropped']} "
+          f"dropped (their cases are no longer made), {n['recorded']} documents' coverage recorded")
     return 0
 
 
@@ -467,11 +496,26 @@ def default_per_tool(gate: str) -> int:
     return CORPUS_PER_TOOL if gate == "corpus" else 0
 
 
-def planned_documents(args) -> int:
+def planned_documents(args) -> list[str]:
     """The documents one mode of the fixtures and reads gates runs: the fixtures picked
-    (``--fixtures``), every ``--every``-th."""
+    (``--fixtures``), every ``--every``-th (relative to the fixtures' tree)."""
     chosen = fixture_selection(args.fixtures, args.base)
-    return len(documents(FIXTURES, args.every, (1, 1), None if chosen == gates_fixtures.ALL else chosen))
+    found = documents_of(FIXTURES, None if chosen == gates_fixtures.ALL else chosen, args.every)
+    return [str(f.relative_to(FIXTURES)) for f in found]
+
+
+def warm_modes(args, gate: str, modes: list[str], per_tool: str, fixtures: list[str] | None) -> list[str]:
+    """The modes of ``gate`` the run plans warm: ``--warm`` all of them (a workflow without
+    ``--store``), else those the store's coverage covers (tools/gates_store.py)."""
+    if args.warm:
+        return modes
+    covered = gates_store.load(args.store) if args.store else None
+    if gate in TREES:
+        planned = fixtures
+    else:   # the corpus: the documents its last run found
+        found = gates_store.tree(covered, gate)
+        planned = None if found is None else found[::max(args.every, 1)]
+    return sorted(gates_store.warm_modes(covered, gate, modes, per_tool, planned))
 
 
 def run_matrix(args) -> int:
@@ -494,19 +538,23 @@ def run_matrix(args) -> int:
     shards = int(args.shards) if args.shards not in ("", "auto") else None
     durations = gates_jobs.load_durations()
     fixtures = planned_documents(args) if shards is None and any(g in TREES for g in gates) else None
+    shapes = []
     include = []
     for gate in gates:
         if gate not in ("fixtures", "corpus", "reads") or gate == "reads" and not reads:
             continue
         per_tool = args.per_tool if args.per_tool != "" else str(default_per_tool(gate))
         gate_modes = list(READ_MODES if gate == "reads" else modes)
-        count = fixtures if gate in TREES else None     # the corpus: as recorded
+        count = len(fixtures) if gate in TREES and fixtures is not None else None     # the corpus: as recorded
         estimates = {mode: gates_jobs.estimate(durations, gate, mode, count) for mode in gate_modes}
-        jobs = gates_jobs.gate_jobs(gate, gate_modes, warm=args.warm, shards=shards, estimates=estimates)
+        warm = [] if shards or gate == "reads" else warm_modes(args, gate, gate_modes, per_tool, fixtures)
+        if not shards and gate != "reads":
+            shapes.append(f"{gate} warm: {','.join(warm) or '(none)'}")
+        jobs = gates_jobs.gate_jobs(gate, gate_modes, warm=warm, shards=shards, estimates=estimates)
         include += [{**job, "per_tool": per_tool} for job in jobs]
     if len(include) > 256:
         raise SystemExit(f"{len(include)} jobs: GitHub's matrix takes 256; fewer shards or modes")
-    shape = f"shards {shards}" if shards else "warm" if args.warm else "cold"
+    shape = f"shards {shards}" if shards else "; ".join(shapes) or "reads"
     print(f"{len(include)} differential jobs ({shape})", file=sys.stderr)
     print(json.dumps({"include": include}) if include else "")
     return 0
@@ -599,7 +647,9 @@ def main(argv: list[str] | None = None) -> int:
     m.add_argument("--modes", default="auto", help="all, auto or a comma list")
     m.add_argument("--base", default="origin/main", help="modes auto: the changes since this one's merge base")
     m.add_argument("--shards", default="auto", help="jobs per mode; auto: tools/gates_jobs.py")
-    m.add_argument("--warm", action="store_true", help="the reference cache holds a store for this checkout")
+    m.add_argument("--store", help="the reference cache's store restored for this checkout: the modes its "
+                   "coverage covers run warm (tools/gates_store.py)")
+    m.add_argument("--warm", action="store_true", help="every mode warm (a workflow from before --store)")
     m.add_argument("--per-tool", default="")
     m.add_argument("--every", type=int, default=1)
     m.add_argument("--fixtures", default="all", help="fixtures and reads: all, auto or a comma list (job sizes)")

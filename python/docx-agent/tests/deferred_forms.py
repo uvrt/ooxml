@@ -236,4 +236,10 @@ DEFERRED: dict[str, str] = {
         "word_set_text by reference",
     "test_text_facts.py::test_an_escape_writes_the_reference_and_a_bad_one_changes_nothing":
         "word_set_text by reference",
+    "test_owned_sources.py::test_the_records_of_an_owned_document_are_the_session_s":
+        "word_insert_markdown from data (from, blob)",
+    "test_owned_sources.py::test_store_provenance_on_an_owned_document_is_an_internal_refusal":
+        "word_insert_markdown from data (from, blob)",
+    "test_owned_sources.py::test_store_provenance_is_never_handed_the_owner_s_document":
+        "word_insert_markdown from data (from, blob)",
 }

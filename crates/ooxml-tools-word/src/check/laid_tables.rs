@@ -105,13 +105,14 @@ pub fn past_margins_json(entry: &PastMargins) -> Value {
 pub fn uncertain_json(entry: &Uncertain) -> Value {
     let mut out = Map::new();
     out.insert("page".into(), Value::from(entry.page));
-    out.insert(
-        "approximations".into(),
-        entry
-            .approximations
-            .iter()
-            .map(|a| json!({"reason": a.reason, "at": a.at}))
-            .collect(),
-    );
+    for (kind, places) in [
+        ("placeholders", &entry.placeholders),
+        ("approximations", &entry.approximations),
+    ] {
+        if !places.is_empty() {
+            let listed: Vec<Value> = places.iter().map(|a| json!({"reason": a.reason, "at": a.at})).collect();
+            out.insert(kind.into(), Value::from(listed));
+        }
+    }
     Value::Object(out)
 }

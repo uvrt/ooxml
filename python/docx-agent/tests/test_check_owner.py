@@ -189,7 +189,9 @@ def test_a_check_reports_what_a_check_of_its_version_alone_reports(made, workers
     assert results["owner"] == results["alone"]
 
 
-@pytest.mark.usefixtures("python_layout")
+# Lane H7e: an owned document's numbers are placed by the session's own engine, not by a
+# worker trip -- the trips counted here are docx-agent's own documents' (the cut deletes them).
+@pytest.mark.usefixtures("python_layout", "python_owned")
 def test_a_check_with_numbers_goes_to_the_worker_once(made, monkeypatch):
     # The worker's trips: docx-agent's own way of checking.  Lane L4b: only for docx2svg's Python layout -- a version the Rust layout lays out has
     # its facts made in this process, no trip at all (tests/test_layout_memory_l4b.py).

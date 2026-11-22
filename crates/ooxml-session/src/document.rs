@@ -4,7 +4,8 @@
 //! as its package ([`PackageDoc`]) --, a version of either as a call reads it ([`At`]), and
 //! what the host keeps of a Word document beside its versions: the version it was opened as
 //! (what a session's own edits are told from) and its tracking mode (each later edit's
-//! revision policy), the ids its versions retired and the rows its table calls wrote.
+//! revision policy), the ids its versions retired, the rows its table calls wrote and its
+//! page engine where the session lays it out.
 //!
 //! Must not: dispatch calls or hold the session's table; parse or write a package beyond
 //! opening it; read the clock but through the store's port.
@@ -58,6 +59,9 @@ pub(crate) struct Word {
     /// The rows this session's `word_edit_table` calls added or wrote into (round 58,
     /// R126): `check`'s `row_text_format` reads them.
     pub(crate) rows_written: RowsWritten,
+    /// Its page engine, where the session lays it out itself, and what its host set it to
+    /// be laid out with (`crate::pages`).
+    pub(crate) pages: crate::pages::DocPages,
     /// The versions its live views were given, kept within the session's memory budget.
     pub(crate) views: crate::live_view::LiveViews,
 }
@@ -192,6 +196,7 @@ impl Document {
                     last_check: Arc::default(),
                     images: ooxml_tools_word::PageImages::new(Some(Arc::clone(&context.budget))),
                     rows_written: RowsWritten::default(),
+                    pages: crate::pages::DocPages::default(),
                     views: crate::live_view::LiveViews::new(Arc::clone(&context.budget)),
                 }))
             }

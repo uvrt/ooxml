@@ -13,6 +13,7 @@ OpenAI Responses and Chat Completions adapters' strict rules.
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 
@@ -30,7 +31,10 @@ PORTED = ("word_set_text", "word_format", "replace_text")
 
 
 def export(tool: Tool) -> dict:
-    """What ``ToolSpec::export`` writes, from today's Python definition."""
+    """What ``ToolSpec::export`` writes, from today's Python definition: copies of its
+    schemas, so that a test changing the export leaves the shared tool as it is (``undo``'s
+    ``scope`` popped from the tool's own schema refused it in every later call of the
+    worker)."""
     strings = list
     return {
         "name": tool.name, "description": tool.description, "group": tool.group,
@@ -46,7 +50,7 @@ def export(tool: Tool) -> dict:
         "kind_values": {name: {value: strings(kinds) for value, kinds in values.items()}
                         for name, values in tool.kind_values.items()},
         "kind_descriptions": {name: dict(texts) for name, texts in tool.kind_descriptions.items()},
-        "schema": tool.schema, "canonical": tool.canonical,
+        "schema": copy.deepcopy(tool.schema), "canonical": tool.canonical,
     }
 
 

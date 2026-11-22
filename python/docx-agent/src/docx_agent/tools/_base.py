@@ -265,6 +265,14 @@ def resolve(call: Any, value: Any) -> Any:
     did so for a tool's declared targets; this covers the rest)."""
     if isinstance(value, list):
         return [resolve(call, item) for item in value]
+    return _heading_range(call, refs_resolved(call, value))
+
+
+def refs_resolved(call: Any, value: Any) -> Any:
+    """``value`` (an address, or a list of them) with each ``$name`` ref replaced, a span's
+    ends too; a heading's range left as given (where the session reads it as its span)."""
+    if isinstance(value, list):
+        return [refs_resolved(call, item) for item in value]
     if isinstance(value, str) and ".." in value and "$" in value:
         # A span's ends, either a ref: $intro..$outro, p:A..$end, $start.. (the dispatcher
         # resolved a leading one).
@@ -273,7 +281,7 @@ def resolve(call: Any, value: Any) -> Any:
                          for end in (first, last))
     if isinstance(value, str) and value.startswith("$"):
         value = call.resolve_ref(value)
-    return _heading_range(call, value)
+    return value
 
 
 def _heading_range(call: Any, value: Any) -> Any:

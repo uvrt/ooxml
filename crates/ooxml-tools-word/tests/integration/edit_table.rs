@@ -243,15 +243,12 @@ fn two_values_for_one_merged_cell_are_refused_with_the_split() {
 }
 
 #[test]
-fn a_value_by_reference_is_not_supported_yet() {
+fn a_value_by_reference_the_host_did_not_hand_is_refused() {
     let reply = edit(json!({"action": "set_cells", "cells": [{"row": 0, "col": 0, "from": "d:x/#1/a"}]}));
-    assert_eq!(reply["ok"], json!(false), "{reply}");
-    assert_eq!(reply["error"]["code"], json!("refused"), "{reply}");
-    assert_eq!(
-        reply["error"]["details"]["not_supported"],
-        json!("word_edit_table set_cells values by reference (from, {{...}})"),
-        "{reply}"
-    );
+    // the host hands the values a call names; one it handed nothing for names no dataset
+    assert_eq!(reply["error"]["code"], "not_found", "{reply}");
+    assert_eq!(reply["error"]["message"], json!("no dataset d:x"), "{reply}");
+    assert_eq!(reply["error"]["field"], json!("cells[0].from"), "{reply}");
 }
 
 /// A made-up document whose first row holds a drawing (number 5) and a content control

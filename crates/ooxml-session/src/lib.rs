@@ -25,6 +25,7 @@
 #![forbid(unsafe_code)]
 
 mod batch;
+mod block_pages;
 mod call;
 mod changes;
 mod context;
@@ -34,6 +35,7 @@ mod error;
 mod group;
 mod handlers;
 mod history;
+mod host_reads;
 mod ids;
 mod live_view;
 mod memory;
@@ -52,8 +54,10 @@ mod rows_written;
 mod session;
 mod undo;
 mod update;
+mod values;
 
 pub use batch::{ReadBatch, ReadOp, BATCH_TIMEOUT, MAX_READ_BATCH_CHARS, READ_BATCH};
+pub use block_pages::{BlockAt, BlockPages};
 pub use call::Call;
 pub use changes::{ChangedPart, IdsSince};
 pub use context::{CallContext, CancelToken};
@@ -62,6 +66,7 @@ pub use error::SessionError;
 pub use group::GroupMark;
 pub use handlers::{EditHandler, ReadHandler, Tool};
 pub use history::{NumberedStep, Numbers, Undone};
+pub use host_reads::IdStateOf;
 pub use ids::{DocId, DocKind};
 pub use live_view::{PageSvg, TextMode, View, ViewError, ViewPage, VIEW_TOKENS};
 pub use memory::{Account, MemoryBudget};
@@ -70,7 +75,7 @@ pub use names::DocNames;
 pub use ooxml_store::Caller;
 pub use ooxml_tools_word::{EditFn, Hosting, ReadFn, TrackingFn};
 pub use ooxml_word_model::ids::HeldId;
-pub use pages::{BlockAt, BlockPages};
+pub use pages::SessionPages;
 pub use reading_edit::ReadingEditHandler;
 pub use registry::Registry;
 pub use retired::RetiredBy;

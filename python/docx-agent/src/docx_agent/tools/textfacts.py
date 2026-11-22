@@ -168,7 +168,14 @@ def data_count(returned: Any) -> int:
 
 
 def number_texts(call: Any, scope: Mapping[str, Any]) -> list[NumberText]:
-    """``DocumentFormat.number_texts`` for a Word document (the module's notes)."""
+    """``DocumentFormat.number_texts`` for a Word document (the module's notes); for one the
+    Rust session owns, the session's reading of it (:func:`docx_agent.rust.hooks.number_texts`,
+    lane H7e)."""
+    from ..rust import hooks
+
+    subject = hooks.owned(call.subject)
+    if subject is not None:
+        return hooks.number_texts(call, subject, scope)
     from ..scope import Scope, ranges_of
     from ._base import resolve
     from .shared import _pages_of

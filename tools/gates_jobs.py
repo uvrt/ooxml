@@ -5,10 +5,11 @@ a job (tools/gates.py ``matrix``, gates.yml's plan job).
 A job waits for a runner far longer than most modes take to run (GitHub gives a repository
 about twenty runners at once), so a run asks for as few jobs as its work allows:
 
-* **cold** (no store of docx-agent's results for the reference code the run checks out --
-  ``gates.py cache-key``, looked up by the plan job): every edit mode in COLD_SHARDS shards,
-  as before the reference cache was warm;
-* **warm** (a store exists): each mode in as many shards as its recorded warm time needs at
+* **cold** (the store of docx-agent's results for the reference code the run checks out --
+  ``gates.py cache-key``, restored by the plan job -- does not cover every document the mode
+  runs, by the store's coverage: tools/gates_store.py; or there is no store): the mode in
+  COLD_SHARDS shards, as before the reference cache was warm;
+* **warm** (the store covers the mode): the mode in as many shards as its recorded warm time needs at
   SHARD_TARGET seconds a shard (one, for all but the slowest), and the modes whose warm time
   is under BUNDLE_UNDER seconds run one after another in one job per gate (a *bundle*, at
   most BUNDLE_LIMIT seconds of work) -- one checkout and setup for all of them;
@@ -30,6 +31,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Collection
 from pathlib import Path
 
 DURATIONS = Path(__file__).resolve().parent / "gates_durations.json"
@@ -68,15 +70,19 @@ def _job(gate: str, modes: list[str], shard: str) -> dict:
     return {"gate": gate, "modes": ",".join(modes), "shard": shard, "label": "+".join(modes)}
 
 
-def gate_jobs(gate: str, modes: list[str], *, warm: bool, shards: int | None,
+def gate_jobs(gate: str, modes: list[str], *, warm: Collection[str], shards: int | None,
               estimates: dict[str, float | None]) -> list[dict]:
-    """The jobs that run ``modes`` of ``gate`` (see the module's docstring); ``estimates``:
-    each mode's warm time (s) or None."""
-    if shards or not (warm or gate in NO_CACHE):
-        n = shards or COLD_SHARDS
-        return [_job(gate, [mode], f"{k}/{n}") for mode in modes for k in range(1, n + 1)]
+    """The jobs that run ``modes`` of ``gate`` (see the module's docstring); ``warm``: the
+    modes the reference cache covers; ``estimates``: each mode's warm time (s) or None."""
+    if shards:
+        return [_job(gate, [mode], f"{k}/{shards}") for mode in modes for k in range(1, shards + 1)]
+    cold = [] if gate in NO_CACHE else [mode for mode in modes if mode not in warm]
+    # the cold modes' jobs first: the longest, they start before the pool fills
+    first = [_job(gate, [mode], f"{k}/{COLD_SHARDS}") for mode in cold for k in range(1, COLD_SHARDS + 1)]
     jobs, bundles = [], []
     for mode in modes:
+        if mode in cold:
+            continue
         seconds = estimates.get(mode)
         if seconds is not None and seconds < BUNDLE_UNDER:
             # first fit, in the modes' order: a mode joins the first bundle with room for it
@@ -89,7 +95,7 @@ def gate_jobs(gate: str, modes: list[str], *, warm: bool, shards: int | None,
             continue
         n = 1 if seconds is None else max(1, math.ceil(seconds / SHARD_TARGET))
         jobs += [_job(gate, [mode], f"{k}/{n}") for k in range(1, n + 1)]
-    return [_job(gate, members, "1/1") for members, _ in bundles] + jobs
+    return first + [_job(gate, members, "1/1") for members, _ in bundles] + jobs
 
 
 def warm_durations(summaries: list[dict], defaults: dict[str, int]) -> dict[str, dict[str, dict]]:
