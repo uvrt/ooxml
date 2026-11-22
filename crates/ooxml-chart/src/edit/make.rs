@@ -44,6 +44,15 @@ impl Make {
         }
     }
 
+    /// The names of a new chart part, whose root declares `c` and `a`.
+    pub(crate) fn fresh() -> Make {
+        Make {
+            c: Some("c".to_owned()),
+            a: Some("a".to_owned()),
+            c15: None,
+        }
+    }
+
     fn prefix(given: Option<&String>, fallback: &'static str) -> Option<String> {
         match given {
             Some(p) if p.is_empty() => None,

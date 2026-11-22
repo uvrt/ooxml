@@ -331,8 +331,14 @@ impl Plan<'_> {
             Some(axis) => axis_name(axis),
             None => {
                 let axes = axis_names(self.root);
-                scale_axis(&self.args.target, self.root, &axes, self.chart_type(), scale)
-                    .map_err(|e| self.refuse(e.0))?
+                scale_axis(
+                    &self.args.target,
+                    self.root,
+                    &axes,
+                    (self.chart_type(), "set_axis_scale"),
+                    scale,
+                )
+                .map_err(|e| self.refuse(e.0))?
             }
         };
         Ok(StyleAction::Scale {
@@ -386,6 +392,32 @@ impl Plan<'_> {
     }
 }
 
+/// `finish_add`'s scale on the chart `add` made (`address`): the axis given, else the one
+/// it is for (`scale_axis(..., action="add with scale")`), then its keywords.
+///
+/// # Errors
+/// As `set_axis_scale` refuses the scale.
+pub(super) fn add_scale(
+    address: &str,
+    root: &Element,
+    data: &ChartData,
+    scale: &ScaleArg,
+    axis: Option<ChartAxis>,
+) -> Result<StyleAction, DataError> {
+    let axis = match axis {
+        Some(axis) => axis_name(axis),
+        None => {
+            let kind = data.types.first().map_or("None", String::as_str);
+            scale_axis(address, root, &axis_names(root), (kind, "add with scale"), scale)?
+        }
+    };
+    Ok(StyleAction::Scale {
+        axis,
+        change: scale_arguments(scale)?,
+        values_format: data.format.clone(),
+    })
+}
+
 /// An axis' name as the chart part's edit takes it.
 fn axis_name(axis: ChartAxis) -> &'static str {
     axis.as_str()
@@ -424,11 +456,10 @@ fn scale_axis(
     address: &str,
     root: &Element,
     names: &[&str],
-    chart_type: &str,
+    (chart_type, action): (&str, &str),
     scale: &ScaleArg,
 ) -> Result<&'static str, DataError> {
     const NUMERIC: [&str; 4] = ["min", "max", "major_unit", "minor_unit"];
-    let action = "set_axis_scale";
     if names.is_empty() {
         return Err(DataError(format!(
             "{address}: a {chart_type} chart has no axes to scale"
@@ -520,7 +551,7 @@ fn style_keys(style: &StyleArg) -> Vec<(&'static str, bool)> {
 }
 
 /// `"none"` is no colour (`_colour`).
-fn colour_given(value: Option<&String>) -> Option<Option<String>> {
+pub(super) fn colour_given(value: Option<&String>) -> Option<Option<String>> {
     value.map(|v| (v.trim().to_lowercase() != "none").then(|| v.clone()))
 }
 
@@ -558,7 +589,7 @@ fn dash_value(dash: &str) -> &str {
 
 /// `set_text_style`'s style, checked as `apply_style_action` and `set_text_style` check it
 /// before anything changes (the size, then the colour).
-fn text_look(style: Option<&StyleArg>) -> Result<TextLook, DataError> {
+pub(super) fn text_look(style: Option<&StyleArg>) -> Result<TextLook, DataError> {
     let keys = style.map(style_keys).unwrap_or_default();
     if let Some((key, _)) = keys.iter().find(|(_, series)| *series) {
         return Err(DataError(format!(

@@ -4,17 +4,20 @@
 //! a workbook without a table) or nothing put in a cell found by its sheet's name; the
 //! sheet's tables named after their headers again; and at the end the shared strings'
 //! counts and each written sheet's `dimension` brought up to date, the package saved with
-//! only the parts that changed written again.
+//! only the parts that changed written again. And [`NewBook`]: a one-sheet workbook written
+//! from nothing (a new chart's).
 //!
 //! Must not: evaluate or write formulas (a cell holding one is refused, `Unsupported`),
 //! write styles or rich text, or change a part that nothing written touches.
 
+mod new_book;
 mod nodes;
 mod sheet;
 mod strings;
 mod table_shift;
 mod tables;
 
+pub use new_book::{NewBook, NewCell, NewValue};
 pub use table_shift::{Axis, Shift};
 
 use crate::items::descendants;
