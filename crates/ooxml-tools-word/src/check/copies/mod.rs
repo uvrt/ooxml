@@ -329,8 +329,65 @@ fn not_open(number: usize, name: &str, doc: &str) -> ToolError {
 
 #[cfg(test)]
 mod tests {
+    use super::cache::CopyCache;
     use super::report::{merged, Report, LIST_CALLS};
-    use serde_json::json;
+    use super::{Resolved, Said};
+    use crate::{CheckCopy, CopyReference};
+    use ooxml_base::Digest;
+    use serde_json::{json, Map, Value};
+    use std::sync::Arc;
+
+    #[test]
+    fn the_kept_comparisons_are_bounded_the_least_recently_used_dropped() {
+        let cache = CopyCache::default();
+        let key = |k: u8| Digest([k; 16]);
+        for k in 0..=128u8 {
+            cache.put(key(k), Arc::new(Map::new()));
+            if k == 1 {
+                assert!(cache.get(&key(0)).is_some()); // used again: kept past the next
+            }
+        }
+        assert!(cache.get(&key(0)).is_some() && cache.get(&key(1)).is_none());
+    }
+
+    #[test]
+    fn past_the_reply_s_budget_differences_are_counted_and_the_way_to_read_them_said() {
+        let item = CheckCopy {
+            blocks: "p:A..p:B".into(),
+            reference: CopyReference {
+                doc: None,
+                block: "p:C..p:D".into(),
+            },
+            lists: None,
+        };
+        let resolved = Resolved {
+            item: &item,
+            other: 0,
+            copy: Vec::new(),
+            reference: Vec::new(),
+        };
+        let differences: Vec<Value> = (0..30)
+            .map(|k| json!({"block": "p:A", "property": "bold", "value": k, "kind": "format"}))
+            .collect();
+        let mut found = Map::new();
+        found.insert("follows".into(), json!(false));
+        found.insert("differences".into(), Value::Array(differences));
+        let mut report = Report::default();
+        let said = Said {
+            other: None,
+            runs_from: None,
+            kept: false,
+        };
+        for _ in 0..6 {
+            report.add(&resolved, &said, &found);
+        }
+        let reply = report.finish("d1", &[]);
+        let items = reply["items"].as_array().unwrap();
+        let shown: usize = items.iter().map(|i| i["differences"].as_array().unwrap().len()).sum();
+        let more: u64 = items.iter().filter_map(|i| i["more"].as_u64()).sum();
+        assert_eq!((shown, more), (100, 80));
+        assert!(reply["left_out"].as_str().unwrap().contains("word_compare_blocks"));
+    }
 
     #[test]
     fn alike_calls_that_change_each_target_are_joined_the_others_kept_apart() {
