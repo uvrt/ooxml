@@ -143,7 +143,9 @@ impl Call<'_> {
         .with_written(self.written)
         .with_rows_written(Some(&word.rows_written))
         .with_limits(self.limits)
-        .with_locale(self.locale);
+        .with_locale(self.locale)
+        .with_last_check(Some(&*word.last_check))
+        .with_in_group(word.editor.store().group_mark().is_some());
         // what its edits made is the call's even where the handler panics after them: the
         // panic goes on to the session's edge (crate::panics), which says they stay
         let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&editing)));

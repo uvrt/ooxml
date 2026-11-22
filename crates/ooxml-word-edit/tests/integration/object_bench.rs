@@ -58,12 +58,7 @@ fn object_edits_on_a_long_document() {
         ("format table, tracked", vec![whole], tracked.clone()),
         ("format column cells, tracked", column, tracked.clone()),
     ] {
-        let command = FormatTable {
-            table: table.clone(),
-            formats,
-            policy,
-            layout: None,
-        };
+        let command = FormatTable::new(table.clone(), formats, policy);
         report(name, best(&bytes, &command));
     }
     for (name, change, policy) in [

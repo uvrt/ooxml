@@ -145,9 +145,9 @@ pub use fields::{
 };
 pub use follow::{CopyFollowed, FollowSample, Followed};
 pub use format::{
-    check as check_formatting, differs, keep_writes, kept_blocks, kept_package, known_style, occurrences, range_text,
-    theme_color_name, FormatEdit, FormatPlan, FormatStep, Formatted, Like, LikeDone, Occurrence, ParagraphLook,
-    Property, Setting, Value, KEEPS_BLOCKS, NOT_TAKEN, PARTS,
+    body_blocks, check as check_formatting, differs, keep_writes, keeps_blocks, kept_blocks, kept_package, known_style,
+    occurrences, range_text, theme_color_name, FormatEdit, FormatPlan, FormatStep, Formatted, Like, LikeDone,
+    Occurrence, ParagraphLook, Property, Setting, Value, KEEPS_BLOCKS, NOT_TAKEN, PARTS,
 };
 pub use ids_delta::{ids_delta, IdsDelta};
 pub use links::{hyperlink_span, AddBookmark, AddHyperlink, LinkEdited, RemoveBookmark, RenameBookmark};

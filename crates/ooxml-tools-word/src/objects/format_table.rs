@@ -451,6 +451,7 @@ fn finish(
         formats,
         policy: policy(editing),
         layout: editing.edit_layout(),
+        pages_later: editing.in_group,
     };
     let done = match editing.editor.run(editing.caller, &command) {
         Ok(done) => done,
@@ -479,5 +480,5 @@ fn finish(
 
 /// Registers `word_format_table` (the crate's [`crate::register`]).
 pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.edit::<WordFormatTable>(word_format_table, crate::Hosting::SERVED);
+    r.edit::<WordFormatTable>(word_format_table, crate::Hosting::SERVED.layout());
 }
