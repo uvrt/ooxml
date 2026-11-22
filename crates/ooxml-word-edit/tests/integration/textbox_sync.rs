@@ -18,7 +18,7 @@ use std::time::Instant;
 
 fn editor() -> Editor {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../python/docx-agent/tests/fixtures/generated/charts/chart-places.docx");
+        .join("../../crates/ooxml-oracle/fixtures/generated/charts/chart-places.docx");
     let bytes: Arc<[u8]> = Arc::from(std::fs::read(path).unwrap());
     let package = Package::open(bytes, &Limits::default()).unwrap();
     Editor::open(

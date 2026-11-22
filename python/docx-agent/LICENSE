@@ -7,8 +7,8 @@ The licence below covers this project's own source, tests and tooling. It does n
   tests/corpus/commonmark/   examples of the CommonMark Spec 0.31.2, Copyright (C) 2014-24
                              John MacFarlane, licensed under Creative Commons
                              Attribution-ShareAlike 4.0 International (CC BY-SA 4.0);
-  tests/fixtures/samplelib/  third-party documents from samplelib.com, and
-  tests/fixtures/wordto/     third-party documents from word.to, each under its
+  ../../crates/ooxml-oracle/fixtures/samplelib/  third-party documents from samplelib.com, and
+  ../../crates/ooxml-oracle/fixtures/wordto/     third-party documents from word.to, each under its
                              source's own (permissive) terms.
 
 Each directory's PROVENANCE.md records the source, the terms and the changes made.

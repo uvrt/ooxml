@@ -11,9 +11,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+from conftest import FIXTURE_DIR
+
 ROOT = Path(__file__).resolve().parents[3]
 HARNESS = ROOT / "crates" / "ooxml-oracle" / "python"
-DOCUMENT = Path(__file__).resolve().parent / "fixtures" / "generated" / "lists-and-styles.docx"
+DOCUMENT = FIXTURE_DIR / "generated" / "lists-and-styles.docx"
 STAND_IN = "kept out of the gates' reference"
 
 #: A guarded process, a spawn worker of it and a subprocess of it each importing ooxml_core.

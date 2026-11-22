@@ -147,6 +147,41 @@ fn a_busy_engine_says_stale_past_twenty_pages_and_a_stop_on_the_spare() {
     );
 }
 
+/// The fixture with its default run size doubled: a style edit that moves every line.
+fn restyled(package: &Package) -> Package {
+    let xml = String::from_utf8(package.read("word/styles.xml").unwrap().unwrap().to_vec()).unwrap();
+    let defaults = r#"<w:sz w:val="24"/><w:szCs w:val="24"/>"#;
+    assert_eq!(xml.matches(defaults).count(), 1, "the fixture's default size");
+    let larger = xml.replacen(defaults, r#"<w:sz w:val="48"/><w:szCs w:val="48"/>"#, 1);
+    package.with_bytes("word/styles.xml", Arc::from(larger.into_bytes()))
+}
+
+#[test]
+fn a_style_edit_reports_its_reflow_on_the_engine_and_on_a_spare_alike() {
+    // The version before is painted in its own styles after the edit's are laid out: the
+    // engine's own measure is the spare's, which lays both out fresh.
+    let (package, _) = versions();
+    let after = restyled(&package);
+    let measure = |layout: &EnginePages| {
+        let from = EditedFrom {
+            version: 0,
+            package: &package,
+        };
+        let aliases = Default::default();
+        reflow_after_edit(layout, &LastCheck::default(), from, &after, &aliases, (None, &Never))
+    };
+    let layout = EnginePages::of(engine());
+    let laid = layout.laid(&package, &Never).unwrap();
+    let own = measure(&layout).expect("measured");
+    assert_eq!(own["pages"][0], json!(laid.page_count()), "{own}");
+    assert!(own["pages"][1].as_u64().unwrap() > laid.page_count() as u64, "{own}");
+    assert_eq!(own["changed"][0], json!(1), "{own}");
+    let spare = EnginePages::of(engine());
+    spare.laid(&package, &Never).unwrap();
+    let _busy = spare.engine().lock().unwrap();
+    assert_eq!(measure(&spare), Some(own));
+}
+
 /// The fixture with `count` page breaks before its body.
 fn long(count: usize) -> Package {
     let (package, _) = versions();

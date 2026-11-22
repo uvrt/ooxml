@@ -24,10 +24,11 @@ from ooxml_edit.tools import Toolbox
 from docx_agent import Document
 from docx_agent.rust.session import RustTools
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
+from conftest import FIXTURE_DIR  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 GOLDEN = HERE.parents[2] / "crates" / "ooxml-tools-word" / "tests" / "golden"
-FIXTURES = sorted((HERE / "fixtures").rglob("*.docx"))
+FIXTURES = sorted((FIXTURE_DIR).rglob("*.docx"))
 
 
 @pytest.fixture(scope="module")
@@ -89,7 +90,7 @@ def _comparable(tool: str, reply: dict) -> dict:
             "total": reply.get("total")}
 
 
-@pytest.mark.parametrize("path", FIXTURES, ids=lambda p: str(p.relative_to(HERE / "fixtures")))
+@pytest.mark.parametrize("path", FIXTURES, ids=lambda p: str(p.relative_to(FIXTURE_DIR)))
 def test_the_rust_reads_equal_todays_on_the_fixtures(toolbox, path):
     data = path.read_bytes()
     session = toolbox.session()

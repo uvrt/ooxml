@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write docx-agent's own fixtures, ``tests/fixtures/generated/*.docx``.
+"""Write docx-agent's own fixtures, ``crates/ooxml-oracle/fixtures/generated/*.docx``.
 
 The reused fixtures (docx2svg's, samplelib's, wordto's) have no ``w14:paraId`` at all and
 almost none of the markup a reader of text has to walk.  These two documents are written
@@ -61,7 +61,7 @@ from __future__ import annotations
 import zipfile
 from pathlib import Path
 
-OUT = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "generated"
+OUT = Path(__file__).resolve().parents[3] / "crates" / "ooxml-oracle" / "fixtures" / "generated"
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"

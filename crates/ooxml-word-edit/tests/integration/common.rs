@@ -106,7 +106,7 @@ where
 
 pub fn fixture(name: &str) -> Arc<[u8]> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../python/docx-agent/tests/fixtures")
+        .join("../../crates/ooxml-oracle/fixtures")
         .join(name);
     Arc::from(std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display())))
 }

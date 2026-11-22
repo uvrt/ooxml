@@ -23,9 +23,10 @@ from ooxml_edit.tools import Toolbox
 
 from docx_agent.rust import reads
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
+from conftest import FIXTURE_DIR  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
-FIXTURES = sorted((HERE / "fixtures").rglob("*.docx"))
+FIXTURES = sorted((FIXTURE_DIR).rglob("*.docx"))
 
 
 @pytest.fixture(scope="module")
@@ -87,7 +88,7 @@ def _calls(session, doc: str) -> list[tuple[str, dict]]:
     return calls
 
 
-@pytest.mark.parametrize("path", FIXTURES, ids=lambda p: str(p.relative_to(HERE / "fixtures")))
+@pytest.mark.parametrize("path", FIXTURES, ids=lambda p: str(p.relative_to(FIXTURE_DIR)))
 def test_the_reads_answer_as_the_python_path_does(toolbox, rust_session, path):
     session = toolbox.session()
     doc = session.open(path.read_bytes(), name=path.name)
@@ -103,7 +104,7 @@ def test_the_reads_answer_as_the_python_path_does(toolbox, rust_session, path):
 
 
 def test_a_new_version_is_handed_over_as_the_parts_that_changed(toolbox, rust_session):
-    path = HERE / "fixtures" / "generated" / "ids-and-markup.docx"
+    path = FIXTURE_DIR / "generated" / "ids-and-markup.docx"
     session = toolbox.session()
     doc = session.open(path.read_bytes(), name=path.name)
     try:
@@ -125,7 +126,7 @@ def test_a_new_version_is_handed_over_as_the_parts_that_changed(toolbox, rust_se
 
 
 def test_what_rust_does_not_answer_the_same_falls_back_counted(toolbox, rust_session):
-    path = HERE / "fixtures" / "generated" / "ids-and-markup.docx"
+    path = FIXTURE_DIR / "generated" / "ids-and-markup.docx"
     session = toolbox.session()
     doc = session.open(path.read_bytes(), name=path.name)
     try:
@@ -147,7 +148,7 @@ def test_what_rust_does_not_answer_the_same_falls_back_counted(toolbox, rust_ses
 
 
 def test_inspect_with_layout_places_the_blocks_as_the_python_path_does(toolbox, rust_session):
-    path = HERE / "fixtures" / "generated" / "ids-and-markup.docx"
+    path = FIXTURE_DIR / "generated" / "ids-and-markup.docx"
     session = toolbox.session()
     doc = session.open(path.read_bytes(), name=path.name)
     try:
@@ -167,7 +168,7 @@ def test_a_placer_callback_holds_no_rust_lock_another_thread_needs():
     no session, document or memo lock is held across the callback (a deadlock pinned)."""
     import threading
 
-    path = HERE / "fixtures" / "generated" / "ids-and-markup.docx"
+    path = FIXTURE_DIR / "generated" / "ids-and-markup.docx"
     data = path.read_bytes()
     session = ooxml_core.Session()
     doc = session.open(data, kind="docx", name=path.name)

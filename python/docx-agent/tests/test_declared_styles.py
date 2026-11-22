@@ -11,6 +11,7 @@ import pytest
 
 from docx_agent import Document
 from docx_agent.edit.design import theme_rgb
+from conftest import FIXTURE_DIR  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 SWATCHES = json.loads((ROOT / "tests" / "observations" / "theme-tints-word.json").read_text())["swatches"]
@@ -124,7 +125,7 @@ def test_the_tool_pages_declared_styles_by_size():
     from docx_agent.tools import FORMAT, GROUPS, TOOLS
     from docx_agent.tools._base import tool_names
 
-    path = ROOT / "tests" / "fixtures" / "wordto" / "sample-10pages.docx"
+    path = FIXTURE_DIR / "wordto" / "sample-10pages.docx"
     every = Document.open(path.read_bytes()).design_facts(["declared_styles"])["declared_styles"]
     with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS) as toolbox:
         session = toolbox.session()

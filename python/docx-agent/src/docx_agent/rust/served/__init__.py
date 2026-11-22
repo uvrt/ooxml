@@ -36,11 +36,61 @@ class Adapted(dict):
     """A served tool's arguments as the session takes them, with the values written by
     reference the adapter handed over itself (``written``, :func:`written_json`) in place of
     the call's own: host data the session cannot read, such as a field ``from`` names or a
-    value's own Markdown."""
+    value's own Markdown; and the rows of the sources the call names, as the host resolved
+    them (``sources``, :func:`sources_json`)."""
 
-    def __init__(self, given: dict[str, Any], written: str | None) -> None:
+    def __init__(self, given: dict[str, Any], written: str | None, *, sources: str | None = None) -> None:
         super().__init__(given)
         self.written = written
+        self.sources = sources
+
+
+def sources_json(found: list[tuple[str, Any]]) -> str | None:
+    """The rows of sources (``(value as the call gives it, Rows)`` each: ``call.source``'s, or
+    its refusal of the value) as ``CallDocuments(sources=...)`` takes them; ``None`` without
+    any."""
+    if not found:
+        return None
+    out: list[dict[str, Any]] = []
+    for given, rows in found:
+        if isinstance(rows, Exception):      # the host's refusal (an unknown dataset)
+            out.append({"given": given, "refused": {"message": getattr(rows, "message", str(rows)),
+                                                    "options": list(getattr(rows, "valid_options", None) or [])}})
+            continue
+        dataset = rows.dataset
+        out.append({
+            "given": given, "address": rows.address, "columns": [str(c) for c in dataset.columns],
+            "types": list(dataset.types) if dataset.types is not None else None,
+            "rows": [[_value(v) for v in row] for row in dataset.rows],
+            "sources": ([[list(s) for s in row] for row in dataset.sources]
+                        if dataset.sources is not None else None),
+            "doc": rows.doc, "name": rows.name, "version": rows.version, "stale": bool(rows.stale),
+            "cache": dict(dataset.cache) if dataset.cache else None})
+    return json.dumps(out)
+
+
+def _value(value: Any) -> Any:
+    """A source value as :func:`sources_json` writes it: JSON's own where it has one, a date, a
+    datetime and a time as their parts, anything else by its kind (``sources.what``)."""
+    import datetime as _dt
+    import math
+
+    from ooxml_edit.tools import sources
+
+    if value is None or isinstance(value, (bool, str)):
+        return value
+    if isinstance(value, int):
+        return value if -(2 ** 63) <= value < 2 ** 64 else {"int": str(value)}
+    if isinstance(value, float):
+        return value if math.isfinite(value) else {"other": sources.what(value)}
+    if isinstance(value, _dt.datetime):
+        return {"datetime": [value.year, value.month, value.day, value.hour, value.minute, value.second,
+                             value.microsecond]}
+    if isinstance(value, _dt.date):
+        return {"date": [value.year, value.month, value.day]}
+    if isinstance(value, _dt.time):
+        return {"time": [value.hour, value.minute, value.second, value.microsecond]}
+    return {"other": sources.what(value)}
 
 
 def written_json(facts: Any, markdown: dict[int, str | None]) -> str | None:

@@ -242,10 +242,22 @@ impl Command<WordDoc> for SetCells {
     }
 
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<CellsSet> {
+        self.write(tx, false)
+    }
+}
+
+impl SetCells {
+    /// The cells written in `tx`, as one part of a command placing a source's rows: a table
+    /// with a record of its source written too (that command keeps the record).
+    pub(crate) fn prepare_placing(&self, tx: &mut Txn<'_, WordDoc>) -> Result<CellsSet> {
+        self.write(tx, true)
+    }
+
+    fn write(&self, tx: &mut Txn<'_, WordDoc>, recorded: bool) -> Result<CellsSet> {
         let mut sink = EditSink::new(tx, self.policy.clone());
         let docx = sink.docx()?;
         let found = table(sink.doc(), &docx, &self.table)?;
-        if crate::tables::placed(sink.doc(), &found.id) {
+        if !recorded && crate::tables::placed(sink.doc(), &found.id) {
             // docx-agent's `_Kept`: the cells written drop their columns from the record
             return Err(EditError::Unsupported(
                 "word_edit_table set_cells in a table placed from a source (its record kept)".to_owned(),

@@ -58,6 +58,8 @@ pub(crate) struct Word {
     /// The rows this session's `word_edit_table` calls added or wrote into (round 58,
     /// R126): `check`'s `row_text_format` reads them.
     pub(crate) rows_written: RowsWritten,
+    /// The versions its live views were given, kept within the session's memory budget.
+    pub(crate) views: crate::live_view::LiveViews,
 }
 
 impl Word {
@@ -190,6 +192,7 @@ impl Document {
                     last_check: Arc::default(),
                     images: ooxml_tools_word::PageImages::new(Some(Arc::clone(&context.budget))),
                     rows_written: RowsWritten::default(),
+                    views: crate::live_view::LiveViews::new(Arc::clone(&context.budget)),
                 }))
             }
             DocKind::Pptx | DocKind::Xlsx => {

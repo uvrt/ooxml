@@ -379,6 +379,34 @@ fn date_names(code: &str, locale: &Locale) -> &'static Names {
     names(shown).unwrap_or(&ENGLISH)
 }
 
+/// The month and day names a date pattern writes in a language (ooxml-common's
+/// `dates.NAMES`, measured): January first, Monday first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DateNames {
+    /// The months' names.
+    pub months: &'static [&'static str; 12],
+    /// Their abbreviations.
+    pub short_months: &'static [&'static str; 12],
+    /// The weekdays' names.
+    pub days: &'static [&'static str; 7],
+    /// Their abbreviations.
+    pub short_days: &'static [&'static str; 7],
+}
+
+/// The measured names `language` (a canonical tag) shows (ooxml-common's `names_for`): its
+/// own tag's where the tables hold it, else its language's in any region (fr-BE shows
+/// fr-FR's); `None` for a language with none measured.
+#[must_use]
+pub fn measured_names(language: &str) -> Option<DateNames> {
+    let found = names(names_tag(language)?)?;
+    Some(DateNames {
+        months: &found.months,
+        short_months: &found.short_months,
+        days: &found.days,
+        short_days: &found.short_days,
+    })
+}
+
 /// A calendar date.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Date {
