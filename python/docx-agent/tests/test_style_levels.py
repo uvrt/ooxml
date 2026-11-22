@@ -224,10 +224,10 @@ def test_word_styles_links_and_unlinks(box, session):
     result = dispatch(box, session, "word_styles", doc="d1", action="modify", name="Aside title",
                       numbering={"list": "none"})
     assert result.ok and result.summary.endswith("unlinked from its list level")
-    assert linked(document)[1] is None
+    assert linked(session.entry("d1").document)[1] is None      # (the view of the version now)
     result = dispatch(box, session, "word_styles", doc="d1", action="modify", name="Section title",
                       numbering={"list": "Chapter title", "level": 1})
-    assert result.ok and numpr(document, "SectionTitle") == ("1", "1")
+    assert result.ok and numpr(session.entry("d1").document, "SectionTitle") == ("1", "1")
 
 
 @pytest.mark.parametrize("arguments, code, field", [

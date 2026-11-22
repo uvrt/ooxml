@@ -11,6 +11,7 @@
 
 use crate::context::StoreClock;
 use crate::model::PackageDoc;
+use crate::owners::{Owners, StepOwner};
 use crate::retired::{Made, Retired};
 use crate::update::PartUpdate;
 use crate::{DocKind, SessionError};
@@ -52,6 +53,8 @@ pub(crate) struct Word {
     pub(crate) retired: Retired,
     /// What its last check with `reflow` saw.
     pub(crate) last_check: Arc<ooxml_tools_word::LastCheck>,
+    /// Its pages drawn by `render`, kept within the session's memory budget.
+    pub(crate) images: ooxml_tools_word::PageImages,
     /// The rows this session's `word_edit_table` calls added or wrote into (round 58,
     /// R126): `check`'s `row_text_format` reads them.
     pub(crate) rows_written: RowsWritten,
@@ -149,6 +152,8 @@ pub(crate) struct Document {
     /// Its readings as a Word document, kept for its latest versions (design section 7:
     /// caches belong to a document).
     pub(crate) versions: Arc<Versions>,
+    /// Who made each of its steps, and its callers' own undos.
+    pub(crate) owners: Owners,
 }
 
 impl Document {
@@ -183,6 +188,7 @@ impl Document {
                     tracking: RwLock::new(None),
                     retired: Retired::default(),
                     last_check: Arc::default(),
+                    images: ooxml_tools_word::PageImages::new(Some(Arc::clone(&context.budget))),
                     rows_written: RowsWritten::default(),
                 }))
             }
@@ -195,6 +201,7 @@ impl Document {
             name: name.to_owned(),
             held,
             versions: Arc::new(Versions::new()),
+            owners: Owners::default(),
         })
     }
 
@@ -212,6 +219,32 @@ impl Document {
             Held::Word(word) => Some(word),
             Held::Package(_) => None,
         }
+    }
+
+    /// Whether a step group is open on it (its commits are numbered as the group closes).
+    pub(crate) fn grouped(&self) -> bool {
+        match &self.held {
+            Held::Package(store) => store.group_mark().is_some(),
+            Held::Word(word) => word.editor.store().group_mark().is_some(),
+        }
+    }
+
+    /// The state numbers of the steps its history holds (undo's and plain redo's).
+    fn held_numbers(&self) -> Vec<u64> {
+        fn of<K: Ord>(listed: ooxml_store::Listed<K>) -> Vec<u64> {
+            listed.steps.iter().chain(&listed.redo).map(|s| s.number).collect()
+        }
+        match &self.held {
+            Held::Package(store) => of(store.listed()),
+            Held::Word(word) => of(word.editor.store().listed()),
+        }
+    }
+
+    /// A step numbered `number` was made, by `tool` (`None`: none, a change from outside
+    /// the tools) as `context`'s caller: kept as its owner.
+    pub(crate) fn stepped(&self, number: u64, tool: Option<&str>, context: &crate::CallContext) {
+        let owner = tool.map(|tool| StepOwner::of(tool, context));
+        self.owners.stepped(number, owner, || self.held_numbers());
     }
 
     /// The store's counters.

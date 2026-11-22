@@ -91,17 +91,27 @@ impl Session {
         Ok(reverted)
     }
 
-    /// Close `id`'s open group: what it committed one step of the context's caller (the
-    /// step's version number; `None` when it committed nothing).
+    /// Close `id`'s open group: what it committed one step of the context's caller, made
+    /// by `tool` (the batch's; `None`: none named) -- the step's version number; `None` when
+    /// it committed nothing.
     ///
     /// # Errors
     /// [`SessionError::NotOpen`]; the store's without an open group.
-    pub fn close_group(&self, id: &DocId, context: &CallContext) -> Result<Option<u64>, SessionError> {
+    pub fn close_group(
+        &self,
+        id: &DocId,
+        context: &CallContext,
+        tool: Option<&str>,
+    ) -> Result<Option<u64>, SessionError> {
         let document = self.document(id)?;
         let made = match &document.held {
             Held::Package(store) => store.close_group(&context.caller)?,
             Held::Word(word) => word.editor.store().close_group(&context.caller)?,
         };
+        if made.is_some() && !document.grouped() {
+            // (the host holds the document alone while its group is open: the head is the step)
+            document.stepped(document.head().number(), tool, context);
+        }
         Ok(made.map(|seq| seq.0))
     }
 }

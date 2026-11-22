@@ -38,7 +38,8 @@ const DEFAULT_WIDTH: i64 = 9026;
 /// The first number of a `_Toc` bookmark made here (Word's are 9 digits).
 const BOOKMARK_BASE: i64 = 100_000_000;
 
-/// The table of contents `toc` (in the main part) rebuilt: its entries' pages from `laid`;
+/// The table of contents `toc` (in the main part) rebuilt: its entries' pages from `laid`,
+/// its style names read under `locale` (the call's; `None`: the document's own language);
 /// each heading whose page the layout cannot say listed in `unknown`.
 ///
 /// # Errors
@@ -48,6 +49,7 @@ pub(crate) fn rebuild(
     sink: &mut EditSink<'_, '_>,
     toc: &Located,
     laid: &dyn LaidFields,
+    locale: Option<&ooxml_numfmt::Locale>,
     unknown: &mut Vec<String>,
 ) -> Result<()> {
     let docx = sink.docx()?;
@@ -58,7 +60,7 @@ pub(crate) fn rebuild(
         EditError::Unsupported("a table of contents whose end is not in a paragraph beside its begin".to_owned())
     })?;
     let inside: Vec<Vec<u32>> = region.places.iter().take(region.places.len() - 1).cloned().collect();
-    let headings: Vec<select::Heading> = select::entries(&docx, &toc.found.instruction)
+    let headings: Vec<select::Heading> = select::entries(&docx, &toc.found.instruction, locale)
         .into_iter()
         .filter(|h| !inside.iter().any(|p| **p == *h.paragraph.path))
         .collect();

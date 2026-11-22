@@ -3,17 +3,22 @@
 //! own undo takes back the latest calls, one per step; a caller's own undo takes back only
 //! its own latest call, and only while it is the document's latest change (a Word body is
 //! one scope every change shares: a later change by anyone else makes it
-//! [`SessionError::Entangled`], naming the later changes and who made them); a caller's own
-//! redo brings back its own undone call while it is the next one redo would bring back.
-//! Ids given stay given (the store keeps the ledger across both).
+//! [`SessionError::Entangled`], naming the later steps); a caller's own redo brings back its
+//! own latest undo while it is the next one redo would bring back, else
+//! [`SessionError::RedoNotNext`] (another caller undid a change since). The check and the
+//! undo or redo are one step of the store's ([`Store::undo_newest`]), so no commit lands
+//! between them. Ids given stay given (the store keeps the ledger across both); what each
+//! step removed and brought back is noted in the document's retired ids.
 //!
 //! Must not: plan an undo itself (the store does), or say anything in a tool's words.
 
+use crate::owners::{OwnUndo, Owners};
 use crate::retired::Made;
 use crate::session::Opened;
 use crate::{CallContext, DocId, Session, SessionError};
-use ooxml_store::{DocModel, Error, HistoryOutcome, Listed, StepInfo, Store, StoreError};
+use ooxml_store::{DocModel, Error, HistoryOutcome, Listed, Seq, StepInfo, Store, StoreError};
 use ooxml_word_edit::WordDoc;
+use std::sync::Arc;
 
 /// What an undo or redo through the session did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,7 +54,7 @@ pub struct Numbers {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Direction {
+pub(crate) enum Direction {
     Undo,
     Redo,
 }
@@ -128,7 +133,7 @@ impl Session {
         Ok(at.map(|at| Self::opened(id, &document, at)))
     }
 
-    fn history(
+    pub(crate) fn history(
         &self,
         id: &DocId,
         steps: usize,
@@ -138,7 +143,9 @@ impl Session {
         let document = self.document(id)?;
         let caller = context.caller.name();
         let count = match &document.held {
-            crate::document::Held::Package(store) => run(store, steps, caller, direction, &mut |_| Ok(()))?,
+            crate::document::Held::Package(store) => {
+                run(store, &document.owners, steps, caller, direction, &mut |_| Ok(()))?
+            }
             crate::document::Held::Word(word) => {
                 // what each undo or redo removed and brought back, in the document's retired ids
                 let mut note = |done: &HistoryOutcome<WordDoc>| -> Result<(), SessionError> {
@@ -152,7 +159,14 @@ impl Session {
                     word.retired.note(&made, &delta);
                     Ok(())
                 };
-                run(word.editor.store(), steps, caller, direction, &mut note)?
+                run(
+                    word.editor.store(),
+                    &document.owners,
+                    steps,
+                    caller,
+                    direction,
+                    &mut note,
+                )?
             }
         };
         Ok(Undone {
@@ -176,9 +190,11 @@ fn numbers_of<K: Ord>(listed: Listed<K>) -> Numbers {
     }
 }
 
-/// Up to `steps` undos or redos on `store`, as `caller` (`None`: the session's own).
+/// Up to `steps` undos or redos on `store`, as `caller` (`None`: the session's own); an
+/// error stops the run, and is the run's when nothing was done yet.
 fn run<D: DocModel>(
     store: &Store<D>,
+    owners: &Owners,
     steps: usize,
     caller: Option<&str>,
     direction: Direction,
@@ -190,54 +206,105 @@ where
     let mut done = 0;
     while done < steps {
         let outcome = match (direction, caller) {
-            (Direction::Undo, None) => store.undo(),
-            (Direction::Redo, None) => store.redo(),
-            (Direction::Undo, Some(caller)) => match own_undo(store, caller) {
-                Ok(Some(outcome)) => Ok(outcome),
-                Ok(None) => break,
-                Err(error) if done == 0 => return Err(error),
-                Err(_) => break,
-            },
-            (Direction::Redo, Some(caller)) => {
-                let next = store.redoable().pop();
-                if next.and_then(|step| step.caller).as_deref() != Some(caller) {
-                    break;
-                }
-                store.redo()
-            }
+            (Direction::Undo, None) => plain(store.undo()),
+            (Direction::Redo, None) => plain(store.redo()),
+            (Direction::Undo, Some(caller)) => own_undo(store, owners, caller),
+            (Direction::Redo, Some(caller)) => own_redo(store, owners, caller),
         };
         match outcome {
-            Ok(outcome) => {
+            Ok(Some(outcome)) => {
                 note(&outcome)?;
                 done += 1;
             }
-            Err(StoreError::NothingToUndo | StoreError::NothingToRedo) => break,
-            Err(error) if done == 0 => return Err(error.into()),
+            Ok(None) => break,
+            Err(error) if done == 0 => return Err(error),
             Err(_) => break,
         }
     }
     Ok(done)
 }
 
-/// Undo `caller`'s latest step when it is the document's latest; `None` when it has none.
-fn own_undo<D: DocModel>(store: &Store<D>, caller: &str) -> Result<Option<HistoryOutcome<D>>, SessionError>
+/// A plain undo's or redo's outcome; `None` when there was none to take.
+fn plain<D: DocModel>(outcome: Result<HistoryOutcome<D>, Error<D>>) -> Result<Option<HistoryOutcome<D>>, SessionError>
 where
     SessionError: From<Error<D>>,
 {
-    let steps = store.steps();
-    let Some(index) = steps.iter().rposition(|s| s.caller.as_deref() == Some(caller)) else {
-        return Ok(None);
-    };
-    let later: Vec<(u64, Option<String>)> = steps
-        .iter()
-        .skip(index + 1)
-        .map(|s| (s.step.0, s.caller.as_deref().map(str::to_owned)))
-        .collect();
-    if let Some(step) = steps.get(index).filter(|_| !later.is_empty()) {
-        return Err(SessionError::Entangled {
-            step: step.step.0,
-            later,
-        });
+    match outcome {
+        Ok(outcome) => Ok(Some(outcome)),
+        Err(StoreError::NothingToUndo | StoreError::NothingToRedo) => Ok(None),
+        Err(error) => Err(error.into()),
     }
-    Ok(Some(store.undo()?))
+}
+
+/// Undo `caller`'s latest step when it is the document's latest; `None` when it has none.
+fn own_undo<D: DocModel>(
+    store: &Store<D>,
+    owners: &Owners,
+    caller: &str,
+) -> Result<Option<HistoryOutcome<D>>, SessionError>
+where
+    SessionError: From<Error<D>>,
+{
+    loop {
+        let steps = store.steps();
+        let Some(index) = steps.iter().rposition(|s| s.caller.as_deref() == Some(caller)) else {
+            return Ok(None);
+        };
+        let (Some(step), later) = (steps.get(index), steps.get(index + 1..).unwrap_or_default()) else {
+            return Ok(None);
+        };
+        if !later.is_empty() {
+            return Err(SessionError::Entangled {
+                step: step.number,
+                later: later.iter().map(|s| s.number).collect(),
+            });
+        }
+        match store.undo_newest(step.step) {
+            Ok(outcome) => {
+                owners.undone(OwnUndo {
+                    caller: Arc::from(caller),
+                    number: step.number,
+                    seq: step.step.0,
+                });
+                return Ok(Some(outcome));
+            }
+            // another commit came first: it is the later change now
+            Err(StoreError::NotNext { .. }) => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
+/// Redo `caller`'s latest own undo when it is the next redo brings back; `None` when it has
+/// none (an own undo whose redo went is let go).
+fn own_redo<D: DocModel>(
+    store: &Store<D>,
+    owners: &Owners,
+    caller: &str,
+) -> Result<Option<HistoryOutcome<D>>, SessionError>
+where
+    SessionError: From<Error<D>>,
+{
+    loop {
+        let Some(undo) = owners.latest_undo(caller) else {
+            return Ok(None);
+        };
+        let Some(next) = store.redoable().pop() else {
+            // nothing of it comes back: the redo went
+            owners.forget(&undo);
+            continue;
+        };
+        if next.number != undo.number {
+            return Err(SessionError::RedoNotNext { step: undo.number });
+        }
+        match store.redo_next(Seq(undo.seq)) {
+            Ok(outcome) => {
+                owners.forget(&undo);
+                return Ok(Some(outcome));
+            }
+            // another undo or redo came first: look again
+            Err(StoreError::NotNext { .. }) => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
 }

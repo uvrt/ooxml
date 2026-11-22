@@ -13,7 +13,8 @@ its saved bytes are the session's.  :class:`RustOwner` is the format's
   read (:func:`.view.follow`: the changed parts, the ids and renames the session gave), and
   the parts it changed are committed through ``Session.bridge`` as the step of that tool and
   caller (``bridge_calls{tool}``);
-- undo and redo are the session's (``Session.undo``/``redo``); the save is the session's bytes;
+- undo and redo are the session's own ``undo`` tool (lane U4: who made each step is the
+  session's record too); the save is the session's bytes;
 - a changing call's checks read the session's validation (:func:`owned_validation`) unless
   the view is current anyway or a layout is compared.
 """
@@ -39,24 +40,57 @@ def caller_key(caller: Mapping[str, Any] | None) -> str | None:
 
 
 def context_of(caller: Mapping[str, Any] | None, limits: Any = None,
-               layout_timeout: float | None = None, **more: Any) -> Any:
-    """An ``ooxml_core.CallContext`` for ``caller``, with the host's ``limits`` on its reply
-    (an :class:`ooxml_edit.tools.Limits`: ``max_result_chars``, ``max_list_items``; the
-    defaults where ``None``), how long laying the document out may take in it
-    (``layout_timeout``, seconds; the session's own where ``None``) and ``more`` of its
-    keywords (``layout_counts``: a save's)."""
+               layout_timeout: float | None = None, *, date: str | None = None,
+               typography: bool = True, layout_counts: tuple[int, int] | None = None,
+               locale: Any = None) -> Any:
+    """An ``ooxml_core.CallContext`` for ``caller``: its key, and its context in the order
+    given (as the session's replies name the caller: ``agent=b``); with the host's ``limits``
+    on its reply (an :class:`ooxml_edit.tools.Limits`: ``max_result_chars``,
+    ``max_list_items``, ``max_images_per_call``, ``max_image_edge``, as an
+    ``ooxml_core.Limits``; the defaults where ``None``), how long
+    laying the document out may take in it (``layout_timeout``, seconds; the session's own
+    where ``None``), its writes dated ``date`` (UTC to the second, the session clock's;
+    ``None``: the Rust session's own clock) and spaced by their language unless
+    ``typography`` is off (``docx_format(typography=False)``: as given), with the host's
+    ``layout_counts`` (``(pages, lines)``: a save's ``app.xml`` statistics) where it has laid
+    the version out, and read under ``locale`` (the document's
+    :attr:`~docx_agent.Document.locale`: a table of contents' style names and the separator
+    between them; ``None``: the document's own language, as ``Document._field_language``
+    reads it) -- the last four as an ``ooxml_core.CallWriting``."""
     import ooxml_core
 
-    if limits is None:
-        return ooxml_core.CallContext(caller=caller_key(caller), layout_timeout=layout_timeout, **more)
-    return ooxml_core.CallContext(caller=caller_key(caller), max_result_chars=limits.max_result_chars,
-                                  max_list_items=limits.max_list_items, layout_timeout=layout_timeout, **more)
+    given: dict[str, Any] = {"layout_timeout": layout_timeout}
+    if caller:
+        given["caller"] = caller_key(caller)
+        given["context"] = json.dumps(dict(caller), default=str)
+    if date is not None or not typography or layout_counts is not None or locale is not None:
+        given["writing"] = ooxml_core.CallWriting(date=date, typography=typography,
+                                                  layout_counts=layout_counts, locale=locale)
+    if limits is not None:
+        given["limits"] = ooxml_core.Limits(result_chars=limits.max_result_chars,
+                                            list_items=limits.max_list_items,
+                                            images_per_call=limits.max_images_per_call,
+                                            image_edge=limits.max_image_edge)
+    return ooxml_core.CallContext(**given)
+
+
+def host_ids(view: Any) -> Any:
+    """An ``ooxml_core.HostIds`` of what ``view``'s id ledger holds beside the parts a Python
+    tool changed in it: where its draws of new ids got to (an id it drew and did not write is
+    given) and its renames (a block it stamped keeps its old id); ``None`` without a view."""
+    import ooxml_core
+
+    if view is None:
+        return None
+    pool = getattr(getattr(view, "_ledger", None), "pool", None)
+    drawn = {seed: k for seed, k in pool.cursors.items() if k > 0} if pool is not None else {}
+    return ooxml_core.HostIds(drawn=drawn, aliases=dict(getattr(view, "_aliases", None) or {}))
 
 
 def options(**given: Any) -> Any:
     """An ``ooxml_core.CallOptions``: what one ``Session.call`` or ``Session.edit`` runs with
-    beside its name and arguments (``context``, ``documents``, ``placer``, ``layout``,
-    ``blobs``, ``written``, ``limit``)."""
+    beside its name and arguments (``context``, ``documents``, ``layout`` -- an
+    ``ooxml_core.CallLayout`` --, ``blobs``, ``written``, ``limit``)."""
     import ooxml_core
 
     return ooxml_core.CallOptions(**given)
@@ -64,7 +98,8 @@ def options(**given: Any) -> Any:
 
 def documents(**given: Any) -> Any:
     """An ``ooxml_core.CallDocuments``: what a call needs about the open documents it names
-    (``at``: the versions it reads; ``names``: the host's names for them)."""
+    (``at``: the versions it reads; ``names``: the host's names for them; ``tables``: the tables
+    of the documents the host holds itself, asked only where a refusal names one)."""
     import ooxml_core
 
     return ooxml_core.CallDocuments(**given)
@@ -121,8 +156,11 @@ class RustOwner:
         # found under the session's bytes of the version too (only where it laid out).
         laid = live is not None and laid_mark(live) != mirror.laid
         own = live.package.to_bytes() if laid else None
+        # the view's ledger beside the parts: where its draws of new ids got to (an id it drew
+        # and did not write is given) and its renames (a block it stamped keeps its old id)
+        ids = host_ids(live)
         with mirror.lock:
-            made = mirror.session.bridge(mirror.doc, tool, parts, context=context_of(caller))
+            made = mirror.session.bridge(mirror.doc, tool, parts, context=context_of(caller), ids=ids)
             mirror.view_head = made
         if own is not None:
             same_state(live, own, bytes(made.save()))
@@ -130,17 +168,13 @@ class RustOwner:
             mirror.laid = laid_mark(live)
         return made
 
-    def undo(self, mirror: "reads.Mirror") -> Any:
-        return self._step(mirror, mirror.session.undo)
-
-    def redo(self, mirror: "reads.Mirror") -> Any:
-        return self._step(mirror, mirror.session.redo)
-
-    @staticmethod
-    def _step(mirror: "reads.Mirror", step: Any) -> Any:
-        with mirror.lock:
-            done, _version = step(mirror.doc, 1)
-            return mirror.session.head(mirror.doc) if done else None
+    def history(self, mirror: "reads.Mirror", name: str, steps: int, redo: bool,
+                caller: Mapping[str, Any] | None) -> dict[str, Any]:
+        """The session's ``undo`` tool on the document, named ``name`` in its reply."""
+        arguments = {"doc": name, "steps": steps, "redo": redo}
+        reply, _images, _app = mirror.session.call("undo", json.dumps(arguments), options(
+            context=context_of(caller), documents=documents(names={name: mirror.doc})))
+        return json.loads(reply)
 
     def reader(self, mirror: "reads.Mirror", head: Any, number: int) -> Any:
         """What makes the Python reader of ``head`` (the document's version ``number``) from
@@ -175,6 +209,8 @@ class RustOwner:
 
         with mirror.lock:
             mirror.keep(head, first)
+            # the session words a refusal of an id this version removed by its state number
+            mirror.session.number_version(mirror.doc, head, head.state)
         live = mirror.live()
         if live is not None:
             owner_committed(live, head.state)
@@ -214,9 +250,10 @@ class RustOwner:
             mirror.tracking = mark[1] if mark is not None else group.tracking
             return made
 
-    def close_group(self, mirror: "reads.Mirror", group: "_Group", caller: Mapping[str, Any] | None) -> Any:
+    def close_group(self, mirror: "reads.Mirror", group: "_Group", caller: Mapping[str, Any] | None,
+                    tool: str | None = None) -> Any:
         with mirror.lock:
-            return group.steps.close(context=context_of(caller))
+            return group.steps.close(context=context_of(caller), tool=tool)
 
     def save(self, mirror: "reads.Mirror") -> bytes:
         return bytes(mirror.session.save(mirror.doc))

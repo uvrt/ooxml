@@ -26,6 +26,8 @@ pub struct LaidVersion {
     pub(crate) drawings: Option<crate::drawings::WordDrawings>,
     pub(crate) glyphs: Arc<WordGlyphs>,
     pub(crate) names: Arc<dyn FaceNames>,
+    /// The faces Word draws it with (what a rasteriser is handed).
+    pub(crate) drawing: Arc<ooxml_fonts::DrawingFonts>,
     pub(crate) relaid: bool,
     pub(crate) relaid_cause: Option<crate::causes::RelaidCause>,
     pub(crate) said: crate::warnings::Said,
@@ -189,6 +191,10 @@ pub struct PageView {
     pub drawings: Vec<DrawingSlot>,
     /// Per drawing, the faces its text is drawn in (a text path's): `(face, bold, italic)`.
     pub drawing_faces: Vec<Vec<(String, bool, bool)>>,
+    /// Per drawing, its text boxes' lines in page coordinates, in the order they are painted
+    /// (docx2svg's `Float.lines`): what a reader of the lines a page draws reads beside
+    /// `lines` (`Page.text_lines`).
+    pub text_box_lines: Vec<Vec<PaintedLine>>,
     /// The body blocks it draws something of (`Page.blocks`).
     pub blocks: Vec<Text>,
     /// What its paint does not draw yet, by reason.

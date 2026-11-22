@@ -88,6 +88,7 @@ impl DocModel for PackageDoc {
     type Key = String;
     type Change = PartChange;
     type Error = ModelError;
+    type Setup = ();
 
     fn apply(&mut self, change: &PartChange) -> Result<(), ModelError> {
         self.package = match change {

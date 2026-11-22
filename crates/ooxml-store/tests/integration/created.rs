@@ -44,6 +44,7 @@ impl DocModel for Rows {
     type Key = u64;
     type Change = Change;
     type Error = NoRow;
+    type Setup = ();
 
     fn apply(&mut self, change: &Change) -> Result<(), NoRow> {
         match change {

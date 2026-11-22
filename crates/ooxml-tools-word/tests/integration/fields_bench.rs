@@ -158,8 +158,9 @@ fn field_tools_on_a_long_document() {
         ids.len(),
         started.elapsed().as_secs_f64() * 1000.0
     );
+    let seed = engine.lock().unwrap().seed();
     let layout = Timed {
-        inner: EnginePages::new(Arc::clone(&engine)),
+        inner: EnginePages::new(Arc::clone(&engine), seed),
         engine,
         spent: Mutex::new(Vec::new()),
     };

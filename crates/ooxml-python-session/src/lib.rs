@@ -2,7 +2,7 @@
 //! sections 3 and 9; layer 6).
 //!
 //! Owns: the PyO3 handles -- [`PySession`] (`ooxml_core.Session`), [`PyCancelToken`]
-//! (`ooxml_core.CancelToken`) and [`PyCallContext`] (`ooxml_core.CallContext`), [`PyCallOptions`] (`ooxml_core.CallOptions`, what one call runs with) and [`PyCallDocuments`] (`ooxml_core.CallDocuments`, the open documents it names) -- and `ooxml_core.tool_specs(kind)` and `tool_hosting(kind)` (`tools`);
+//! (`ooxml_core.CancelToken`), [`PyLimits`] (`ooxml_core.Limits`) and [`PyCallContext`] (`ooxml_core.CallContext`), [`PyCallOptions`] (`ooxml_core.CallOptions`, what one call runs with) [`PyCallDocuments`] (`ooxml_core.CallDocuments`, the open documents it names), [`PyCallLayout`] (`ooxml_core.CallLayout`, the layout it reads) and [`PyCallWriting`] (`ooxml_core.CallWriting`, how it writes) -- and `ooxml_core.tool_specs(kind)` and `tool_hosting(kind)` (`tools`);
 //! the Word layout's handles (`layout`: `WordFonts`, `WordPages`, `LaidPages`, lane L4); the conversion of their
 //! arguments and results (bytes copied in while the interpreter lock is held, then every
 //! Rust call made with it released, `py.detach`); the mapping of session errors to Python
@@ -22,23 +22,29 @@
 
 mod adapters;
 mod budget;
+mod context;
 mod group;
 mod layout;
+mod locale;
 mod options;
 mod raster;
 mod session;
 mod summary;
 mod tools;
+mod version;
 
 use pyo3::prelude::*;
 
 pub use budget::{PyBudgetAccount, PyMemoryBudget};
+pub use context::{PyCallContext, PyCancelToken, PyLimits};
 pub use layout::{LayoutFallback, PyLaidPages, PyWordFonts, PyWordPages};
-pub use options::{PyCallDocuments, PyCallOptions};
+pub use options::{PyCallDocuments, PyCallLayout, PyCallOptions, PyCallWriting, PyHostIds};
 pub use raster::PyPageRaster;
-pub use session::{PyCallContext, PyCancelToken, PySession, PyVersion};
+pub use session::PySession;
+pub use version::PyVersion;
 
-/// Add the session API to the module `m`: `Session`, `CancelToken`, `CallContext`, `CallOptions`, `Version` and
+/// Add the session API to the module `m`: `Session`, `CancelToken`, `Limits`, `CallContext`, `CallOptions`, `CallDocuments`, `HostIds`,
+/// `CallWriting`, `CallLayout`, `Version` and
 /// `tool_specs`, `tool_hosting`, `new_document`; and the Word layout's handles: `WordFonts`, `WordPages`, `LaidPages`,
 /// `LayoutFallback`, `LayoutSummary`, `MemoryBudget` and `BudgetAccount`.
 ///
@@ -47,9 +53,13 @@ pub use session::{PyCallContext, PyCancelToken, PySession, PyVersion};
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySession>()?;
     m.add_class::<PyCancelToken>()?;
+    m.add_class::<PyLimits>()?;
     m.add_class::<PyCallContext>()?;
     m.add_class::<PyCallOptions>()?;
     m.add_class::<PyCallDocuments>()?;
+    m.add_class::<PyHostIds>()?;
+    m.add_class::<PyCallWriting>()?;
+    m.add_class::<PyCallLayout>()?;
     m.add_class::<PyVersion>()?;
     m.add_class::<group::PyStepGroup>()?;
     m.add_class::<group::PyGroupMark>()?;

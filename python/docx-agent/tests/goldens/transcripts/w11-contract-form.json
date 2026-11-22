@@ -163,7 +163,7 @@
    "expect": {
     "ok": true,
     "summary": "Saved services-agreement-halden.docx for the application",
-    "data_sha": "4c563e25ef16dcff",
+    "data_sha": "f8fb453c3875b2c7",
     "data_keys": [
      "coverage",
      "coverage.blocks_laid_out",
@@ -185,6 +185,6 @@
  ],
  "output": {
   "name": "services-agreement-halden.docx",
-  "sha256": "68db7846b3e2f9e396fa505a0c7b0c2773bb71004407a8b152b5a7d2a260a52b"
+  "parts_sha256": "58a09ebf39e04c5cd9cfd12812f8d824b80c95a6a005d3f1c09eb7ed5f0035f1"
  }
 }

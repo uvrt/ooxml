@@ -1,6 +1,7 @@
 """The layout in Rust (lane L4, :mod:`docx2svg.rust`) reads as docx2svg's own: on every
 fixture it lays out, each page's frame, page info, body blocks, lines, spans, rules,
-pictures and floating drawings' boxes are the Python layout's, and each page it draws is
+pictures, floating drawings' boxes and every line it draws (``text_lines``: its text boxes'
+too) are the Python layout's, and each page it draws is
 the same SVG, byte for byte; a fixture or page it does not is a counted fallback."""
 
 from __future__ import annotations
@@ -34,7 +35,9 @@ def _page(page) -> tuple:
             [(_line(line), [_span(s) for s in line.spans]) for line in page.lines],
             [(r.kind, r.path, r.x, r.y, r.width, r.height, r.color, r.style) for r in page.rules],
             [(p.path, p.relationship, p.x, p.y, p.width, p.height, p.part) for p in page.pictures],
-            [(f.path, f.x, f.y, f.width, f.height, f.behind, f.story) for f in page.floats])
+            [(f.path, f.x, f.y, f.width, f.height, f.behind, f.story) for f in page.floats],
+            # every line it draws in paint order, its text boxes' included
+            [(_line(line), [_span(s) for s in line.spans]) for line in page.text_lines()])
 
 
 @pytest.mark.parametrize("path", FIXTURES, ids=lambda p: p.name)
@@ -71,12 +74,13 @@ def _charts(probe) -> bytes:
 
 def _made() -> dict:
     """Made-up documents of what lane L4d paints in Rust: SmartArt, VML shapes and text paths
-    (watermarks), and charts in another locale than en-US."""
+    (watermarks), charts in another locale than en-US, and text boxes."""
     import sys
 
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
     import make_chart_probe
     import make_smartart_probe
+    import make_text_box_probe
     import test_carry_on as made
     from ooxml_common.locales import Locale
 
@@ -96,10 +100,12 @@ def _made() -> dict:
         "vml-shapes": (made._docx(shapes + body), None),
         "smartart": (make_smartart_probe.build("15"), None),
         "charts-nl": (_charts(make_chart_probe), nl),
+        # text boxes' lines are the page's text lines too (Page.text_lines)
+        "text-boxes": (make_text_box_probe.build("15"), None),
     }
 
 
-@pytest.mark.parametrize("name", ["watermark", "fitted-italic", "vml-shapes", "smartart", "charts-nl"])
+@pytest.mark.parametrize("name", ["watermark", "fitted-italic", "vml-shapes", "smartart", "charts-nl", "text-boxes"])
 def test_smartart_vml_and_charts_in_a_locale_are_laid_out_and_drawn_as_docx2svg(name: str):
     data, locale = _made()[name]
     options = docx2svg.ConvertOptions(locale=locale) if locale else docx2svg.ConvertOptions()

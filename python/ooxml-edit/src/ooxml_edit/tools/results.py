@@ -35,7 +35,8 @@ class ToolError(Exception):
     """An error a tool reports to the model, with the options it could use instead."""
 
     def __init__(self, code: str, message: str, *, valid_options: Sequence[Any] | None = (),
-                 field: str | None = None, details: dict[str, Any] | None = None) -> None:
+                 field: str | None = None, details: dict[str, Any] | None = None,
+                 try_call: dict[str, Any] | None = None) -> None:
         if code not in ERROR_CODES:
             raise ValueError(f"unknown error code {code!r}; one of {sorted(ERROR_CODES)}")
         super().__init__(message)
@@ -45,25 +46,31 @@ class ToolError(Exception):
         self.valid_options = list(valid_options or ())
         self.field = field
         self.details = dict(details or {})
+        #: A call that would work (``{tool, arguments}``), where the error has one: a Rust
+        #: tool's refusal carries it (tool rule 2), and the reply keeps it.
+        self.try_call = dict(try_call) if try_call else None
 
     def __reduce__(self) -> Any:
         # Pickles whole, so an error raised in a worker process arrives intact.
         return (_rebuild_error, (self.code, self.message, self.valid_options, self.field,
-                                 self.details))
+                                 self.details, self.try_call))
 
     def to_json(self) -> dict[str, Any]:
         data: dict[str, Any] = {"code": self.code, "message": self.message}
         if self.field:
             data["field"] = self.field
         data["valid_options"] = self.valid_options
+        if self.try_call:
+            data["try_call"] = self.try_call
         if self.details:
             data["details"] = self.details
         return data
 
 
 def _rebuild_error(code: str, message: str, valid_options: list[Any], field: str | None,
-                   details: dict[str, Any]) -> ToolError:
-    return ToolError(code, message, valid_options=valid_options, field=field, details=details)
+                   details: dict[str, Any], try_call: dict[str, Any] | None = None) -> ToolError:
+    return ToolError(code, message, valid_options=valid_options, field=field, details=details,
+                     try_call=try_call)
 
 
 @dataclass

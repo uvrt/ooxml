@@ -15,6 +15,7 @@
 
 mod blobs;
 mod check;
+mod coverage;
 mod describe;
 mod document;
 mod drawn_reply;
@@ -27,6 +28,7 @@ mod placements;
 mod refusal;
 mod registrar;
 mod review;
+mod spaced_reply;
 mod structure;
 mod style;
 mod table_read;
@@ -45,6 +47,7 @@ pub use find_text::{find_text, FindStories, FindText};
 pub use pages::{EnginePages, LayoutLimit, NotLaid, WordLayout};
 pub use placements::Placer;
 pub use registrar::{register, EditFn, Hosting, ReadFn, Registrar, TrackingFn};
+pub use spaced_reply::note_spaced;
 // A tool group's module exports its tools (`pub use` in its `mod.rs`); the crate exports
 // each group whole, so a new tool in a group is named only there.
 pub use objects::*;
@@ -52,7 +55,7 @@ pub use review::*;
 pub use structure::*;
 pub use style::*;
 pub use text::*;
-pub use version::{LayoutCounts, Others, Owned, Version};
+pub use version::{HostTable, HostTables, LayoutCounts, Others, Owned, Version};
 pub use word_inspect::{word_inspect, WordInspect};
 pub use word_read::{word_read, Story, View, WordRead};
 pub use written::Written;

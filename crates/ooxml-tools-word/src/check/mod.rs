@@ -19,6 +19,7 @@
 //! words it ([`refused`]); a heading's range is read, and named, as the span it is.
 
 mod args;
+mod edit_reflow;
 mod facts;
 mod laid_facts;
 mod laid_tables;
@@ -29,6 +30,7 @@ mod reflow;
 mod refused;
 
 pub use args::{Check, CheckCopy, CheckInclude, CheckScale, CopyLists, CopyReference, ScaleShow, ScaleStep, StepText};
+pub use edit_reflow::{reflow_after_edit, EditedFrom, REFLOW_PAGES, STALE};
 pub use facts::{
     direct_formatting_json, empty_run_json, grid_mismatch_json, lost_cell_json, lost_original_json, row_unlike_json,
     skipped_level_json, spacing_problem_json, style_use_json, text_language_json,
@@ -69,7 +71,7 @@ pub const CHECK_LAYOUT: &str = "check: layout facts";
 pub const CHECK_ARGUMENTS: &str = "check: arguments";
 /// What `unported` says of a check whose `pages` hold none of its ranges' blocks.
 pub const CHECK_PAGES_OUTSIDE: &str = "check: pages outside the ranges";
-/// The ranges a check takes at most (docx-agent's `MAX_RANGES`).
+/// The ranges a check or a render takes at most (docx-agent's `scope.MAX_RANGES`).
 pub const MAX_RANGES: usize = 20;
 /// What `unported` says of a check of a document the session does not own.
 pub const CHECK_NOT_OWNED: &str = "check: a document the session does not own";

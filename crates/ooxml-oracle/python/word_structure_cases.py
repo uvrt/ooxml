@@ -186,6 +186,14 @@ def story_cases(document) -> list[dict]:
                     call("word_headers_footers", section=section, which=which, action="unlink"),
                     call("word_headers_footers", section=section, which=which, action="unlink", type="even")]
     out.append(call("word_headers_footers", section="s:42", which="header", action="set", text="x"))
+    # A section named by any block: a cell's is its table's; a bookmark's is left to the host.
+    tables = document.tables()
+    if tables:
+        out.append(call("word_headers_footers", section=f"{tables[0].id}/c0,0", which="header", action="set",
+                        text="Cell"))
+    marks = document.bookmarks()
+    if marks:
+        out.append(call("word_headers_footers", section=marks[0].name, which="header", action="set", text="Mark"))
     fonts = fonts_of(document)
     for section in [s.id for s in document.sections()][:2]:
         out += [{**call("word_headers_footers", section=section, which="footer", action="set", text="Title",
@@ -630,6 +638,34 @@ def review_within_cases(document) -> list[dict]:
                 call("word_changes", action="list", detail="records", within="p:00000000@2")]
     return out
 
+
+#: A Dutch locale with its list separator (``;``), and one that names only the language (its
+#: list separator ooxml-common's default, ``,``), as a host's document locale.
+DUTCH = {"decimal_separator": ",", "thousands_separator": ".", "date_order": "dmy", "language": "nl-NL",
+         "list_separator": ";"}
+DUTCH_LANGUAGE = {"language": "nl-NL"}
+
+
+@CASES
+def toc_locale_cases(document) -> list[dict]:
+    """A table of contents' ``\\t`` styles read under the document's locale (lane P5q): its
+    style names split on the locale's list separator and found in its language -- a Dutch
+    locale with ``;``, one with the language only, and none (the document's own language) --
+    on a TOC inserted with Dutch and English names, and every field updated.  Registered
+    last: the other tools' case numbers stay."""
+    paragraphs = _words(document)
+    if not paragraphs:
+        return []
+    pid = paragraphs[0][0]
+    fonts = fonts_of(document)
+    out = []
+    for locale in (DUTCH, DUTCH_LANGUAGE, None):
+        for styles in ("Kop 1;1;Kop 2;2", "Heading 1,1,Heading 2,2"):
+            out.append({**call("word_fields", action="insert_field", at=pid,
+                               instruction=f'TOC \\h \\t "{styles}"'), "locale": locale})
+        if locale is not None:
+            out.append({**call("word_fields", action="update"), "locale": locale})
+    return [{**case, "fonts": fonts} for case in out]
 
 def cases(document) -> list[dict]:
     """Every structure case for ``document``."""

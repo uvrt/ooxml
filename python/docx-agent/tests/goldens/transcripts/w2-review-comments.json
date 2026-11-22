@@ -376,7 +376,7 @@
    "expect": {
     "ok": true,
     "summary": "Saved hosting-agreement-summary-reviewed.docx for the application",
-    "data_sha": "29bdfcb39ac9affd",
+    "data_sha": "5a778347c6b041ef",
     "data_keys": [
      "coverage",
      "coverage.blocks_laid_out",
@@ -398,6 +398,6 @@
  ],
  "output": {
   "name": "hosting-agreement-summary-reviewed.docx",
-  "sha256": "cfddbe0e220b4c83917dfd73cf16c557b104065a8271e38354b7fa6d9c3a6fa6"
+  "parts_sha256": "82e5b7fd3dd4e12844d3f57298492e6213263f6533c32064e7c57984722e9781"
  }
 }

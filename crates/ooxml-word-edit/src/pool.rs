@@ -338,6 +338,16 @@ impl Ids {
         }
     }
 
+    /// Where the next draw from `seed` starts: where its draws got to, else after the last
+    /// value the pool holds.
+    #[must_use]
+    pub fn draws_from(&self, seed: &str, sequences: &Sequences) -> usize {
+        self.cursors
+            .get(seed)
+            .copied()
+            .unwrap_or_else(|| self.after_last(seed, sequences))
+    }
+
     /// Where `seed`'s new values start: after the last one the pool holds with no later one
     /// within [`REACH`].
     fn after_last(&self, seed: &str, sequences: &Sequences) -> usize {

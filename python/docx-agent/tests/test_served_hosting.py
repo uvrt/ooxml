@@ -20,9 +20,11 @@ SERVED = {"word_set_text", "replace_text", "word_insert_text", "word_delete", "w
           "word_drawings",
           # p2-serve-i (#167): the review and object tools, word_copy_from
           "word_edit_table", "word_changes", "word_comments", "word_controls", "word_set_tracking",
-          "word_copy_from", "set_properties"}
+          "word_copy_from", "set_properties",
+          # lane RD2: render, a reading tool the host hands over with its page engine
+          "render"}
 BLOBS = {"word_drawings"}
-LAID = {"word_fields", "word_headers_footers", "word_template"}
+LAID = {"word_fields", "word_headers_footers", "word_template", "render"}
 KEEPS_WRITTEN = {"word_set_text", "word_insert_text", "replace_text", "word_insert_markdown"}
 
 
@@ -36,7 +38,7 @@ def test_the_exported_sets_are_the_lists_they_replace():
 
 def test_every_tool_is_exported_with_its_hosting():
     exported = json.loads(ooxml_core.tool_hosting("docx"))
-    names = {s["name"] for s in json.loads(ooxml_core.tool_specs("docx"))} - {"read_batch"}
+    names = {s["name"] for s in json.loads(ooxml_core.tool_specs("docx"))} - {"read_batch", "undo"}
     assert set(exported) == names
     assert all(set(facts) == {"served", "blobs", "layout", "keeps_written"} for facts in exported.values())
     assert json.loads(ooxml_core.tool_hosting("pptx")) == {}

@@ -42,6 +42,16 @@ pub fn repr(value: &Value) -> String {
     }
 }
 
+/// Python's `str` of a JSON value as the json module reads it (`f"{value}"`): a string as
+/// itself, anything else as its `repr`.
+#[must_use]
+pub fn str_of(value: &Value) -> String {
+    match value {
+        Value::String(s) => s.clone(),
+        other => repr(other),
+    }
+}
+
 /// Whether Python's `float(text)` reads `text` as a number: surrounding white space,
 /// a sign, `inf`, `infinity` and `nan` in any case, and single underscores between
 /// digits (PEP 515) allowed.
@@ -88,6 +98,8 @@ mod tests {
         assert_eq!(repr_str("a'b\"c"), "'a\\'b\"c'");
         assert_eq!(repr_str("a\nb\u{b}"), "'a\\nb\\x0b'");
         assert_eq!(repr(&serde_json::json!([true, null, "x", 2])), "[True, None, 'x', 2]");
+        assert_eq!(str_of(&serde_json::json!("x")), "x");
+        assert_eq!(str_of(&serde_json::json!(true)), "True");
     }
 
     #[test]

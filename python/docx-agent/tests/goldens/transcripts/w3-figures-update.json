@@ -358,7 +358,7 @@
    "expect": {
     "ok": true,
     "summary": "Saved regional-sales-update.docx for the application",
-    "data_sha": "e0c780d53c428c80",
+    "data_sha": "bbc373cf999ce227",
     "data_keys": [
      "coverage",
      "coverage.blocks_laid_out",
@@ -380,6 +380,6 @@
  ],
  "output": {
   "name": "regional-sales-update.docx",
-  "sha256": "24f446c950107751d682d36f44563da51a1025d1b8e0a6c96d8ee86fc75f6f0e"
+  "parts_sha256": "5b941a6c5641155db659bb0a8a17a7084f4b475ec249ba58b791727307cc353c"
  }
 }

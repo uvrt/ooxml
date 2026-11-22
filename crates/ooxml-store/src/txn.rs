@@ -35,9 +35,10 @@ pub struct Savepoint<D: DocModel> {
 }
 
 impl<'s, D: DocModel> Txn<'s, D> {
-    pub(crate) fn new(base: Snapshot<D>, ids: &'s IdAllocator) -> Self {
+    pub(crate) fn new(base: Snapshot<D>, ids: &'s IdAllocator, setup: &D::Setup) -> Self {
         let mut work = base.doc().clone();
         work.begin();
+        work.set_up(setup);
         Self {
             base,
             work,

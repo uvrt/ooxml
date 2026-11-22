@@ -29,6 +29,7 @@ from ooxml_edit.tools.limits import Limits  # noqa: E402
 from docx_agent import Document  # noqa: E402
 from docx_agent.rust import fields as rust_fields  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
+from python_handler import python_session  # noqa: E402
 
 INCLUDE = ["validate", "layout", "numbers", "reflow", "fields"]
 CLOCK = lambda: dt.datetime(2026, 11, 8, 9, 0, tzinfo=dt.timezone.utc)  # noqa: E731
@@ -163,8 +164,10 @@ def _run(data: bytes, on: bool, monkeypatch, *, check_first: bool = True) -> tup
     rust_fields.STATS.clear()
     out = []
     with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0, limits=LIMITS) as box:
-        session = box.session(clock=CLOCK)
-        doc = session.open(data, "report.docx")
+        # The check's own mirror of the Python view (``check.RustDoc``) is what the update reads:
+        # the view the Python handlers edit (lane P2e6; a document the session owns is not
+        # mirrored so).
+        session, doc = python_session(box, data, "report.docx", clock=CLOCK)
         for writer, tool, arguments in _sequence(session, doc, check_first=check_first):
             view = session.view(context={"agent": writer})
             arguments = dict(arguments)

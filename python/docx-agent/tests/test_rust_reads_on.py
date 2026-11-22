@@ -45,12 +45,19 @@ def rust_session():
 
 def _answer(toolbox, session, tool, arguments, rust) -> dict:
     """``tool``'s answer through the toolbox, by the Rust session (``rust``) or the Python
-    path (no session)."""
+    path (no session); a refusal as both must say it, its code and message (lane P2e1: the
+    session's is the answer, its way out -- ``field``, ``valid_options``, ``try_call`` --
+    Rust's addition, as the reads differential takes it)."""
     before = reads.use_session(rust)
     try:
-        return json.loads(json.dumps(toolbox.dispatch(session, tool, arguments).to_json()))
+        answer = json.loads(json.dumps(toolbox.dispatch(session, tool, arguments).to_json()))
     finally:
         reads.use_session(before)
+    ops = answer["data"].get("ops") if isinstance(answer.get("data"), dict) else None
+    for said in [answer, *(op for op in ops or () if isinstance(op, dict))]:     # (a read_batch's ops)
+        if said.get("error"):
+            said["error"] = {key: said["error"].get(key) for key in ("code", "message")}
+    return answer
 
 
 def _calls(session, doc: str) -> list[tuple[str, dict]]:
@@ -129,9 +136,12 @@ def test_what_rust_does_not_answer_the_same_falls_back_counted(toolbox, rust_ses
         first = session.entry(doc).document.paragraphs()[0].id
         deleted = toolbox.dispatch(session, "word_delete", {"doc": doc, "target": first, "force": True})
         assert deleted.ok, deleted.to_json()
+        # an id a served edit deleted: refused by the session, worded as the view words it (lane P2e1)
+        inspected = reads.served().get("word_inspect", 0)
         gone = _answer(toolbox, session, "word_inspect", {"doc": doc, "target": first}, rust_session)
+        assert reads.served()["word_inspect"] == inspected + 1
         assert gone == _answer(toolbox, session, "word_inspect", {"doc": doc, "target": first}, None)
-        assert reads.fallbacks()["word_inspect"]["renamed or deleted id"] >= 1
+        assert f"{first} was deleted by word_delete" in gone["error"]["message"]
     finally:
         session.close(doc)
 
@@ -183,7 +193,7 @@ def test_a_placer_callback_holds_no_rust_lock_another_thread_needs():
 
     reply, _images, _app = session.call("word_inspect", json.dumps({"doc": doc, "target": "body", "layout": True}),
                                         ooxml_core.CallOptions(documents=ooxml_core.CallDocuments(at=[head]),
-                                                                placer=placer))
+                                                               layout=ooxml_core.CallLayout(placer=placer)))
     assert json.loads(reply)["ok"] and done == ["other"]
 
     # Two threads at once, one inspecting with a placer, one committing and reading.
@@ -193,8 +203,8 @@ def test_a_placer_callback_holds_no_rust_lock_another_thread_needs():
         try:
             for _ in range(5):
                 session.call("word_inspect", json.dumps({"doc": doc, "target": "body", "layout": True}),
-                             ooxml_core.CallOptions(placer=lambda asked: json.dumps(
-                                 [{"placements": []} for _ in json.loads(asked)])))
+                             ooxml_core.CallOptions(layout=ooxml_core.CallLayout(placer=lambda asked: json.dumps(
+                                 [{"placements": []} for _ in json.loads(asked)]))))
         except BaseException as error:  # noqa: BLE001
             errors.append(error)
 

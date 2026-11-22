@@ -5,7 +5,8 @@ A tool the Rust session serves (declared by the Rust tool and exported with the 
 :func:`docx_agent.rust.served.hosting`; its arguments as the session takes them:
 :func:`docx_agent.rust.served.arguments_for`) runs there, ahead of docx-agent's handler and its wrapper
 (:func:`docx_agent.tools._base.wrap`): the call's arguments, its ``$name`` refs resolved, go to
-``Session.edit`` with the call's caller and the document's tracking mode; the versions the
+``Session.edit`` with the call's caller, its date (the session clock's, to the second: lane
+P2e1) and the document's tracking mode; the versions the
 call's edits made are the call's step (:meth:`~ooxml_edit.tools.owned.OwnedEntry.served`,
 numbered in the order the session made them), its reply the result.  The Python view of the
 document is not read.
@@ -22,14 +23,19 @@ compare layouts (Python lays them out) it runs under the lock (:func:`serve`).
 The Python handler answers instead -- on the view, committed through the bridge, counted by
 tool and reason (:func:`fallbacks`, ``edit_fallbacks{tool,reason}``), never silently -- where
 the session does not answer as it yet: values written by reference in a tool that does not
-keep them yet (``Hosting.keeps_written``), a refusal (the session's carries its own way out, tool rule 2,
-which today's does not), a session given its own clock (the Rust session dates revisions by
-the system's), and what the session says it leaves to the host (its ``unported``: a find
-within a block, a picture, regex, ...).  The Rust handler changes nothing in each of those.
+keep them yet (``Hosting.keeps_written``), and what the session says it leaves to the host
+(its ``unported``: a find within a block, a picture, regex, ...).  A format whose writes are
+not spaced by their language (``docx_format(typography=False)``) is served: the call's
+context says so (``CallContext(writing=CallWriting(typography=False))``, lane P2e7).  The Rust handler changes
+nothing in each of those.
+
+A refusal is not a fallback (lane P2e1): the session's is the call's answer, in docx-agent's
+words, with its way out (:mod:`.refusals`).
 """
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
 import threading
 import time
@@ -39,10 +45,10 @@ from typing import Any, Callable
 from ooxml_edit.tools import Result, ToolError
 from ooxml_edit.tools.session import StepOwner
 from ooxml_edit.tools.session import folded_warning
-from ooxml_edit.tools.session import utc_now
 
 from . import served as _served
 from .owner import context_of, documents, options
+from .refusals import refusal
 from .served import Adapted, Fallback, written_json
 
 _COUNTS_LOCK = threading.Lock()
@@ -90,16 +96,29 @@ def _written(call: Any) -> str | None:
     return written_json(getattr(call, "facts", None) or (), {})
 
 
+def _date(call: Any) -> str:
+    """The moment the call's writes are dated by (a revision's, a comment's): the session's
+    clock, UTC, to the second -- as docx-agent's handlers date them (lane P2e1)."""
+    moment = call.now()
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=_dt.timezone.utc)
+    return moment.astimezone(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _kept_refs(call: Any, arguments: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
     """``arguments`` with each ref name they give (``ref``, ``items[].ref``) as the call keeps it
     (ooxml-edit's ``Call.ref_name``: a camelCase or hyphenated name folded; one that folds to
     none, or to another address's ref, refused before the edit, so the refusal changes
-    nothing -- lane H2), and the names folded, ``{kept: given}``."""
+    nothing -- lane H2), and the names folded, ``{kept: given}``.  A ref that reads as an
+    address or a place (:func:`~docx_agent.tools.positions.is_place`) is left to the tool,
+    which refuses it naming the argument it belongs in (``at``), as docx-agent's handler does."""
+    from ..tools.positions import is_place
+
     folded: dict[str, str] = {}
 
     def kept(holder: dict[str, Any]) -> dict[str, Any]:
         name = holder.get("ref")
-        if not isinstance(name, str) or not name:
+        if not isinstance(name, str) or not name or is_place(name):
             return holder
         ref = call.ref_name(name)
         if ref == name:
@@ -127,9 +146,6 @@ def _why_not(call: Any, entry: Any, arguments: dict[str, Any]) -> str | None:
     # ``entry`` -- an owner's -- is never a reader's copy; lane H2.)
     if getattr(call, "facts", None) and call.tool.name not in _served.hosting().keeps_written:
         return "values by reference"
-    if getattr(call.session, "clock", utc_now) is not utc_now:
-        # Revisions are dated by the session's clock: the Rust session's is the system's.
-        return "the session's own clock"
     return None
 
 
@@ -152,13 +168,16 @@ def _pages(entry: Any) -> Any:
     return word_pages(entry.held)[0]
 
 
-def _layout(call: Any, entry: Any) -> Any:
+def _layout(call: Any, entry: Any, measured: bool) -> Any:
     """The page engine a call of a tool whose edits read the pages
-    (:attr:`~docx_agent.rust.served.Hosting.laid`) edits with; ``None`` for the others."""
-    if call.tool.name not in _served.hosting().laid:
-        return None
+    (:attr:`~docx_agent.rust.served.Hosting.laid`) edits with; for the others, where the
+    call's checks take the reflow the session measures (``measured``: served without the
+    lock, lane P5m), the document's engine where this process has one already; else
+    ``None``."""
     from ..pages import word_pages
 
+    if call.tool.name not in _served.hosting().laid:
+        return word_pages(entry.held, make=False)[0] if measured else None
     found, why = word_pages(entry.held)
     if found is None:
         raise Fallback(f"the layout: {why}")
@@ -185,7 +204,7 @@ def _tracking(call: Any, entry: Any, context: Any, counted: bool) -> None:
                             valid_options=error.get("valid_options"), details=error.get("details"))
         mirror.tracking = wanted
     if made is not None:
-        first, head, _touched, _validation, before = made
+        first, head, _touched, _validation, before, _reflow = made
         entry.served(first, head, StepOwner(dict(call.caller), "word_set_tracking"), counted=counted,
                      before=before)
 
@@ -203,6 +222,31 @@ def _set_mode(entry: Any, given: dict[str, Any], context: Any, names: dict[str, 
             entry.tracking = wanted
             mirror.tracking = wanted
     return reply, app, made
+
+
+def _host_tables(session: Any) -> Callable[[], list[tuple[str, str, str]]]:
+    """The tables of the open documents the host holds itself (a workbook's ``t:stock``), as
+    ``CallDocuments``' ``tables`` asks them: ``(name, doc, kind)``, the name as a ``from``
+    takes it (:func:`ooxml_edit.tools.sources.offered`).  Called by the session only where a
+    refusal names one (round 56, R120: a table not in the document), as docx-agent's
+    ``_no_table`` reads them only then: reading another document may wait for it."""
+
+    def tables() -> list[tuple[str, str, str]]:
+        from ooxml_edit.tools import sources
+
+        held = dict(session.documents)
+        if len(held) < 2:
+            return []
+        found = []
+        for name in sources.offered(session)[1]:
+            try:
+                handle = sources.qualify(name, held, session.formats)[0]
+            except ToolError:
+                continue
+            found.append((name, handle, held[handle].kind))
+        return found
+
+    return tables
 
 
 def _names(call: Any, entry: Any, arguments: dict[str, Any]) -> dict[str, str]:
@@ -284,12 +328,17 @@ def _timing(call: Any, arguments: dict[str, Any]) -> Any:
 
 def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tuple[Result, Any, list[Any]]:
     """The call's edit made by the session: its result, what it made (``Session.edit``'s
-    ``(first, head, touched, validation, before)``, ``None`` where it changed nothing), and the
+    ``(first, head, touched, validation, before, reflow)``, ``None`` where it changed nothing), and the
     markers its checks get (its ``Timing``, :func:`_timing`).  ``counted``: as for
     :meth:`~ooxml_edit.tools.owned.OwnedEntry.served`."""
     mirror = entry.handle
     tool = call.tool.name
-    context = context_of(call.caller, call.limits)
+    held = entry.held
+    # the host's limit on laying the document out holds in an edit as in a read (a field's
+    # page numbers, a reflow): past it the call is a timeout that changes nothing
+    context = context_of(call.caller, call.limits, call.limits.layout_timeout, date=_date(call),
+                         typography=getattr(held, "typography", True) is not False,
+                         locale=getattr(held, "locale", None))
     arguments, folded = _kept_refs(call, arguments)
     entry.flush_view()        # (in a batch: the Python ops' changes before it, the session's)
     _tracking(call, entry, context, counted)
@@ -297,22 +346,27 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
     written = adapted.written if isinstance(adapted, Adapted) else _written(call)
     given = {**{k: v for k, v in adapted.items() if v is not None}, "doc": entry.doc_id}
     names = _names(call, entry, arguments)
-    layout = _layout(call, entry)
+    layout = _layout(call, entry, measured=counted)
     timing = _timing(call, arguments)
     started = time.perf_counter()
     blobs = _Blobs(call.session) if tool in _served.hosting().blobs else None
     if tool == "word_set_tracking":
         reply, app, made = _set_mode(entry, given, context, names)
     else:
+        import ooxml_core
+
+        laid = ooxml_core.CallLayout(layout) if layout is not None else None
         reply, app, made = mirror.session.edit(tool, json.dumps(given), options(
-            context=context, layout=layout, blobs=blobs, written=written, documents=documents(names=names)))
+            context=context, layout=laid, blobs=blobs, written=written,
+            documents=documents(names=names, tables=_host_tables(call.session))))
     if timing is not None:
         timing.add("update", time.perf_counter() - started)
     envelope = json.loads(reply)
     error = envelope.get("error")
     unported = json.loads(app).get("unported") or []
     if made is None and error is not None:
-        raise Fallback(f"refusal: {error.get('code')}")
+        # A refusal is the call's answer, in docx-agent's words with Rust's way out (lane P2e1).
+        raise refusal(error)
     if made is None and unported:
         raise Fallback(unported[0])
     result = _result(envelope)
@@ -340,13 +394,16 @@ class Made:
     """A check's marker (:attr:`~ooxml_edit.tools.served.Served.touched`): the version a
     call the session served made, and its validation (``(new, fixed, baseline)``, as
     ``Session.validation`` gives it), which its checks report; the ``engine`` its relayout on
-    commit lays the version out with (lane P2c13)."""
+    commit lays the version out with (lane P2c13).  Lane P5m: the ``reflow`` its checks
+    report, as the session measured it after the call's edits (JSON text), where it did."""
 
-    def __init__(self, head: Any, validation: tuple[list[str], list[str], int], engine: Any = None) -> None:
+    def __init__(self, head: Any, validation: tuple[list[str], list[str], int], engine: Any = None,
+                 reflow: str | None = None) -> None:
         self.head = head
         self.engine = engine
         new, fixed, baseline = validation
         self.validation = {"new": list(new), "fixed": list(fixed), "baseline": baseline}
+        self.reflow = json.loads(reflow) if reflow is not None else None
 
 
 def serve_owned(call: Any, arguments: dict[str, Any]) -> Any:
@@ -370,6 +427,9 @@ def serve_owned(call: Any, arguments: dict[str, Any]) -> Any:
             result, made, markers = _edit(call, entry, arguments, counted=True)
         except Fallback as fallback:
             why = str(fallback)
+        except ToolError:
+            _count(tool, None)          # the session's refusal is the answer
+            raise
     if why is not None:
         _count(tool, why)
         return Declined(why)
@@ -377,8 +437,8 @@ def serve_owned(call: Any, arguments: dict[str, Any]) -> Any:
     touched: list[Any] = [*([_before(before)] if current else []), *markers]
     if made is None:
         return Served(result, None, None, touched)
-    first, head, step, validation, before = made
-    return Served(result, first, head, [*touched, Made(head, validation, _engine(call, entry))],
+    first, head, step, validation, before, reflow = made
+    return Served(result, first, head, [*touched, Made(head, validation, _engine(call, entry), reflow)],
                   None if step is None else json.loads(step), before)
 
 
@@ -414,6 +474,9 @@ def serve(call: Any, arguments: dict[str, Any], python: Callable[[], Any]) -> An
     except Fallback as fallback:
         _count(tool, str(fallback))
         return python()
+    except ToolError:
+        _count(tool, None)              # the session's refusal is the answer
+        raise
     _count(tool, None)
     return result
 

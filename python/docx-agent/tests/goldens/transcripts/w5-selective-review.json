@@ -233,7 +233,7 @@
    "expect": {
     "ok": true,
     "summary": "Saved remote-working-guideline.docx for the application",
-    "data_sha": "b734d751bf8904e6",
+    "data_sha": "98ace68f6e8627c9",
     "data_keys": [
      "coverage",
      "coverage.blocks_laid_out",
@@ -255,6 +255,6 @@
  ],
  "output": {
   "name": "remote-working-guideline.docx",
-  "sha256": "1814f789a78d8f75b2aaed6c2edbb01b9d98eda007e0985cabb3d99e1ba8de32"
+  "parts_sha256": "25d38284272b6aa6018743aace0a20f60b198631d944cb72f55fcb5c28c0ef9d"
  }
 }

@@ -54,7 +54,10 @@ dict's keys) and `data_sha_core` (all of it less what the layout measures).
 `tests/test_tools_goldens.py` replays them two ways:
 
 - **Where Office's faces are installed** (Calibri, Cambria, Georgia, Aptos: the Mac they were
-  recorded on), every result must be as recorded and every saved document byte for byte.
+  recorded on), every result must be as recorded and every saved document's parts byte for
+  byte (`output.parts_sha256`: the parts' names and uncompressed bytes, by name -- what Word
+  reads, not the zip's compressed bytes, which zlib and zlib-rs deflate differently, nor the
+  order of its entries).
 - **Everywhere, CI's runners included**, the *core* replay: the same calls with whatever
   faces are there (the open substitutes, or none), comparing everything except what the
   layout measures. A result that gains, loses or renames a key, or whose other content
@@ -62,7 +65,8 @@ dict's keys) and `data_sha_core` (all of it less what the layout measures).
 
 What the layout measures is defined once, at the top of the split in
 `tests/goldens_replay.py`: the data fields `reflow`, `coverage`, `pages`, `pages_estimated`
-and a saved document's `size` (its `app.xml` carries the page count); the keys those fields
+(a saved document's `size` is left out of both digests, as an encoding field: it is the
+zip's, not the parts'; its key stays in `data_keys`); the keys those fields
 have only when the layout stopped or substituted a face (`coverage.stop`,
 `coverage.missing_fonts`, `reflow.stopped`, ...), left out of `data_keys`; and the calls that
 write measured page numbers into the document (`word_fields` `update`, `insert_toc`, ...),
@@ -81,7 +85,7 @@ python tools/refresh_goldens.py --new-keys coverage.status             # write i
 
 It writes nothing unless, for every call, `ok`, `summary` and the other recorded fields are
 unchanged, the data less the keys named by `--new-keys` hashes to the recorded `data_sha`,
-and every saved document is byte for byte the one recorded. A change that alters a result
+and every saved document's parts are byte for byte the ones recorded. A change that alters a result
 or a saved document is not a refresh: record that transcript again
 (`goldens_replay.run(..., record=True)`) and review the diff as part of the change.
 

@@ -502,13 +502,22 @@ class RustPage:
         return [f for f in ordered if f.behind], [f for f in ordered if not f.behind]
 
     def text_lines(self) -> list:
-        """Every line of text the page draws, in paint order (docx2svg's ``Page.paint``)."""
-        lines = self.lines
-        behind, front = self.layers()
-        if not ([f for f in behind if f.story] or [f for f in front if f.story]
-                or ([f for f in behind if not f.story] and any(line.story for line in lines))):
-            return list(lines)
-        return [line for line in lines if line.story] + [line for line in lines if not line.story]
+        """Every line of text the page draws, in paint order (docx2svg's ``Page.paint``), text
+        boxes included: its lines and its drawings' text from one paint of the page."""
+        painted = self._layout.painted(self.number)
+        lines = painted["lines"]
+        ordered = sorted(painted["floats"], key=lambda f: f.order)
+        behind, front = [f for f in ordered if f.behind], [f for f in ordered if not f.behind]
+        story_behind, story_front = [f for f in behind if f.story], [f for f in front if f.story]
+        body_behind, body_front = [f for f in behind if not f.story], [f for f in front if not f.story]
+
+        def boxed(floats: list) -> list:
+            return [line for placed in floats for line in placed.lines]
+
+        if not (story_behind or story_front or (body_behind and any(line.story for line in lines))):
+            return boxed(body_behind) + list(lines) + boxed(body_front)
+        return (boxed(story_behind) + [line for line in lines if line.story] + boxed(story_front)
+                + boxed(body_behind) + [line for line in lines if not line.story] + boxed(body_front))
 
 
 class _Xs(list):
@@ -566,8 +575,8 @@ def _paint(view: dict) -> dict:
     from .drawing import Primitive
     from .layout import Float, Line, Picture, Rule, Span
 
-    lines = []
-    for path, number, baseline, top, pitch, paragraph_id, band, story, part, column, spans in view["lines"]:
+    def made(row: Sequence) -> Line:
+        path, number, baseline, top, pitch, paragraph_id, band, story, part, column, spans = row
         line = Line(path, number, baseline, _q(top), _q(pitch), paragraph_id=paragraph_id, band=tuple(band),
                     story=story, part=part, column=column)
         for (span_path, chars, xs, y, end, face, bold, italic, half_points, color, underline, strike,
@@ -576,7 +585,9 @@ def _paint(view: dict) -> dict:
                                    half_points, color=color, underline=underline, strike=strike,
                                    double_strike=double_strike, highlight=highlight, shading=shading, kind=kind,
                                    line_baseline=line_baseline, vertical_align=vertical_align))
-        lines.append(line)
+        return line
+
+    lines = [made(row) for row in view["lines"]]
     rules = [Rule(kind, path, _q(x), _q(y), _q(w), _q(h), color, style)
              for kind, path, x, y, w, h, color, style in view["rules"]]
     pictures = [Picture(path, relationship, _q(x), _q(y), _q(w), _q(h), part=part,
@@ -590,6 +601,8 @@ def _paint(view: dict) -> dict:
                        part=slot["story"][1] if slot["story"] else None)
         # What its text is drawn in (a text path's), for the rasteriser's faces (``drawn_faces``).
         placed.primitives = [Primitive("markup", slot["path"], face=tuple(face)) for face in slot["faces"]]
+        # Its text boxes' lines, in page coordinates (none where the page was read without lines).
+        placed.lines = [made(row) for row in slot.get("lines", ())]
         floats.append(placed)
     return {"lines": lines, "rules": rules, "pictures": pictures, "floats": floats}
 

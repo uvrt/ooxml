@@ -75,6 +75,7 @@ pub(crate) fn limited(
             last_check: last,
             layout: layout.map(|l| l as &dyn ooxml_tools_word::WordLayout),
             layout_limit: limit,
+            drawing: None,
         }))
         .with_word(Some(&doc));
     let args = Check::from_arg(&arguments, "").unwrap();
@@ -88,7 +89,7 @@ pub(crate) fn limited(
 #[test]
 fn a_default_check_reports_the_reflow_since_the_last() {
     let (first, edited) = versions();
-    let layout = EnginePages::new(Arc::new(Mutex::new(engine())));
+    let layout = EnginePages::of(engine());
     let last = LastCheck::default();
     let reply = checked(&first, 1, json!({"doc": "d1"}), &last, Some(&layout));
     assert_eq!(reply["summary"], "Checked validate, reflow, fields");
@@ -152,7 +153,7 @@ fn many_writers_checking_at_once_digest_each_page_once_and_answer_as_one_alone()
     let reflow = json!({"doc": "d1", "include": ["reflow"]});
     // One writer alone: a check of the first version, then of the edited one.
     let alone = Arc::new(Mutex::new(engine()));
-    let layout = EnginePages::new(Arc::clone(&alone));
+    let layout = EnginePages::new(Arc::clone(&alone), alone.lock().unwrap().seed());
     let last = LastCheck::default();
     let opened = checked(&first, 1, reflow.clone(), &last, Some(&layout));
     assert!(opened["data"]["reflow"].get("since_last_check").is_none());
@@ -162,7 +163,7 @@ fn many_writers_checking_at_once_digest_each_page_once_and_answer_as_one_alone()
     let once = digested(&alone);
     // Four writers, each having checked the first version, check the edited one at once.
     let shared = Arc::new(Mutex::new(engine()));
-    let layout = EnginePages::new(Arc::clone(&shared));
+    let layout = EnginePages::new(Arc::clone(&shared), shared.lock().unwrap().seed());
     let lasts: Vec<LastCheck> = (0..4).map(|_| LastCheck::default()).collect();
     for last in &lasts {
         checked(&first, 1, reflow.clone(), last, Some(&layout));
@@ -210,7 +211,7 @@ impl ooxml_base::Cancel for Past {
 #[test]
 fn a_reflow_past_the_limit_on_laying_out_says_so_and_the_check_goes_on() {
     let (first, edited) = versions();
-    let layout = EnginePages::new(Arc::new(Mutex::new(engine())));
+    let layout = EnginePages::of(engine());
     let last = LastCheck::default();
     let seen = checked(&first, 1, json!({"doc": "d1"}), &last, Some(&layout));
     let limit = LayoutLimit {
@@ -247,7 +248,7 @@ fn a_version_laid_out_is_summarised_whole_past_the_limit_on_laying_out() {
     // engine laid out already is answered whatever the limit says, and its summary is made
     // whole however long its pages take to paint
     let (first, _) = versions();
-    let layout = EnginePages::new(Arc::new(Mutex::new(engine())));
+    let layout = EnginePages::of(engine());
     layout.laid(&first, &Never).unwrap();
     let limit = LayoutLimit {
         cancel: &Past,

@@ -120,7 +120,10 @@ def test_the_rust_definition_is_todays_byte_for_byte():
 
 
 def test_the_rust_definition_renders_as_todays_for_every_provider():
-    named = {tool.name: tool for tool in TOOLS}
+    # today's tools as a Word toolbox sends them: a shared tool without the parameters of
+    # kinds it does not serve there (undo's scope is a deck's and a workbook's)
+    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as box:
+        named = dict(box.tools)
     rust = RustTools().tools
     today = [named[tool.name] for tool in rust]
     assert to_anthropic(rust) == to_anthropic(today)

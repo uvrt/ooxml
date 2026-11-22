@@ -138,6 +138,7 @@ fn run(args: &WordFields, editing: &Editing<'_>, list: &TryCall) -> Result<ToolR
                 ids: args.ids.clone(),
                 today,
                 layout,
+                locale: editing.locale,
             };
             respond(
                 editor.run(editing.caller, &command).map(|d| d.out),
@@ -156,6 +157,7 @@ fn run(args: &WordFields, editing: &Editing<'_>, list: &TryCall) -> Result<ToolR
                 policy: policy(editing),
                 today,
                 layout,
+                locale: editing.locale,
             };
             respond(
                 editor.run(editing.caller, &command).map(|d| d.out),
@@ -214,6 +216,7 @@ fn insert(args: &WordFields, editing: &Editing<'_>, list: &TryCall) -> Result<To
                 policy: policy(editing),
                 today,
                 layout,
+                locale: editing.locale,
             };
             editor.run(editing.caller, &command).map(|d| d.out)
         }
@@ -226,6 +229,7 @@ fn insert(args: &WordFields, editing: &Editing<'_>, list: &TryCall) -> Result<To
                 policy: policy(editing),
                 today,
                 layout,
+                locale: editing.locale,
             };
             editor.run(editing.caller, &command).map(|d| d.out)
         }

@@ -320,7 +320,9 @@ def test_the_update_says_where_its_time_went(toolbox):
     result = toolbox.dispatch(session, "word_fields", {"doc": "d1", "action": "update"})
     assert result.ok, result.to_json()
     timing = result.data["timing"]
-    assert list(timing)[:2] == ["ahead", "update"] and "validate" in timing
+    # the update ahead of the lock where docx-agent's handler makes it (its copy laid out first);
+    # the Rust session's update has no such part (lane P2e6)
+    assert list(timing)[:2] in (["ahead", "update"], ["update", "validate"]) and "validate" in timing
     assert len(json.dumps(timing)) < 200
 
 

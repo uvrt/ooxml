@@ -129,7 +129,7 @@ pub use copying::{
 pub use core_properties::{core_part, core_properties, CoreProperty, CoreSet, SetCoreProperties};
 pub use delete::{BlockDeleted, DeleteBlock};
 pub use delete_blocks::{blocks_named, BlocksDeleted, DeleteBlocks};
-pub use doc::{Change, Draw, DrawFrom, Key, ModelError, Shared, WordDoc};
+pub use doc::{Change, Draw, DrawFrom, Key, ModelError, Setup, Shared, WordDoc};
 pub use drawings::{
     image_format, picture_size, written_size, DrawingEdited, DrawingValues, FloatDrawing, InlineDrawing, InsertPicture,
     InsertShape, SetDrawing, ZOrder,

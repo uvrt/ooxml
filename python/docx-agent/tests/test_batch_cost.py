@@ -18,6 +18,7 @@ on, and compares every result and the document's bytes."""
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import json
 from pathlib import Path
@@ -98,14 +99,18 @@ def _plain(result) -> dict:
             "touched_by_op": {str(k): v for k, v in result.touched_by_op.items()}}
 
 
-def _run(box, data: bytes) -> dict:
+def _run(box, data: bytes, during=contextlib.nullcontext) -> dict:
+    """The mixed batch's results and bytes, and each op's alone; ``during``: a context the
+    batch itself runs in (what it costs, counted)."""
     session = box.session(clock=CLOCK)
     doc = session.open(data, "report.docx")
     document = session.entry(doc).document
     document.layout()                  # laid out before: the checks' reflow compares with it
     ops = mixed(doc, document)
-    out = {"batch": _plain(box.dispatch(session, "batch", {"ops": ops})),
-           "bytes": document.to_bytes().hex()}
+    with during():
+        batch = _plain(box.dispatch(session, "batch", {"ops": ops}))
+    # (the document after the batch: a served op makes a new version, read afresh)
+    out = {"batch": batch, "bytes": session.entry(doc).document.to_bytes().hex()}
     alone = []
     for op in ops:
         single = box.session(clock=CLOCK)
@@ -137,13 +142,51 @@ def test_a_mixed_batch_gives_the_results_it_gave_before(box, monkeypatch):
         read_alone.append(found is not None)
         return found
 
+    from docx_agent import pages
+    from docx_agent.rust import edits as _edits
+    from docx_agent.rust import owner as _owner
+
+    cost: dict = {}
+    follow = _owner.RustOwner.follow
+
+    def followed(self, *args, **kwargs):
+        cost["follows"] = cost.get("follows", 0) + 1
+        return follow(self, *args, **kwargs)
+
+    def layouts() -> int:
+        return sum(int(s["full"] + s["relaid"]) for s in (e.stats() for e in list(pages._ENGINES.values())))
+
+    @contextlib.contextmanager
+    def counting():
+        """What the batch costs where the Rust session serves its ops: the editing calls it
+        answered and those left to docx-agent's handlers, the times the Python view followed
+        the session's head, the versions the page engine laid out."""
+        served, fallbacks, laid = _edits.served(), _edits.fallbacks(), layouts()
+        with monkeypatch.context() as patch:
+            patch.setattr(_owner.RustOwner, "follow", followed)
+            yield
+        cost["served"] = {k: v - served.get(k, 0) for k, v in _edits.served().items()}
+        handled = [sum(n for reasons in f.values() for n in reasons.values()) for f in (fallbacks, _edits.fallbacks())]
+        cost["handled"] = handled[1] - handled[0]
+        cost["laid"] = layouts() - laid
+
     with monkeypatch.context() as patch:
         patch.setattr(Reader, "block", counted)
-        fast = _run(box, data)
+        fast = _run(box, data, counting)
     with monkeypatch.context() as patch:
         _unoptimised(patch, box)
         slow = _run(box, data)
-    assert any(read_alone)                         # the tables were read alone
+    tables = sum(op["tool"] == "word_edit_table" for op in mixed("d1", Document.open(data)))
+    if cost["served"].get("word_edit_table"):
+        # Served (lane P2e1): every word_edit_table op is the session's, which reads its table
+        # in Rust; the Python view is not rebuilt for the ops it serves -- it follows the
+        # session's head only for an op left to docx-agent's handler, and once for the
+        # batch's checks -- and the document is laid out once, after the last op.
+        assert cost["served"]["word_edit_table"] == tables, cost
+        assert cost.get("follows", 0) <= cost["handled"] + 1, cost
+        assert not pages.available() or cost["laid"] == 1, cost
+    else:
+        assert any(read_alone)                     # the tables were read alone
     assert json.dumps(fast, sort_keys=True, default=str) == json.dumps(slow, sort_keys=True, default=str)
     batch = fast["batch"]["result"]
     warnings = batch["warnings"]

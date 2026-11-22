@@ -104,6 +104,8 @@ impl PyWordFonts {
 #[pyclass(frozen, name = "WordPages", module = "ooxml_core")]
 pub struct PyWordPages {
     engine: Arc<Mutex<PageEngine>>,
+    /// The engine's seed, taken when it was made: read without waiting for the engine.
+    seed: ooxml_word_pages::EngineSeed,
 }
 
 fn lock(engine: &Mutex<PageEngine>) -> std::sync::MutexGuard<'_, PageEngine> {
@@ -126,7 +128,7 @@ fn laid_or_raise(engine: &Arc<Mutex<PageEngine>>, laid: Laid) -> PyResult<PyLaid
 impl PyWordPages {
     /// The edit core's layout port over this engine (a call's `layout`).
     pub(crate) fn port(&self) -> ooxml_tools_word::EnginePages {
-        ooxml_tools_word::EnginePages::new(Arc::clone(&self.engine))
+        ooxml_tools_word::EnginePages::new(Arc::clone(&self.engine), self.seed.clone())
     }
 }
 
@@ -152,7 +154,7 @@ impl PyWordPages {
         let (thousands, date_order, list_separator) = numbers;
         let numbers = ooxml_numfmt::Locale::new(decimal, thousands, &date_order, locale, list_separator)
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        let locale = Locale::new(locale).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        let locale = Locale::from(&numbers);
         let glyph_size = match glyph_size {
             "device" => GlyphSize::Device,
             "exact" => GlyphSize::Exact,
@@ -170,8 +172,10 @@ impl PyWordPages {
             held: budget.holding(),
             paint: budget.account(),
         };
+        let engine = PageEngine::new(Arc::clone(&fonts.inner), options, budgets);
         Ok(Self {
-            engine: Arc::new(Mutex::new(PageEngine::new(Arc::clone(&fonts.inner), options, budgets))),
+            seed: engine.seed(),
+            engine: Arc::new(Mutex::new(engine)),
         })
     }
 
@@ -463,7 +467,7 @@ impl PyLaidPages {
     /// strike, double_strike, highlight, shading, kind, line_baseline, vertical_align)`),
     /// `rules` (`(kind, path, x, y, width, height, color, style)`), `pictures` (`(path,
     /// relationship, x, y, width, height, part, crop)`), `drawings` (slots, as a painter
-    /// is given them), `blocks` and `unpainted`. `lines` false: its lines left out (lane
+    /// is given them, each with its text boxes' `lines`), `blocks` and `unpainted`. `lines` false: its lines left out (lane
     /// L4b: what a reader of its rules, pictures and drawings alone reads).
     #[pyo3(signature = (page, lines = true))]
     fn page<'py>(&self, py: Python<'py>, page: usize, lines: bool) -> PyResult<Bound<'py, PyDict>> {
@@ -747,9 +751,16 @@ fn view_dict<'py>(py: Python<'py>, view: &PageView, with_lines: bool) -> PyResul
         .drawings
         .iter()
         .zip(&view.drawing_faces)
-        .map(|(s, faces)| {
+        .zip(&view.text_box_lines)
+        .map(|((s, faces), text)| {
             let d = slot_dict(py, s)?;
             d.set_item("faces", faces.clone())?;
+            let lines = text
+                .iter()
+                .filter(|_| with_lines)
+                .map(|l| line_tuple(py, l))
+                .collect::<PyResult<Vec<_>>>()?;
+            d.set_item("lines", lines)?;
             Ok(d)
         })
         .collect::<PyResult<Vec<_>>>()?;

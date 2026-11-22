@@ -101,11 +101,12 @@ def _engine(lineage: str, convert_options: Any, make: bool = True) -> Any:
     return found
 
 
-def word_pages(document: Any) -> tuple[Any, str | None]:
+def word_pages(document: Any, *, make: bool = True) -> tuple[Any, str | None]:
     """``document``'s page engine in this process (an ``ooxml_core.WordPages``: the one
     :func:`lay_out` lays its versions out with, made where there is none), for an edit the
     Rust session makes that reads the pages (lane P2c13); ``(None, why)`` where the Rust
-    layout does not lay it out with the document's options."""
+    layout does not lay it out with the document's options.  ``make`` false: only an engine
+    this process has already (lane P5m: the one an edit's checks measure the reflow with)."""
     if not available():
         return None, "no Rust layout"
     import docx2svg
@@ -117,7 +118,10 @@ def word_pages(document: Any) -> tuple[Any, str | None]:
     why = rust.unsupported_options(convert_options)
     if why is not None:
         return None, why
-    return _engine(lineage(document), convert_options)._pages, None
+    engine = _engine(lineage(document), convert_options, make=make)
+    if engine is None:
+        return None, "no engine laid the document out"
+    return engine._pages, None
 
 
 def lay_out(data: bytes, options: dict, lineage: str, *, make: bool = True) -> Any:

@@ -66,6 +66,10 @@ pub struct Editing<'a> {
     /// The host's record of the rows the session's `word_edit_table` calls wrote (round 58,
     /// R126), read and added to; `None`: the call's own rows only, none kept.
     pub rows_written: Option<&'a crate::RowsWritten>,
+    /// The locale the call reads its document under where the host names one (the host's
+    /// document locale): a table of contents' style names and the separator between them;
+    /// `None`: the document's own language.
+    pub locale: Option<&'a ooxml_numfmt::Locale>,
     /// The host's limits on the call's reply (a listing's items per page).
     pub limits: ooxml_tools::Limits,
 }
@@ -99,6 +103,7 @@ impl<'a> Editing<'a> {
             blobs: None,
             written: &[],
             rows_written: None,
+            locale: None,
             limits: ooxml_tools::Limits::DEFAULT,
         }
     }
@@ -175,6 +180,13 @@ impl<'a> Editing<'a> {
     #[must_use]
     pub fn with_limits(mut self, limits: ooxml_tools::Limits) -> Self {
         self.limits = limits;
+        self
+    }
+
+    /// The locale the call reads its document under, where the host names one.
+    #[must_use]
+    pub fn with_locale(mut self, locale: Option<&'a ooxml_numfmt::Locale>) -> Self {
+        self.locale = locale;
         self
     }
 }

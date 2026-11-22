@@ -59,7 +59,22 @@ def test_ids_are_carried_after_edits(docx_path):
 
 
 def test_where_agrees_with_the_svg(markup_doc):
-    document = Document.open(markup_doc)
+    _where_agrees_with_the_svg(Document.open(markup_doc))
+
+
+def test_where_finds_a_text_box_paragraph_where_it_is_drawn():
+    """A paragraph in a text box (E2's constructs document has one) is placed on the page
+    that draws it -- for a Rust layout too, whose body lines are the flow's alone."""
+    from conftest import MARKDOWN_DIR
+
+    document = Document.open((MARKDOWN_DIR / "constructs.docx").read_bytes())
+    boxed = [p for p in document.paragraphs() if p._element.getparent().tag.endswith("}txbxContent")]
+    assert boxed
+    _where_agrees_with_the_svg(document)
+    assert not any(isinstance(document.layout().where(p.id), Unknown) for p in boxed)
+
+
+def _where_agrees_with_the_svg(document: Document) -> None:
     layout = document.layout()
     svgs = document.render_svg()
     for paragraph in document.paragraphs():

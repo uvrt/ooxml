@@ -11,7 +11,7 @@
 
 use super::pages::{EditLayout, FieldPlace};
 use super::scan::all_fields;
-use super::update::pass_on;
+use super::update::{pass_on, Inputs};
 use super::values::Day;
 use super::write::green_path;
 use super::FieldEdited;
@@ -53,6 +53,9 @@ pub struct InsertField<'l> {
     pub today: Day,
     /// The layout of the document's versions.
     pub layout: Option<EditLayout<'l>>,
+    /// The locale a table of contents' style names are read under (the host's document
+    /// locale); `None`: the document's own language.
+    pub locale: Option<&'l ooxml_numfmt::Locale>,
 }
 
 impl std::fmt::Debug for InsertField<'_> {
@@ -371,7 +374,15 @@ impl InsertField<'_> {
             .ok_or_else(|| EditError::Path(here.part.clone()))?;
         let id = located.id();
         let unknown = if self.result.is_none() {
-            pass_on(&mut *sink, &located, self.layout, self.today)?
+            pass_on(
+                &mut *sink,
+                &located,
+                Inputs {
+                    today: self.today,
+                    layout: self.layout,
+                    locale: self.locale,
+                },
+            )?
         } else {
             Vec::new()
         };

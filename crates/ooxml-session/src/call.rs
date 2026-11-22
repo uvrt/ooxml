@@ -27,14 +27,23 @@ pub struct Call<'a> {
     pub(crate) word: Option<&'a Word>,
     pub(crate) caller: &'a Caller,
     pub(crate) cancel: &'a dyn Cancel,
-    /// The revision date edits made now carry (the session's clock, to the minute).
+    /// The date edits made now carry (the host's, else the session's clock; to the second).
     pub(crate) date: String,
+    /// How its edits write (text as given, or spaced by its language: the host's setting).
+    pub(crate) setup: ooxml_word_edit::Setup,
+    /// The locale it reads under: the call's, else the session's where the host set one;
+    /// `None`: each document's own language.
+    pub(crate) locale: Option<&'a ooxml_numfmt::Locale>,
     /// The versions the call's edits made (an editing tool's: [`CallEditor::made`]).
     pub(crate) made: &'a Mutex<Option<Made>>,
     /// The host's layout of the document's versions.
     pub(crate) layout: Option<&'a dyn ooxml_tools_word::WordLayout>,
     /// How long laying a version out may take in the call.
     pub(crate) layout_limit: Option<ooxml_tools_word::LayoutLimit<'a>>,
+    /// The host's raster, where it hands one (`render`).
+    pub(crate) raster: Option<&'a ooxml_tools_word::PageRaster>,
+    /// The host's budgets of images, as they stand when the call starts.
+    pub(crate) image_budgets: &'a [ooxml_tools::ImageBudget],
     /// The session's blobs, where the host hands them over.
     pub(crate) blobs: Option<&'a dyn ooxml_tools_word::Blobs>,
     /// The values the host wrote into the call's arguments for references.
@@ -42,6 +51,8 @@ pub struct Call<'a> {
     /// The other documents the call names (`ooxml_tools::documents`), by id, each at the
     /// version pinned for the call when it was dispatched.
     pub(crate) others: &'a [(String, Opened)],
+    /// The tables of the open documents the host holds itself.
+    pub(crate) tables: Option<&'a dyn ooxml_tools_word::HostTables>,
     /// The pages and lines of the version's layout, where the host laid it out.
     pub(crate) counts: Option<ooxml_tools_word::LayoutCounts>,
     /// The host's limits on the call's reply.
@@ -81,6 +92,11 @@ impl Call<'_> {
             last_check: &word.last_check,
             layout: self.layout,
             layout_limit: self.layout_limit,
+            drawing: self.raster.map(|raster| ooxml_tools_word::Drawing {
+                raster,
+                images: &word.images,
+                budgets: self.image_budgets,
+            }),
         })
     }
 
@@ -99,14 +115,15 @@ impl Call<'_> {
     /// editor, the call's caller, tracking mode and host context; the versions its edits
     /// made are kept for the call (its `made`), and the ids its edits drew as stand-ins are
     /// named in the reply as they were drawn where the edits landed
-    /// ([`ooxml_tools_word::resolve_drawn`]).
+    /// ([`ooxml_tools_word::resolve_drawn`]); the spaces their language spacing wrote are
+    /// counted in it ([`ooxml_tools_word::note_spaced`]).
     pub(crate) fn edit(&self, word: &Word, run: impl FnOnce(&Editing<'_>) -> ToolResult<Value>) -> ToolResult<Value> {
         let policy = word.policy(&self.date);
         let tracking = match &policy {
             ooxml_word_edit::RevisionPolicy::Tracked(tracking) => Some(tracking),
             ooxml_word_edit::RevisionPolicy::Untracked => None,
         };
-        let editor = CallEditor::new(&word.editor);
+        let editor = CallEditor::new(&word.editor).with_setup(self.setup);
         let others = self.other_versions();
         let editing = Editing::new(
             &editor,
@@ -119,11 +136,12 @@ impl Call<'_> {
         .with_tracking(tracking)
         .with_layout(self.layout.map(|layout| layout as &dyn ooxml_word_edit::FieldLayout))
         .with_layout_limit(self.layout_limit)
-        .with_others(Others::new(&others))
+        .with_others(Others::new(&others).with_tables(self.tables))
         .with_blobs(self.blobs)
         .with_written(self.written)
         .with_rows_written(Some(&word.rows_written))
-        .with_limits(self.limits);
+        .with_limits(self.limits)
+        .with_locale(self.locale);
         let mut result = run(&editing);
         let made = editor.made();
         // a call is one history step and one state number: a handler with several commands
@@ -132,6 +150,7 @@ impl Call<'_> {
             made.as_ref().is_none_or(|m| m.ids.len() <= 1),
             "a call committed more than once: run its commands as one transaction"
         );
+        ooxml_tools_word::note_spaced(&mut result, made.as_ref().map_or(0, |m| m.spaced));
         *self.made.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = made;
         ooxml_tools_word::resolve_drawn(&mut result, &editor.moved());
         result
@@ -144,7 +163,7 @@ impl Call<'_> {
         let version = self
             .doc
             .version_of()
-            .with_others(Others::new(&others))
+            .with_others(Others::new(&others).with_tables(self.tables))
             .with_owned(self.owned())
             .with_limits(self.limits)
             .with_counts(self.counts);
