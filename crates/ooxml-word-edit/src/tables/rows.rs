@@ -10,11 +10,14 @@
 //! not even the document's ids.
 //!
 //! Must not: decide what a tool's arguments mean, or read past the table but for its
-//! ids and its part's relationships. Tables with pending tracked structure, and rows
-//! holding note or comment references, are not ported: they are refused as
-//! [`EditError::Unsupported`] for the host to answer its own way.
+//! ids and its part's relationships. Rows holding note or comment references are not
+//! ported: they are refused as [`EditError::Unsupported`] for the host to answer its own
+//! way. Over pending tracked structure ([`super::pending`]), tracked: a new row's cells
+//! follow the pending column changes beside them, a row deleted gives back the text pending
+//! merges took from it, and a row holding a pending merge's first cell is refused.
 
 use super::new_row::{merges_note, row_like, vmerge, Beside};
+use super::pending::{follow_pending_columns, Reshape};
 use super::shape::{own_rows, row_cells};
 use super::tracker::TableTracker;
 use super::{find_table, write, Found, Written};
@@ -126,28 +129,6 @@ pub struct TableChanged {
     pub unchanged: bool,
 }
 
-/// Whether `table` holds tracked structure -- a row or cell deleted or inserted, cells
-/// merged, a deleted paragraph mark -- that its accepted view counts otherwise
-/// (docx-agent's `_Accepted` positions, not ported yet).
-#[must_use]
-pub fn pending_structure(table: &Element) -> bool {
-    fn walk(element: &Element, parent: Option<&str>) -> bool {
-        element.children().iter().any(|n| {
-            let Node::Element(child) = n else { return false };
-            let local = child.name().local();
-            let held = child.name().namespace() == Some(W);
-            if held && matches!(local, "cellDel" | "cellMerge" | "cellIns") {
-                return true;
-            }
-            if held && local == "del" && matches!(parent, Some("trPr" | "rPr")) {
-                return true;
-            }
-            walk(child, Some(local))
-        })
-    }
-    walk(table, None)
-}
-
 /// Whether `element` holds a note or comment reference.
 fn holds_reference(element: &Element) -> bool {
     element.children().iter().any(|n| {
@@ -185,16 +166,12 @@ pub(crate) fn placed(doc: &WordDoc, key: &str) -> bool {
 impl EditTable {
     /// The change's arguments against the table as it is; the row it names.
     fn check(&self, doc: &WordDoc, found: &Found) -> Result<usize> {
-        if pending_structure(&found.element) {
-            return Err(EditError::Unsupported(
-                "word_edit_table rows and columns of a table with pending tracked structure".to_owned(),
-            ));
-        }
         if placed(doc, &found.id) {
             return Err(EditError::Unsupported(
                 "word_edit_table rows of a table placed from a source (its record kept)".to_owned(),
             ));
         }
+        let tracked = matches!(self.policy, RevisionPolicy::Tracked(_));
         let work = Work::of(&found.element, Vec::new());
         let rows = own_rows(&work, work.root());
         let index = match self.change {
@@ -205,9 +182,11 @@ impl EditTable {
             TableChange::InsertRow { index, .. } => index.unwrap_or(rows.len().saturating_sub(1)),
             TableChange::DeleteRow { index } => index,
             TableChange::DeleteColumn { index } => {
-                return super::columns::check_column(&work, &found.id, index).map(|()| index)
+                return super::columns::check_column(&work, &found.id, index, tracked).map(|()| index)
             }
-            TableChange::Merge { first, last } => return super::merge::rectangle(&work, first, last).map(|_| 0),
+            TableChange::Merge { first, last } => {
+                return super::merge::rectangle(&work, first, last, tracked).map(|_| 0)
+            }
             TableChange::Split {
                 row,
                 column,
@@ -236,6 +215,9 @@ impl EditTable {
                 return Err(EditError::Unsupported(
                     "word_edit_table delete_row of a row holding a note or comment reference".to_owned(),
                 ));
+            }
+            if tracked {
+                super::pending::no_reshape_over_merge(&work, Reshape::DeleteRow(index), &format!("row {index}"))?;
             }
         }
         Ok(index)
@@ -277,26 +259,8 @@ impl Held {
     /// Where `node` of the unchanged copy stands in its part (a copy's children are the
     /// element's but its text).
     pub(super) fn path_of(&self, node: Id) -> Option<Vec<u32>> {
-        let mut chain = Vec::new();
-        let mut at = node;
-        while let Some(parent) = self.work.parent(at) {
-            chain.push(self.work.children(parent).iter().position(|c| *c == at)?);
-            at = parent;
-        }
-        let mut path = self.found.path.clone();
-        let mut element = &self.table;
-        for k in chain.into_iter().rev() {
-            let (place, child) = element
-                .children()
-                .iter()
-                .enumerate()
-                .filter(|(_, n)| !matches!(n, Node::Text(_)))
-                .nth(k)?;
-            path.push(u32::try_from(place).ok()?);
-            let Node::Element(child) = child else { return None };
-            element = child;
-        }
-        Some(path)
+        let below = super::pending::path_below(&self.work, &self.table, node)?;
+        Some(self.found.path.iter().copied().chain(below).collect())
     }
 }
 
@@ -307,8 +271,17 @@ impl EditTable {
         let work = Work::of(&found.element, Vec::new());
         let warnings = match self.change {
             TableChange::Merge { first, last } => {
-                let rectangle = super::merge::rectangle(&work, first, last)?;
-                if !super::merge::merged_already(&work, &rectangle.plan) {
+                // tracked, a pending tracked merge counts as made (round 55, R115)
+                let tracked = matches!(self.policy, RevisionPolicy::Tracked(_));
+                let rectangle = super::merge::rectangle(&work, first, last, tracked)?;
+                let plan = if tracked {
+                    super::merge::tracked_plan(&work, rectangle.plan.clone())
+                } else {
+                    rectangle.plan.clone()
+                };
+                let made = super::merge::merged_already(&work, &plan)
+                    || (tracked && super::merge::merged_down_pending(&work, &plan));
+                if !made {
                     return Ok(None);
                 }
                 super::merge::grown_note(&rectangle, first, last).into_iter().collect()
@@ -462,7 +435,7 @@ fn insert_row(
         below,
         plain,
     };
-    let (row, note) = row_like(work, table, &beside, orders);
+    let (row, note, pending) = row_like(work, table, &beside, orders);
     if below {
         work.add_next(reference, row);
     } else {
@@ -490,12 +463,25 @@ fn insert_row(
         },
         drawn.first().map_or("", String::as_str)
     );
-    let tracked = under_policy(sink, |stamp| {
-        if let Some(stamp) = stamp {
-            track_insert(&mut held.work, row, &paragraphs, stamp, orders);
+    // the new cells of columns whose deletion or insertion is pending go with that change
+    // (round 53, R107), their records numbered before the row's own
+    let tracked = match sink.policy() {
+        RevisionPolicy::Untracked if pending.is_empty() => None,
+        RevisionPolicy::Untracked => {
+            let work = &mut held.work;
+            let (_, numbered) = sink.numbered(|next| follow_pending_columns(work, &pending, next, orders))?;
+            Some((numbered, false))
         }
-        Ok(())
-    })?;
+        RevisionPolicy::Tracked(_) => under_policy(sink, |stamp| {
+            if let Some(stamp) = stamp {
+                let work = &mut held.work;
+                let marked = follow_pending_columns(work, &pending, &mut || stamp.next_id(), orders);
+                let unmarked: Vec<Id> = paragraphs.iter().copied().filter(|p| !marked.contains(p)).collect();
+                track_insert(work, row, &unmarked, stamp, orders);
+            }
+            Ok(())
+        })?,
+    };
     let at = index + usize::from(below);
     let beside = merges_note(&held.work, &own_rows(&held.work, table), at);
     put(sink, held, tracked)?;
@@ -508,7 +494,7 @@ fn insert_row(
     })
 }
 
-/// A new row's insertion recorded: the row's and each paragraph mark's.
+/// A new row's insertion recorded: the row's and each paragraph mark's (`paragraphs`).
 fn track_insert(work: &mut Work, row: Id, paragraphs: &[Id], stamp: &mut Stamp, orders: &Orders) {
     let properties = match work.find(row, W, "trPr") {
         Some(p) => p,
@@ -548,6 +534,9 @@ fn delete_row(
         .filter(|cell| vmerge(work, *cell).as_deref() == Some("continue"))
         .collect();
     let inside = paragraphs_of_row(docx, &held.found, index);
+    // the cells of pending tracked merges in the row: their text leaves the merged cell
+    // again, as had the row gone first (round 55, R115)
+    let taken = super::pending::taken_in(work, table, Reshape::DeleteRow(index));
     let mut removed = vec![old_row];
     let mut released = Vec::new();
     let mut gone = true;
@@ -575,6 +564,9 @@ fn delete_row(
         }
         if matches!(row_fate(work, row, stamp.author()), Fate::Remove | Fate::Relocate) {
             removed.extend(inside);
+        }
+        for (origin, cell) in &taken {
+            super::pending::drop_copies(work, Some(*origin), *cell, stamp, orders);
         }
         let (taken, freed) = track_delete_rows(work, &[row], false, stamp, orders);
         gone = !taken.is_empty();
