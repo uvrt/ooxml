@@ -462,8 +462,15 @@ fn finish(
     let edits: Vec<Outcome> = done.out.edits.into_iter().map(Outcome::from).collect();
     let mut result = outcome(&edits, summary, None);
     if let ooxml_tools::Outcome::Done(found) = &mut result.outcome {
-        if !found.changed.contains(&args.table) {
-            found.changed.push(args.table.clone());
+        // the table as the call leaves it: a positional address its stamping renamed is named
+        // by its new id (docx-agent's result names the stamped id)
+        let table = found
+            .renamed
+            .iter()
+            .find(|(old, _)| *old == args.table)
+            .map_or_else(|| args.table.clone(), |(_, new)| new.clone());
+        if !found.changed.contains(&table) {
+            found.changed.push(table);
         }
     }
     if let (true, Some(now)) = (regions, now) {
@@ -479,5 +486,5 @@ fn finish(
 
 /// Registers `word_format_table` (the crate's [`crate::register`]).
 pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.edit::<WordFormatTable>(word_format_table, crate::Hosting::SERVED);
+    r.edit::<WordFormatTable>(word_format_table, crate::Hosting::SERVED.layout());
 }

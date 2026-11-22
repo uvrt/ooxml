@@ -24,7 +24,7 @@ SERVED = {"word_set_text", "replace_text", "word_insert_text", "word_delete", "w
           # lane RD2: render, a reading tool the host hands over with its page engine
           "render"}
 BLOBS = {"word_drawings"}
-LAID = {"word_fields", "word_headers_footers", "word_template", "render"}
+LAID = {"word_fields", "word_headers_footers", "word_template", "word_format_table", "render"}
 KEEPS_WRITTEN = {"word_set_text", "word_insert_text", "replace_text", "word_insert_markdown"}
 
 

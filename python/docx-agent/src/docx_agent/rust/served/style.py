@@ -11,9 +11,6 @@ from . import Fallback, adapter, own, refs_in
 
 @adapter("word_format")
 def _format(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-    if arguments.get("keep_together"):
-        # Blocks kept together are measured against a page (Python lays them out).
-        raise Fallback("keep_together")
     find = arguments.get("find")
     finds = find if isinstance(find, list) else None if find is None else [find]
     return {**own(arguments), "targets": refs_in(call, arguments.get("targets")),

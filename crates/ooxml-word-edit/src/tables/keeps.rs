@@ -278,11 +278,13 @@ pub fn loose_paragraph_after(doc: &WordDoc, table: &str) -> Result<Option<(Strin
 
 /// The pages the body table `table` names is drawn on in the version `sink` holds (a
 /// table kept together: docx-agent's `_taller_than_page`, read after the call's edits);
-/// `None` for a table outside the body (a header's has no page to break).
+/// `None` for a table outside the body (a header's has no page to break). Where there is
+/// no layout, or laying the version out stops or is not done, what the pages are is
+/// [`Unknown`]: the keep is made all the same, and its warning says so (docx-agent's "no
+/// layout: said, not guessed").
 ///
 /// # Errors
-/// [`EditError::Unsupported`] without a layout, or for a version the layout does not lay
-/// out: the call is left to the host.
+/// A `table` that names no table.
 pub(crate) fn table_pages(
     sink: &EditSink<'_, '_>,
     layout: Option<EditLayout<'_>>,
@@ -293,9 +295,13 @@ pub(crate) fn table_pages(
     if found.part != docx.main {
         return Ok(None);
     }
-    let layout = layout.ok_or_else(|| EditError::Unsupported("keep_together's pages without a layout".to_owned()))?;
-    let laid = layout.lay_out(sink.doc().package())?;
-    Ok(Some(laid.block_pages(&found.id)))
+    let Some(layout) = layout else {
+        return Ok(Some(Err(Unknown("no layout".to_owned()))));
+    };
+    Ok(Some(match layout.lay_out(sink.doc().package()) {
+        Ok(laid) => laid.block_pages(&found.id),
+        Err(stopped) => Err(Unknown(stopped.to_string())),
+    }))
 }
 
 #[cfg(test)]

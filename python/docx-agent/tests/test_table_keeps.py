@@ -119,6 +119,7 @@ def test_keep_together_where_a_style_keeps_the_rows(box, session):
     chained = document.table_properties(table)                             # every row keeps: a chain
     assert chained["keep_together"] is True and chained["keep_with_next"] is True
     made = ok(box, session, "word_format_table", doc=d, table=table, scope="table", keep_together=True)
+    document = session.entry(d).document       # (the view as the served call left it)
     table = made.renamed.get(table, table)                       # stamped by the edit
     assert table in made.changed and table == document.tables()[0].id
     assert _keeps(document, table) == [None] * 5 + [False]
@@ -134,6 +135,7 @@ def test_keep_together_where_a_style_keeps_the_rows(box, session):
     assert described[0]["keep_together"] is True and "keep_with_next" not in described[0]
 
     off = ok(box, session, "word_format_table", doc=d, table=table, scope="table", keep_together=False)
+    document = session.entry(d).document       # (the view as the served call left it)
     assert _keeps(document, table) == [None] * 6
     assert off.warnings == [f"{table} is still kept together by its rows' styles (they keep with the next); "
                             "keep_together false removes only the direct keeps"]
@@ -153,6 +155,7 @@ def test_keep_together_on_plain_rows_and_off_removes_only_its_own(box, session):
     document = session.entry(d).document
     table = document.tables()[0].id
     ok(box, session, "word_format_table", doc=d, table=table, scope="table", keep_together=True)
+    document = session.entry(d).document       # (the view as the served call left it)
     table = document.tables()[0].id
     assert _keeps(document, table) == [True, True, True, None]
     layout = facts(box, session, d)
@@ -165,6 +168,7 @@ def test_keep_together_on_plain_rows_and_off_removes_only_its_own(box, session):
         assert centred[lead]["fix"]["calls"][0]["clear"] == ["alignment"]
 
     ok(box, session, "word_format_table", doc=d, table=table, scope="table", keep_together=False)
+    document = session.entry(d).document       # (the view as the served call left it)
     assert _keeps(document, table) == [None] * 4
     element = document._table_entry(table)[1].element
     assert len(element.findall(f".//{_W}jc")) == 4               # the centring stays
@@ -183,9 +187,11 @@ def test_keep_together_mends_a_released_row_and_keeps_a_nested_tables_first_para
     first, second = [t.id for t in document.tables()][:2]
     assert _keeps(document, first) == [None, False, None]
     ok(box, session, "word_format_table", doc=d, table=first, scope="table", keep_together=True)
+    document = session.entry(d).document       # (the view as the served call left it)
     first, second = [t.id for t in document.tables()][:2]
     assert _keeps(document, first) == [None, None, False]
     ok(box, session, "word_format_table", doc=d, table=second, scope="table", keep_together=True)
+    document = session.entry(d).document       # (the view as the served call left it)
     first, second = [t.id for t in document.tables()][:2]
     assert _keeps(document, second) == [True, True, None]
     element = document._table_entry(second)[1].element
@@ -212,12 +218,14 @@ def test_keep_together_on_a_one_row_table_is_a_note_and_a_batch_applies(box, ses
     one, three = [t.id for t in document.tables()]
     named = document._table_entry(one)[1].id
     result = ok(box, session, "word_format_table", doc=d, table=one, scope="table", keep_together=True)
+    document = session.entry(d).document       # (the view as the served call left it)
     assert result.summary == f"No change to {one}" and result.changed == []
     assert result.warnings[0].startswith(f"{named} has one row: nothing to keep together, left as it was")
     batch = ok(box, session, "batch", ops=[
         {"tool": "word_format_table", "arguments": {"doc": d, "table": one, "scope": "table", "cant_split": True,
                                                "keep_together": True, "keep_with_next": True}},
         {"tool": "word_format_table", "arguments": {"doc": d, "table": three, "scope": "table", "keep_together": True}}])
+    document = session.entry(d).document       # (the view as the served call left it)
     assert batch.ok
     assert document.row_properties(one, 0)["cant_split"] is True
     assert document.table_properties(document.tables()[1].id)["keep_together"] is True
@@ -232,6 +240,7 @@ def test_turning_off_a_keep_the_table_does_not_have_changes_nothing(box, session
     document = session.entry(d).document
     one, three, kept = [t.id for t in document.tables()]
     ok(box, session, "word_format_table", doc=d, table=kept, scope="table", keep_together=True)
+    document = session.entry(d).document       # (the view as the served call left it)
     kept = document.tables()[2].id
     before = document.to_bytes()
     named = {t: document._table_entry(t)[1].id for t in (one, three, kept)}    # t:<id>, as said
@@ -243,6 +252,7 @@ def test_turning_off_a_keep_the_table_does_not_have_changes_nothing(box, session
             (three, {"keep_together": False, "keep_with_next": False}, " was not kept together"),
             (kept, {"keep_with_next": False}, "'s last row did not keep with the next")):
         result = ok(box, session, "word_format_table", doc=d, table=table, scope="table", **arguments)
+        document = session.entry(d).document       # (the view as the served call left it)
         assert result.summary == f"No change to {table}" and result.changed == [], arguments
         assert result.warnings == [named[table] + said] and result.touched == [], arguments
     assert document.to_bytes() == before
@@ -326,6 +336,7 @@ def test_a_table_kept_together_taller_than_a_page_is_warned_of_and_reported_once
     document = session.entry(d).document
     made = ok(box, session, "word_format_table", doc=d, table=document.tables()[0].id, scope="table",
               keep_together=True)
+    document = session.entry(d).document       # (the view as the served call left it)
     tall, other, short, chain = [t.id for t in document.tables()]
     assert made.warnings == [f"{tall} is taller than a page: Word starts it on a new page and breaks it where "
                              "the page is full"]
@@ -367,10 +378,12 @@ def test_keep_with_next_takes_the_box_along_and_check_reports_the_table(box, ses
     record, after = [t.id for t in document.tables()]
     for table in (record, after):
         ok(box, session, "word_format_table", doc=d, table=table, scope="table", keep_together=True)
+        document = session.entry(d).document       # (the view as the served call left it)
     assert _pages(document) == [[1], [2]]                        # the box alone on page 2
     record = document.tables()[0].id
     made = ok(box, session, "word_format_table", doc=d, table=record, scope="table", keep_together=True,
               keep_with_next=True)
+    document = session.entry(d).document       # (the view as the served call left it)
     assert made.warnings == []
     record = document.tables()[0].id
     assert _keeps(document, record) == [True] * 4
@@ -388,6 +401,7 @@ def test_keep_with_next_takes_the_box_along_and_check_reports_the_table(box, ses
     assert described["keep_together"] is True and described["keep_with_next"] is True
 
     ok(box, session, "word_format_table", doc=d, table=record, scope="table", keep_together=False)
+    document = session.entry(d).document       # (the view as the served call left it)
     record = document.tables()[0].id
     assert _keeps(document, record) == [None] * 4
     assert document.table_properties(record)["keep_with_next"] is False
@@ -402,19 +416,24 @@ def test_keep_with_next_alone_turns_the_last_row_on_and_off(box, session):
     document = session.entry(d).document
     plain, label = [t.id for t in document.tables()]
     ok(box, session, "word_format_table", doc=d, table=plain, scope="table", keep_together=True)
+    document = session.entry(d).document       # (the view as the served call left it)
     plain = document.tables()[0].id
     ok(box, session, "word_format_table", doc=d, table=plain, scope="table", keep_with_next=True)
+    document = session.entry(d).document       # (the view as the served call left it)
     plain = document.tables()[0].id
     assert _keeps(document, plain) == [True] * 4
     ok(box, session, "word_format_table", doc=d, table=plain, scope="table", keep_with_next=False)
+    document = session.entry(d).document       # (the view as the served call left it)
     plain = document.tables()[0].id
     assert _keeps(document, plain) == [True, True, True, None]
     label = document.tables()[1].id
     ok(box, session, "word_format_table", doc=d, table=label, scope="table", keep_with_next=False)
+    document = session.entry(d).document       # (the view as the served call left it)
     label = document.tables()[1].id
     assert _keeps(document, label) == [None, None, None, False]
     assert document.table_properties(label)["keep_with_next"] is False
     ok(box, session, "word_format_table", doc=d, table=label, scope="table", keep_with_next=True)
+    document = session.entry(d).document       # (the view as the served call left it)
     assert _keeps(document, document.tables()[1].id) == [None] * 4
 
 
@@ -444,8 +463,10 @@ def test_keep_with_next_warns_of_a_paragraph_between_that_does_not_keep(box, ses
     document = session.entry(d).document
     record, after = [t.id for t in document.tables()]
     ok(box, session, "word_format_table", doc=d, table=after, scope="table", keep_together=True)
+    document = session.entry(d).document       # (the view as the served call left it)
     made = ok(box, session, "word_format_table", doc=d, table=record, scope="table", keep_together=True,
               keep_with_next=True)
+    document = session.entry(d).document       # (the view as the served call left it)
     record, after = [t.id for t in document.tables()]
     between = next(q.id for q in document.paragraphs() if q.text == "Between")
     assert made.warnings == [f"{between}, between {record} and {after}, does not keep with the next: {after} can "
@@ -453,6 +474,7 @@ def test_keep_with_next_warns_of_a_paragraph_between_that_does_not_keep(box, ses
                              "keeps them together"]
     assert _pages(document) == [[1], [2]]
     ok(box, session, "word_format", doc=d, targets=[between], keep_with_next=True)
+    document = session.entry(d).document       # (the view as the served call left it)
     assert _pages(document) == [[2], [2]]
 
 
@@ -470,6 +492,7 @@ def test_a_chain_of_records_longer_than_a_page_breaks_after_a_box_and_check_says
     for k in range(16):
         ok(box, session, "word_format_table", doc=d, table=document.tables()[k].id, scope="table",
            keep_together=True, keep_with_next=True)
+        document = session.entry(d).document       # (the view as the served call left it)
     pages = _pages(document)
     assert pages[:6] == [[2]] * 6 and pages[6:12] == [[3]] * 6 and pages[12:] == [[4]] * 4
     tables = [t.id for t in document.tables()]
