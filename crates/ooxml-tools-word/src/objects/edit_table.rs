@@ -22,8 +22,10 @@
 //! A table kept in step with a source's rows by key (`sync`, [`super::table_sync`]); cells
 //! written from a source ([`super::set_from`]).
 //!
-//! Not ported yet, said in `unported` for the host to answer its own way: a change of the
-//! rows of a table with a placement record (refused so by the edit core); any call on a
+//! A table placed from a source keeps its record of where its values came from true
+//! through the change (docx-agent's `_Kept`, [`KeepingRecord`]).
+//!
+//! Not ported yet, said in `unported` for the host to answer its own way: any call on a
 //! table with Accept All's
 //! cell ends (a cell's last paragraph mark deleted: the reply's Markdown joins cells across
 //! it, and names the cells Accept All loses with the changes that do it).
@@ -40,7 +42,7 @@ use ooxml_base::pyfmt::repr_str;
 use ooxml_tools::{ArgEnum, ErrorCode, Refusal, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::facts::{ragged_rows, RaggedRow};
 use ooxml_word_edit::WordDoc;
-use ooxml_word_edit::{EditError, EditTable, Reshape, TableChange, TableChanged};
+use ooxml_word_edit::{EditError, EditTable, KeepingRecord, Reshape, TableChange, TableChanged};
 use ooxml_word_model::docx::tables::TableGrid;
 use ooxml_word_model::docx::{find_path, Docx};
 use ooxml_word_model::ids::{TableId, W};
@@ -433,11 +435,12 @@ fn finish(
     let before = editing.editor.store().snapshot();
     let ragged_before = !matches!(change, TableChange::InsertRow { .. }) && ragged(before.doc(), &table).is_some();
     let mut watched = watch(editing, before.doc(), view, change);
-    let command = EditTable {
+    // a table placed from a source keeps its record true through the change (`_Kept`)
+    let command = KeepingRecord(EditTable {
         table: args.table.clone(),
         change,
         policy: policy(editing),
-    };
+    });
     // round 58 (R126): a row added looked at against the rows around it, in the call's
     // transaction
     let adds_row = matches!(change, TableChange::InsertRow { .. } | TableChange::CopyRow { .. });

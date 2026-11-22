@@ -183,11 +183,13 @@ pub use styles::{
     WORD_TAG_SLOTS,
 };
 pub use switch::{tracks_changes, word_tracks_changes, SetWordTracking, WordTracking};
+pub use table_delete::{tracked_row_fates, Fate as RowFate};
 pub use tables::{
     body_lines, body_width, loose_paragraph_after, merges_in_the_way, row_cells, row_shown, rows_unlike, table_keeps,
     table_keeps_at, BodyLines, BodyWidth, CellUnlike, CellValues, ColumnCopy, EditTable, FormatCall, FormatTable,
-    LikeTheColumn, Look, LookField, PlaceRows, PlacedRecord, Reshape, RowUnlike, RowsBeside, RowsPlaced, TableChange,
-    TableChanged, TableEdit, TableFormat, TableFormatted, TableKeeps, TableValues, TableWidth, TextLook, ROW_WINDOW,
+    KeepingRecord, LikeTheColumn, Look, LookField, PlaceRows, PlacedRecord, Reshape, RowUnlike, RowsBeside, RowsPlaced,
+    TableChange, TableChanged, TableEdit, TableFormat, TableFormatted, TableKeeps, TableValues, TableWidth, TextLook,
+    ROW_WINDOW,
 };
 pub use template::{
     compatibility_mode, Reflowed, UpgradeReflowed, UpgradeToModern, Upgraded, DEFAULT_COMPATIBILITY_MODE, MODERN_MODE,

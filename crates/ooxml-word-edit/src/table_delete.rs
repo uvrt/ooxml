@@ -20,7 +20,7 @@ use ooxml_xml::{Element, Node};
 
 /// How a tracked deletion treats a row (docx-agent's `_row_fate`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Fate {
+pub enum Fate {
     /// Wholly one's own insertion: removed outright.
     Remove,
     /// The same, holding another author's insertion: removed, that moved on.
@@ -85,6 +85,22 @@ pub(crate) fn row_fate(work: &Work, row: Id, author: &str) -> Fate {
     } else {
         Fate::Remove
     }
+}
+
+/// How a tracked deletion by `author` treats each document row of the table `target` names,
+/// as it is (before any paragraph after a row is looked for: a row [`Fate::Relocate`] stays
+/// as [`Fate::Keep`] where none is left after it).
+///
+/// # Errors
+/// When no table has the id.
+pub fn tracked_row_fates(doc: &crate::WordDoc, target: &str, author: &str) -> crate::Result<Vec<Fate>> {
+    let docx = doc.docx()?;
+    let found = crate::tables::find_table(doc, &docx, target)?;
+    let work = Work::of(&found.element, Vec::new());
+    Ok(own_rows(&work, work.root())
+        .into_iter()
+        .map(|row| row_fate(&work, row, author))
+        .collect())
 }
 
 /// Whether a table is wholly the author's own insertion: every row of its own is.

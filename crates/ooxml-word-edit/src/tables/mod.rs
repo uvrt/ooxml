@@ -15,6 +15,7 @@ mod body_lines;
 mod columns;
 mod copy_row;
 mod keeps;
+mod kept;
 mod like_column;
 mod merge;
 mod new_column;
@@ -33,6 +34,7 @@ pub(crate) use rows::placed;
 
 pub use body_lines::{body_lines, body_width, BodyLines, BodyWidth};
 pub use keeps::{loose_paragraph_after, table_keeps, table_keeps_at, TableKeeps};
+pub use kept::KeepingRecord;
 pub use like_column::{ColumnCopy, LikeTheColumn};
 pub use pending::{merges_in_the_way, Reshape};
 pub use place_rows::{PlaceRows, PlacedRecord, RowsBeside, RowsPlaced};

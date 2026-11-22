@@ -168,7 +168,7 @@ impl EditTable {
     fn check(&self, doc: &WordDoc, found: &Found, placing: Placing) -> Result<usize> {
         if !placing.recorded && placed(doc, &found.id) {
             return Err(EditError::Unsupported(
-                "word_edit_table rows of a table placed from a source (its record kept)".to_owned(),
+                "a change of a table placed from a source: its record is kept through KeepingRecord".to_owned(),
             ));
         }
         let tracked = matches!(self.policy, RevisionPolicy::Tracked(_));
@@ -229,9 +229,7 @@ impl Command<WordDoc> for EditTable {
     type Error = EditError;
 
     fn validate(&self, doc: &WordDoc) -> Result<()> {
-        let docx = doc.docx()?;
-        self.check(doc, &find_table(doc, &docx, &self.table)?, Placing::default())
-            .map(|_| ())
+        self.validate_with(doc, Placing::default())
     }
 
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<TableChanged> {
@@ -253,7 +251,30 @@ pub(super) struct Placing {
     pub(super) body: bool,
 }
 
+impl Placing {
+    /// A change of a table whose record of its source the command running it keeps
+    /// ([`super::kept`]).
+    pub(super) fn recorded() -> Placing {
+        Placing {
+            recorded: true,
+            body: false,
+        }
+    }
+}
+
 impl EditTable {
+    /// The change's arguments checked against the table as `doc` has it, made `placing`.
+    pub(super) fn validate_with(&self, doc: &WordDoc, placing: Placing) -> Result<()> {
+        let docx = doc.docx()?;
+        self.check(doc, &find_table(doc, &docx, &self.table)?, placing)
+            .map(|_| ())
+    }
+
+    /// The change made through `sink`, made `placing`.
+    pub(super) fn edit_with(&self, sink: &mut EditSink<'_, '_>, placing: Placing) -> Result<TableChanged> {
+        self.edit(sink, placing)
+    }
+
     /// The change made through `sink`, as one part of a command placing a source's rows.
     pub(super) fn edit_placing(&self, sink: &mut EditSink<'_, '_>) -> Result<TableChanged> {
         self.edit(
