@@ -33,6 +33,7 @@ mod placed;
 mod ranges;
 mod reflow;
 mod refused;
+mod taller;
 
 pub use args::{Check, CheckCopy, CheckInclude, CheckScale, CopyLists, CopyReference, ScaleShow, ScaleStep, StepText};
 pub use copies::CHECK_COPIES_PACKAGE;
@@ -48,6 +49,7 @@ pub use laid_facts::{
 pub use laid_tables::{column_fit_json, past_margins_json, split_row_json, uncertain_json, unrepeated_json};
 pub use ranges::{ranges_json, Trials, TRIALS, TRIAL_SECONDS};
 pub use reflow::{LastCheck, Seen};
+pub(crate) use taller::taller_than_page;
 
 use crate::describe::cancelled;
 use crate::pages::NotLaid;
