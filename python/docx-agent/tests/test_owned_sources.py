@@ -29,8 +29,9 @@ from ooxml_edit.tools import OwnedDocument, ToolError, Toolbox  # noqa: E402
 import test_tables_from_data as data  # noqa: E402
 from test_tables_from_data import call, ds_put, ok  # noqa: E402
 
-FIXTURES = Path(__file__).parent / "fixtures"
 ROOT = Path(__file__).resolve().parents[3]
+#: The repository\'s Word fixtures, with the oracle (as conftest.FIXTURE_DIR).
+FIXTURES = ROOT / "crates" / "ooxml-oracle" / "fixtures"
 LISTED = sorted(json.loads((ROOT / "tools" / "gates_fixtures.json").read_text()))
 
 
