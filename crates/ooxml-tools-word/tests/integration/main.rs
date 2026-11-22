@@ -16,6 +16,7 @@ mod edit_reflow;
 mod edit_table;
 mod fields_bench;
 mod follow;
+mod keeps;
 mod objects;
 mod reads;
 mod review;
