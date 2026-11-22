@@ -14,6 +14,9 @@ and each answers from the session's reading of that version, never from the Pyth
   ``Version.has_drawing``);
 - :func:`provenance` -- the records of placed values it keeps (``Version.records``), for
   ``read_provenance`` (lane H7d);
+- :func:`number_texts` and :func:`scale_values` -- what a check of numbers and a scale read
+  in it (lane H7e: ``Version.number_texts``, ``Version.scale_values``), placed with the
+  session's own engine for the document (:func:`.engines.session_pages`);
 - :func:`closed` and :func:`restored` -- nothing of the session's: the session lets go of the
   document as the owner closes it, and what a batch or scoped undo puts back is its own
   version; only what docx-agent kept in this process for a view made of it goes.
@@ -22,7 +25,7 @@ and each answers from the session's reading of that version, never from the Pyth
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Mapping
 
 from . import reads
 
@@ -120,3 +123,82 @@ def live_view(subject: Any) -> Any:
     made current), or ``None``."""
     live = getattr(_mirror(subject), "live", None)
     return live() if live is not None else None
+
+
+def number_texts(call: Any, subject: Any, scope: Mapping[str, Any]) -> list[Any]:
+    """The format's ``number_texts`` for an owned document (lane H7e): the texts a check of
+    numbers reads in the version, as the session reads them (``Version.number_texts``),
+    each placed on its page by the session's own engine for the document."""
+    from ooxml_edit.tools import NumberText
+
+    from ..tools.shared import _pages_of
+
+    pages = _pages_of(call, scope.get("slides"), scope.get("pages"))
+    request = {"range": _ranges(call, scope.get("range")), "pages": pages}
+    found = _values(call, subject, "number_texts", request, pages, always=True)
+    return [NumberText(text["at"], text["text"], tuple((a, b) for a, b in text["written"]), {"range": text["at"]},
+                       {"page": text["page"]} if text["page"] is not None else {})
+            for text in (found or {}).get("texts", ())]
+
+
+def scale_values(call: Any, subject: Any, scale: Any, scope: Mapping[str, Any]) -> list[Any]:
+    """The format's ``scale_values`` for an owned document (lane H7e): the values the
+    scale's targets hold in the version, each with the step it is styled as now, as the
+    session reads them (``Version.scale_values``); with ``pages``, placed by the session's
+    own engine for the document."""
+    from ooxml_edit.tools import ScaleValue
+
+    from ..tools.shared import _pages_of
+
+    pages = _pages_of(call, scope.get("slides"), scope.get("pages"))
+    request = {"scale": {"name": scale.name, "targets": list(scale.targets), "labels": scale.labels,
+                         "steps": [{"fill": s.fill, "text": s.text, "label": s.label} for s in scale.steps]},
+               "range": _ranges(call, scope.get("range")), "pages": pages}
+    found = _values(call, subject, "scale_values", request, pages, always=False)
+    out = []
+    for value in (found or {}).get("values", ()):
+        handle = value["handle"]
+        if handle is not None:
+            kind, where, ids = handle
+            handle = (kind, tuple(where) if kind == "range" else where, list(ids))
+        out.append(ScaleValue(value["target"], value["text"], given=value["given"], now=value["now"],
+                              exact=value["exact"], differs=value["differs"], skip=value["skip"],
+                              where={"page": value["page"]} if value["page"] is not None else {},
+                              handle=handle, kept=value["kept"], source=value["source"]))
+    return out
+
+
+def _ranges(call: Any, value: Any) -> list[str]:
+    """``range`` as a list of addresses, refs resolved (a heading's range is read as its
+    span by the session, as ``check`` reads it)."""
+    from ..scope import ranges_of
+    from ..tools._base import refs_resolved
+
+    return ranges_of(refs_resolved(call, value))
+
+
+def _values(call: Any, subject: Any, method: str, request: dict[str, Any], pages: Any,
+            always: bool) -> dict[str, Any] | None:
+    """The session's reply to ``Version.<method>`` for ``request`` (the session's engine for
+    the document given where its texts are placed: always, or where ``pages`` are asked
+    for); its warnings said, its refusal raised."""
+    from ooxml_edit.tools import ToolError
+
+    from .engines import session_pages
+    from .refusals import refusal
+
+    engine = None
+    if always or pages is not None:
+        engine, why = session_pages(_mirror(subject), call.session)
+        if engine is None:
+            if pages is not None:
+                raise ToolError("layout_failed", f"numbers on pages need the layout: {why}; leave pages out "
+                                "to read the whole body, or give range", field="pages")
+            call.warn("numbers: the layout failed (layout_failed): no pages said")
+    reply = getattr(version_of(subject), method)(call.entry.doc_id, json.dumps(request), engine)
+    found = json.loads(reply)
+    if isinstance(found, dict) and found.get("error") is not None:
+        raise refusal(found["error"])
+    for warning in (found or {}).get("warnings", ()):
+        call.warn(warning)
+    return found

@@ -12,3 +12,4 @@ mod panics;
 mod registry;
 mod rows_written;
 mod session;
+mod values;

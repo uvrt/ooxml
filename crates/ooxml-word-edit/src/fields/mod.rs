@@ -68,6 +68,21 @@ pub struct FieldInfo {
     pub paragraph: Option<String>,
 }
 
+/// The places of the paragraphs the tables of contents of the part `part` of `docx` (a
+/// reading of `doc`) span, each from its field's begin to its end, both included
+/// (docx-agent's `_toc_paragraphs` of every `TOC` field `scan` finds), in order.
+#[must_use]
+pub fn toc_paragraphs(doc: &WordDoc, docx: &ooxml_word_model::docx::Docx, part: &str) -> Vec<Vec<u32>> {
+    let Some(story) = docx.part(part) else {
+        return Vec::new();
+    };
+    scan::all_fields(doc, docx)
+        .iter()
+        .filter(|located| located.part == part && located.found.keyword() == "TOC")
+        .flat_map(|located| insert_toc::toc_paragraphs(story.root(), located))
+        .collect()
+}
+
 /// Every field of `doc`, in story and document order (nested ones after their outer).
 ///
 /// # Errors
