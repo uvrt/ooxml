@@ -159,6 +159,25 @@ def _engine_key(options) -> tuple:
             locale.thousands_separator, locale.date_order, locale.list_separator)
 
 
+def engine_key(options) -> tuple:
+    """What an engine for ``options`` is made for (:class:`Engine`'s ``key``): two options
+    with the same key lay out alike."""
+    return _engine_key(options)
+
+
+def page_setup(options) -> Any:
+    """What a Rust session lays its documents out with for ``options`` (an
+    ``ooxml_core.PageSetup``: the fonts as :func:`word_fonts` finds them, the engines'
+    locale, decimal tab and glyph size, counted in :func:`memory_budget`) -- each document's
+    engine then the session's own (``ooxml_core.Session(pages=...)``, ``Session.set_pages``)
+    -- or ``None`` for options the Rust layout does not take (:func:`unsupported_options`)."""
+    if unsupported_options(options) is not None:
+        return None
+    _, decimal, glyph_size, language, thousands, date_order, list_separator = _engine_key(options)
+    return _core().PageSetup(word_fonts(options), locale=language, decimal=decimal, glyph_size=glyph_size,
+                             numbers=(thousands, date_order, list_separator), budget=memory_budget())
+
+
 class Engine:
     """One document's layouts in Rust (``ooxml_core.WordPages``), each version laid out
     from the one before; safe to share between threads (the Rust engine locks itself)."""
