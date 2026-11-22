@@ -221,3 +221,13 @@ input = { tool = "word_design_facts", arguments = { include = ["theme", "declare
 cause = """#146: as above -- the Rust tool names the theme colour (background1) of a band \
 cell's edge drawn by a neighbouring place's border; docx-agent leaves the label out. Rust's \
 answer is the accurate one; docx-agent's code is deleted at P4e."""
+
+# Lane E3: a tracked delete_row past the last row of a table holding a pending tracked merge.
+[[difference]]
+mode = "objects"
+file = "generated/tables-accepted.docx"
+input = { tool = "word_edit_table", tracked = { author = "Writer A" }, arguments = { action = "delete_row", index = 99 } }
+cause = """Lane E3: docx-agent's _no_reshape_over_merge_lead reads rows[index] unchecked while looking \
+for a pending tracked merge's first cell and fails with Python's IndexError ('list index out of \
+range', not_found); the Rust core refuses the row as docx-agent's delete_row does untracked \
+('t:... has no row 99', refused). A docx-agent crash, not copied."""

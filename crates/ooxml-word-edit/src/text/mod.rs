@@ -36,6 +36,8 @@ pub(crate) enum AtomKind {
     Text,
     /// The whole of an element (a tab, a break, an object).
     Element,
+    /// A character of a `w:delText` (the original view's).
+    Deleted,
 }
 
 /// One character of a paragraph's text and where it comes from.
@@ -78,6 +80,8 @@ struct State {
     fields: Vec<bool>,
     simple_field: usize,
     owners: Vec<Id>,
+    /// The original view (deletions in, insertions out), else the current.
+    original: bool,
 }
 
 impl State {
@@ -95,15 +99,23 @@ impl State {
 }
 
 /// The paragraph's characters and runs in document order, in the current view
-/// (insertions in, deletions out; the original and markup views are the reading tools',
+/// (insertions in, deletions out; [`original_text`] reads the original view, the markup
+/// view is the reading tools',
 /// `ooxml-word-model`).
 pub(crate) fn walk(work: &Work, paragraph: Id) -> Walk {
+    walk_in(work, paragraph, false)
+}
+
+/// [`walk`] in the current view, or (`original`) the original one: deletions in,
+/// insertions out, deleted text (`w:delText`) read.
+fn walk_in(work: &Work, paragraph: Id, original: bool) -> Walk {
     let mut state = State {
         atoms: Vec::new(),
         runs: Vec::new(),
         fields: Vec::new(),
         simple_field: 0,
         owners: Vec::new(),
+        original,
     };
     container(work, paragraph, &mut state);
     Walk {
@@ -120,6 +132,11 @@ pub(crate) fn atoms(work: &Work, paragraph: Id) -> Vec<Atom> {
 /// The paragraph's text in the current view.
 pub(crate) fn paragraph_text(work: &Work, paragraph: Id) -> String {
     atoms(work, paragraph).iter().map(|a| a.ch).collect()
+}
+
+/// The paragraph's text in the original view (docx-agent's `paragraph_text(p, "original")`).
+pub(crate) fn original_text(work: &Work, paragraph: Id) -> String {
+    walk_in(work, paragraph, true).atoms.iter().map(|a| a.ch).collect()
 }
 
 /// The paragraph's runs in the current view.
@@ -159,7 +176,7 @@ fn container(work: &Work, node: Id, state: &mut State) {
                 container(work, content, state);
             }
         } else if let Some(shown) = in_w.then(|| shown(local)).flatten() {
-            if shown {
+            if shown != state.original {
                 container(work, child, state);
             }
         } else if name.namespace() == Some(M) && (local == "oMath" || local == "oMathPara") && state.visible() {
@@ -244,6 +261,20 @@ fn run(work: &Work, r: Id, state: &mut State) {
                     in_field,
                     field,
                 });
+            }
+        } else if namespace == Some(W) && local == "delText" {
+            if state.original {
+                for (offset, ch) in work.text(child).chars().enumerate() {
+                    state.atoms.push(Atom {
+                        ch,
+                        kind: AtomKind::Deleted,
+                        node: child,
+                        offset,
+                        run: Some(r),
+                        in_field,
+                        field,
+                    });
+                }
             }
         } else if let Some(ch) = character_of(work, child, local, namespace) {
             state.atoms.push(Atom {

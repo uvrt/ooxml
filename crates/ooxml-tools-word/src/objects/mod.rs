@@ -21,6 +21,7 @@ mod edit_chart_args;
 mod edit_table;
 mod edit_table_args;
 mod edit_table_cells;
+mod edit_table_pending;
 mod format_table;
 mod format_table_args;
 mod rows_written;
