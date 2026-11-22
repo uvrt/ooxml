@@ -6,6 +6,7 @@ them (`python3 -m unittest discover -s tools -p 'test_*.py'`)."""
 
 from __future__ import annotations
 
+import gc
 import os
 import shutil
 import subprocess
@@ -105,6 +106,33 @@ class Split(unittest.TestCase):
         # a name it took from one (a constant, a helper) would change its results unkeyed
         imported = {p.name for p in gates_frozen.harness_modules(entries=REFERENCE)}
         self.assertEqual(imported & set(reference_cache.NOT_REFERENCE), set())
+
+
+class Read(unittest.TestCase):
+    """A run keeps the store's results of its own cases only (lane PF1: the whole store held
+    in memory made every full garbage collection walk it, and a gate job ran three times as
+    long)."""
+
+    def setUp(self) -> None:
+        self.folder = Path(tempfile.mkdtemp(prefix="reference-store-"))
+        self.addCleanup(shutil.rmtree, self.folder)
+        value = {"result": {"id": "p1", "renamed": {}}, "parts": {"word/document.xml": "sha256:00"}, "touched": [{}]}
+        reference_cache._write(self.folder / "reference.jsonl.gz", {f"a{n}": value for n in range(5000)})
+        reference_cache._write(self.folder / "other.jsonl.gz", {"b0": {"refused": "no"}})
+
+    def test_only_the_wanted_results_are_kept(self) -> None:
+        found = reference_cache.kept_entries(self.folder, {"a7", "b0", "missing"})
+        self.assertEqual(set(found), {"a7", "b0"})
+        self.assertEqual(found["b0"], {"refused": "no"})
+
+    def test_the_rest_of_the_store_is_not_held(self) -> None:
+        gc.collect()
+        before = len(gc.get_objects())
+        found = reference_cache.kept_entries(self.folder, {"a1"})
+        gc.collect()
+        # 5,001 entries read, one kept: the objects the collector tracks grow by that one's
+        self.assertLess(len(gc.get_objects()) - before, 100)
+        self.assertEqual(len(found), 1)
 
 
 if __name__ == "__main__":

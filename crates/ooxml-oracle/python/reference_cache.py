@@ -51,7 +51,11 @@ JSON exactly as it was computed.
 
 A store is a folder of ``*.jsonl.gz`` files (one entry a line: ``{"key", "value"}``); a run
 writes the entries it computed to its own file (``--cache-new``) and :func:`merge` adds
-those to a store.
+those to a store.  One store holds every mode's results (fixtures and corpus), so a run
+keeps in memory only the entries of its own cases (:meth:`Store.read`): the whole store held
+as Python objects made every full collection of the cyclic garbage collector walk it, case
+after case, and a structure gate job ran three times as long with the store as without it
+(lane PF1).
 """
 
 from __future__ import annotations
@@ -178,6 +182,17 @@ def _read(path: Path):
                 yield json.loads(line)
 
 
+def kept_entries(folder: Path | None, wanted: set[str]) -> dict[str, dict]:
+    """The results of the store in ``folder`` under the keys ``wanted``: each other entry is
+    let go as soon as it is read (:meth:`Store.read`)."""
+    found: dict[str, dict] = {}
+    for path in sorted(folder.glob("*.jsonl.gz")) if folder and folder.is_dir() else ():
+        for entry in _read(path):
+            if entry["key"] in wanted:
+                found[entry["key"]] = entry["value"]
+    return found
+
+
 def _write(path: Path, entries: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with gzip.open(path, "wt", encoding="utf-8", compresslevel=6) as handle:
@@ -231,20 +246,26 @@ class Store:
         self.prefix = _sha(self.chain.encode(), environment(self.files).encode())
         self.new_path = Path(new) if new else None
         self.same = same            # (a, b) -> True when a and b compare equal (the harness's differences)
+        self.folder = Path(folder) if folder else None
         self.kept: dict[str, dict] = {}
-        for path in sorted(Path(folder).glob("*.jsonl.gz")) if folder and Path(folder).is_dir() else ():
-            for entry in _read(path):
-                self.kept[entry["key"]] = entry["value"]
         self.new: dict[str, dict] = {}
         self.hits = 0
+
+    def read(self, wanted: set[str]) -> None:
+        """Keeps the store's results under the keys ``wanted`` (the run's cases', :meth:`key`)
+        and no others: what :meth:`get` finds.  Every other entry is let go as it is read, so
+        the run holds its own results only, whatever the store's size (the module's
+        docstring)."""
+        self.kept.update(kept_entries(self.folder, wanted))
 
     def key(self, data: bytes, case: dict) -> str:
         other = case.get("reference_file")
         return _sha(self.prefix.encode(), hashlib.sha256(data).digest(), json.dumps(case, sort_keys=True).encode(),
                     Path(other).read_bytes() if other else b"")
 
-    def get(self, data: bytes, case: dict) -> dict | None:
-        found = self.kept.get(self.key(data, case))
+    def get(self, key: str) -> dict | None:
+        """The kept result under ``key`` (a case's, :meth:`key`), where :meth:`read` kept one."""
+        found = self.kept.get(key)
         if found is not None:
             self.hits += 1
         return found
