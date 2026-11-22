@@ -19,6 +19,7 @@ mod like_column;
 mod merge;
 mod new_column;
 mod new_row;
+mod pending;
 mod props;
 mod row_look;
 mod rows;
@@ -32,11 +33,12 @@ pub(crate) use rows::placed;
 pub use body_lines::{body_lines, body_width, BodyLines, BodyWidth};
 pub use keeps::{loose_paragraph_after, table_keeps, table_keeps_at, TableKeeps};
 pub use like_column::{ColumnCopy, LikeTheColumn};
+pub use pending::{merges_in_the_way, Reshape};
 pub use props::{CellValues, Look, TableValues, TableWidth};
 pub use row_look::{
     row_cells, row_shown, rows_unlike, CellUnlike, FormatCall, LookField, RowUnlike, TextLook, ROW_WINDOW,
 };
-pub use rows::{pending_structure, EditTable, TableChange, TableChanged};
+pub use rows::{EditTable, TableChange, TableChanged};
 
 use crate::doc::Key;
 use crate::fields::{EditLayout, Unknown};

@@ -24,6 +24,7 @@ ooxml-chart.workspace = true
 ooxml-sheets.workspace = true
 ooxml-zip.workspace = true
 serde_json.workspace = true
+unicode-normalization.workspace = true
 
 [dev-dependencies]
 ooxml-derive.workspace = true
