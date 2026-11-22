@@ -4,11 +4,15 @@
 //! fewer and a row skipping it skips one fewer (tracked: their old properties and the old
 //! grid recorded), the grid column goes, and, untracked, the table's width shrinks by the
 //! column's and a row left without cells goes. A column wholly this author's pending
-//! insertion goes outright, as its own pending rows do.
+//! insertion goes outright, as its own pending rows do. Over pending tracked structure
+//! (round 55, R115): a cell whose deletion is pending is left as it is, a cell a pending
+//! merge took in gives its text back (its `w:cellDel` kept), and a column holding a
+//! merge's first cell is refused.
 //!
 //! Must not: decide what a tool's arguments mean (positions as accepted are the tool's),
 //! or read past the table but for its ids and its part's relationships.
 
+use super::pending::{column_deleted, drop_copies, merge_origins, merged_away, no_reshape_over_merge, Reshape};
 use super::rows::{put, under_policy, Held};
 use super::shape::{grid_widths, own_rows, row_cells, set_grid};
 use super::tracker::TableTracker;
@@ -59,8 +63,9 @@ fn plan(work: &Work, table: Id, index: usize) -> Plan {
     out
 }
 
-/// The column's arguments against the table (`delete_column`'s refusals, before it edits).
-pub(super) fn check_column(work: &Work, id: &str, index: usize) -> Result<()> {
+/// The column's arguments against the table (`delete_column`'s refusals, before it edits);
+/// `tracked`, a column holding a pending tracked merge's first cell too.
+pub(super) fn check_column(work: &Work, id: &str, index: usize, tracked: bool) -> Result<()> {
     let table = work.root();
     let columns = grid_widths(work, table).len();
     if index >= columns {
@@ -82,6 +87,9 @@ pub(super) fn check_column(work: &Work, id: &str, index: usize) -> Result<()> {
         return Err(EditError::Unsupported(
             "word_edit_table delete_column of a column holding a note or comment reference".to_owned(),
         ));
+    }
+    if tracked {
+        no_reshape_over_merge(work, Reshape::DeleteColumn(index), &format!("column {index}"))?;
     }
     let doomed = cells
         .iter()
@@ -133,7 +141,19 @@ pub(super) fn delete_column(
         match stamp {
             Some(stamp) if !own_column => {
                 let tracker = spans.then(|| TableTracker::new(work, table, true));
+                let origins = merge_origins(work, table);
                 for cell in &plan.doomed {
+                    if column_deleted(work, *cell) {
+                        continue;
+                    }
+                    if merged_away(work, *cell) {
+                        // a cell a pending tracked merge took in: its text leaves the merged
+                        // cell again, as had the column gone first; its w:cellDel stays, now
+                        // with its content deleted (round 55, R115)
+                        drop_copies(work, origins.get(cell).copied(), *cell, stamp, orders);
+                    } else {
+                        record_deletion(work, *cell, stamp, orders);
+                    }
                     released.extend(delete_cell(work, *cell, stamp, orders));
                 }
                 if let Some(tracker) = tracker {
@@ -201,9 +221,8 @@ fn reshape(work: &mut Work, table: Id, plan: &Plan, widths: &[i64], index: usize
     set_grid(work, table, &left, orders);
 }
 
-/// A tracked cell deletion (`w:cellDel`), its content and paragraph marks deleted; the
-/// relationship ids released.
-fn delete_cell(work: &mut Work, cell: Id, stamp: &mut Stamp, orders: &Orders) -> Vec<String> {
+/// A cell's deletion recorded (`w:cellDel`).
+fn record_deletion(work: &mut Work, cell: Id, stamp: &mut Stamp, orders: &Orders) {
     let properties = match work.find(cell, W, "tcPr") {
         Some(p) => p,
         None => {
@@ -214,6 +233,11 @@ fn delete_cell(work: &mut Work, cell: Id, stamp: &mut Stamp, orders: &Orders) ->
     };
     let record = stamp.make(work, "cellDel");
     insert_in_order(work, properties, record, orders);
+}
+
+/// A deleted cell's content and paragraph marks deleted, tracked; the relationship ids
+/// released.
+fn delete_cell(work: &mut Work, cell: Id, stamp: &mut Stamp, orders: &Orders) -> Vec<String> {
     let row_inserted = crate::review::xml::ancestor(work, cell, "tr")
         .and_then(|row| find_path(work, row, &["trPr", "ins"]))
         .is_some();

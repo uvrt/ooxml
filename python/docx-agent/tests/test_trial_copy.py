@@ -1,5 +1,5 @@
 """Copying a section in the destination's styles (ROADMAP.md, "Trial findings", 3), on the
-trial's merge-a-section task (``fixtures/generated/trial``: a handbook and a safety bulletin
+trial's merge-a-section task (``crates/ooxml-oracle/fixtures/generated/trial``: a handbook and a safety bulletin
 docx-agent wrote): ``copy_blocks(style_map=..., unmapped="body")``, ``styles="merge"``
 keeping headings and lists, ``Styles.remove`` and ``Styles.purge_unused``."""
 

@@ -26,7 +26,10 @@ finds a difference is computed again in full.
 
 A ``diff`` writes the harness's log, its cases with differences (JSON lines) and a summary
 (JSON) into ``--out``.  It fails when a case differs and no entry of the known differences
-(crates/ooxml-oracle/known-differences.toml, each with its cause) covers it.
+(crates/ooxml-oracle/known-differences.toml, each with its cause) covers it, and on any case
+where the Rust side panicked (``panics``: the oracle's catch or the session's ``internal``
+reply).  The cases the Rust tools leave to the host are reported by form (``unported_forms``),
+not failing yet.
 
 Modes ``auto`` (the dispatch's default): the edit modes, and whether the reads' checks run,
 picked from the files the branch changes against origin/main (``git diff origin/main...``):
@@ -261,18 +264,24 @@ def run_diff(args) -> int:
     summary = {"gate": args.gate, "mode": args.mode, "shard": args.shard, "every": args.every,
                "per_tool": args.per_tool, "documents": len(files),
                "cases": totals.get("cases", 0), "differences": len(unknown), "known": len(known),
-               "unported": totals.get("unported", 0), "wall": round(wall, 1), "crashed": bool(crashed),
+               "unported": totals.get("unported", 0), "panics": totals.get("panics", 0),
+               "unported_forms": totals.get("unported_forms", {}), "wall": round(wall, 1), "crashed": bool(crashed),
                **({"kept": totals["kept"], "computed": totals["computed"]} if "kept" in totals else {}),
                "unknown": unknown[:50]}
     (out / "summary.json").write_text(json.dumps(summary, indent=1))
-    print(json.dumps({k: v for k, v in summary.items() if k != "unknown"}))
+    print(json.dumps({k: v for k, v in summary.items() if k not in ("unknown", "unported_forms")}))
+    for form, count in list(summary["unported_forms"].items())[:20]:
+        print(f"unported: {count} {form}")     # reported, not failing yet (P4e PR 4 refuses them)
     for case in unknown[:50]:
         errors = f"; errors {json.dumps(case['errors'])[:300]}" if case.get("errors") else ""
         print(f"::error::{args.gate}/{args.mode}: {case['file']} [{case['case']}] differs (log.txt has the paths)"
               f"{errors}")
     if crashed:
         print(f"::error::{args.gate}/{args.mode} {args.shard}: the harness failed (log.txt)")
-    return 1 if unknown or crashed else 0
+    if summary["panics"]:
+        print(f"::error::{args.gate}/{args.mode} {args.shard}: {summary['panics']} cases where Rust panicked "
+              "(log.txt: 'rust panicked')")
+    return 1 if unknown or crashed or summary["panics"] else 0
 
 
 def run_cache_key(args) -> int:
@@ -496,8 +505,8 @@ def run_summary(args) -> int:
     for path in sorted(Path(args.dir).rglob("summary.json")):
         s = json.loads(path.read_text())
         row = rows.setdefault((s["gate"], s["mode"]), {"shards": 0, "documents": 0, "cases": 0, "differences": 0,
-                                                       "known": 0, "unported": 0, "wall": 0.0, "crashed": 0,
-                                                       "unknown": []})
+                                                       "known": 0, "unported": 0, "panics": 0, "wall": 0.0,
+                                                       "crashed": 0, "unknown": [], "forms": {}})
         row["shards"] += 1
         for key in ("kept", "computed"):
             if key in s:
@@ -507,19 +516,27 @@ def run_summary(args) -> int:
         row["unknown"] += s["unknown"]
         for key in ("documents", "cases", "differences", "known", "unported"):
             row[key] += s[key]
+        row["panics"] += s.get("panics", 0)
+        for form, count in s.get("unported_forms", {}).items():
+            row["forms"][form] = row["forms"].get(form, 0) + count
     out = []
     for gate in dict.fromkeys(g for g, _ in rows):
         out += [f"### {gate}", "", "| mode | shards | documents | cases | differences | known | unported | "
-                "slowest shard (s) |", "|---|---:|---:|---:|---:|---:|---:|---:|"]
+                "panics | slowest shard (s) |", "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
         for (g, mode), r in rows.items():
             if g == gate:
                 flag = " (harness failed)" if r["crashed"] else ""
                 out.append(f"| {mode}{flag} | {r['shards']} | {r['documents']} | {r['cases']:,} | "
-                           f"{r['differences']} | {r['known']} | {r['unported']} | {r['wall']:.0f} |")
+                           f"{r['differences']} | {r['known']} | {r['unported']} | {r['panics']} | "
+                           f"{r['wall']:.0f} |")
         cached = [f"{mode} {r['kept']:,} of {r['kept'] + r['computed']:,}" for (g, mode), r in rows.items()
                   if g == gate and "kept" in r]
         if cached:
             out += ["", "docx-agent's results kept from earlier runs (reference cache): " + ", ".join(cached)]
+        forms = [f"{mode}: {count} {form}" for (g, mode), r in rows.items() if g == gate
+                 for form, count in sorted(r["forms"].items(), key=lambda x: -x[1])[:10]]
+        if forms:
+            out += ["", "Unported forms (reported, not failing yet):", "", *(f"- {f}" for f in forms)]
         out.append("")
         for (g, mode), r in rows.items():
             for case in r["unknown"][:20] if g == gate else []:

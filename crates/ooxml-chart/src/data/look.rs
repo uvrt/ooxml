@@ -280,7 +280,7 @@ fn xy(root: &Element) -> bool {
 }
 
 /// The primary axis `name` names: `category`/`value` by role, `x`/`y` by direction.
-fn axis_named<'a>(root: &'a Element, name: &str) -> Option<&'a Element> {
+pub(crate) fn axis_named<'a>(root: &'a Element, name: &str) -> Option<&'a Element> {
     match name {
         "category" | "value" => plot_area(root).and_then(|p| super::axis_of(p, name)),
         _ => {

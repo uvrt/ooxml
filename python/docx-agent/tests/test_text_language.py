@@ -1,7 +1,7 @@
 """The language a text is written in, next to its tag (round 49, R94:
 :mod:`docx_agent.edit.text_language`, ``check``'s layout fact ``text_language``).
 
-The detector's measured claims hold on the made-up samples (``tests/fixtures/
+The detector's measured claims hold on the made-up samples (``crates/ooxml-oracle/fixtures/
 language-samples.json``, ``tools/language_accuracy.py``); the fact lists what differs, folds
 a whole document under the wrong default into one entry with the fix, groups consecutive
 paragraphs, counts what agrees, and stays capped.  The documents are made up here.

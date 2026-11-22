@@ -7,12 +7,16 @@
 //! the other cells `w:cellDel`, merged down as `w:cellMerge`, their text inserted at the
 //! first cell's end).
 //!
-//! Must not: decide what a tool's arguments mean, or read past the table. A table with
-//! pending tracked structure (whose pending merges a merge takes in, `_tracked_plan`) is
-//! refused before this as [`EditError::Unsupported`].
+//! Tracked over pending tracked structure (round 55, R115, measured): a pending merge the
+//! rectangle reaches taken in whole and counted as made, a row whose deletion is pending
+//! and a cell a pending column deletion removes left out (`_tracked_plan`), a cell a
+//! pending merge took in keeping its record (its text is in that merge's first cell).
+//!
+//! Must not: decide what a tool's arguments mean, or read past the table.
 
 use super::new_column::stamp_new;
 use super::new_row::{clean_cell_properties, vmerge};
+use super::pending::{cell_merge, column_deleted, merged_away};
 use super::rows::{put, under_policy, Held};
 use super::shape::{own_rows, row_cells, Placed};
 use super::TableChanged;
@@ -23,7 +27,7 @@ use crate::marks::{
 };
 use crate::names::W;
 use crate::policy::Stamp;
-use crate::review::xml::{digits, find_all, find_path, make, set_attr};
+use crate::review::xml::{ancestor, digits, find_all, find_path, make, set_attr};
 use crate::sink::EditSink;
 use crate::table_delete::delete_content;
 use crate::validate::Orders;
@@ -77,8 +81,9 @@ pub(super) fn extents(work: &Work, rows: &[Id]) -> HashMap<Id, (usize, usize)> {
 }
 
 /// The rectangle `first`..`last` grown until no cell lies partly in it -- across a span,
-/// down a vertical merge -- and each row's cells in it (`_rectangle`).
-pub(super) fn rectangle(work: &Work, first: Position, last: Position) -> Result<Rectangle> {
+/// down a vertical merge, and (`pending`: a tracked merge) over a pending tracked merge,
+/// which counts as the one cell it makes -- and each row's cells in it (`_rectangle`).
+pub(super) fn rectangle(work: &Work, first: Position, last: Position, pending: bool) -> Result<Rectangle> {
     let rows = own_rows(work, work.root());
     let ((mut r1, mut c1), (mut r2, mut c2)) = (first, last);
     if !(r1 <= r2 && r2 < rows.len()) || c1 > c2 {
@@ -87,8 +92,21 @@ pub(super) fn rectangle(work: &Work, first: Position, last: Position) -> Result<
         ));
     }
     let layout = extents(work, &rows);
+    let boxes = if pending {
+        super::pending::pending_boxes(work, &rows)
+    } else {
+        Vec::new()
+    };
     loop {
         let mut grown = false;
+        for &((top, left), (bottom, right)) in &boxes {
+            let meets = top <= r2 && bottom >= r1 && left <= c2 && right >= c1;
+            let inside = r1 <= top && bottom <= r2 && c1 <= left && right <= c2;
+            if meets && !inside {
+                (r1, r2, c1, c2) = (r1.min(top), r2.max(bottom), c1.min(left), c2.max(right));
+                grown = true;
+            }
+        }
         // the rows as they were when this pass began (Python's `range`)
         let (from, to) = (r1, r2);
         for r in from..=to {
@@ -154,6 +172,61 @@ pub(super) fn merged_already(work: &Work, plan: &[Vec<Placed>]) -> bool {
             && rest.iter().all(|p| (p.start, p.span) == (head.start, head.span)))
 }
 
+/// A tracked merge's rows and cells, what pending tracked changes take out left out
+/// (`_tracked_plan`): a row whose deletion is pending (Word's Accept All removes it, the
+/// merge continuing over it), a cell a pending column deletion removes -- a row or plan
+/// that would be left empty kept whole.
+pub(super) fn tracked_plan(work: &Work, plan: Vec<Vec<Placed>>) -> Vec<Vec<Placed>> {
+    let plan = if plan.len() > 1 {
+        let kept: Vec<Vec<Placed>> = plan
+            .iter()
+            .filter(|row| {
+                row.first().is_some_and(|p| {
+                    ancestor(work, p.cell, "tr").is_none_or(|r| find_path(work, r, &["trPr", "del"]).is_none())
+                })
+            })
+            .cloned()
+            .collect();
+        if kept.is_empty() {
+            plan
+        } else {
+            kept
+        }
+    } else {
+        plan
+    };
+    plan.into_iter()
+        .map(|row| {
+            let kept: Vec<Placed> = row.iter().copied().filter(|p| !column_deleted(work, p.cell)).collect();
+            if kept.is_empty() {
+                row
+            } else {
+                kept
+            }
+        })
+        .collect()
+}
+
+/// Whether the plan is one pending tracked merge already (`_merged_down_pending`): each
+/// row's first cell joined by a `w:cellMerge` (`rest`, then `cont`) and the other cells
+/// merged away.
+pub(super) fn merged_down_pending(work: &Work, plan: &[Vec<Placed>]) -> bool {
+    if !plan
+        .iter()
+        .all(|row| row.iter().skip(1).all(|p| merged_away(work, p.cell)))
+    {
+        return false;
+    }
+    let Some((head, rest)) = plan.split_first() else {
+        return false;
+    };
+    if rest.is_empty() {
+        return head.len() > 1;
+    }
+    let merge = |row: &Vec<Placed>| row.first().and_then(|p| cell_merge(work, p.cell));
+    merge(head) == Some("rest") && rest.iter().all(|row| merge(row) == Some("cont"))
+}
+
 /// The warning where the rectangle grew.
 pub(super) fn grown_note(rectangle: &Rectangle, first: Position, last: Position) -> Option<String> {
     let ((r1, c1), (r2, c2)) = (rectangle.first, rectangle.last);
@@ -169,15 +242,19 @@ pub(super) fn merge_cells(
     last: Position,
     orders: &Orders,
 ) -> Result<TableChanged> {
-    let rectangle = rectangle(&held.work, first, last)?;
+    let tracked = matches!(sink.policy(), crate::policy::RevisionPolicy::Tracked(_));
+    let rectangle = rectangle(&held.work, first, last, tracked)?;
     let warnings: Vec<String> = grown_note(&rectangle, first, last).into_iter().collect();
-    let plan = rectangle.plan;
+    let plan = if tracked {
+        tracked_plan(&held.work, rectangle.plan)
+    } else {
+        rectangle.plan
+    };
     let origin = plan
         .first()
         .and_then(|row| row.first())
         .map(|p| p.cell)
         .ok_or_else(|| EditError::Path(held.found.part.clone()))?;
-    let tracked = matches!(sink.policy(), crate::policy::RevisionPolicy::Tracked(_));
     let (written, released, copied) = if tracked {
         let copies = tracked_copies(&mut held.work, &plan);
         stamp_new(sink, held, &copies, "\0table")?;
@@ -379,13 +456,24 @@ fn move_references(work: &mut Work, original: Id, copy: Id) {
     }
 }
 
+/// A tracked merge's cells of one row: its first, and the others but those a pending
+/// tracked merge already took in (they keep their record; their text is in that merge's
+/// first cell, which this merge takes in).
+fn taken_cells(work: &Work, row: &[Placed]) -> Vec<Id> {
+    row.iter()
+        .enumerate()
+        .filter(|(k, p)| *k == 0 || !merged_away(work, p.cell))
+        .map(|(_, p)| p.cell)
+        .collect()
+}
+
 /// A tracked merge's copies of the other cells' paragraphs with text, in reading order
 /// (`_merge_tracked`'s first part): plain, without bookmarks or comments reaching outside,
 /// each paragraph's references moved to its copy.
 fn tracked_copies(work: &mut Work, plan: &[Vec<Placed>]) -> Vec<Id> {
     let mut copies = Vec::new();
     for (k, row) in plan.iter().enumerate() {
-        let cells: Vec<Id> = row.iter().skip(usize::from(k == 0)).map(|p| p.cell).collect();
+        let cells: Vec<Id> = taken_cells(work, row).into_iter().skip(usize::from(k == 0)).collect();
         for cell in cells {
             for paragraph in paragraphs(work, cell) {
                 if !has_runs(work, paragraph) {
@@ -438,21 +526,27 @@ fn merge_tracked(
                     p
                 }
             };
-            let had = vmerge(work, lead);
-            if let Some(existing) = work.find(properties, W, "vMerge") {
-                work.remove(existing);
+            let now = if k == 0 { "rest" } else { "cont" };
+            if let Some(record) = work.find(properties, W, "cellMerge") {
+                // merged down already, pending: the record says where it is now
+                set_attr(work, record, "vMerge", now);
+            } else {
+                let had = vmerge(work, lead);
+                if let Some(existing) = work.find(properties, W, "vMerge") {
+                    work.remove(existing);
+                }
+                let record = stamp.make(work, "cellMerge");
+                set_attr(work, record, "vMerge", now);
+                if let Some(had) = had {
+                    set_attr(
+                        work,
+                        record,
+                        "vMergeOrig",
+                        if had == "restart" { "rest" } else { "cont" },
+                    );
+                }
+                insert_in_order(work, properties, record, orders);
             }
-            let record = stamp.make(work, "cellMerge");
-            set_attr(work, record, "vMerge", if k == 0 { "rest" } else { "cont" });
-            if let Some(had) = had {
-                set_attr(
-                    work,
-                    record,
-                    "vMergeOrig",
-                    if had == "restart" { "rest" } else { "cont" },
-                );
-            }
-            insert_in_order(work, properties, record, orders);
         }
         if k > 0 {
             // a continuing row's first cell stays (merged into the one above): its content goes
@@ -460,12 +554,12 @@ fn merge_tracked(
                 released.extend(delete_content(work, paragraph, stamp));
             }
         }
-        for placed in row.iter().skip(1) {
-            let properties = match work.find(placed.cell, W, "tcPr") {
+        for cell in taken_cells(work, row).into_iter().skip(1) {
+            let properties = match work.find(cell, W, "tcPr") {
                 Some(p) => p,
                 None => {
                     let p = make(work, "tcPr", &[]);
-                    work.insert(placed.cell, 0, p);
+                    work.insert(cell, 0, p);
                     p
                 }
             };

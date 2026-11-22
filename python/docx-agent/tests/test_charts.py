@@ -2,8 +2,8 @@
 kept in step, wherever Word holds a chart -- the body, a header, a footnote, a text box, a
 group, floating.
 
-Every edit runs on every chart of the Word-saved fixtures (``tests/fixtures/generated/
-charts``, ``tools/make_chart_fixtures.py``) and goes through every gate:
+Every edit runs on every chart of the Word-saved fixtures (``crates/ooxml-oracle/fixtures/
+generated/charts``, ``tools/make_chart_fixtures.py``) and goes through every gate:
 
 * **round trip** -- edit, save, reopen, read back;
 * **the workbook agrees** -- the saved document's embedded workbook opened independently

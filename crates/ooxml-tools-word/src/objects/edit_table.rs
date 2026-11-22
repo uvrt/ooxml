@@ -16,24 +16,29 @@
 //!
 //! Cells written without a source ([`super::set_cells`]).
 //!
+//! Tracked, a row or column deleted that holds a pending tracked merge's first cell is
+//! refused naming the merge's changes to settle first ([`super::edit_table_pending`]).
+//!
 //! Not ported yet, said in `unported` for the host to answer its own way: `sync` and `from`
 //! (a source the dispatcher resolves: the session's datasets and other documents' rows); a
-//! change of the rows, columns or cells of a table with pending tracked structure or a
-//! placement record (refused so by the edit core); any call on a table with Accept All's
+//! change of the rows of a table with a placement record (refused so by the edit core);
+//! any call on a table with Accept All's
 //! cell ends (a cell's last paragraph mark deleted: the reply's Markdown joins cells across
 //! it, and names the cells Accept All loses with the changes that do it).
 //!
 //! Must not: change the document but through the command.
 
 use super::edit_table_args::{Side, TableAction, WordEditTable};
+use super::edit_table_pending::no_reshape_over_merge;
 use super::table_view::{table_view, AcceptedView, TableView};
 use crate::originals::{add, Watch};
 use crate::review::{needed, Editing};
 use crate::structure::common::{call, outcome, policy, refused, Outcome};
 use ooxml_base::pyfmt::repr_str;
 use ooxml_tools::{ArgEnum, ErrorCode, Refusal, ToolError, ToolResult, TryCall, WayOut};
+use ooxml_word_edit::facts::{table_grid_mismatch, GridMismatch, RaggedRow};
 use ooxml_word_edit::WordDoc;
-use ooxml_word_edit::{EditError, EditTable, TableChange, TableChanged};
+use ooxml_word_edit::{EditError, EditTable, Reshape, TableChange, TableChanged};
 use ooxml_word_model::docx::tables::TableGrid;
 use ooxml_word_model::docx::{find_path, Docx};
 use ooxml_word_model::ids::{TableId, W};
@@ -213,7 +218,8 @@ fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<T
     if args.action == TableAction::SetCells {
         return super::set_cells::set_cells(args, editing, &docx, &view, &mut accepted, retry);
     }
-    let change = match change(args, editing.tracking.is_some(), &view, &mut accepted, retry)? {
+    let tracked = editing.tracking.is_some();
+    let change = match change(args, (tracked, &docx), &view, &mut accepted, retry)? {
         Ok(change) => change,
         Err(what) => return Ok(unported(&what, retry)),
     };
@@ -224,7 +230,7 @@ fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<T
 /// accepted; `Err` with what `unported` says where it is not ported yet.
 fn change(
     args: &WordEditTable,
-    tracked: bool,
+    (tracked, docx): (bool, &Docx),
     view: &TableView,
     accepted: &mut AcceptedView,
     retry: &TryCall,
@@ -246,15 +252,19 @@ fn change(
         },
         TableAction::DeleteRow => {
             let given = args.index.ok_or_else(|| needed("index", "", retry.clone()))?;
-            TableChange::DeleteRow {
-                index: row(accepted, Some(given))?.unwrap_or(usize::MAX),
+            let index = row(accepted, Some(given))?.unwrap_or(usize::MAX);
+            if tracked {
+                no_reshape_over_merge(&args.doc, docx, view, accepted, Reshape::DeleteRow(index))?;
             }
+            TableChange::DeleteRow { index }
         }
         TableAction::DeleteColumn => {
             let given = args.index.ok_or_else(|| needed("index", "", retry.clone()))?;
-            TableChange::DeleteColumn {
-                index: accepted.grid_column(given, "index", retry)?,
+            let index = accepted.grid_column(given, "index", retry)?;
+            if tracked {
+                no_reshape_over_merge(&args.doc, docx, view, accepted, Reshape::DeleteColumn(index))?;
             }
+            TableChange::DeleteColumn { index }
         }
         TableAction::CopyRow => TableChange::CopyRow {
             index: row(accepted, args.index)?,
@@ -269,14 +279,7 @@ fn change(
             }
         }
         TableAction::Merge | TableAction::Split => {
-            match super::edit_table_cells::cells_change(args, view, accepted, tracked, retry)? {
-                Some(change) => change,
-                None => {
-                    return Ok(Err(
-                        "word_edit_table split tracked in a table with pending tracked structure".to_owned(),
-                    ))
-                }
-            }
+            super::edit_table_cells::cells_change(args, (tracked, docx), view, accepted, retry)?
         }
         other => return Ok(Err(format!("word_edit_table {}", other.as_str()))),
     };
@@ -312,6 +315,7 @@ fn finish(
     let table = view.table.id.clone();
     let off_before = view.off_grid();
     let before = editing.editor.store().snapshot();
+    let ragged_before = !matches!(change, TableChange::InsertRow { .. }) && ragged(before.doc(), &table).is_some();
     let mut watched = watch(editing, before.doc(), view, change);
     let command = EditTable {
         table: args.table.clone(),
@@ -350,6 +354,9 @@ fn finish(
         add(&mut result, watched.report(head.doc(), editing.doc));
     }
     result.warnings.extend(notes);
+    if !ragged_before && !matches!(change, TableChange::InsertRow { .. }) {
+        result.warnings.extend(made_ragged(head.doc(), &now));
+    }
     let off_now = head
         .doc()
         .docx()
@@ -376,6 +383,55 @@ fn finish(
     }
     result.warnings.extend(rows);
     result
+}
+
+/// The table `id` ragged (check's `table_grid_mismatch` ragged entry: its rows' cells not
+/// all starting and ending on the same grid columns, as Accept All leaves it where pending
+/// changes reshape it): the grid columns its widest rows cover, its other rows (at most
+/// check's 20) and whether pending changes make the shape.
+fn ragged(doc: &WordDoc, id: &str) -> Option<(usize, Vec<RaggedRow>, bool)> {
+    let keep = |t: &str| t == id;
+    table_grid_mismatch(doc, Some(&keep))
+        .ok()?
+        .into_iter()
+        .find_map(|entry| match entry {
+            GridMismatch::Ragged {
+                grid,
+                rows,
+                after_accept,
+                ..
+            } => Some((grid, rows.into_iter().take(RAGGED_LISTED).collect(), after_accept)),
+            GridMismatch::OffGrid { .. } => None,
+        })
+}
+
+/// Rows of a ragged table check lists (`layout_facts.CAP`).
+const RAGGED_LISTED: usize = 20;
+
+/// The warning of a change that left `table` ragged where it was not (`_made_ragged`,
+/// round 57 R125, rule 7); the call is not kept for check's `made_by` yet (the session's).
+fn made_ragged(doc: &WordDoc, table: &str) -> Option<String> {
+    let (grid, rows, after_accept) = ragged(doc, table)?;
+    let named: Vec<String> = rows
+        .iter()
+        .take(5)
+        .map(|r| format!("{} (columns {}-{})", r.row, r.covers.0, r.covers.1))
+        .collect();
+    let more = if rows.len() > 5 {
+        format!(" and {} more", rows.len() - 5)
+    } else {
+        String::new()
+    };
+    let when = if after_accept {
+        "once its tracked changes are accepted"
+    } else {
+        "now"
+    };
+    Some(format!(
+        "{table} is ragged {when}: rows {}{more} end short of the others' {grid} columns; this call made it so \
+         (undo reverses it)",
+        named.join(", ")
+    ))
 }
 
 /// A row `copy_row` does not copy, refused with the calls that add a row like it and fill

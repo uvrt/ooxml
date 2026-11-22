@@ -2,7 +2,7 @@
 what Word did with File > New from a template and Save As template
 (``tests/observations/e6-word.json``: ``template-dotx``, ``template-docx``, ``as-template``).
 
-Templates: ``tests/fixtures/generated/templates`` (``tools/make_template_fixtures.py``) and
+Templates: ``crates/ooxml-oracle/fixtures/generated/templates`` (``tools/make_template_fixtures.py``) and
 the corpus's Dutch templates used as templates.
 """
 

@@ -6,11 +6,16 @@ ci.yml's plan job runs them (`python3 -m unittest discover -s tools -p 'test_*.p
 
 from __future__ import annotations
 
+import argparse
+import contextlib
+import io
+import json
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -435,6 +440,57 @@ class HarnessCommand(unittest.TestCase):
         command, env = gates.harness_command(self.args("styled"), Path("out"), Path("r.jsonl"), [Path("a.docx")])
         self.assertEqual(command[2:], ["--styled", "--rust", "/bin/word-edits", "--results", "r.jsonl", "a.docx"])
         self.assertEqual(env, {})
+
+
+class Panics(unittest.TestCase):
+    """A shard fails on any case where Rust panicked; the unported forms are reported, not failing."""
+
+    def diff(self, totals: dict) -> tuple[int, dict, str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out"
+            line = json.dumps({"totals": totals})
+
+            def command(args, out_dir, results, files):
+                write = f"import pathlib; pathlib.Path({str(results)!r}).write_text({line!r})"
+                return [sys.executable, "-c", write], {}
+
+            args = argparse.Namespace(out=str(out), tree=tmp, gate="corpus", mode="styled", shard="1/1",
+                                      every=None, per_tool=None, fixtures=None, base=None)
+            printed = io.StringIO()
+            with mock.patch.object(gates, "harness_command", command), \
+                    mock.patch.object(gates, "documents", lambda *_: [Path(tmp) / "a.docx"]), \
+                    contextlib.redirect_stdout(printed):
+                code = gates.run_diff(args)
+            return code, json.loads((out / "summary.json").read_text()), printed.getvalue()
+
+    def test_a_panic_fails_the_shard(self) -> None:
+        code, summary, printed = self.diff({"cases": 3, "failed": 0, "panics": 1, "unported_forms": {}})
+        self.assertEqual((code, summary["panics"]), (1, 1))
+        self.assertIn("Rust panicked", printed)
+
+    def test_unported_forms_are_reported_not_failing(self) -> None:
+        forms = {"like": 2, "from/blob": 1}
+        code, summary, printed = self.diff({"cases": 3, "failed": 0, "panics": 0, "unported": 3,
+                                            "unported_forms": forms})
+        self.assertEqual((code, summary["unported_forms"]), (0, forms))
+        self.assertIn("unported: 2 like", printed)
+
+    def test_the_summary_adds_panics_and_forms_up(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            for k, (panics, forms) in enumerate([(1, {"like": 2}), (0, {"like": 1, "picture": 1})]):
+                shard = Path(tmp) / f"diff-{k}"
+                shard.mkdir()
+                (shard / "summary.json").write_text(json.dumps({
+                    "gate": "fixtures", "mode": "text", "documents": 1, "cases": 4, "differences": 0,
+                    "known": 0, "unported": 3, "panics": panics, "unported_forms": forms, "wall": 1.0,
+                    "crashed": False, "unknown": []}))
+            printed = io.StringIO()
+            with contextlib.redirect_stdout(printed):
+                gates.run_summary(argparse.Namespace(dir=tmp))
+        table = printed.getvalue()
+        self.assertIn("| text | 2 | 2 | 8 | 0 | 0 | 6 | 1 | 1 |", table)
+        self.assertIn("- text: 3 like", table)
+        self.assertIn("- text: 1 picture", table)
 
 
 if __name__ == "__main__":

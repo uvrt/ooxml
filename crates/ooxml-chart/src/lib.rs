@@ -7,6 +7,8 @@
 //! - a chart's data and labels as an editor shows them, and their one-line summary
 //!   ([`data`]), and what `edit_chart`'s `read` gives of its look (`data::look`,
 //!   `data::labels`);
+//! - a chart's data changed in its caches, point by point, for `edit_chart`'s data actions
+//!   ([`edit`]);
 //! - where Word and PowerPoint differ ([`rules`]);
 //! - the layout, lowered to drawable elements ([`layout`]);
 //! - Python's number writing and arithmetic where the layout's text, paths and positions
@@ -18,6 +20,7 @@
 #![forbid(unsafe_code)]
 
 pub mod data;
+pub mod edit;
 pub mod layout;
 pub mod model;
 pub mod pyfmt;

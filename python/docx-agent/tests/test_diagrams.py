@@ -1,5 +1,5 @@
 """SmartArt (ROADMAP.md, "Charts and SmartArt"): node text, nodes added and removed, on the
-diagrams Word laid out and saved (``tests/fixtures/generated/charts/smartart.docx``).
+diagrams Word laid out and saved (``crates/ooxml-oracle/fixtures/generated/charts/smartart.docx``).
 
 Every edit goes through the gates the charts do -- edit, save, reopen, read back; validity;
 undo and redo byte for byte; docx2svg's render -- and the cached drawing is held to the
