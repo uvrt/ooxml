@@ -12,7 +12,6 @@
 //! and the revision rules').
 
 pub(crate) mod diff;
-mod matcher;
 pub(crate) mod write;
 
 use crate::names::{M, MC, W};
