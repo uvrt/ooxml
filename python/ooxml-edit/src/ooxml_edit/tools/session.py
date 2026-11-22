@@ -201,6 +201,12 @@ class DocumentFormat:
 
     The tool layer knows no format; a library describes its own with this, and the toolbox
     opens, checks and validates documents of that kind through it.
+
+    Lane H7a: for a document the format's :attr:`owner` holds, the hooks that take a
+    document -- ``summary``, ``problems``, ``state``, ``closed`` and ``restored`` -- are given
+    an :class:`~.owned.OwnedDocument` (the owner, its handle, the version read), never the
+    entry or a Python view of it (:attr:`DocumentEntry.subject`; a hook taking the call reads
+    :attr:`~.dispatch.Call.subject`).
     """
 
     #: The kind tools are written for (``Tool.kinds``) and results report.
@@ -277,6 +283,8 @@ class DocumentFormat:
     #: appended to the ``not_found`` message (say, that ``d:3`` is one of the format's
     #: own drawings, not a dataset).  It only adds wording: what resolves never changes,
     #: and a hint that raises is ignored.  ``None``: the message is left as it is.
+    #: ``document`` is the entry's :attr:`DocumentEntry.subject` (lane H7d), as for the
+    #: provenance hooks and :attr:`own_source`.
     source_hint: Callable[[Any, str], str | None] | None = None
     #: Round 56 (R120): what a source value names in a document of this format that gives
     #: no rows -- the call's own (``t:60D6847F``, a Word document's table, given as the
@@ -285,7 +293,8 @@ class DocumentFormat:
     #: phrase), ``None`` when it names nothing there.  Asked only when the value resolves
     #: to no rows: the refusal then says what it is, and lists the sources there are (the
     #: datasets, and the tables of :attr:`value_sources`) with the call shape.  A hook that
-    #: raises is ignored.  ``None``: the refusal is the resolver's.
+    #: raises is ignored.  ``None``: the refusal is the resolver's.  ``document``: the
+    #: entry's :attr:`DocumentEntry.subject` (lane H7d).
     own_source: Callable[[Any, str], str | None] | None = None
     #: References a text argument may hold to things of this format's own document -- the
     #: call's (:mod:`.textfacts`): ``{prefix: resolve}``, ``resolve(document, name) ->
@@ -325,11 +334,14 @@ class DocumentFormat:
     #: record.  It replaces the record the address had.  Called inside the call's undo step, after the placement succeeded:
     #: by the shared ``edit_chart`` for a chart from ``from``, and by a tool's handler
     #: through :meth:`~.dispatch.Call.keep_provenance`.  ``None``: the format keeps none
-    #: (a chart still keeps its own copy in its part).
+    #: (a chart still keeps its own copy in its part).  ``document``: the document the
+    #: call's handler edits (:meth:`~.dispatch.Call.store_provenance`), never an owner's
+    #: handle (lane H7d).
     store_provenance: Callable[[Any, str, Any], None] | None = None
     #: The records the document keeps: ``read_provenance(document) -> {address: record}``,
     #: each as :func:`ooxml_edit.provenance.loads` reads it, under the addresses the
-    #: format's tools take now.  :meth:`Session.provenance` asks it.  ``None``: none.
+    #: format's tools take now.  :meth:`Session.provenance` asks it, with the entry's
+    #: :attr:`DocumentEntry.subject` (lane H7d).  ``None``: none.
     read_provenance: Callable[[Any], Any] | None = None
     #: Tools the format offers only by the application's configuration -- an asset
     #: catalogue's search (:mod:`.assets`) -- so a toolbox without it sends no definition
@@ -638,6 +650,22 @@ class DocumentEntry:
     @document.setter
     def document(self, value: Any) -> None:
         self.held = value
+
+    @property
+    def subject(self) -> Any:
+        """What the format's hooks are given for this document (lane H7a): the document
+        itself; for a read copy of a document its format's owner holds, that document at
+        the copy's version (:class:`~.owned.OwnedDocument`), so no hook reads a Python copy
+        of an owned document."""
+        live = self.live
+        if live is not None and live.owned and self.pinned is not None:
+            return live.subject_at(self.pinned)
+        return self.document
+
+    def subject_at(self, version: int) -> Any:
+        """:attr:`subject` at the committed version ``version``, for a read copy of this
+        document (an owned one's: :meth:`~.owned.OwnedEntry.subject_at`)."""
+        return self.document
 
     @property
     def history(self) -> Any:
@@ -1479,7 +1507,7 @@ class Session:
             return {}
         with entry.lock:
             return {str(address): dict(found)
-                    for address, found in (hook(entry.document) or {}).items()}
+                    for address, found in (hook(entry.subject) or {}).items()}
 
     def save(self, doc_id: str) -> SavedDocument:
         """The open document ``doc_id``'s bytes (``document.to_bytes()``) and the state to
@@ -1491,7 +1519,7 @@ class Session:
         fmt = self.formats.get(entry.kind)
         with entry.lock:
             data = entry.snapshot()
-            state = fmt.state(entry.document) if fmt is not None and fmt.state is not None else None
+            state = fmt.state(entry.subject) if fmt is not None and fmt.state is not None else None
             return SavedDocument(doc=doc_id, name=entry.name, kind=entry.kind,
                                  version=entry.version, data=data, state=state)
 
@@ -1521,7 +1549,7 @@ class Session:
                     dataset.document_closed(doc_id)     # its own source, and any it also read
             fmt = self.formats.get(entry.kind)
             if fmt is not None and fmt.closed is not None:
-                fmt.closed(entry.document)          # round 58: what the format kept for it
+                fmt.closed(entry.subject)           # round 58: what the format kept for it
             entry.release()
             # Q3: the joined bytes of its parts' states (kept by their pieces, for every
             # document) go too.
@@ -1700,7 +1728,7 @@ class Session:
                     done += 1
             finally:
                 if own.restored and fmt is not None and fmt.restored is not None:
-                    fmt.restored(entry.document)
+                    fmt.restored(entry.subject)
             return done
 
     def _scoped(self, doc_id: str, steps: int, scope: str, direction: str) -> int:
@@ -1745,7 +1773,7 @@ class Session:
                         details={"parts": exc.parts, "shared": exc.shared}) from None
             finally:
                 if done and fmt.restored is not None:
-                    fmt.restored(entry.document)
+                    fmt.restored(entry.subject)
             return done
 
     def _step(self, doc_id: str, steps: int, direction: str) -> int:

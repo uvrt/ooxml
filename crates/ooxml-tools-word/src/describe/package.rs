@@ -101,7 +101,7 @@ impl Reader<'_> {
         Ok(Value::Object(out))
     }
 
-    fn comment_records(&self, main: &str) -> Result<Vec<CommentRecord>, ToolError> {
+    pub(super) fn comment_records(&self, main: &str) -> Result<Vec<CommentRecord>, ToolError> {
         let parts = related_parts(self.package, main, REL_COMMENTS).map_err(opc)?;
         let Some(part) = parts.into_iter().next().filter(|p| self.package.has_part(p)) else {
             return Ok(Vec::new());
@@ -216,7 +216,7 @@ impl Reader<'_> {
 }
 
 /// One comment as `describe` reads it.
-struct CommentRecord {
+pub(super) struct CommentRecord {
     id: String,
     author: Option<String>,
     done: bool,

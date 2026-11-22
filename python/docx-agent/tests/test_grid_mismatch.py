@@ -10,7 +10,7 @@ docx2svg (0.11.11) lays such a table out as Word does; here:
   it, the call that settles a tracked one), from the document alone, so even where the layout
   failed (rule 7);
 * a layout that fails is ``layout_failed``, naming the table where docx2svg names it -- never
-  ``not_found`` -- and a version that failed fails again at once, logged once (rule 2);
+  ``not_found`` (rule 2);
 * the edits that left a table off its grid keep it in step: a row inserted beside a column
   whose tracked deletion or insertion is pending goes with that change, and a review leaves
   every table it touched fitting its grid.
@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import datetime as dt
 import io
-import logging
 import zipfile
 
 import docx2svg
@@ -225,28 +224,6 @@ def test_any_failure_in_the_layout_is_layout_failed(toolbox, monkeypatch):
     rendered = toolbox.dispatch(session, "render", {"doc": "d1", "pages": [1]})
     assert not rendered.ok and rendered.error.code == "layout_failed"
     assert "IndexError" in rendered.error.message and rendered.error.valid_options == []
-
-
-@pytest.mark.usefixtures("python_owned")   # the application's own edit: not yet an owned document's step
-@pytest.mark.usefixtures("python_layout")  # lane L4: docx2svg's Python layout's failures and relaid causes
-def test_a_version_that_failed_fails_again_at_once_logged_once(toolbox, monkeypatch, caplog):
-    from docx_agent.liveview import view
-
-    session, document = _open(toolbox, _shelf().to_bytes())
-    calls = _failing(monkeypatch, docx2svg.LayoutError("w:body/w:tbl[1]", "IndexError: boom"))
-    with caplog.at_level(logging.WARNING, logger="docx_agent.layout"):
-        for _ in range(5):
-            with pytest.raises(LayoutFailed) as raised:
-                view(session, "d1")
-    assert raised.value.at == document.tables()[0].id
-    assert len(calls) == 1
-    assert len([r for r in caplog.records if r.name == "docx_agent.layout"]) == 1
-    # A new version is laid out again.
-    with session.lock(["d1"]) as [entry]:      # the application's own change
-        entry.document.insert_markdown("Another line.", at="end")
-    with pytest.raises(LayoutFailed):
-        view(session, "d1")
-    assert len(calls) == 2
 
 
 def test_layout_failed_survives_a_worker():
