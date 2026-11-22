@@ -36,7 +36,7 @@ use crate::review::{needed, Editing};
 use crate::structure::common::{call, outcome, policy, refused, Outcome};
 use ooxml_base::pyfmt::repr_str;
 use ooxml_tools::{ArgEnum, ErrorCode, Refusal, ToolError, ToolResult, TryCall, WayOut};
-use ooxml_word_edit::facts::{table_grid_mismatch, GridMismatch, RaggedRow};
+use ooxml_word_edit::facts::{ragged_rows, RaggedRow};
 use ooxml_word_edit::WordDoc;
 use ooxml_word_edit::{EditError, EditTable, Reshape, TableChange, TableChanged};
 use ooxml_word_model::docx::tables::TableGrid;
@@ -385,24 +385,20 @@ fn finish(
     result
 }
 
-/// The table `id` ragged (check's `table_grid_mismatch` ragged entry: its rows' cells not
-/// all starting and ending on the same grid columns, as Accept All leaves it where pending
-/// changes reshape it): the grid columns its widest rows cover, its other rows (at most
-/// check's 20) and whether pending changes make the shape.
+/// The table `id` ragged (docx-agent's `_ragged`, `layout_facts.ragged_rows`: its rows'
+/// cells not all starting and ending on the same grid columns, as Accept All leaves it
+/// where pending changes reshape it -- a table off its grid too): the grid columns its
+/// widest rows cover, its other rows (at most check's 20) and whether pending changes make
+/// the shape.
 fn ragged(doc: &WordDoc, id: &str) -> Option<(usize, Vec<RaggedRow>, bool)> {
-    let keep = |t: &str| t == id;
-    table_grid_mismatch(doc, Some(&keep))
-        .ok()?
-        .into_iter()
-        .find_map(|entry| match entry {
-            GridMismatch::Ragged {
-                grid,
-                rows,
-                after_accept,
-                ..
-            } => Some((grid, rows.into_iter().take(RAGGED_LISTED).collect(), after_accept)),
-            GridMismatch::OffGrid { .. } => None,
-        })
+    let docx = doc.docx().ok()?;
+    let table = docx.body()?.ids.tables().iter().find(|t| t.id == id)?;
+    let found = ragged_rows(doc, &table.element)?;
+    Some((
+        found.grid,
+        found.rows.into_iter().take(RAGGED_LISTED).collect(),
+        found.after_accept,
+    ))
 }
 
 /// Rows of a ragged table check lists (`layout_facts.CAP`).
