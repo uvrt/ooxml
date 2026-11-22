@@ -207,7 +207,7 @@ fn changes(
     } else {
         Vec::new()
     };
-    removed.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+    removed.sort_unstable_by_key(|a| std::cmp::Reverse(a.1));
     let delete: Vec<usize> = removed.iter().map(|(_, at)| *at).collect();
     let accepted_columns = accepted.table.active().then(|| accepted.table.kept.clone());
     let kept = record(
