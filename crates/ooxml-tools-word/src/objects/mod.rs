@@ -10,6 +10,7 @@
 //! are the host's record, handed in), or write the document but through a command.
 
 mod cell_fills;
+mod cell_values;
 mod chart_add;
 mod chart_add_plan;
 mod chart_block;

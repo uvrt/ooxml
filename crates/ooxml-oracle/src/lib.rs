@@ -22,6 +22,7 @@
 #![forbid(unsafe_code)]
 
 pub mod bench;
+mod case_values;
 pub mod chart;
 pub mod disk;
 pub mod dml;

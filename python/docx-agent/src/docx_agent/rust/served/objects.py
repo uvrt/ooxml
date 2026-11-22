@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from .. import reads
@@ -29,16 +30,53 @@ def _edit_table(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
     # session too (round 58, R126), and kept in its record (owner.SessionRows).
     given = {**own(arguments), "table": reads._refs(call, arguments.get("table"))}
     source = arguments.get("from") or None      # "": a strict decoder's placeholder for none
+    facts = list(getattr(call, "facts", None) or ())
     from ...tools import field_text
 
-    if not isinstance(source, str) or field_text.names_one_value(source):
-        return given
-    # The rows the source names, as the dispatcher resolves them (its refusals the call's); an
-    # unknown dataset is the session's to word (what the document says of the value: a
-    # drawing's id), with the datasets there are.
-    found = _rows(call, source)
-    return Adapted(given, written_json(getattr(call, "facts", None) or (), {}),
-                   sources=sources_json([(source, found)]))
+    if isinstance(source, str) and not field_text.names_one_value(source):
+        # The rows the source names, as the dispatcher resolves them (its refusals the
+        # call's); an unknown dataset is the session's to word (what the document says of
+        # the value: a drawing's id), with the datasets there are.
+        found = _rows(call, source)
+        return Adapted(given, written_json(facts, {}), sources=sources_json([(source, found)]))
+    # Values by reference (rounds 45, 48, 49: R66, R89, R96): each cell's one value -- its own
+    # from, else a top-level one naming one value where it gives no text -- resolved as the
+    # handler reads it, a refusal handed over for the session to give where the handler does
+    # (after the places, in the cells' order).
+    from ooxml_edit.tools import ToolError
+
+    refused: list[dict[str, Any]] = []
+    for k, cell_from in _cell_froms(arguments, source):
+        field = f"cells[{k}].from"
+        try:
+            text, record = call.fact(cell_from, field=field)
+        except ToolError as error:
+            field_text.with_rows(call, cell_from, field, error)
+            refused.append({"given": cell_from, "field": field,
+                            "refused": {"code": error.code, "message": error.message,
+                                        "options": list(error.valid_options or [])}})
+            continue
+        facts.append(field_text.as_fact(cell_from, field, text, record))
+    return Adapted(given, written_json(facts, {}), sources=json.dumps(refused) if refused else None)
+
+
+def _cell_froms(arguments: dict[str, Any], source: Any) -> list[tuple[int, str]]:
+    """The one value each ``set_cells`` entry names (docx-agent's ``_one_value_cells`` and
+    ``_cell_value``): its own ``from``, else the top-level ``source`` (one value) where the
+    entry gives no ``text`` either; none for an entry giving ``text`` and ``from`` (refused)."""
+    cells = arguments.get("cells")
+    if arguments.get("action") != "set_cells" or not isinstance(cells, list):
+        return []
+    out = []
+    for k, cell in enumerate(cells):
+        if not isinstance(cell, dict):
+            continue
+        own_from, text = cell.get("from") or None, cell.get("text") or None
+        if own_from is None and text is None and isinstance(source, str):
+            own_from = source
+        if isinstance(own_from, str) and text is None:
+            out.append((k, own_from))
+    return out
 
 
 @adapter("word_controls")

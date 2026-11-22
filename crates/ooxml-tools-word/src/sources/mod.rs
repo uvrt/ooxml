@@ -9,7 +9,9 @@
 //! The host resolves and qualifies a source (its dispatcher's `call.source`: an unknown
 //! dataset, a row past the last, a source of the call's own document are its refusals) and
 //! hands the rows over with the call ([`crate::Others::with_sources`]), keyed by the value as
-//! the call gives it.
+//! the call gives it. A value one reference names that the host could not resolve (a cell's
+//! `from`: its `call.fact`'s refusal) comes the same way, as refused at the argument naming it
+//! ([`SourceRefused::field`], [`value_refusal`]).
 //!
 //! Must not: resolve a source (the host's datasets and other documents do), or read the
 //! document.
@@ -25,7 +27,7 @@ pub(crate) use pattern::{date_pattern, DatePattern};
 pub(crate) use placed::{first_rows, fits, placed, runs, thousands, Placed};
 
 use ooxml_base::pyfmt::repr_str;
-use ooxml_tools::{Refusal, ToolError, TryCall, WayOut};
+use ooxml_tools::{ErrorCode, Refusal, ToolError, TryCall, WayOut};
 use ooxml_word_model::docx::casefold;
 use serde_json::{Map, Value};
 
@@ -373,7 +375,8 @@ impl SourceRows {
 }
 
 /// The host's refusal of a source it resolved to no rows (an unknown dataset), which the
-/// tool words with what its document says of the value (the docx format's `source_hint`).
+/// tool words with what its document says of the value (the docx format's `source_hint`);
+/// or of one value a reference at `field` names (a cell's `from`), as the host words it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceRefused {
     /// The source as the call gives it.
@@ -382,6 +385,11 @@ pub struct SourceRefused {
     pub message: String,
     /// The host's options (the datasets there are).
     pub options: Vec<String>,
+    /// The argument naming one value refused (`cells[2].from`); `None` for the call's own
+    /// `from`.
+    pub field: Option<String>,
+    /// The host's code for a value refused (`not_found` unless it said another).
+    pub code: ErrorCode,
 }
 
 /// The sources a call names, as the host resolved them: their rows, or its refusals.
@@ -395,8 +403,8 @@ pub struct Sources {
 
 impl Sources {
     /// The sources a host hands over as JSON: a list, each as [`SourceRows::list_from_json`]
-    /// reads one, or `{"given", "refused": {"message", "options"}}`; `None` for anything
-    /// else.
+    /// reads one, or `{"given", "refused": {"message", "options"}}` (and a value's
+    /// `"field"`, and `"code"` in the refusal); `None` for anything else.
     #[must_use]
     pub fn from_json(value: &Value) -> Option<Sources> {
         let mut out = Sources::default();
@@ -410,6 +418,17 @@ impl Sources {
                         .and_then(Value::as_array)
                         .map(|o| o.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
                         .unwrap_or_default(),
+                    field: match item.get("field") {
+                        None | Some(Value::Null) => None,
+                        Some(field) => Some(field.as_str()?.to_owned()),
+                    },
+                    code: match refused.get("code") {
+                        None | Some(Value::Null) => ErrorCode::Refusal(Refusal::NotFound),
+                        Some(code) => {
+                            let code = code.as_str()?;
+                            *ErrorCode::ALL.iter().find(|c| c.as_str() == code)?
+                        }
+                    },
                 }),
                 None => out.rows.push(SourceRows::from_json(item)?),
             }
@@ -454,6 +473,21 @@ pub(crate) fn refused_source(
         WayOut::names(refused.options.iter().cloned()).unwrap_or_else(|| WayOut::call(retry.clone())),
     )
     .at("from")
+}
+
+/// The host's refusal of one value a reference names ([`SourceRefused::field`]), as it
+/// worded it, at its argument.
+pub(crate) fn value_refusal(refused: &SourceRefused, retry: &TryCall) -> ToolError {
+    let field = refused.field.clone().unwrap_or_else(|| "from".to_owned());
+    match refused.code {
+        ErrorCode::Refusal(code) => ToolError::refusal(
+            code,
+            refused.message.clone(),
+            WayOut::names(refused.options.iter().cloned()).unwrap_or_else(|| WayOut::call(retry.clone())),
+        ),
+        ErrorCode::Failure(code) => ToolError::failure(code, refused.message.clone()),
+    }
+    .at(field)
 }
 
 /// The refusal of a source the host handed no rows for: a dataset as ooxml-edit's
