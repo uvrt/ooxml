@@ -145,9 +145,9 @@ pub use fields::{
 };
 pub use follow::{CopyFollowed, FollowSample, Followed};
 pub use format::{
-    check as check_formatting, differs, keep_writes, kept_blocks, kept_package, known_style, occurrences, range_text,
-    theme_color_name, FormatEdit, FormatPlan, FormatStep, Formatted, Like, LikeDone, Occurrence, ParagraphLook,
-    Property, Setting, Value, KEEPS_BLOCKS, NOT_TAKEN, PARTS,
+    body_blocks, check as check_formatting, differs, keep_writes, keeps_blocks, kept_blocks, kept_package, known_style,
+    occurrences, range_text, theme_color_name, FormatEdit, FormatPlan, FormatStep, Formatted, Like, LikeDone,
+    Occurrence, ParagraphLook, Property, Setting, Value, KEEPS_BLOCKS, NOT_TAKEN, PARTS,
 };
 pub use ids_delta::{ids_delta, IdsDelta};
 pub use links::{hyperlink_span, AddBookmark, AddHyperlink, LinkEdited, RemoveBookmark, RenameBookmark};
@@ -186,8 +186,8 @@ pub use switch::{tracks_changes, word_tracks_changes, SetWordTracking, WordTrack
 pub use tables::{
     body_lines, body_width, loose_paragraph_after, merges_in_the_way, row_cells, row_shown, rows_unlike, table_keeps,
     table_keeps_at, BodyLines, BodyWidth, CellUnlike, CellValues, ColumnCopy, EditTable, FormatCall, FormatTable,
-    LikeTheColumn, Look, LookField, PlaceRows, Reshape, RowUnlike, RowsPlaced, TableChange, TableChanged, TableEdit,
-    TableFormat, TableFormatted, TableKeeps, TableValues, TableWidth, TextLook, ROW_WINDOW,
+    LikeTheColumn, Look, LookField, PlaceRows, PlacedRecord, Reshape, RowUnlike, RowsBeside, RowsPlaced, TableChange,
+    TableChanged, TableEdit, TableFormat, TableFormatted, TableKeeps, TableValues, TableWidth, TextLook, ROW_WINDOW,
 };
 pub use template::{
     compatibility_mode, Reflowed, UpgradeReflowed, UpgradeToModern, Upgraded, DEFAULT_COMPATIBILITY_MODE, MODERN_MODE,

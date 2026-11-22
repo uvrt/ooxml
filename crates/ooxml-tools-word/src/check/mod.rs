@@ -11,14 +11,19 @@
 //! range's extent and keeps (`range`), the minimum text size (`min_size`) and the styles
 //! allowed (`styles`).
 //!
-//! Must not: lay out but through the host's engine. Copies, a scale and a deck's arguments
-//! are not given here yet: such a call is answered `unported`, and the host answers it; so
-//! is a check needing the layout without the host's layout, or of a version its engine
+//! With `copies`, each copy compared with the reference it was made from ([`copies`], lane
+//! CP1), in this document or another open one the call names.
+//!
+//! Must not: lay out but through the host's engine. A scale and a deck's arguments are not
+//! given here yet: such a call is answered `unported`, and the host answers it; so is a
+//! check of copies of a document held as a package, a check needing the layout without the
+//! host's layout, or of a version its engine
 //! does not lay out, a `min_size` that is not one, and `pages` holding none of the
 //! ranges' blocks (the host warns of it). A range refused is refused here, as docx-agent
 //! words it ([`refused`]); a heading's range is read, and named, as the span it is.
 
 mod args;
+mod copies;
 mod edit_reflow;
 mod facts;
 mod laid_facts;
@@ -28,8 +33,10 @@ mod placed;
 mod ranges;
 mod reflow;
 mod refused;
+mod taller;
 
 pub use args::{Check, CheckCopy, CheckInclude, CheckScale, CopyLists, CopyReference, ScaleShow, ScaleStep, StepText};
+pub use copies::CHECK_COPIES_PACKAGE;
 pub use edit_reflow::{reflow_after_edit, EditedFrom, REFLOW_PAGES, STALE};
 pub use facts::{
     direct_formatting_json, empty_run_json, grid_mismatch_json, lost_cell_json, lost_original_json, row_unlike_json,
@@ -42,6 +49,7 @@ pub use laid_facts::{
 pub use laid_tables::{column_fit_json, past_margins_json, split_row_json, uncertain_json, unrepeated_json};
 pub use ranges::{ranges_json, Trials, TRIALS, TRIAL_SECONDS};
 pub use reflow::{LastCheck, Seen};
+pub(crate) use taller::taller_than_page;
 
 use crate::describe::cancelled;
 use crate::pages::NotLaid;
@@ -106,35 +114,23 @@ pub fn check(args: &Check, version: &Version<'_>, cancel: &dyn Cancel) -> Result
     let mut data = Map::new();
     let mut timing = Map::new();
     let docx = if layout_wanted { Some(version.docx()?) } else { None };
-    let ranges = match &docx {
-        Some(docx) => {
-            ranges_of(args.range.as_deref(), &|a| version.follow(a), docx).map_err(|e| heading_refused(e, &args.doc))?
-        }
-        None => Vec::new(),
-    };
-    if ranges.len() > MAX_RANGES {
-        return Err(ToolError::failure(
-            ooxml_tools::Failure::Limit,
-            format!(
-                "{} ranges: at most {MAX_RANGES} per check; a span p:A..t:B covers many blocks",
-                ranges.len()
-            ),
-        )
-        .at("range"));
-    }
-    let scope = match (&docx, ranges.is_empty()) {
-        (Some(docx), false) => {
-            let started = Instant::now();
-            let scope = Scope::of(docx, &ranges).map_err(|e| refused::range_refused(e, docx, &args.doc))?;
-            timing.insert("resolve".into(), seconds(started));
-            Some(scope)
-        }
-        _ => None,
+    let scope = match &docx {
+        Some(docx) => checked_scope(args, version, docx, &mut timing)?,
+        None => None,
     };
     if wanted.contains(&CheckInclude::Validate) {
         let started = Instant::now();
         data.insert("validate".into(), validate(owned, scope.as_ref())?);
         timing.insert("validate".into(), seconds(started));
+    }
+    if args.copies.as_ref().is_some_and(|c| !c.is_empty()) {
+        // Round 35, R19: on the version validate read.
+        let started = Instant::now();
+        match copies::copies(args, version, owned, cancel)? {
+            Ok(found) => data.insert("copies".into(), found),
+            Err(why) => return Ok(unported(why)),
+        };
+        timing.insert("copies".into(), seconds(started));
     }
     cancel.check().map_err(cancelled)?;
     if let Some(layout) = layout {
@@ -158,6 +154,38 @@ pub fn check(args: &Check, version: &Version<'_>, cancel: &dyn Cancel) -> Result
         }
     }
     finish(owned, &wanted, scope.as_ref(), data, timing)
+}
+
+/// The scope of the check's `range` on `docx` (`None` for no range), at most
+/// [`MAX_RANGES`] ranges; the time it took to resolve in `timing`.
+///
+/// # Errors
+/// A range refused, or too many ranges.
+fn checked_scope(
+    args: &Check,
+    version: &Version<'_>,
+    docx: &ooxml_word_model::docx::Docx,
+    timing: &mut Map<String, Value>,
+) -> Result<Option<Scope>, ToolError> {
+    let ranges =
+        ranges_of(args.range.as_deref(), &|a| version.follow(a), docx).map_err(|e| heading_refused(e, &args.doc))?;
+    if ranges.len() > MAX_RANGES {
+        return Err(ToolError::failure(
+            ooxml_tools::Failure::Limit,
+            format!(
+                "{} ranges: at most {MAX_RANGES} per check; a span p:A..t:B covers many blocks",
+                ranges.len()
+            ),
+        )
+        .at("range"));
+    }
+    if ranges.is_empty() {
+        return Ok(None);
+    }
+    let started = Instant::now();
+    let scope = Scope::of(docx, &ranges).map_err(|e| refused::range_refused(e, docx, &args.doc))?;
+    timing.insert("resolve".into(), seconds(started));
+    Ok(Some(scope))
 }
 
 /// What a check with the layout reads, besides the layout.
@@ -340,6 +368,15 @@ fn finish(
     if let Some(scope) = scope {
         summary.push_str(&format!(" in {} range(s)", scope.ranges.len()));
     }
+    if let Some(found) = data.get("copies") {
+        let count = |key: &str| found.get(key).and_then(Value::as_u64).unwrap_or(0);
+        summary.push_str(&format!(
+            "; copies: {} of {} follow their reference, {} with its example text",
+            count("follow"),
+            count("compared"),
+            count("with_example_text")
+        ));
+    }
     let mut done = Done::new(summary);
     done.data = Some(Value::Object(data));
     Ok(done)
@@ -405,19 +442,20 @@ fn served(args: &Check) -> Result<Vec<CheckInclude>, &'static str> {
         .range
         .as_ref()
         .is_some_and(|r| r.iter().any(|a| !a.trim().is_empty()));
-    let copies = args.copies.as_ref().is_some_and(|c| !c.is_empty());
     if args.slides.is_some()
         || args.boxes.is_some()
         || args.spacing.is_some()
         || args.contrast.is_some()
-        || copies
         || args.scale.is_some()
     {
         return Err(CHECK_ARGUMENTS);
     }
+    // An empty list is the default, as docx-agent reads it (`include or [...]`; teams' calls
+    // rely on it: python-quirks.md).
     let mut wanted = args
         .include
         .clone()
+        .filter(|parts| !parts.is_empty())
         .unwrap_or_else(|| vec![CheckInclude::Validate, CheckInclude::Reflow, CheckInclude::Fields]);
     for part in &wanted {
         match part {

@@ -25,6 +25,7 @@
 #![forbid(unsafe_code)]
 
 mod batch;
+mod block_pages;
 mod call;
 mod changes;
 mod context;
@@ -56,6 +57,7 @@ mod update;
 mod values;
 
 pub use batch::{ReadBatch, ReadOp, BATCH_TIMEOUT, MAX_READ_BATCH_CHARS, READ_BATCH};
+pub use block_pages::{BlockAt, BlockPages};
 pub use call::Call;
 pub use changes::{ChangedPart, IdsSince};
 pub use context::{CallContext, CancelToken};

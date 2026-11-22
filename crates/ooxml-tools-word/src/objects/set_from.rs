@@ -17,7 +17,7 @@ use crate::review::Editing;
 use crate::sources::{first_rows, fits, placed, thousands, Placed, SourceRows};
 use crate::structure::common::{outcome, policy, refused, Outcome};
 use ooxml_tools::{ArgEnum, Refusal, ToolError, ToolResult, TryCall, WayOut};
-use ooxml_word_edit::{CellAxis, CellWrite, EditError, PlaceRows, RowsPlaced, WordDoc};
+use ooxml_word_edit::{CellAxis, CellWrite, EditError, PlaceRows, PlacedRecord, RowsBeside, RowsPlaced, WordDoc};
 use ooxml_word_model::docx::tables::Accepted;
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
@@ -108,9 +108,17 @@ pub(super) fn set_from(
     let placed_from = block.provenance(plan.top);
     let command = PlaceRows {
         table: args.table.clone(),
-        grow: plan.short_by,
+        beside: (plan.short_by > 0)
+            .then_some(RowsBeside {
+                row: None,
+                below: true,
+                count: plan.short_by,
+            })
+            .into_iter()
+            .collect(),
         writes: writes(&lines, &accepted.table, &plan),
-        record: record(&placed_from, rows.name.as_deref()),
+        delete: Vec::new(),
+        record: PlacedRecord::Store(record(&placed_from, rows.name.as_deref())),
         policy: policy(editing),
     };
     let look = |out: &RowsPlaced, _: &WordDoc| {
