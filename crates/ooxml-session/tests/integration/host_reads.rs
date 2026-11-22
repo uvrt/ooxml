@@ -59,13 +59,9 @@ fn a_block_id_says_what_kind_of_block_it_names() {
     let version = s.snapshot(&d).unwrap();
     let kind = |id: &str| version.block_kind(id).unwrap();
     assert_eq!(kind("p:0A000001"), Some("paragraph"));
-    assert_eq!(kind("p@body/0"), Some("paragraph"));
-    let table = s.snapshot(&d).unwrap();
-    let tables: Vec<_> = ["t:0A000003", "t@body/0"]
-        .iter()
-        .map(|t| table.block_kind(t).unwrap())
-        .collect();
-    assert!(tables.contains(&Some("table")), "{tables:?}");
+    assert_eq!(kind("p:0A000006"), Some("paragraph"));
+    assert_eq!(kind("p@body/0"), None, "a paragraph with an id is named by it");
+    assert_eq!(kind("t:0A000003"), Some("table"));
     assert_eq!(kind("cc:7"), Some("content control"));
     assert_eq!(kind("cc:8"), None, "a control in the line is no block");
     assert_eq!(kind("p:0A0000FF"), None);
