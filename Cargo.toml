@@ -58,6 +58,8 @@ flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 arc-swap = "1"
 loom = "0.7"
 fancy-regex = "0.14"
+# NFKC, as Python's unicodedata folds names (DEPENDENCIES.md; approved 2026-11-21).
+unicode-normalization = "=0.1.26"
 ooxml-base = { path = "crates/ooxml-base" }
 ooxml-xml = { path = "crates/ooxml-xml" }
 ooxml-zip = { path = "crates/ooxml-zip" }

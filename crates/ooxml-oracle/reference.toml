@@ -1,0 +1,7 @@
+# The gates' reference, frozen (P4e): docx-agent's Python and the packages it runs
+# (python/{ooxml-common,ooxml-edit,docx2svg,docx-agent}) as they were at this commit, the last
+# main commit before P4e's deletions.  .github/actions/gates-reference and local-gates.sh install
+# them from `git archive` of it (crates/ooxml-oracle/python/reference_packages.py); the
+# reference cache keys its results with it; tools/gates.py frozen-api checks that the harness
+# names only what it has.
+sha = "a512c9019eef9497ecbc85fc624730d10b561a85"

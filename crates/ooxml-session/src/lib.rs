@@ -9,7 +9,9 @@
 //! [`CallContext`]: who calls, its cancellation token and its deadline, read through the
 //! [`ooxml_base::Clock`] and [`ooxml_base::Cancel`] ports of the session's
 //! [`ooxml_base::Context`]; and the session's [`MemoryBudget`] (section 6, Memory): what
-//! its documents keep that can be made again, within one limit, counted per document.
+//! its documents keep that can be made again, within one limit, counted per document; and
+//! an application's live view of a Word document ([`Session::view`], [`Session::page_svg`]):
+//! its pages, those changed since a token, one page's SVG of the version a token names.
 //!
 //! Must not: hold process-wide state (a session is a value; the Python module holds the
 //! sessions), know providers, implement a tool's logic (the `ooxml-tools-*` crates do),
@@ -33,11 +35,13 @@ mod group;
 mod handlers;
 mod history;
 mod ids;
+mod live_view;
 mod memory;
 mod model;
 mod names;
 mod owners;
 mod pages;
+mod panics;
 mod reading_edit;
 mod records;
 mod reflowed;
@@ -59,6 +63,7 @@ pub use group::GroupMark;
 pub use handlers::{EditHandler, ReadHandler, Tool};
 pub use history::{NumberedStep, Numbers, Undone};
 pub use ids::{DocId, DocKind};
+pub use live_view::{PageSvg, TextMode, View, ViewError, ViewPage, VIEW_TOKENS};
 pub use memory::{Account, MemoryBudget};
 pub use model::{ModelError, PackageDoc, PartChange, PartContent};
 pub use names::DocNames;

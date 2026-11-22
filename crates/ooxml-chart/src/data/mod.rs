@@ -34,6 +34,7 @@ mod serial;
 mod source;
 
 pub use labels::point_labels;
+pub(crate) use look::axis_named;
 pub use look::{
     axis_names, axis_scale, blanks, gap_width, is_dot, number_formats, series_look, Look, NumberFormats, Said, Scale,
     SeriesLook,
@@ -48,7 +49,7 @@ use ooxml_drawingml::read::text::paragraph_text;
 use ooxml_numfmt::is_date_code;
 use ooxml_xml::view::{attr, child, children, elements, local, py_flat as flat, text};
 use ooxml_xml::Element;
-use source::Source;
+pub(crate) use source::Source;
 
 /// One series' name and values.
 #[derive(Debug, Clone, PartialEq)]

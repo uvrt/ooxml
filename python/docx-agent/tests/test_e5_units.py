@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 
 import e5_probe  # noqa: E402
+from conftest import FIXTURE_DIR  # noqa: E402
 
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 _MC = "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
@@ -218,7 +219,7 @@ def test_removing_a_control_keeps_or_drops_its_content(controls):
 
 
 def test_table_edits_are_checked_first():
-    document = Document.open("tests/fixtures/samplelib/sample-simple.docx")
+    document = Document.open(FIXTURE_DIR / "samplelib" / "sample-simple.docx")
     paragraph = document.paragraphs()[0]
     with pytest.raises(EditError):
         document.insert_table(0, 2, after=paragraph.id)
@@ -238,7 +239,7 @@ def test_table_edits_are_checked_first():
 
 
 def test_a_table_never_touches_another():
-    document = Document.open("tests/fixtures/samplelib/sample-simple.docx")
+    document = Document.open(FIXTURE_DIR / "samplelib" / "sample-simple.docx")
     paragraph = document.paragraphs()[0]
     first = document.insert_table(2, 2, after=paragraph.id).id
     second = document.insert_table(2, 2, after=first).id
@@ -248,4 +249,4 @@ def test_a_table_never_touches_another():
     cell = document.table(second).cell(0, 0)
     nested = document.insert_table(1, 1, after=cell.paragraphs[0].id).id
     assert document.table(nested)._entry()[1].element.getnext().tag == _W + "p"
-    assert check(document.package) == check(Document.open("tests/fixtures/samplelib/sample-simple.docx").package)
+    assert check(document.package) == check(Document.open(FIXTURE_DIR / "samplelib" / "sample-simple.docx").package)

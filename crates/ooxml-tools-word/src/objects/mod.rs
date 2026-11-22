@@ -10,7 +10,16 @@
 //! are the host's record, handed in), or write the document but through a command.
 
 mod cell_fills;
+mod chart_add;
+mod chart_add_plan;
+mod chart_block;
+mod chart_data;
+mod chart_fold;
+mod chart_keeper;
+mod chart_names;
 mod chart_read;
+mod chart_record;
+mod chart_style;
 mod chart_workbook;
 mod controls;
 mod drawings;
@@ -21,10 +30,12 @@ mod edit_chart_args;
 mod edit_table;
 mod edit_table_args;
 mod edit_table_cells;
+mod edit_table_pending;
 mod format_table;
 mod format_table_args;
 mod rows_written;
 mod set_cells;
+mod set_from;
 mod table_view;
 
 pub use controls::word_controls;

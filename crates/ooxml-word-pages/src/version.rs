@@ -41,8 +41,12 @@ pub struct LaidVersion {
     pub(crate) summary: OnceLock<Arc<crate::summary::Summary>>,
     /// The stories' epoch of its generation it was laid out in.
     pub(crate) epoch: u64,
-    /// The model's context of its generation it was laid out in: it is painted only in it.
+    /// The model's context of its generation it was laid out in: it is painted and measured
+    /// in it, by the generation's model where that is its context still, else by a painter
+    /// of its own.
     pub(crate) context: u64,
+    /// Its context's mark: while a version of a context is held, its painter is kept.
+    pub(crate) painted_in: Arc<crate::engine::ContextMark>,
     /// What a comparison reads of each page without painting it, made when first asked.
     pub(crate) pages: OnceLock<Arc<VersionPages>>,
 }
@@ -75,6 +79,26 @@ impl LaidVersion {
     /// tool names it in this version's bytes.
     pub fn id_of(&self, path: &str) -> Option<&str> {
         self.ids.all().get(path).map(|id| &**id)
+    }
+
+    /// The tool's ids of the body's top-level blocks (paragraphs and tables, those of its
+    /// block-level content controls too) page `page` (0-based) draws something of, each once,
+    /// in document order (docx-agent's `DocumentLayout.blocks_on`): a block split across
+    /// pages is on each; empty past the last page. A block the version does not name is left
+    /// out.
+    pub fn top_blocks(&self, page: usize) -> Vec<&str> {
+        let Some(facts) = self.page_facts(page) else {
+            return Vec::new();
+        };
+        let mut found: Vec<(Vec<u32>, &str)> = facts
+            .blocks
+            .iter()
+            .filter(|key| crate::layout_facts::block_keys_top(key))
+            .filter_map(|key| Some((self.ids.place_of_path(key)?, self.id_of(key)?)))
+            .collect();
+        found.sort();
+        found.dedup_by(|a, b| a.1 == b.1);
+        found.into_iter().map(|(_, id)| id).collect()
     }
 
     /// Its body blocks by the tool's ids (every block named, once, when first asked).

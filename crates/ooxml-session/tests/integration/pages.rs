@@ -3,7 +3,8 @@
 //! it; `word_inspect`'s placements from that layout where the host gives no placer.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use crate::locale::{docx, session_with, test_fonts};
+use crate::common::test_fonts;
+use crate::locale::{docx, session_with};
 use ooxml_session::{CallContext, DocKind, MemoryBudget, SessionConfig, SessionPages};
 use ooxml_tools_word::PageSetup;
 use ooxml_word_pages::EngineOptions;

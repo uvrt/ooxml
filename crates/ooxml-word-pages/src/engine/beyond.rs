@@ -10,7 +10,7 @@
 //! the pages kept painted), or measure the blank (`layout_facts::room` does).
 
 use super::trial::Trial;
-use super::{paint_laid, Generation, PageEngine};
+use super::{paint_laid, PageEngine, Painter};
 use crate::drawings::text_boxes::holds_text;
 use crate::layout_facts::{story_kind, BeyondFacts};
 use crate::LaidVersion;
@@ -47,8 +47,9 @@ impl<'a> Laid<'a> {
 }
 
 impl PageEngine {
-    /// What page `page` (0-based, blank pages counted) of `laid` draws beyond its facts:
-    /// nothing known where `laid` is not of this engine's generation and context.
+    /// What page `page` (0-based, blank pages counted) of `laid` draws beyond its facts,
+    /// measured in the context it was laid out in: nothing known where `laid` is not of
+    /// this engine's generation.
     pub fn beyond_facts(&mut self, laid: Laid<'_>, page: usize) -> BeyondFacts {
         BeyondFacts {
             text_boxes: self.text_box_foot(laid, page),
@@ -78,12 +79,12 @@ impl PageEngine {
         })
     }
 
-    /// The generation `version` was laid out in, while it is the engine's and in the same
-    /// model context.
-    fn generation_of(&mut self, version: &LaidVersion) -> Option<&mut Generation> {
+    /// What `version` (or a trial laid out from it) is measured with, while its generation
+    /// is the engine's: its context's painter.
+    fn painter_of(&mut self, version: &LaidVersion) -> Option<Painter<'_>> {
         self.generation
-            .as_mut()
-            .filter(|g| g.number == version.generation && g.context == version.context)
+            .as_mut()?
+            .painter(version, &self.locale, &self.budgets.held)
     }
 
     /// The bottom of the lowest line the page draws in a text box of the body's.
@@ -102,8 +103,8 @@ impl PageEngine {
         let paint = match laid {
             Laid::Version(v) => self.painted_page(v, page, false)?,
             Laid::Trial(t) => {
-                let generation = self.generation_of(version)?;
-                Arc::new(paint_laid(generation, &t.layout, version, page, with)?)
+                let painter = self.painter_of(version)?;
+                Arc::new(paint_laid(painter, &t.layout, version, page, with)?)
             }
         };
         paint
@@ -122,8 +123,8 @@ impl PageEngine {
         if page >= layout.page_count() {
             return None;
         }
-        let generation = self.generation_of(laid.version())?;
-        let parts = generation.layout.page_parts(&mut generation.model, layout, page);
+        let painter = self.painter_of(laid.version())?;
+        let parts = painter.layout.page_parts(painter.model, layout, page);
         parts
             .footnotes
             .iter()

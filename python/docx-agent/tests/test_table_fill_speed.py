@@ -38,9 +38,10 @@ from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).parent))
 import toc_number_cases  # noqa: E402
+from conftest import FIXTURE_DIR  # noqa: E402
 
 CLOCK = lambda: dt.datetime(2026, 11, 8, 9, 0, tzinfo=dt.timezone.utc)  # noqa: E731
-FIXTURES = Path(__file__).parent / "fixtures"
+FIXTURES = FIXTURE_DIR
 
 #: A made-up stock list: a code, a name (some empty), an amount (some missing), a date, a note
 #: (some missing, some of two lines, some long, some with French punctuation).
@@ -181,7 +182,8 @@ def test_the_result_says_where_the_time_went(toolbox):
     _, _, results, timings = _run(toolbox, {}, [{"grow": True}], {})
     timing = timings[0]
     assert list(timing)[:6] == ["resolve", "check", "rows", "cells", "record", "result"]
-    assert {"spacing", "validate"} <= set(timing)
+    # (the Rust session spaces the text as it writes the cells: its "spacing" is in "cells")
+    assert "validate" in timing
     assert all(isinstance(v, float) and v >= 0 for v in timing.values())
     assert len(json.dumps(timing)) < 300                       # a small part of the result's budget
 

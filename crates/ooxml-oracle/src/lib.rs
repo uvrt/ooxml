@@ -46,6 +46,8 @@ pub mod markdown;
 pub mod metafile;
 pub mod object_bench;
 pub mod painter;
+mod panics;
+mod part_texts;
 pub mod pixels;
 pub mod raster;
 pub mod reads;

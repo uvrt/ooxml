@@ -1,7 +1,10 @@
 """Call logging: what was called, on what, how it went -- never the document's content.
 
 Every call is recorded as a :class:`CallRecord` on the session (and on each document it
-touched) and logged to the ``ooxml_edit.tools`` logger at INFO.  Arguments appear as a
+touched) and logged to the ``ooxml_edit.tools`` logger at INFO; a call whose reply is an
+``internal`` failure (a library's unexpected failure, a panic in the Rust session among them)
+at ERROR as well, with its message and ``details.trace`` (:func:`log_internal`), in this one
+place whichever format or path answered it.  Arguments appear as a
 digest -- a hash of their canonical JSON, and their shape (names, types and lengths) -- so
 a transcript can tell two calls apart and find the same call again without holding any text
 from the document or the conversation.  An application that wants full arguments in its
@@ -91,3 +94,12 @@ def log_call(record: CallRecord) -> None:
     logger.info("tool=%s docs=%s ok=%s code=%s version=%s digest=%s duration=%.3fs",
                 record.tool, ",".join(record.docs) or "-", record.ok, record.code or "-",
                 record.version, record.digest, record.duration)
+
+
+def log_internal(record: CallRecord, message: str, trace: Any) -> None:
+    """A call whose reply is an ``internal`` failure, at ERROR: what was called, on what, the
+    reply's message and its ``details.trace`` (a Rust panic's names the tool and what it
+    said) -- never the arguments."""
+    logger.error("internal failure: tool=%s docs=%s version=%s digest=%s trace=%s: %s",
+                 record.tool, ",".join(record.docs) or "-", record.version, record.digest,
+                 trace if trace is not None else "-", message)

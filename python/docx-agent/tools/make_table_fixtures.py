@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write ``tests/fixtures/generated/table-keeps.docx``: tables kept on one page by their rows'
+"""Write ``crates/ooxml-oracle/fixtures/generated/table-keeps.docx``: tables kept on one page by their rows'
 keeps in every way ``word_format_table``'s ``keep_together`` / ``keep_with_next`` read and
 write them (round 25, W2/W5; round 27, W7), written here by hand with
 :mod:`make_fixtures`' parts (compatibility mode 15, paraIds on every paragraph):

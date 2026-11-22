@@ -5,8 +5,10 @@
 mod common;
 
 mod editing;
+mod live_view;
 mod locale;
 mod pages;
+mod panics;
 mod registry;
 mod rows_written;
 mod session;

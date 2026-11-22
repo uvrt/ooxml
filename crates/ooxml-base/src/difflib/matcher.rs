@@ -12,7 +12,7 @@
 //! finish on those texts.
 //!
 //! Must not: tell replacements, deletions and insertions apart, or fold anything; the
-//! callers' rules ([`super::diff`]) do that.
+//! callers' rules ([`super`]'s foldings and theirs) do that.
 
 use std::collections::HashMap;
 use std::hash::Hash;

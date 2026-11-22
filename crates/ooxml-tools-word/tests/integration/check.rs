@@ -24,7 +24,7 @@ use std::time::Duration;
 
 const FIXTURE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../python/docx-agent/tests/fixtures/generated/trial/safety-bulletin.docx"
+    "/../../crates/ooxml-oracle/fixtures/generated/trial/safety-bulletin.docx"
 );
 
 /// The fixture, and a version of it whose first body text is much longer.

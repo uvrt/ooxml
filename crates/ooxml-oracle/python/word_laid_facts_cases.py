@@ -14,12 +14,6 @@ Python's behaviour is not changed: this only calls docx-agent's documented funct
 from __future__ import annotations
 
 import json
-import sys
-from pathlib import Path
-
-TESTS = Path(__file__).resolve().parents[3] / "python" / "docx-agent" / "tests"
-if str(TESTS) not in sys.path:
-    sys.path.insert(0, str(TESTS))
 
 from docx_agent import Document
 from docx_agent.layout_facts import layout_facts

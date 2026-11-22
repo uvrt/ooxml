@@ -14,6 +14,7 @@ shard of the documents at a time:
     python tools/gates.py summary DIR                     # the job summary's tables (Markdown)
     python tools/gates.py cache-key                       # the reference cache's chain digest
     python tools/gates.py cache-merge STORE FILE...       # kept results added to a store
+    python tools/gates.py frozen-api                      # the harness uses only the frozen reference's names
     python tools/gates.py durations DIR [--write]         # a run's warm times per mode (tools/gates_durations.json)
 
 The reference cache (crates/ooxml-oracle/python/reference_cache.py): with ``--cache STORE``
@@ -25,14 +26,19 @@ finds a difference is computed again in full.
 
 A ``diff`` writes the harness's log, its cases with differences (JSON lines) and a summary
 (JSON) into ``--out``.  It fails when a case differs and no entry of the known differences
-(crates/ooxml-oracle/known-differences.toml, each with its cause) covers it.
+(crates/ooxml-oracle/known-differences.toml, each with its cause) covers it, and on any case
+where the Rust side panicked (``panics``: the oracle's catch or the session's ``internal``
+reply).  The cases the Rust tools leave to the host are reported by form (``unported_forms``),
+not failing yet.
 
 Modes ``auto`` (the dispatch's default): the edit modes, and whether the reads' checks run,
 picked from the files the branch changes against origin/main (``git diff origin/main...``):
 a path counts for the modes it can change and no others (``gate_effects``), conservatively --
-the Rust code and docx-agent's count for every mode, a harness's case maker for its own
-modes, notes and the packages and crates the gates do not run for none, and anything not
-named for every mode.  No change at all (the ref is main) is every mode too.
+the Rust code, the fixtures and what makes the corpus (docx2svg, ooxml-common) count for
+every mode, a harness's case maker for its own modes, notes, the checkout's docx-agent and
+ooxml-edit (the reference is installed from its frozen commit) and the packages and crates the
+gates do not run for none, and anything not named for every mode.  No change at all (the ref
+is main) is every mode too.
 
 Fixtures ``auto`` (``--fixtures``; the dispatch's default for a branch): the fixtures and
 reads gates run only the fixture documents holding the Word features the branch's changes
@@ -70,7 +76,7 @@ KNOWN = ROOT / "crates" / "ooxml-oracle" / "known-differences.toml"
 REPORT = ROOT / "python" / "ooxml-core" / "tests" / "harness"
 
 #: The trees a gate reads by default (the corpus: the folder ``corpus`` made, given as --tree).
-FIXTURES = ROOT / "python" / "docx-agent" / "tests" / "fixtures"
+FIXTURES = gates_fixtures.FIXTURES
 TREES = {"fixtures": FIXTURES, "reads": FIXTURES}
 
 #: word_edits_diff.py's modes: each the flags it takes (``set_text`` none: set_text alone).
@@ -98,14 +104,22 @@ ALL = frozenset([*EDIT_MODES, READS])
 #: word_style_cases.py take their helpers from word_structure_cases.py).
 CASE_MAKERS = {"word_structure_cases.py": {"structure", "objects", "style"}, "word_object_cases.py": {"objects"},
                "word_style_cases.py": {"style"}, "word_text_cases.py": {"text"}}
-#: The rest of the harness the gates run: the edits harness (it imports word_reads_diff.py), and
-#: what keeps the Rust core out of the reference (reference_guard.py and its no_core/ stand-in).
-GATE_HARNESS = ("word_edits_", "word_tool_reference", "word_reads_", "reference_cache", "reference_guard")
+#: The reads' case makers (word_reads_diff.py's facts and laid checks, and the made-up
+#: documents they share with docx-agent's tests): the reads alone.
+READ_CASE_MAKERS = ("word_facts_cases.py", "word_laid_facts_cases.py", "facts_documents.py", "shelf_tables.py")
+#: The rest of the harness the gates run: the edits harness (it imports word_reads_diff.py),
+#: what keeps the Rust core out of the reference (reference_guard.py and its no_core/ stand-in)
+#: and where the reference is imported from (reference_packages.py).
+GATE_HARNESS = ("word_edits_", "word_tool_reference", "word_reads_", "reference_cache", "reference_guard",
+                "reference_packages")
 GATE_HARNESS_FOLDERS = ("crates/ooxml-oracle/python/no_core/",)
 #: The oracle binaries the gates run, and what each answers.
 GATE_BINARIES = {"word-edits": set(EDIT_MODES), "word-reads": {READS}, "word-ids": {READS}}
-#: The packages the gates install (gates.yml: the reference and what makes the corpus).
-GATE_PACKAGES = ("docx-agent", "docx2svg", "ooxml-edit", "ooxml-common")
+#: The packages the gates install from the checkout: what makes the corpus (gates.yml's corpus
+#: job).  The reference's packages -- docx-agent, ooxml-edit and these two -- are installed from
+#: the commit crates/ooxml-oracle/reference.toml names instead (the gates-reference action), so a
+#: change to the checkout's docx-agent or ooxml-edit changes no gate.
+GATE_PACKAGES = ("docx2svg", "ooxml-common")
 #: The files the gates themselves are: they change every mode.
 GATE_FILES = ("tools/gates.py", ".github/workflows/gates.yml", ".github/actions/", "Cargo.toml", "Cargo.lock",
               ".cargo/", "rust-toolchain", "crates/ooxml-oracle/known-differences.toml")
@@ -250,18 +264,24 @@ def run_diff(args) -> int:
     summary = {"gate": args.gate, "mode": args.mode, "shard": args.shard, "every": args.every,
                "per_tool": args.per_tool, "documents": len(files),
                "cases": totals.get("cases", 0), "differences": len(unknown), "known": len(known),
-               "unported": totals.get("unported", 0), "wall": round(wall, 1), "crashed": bool(crashed),
+               "unported": totals.get("unported", 0), "panics": totals.get("panics", 0),
+               "unported_forms": totals.get("unported_forms", {}), "wall": round(wall, 1), "crashed": bool(crashed),
                **({"kept": totals["kept"], "computed": totals["computed"]} if "kept" in totals else {}),
                "unknown": unknown[:50]}
     (out / "summary.json").write_text(json.dumps(summary, indent=1))
-    print(json.dumps({k: v for k, v in summary.items() if k != "unknown"}))
+    print(json.dumps({k: v for k, v in summary.items() if k not in ("unknown", "unported_forms")}))
+    for form, count in list(summary["unported_forms"].items())[:20]:
+        print(f"unported: {count} {form}")     # reported, not failing yet (P4e PR 4 refuses them)
     for case in unknown[:50]:
         errors = f"; errors {json.dumps(case['errors'])[:300]}" if case.get("errors") else ""
         print(f"::error::{args.gate}/{args.mode}: {case['file']} [{case['case']}] differs (log.txt has the paths)"
               f"{errors}")
     if crashed:
         print(f"::error::{args.gate}/{args.mode} {args.shard}: the harness failed (log.txt)")
-    return 1 if unknown or crashed else 0
+    if summary["panics"]:
+        print(f"::error::{args.gate}/{args.mode} {args.shard}: {summary['panics']} cases where Rust panicked "
+              "(log.txt: 'rust panicked')")
+    return 1 if unknown or crashed or summary["panics"] else 0
 
 
 def run_cache_key(args) -> int:
@@ -270,6 +290,13 @@ def run_cache_key(args) -> int:
                           check=True, cwd=ROOT, env={**os.environ, "DOCX_AGENT_RUST": "0", "PYTHONWARNINGS": "ignore"})
     print(done.stdout.split()[-1])
     return 0
+
+
+def run_frozen_api(args) -> int:  # noqa: ARG001 -- every command takes its arguments
+    """The gates' harness names only what the frozen reference has (tools/gates_frozen.py)."""
+    import gates_frozen
+
+    return gates_frozen.main()
 
 
 def run_cache_merge(args) -> int:
@@ -336,6 +363,8 @@ def gate_effects(path: str, crates: set[str]) -> set[str]:
     if path.startswith("crates/ooxml-oracle/python/"):
         if parts[-1] in CASE_MAKERS:
             return set(CASE_MAKERS[parts[-1]])
+        if parts[-1] in READ_CASE_MAKERS:
+            return {READS}
         return set(ALL) if parts[-1].startswith(GATE_HARNESS) or path.startswith(GATE_HARNESS_FOLDERS) else set()
     if parts[0] == "crates" and len(parts) > 2:
         if parts[1] not in crates or parts[2] in CRATE_TEST_FOLDERS or path.endswith(".md") and parts[2] != "src":
@@ -347,7 +376,7 @@ def gate_effects(path: str, crates: set[str]) -> set[str]:
         if parts[1] not in GATE_PACKAGES:
             return set()
         inside = "/".join(parts[2:])
-        if inside.startswith(("src/", "tests/fixtures/")) or inside == "pyproject.toml" \
+        if inside.startswith("src/") or inside == "pyproject.toml" \
                 or parts[1] == "docx2svg" and inside.startswith("tools/make_"):
             return set(ALL)
         return set()
@@ -476,8 +505,8 @@ def run_summary(args) -> int:
     for path in sorted(Path(args.dir).rglob("summary.json")):
         s = json.loads(path.read_text())
         row = rows.setdefault((s["gate"], s["mode"]), {"shards": 0, "documents": 0, "cases": 0, "differences": 0,
-                                                       "known": 0, "unported": 0, "wall": 0.0, "crashed": 0,
-                                                       "unknown": []})
+                                                       "known": 0, "unported": 0, "panics": 0, "wall": 0.0,
+                                                       "crashed": 0, "unknown": [], "forms": {}})
         row["shards"] += 1
         for key in ("kept", "computed"):
             if key in s:
@@ -487,19 +516,27 @@ def run_summary(args) -> int:
         row["unknown"] += s["unknown"]
         for key in ("documents", "cases", "differences", "known", "unported"):
             row[key] += s[key]
+        row["panics"] += s.get("panics", 0)
+        for form, count in s.get("unported_forms", {}).items():
+            row["forms"][form] = row["forms"].get(form, 0) + count
     out = []
     for gate in dict.fromkeys(g for g, _ in rows):
         out += [f"### {gate}", "", "| mode | shards | documents | cases | differences | known | unported | "
-                "slowest shard (s) |", "|---|---:|---:|---:|---:|---:|---:|---:|"]
+                "panics | slowest shard (s) |", "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
         for (g, mode), r in rows.items():
             if g == gate:
                 flag = " (harness failed)" if r["crashed"] else ""
                 out.append(f"| {mode}{flag} | {r['shards']} | {r['documents']} | {r['cases']:,} | "
-                           f"{r['differences']} | {r['known']} | {r['unported']} | {r['wall']:.0f} |")
+                           f"{r['differences']} | {r['known']} | {r['unported']} | {r['panics']} | "
+                           f"{r['wall']:.0f} |")
         cached = [f"{mode} {r['kept']:,} of {r['kept'] + r['computed']:,}" for (g, mode), r in rows.items()
                   if g == gate and "kept" in r]
         if cached:
             out += ["", "docx-agent's results kept from earlier runs (reference cache): " + ", ".join(cached)]
+        forms = [f"{mode}: {count} {form}" for (g, mode), r in rows.items() if g == gate
+                 for form, count in sorted(r["forms"].items(), key=lambda x: -x[1])[:10]]
+        if forms:
+            out += ["", "Unported forms (reported, not failing yet):", "", *(f"- {f}" for f in forms)]
         out.append("")
         for (g, mode), r in rows.items():
             for case in r["unknown"][:20] if g == gate else []:
@@ -516,7 +553,7 @@ def main(argv: list[str] | None = None) -> int:
     d = sub.add_parser("diff")
     d.add_argument("--gate", required=True, choices=["fixtures", "corpus", "reads"])
     d.add_argument("--mode", required=True, choices=[*EDIT_MODES, *READ_MODES])
-    d.add_argument("--tree", help="the documents (fixtures: docx-agent's, from the checkout)")
+    d.add_argument("--tree", help="the documents (fixtures: crates/ooxml-oracle/fixtures, from the checkout)")
     d.add_argument("--shard", default="1/1", help="K/N")
     d.add_argument("--every", type=int, default=1)
     d.add_argument("--per-tool", type=int, default=0)
@@ -549,6 +586,7 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("summary")
     s.add_argument("dir")
     sub.add_parser("cache-key")
+    sub.add_parser("frozen-api", help="the harness uses only what the frozen reference has")
     du = sub.add_parser("durations", help="a run's warm times per mode (from its diff-* logs)")
     du.add_argument("dir")
     du.add_argument("--write", action="store_true", help="merge them into tools/gates_durations.json")
@@ -558,7 +596,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     return {"diff": run_diff, "corpus": run_corpus, "report": run_report, "matrix": run_matrix,
             "summary": run_summary, "plan": run_plan, "fixtures": run_fixtures, "cache-key": run_cache_key, "cache-merge": run_cache_merge,
-            "durations": run_durations}[args.command](args)
+            "durations": run_durations, "frozen-api": run_frozen_api}[args.command](args)
 
 
 if __name__ == "__main__":

@@ -75,7 +75,7 @@ def word_locale():
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _W = "{%s}" % W
-FIXTURES = ROOT / "tests" / "fixtures"
+FIXTURES = ROOT.parents[1] / "crates" / "ooxml-oracle" / "fixtures"
 DRAWING_NS = ('xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
               'xmlns:wp14="http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing" '
               'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '

@@ -1,7 +1,7 @@
 """The language a text is written in, next to its tag (round 49, R94:
 :mod:`docx_agent.edit.text_language`, ``check``'s layout fact ``text_language``).
 
-The detector's measured claims hold on the made-up samples (``tests/fixtures/
+The detector's measured claims hold on the made-up samples (``crates/ooxml-oracle/fixtures/
 language-samples.json``, ``tools/language_accuracy.py``); the fact lists what differs, folds
 a whole document under the wrong default into one entry with the fix, groups consecutive
 paragraphs, counts what agrees, and stays capped.  The documents are made up here.
@@ -24,9 +24,10 @@ from docx_agent.edit import text_language
 from docx_agent.edit.text_language import (LANGUAGES, MIN_CONFIDENCE, MIN_WORDS, PROFILES, detect,
                                            words_of)
 from docx_agent.tools import GROUPS, TOOLS, docx_format
+from conftest import FIXTURE_DIR  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-SAMPLES = json.loads((ROOT / "tests" / "fixtures" / "language-samples.json").read_text(encoding="utf-8"))
+SAMPLES = json.loads((FIXTURE_DIR / "language-samples.json").read_text(encoding="utf-8"))
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 CLOCK = lambda: datetime.datetime(2026, 11, 10, 12, 0)  # noqa: E731
 
