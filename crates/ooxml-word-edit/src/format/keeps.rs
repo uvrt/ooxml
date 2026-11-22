@@ -109,9 +109,12 @@ fn top_block(root: &Arc<Element>, path: &[u32]) -> Option<Vec<u32>> {
     None
 }
 
-/// `(id, place)` of the body's blocks `address` names: a block-level control's blocks in
-/// its place.
-fn body_blocks(doc: &WordDoc, docx: &Docx, address: &str) -> Result<Vec<(String, Vec<u32>)>> {
+/// `(id, place)` of the body's blocks `address` names, in order (docx-agent's
+/// `copies.blocks_of`): a block-level control's blocks in its place.
+///
+/// # Errors
+/// An address naming nothing in the body, or not in the body.
+pub fn body_blocks(doc: &WordDoc, docx: &Docx, address: &str) -> Result<Vec<(String, Vec<u32>)>> {
     let body = docx.body().ok_or_else(|| EditError::NoPart(docx.main.clone()))?;
     let mut out = Vec::new();
     for place in block_places(doc, docx, address)? {

@@ -20,7 +20,7 @@ pub(crate) mod values;
 
 pub(crate) use colour::ThemeColours;
 pub use found::{occurrences, range_text, Occurrence};
-pub use keeps::{keep_writes, kept_blocks, kept_package};
+pub use keeps::{body_blocks, keep_writes, kept_blocks, kept_package};
 pub use like::{differs, ParagraphLook, NOT_TAKEN, PARTS};
 pub use values::{check, theme_color_name, Property, Setting, Value};
 pub(crate) use values::{properties_of, set_child, write_paragraph, write_run};

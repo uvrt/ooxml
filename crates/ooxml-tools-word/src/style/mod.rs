@@ -10,10 +10,10 @@
 //! Must not: hold sessions or documents by id, keep state between calls, or write the
 //! document but through a command.
 
-mod compare;
+pub(crate) mod compare;
 mod compare_args;
-mod compare_paragraphs;
-mod compare_tables;
+pub(crate) mod compare_paragraphs;
+pub(crate) mod compare_tables;
 mod design;
 mod design_args;
 mod design_layout;

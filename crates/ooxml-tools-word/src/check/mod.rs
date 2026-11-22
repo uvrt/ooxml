@@ -11,14 +11,19 @@
 //! range's extent and keeps (`range`), the minimum text size (`min_size`) and the styles
 //! allowed (`styles`).
 //!
-//! Must not: lay out but through the host's engine. Copies, a scale and a deck's arguments
-//! are not given here yet: such a call is answered `unported`, and the host answers it; so
-//! is a check needing the layout without the host's layout, or of a version its engine
+//! With `copies`, each copy compared with the reference it was made from ([`copies`], lane
+//! CP1), in this document or another open one the call names.
+//!
+//! Must not: lay out but through the host's engine. A scale and a deck's arguments are not
+//! given here yet: such a call is answered `unported`, and the host answers it; so is a
+//! check of copies of a document held as a package, a check needing the layout without the
+//! host's layout, or of a version its engine
 //! does not lay out, a `min_size` that is not one, and `pages` holding none of the
 //! ranges' blocks (the host warns of it). A range refused is refused here, as docx-agent
 //! words it ([`refused`]); a heading's range is read, and named, as the span it is.
 
 mod args;
+mod copies;
 mod edit_reflow;
 mod facts;
 mod laid_facts;
@@ -30,6 +35,7 @@ mod reflow;
 mod refused;
 
 pub use args::{Check, CheckCopy, CheckInclude, CheckScale, CopyLists, CopyReference, ScaleShow, ScaleStep, StepText};
+pub use copies::CHECK_COPIES_PACKAGE;
 pub use edit_reflow::{reflow_after_edit, EditedFrom, REFLOW_PAGES, STALE};
 pub use facts::{
     direct_formatting_json, empty_run_json, grid_mismatch_json, lost_cell_json, lost_original_json, row_unlike_json,
@@ -133,6 +139,15 @@ pub fn check(args: &Check, version: &Version<'_>, cancel: &dyn Cancel) -> Result
         let started = Instant::now();
         data.insert("validate".into(), validate(owned, scope.as_ref())?);
         timing.insert("validate".into(), seconds(started));
+    }
+    if args.copies.as_ref().is_some_and(|c| !c.is_empty()) {
+        // Round 35, R19: on the version validate read.
+        let started = Instant::now();
+        match copies::copies(args, version, owned, cancel)? {
+            Ok(found) => data.insert("copies".into(), found),
+            Err(why) => return Ok(unported(why)),
+        };
+        timing.insert("copies".into(), seconds(started));
     }
     cancel.check().map_err(cancelled)?;
     if let Some(layout) = layout {
@@ -338,6 +353,15 @@ fn finish(
     if let Some(scope) = scope {
         summary.push_str(&format!(" in {} range(s)", scope.ranges.len()));
     }
+    if let Some(found) = data.get("copies") {
+        let count = |key: &str| found.get(key).and_then(Value::as_u64).unwrap_or(0);
+        summary.push_str(&format!(
+            "; copies: {} of {} follow their reference, {} with its example text",
+            count("follow"),
+            count("compared"),
+            count("with_example_text")
+        ));
+    }
     let mut done = Done::new(summary);
     done.data = Some(Value::Object(data));
     Ok(done)
@@ -381,19 +405,20 @@ fn served(args: &Check) -> Result<Vec<CheckInclude>, &'static str> {
         .range
         .as_ref()
         .is_some_and(|r| r.iter().any(|a| !a.trim().is_empty()));
-    let copies = args.copies.as_ref().is_some_and(|c| !c.is_empty());
     if args.slides.is_some()
         || args.boxes.is_some()
         || args.spacing.is_some()
         || args.contrast.is_some()
-        || copies
         || args.scale.is_some()
     {
         return Err(CHECK_ARGUMENTS);
     }
+    // An empty list is the default, as docx-agent reads it (`include or [...]`; teams' calls
+    // rely on it: python-quirks.md).
     let mut wanted = args
         .include
         .clone()
+        .filter(|parts| !parts.is_empty())
         .unwrap_or_else(|| vec![CheckInclude::Validate, CheckInclude::Reflow, CheckInclude::Fields]);
     for part in &wanted {
         match part {

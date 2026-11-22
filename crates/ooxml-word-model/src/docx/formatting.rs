@@ -330,6 +330,25 @@ impl Formatting {
         effective_paragraph(resolved)
     }
 
+    /// What a paragraph's styles give it, `cell` where it stands in a table: its formatting
+    /// with no direct formatting but its list (`w:numPr`), which clearing direct formatting
+    /// keeps (docx-agent's `effective.paragraph(direct=False)`). Not memoised: a check asks
+    /// it of the few paragraphs a fix names.
+    #[must_use]
+    pub fn paragraph_styled(&self, paragraph: &Element, cell: Option<&Cell>) -> EffectiveParagraph {
+        let properties = paragraph.find(Some(W), "pPr").map(|e| &**e);
+        let style = paragraph_style(paragraph);
+        let mut direct = paragraph_properties(properties, &self.context.colours);
+        direct.retain(|key, _| key.starts_with("numPr."));
+        let input = ParagraphInput {
+            style_id: style.as_deref(),
+            table_style: cell.map(|c| &*c.style),
+            conditions: cell.map_or(&[], |c| &c.conditions),
+            direct: &direct,
+        };
+        effective_paragraph(Arc::new(resolve_paragraph(&self.sources(), &input)))
+    }
+
     /// A paragraph's formatting, `cell` where it stands in a table, with where each of its
     /// resolved values came from (docx2svg's `Resolved.origin`). Not memoised: a check asks
     /// it of the few paragraphs it names.

@@ -552,10 +552,10 @@ def _session_check(call: Any, held: Any, arguments: dict[str, Any]) -> tuple[str
 
 def _laid_check(arguments: dict[str, Any]) -> bool:
     """Whether a check with these arguments reads the layout: ``reflow`` or ``layout``
-    asked (or the default), or what the layout's facts measure (``range``, ``min_size``,
-    ``styles``)."""
+    asked (or the default: none, or an empty list), or what the layout's facts measure
+    (``range``, ``min_size``, ``styles``)."""
     include = arguments.get("include")
-    if include is None or "reflow" in include or "layout" in include:
+    if not include or "reflow" in include or "layout" in include:
         return True
     from ..scope import ranges_of
 
