@@ -10,21 +10,27 @@
 //! (docx-agent's `_Accepted`): the edit core resolves them as the earlier cells left the
 //! table, and the notes they make are said in the reply.
 //!
-//! The host's, said in `unported`: a value by reference (a cell's or the call's `from`, a
-//! `{{...}}` in a text), a table placed from a source.
+//! A table placed from a source keeps its record true: the columns written inside its block
+//! taken out of it ([`KeepingRecord`]).
+//!
+//! Values by reference -- a cell's or the call's one-value `from`, a `{{...}}` the host wrote
+//! into a text -- said in the reply and kept where they went, in the call's transaction
+//! ([`super::cell_values`]).
 //!
 //! Must not: change the document but through the command.
 
 use super::cell_fills::{column_rows, count_fills, fill_brief, Fill};
-use super::edit_table::{table_json, unported};
+use super::cell_values::{any_by_reference, cell_facts, cell_values, CellsGiven, Wrote};
+use super::edit_table::table_json;
 use super::edit_table_args::{CellArg, WordEditTable};
 use super::table_view::{table_view, AcceptedView, TableView};
 use crate::describe::short;
 use crate::review::{needed, Editing};
 use crate::structure::common::{outcome, policy, refused, Outcome};
+use crate::written;
 use ooxml_base::pyfmt::repr_str;
 use ooxml_tools::{Failure, Refusal, ToolError, ToolResult, TryCall, WayOut};
-use ooxml_word_edit::{CellAxis, CellEdit, CellWrite, EditError, SetCells, WordDoc};
+use ooxml_word_edit::{CellAxis, CellEdit, CellWrite, CellsSet, EditError, KeepingRecord, SetCells, TextKeep, WordDoc};
 use ooxml_word_model::docx::tables::{Axis, TableGrid};
 use ooxml_word_model::docx::Docx;
 use serde_json::{json, Value};
@@ -48,28 +54,20 @@ impl From<CellEdit> for Outcome {
     }
 }
 
-/// `set_cells` on the table `view` (found on `docx`, the version before).
+/// `set_cells` on the table `view` (found on `docx`, the version before), of the cells
+/// `given`.
 pub(super) fn set_cells(
     args: &WordEditTable,
+    given: CellsGiven<'_>,
     editing: &Editing<'_>,
-    docx: &Docx,
-    view: &TableView,
+    (docx, view): (&Docx, &TableView),
     accepted: &mut AcceptedView,
     retry: &TryCall,
 ) -> Result<ToolResult<Value>, ToolError> {
-    let cells = args
+    let cells = given
         .cells
         .as_deref()
         .ok_or_else(|| needed("cells", "", retry.clone()))?;
-    let by_reference = |cell: &CellArg| {
-        cell.from.as_deref().is_some_and(|f| !f.is_empty()) || cell.text.as_deref().is_some_and(|t| t.contains("{{"))
-    };
-    if cells.iter().any(by_reference) {
-        return Ok(unported(
-            "word_edit_table set_cells values by reference (from, {{...}})",
-            retry,
-        ));
-    }
     let part = docx
         .part(&view.part)
         .ok_or_else(|| ToolError::internal(format!("no part {}", view.part), "word:edit_table"))?;
@@ -86,14 +84,11 @@ pub(super) fn set_cells(
             format!("{} cells in one call; at most {MOST_CELLS}", places.len()),
         ));
     }
-    let values = cells
-        .iter()
-        .enumerate()
-        .map(|(k, cell)| cell_value(cell, k, retry))
-        .collect::<Result<Vec<String>, ToolError>>()?;
+    // all read first, once each
+    let values = cell_values(cells, editing, retry)?;
     let texts: Vec<&str> = owners
         .iter()
-        .map(|k| values.get(*k).map(String::as_str).unwrap_or_default())
+        .map(|k| values.get(*k).map(|v| v.text.as_str()).unwrap_or_default())
         .collect();
     one_value_per_cell(view, &grid, accepted, &places, &owners, &texts)?;
     let writes = places
@@ -105,38 +100,92 @@ pub(super) fn set_cells(
             text: (*text).to_owned(),
         })
         .collect();
-    let command = SetCells {
+    // a table placed from a source keeps its record true: the columns written in its block
+    // taken out (`_Kept`)
+    let command = KeepingRecord(SetCells {
         table: args.table.clone(),
         writes,
         stamping: true,
         policy: policy(editing),
         accepted: (accepted.table.active() || accepted.table.rows_active())
             .then(|| std::sync::Arc::new(accepted.table.clone())),
+    });
+    let wrote = Wrote {
+        cells,
+        values: &values,
+        owners: &owners,
+        table: &view.table.id,
+        accepted,
     };
-    // round 58 (R126): the rows written looked at against the rows around them, in the
-    // call's transaction
-    let look = |_: &_, doc: &WordDoc| Some((doc.ids().follow(&view.table.id), Vec::new()));
-    let (done, rows) = match super::rows_written::run_writing_rows(editing, &command, &view.table.id, look, retry) {
-        Ok(done) => done,
-        Err(error @ (EditError::Address(_) | EditError::Argument { .. } | EditError::Position(_))) => {
-            return Ok(ToolResult::failed(crate::review::edit_refusal(
-                error,
-                "",
-                retry.clone(),
-            )));
-        }
-        Err(error) => return Ok(refused(error, retry.clone())),
+    let ran = if any_by_reference(&values, editing) {
+        // the values written by reference said and kept where they went, in the same step
+        let finish = |out: &CellsSet, after: &written::After| keep_values(args, &wrote, editing, out, after, retry);
+        run(editing, &written::keeping(&command, finish), view, retry).map(|((done, facts), rows)| (done, facts, rows))
+    } else {
+        run(editing, &command, view, retry).map(|(done, rows)| (done, None, rows))
     };
-    count_fills(&mut fills, &values);
+    let (done, facts, rows) = match ran {
+        Ok(ran) => ran,
+        Err(refusal) => return Ok(*refusal),
+    };
+    count_fills(&mut fills, &values.iter().map(|v| v.text.clone()).collect::<Vec<_>>());
     for note in done.notes {
         if !accepted.notes.contains(&note) {
             accepted.notes.push(note);
         }
     }
     let notes = std::mem::take(&mut accepted.notes);
-    let mut result = reply(editing, view, done.edits, (&fills, notes), &held, retry);
+    let mut result = reply(editing, view, done.edits, (&fills, notes, facts), &held, retry);
     result.warnings.extend(rows);
+    if let Some(read_as) = given.read_as {
+        result.warnings.insert(0, read_as);
+    }
     Ok(result)
+}
+
+/// A refusal given as the call's reply.
+type Replied = Box<ToolResult<Value>>;
+
+/// `command` run with the rows it writes looked at against the rows around them (round 58,
+/// R126), in the call's transaction; its refusal as the call's reply.
+fn run<C>(
+    editing: &Editing<'_>,
+    command: &C,
+    view: &TableView,
+    retry: &TryCall,
+) -> Result<(C::Out, Vec<String>), Replied>
+where
+    C: ooxml_store::Command<WordDoc, Error = EditError>,
+{
+    let look = |_: &_, doc: &WordDoc| Some((doc.ids().follow(&view.table.id), Vec::new()));
+    super::rows_written::run_writing_rows(editing, command, &view.table.id, look, retry).map_err(|error| match error {
+        error @ (EditError::Address(_) | EditError::Argument { .. } | EditError::Position(_)) => Box::new(
+            ToolResult::failed(crate::review::edit_refusal(error, "", retry.clone())),
+        ),
+        error => Box::new(refused(error, retry.clone())),
+    })
+}
+
+/// The reply's facts of the values written by reference, and their keeps: the cells' own
+/// ([`cell_facts`]), then the references written in single cells kept where they went in
+/// the table (the dispatcher's `keep_written`).
+fn keep_values(
+    args: &WordEditTable,
+    wrote: &Wrote<'_, '_>,
+    editing: &Editing<'_>,
+    out: &CellsSet,
+    after: &written::After,
+    retry: &TryCall,
+) -> (Option<Vec<Value>>, Vec<TextKeep>) {
+    let (facts, mut keeps) = cell_facts(wrote, editing, &out.at, after, retry);
+    let now = after.doc().ids().follow(wrote.table);
+    let touched = written::paragraphs_of(after, &now);
+    let argument = |field: &str| {
+        let k: usize = field.strip_prefix("cells[")?.strip_suffix("].text")?.parse().ok()?;
+        args.cells.as_ref()?.get(k)?.text.clone()
+    };
+    keeps.extend(written::keeps_in(after, editing, &touched, 1, &argument));
+    (facts, keeps)
 }
 
 /// A cells entry's row or column: its place, else its label, else missing.
@@ -146,18 +195,6 @@ fn axis(at: Option<i64>, label: Option<&str>) -> CellAxis {
         (None, Some(label)) => CellAxis::Label(label.to_owned()),
         (None, None) => CellAxis::Missing,
     }
-}
-
-/// A cells entry's text (`_cell_value` without a `from`).
-fn cell_value(cell: &CellArg, k: usize, retry: &TryCall) -> Result<String, ToolError> {
-    cell.text.clone().ok_or_else(|| {
-        ToolError::refusal(
-            Refusal::InvalidArguments,
-            format!("cells[{k}] gives no text: give text, or from (one value, d:<id>/#12/<column>)"),
-            WayOut::names(["text", "from"]).unwrap_or_else(|| WayOut::call(retry.clone())),
-        )
-        .at(format!("cells[{k}].text"))
-    })
 }
 
 /// The ids of the table's paragraphs, those of tables nested in it too (`_paragraphs_of`).
@@ -316,7 +353,7 @@ fn reply(
     editing: &Editing<'_>,
     view: &TableView,
     edits: Vec<CellEdit>,
-    (fills, notes): (&[Fill], Vec<String>),
+    (fills, notes, facts): (&[Fill], Vec<String>, Option<Vec<Value>>),
     held: &HashSet<String>,
     retry: &TryCall,
 ) -> ToolResult<Value> {
@@ -330,6 +367,9 @@ fn reply(
     if let Some(Value::Object(map)) = &mut data {
         if !fills.is_empty() {
             map.insert("filled".into(), json!(fills.iter().map(fill_brief).collect::<Vec<_>>()));
+        }
+        if let Some(facts) = facts {
+            map.insert("facts".into(), Value::Array(facts));
         }
     }
     let edits: Vec<Outcome> = edits.into_iter().map(Outcome::from).collect();

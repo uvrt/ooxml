@@ -47,6 +47,7 @@ pub mod page_stories;
 pub mod paginate;
 pub mod paint;
 pub mod paragraph;
+pub mod placeholder;
 pub mod px;
 pub mod rebreak;
 pub mod rooms;

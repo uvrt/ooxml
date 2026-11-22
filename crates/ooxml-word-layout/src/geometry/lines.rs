@@ -148,7 +148,8 @@ fn line_left(layout: &DocumentLayout, placed: &PlacedLine, frame: &PageFrame) ->
 fn flow_line(layout: &DocumentLayout, laid: &LaidPage, placed: &PlacedLine, frame: &PageFrame) -> Option<DrawnLine> {
     let item = layout.flow.items.get(placed.item)?.para()?;
     let measured = measured_on(layout, laid, placed.item)?;
-    if measured.undrawn.contains(&placed.line) {
+    if item.placeholder.is_some() || measured.undrawn.contains(&placed.line) {
+        // A placeholder's lines hold no text (`Layout._box` draws its extent instead).
         return None;
     }
     let height = measured.heights.get(placed.line)?;

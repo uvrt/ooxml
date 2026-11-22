@@ -273,6 +273,13 @@ impl PyLaidPages {
         layout.roles.iter().filter(|role| role.is_none()).count()
     }
 
+    /// The body blocks laid out: all but those drawn as placeholders (docx2svg's
+    /// `Coverage.blocks_laid_out`).
+    #[getter]
+    fn blocks_laid_out(&self) -> usize {
+        ooxml_word_pages::coverage::blocks_laid_out(&self.version).0
+    }
+
     /// What it holds in bytes, roughly.
     #[getter]
     fn weight(&self) -> usize {
@@ -408,6 +415,17 @@ impl PyLaidPages {
             .warnings
             .iter()
             .map(|w| (w.code.clone(), w.message.clone(), w.page))
+            .collect()
+    }
+
+    /// docx2svg's placeholders of this version, drawn where it carried on past what it
+    /// cannot lay out: `(code, message, 1-based page, path)`.
+    fn placeholders(&self) -> Vec<(String, String, Option<usize>, Option<String>)> {
+        self.version
+            .said()
+            .placeholders
+            .iter()
+            .map(|p| (p.code.clone(), p.message.clone(), p.page, p.path.clone()))
             .collect()
     }
 

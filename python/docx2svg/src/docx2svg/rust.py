@@ -11,7 +11,8 @@ the pages a caller reads, while it reads them.
 
 **Falling back.**  A version the Rust layout does not lay out as docx2svg does yet (its
 reasons: ``ooxml_word_pages::support``), or options it does not take (a measurer of the
-caller's own, ``text="outlines"``), is not laid out here: :meth:`Engine.lay_out` answers
+caller's own, ``text="outlines"``, the layout made to stop where it cannot lay out
+(``paginate.CARRY_ON`` off)), is not laid out here: :meth:`Engine.lay_out` answers
 ``None`` and counts the reason (:func:`fallbacks`), and the caller lays it out with
 docx2svg's Python layout, frozen as that fallback until phase P4 deletes it.  A page whose
 SVG the Rust paint does not draw as docx2svg does (what a page's paint lists as not drawn)
@@ -123,6 +124,11 @@ def unsupported_options(options) -> str | None:
         return "custom measurement"
     if options.text != "text":
         return "outlined text"
+    from . import paginate
+
+    if not paginate.CARRY_ON:
+        # The Rust layout always carries on past what it cannot lay out (a placeholder).
+        return "layout stops"
     return None
 
 
@@ -317,7 +323,9 @@ class RustLayout:
 
     @property
     def placeholders(self) -> list:
-        return []
+        """docx2svg's ``(code, message, 1-based page, path)`` of each placeholder drawn where
+        the layout carried on past what it cannot lay out, found in Rust."""
+        return list(self.laid.placeholders())
 
     def blocks_on(self, page: int) -> list[str]:
         from .paths import block_keys
@@ -449,11 +457,14 @@ class RustLayout:
                                    f"{'its missing glyph' if used == '.notdef' else repr(used)}", None, None)
                           for family, char, used in glyph_fallbacks]
         warnings += [Warning(code, message, page) for code, message, page in self.laid.warnings()]
-        count = self.laid.body_blocks
+        placeholders = [StopInfo(code, code.split(":", 1)[1], message, page, path)
+                        for code, message, page, path in self.placeholders]
+        count, laid_out = self.laid.body_blocks, self.laid.blocks_laid_out
         pages = len(self.pages)
         self._warnings = warnings
-        self._coverage = Coverage(not missing, pages, pages, "layout", count, count, 0, None, [],
-                                  [s.as_dict() for s in substituted], sorted(missing), approximations, [])
+        self._coverage = Coverage(not missing and not placeholders, pages, pages, "layout", count, laid_out,
+                                  count - laid_out, None, [], [s.as_dict() for s in substituted], sorted(missing),
+                                  approximations, placeholders)
 
 
 def _sized(svg: str, page, width: int | None, height: int | None) -> str:

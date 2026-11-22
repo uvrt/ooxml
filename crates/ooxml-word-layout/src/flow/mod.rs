@@ -17,6 +17,7 @@ use crate::input::section_geometry;
 use crate::notes::flowed::NoteMaker;
 use crate::notes::{NoteLines, NoteRole};
 use crate::paragraph::{measure_paragraph, MeasureContext, MeasuredParagraph, ParagraphJob, Unmeasured};
+use crate::placeholder::Placeholder;
 use crate::px::Px;
 use crate::sections::Sections;
 use crate::stop::Stop;
@@ -82,6 +83,9 @@ pub struct ParaItem {
     pub drop_cap: Option<Arc<DropCap>>,
     /// What a page lays its footnotes out from beyond their lines.
     pub note_forms: NoteForms,
+    /// What it stands for where it is a placeholder of what the layout cannot lay out: its
+    /// lines are estimated and hold no text.
+    pub placeholder: Option<Arc<Placeholder>>,
 }
 
 impl ParaItem {
@@ -93,6 +97,12 @@ impl ParaItem {
     /// The pitch of the continuation separator's line a page it starts opens with.
     pub fn continuation_pitch(&self) -> Option<Px> {
         self.continuation.as_ref().map(crate::heights::LineHeight::pitch)
+    }
+
+    /// Whether line `line` draws anything: no placeholder's line does, nor a line of no
+    /// character but spaces (`undrawn`).
+    pub fn draws(&self, line: usize) -> bool {
+        self.placeholder.is_none() && !self.measured.undrawn.contains(&line)
     }
 
     /// The footnotes referenced on line `line`.
@@ -321,6 +331,7 @@ pub use crate::borders::paragraph_borders;
 
 mod again;
 mod cache;
+mod carried;
 mod drop;
 mod notes;
 mod source;
@@ -375,6 +386,8 @@ pub struct FlowMaker<'a, 'm> {
     pending_drop: Option<Arc<DropCap>>,
     /// Asked before each top-level block: the flow ends there where it says stop.
     stop: Option<&'a Stop<'a>>,
+    /// What it cannot lay out is a placeholder it carries on past ([`FlowMaker::carry_on`]).
+    carry_on: bool,
 }
 
 impl<'a, 'm> FlowMaker<'a, 'm> {
@@ -395,7 +408,16 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
             wraps: source::wraps(cx.blocks),
             pending_drop: None,
             stop: None,
+            carry_on: false,
         }
+    }
+
+    /// What it cannot lay out taken in as a placeholder ([`Placeholder`]), the layout carrying
+    /// on past it, rather than a stop (docx2svg's `CARRY_ON`, for the body's flow).
+    #[must_use]
+    pub fn carry_on(mut self) -> FlowMaker<'a, 'm> {
+        self.carry_on = true;
+        self
     }
 
     /// The flow ended before the first top-level block `stop` says stop at (a flow its
@@ -674,6 +696,9 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
         section: usize,
         section_start: bool,
     ) -> FlowItem {
+        if let Some(placeholder) = Placeholder::of(paragraph).filter(|_| self.carry_on) {
+            return self.placeholder_item(paragraph, (body, block, section, section_start), placeholder);
+        }
         let measured = match self.measured(paragraph, body, section) {
             Ok(m) => m,
             Err(why) => return stop(block, body, section, format!("{why:?}")),
@@ -726,6 +751,7 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
             source,
             drop_cap: self.pending_drop.take(),
             note_forms: forms,
+            placeholder: None,
         }))
     }
 }

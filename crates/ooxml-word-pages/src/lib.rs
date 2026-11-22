@@ -53,6 +53,7 @@ pub mod page_read;
 pub mod page_said;
 mod pictures;
 pub mod png;
+mod said;
 mod stats;
 pub mod summarised;
 pub mod summary;

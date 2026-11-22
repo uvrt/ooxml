@@ -10,6 +10,7 @@
 //! Must not: find the facts (`ooxml_word_pages::layout_facts` does) or filter them.
 
 use super::laid_tables::{column_fit_json, past_margins_json, split_row_json, uncertain_json, unrepeated_json};
+use ooxml_word_pages::coverage::Coverage;
 use ooxml_word_pages::layout_facts::columns::column_fit;
 use ooxml_word_pages::layout_facts::keeps::{
     keep_together, keep_with_next_at_foot, kept_tables, KeepAtFoot, KeptTogether,
@@ -21,7 +22,6 @@ use ooxml_word_pages::layout_facts::spacers::{spacers, Spacer};
 use ooxml_word_pages::layout_facts::tables::{drawn_tables, tables};
 use ooxml_word_pages::layout_facts::uncertain::uncertain;
 use ooxml_word_pages::layout_facts::{Facts, Scope};
-use ooxml_word_pages::warnings::Approximation;
 use serde_json::{json, Map, Value};
 
 /// `smallest_text`: the smallest size per kind.
@@ -234,12 +234,12 @@ pub(super) fn capped_values(scope: Option<&Scope>, out: &mut Map<String, Value>,
 }
 
 /// The layout facts of `facts` this module words, capped as `check` lists them, into
-/// `out` (`settings`' `keep_together` into `settings`); `approximations` the version's
-/// coverage's (`uncertain`).
+/// `out` (`settings`' `keep_together` into `settings`); `coverage` the version's (its
+/// placeholders and approximations: `uncertain`).
 pub fn page_facts_json(
     facts: &Facts<'_>,
     minimum: Option<&Minimum>,
-    approximations: &[Approximation],
+    coverage: &Coverage,
     out: &mut Map<String, Value>,
     settings: &mut Map<String, Value>,
 ) {
@@ -270,13 +270,7 @@ pub fn page_facts_json(
     capped(facts, out, "header_not_repeated", &unrepeated, unrepeated_json);
     capped(facts, out, "column_fit", &column_fit(facts), column_fit_json);
     capped(facts, out, "past_margins", &past_margins(facts), past_margins_json);
-    capped(
-        facts,
-        out,
-        "uncertain",
-        &uncertain(facts, approximations),
-        uncertain_json,
-    );
+    capped(facts, out, "uncertain", &uncertain(facts, coverage), uncertain_json);
 }
 
 /// A minimum text size as `check`'s `min_size` (or the application's `min_text_size`) gives
