@@ -134,6 +134,20 @@ impl PyVersion {
         py.detach(|| version.id_state(&host)).map_err(|e| to_py(&e))
     }
 
+    /// What kind of block ``id`` names in the version: ``"paragraph"``, ``"table"`` or
+    /// ``"content control"`` (a block-level one), a renamed id followed; ``None`` when it
+    /// names none of its blocks (or the document is not a Word document).
+    fn block_kind(&self, py: Python<'_>, id: &str) -> PyResult<Option<&'static str>> {
+        let version = &self.inner;
+        py.detach(|| version.block_kind(id)).map_err(|e| to_py(&e))
+    }
+
+    /// Whether the version has the drawing ``id`` (``d:3``, ``d:3#1``).
+    fn has_drawing(&self, py: Python<'_>, id: &str) -> PyResult<bool> {
+        let version = &self.inner;
+        py.detach(|| version.has_drawing(id)).map_err(|e| to_py(&e))
+    }
+
     /// What changed since `before`, as docx-agent's ``Result.touched`` entries (JSON text).
     fn touched_since(&self, py: Python<'_>, before: PyRef<'_, PyVersion>) -> PyResult<String> {
         let (now, then) = (&self.inner, &before.inner);

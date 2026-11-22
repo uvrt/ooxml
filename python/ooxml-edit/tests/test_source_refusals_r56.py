@@ -168,7 +168,7 @@ def test_a_failing_hook_is_ignored(toolbox):
 def test_a_document_another_call_holds_is_not_waited_for():
     entry = type("Entry", (), {})()
     entry.lock = threading.RLock()
-    entry.document = object()
+    entry.subject = object()            # what the format's hooks read (lane H7d)
     entry.reader = lambda: None
     held, release = threading.Event(), threading.Event()
 
@@ -187,7 +187,7 @@ def test_a_document_another_call_holds_is_not_waited_for():
     release.set()
     thread.join()
     with sources.reading(entry) as document:
-        assert document is entry.document
+        assert document is entry.subject
 
 
 def test_limit_and_other_codes_stand():
