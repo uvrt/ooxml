@@ -92,6 +92,20 @@ pub(crate) fn store_record(sink: &mut EditSink<'_, '_>, kind: &str, key: &str, t
     }
 }
 
+/// The record kept for the table `key` (docx-agent's `provenance().get(key)`), read through
+/// `sink` as an edit of the records reads them.
+///
+/// # Errors
+/// When the content types, the main part's relationships or the item are not XML.
+pub(crate) fn table_record(
+    sink: &mut EditSink<'_, '_>,
+    key: &str,
+) -> Result<Option<serde_json::Map<String, serde_json::Value>>> {
+    let docx = sink.docx()?;
+    Draft::open(sink, &docx)?;
+    Ok(records::provenance(&docx)?.get(key).cloned())
+}
+
 /// What an entry is weighed against: the keys of the entries whose object the version the
 /// edit started from no longer had (pruned as the edit began: an entry the edit itself
 /// wrote is not), and the version the edit made, with its renames.

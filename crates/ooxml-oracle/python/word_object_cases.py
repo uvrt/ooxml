@@ -275,11 +275,10 @@ def _from_sources(table: str) -> list[dict]:
             edit(grow=True, key="Region", **{"from": "d:sales"})]
 
 
-def _sync_dataset(document, table: str) -> dict | None:
-    """A dataset made from ``table``'s own text, for ``sync``: its first row's texts the
-    columns, its other rows the rows -- the second row's last value changed, the last row
-    left out, a new key added and one key spelled in capitals; ``None`` for a table too
-    small (two columns and three rows at least)."""
+def _own_text(document, table: str) -> tuple[list[str], list[list[str]]] | None:
+    """``table``'s text as a dataset's: its first row's texts the columns, the rows between
+    its first and last row the rows; ``None`` for a table too small (two columns and three
+    rows at least)."""
     try:
         grid = document.table(table).grid()
     except Exception:  # noqa: BLE001 - a table it cannot read has no case
@@ -291,7 +290,18 @@ def _sync_dataset(document, table: str) -> dict | None:
     columns = [t or f"column {k}" for k, t in enumerate(texts[0][:width])]
     if len(set(columns)) != width:
         return None
-    rows = [line[:width] for line in texts[1:-1]]
+    return columns, [line[:width] for line in texts[1:-1]]
+
+
+def _sync_dataset(document, table: str) -> dict | None:
+    """A dataset made from ``table``'s own text, for ``sync`` (:func:`_own_text`) -- the
+    second row's last value changed, the last row left out, a new key added and one key
+    spelled in capitals."""
+    found = _own_text(document, table)
+    if found is None:
+        return None
+    columns, rows = found
+    width = len(columns)
     if len(rows) > 1:
         rows[1] = rows[1][:-1] + [rows[1][-1] + " (new)"]
     rows.append(["K-NEW"] + ["x"] * (width - 1))
@@ -300,12 +310,25 @@ def _sync_dataset(document, table: str) -> dict | None:
     return {"id": "own", "columns": columns, "types": None, "rows": rows}
 
 
+def _sync_gone_dataset(document, table: str) -> dict | None:
+    """``table``'s own text (:func:`_own_text`) with its second row gone and its last row's
+    last value changed: a row deleted above a row written (a tracked deletion of a row that
+    is the author's own pending insertion removes it outright); ``None`` under three rows."""
+    found = _own_text(document, table)
+    if found is None or len(found[1]) < 3:
+        return None
+    columns, rows = found
+    rows[-1] = rows[-1][:-1] + [rows[-1][-1] + " (again)"]
+    return {"id": "own_gone", "columns": columns, "types": None, "rows": rows[:1] + rows[2:]}
+
+
 def _syncs(document, table: str) -> list[dict]:
-    """``sync`` of ``table`` with a dataset of its own text (:func:`_sync_dataset`) and with
-    the cases' datasets: by labels, removing the keys gone, by another key column, keys
+    """``sync`` of ``table`` with a dataset of its own text (:func:`_sync_dataset`, and
+    :func:`_sync_gone_dataset` with the keys gone removed) and with the cases' datasets: by labels, removing the keys gone, by another key column, keys
     matched loosely and by pairs, columns named, and the refusals of arguments for other
     actions."""
     own = _sync_dataset(document, table)
+    gone = _sync_gone_dataset(document, table)
     sets = DATASETS + ([own] if own else [])
 
     def edit(**arguments) -> dict:
@@ -328,6 +351,8 @@ def _syncs(document, table: str) -> list[dict]:
                 edit(match=[{"table": "nope", "data": "K-NEW"}], **{"from": "d:own"}),
                 edit(from_columns=own["columns"][:1] + [""] * (len(own["columns"]) - 1), **{"from": "d:own"}),
                 edit(from_columns=own["columns"] + ["extra"], **{"from": "d:own"})]
+    if gone:      # its own dataset beside the others (the other cases' inputs unchanged)
+        out += [{**edit(remove=True, **{"from": "d:own_gone"}), "datasets": sets + [gone]}]
     return out
 
 

@@ -97,6 +97,8 @@ pub struct CellsSet {
     pub edits: Vec<CellEdit>,
     /// Each write's cell, `<table>/c<row>,<column>` (the merged cell's first place).
     pub ids: Vec<String>,
+    /// Each write's place, (document row, grid column), in order.
+    pub at: Vec<(usize, usize)>,
     /// What positions as accepted stepped over or into, said once each.
     pub notes: Vec<String>,
 }
@@ -259,8 +261,9 @@ impl SetCells {
         let found = table(sink.doc(), &docx, &self.table)?;
         if !recorded && crate::tables::placed(sink.doc(), &found.id) {
             // docx-agent's `_Kept`: the cells written drop their columns from the record
+            // ([`crate::KeepingRecord`] does)
             return Err(EditError::Unsupported(
-                "word_edit_table set_cells in a table placed from a source (its record kept)".to_owned(),
+                "set_cells in a table placed from a source: its record is kept through KeepingRecord".to_owned(),
             ));
         }
         sink.read(block_key(&found.part, &found.id));
@@ -272,6 +275,7 @@ impl SetCells {
         let mut out = CellsSet {
             edits: Vec::new(),
             ids: Vec::new(),
+            at: Vec::new(),
             notes: Vec::new(),
         };
         for write in &self.writes {
@@ -295,6 +299,7 @@ impl SetCells {
                 &mut out.edits,
             )?;
             out.ids.push(format!("{}/c{r},{c}", found.id));
+            out.at.push((row, column));
         }
         // docx-agent's edit, once it ends: text boxes synced, revision ids unique
         sink.space_written()?;

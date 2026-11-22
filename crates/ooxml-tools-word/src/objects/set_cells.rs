@@ -10,8 +10,11 @@
 //! (docx-agent's `_Accepted`): the edit core resolves them as the earlier cells left the
 //! table, and the notes they make are said in the reply.
 //!
+//! A table placed from a source keeps its record true: the columns written inside its block
+//! taken out of it ([`KeepingRecord`]).
+//!
 //! The host's, said in `unported`: a value by reference (a cell's or the call's `from`, a
-//! `{{...}}` in a text), a table placed from a source.
+//! `{{...}}` in a text).
 //!
 //! Must not: change the document but through the command.
 
@@ -24,7 +27,7 @@ use crate::review::{needed, Editing};
 use crate::structure::common::{outcome, policy, refused, Outcome};
 use ooxml_base::pyfmt::repr_str;
 use ooxml_tools::{Failure, Refusal, ToolError, ToolResult, TryCall, WayOut};
-use ooxml_word_edit::{CellAxis, CellEdit, CellWrite, EditError, SetCells, WordDoc};
+use ooxml_word_edit::{CellAxis, CellEdit, CellWrite, EditError, KeepingRecord, SetCells, WordDoc};
 use ooxml_word_model::docx::tables::{Axis, TableGrid};
 use ooxml_word_model::docx::Docx;
 use serde_json::{json, Value};
@@ -105,14 +108,16 @@ pub(super) fn set_cells(
             text: (*text).to_owned(),
         })
         .collect();
-    let command = SetCells {
+    // a table placed from a source keeps its record true: the columns written in its block
+    // taken out (`_Kept`)
+    let command = KeepingRecord(SetCells {
         table: args.table.clone(),
         writes,
         stamping: true,
         policy: policy(editing),
         accepted: (accepted.table.active() || accepted.table.rows_active())
             .then(|| std::sync::Arc::new(accepted.table.clone())),
-    };
+    });
     // round 58 (R126): the rows written looked at against the rows around them, in the
     // call's transaction
     let look = |_: &_, doc: &WordDoc| Some((doc.ids().follow(&view.table.id), Vec::new()));

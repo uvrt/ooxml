@@ -20,7 +20,7 @@ use super::set_from::Timing;
 use super::table_sync_keys::{matches, merged_refusal, note_loose, slots, sorted, Matched, Slot};
 use super::table_sync_read::refusal;
 use super::table_sync_read::{body, key_column, mapping, source_keys, sync_grid, table_keys};
-use super::table_sync_said::{record, reply, said, unchanged, Done, Kept};
+use super::table_sync_said::{record, reply, said, unchanged, Deleted, Done, Kept};
 use super::table_view::{AcceptedView, TableView};
 use crate::review::Editing;
 use crate::sources::{placed, SourceRows};
@@ -208,14 +208,14 @@ fn changes(
         Vec::new()
     };
     removed.sort_unstable_by_key(|a| std::cmp::Reverse(a.1));
-    let delete: Vec<usize> = removed.iter().map(|(_, at)| *at).collect();
+    let deleted = Deleted::of(editing, view, &removed, height + compared.added.len());
     let accepted_columns = accepted.table.active().then(|| accepted.table.kept.clone());
     let kept = record(
         editing,
         view,
         (plan, taken, matched, compared),
         (&final_rows, slots),
-        (height, &delete),
+        (height, &deleted),
         accepted_columns,
     );
     let command = PlaceRows {
@@ -230,7 +230,7 @@ fn changes(
             })
             .collect(),
         writes: writes(plan, taken, compared, slots, &final_rows, accepted),
-        delete,
+        delete: deleted.rows,
         record: kept.record.clone(),
         policy: policy(editing),
     };
