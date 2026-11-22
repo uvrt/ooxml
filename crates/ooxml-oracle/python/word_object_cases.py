@@ -514,7 +514,19 @@ def _chart_style_edits(document, target: str) -> list[dict]:
            edit("set_text_style", part="axis_titles", style={"size": 9}),
            edit("set_text_style", style={"size": 401}), edit("set_text_style", style={"fill": "tx1"}),
            edit("set_text_style", style={"font": "A typeface name longer than thirty-one"}),
-           edit("set_text_style")]
+           edit("set_text_style"),
+           # lane P4c20: JSON's 9.0 is Python's float, named so in messages; a null key is
+           # left out, as the validator drops it (no fill, no automatic bound)
+           edit("set_axis_scale", axis="value", scale={"min": 9.0, "max": 3.0}),
+           edit("set_axis_scale", axis="value", scale={"major_unit": 5.0, "minor_unit": 10.0}),
+           edit("set_axis_scale", axis="value", scale={"min": 9, "max": 3.5}),
+           edit("format_series", series="0", style={"line_width": 2000.0}),
+           edit("set_text_style", style={"size": 401.0}), edit("set_text_style", style={"size": 12.0}),
+           edit("format_series", series="0", style={"fill": None}),
+           edit("format_series", series="0", style={"fill": None, "line": "none"}),
+           edit("set_axis_scale", axis="value", scale={"max": None}),
+           edit("set_axis_scale", axis="value", scale={"max": None, "min": 1}),
+           edit("set_text_style", style={"size": None, "bold": True})]
     return out + [tracked(case) for case in (out[0], out[30])]
 
 

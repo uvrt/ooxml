@@ -25,7 +25,7 @@ mod text_style;
 mod title;
 
 pub use axes::ScaleChange;
-pub use format::{points_to_emu, py_number, text_size, Colour, TextLook};
+pub use format::{points_to_emu, text_size, Colour, TextLook};
 pub use look::{labels_show_values, LabelLook};
 pub use looks::SeriesFormat;
 pub use rich::{paragraph_text, rebuild_paragraph, replace_body_text};

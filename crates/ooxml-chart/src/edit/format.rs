@@ -9,7 +9,7 @@ use super::make::Make;
 use super::owned::{Order, Owned};
 use super::DataError;
 use crate::pyfmt::round_half_even;
-use ooxml_base::pyfmt::repr_str;
+use ooxml_base::pyfmt::{repr_str, PyNumber};
 use ooxml_xml::view::{py_flat, py_int};
 
 /// The theme colours a chart may name (`SCHEME_COLORS`), sorted as Python sorts them.
@@ -220,12 +220,10 @@ fn py_float(text: &str) -> Option<f64> {
 ///
 /// # Errors
 /// [`DataError`] past 0-1584 points.
-pub fn points_to_emu(points: f64) -> Result<i64, DataError> {
+pub fn points_to_emu(given: PyNumber) -> Result<i64, DataError> {
+    let points = given.value();
     if !(0.0..=1584.0).contains(&points) {
-        return Err(DataError(format!(
-            "a line width is in points, 0-1584 (got {})",
-            py_number(points)
-        )));
+        return Err(DataError(format!("a line width is in points, 0-1584 (got {given})")));
     }
     #[allow(clippy::cast_possible_truncation)] // at most 1584 * 12700
     Ok(round_half_even(points * EMU_PER_POINT) as i64)
@@ -235,27 +233,13 @@ pub fn points_to_emu(points: f64) -> Result<i64, DataError> {
 ///
 /// # Errors
 /// [`DataError`] past 1-400 points.
-pub fn text_size(points: f64) -> Result<i64, DataError> {
+pub fn text_size(given: PyNumber) -> Result<i64, DataError> {
+    let points = given.value();
     if !(1.0..=400.0).contains(&points) {
-        return Err(DataError(format!(
-            "a text size is in points, 1-400 (got {})",
-            py_number(points)
-        )));
+        return Err(DataError(format!("a text size is in points, 1-400 (got {given})")));
     }
     #[allow(clippy::cast_possible_truncation)] // at most 40000
     Ok(round_half_even(points * 100.0) as i64)
-}
-
-/// A number given as JSON, as Python shows it: a whole one as an integer (JSON's `5` is
-/// Python's `5`), else its `repr`.
-#[must_use]
-pub fn py_number(value: f64) -> String {
-    if value.fract() == 0.0 && value.abs() < 1e16 {
-        #[allow(clippy::cast_possible_truncation)] // whole and below 10^16
-        let whole = value as i64;
-        return whole.to_string();
-    }
-    crate::pyfmt::repr(value)
 }
 
 /// Take out every child of `parent` named one of `names` (`_replace`), then put `new` in
