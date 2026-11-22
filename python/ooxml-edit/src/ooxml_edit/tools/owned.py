@@ -61,6 +61,11 @@ fails (the whole group taken back; undo and redo as they were).  The group is cl
 path, an exception's too.  While it is open the view and the batch's reads follow the group's
 head (:meth:`OwnedHistory.reading_head`).
 
+**The hooks' subject** (lane H7a).  A format's hooks that take a document (``summary``,
+``problems``, ``state``, ``closed``, ``restored``, ...) are given, for a document its owner
+holds, an :class:`OwnedDocument` -- the owner, its handle and the version -- never the
+entry or the view (:attr:`~.session.DocumentEntry.subject`): they read the owner.
+
 **Numbers.**  The owner numbers the document's states as
 :class:`~ooxml_edit.history.History` does (a step a new number, undo and redo back to the
 number of the state they bring back), so every version-keyed thing of the tool layer (refs,
@@ -93,6 +98,19 @@ DEPTH = 50
 #: the view open the view's step (a read made meanwhile by another call does not).
 _IN_STEP: contextvars.ContextVar[frozenset[int]] = contextvars.ContextVar("ooxml_edit_owned_step",
                                                                            default=frozenset())
+
+
+@dataclass(frozen=True)
+class OwnedDocument:
+    """A document its format's owner holds, as the format's hooks are given it (lane H7a):
+    the owner, the handle its ``open`` gave, and the version the hook reads -- ``None``: the
+    version the calls on the document read now (within a batch's step group, the one its ops
+    left); a number: that committed version (a read copy's, :attr:`~.session.DocumentEntry.
+    pinned`).  Never the view: a hook reads the owner."""
+
+    owner: Any
+    handle: Any
+    version: int | None = None
 
 
 class OwnerDisagrees(RuntimeError):
@@ -357,6 +375,21 @@ class OwnedEntry(DocumentEntry):
     @document.setter
     def document(self, value: Any) -> None:
         self.held = value
+
+    @property
+    def subject(self) -> Any:
+        """What the format's hooks are given (:class:`OwnedDocument`, at the version the
+        calls read now).  Within a batch's step group, the view's changes so far are
+        committed in the group first (:meth:`flush_view`), so the owner's version is the
+        document as the batch left it."""
+        if self._owned is None:
+            return self.held
+        self.flush_view()
+        return OwnedDocument(self.owner, self.handle, None)
+
+    def subject_at(self, version: int) -> OwnedDocument:
+        """:attr:`subject` at the committed version ``version`` (a read copy's)."""
+        return OwnedDocument(self.owner, self.handle, version)
 
     @property
     def view_current(self) -> bool:
@@ -740,4 +773,4 @@ class OwnedEntry(DocumentEntry):
             self.owner.close(self.handle)
 
 
-__all__ = ["DEPTH", "OwnedChange", "OwnedEntry", "OwnedHistory", "OwnerDisagrees"]
+__all__ = ["DEPTH", "OwnedChange", "OwnedDocument", "OwnedEntry", "OwnedHistory", "OwnerDisagrees"]
