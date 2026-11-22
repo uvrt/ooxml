@@ -300,7 +300,7 @@ def word_inspect(call: Any, doc: str, target: str, layout: bool = False) -> Resu
 
     given = reads._refs(call, target)
     # (with layout: placed by the session's own layout of the version, its engine set to the
-    # toolbox's fonts here)
+    # document's fonts and locale here)
     return reads.serve(call, "word_inspect", {"target": given, "layout": layout or None},
                        lambda: _python_word_inspect(call, doc, target, layout), addresses=(given,),
                        layout=reads.session_layout(call) if layout else None)
