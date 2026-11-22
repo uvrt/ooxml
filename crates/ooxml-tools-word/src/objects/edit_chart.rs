@@ -4,7 +4,8 @@
 //! the data actions (`apply_data_action`: points changed in place, categories and series
 //! added and removed, the titles, the legend, value labels and the gap width; their series
 //! and category named as `chart_names` resolves them, the edit `chart_data`'s, one
-//! [`EditGraphic`] command) through the editor -- and the style actions (`chart_style`).
+//! [`EditGraphic`] command, the chart's record of where its values came from kept true by
+//! `chart_record`) through the editor -- and the style actions (`chart_style`).
 //!
 //! And `add` (`chart_add`). Not here yet: values given `from` a table (its provenance records), new title or label text in a document whose
 //! defaults name no language (the session's locale decides it), and a read

@@ -3,14 +3,16 @@
 //! `Document.chart`), its part found from the drawing, and what a [`GraphicEdit`] makes of
 //! the version the edit is prepared on -- parts put whole, as trees or as bytes (a chart
 //! part, its embedded workbook) -- written through the sink, with the parts it read
-//! recorded. Word tracks no chart data: tracked, the edit is applied untracked, and the
+//! recorded, and the chart's entry in the document's records kept as the edit says
+//! ([`RecordChange`]: replaced or dropped, in the edit's step). Word tracks no chart data: tracked, the edit is applied untracked, and the
 //! result says so as docx-agent's warning does (its category, `UntrackedChartEdit`, first).
 //!
-//! Must not: know what a chart holds (the [`GraphicEdit`] does), or write but through the
-//! sink.
+//! Must not: know what a chart holds or what its record says (the [`GraphicEdit`] does), or
+//! write but through the sink.
 
 use crate::doc::Key;
 use crate::policy::RevisionPolicy;
+use crate::provenance::store_record;
 use crate::sink::EditSink;
 use crate::{EditError, Result, WordDoc};
 use ooxml_opc::Package;
@@ -21,6 +23,9 @@ use ooxml_word_model::docx::Docx;
 use ooxml_xml::Tree;
 use std::sync::Arc;
 
+/// The kind of a chart's entry in the document's records.
+const CHART: &str = "chart";
+
 /// A part an edit writes whole.
 #[derive(Debug, Clone)]
 pub enum PartWrite {
@@ -30,14 +35,30 @@ pub enum PartWrite {
     Bytes(String, Arc<[u8]>),
 }
 
+/// What becomes of the chart's entry in the document's records of where placed values came
+/// from (the `prov:source` keyed by the drawing's id), beside the record the chart part
+/// keeps itself (one of the edit's [`PartWrite`]s).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum RecordChange {
+    /// It stays as it is.
+    #[default]
+    Kept,
+    /// It holds this record (written as a record is), made where there is none.
+    Stored(String),
+    /// It goes.
+    Dropped,
+}
+
 /// What a [`GraphicEdit`] made: the parts it read beside the graphic's own, those it
-/// writes, and its outcome.
+/// writes, what becomes of the chart's record, and its outcome.
 #[derive(Debug, Clone)]
 pub struct GraphicParts<T> {
     /// The parts read beside the graphic's part (an embedded workbook).
     pub read: Vec<String>,
     /// The parts written.
     pub writes: Vec<PartWrite>,
+    /// The chart's entry in the document's records.
+    pub record: RecordChange,
     /// The outcome.
     pub out: T,
 }
@@ -116,6 +137,11 @@ impl<E: GraphicEdit> Command<WordDoc> for EditGraphic<E> {
                 PartWrite::Tree(name, tree) => sink.put(&name, tree)?,
                 PartWrite::Bytes(name, bytes) => sink.put_bytes(&name, bytes)?,
             }
+        }
+        match &made.record {
+            RecordChange::Kept => {}
+            RecordChange::Stored(text) => store_record(&mut sink, CHART, &self.drawing, Some(text))?,
+            RecordChange::Dropped => store_record(&mut sink, CHART, &self.drawing, None)?,
         }
         let tracked = matches!(self.policy, RevisionPolicy::Tracked(_));
         let warnings = (changed && tracked)
