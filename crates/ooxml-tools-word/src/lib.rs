@@ -34,6 +34,7 @@ mod structure;
 mod style;
 mod table_read;
 mod text;
+mod values;
 mod version;
 mod word_inspect;
 mod word_read;
@@ -58,6 +59,9 @@ pub use sources::{Clock, Day, SourceRefused, SourceRows, SourceValue, Sources};
 pub use structure::*;
 pub use style::*;
 pub use text::*;
+pub use values::{
+    number_texts, scale_values, NumberText, NumberTexts, ReadScale, ReadStep, ScaleValue, ScaleValues, ValueHandle,
+};
 pub use version::{HostTable, HostTables, LayoutCounts, Others, Owned, Version};
 pub use word_inspect::{word_inspect, WordInspect};
 pub use word_read::{word_read, Story, View, WordRead};
