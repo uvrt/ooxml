@@ -3,7 +3,8 @@
 //! written into its cache (`c:pt idx=` with its `c:v`, made in index order where there is
 //! none, taken out for a blank), a series' name given as a literal where it has none, and
 //! each source's reference read for its formula (`c:f`), so the caller keeps the embedded
-//! workbook in step.
+//! workbook in step; and the chart part's own record of where its values came from
+//! ([`record_text`], [`with_record`]).
 //!
 //! The tree is immutable: each change copies the path from the root down to the element it
 //! changes ([`ChartTree`] holds the root as changed so far).
@@ -21,6 +22,7 @@ mod owned;
 mod path;
 mod point_labels;
 mod points;
+mod record;
 mod rich;
 mod series;
 mod text_style;
@@ -31,6 +33,7 @@ pub use format::{points_to_emu, text_size, Colour, TextLook};
 pub use look::{labels_show_values, LabelLook};
 pub use looks::SeriesFormat;
 pub use point_labels::{PointLabels, LABEL_POSITIONS};
+pub use record::{record_text, with_record, RECORD_URI};
 pub use rich::{paragraph_text, rebuild_paragraph, replace_body_text};
 pub use series::{Hash, POINT_SOURCES};
 pub use text_style::{TextHost, TextStop, TEXT_PARTS};

@@ -6,13 +6,15 @@
 //! and `set_gap_width` -- the chart part's caches changed (`ooxml_chart::edit`) and the
 //! embedded workbook kept in step (`_Editor`, with `ooxml-sheets`' writer), or, where it
 //! cannot be, the chart changed in its cache only and the result warned
-//! (`ChartDataWarning`, in ooxml-edit's words).
+//! (`ChartDataWarning`, in ooxml-edit's words); the chart's record of where its values
+//! came from kept true (`chart_record`).
 //!
 //! Must not: resolve a series or category by name (the handler does, `chart_names`), or
 //! write but through the [`EditGraphic`](ooxml_word_edit::EditGraphic) command.
 
 use super::chart_block::{all_sources, Block};
 use super::chart_keeper::{refused, unported, Keeper};
+use super::chart_record::kept;
 use ooxml_chart::data::Point;
 use ooxml_chart::edit::{ChartTree, DataError, LabelLook, PointValue, TitleEdit, TitleLook, Which};
 use ooxml_opc::Package;
@@ -139,12 +141,12 @@ impl GraphicEdit for ChartDataEdit {
                 edit.title(*axis, text.as_deref(), &look)?;
             }
         }
+        // the record of where the values came from kept true (ooxml-edit's `_edit_record`)
+        let (recorded, record) = kept(edit.chart.root(), &self.action);
         let mut writes = Vec::new();
-        if edit.changed {
-            writes.push(PartWrite::Tree(
-                part.to_owned(),
-                tree.with_root(Arc::clone(edit.chart.root())),
-            ));
+        if edit.changed || recorded.is_some() {
+            let root = recorded.map_or_else(|| Arc::clone(edit.chart.root()), Arc::new);
+            writes.push(PartWrite::Tree(part.to_owned(), tree.with_root(root)));
         }
         let mut read = Vec::new();
         let warnings = edit.keeper.finish(&mut writes, &mut read)?;
@@ -161,6 +163,7 @@ impl GraphicEdit for ChartDataEdit {
         Ok(GraphicParts {
             read,
             writes,
+            record,
             out: warnings,
         })
     }
