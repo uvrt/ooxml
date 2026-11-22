@@ -436,6 +436,7 @@ def main(argv: list[str] | None = None) -> int:
     inputs: dict = {}
     manifest = []
     used: dict[str, list[str]] = {}     # each document's case keys (--cache-used)
+    made: list[tuple] = []              # each document's cases, as made: (path, source, data, baseline, cases)
     for path in files_of(args):
         data = path.read_bytes()
         source = str(path)
@@ -499,10 +500,16 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as error:  # noqa: BLE001
             print(f"{path}: python failed: {error}")
             continue
+        if store:
+            used[source] = [store.key(data, case) for case in cases]
+        made.append((path, source, data, baseline, cases))
+        manifest.append({"file": str(path), "cases": cases})
+    if store:
+        # every case is made before the store is read: it keeps their results only
+        store.read({key for keys in used.values() for key in keys})
+    for path, source, data, baseline, cases in made:
         for k, case in enumerate(cases):
-            if store:
-                used[source].append(store.key(data, case))
-            found = store.get(data, case) if store else None
+            found = store.get(used[source][k]) if store else None
             if found is None and store:
                 found = store.compute(python_case, data, case, baseline)
             elif found is None:
@@ -511,7 +518,6 @@ def main(argv: list[str] | None = None) -> int:
                 kept[(str(path), k)] = (data, case, baseline)
             expected[(str(path), k)] = found
             inputs[(str(path), k)] = {**case, "source": source}
-        manifest.append({"file": str(path), "cases": cases})
     rust = run_rust(args.rust, manifest)
     got = {key: value.get("rust") for key, value in rust.items()}
     counts = {"unported": 0, "rewritten": 0, None: 0, "again": 0}
