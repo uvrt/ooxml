@@ -27,10 +27,11 @@ from ooxml_edit.tools.adapters import (anthropic_tool_result, openai_function_ca
 
 from docx_agent.rust.session import RUST_DESCRIBED, RustTools
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
+from conftest import FIXTURE_DIR  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 GOLDEN = HERE.parents[2] / "crates" / "ooxml-tools-word" / "tests" / "golden" / "describe.json"
-FIXTURES = sorted((HERE / "fixtures").rglob("*.docx"))
+FIXTURES = sorted((FIXTURE_DIR).rglob("*.docx"))
 
 #: Today's fields the Rust session does not give yet (ooxml_tools_word::NOT_DESCRIBED).
 NOT_YET = {"pages", "problems"}
@@ -166,7 +167,7 @@ def _assert_equal(today: dict, result) -> None:
     assert set(today["data"]) - set(RUST_DESCRIBED) <= NOT_YET, set(today["data"]) - set(RUST_DESCRIBED) - NOT_YET
 
 
-@pytest.mark.parametrize("path", FIXTURES, ids=lambda p: str(p.relative_to(HERE / "fixtures")))
+@pytest.mark.parametrize("path", FIXTURES, ids=lambda p: str(p.relative_to(FIXTURE_DIR)))
 def test_describe_in_rust_equals_todays_on_the_fixtures(toolbox, path):
     # Round 59: every fixture now, the chart in a group of chart-places.docx among them.
     today, rust = _both(toolbox, path.read_bytes(), path.name)

@@ -5,7 +5,6 @@ the next check's ``since_last_check`` says of the same two versions.  (Where doc
 layout before compares, Python measures it under the lock still: here it has none.)"""
 from __future__ import annotations
 
-from pathlib import Path
 
 import pytest
 
@@ -17,8 +16,9 @@ from ooxml_edit.tools import Toolbox
 
 from docx_agent.rust import edits, reads
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
+from conftest import FIXTURE_DIR  # noqa: E402
 
-FIXTURE = Path(__file__).resolve().parent / "fixtures" / "generated" / "trial" / "safety-bulletin.docx"
+FIXTURE = FIXTURE_DIR / "generated" / "trial" / "safety-bulletin.docx"
 
 
 @pytest.fixture(scope="module")

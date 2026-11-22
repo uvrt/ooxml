@@ -9,7 +9,6 @@ them.
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import pytest
 
@@ -28,8 +27,9 @@ from docx_agent.edit.pictures import PictureError  # noqa: E402
 from docx_agent.edit.ranges import AmbiguousAnchor, AnchorNotFound  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
 from docx_agent.tools.format import ERRORS  # noqa: E402
+from conftest import FIXTURE_DIR  # noqa: E402
 
-SMARTART = Path(__file__).parent / "fixtures" / "generated" / "charts" / "smartart.docx"
+SMARTART = FIXTURE_DIR / "generated" / "charts" / "smartart.docx"
 
 
 @pytest.fixture(scope="module")

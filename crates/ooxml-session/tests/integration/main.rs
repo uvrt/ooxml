@@ -6,6 +6,7 @@ mod common;
 
 mod editing;
 mod host_reads;
+mod live_view;
 mod locale;
 mod panics;
 mod registry;

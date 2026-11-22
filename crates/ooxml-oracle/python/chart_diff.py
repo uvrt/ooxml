@@ -233,7 +233,8 @@ def freeze(out: Path) -> int:
 
     root = dd.ROOT
     files = chart_files(root / "python" / "ooxml-common" / "tests" / "fixtures")
-    files += [p for p in chart_files(root / "python") if p.suffix != ".xml"]
+    for tree in (root / "python", root / "crates" / "ooxml-oracle" / "fixtures"):
+        files += [p for p in chart_files(tree) if p.suffix != ".xml"]
     records = []
     for case in layout_cases(files):
         answer = python_layout(case)

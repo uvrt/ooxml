@@ -48,8 +48,10 @@ impl Trial<'_> {
 impl PageEngine {
     /// `package` laid out from `from` (a version this engine laid out), stopped where
     /// `cancel` says so: the trial, `None` where it is not laid out here -- `from` is of
-    /// another generation than the engine's (its fonts changed since), `package`'s fonts
-    /// are not `from`'s, or the layout falls back for it.
+    /// another generation than the engine's (its fonts changed since) or of a model context
+    /// it has left (its styles, numbering, settings or theme changed since: the model opens
+    /// in the current context only, and is not opened for it), `package`'s fonts are not
+    /// `from`'s, or the layout falls back for it.
     ///
     /// # Errors
     /// Its Word parts do not open; [`PagesError::Stopped`] where `cancel` stopped it.
@@ -63,7 +65,8 @@ impl PageEngine {
         let Some(generation) = self.generation.as_mut() else {
             return Ok(None);
         };
-        if generation.number != from.generation || generation.fonts.epoch != fonts.epoch {
+        let left = generation.context != from.context;
+        if generation.number != from.generation || left || generation.fonts.epoch != fonts.epoch {
             return Ok(None);
         }
         let started = Instant::now();

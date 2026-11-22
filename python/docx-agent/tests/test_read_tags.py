@@ -16,9 +16,10 @@ from ooxml_edit.tools import Toolbox  # noqa: E402
 
 from docx_agent import Document  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
+from conftest import FIXTURE_DIR  # noqa: E402
 
-CONSTRUCTS = Path(__file__).parent / "fixtures" / "generated" / "markdown" / "constructs.docx"
-AGREEMENT = Path(__file__).parent / "fixtures" / "generated" / "pilot" / "agreement-summary.docx"
+CONSTRUCTS = FIXTURE_DIR / "generated" / "markdown" / "constructs.docx"
+AGREEMENT = FIXTURE_DIR / "generated" / "pilot" / "agreement-summary.docx"
 _LOOK = ('<w:tblLook w:val="04A0" w:firstRow="1" w:lastRow="0" w:firstColumn="1" w:lastColumn="0" '
          'w:noHBand="0" w:noVBand="1"/>')
 

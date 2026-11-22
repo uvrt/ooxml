@@ -1,5 +1,6 @@
 //! Helpers the test modules share: a context with no fonts, no stored parts, no budget limit
-//! and no cancelling (one copy instead of one per module).
+//! and no cancelling, and a page engine over the repository's test fonts (one copy instead of
+//! one per module).
 // Tests may unwrap, panic and index (docs/architecture/README.md, section 2.5).
 #![allow(
     dead_code,
@@ -11,6 +12,9 @@
 
 use ooxml_base::context::{FaceData, FaceRequest};
 use ooxml_base::{BaseError, CacheBudget, Cancel, FontSource, PartStore};
+use ooxml_fonts::{Folder, Location, WordFontOptions};
+use ooxml_tools_word::EnginePages;
+use ooxml_word_pages::{DiskFonts, EngineBudgets, EngineOptions, FontSetup, PageEngine};
 use std::sync::Arc;
 
 pub struct NoFonts;
@@ -50,4 +54,42 @@ impl Cancel for Never {
     fn is_cancelled(&self) -> bool {
         false
     }
+}
+
+/// A memo budget that grants every reservation (the page engine's).
+pub struct Memos;
+
+impl ooxml_derive::CacheBudget for Memos {
+    fn reserve(&self, _: usize) -> bool {
+        true
+    }
+    fn release(&self, _: usize) {}
+    fn used(&self) -> usize {
+        0
+    }
+}
+
+/// The page engine a host lays its documents out with (the repository's test fonts), its
+/// memos and paint within no limit.
+pub fn layout() -> Arc<EnginePages> {
+    let folder = Folder {
+        location: Location::Folder,
+        path: concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../python/pptx2svg/packages/pptx2svg-fonts/src/pptx2svg_fonts/files"
+        )
+        .to_owned(),
+    };
+    let options = WordFontOptions {
+        substitutes: Vec::new(),
+        recorded_faces: true,
+        fallbacks: true,
+    };
+    let setup = Arc::new(FontSetup::new(Arc::new(DiskFonts), &[folder], options));
+    let budgets = EngineBudgets {
+        held: Arc::new(Memos),
+        paint: Arc::new(Memos),
+    };
+    let engine = PageEngine::new(setup, EngineOptions::default(), budgets);
+    Arc::new(EnginePages::of(engine))
 }

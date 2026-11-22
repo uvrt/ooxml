@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write the chart and SmartArt documents, ``tests/fixtures/generated/charts/``.
+"""Write the chart and SmartArt documents, ``crates/ooxml-oracle/fixtures/generated/charts/``.
 
 Each is built here -- ``Document.new()``'s parts with charts, workbooks and SmartArt data
 models added by ``tools/chart_parts.py`` -- and then **opened and saved by Word** (the
@@ -46,7 +46,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 import chart_parts as cp  # noqa: E402
 
-OUT = ROOT / "tests" / "fixtures" / "generated" / "charts"
+OUT = ROOT.parents[1] / "crates" / "ooxml-oracle" / "fixtures" / "generated" / "charts"
 CREATED = datetime(2026, 10, 4, tzinfo=timezone.utc)
 #: What ``docProps/core.xml`` says after normalising.
 AUTHOR = "docx-agent"

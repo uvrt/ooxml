@@ -21,8 +21,9 @@ import pytest
 from docx2svg import fonts
 
 from docx_agent.tools import render
+from conftest import FIXTURE_DIR  # noqa: E402
 
-DOCUMENT = Path(__file__).resolve().parent / "fixtures" / "wordto" / "sample-with-table.docx"
+DOCUMENT = FIXTURE_DIR / "wordto" / "sample-with-table.docx"
 _HEAD = struct.pack(">IIIIHH", 0x00010000, 0, 0, 0x5F0F3CF5, 0, 1000) + b"\0" * 34
 
 

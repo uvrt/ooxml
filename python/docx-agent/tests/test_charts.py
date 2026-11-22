@@ -2,8 +2,8 @@
 kept in step, wherever Word holds a chart -- the body, a header, a footnote, a text box, a
 group, floating.
 
-Every edit runs on every chart of the Word-saved fixtures (``tests/fixtures/generated/
-charts``, ``tools/make_chart_fixtures.py``) and goes through every gate:
+Every edit runs on every chart of the Word-saved fixtures (``crates/ooxml-oracle/fixtures/
+generated/charts``, ``tools/make_chart_fixtures.py``) and goes through every gate:
 
 * **round trip** -- edit, save, reopen, read back;
 * **the workbook agrees** -- the saved document's embedded workbook opened independently
@@ -36,8 +36,9 @@ from docx_agent.validate import check
 
 from test_roundtrip import entries
 from xlsx import check_chart_against_workbook
+from conftest import FIXTURE_DIR  # noqa: E402
 
-CHARTS = Path(__file__).parent / "fixtures" / "generated" / "charts"
+CHARTS = FIXTURE_DIR / "generated" / "charts"
 C = "{http://schemas.openxmlformats.org/drawingml/2006/chart}"
 A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
 

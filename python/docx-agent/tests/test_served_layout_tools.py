@@ -7,7 +7,6 @@ Made-up documents only."""
 from __future__ import annotations
 
 import datetime as dt
-from pathlib import Path
 
 import pytest
 
@@ -17,9 +16,10 @@ from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from ooxml_edit.tools import Toolbox
 from ooxml_edit.tools.owned import OwnedEntry
 from python_handler import python_session
+from conftest import FIXTURE_DIR  # noqa: E402
 
 CLOCK = lambda: dt.datetime(2026, 11, 20, 9, 0, tzinfo=dt.timezone.utc)  # noqa: E731
-MODE14 = Path(__file__).parent / "fixtures" / "generated" / "mode14.docx"
+MODE14 = FIXTURE_DIR / "generated" / "mode14.docx"
 
 
 @pytest.fixture(scope="module")
