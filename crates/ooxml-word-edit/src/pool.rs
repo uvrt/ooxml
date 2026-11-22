@@ -194,6 +194,18 @@ impl Ids {
         &self.added
     }
 
+    /// Every value in the pool: the document's as opened (and as saved before, where its
+    /// state was given) and every one given since -- what its id state writes.
+    pub fn values(&self) -> impl Iterator<Item = u32> + '_ {
+        self.base.iter().chain(self.added.iter()).copied()
+    }
+
+    /// Where each seed's draws got to.
+    #[must_use]
+    pub fn cursors(&self) -> &BTreeMap<String, usize> {
+        &self.cursors
+    }
+
     /// The renames: an old id and the id it names now.
     #[must_use]
     pub fn aliases(&self) -> &BTreeMap<String, String> {

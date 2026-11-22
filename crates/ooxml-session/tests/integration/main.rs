@@ -5,6 +5,7 @@
 mod common;
 
 mod editing;
+mod host_reads;
 mod locale;
 mod registry;
 mod rows_written;
