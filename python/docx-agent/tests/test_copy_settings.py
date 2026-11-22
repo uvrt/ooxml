@@ -16,6 +16,7 @@ from docx_agent import Document  # noqa: E402
 from docx_agent.edit import copies as copies_module  # noqa: E402
 from docx_agent.edit import copy_settings  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS, scoped  # noqa: E402
+from conftest import FIXTURE_DIR  # noqa: E402
 
 pytestmark = pytest.mark.any_faces
 
@@ -249,9 +250,8 @@ def _made_up() -> list[bytes]:
     doc.paragraph(ids[1]).format(keep_with_next=True, keep_together=True, page_break_before=True)
     doc.restart_numbering(ids[6], at=4)
     out.append(doc.to_bytes())
-    import pathlib
 
-    out += [path.read_bytes() for path in sorted((pathlib.Path(__file__).parent / "fixtures").rglob("*.docx"))]
+    out += [path.read_bytes() for path in sorted((FIXTURE_DIR).rglob("*.docx"))]
     return out
 
 

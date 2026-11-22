@@ -15,8 +15,8 @@ use std::time::Instant;
 
 #[test]
 fn a_repeat_writes_nothing() {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../python/docx-agent/tests/fixtures/samplelib/sample-long.docx");
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../crates/ooxml-oracle/fixtures/samplelib/sample-long.docx");
     let bytes: Arc<[u8]> = Arc::from(std::fs::read(path).unwrap());
     let package = Package::open(bytes, &Limits::default()).unwrap();
     let editor = Editor::open(

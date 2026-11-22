@@ -344,7 +344,7 @@ mod tests {
 
     #[test]
     fn kept_texts_equal_each_paragraphs_walk_on_every_fixture() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../python/docx-agent/tests/fixtures");
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../crates/ooxml-oracle/fixtures");
         let mut files = Vec::new();
         fixtures(&root, &mut files);
         files.sort();
@@ -399,7 +399,7 @@ mod tests {
     #[test]
     fn kept_texts_read_out_of_order_equal_each_paragraphs_walk() {
         let file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../python/docx-agent/tests/fixtures/samplelib/sample-long.docx");
+            .join("../../crates/ooxml-oracle/fixtures/samplelib/sample-long.docx");
         let bytes: Arc<[u8]> = Arc::from(std::fs::read(&file).unwrap());
         let package = Package::open(bytes, &Limits::default()).unwrap();
         let editor = Editor::open(

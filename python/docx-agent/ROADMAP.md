@@ -2629,7 +2629,7 @@ Word's re-save changes no style definition docx-agent wrote, copied blocks keep 
 part by part against the probe's comparison, its package, settings and section against
 Word's, its styles, theme, locale, pages, orientation, language and properties,
 deterministic given its date; from every template (the three of
-`tests/fixtures/generated/templates`, written by `tools/make_template_fixtures.py`, and the
+`crates/ooxml-oracle/fixtures/generated/templates`, written by `tools/make_template_fixtures.py`, and the
 corpus's two Dutch templates): kept and dropped bodies, attachment, properties, macros,
 mode, overrides, edits saved, read back, undone and redone, laid out; save as template;
 copying against each of Word's observations (styles per policy, the direct formatting Keep
@@ -2804,7 +2804,7 @@ holds, tables cover the data and are named after their headers, shared-string co
 right; Word keeps caches, formulas and workbooks byte for byte, and the check holds on what
 Word saved. Edit Data opens that workbook.
 
-**Fixtures** (`tests/fixtures/generated/charts`, `tools/make_chart_fixtures.py`, provenance
+**Fixtures** (`crates/ooxml-oracle/fixtures/generated/charts`, `tools/make_chart_fixtures.py`, provenance
 in its `PROVENANCE.md`): written here, then saved by Word -- `charts.docx` (clustered
 columns, a line, a pie, a doughnut, a scatter, columns with a line), `chart-places.docx`
 (a chart in the header, a footnote, a text box, a group, and floating), `smartart.docx`
@@ -2902,7 +2902,7 @@ docx-agent saved has the ids Word would write.
 
 A Sonnet agent did a real task with docx-agent as a black box, from the README, `help()`
 and `dir()` only: apply five reviewers' comments to a supplier agreement summary
-(`tests/fixtures/generated/pilot`, written by docx-agent) as tracked changes by "Claude",
+(`crates/ooxml-oracle/fixtures/generated/pilot`, written by docx-agent) as tracked changes by "Claude",
 reply to each and resolve it. It succeeded, first run, but found the API slowly. Its
 friction log, in order:
 
@@ -2992,7 +2992,7 @@ output unprompted, but the docx-agent findings below cost the agents time, and o
 was latent everywhere: a template opened and saved as a `.docx` kept the template's content
 type, which Word refuses while `validate()` said nothing (its pptx-agent twin failed a
 PowerPoint run). The merge-a-section task's inputs and the reproduction are in
-`tests/fixtures/generated/trial` (written by docx-agent; `PROVENANCE.md`).
+`crates/ooxml-oracle/fixtures/generated/trial` (written by docx-agent; `PROVENANCE.md`).
 
 ### What changed
 

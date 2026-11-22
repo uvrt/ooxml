@@ -29,7 +29,7 @@ from pathlib import Path
 import pytest
 
 import oracle
-from conftest import fixture_id, fixture_paths
+from conftest import FIXTURE_DIR, fixture_id, fixture_paths
 from docx_agent import Document
 
 from e5_edits import BOX, CONTROL, SHAPE_TEXT, e5_edit_set
@@ -256,7 +256,7 @@ REVIEWED = {name: "same" for name in CASES}
 @pytest.mark.parametrize("accept", [True, False], ids=["accept-all", "reject-all"])
 @pytest.mark.parametrize("case", list(CASES))
 def test_words_review_of_tracked_e5_edits_reads_as_ours(word, case, accept):
-    path = ROOT / "tests" / "fixtures" / "samplelib" / "sample-simple.docx"
+    path = FIXTURE_DIR / "samplelib" / "sample-simple.docx"
     prepare, edit = CASES[case]
     document = Document.open(path)
     target = prepare(document) if prepare else None

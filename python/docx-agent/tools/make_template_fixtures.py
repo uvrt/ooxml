@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write the templates E6 is tested on, ``tests/fixtures/generated/templates/``.
+"""Write the templates E6 is tested on, ``crates/ooxml-oracle/fixtures/generated/templates/``.
 
 ``brand.dotx`` (compatibility mode 15)
     a template of the kind File > New from a template starts from: its own styles (heading
@@ -34,7 +34,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 
 import e6_probe  # noqa: E402
 
-OUT = ROOT / "tests" / "fixtures" / "generated" / "templates"
+OUT = ROOT.parents[1] / "crates" / "ooxml-oracle" / "fixtures" / "generated" / "templates"
 DATE = (2026, 10, 4, 12, 0, 0)
 _VBA = "http://schemas.microsoft.com/office/2006/relationships/vbaProject"
 _VBA_DATA = "http://schemas.microsoft.com/office/2006/relationships/wordVbaData"

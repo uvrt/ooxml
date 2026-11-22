@@ -31,7 +31,7 @@ from pathlib import Path
 import gates_hunks
 
 ROOT = Path(__file__).resolve().parents[1]
-FIXTURES = ROOT / "python" / "docx-agent" / "tests" / "fixtures"
+FIXTURES = ROOT / "crates" / "ooxml-oracle" / "fixtures"
 FEATURES_FILE = Path(__file__).resolve().parent / "gates_fixtures.json"
 
 #: Every fixture, whatever it holds.

@@ -1,19 +1,19 @@
 """Copying a section in the destination's styles (ROADMAP.md, "Trial findings", 3), on the
-trial's merge-a-section task (``fixtures/generated/trial``: a handbook and a safety bulletin
+trial's merge-a-section task (``crates/ooxml-oracle/fixtures/generated/trial``: a handbook and a safety bulletin
 docx-agent wrote): ``copy_blocks(style_map=..., unmapped="body")``, ``styles="merge"``
 keeping headings and lists, ``Styles.remove`` and ``Styles.purge_unused``."""
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import pytest
 
 from docx_agent import Document, EditError
 from docx_agent.edit.styles import StyleError
 from docx_agent.validate import check
+from conftest import FIXTURE_DIR  # noqa: E402
 
-TRIAL = Path(__file__).parent / "fixtures" / "generated" / "trial"
+TRIAL = FIXTURE_DIR / "generated" / "trial"
 SECTION = "p:3B212964"          # the bulletin's "Working at height"
 VEHICLE_CHECKS = "p:69E36C9F"   # the handbook's heading the section goes before
 

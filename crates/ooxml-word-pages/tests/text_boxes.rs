@@ -48,7 +48,7 @@ fn engine() -> PageEngine {
 fn fixture() -> Vec<u8> {
     std::fs::read(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../python/docx-agent/tests/fixtures/generated/charts/chart-places.docx"
+        "/../../crates/ooxml-oracle/fixtures/generated/charts/chart-places.docx"
     ))
     .unwrap()
 }

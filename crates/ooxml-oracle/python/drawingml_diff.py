@@ -39,10 +39,11 @@ from types import SimpleNamespace
 from xml.etree import ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[3]
-for package in ("ooxml-common", "pptx2svg"):
-    source = ROOT / "python" / package / "src"
-    if str(source) not in sys.path:
-        sys.path.insert(0, str(source))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+# The reference's packages: installed from the frozen commit, or the checkout's (reference_packages.py).
+from reference_packages import use_sources  # noqa: E402
+
+use_sources("ooxml-common", "pptx2svg")
 
 from ooxml_common.drawingml import color as dml_color  # noqa: E402
 from ooxml_common.drawingml import model as m  # noqa: E402

@@ -22,11 +22,12 @@ from ooxml_edit.tools import Toolbox
 
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from test_cleaning import bloated
+from conftest import FIXTURE_DIR  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 #: A few fixtures, and a template saved as a .docx (its main part retyped on a .dotx save).
-FIXTURES = sorted({*sorted((HERE / "fixtures").rglob("*.docx"))[:6],
-                   *(HERE / "fixtures").rglob("template-saved-as-docx.docx")})
+FIXTURES = sorted({*sorted((FIXTURE_DIR).rglob("*.docx"))[:6],
+                   *(FIXTURE_DIR).rglob("template-saved-as-docx.docx")})
 
 
 def _canonical(data: bytes) -> dict[str, bytes]:

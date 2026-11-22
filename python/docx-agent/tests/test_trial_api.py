@@ -5,13 +5,13 @@ says what ``set_cell`` does, and ``Picture.image`` is a property the old call st
 from __future__ import annotations
 
 import zipfile
-from pathlib import Path
 
 import pytest
 
 from docx_agent import Document, EditResult, Paragraph, Table
+from conftest import FIXTURE_DIR  # noqa: E402
 
-FIXTURES = Path(__file__).parent / "fixtures" / "generated"
+FIXTURES = FIXTURE_DIR / "generated"
 PILOT = FIXTURES / "pilot" / "agreement-summary.docx"
 
 

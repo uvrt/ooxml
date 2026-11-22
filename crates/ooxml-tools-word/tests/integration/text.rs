@@ -15,7 +15,7 @@ use ooxml_word_edit::Editor;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-const FIXTURE: &[u8] = include_bytes!("../../../../python/docx-agent/tests/fixtures/generated/lists-and-styles.docx");
+const FIXTURE: &[u8] = include_bytes!("../../../../crates/ooxml-oracle/fixtures/generated/lists-and-styles.docx");
 
 /// Each of `calls` (`(tool, arguments)`) in turn on a fresh copy of the fixture: the replies.
 fn calls(calls: &[(&str, Value)]) -> Vec<Value> {

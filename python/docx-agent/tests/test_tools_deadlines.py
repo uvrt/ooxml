@@ -7,7 +7,6 @@ worker is killed, the call reports ``timeout``, and a changing call is rolled ba
 from __future__ import annotations
 
 import datetime as dt
-from pathlib import Path
 
 import pytest
 
@@ -16,8 +15,9 @@ pytest.importorskip("ooxml_edit.tools.shared", reason="needs ooxml-edit 0.4 (the
 from ooxml_edit.tools import Limits, Toolbox  # noqa: E402
 
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
+from conftest import FIXTURE_DIR  # noqa: E402
 
-LONG = Path(__file__).parent / "fixtures" / "samplelib" / "sample-long.docx"
+LONG = FIXTURE_DIR / "samplelib" / "sample-long.docx"
 CLOCK = lambda: dt.datetime(2026, 10, 7, 9, 0, tzinfo=dt.timezone.utc)  # noqa: E731
 
 
