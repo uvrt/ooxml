@@ -276,23 +276,24 @@ _REFINED = ("not_found", "invalid_arguments", "ambiguous")
 
 @contextmanager
 def reading(entry: Any, wait: float = 1.0) -> Iterator[Any]:
-    """``entry``'s document to read for a refusal's words, or ``None`` when it cannot be
-    read now: under its lock when this thread holds it, else its committed copy
-    (``DocumentEntry.reader``), else its lock taken for at most ``wait`` seconds -- a
-    refusal never waits long on another call's edit."""
+    """``entry``'s document as its format's hooks read it (:attr:`DocumentEntry.subject`: for
+    one its format's owner holds, the owner's handle; lane H7d) for a refusal's words, or
+    ``None`` when it cannot be read now: under its lock when this thread holds it, else its
+    committed copy (``DocumentEntry.reader``), else its lock taken for at most ``wait``
+    seconds -- a refusal never waits long on another call's edit."""
     owned = getattr(entry.lock, "_is_owned", None)      # threading.RLock's own test
     if owned is not None and owned():
-        yield entry.document
+        yield entry.subject
         return
     reader = entry.reader() if hasattr(entry, "reader") else None
     if reader is not None:
-        yield reader.document
+        yield reader.subject
         return
     if not entry.lock.acquire(timeout=wait):
         yield None
         return
     try:
-        yield entry.document
+        yield entry.subject
     finally:
         entry.lock.release()
 

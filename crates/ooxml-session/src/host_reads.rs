@@ -2,7 +2,9 @@
 //! format hooks of docx-agent's `tools/format.py` without its Python view): the version's
 //! validation problems ([`Opened::problems`]), what `open_document` says of it
 //! ([`Opened::summary`]) and its id state ([`Opened::id_state`], docx-agent's
-//! `Document.id_state`).
+//! `Document.id_state`); and, for a source value that names the document's own things
+//! (lane H7d, docx-agent's `own_source` and `source_hint`), what kind of block an id names
+//! ([`Opened::block_kind`]) and whether a drawing id is there ([`Opened::has_drawing`]).
 //!
 //! Must not: change the document, or number versions (the host's [`IdStateOf`] says how it
 //! numbers them).
@@ -10,6 +12,10 @@
 use crate::{CancelToken, Opened, SessionError};
 use ooxml_tools::ToolError;
 use ooxml_word_edit::validate::Problem;
+use ooxml_word_model::address::direct;
+use ooxml_word_model::docx::controls::controls;
+use ooxml_word_model::docx::drawings::all_drawings;
+use ooxml_word_model::ids::Entry;
 use ooxml_word_model::ids::{export_state, IdPool, Ledger, Versions};
 use ooxml_word_model::parts::parts;
 use ooxml_xml::Tree;
@@ -106,5 +112,46 @@ impl Opened {
         };
         let describe = |version: i64| said.get(&version).map(|w| (*w).to_owned());
         Ok(Some(export_state(&ledger, &roots, &versions, &describe)))
+    }
+
+    /// What kind of block `id` names in the version (docx-agent's `_resolve_block`):
+    /// `"paragraph"`, `"table"`, or `"content control"` for a block-level one (`cc:`,
+    /// `cc@`); a renamed id is followed while what it names now is there. `None` when it
+    /// names none of the document's blocks, or the document is not a Word document.
+    ///
+    /// # Errors
+    /// When a story part is not XML.
+    pub fn block_kind(&self, id: &str) -> Result<Option<&'static str>, SessionError> {
+        let Some(word) = self.word() else {
+            return Ok(None);
+        };
+        let docx = word.docx()?;
+        if id.starts_with("cc:") || id.starts_with("cc@") {
+            let block = controls(&docx)
+                .into_iter()
+                .find(|c| c.id == id)
+                .is_some_and(|c| docx.part(&c.part).is_some_and(|part| c.level(part) == "block"));
+            return Ok(block.then_some("content control"));
+        }
+        let followed = word.ids().follow(id);
+        let found = direct(&docx, &followed).or_else(|| direct(&docx, id));
+        Ok(found.map(|(_, entry)| match entry {
+            Entry::Paragraph(_) => "paragraph",
+            Entry::Table(_) => "table",
+        }))
+    }
+
+    /// Whether the version has the drawing `id` (`d:3`, `d:3#1`; docx-agent's `drawing`:
+    /// every drawing with a `docPr` id, a picture under its picture id); `false` for a
+    /// document that is not a Word document.
+    ///
+    /// # Errors
+    /// When a story part is not XML.
+    pub fn has_drawing(&self, id: &str) -> Result<bool, SessionError> {
+        let Some(word) = self.word() else {
+            return Ok(false);
+        };
+        let docx = word.docx()?;
+        Ok(all_drawings(&docx).iter().any(|d| d.id == id))
     }
 }
