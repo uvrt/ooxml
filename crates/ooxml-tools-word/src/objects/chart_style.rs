@@ -22,7 +22,7 @@ use ooxml_chart::edit::{
     text_size, ChartTree, Colour, DataError, PointLabels, ScaleChange, SeriesFormat, TextHost, TextLook, TextStop,
 };
 use ooxml_tools::{ArgEnum, Refusal, ToolError, TryCall, WayOut};
-use ooxml_word_edit::{EditError, GraphicEdit, GraphicParts, PartWrite};
+use ooxml_word_edit::{EditError, GraphicEdit, GraphicParts, PartWrite, RecordChange};
 use ooxml_xml::view::{child, children};
 use ooxml_xml::Element;
 use std::sync::Arc;
@@ -157,6 +157,7 @@ impl GraphicEdit for ChartStyleEdit {
         Ok(GraphicParts {
             read,
             writes,
+            record: RecordChange::Kept,
             out: Vec::new(),
         })
     }
