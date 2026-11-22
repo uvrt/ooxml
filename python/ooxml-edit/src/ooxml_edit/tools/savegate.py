@@ -53,13 +53,13 @@ def problems_now(entry: Any, fmt: Any, *, cache: bool = True,
     if fmt is None or fmt.problems is None:
         return []
     if not cache:
-        return list(fmt.problems(entry.document))
+        return list(fmt.problems(entry.subject))
     full = (entry.version, _CACHE_KEY)
     if not fresh:
         found = entry.check_cache.get(full)
         if found is not None:
             return found
-    found = list(fmt.problems(entry.document))
+    found = list(fmt.problems(entry.subject))
     entry.check_cache.put(full, found)
     return found
 

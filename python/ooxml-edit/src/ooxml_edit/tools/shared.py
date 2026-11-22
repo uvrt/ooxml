@@ -1314,7 +1314,7 @@ def _open_document(call: Any, blob: str) -> Result:
     data: dict[str, Any] = entry.describe()
     data["baseline_problems"] = len(entry.baseline_problems)
     if fmt is not None and fmt.summary is not None:
-        data["summary"] = fmt.summary(entry.document)
+        data["summary"] = fmt.summary(entry.subject)
     return Result(summary=f"Opened {entry.name} as {doc_id} ({entry.kind})", created=[doc_id],
                   data=data)
 
