@@ -6,6 +6,7 @@
 
 use crate::session::to_py;
 use ooxml_session::{IdStateOf, Opened};
+use ooxml_tools_word::WordLayout;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
@@ -146,6 +147,41 @@ impl PyVersion {
     fn has_drawing(&self, py: Python<'_>, id: &str) -> PyResult<bool> {
         let version = &self.inner;
         py.detach(|| version.has_drawing(id)).map_err(|e| to_py(&e))
+    }
+
+    /// The texts a check of numbers reads in the version (JSON text: ``{"texts": [{"at",
+    /// "text", "written", "page"}], "warnings"}``, ``{"error": ...}`` for a refusal, ``null``
+    /// for a document that is not a Word document). ``request`` (JSON): ``range`` (a check's,
+    /// refs resolved) and ``pages``; ``doc``: the document as the host names it; ``pages``:
+    /// the engine its texts are placed with (``Session.pages``; ``None``: not placed).
+    #[pyo3(signature = (doc, request, pages = None))]
+    fn number_texts(
+        &self,
+        py: Python<'_>,
+        doc: &str,
+        request: &str,
+        pages: Option<PyRef<'_, crate::PyWordPages>>,
+    ) -> String {
+        let layout = pages.map(|p| p.port());
+        let version = &self.inner;
+        py.detach(|| crate::values::number_texts(version, doc, request, layout.as_ref().map(|l| l as &dyn WordLayout)))
+    }
+
+    /// The values a scale's targets hold in the version, each with the step it is styled as
+    /// now (JSON text: ``{"values": [...]}``, as ``number_texts`` answers). ``request``
+    /// (JSON): ``scale`` (``name``, ``steps`` with ``fill``, ``text`` and ``label``,
+    /// ``targets``, ``labels``), ``range`` and ``pages``.
+    #[pyo3(signature = (doc, request, pages = None))]
+    fn scale_values(
+        &self,
+        py: Python<'_>,
+        doc: &str,
+        request: &str,
+        pages: Option<PyRef<'_, crate::PyWordPages>>,
+    ) -> String {
+        let layout = pages.map(|p| p.port());
+        let version = &self.inner;
+        py.detach(|| crate::values::scale_values(version, doc, request, layout.as_ref().map(|l| l as &dyn WordLayout)))
     }
 
     /// What changed since `before`, as docx-agent's ``Result.touched`` entries (JSON text).

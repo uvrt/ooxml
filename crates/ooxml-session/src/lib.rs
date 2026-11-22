@@ -54,6 +54,7 @@ mod rows_written;
 mod session;
 mod undo;
 mod update;
+mod values;
 
 pub use batch::{ReadBatch, ReadOp, BATCH_TIMEOUT, MAX_READ_BATCH_CHARS, READ_BATCH};
 pub use block_pages::{BlockAt, BlockPages};

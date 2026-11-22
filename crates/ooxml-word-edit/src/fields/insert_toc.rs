@@ -254,7 +254,7 @@ fn put_field(sink: &mut EditSink<'_, '_>, part: &str, holder: &Holder, instructi
 }
 
 /// The paragraphs from the field's begin to its end, both included (`_toc_paragraphs`).
-fn toc_paragraphs(root: &Arc<Element>, toc: &Located) -> Vec<Vec<u32>> {
+pub(crate) fn toc_paragraphs(root: &Arc<Element>, toc: &Located) -> Vec<Vec<u32>> {
     let Some(first) = paragraph_of(root, &toc.found.begin) else {
         return Vec::new();
     };

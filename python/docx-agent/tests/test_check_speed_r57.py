@@ -106,6 +106,9 @@ def test_numbers_on_pages_keep_only_the_texts_drawn_there(made):
         assert past.ok and past.data["numbers"]["texts"] == []
 
 
+# Lane H7e: the layout part is docx-agent's own documents' (an owned document's numbers are
+# placed by the session's engine, whose reply carries no timing).
+@pytest.mark.usefixtures("python_owned")
 def test_timing_says_numbers_and_validation(made):
     with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as box:
         session, doc, document = _session(box, made)
