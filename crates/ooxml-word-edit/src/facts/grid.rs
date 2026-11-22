@@ -156,24 +156,50 @@ pub fn table_grid_mismatch(doc: &WordDoc, keep: Option<&dyn Fn(&str) -> bool>) -
         })
         .collect();
     for table in &tables {
-        let after_accept = reshaped_on_accept(&table.element);
-        let shape = if after_accept {
-            accepted_shape(doc, &table.element)
-        } else {
-            shape(&table.element)
+        let Some(ragged) = ragged_rows(doc, &table.element) else {
+            continue;
         };
-        let Some((grid, rows)) = shape else { continue };
         // A row off the grid is said above; as it is now, that is the ragged shape too.
-        if after_accept || !off_grid.contains(&table.id) {
+        if ragged.after_accept || !off_grid.contains(&table.id) {
             found.push(GridMismatch::Ragged {
                 table: table.id.clone(),
-                grid,
-                rows,
-                after_accept,
+                grid: ragged.grid,
+                rows: ragged.rows,
+                after_accept: ragged.after_accept,
             });
         }
     }
     Ok(found)
+}
+
+/// A ragged table's shape as Accept All leaves it ([`ragged_rows`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ragged {
+    /// The grid columns its widest rows cover.
+    pub grid: usize,
+    /// Its other rows.
+    pub rows: Vec<RaggedRow>,
+    /// Whether pending tracked changes make the shape.
+    pub after_accept: bool,
+}
+
+/// `table` as Accept All leaves it when its rows' cells do not all start and end on the
+/// same grid columns, off its grid or not (docx-agent's `ragged_rows`; check's
+/// `table_grid_mismatch` says an off-grid table's present shape as off the grid instead);
+/// `None` for a table whose rows line up.
+#[must_use]
+pub fn ragged_rows(doc: &WordDoc, table: &Arc<Element>) -> Option<Ragged> {
+    let after_accept = reshaped_on_accept(table);
+    let (grid, rows) = if after_accept {
+        accepted_shape(doc, table)
+    } else {
+        shape(table)
+    }?;
+    Some(Ragged {
+        grid,
+        rows,
+        after_accept,
+    })
 }
 
 fn int_val(node: Option<&Element>, default: i64) -> i64 {
