@@ -10,7 +10,7 @@ import zipfile
 from typing import Any
 
 from ooxml_edit.charts import ChartDataWarning
-from ooxml_edit.tools import DocumentFormat
+from ooxml_edit.tools import DocumentFormat, ToolError
 
 from ..blocks import BLOCKS
 from ..edit.addresses import AddressError
@@ -133,16 +133,25 @@ class _StepOwner:
         return None
 
 
-def store_provenance(document: Document, address: str, record: Any) -> None:
+def store_provenance(document: Any, address: str, record: Any) -> None:
     """Keep a placement's record in the document's own custom XML item
     (:mod:`docx_agent.edit.provenance`), keyed by the table's ``t:`` or the chart's ``d:``
-    id; ``None`` drops it.  Inside the call's undo step."""
+    id; ``None`` drops it.  Inside the call's undo step.  The hook is given the document a
+    handler of docx-agent's edits (a table from data, a chart: their edits are docx-agent's
+    still); the Rust session's tools keep their records themselves, so the owner's handle is
+    refused as ``internal`` (lane H7d)."""
+    if owned(document) is not None:
+        raise ToolError("internal", f"a placement's record for {address} was handed the Rust "
+                        "session's document: the session's tools keep their own records")
     document.store_provenance(address, record)
 
 
-def read_provenance(document: Document) -> dict[str, Any]:
+def read_provenance(document: Any) -> dict[str, Any]:
     """``{address: record}`` for the tables and charts the document has (tracked changes
-    accepted); an entry whose object is gone is left out."""
+    accepted); an entry whose object is gone is left out.  For one the Rust session owns,
+    the session's records (lane H7d)."""
+    if owned(document) is not None:
+        return hooks.provenance(document)
     return dict(document.provenance())
 
 

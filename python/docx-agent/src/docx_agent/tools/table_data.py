@@ -36,6 +36,8 @@ from ooxml_edit.tools import ToolError, array, string
 from ooxml_edit.tools import sources
 
 from ..edit.text import LINE_BREAK
+from ..rust import hooks
+from ..rust.hooks import owned
 
 #: The most a table from data takes: columns (Word's), rows (the header included) and cells
 #: (one call's, as ``set_cells`` takes).
@@ -166,17 +168,29 @@ def source_hint(document: Any, value: str) -> str | None:
     form Word documents name drawings by) is told it is a drawing, not a dataset."""
     if not isinstance(value, str) or not _DRAWING.match(value):
         return None
-    try:
-        document.drawing(value)
-    except (KeyError, ValueError):
+    if not _has_drawing(document, value):
         return (f"{value} is a drawing's id (none here), not a dataset: a source is a dataset "
                 "d:<id>, its id starting with a letter, or a table t:<name>")
     return (f"{value} is a drawing in this document, not a dataset: a source is a dataset "
             "d:<id>, its id starting with a letter, or a table t:<name>")
 
 
-#: Round 56 (R120): the kinds of a Word document's blocks, as a refusal names them.
-_KINDS = {"TableEntry": "a table", "ParagraphEntry": "a paragraph", "ControlBlock": "a content control"}
+def _has_drawing(document: Any, value: str) -> bool:
+    """Whether the document has the drawing ``value``: for one the Rust session owns, as the
+    session reads it (lane H7d)."""
+    if owned(document) is not None:
+        return hooks.has_drawing(document, value)
+    try:
+        document.drawing(value)
+    except (KeyError, ValueError):
+        return False
+    return True
+
+
+#: Round 56 (R120): the kinds of a Word document's blocks, as a refusal names them (by the
+#: Python view's entry, and by the kind the Rust session says).
+_KINDS = {"TableEntry": "a table", "ParagraphEntry": "a paragraph", "ControlBlock": "a content control",
+          "table": "a table", "paragraph": "a paragraph", "content control": "a content control"}
 
 
 def own_source(document: Any, address: str) -> str | None:
@@ -188,11 +202,19 @@ def own_source(document: Any, address: str) -> str | None:
         return None
     base, slash, _rest = address.partition("/")
     for identifier in ((address, base) if slash else (address,)):
-        try:
-            entry = document._resolve_block(identifier)[1]
-        except Exception:  # noqa: BLE001 -- not one of its blocks
-            continue
-        what = _KINDS.get(type(entry).__name__)
+        what = _KINDS.get(_block_kind(document, identifier) or "")
         if what is not None:
             return what if identifier == address else f"part of {what}"
     return None
+
+
+def _block_kind(document: Any, identifier: str) -> str | None:
+    """The kind of block ``identifier`` names (a :data:`_KINDS` key), or ``None``: for a
+    document the Rust session owns, as the session reads it (lane H7d)."""
+    if owned(document) is not None:
+        return hooks.block_kind(document, identifier)
+    try:
+        entry = document._resolve_block(identifier)[1]
+    except Exception:  # noqa: BLE001 -- not one of its blocks
+        return None
+    return type(entry).__name__

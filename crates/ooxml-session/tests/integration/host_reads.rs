@@ -49,3 +49,26 @@ fn the_id_state_is_read_back_with_the_host_s_numbers_and_retired_ids() {
     assert_eq!(loaded.steps.get(&2), Some(&Some("word_delete (agent=a)".to_owned())));
     assert!(loaded.pool.contains(0x0A00_0004));
 }
+
+const OWN: &str = r#"<w:p w14:paraId="0A000001"><w:r><w:t>Text.</w:t></w:r></w:p><w:tbl><w:tr w14:paraId="0A000003"><w:tc><w:p w14:paraId="0A000004"><w:r><w:t>a</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:sdt><w:sdtPr><w:id w:val="7"/></w:sdtPr><w:sdtContent><w:p w14:paraId="0A000006"><w:r><w:t>In a control.</w:t></w:r></w:p></w:sdtContent></w:sdt><w:p w14:paraId="0A000005"><w:sdt><w:sdtPr><w:id w:val="8"/></w:sdtPr><w:sdtContent><w:r><w:t>inline</w:t></w:r></w:sdtContent></w:sdt></w:p>"#;
+
+#[test]
+fn a_block_id_says_what_kind_of_block_it_names() {
+    let s = session();
+    let d = s.open(docx(OWN), DocKind::Docx, "a.docx").unwrap();
+    let version = s.snapshot(&d).unwrap();
+    let kind = |id: &str| version.block_kind(id).unwrap();
+    assert_eq!(kind("p:0A000001"), Some("paragraph"));
+    assert_eq!(kind("p@body/0"), Some("paragraph"));
+    let table = s.snapshot(&d).unwrap();
+    let tables: Vec<_> = ["t:0A000003", "t@body/0"]
+        .iter()
+        .map(|t| table.block_kind(t).unwrap())
+        .collect();
+    assert!(tables.contains(&Some("table")), "{tables:?}");
+    assert_eq!(kind("cc:7"), Some("content control"));
+    assert_eq!(kind("cc:8"), None, "a control in the line is no block");
+    assert_eq!(kind("p:0A0000FF"), None);
+    assert_eq!(kind("cc:9"), None);
+    assert!(!version.has_drawing("d:1").unwrap());
+}

@@ -661,7 +661,10 @@ class Call:
     def store_provenance(self, address: str, found: Mapping[str, Any] | None) -> None:
         """Hand ``found`` -- a record as it is, or ``None`` to drop the one ``address`` has
         -- to the format's :attr:`~.session.DocumentFormat.store_provenance`, if it has
-        one.  For a call that changes its document, inside its undo step."""
+        one.  For a call that changes its document, inside its undo step.  The hook is given
+        the document the call's handler edits (:attr:`document`), never the owner's handle:
+        only a handler of the host's that changes a document keeps a record here (an owner's
+        own tools keep theirs), and the record goes in with the rest of its edit (lane H7d)."""
         if self.entry is None or not self.changing:
             raise RuntimeError("provenance is kept by a call that changes its document")
         hook = getattr(self.session.formats.get(self.entry.kind), "store_provenance", None)
@@ -2721,7 +2724,7 @@ class Toolbox:
         assert entry is not None  # the hook is its format's
         try:
             with entry.lock:
-                said = hook(entry.document, value)
+                said = hook(entry.subject, value)
         except Exception:  # noqa: BLE001 -- a hint only adds words; the refusal stands
             logger.exception("source_hint of %s failed", entry.kind)
             return None

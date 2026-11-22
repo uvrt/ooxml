@@ -9,6 +9,11 @@ and each answers from the session's reading of that version, never from the Pyth
 - :func:`id_state` -- the state kept beside its bytes (``Version.id_state``), numbered as the
   tool layer numbers its states, the retired ids as the session records them
   (:func:`.owner.retired_ids`);
+- :func:`block_kind` and :func:`has_drawing` -- what a source value names in it, for the
+  ``own_source`` and ``source_hint`` refusals (lane H7d: ``Version.block_kind``,
+  ``Version.has_drawing``);
+- :func:`provenance` -- the records of placed values it keeps (``Version.records``), for
+  ``read_provenance`` (lane H7d);
 - :func:`closed` and :func:`restored` -- nothing of the session's: the session lets go of the
   document as the owner closes it, and what a batch or scoped undo puts back is its own
   version; only what docx-agent kept in this process for a view made of it goes.
@@ -86,6 +91,28 @@ def id_state(subject: Any) -> str:
     if state is None:
         raise TypeError(f"{mirror.doc} is not a Word document")
     return str(state)
+
+
+def block_kind(subject: Any, identifier: str) -> str | None:
+    """What kind of block ``identifier`` names in an owned document: ``"paragraph"``,
+    ``"table"`` or ``"content control"`` (a block-level one), a renamed id followed; ``None``
+    when it names none of its blocks."""
+    found = version_of(subject).block_kind(identifier)
+    return str(found) if found is not None else None
+
+
+def has_drawing(subject: Any, identifier: str) -> bool:
+    """Whether an owned document has the drawing ``identifier`` (``d:3``)."""
+    return bool(version_of(subject).has_drawing(identifier))
+
+
+def provenance(subject: Any) -> dict[str, Any]:
+    """``{address: record}`` for the tables and charts an owned document has (tracked changes
+    accepted), as the session reads its records: ``Document.provenance``'s."""
+    found = version_of(subject).records()
+    if found is None:
+        return {}
+    return {str(key): dict(record) for key, record in json.loads(found)["provenance"]}
 
 
 def live_view(subject: Any) -> Any:
