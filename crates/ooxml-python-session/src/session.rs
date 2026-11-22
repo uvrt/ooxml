@@ -8,7 +8,7 @@
 use crate::adapters::{context, SessionStop};
 use crate::context::{caller_context, PyCallContext};
 use crate::locale::locale_of;
-use crate::options::{context_of, PyCallOptions, PyHostIds};
+use crate::options::{context_of, PyCallLayout, PyCallOptions, PyHostIds};
 use crate::version::PyVersion;
 use ooxml_base::Locale;
 use ooxml_session::{DocId, DocKind, HeldId, RetiredBy, Session, SessionConfig, SessionError};
@@ -570,6 +570,53 @@ impl PySession {
         let session = &self.inner;
         py.detach(|| session.note_rows_written(&id, rows))
             .map_err(|e| to_py(&e))
+    }
+
+    /// The live view of the Word document `doc` (an application's API, not a tool): its
+    /// pages at its head version, laid out by `layout`'s page engine (a `CallLayout(pages=)`)
+    /// within `context`'s limit on laying out, and those changed since the view whose token is
+    /// `since` (every page without one). Returns a dict: `token` (this version's: `since` for
+    /// the next view, `page_svg`'s token), `pages` (each `(number, blocks, width, height)`:
+    /// the ids of the body's top-level blocks it draws, in document order, its size in
+    /// points), `changed` (1-based), `since` (as given), `stale` (`since` names no version
+    /// kept: every page is changed), `note`, `version` (the state number laid out).
+    ///
+    /// # Errors
+    /// `KeyError` for a document not open; `ValueError` for one that is not Word's or a
+    /// layout without pages; `ooxml_core.ViewRefused` for a version the engine does not lay
+    /// out yet; `TimeoutError` past the limit.
+    #[pyo3(signature = (doc, since = None, *, layout, context = None))]
+    fn view<'py>(
+        &self,
+        py: Python<'py>,
+        doc: &str,
+        since: Option<&str>,
+        layout: PyRef<'_, PyCallLayout>,
+        context: Option<PyRef<'_, PyCallContext>>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        crate::view::view(py, &self.inner, (doc, since), &layout, context.as_deref())
+    }
+
+    /// Page `page` (1-based) of the version `token` names (a view's) as SVG, its paragraph
+    /// groups carrying `data-docx-agent-id` (that version's ids), its pictures embedded:
+    /// `(svg, warnings)`. `text`: `"text"` (`"outlines"` is not drawn yet).
+    ///
+    /// # Errors
+    /// `ooxml_core.UnknownToken` for a token no view of the document gave or kept;
+    /// `IndexError` for a page the version does not have; `ValueError` for a `text` there is
+    /// none of; `ooxml_core.ViewRefused` for `"outlines"`; as [`view`](Self::view).
+    #[pyo3(signature = (doc, page, token, *, layout, text = "text", context = None))]
+    fn page_svg(
+        &self,
+        doc: &str,
+        page: usize,
+        token: &str,
+        layout: PyRef<'_, PyCallLayout>,
+        text: &str,
+        context: Option<PyRef<'_, PyCallContext>>,
+    ) -> PyResult<(String, Vec<String>)> {
+        let py = layout.py();
+        crate::view::page_svg(py, &self.inner, (doc, page, token), (&layout, text), context.as_deref())
     }
 
     /// Close the document; its versions and history are let go.

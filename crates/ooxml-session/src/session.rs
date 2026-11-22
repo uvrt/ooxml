@@ -138,6 +138,9 @@ pub struct Session {
     documents: RwLock<BTreeMap<DocId, Arc<Document>>>,
     last_id: AtomicU64,
     pub(crate) counts: Counts,
+    /// What tells this session's live-view tokens from another's (one before a restart):
+    /// eight hex digits of the moment it was made.
+    pub(crate) nonce: String,
 }
 
 impl Session {
@@ -152,11 +155,12 @@ impl Session {
     pub fn with_registry(config: SessionConfig, context: Context, registry: Registry) -> Self {
         Self {
             config,
-            context,
             registry,
             documents: RwLock::new(BTreeMap::new()),
             last_id: AtomicU64::new(0),
             counts: Counts::default(),
+            nonce: nonce(&context),
+            context,
         }
     }
 
@@ -436,4 +440,16 @@ impl Session {
     fn write_table(&self) -> std::sync::RwLockWriteGuard<'_, BTreeMap<DocId, Arc<Document>>> {
         self.documents.write().unwrap_or_else(PoisonError::into_inner)
     }
+}
+
+/// A session's nonce: the moment `context`'s clock says it is made, digested, as eight hex
+/// digits.
+fn nonce(context: &Context) -> String {
+    const KEY: ooxml_base::DigestKey = ooxml_base::DigestKey::new(0x6f6f_786d_6c2d_7669, 0x6577_2d6e_6f6e_6365);
+    let now = context.clock.now();
+    let mut digester = ooxml_base::Digester::new(KEY);
+    digester.update(&now.seconds.to_le_bytes());
+    digester.update(&now.nanos.to_le_bytes());
+    let digest = digester.finish();
+    digest.0.iter().take(4).map(|b| format!("{b:02x}")).collect()
 }
