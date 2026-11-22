@@ -13,7 +13,8 @@ use ooxml_word_edit::{paragraphs_of, EditError, EditLayout, FieldLayout};
 /// Where one block asked is drawn.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BlockAt {
-    /// On these pages, counted from 0 (the layout port's count).
+    /// On these pages, numbered from 1 as docx-agent and Word number them (the layout port
+    /// counts from 0; this answer is the host's, like the session's other page reads).
     Pages(Vec<usize>),
     /// Outside the body (a header's, a note's): no page of the body's to break.
     Outside,
@@ -76,7 +77,7 @@ impl Session {
             .zip(laid.blocks_pages(&ids))
             .map(|(id, found)| match found {
                 _ if outside(id) => BlockAt::Outside,
-                Ok(pages) => BlockAt::Pages(pages),
+                Ok(pages) => BlockAt::Pages(pages.into_iter().map(|page| page + 1).collect()),
                 Err(unknown) => BlockAt::Unknown(unknown.0),
             })
             .collect()))

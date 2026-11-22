@@ -428,7 +428,7 @@ impl PySession {
 
     /// The pages the document's head version draws each of `blocks` on (body blocks by id),
     /// laid out by `options`' page engine (its `layout`) within the context's limit on laying
-    /// out: `(blocks, why)` -- per block `("pages", numbers from 0, None)`, `("outside", None, None)`
+    /// out: `(blocks, why)` -- per block `("pages", page numbers from 1, None)`, `("outside", None, None)`
     /// for one outside the body, or `("unknown", None, why the layout cannot say)`; `blocks`
     /// `None` with `why` where the version was not laid out (no page engine handed, the limit
     /// passed, a version the layout does not lay out).

@@ -17,7 +17,7 @@ fn a_head_version_s_blocks_are_said_on_their_pages() {
     };
     let blocks = ["p:10000001".to_owned(), "p:7FFFFFFF".to_owned()];
     let found = s.block_pages(&doc, &blocks, &context).unwrap().expect("laid out");
-    assert_eq!(found[0], BlockAt::Pages(vec![0]));
+    assert_eq!(found[0], BlockAt::Pages(vec![1])); // numbered from 1
     assert!(matches!(found[1], BlockAt::Unknown(_)), "{found:?}");
     // without the host's layout, nothing is laid out
     let unlaid = s.block_pages(&doc, &blocks, &CallContext::default()).unwrap();

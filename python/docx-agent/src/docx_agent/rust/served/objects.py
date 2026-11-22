@@ -26,18 +26,20 @@ def _format_table(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
 def _taller_after(call: Any, result: Any, table: str) -> None:
     """docx-agent's ``_later_taller``, served: the warning for a table kept together that is
     taller than a page, from the pages the session says the document draws it on now
-    (``Session.block_pages``, laid out by the document's page engine within the call's limit
-    on laying out), before the op's warning of a loose paragraph after it, else last."""
+    (``Session.block_pages``, numbered from 1, laid out by the document's page engine within
+    the call's limit on laying out, with the call's writing settings), before the op's warning
+    of a loose paragraph after it, else last."""
     import ooxml_core
 
-    from ..owner import context_of, options
+    from ..edits import call_context
+    from ..owner import options
     from ...pages import word_pages
 
     entry = call.entry
     table = result.renamed.get(table, table)
     engine, _why = word_pages(entry.held)
     laid = ooxml_core.CallLayout(engine) if engine is not None else None
-    context = context_of(call.caller, call.limits, call.limits.layout_timeout)
+    context = call_context(call, entry.held)
     mirror = entry.handle
     found, _not_laid = mirror.session.block_pages(mirror.doc, [table], options(context=context, layout=laid))
     kind, pages = (found[0][0], found[0][1]) if found else ("unknown", None)
