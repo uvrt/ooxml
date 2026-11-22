@@ -17,8 +17,7 @@ use ooxml_word_edit::{Editor, Tracking};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-const FIXTURE: &[u8] =
-    include_bytes!("../../../../python/docx-agent/tests/fixtures/generated/charts/chart-places.docx");
+const FIXTURE: &[u8] = include_bytes!("../../../../crates/ooxml-oracle/fixtures/generated/charts/chart-places.docx");
 
 /// `b1`: a 96 by 48 pixel PNG header stating no density (96 dpi: 72 by 36 pt); `b2`: text.
 fn picture_blobs() -> BlobList {

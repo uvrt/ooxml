@@ -5,7 +5,6 @@ calls, the same results, but for the chart's name in a result (here ``id``)."""
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import pytest
 
@@ -14,8 +13,9 @@ from ooxml_edit.tools import Toolbox
 
 from docx_agent import Document
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
+from conftest import FIXTURE_DIR  # noqa: E402
 
-SMARTART = Path(__file__).parent / "fixtures" / "generated" / "charts" / "smartart.docx"
+SMARTART = FIXTURE_DIR / "generated" / "charts" / "smartart.docx"
 
 
 @pytest.fixture(scope="module")

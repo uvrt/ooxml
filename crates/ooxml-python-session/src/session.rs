@@ -8,18 +8,17 @@
 use crate::adapters::{context, SessionStop};
 use crate::context::{caller_context, PyCallContext};
 use crate::locale::locale_of;
-use crate::options::{context_of, PyCallOptions, PyHostIds};
+use crate::options::{context_of, PyCallLayout, PyCallOptions, PyHostIds};
 use crate::version::PyVersion;
 use ooxml_base::Locale;
 use ooxml_session::{DocId, DocKind, HeldId, RetiredBy, Session, SessionConfig, SessionError};
 use ooxml_store::StoreConfig;
-use ooxml_tools::{compact, ToolError, ToolResult};
+use ooxml_tools::compact;
 use ooxml_word_edit::EarlierIds;
 use pyo3::exceptions::{PyKeyError, PyRuntimeError, PyTimeoutError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
 use serde_json::Value;
-use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
 /// Documents by id, their versions, and the tools that read them. Every method releases
@@ -71,19 +70,6 @@ type HistoryNumbers = (u64, Vec<NumberedRow>, Vec<NumberedRow>);
 /// version's validation, the state number of the version its first edit was applied to, and
 /// the reflow its checks report (JSON text; `None` where none was measured).
 type EditMade = (u64, PyVersion, Option<String>, Validation, u64, Option<String>);
-
-/// A call that panicked, as its failure.
-fn panicked(name: &str, panic: &(dyn std::any::Any + Send)) -> ToolResult<Value> {
-    let what = panic
-        .downcast_ref::<&str>()
-        .map(|s| (*s).to_owned())
-        .or_else(|| panic.downcast_ref::<String>().cloned())
-        .unwrap_or_default();
-    ToolResult::failed(ToolError::internal(
-        format!("the call panicked: {what}"),
-        &format!("call:{name}"),
-    ))
-}
 
 /// A Word document's ids before it was saved, as a host's state keeps them:
 /// `(values, cursors, highest_drawing, drawings)` ([`EarlierIds`]).
@@ -195,7 +181,8 @@ impl PySession {
     /// limit as the model is sent it --, the files the call gives the application (bytes:
     /// `save_document`'s), and what only the application reads, as JSON text: `unported`,
     /// what of the answer is not yet given as the Python tool gives it (a list of reasons),
-    /// and `files`, each file's `name` and `format` in the order of the bytes. Never raises
+    /// `files`, each file's `name` and `format` in the order of the bytes, and `panic`, what a
+    /// call that panicked said (else `null`; its reply is an `internal` failure). Never raises
     /// for the call's own failure: that is the reply's `error`, with its way out.
     #[pyo3(signature = (name, arguments, options = None))]
     fn call(&self, py: Python<'_>, name: &str, arguments: String, options: Option<PyRef<'_, PyCallOptions>>) -> Reply {
@@ -203,14 +190,13 @@ impl PySession {
         let limit = options.as_ref().and_then(|o| o.limit);
         let session = &self.inner;
         let (text, files, app) = py.detach(|| {
-            let run = || session.call(name, Value::String(arguments), &context);
-            let mut result = catch_unwind(AssertUnwindSafe(run)).unwrap_or_else(|panic| panicked(name, &*panic));
+            let mut result = session.call(name, Value::String(arguments), &context);
             let files = std::mem::take(&mut result.app.files);
             let named: Vec<Value> = files
                 .iter()
                 .map(|f| serde_json::json!({"name": f.name, "format": f.format}))
                 .collect();
-            let app = serde_json::json!({"unported": result.unported(), "files": named});
+            let app = serde_json::json!({"unported": result.unported(), "files": named, "panic": result.app.panic});
             let text = match limit {
                 Some(limit) => result.to_text(Some(limit)),
                 None => compact(&Value::Object(result.to_json())),
@@ -224,7 +210,7 @@ impl PySession {
     /// Run the editing tool `name` as [`call`](Self::call) does, with `options` (a
     /// `CallOptions`: who calls, the page engine, the blobs, the values written by reference;
     /// no limit, no images): returns the envelope's JSON text, the application's JSON text
-    /// (`unported`), and what the call's edits made -- `(first, last, touched, validation,
+    /// (`unported`, `panic`), and what the call's edits made -- `(first, last, touched, validation,
     /// before, reflow)`: the number of the version its first edit made, the version its last
     /// made (held), what it touched as JSON text (`None` where it made more than one version),
     /// the last version's validation as [`validation`](Self::validation) gives it, the state
@@ -252,10 +238,8 @@ impl PySession {
         let context = context_of(options.as_deref());
         let session = &self.inner;
         let (text, app, made) = py.detach(|| {
-            let run = || session.edit(name, Value::String(arguments), &context);
-            let (result, made) =
-                catch_unwind(AssertUnwindSafe(run)).unwrap_or_else(|panic| (panicked(name, &*panic), None));
-            let app = serde_json::json!({"unported": result.unported()});
+            let (result, made) = session.edit(name, Value::String(arguments), &context);
+            let app = serde_json::json!({"unported": result.unported(), "panic": result.app.panic});
             (compact(&Value::Object(result.to_json())), compact(&app), made)
         });
         let made = made.map(|m| {
@@ -572,6 +556,53 @@ impl PySession {
             .map_err(|e| to_py(&e))
     }
 
+    /// The live view of the Word document `doc` (an application's API, not a tool): its
+    /// pages at its head version, laid out by `layout`'s page engine (a `CallLayout(pages=)`)
+    /// within `context`'s limit on laying out, and those changed since the view whose token is
+    /// `since` (every page without one). Returns a dict: `token` (this version's: `since` for
+    /// the next view, `page_svg`'s token), `pages` (each `(number, blocks, width, height)`:
+    /// the ids of the body's top-level blocks it draws, in document order, its size in
+    /// points), `changed` (1-based), `since` (as given), `stale` (`since` names no version
+    /// kept: every page is changed), `note`, `version` (the state number laid out).
+    ///
+    /// # Errors
+    /// `KeyError` for a document not open; `ValueError` for one that is not Word's or a
+    /// layout without pages; `ooxml_core.ViewRefused` for a version the engine does not lay
+    /// out yet; `TimeoutError` past the limit.
+    #[pyo3(signature = (doc, since = None, *, layout, context = None))]
+    fn view<'py>(
+        &self,
+        py: Python<'py>,
+        doc: &str,
+        since: Option<&str>,
+        layout: PyRef<'_, PyCallLayout>,
+        context: Option<PyRef<'_, PyCallContext>>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        crate::view::view(py, &self.inner, (doc, since), &layout, context.as_deref())
+    }
+
+    /// Page `page` (1-based) of the version `token` names (a view's) as SVG, its paragraph
+    /// groups carrying `data-docx-agent-id` (that version's ids), its pictures embedded:
+    /// `(svg, warnings)`. `text`: `"text"` (`"outlines"` is not drawn yet).
+    ///
+    /// # Errors
+    /// `ooxml_core.UnknownToken` for a token no view of the document gave or kept;
+    /// `IndexError` for a page the version does not have; `ValueError` for a `text` there is
+    /// none of; `ooxml_core.ViewRefused` for `"outlines"`; as [`view`](Self::view).
+    #[pyo3(signature = (doc, page, token, *, layout, text = "text", context = None))]
+    fn page_svg(
+        &self,
+        doc: &str,
+        page: usize,
+        token: &str,
+        layout: PyRef<'_, PyCallLayout>,
+        text: &str,
+        context: Option<PyRef<'_, PyCallContext>>,
+    ) -> PyResult<(String, Vec<String>)> {
+        let py = layout.py();
+        crate::view::page_svg(py, &self.inner, (doc, page, token), (&layout, text), context.as_deref())
+    }
+
     /// Close the document; its versions and history are let go.
     fn close(&self, py: Python<'_>, doc: &str) -> PyResult<()> {
         let id = doc_id(doc, &self.inner)?;
@@ -601,7 +632,8 @@ impl PySession {
         Ok(py.detach(|| compact(&Value::Array(session.registry().export(kind)))))
     }
 
-    /// The session's counters: calls, failed, cancelled, updates, open.
+    /// The session's counters: calls, failed, cancelled, updates, open, panics (the calls
+    /// that panicked, of every tool: [`panics`](Self::panics)).
     fn stats(&self, py: Python<'_>) -> Vec<(&'static str, u64)> {
         let s = py.detach(|| self.inner.stats());
         vec![
@@ -610,7 +642,14 @@ impl PySession {
             ("cancelled", s.cancelled),
             ("updates", s.updates),
             ("open", s.open),
+            ("panics", s.panics.values().sum()),
         ]
+    }
+
+    /// ``panics{tool}``: the calls of each tool that panicked, each answered as an
+    /// ``internal`` failure (its application part's ``panic`` says what it said).
+    fn panics(&self, py: Python<'_>) -> Vec<(String, u64)> {
+        py.detach(|| self.inner.stats().panics.into_iter().collect())
     }
 
     /// The document's store counters: commits, conflicts, exclusive runs.

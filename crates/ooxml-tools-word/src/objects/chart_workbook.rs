@@ -31,7 +31,7 @@ pub(crate) struct Unreadable(pub(crate) &'static str);
 ///
 /// # Errors
 /// [`Unreadable`] where the chart part's relationships cannot be read.
-fn workbook_part(
+pub(crate) fn workbook_part(
     package: &Package,
     chart_part: &str,
     root: &Element,

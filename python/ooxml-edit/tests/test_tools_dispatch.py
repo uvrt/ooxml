@@ -410,6 +410,27 @@ def test_calls_are_logged_with_a_digest_not_content(toolbox, session, caplog):
     assert secret not in json.dumps(record.to_json())
 
 
+def test_an_internal_failure_is_logged_at_error_once_with_its_trace(caplog):
+    @tool("toy_word_fail", "Test only: a call a library fails inside.",
+          {"doc": string("Document id, e.g. d1.")}, kind="docx")
+    def toy_word_fail(call, doc):
+        raise ToolError("internal", "the call failed inside the library; nothing changed",
+                        details={"trace": "panic:toy_word_fail:1: boom"})
+
+    with Toolbox([*tools_toys.TOOLS, toy_word_fail], formats=tools_toys.FORMATS) as box:
+        session = box.session(clock=CLOCK)
+        session.open(synthetic.outer_package(), "text.docx")
+        with caplog.at_level(logging.ERROR, logger="ooxml_edit.tools"):
+            result = box.dispatch(session, "toy_word_fail", {"doc": "d1"})
+            box.dispatch(session, "toy_word_insert", {"doc": "d1", "text": "x", "at": "end"})
+    assert result.error.code == "internal"
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(errors) == 1
+    line = errors[0].getMessage()
+    assert "tool=toy_word_fail" in line and "trace=panic:toy_word_fail:1: boom" in line
+    assert "nothing changed" in line
+
+
 def test_the_system_prompt_is_mechanics_and_the_app_appends(toolbox):
     prompt = toolbox.system_prompt(extra="House style: one accent colour.")
     assert prompt.startswith(SYSTEM.strip()[:40])

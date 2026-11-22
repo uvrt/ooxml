@@ -9,6 +9,7 @@
 //! Must not: put the row in the table, give it ids, or record it as a tracked change (the
 //! command does, in that order).
 
+use super::pending::{pending_column, Following};
 use super::shape::{grid_widths, own_rows, row_cells, Placed};
 use crate::names::W;
 use crate::review::xml::{find_path, insert_in_order, make};
@@ -219,10 +220,21 @@ pub(crate) struct Beside {
     pub(crate) below: bool,
     /// One cell per grid column beside a row with a cell over several.
     pub(crate) plain: bool,
+    /// A body row, never one that repeats as a header (docx-agent's `set_row(header=False)`
+    /// after `insert_row`).
+    pub(crate) body: bool,
 }
 
-/// The new row (not yet in the table) and what it says of its shape.
-pub(crate) fn row_like(work: &mut Work, table: Id, beside: &Beside, orders: &Orders) -> (Id, Option<String>) {
+/// The new row (not yet in the table), what it says of its shape, whether a header mark
+/// its likeness had was left out (a body row, [`Beside::body`]), and its cells in columns
+/// whose tracked deletion or insertion is pending, for them to follow it
+/// ([`super::pending::follow_pending_columns`]).
+pub(crate) fn row_like(
+    work: &mut Work,
+    table: Id,
+    beside: &Beside,
+    orders: &Orders,
+) -> (Id, Option<String>, bool, Vec<Following>) {
     let reference = beside.reference;
     let mut shape = reference;
     let mut note = None;
@@ -245,29 +257,14 @@ pub(crate) fn row_like(work: &mut Work, table: Id, beside: &Beside, orders: &Ord
         }
     }
     let row = make(work, "tr", &[]);
-    if let Some(extra) = work.find(shape, W, "tblPrEx") {
-        let copy = work.deep_copy(extra);
-        work.append(row, copy);
-    }
-    if let Some(found) = work.find(shape, W, "trPr") {
-        let properties = work.deep_copy(found);
-        let header_kept = shape == reference || find_path(work, reference, &["trPr", "tblHeader"]).is_some();
-        for child in work.children(properties).to_vec() {
-            if work.is_any(child, W, &["ins", "del", "trPrChange"]) || (work.is(child, W, "tblHeader") && !header_kept)
-            {
-                work.remove(child);
-            }
-        }
-        if !work.children(properties).is_empty() {
-            work.append(row, properties);
-        }
-    }
+    let header_dropped = row_properties(work, row, shape, beside);
     let after = if beside.below {
         beside.neighbour
     } else {
         Some(reference)
     };
     let after_cells: Vec<Placed> = after.map(|a| row_cells(work, a)).unwrap_or_default();
+    let mut pending = Vec::new();
     for placed in row_cells(work, shape) {
         let cell = make(work, "tc", &[]);
         let own = work.find(placed.cell, W, "tcPr");
@@ -290,8 +287,45 @@ pub(crate) fn row_like(work: &mut Work, table: Id, beside: &Beside, orders: &Ord
         let paragraph = new_row_paragraph(work, placed.cell, orders);
         work.append(cell, paragraph);
         work.append(row, cell);
+        let records = pending_column(work, placed.cell);
+        if !records.is_empty() {
+            pending.push(Following {
+                cell,
+                paragraph,
+                records,
+            });
+        }
     }
-    (row, note)
+    (row, note, header_dropped, pending)
+}
+
+/// The new `row`'s properties, those of the row it is shaped like (`shape`) without their
+/// tracked changes, a header mark kept only where the row beside is a header too and the
+/// new row may be one ([`Beside::body`]); whether a header mark was left out of a body row.
+fn row_properties(work: &mut Work, row: Id, shape: Id, beside: &Beside) -> bool {
+    let reference = beside.reference;
+    let mut header_dropped = false;
+    if let Some(extra) = work.find(shape, W, "tblPrEx") {
+        let copy = work.deep_copy(extra);
+        work.append(row, copy);
+    }
+    if let Some(found) = work.find(shape, W, "trPr") {
+        let properties = work.deep_copy(found);
+        let like_header = shape == reference || find_path(work, reference, &["trPr", "tblHeader"]).is_some();
+        let header_kept = !beside.body && like_header;
+        for child in work.children(properties).to_vec() {
+            let header = work.is(child, W, "tblHeader");
+            if work.is_any(child, W, &["ins", "del", "trPrChange"]) || (header && !header_kept) {
+                work.remove(child);
+                // (a header made a body row: one the likeness repeated as a header)
+                header_dropped |= header && beside.body && like_header;
+            }
+        }
+        if !work.children(properties).is_empty() {
+            work.append(row, properties);
+        }
+    }
+    header_dropped
 }
 
 /// The merges down that `rows[at]` sits right beside without joining (`merges_beside`):

@@ -21,11 +21,12 @@ import pytest
 import oracle
 from docx_agent import Document
 from docx_agent.edit.authoring import TemplateOpened
+from conftest import FIXTURE_DIR  # noqa: E402
 
 pytestmark = pytest.mark.oracle
 
 ROOT = Path(__file__).resolve().parents[1]
-TRIAL = ROOT / "tests" / "fixtures" / "generated" / "trial"
+TRIAL = FIXTURE_DIR / "generated" / "trial"
 
 
 @pytest.fixture(scope="module")

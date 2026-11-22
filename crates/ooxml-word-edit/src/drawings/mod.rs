@@ -1,7 +1,9 @@
 //! Owns: drawings edited as docx-agent's `edit/drawings.py` and `edit/pictures.py` edit
 //! them (as Word 16.106 writes each): a drawing floated ([`FloatDrawing`]), put in the line
 //! again ([`InlineDrawing`]), its place, wrapping, order, size and alternative text set
-//! ([`SetDrawing`]), a text box or a shape inserted ([`InsertShape`]) -- and what they share:
+//! ([`SetDrawing`]), a text box or a shape inserted ([`InsertShape`]), a chart inserted
+//! ([`InsertChart`]), the parts behind a
+//! chart edited ([`EditGraphic`]) -- and what they share:
 //! the drawing a `d:` id names, Word's measured constants, the document's z-order heights,
 //! VML lengths.
 //!
@@ -11,12 +13,16 @@
 //! Must not: write but through the sink, or read a part an edit does not need but for the
 //! z-order heights every story holds.
 
+mod chart;
 mod frame;
+mod graphic;
 mod picture;
 mod settings;
 mod shape;
 
+pub use chart::{ChartInserted, ChartParts, InsertChart};
 pub use frame::{FloatDrawing, InlineDrawing, SetDrawing};
+pub use graphic::{EditGraphic, GraphicEdit, GraphicEdited, GraphicParts, PartWrite, RecordChange};
 pub use picture::{image_format, picture_size, written_size, InsertPicture};
 pub use settings::{DrawingValues, ZOrder};
 pub use shape::InsertShape;

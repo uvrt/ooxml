@@ -44,6 +44,7 @@ use ooxml_word_model::docx::Docx;
 use ooxml_xml::Element;
 use std::cell::OnceCell;
 use std::collections::{BTreeSet, HashMap};
+pub(crate) use tree::block_keys_top;
 
 pub use ranges::{room, BeyondFacts, Break, Extent, RangeLayout};
 pub use scope::{Range, Scope, ScopeError};

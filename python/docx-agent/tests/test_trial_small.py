@@ -5,14 +5,14 @@ as an ISO string."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from pathlib import Path
 
 import pytest
 
 from docx_agent import Document, EditError
 from docx_agent.validate import check
+from conftest import FIXTURE_DIR  # noqa: E402
 
-TEMPLATES = Path(__file__).parent / "fixtures" / "generated" / "templates"
+TEMPLATES = FIXTURE_DIR / "generated" / "templates"
 DATE = datetime(2026, 10, 5, 9, 0, tzinfo=timezone.utc)
 
 

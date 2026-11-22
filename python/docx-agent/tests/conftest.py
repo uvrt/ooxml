@@ -1,4 +1,5 @@
 import os
+import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,7 +19,14 @@ os.environ.setdefault("OOXML_EDIT_VERIFY_SERIALIZED", "1")
 # docx_agent.blocks.drafts_on); test_block_edits.py tests the default.
 os.environ.setdefault("DOCX_AGENT_DRAFTS", "1")
 
-FIXTURE_DIR = Path(__file__).parent / "fixtures"
+#: The repository's Word fixtures: the gates' documents too, so they live with the oracle
+#: (crates/ooxml-oracle/fixtures), apart from docx-agent's tests.
+ORACLE = Path(__file__).resolve().parents[3] / "crates" / "ooxml-oracle"
+FIXTURE_DIR = ORACLE / "fixtures"
+# The made-up documents some tests share with the oracle's fact cases (facts_documents.py,
+# shelf_tables.py): last on the path, so no harness module hides one of these tests' own.
+if str(ORACLE / "python") not in sys.path:
+    sys.path.append(str(ORACLE / "python"))
 #: E6's new document, written where the corpus is read from (``new/document``): every gate
 #: and every phase's edit set holds for a document docx-agent made, as for one it opened.
 NEW_DOCUMENT = Path(tempfile.gettempdir()) / "docx-agent-tests" / "new" / "document.docx"

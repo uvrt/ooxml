@@ -23,7 +23,11 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / "python" / "docx-agent" / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+# The reference's packages: installed from the frozen commit, or the checkout's (reference_packages.py).
+from reference_packages import use_sources  # noqa: E402
+
+use_sources("docx-agent")
 
 #: Markers, words, white space and punctuation of several scripts.
 ALPHABET = ["*", "**", "***", "_", "\\", "[", "]", "{", "}", "]{", "{style=", "\"", "'", " ", "  ", "a", "word",

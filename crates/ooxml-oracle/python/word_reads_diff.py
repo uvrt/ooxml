@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import collections
 import functools
 import json
 import subprocess
@@ -41,10 +42,10 @@ import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-for package in ("docx-agent", "docx2svg", "ooxml-edit", "ooxml-common"):
-    source = ROOT / "python" / package / "src"
-    if str(source) not in sys.path:
-        sys.path.insert(0, str(source))
+# The reference's packages: installed from the frozen commit, or the checkout's (reference_packages.py).
+from reference_packages import use_sources  # noqa: E402
+
+use_sources("docx-agent", "docx2svg", "ooxml-edit", "ooxml-common")
 
 # The reference is docx-agent in Python: the Rust core kept out of this process and its workers
 # before docx-agent is imported (reference_guard.py).
@@ -116,12 +117,38 @@ def differences(a, b, path: str = "", out: list | None = None, limit: int = 200)
     return out
 
 
+#: What the Rust side's lines said beyond their results, over this process's run (one harness
+#: run per process): the cases that panicked (``{"panic": ...}``: the oracle's own catch, or
+#: the session's ``internal`` reply), and the cases left to the host, by form (their first
+#: ``unported`` reason).  :func:`report` adds both to the totals: tools/gates.py fails on any
+#: panic and reports the forms.
+RUST_TALLY: dict = {"panics": 0, "unported_forms": collections.Counter()}
+
+
+def _tally(line: dict) -> None:
+    for key, value in line.items():
+        if key in ("file", "case") or not isinstance(value, dict):
+            continue
+        if "panic" in value:
+            RUST_TALLY["panics"] += 1
+            print(f"{line.get('file')} [{line.get('case')}]: rust panicked: {str(value['panic'])[:300]}")
+        reasons = value.get("unported") or []
+        error = value.get("error")
+        if isinstance(error, dict) and error.get("code") == "unported":
+            reasons = [error.get("message")]
+        if reasons:
+            RUST_TALLY["unported_forms"][str(reasons[0])] += 1
+
+
 def run_rust(binary: str, manifest: list[dict]) -> dict[str, dict]:
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
         json.dump(manifest, handle)
     done = subprocess.run([binary, handle.name], capture_output=True, text=True, check=True)
     Path(handle.name).unlink()
-    return {(r["file"], r.get("case")): r for r in map(json.loads, done.stdout.splitlines())}
+    lines = [json.loads(x) for x in done.stdout.splitlines()]
+    for line in lines:
+        _tally(line)
+    return {(r["file"], r.get("case")): r for r in lines}
 
 
 def files_of(args) -> list[Path]:
@@ -171,7 +198,8 @@ def report(expected: dict, rust: dict, ignore: tuple = (), results: str | None =
     ``results``: also a JSON-lines file of them for tools/gates.py -- one line per case with
     differences (its file, case key, input from ``inputs``, differences and each side's error,
     :func:`refusal`), then the totals
-    with ``counts`` (e.g. the cases left to the host)."""
+    with ``counts`` (e.g. the cases left to the host), the cases the Rust side panicked in and
+    its unported forms (:data:`RUST_TALLY`)."""
     _core_check()      # a reference that loaded the Rust core compared Rust with Rust
     failed = 0
     lines = []
@@ -191,8 +219,12 @@ def report(expected: dict, rust: dict, ignore: tuple = (), results: str | None =
             lines.append({"file": key[0], "case": key[1], "input": (inputs or {}).get(key), "differences": found,
                           **({"errors": errors} if errors else {})})
     print(f"{len(expected)} cases, {failed} with differences")
+    panics, forms = RUST_TALLY["panics"], dict(RUST_TALLY["unported_forms"].most_common())
+    if panics:
+        print(f"{panics} cases where the Rust side panicked")
     if results:
-        totals = {"cases": len(expected), "failed": failed, **(counts or {})}
+        totals = {"cases": len(expected), "failed": failed, "panics": panics, "unported_forms": forms,
+                  **(counts or {})}
         Path(results).write_text("".join(json.dumps(x) + "\n" for x in [*lines, {"totals": totals}]))
     return 1 if failed else 0
 

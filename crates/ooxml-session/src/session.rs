@@ -15,7 +15,9 @@ use ooxml_store::{StoreConfig, StoreStats};
 use ooxml_tools_word::{Placer, Version};
 use ooxml_word_edit::EarlierIds;
 use ooxml_word_model::docx::Versions;
+use std::collections::hash_map::RandomState;
 use std::collections::BTreeMap;
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 
@@ -106,7 +108,7 @@ impl Opened {
 }
 
 /// A copy of a session's counters (section 10).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SessionStats {
     /// Tool calls dispatched.
     pub calls: u64,
@@ -118,6 +120,9 @@ pub struct SessionStats {
     pub updates: u64,
     /// Documents open now.
     pub open: u64,
+    /// `panics{tool}`: the calls of each tool that panicked, each answered as an `internal`
+    /// failure ([`crate::panics`]).
+    pub panics: BTreeMap<String, u64>,
 }
 
 #[derive(Default)]
@@ -128,6 +133,8 @@ pub(crate) struct Counts {
     pub(crate) updates: AtomicU64,
     /// `bridge_calls{tool}` (section 13): unported tools' calls committed through the bridge.
     bridged: std::sync::Mutex<BTreeMap<String, u64>>,
+    /// `panics{tool}`.
+    pub(crate) panics: std::sync::Mutex<BTreeMap<String, u64>>,
 }
 
 /// Documents by id, their versions, and the tools that read and change them.
@@ -138,6 +145,9 @@ pub struct Session {
     documents: RwLock<BTreeMap<DocId, Arc<Document>>>,
     last_id: AtomicU64,
     pub(crate) counts: Counts,
+    /// What tells this session's live-view tokens from another's (one made at the same
+    /// moment, one before a restart): sixteen hex digits, its own.
+    pub(crate) nonce: String,
 }
 
 impl Session {
@@ -152,11 +162,12 @@ impl Session {
     pub fn with_registry(config: SessionConfig, context: Context, registry: Registry) -> Self {
         Self {
             config,
-            context,
             registry,
             documents: RwLock::new(BTreeMap::new()),
             last_id: AtomicU64::new(0),
             counts: Counts::default(),
+            nonce: nonce(&context),
+            context,
         }
     }
 
@@ -411,6 +422,12 @@ impl Session {
             cancelled: self.counts.cancelled.load(Ordering::Relaxed),
             updates: self.counts.updates.load(Ordering::Relaxed),
             open: self.read_table().len() as u64,
+            panics: self
+                .counts
+                .panics
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone(),
         }
     }
 
@@ -436,4 +453,16 @@ impl Session {
     fn write_table(&self) -> std::sync::RwLockWriteGuard<'_, BTreeMap<DocId, Arc<Document>>> {
         self.documents.write().unwrap_or_else(PoisonError::into_inner)
     }
+}
+
+/// A session's nonce: the moment `context`'s clock says it is made and this session's own
+/// random keys ([`RandomState`], drawn afresh for each session), hashed, as sixteen hex
+/// digits -- two sessions made at the same moment, or in two processes, tell their tokens
+/// apart.
+fn nonce(context: &Context) -> String {
+    let now = context.clock.now();
+    let mut hasher = RandomState::new().build_hasher();
+    now.seconds.hash(&mut hasher);
+    now.nanos.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
 }

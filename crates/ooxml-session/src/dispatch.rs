@@ -18,6 +18,7 @@ use ooxml_tools::{Accepted, Outcome, Refusal, ToolError, ToolResult, ToolSpec, W
 use ooxml_tools_word::{Made, Placer};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -79,14 +80,19 @@ impl Session {
     /// Run the tool `name` with `arguments` (a JSON object, or its text) under `context`:
     /// the arguments taken as meant and validated, the document found, the handler run on
     /// the version `context` names for it, else on its head snapshot. Never panics and
-    /// never fails: what went wrong is the result's error, with its way out.
+    /// never fails: what went wrong is the result's error, with its way out -- a panic in
+    /// the tool too, as an `internal` failure (counted in [`crate::SessionStats::panics`]).
     pub fn call(&self, name: &str, arguments: Value, context: &CallContext) -> ToolResult<Value> {
         if name == READ_BATCH {
-            return self.call_batch(arguments, context);
+            let retry = arguments.clone();
+            return catch_unwind(AssertUnwindSafe(|| self.call_batch(arguments, context)))
+                .unwrap_or_else(|panic| self.panicked(name, retry, &*panic, false));
         }
         if name == UNDO {
             self.counts.calls.fetch_add(1, Ordering::Relaxed);
-            let result = self.call_undo(arguments, context);
+            let retry = arguments.clone();
+            let result = catch_unwind(AssertUnwindSafe(|| self.call_undo(arguments, context)))
+                .unwrap_or_else(|panic| self.panicked(name, retry, &*panic, false));
             if result.is_error() {
                 self.counts.failed.fetch_add(1, Ordering::Relaxed);
             }
@@ -166,11 +172,19 @@ impl Session {
             made: Mutex::new(None),
             layout_limit: layout_cancel.as_ref().map(LayoutCancel::limit),
         };
-        let mut result = if within.is_empty() {
-            self.dispatch(name, arguments, context, &cancel, &mut state)
-        } else {
-            self.dispatch_within(name, arguments, context, &cancel, &mut state, within)
-        };
+        // a panic in the handler is the call's internal failure (crate::panics), never the host's
+        let retry = arguments.clone();
+        let run = AssertUnwindSafe(|| {
+            if within.is_empty() {
+                self.dispatch(name, arguments, context, &cancel, &mut state)
+            } else {
+                self.dispatch_within(name, arguments, context, &cancel, &mut state, within)
+            }
+        });
+        let mut result = catch_unwind(run).unwrap_or_else(|panic| {
+            let changed = state.made.get_mut().unwrap_or_else(PoisonError::into_inner).is_some();
+            self.panicked(name, retry, &*panic, changed)
+        });
         if let ooxml_tools::Outcome::Failed(error) = &result.outcome {
             self.counts.failed.fetch_add(1, Ordering::Relaxed);
             if error.code().as_str() == "timeout" {
@@ -285,6 +299,7 @@ impl Session {
             written: &context.written,
             others: &state.others,
             tables: context.tables.as_deref(),
+            sources: &context.sources,
             counts: context.counts,
             limits: context.limits,
         };

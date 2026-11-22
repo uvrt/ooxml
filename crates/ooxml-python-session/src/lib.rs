@@ -3,10 +3,12 @@
 //!
 //! Owns: the PyO3 handles -- [`PySession`] (`ooxml_core.Session`), [`PyCancelToken`]
 //! (`ooxml_core.CancelToken`), [`PyLimits`] (`ooxml_core.Limits`) and [`PyCallContext`] (`ooxml_core.CallContext`), [`PyCallOptions`] (`ooxml_core.CallOptions`, what one call runs with) [`PyCallDocuments`] (`ooxml_core.CallDocuments`, the open documents it names), [`PyCallLayout`] (`ooxml_core.CallLayout`, the layout it reads) and [`PyCallWriting`] (`ooxml_core.CallWriting`, how it writes) -- and `ooxml_core.tool_specs(kind)` and `tool_hosting(kind)` (`tools`);
-//! the Word layout's handles (`layout`: `WordFonts`, `WordPages`, `LaidPages`, lane L4); the conversion of their
+//! the Word layout's handles (`layout`: `WordFonts`, `WordPages`, `LaidPages`, lane L4); the live view's
+//! (`view`: `Session.view`, `Session.page_svg`, `UnknownToken`, `ViewRefused`); the conversion of their
 //! arguments and results (bytes copied in while the interpreter lock is held, then every
 //! Rust call made with it released, `py.detach`); the mapping of session errors to Python
-//! exceptions; a panic in a call turned into an `internal` tool error, never an abort; and
+//! exceptions (a panic in a call is the session's own `internal` reply, ooxml-session's
+//! `panics`; its message the application part's `panic`); and
 //! the adapters of the ports a session is given (`adapters`: the system clock, no fonts,
 //! no part store, an unlimited cache budget).
 //!
@@ -32,6 +34,7 @@ mod session;
 mod summary;
 mod tools;
 mod version;
+mod view;
 
 use pyo3::prelude::*;
 
@@ -46,7 +49,8 @@ pub use version::PyVersion;
 /// Add the session API to the module `m`: `Session`, `CancelToken`, `Limits`, `CallContext`, `CallOptions`, `CallDocuments`, `HostIds`,
 /// `CallWriting`, `CallLayout`, `Version` and
 /// `tool_specs`, `tool_hosting`, `new_document`; and the Word layout's handles: `WordFonts`, `WordPages`, `LaidPages`,
-/// `LayoutFallback`, `LayoutSummary`, `MemoryBudget` and `BudgetAccount`.
+/// `LayoutFallback`, `LayoutSummary`, `MemoryBudget` and `BudgetAccount`; the live view's `UnknownToken` and
+/// `ViewRefused`.
 ///
 /// # Errors
 /// Python's, adding a name.
@@ -74,5 +78,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<summary::PyLayoutSummary>()?;
     m.add_class::<PyPageRaster>()?;
     m.add("LayoutFallback", m.py().get_type::<LayoutFallback>())?;
+    m.add("UnknownToken", m.py().get_type::<view::UnknownToken>())?;
+    m.add("ViewRefused", m.py().get_type::<view::ViewRefused>())?;
     Ok(())
 }

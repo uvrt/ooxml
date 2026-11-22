@@ -41,7 +41,7 @@ import pytest
 pytest.importorskip("ooxml_edit.tools.shared", reason="needs ooxml-edit 0.4 (the shared tools)")
 
 import goldens_replay  # noqa: E402
-from conftest import OFFICE_FACES_ABSENT  # noqa: E402
+from conftest import FIXTURE_DIR, OFFICE_FACES_ABSENT
 
 HERE = Path(__file__).parent
 GOLDENS = HERE / "goldens"
@@ -50,7 +50,7 @@ TRANSCRIPTS = sorted((GOLDENS / "transcripts").glob("*.json"))
 
 def inputs_of(transcript: dict) -> Path:
     if "fixture" in transcript:
-        return (HERE / "fixtures" / transcript["fixture"]).parent
+        return (FIXTURE_DIR / transcript["fixture"]).parent
     return GOLDENS / "trial" / "_inputs" / transcript["task"] / "input"
 
 
