@@ -8,7 +8,11 @@
 //! its date system ([`Workbook`]); a sheet's cells read by position ([`Worksheet`],
 //! [`Value`]).
 //!
-//! Must not: write a workbook, evaluate a formula, or hold state beyond what one opened
+//! Beside the reading, [`write`]: a workbook written cell by cell ([`WorkbookWriter`]), as
+//! ooxml-edit writes the cells a chart edit changes, and a new one-sheet workbook
+//! ([`NewBook`]), as ooxml-edit writes the one behind a new chart.
+//!
+//! Must not: evaluate a formula, or hold state beyond what one opened
 //! workbook memoises: every value is `Send + Sync`, and nothing here depends on an
 //! interpreter lock.
 #![forbid(unsafe_code)]
@@ -18,6 +22,7 @@ mod error;
 mod items;
 mod sheet;
 mod workbook;
+pub mod write;
 
 pub use address::{
     column_index, column_letters, parse_formula, AddressError, Area, Cell, SheetRange, MAX_COLUMN, MAX_ROW,
@@ -25,6 +30,7 @@ pub use address::{
 pub use error::SheetsError;
 pub use sheet::{Value, Worksheet};
 pub use workbook::Workbook;
+pub use write::{Axis, NewBook, NewCell, NewValue, Shift, WorkbookWriter, Write};
 
 /// SpreadsheetML's main namespace (transitional), the one ooxml-edit reads.
 pub const SML_NS: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";

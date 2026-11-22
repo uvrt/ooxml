@@ -38,6 +38,7 @@ mod memory;
 mod model;
 mod names;
 mod owners;
+mod panics;
 mod reading_edit;
 mod records;
 mod reflowed;

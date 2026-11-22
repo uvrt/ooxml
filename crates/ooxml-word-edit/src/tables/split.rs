@@ -13,6 +13,7 @@ use super::columns::skip;
 use super::merge::extents;
 use super::new_column::stamp_new;
 use super::new_row::{clean_cell_properties, empty_paragraph_like, vmerge};
+use super::pending::column_deleted;
 use super::rows::{merges_as_cell_merges, put, under_policy, Held};
 use super::shape::{grid_widths, own_rows, row_cells, set_grid};
 use super::tracker::TableTracker;
@@ -541,7 +542,7 @@ pub(super) fn split_cell(
     let written = under_policy(sink, |stamp| {
         if let (Some(stamp), Some(tracker)) = (stamp, tracker.as_ref()) {
             let made = (new_rows.as_slice(), new_paragraphs.as_slice());
-            track_split(&mut held.work, made, tracker, columns == 1, stamp, orders);
+            track_split(&mut held.work, made, (tracker, top_row), columns == 1, stamp, orders);
         }
         Ok(())
     })?;
@@ -557,13 +558,48 @@ pub(super) fn split_cell(
     })
 }
 
+/// A new row's cell under a cell of the split's first row that a pending column deletion
+/// removes, deleted with it (`w:cellDel`, its marks deleted; round 55, R115) -- otherwise
+/// Word's Accept All keeps it, the row a cell too long (measured, probe-C).
+fn follow_deleted_columns(
+    work: &mut Work,
+    top_row: Option<Id>,
+    new_rows: &[Id],
+    stamp: &mut crate::policy::Stamp,
+    orders: &Orders,
+) {
+    let gone_at: Vec<usize> = top_row
+        .map(|r| row_cells(work, r))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|p| column_deleted(work, p.cell))
+        .map(|p| p.start)
+        .collect();
+    if gone_at.is_empty() {
+        return;
+    }
+    for new_row in new_rows {
+        for placed in row_cells(work, *new_row) {
+            if !gone_at.contains(&placed.start) {
+                continue;
+            }
+            let properties = properties_of(work, placed.cell);
+            let record = stamp.make(work, "cellDel");
+            insert_in_order(work, properties, record, orders);
+            for paragraph in work.iter(placed.cell, W, &["p"]) {
+                mark(work, paragraph, "del", stamp, orders);
+            }
+        }
+    }
+}
+
 /// A split recorded as Word tracks it: the new rows and paragraph marks inserted, the other
 /// cells' old properties (and, unless a column was divided, the old grid) recorded, a
 /// divided merge as `w:cellMerge` where no row was added.
 fn track_split(
     work: &mut Work,
     (new_rows, new_paragraphs): (&[Id], &[Id]),
-    tracker: &TableTracker,
+    (tracker, top_row): (&TableTracker, Option<Id>),
     grid: bool,
     stamp: &mut crate::policy::Stamp,
     orders: &Orders,
@@ -580,6 +616,7 @@ fn track_split(
         let record = stamp.make(work, "ins");
         insert_in_order(work, properties, record, orders);
     }
+    follow_deleted_columns(work, top_row, new_rows, stamp, orders);
     for paragraph in new_paragraphs {
         if mark_record(work, *paragraph).is_none() {
             mark(work, *paragraph, "ins", stamp, orders);

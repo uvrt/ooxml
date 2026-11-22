@@ -112,7 +112,7 @@ from .datasets import (DATASET_PREFIX, Dataset, DatasetEntry, check_dataset_id,
 from .numbers import NumberRules, rules_of
 from .blocks import BlockConflict
 from .limits import LimitError, Limits
-from .logs import CallRecord, digest, log_call, logger, shape
+from .logs import CallRecord, digest, log_call, log_internal, logger, shape
 from .registry import (ACCEPT, ANY_ROLE, CORE, EDIT, RESOLVE, ROLES, Tool, ToolGroup,
                        merge_tools, role_set)
 from .results import (Image, Result, ToolError, anthropic_image_tokens,
@@ -3558,6 +3558,8 @@ class Toolbox:
             entry.log.append(record)
         if logger.isEnabledFor(logging.INFO):
             log_call(record)
+        if result.error is not None and result.error.code == "internal":
+            log_internal(record, result.error.message, result.error.details.get("trace"))
 
 
 #: The codes of the libraries' typed refusals (:mod:`ooxml_edit.errors`), in every format:

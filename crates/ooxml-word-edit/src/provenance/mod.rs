@@ -16,7 +16,8 @@
 //! review itself before this).
 //!
 //! Values written by reference and labels are kept on their paragraphs by [`KeepText`]
-//! (the tool that wrote them says where), the item made where there is none.
+//! (the tool that wrote them says where), the item made where there is none; a chart's
+//! record is replaced or dropped by the edit that changed its data ([`store_record`]).
 //!
 //! Must not: decide where a value went, or run the follow-up but once per command, after
 //! it ([`Followed`]).
@@ -60,6 +61,34 @@ impl<C: Command<WordDoc, Error = EditError>> Command<WordDoc> for Followed<'_, C
             follow(&mut EditSink::new(tx, RevisionPolicy::Untracked))?;
         }
         Ok(out)
+    }
+}
+
+/// The entry of `kind` keyed `key` holding `text` now, made (with the item, where the
+/// document has none) or replaced where it stands; with `None`, dropped (docx-agent's
+/// `store_provenance`). The edit's follow-up then prunes and releases as after every edit.
+///
+/// # Errors
+/// When the content types, the main part's relationships or the item are not XML.
+pub(crate) fn store_record(sink: &mut EditSink<'_, '_>, kind: &str, key: &str, text: Option<&str>) -> Result<()> {
+    let docx = sink.docx()?;
+    let mut draft = Draft::open(sink, &docx)?;
+    match (text, draft.as_mut()) {
+        (None, None) => return Ok(()),
+        (None, Some(found)) => found.drop_entry(kind, key),
+        (Some(text), Some(found)) => found.store(kind, key, text),
+        (Some(text), None) => {
+            made::make_item(sink, &docx, key)?;
+            let made = sink.docx()?;
+            draft = Draft::open(sink, &made)?;
+            if let Some(found) = draft.as_mut() {
+                found.store(kind, key, text);
+            }
+        }
+    }
+    match draft {
+        Some(found) => found.finish(sink, &docx),
+        None => Ok(()),
     }
 }
 
