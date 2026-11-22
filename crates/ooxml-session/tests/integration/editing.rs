@@ -28,8 +28,9 @@ impl Clock for Fixed {
     }
 }
 
-pub(crate) fn session() -> Session {
-    let context = Context {
+/// The ports of the made-up documents' sessions: no fonts, no stored parts, a fixed clock.
+pub(crate) fn context() -> Context {
+    Context {
         fonts: Arc::new(NoFonts),
         parts: Arc::new(NoParts),
         clock: Arc::new(Fixed),
@@ -37,8 +38,11 @@ pub(crate) fn session() -> Session {
         cancel: Arc::new(Never),
         limits: Limits::default(),
         locale: Locale::default(),
-    };
-    Session::new(SessionConfig::default(), context)
+    }
+}
+
+pub(crate) fn session() -> Session {
+    Session::new(SessionConfig::default(), context())
 }
 
 const NS: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml""#;

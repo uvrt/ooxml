@@ -68,7 +68,8 @@ impl CacheBudget for Unlimited {
     }
 }
 
-/// Run over a manifest: one JSON line per case on stdout.
+/// Run over a manifest: one JSON line per case on stdout (`{"panic": ...}` for a case that
+/// panicked).
 ///
 /// # Errors
 /// A message when the manifest or a document cannot be read.
@@ -84,7 +85,8 @@ pub fn run(args: &[String]) -> Result<(), String> {
         let bytes: Arc<[u8]> = Arc::from(std::fs::read(file).map_err(|e| format!("{file}: {e}"))?);
         let cases = item.get("cases").and_then(Value::as_array).cloned().unwrap_or_default();
         for (k, case) in cases.iter().enumerate() {
-            let out = edit(&bytes, case).unwrap_or_else(|e| json!({"error": e}));
+            // a case that panics is reported as one (crate::panics), and the run goes on
+            let out = crate::panics::caught(|| edit(&bytes, case).unwrap_or_else(|e| json!({"error": e})));
             println!("{}", json!({"file": file, "case": k, "rust": out}));
         }
     }
