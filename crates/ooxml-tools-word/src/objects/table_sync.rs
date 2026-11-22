@@ -207,7 +207,7 @@ fn changes(
     } else {
         Vec::new()
     };
-    removed.sort_unstable_by_key(|r| std::cmp::Reverse(r.1));
+    removed.sort_unstable_by_key(|a| std::cmp::Reverse(a.1));
     let deleted = Deleted::of(editing, view, &removed, height + compared.added.len());
     let accepted_columns = accepted.table.active().then(|| accepted.table.kept.clone());
     let kept = record(
