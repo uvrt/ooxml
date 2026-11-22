@@ -295,14 +295,14 @@ def _named(call: Any) -> Any:
 
 def session_layout(call: Any) -> Any:
     """The page engine the session lays the document ``call`` reads out with (its own,
-    :func:`.engines.session_pages`, set to the toolbox's fonts and locale), or ``None``: a
+    :func:`.engines.session_pages`, set to the document's fonts and locale), or ``None``: a
     document the session does not own, or options the Rust layout does not take."""
     owned = _owned(call.entry)
     if owned is None:
         return None
     from .engines import session_pages
 
-    return session_pages(owned.handle, call.session)[0]
+    return session_pages(owned.handle, owned.held)[0]
 
 
 def _owned(entry: Any) -> Any:
@@ -524,7 +524,7 @@ def serve_check(call: Any, arguments: dict[str, Any]) -> Result | None:
     if why is None and _laid_check(arguments):
         from .engines import session_pages
 
-        layout, _ = session_pages(owned.handle, call.session)     # none: the session says so (unported)
+        layout, _ = session_pages(owned.handle, owned.held)     # none: the session says so (unported)
     served = serve(call, "check", arguments, lambda: None, why_not=why, layout=layout,
                    others=("copies[].reference.doc",))
     if served is not None and layout is not None:
@@ -628,13 +628,12 @@ def serve_render(call: Any, arguments: dict[str, Any]) -> Result | None:
     elif call.in_batch:
         why = "in a batch"
     else:
-        from ooxml_common.fonts.office import user_font_dirs
-
+        from ..layout import font_dirs_of
         from .engines import session_pages
 
         if "render" in hosting.laid:
-            layout, _ = session_pages(owned.handle, call.session)     # none: the session says so (unported)
-        raster = host_raster([str(path) for path in user_font_dirs(call.session.font_dirs)])
+            layout, _ = session_pages(owned.handle, owned.held)     # none: the session says so (unported)
+        raster = host_raster(font_dirs_of(owned.held))
     files: list[tuple[str, str, bytes]] = []
     served = serve(call, "render", arguments, lambda: None, why_not=why, layout=layout, raster=raster,
                    images=image_budgets(call) if why is None else None, files=files)
