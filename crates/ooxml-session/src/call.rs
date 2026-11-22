@@ -142,7 +142,8 @@ impl Call<'_> {
         .with_rows_written(Some(&word.rows_written))
         .with_limits(self.limits)
         .with_locale(self.locale)
-        .with_last_check(Some(&*word.last_check));
+        .with_last_check(Some(&*word.last_check))
+        .with_in_group(word.editor.store().group_mark().is_some());
         let mut result = run(&editing);
         let made = editor.made();
         // a call is one history step and one state number: a handler with several commands

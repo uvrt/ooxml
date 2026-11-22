@@ -114,9 +114,27 @@ pub struct FormatTable<'l> {
     pub policy: RevisionPolicy,
     /// The layout of the document's versions: a body table kept together
     /// ([`TableFormat::Keeps`], `keep_together` on) is laid out after the edits, for the
-    /// pages it is drawn on ([`TableFormatted::pages`]); without one, that is
-    /// [`EditError::Unsupported`].
+    /// pages it is drawn on ([`TableFormatted::pages`]); without one, those pages are
+    /// [`Unknown`].
     pub layout: Option<EditLayout<'l>>,
+    /// Whether a table kept together is measured later, not here: inside a host's batch
+    /// (a step group), whose host lays the document out once after the last op and says
+    /// what it finds then ([`TableFormatted::pages`] is `None`).
+    pub pages_later: bool,
+}
+
+impl FormatTable<'_> {
+    /// `formats` on `table`, with no layout and its keeps measured here.
+    #[must_use]
+    pub fn new(table: String, formats: Vec<TableFormat>, policy: RevisionPolicy) -> Self {
+        Self {
+            table,
+            formats,
+            policy,
+            layout: None,
+            pages_later: false,
+        }
+    }
 }
 
 impl std::fmt::Debug for FormatTable<'_> {
@@ -297,7 +315,7 @@ impl Command<WordDoc> for FormatTable<'_> {
                 }
             )
         });
-        if kept {
+        if kept && !self.pages_later {
             out.pages = keeps::table_pages(&sink, self.layout, &self.table)?;
         }
         Ok(out)

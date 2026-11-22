@@ -451,6 +451,7 @@ fn finish(
         formats,
         policy: policy(editing),
         layout: editing.edit_layout(),
+        pages_later: editing.in_group,
     };
     let done = match editing.editor.run(editing.caller, &command) {
         Ok(done) => done,
