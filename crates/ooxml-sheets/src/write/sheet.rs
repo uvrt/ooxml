@@ -9,8 +9,7 @@
 //! which this writer does not port yet).
 
 use super::nodes::{
-    append_child, element, element_at, insert_child, places, remove_child, replace_child, text_element, with_attr,
-    without_attr,
+    append_child, element, element_at, insert_child, places, replace_child, text_element, with_attr, without_attr,
 };
 use super::strings::Strings;
 use super::Write;
@@ -20,6 +19,8 @@ use crate::{Area, Cell, SheetsError, Value};
 use ooxml_xml::view::py_int;
 use ooxml_xml::{Atom, Element, Node};
 use std::sync::Arc;
+
+mod moves;
 
 /// A sheet being written: its root, its `sheetData`'s place, and its rows by number.
 #[derive(Debug)]
@@ -187,18 +188,7 @@ impl SheetEdit {
             .cloned()
             .ok_or_else(|| SheetsError::NoSheetData(self.part.clone()))?;
         if emptied {
-            let row = remove_child(&row, at);
-            let bare = row.child_elements().next().is_none()
-                && row
-                    .attributes()
-                    .iter()
-                    .all(|a| matches!(a.name.local(), "r" | "spans") && a.name.namespace().is_none());
-            if bare {
-                self.set_data(remove_child(self.sheet_data(), place));
-                self.index()?;
-            } else {
-                self.put_row(place, spans(&row)?);
-            }
+            self.take_out(place, at)?;
         } else {
             self.put_row(place, replace_child(&row, at, Node::Element(Arc::new(written))));
         }
@@ -241,7 +231,23 @@ impl SheetEdit {
             .row(place)
             .cloned()
             .ok_or_else(|| SheetsError::NoSheetData(self.part.clone()))?;
-        let node = Arc::new(element(&row, "c", attributes, Vec::new()));
+        let node = element(&row, "c", attributes, Vec::new());
+        self.place(cell, node)
+    }
+
+    /// Put the cell `node` at `cell` (`_place`): in its row, made where there is none, before
+    /// the first cell after it (else before the row's `extLst`, else last), the row's spans
+    /// kept true. The row's place, the cell's place in it, and the cell.
+    fn place(&mut self, cell: Cell, node: Element) -> Result<(usize, usize, Arc<Element>), SheetsError> {
+        let place = match self.row_place(i64::from(cell.row)) {
+            Some(place) => place,
+            None => self.new_row(i64::from(cell.row))?,
+        };
+        let row = self
+            .row(place)
+            .cloned()
+            .ok_or_else(|| SheetsError::NoSheetData(self.part.clone()))?;
+        let node = Arc::new(node);
         let at = cells(&row)?
             .into_iter()
             .find(|(column, _, _)| *column > cell.column)

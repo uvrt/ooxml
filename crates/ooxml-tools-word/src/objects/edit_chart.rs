@@ -17,7 +17,7 @@
 use super::chart_data::{ChartDataEdit, DataAction};
 use super::chart_names::{category_names, resolve, series_names, Named};
 use super::chart_read::{chart_json, chart_read_json};
-use super::{ChartAction, EditChart};
+use super::{ChartAction, ChartPosition, EditChart};
 use crate::structure::common::{call, policy, refused};
 use crate::{Editing, Version};
 use ooxml_base::pyfmt::repr_str;
@@ -65,11 +65,11 @@ pub fn edit_chart(args: &EditChart, editing: &Editing<'_>) -> ToolResult<Value> 
     }
     let action = args.action.as_str();
     let summary = format!("{action} on {}", args.target);
-    let in_place = matches!(
+    let ported = !matches!(
         args.action,
-        ChartAction::SetValues | ChartAction::SetValue | ChartAction::RenameSeries | ChartAction::RenameCategory
-    );
-    if !in_place {
+        ChartAction::Read | ChartAction::Add | ChartAction::SetTitle | ChartAction::SetAxisTitle
+    ) && !STYLE_ACTIONS.contains(&args.action);
+    if !ported {
         return ToolResult::done(unported(summary, &format!("edit_chart {action}")));
     }
     if args.from.is_some() || args.columns.is_some() || args.date_format.is_some() || args.blanks.is_some() {
@@ -82,8 +82,22 @@ pub fn edit_chart(args: &EditChart, editing: &Editing<'_>) -> ToolResult<Value> 
     }
 }
 
-/// A data action that changes points in place: the chart found and read on the head, its
-/// series and category resolved, then one command.
+/// The style actions (ooxml-edit's `STYLE_ACTIONS`), not ported yet.
+const STYLE_ACTIONS: [ChartAction; 7] = [
+    ChartAction::SetAxisScale,
+    ChartAction::SetGridlines,
+    ChartAction::FormatSeries,
+    ChartAction::FormatPoint,
+    ChartAction::SetSeriesType,
+    ChartAction::SetTextStyle,
+    ChartAction::SetPointLabels,
+];
+
+/// Word's look for value labels: their size (`WORD_LOOK.data_labels`, hundredths of a point).
+const WORD_LABEL_SIZE: u32 = 900;
+
+/// A data action: the chart found and read on the head, its series and category resolved,
+/// then one command.
 fn data_action(args: &EditChart, editing: &Editing<'_>, summary: String) -> Result<ToolResult<Value>, ToolError> {
     let read = call(
         "edit_chart",
@@ -109,7 +123,7 @@ fn data_action(args: &EditChart, editing: &Editing<'_>, summary: String) -> Resu
         Ok(data) => data,
         Err(why) => return Ok(ToolResult::done(unported(summary, &why))),
     };
-    let action = match planned(args, &data.0, &read) {
+    let action = match planned(args, &data.0, &read, &docx) {
         Ok(action) => action,
         Err(Stop::Refused(error)) => return Err(error),
         Err(Stop::Unported(why)) => return Ok(ToolResult::done(unported(summary, why))),
@@ -181,7 +195,7 @@ enum Stop {
 
 /// The action with its series and category resolved (`apply_data_action`, in its order:
 /// the series, the category, then what the action needs).
-fn planned(args: &EditChart, data: &ChartData, read: &TryCall) -> Result<DataAction, Stop> {
+fn planned(args: &EditChart, data: &ChartData, read: &TryCall, docx: &Docx) -> Result<DataAction, Stop> {
     let action = args.action.as_str();
     let named = |names: Vec<String>, which: Option<&String>, what: &str, hint: &str| match resolve(
         &names,
@@ -232,12 +246,115 @@ fn planned(args: &EditChart, data: &ChartData, read: &TryCall) -> Result<DataAct
             want("text", args.text.is_some(), "the new name")?;
             DataAction::RenameSeries { series, text: text() }
         }
-        _ => {
+        ChartAction::RenameCategory => {
             let category = category()?;
             want("text", args.text.is_some(), "the new label")?;
             DataAction::RenameCategory { category, text: text() }
         }
+        _ => shape_action(args, read, docx, &series, &category, &want)?,
     })
+}
+
+/// The actions that change the data's shape or how it shows, planned.
+fn shape_action(
+    args: &EditChart,
+    read: &TryCall,
+    docx: &Docx,
+    series: &dyn Fn() -> Result<usize, Stop>,
+    category: &dyn Fn() -> Result<usize, Stop>,
+    want: &dyn Fn(&str, bool, &str) -> Result<(), Stop>,
+) -> Result<DataAction, Stop> {
+    let text = || args.text.clone().unwrap_or_default();
+    Ok(match args.action {
+        ChartAction::AddCategory => {
+            want("text", args.text.is_some(), "the new category's label")?;
+            DataAction::AddCategory {
+                text: text(),
+                values: args.values.clone(),
+            }
+        }
+        ChartAction::RemoveCategory => DataAction::RemoveCategory { category: category()? },
+        ChartAction::AddSeries => {
+            want("text", args.text.is_some(), "the new series' name")?;
+            DataAction::AddSeries {
+                text: text(),
+                values: args.values.clone(),
+            }
+        }
+        ChartAction::RemoveSeries => DataAction::RemoveSeries { series: series()? },
+        ChartAction::SetLegend => DataAction::SetLegend {
+            position: legend_position(args.position, read)?,
+        },
+        ChartAction::ShowDataLabels | ChartAction::HideDataLabels => {
+            let show = args.action == ChartAction::ShowDataLabels;
+            let series = args.series.as_ref().map(|_| series()).transpose()?;
+            let lang = default_language(docx);
+            if show && lang.is_none() {
+                return Err(Stop::Unported(
+                    "edit_chart show_data_labels: a document whose defaults name no language (the session's locale decides)",
+                ));
+            }
+            DataAction::DataLabels {
+                show,
+                series,
+                number_format: args.number_format.clone(),
+                size: Some(WORD_LABEL_SIZE),
+                lang,
+            }
+        }
+        _ => {
+            want(
+                "value",
+                args.value.is_some(),
+                "the gap as a whole % of a bar's width, 0-500",
+            )?;
+            let given = args.value.unwrap_or_default();
+            if given.fract() != 0.0 || !given.is_finite() {
+                let message = "a gap width is a whole percentage, 0-500";
+                let refusal = ToolError::refusal(Refusal::InvalidArguments, message, WayOut::call(read.clone()));
+                return Err(Stop::Refused(refusal.at("value")));
+            }
+            #[allow(clippy::cast_possible_truncation)] // whole, and checked 0-500 after
+            DataAction::GapWidth { percent: given as i64 }
+        }
+    })
+}
+
+/// `legend_position`: the legend's position as the chart names it (`None`: no legend; the
+/// right where none is given); a label position refused.
+fn legend_position(given: Option<ChartPosition>, read: &TryCall) -> Result<Option<&'static str>, Stop> {
+    Ok(match given.unwrap_or(ChartPosition::Right) {
+        ChartPosition::Right => Some("r"),
+        ChartPosition::Left => Some("l"),
+        ChartPosition::Top => Some("t"),
+        ChartPosition::Bottom => Some("b"),
+        ChartPosition::None => None,
+        other => {
+            let message = format!(
+                "{} is a label position; a legend is right, left, top, bottom or none",
+                other.as_str()
+            );
+            let refusal = ToolError::refusal(Refusal::InvalidArguments, message, WayOut::call(read.clone()));
+            return Err(Stop::Refused(refusal.at("position")));
+        }
+    })
+}
+
+/// `default_language`'s first answer: the document's default run language
+/// (`w:docDefaults/w:rPrDefault/w:rPr/w:lang`); `None` where it names none, and the
+/// session's locale (which the host holds) decides.
+fn default_language(docx: &Docx) -> Option<String> {
+    const STYLES: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles";
+    const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    let part = ooxml_word_model::parts::related(&docx.package, &docx.main, STYLES).ok()??;
+    let tree = docx.package.tree(&part).ok()??;
+    let mut node: &Element = tree.root();
+    for name in ["docDefaults", "rPrDefault", "rPr", "lang"] {
+        node = node.find(Some(W), name)?;
+    }
+    node.attribute(Some(W), "val")
+        .filter(|v| !v.is_empty())
+        .map(str::to_owned)
 }
 
 fn unported(summary: String, what: &str) -> Done<Value> {

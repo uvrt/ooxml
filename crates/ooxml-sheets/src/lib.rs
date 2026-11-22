@@ -29,7 +29,7 @@ pub use address::{
 pub use error::SheetsError;
 pub use sheet::{Value, Worksheet};
 pub use workbook::Workbook;
-pub use write::{WorkbookWriter, Write};
+pub use write::{Axis, Shift, WorkbookWriter, Write};
 
 /// SpreadsheetML's main namespace (transitional), the one ooxml-edit reads.
 pub const SML_NS: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";

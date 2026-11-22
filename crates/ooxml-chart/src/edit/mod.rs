@@ -11,12 +11,20 @@
 //! Must not: write the workbook (the caller does, with `ooxml-sheets`), add or remove points
 //! (`c:ptCount` stays), or know which document holds the chart.
 
+mod look;
+mod make;
+mod owned;
 mod path;
+mod points;
+mod series;
+
+pub use look::{labels_show_values, LabelLook};
+pub use series::{Hash, POINT_SOURCES};
 
 use crate::data::{Point, Source, Unreadable};
 
 use ooxml_base::pyfmt::repr_str;
-use ooxml_xml::view::{attr, child, children, local, py_int, text};
+use ooxml_xml::view::{attr, children, local, py_int, text};
 use ooxml_xml::{Atom, Element, Node, QName};
 use path::{indexed, update};
 use std::sync::Arc;
@@ -45,7 +53,7 @@ const PLOTS: [&str; 16] = [
 const REFERENCES: [&str; 6] = ["strRef", "numRef", "multiLvlStrRef", "strLit", "numLit", "v"];
 
 /// `CT_NumData` / `CT_StrData`'s sequence: where a new point goes among a cache's children.
-const CACHE_ORDER: [&[&str]; 3] = [&["formatCode"], &["ptCount"], &["pt"]];
+const CACHE_ORDER: [&[&str]; 4] = [&["formatCode"], &["ptCount"], &["pt"], &["extLst"]];
 
 /// Where a series' `c:tx` goes: after `c:idx` and `c:order`, as every series type has them.
 const SERIES_HEAD: [&[&str]; 3] = [&["idx"], &["order"], &["tx"]];
@@ -59,6 +67,10 @@ pub enum Which {
     Categories,
     /// Its values (`c:val`, else `c:yVal`).
     Values,
+    /// A bubble chart's sizes (`c:bubbleSize`).
+    Sizes,
+    /// Its Value From Cells labels (`c15:datalabelsRange`, in its `c:extLst`).
+    Labels,
 }
 
 /// A value a point is given.
@@ -155,10 +167,12 @@ impl ChartTree {
     /// `which`'s reference of `series`; `None` where the source has none.
     #[must_use]
     pub fn source(&self, series: usize, which: Which) -> Option<SourceRef> {
-        let (_, reference) = self.reference(series, which)?;
+        let (_, ser) = self.series(series)?;
+        let mut owned = owned::Owned::open(ser);
+        let reference = points::reference(&mut owned, which)?;
         Some(SourceRef {
-            kind: local(reference).to_owned(),
-            formula: child(reference, "f").map(text),
+            formula: reference.formula(),
+            kind: reference.kind,
         })
     }
 
@@ -267,6 +281,8 @@ fn container(ser: &Element, which: Which) -> Option<(usize, &Element)> {
         Which::Name => first(&["tx"]),
         Which::Categories => first(&["cat", "xVal"]),
         Which::Values => first(&["val", "yVal"]),
+        Which::Sizes => first(&["bubbleSize"]),
+        Which::Labels => None,
     }
 }
 

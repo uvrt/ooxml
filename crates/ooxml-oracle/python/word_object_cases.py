@@ -378,6 +378,7 @@ def chart_cases(document) -> list[dict]:
     out.append(read("d:999999"))
     for identifier in charts[:3]:
         out += _chart_data_edits(document, identifier)
+        out += _chart_shape_edits(document, identifier)
     return out
 
 
@@ -404,6 +405,40 @@ def _chart_data_edits(document, target: str) -> list[dict]:
            edit("rename_category", category="0", text="Renamed"), edit("rename_category", category="0", text=""),
            edit("rename_category", category="999", text="x")]
     return out + [tracked(case) for case in (out[3], out[6])]
+
+
+def _chart_shape_edits(document, target: str) -> list[dict]:
+    """The data actions that change the data's shape or how it shows (lane P4c18):
+    categories and series added (with values, blank, a count that is not the series' or
+    the categories') and removed (by position, by name), the legend moved, hidden and given
+    a label position, value labels shown (on one series, in a format) and hidden, the gap
+    width set (whole, not whole, past 500, missing); ``add_category`` and ``remove_series``
+    tracked too."""
+    def edit(action: str, **arguments) -> dict:
+        return call("edit_chart", action=action, target=target, **arguments)
+
+    try:
+        chart = document.chart(target)
+        names = ["" if s.name is None else str(s.name) for s in chart.series]
+        categories = [str(c) for c in chart.categories]
+        count = chart.point_count
+    except Exception:  # noqa: BLE001 -- a chart docx-agent cannot read: the reads cover it
+        return []
+    last = names[-1] if names and names[-1] else str(max(len(names) - 1, 0))
+    out = [edit("add_category", text="New", values=[1.5 + i for i in range(len(names))]),
+           edit("add_category", text="Blank"), edit("add_category", text="x", values=[1] * (len(names) + 1)),
+           edit("add_category"), edit("remove_category", category="0"),
+           edit("remove_category", category=categories[-1] if categories else "0"),
+           edit("add_series", text="New series", values=[2.5 + i for i in range(count)]),
+           edit("add_series", text="Blank series"), edit("add_series", text="x", values=[1] * (count + 1)),
+           edit("remove_series", series="0"), edit("remove_series", series=last),
+           edit("set_legend", position="bottom"), edit("set_legend", position="none"), edit("set_legend"),
+           edit("set_legend", position="inside_end"), edit("show_data_labels"),
+           edit("show_data_labels", series="0", number_format="0.0"), edit("show_data_labels", number_format=" "),
+           edit("hide_data_labels", number_format="0"), edit("hide_data_labels"),
+           edit("set_gap_width", value=80), edit("set_gap_width", value=80.5), edit("set_gap_width", value=600),
+           edit("set_gap_width")]
+    return out + [tracked(case) for case in (out[0], out[9])]
 
 
 def _chunk(kind: bytes, body: bytes) -> bytes:

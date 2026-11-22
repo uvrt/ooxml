@@ -12,7 +12,10 @@
 mod nodes;
 mod sheet;
 mod strings;
+mod table_shift;
 mod tables;
+
+pub use table_shift::{Axis, Shift};
 
 use crate::items::descendants;
 use crate::SheetsError;
@@ -145,31 +148,101 @@ impl WorkbookWriter {
         value: &Write,
         style_from: Option<Cell>,
     ) -> Result<(), SheetsError> {
-        if self.sheet(name)?.is_none() {
-            return Err(SheetsError::NoSheet(name.to_owned()));
-        }
-        let mut strings = self.strings.take();
-        let written = match self.sheets.get_mut(name).and_then(Option::as_mut) {
-            Some(sheet) => sheet.set_value(cell, value, style_from, &mut strings),
-            None => Err(SheetsError::NoSheet(name.to_owned())),
-        };
-        self.strings = strings;
-        written?;
+        self.write_cell(name, cell, value, style_from)?;
         self.sync_tables(name)
     }
 
-    fn sync_tables(&mut self, name: &str) -> Result<(), SheetsError> {
+    /// [`WorkbookWriter::set_value`] without naming the tables' columns again (`set_value`
+    /// alone; [`WorkbookWriter::sync_tables`] after).
+    ///
+    /// # Errors
+    /// As [`WorkbookWriter::set_value`].
+    pub fn write_cell(
+        &mut self,
+        name: &str,
+        cell: Cell,
+        value: &Write,
+        style_from: Option<Cell>,
+    ) -> Result<(), SheetsError> {
+        let mut strings = self.strings.take();
+        let written = self
+            .opened(name)
+            .and_then(|sheet| sheet.set_value(cell, value, style_from, &mut strings));
+        self.strings = strings;
+        written
+    }
+
+    /// The sheet `name`, opened.
+    fn opened(&mut self, name: &str) -> Result<&mut SheetEdit, SheetsError> {
+        self.sheet(name)?.ok_or_else(|| SheetsError::NoSheet(name.to_owned()))
+    }
+
+    /// Whether `cell` of the sheet `name` holds no value (`is_empty`: a cell with only a
+    /// style counts as empty).
+    ///
+    /// # Errors
+    /// [`SheetsError::NoSheet`]; a cell that cannot be read.
+    pub fn is_empty(&mut self, name: &str, cell: Cell) -> Result<bool, SheetsError> {
+        self.opened(name)?;
+        match self.sheets.get(name).and_then(Option::as_ref) {
+            Some(sheet) => sheet.is_empty(cell, self.strings.as_ref()),
+            None => Err(SheetsError::NoSheet(name.to_owned())),
+        }
+    }
+
+    /// Move the cell at `from` of the sheet `name` -- value, formula and style -- onto `to`
+    /// (`move`).
+    ///
+    /// # Errors
+    /// [`SheetsError::NoSheet`]; a reference that cannot be read.
+    pub fn move_cell(&mut self, name: &str, from: Cell, to: Cell) -> Result<(), SheetsError> {
+        self.opened(name)?.move_cell(from, to)
+    }
+
+    /// Remove `cell` of the sheet `name`, style and all (`clear`).
+    ///
+    /// # Errors
+    /// [`SheetsError::NoSheet`]; [`SheetsError::Unsupported`] for a cell holding a formula.
+    pub fn clear(&mut self, name: &str, cell: Cell) -> Result<(), SheetsError> {
+        self.opened(name)?.clear(cell)
+    }
+
+    /// Keep the tables of the sheet `name` in step with a line of cells put in or taken out
+    /// (`shift_tables`).
+    ///
+    /// # Errors
+    /// [`SheetsError::NoSheet`]; [`SheetsError::Unsupported`] for a table reference this
+    /// does not read.
+    pub fn shift_tables(&mut self, name: &str, shift: Shift) -> Result<(), SheetsError> {
+        let part = self.opened(name)?.part.clone();
+        for table in self.package.relationships(&part)?.targets_of_type(REL_TABLE) {
+            let Some(root) = self.table_root(table)? else { continue };
+            if let Some(changed) = table_shift::shifted(&root, shift)? {
+                self.tables.insert(table.to_owned(), Arc::new(changed));
+            }
+        }
+        Ok(())
+    }
+
+    fn table_root(&self, part: &str) -> Result<Option<Arc<Element>>, SheetsError> {
+        Ok(match self.tables.get(part) {
+            Some(root) => Some(Arc::clone(root)),
+            None => self.package.tree(part)?.map(|tree| Arc::clone(tree.root())),
+        })
+    }
+
+    /// Name the columns of the tables of the sheet `name` after their header cells again
+    /// (`sync_tables`).
+    ///
+    /// # Errors
+    /// [`SheetsError::Unsupported`] for a table this does not read; a header that cannot be
+    /// read.
+    pub fn sync_tables(&mut self, name: &str) -> Result<(), SheetsError> {
         let Some(sheet) = self.sheets.get(name).and_then(Option::as_ref) else {
             return Ok(());
         };
         for part in self.package.relationships(&sheet.part)?.targets_of_type(REL_TABLE) {
-            let root = match self.tables.get(part) {
-                Some(root) => Arc::clone(root),
-                None => match self.package.tree(part)? {
-                    Some(tree) => Arc::clone(tree.root()),
-                    None => continue,
-                },
-            };
+            let Some(root) = self.table_root(part)? else { continue };
             if let Some(changed) = tables::synced(&root, sheet, self.strings.as_ref())? {
                 self.tables.insert(part.to_owned(), Arc::new(changed));
             }
