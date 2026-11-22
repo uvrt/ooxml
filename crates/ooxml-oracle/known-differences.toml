@@ -231,3 +231,55 @@ cause = """Lane E3: docx-agent's _no_reshape_over_merge_lead reads rows[index] u
 for a pending tracked merge's first cell and fails with Python's IndexError ('list index out of \
 range', not_found); the Rust core refuses the row as docx-agent's delete_row does untracked \
 ('t:... has no row 99', refused). A docx-agent crash, not copied."""
+
+# Lane E1e (#282): a tracked deletion of tables-placed's first table, whose third row is Writer A's
+# own pending insertion. Both documents are the same: that row goes outright with its two
+# paragraphs (Word removes one's own pending row outright; docx-agent round 51 R103, measured).
+[[difference]]
+gate = "fixtures"
+mode = "delete"
+file = "generated/tables-placed.docx"
+input = { op = "delete", target = "t:5B0000AA", tracked = { author = "Writer A" } }
+cause = """#282: /result/removed. The Rust core reports the row removed outright and its two \
+paragraphs (tr:5B0000B0, p:5B0000AE, p:5B0000AF), none of which the document has after the edit; \
+docx-agent's delete_block names a gone row's paragraphs by id() of their lxml proxies taken \
+before the deletion, and the detached row's paragraphs come back as new proxies, so only the row \
+is named. A docx-agent leftover (the paragraphs are gone, as an untracked deletion reports), not \
+copied."""
+
+# Lane E1e (#282): cells written in tables-placed's tables, both placed from a source (cells
+# mode, and spacing's French text in a cell). The document-level comparison has no record to keep.
+[[difference]]
+gate = "fixtures"
+mode = "cells"
+file = "generated/tables-placed.docx"
+input = { op = "set_cells" }
+cause = """#282: the Rust core's SetCells refuses a table with a record of its source ("not \
+supported yet: ... its record is kept through KeepingRecord"), the command word_edit_table runs \
+(docx-agent's _Kept: a cell written takes its column out of the record); docx-agent's \
+document-level set_cells, this mode's reference, writes the cells and leaves the record saying \
+they hold the source's values. The tool-level set_cells on these tables is compared in the \
+objects mode, without differences."""
+
+[[difference]]
+gate = "fixtures"
+mode = "spacing"
+file = "generated/tables-placed.docx"
+input = { op = "set_cells" }
+cause = """#282: as the cells mode's entry for this document -- SetCells refuses a table placed \
+from a source (KeepingRecord keeps its record), docx-agent's document-level set_cells leaves \
+the record stale."""
+
+# Lane E1e (#282): rejections touching tables-placed's first table (its pending row, rev:904,
+# inside the block its record describes).
+[[difference]]
+gate = "fixtures"
+mode = "review"
+file = "generated/tables-placed.docx"
+input = { op = "reject" }
+cause = """#282: the Rust core's Review follows the tables' records as word_changes does \
+(docx-agent's _follow_review, tools/review.py: rejecting anything in a recorded table drops its \
+record, as the values put back may not be the source's), so customXml/item1.xml loses \
+t:5B0000AA's entry; docx-agent's document-level review, this mode's reference, has no records \
+to follow. word_changes on this document is compared in the structure mode, without \
+differences."""
