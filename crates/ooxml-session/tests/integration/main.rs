@@ -8,6 +8,7 @@ mod editing;
 mod host_reads;
 mod live_view;
 mod locale;
+mod pages;
 mod panics;
 mod registry;
 mod rows_written;

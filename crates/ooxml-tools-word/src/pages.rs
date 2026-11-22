@@ -16,6 +16,10 @@
 //! the edit core's [`FieldLayout`], and the page engine behind it for what a tool reads of
 //! the pages themselves (`check`'s reflow and layout facts).
 //!
+//! Also owns [`PageSetup`]: what a session makes its documents' engines from (the
+//! machine's fonts, scanned once, and how the engines lay out), so the session keeps each
+//! document's engine itself.
+//!
 //! Must not: hold anything but the engine and its seed, or lay out but through them.
 
 use ooxml_base::Cancel;
@@ -27,7 +31,9 @@ use ooxml_word_layout::facts::LayoutFacts;
 use ooxml_word_layout::fields::update::{drawn_text, style_reference_known, PageNumbers};
 use ooxml_word_model::value::Text;
 use ooxml_word_pages::summary::Summary;
-use ooxml_word_pages::{EngineSeed, Fallback, LaidVersion, PageEngine, PagesError};
+use ooxml_word_pages::{
+    EngineBudgets, EngineOptions, EngineSeed, Fallback, FontSetup, LaidVersion, PageEngine, PagesError,
+};
 use std::borrow::Borrow;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -101,6 +107,38 @@ impl EnginePages {
     pub fn of(engine: PageEngine) -> EnginePages {
         let seed = engine.seed();
         EnginePages::new(Arc::new(Mutex::new(engine)), seed)
+    }
+}
+
+/// What a session makes its documents' page engines from: the machine's fonts (one set of
+/// folders, scanned once and shared by every engine) and how the engines lay out (the
+/// locale, the decimal tab, the glyph size).
+#[derive(Clone)]
+pub struct PageSetup {
+    fonts: Arc<FontSetup>,
+    options: EngineOptions,
+}
+
+impl std::fmt::Debug for PageSetup {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PageSetup")
+            .field("options", &self.options)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PageSetup {
+    /// Engines laying out with `fonts` and `options`.
+    #[must_use]
+    pub fn new(fonts: Arc<FontSetup>, options: EngineOptions) -> PageSetup {
+        PageSetup { fonts, options }
+    }
+
+    /// A new document's engine, its memory counted in `budgets`.
+    #[must_use]
+    pub fn engine(&self, budgets: EngineBudgets) -> EnginePages {
+        let engine = PageEngine::new(Arc::clone(&self.fonts), self.options.clone(), budgets);
+        EnginePages::of(engine)
     }
 }
 

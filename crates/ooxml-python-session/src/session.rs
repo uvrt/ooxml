@@ -7,8 +7,10 @@
 
 use crate::adapters::{context, SessionStop};
 use crate::context::{caller_context, PyCallContext};
+use crate::layout::PyWordPages;
 use crate::locale::locale_of;
 use crate::options::{context_of, PyCallLayout, PyCallOptions, PyHostIds};
+use crate::pages::PyPageSetup;
 use crate::version::PyVersion;
 use ooxml_base::Locale;
 use ooxml_session::{DocId, DocKind, HeldId, RetiredBy, Session, SessionConfig, SessionError};
@@ -130,10 +132,16 @@ impl PySession {
     /// A session: each document keeps `history_depth` undo steps; `locale` (ooxml-common's
     /// `Locale` or a BCP 47 tag) is the one the session's documents are read under, unless
     /// a call names its own; `None`: en-US, and each document's own language where a call
-    /// reads one (a table of contents' style names).
+    /// reads one (a table of contents' style names). `pages` (a `PageSetup`): what the
+    /// session lays its Word documents out with, each document's engine its own (`pages`);
+    /// `None`: only with the layout a call gives.
     #[new]
-    #[pyo3(signature = (*, history_depth = 50, locale = None))]
-    fn new(history_depth: usize, locale: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+    #[pyo3(signature = (*, history_depth = 50, locale = None, pages = None))]
+    fn new(
+        history_depth: usize,
+        locale: Option<&Bound<'_, PyAny>>,
+        pages: Option<PyRef<'_, PyPageSetup>>,
+    ) -> PyResult<Self> {
         let locale = locale.map(locale_of).transpose()?;
         let tag = locale.as_ref().map(Locale::from).unwrap_or_default();
         let stop = Arc::new(SessionStop::default());
@@ -143,6 +151,7 @@ impl PySession {
                 ..StoreConfig::default()
             },
             locale,
+            pages: pages.map(|p| p.inner.clone()),
         };
         let inner = Session::new(config, context(Arc::clone(&stop), tag));
         Ok(Self {
@@ -342,6 +351,26 @@ impl PySession {
         let session = &self.inner;
         let opened = py.detach(|| session.snapshot(&id)).map_err(|e| to_py(&e))?;
         Ok(PyVersion { inner: opened })
+    }
+
+    /// The page engine the session lays the Word document `doc` out with (a `WordPages`,
+    /// the session's own: made on first use from what `set_pages` set for it, else the
+    /// session's `pages`); `None` where neither is given or `doc` is not a Word document.
+    fn pages(&self, doc: &str) -> PyResult<Option<PyWordPages>> {
+        let id = doc_id(doc, &self.inner)?;
+        let found = self.inner.pages(&id).map_err(|e| to_py(&e))?;
+        Ok(found.as_deref().map(PyWordPages::of))
+    }
+
+    /// Lay the Word document `doc` out with `pages` (a `PageSetup`) from now on -- a
+    /// document drawn with other fonts or in another locale than the session's; `None`:
+    /// with the session's. Its engine is made again when next needed.
+    #[pyo3(signature = (doc, pages = None))]
+    fn set_pages(&self, doc: &str, pages: Option<PyRef<'_, PyPageSetup>>) -> PyResult<()> {
+        let id = doc_id(doc, &self.inner)?;
+        self.inner
+            .set_pages(&id, pages.map(|p| p.inner.clone()))
+            .map_err(|e| to_py(&e))
     }
 
     /// The document's bytes at its head version. `checked`: through the save gate, refused

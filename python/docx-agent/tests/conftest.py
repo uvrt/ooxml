@@ -233,19 +233,31 @@ def _skip_if_a_check_says_a_face_is_absent(coverage, warnings) -> None:
 
 
 def _skip_if_the_session_laid_a_face_absent(call) -> None:
-    # The version the session's check laid out, by the document's page engine (which laid it
-    # out just now: nothing is laid out again), read as docx2svg's layout.
-    from docx_agent import pages
-    from docx_agent.layout import layout_options, lineage
+    # The version the session's check laid out, by the session's own engine for the document
+    # (lane H7b; it laid the version out just now: its pages are the engine's memo), read as
+    # docx2svg's layout.
+    import ooxml_core
+    import docx2svg
+    from docx2svg import rust
+
+    from docx_agent.layout import layout_options
     from docx_agent.rust import reads as rust_reads
+    from docx_agent.rust.engines import session_pages
 
     owned = rust_reads._owned(call.entry)
     if owned is None:
         return
     held = owned.held
-    laid = pages.lay_out(held.to_bytes(), layout_options(held, {}), lineage(held), make=False)
-    if laid is not None:
-        _skip_if_a_face_is_absent(laid.warnings, laid.coverage)
+    engine, _ = session_pages(owned.handle, held, make=False)
+    if engine is None:
+        return
+    data = held.to_bytes()
+    try:
+        laid = engine.lay_out(data)
+    except ooxml_core.LayoutFallback:
+        return
+    layout = rust.RustLayout(laid, data, docx2svg.ConvertOptions(**layout_options(held, {})))
+    _skip_if_a_face_is_absent(layout.warnings, layout.coverage)
 
 
 @pytest.fixture(autouse=True)
