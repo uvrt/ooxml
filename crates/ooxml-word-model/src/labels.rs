@@ -120,6 +120,19 @@ impl Counters {
         (Some(label), number)
     }
 
+    /// Whether the next item of instance `num_id` at `ilvl` begins its count, read before it
+    /// is counted: no item of its list at that level since the count last began (a
+    /// shallower item, the story's start), or a restart (`w:startOverride`) its instance
+    /// makes at its first item there.
+    #[must_use]
+    pub fn begins(&self, numbering: &Numbering, num_id: i64, ilvl: i64) -> bool {
+        let counted = self
+            .counts
+            .get(&numbering.list_of(num_id))
+            .is_some_and(|c| c.contains_key(&ilvl));
+        !counted || (!self.used.contains(&(num_id, ilvl)) && numbering.restarts.contains(&(num_id, ilvl)))
+    }
+
     /// Count the next item of instance `num_id` at `ilvl`; its label, or `None` where the
     /// instance has no such level or the level no `w:lvlText`.
     pub fn item(&mut self, numbering: &Numbering, num_id: i64, ilvl: i64) -> Option<String> {
