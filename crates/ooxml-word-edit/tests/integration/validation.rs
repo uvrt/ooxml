@@ -28,7 +28,7 @@ fn fixtures(dir: &Path, out: &mut Vec<PathBuf>) {
 
 #[test]
 fn kept_problems_equal_the_full_check_on_every_fixture() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../python/docx-agent/tests/fixtures");
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../crates/ooxml-oracle/fixtures");
     let mut files = Vec::new();
     fixtures(&root, &mut files);
     files.sort();

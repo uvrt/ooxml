@@ -5,16 +5,12 @@
 //! the pages from a page engine over the repository's test fonts.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
-use crate::common::{Never, NoFonts, NoParts, Unlimited};
+use crate::common::{layout, Never, NoFonts, NoParts, Unlimited};
 use ooxml_base::context::Timestamp;
 use ooxml_base::{Clock, Context, Limits};
-use ooxml_derive::CacheBudget;
-use ooxml_fonts::{Folder, Location, WordFontOptions};
 use ooxml_numfmt::{Locale, EN_US};
 use ooxml_opc::Package;
 use ooxml_session::{CallContext, DocId, DocKind, Session, SessionConfig};
-use ooxml_tools_word::EnginePages;
-use ooxml_word_pages::{DiskFonts, EngineBudgets, EngineOptions, FontSetup, PageEngine};
 use ooxml_zip::{Method, NewEntry, Writer};
 use serde_json::json;
 use std::sync::Arc;
@@ -31,43 +27,6 @@ impl Clock for Fixed {
     fn monotonic(&self) -> Duration {
         Duration::ZERO
     }
-}
-
-/// A memo budget that grants every reservation (the page engine's).
-struct Memos;
-
-impl CacheBudget for Memos {
-    fn reserve(&self, _: usize) -> bool {
-        true
-    }
-    fn release(&self, _: usize) {}
-    fn used(&self) -> usize {
-        0
-    }
-}
-
-/// The page engine the host lays the documents out with (the repository's test fonts).
-pub(crate) fn layout() -> Arc<EnginePages> {
-    let folder = Folder {
-        location: Location::Folder,
-        path: concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../python/pptx2svg/packages/pptx2svg-fonts/src/pptx2svg_fonts/files"
-        )
-        .to_owned(),
-    };
-    let options = WordFontOptions {
-        substitutes: Vec::new(),
-        recorded_faces: true,
-        fallbacks: true,
-    };
-    let setup = Arc::new(FontSetup::new(Arc::new(DiskFonts), &[folder], options));
-    let budgets = EngineBudgets {
-        held: Arc::new(Memos),
-        paint: Arc::new(Memos),
-    };
-    let engine = PageEngine::new(setup, EngineOptions::default(), budgets);
-    Arc::new(EnginePages::of(engine))
 }
 
 pub(crate) fn session(locale: Option<Locale>) -> Session {

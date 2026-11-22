@@ -4,7 +4,8 @@
 //! version does not draw is said not known, and without a layout nothing is laid out.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
-use crate::locale::{docx, layout, session};
+use crate::common::layout;
+use crate::locale::{docx, session};
 use ooxml_session::{BlockAt, CallContext, DocKind};
 
 #[test]

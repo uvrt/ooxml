@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write ``tests/fixtures/generated/toc-numbered.docx``: a table of contents over numbered
+"""Write ``crates/ooxml-oracle/fixtures/generated/toc-numbered.docx``: a table of contents over numbered
 headings, every way a numbered heading's entry is written (round 32, R12: the number, a tab
 and a left stop after it; or the number, a space and the text), written here by hand with
 :mod:`make_fixtures`' parts (compatibility mode 15, paraIds on every paragraph):

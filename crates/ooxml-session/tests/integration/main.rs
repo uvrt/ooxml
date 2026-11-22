@@ -5,6 +5,7 @@
 mod common;
 
 mod editing;
+mod live_view;
 mod locale;
 mod pages;
 mod panics;

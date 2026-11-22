@@ -404,8 +404,7 @@ def hyperlink_field_cases(document) -> list[dict]:
 
 
 #: The other document ``word_copy_from``'s cases copy from (styles and lists of its own).
-_COPY_SOURCE = Path(__file__).resolve().parents[3] / "python" / "docx-agent" / "tests" / "fixtures" / "generated" \
-    / "trial" / "safety-bulletin.docx"
+_COPY_SOURCE = Path(__file__).resolve().parents[1] / "fixtures" / "generated" / "trial" / "safety-bulletin.docx"
 
 
 @CASES
