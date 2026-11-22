@@ -4,6 +4,7 @@
 
 mod common;
 
+mod chart_target;
 mod control_delete;
 mod copy_writers;
 mod history;

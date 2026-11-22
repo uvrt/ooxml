@@ -14,7 +14,7 @@
 
 use ooxml_derive::CacheBudget;
 use ooxml_fonts::{Folder, Location, WordFontOptions};
-use ooxml_word_pages::summary::Summary;
+use ooxml_word_pages::summary::{Reflow, Summary};
 use ooxml_word_pages::{DiskFonts, EngineBudgets, EngineOptions, FontSetup, LaidVersion, PageEngine};
 use ooxml_zip::{Method, NewEntry, Writer};
 use std::collections::HashMap;
@@ -508,7 +508,7 @@ fn a_version_laid_out_the_same_is_compared_without_painting_and_the_cache_is_bou
 }
 
 #[test]
-fn a_watched_version_is_digested_before_a_style_change_and_compared_after_it() {
+fn a_version_laid_out_before_a_style_change_is_compared_after_it_watched_or_not() {
     let mut rng = Rng(11);
     let mut doc = Doc::new(&mut rng);
     let mut engine = engine();
@@ -520,11 +520,15 @@ fn a_watched_version_is_digested_before_a_style_change_and_compared_after_it() {
     let after = engine.lay_out_bytes(Arc::clone(&bytes)).unwrap().unwrap();
     let found = engine.compare(&after, &before, &HashMap::new());
     assert_eq!(found, Some(whole(&bytes).compare(&whole(&first), &HashMap::new())));
-    // Unwatched and never summarised, a version laid out before a style change is no
-    // longer compared.
+    // Unwatched and never summarised, a version laid out before a style change is
+    // compared in its own styles, as fresh engines' whole summaries compare.
     doc.heading_size = 40;
-    let unwatched = engine.lay_out_bytes(doc.package()).unwrap().unwrap();
+    let older = doc.package();
+    let unwatched = engine.lay_out_bytes(Arc::clone(&older)).unwrap().unwrap();
     doc.heading_size = 32;
-    let again = engine.lay_out_bytes(doc.package()).unwrap().unwrap();
-    assert_eq!(engine.compare(&again, &unwatched, &HashMap::new()), None);
+    let newer = doc.package();
+    let again = engine.lay_out_bytes(Arc::clone(&newer)).unwrap().unwrap();
+    let expected = whole(&newer).compare(&whole(&older), &HashMap::new());
+    assert_ne!(expected, Reflow::default(), "the headings' size moves lines");
+    assert_eq!(engine.compare(&again, &unwatched, &HashMap::new()), Some(expected));
 }

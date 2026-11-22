@@ -29,7 +29,7 @@
 #![forbid(unsafe_code)]
 
 pub mod address;
-mod digest;
+pub mod digest;
 pub mod document;
 pub mod docx;
 mod error;

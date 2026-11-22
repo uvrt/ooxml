@@ -135,6 +135,20 @@ fn a_default_check_reports_the_reflow_since_the_last() {
 }
 
 #[test]
+fn an_empty_include_is_the_default() {
+    let (first, _) = versions();
+    let layout = EnginePages::of(engine());
+    let reply = checked(
+        &first,
+        1,
+        json!({"doc": "d1", "include": []}),
+        &LastCheck::default(),
+        Some(&layout),
+    );
+    assert_eq!(reply["summary"], "Checked validate, reflow, fields");
+}
+
+#[test]
 fn a_reflow_without_the_hosts_layout_is_not_supported() {
     let (first, _) = versions();
     let reply = checked(&first, 1, json!({"doc": "d1"}), &LastCheck::default(), None);

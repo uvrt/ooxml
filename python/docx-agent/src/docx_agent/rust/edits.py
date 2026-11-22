@@ -105,6 +105,16 @@ def _date(call: Any) -> str:
     return moment.astimezone(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def call_context(call: Any, held: Any) -> Any:
+    """The ``ooxml_core.CallContext`` a served call of ``held`` (the document's view) runs
+    with: the caller, the host's limits and limit on laying out, and its writing settings
+    (dated by :func:`_date`, the document's typography and locale) -- the one context of
+    the call's edit and of what its adapter asks the session after it."""
+    return context_of(call.caller, call.limits, call.limits.layout_timeout, date=_date(call),
+                      typography=getattr(held, "typography", True) is not False,
+                      locale=getattr(held, "locale", None))
+
+
 def _kept_refs(call: Any, arguments: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
     """``arguments`` with each ref name they give (``ref``, ``items[].ref``) as the call keeps it
     (ooxml-edit's ``Call.ref_name``: a camelCase or hyphenated name folded; one that folds to
@@ -336,14 +346,13 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
     held = entry.held
     # the host's limit on laying the document out holds in an edit as in a read (a field's
     # page numbers, a reflow): past it the call is a timeout that changes nothing
-    context = context_of(call.caller, call.limits, call.limits.layout_timeout, date=_date(call),
-                         typography=getattr(held, "typography", True) is not False,
-                         locale=getattr(held, "locale", None))
+    context = call_context(call, held)
     arguments, folded = _kept_refs(call, arguments)
     entry.flush_view()        # (in a batch: the Python ops' changes before it, the session's)
     _tracking(call, entry, context, counted)
     adapted = _served.arguments_for(call, tool, arguments)
     written = adapted.written if isinstance(adapted, Adapted) else _written(call)
+    sources = adapted.sources if isinstance(adapted, Adapted) else None
     given = {**{k: v for k, v in adapted.items() if v is not None}, "doc": entry.doc_id}
     names = _names(call, entry, arguments)
     layout = _layout(call, entry, measured=counted)
@@ -358,7 +367,7 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
         laid = ooxml_core.CallLayout(layout) if layout is not None else None
         reply, app, made = mirror.session.edit(tool, json.dumps(given), options(
             context=context, layout=laid, blobs=blobs, written=written,
-            documents=documents(names=names, tables=_host_tables(call.session))))
+            documents=documents(names=names, tables=_host_tables(call.session), sources=sources)))
     if timing is not None:
         timing.add("update", time.perf_counter() - started)
     envelope = json.loads(reply)
@@ -374,10 +383,26 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
     # (first, as the call's own warnings come before its handler's)
     result.warnings[:0] = [folded_warning(given, ref) for ref, given in folded.items() if ref in refs]
     if timing is None:
+        timing = _replied_timing(result)
+    if timing is None:
         return result, made, []
     if isinstance(result.data, dict):
         result.data["timing"] = timing.parts      # (the checks add theirs)
     return result, made, [timing]
+
+
+def _replied_timing(result: Result) -> Any:
+    """The ``Timing`` of a reply that says where its time went itself (its ``data.timing``:
+    ``word_edit_table`` from a source), which the call's checks add their parts to; ``None``
+    without one."""
+    from ..tools._base import Timing
+
+    parts = result.data.get("timing") if isinstance(result.data, dict) else None
+    if not isinstance(parts, dict):
+        return None
+    timing = Timing()
+    timing.parts.update(parts)
+    return timing
 
 
 def _count(tool: str, why: str | None) -> None:

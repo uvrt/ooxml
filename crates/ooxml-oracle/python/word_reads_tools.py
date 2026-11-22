@@ -40,6 +40,37 @@ LAID = (("min_size", {"include": ["layout"], "min_size": 10}),
 #: Lane P5k: the addressed cases a check reads by range (``targets``' first ones).
 CHECKED_RANGES = 4
 
+#: Lane CP1: check's ``copies`` cases: (name, copies) made from the body's top-level blocks and
+#: tables (:func:`copies_of`); the reference in the same document.
+COPIES_BLOCKS = 3
+
+
+def copies_of(path) -> list[tuple[str, list[dict]]]:
+    """``check(copies=...)`` cases for the document at ``path``: a span of the body's first
+    blocks compared with the next span, the same two stated to run on, a block with itself,
+    and the second table with the first (where there are such)."""
+    from docx_agent import Document
+    from docx_agent.edit.outline import body_blocks
+
+    document = Document.open(path.read_bytes())
+    ids = [b.id for b in body_blocks(document) if b.id]
+    out: list[tuple[str, list[dict]]] = []
+    n = COPIES_BLOCKS
+    if len(ids) >= 2 * n:
+        sample, copy = f"{ids[0]}..{ids[n - 1]}", f"{ids[n]}..{ids[2 * n - 1]}"
+        out.append(("copies span", [{"blocks": copy, "reference": {"block": sample}}]))
+        if len(ids) >= 3 * n:
+            again = f"{ids[2 * n]}..{ids[3 * n - 1]}"
+            out.append(("copies run_on", [{"blocks": c, "reference": {"block": sample}, "lists": "run_on"}
+                                          for c in (copy, again)]))
+    if ids:
+        out.append(("copies itself", [{"blocks": ids[len(ids) // 2], "reference": {"block": ids[len(ids) // 2]}}]))
+    tables = document.tables()
+    if len(tables) >= 2:
+        out.append(("copies table", [{"blocks": tables[1].id, "reference": {"block": tables[0].id}}]))
+    return out
+
+
 #: Lane P5e: check's sequences of versions, each case a check after the calls before it in
 #: the same session (checks and edits), measured from the check before (``since_last_check``):
 #: (name, calls before as (tool, arguments) with ``{first}`` / ``{middle}`` the first and middle
@@ -138,7 +169,9 @@ def cases_of(path, what: str) -> list[tuple[str, str, dict]]:
                 *((f"check {name}", "check", {"include": include}) for name, include, _ in LIMITED),
                 *((f"check {name}", "check", arguments) for name, arguments in LAID),
                 *((f"check range {t}", "check", {"range": [t]})
-                  for t in targets(path)[:CHECKED_RANGES])]
+                  for t in targets(path)[:CHECKED_RANGES]),
+                *((f"check {name}", "check", {"include": ["validate"], "copies": copies})
+                  for name, copies in copies_of(path))]
     if what == "ranges":
         return [(f"read {t}", "word_read", {"range": t}) for t in targets(path)]
     if what == "inspect":

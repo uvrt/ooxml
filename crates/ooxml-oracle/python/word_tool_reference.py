@@ -82,6 +82,8 @@ def python_case(data: bytes, case: dict, baseline: list, toolbox, parts_of, orde
         session.entry(doc).document.locale = Locale(**case["locale"])
     for blob in case.get("blobs") or []:                # b1, b2, ... as the session numbers them
         session.add_blob(bytes.fromhex(blob["hex"]), blob["name"], blob["mime"])
+    if case.get("datasets"):                            # d:<id>, the session's own
+        session.keep_datasets([_dataset(found) for found in case["datasets"]])
     arguments = {**case["arguments"], "doc": doc}
     answer = json.loads(json.dumps(toolbox.dispatch(session, case["tool"], arguments).to_json()))
     document = session.entry(doc).document
@@ -114,6 +116,19 @@ def python_case(data: bytes, case: dict, baseline: list, toolbox, parts_of, orde
     }
     session.close(doc)
     return result
+
+
+def _dataset(found: dict):
+    """A case's dataset (``{"id", "columns", "types", "rows"}``, a date as ``{"date": [y, m,
+    d]}``) as the session keeps one."""
+    from ooxml_edit.tools.datasets import Dataset, DatasetEntry
+
+    def value(v):
+        return datetime.date(*v["date"]) if isinstance(v, dict) else v
+
+    rows = tuple(tuple(value(v) for v in row) for row in found["rows"])
+    types = tuple(found["types"]) if found.get("types") is not None else None
+    return DatasetEntry(found["id"], Dataset(tuple(found["columns"]), rows, types=types))
 
 
 def _reserialized(before: dict, after: dict, main: str) -> list[str]:

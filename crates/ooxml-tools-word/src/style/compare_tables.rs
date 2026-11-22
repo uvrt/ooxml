@@ -90,6 +90,42 @@ pub(crate) fn tables(block: &Block<'_>, mine: &Side<'_>, source: &Block<'_>, the
     out
 }
 
+/// The `(paragraph, reference paragraph)` pairs [`tables`] compares for two tables (docx-agent's
+/// `paragraph_pairs`): each cell's paragraphs paired with its reference cell's, as the
+/// cells pair (a cell merged up and a cell the reference lacks pair nothing).
+pub(crate) fn paragraph_pairs(
+    block: &Block<'_>,
+    mine: &Side<'_>,
+    source: &Block<'_>,
+    theirs: &Side<'_>,
+) -> Vec<(Para, Para)> {
+    let (rows, reference_rows) = (own_rows(&block.element), own_rows(&source.element));
+    if rows.is_empty() || reference_rows.is_empty() {
+        return Vec::new();
+    }
+    let mapping = pairing::row_map(rows.len(), reference_rows.len(), header_rows(&reference_rows));
+    let (grid, reference_grid) = (origins(&rows), origins(&reference_rows));
+    let mut out = Vec::new();
+    for (r, line) in grid.iter().enumerate() {
+        let Some(reference_line) = mapping.get(r).and_then(|m| reference_grid.get(*m)) else {
+            continue;
+        };
+        for (column, origin) in line {
+            if origin.up {
+                continue;
+            }
+            let Some(matched) = reference_cell(reference_line, *column) else {
+                continue;
+            };
+            let reference = cell_paragraphs(&matched.cell);
+            if !reference.is_empty() {
+                out.extend(align(mine, &cell_paragraphs(&origin.cell), theirs, &reference).pairs);
+            }
+        }
+    }
+    out
+}
+
 fn one(key: &str, value: Value) -> Map<String, Value> {
     let mut out = Map::new();
     out.insert(key.into(), value);
