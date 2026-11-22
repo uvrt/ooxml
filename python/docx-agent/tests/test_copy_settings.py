@@ -200,8 +200,10 @@ def test_the_sample_in_the_same_document(box):
     assert (numbering["value"], numbering["reference"]) == ("starts at 3", "starts at 1")
 
 
-def test_the_list_fix_keeps_to_its_budget(box, monkeypatch):
-    """Rule 4: past the budget the list fix's calls are counted."""
+def test_the_list_fix_keeps_to_its_budget(box, monkeypatch, python_owned):
+    """Rule 4: past the budget the list fix's calls are counted.  docx-agent's own handler
+    (``python_owned``): the session's budget is the Rust check's (its unit test
+    ``the_list_fix_keeps_to_its_budget``); the cut deletes this one with the handler."""
     monkeypatch.setattr(scoped, "LIST_CALLS", 1)
     session = box.session()
     d1, samples, reference, made = _made(box, session, 3)

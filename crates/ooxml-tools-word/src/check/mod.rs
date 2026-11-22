@@ -413,9 +413,12 @@ fn served(args: &Check) -> Result<Vec<CheckInclude>, &'static str> {
     {
         return Err(CHECK_ARGUMENTS);
     }
+    // An empty list is the default, as docx-agent reads it (`include or [...]`; teams' calls
+    // rely on it: python-quirks.md).
     let mut wanted = args
         .include
         .clone()
+        .filter(|parts| !parts.is_empty())
         .unwrap_or_else(|| vec![CheckInclude::Validate, CheckInclude::Reflow, CheckInclude::Fields]);
     for part in &wanted {
         match part {
