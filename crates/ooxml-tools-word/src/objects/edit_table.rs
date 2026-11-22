@@ -19,10 +19,12 @@
 //! Tracked, a row or column deleted that holds a pending tracked merge's first cell is
 //! refused naming the merge's changes to settle first ([`super::edit_table_pending`]).
 //!
-//! Not ported yet, said in `unported` for the host to answer its own way: `sync` and `from`
-//! (a source the dispatcher resolves: the session's datasets and other documents' rows); a
-//! change of the rows of a table with a placement record (refused so by the edit core);
-//! any call on a table with Accept All's
+//! A table kept in step with a source's rows by key (`sync`, [`super::table_sync`]); cells
+//! written from a source ([`super::set_from`]).
+//!
+//! Not ported yet, said in `unported` for the host to answer its own way: a change of the
+//! rows of a table with a placement record (refused so by the edit core); any call on a
+//! table with Accept All's
 //! cell ends (a cell's last paragraph mark deleted: the reply's Markdown joins cells across
 //! it, and names the cells Accept All loses with the changes that do it).
 //!
@@ -233,7 +235,7 @@ fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<T
         Err(error) => return Err(error),
     };
     if args.action == TableAction::Sync {
-        return Ok(unported("word_edit_table sync", retry));
+        return sync(args, editing, &docx, &view, source, retry);
     }
     check_sync_fields(args, retry)?;
     let given = args.from.as_deref().filter(|f| !f.is_empty());
@@ -278,6 +280,39 @@ fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<T
         Err(what) => return Ok(unported(&what, retry)),
     };
     Ok(finish(args, editing, &view, change, accepted.notes, retry))
+}
+
+/// `sync` (docx-agent's `_sync`): a table kept in step with the rows `source` gives
+/// ([`super::table_sync`]); a `from` naming one value is the host's.
+fn sync(
+    args: &WordEditTable,
+    editing: &Editing<'_>,
+    docx: &Docx,
+    view: &TableView,
+    source: Option<&crate::SourceRows>,
+    retry: &TryCall,
+) -> Result<ToolResult<Value>, ToolError> {
+    let Some(rows) = source else {
+        if args.from.as_deref().is_some_and(|f| !f.is_empty()) {
+            return Ok(unported("word_edit_table sync from one value", retry));
+        }
+        return Err(invalid(
+            "sync takes from: the rows to keep the table in step with, e.g. {action: 'sync', from: 'd:<id>', key: \
+             '<key column label>'}"
+                .to_owned(),
+            "from",
+            &[],
+            retry,
+        ));
+    };
+    let accepted = view.accepted(docx);
+    if accepted.table.cell_ends {
+        return Ok(unported(
+            &format!("word_edit_table on a table with {}", crate::CELL_ENDS),
+            retry,
+        ));
+    }
+    super::table_sync::sync(args, editing, docx, view, &accepted, rows, retry)
 }
 
 /// A `from` naming rows beside `cells`: two forms of `set_cells` at once, refused naming
