@@ -16,9 +16,8 @@ committed since.
 
 **What Python adds.**  The document's state Python holds goes into the answer as before:
 ``describe``'s ``name``, ``pages`` (the layout's, as :func:`docx_agent.tools.read._pages`
-asks it), ``tracking`` and ``problems``, and its ``memory``; ``word_inspect``'s placements,
-asked of the document's layout as :func:`docx_agent.tools.read._placed_by_worker` asks them
-(a :class:`Placer` Rust calls back once per call, with the lock taken back).
+asks it), ``tracking`` and ``problems``, and its ``memory``.  ``word_inspect``'s placements
+are the session's own, from its layout of the version (lane H7b, :func:`session_layout`).
 
 **Falling back.**  Where the Rust answer is not yet the same, the call is answered by the
 Python path, counted by tool and reason (:func:`fallbacks`, ``read_fallbacks{tool,reason}``)
@@ -294,6 +293,18 @@ def _named(call: Any) -> Any:
     return None
 
 
+def session_layout(call: Any) -> Any:
+    """The page engine the session lays the document ``call`` reads out with (its own,
+    :func:`.engines.session_pages`, set to the toolbox's fonts and locale), or ``None``: a
+    document the session does not own, or options the Rust layout does not take."""
+    owned = _owned(call.entry)
+    if owned is None:
+        return None
+    from .engines import session_pages
+
+    return session_pages(owned.handle, call.session)[0]
+
+
 def _owned(entry: Any) -> Any:
     """The entry the session owns that ``entry`` is, or reads a committed version of."""
     for found in (entry, getattr(entry, "live", None)):
@@ -402,7 +413,7 @@ def _at_path(value: Any, path: list[str]) -> list[Any]:
     return _at_path(value.get(head), rest) if isinstance(value, dict) else []
 
 
-def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | None" = None,
+def _call(call: Any, tool: str, arguments: dict[str, Any], *,
           others: tuple[str, ...] = (), layout: Any = None, raster: Any = None,
           images: "list[tuple[str, int, int]] | None" = None,
           context: "Callable[[], dict[str, Any]] | None" = None,
@@ -436,13 +447,10 @@ def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | 
     made = context_of(None, call.limits, call.limits.layout_timeout if layout is not None else None,
                       **(context() if context is not None else {}))
     laid = None
-    if layout is not None or raster is not None or placer is not None:
-        laid = ooxml_core.CallLayout(layout, raster=raster, image_budgets=images,
-                                     placer=placer.place if placer is not None else None)
+    if layout is not None or raster is not None:
+        laid = ooxml_core.CallLayout(layout, raster=raster, image_budgets=images)
     reply, given_files, app = mirror.session.call(tool, json.dumps(arguments), ooxml_core.CallOptions(
         context=made, documents=ooxml_core.CallDocuments(at=[version, *pinned], names=names), layout=laid))
-    if placer is not None and placer.error is not None:
-        raise placer.error
     envelope = json.loads(reply)
     error = envelope.get("error")
     if error is not None:
@@ -463,7 +471,7 @@ def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | 
 def serve(call: Any, tool: str, arguments: dict[str, Any],
           python: Callable[[], Result], *, addresses: tuple = (),
           answer: Callable[[dict[str, Any]], Result] | None = None,
-          placer: "Placer | None" = None, why_not: str | None = None,
+          why_not: str | None = None,
           others: tuple[str, ...] = (), layout: Any = None, raster: Any = None,
           images: "list[tuple[str, int, int]] | None" = None,
           context: "Callable[[], dict[str, Any]] | None" = None,
@@ -479,7 +487,7 @@ def serve(call: Any, tool: str, arguments: dict[str, Any],
             raise _Fallback("limits")
         if _renamed_or_deleted(_named(call), *addresses):
             raise _Fallback("renamed or deleted id")
-        envelope = _call(call, tool, arguments, placer=placer, others=others, layout=layout,
+        envelope = _call(call, tool, arguments, others=others, layout=layout,
                          raster=raster, images=images, context=context, files=files)
         result = (answer or _result)(envelope)
     except _Fallback as why:
@@ -501,7 +509,7 @@ def serve_check(call: Any, arguments: dict[str, Any]) -> Result | None:
     ``unported``).
 
     Lane P5b: ``reflow`` (asked, or by default) is answered there too, laid out by the
-    document's page engine (:func:`docx_agent.pages.word_pages`), handed to the call; the
+    document's page engine (the session's own, :func:`.engines.session_pages`), handed to the call; the
     session keeps what the check saw for the next one's ``since_last_check``
     (:func:`last_check`)."""
     owned = _owned(call.entry)
@@ -514,9 +522,9 @@ def serve_check(call: Any, arguments: dict[str, Any]) -> Result | None:
     else:
         why, arguments = _session_check(call, owned.held, arguments)
     if why is None and _laid_check(arguments):
-        from ..pages import word_pages
+        from .engines import session_pages
 
-        layout, _ = word_pages(owned.held)     # none: the session says so (unported)
+        layout, _ = session_pages(owned.handle, call.session)     # none: the session says so (unported)
     served = serve(call, "check", arguments, lambda: None, why_not=why, layout=layout,
                    others=("copies[].reference.doc",))
     if served is not None and layout is not None:
@@ -603,7 +611,7 @@ def image_budgets(call: Any) -> list[tuple[str, int, int]]:
 
 def serve_render(call: Any, arguments: dict[str, Any]) -> Result | None:
     """Lane RD1: ``render`` answered by the Rust session -- laid out by the document's page
-    engine (:func:`docx_agent.pages.word_pages`), its pages drawn in Rust and kept there --
+    engine (the session's own, :func:`.engines.session_pages`), its pages drawn in Rust and kept there --
     for a document it owns, outside a batch; else ``None`` (counted, with why), and the
     handler goes on.  Each image comes back as a file (``page 3``, ``sheet of pages 1-12``),
     made an image of the reply here (``call.image``)."""
@@ -620,12 +628,13 @@ def serve_render(call: Any, arguments: dict[str, Any]) -> Result | None:
     elif call.in_batch:
         why = "in a batch"
     else:
-        from ..layout import font_dirs_of
-        from ..pages import word_pages
+        from ooxml_common.fonts.office import user_font_dirs
+
+        from .engines import session_pages
 
         if "render" in hosting.laid:
-            layout, _ = word_pages(owned.held)     # none: the session says so (unported)
-        raster = host_raster(font_dirs_of(call.document))
+            layout, _ = session_pages(owned.handle, call.session)     # none: the session says so (unported)
+        raster = host_raster([str(path) for path in user_font_dirs(call.session.font_dirs)])
     files: list[tuple[str, str, bytes]] = []
     served = serve(call, "render", arguments, lambda: None, why_not=why, layout=layout, raster=raster,
                    images=image_budgets(call) if why is None else None, files=files)
@@ -696,32 +705,3 @@ def _result(envelope: dict[str, Any]) -> Result:
     result.total = envelope.get("total")
     result.warnings.extend(envelope.get("warnings") or [])
     return result
-
-
-class Placer:
-    """Where ``word_inspect``'s blocks are placed, asked of the document's layout as the
-    Python path asks it (:func:`docx_agent.tools.read._placed_by_worker`, else the read
-    copy's own layout), and written as :mod:`docx_agent.state` writes it.  Rust calls
-    :meth:`place` with the interpreter lock taken back; an error there is kept and raised
-    once the call is back (:attr:`error`)."""
-
-    def __init__(self, call: Any) -> None:
-        self.call = call
-        self.error: BaseException | None = None
-
-    def place(self, asked_json: str) -> str | None:
-        try:
-            from ..state import placement_keys
-            from ..layout import placements_of
-            from ..tools.read import _placed_by_worker
-
-            asked = json.loads(asked_json)
-            found = _placed_by_worker(self.call)(asked)
-            if found is None:
-                answers = placements_of(self.call.document.layout(), asked)
-            else:
-                answers = found[0]
-            return json.dumps([placement_keys(where) for where in answers])
-        except BaseException as error:  # noqa: BLE001 -- raised again once the call is back
-            self.error = error
-            return None

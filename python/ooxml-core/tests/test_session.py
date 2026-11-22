@@ -240,6 +240,29 @@ def page_docx(result: str) -> bytes:
     return out.getvalue()
 
 
+def test_a_field_update_lays_out_with_the_sessions_own_engine():
+    """``Session(pages=PageSetup(...))`` (lane H7b): the session keeps each document's engine
+    (``Session.pages``, one per document) and a call whose host gives no layout is laid out by
+    it; ``set_pages`` gives a document an engine of its own."""
+    from pathlib import Path
+
+    files = Path(__file__).resolve().parents[2] / "pptx2svg/packages/pptx2svg-fonts/src/pptx2svg_fonts/files"
+    setup = ooxml_core.PageSetup(ooxml_core.WordFonts([("folder", str(files))]))
+    bare = ooxml_core.Session()
+    assert bare.pages(bare.open(page_docx("9"), name="a.docx")) is None
+    session = ooxml_core.Session(pages=setup)
+    doc = session.open(page_docx("9"), name="a.docx")
+    assert isinstance(session.pages(doc), ooxml_core.WordPages)
+    reply = call(session, "word_fields", {"doc": doc, "action": "update"})
+    assert reply["ok"], reply
+    assert call(session, "word_fields", {"doc": doc, "action": "list"})["data"][0]["result"] == "1"
+    other = ooxml_core.Session()
+    doc = other.open(page_docx("9"), name="a.docx")
+    other.set_pages(doc, setup)
+    assert call(other, "word_fields", {"doc": doc, "action": "update"})["ok"]
+    assert call(other, "word_fields", {"doc": doc, "action": "list"})["data"][0]["result"] == "1"
+
+
 def test_a_field_update_lays_out_with_the_hosts_engine():
     """``layout=CallLayout(pages)``: the host's page engine for the document, which ``word_fields`` lays the
     versions it updates out with; without it a page number is left to the host."""

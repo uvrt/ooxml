@@ -158,27 +158,28 @@ def will_serve(call: Any, arguments: dict[str, Any]) -> bool:
         return False
     if _why_not(call, entry, arguments) is not None:
         return False
-    return call.tool.name not in _served.hosting().laid or _pages(entry) is not None
+    return call.tool.name not in _served.hosting().laid or _pages(call, entry) is not None
 
 
-def _pages(entry: Any) -> Any:
-    """The document's page engine (:func:`docx_agent.pages.word_pages`), or ``None``."""
-    from ..pages import word_pages
+def _pages(call: Any, entry: Any) -> Any:
+    """The document's page engine (the session's own, :func:`.engines.session_pages`), or
+    ``None``."""
+    from .engines import session_pages
 
-    return word_pages(entry.held)[0]
+    return session_pages(entry.handle, call.session)[0]
 
 
 def _layout(call: Any, entry: Any, measured: bool) -> Any:
-    """The page engine a call of a tool whose edits read the pages
-    (:attr:`~docx_agent.rust.served.Hosting.laid`) edits with; for the others, where the
-    call's checks take the reflow the session measures (``measured``: served without the
-    lock, lane P5m), the document's engine where this process has one already; else
-    ``None``."""
-    from ..pages import word_pages
+    """The page engine (the session's own, :func:`.engines.session_pages`) a call of a tool
+    whose edits read the pages (:attr:`~docx_agent.rust.served.Hosting.laid`) edits with; for
+    the others, where the call's checks take the reflow the session measures (``measured``:
+    served without the lock, lane P5m) -- measured only where the engine laid out the version
+    the edit starts from --; else ``None``."""
+    from .engines import session_pages
 
     if call.tool.name not in _served.hosting().laid:
-        return word_pages(entry.held, make=False)[0] if measured else None
-    found, why = word_pages(entry.held)
+        return session_pages(entry.handle, call.session)[0] if measured else None
+    found, why = session_pages(entry.handle, call.session)
     if found is None:
         raise Fallback(f"the layout: {why}")
     return found

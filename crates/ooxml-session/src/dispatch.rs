@@ -41,6 +41,9 @@ pub(crate) struct CallState<'p> {
     /// The name the call gives its own document.
     named: String,
     placer: Option<Arc<dyn Placer>>,
+    /// The layout of the call's document: the host's where it gives one, else the
+    /// session's own engine of the document (set once the document is known).
+    layout: Option<Arc<dyn ooxml_tools_word::WordLayout>>,
     /// The versions an editing tool's edits made.
     made: Mutex<Option<Made>>,
     /// The call's limit on laying a document out.
@@ -163,6 +166,7 @@ impl Session {
             names: context.names.clone(),
             named: String::new(),
             placer: context.placer.clone(),
+            layout: context.layout.clone(),
             made: Mutex::new(None),
             layout_limit: layout_cancel.as_ref().map(LayoutCancel::limit),
         };
@@ -198,6 +202,8 @@ impl Session {
             }
             call_made = made.zip(document.as_ref()).map(|(made, document)| {
                 let one = made.first.seq() == made.last.seq();
+                // (the host's layout only: a call it gives none is not measured after its
+                // edits, as before the session kept engines of its own)
                 let reflow = context
                     .layout
                     .as_deref()
@@ -277,7 +283,7 @@ impl Session {
             },
             locale: context.locale.as_ref().or(self.config.locale.as_ref()),
             made: &state.made,
-            layout: context.layout.as_deref(),
+            layout: state.layout.as_deref(),
             layout_limit: state.layout_limit,
             raster: context.raster.as_deref(),
             image_budgets: &context.image_budgets,
@@ -324,6 +330,9 @@ impl Session {
         state
             .warnings
             .extend(spec.ignored_for(Some(doc.kind.as_str()), &mut arguments));
+        if state.layout.is_none() {
+            state.layout = self.own_pages(&doc.id);
+        }
         state.opened = Some(doc.with_placer(state.placer.clone()));
         Ok((Arc::clone(tool), arguments))
     }
