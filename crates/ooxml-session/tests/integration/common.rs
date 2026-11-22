@@ -69,9 +69,8 @@ impl ooxml_derive::CacheBudget for Memos {
     }
 }
 
-/// The page engine a host lays its documents out with (the repository's test fonts), its
-/// memos and paint within no limit.
-pub fn layout() -> Arc<EnginePages> {
+/// The repository's test fonts, scanned.
+pub fn test_fonts() -> Arc<FontSetup> {
     let folder = Folder {
         location: Location::Folder,
         path: concat!(
@@ -85,11 +84,16 @@ pub fn layout() -> Arc<EnginePages> {
         recorded_faces: true,
         fallbacks: true,
     };
-    let setup = Arc::new(FontSetup::new(Arc::new(DiskFonts), &[folder], options));
+    Arc::new(FontSetup::new(Arc::new(DiskFonts), &[folder], options))
+}
+
+/// The page engine a host lays its documents out with (the repository's test fonts), its
+/// memos and paint within no limit.
+pub fn layout() -> Arc<EnginePages> {
     let budgets = EngineBudgets {
         held: Arc::new(Memos),
         paint: Arc::new(Memos),
     };
-    let engine = PageEngine::new(setup, EngineOptions::default(), budgets);
+    let engine = PageEngine::new(test_fonts(), EngineOptions::default(), budgets);
     Arc::new(EnginePages::of(engine))
 }

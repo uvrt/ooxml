@@ -29,10 +29,12 @@ mod group;
 mod layout;
 mod locale;
 mod options;
+mod pages;
 mod raster;
 mod session;
 mod summary;
 mod tools;
+mod values;
 mod version;
 mod view;
 
@@ -42,6 +44,7 @@ pub use budget::{PyBudgetAccount, PyMemoryBudget};
 pub use context::{PyCallContext, PyCancelToken, PyLimits};
 pub use layout::{LayoutFallback, PyLaidPages, PyWordFonts, PyWordPages};
 pub use options::{PyCallDocuments, PyCallLayout, PyCallOptions, PyCallWriting, PyHostIds};
+pub use pages::PyPageSetup;
 pub use raster::PyPageRaster;
 pub use session::PySession;
 pub use version::PyVersion;
@@ -72,6 +75,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(tools::new_document, m)?)?;
     m.add_class::<PyWordFonts>()?;
     m.add_class::<PyWordPages>()?;
+    m.add_class::<PyPageSetup>()?;
     m.add_class::<PyLaidPages>()?;
     m.add_class::<PyMemoryBudget>()?;
     m.add_class::<PyBudgetAccount>()?;

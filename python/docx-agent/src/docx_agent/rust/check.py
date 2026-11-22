@@ -806,6 +806,10 @@ def _serve(c: Any, call: Any, arguments: dict[str, Any], timing: Any) -> Any:
     since = "reflow" in wanted and seen is not None and seen[2] != version
     if "reflow" in wanted and seen is None and live.__dict__.get("_tool_seen_layout") is not None:
         raise Fallback("a layout seen before the owner")
+    if "reflow" in wanted and seen is None and _session_saw(call):
+        # The last check was the session's (lane P5b keeps it there): docx-agent's handler
+        # measures since_last_check from it, this owner cannot.
+        raise Fallback("a layout seen before the owner")
     aliases = dict(document._aliases) if since else {}
     from .. import layout_facts
     from ..tools import scoped
@@ -1186,6 +1190,14 @@ def _seen_add(live: Any, doc: RustDoc, seq: int, version: int, snap: Any, by: st
             log = live.__dict__["_rust_seen"] = []
         log.append(((doc.key, seq), next(_seen_order), version, snap, by))
         del log[:-_SEEN_KEPT]
+
+
+def _session_saw(call: Any) -> bool:
+    """Whether the Rust session kept what a check of the document saw (lane P5b)."""
+    from .reads import last_check
+
+    owned, kept, _ = last_check(call)
+    return owned and kept is not None
 
 
 def since_for_python(call: Any, version: int) -> Any:

@@ -125,28 +125,9 @@ fn checked(args: &Check, version: &Version<'_>, cancel: &dyn Cancel) -> Result<D
     let mut data = Map::new();
     let mut timing = Map::new();
     let docx = if layout_wanted { Some(version.docx()?) } else { None };
-    let ranges = match &docx {
-        Some(docx) => ranges_of(args.range.as_deref(), version, docx).map_err(|e| heading_refused(e, &args.doc))?,
-        None => Vec::new(),
-    };
-    if ranges.len() > MAX_RANGES {
-        return Err(ToolError::failure(
-            ooxml_tools::Failure::Limit,
-            format!(
-                "{} ranges: at most {MAX_RANGES} per check; a span p:A..t:B covers many blocks",
-                ranges.len()
-            ),
-        )
-        .at("range"));
-    }
-    let scope = match (&docx, ranges.is_empty()) {
-        (Some(docx), false) => {
-            let started = Instant::now();
-            let scope = Scope::of(docx, &ranges).map_err(|e| refused::range_refused(e, docx, &args.doc))?;
-            timing.insert("resolve".into(), seconds(started));
-            Some(scope)
-        }
-        _ => None,
+    let scope = match &docx {
+        Some(docx) => checked_scope(args, version, docx, &mut timing)?,
+        None => None,
     };
     if wanted.contains(&CheckInclude::Validate) {
         let started = Instant::now();
@@ -184,6 +165,38 @@ fn checked(args: &Check, version: &Version<'_>, cancel: &dyn Cancel) -> Result<D
         }
     }
     finish(owned, &wanted, scope.as_ref(), data, timing)
+}
+
+/// The scope of the check's `range` on `docx` (`None` for no range), at most
+/// [`MAX_RANGES`] ranges; the time it took to resolve in `timing`.
+///
+/// # Errors
+/// A range refused, or too many ranges.
+fn checked_scope(
+    args: &Check,
+    version: &Version<'_>,
+    docx: &ooxml_word_model::docx::Docx,
+    timing: &mut Map<String, Value>,
+) -> Result<Option<Scope>, ToolError> {
+    let ranges =
+        ranges_of(args.range.as_deref(), &|a| version.follow(a), docx).map_err(|e| heading_refused(e, &args.doc))?;
+    if ranges.len() > MAX_RANGES {
+        return Err(ToolError::failure(
+            ooxml_tools::Failure::Limit,
+            format!(
+                "{} ranges: at most {MAX_RANGES} per check; a span p:A..t:B covers many blocks",
+                ranges.len()
+            ),
+        )
+        .at("range"));
+    }
+    if ranges.is_empty() {
+        return Ok(None);
+    }
+    let started = Instant::now();
+    let scope = Scope::of(docx, &ranges).map_err(|e| refused::range_refused(e, docx, &args.doc))?;
+    timing.insert("resolve".into(), seconds(started));
+    Ok(Some(scope))
 }
 
 /// What a check with the layout reads, besides the layout.
@@ -388,7 +401,7 @@ fn finish(
 /// A heading's range that names no heading of the body.
 fn ranges_of(
     range: Option<&[String]>,
-    version: &Version<'_>,
+    follow: &dyn Fn(&str) -> String,
     docx: &ooxml_word_model::docx::Docx,
 ) -> Result<Vec<String>, AddressError> {
     let mut out: Vec<String> = Vec::new();
@@ -397,12 +410,34 @@ fn ranges_of(
         if address.is_empty() {
             continue;
         }
-        let address = expand_heading(docx, &version.follow(address))?;
+        let address = expand_heading(docx, &follow(address))?;
         if !out.contains(&address) {
             out.push(address);
         }
     }
     Ok(out)
+}
+
+/// The scope of a check's `range` on `docx` (the document `doc`, its renames followed by
+/// `follow`) as `check` resolves and refuses it -- a heading's range read as its span, each
+/// range once -- for what reads within it beside the check (a check of numbers, a scale);
+/// `None` for no range.
+///
+/// # Errors
+/// A range refused, in `check`'s words.
+pub(crate) fn scope_of(
+    range: Option<&[String]>,
+    follow: &dyn Fn(&str) -> String,
+    docx: &ooxml_word_model::docx::Docx,
+    doc: &str,
+) -> Result<Option<Scope>, ToolError> {
+    let ranges = ranges_of(range, follow, docx).map_err(|e| heading_refused(e, doc))?;
+    if ranges.is_empty() {
+        return Ok(None);
+    }
+    Scope::of(docx, &ranges)
+        .map(Some)
+        .map_err(|e| refused::range_refused(e, docx, doc))
 }
 
 /// A heading's range refused (docx-agent's `_heading_range`: at no field, the body's

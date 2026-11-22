@@ -55,6 +55,7 @@ pub use edit_table_args::{CellArg, KeyPair, Loose, Position, Side, TableAction, 
 pub use format_table::word_format_table;
 pub use format_table_args::{Across, BorderStyle, HeightRule, Look, Scope, Vertical, WidthOf, WordFormatTable};
 pub use rows_written::RowsWritten;
+pub(crate) use table_view::table_view;
 pub(crate) use table_view::{read_look, LOOK_NAMES};
 
 /// Registers the group's tools, in the order a model is shown them (the crate's

@@ -34,6 +34,7 @@ mod structure;
 mod style;
 mod table_read;
 mod text;
+mod values;
 mod version;
 mod word_inspect;
 mod word_read;
@@ -41,11 +42,12 @@ mod written;
 
 pub use blobs::{Blob, BlobList, Blobs};
 pub use check::*;
-pub use describe::{describe, Describe, DESCRIBED, NOT_DESCRIBED};
+pub use describe::{describe, summary, Describe, DESCRIBED, NOT_DESCRIBED};
 pub use document::*;
 pub use drawn_reply::resolve_drawn;
 pub use find_text::{find_text, FindStories, FindText};
-pub use pages::{EnginePages, LayoutLimit, NotLaid, WordLayout};
+pub use ooxml_word_pages::EngineBudgets;
+pub use pages::{EnginePages, LayoutLimit, NotLaid, PageSetup, WordLayout};
 pub use placements::Placer;
 pub use registrar::{register, EditFn, Hosting, ReadFn, Registrar, TrackingFn};
 pub use spaced_reply::note_spaced;
@@ -57,6 +59,9 @@ pub use sources::{Clock, Day, SourceRefused, SourceRows, SourceValue, Sources};
 pub use structure::*;
 pub use style::*;
 pub use text::*;
+pub use values::{
+    number_texts, scale_values, NumberText, NumberTexts, ReadScale, ReadStep, ScaleValue, ScaleValues, ValueHandle,
+};
 pub use version::{HostTable, HostTables, LayoutCounts, Others, Owned, Version};
 pub use word_inspect::{word_inspect, WordInspect};
 pub use word_read::{word_read, Story, View, WordRead};
