@@ -13,7 +13,7 @@ warnings, the validate delta's new problems, and three things about data -- ``da
 digest of all of it but :data:`ENCODING_FIELDS`; ``data_keys``, its schema (:func:`data_keys`);
 and ``data_sha_core``, a digest of what the layout does not measure (:func:`core_data`).
 ``output.parts_sha256`` is the saved package's :func:`package_digest`: its parts' names and
-uncompressed bytes, what Word reads -- not the zip's compressed bytes, which differ between
+uncompressed bytes (an embedded package's by its own parts), what Word reads -- not the zip's compressed bytes, which differ between
 deflate implementations (zlib, zlib-rs) for the same parts, nor the order of its entries.  Replaying gives the same results
 and the same parts (the session clock is fixed) where Office's faces are installed; elsewhere
 it gives the same results less what the layout measures (:func:`core_mismatches`).
@@ -115,16 +115,33 @@ def package_digest(data: bytes) -> str:
     by name, hashed (sha256, hex).  The compression, timestamps and other zip headers are left
     out, and so is the entries' order: a package's parts are found by name, and the Python and
     Rust saves write the same parts in different orders (a new part where docx-agent adds it,
-    or where the Rust session does)."""
+    or where the Rust session does).  A part that is itself a package (a chart's embedded
+    workbook, ``word/embeddings/*.xlsx``) counts by its own parts the same way
+    (:func:`_part_bytes`): the Rust session deflates the workbook it writes with zlib-rs, the
+    Python save with zlib -- the same parts, other bytes."""
     sha = hashlib.sha256()
     with zipfile.ZipFile(io.BytesIO(data)) as package:
         names = package.namelist()
         if len(set(names)) != len(names):
             raise ValueError(f"a part is in the package twice: {sorted(names)}")
         for name in sorted(names):
-            encoded, body = name.encode("utf-8"), package.read(name)
+            encoded, body = name.encode("utf-8"), _part_bytes(package.read(name))
             sha.update(len(encoded).to_bytes(4, "big") + encoded + len(body).to_bytes(8, "big") + body)
     return sha.hexdigest()
+
+
+def _part_bytes(body: bytes) -> bytes:
+    """What :func:`package_digest` hashes of a part: its bytes, or, for an OPC package (a zip
+    holding ``[Content_Types].xml``), its :func:`package_digest` marked as one."""
+    if not body.startswith(b"PK\x03\x04"):
+        return body
+    try:
+        with zipfile.ZipFile(io.BytesIO(body)) as inner:
+            if "[Content_Types].xml" not in inner.namelist():
+                return body
+    except zipfile.BadZipFile:
+        return body
+    return b"package:" + package_digest(body).encode("ascii")
 
 
 # -- What the layout measures ---------------------------------------------------------------
