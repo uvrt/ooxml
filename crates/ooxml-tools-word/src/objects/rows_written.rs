@@ -68,12 +68,14 @@ fn texts(docx: &Docx, part: &str, table: &TableId) -> Vec<String> {
         .collect()
 }
 
-/// The rows the call wrote: `made` the row it added, if any (its id); every other row
-/// is the row at its place before, the added one left out.
-fn written_rows(before: &[String], after: &[String], after_ids: &[String], made: Option<&str>) -> Option<Vec<usize>> {
-    let added = made.and_then(|id| after_ids.iter().position(|r| r == id));
-    let kept = after.len() - usize::from(added.is_some());
-    if kept != before.len() {
+/// The rows the call wrote: `made` the rows it added, if any (their ids); every other row
+/// is the row at its place before, the added ones left out.
+fn written_rows(before: &[String], after: &[String], after_ids: &[String], made: &[String]) -> Option<Vec<usize>> {
+    let added: Vec<usize> = made
+        .iter()
+        .filter_map(|id| after_ids.iter().position(|r| r == id))
+        .collect();
+    if after.len() - added.len() != before.len() {
         return None;
     }
     let mut old = before.iter();
@@ -81,7 +83,7 @@ fn written_rows(before: &[String], after: &[String], after_ids: &[String], made:
         after
             .iter()
             .enumerate()
-            .filter(|(k, text)| Some(*k) == added || old.next() != Some(*text))
+            .filter(|(k, text)| added.contains(k) || old.next() != Some(*text))
             .map(|(k, _)| k)
             .collect(),
     )
@@ -100,7 +102,7 @@ struct Looked {
 /// given its column's formatting in the same transaction: one commit, one history step, and
 /// the rows kept in the host's record only once it is committed (as drawn). `table` is the
 /// table as the call named it; `look` gives, from the command's out and the version it
-/// made, the table's id after and the row it added, `None` where the rows are not looked
+/// made, the table's id after and the rows it added, `None` where the rows are not looked
 /// at. The command's out and the warnings.
 ///
 /// # Errors
@@ -114,7 +116,7 @@ pub(super) fn run_writing_rows<C, F>(
 ) -> Result<(C::Out, Vec<String>), EditError>
 where
     C: Command<WordDoc, Error = EditError>,
-    F: Fn(&C::Out, &WordDoc) -> Option<(String, Option<String>)>,
+    F: Fn(&C::Out, &WordDoc) -> Option<(String, Vec<String>)>,
 {
     let writing = WritingRows {
         command,
@@ -143,7 +145,7 @@ struct WritingRows<'a, 'e, C, F> {
 impl<C, F> Command<WordDoc> for WritingRows<'_, '_, C, F>
 where
     C: Command<WordDoc, Error = EditError>,
-    F: Fn(&C::Out, &WordDoc) -> Option<(String, Option<String>)>,
+    F: Fn(&C::Out, &WordDoc) -> Option<(String, Vec<String>)>,
 {
     type Out = (C::Out, Looked);
     type Error = EditError;
@@ -161,27 +163,20 @@ where
         let Some((now, made)) = (self.look)(&out, tx.doc()) else {
             return Ok((out, Looked::default()));
         };
-        let looked = rows_written(
-            self.editing,
-            tx,
-            &before,
-            (self.table, &now),
-            made.as_deref(),
-            self.retry,
-        );
+        let looked = rows_written(self.editing, tx, &before, (self.table, &now), &made, self.retry);
         Ok((out, looked))
     }
 }
 
 /// What the call did beyond its command (`_rows_written`): `table` the table as the call
 /// named it and its id after, `previous` the version its command was applied to and `tx`
-/// the one it made, `made` the row it added.
+/// the one it made, `made` the rows it added.
 fn rows_written(
     editing: &Editing<'_>,
     tx: &mut Txn<'_, WordDoc>,
     previous: &WordDoc,
     (table, now): (&str, &str),
-    made: Option<&str>,
+    made: &[String],
     retry: &TryCall,
 ) -> Looked {
     let (Ok(old_docx), Ok(docx)) = (previous.docx(), tx.doc().docx()) else {
@@ -384,9 +379,12 @@ mod tests {
         let before = ["a", "b", "c"].map(String::from);
         let after = ["a", "x", "b", "c2"].map(String::from);
         let ids = ["r0", "new", "r1", "r2"].map(String::from);
-        assert_eq!(written_rows(&before, &after, &ids, Some("new")), Some(vec![1, 3]));
-        assert_eq!(written_rows(&before, &before, &ids[..3], None), Some(vec![]));
-        assert_eq!(written_rows(&before, &after, &ids, None), None);
+        assert_eq!(
+            written_rows(&before, &after, &ids, &["new".to_owned()]),
+            Some(vec![1, 3])
+        );
+        assert_eq!(written_rows(&before, &before, &ids[..3], &[]), Some(vec![]));
+        assert_eq!(written_rows(&before, &after, &ids, &[]), None);
     }
 
     #[test]

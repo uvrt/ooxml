@@ -219,10 +219,14 @@ pub(crate) struct Beside {
     pub(crate) below: bool,
     /// One cell per grid column beside a row with a cell over several.
     pub(crate) plain: bool,
+    /// A body row, never one that repeats as a header (docx-agent's `set_row(header=False)`
+    /// after `insert_row`).
+    pub(crate) body: bool,
 }
 
-/// The new row (not yet in the table) and what it says of its shape.
-pub(crate) fn row_like(work: &mut Work, table: Id, beside: &Beside, orders: &Orders) -> (Id, Option<String>) {
+/// The new row (not yet in the table), what it says of its shape, and whether a header
+/// mark its likeness had was left out (a body row, [`Beside::body`]).
+pub(crate) fn row_like(work: &mut Work, table: Id, beside: &Beside, orders: &Orders) -> (Id, Option<String>, bool) {
     let reference = beside.reference;
     let mut shape = reference;
     let mut note = None;
@@ -245,17 +249,23 @@ pub(crate) fn row_like(work: &mut Work, table: Id, beside: &Beside, orders: &Ord
         }
     }
     let row = make(work, "tr", &[]);
+    let mut header_dropped = false;
     if let Some(extra) = work.find(shape, W, "tblPrEx") {
         let copy = work.deep_copy(extra);
         work.append(row, copy);
     }
     if let Some(found) = work.find(shape, W, "trPr") {
         let properties = work.deep_copy(found);
-        let header_kept = shape == reference || find_path(work, reference, &["trPr", "tblHeader"]).is_some();
+        let header_kept =
+            !beside.body && (shape == reference || find_path(work, reference, &["trPr", "tblHeader"]).is_some());
         for child in work.children(properties).to_vec() {
-            if work.is_any(child, W, &["ins", "del", "trPrChange"]) || (work.is(child, W, "tblHeader") && !header_kept)
-            {
+            let header = work.is(child, W, "tblHeader");
+            if work.is_any(child, W, &["ins", "del", "trPrChange"]) || (header && !header_kept) {
                 work.remove(child);
+                // (a header made a body row: one the likeness repeated as a header)
+                header_dropped |= header
+                    && beside.body
+                    && (shape == reference || find_path(work, reference, &["trPr", "tblHeader"]).is_some());
             }
         }
         if !work.children(properties).is_empty() {
@@ -291,7 +301,7 @@ pub(crate) fn row_like(work: &mut Work, table: Id, beside: &Beside, orders: &Ord
         work.append(cell, paragraph);
         work.append(row, cell);
     }
-    (row, note)
+    (row, note, header_dropped)
 }
 
 /// The merges down that `rows[at]` sits right beside without joining (`merges_beside`):

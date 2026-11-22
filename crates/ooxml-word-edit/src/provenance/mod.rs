@@ -25,9 +25,11 @@ mod item;
 mod keep;
 mod made;
 mod review;
+mod table;
 
 pub use keep::{KeepText, TextKeep};
 pub(crate) use review::follow_review;
+pub(crate) use table::store_table_record;
 
 use crate::doc::WordDoc;
 use crate::policy::RevisionPolicy;

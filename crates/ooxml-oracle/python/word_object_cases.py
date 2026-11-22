@@ -220,16 +220,57 @@ def edit_table_cases(document) -> list[dict]:
     last) and split (by default, across, down, both, into one, past the table, no first);
     cells set (by place, in lines, as they are, by labels, a label an earlier cell wrote,
     past the table, missing a place or text, one merged cell given two values, a column's
-    rows filled and the ranges refused, references left to the host);
+    rows filled and the ranges refused, references left to the host); cells set from a
+    dataset (a header row or none, a run of rows, columns picked, dates in a pattern, rows
+    grown, the refusals of a block that does not fit or whose arguments are wrong);
     arguments
     of another action refused; strict mode's empty values taken as none -- untracked and
     tracked."""
     out = []
     for table in _tables(document)[:3]:
         out += _rows(table) + _columns(table) + _cells(table) + _set_cells(document, table)
+    for table in _tables(document)[:2]:
+        out += _from_sources(table)
     out += _held_rows(document)
     out += [call("word_edit_table", table="t:00000000", action="insert_row")]
     return out + [tracked(case) for case in out]
+
+
+#: The datasets the source cases define, as the host hands rows to the Rust session
+#: (``CallDocuments(sources=...)``): values JSON's own, a date as ``{"date": [y, m, d]}``.
+DATASETS = [
+    {"id": "sales", "columns": ["Region", "Units", "When"], "types": [None, None, "date"],
+     "rows": [["North", 12, "2026-03-01"], ["South", 7.5, "2026-01-20"], ["East", None, {"date": [2026, 2, 2]}]]},
+    {"id": "wide", "columns": ["a", "b", "c", "d", "e", "f", "g", "h", "i"], "types": None,
+     "rows": [[1, 2.25, True, False, "x\ny", "", None, 1e20, "two\r\nlines"]]},
+    {"id": "long", "columns": ["Code", "Name"], "types": None,
+     "rows": [[f"K-{k}", f"Item {k}"] for k in range(1, 23)]},
+]
+
+
+def _from_sources(table: str) -> list[dict]:
+    """``set_cells`` from a dataset into ``table``."""
+    def edit(action: str = "set_cells", **arguments) -> dict:
+        return {**call("word_edit_table", table=table, action=action, **arguments), "datasets": DATASETS}
+
+    return [edit(**{"from": "d:sales"}), edit(grow=True, **{"from": "d:sales"}),
+            edit(index=1, grow=True, **{"from": "d:sales"}), edit(header=[], **{"from": "d:sales/#2:#3"}),
+            edit(header=[], index=1, **{"from": "d:sales/#3"}),
+            edit(from_columns=["When", "region"], date_format="d mmmm yyyy", grow=True, **{"from": "d:sales"}),
+            edit(from_columns=["When"], date_format="dddd dd/mm/yy", header=["Day"], grow=True,
+                 **{"from": "d:sales"}),
+            edit(header=["A"], **{"from": "d:sales"}), edit(from_columns=[], **{"from": "d:sales"}),
+            edit(from_columns=["Nope"], **{"from": "d:sales"}), edit(from_columns=["Units", "units"],
+                                                                     **{"from": "d:sales"}),
+            edit(date_format="h mm", **{"from": "d:sales"}), edit(date_format="d mmm", from_columns=["Region"],
+                                                                  **{"from": "d:sales"}),
+            edit(index=99, **{"from": "d:sales"}), edit(index=2, header=[], **{"from": "d:sales/#1"}),
+            edit(grow=True, header=[], **{"from": "d:wide"}), edit(from_columns=["a", "b"], header=[], grow=True,
+                                                                    **{"from": "d:wide"}),
+            edit(grow=True, **{"from": "d:long"}), edit(**{"from": "d:long"}), edit(header=[], **{"from": "d:long"}),
+            edit(cells=[{"row": 0, "col": 0, "text": "x"}], **{"from": "d:sales"}),
+            edit("insert_row", **{"from": "d:sales"}), edit(**{"from": "d:nothing"}),
+            edit(grow=True, key="Region", **{"from": "d:sales"})]
 
 
 def _control_values(kind: str) -> list[str]:

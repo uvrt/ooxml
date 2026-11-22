@@ -91,6 +91,10 @@ pub struct CallContext {
     /// `from` names them: a call refused for a table not in its document says it is one of
     /// those (asked only then); `None`: none.
     pub tables: Option<Arc<dyn ooxml_tools_word::HostTables>>,
+    /// The rows of the sources the call names (a `from`'s dataset `d:sales`, a workbook's
+    /// table `t:stock`), as the host resolved them before the call, each keyed by the value
+    /// as the call gives it; empty: none.
+    pub sources: Vec<ooxml_tools_word::SourceRows>,
     /// The pages and lines of the host's layout of the version the call reads, where it
     /// has laid it out (`save_document`'s `app.xml` statistics); `None`: not laid out.
     pub counts: Option<ooxml_tools_word::LayoutCounts>,

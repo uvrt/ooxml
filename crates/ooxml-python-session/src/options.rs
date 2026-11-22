@@ -18,7 +18,7 @@ use crate::raster::PyPageRaster;
 use crate::version::PyVersion;
 use ooxml_session::{CallContext, DocId, DocNames, HostIds, Opened};
 use ooxml_tools::{BudgetSpan, ImageBudget};
-use ooxml_tools_word::{Blobs, HostTable, HostTables, LayoutCounts, Placer, Written};
+use ooxml_tools_word::{Blobs, HostTable, HostTables, LayoutCounts, Placer, SourceRows, Written};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use serde_json::{Map, Value};
@@ -33,35 +33,53 @@ use std::sync::Arc;
 /// the open documents the host holds itself, a callable answering a list of `(name, doc,
 /// kind)` -- as a `from` names it (`t:stock`, `d2/t:stock`), the host's name of its
 /// document, its format (`xlsx`) -- called with the lock taken back, only where a call
-/// refused for a table not in its document says it is one of them. One may serve many
-/// calls.
+/// refused for a table not in its document says it is one of them. `sources`: the rows of
+/// the sources the call names, as the host resolved them before the call, as JSON text (a
+/// list, each `{"given", "address", "columns", "types", "rows", "sources", "doc", "name",
+/// "version", "stale", "cache"}`: ooxml-edit's `Rows`, keyed by the value as the call gives
+/// it; a value `null`, a logical value, a number, text, `{"date": [y, m, d]}`, `{"datetime":
+/// [y, m, d, h, min, s, us]}`, `{"time": [h, min, s, us]}`, `{"int": "digits"}` or
+/// `{"other": kind}`). One may serve many calls.
 #[pyclass(frozen, name = "CallDocuments", module = "ooxml_core")]
 pub struct PyCallDocuments {
     at: Vec<Opened>,
     names: DocNames,
     tables: Option<Arc<dyn HostTables>>,
+    sources: Vec<SourceRows>,
 }
 
 #[pymethods]
 impl PyCallDocuments {
+    /// # Errors
+    /// `ValueError` for `sources` that is not such a list.
     #[new]
-    #[pyo3(signature = (*, at = None, names = None, tables = None))]
+    #[pyo3(signature = (*, at = None, names = None, tables = None, sources = None))]
     fn new(
         at: Option<Vec<PyRef<'_, PyVersion>>>,
         names: Option<BTreeMap<String, String>>,
         tables: Option<Py<PyAny>>,
-    ) -> Self {
+        sources: Option<&str>,
+    ) -> PyResult<Self> {
         let mut known = DocNames::new();
         for (name, id) in names.into_iter().flatten() {
             if let Some(id) = DocId::parse(&id) {
                 known.insert(name, id);
             }
         }
-        Self {
+        let sources = match sources {
+            None => Vec::new(),
+            Some(given) => serde_json::from_str::<Value>(given)
+                .ok()
+                .as_ref()
+                .and_then(SourceRows::list_from_json)
+                .ok_or_else(|| PyValueError::new_err("sources is a JSON list of the rows the call's sources name"))?,
+        };
+        Ok(Self {
             at: at.iter().flatten().map(|v| v.inner.clone()).collect(),
             names: known,
             tables: tables.map(|t| Arc::new(PyHostTables(t)) as Arc<dyn HostTables>),
-        }
+            sources,
+        })
     }
 }
 
@@ -234,6 +252,7 @@ impl PyCallOptions {
             built.at.clone_from(&documents.at);
             built.names = documents.names.clone();
             built.tables.clone_from(&documents.tables);
+            built.sources.clone_from(&documents.sources);
         }
         if let Some(layout) = layout {
             built.placer.clone_from(&layout.placer);

@@ -28,6 +28,7 @@ mod placements;
 mod refusal;
 mod registrar;
 mod review;
+mod sources;
 mod spaced_reply;
 mod structure;
 mod style;
@@ -52,6 +53,7 @@ pub use spaced_reply::note_spaced;
 // each group whole, so a new tool in a group is named only there.
 pub use objects::*;
 pub use review::*;
+pub use sources::{Clock, Day, SourceRows, SourceValue};
 pub use structure::*;
 pub use style::*;
 pub use text::*;
