@@ -20,8 +20,8 @@
 //! supported yet: such a call is refused as such ([`ToolError::not_supported`]); so is a
 //! check of copies of a document held as a package, a check needing the layout without the
 //! host's layout, or of a version its engine
-//! does not lay out, a `min_size` that is not one, and `pages` holding none of the
-//! ranges' blocks. A range refused is refused here, as docx-agent
+//! does not lay out, and a `min_size` that is not one. `pages` holding none of the ranges'
+//! blocks read no page's facts, and say so. A range refused is refused here, as docx-agent
 //! words it ([`refused`]); a heading's range is read, and named, as the span it is.
 
 mod args;
@@ -80,8 +80,6 @@ const FIELDS_NOTE: &str = "results are caches: after moving headings or text, wo
 pub const CHECK_LAYOUT: &str = "check: layout facts";
 /// The form refused of a check whose arguments this handler does not take yet.
 pub const CHECK_ARGUMENTS: &str = "check: arguments";
-/// The form refused of a check whose `pages` hold none of its ranges' blocks.
-pub const CHECK_PAGES_OUTSIDE: &str = "check: pages outside the ranges";
 /// The ranges a check or a render takes at most (docx-agent's `scope.MAX_RANGES`).
 pub const MAX_RANGES: usize = 20;
 /// The form refused of a check of a document the session does not own.
@@ -124,6 +122,7 @@ fn checked(args: &Check, version: &Version<'_>, cancel: &dyn Cancel) -> Result<D
     };
     let mut data = Map::new();
     let mut timing = Map::new();
+    let mut warnings = Vec::new();
     let docx = if layout_wanted { Some(version.docx()?) } else { None };
     let scope = match &docx {
         Some(docx) => checked_scope(args, version, docx, &mut timing)?,
@@ -158,13 +157,13 @@ fn checked(args: &Check, version: &Version<'_>, cancel: &dyn Cancel) -> Result<D
             &checking,
             layout,
             (reflow_wanted, layout_wanted),
-            &mut data,
-            &mut timing,
+            (&mut data, &mut timing),
+            &mut warnings,
         )? {
             return Err(not_supported(why, &args.doc));
         }
     }
-    finish(owned, &wanted, scope.as_ref(), data, timing)
+    finish(owned, &wanted, scope.as_ref(), (data, timing), warnings)
 }
 
 /// The scope of the check's `range` on `docx` (`None` for no range), at most
@@ -211,13 +210,14 @@ struct Checking<'c, 'v> {
 }
 
 /// `reflow`, `layout` and `range` of the version laid out by `layout` into `data`
-/// (`wanted`: reflow, layout), their seconds into `timing`; else why the host answers.
+/// (`wanted`: reflow, layout), their seconds into `timing`, what the call says of them into
+/// `warnings`; else why the host answers.
 fn with_layout(
     c: &Checking<'_, '_>,
     layout: &dyn crate::WordLayout,
     (reflow_wanted, layout_wanted): (bool, bool),
-    data: &mut Map<String, Value>,
-    timing: &mut Map<String, Value>,
+    (data, timing): (&mut Map<String, Value>, &mut Map<String, Value>),
+    warnings: &mut Vec<String>,
 ) -> Result<Option<&'static str>, ToolError> {
     let started = Instant::now();
     let last = layout
@@ -248,9 +248,14 @@ fn with_layout(
     };
     // The ranges' pages, among those asked for: the pages the facts are read on.
     let on: Option<BTreeSet<usize>> = c.scope.map(|s| s.pages(&laid).into_iter().flatten().collect());
-    let Some(pages) = pages_read(c.args.pages.as_deref(), on.as_ref()) else {
-        return Ok(Some(CHECK_PAGES_OUTSIDE));
-    };
+    let pages = pages_read(c.args.pages.as_deref(), on.as_ref());
+    if let (Some(asked), Some(on), Some(&[])) = (c.args.pages.as_deref(), on.as_ref(), pages.as_deref()) {
+        warnings.push(format!(
+            "pages {} hold none of the range's blocks (on pages {}): no layout facts",
+            listed(asked.iter()),
+            listed(on.iter())
+        ));
+    }
     let mut reflow = None;
     if reflow_wanted {
         let Ok(mut facts) = reflow_facts(layout, &laid, c.version, c.owned, c.args.pages.as_deref()) else {
@@ -289,18 +294,21 @@ fn with_layout(
 }
 
 /// The pages a check reads its facts on: those `asked` for, and of them the ranges' pages
-/// (`on`) where scoped (`Some(None)`: every page); `None` where none of `asked` holds any of
-/// the ranges' blocks.
-fn pages_read(asked: Option<&[i64]>, on: Option<&BTreeSet<usize>>) -> Option<Option<Vec<usize>>> {
+/// (`on`) where scoped (`None`: every page); none where none of `asked` holds any of the
+/// ranges' blocks (docx-agent's `scoped_pages`).
+fn pages_read(asked: Option<&[i64]>, on: Option<&BTreeSet<usize>>) -> Option<Vec<usize>> {
     let asked: Option<Vec<usize>> = asked.map(|pages| pages.iter().filter_map(|p| usize::try_from(*p).ok()).collect());
     match (on, asked) {
-        (Some(on), None) => Some(Some(on.iter().copied().collect())),
-        (Some(on), Some(asked)) => {
-            let kept: Vec<usize> = on.iter().copied().filter(|p| asked.contains(p)).collect();
-            (!kept.is_empty()).then_some(Some(kept))
-        }
-        (None, asked) => Some(asked),
+        (Some(on), None) => Some(on.iter().copied().collect()),
+        (Some(on), Some(asked)) => Some(on.iter().copied().filter(|p| asked.contains(p)).collect()),
+        (None, asked) => asked,
     }
+}
+
+/// Numbers as a Python list of them writes them (`[1, 2]`).
+fn listed<T: std::fmt::Display>(numbers: impl Iterator<Item = T>) -> String {
+    let named: Vec<String> = numbers.map(|n| n.to_string()).collect();
+    format!("[{}]", named.join(", "))
 }
 
 /// `layout` and `range` of version `laid` (read as `docx`) on `pages`, its keeps tried by
@@ -317,12 +325,11 @@ fn layout_facts(
         engine: layout.engine(),
         version: Arc::clone(laid),
     };
-    let approximations = layout
+    let coverage = layout
         .engine()
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .coverage(laid)
-        .map(|found| found.approximations)
         .unwrap_or_default();
     let mut facts = Facts::new(laid, docx, pages, &painted);
     if let Some(scope) = c.scope.cloned() {
@@ -332,7 +339,7 @@ fn layout_facts(
         minimum: c.minimum,
         styles: c.args.styles.as_deref(),
     };
-    layout::laid(&facts, c.owned, &asked, &approximations, (layout.engine(), stop))
+    layout::laid(&facts, c.owned, &asked, &coverage, (layout.engine(), stop))
 }
 
 /// What a check says where laying the version out did not finish within its limit: each
@@ -356,14 +363,14 @@ fn not_finished(
     Ok(())
 }
 
-/// The check's result: `fields` where asked, `app_findings`, `timing`, and the summary
-/// naming what it checked (and in how many ranges).
+/// The check's result: `fields` where asked, `app_findings`, `timing`, the summary naming
+/// what it checked (and in how many ranges), and `warnings`.
 fn finish(
     owned: Owned<'_>,
     wanted: &[CheckInclude],
     scope: Option<&Scope>,
-    mut data: Map<String, Value>,
-    mut timing: Map<String, Value>,
+    (mut data, mut timing): (Map<String, Value>, Map<String, Value>),
+    warnings: Vec<String>,
 ) -> Result<Done<Value>, ToolError> {
     if wanted.contains(&CheckInclude::Fields) {
         let started = Instant::now();
@@ -390,6 +397,7 @@ fn finish(
     }
     let mut done = Done::new(summary);
     done.data = Some(Value::Object(data));
+    done.warnings = warnings;
     Ok(done)
 }
 

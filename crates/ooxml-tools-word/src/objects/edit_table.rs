@@ -14,7 +14,8 @@
 //! said in the reply. Cells merged or split ([`super::edit_table_cells`]), a merge already
 //! made answered as changing nothing (rule 3).
 //!
-//! Cells written without a source ([`super::set_cells`]).
+//! Cells written without a source ([`super::set_cells`]), their values by reference too
+//! (a top-level `from` naming one value read as each cell's, [`super::cell_values`]).
 //!
 //! Tracked, a row or column deleted that holds a pending tracked merge's first cell is
 //! refused naming the merge's changes to settle first ([`super::edit_table_pending`]).
@@ -22,14 +23,16 @@
 //! A table kept in step with a source's rows by key (`sync`, [`super::table_sync`]); cells
 //! written from a source ([`super::set_from`]).
 //!
-//! Refused as not supported yet ([`ToolError::not_supported`]): a change of the rows of a
-//! table with a placement record (refused so by the edit core); any call on a table with
-//! Accept All's
-//! cell ends (a cell's last paragraph mark deleted: the reply's Markdown joins cells across
+//! A table placed from a source keeps its record of where its values came from true
+//! through the change (docx-agent's `_Kept`, [`KeepingRecord`]).
+//!
+//! Refused as not supported yet ([`ToolError::not_supported`]): any call on a table with
+//! Accept All's cell ends (a cell's last paragraph mark deleted: the reply's Markdown joins cells across
 //! it, and names the cells Accept All loses with the changes that do it).
 //!
 //! Must not: change the document but through the command.
 
+use super::cell_values::CellsGiven;
 use super::edit_table_args::{Side, TableAction, WordEditTable};
 use super::edit_table_pending::no_reshape_over_merge;
 use super::table_view::{table_view, AcceptedView, TableView};
@@ -40,7 +43,7 @@ use ooxml_base::pyfmt::repr_str;
 use ooxml_tools::{ArgEnum, ErrorCode, Refusal, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::facts::{ragged_rows, RaggedRow};
 use ooxml_word_edit::WordDoc;
-use ooxml_word_edit::{EditError, EditTable, Reshape, TableChange, TableChanged};
+use ooxml_word_edit::{EditError, EditTable, KeepingRecord, Reshape, TableChange, TableChanged};
 use ooxml_word_model::docx::tables::TableGrid;
 use ooxml_word_model::docx::{find_path, Docx};
 use ooxml_word_model::ids::{TableId, W};
@@ -239,6 +242,7 @@ fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<T
     }
     check_sync_fields(args, retry)?;
     let given = args.from.as_deref().filter(|f| !f.is_empty());
+    let mut cells = CellsGiven::own(args.cells.as_deref());
     if let Some(given) = given {
         if args.action != TableAction::SetCells {
             return Err(invalid(
@@ -249,12 +253,10 @@ fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<T
             ));
         }
         if source.is_none() {
-            return Ok(not_supported(
-                "word_edit_table set_cells values by reference (from, {{...}})",
-                retry,
-            ));
-        }
-        if args.cells.is_some() {
+            // round 45 (R66): one value is a cell's, not rows to fill from
+            cells = CellsGiven::one_value(given, args.cells.as_deref(), retry)?;
+            check_arguments(args, retry)?;
+        } else if args.cells.is_some() {
             return Err(rows_beside_cells(given, retry));
         }
     } else {
@@ -272,7 +274,7 @@ fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<T
         return super::set_from::set_from(args, editing, &view, &accepted, rows, retry);
     }
     if args.action == TableAction::SetCells {
-        return super::set_cells::set_cells(args, editing, &docx, &view, &mut accepted, retry);
+        return super::set_cells::set_cells(args, cells, editing, (&docx, &view), &mut accepted, retry);
     }
     let tracked = editing.tracking.is_some();
     let change = match change(args, (tracked, &docx), &view, &mut accepted, retry)? {
@@ -433,11 +435,12 @@ fn finish(
     let before = editing.editor.store().snapshot();
     let ragged_before = !matches!(change, TableChange::InsertRow { .. }) && ragged(before.doc(), &table).is_some();
     let mut watched = watch(editing, before.doc(), view, change);
-    let command = EditTable {
+    // a table placed from a source keeps its record true through the change (`_Kept`)
+    let command = KeepingRecord(EditTable {
         table: args.table.clone(),
         change,
         policy: policy(editing),
-    };
+    });
     // round 58 (R126): a row added looked at against the rows around it, in the call's
     // transaction
     let adds_row = matches!(change, TableChange::InsertRow { .. } | TableChange::CopyRow { .. });
@@ -633,5 +636,6 @@ pub(super) fn deleted_rows(table: &TableId) -> Vec<usize> {
 
 /// Registers `word_edit_table` (the crate's [`crate::register`]).
 pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.edit::<WordEditTable>(word_edit_table, crate::Hosting::SERVED);
+    // a cell's value by reference is kept where it went (set_cells, `super::cell_values`)
+    r.edit::<WordEditTable>(word_edit_table, crate::Hosting::SERVED.keeps_written());
 }

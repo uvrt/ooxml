@@ -159,10 +159,6 @@ pub(crate) fn written_keeps(
     if editing.written.is_empty() {
         return Vec::new();
     }
-    let paragraphs: Vec<(String, Vec<char>)> = touched(after, done, targets)
-        .into_iter()
-        .filter_map(|id| Some((id.clone(), text_of(after, &id)?.chars().collect())))
-        .collect();
     let count = done
         .data
         .as_ref()
@@ -170,6 +166,25 @@ pub(crate) fn written_keeps(
         .and_then(Value::as_u64)
         .filter(|n| *n > 0)
         .map_or(1, |n| usize::try_from(n).unwrap_or(1));
+    keeps_in(after, editing, &touched(after, done, targets), count, argument)
+}
+
+/// The keeps of each value of `editing.written` found in the paragraphs `touched` (by id,
+/// in order), each argument's text given by `argument` (`None`: a field whose values are not
+/// looked for, such as a handler's own `from`); `count` the places `replace_text` wrote its
+/// replacement in.
+#[must_use]
+pub(crate) fn keeps_in(
+    after: &After,
+    editing: &Editing<'_>,
+    touched: &[String],
+    count: usize,
+    argument: &dyn Fn(&str) -> Option<String>,
+) -> Vec<TextKeep> {
+    let paragraphs: Vec<(String, Vec<char>)> = touched
+        .iter()
+        .filter_map(|id| Some((id.clone(), text_of(after, id)?.chars().collect())))
+        .collect();
     let mut taken: HashSet<(String, usize)> = HashSet::new();
     let mut kept: Vec<(String, Vec<Value>)> = Vec::new();
     for fact in editing.written {
@@ -300,22 +315,35 @@ where
     C: Command<WordDoc, Error = EditError>,
     F: Fn(&C::Out, &After) -> (ToolResult<Value>, Vec<TextKeep>),
 {
-    let keeping = Keeping { command, finish };
-    editing.editor.run(editing.caller, &keeping).map(|done| done.out)
+    editing
+        .editor
+        .run(editing.caller, &keeping(command, finish))
+        .map(|done| done.out)
 }
 
-/// A command, then the keeps its out names, as one transaction ([`run_keeping`]).
-struct Keeping<'a, C, F> {
+/// `command`, then the keeps `finish` makes of its out and the version it made, as one
+/// command (for a caller that runs it inside another, [`run_keeping`] otherwise): its out
+/// is the command's and what `finish` said beside the keeps.
+pub(crate) fn keeping<C, F, R>(command: &C, finish: F) -> Keeping<'_, C, F>
+where
+    C: Command<WordDoc, Error = EditError>,
+    F: Fn(&C::Out, &After) -> (R, Vec<TextKeep>),
+{
+    Keeping { command, finish }
+}
+
+/// A command, then the keeps its out names, as one transaction ([`keeping`]).
+pub(crate) struct Keeping<'a, C, F> {
     command: &'a C,
     finish: F,
 }
 
-impl<C, F> Command<WordDoc> for Keeping<'_, C, F>
+impl<C, F, R> Command<WordDoc> for Keeping<'_, C, F>
 where
     C: Command<WordDoc, Error = EditError>,
-    F: Fn(&C::Out, &After) -> (ToolResult<Value>, Vec<TextKeep>),
+    F: Fn(&C::Out, &After) -> (R, Vec<TextKeep>),
 {
-    type Out = (C::Out, ToolResult<Value>);
+    type Out = (C::Out, R);
     type Error = EditError;
 
     fn validate(&self, doc: &WordDoc) -> Result<(), EditError> {
@@ -325,13 +353,13 @@ where
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<Self::Out, EditError> {
         let out = self.command.prepare(tx)?;
         let after = After::of(tx.doc())?;
-        let (result, keeps) = (self.finish)(&out, &after);
+        let (said, keeps) = (self.finish)(&out, &after);
         if !keeps.is_empty() {
             let keep = KeepText { keeps };
             keep.validate(tx.doc())?;
             keep.prepare(tx)?;
         }
-        Ok((out, result))
+        Ok((out, said))
     }
 }
 
@@ -356,6 +384,16 @@ impl After {
     /// The id `name` leads to through the version's renames.
     fn follow(&self, name: &str) -> String {
         self.doc.ids().follow(name)
+    }
+
+    /// The version.
+    pub(crate) fn doc(&self) -> &WordDoc {
+        &self.doc
+    }
+
+    /// The version's parts, read.
+    pub(crate) fn docx(&self) -> &Docx {
+        &self.docx
     }
 }
 
@@ -387,7 +425,7 @@ fn touched(after: &After, done: &Done<Value>, targets: &[&str]) -> Vec<String> {
 
 /// The paragraphs `name` holds as docx-agent's `document.get` reads it: a paragraph, a
 /// cell's paragraphs, a table's; nothing for any other address.
-fn paragraphs_of(after: &After, name: &str) -> Vec<String> {
+pub(crate) fn paragraphs_of(after: &After, name: &str) -> Vec<String> {
     let (docx, followed) = (&*after.docx, after.follow(name));
     let ids = |address: &str| {
         scope_paragraphs(docx, address).map_or_else(

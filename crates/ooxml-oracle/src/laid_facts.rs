@@ -63,9 +63,9 @@ fn facts(package: &Package, fonts: &Value, min_size: Option<&Value>, range: Opti
         engine: &engine,
         version: Arc::clone(&version),
     };
-    let approximations = {
+    let coverage = {
         let mut held = engine.lock().unwrap_or_else(PoisonError::into_inner);
-        held.coverage(&version).map(|c| c.approximations).unwrap_or_default()
+        held.coverage(&version).unwrap_or_default()
     };
     let scope = match range.and_then(Value::as_array) {
         Some(addresses) => {
@@ -84,7 +84,7 @@ fn facts(package: &Package, fonts: &Value, min_size: Option<&Value>, range: Opti
     }
     let mut out = Map::new();
     let mut settings = Map::new();
-    ooxml_tools_word::page_facts_json(&facts, minimum.as_ref(), &approximations, &mut out, &mut settings);
+    ooxml_tools_word::page_facts_json(&facts, minimum.as_ref(), &coverage, &mut out, &mut settings);
     out.insert("settings".into(), Value::Object(settings));
     if facts.scope().is_some() {
         let trials = ooxml_tools_word::Trials {

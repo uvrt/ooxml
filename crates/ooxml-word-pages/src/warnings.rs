@@ -31,76 +31,7 @@ use ooxml_word_model::value::Value;
 use ooxml_word_model::{Model, WordDocument};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-/// One warning: docx2svg's `(code, message, 1-based page or None)`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LayoutWarning {
-    /// Its stable code (`table-grid-mismatch`, `field-not-computed:PAGEREF`...).
-    pub code: String,
-    /// What it says.
-    pub message: String,
-    /// The 1-based page it is of, where it is of one.
-    pub page: Option<usize>,
-}
-
-/// One approximation: docx2svg's `(code, message, 1-based page, element path)`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Approximation {
-    /// `layout-approximate:<reason>`.
-    pub code: String,
-    /// What it says.
-    pub message: String,
-    /// The 1-based page it is on.
-    pub page: Option<usize>,
-    /// The element it is of.
-    pub path: Option<String>,
-}
-
-/// The warnings and approximations of a version, in docx2svg's order.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Said {
-    /// Every warning, approximations' included.
-    pub warnings: Vec<LayoutWarning>,
-    /// The approximations.
-    pub approximations: Vec<Approximation>,
-}
-
-impl Said {
-    pub(crate) fn warn(&mut self, code: impl Into<String>, message: impl Into<String>, page: Option<usize>) {
-        let entry = LayoutWarning {
-            code: code.into(),
-            message: message.into(),
-            page,
-        };
-        if !self.warnings.contains(&entry) {
-            self.warnings.push(entry);
-        }
-    }
-
-    /// Take what `other` said, after what this said: each warning and approximation once.
-    pub(crate) fn extend(&mut self, other: &Said) {
-        for w in &other.warnings {
-            self.warn(w.code.clone(), w.message.clone(), w.page);
-        }
-        for a in &other.approximations {
-            if !self.approximations.contains(a) {
-                self.approximations.push(a.clone());
-            }
-        }
-    }
-
-    fn approximate(&mut self, reason: &str, message: &str, page: Option<usize>, path: Option<&str>) {
-        let entry = Approximation {
-            code: format!("layout-approximate:{reason}"),
-            message: message.to_owned(),
-            page,
-            path: path.map(str::to_owned),
-        };
-        if !self.approximations.contains(&entry) {
-            self.approximations.push(entry.clone());
-        }
-        self.warn(entry.code, entry.message, page);
-    }
-}
+pub use crate::said::{Approximation, DrawnPlaceholder, LayoutWarning, Said};
 
 /// The fields Word computes again when it exports (`RECOMPUTED_BY_WORD`).
 const RECOMPUTED_BY_WORD: &[&str] = &["DATE", "TIME", "REF", "PAGEREF", "SEQ", "IF"];
@@ -529,8 +460,16 @@ impl PageWalk {
             order.push(next);
         }
         let mut done: HashSet<usize> = HashSet::new();
-        for (item, line) in order {
+        for (k, &(item, line)) in order.iter().enumerate() {
             match layout.flow.items.get(item) {
+                Some(FlowItem::Para(p)) if p.placeholder.is_some() => {
+                    // Drawn as a box after its last line on the page (`Layout._box`).
+                    if order.get(k + 1).is_none_or(|next| next.0 != item) {
+                        if let Some(placeholder) = &p.placeholder {
+                            out.placeholder(placeholder, number);
+                        }
+                    }
+                }
                 Some(FlowItem::Para(p)) => {
                     let (Some(paragraph), Some(line)) = (self.paragraphs.get(p.block).cloned(), line) else {
                         continue;

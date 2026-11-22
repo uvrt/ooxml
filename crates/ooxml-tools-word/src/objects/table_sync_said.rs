@@ -17,7 +17,9 @@ use crate::review::Editing;
 use crate::structure::common::{outcome, Outcome};
 use ooxml_store::{Command, Txn};
 use ooxml_tools::{Done as Reply, ToolResult, TryCall};
-use ooxml_word_edit::{EditError, KeepText, PlaceRows, PlacedRecord, RowsPlaced, TextKeep, WordDoc};
+use ooxml_word_edit::{
+    tracked_row_fates, EditError, KeepText, PlaceRows, PlacedRecord, RowFate, RowsPlaced, TextKeep, WordDoc,
+};
 use ooxml_word_model::docx::provenance::{kind_of, provenance, Kind};
 use ooxml_word_model::docx::tables::TableGrid;
 use ooxml_word_model::docx::text::{paragraph_text, View};
@@ -267,8 +269,56 @@ fn value_fact(taken: &Taken<'_>, row: usize, column: usize, address: &str, text:
     out
 }
 
-/// Where the rows stand once the command has run: the rows deleted outright (untracked;
-/// tracked, a deleted row stays as a tracked deletion) taken out.
+/// The rows a sync deletes, by their places once its rows are added, from the bottom: those
+/// the command takes out of the table, and those a tracked deletion leaves counted as
+/// accepted (`_row_fate`, measured on Word in docx-agent's rounds 51-57).
+#[derive(Debug, Default)]
+pub(super) struct Deleted {
+    /// Every row deleted.
+    pub(super) rows: Vec<usize>,
+    /// The rows taken out: every one untracked; tracked, each wholly the author's own pending
+    /// insertion, which Word removes outright -- one holding another author's insertion
+    /// only where a row is left after it to take that.
+    taken_out: Vec<usize>,
+    /// The rows a tracked deletion keeps with no deletion record: the author's own inserted
+    /// row holding what was there before (its content deleted, its insertion kept).
+    counted: Vec<usize>,
+}
+
+impl Deleted {
+    /// The rows of `removed` (row before, row once the rows are added; from the bottom) as
+    /// deleting them one after the other leaves them; `total`, the table's rows once the
+    /// rows are added.
+    pub(super) fn of(editing: &Editing<'_>, view: &TableView, removed: &[(usize, usize)], total: usize) -> Deleted {
+        let rows: Vec<usize> = removed.iter().map(|(_, at)| *at).collect();
+        let Some(tracking) = editing.tracking else {
+            return Deleted {
+                taken_out: rows.clone(),
+                rows,
+                counted: Vec::new(),
+            };
+        };
+        let head = editing.editor.store().snapshot();
+        let fates = tracked_row_fates(head.doc(), &view.table.id, &tracking.author).unwrap_or_default();
+        let mut out = Deleted {
+            rows,
+            ..Deleted::default()
+        };
+        for (row, at) in removed {
+            // the rows after it, but those already taken out (each lower down)
+            let left_after = total.saturating_sub(at + 1) > out.taken_out.len();
+            match fates.get(*row) {
+                Some(RowFate::Remove) => out.taken_out.push(*at),
+                Some(RowFate::Relocate) if left_after => out.taken_out.push(*at),
+                Some(RowFate::Relocate | RowFate::Keep) => out.counted.push(*at),
+                Some(RowFate::Mark) | None => {}
+            }
+        }
+        out
+    }
+}
+
+/// Where the rows stand once the command has run: the rows taken out ([`Deleted`]) gone.
 struct After<'l> {
     layout: &'l Layout,
     taken_out: Vec<usize>,
@@ -296,20 +346,16 @@ pub(super) fn record(
     view: &TableView,
     (plan, taken, matched, compared): (&Plan, &Taken<'_>, &Matched, &Compared),
     (layout, slots): (&Layout, &[Slot]),
-    (height, delete): (usize, &[usize]),
+    (height, deleted): (usize, &Deleted),
     accepted_columns: Option<Vec<usize>>,
 ) -> Kept {
     let head = editing.editor.store().snapshot();
     let had = head.doc().docx().ok().and_then(|docx| record_of(&docx, &view.table.id));
     let after = After {
         layout,
-        taken_out: if editing.tracking.is_none() {
-            delete.to_vec()
-        } else {
-            Vec::new()
-        },
+        taken_out: deleted.taken_out.clone(),
     };
-    if let Some(saved) = whole(view, (plan, taken, matched, compared), &after, (height, delete)) {
+    if let Some(saved) = whole(view, (plan, taken, matched, compared), &after, (height, deleted)) {
         return Kept {
             record: PlacedRecord::Store(placement_record(&saved, taken.rows.name.as_deref())),
             note: None,
@@ -346,15 +392,16 @@ fn whole(
     view: &TableView,
     (plan, taken, matched, compared): (&Plan, &Taken<'_>, &Matched, &Compared),
     after: &After<'_>,
-    (height, delete): (usize, &[usize]),
+    (height, deleted): (usize, &Deleted),
 ) -> Option<Map<String, Value>> {
     let deleted_before = super::edit_table::deleted_rows(&view.table);
     let total = height + compared.added.len() - after.taken_out.len();
-    // the rows accepted after: the table's not deleted before nor now, and the rows added
+    // the rows accepted after: the table's not deleted before nor now (a row a tracked
+    // deletion leaves without its own record counted), and the rows added
     let mut accepted: Vec<usize> = (0..height)
         .filter(|r| !deleted_before.contains(r))
         .map(|r| after.layout.old(r))
-        .filter(|r| !delete.contains(r))
+        .filter(|r| !deleted.rows.contains(r) || deleted.counted.contains(r))
         .chain(compared.added.iter().filter_map(|i| after.layout.added(*i)))
         .map(|r| after.shift(r))
         .collect();

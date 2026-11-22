@@ -415,7 +415,10 @@ impl WordLayout {
             tables: self.tables.as_ref(),
             roles,
         };
-        FlowMaker::new(&cx, model, &mut self.body).until(stop).build()
+        FlowMaker::new(&cx, model, &mut self.body)
+            .until(stop)
+            .carry_on()
+            .build()
     }
 
     /// A version's flow made again from the same pass of the version before, and the
@@ -443,7 +446,10 @@ impl WordLayout {
             labels: old.labels,
             roles: old.roles,
         };
-        FlowMaker::new(&cx, model, &mut self.body).until(frame.stop).again(&old)
+        FlowMaker::new(&cx, model, &mut self.body)
+            .until(frame.stop)
+            .carry_on()
+            .again(&old)
     }
 
     /// One pass: the flow of `version` and its pages, laid out again from `old` (the same

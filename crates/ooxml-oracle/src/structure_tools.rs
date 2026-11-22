@@ -177,7 +177,13 @@ pub(crate) fn tool_case(
         .unwrap_or("2026-11-17T10:00:00Z");
     let blobs = case_blobs(case);
     let locale = case_locale(case)?;
-    let sources = case_sources(case);
+    // the host's references: written into the arguments, or its refusal of the call
+    let given = case.get("arguments").cloned().unwrap_or(Value::Object(Map::new()));
+    let (arguments, written, refused, refusal) = match crate::case_values::case_values(case, given)? {
+        Ok(values) => (values.arguments, values.written, values.refused, None),
+        Err(refusal) => (Value::Null, Vec::new(), Vec::new(), Some(refusal)),
+    };
+    let sources = case_sources(case, refused);
     let copy = other_document(bytes, case);
     let copy_versions = Versions::new();
     let others: Vec<(&str, Version<'_>)> = copy
@@ -190,10 +196,13 @@ pub(crate) fn tool_case(
         .with_layout(layout.as_ref().map(|l| l as &dyn ooxml_word_edit::FieldLayout))
         .with_others(Others::new(&others).with_sources(&sources))
         .with_blobs(Some(&blobs))
+        .with_written(&written)
         .with_locale(locale.as_ref());
-    let arguments = case.get("arguments").cloned().unwrap_or(Value::Object(Map::new()));
     let tool = case.get("tool").and_then(Value::as_str).unwrap_or("");
-    let reply = reply(tool, &arguments, &editing).ok_or_else(|| format!("no tool {tool}"))?;
+    let reply = match refusal {
+        Some(refusal) => ToolResult::failed(refusal),
+        None => reply(tool, &arguments, &editing).ok_or_else(|| format!("no tool {tool}"))?,
+    };
     let head = editor.store().snapshot();
     let doc = head.doc();
     let parts = changed_parts(&package, doc);
@@ -238,22 +247,27 @@ fn other_version<'a>(package: &'a Package, word: Option<&'a WordDoc>, versions: 
 
 /// The rows the case's `from` names of the datasets it defines (`datasets`: `{id, columns,
 /// types, rows}` each), as a host hands them over: a whole dataset (`d:sales`) or a run of
-/// its rows (`d:sales/#2:#3`, `/#2:`, `/#2`); none for anything else.
-fn case_sources(case: &Value) -> ooxml_tools_word::Sources {
-    let Some(given) = case.pointer("/arguments/from").and_then(Value::as_str) else {
-        return ooxml_tools_word::Sources::default();
-    };
-    let Some(rest) = given.strip_prefix("d:") else {
-        return ooxml_tools_word::Sources::default();
-    };
+/// its rows (`d:sales/#2:#3`, `/#2:`, `/#2`); none for anything else (one value is a
+/// cell's: [`crate::case_values`]). With them the host's refusals of cells' values,
+/// `refused`.
+fn case_sources(case: &Value, refused: Vec<Value>) -> ooxml_tools_word::Sources {
+    let mut listed = refused;
+    listed.extend(case_rows(case));
+    ooxml_tools_word::Sources::from_json(&Value::Array(listed)).unwrap_or_default()
+}
+
+/// The rows of [`case_sources`], as `CallDocuments(sources=...)` takes them.
+fn case_rows(case: &Value) -> Option<Value> {
+    let given = case.pointer("/arguments/from").and_then(Value::as_str)?;
+    let rest = given.strip_prefix("d:")?;
     let (id, run) = rest.split_once('/').map_or((rest, None), |(id, run)| (id, Some(run)));
+    if run.is_some_and(|r| r.contains('/')) {
+        return None;
+    }
     let datasets = case.get("datasets").and_then(Value::as_array).into_iter().flatten();
-    let Some(found) = datasets
+    let found = datasets
         .into_iter()
-        .find(|d| d.get("id").and_then(Value::as_str) == Some(id))
-    else {
-        return ooxml_tools_word::Sources::default();
-    };
+        .find(|d| d.get("id").and_then(Value::as_str) == Some(id))?;
     let rows = found.get("rows").and_then(Value::as_array).cloned().unwrap_or_default();
     let (first, last) = match run.and_then(|r| r.strip_prefix('#')) {
         None => (1, rows.len()),
@@ -273,7 +287,7 @@ fn case_sources(case: &Value) -> ooxml_tools_word::Sources {
         map.insert("address".into(), json!(given));
         map.insert("rows".into(), Value::Array(taken));
     }
-    ooxml_tools_word::Sources::from_json(&json!([rows_json])).unwrap_or_default()
+    Some(rows_json)
 }
 
 /// The blobs a case registers (`blobs`: `{name, mime, hex}` each), as the session's

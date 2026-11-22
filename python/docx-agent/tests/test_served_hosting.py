@@ -27,7 +27,9 @@ SERVED = {"word_set_text", "replace_text", "word_insert_text", "word_delete", "w
           "edit_chart"}
 BLOBS = {"word_drawings"}
 LAID = {"word_fields", "word_headers_footers", "word_template", "word_format_table", "render"}
-KEEPS_WRITTEN = {"word_set_text", "word_insert_text", "replace_text", "word_insert_markdown"}
+KEEPS_WRITTEN = {"word_set_text", "word_insert_text", "replace_text", "word_insert_markdown",
+                 # lane E1d: set_cells' values by reference
+                 "word_edit_table"}
 
 
 def test_the_exported_sets_are_the_lists_they_replace():

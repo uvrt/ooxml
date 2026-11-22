@@ -140,3 +140,105 @@ fn a_notes_paragraph_is_on_the_pages_that_draw_it() {
         .expect("a footnote's style");
     assert_eq!(noted["pages"], json!([1]), "{noted}");
 }
+
+/// The fixture with a first paragraph holding a VML shape that states no size, which the
+/// layout cannot lay out (docx-agent's `_vml_first`).
+fn with_a_shape() -> ooxml_opc::Package {
+    let (first, _) = versions();
+    let xml = String::from_utf8(first.read("word/document.xml").unwrap().unwrap().to_vec()).unwrap();
+    let body = xml.find("<w:body>").unwrap() + "<w:body>".len();
+    let shape = r##"<w:p><w:r><w:pict><v:rect xmlns:v="urn:schemas-microsoft-com:vml" style="position:absolute" fillcolor="#4472c4"/></w:pict></w:r><w:r><w:t>A shape.</w:t></w:r></w:p>"##;
+    let edited = format!("{}{shape}{}", &xml[..body], &xml[body..]);
+    first.with_bytes("word/document.xml", std::sync::Arc::from(edited.into_bytes()))
+}
+
+#[test]
+fn a_placeholder_makes_the_coverage_partial_and_its_page_uncertain() {
+    let shaped = with_a_shape();
+    let layout = EnginePages::of(engine());
+    let last = LastCheck::default();
+    let arguments = json!({"doc": "d1", "include": ["reflow", "layout"]});
+    let reply = checked(&shaped, 1, arguments, &last, Some(&layout));
+    let reflow = &reply["data"]["reflow"];
+    let coverage = &reflow["coverage"];
+    assert_eq!(coverage["complete"], false, "{reply}");
+    assert_eq!(coverage["status"], "partial");
+    assert!(coverage.get("stop").is_none());
+    let blocks = coverage["blocks_laid_out"].as_array().unwrap();
+    assert_eq!(
+        blocks[0].as_u64().unwrap() + 1,
+        blocks[1].as_u64().unwrap(),
+        "{coverage}"
+    );
+    let placeholder = &coverage["placeholders"][0];
+    assert_eq!(placeholder["page"], 1);
+    assert_eq!(placeholder["reason"], "drawing");
+    assert!(placeholder["at"].as_str().unwrap().starts_with('p'), "{placeholder}");
+    assert!(
+        placeholder["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("w:body/w:p[1] is drawn as a placeholder of its estimated height (a drawing this model"),
+        "{placeholder}"
+    );
+    let warned = reflow["layout_warnings"].as_array().unwrap();
+    assert!(
+        warned.iter().any(|w| w
+            .as_str()
+            .unwrap()
+            .starts_with("[layout-placeholder:drawing] (page 1) w:body/w:p[1]")),
+        "{reflow}"
+    );
+    let uncertain = &reply["data"]["layout"]["uncertain"];
+    assert_eq!(uncertain[0]["page"], 1, "{uncertain}");
+    assert_eq!(uncertain[0]["placeholders"][0]["reason"], "drawing");
+    assert_eq!(uncertain[0]["placeholders"][0]["at"], placeholder["at"]);
+    // what follows the shape is laid out as without it: the pages go on
+    let (plain, _) = versions();
+    let alone = checked(
+        &plain,
+        1,
+        json!({"doc": "d1", "include": ["reflow"]}),
+        &LastCheck::default(),
+        Some(&EnginePages::of(engine())),
+    );
+    assert!(
+        reflow["pages"].as_u64() >= alone["data"]["reflow"]["pages"].as_u64(),
+        "{reply}"
+    );
+}
+
+#[test]
+fn pages_outside_the_ranges_read_no_facts_and_say_so() {
+    let (first, _) = versions();
+    let layout = EnginePages::of(engine());
+    let last = LastCheck::default();
+    let on = checked(
+        &first,
+        1,
+        json!({"doc": "d1", "include": ["layout"], "range": ["s:1"]}),
+        &last,
+        Some(&layout),
+    );
+    let pages = on["data"]["range"][0]["pages"].clone();
+    let arguments = json!({"doc": "d1", "include": ["layout"], "range": ["s:1"], "pages": [999]});
+    let reply = checked(&first, 1, arguments, &last, Some(&layout));
+    assert!(reply.get("unported").is_none(), "{reply}");
+    let listed = pages
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    assert_eq!(
+        reply["warnings"],
+        json!([format!(
+            "pages [999] hold none of the range's blocks (on pages [{listed}]): no layout facts"
+        )]),
+        "{reply}"
+    );
+    let facts = &reply["data"]["layout"];
+    assert_eq!(facts["direct_formatting"], json!([]), "{facts}");
+    assert_eq!(reply["data"]["range"][0]["pages"], pages);
+}

@@ -248,10 +248,20 @@ impl<'a> Others<'a> {
         self.sources?.rows.iter().find(|s| s.given == given)
     }
 
-    /// The host's refusal of the source `given`, where it refused it.
+    /// The host's refusal of the source `given` (the call's `from`), where it refused it.
     #[must_use]
     pub fn refused_source(&self, given: &str) -> Option<&'a crate::SourceRefused> {
-        self.sources?.refused.iter().find(|s| s.given == given)
+        self.sources?
+            .refused
+            .iter()
+            .find(|s| s.field.is_none() && s.given == given)
+    }
+
+    /// The host's refusal of the one value the reference at `field` names (`cells[2].from`),
+    /// where it refused it.
+    #[must_use]
+    pub fn refused_value(&self, field: &str) -> Option<&'a crate::SourceRefused> {
+        self.sources?.refused.iter().find(|s| s.field.as_deref() == Some(field))
     }
 
     /// The host's table `given` names (`t:stock`, `d2/t:stock`), where it holds one.
