@@ -12,7 +12,7 @@ mod blocks;
 mod cleanup;
 mod describing;
 mod edges;
-mod grid;
+pub(crate) mod grid;
 mod part;
 pub(crate) mod space;
 mod step;

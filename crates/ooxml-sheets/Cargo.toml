@@ -12,8 +12,6 @@ ooxml-base.workspace = true
 ooxml-xml.workspace = true
 ooxml-opc.workspace = true
 thiserror.workspace = true
-
-[dev-dependencies]
 ooxml-zip.workspace = true
 
 [lints]

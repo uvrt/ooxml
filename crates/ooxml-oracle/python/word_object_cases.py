@@ -426,6 +426,70 @@ def chart_cases(document) -> list[dict]:
     return out
 
 
+@CASES
+def chart_add_cases(document) -> list[dict]:
+    """``edit_chart add`` (lane P4c23): each kind after the first paragraph (inline at a
+    position, after a heading, a table and a cell too), with a title, a format, a legend
+    place, a width, a reversed order, a scale, minor gridlines, value labels, colours and a
+    text style; refusals in docx-agent's order (what add needs, x values, the limit, a label
+    position, colours, style keys, data that cannot be charted, a scale for no axis) --
+    three tracked too."""
+    paragraphs = [b["id"] for b in document.blocks() if b["id"] and b["kind"] == "paragraph"]
+    if not paragraphs:
+        return []
+    first = paragraphs[0]
+    two = [{"name": "2024", "values": [1, 2.5, None]}, {"name": "2025", "values": [3, 4, 5]}]
+    places = ["North", "South", "East"]
+
+    def add(target: str = first, **arguments) -> dict:
+        return call("edit_chart", action="add", target=target, **arguments)
+
+    def column(**arguments) -> dict:
+        return add(**{"chart_type": "column", "categories": places, "data": two, **arguments})
+
+    out = [column(), column(target=f"{first}@0", text="Sales\nby region", number_format="#,##0.0", ref="ch"),
+           add(chart_type="bar", categories=places, data=two, position="none", width=300),
+           add(chart_type="stacked_bar", categories=places, data=two, position="right", axis="category",
+               scale={"reverse": True}),
+           add(chart_type="stacked_column", categories=places, data=two, scale={"max": 10, "major_unit": 2},
+               gridlines="minor"),
+           add(chart_type="line", categories=places, data=two, gridlines="none", style={"size": 12, "bold": True},
+               part="legend"),
+           add(chart_type="pie", categories=places, data=two[1:], data_labels=True,
+               colors=["accent2", "FF0000", "none"]),
+           add(chart_type="scatter", values=[1, 2, 4], data=two, colors=["accent1"]),
+           add(chart_type="bubble", values=[1, 2, 4], data=[{**two[1], "size": [1, 2, 3]}], gridlines="both"),
+           add(chart_type="radar", categories=places, data=two, position="top"),
+           add(chart_type="radar_filled", categories=places, data=two, colors=["accent3", "accent4"]),
+           add(chart_type="dot", categories=places, data=two, number_format="0%", data_labels=True),
+           column(data=[two[0], {**two[1], "type": "line"}], colors=["tx2", "accent6"]),
+           column(scale={"min": 0}, axis="value", style={"color": "tx1"}),
+           add(categories=places, data=two), add(chart_type="column", categories=places),
+           column(box={"x": 0, "y": 0, "w": 100, "h": 100}),
+           add(chart_type="scatter", categories=places, data=two),
+           add(chart_type="scatter", values=[1, None, 3], data=two), add(chart_type="column", data=two),
+           column(values=[1, 2, 3]), column(position="center"),
+           add(chart_type="column", categories=[str(n) for n in range(5001)],
+               data=[{"name": "a", "values": [1] * 5001}, {"name": "b", "values": [2] * 5001}]),
+           column(colors=["accent1", "accent2", "accent3"]), column(colors=["  "]), column(colors=["#12ab9z"]),
+           add(chart_type="pie", categories=places, data=two[1:], colors=["accent1"] * 4),
+           column(style={"fill": "tx1"}), column(style={}), column(part="title"),
+           column(data=[{"name": "a", "values": [1, 2]}]), add(chart_type="pie", categories=places, data=two),
+           add(chart_type="pie", categories=places, data=two[1:], scale={"max": 5}),
+           column(scale={"reverse": True}), column(scale={"auto": []}, axis="value"),
+           column(style={"size": 401}), add(chart_type="scatter", values=[1, 2, 4], data=two, scale={"max": 5}),
+           add(chart_type="line", categories=places, data=[{**two[0], "type": "line"}]),
+           column(target="p:00000000")]
+    headings = [b["id"] for b in document.blocks()
+                if b["kind"] == "paragraph" and b["id"] and (b.get("style") or "").lower().startswith("heading")]
+    if headings:
+        out.append(column(target=headings[0]))
+    tables = _tables(document)
+    if tables:
+        out += [column(target=tables[0]), column(target=f"{tables[0]}/c0,0")]
+    return out + [tracked(case) for case in (out[0], out[4], out[6])]
+
+
 def _chart_data_edits(document, target: str) -> list[dict]:
     """``set_values`` (each value moved, a blank kept), ``set_value``, ``rename_series`` and
     ``rename_category`` (to text, to nothing) by name and by position, the same value again,

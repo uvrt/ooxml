@@ -7,8 +7,7 @@
 //! [`EditGraphic`] command, the chart's record of where its values came from kept true by
 //! `chart_record`) through the editor -- and the style actions (`chart_style`).
 //!
-//! Not here yet: `add` answers `unported` (lane P4c's later parts); so do values given
-//! `from` a table (its provenance records), new title or label text in a document whose
+//! And `add` (`chart_add`). Not here yet: values given `from` a table (its provenance records), new title or label text in a document whose
 //! defaults name no language (the session's locale decides it), and a read
 //! or edit ooxml-edit words as its own exception (a chart part that is missing or
 //! unreadable, a workbook `ooxml-sheets` cannot read or write), so a host that owns the
@@ -69,15 +68,29 @@ pub fn edit_chart(args: &EditChart, editing: &Editing<'_>) -> ToolResult<Value> 
     }
     let action = args.action.as_str();
     let summary = format!("{action} on {}", args.target);
-    let ported = !matches!(args.action, ChartAction::Read | ChartAction::Add);
-    if !ported {
+    if args.action == ChartAction::Read {
         return ToolResult::done(unported(summary, &format!("edit_chart {action}")));
     }
     if args.from.is_some() || args.columns.is_some() || args.date_format.is_some() || args.blanks.is_some() {
         // values from a table, with their provenance records: the host's (KeepText later)
         return ToolResult::done(unported(summary, &format!("edit_chart {action} from")));
     }
-    match chart_action(args, editing, summary) {
+    let ran = if args.action == ChartAction::Add {
+        let lang = editing
+            .editor
+            .store()
+            .snapshot()
+            .doc()
+            .docx()
+            .map(|docx| default_language(&docx));
+        match lang {
+            Ok(lang) => super::chart_add::add(args, editing, lang),
+            Err(e) => Err(ToolError::internal(e.to_string(), "word:model")),
+        }
+    } else {
+        chart_action(args, editing, summary)
+    };
+    match ran {
         Ok(result) => result,
         Err(error) => ToolResult::failed(error),
     }

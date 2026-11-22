@@ -118,6 +118,21 @@ impl Owned {
         self
     }
 
+    /// `self` with the attribute `prefix:local` of `namespace` set last (for building).
+    pub(crate) fn with_ns_attr(mut self, (prefix, namespace): (&str, &str), local: &str, value: &str) -> Owned {
+        self.attributes.push(Attribute {
+            name: Arc::new(QName::new(Some(prefix), local, Some(namespace))),
+            value: Atom::from(value),
+        });
+        self
+    }
+
+    /// `self` with `prefix` declared for `uri` (for building).
+    pub(crate) fn declaring(mut self, prefix: &str, uri: &str) -> Owned {
+        self.declare(prefix, uri);
+        self
+    }
+
     /// `self` with `child` last (for building).
     pub(crate) fn with(mut self, child: Owned) -> Owned {
         self.push(child);

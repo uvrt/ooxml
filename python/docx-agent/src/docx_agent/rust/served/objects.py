@@ -61,5 +61,5 @@ def _rows(call: Any, source: str) -> Any:
 
 @adapter("edit_chart")
 def _chart(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-    # (its data actions, the titles and the style actions; ``add`` answers ``unported``)
+    # (its data actions, the titles, the style actions and ``add``)
     return {**own(arguments), "target": reads._refs(call, arguments.get("target"))}

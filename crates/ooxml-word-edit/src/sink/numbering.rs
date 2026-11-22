@@ -127,6 +127,27 @@ impl EditSink<'_, '_> {
         Ok((out, numbered, stamp.dated))
     }
 
+    /// Revision records an untracked write copies (a pending change's records a new cell
+    /// follows), numbered on from this edit's next id: `write` given the next id at each
+    /// call; the ids it gave.
+    ///
+    /// # Errors
+    /// When a story part is not XML.
+    pub(crate) fn numbered<R>(&mut self, write: impl FnOnce(&mut dyn FnMut() -> String) -> R) -> Result<(R, Numbered)> {
+        let from = self.next_annotation_id()?;
+        let mut next = from;
+        let out = {
+            let mut give = || {
+                let value = next;
+                next += 1;
+                value.to_string()
+            };
+            write(&mut give)
+        };
+        let numbered = self.given(from, next);
+        Ok((out, numbered))
+    }
+
     /// A tracked write through a [`Stamp`] numbering on from this edit's next id.
     pub(super) fn tracked(
         &mut self,

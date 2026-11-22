@@ -131,9 +131,9 @@ pub use delete::{BlockDeleted, DeleteBlock};
 pub use delete_blocks::{blocks_named, BlocksDeleted, DeleteBlocks};
 pub use doc::{Change, Draw, DrawFrom, Key, ModelError, Setup, Shared, WordDoc};
 pub use drawings::{
-    image_format, picture_size, written_size, DrawingEdited, DrawingValues, EditGraphic, FloatDrawing, GraphicEdit,
-    GraphicEdited, GraphicParts, InlineDrawing, InsertPicture, InsertShape, PartWrite, RecordChange, SetDrawing,
-    ZOrder,
+    image_format, picture_size, written_size, ChartInserted, ChartParts, DrawingEdited, DrawingValues, EditGraphic,
+    FloatDrawing, GraphicEdit, GraphicEdited, GraphicParts, InlineDrawing, InsertChart, InsertPicture, InsertShape,
+    PartWrite, RecordChange, SetDrawing, ZOrder,
 };
 pub use drawn::Drawn;
 pub use editor::{EditTiming, Edited, Editor};
@@ -184,9 +184,9 @@ pub use styles::{
 };
 pub use switch::{tracks_changes, word_tracks_changes, SetWordTracking, WordTracking};
 pub use tables::{
-    body_lines, body_width, loose_paragraph_after, pending_structure, row_cells, row_shown, rows_unlike, table_keeps,
+    body_lines, body_width, loose_paragraph_after, merges_in_the_way, row_cells, row_shown, rows_unlike, table_keeps,
     table_keeps_at, BodyLines, BodyWidth, CellUnlike, CellValues, ColumnCopy, EditTable, FormatCall, FormatTable,
-    LikeTheColumn, Look, LookField, PlaceRows, RowUnlike, RowsPlaced, TableChange, TableChanged, TableEdit,
+    LikeTheColumn, Look, LookField, PlaceRows, Reshape, RowUnlike, RowsPlaced, TableChange, TableChanged, TableEdit,
     TableFormat, TableFormatted, TableKeeps, TableValues, TableWidth, TextLook, ROW_WINDOW,
 };
 pub use template::{
