@@ -67,7 +67,13 @@ _HIDING = ("color", "shd", "highlight")
 
 def scale_values(call: Any, scale: _scales.Scale, scope: Mapping[str, Any]) -> list[ScaleValue]:
     """``DocumentFormat.scale_values`` for a Word document (the module's notes); ``scope``:
-    ``check``'s ``range`` and ``pages``."""
+    ``check``'s ``range`` and ``pages``.  For a document the Rust session owns, the session's
+    reading of it (:func:`docx_agent.rust.hooks.scale_values`, lane H7e)."""
+    from ..rust import hooks
+
+    subject = hooks.owned(call.subject)
+    if subject is not None:
+        return hooks.scale_values(call, subject, scale, scope)
     document = call.document
     styles = _style_names(document)
     labels = document.text_labels()

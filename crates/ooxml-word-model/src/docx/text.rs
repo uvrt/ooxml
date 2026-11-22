@@ -77,6 +77,20 @@ pub fn shown_runs(paragraph: &Element, view: View) -> Vec<TextRun> {
     state.runs.unwrap_or_default()
 }
 
+/// Each character of the paragraph's text in `view`, in order, with the place below the
+/// paragraph of the run holding it (`None`: one no run holds, an equation's object):
+/// docx-agent's `atoms` with each atom's run.
+#[must_use]
+pub fn char_runs(paragraph: &Element, view: View) -> Vec<CharRun> {
+    let mut state = Walk::new(view, None);
+    state.owners = Some(Vec::new());
+    container(paragraph, &mut state);
+    state.owners.unwrap_or_default()
+}
+
+/// A character of a paragraph's text, with the place of the run holding it ([`char_runs`]).
+pub type CharRun = (char, Option<Box<[u32]>>);
+
 /// A run of a paragraph's text ([`text_runs`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextRun {
@@ -116,6 +130,10 @@ struct Walk<'m> {
     before: usize,
     /// The runs written so far, when asked for ([`text_runs`]).
     runs: Option<Vec<TextRun>>,
+    /// Each character written so far with its run's place, when asked for ([`char_runs`]).
+    owners: Option<Vec<CharRun>>,
+    /// The place of the run being walked.
+    run: Option<Box<[u32]>>,
 }
 
 impl<'m> Walk<'m> {
@@ -128,12 +146,17 @@ impl<'m> Walk<'m> {
             marker,
             before: 0,
             runs: None,
+            owners: None,
+            run: None,
         }
     }
 
     /// Text of the element at `self.path` written: counted when it stands before the marker.
     fn push(&mut self, text: &str) {
         self.out.push_str(text);
+        if let Some(owners) = self.owners.as_mut() {
+            owners.extend(text.chars().map(|c| (c, self.run.clone())));
+        }
         if self.marker.is_some_and(|m| self.path.as_slice() < m) {
             self.before += text.chars().count();
         }
@@ -166,7 +189,11 @@ fn container(node: &Element, state: &mut Walk<'_>) {
 fn item(child: &Element, state: &mut Walk<'_>) {
     {
         if is_w(child, &["r"]) {
+            if state.owners.is_some() {
+                state.run = Some(state.path.as_slice().into());
+            }
             run(child, state);
+            state.run = None;
         } else if is_w(
             child,
             &["hyperlink", "smartTag", "customXml", "dir", "bdo", "fldSimple"],

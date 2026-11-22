@@ -34,6 +34,7 @@ mod raster;
 mod session;
 mod summary;
 mod tools;
+mod values;
 mod version;
 mod view;
 

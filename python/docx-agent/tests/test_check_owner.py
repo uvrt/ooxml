@@ -189,7 +189,9 @@ def test_a_check_reports_what_a_check_of_its_version_alone_reports(made, workers
     assert results["owner"] == results["alone"]
 
 
-@pytest.mark.usefixtures("python_layout")
+# Lane H7e: an owned document's numbers are placed by the session's own engine, not by a
+# worker trip -- the trips counted here are docx-agent's own documents' (the cut deletes them).
+@pytest.mark.usefixtures("python_layout", "python_owned")
 def test_a_check_with_numbers_goes_to_the_worker_once(made, monkeypatch):
     # The worker's trips: docx-agent's own way of checking (0.1.114 answers a check of a
     # range in Rust where it can: none goes to the worker then; tests/test_rust_check.py).

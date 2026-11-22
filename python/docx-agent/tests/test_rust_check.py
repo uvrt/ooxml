@@ -200,9 +200,12 @@ def test_checks_served_in_rust_say_what_docx_agent_says(report, monkeypatch):
     # Served in Rust: by the session (lane P5k: what the layout's facts measure too), else
     # by lane F; the checks after a table's rows were written here are the host's still
     # ("rows written here"), and lane F leaves those whose table has a column that may fit
-    # to docx-agent (column_fit is not ported there; P4e deletes lane F).
-    assert stats.get("session", 0) + stats.get("served", 0) >= 9, stats
-    assert {k for k in stats if k.startswith("fallback")} <= {"fallback: column_fit: a column that may fit"}, stats
+    # to docx-agent (column_fit is not ported there; P4e deletes lane F), and those after a
+    # check the session served, whose since_last_check docx-agent's handler measures from the
+    # session's record (lane H7e: a check of numbers no longer goes there first).
+    assert stats.get("session", 0) + stats.get("served", 0) >= 8, stats
+    assert {k for k in stats if k.startswith("fallback")} <= {"fallback: column_fit: a column that may fit",
+                                                                "fallback: a layout seen before the owner"}, stats
     compared = 0
     for (tool, arguments, a), (_, _, b) in zip(mine, theirs):
         assert a.get("ok", True) == b.get("ok", True), (tool, arguments, a, b)

@@ -139,9 +139,9 @@ pub use drawn::Drawn;
 pub use editor::{EditTiming, Edited, Editor};
 pub use error::{EditError, Result};
 pub use fields::{
-    field_facts, fields, format_date, CharAdvance, Day, EditLayout, FieldEdited, FieldFacts, FieldInfo, FieldLayout,
-    FieldPlace, FieldRun, InsertCaption, InsertCrossReference, InsertField, InsertToc, LaidFields, LayOutError,
-    PageReflow, PageShows, SetStoryNumbered, StoryNumber, StoryNumbered, Unknown, UpdateFields,
+    field_facts, fields, format_date, toc_paragraphs, CharAdvance, Day, EditLayout, FieldEdited, FieldFacts, FieldInfo,
+    FieldLayout, FieldPlace, FieldRun, InsertCaption, InsertCrossReference, InsertField, InsertToc, LaidFields,
+    LayOutError, PageReflow, PageShows, SetStoryNumbered, StoryNumber, StoryNumbered, Unknown, UpdateFields,
 };
 pub use follow::{CopyFollowed, FollowSample, Followed};
 pub use format::{
