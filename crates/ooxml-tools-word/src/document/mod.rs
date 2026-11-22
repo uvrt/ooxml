@@ -16,8 +16,8 @@ mod set_properties;
 
 pub use ooxml_word_pages::png::PageRaster;
 pub use render::{
-    page_key, render, sheet_key, Drawing, ImageKey, PageImages, Render, RenderSheet, DEFAULT_WIDTH, MAX_IMAGES,
-    RENDER_NOT_OWNED, RENDER_NO_LAYOUT,
+    laid_to_draw, page_key, render, sheet_key, Drawing, ImageKey, PageImages, Render, RenderSheet, DEFAULT_WIDTH,
+    MAX_IMAGES, RENDER_NOT_OWNED, RENDER_NO_LAYOUT,
 };
 pub use save_document::{save_document, SaveDocument, SaveFormat};
 pub use set_properties::{set_properties, SetProperties};

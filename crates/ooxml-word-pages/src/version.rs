@@ -77,6 +77,26 @@ impl LaidVersion {
         self.ids.all().get(path).map(|id| &**id)
     }
 
+    /// The tool's ids of the body's top-level blocks (paragraphs and tables, those of its
+    /// block-level content controls too) page `page` (0-based) draws something of, each once,
+    /// in document order (docx-agent's `DocumentLayout.blocks_on`): a block split across
+    /// pages is on each; empty past the last page. A block the version does not name is left
+    /// out.
+    pub fn top_blocks(&self, page: usize) -> Vec<&str> {
+        let Some(facts) = self.page_facts(page) else {
+            return Vec::new();
+        };
+        let mut found: Vec<(Vec<u32>, &str)> = facts
+            .blocks
+            .iter()
+            .filter(|key| crate::layout_facts::block_keys_top(key))
+            .filter_map(|key| Some((self.ids.place_of_path(key)?, self.id_of(key)?)))
+            .collect();
+        found.sort();
+        found.dedup_by(|a, b| a.1 == b.1);
+        found.into_iter().map(|(_, id)| id).collect()
+    }
+
     /// Its body blocks by the tool's ids (every block named, once, when first asked).
     pub fn block_ids(&self) -> &crate::ids::BlockIds {
         self.ids.all()
