@@ -201,7 +201,7 @@ pub(crate) fn tool_case(
     let delta = Delta::of(editor.baseline(), &now);
     Ok(json!({
         "reply": Value::Object(reply.to_json()),
-        "unported": reply.unported(),
+        "not_supported": reply.not_supported_form(),
         "parts": parts,
         "order": doc.package().part_names(),
         "touched": found.iter().map(touched_json).collect::<Vec<_>>(),

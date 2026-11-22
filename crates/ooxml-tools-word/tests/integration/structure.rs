@@ -568,15 +568,18 @@ fn blocks_of_the_document_are_copied_with_fresh_ids() {
 }
 
 #[test]
-fn what_the_copy_does_not_port_is_left_to_the_host() {
+fn what_the_copy_does_not_support_yet_is_refused() {
     // a place given by reference: the host resolves it before it calls
     let (reply, editor) = call(
         json!({"doc": "d1", "source_doc": "d1", "range": "p:10000002", "at": "after:$mark"}),
         word_copy_from,
     );
-    // `unported` is the host's to read: the reply changes nothing and says nothing
-    assert_eq!(reply["summary"], json!(""), "{reply}");
-    assert_eq!(reply["changed"], json!([]), "{reply}");
+    assert_eq!(reply["error"]["code"], json!("refused"), "{reply}");
+    assert_eq!(
+        reply["error"]["details"]["not_supported"],
+        json!("copy_from at a place by reference"),
+        "{reply}"
+    );
     let body = editor
         .store()
         .snapshot()

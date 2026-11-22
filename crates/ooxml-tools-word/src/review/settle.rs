@@ -85,12 +85,6 @@ pub(crate) fn settle(args: &WordChanges, editing: &Editing<'_>) -> Result<ToolRe
     let review = Review { accept, selection };
     let done = match editing.editor.run(editing.caller, &review) {
         Ok(done) => done,
-        // a form not ported (the host's handler answers): said in `unported`
-        Err(ooxml_word_edit::EditError::Unsupported(what)) => {
-            let mut reply = Done::new(String::new());
-            reply.unported.push(what);
-            return Ok(ToolResult::done(reply));
-        }
         Err(e) => return Err(refusal(e, args)),
     };
     let after = done

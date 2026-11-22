@@ -9,7 +9,7 @@
 //! Must not: change the chart's caches (`ooxml_chart::edit` does), or open the workbook but
 //! through the [`Keeper`].
 
-use super::chart_keeper::{refused, unported, Keeper};
+use super::chart_keeper::{not_supported, refused, Keeper};
 use ooxml_base::pyfmt::repr_str;
 use ooxml_chart::edit::{ChartTree, Which, POINT_SOURCES};
 use ooxml_sheets::{parse_formula, Area, Axis, Cell, SheetRange, Shift, Write};
@@ -43,7 +43,9 @@ impl SerSources {
             if let Some(source) = chart.source(series, which) {
                 let range = match source.formula.as_deref() {
                     None => None,
-                    Some(text) => parse_formula(text).map_err(|_| unported("a formula ooxml-sheets cannot read"))?,
+                    Some(text) => {
+                        parse_formula(text).map_err(|_| not_supported("a formula ooxml-sheets cannot read"))?
+                    }
                 };
                 sources.push((
                     which,
@@ -153,7 +155,7 @@ impl Block {
             for r in &ranges {
                 spelled.insert(
                     r.formula()
-                        .map_err(|_| unported("a formula ooxml-sheets cannot spell"))?,
+                        .map_err(|_| not_supported("a formula ooxml-sheets cannot spell"))?,
                 );
             }
             let spelled: Vec<String> = spelled.into_iter().collect();
@@ -248,7 +250,7 @@ impl Block {
             for &position in positions {
                 let cell = self.cell(line, position);
                 if !keeper.is_empty(&self.sheet, cell)? {
-                    let spelled = cell.reference().map_err(|_| unported("a cell off the sheet"))?;
+                    let spelled = cell.reference().map_err(|_| not_supported("a cell off the sheet"))?;
                     return Err(refused(&format!(
                         "{address}: workbook cell {spelled} is in the way of the chart's data growing; move it in Excel first"
                     )));
@@ -393,7 +395,7 @@ impl Block {
         self.check_free(address, keeper, series, &positions, Some(&[across]))?;
         let previous = value_lines.last().copied().unwrap_or(span_of(&lines).1);
         let Some(template) = series.iter().find_map(|s| s.range(Which::Values)) else {
-            return Err(unported("a chart whose series draw their values from no range"));
+            return Err(not_supported("a chart whose series draw their values from no range"));
         };
         let own = self.line_range(template, across, self.start, self.count);
         chart.set_formula(new, Which::Values, &spell(&own)?);
@@ -608,5 +610,5 @@ fn label_for(source: Option<&Src>, given: Write) -> Result<Write, EditError> {
 fn spell(range: &SheetRange) -> Result<String, EditError> {
     range
         .formula()
-        .map_err(|_| unported("a formula ooxml-sheets cannot spell"))
+        .map_err(|_| not_supported("a formula ooxml-sheets cannot spell"))
 }

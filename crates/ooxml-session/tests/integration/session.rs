@@ -397,7 +397,7 @@ fn a_diagram_whose_parts_are_missing_reads_as_a_drawing() {
     s.update(&d, vec![put("word/document.xml", &doc)], &CallContext::default())
         .unwrap();
     let read = s.call("word_read", json!({"doc": "d1"}), &CallContext::default());
-    assert!(read.unported().is_empty());
+    assert!(read.not_supported_form().is_none());
     let text = Value::Object(read.to_json());
     assert!(text["data"]
         .as_str()

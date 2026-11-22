@@ -7,7 +7,7 @@ for laying out and waiting, :data:`LAYING_OUT`) and its ``validation`` (the save
 comparison, which the tool layer adds around either); every other field must be equal.
 ``check``'s cases are the facts the Rust session gives whole (``validate``, ``fields``,
 ``app``, and ``reflow``, ``layout`` and ``range`` laid out by a page engine with docx-agent's
-fonts); one it leaves to the host fails as ``unported``.
+fonts); one it does not support yet is its refusal (``details.not_supported``), judged by tools/gates.py.
 
 The addressed cases (``ranges``, ``inspect``, ``find``, ``batch``) are made per document from
 what it holds: its first, a middle and its last body paragraph, a span of five blocks, its

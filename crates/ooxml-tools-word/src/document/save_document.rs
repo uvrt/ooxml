@@ -138,10 +138,12 @@ pub fn save_document(
         .at("name"));
     }
     let Some(owned) = version.owned else {
-        let mut done = Done::new("");
-        done.unported
-            .push("a version the session does not own: what changed since opening is the host's".to_owned());
-        return Ok(done);
+        return Err(crate::refusal::not_supported(
+            "save_document of a document the session does not own",
+            "save_document",
+            serde_json::json!({"doc": args.doc}),
+            &["doc"],
+        ));
     };
     let current = FileKind::of(version.package).map_err(internal)?;
     let mut kind = FileKind::named(format).unwrap_or(FileKind::Docx);

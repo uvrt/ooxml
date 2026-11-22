@@ -119,10 +119,24 @@ def differences(a, b, path: str = "", out: list | None = None, limit: int = 200)
 
 #: What the Rust side's lines said beyond their results, over this process's run (one harness
 #: run per process): the cases that panicked (``{"panic": ...}``: the oracle's own catch, or
-#: the session's ``internal`` reply), and the cases left to the host, by form (their first
-#: ``unported`` reason).  :func:`report` adds both to the totals: tools/gates.py fails on any
-#: panic and reports the forms.
-RUST_TALLY: dict = {"panics": 0, "unported_forms": collections.Counter()}
+#: the session's ``internal`` reply), and the cases refused as not supported yet, by form
+#: (:func:`not_supported_form`).  :func:`report` adds both to the totals: tools/gates.py fails
+#: on any panic and on a form its allow-list does not name.
+RUST_TALLY: dict = {"panics": 0, "not_supported_forms": collections.Counter()}
+
+
+def not_supported_form(value) -> str | None:
+    """The form a Rust result was refused as not supported yet (``details.not_supported`` of
+    its error, or an edit oracle's ``not_supported``), if it was."""
+    if not isinstance(value, dict):
+        return None
+    if value.get("not_supported"):
+        return str(value["not_supported"])
+    for error in (value.get("error"), (value.get("reply") or {}).get("error")):
+        if isinstance(error, dict) and isinstance(error.get("details"), dict) \
+                and error["details"].get("not_supported"):
+            return str(error["details"]["not_supported"])
+    return None
 
 
 def _tally(line: dict) -> None:
@@ -132,12 +146,9 @@ def _tally(line: dict) -> None:
         if "panic" in value:
             RUST_TALLY["panics"] += 1
             print(f"{line.get('file')} [{line.get('case')}]: rust panicked: {str(value['panic'])[:300]}")
-        reasons = value.get("unported") or []
-        error = value.get("error")
-        if isinstance(error, dict) and error.get("code") == "unported":
-            reasons = [error.get("message")]
-        if reasons:
-            RUST_TALLY["unported_forms"][str(reasons[0])] += 1
+        form = not_supported_form(value)
+        if form:
+            RUST_TALLY["not_supported_forms"][form] += 1
 
 
 def run_rust(binary: str, manifest: list[dict]) -> dict[str, dict]:
@@ -198,14 +209,17 @@ def report(expected: dict, rust: dict, ignore: tuple = (), results: str | None =
     ``results``: also a JSON-lines file of them for tools/gates.py -- one line per case with
     differences (its file, case key, input from ``inputs``, differences and each side's error,
     :func:`refusal`), then the totals
-    with ``counts`` (e.g. the cases left to the host), the cases the Rust side panicked in and
-    its unported forms (:data:`RUST_TALLY`)."""
+    with ``counts`` (e.g. the cases refused as not supported yet), the cases the Rust side
+    panicked in and its forms not supported yet (:data:`RUST_TALLY`).  A case Rust refused
+    as not supported yet is no difference here: tools/gates.py judges its form."""
     _core_check()      # a reference that loaded the Rust core compared Rust with Rust
     failed = 0
     lines = []
     for key, want in expected.items():
         got = rust.get(key)
         want = {k: v for k, v in want.items() if k not in ignore}
+        if not_supported_form(got):
+            continue
         found = differences(want, got) if got is not None else ["no rust result"]
         name = key[0] if key[1] is None else f"{key[0]} [{key[1]}]"
         if found:
@@ -219,11 +233,11 @@ def report(expected: dict, rust: dict, ignore: tuple = (), results: str | None =
             lines.append({"file": key[0], "case": key[1], "input": (inputs or {}).get(key), "differences": found,
                           **({"errors": errors} if errors else {})})
     print(f"{len(expected)} cases, {failed} with differences")
-    panics, forms = RUST_TALLY["panics"], dict(RUST_TALLY["unported_forms"].most_common())
+    panics, forms = RUST_TALLY["panics"], dict(RUST_TALLY["not_supported_forms"].most_common())
     if panics:
         print(f"{panics} cases where the Rust side panicked")
     if results:
-        totals = {"cases": len(expected), "failed": failed, "panics": panics, "unported_forms": forms,
+        totals = {"cases": len(expected), "failed": failed, "panics": panics, "not_supported_forms": forms,
                   **(counts or {})}
         Path(results).write_text("".join(json.dumps(x) + "\n" for x in [*lines, {"totals": totals}]))
     return 1 if failed else 0

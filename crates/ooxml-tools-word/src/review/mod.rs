@@ -213,6 +213,8 @@ pub(crate) fn edit_refusal(error: EditError, field: &str, call: TryCall) -> Tool
             ToolError::refusal(Refusal::InvalidArguments, message, way_out).at(field)
         }
         EditError::LayoutStopped(limit) => laying_out_stopped(limit),
+        // a form the edit core does not support yet: refused as such, the call as the way out
+        EditError::Unsupported(what) => ToolError::not_supported(&what, WayOut::call(call)).at(field),
         other => ToolError::internal(other.to_string(), "word:edit"),
     }
 }

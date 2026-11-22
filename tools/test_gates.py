@@ -443,7 +443,8 @@ class HarnessCommand(unittest.TestCase):
 
 
 class Panics(unittest.TestCase):
-    """A shard fails on any case where Rust panicked; the unported forms are reported, not failing."""
+    """A shard fails on any case where Rust panicked, and on a form not supported yet that the
+    allow-list does not name; the allowed forms are reported."""
 
     def diff(self, totals: dict) -> tuple[int, dict, str]:
         with tempfile.TemporaryDirectory() as tmp:
@@ -464,16 +465,29 @@ class Panics(unittest.TestCase):
             return code, json.loads((out / "summary.json").read_text()), printed.getvalue()
 
     def test_a_panic_fails_the_shard(self) -> None:
-        code, summary, printed = self.diff({"cases": 3, "failed": 0, "panics": 1, "unported_forms": {}})
+        code, summary, printed = self.diff({"cases": 3, "failed": 0, "panics": 1, "not_supported_forms": {}})
         self.assertEqual((code, summary["panics"]), (1, 1))
         self.assertIn("Rust panicked", printed)
 
-    def test_unported_forms_are_reported_not_failing(self) -> None:
-        forms = {"like": 2, "from/blob": 1}
-        code, summary, printed = self.diff({"cases": 3, "failed": 0, "panics": 0, "unported": 3,
-                                            "unported_forms": forms})
-        self.assertEqual((code, summary["unported_forms"]), (0, forms))
-        self.assertIn("unported: 2 like", printed)
+    def test_allowed_forms_are_reported_not_failing(self) -> None:
+        forms = {"word_insert_markdown like": 2, "a picture in Markdown": 1}
+        with mock.patch.object(gates, "allowed_forms", lambda: [{"form": "word_insert_markdown *", "cause": "x"},
+                                                                {"form": "a picture in Markdown", "cause": "x"}]):
+            code, summary, printed = self.diff({"cases": 3, "failed": 0, "panics": 0, "not_supported_forms": forms})
+        self.assertEqual((code, summary["not_supported_forms"], summary["not_supported"]), (0, forms, 3))
+        self.assertIn("not supported: 2 word_insert_markdown like", printed)
+
+    def test_a_form_outside_the_allow_list_fails_the_shard(self) -> None:
+        forms = {"word_insert_markdown like": 2, "a new form": 1}
+        with mock.patch.object(gates, "allowed_forms", lambda: [{"form": "word_insert_markdown *", "cause": "x"}]):
+            code, summary, printed = self.diff({"cases": 3, "failed": 0, "panics": 0, "not_supported_forms": forms})
+        self.assertEqual((code, summary["unlisted_forms"]), (1, {"a new form": 1}))
+        self.assertIn("'a new form'", printed)
+
+    def test_the_allow_list_is_well_formed(self) -> None:
+        entries = gates.allowed_forms()
+        self.assertTrue(entries)
+        self.assertTrue(all(e["form"] and e["cause"] for e in entries))
 
     def test_the_summary_adds_panics_and_forms_up(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -482,7 +496,7 @@ class Panics(unittest.TestCase):
                 shard.mkdir()
                 (shard / "summary.json").write_text(json.dumps({
                     "gate": "fixtures", "mode": "text", "documents": 1, "cases": 4, "differences": 0,
-                    "known": 0, "unported": 3, "panics": panics, "unported_forms": forms, "wall": 1.0,
+                    "known": 0, "not_supported": 3, "panics": panics, "not_supported_forms": forms, "wall": 1.0,
                     "crashed": False, "unknown": []}))
             printed = io.StringIO()
             with contextlib.redirect_stdout(printed):

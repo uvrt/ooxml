@@ -12,10 +12,10 @@
 //! allowed (`styles`).
 //!
 //! Must not: lay out but through the host's engine. Copies, a scale and a deck's arguments
-//! are not given here yet: such a call is answered `unported`, and the host answers it; so
+//! are not supported yet: such a call is refused as such ([`ToolError::not_supported`]); so
 //! is a check needing the layout without the host's layout, or of a version its engine
 //! does not lay out, a `min_size` that is not one, and `pages` holding none of the
-//! ranges' blocks (the host warns of it). A range refused is refused here, as docx-agent
+//! ranges' blocks. A range refused is refused here, as docx-agent
 //! words it ([`refused`]); a heading's range is read, and named, as the span it is.
 
 mod args;
@@ -54,7 +54,7 @@ use ooxml_word_model::address::{expand_heading, AddressError};
 use ooxml_word_pages::layout_facts::sizes::Minimum;
 use ooxml_word_pages::layout_facts::{Facts, Scope};
 use ooxml_word_pages::summarised::Summarised;
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 use std::collections::BTreeSet;
 use std::sync::{Arc, PoisonError};
 use std::time::Instant;
@@ -65,19 +65,19 @@ const LISTED: usize = 50;
 /// What a field's result is, said with every `fields` fact.
 const FIELDS_NOTE: &str = "results are caches: after moving headings or text, word_fields update";
 
-/// What `unported` says of a check that needs the layout.
+/// The form refused of a check that needs the layout.
 pub const CHECK_LAYOUT: &str = "check: layout facts";
-/// What `unported` says of a check whose arguments this handler does not take yet.
+/// The form refused of a check whose arguments this handler does not take yet.
 pub const CHECK_ARGUMENTS: &str = "check: arguments";
-/// What `unported` says of a check whose `pages` hold none of its ranges' blocks.
+/// The form refused of a check whose `pages` hold none of its ranges' blocks.
 pub const CHECK_PAGES_OUTSIDE: &str = "check: pages outside the ranges";
 /// The ranges a check or a render takes at most (docx-agent's `scope.MAX_RANGES`).
 pub const MAX_RANGES: usize = 20;
-/// What `unported` says of a check of a document the session does not own.
+/// The form refused of a check of a document the session does not own.
 pub const CHECK_NOT_OWNED: &str = "check: a document the session does not own";
-/// What `unported` says of a `reflow` the host hands no layout for.
+/// The form refused of a `reflow` the host hands no layout for.
 pub const CHECK_NO_LAYOUT: &str = "check: no layout";
-/// What `unported` says of a `reflow` of a version the host's engine does not lay out.
+/// The form refused of a `reflow` of a version the host's engine does not lay out.
 pub const CHECK_NOT_LAID_OUT: &str = "check: the layout falls back";
 
 /// `check` of a Word document at one version.
@@ -87,21 +87,21 @@ pub const CHECK_NOT_LAID_OUT: &str = "check: the layout falls back";
 pub fn check(args: &Check, version: &Version<'_>, cancel: &dyn Cancel) -> Result<Done<Value>, ToolError> {
     let wanted = match served(args) {
         Ok(wanted) => wanted,
-        Err(why) => return Ok(unported(why)),
+        Err(why) => return Err(not_supported(why, &args.doc)),
     };
     let Some(owned) = version.owned else {
-        return Ok(unported(CHECK_NOT_OWNED));
+        return Err(not_supported(CHECK_NOT_OWNED, &args.doc));
     };
     let reflow_wanted = wanted.contains(&CheckInclude::Reflow);
     let layout_wanted = wanted.contains(&CheckInclude::Layout);
     let layout = match (reflow_wanted || layout_wanted, owned.layout) {
-        (true, None) => return Ok(unported(CHECK_NO_LAYOUT)),
+        (true, None) => return Err(not_supported(CHECK_NO_LAYOUT, &args.doc)),
         (true, Some(layout)) => Some(layout),
         (false, _) => None,
     };
     let minimum = match args.min_size.map(Value::from).as_ref().map(minimum_of).transpose() {
         Ok(minimum) => minimum.flatten(),
-        Err(_) => return Ok(unported(CHECK_ARGUMENTS)),
+        Err(_) => return Err(not_supported(CHECK_ARGUMENTS, &args.doc)),
     };
     let mut data = Map::new();
     let mut timing = Map::new();
@@ -152,7 +152,7 @@ pub fn check(args: &Check, version: &Version<'_>, cancel: &dyn Cancel) -> Result
             &mut data,
             &mut timing,
         )? {
-            return Ok(unported(why));
+            return Err(not_supported(why, &args.doc));
         }
     }
     finish(owned, &wanted, scope.as_ref(), data, timing)
@@ -451,10 +451,19 @@ fn timed_out(timeout: Option<std::time::Duration>) -> Value {
     Value::Object(out)
 }
 
-fn unported(why: &str) -> Done<Value> {
-    let mut done = Done::new("");
-    done.unported.push(why.to_owned());
-    done
+/// `why` refused as not supported yet: the check of the validation and the fields (read
+/// from the document alone) is the way out, or for a document the session does not own,
+/// one it does.
+fn not_supported(why: &str, doc: &str) -> ToolError {
+    if why == CHECK_NOT_OWNED {
+        return crate::refusal::not_supported(why, "check", json!({"doc": doc}), &["doc"]);
+    }
+    crate::refusal::not_supported(
+        why,
+        "check",
+        json!({"doc": doc, "include": ["validate", "fields"]}),
+        &[],
+    )
 }
 
 fn seconds(started: Instant) -> Value {

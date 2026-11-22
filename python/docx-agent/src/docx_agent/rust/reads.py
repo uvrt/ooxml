@@ -26,8 +26,7 @@ and never silently: ``ooxml_core`` without a session; a document that is not a c
 version's read copy (a batch's reads of its own changes); limits below 1 (the host's own
 limits are the Rust session's, ``CallContext(limits=ooxml_core.Limits(...))``); an address naming an id this session renamed or deleted (the ledger and
 the aliases are Python's until P2); a regular expression Rust does not match as Python does;
-and what Rust says it does not give as Python does yet (its ``unported``: Accept All's cell
-ends).  A refusal is not a fallback (lane P2e1): Rust's is the call's answer, in
+A form Rust does not support yet is its refusal (``details.not_supported``).  A refusal is not a fallback (lane P2e1): Rust's is the call's answer, in
 docx-agent's words with its own way out (:mod:`.refusals`).
 """
 
@@ -451,9 +450,6 @@ def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | 
         # A refusal is the call's answer, in docx-agent's words with Rust's way out (lane P2e1).
         raise refusal(error)
     app = json.loads(app)
-    unported = app.get("unported") or []
-    if unported:
-        raise _Fallback(unported[0])
     if files is not None:
         files.extend((given["name"], given["format"], data)
                      for given, data in zip(app.get("files") or [], given_files))
@@ -497,8 +493,7 @@ def serve_check(call: Any, arguments: dict[str, Any]) -> Result | None:
     facts read from the document alone (``validate``, ``fields``) of a document it owns,
     outside a batch -- else ``None`` (counted, with why), and the handler goes on.  What
     needs the layout's facts, copies, a scale and the application's ``min_text_size``
-    (which asks for layout facts) are the handler's still (the session says which:
-    ``unported``).
+    (which asks for layout facts) are refused as not supported yet by the session.
 
     Lane P5b: ``reflow`` (asked, or by default) is answered there too, laid out by the
     document's page engine (:func:`docx_agent.pages.word_pages`), handed to the call; the
@@ -516,7 +511,7 @@ def serve_check(call: Any, arguments: dict[str, Any]) -> Result | None:
     if why is None and _laid_check(arguments):
         from ..pages import word_pages
 
-        layout, _ = word_pages(owned.held)     # none: the session says so (unported)
+        layout, _ = word_pages(owned.held)     # none: the session refuses it (not supported yet)
     served = serve(call, "check", arguments, lambda: None, why_not=why, layout=layout,
                    others=("copies[].reference.doc",))
     if served is not None and layout is not None:
@@ -624,7 +619,7 @@ def serve_render(call: Any, arguments: dict[str, Any]) -> Result | None:
         from ..pages import word_pages
 
         if "render" in hosting.laid:
-            layout, _ = word_pages(owned.held)     # none: the session says so (unported)
+            layout, _ = word_pages(owned.held)     # none: the session refuses it (not supported yet)
         raster = host_raster(font_dirs_of(call.document))
     files: list[tuple[str, str, bytes]] = []
     served = serve(call, "render", arguments, lambda: None, why_not=why, layout=layout, raster=raster,

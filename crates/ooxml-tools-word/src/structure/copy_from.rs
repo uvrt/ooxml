@@ -3,7 +3,7 @@
 //! document (as it was before the call) or another open one, its blocks a range or a
 //! heading's section, the reply naming the blocks made and each source id's copy.
 //!
-//! Left to the host (`unported`): a place given by reference (the host resolves its refs
+//! Refused as not supported yet: a place given by reference (the host resolves its refs
 //! before it calls), and what the edit core does not port yet.
 //!
 //! Must not: change the document but through a command.
@@ -11,7 +11,7 @@
 use super::common::{blocks_ref_as_place, call, is_place, name_blocks, outcome, policy, refused, Outcome};
 use crate::review::Editing;
 use ooxml_tools::pyfmt::repr_str;
-use ooxml_tools::{ArgEnum, Done, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
+use ooxml_tools::{ArgEnum, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::{
     section_blocks, section_blocks_in, BookmarkPolicy, CopyBlocks, CopyRange, CopySource, ListPolicy, StylePolicy,
     UnmappedPolicy,
@@ -99,11 +99,9 @@ pub fn word_copy_from(args: &WordCopyFrom, editing: &Editing<'_>) -> ToolResult<
     }
 }
 
-/// What the host answers its own way.
-fn unported(what: &str) -> ToolResult<Value> {
-    let mut done = Done::new(String::new());
-    done.unported.push(what.to_owned());
-    ToolResult::done(done)
+/// `what` refused as not supported yet, `way` (reading the document) the way out.
+fn not_supported(what: &str, way: &TryCall) -> ToolError {
+    ToolError::not_supported(what, WayOut::call(way.clone()))
 }
 
 fn run(args: &WordCopyFrom, editing: &Editing<'_>, way: &TryCall) -> Result<ToolResult<Value>, ToolError> {
@@ -111,7 +109,7 @@ fn run(args: &WordCopyFrom, editing: &Editing<'_>, way: &TryCall) -> Result<Tool
         return Err(blocks_ref_as_place(name, &args.at));
     }
     if args.at.contains('$') {
-        return Ok(unported("copy_from at a place by reference"));
+        return Err(not_supported("copy_from at a place by reference", way));
     }
     let source = if args.source_doc == args.doc {
         CopySource::Own
@@ -122,7 +120,12 @@ fn run(args: &WordCopyFrom, editing: &Editing<'_>, way: &TryCall) -> Result<Tool
             .ok_or_else(|| not_open(&args.source_doc, &args.doc))?;
         match other.word {
             Some(word) => CopySource::Other(Box::new(word.clone())),
-            None => return Ok(unported("a source the session holds only as a package")),
+            None => {
+                return Err(not_supported(
+                    "copy_from a source the session holds only as a package",
+                    way,
+                ))
+            }
         }
     };
     let edit_refusal = |e| crate::review::edit_refusal(e, "", way.clone());

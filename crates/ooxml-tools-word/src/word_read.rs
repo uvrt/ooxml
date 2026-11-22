@@ -92,7 +92,9 @@ pub fn word_read(args: &WordRead, version: &Version<'_>, cancel: &dyn Cancel) ->
         .transpose()
         .map_err(|e| range_refusal(e, &args.doc))?;
     let markdown = to_markdown(&docx, range.as_deref(), view, stories).map_err(|e| range_refusal(e, &args.doc))?;
-    let unported = unported(&docx, view);
+    if let Some(refusal) = not_supported(&docx, view, args) {
+        return Err(refusal);
+    }
     cancel.check().map_err(cancelled)?;
     let first_page = try_call(json!({"doc": args.doc}));
     let (text, next) = page_text(
@@ -111,18 +113,28 @@ pub fn word_read(args: &WordRead, version: &Version<'_>, cancel: &dyn Cancel) ->
     done.data = Some(Value::from(text));
     done.next_cursor = next;
     done.total = Some(markdown.chars().count() as u64);
-    done.unported = unported;
     Ok(done)
 }
 
-/// What of a reading in `view` docx-agent writes otherwise: a cell's end that Accept All
-/// takes away, in the final view.
-fn unported(docx: &ooxml_word_model::docx::Docx, view: ViewName) -> Vec<String> {
+/// A reading in `view` not supported yet: the final view of a table with a cell's end
+/// that Accept All takes away, refused with the markup view of the same range as the way
+/// out.
+fn not_supported(docx: &ooxml_word_model::docx::Docx, view: ViewName, args: &WordRead) -> Option<ToolError> {
     let shared = ooxml_word_model::markdown::read::Shared::of(docx);
-    if view == ViewName::Final && shared.cell_ends(docx) {
-        return vec![crate::CELL_ENDS.to_owned()];
+    if view != ViewName::Final || !shared.cell_ends(docx) {
+        return None;
     }
-    Vec::new()
+    let mut call = serde_json::Map::new();
+    call.insert("doc".into(), Value::from(args.doc.as_str()));
+    if let Some(range) = &args.range {
+        call.insert("range".into(), Value::from(range.as_str()));
+    }
+    call.insert("view".into(), Value::from("markup"));
+    let call = Value::Object(call);
+    Some(ToolError::not_supported(
+        &format!("word_read final view of {}", crate::CELL_ENDS),
+        WayOut::call(try_call(call)),
+    ))
 }
 
 /// `word_read` called with `arguments`.

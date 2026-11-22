@@ -79,11 +79,10 @@ pub(crate) fn limited(
         }))
         .with_word(Some(&doc));
     let args = Check::from_arg(&arguments, "").unwrap();
-    let done = check(&args, &version, &Never).unwrap();
-    if let Some(why) = done.unported.first() {
-        return json!({"unported": why});
+    match check(&args, &version, &Never) {
+        Ok(done) => json!({"summary": done.summary, "data": done.data}),
+        Err(error) => json!({"not_supported": error.not_supported_form(), "error": error.to_json()}),
     }
-    json!({"summary": done.summary, "data": done.data})
 }
 
 #[test]
@@ -136,10 +135,11 @@ fn a_default_check_reports_the_reflow_since_the_last() {
 }
 
 #[test]
-fn a_reflow_without_the_hosts_layout_is_the_hosts() {
+fn a_reflow_without_the_hosts_layout_is_not_supported() {
     let (first, _) = versions();
     let reply = checked(&first, 1, json!({"doc": "d1"}), &LastCheck::default(), None);
-    assert_eq!(reply["unported"], CHECK_NO_LAYOUT);
+    assert_eq!(reply["not_supported"], CHECK_NO_LAYOUT);
+    assert_eq!(reply["error"]["code"], "refused");
 }
 
 /// The engine's pages painted for their digests.

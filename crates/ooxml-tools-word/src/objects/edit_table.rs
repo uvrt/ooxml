@@ -19,7 +19,7 @@
 //! Tracked, a row or column deleted that holds a pending tracked merge's first cell is
 //! refused naming the merge's changes to settle first ([`super::edit_table_pending`]).
 //!
-//! Not ported yet, said in `unported` for the host to answer its own way: `sync` and `from`
+//! Refused as not supported yet ([`ToolError::not_supported`]): `sync` and `from`
 //! (a source the dispatcher resolves: the session's datasets and other documents' rows); a
 //! change of the rows of a table with a placement record (refused so by the edit core);
 //! any call on a table with Accept All's
@@ -85,7 +85,7 @@ fn invalid(message: String, field: &str, options: &[&str], retry: &TryCall) -> T
     ToolError::refusal(Refusal::InvalidArguments, message, way_out).at(field)
 }
 
-pub(super) fn unported(what: &str, retry: &TryCall) -> ToolResult<Value> {
+pub(super) fn not_supported(what: &str, retry: &TryCall) -> ToolResult<Value> {
     refused(EditError::Unsupported(what.to_owned()), retry.clone())
 }
 
@@ -159,7 +159,7 @@ fn from_source(args: &WordEditTable, retry: &TryCall) -> Option<ToolResult<Value
     args.from
         .as_deref()
         .is_some_and(|f| !f.is_empty())
-        .then(|| unported("word_edit_table from (sources)", retry))
+        .then(|| not_supported("word_edit_table from (sources)", retry))
 }
 
 /// Refuse what belongs to `from` given without it, and `grow` without a source.
@@ -200,7 +200,7 @@ fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<T
         Err(error) => return Err(error),
     };
     if args.action == TableAction::Sync {
-        return Ok(unported("word_edit_table sync", retry));
+        return Ok(not_supported("word_edit_table sync", retry));
     }
     check_sync_fields(args, retry)?;
     if let Some(left) = from_source(args, retry) {
@@ -210,7 +210,7 @@ fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<T
     let mut accepted = view.accepted(&docx);
     if accepted.table.cell_ends {
         // the reply's Markdown joins cells across them, and says the cells Accept All loses
-        return Ok(unported(
+        return Ok(not_supported(
             &format!("word_edit_table on a table with {}", crate::CELL_ENDS),
             retry,
         ));
@@ -221,13 +221,13 @@ fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<T
     let tracked = editing.tracking.is_some();
     let change = match change(args, (tracked, &docx), &view, &mut accepted, retry)? {
         Ok(change) => change,
-        Err(what) => return Ok(unported(&what, retry)),
+        Err(what) => return Ok(not_supported(&what, retry)),
     };
     Ok(finish(args, editing, &view, change, accepted.notes, retry))
 }
 
 /// The change a row, column, merge or split action names, positions as the table is
-/// accepted; `Err` with what `unported` says where it is not ported yet.
+/// accepted; `Err` with the form refused where it is not supported yet.
 fn change(
     args: &WordEditTable,
     (tracked, docx): (bool, &Docx),

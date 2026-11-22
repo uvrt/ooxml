@@ -54,8 +54,8 @@ impl<'p> Keeper<'p> {
                 .package
                 .tree(self.chart_part)?
                 .ok_or_else(|| EditError::NoPart(self.chart_part.to_owned()))?;
-            let found =
-                workbook_part(self.package, self.chart_part, root.root(), DOCUMENT).map_err(|why| unported(why.0))?;
+            let found = workbook_part(self.package, self.chart_part, root.root(), DOCUMENT)
+                .map_err(|why| not_supported(why.0))?;
             match found {
                 Err(reason) => self.cache_only = Some(reason),
                 Ok(part) => {
@@ -65,7 +65,7 @@ impl<'p> Keeper<'p> {
                         .ok_or_else(|| EditError::NoPart(part.clone()))?;
                     // ooxml-edit words a workbook it cannot open with the exception's text
                     let writer = WorkbookWriter::open(bytes, &Limits::default())
-                        .map_err(|_| unported("an embedded workbook that cannot be read"))?;
+                        .map_err(|_| not_supported("an embedded workbook that cannot be read"))?;
                     self.workbook = Some((part, writer));
                 }
             }
@@ -96,7 +96,7 @@ impl<'p> Keeper<'p> {
         self.workbook
             .as_mut()
             .map(|(_, w)| w)
-            .ok_or_else(|| unported("a chart workbook written before it was opened"))
+            .ok_or_else(|| not_supported("a chart workbook written before it was opened"))
     }
 
     /// Whether `cell` of `sheet` holds no value (`is_empty`).
@@ -153,7 +153,7 @@ impl<'p> Keeper<'p> {
                 self.note(format!("the formula {} is not a single range", repr_str(formula)));
                 return Ok(());
             }
-            Err(_) => return Err(unported("a formula ooxml-sheets cannot read")),
+            Err(_) => return Err(not_supported("a formula ooxml-sheets cannot read")),
         };
         if !self.sheet(&range)? {
             return Ok(());
@@ -165,7 +165,7 @@ impl<'p> Keeper<'p> {
         let Some(cell) = cell else {
             let spelled = range
                 .formula()
-                .map_err(|_| unported("a formula ooxml-sheets cannot spell"))?;
+                .map_err(|_| not_supported("a formula ooxml-sheets cannot spell"))?;
             self.note(format!("the formula {spelled} does not have a cell for point {index}"));
             return Ok(());
         };
@@ -206,14 +206,14 @@ pub(crate) fn refused(message: &str) -> EditError {
     }
 }
 
-pub(crate) fn unported(what: &str) -> EditError {
+pub(crate) fn not_supported(what: &str) -> EditError {
     EditError::Unsupported(format!("edit_chart: {what}"))
 }
 
 pub(crate) fn sheets_error(error: SheetsError) -> EditError {
     match error {
-        SheetsError::Unsupported(what) => unported(&what),
+        SheetsError::Unsupported(what) => not_supported(&what),
         // ooxml-edit words a workbook it cannot write with its exceptions' texts
-        _ => unported("an embedded workbook ooxml-sheets cannot write"),
+        _ => not_supported("an embedded workbook ooxml-sheets cannot write"),
     }
 }

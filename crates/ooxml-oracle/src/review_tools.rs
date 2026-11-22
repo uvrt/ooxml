@@ -79,7 +79,7 @@ pub fn tool_case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
     }
     Ok(json!({
         "reply": Value::Object(reply.to_json()),
-        "unported": reply.unported(),
+        "not_supported": reply.not_supported_form(),
         "parts": parts,
         "order": doc.package().part_names(),
     }))

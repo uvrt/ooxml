@@ -10,13 +10,13 @@
 //! (docx-agent's `_Accepted`): the edit core resolves them as the earlier cells left the
 //! table, and the notes they make are said in the reply.
 //!
-//! The host's, said in `unported`: a value by reference (a cell's or the call's `from`, a
+//! Refused as not supported yet: a value by reference (a cell's or the call's `from`, a
 //! `{{...}}` in a text), a table placed from a source.
 //!
 //! Must not: change the document but through the command.
 
 use super::cell_fills::{column_rows, count_fills, fill_brief, Fill};
-use super::edit_table::{table_json, unported};
+use super::edit_table::{not_supported, table_json};
 use super::edit_table_args::{CellArg, WordEditTable};
 use super::table_view::{table_view, AcceptedView, TableView};
 use crate::describe::short;
@@ -65,7 +65,7 @@ pub(super) fn set_cells(
         cell.from.as_deref().is_some_and(|f| !f.is_empty()) || cell.text.as_deref().is_some_and(|t| t.contains("{{"))
     };
     if cells.iter().any(by_reference) {
-        return Ok(unported(
+        return Ok(not_supported(
             "word_edit_table set_cells values by reference (from, {{...}})",
             retry,
         ));

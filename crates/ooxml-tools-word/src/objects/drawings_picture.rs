@@ -23,7 +23,7 @@ use ooxml_word_edit::{
 };
 use serde_json::{json, Value};
 
-fn unported(what: &str, retry: &TryCall) -> ToolResult<Value> {
+fn not_supported(what: &str, retry: &TryCall) -> ToolResult<Value> {
     refused(EditError::Unsupported(what.to_owned()), retry.clone())
 }
 
@@ -118,9 +118,9 @@ fn checked(
     editing: &Editing<'_>,
     list: &TryCall,
 ) -> Result<Result<Plan, ToolResult<Value>>, ToolError> {
-    let unported_blobs = || unported("word_drawings insert_picture without the session's blobs", list);
+    let not_supported_blobs = || not_supported("word_drawings insert_picture without the session's blobs", list);
     if args.reference.is_some() {
-        return Ok(Err(unported("word_drawings ref", list)));
+        return Ok(Err(not_supported("word_drawings ref", list)));
     }
     let own = own_paragraph(args);
     let paragraph = own.as_ref().map(|(after, block)| InsertParagraph {
@@ -138,7 +138,7 @@ fn checked(
     }
     let align_taken = own.is_some() && args.wrap.is_none() && args.align.is_some();
     let Some(data) = image_bytes(args, editing, list)? else {
-        return Ok(Err(unported_blobs()));
+        return Ok(Err(not_supported_blobs()));
     };
     let alt_text = args
         .alt_text
@@ -159,7 +159,7 @@ fn checked(
         return Err(invalid(message, "color", WayOut::call(list.clone())));
     }
     if svg {
-        return Ok(Err(unported("word_drawings insert_picture of an SVG", list)));
+        return Ok(Err(not_supported("word_drawings insert_picture of an SVG", list)));
     }
     let size = match picture_size(&data, args.width) {
         Ok(size) => size,

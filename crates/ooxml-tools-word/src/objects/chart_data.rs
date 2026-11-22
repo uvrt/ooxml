@@ -13,7 +13,7 @@
 //! write but through the [`EditGraphic`](ooxml_word_edit::EditGraphic) command.
 
 use super::chart_block::{all_sources, Block};
-use super::chart_keeper::{refused, unported, Keeper};
+use super::chart_keeper::{not_supported, refused, Keeper};
 use super::chart_record::kept;
 use ooxml_chart::data::Point;
 use ooxml_chart::edit::{ChartTree, DataError, LabelLook, PointValue, TitleEdit, TitleLook, Which};
@@ -183,7 +183,7 @@ impl Edit<'_> {
     fn points(&self, series: usize, which: Which) -> Result<Vec<Option<Point>>, EditError> {
         self.chart
             .points(series, which)
-            .map_err(|_| unported("a chart whose data the model cannot read"))
+            .map_err(|_| not_supported("a chart whose data the model cannot read"))
     }
 
     fn set(&mut self, series: usize, which: Which, index: usize, value: &PointValue) -> Result<bool, EditError> {
@@ -448,7 +448,9 @@ impl Edit<'_> {
         };
         let edit = done
             .map_err(|_| {
-                unported("a new title in a document whose defaults name no language (the session's locale decides)")
+                not_supported(
+                    "a new title in a document whose defaults name no language (the session's locale decides)",
+                )
             })?
             .map_err(data_refusal)?;
         if edit.changed {

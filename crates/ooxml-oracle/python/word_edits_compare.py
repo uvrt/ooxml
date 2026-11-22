@@ -10,14 +10,15 @@ from word_tool_reference import reply
 
 def settle(want: dict, have) -> tuple:
     """``want`` (changed in place) and ``have`` as they are compared: the Rust side's result,
-    or ``want`` where the two are equal by rule; and the rule (unported, rewritten) or None."""
+    or ``want`` where the two are equal by rule; and the rule (not_supported, rewritten) or None."""
     if want.pop("structure", False) and isinstance(have, dict):
         _structure_settle(want, have)
     if isinstance(have, dict) and "reply" in have:
-        if have.get("unported"):
-            return want, "unported"     # the host answers it its own way (Done::unported)
+        if have.get("not_supported"):
+            # refused as not supported yet: tools/gates.py allows the form or fails on it
+            return want, "not_supported"
         have["reply"] = reply(have["reply"])
-        have.pop("unported", None)
+        have.pop("not_supported", None)
         shorten(want["parts"], have["parts"])
         return have, None
     written = want.pop("touched_as_written", None)

@@ -60,7 +60,7 @@ pub use word_inspect::{word_inspect, WordInspect};
 pub use word_read::{word_read, Story, View, WordRead};
 pub use written::Written;
 
-/// What `unported` says of a final view where a cell's end is one Accept All takes away.
+/// What a refusal names of a final view where a cell's end is one Accept All takes away.
 pub const CELL_ENDS: &str = "Accept All's cell ends";
 
 /// The document kind these tools serve.

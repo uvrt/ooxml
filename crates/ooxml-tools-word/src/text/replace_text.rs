@@ -3,12 +3,11 @@
 //! one, several (the matches listed as the way out); the replacement one
 //! [`ReplaceText`] command (one history step); the reply as docx-agent's makes it.
 //!
-//! Must not: write the document but through the command, or answer a call it does not
-//! port otherwise than by saying so ([`Unported`]): a regex, a range, a deck's slides, and
-//! a body-only call while other stories match too (docx-agent replaces those paragraph by
-//! paragraph) are the host's still.
+//! Must not: write the document but through the command, or answer a form it does not
+//! support yet but by refusing it (`not_supported`): a regex, a range, a deck's slides, an
+//! empty find, and a body-only call while other stories match too.
 
-use super::{merge_renamed, text_unported, Unported};
+use super::{merge_renamed, not_supported, text_unported};
 use crate::find_text::{literal_matches, match_context, story_ok};
 use crate::review::edit_refusal;
 use crate::{written, Editing};
@@ -80,8 +79,8 @@ const LISTED: usize = 50;
 
 /// `replace_text` on the Word document `editing` names. A failed reply is `not_found`
 /// when the text occurs nowhere, `ambiguous` when one is expected and several match (each
-/// listed with its context); `unported` (nothing changed) for what the Rust core does not
-/// do yet.
+/// listed with its context); `refused` (nothing changed) for what is not supported
+/// yet.
 #[must_use]
 pub fn replace_text(args: &ReplaceText, editing: &Editing<'_>) -> ToolResult<Value> {
     run(args, editing).unwrap_or_else(ToolResult::failed)
@@ -89,11 +88,11 @@ pub fn replace_text(args: &ReplaceText, editing: &Editing<'_>) -> ToolResult<Val
 
 fn run(args: &ReplaceText, editing: &Editing<'_>) -> Result<ToolResult<Value>, ToolError> {
     crate::review::stopped(editing.cancel)?;
-    if args.regex == Some(true) || args.range.is_some() || args.slides.is_some() || args.find.is_empty() {
-        return Ok(Unported::Form.reply());
+    if let Some(refusal) = form_not_supported(args) {
+        return Err(refusal);
     }
     if let Some(unported) = text_unported(&args.replace) {
-        return Ok(unported.reply());
+        return Err(unported.refusal(replace_call(args), &["replace"]));
     }
     let head = editing.editor.store().snapshot();
     let docx = head
@@ -126,7 +125,13 @@ fn run(args: &ReplaceText, editing: &Editing<'_>) -> Result<ToolResult<Value>, T
         ));
     }
     if args.stories != Some(ReplaceStories::All) && matches.len() != all {
-        return Ok(Unported::Form.reply());
+        let mut call = replace_call(args);
+        call.arguments.insert("stories".into(), Value::from("all"));
+        return Err(not_supported(
+            "replace_text in the body only while other stories match",
+            call,
+            &[],
+        ));
     }
     let pattern =
         Literal::new(&args.find, true, false, &args.replace).map_err(|e| edit_refusal(e, "", find_call(args)))?;
@@ -207,6 +212,43 @@ fn found(docx: &Docx, args: &ReplaceText) -> (Vec<Match>, usize) {
         }
     }
     (matches, all)
+}
+
+/// The forms of `args` not supported yet, refused with the call without them: a regex, a
+/// range, a deck's slides, an empty `find`.
+fn form_not_supported(args: &ReplaceText) -> Option<ToolError> {
+    let (form, fill) = if args.regex == Some(true) {
+        ("replace_text regex", &["find"][..])
+    } else if args.range.is_some() {
+        ("replace_text range", &[][..])
+    } else if args.slides.is_some() {
+        ("replace_text slides", &[][..])
+    } else if args.find.is_empty() {
+        ("replace_text empty find", &["find"][..])
+    } else {
+        return None;
+    };
+    Some(not_supported(form, replace_call(args), fill))
+}
+
+/// `replace_text` of `args`' text and replacement, in the stories it names, without the
+/// forms not supported yet.
+fn replace_call(args: &ReplaceText) -> TryCall {
+    let mut arguments = Map::new();
+    arguments.insert("doc".into(), Value::from(args.doc.as_str()));
+    arguments.insert("find".into(), Value::from(args.find.as_str()));
+    arguments.insert("replace".into(), Value::from(args.replace.as_str()));
+    if args.expect == Expect::All {
+        arguments.insert("expect".into(), Value::from("all"));
+    }
+    if args.stories == Some(ReplaceStories::All) {
+        arguments.insert("stories".into(), Value::from("all"));
+    }
+    TryCall {
+        tool: "replace_text".to_owned(),
+        arguments,
+        fill: Vec::new(),
+    }
 }
 
 /// `find_text` of the same text: where it occurs.

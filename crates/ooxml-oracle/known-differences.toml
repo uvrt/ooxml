@@ -231,3 +231,155 @@ cause = """Lane E3: docx-agent's _no_reshape_over_merge_lead reads rows[index] u
 for a pending tracked merge's first cell and fails with Python's IndexError ('list index out of \
 range', not_found); the Rust core refuses the row as docx-agent's delete_row does untracked \
 ('t:... has no row 99', refused). A docx-agent crash, not copied."""
+
+# ---------------------------------------------------------------------------------------------
+# Forms the Rust tools refuse as not supported yet (lane CUT1: ToolError::not_supported, code
+# `refused`, the form in details.not_supported). The reference (the frozen docx-agent) answers
+# them; such a case is no difference, but tools/gates.py fails a shard on any form refused so
+# that no entry here names. `form` is a glob on the form (fnmatch, case-sensitive); `cause`
+# says who ports it, or that it is deferred until after the release (p4e-plan.md). A port lane
+# removes its lines when its forms are served.
+# ---------------------------------------------------------------------------------------------
+
+[[not_supported]]
+form = "word_edit_table sync"
+cause = "lane E1 (edit_table sync), before the release"
+
+[[not_supported]]
+form = "word_edit_table from (sources)"
+cause = "lane E1 (edit_table from), before the release"
+
+[[not_supported]]
+form = "word_edit_table *"
+cause = """the rest of edit_table's forms: values by reference, tables placed from a source, \
+Accept All's cell ends, note or comment references (deferred, objects O, p4e-plan.md)"""
+
+[[not_supported]]
+form = "keep_together's pages without a layout"
+cause = "lane E2 (keep_together in word_format and word_format_table), before the release"
+
+[[not_supported]]
+form = "check: *"
+cause = """check's forms the session does not give yet: arguments (copies, scale, a deck's), layout \
+facts without the host's layout, pages outside the ranges, a document not owned (lanes H7a/H7b, \
+P5; the deck arguments are pptx's)"""
+
+[[not_supported]]
+form = "render: *"
+cause = "render without a page engine, or of a document the session does not own (lane H7b)"
+
+[[not_supported]]
+form = "* of a document the session does not own"
+cause = "word_changes and save_document of a document the session does not own (lane H7a)"
+
+[[not_supported]]
+form = "word_read final view of Accept All's cell ends"
+cause = "Accept All's cell ends in the final view (deferred, objects O)"
+
+[[not_supported]]
+form = "word_inspect of Accept All's cell ends"
+cause = "Accept All's cell ends in the final view (deferred, objects O)"
+
+[[not_supported]]
+form = "* by reference"
+cause = "values and addresses by reference, $ref and {{...}} (deferred, references R)"
+
+[[not_supported]]
+form = "replace_text *"
+cause = "replace_text regex, range, slides, empty find, styled text, body only (deferred, text forms T)"
+
+[[not_supported]]
+form = "word_delete a *"
+cause = "word_delete of a picture (d:) or of a heading without its end (deferred, text forms T)"
+
+[[not_supported]]
+form = "word_insert_markdown *"
+cause = "insert_markdown like, from, blob (user 2026-11-22: refused at release, added after)"
+
+[[not_supported]]
+form = "a picture in Markdown"
+cause = "insert_markdown pictures (user 2026-11-22: refused at release, added after)"
+
+[[not_supported]]
+form = "a footnote in Markdown"
+cause = "insert_markdown footnotes (user 2026-11-22: refused at release, added after)"
+
+[[not_supported]]
+form = "* at replace:"
+cause = "placing at replace: (user 2026-11-22: refused at release, added after)"
+
+[[not_supported]]
+form = "* into an empty container"
+cause = "placing into an empty container (deferred, text forms T)"
+
+[[not_supported]]
+form = "a block of * without an id"
+cause = "deleting a block without an id (deferred, text forms T)"
+
+[[not_supported]]
+form = "ranges sharing a paragraph with a range across paragraphs"
+cause = "settle forms (deferred, objects O)"
+
+[[not_supported]]
+form = "word_drawings *"
+cause = "word_drawings by ref, SVG pictures, pictures without blobs, a chart in a group (deferred, objects O)"
+
+[[not_supported]]
+form = "edit_chart*"
+cause = "edit_chart's forms not ported (chart chain leftovers, values from tables; deferred, objects O)"
+
+[[not_supported]]
+form = "copy_from *"
+cause = "copy_from at a place by reference, a source held only as a package (deferred)"
+
+[[not_supported]]
+form = "a list number docx-agent cannot read"
+cause = "copy_from forms (deferred, objects O)"
+
+[[not_supported]]
+form = "a theme whose colours docx-agent cannot read"
+cause = "copy_from forms (deferred, objects O)"
+
+[[not_supported]]
+form = "a copied style *"
+cause = "copy_from of a style without kind or basedOn (deferred, objects O)"
+
+[[not_supported]]
+form = "word_controls fill *"
+cause = "controls fill beyond child steps (deferred, objects O)"
+
+[[not_supported]]
+form = "word_changes accept moving the document's only table record*"
+cause = "settle forms (deferred, objects O)"
+
+[[not_supported]]
+form = "a document without a settings part"
+cause = "headers_footers on a document without a settings part (deferred, layout P)"
+
+[[not_supported]]
+form = "the section of *: a section given by what a block holds"
+cause = "headers_footers by what a block holds (deferred, layout P)"
+
+[[not_supported]]
+form = "word_template reflow without the layout"
+cause = "template reflow without the host's layout (deferred, layout P)"
+
+[[not_supported]]
+form = "a field update that needs the layout"
+cause = "field forms that need the layout (deferred, layout P)"
+
+[[not_supported]]
+form = "no layout"
+cause = "field forms that need the layout (deferred, layout P)"
+
+[[not_supported]]
+form = "a page cross-reference without the layout"
+cause = "field forms that need the layout (deferred, layout P)"
+
+[[not_supported]]
+form = "the layout of this version: *"
+cause = "a version the page engine does not lay out (deferred, layout P)"
+
+[[not_supported]]
+form = "a table of contents whose end is not in a paragraph beside its begin"
+cause = "field forms (deferred, layout P)"

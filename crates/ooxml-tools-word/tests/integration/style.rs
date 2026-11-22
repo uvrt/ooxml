@@ -390,10 +390,13 @@ fn convert_whose_reflow_is_stopped_is_a_timeout_that_changes_nothing() {
 }
 
 #[test]
-fn convert_without_the_layout_is_left_to_the_host() {
+fn convert_without_the_layout_is_not_supported_yet() {
     let editor = Editor::open(package(), StoreConfig::default(), Arc::new(Still), Arc::new(Unlimited)).unwrap();
     let result = template(&editor, None);
-    assert_eq!(result.unported(), ["the reflow without the layout"]);
+    assert_eq!(
+        result.not_supported_form(),
+        Some("word_template reflow without the layout")
+    );
     assert!(
         editor
             .store()

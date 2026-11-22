@@ -4,7 +4,7 @@
 //! before left) -- the new ranges' ids in the reply, each named by its `ref`.
 //!
 //! Must not: write the document but through the command, or answer a call it does not
-//! port otherwise than by saying so ([`Unported`]).
+//! support yet, refused ([`Unported`]).
 
 use super::{by_reference, Unported};
 use crate::review::{edit_refusal, needed};
@@ -97,7 +97,7 @@ pub struct WordInsertText {
 /// `invalid_arguments` for a call giving both one insertion's fields and items, an item
 /// without text or without exactly one of find, target and at, an `at` that is no side of a
 /// range or position, a `ref` holding an address; the find's or the range's refusal;
-/// `unported` (nothing changed) for what the Rust core does not do yet.
+/// `refused` (nothing changed) for what is not supported yet.
 #[must_use]
 pub fn word_insert_text(args: &WordInsertText, editing: &Editing<'_>) -> ToolResult<Value> {
     run(args, editing).unwrap_or_else(ToolResult::failed)
@@ -131,7 +131,7 @@ fn run(args: &WordInsertText, editing: &Editing<'_>) -> Result<ToolResult<Value>
         }],
     };
     if let Some(unported) = unported(args, &work) {
-        return Ok(unported.reply());
+        return Err(unported.refusal(try_call(args), &["text", "target", "at", "within"]));
     }
     let policy = editing.policy();
     let mut ops = Vec::with_capacity(work.len());
