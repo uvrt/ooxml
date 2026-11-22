@@ -35,6 +35,7 @@ mod format_table;
 mod format_table_args;
 mod rows_written;
 mod set_cells;
+mod set_from;
 mod table_view;
 
 pub use controls::word_controls;

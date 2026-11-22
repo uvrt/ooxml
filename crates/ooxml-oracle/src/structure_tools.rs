@@ -177,6 +177,7 @@ pub(crate) fn tool_case(
         .unwrap_or("2026-11-17T10:00:00Z");
     let blobs = case_blobs(case);
     let locale = case_locale(case)?;
+    let sources = case_sources(case);
     let copy = other_document(bytes, case);
     let copy_versions = Versions::new();
     let others: Vec<(&str, Version<'_>)> = copy
@@ -187,7 +188,7 @@ pub(crate) fn tool_case(
     let editing = Editing::new(&call_editor, &caller, &opened, "d1", &Never, date)
         .with_tracking(tracking.as_ref())
         .with_layout(layout.as_ref().map(|l| l as &dyn ooxml_word_edit::FieldLayout))
-        .with_others(Others::new(&others))
+        .with_others(Others::new(&others).with_sources(&sources))
         .with_blobs(Some(&blobs))
         .with_locale(locale.as_ref());
     let arguments = case.get("arguments").cloned().unwrap_or(Value::Object(Map::new()));
@@ -233,6 +234,46 @@ fn changed_parts(package: &Package, doc: &ooxml_word_edit::WordDoc) -> Map<Strin
 /// The other document a case names (`d2`), as a reading tool is handed it.
 fn other_version<'a>(package: &'a Package, word: Option<&'a WordDoc>, versions: &'a Versions) -> Version<'a> {
     Version::new("copy.docx", package, 1, versions).with_word(word)
+}
+
+/// The rows the case's `from` names of the datasets it defines (`datasets`: `{id, columns,
+/// types, rows}` each), as a host hands them over: a whole dataset (`d:sales`) or a run of
+/// its rows (`d:sales/#2:#3`, `/#2:`, `/#2`); none for anything else.
+fn case_sources(case: &Value) -> ooxml_tools_word::Sources {
+    let Some(given) = case.pointer("/arguments/from").and_then(Value::as_str) else {
+        return ooxml_tools_word::Sources::default();
+    };
+    let Some(rest) = given.strip_prefix("d:") else {
+        return ooxml_tools_word::Sources::default();
+    };
+    let (id, run) = rest.split_once('/').map_or((rest, None), |(id, run)| (id, Some(run)));
+    let datasets = case.get("datasets").and_then(Value::as_array).into_iter().flatten();
+    let Some(found) = datasets
+        .into_iter()
+        .find(|d| d.get("id").and_then(Value::as_str) == Some(id))
+    else {
+        return ooxml_tools_word::Sources::default();
+    };
+    let rows = found.get("rows").and_then(Value::as_array).cloned().unwrap_or_default();
+    let (first, last) = match run.and_then(|r| r.strip_prefix('#')) {
+        None => (1, rows.len()),
+        Some(run) => {
+            let number = |t: &str| t.trim_start_matches('#').parse::<usize>().ok();
+            match run.split_once(':') {
+                Some((first, "")) => (number(first).unwrap_or(1), rows.len()),
+                Some((first, last)) => (number(first).unwrap_or(1), number(last).unwrap_or(rows.len())),
+                None => (number(run).unwrap_or(1), number(run).unwrap_or(1)),
+            }
+        }
+    };
+    let taken: Vec<Value> = rows.into_iter().skip(first - 1).take(last + 1 - first).collect();
+    let mut rows_json = found.clone();
+    if let Value::Object(map) = &mut rows_json {
+        map.insert("given".into(), json!(given));
+        map.insert("address".into(), json!(given));
+        map.insert("rows".into(), Value::Array(taken));
+    }
+    ooxml_tools_word::Sources::from_json(&json!([rows_json])).unwrap_or_default()
 }
 
 /// The blobs a case registers (`blobs`: `{name, mime, hex}` each), as the session's
