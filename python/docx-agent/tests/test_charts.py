@@ -36,8 +36,9 @@ from docx_agent.validate import check
 
 from test_roundtrip import entries
 from xlsx import check_chart_against_workbook
+from conftest import FIXTURE_DIR  # noqa: E402
 
-CHARTS = Path(__file__).parent / "fixtures" / "generated" / "charts"
+CHARTS = FIXTURE_DIR / "generated" / "charts"
 C = "{http://schemas.openxmlformats.org/drawingml/2006/chart}"
 A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
 

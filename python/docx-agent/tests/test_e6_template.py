@@ -24,9 +24,10 @@ from docx_agent.edit.authoring import MacrosDropped, ModeUpgraded
 from docx_agent.validate import check
 
 from test_roundtrip import entries
+from conftest import FIXTURE_DIR  # noqa: E402
 
 HERE = Path(__file__).parent
-TEMPLATES = HERE / "fixtures" / "generated" / "templates"
+TEMPLATES = FIXTURE_DIR / "generated" / "templates"
 BRAND = TEMPLATES / "brand.dotx"
 OBSERVATIONS = json.loads((HERE / "observations" / "e6-word.json").read_text(encoding="utf-8"))
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -34,8 +35,8 @@ CREATED = datetime(2026, 10, 4, 9, 30, tzinfo=timezone.utc)
 DOCUMENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
 TEMPLATE_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml"
 TEMPLATE_SOURCES = [BRAND, TEMPLATES / "brand-macros.dotm", TEMPLATES / "brand-mode14.dotx",
-                    HERE / "fixtures" / "generated" / "markdown" / "dutch-template.docx",
-                    HERE / "fixtures" / "generated" / "lists-and-styles.docx"]
+                    FIXTURE_DIR / "generated" / "markdown" / "dutch-template.docx",
+                    FIXTURE_DIR / "generated" / "lists-and-styles.docx"]
 
 
 def parts(data: bytes) -> dict[str, bytes]:
@@ -106,7 +107,7 @@ def test_a_template_is_attached_only_when_asked():
     assert target.startswith("file:///") and target.endswith("/brand.dotx") and rels[0].get("TargetMode") == "External"
     assert b"<Template>brand.dotx</Template>" in data["docProps/app.xml"]
     for document in (Document.new(template=BRAND), Document.new(template=BRAND.read_bytes()),
-                     Document.new(template=HERE / "fixtures" / "generated" / "markdown" / "dutch-template.docx")):
+                     Document.new(template=FIXTURE_DIR / "generated" / "markdown" / "dutch-template.docx")):
         data = parts(document.to_bytes())
         assert etree.fromstring(data["word/settings.xml"]).find(W + "attachedTemplate") is None
         assert b"<Template>Normal.dotm</Template>" in data["docProps/app.xml"]
@@ -142,7 +143,7 @@ def test_keep_content_false_drops_the_body_keeps_the_rest():
 
 
 def test_keep_content_false_drops_notes_and_comments():
-    template = HERE / "fixtures" / "generated" / "ids-and-markup.docx"
+    template = FIXTURE_DIR / "generated" / "ids-and-markup.docx"
     document = Document.new(template=template, keep_content=False)
     assert check(document.package) == []
     assert document.comments() == []

@@ -12,7 +12,6 @@ draws only the cache -- draws a placeholder until Word saves the document again.
 from __future__ import annotations
 
 import warnings
-from pathlib import Path
 
 import pytest
 
@@ -22,8 +21,9 @@ from docx_agent.edit.charts import (DIAGRAM_POLICY, ChartEditError, DiagramDrawi
 from docx_agent.validate import check
 
 from test_roundtrip import entries
+from conftest import FIXTURE_DIR  # noqa: E402
 
-SMARTART = Path(__file__).parent / "fixtures" / "generated" / "charts" / "smartart.docx"
+SMARTART = FIXTURE_DIR / "generated" / "charts" / "smartart.docx"
 
 
 def test_reading():

@@ -1,9 +1,14 @@
 name: The gates' reference
 description: >-
   Python 3.12 and docx-agent (pure Python, not ooxml-core: DOCX_AGENT_RUST=0 too) with what it
-  runs, as the differential jobs run it.  The reference cache's key (tools/gates.py cache-key)
-  covers the installed distributions, so gates.yml's plan job, which looks the key up, and its
-  differential jobs install through this one action.
+  runs, as the differential jobs run it.  Where the checkout has crates/ooxml-oracle/reference.toml
+  the reference is frozen: python/{ooxml-common,ooxml-edit,docx2svg,docx-agent} are installed from
+  `git archive` of the commit it names, not from the checkout, and GATES_REFERENCE_SHA is set to
+  that commit for the later steps (the harness then imports the installed packages:
+  crates/ooxml-oracle/python/reference_packages.py).  A checkout without the file (a branch from
+  before the freeze) installs its own packages, as before.  The reference cache's key
+  (tools/gates.py cache-key) covers the commit and the installed distributions, so gates.yml's
+  plan job, which looks the key up, and its differential jobs install through this one action.
 runs:
   using: composite
   steps:
@@ -14,5 +19,16 @@ runs:
       shell: bash
       run: |
         python -m pip install --upgrade pip
-        python -m pip install ./python/ooxml-common ./python/ooxml-edit "./python/docx2svg[measure]" markdown-it-py mdit-py-plugins
-        python -m pip install --no-deps ./python/docx-agent
+        source=.
+        if [ -f crates/ooxml-oracle/reference.toml ]; then
+          sha=$(python -c 'import tomllib; print(tomllib.load(open("crates/ooxml-oracle/reference.toml", "rb"))["sha"])')
+          git cat-file -e "$sha^{commit}" 2>/dev/null || git fetch --no-tags --depth 1 origin "$sha"
+          source="$RUNNER_TEMP/reference-source"
+          rm -rf "$source" && mkdir -p "$source"
+          git archive "$sha" python/ooxml-common python/ooxml-edit python/docx2svg python/docx-agent | tar -x -C "$source"
+          echo "GATES_REFERENCE_SHA=$sha" >> "$GITHUB_ENV"
+          echo "the gates' reference: frozen at $sha (crates/ooxml-oracle/reference.toml)"
+        fi
+        python -m pip install "$source/python/ooxml-common" "$source/python/ooxml-edit" \
+          "$source/python/docx2svg[measure]" markdown-it-py mdit-py-plugins
+        python -m pip install --no-deps "$source/python/docx-agent"

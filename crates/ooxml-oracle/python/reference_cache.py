@@ -4,18 +4,24 @@ docx-agent is the reference the Rust core is compared with, and it is frozen (pu
 deleted at P4e), so a case's expected result is the same in every run until something it
 depends on changes.  A result is kept under a key made of everything it depends on:
 
-* the **chain**: the repository code the reference runs -- every git-tracked file of each
-  package folder a harness module was imported from (``python/<package>/src``: its modules
-  and the data they read), and the harness modules themselves but NOT_REFERENCE -- with the
-  Python version and every installed distribution (pip excepted: the workflow upgrades it,
-  and the reference never imports it);
+* the **chain**: the code the reference runs.  Frozen (reference_packages.py: the gates
+  install docx-agent and its packages from the commit crates/ooxml-oracle/reference.toml
+  names), that commit, the harness modules but NOT_REFERENCE, the Python version and every
+  installed distribution (pip excepted: the workflow upgrades it, and the reference never
+  imports it) -- so a kept result stays valid whatever the checkout's ``python/`` holds.  Not
+  frozen (a run by hand), instead of the commit every git-tracked file of each package folder
+  a harness module was imported from (``python/<package>/src``: its modules and the data they
+  read);
 * the **environment**: the variables the reference code names (any quoted upper-case name
-  in its Python files that is set) and the font files docx2svg measures with (paths, sizes);
+  in its Python files -- the harness's and the reference packages', installed or not -- that
+  is set) and the font files docx2svg measures with (paths, sizes);
 * the **case**: its document's bytes, its spec as both sides are given it, and the bytes of
   a ``reference_file`` it names.
 
 The chain is derived, not listed: it is read from ``sys.modules`` once the harness has been
-imported, and :meth:`Store.close` fails when a module the run imported later lies outside it.
+imported, and :meth:`Store.close` fails when a module the run imported later lies in the
+repository outside it (the installed reference lies outside the repository, its commit
+keyed instead).
 
 NOT_REFERENCE are the harness modules that make the cases and compare the results
 (word_*_cases.py, word_edits_compare.py): the case they make is in each result's key, and a
@@ -54,6 +60,8 @@ import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
+
+from reference_packages import check_frozen, installed_sources
 
 ROOT = Path(__file__).resolve().parents[3]
 HARNESS = Path(__file__).resolve().parent
@@ -118,10 +126,13 @@ def reference_files() -> list[Path]:
 
 def chain() -> tuple[str, list[Path]]:
     """The chain's digest and the files it covers (see the module's docstring)."""
+    frozen = check_frozen()
     files = reference_files()
     distributions = sorted({f"{d.metadata['Name']}=={d.version}" for d in importlib.metadata.distributions()
                             if (d.metadata["Name"] or "").lower() not in NOT_REFERENCE_DISTRIBUTIONS})
     chunks = [sys.version.encode(), "\n".join(distributions).encode()]
+    if frozen is not None:
+        chunks.insert(0, f"frozen reference {frozen}".encode())
     for file in files:
         chunks += [str(file.relative_to(ROOT)).encode(), file.read_bytes() if file.exists() else b"(deleted)"]
     return _sha(*chunks), files
@@ -130,7 +141,7 @@ def chain() -> tuple[str, list[Path]]:
 def environment(files: list[Path]) -> str:
     """The digest of the variables the reference code names and the fonts it can measure."""
     names: set[str] = set()
-    for file in files:
+    for file in [*files, *installed_sources()]:
         if file.suffix == ".py" and file.exists():
             names.update(re.findall(r"""["']([A-Z][A-Z0-9_]{2,})["']""", file.read_text("utf-8", "replace")))
     variables = {name: os.environ[name] for name in sorted(names) if name in os.environ}

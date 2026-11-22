@@ -17,9 +17,10 @@ from docx_agent import Document, EditError
 from docx_agent.validate import check, grid_problems
 
 from canonical import canonical, difference, without_added_styles
+from conftest import FIXTURE_DIR  # noqa: E402
 from test_roundtrip import entries
 
-BLANK = "tests/fixtures/samplelib/sample-blank.docx"
+BLANK = FIXTURE_DIR / "samplelib" / "sample-blank.docx"
 
 
 def _table(document: Document, rows: int = 4, columns: int = 4) -> str:

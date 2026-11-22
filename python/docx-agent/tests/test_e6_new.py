@@ -26,6 +26,7 @@ from docx_agent.edit.properties import read_app
 from docx_agent.validate import check
 
 from test_roundtrip import entries
+from conftest import FIXTURE_DIR  # noqa: E402
 
 #: The separators the Word the new document was measured on writes (``,`` and ``;``), and
 #: its language; tools/e6_probe.py's ``word_locale``.
@@ -262,7 +263,7 @@ def test_save_brings_apps_statistics_up_to_date(tmp_path):
 
 
 def test_a_saved_document_that_did_not_change_keeps_its_app_part(tmp_path):
-    source = Path(__file__).parent / "fixtures" / "samplelib" / "sample-simple.docx"
+    source = FIXTURE_DIR / "samplelib" / "sample-simple.docx"
     document = Document.open(source)
     document.save(tmp_path / "same.docx")
     assert parts((tmp_path / "same.docx").read_bytes())["docProps/app.xml"] == \

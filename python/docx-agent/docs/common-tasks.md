@@ -5,7 +5,7 @@ the files it names, so these recipes cannot rot.
 
 Short recipes for what an agent does most. Every block runs as written:
 `tests/test_readme.py` runs each one on its own, in a folder holding `agreement.docx` (the
-supplier agreement summary in `tests/fixtures/generated/pilot`, with five reviewers'
+supplier agreement summary in `crates/ooxml-oracle/fixtures/generated/pilot`, with five reviewers'
 comments), `charts.docx`, `brand.dotx` and `logo.png`. The ids (`p:3B212964`, `c:76FCC91F`)
 are that document's; in yours, read them from `to_markdown()` first.
 

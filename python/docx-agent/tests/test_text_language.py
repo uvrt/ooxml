@@ -24,9 +24,10 @@ from docx_agent.edit import text_language
 from docx_agent.edit.text_language import (LANGUAGES, MIN_CONFIDENCE, MIN_WORDS, PROFILES, detect,
                                            words_of)
 from docx_agent.tools import GROUPS, TOOLS, docx_format
+from conftest import FIXTURE_DIR  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-SAMPLES = json.loads((ROOT / "tests" / "fixtures" / "language-samples.json").read_text(encoding="utf-8"))
+SAMPLES = json.loads((FIXTURE_DIR / "language-samples.json").read_text(encoding="utf-8"))
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 CLOCK = lambda: datetime.datetime(2026, 11, 10, 12, 0)  # noqa: E731
 

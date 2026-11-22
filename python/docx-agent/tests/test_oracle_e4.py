@@ -27,7 +27,7 @@ from pathlib import Path
 import pytest
 
 import oracle
-from conftest import fixture_paths, fixture_id
+from conftest import FIXTURE_DIR, fixture_id, fixture_paths
 from docx_agent import Document
 
 from e4_edits import DATE, ENDNOTE, EVEN, FIRST, FOOTNOTE, e4_edit_set, enough
@@ -222,7 +222,7 @@ def test_a_long_toc_is_words(word, name):
     """Many headings over many pages: sample-long's 18 chapters (36 pages), and the probe
     document of three heading levels with a section restarting its numbers in lower Roman."""
     if name == "long":
-        document = Document.open(ROOT / "tests" / "fixtures" / "samplelib" / "sample-long.docx")
+        document = Document.open(FIXTURE_DIR / "samplelib" / "sample-long.docx")
     else:
         document = Document.open(e4_probe.headings_document())
         for k, level in e4_probe.heading_levels().items():
