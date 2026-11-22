@@ -177,6 +177,14 @@ def _ranges(call: Any, value: Any) -> list[str]:
     return ranges_of(refs_resolved(call, value))
 
 
+def _drawn_as(call: Any) -> Any:
+    """What the document of ``call`` is laid out with -- its font folders and locale, settings
+    the toolbox keeps on its view (``set_language``), not what the view holds of the
+    document --; the toolbox session's where the call's entry is not one the session owns."""
+    owned = reads._owned(call.entry)
+    return owned.held if owned is not None else call.session
+
+
 def _values(call: Any, subject: Any, method: str, request: dict[str, Any], pages: Any,
             always: bool) -> dict[str, Any] | None:
     """The session's reply to ``Version.<method>`` for ``request`` (the session's engine for
@@ -189,7 +197,7 @@ def _values(call: Any, subject: Any, method: str, request: dict[str, Any], pages
 
     engine = None
     if always or pages is not None:
-        engine, why = session_pages(_mirror(subject), call.session)
+        engine, why = session_pages(_mirror(subject), _drawn_as(call))
         if engine is None:
             if pages is not None:
                 raise ToolError("layout_failed", f"numbers on pages need the layout: {why}; leave pages out "
