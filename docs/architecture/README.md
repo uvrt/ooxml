@@ -92,7 +92,7 @@ Targets at production size for the other formats:
 5. **Typed errors.**
    - Each crate has a `thiserror` enum. Errors that reach a tool map to `ToolError {code, message, valid_options, try_call, field, details}`.
    - In library code, `unwrap`, `expect`, `panic!`, `todo!` and unchecked indexing in parsers are denied (`clippy::unwrap_used`, `expect_used`, `panic` and `indexing_slicing` set to deny in `[workspace.lints]`). They are allowed in tests and xtask only.
-   - The FFI layer wraps every entry point in `catch_unwind`. A panic becomes `ToolError {code: internal}` with a trace id and never aborts the host.
+   - The session catches a panic in a tool call itself (`Session::call`, `Session::edit`, each batch op; `ooxml-session`'s `panics` module), so every host, the oracles' binaries too, gets the same reply: `ToolError {code: internal}`, "the call failed inside the library; nothing changed" (or that what it changed stays, as its step), the same call as its `try_call`, and `details.trace` naming the tool and what the panic said. It is counted in `SessionStats::panics{tool}`; the gates fail on any; the host logs every `internal` reply at ERROR in one place (ooxml-edit's call record). A panic never aborts the host.
 6. **Unsafe policy.**
    - `#![forbid(unsafe_code)]` in every crate except `ooxml-python` (PyO3 needs none of ours there) and possibly `ooxml-xml` for an arena.
    - Any unsafe needs an ADR naming each block, a `// SAFETY:` comment, and Miri in CI.
