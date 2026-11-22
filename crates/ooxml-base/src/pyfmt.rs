@@ -117,9 +117,62 @@ fn fixed_digits(digits: &str, point: i32) -> String {
     format!("{whole}.{fraction}")
 }
 
+/// A number as Python's `json` module reads it: a JSON integer is an `int`, anything with a
+/// fraction or an exponent a `float`. Python writes the two apart (`5` and `5.0`), so a
+/// message that names a number from the arguments keeps which it was.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PyNumber {
+    /// An `int` (JSON's `5`).
+    Int(i128),
+    /// A `float` (JSON's `5.0`, `5e0`).
+    Float(f64),
+}
+
+impl PyNumber {
+    /// The number's value.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)] // as Python's float(int)
+    pub fn value(self) -> f64 {
+        match self {
+            Self::Int(int) => int as f64,
+            Self::Float(float) => float,
+        }
+    }
+}
+
+impl From<f64> for PyNumber {
+    fn from(value: f64) -> Self {
+        Self::Float(value)
+    }
+}
+
+impl From<i64> for PyNumber {
+    fn from(value: i64) -> Self {
+        Self::Int(value.into())
+    }
+}
+
+/// Python's `str` of the number: `5`, `5.0`, `1e-05`.
+impl std::fmt::Display for PyNumber {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Int(int) => write!(f, "{int}"),
+            Self::Float(float) => f.write_str(&repr_float(*float)),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{repr_float, repr_str, round2};
+    use super::{repr_float, repr_str, round2, PyNumber};
+
+    #[test]
+    fn numbers_keep_int_and_float_apart() {
+        assert_eq!(PyNumber::from(5).to_string(), "5");
+        assert_eq!(PyNumber::from(5.0).to_string(), "5.0");
+        assert_eq!(PyNumber::Float(1e-5).to_string(), "1e-05");
+        assert!((PyNumber::from(-3).value() + 3.0).abs() < f64::EPSILON);
+    }
 
     #[test]
     fn strings_read_as_python_writes_them() {
