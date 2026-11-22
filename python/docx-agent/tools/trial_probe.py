@@ -46,7 +46,7 @@ import oracle  # noqa: E402
 from docx_agent import Document  # noqa: E402
 
 OBSERVATIONS = ROOT / "tests" / "observations" / "trial-word.json"
-BRAND = ROOT / "tests" / "fixtures" / "generated" / "templates" / "brand.dotx"
+BRAND = ROOT.parents[1] / "crates" / "ooxml-oracle" / "fixtures" / "generated" / "templates" / "brand.dotx"
 #: Long enough for Word to open and export a one-page document on a cold start; a dialog
 #: never returns.
 TIMEOUT = 90

@@ -6,13 +6,13 @@ document leaves the fallback as it was."""
 
 from __future__ import annotations
 
-from pathlib import Path
 
 from lxml import etree
 
 from docx_agent import Document
+from conftest import FIXTURE_DIR  # noqa: E402
 
-FIXTURE = Path(__file__).parent / "fixtures" / "generated" / "charts" / "chart-places.docx"
+FIXTURE = FIXTURE_DIR / "generated" / "charts" / "chart-places.docx"
 MC = "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 PARA_ID = "{http://schemas.microsoft.com/office/word/2010/wordml}paraId"

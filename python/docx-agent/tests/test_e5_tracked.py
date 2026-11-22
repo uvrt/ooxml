@@ -18,6 +18,7 @@ from docx_agent import Document
 from docx_agent.validate import check, grid_problems
 
 from canonical import canonical, difference, without_added_styles
+from conftest import FIXTURE_DIR  # noqa: E402
 from e4_edits import enough
 
 AUTHOR = "E5 Agent"
@@ -158,7 +159,7 @@ def _bound_xml(document: Document) -> bytes:
 def test_a_bound_control_follows_the_review():
     """Rejecting a tracked fill of a bound control puts the old text back in the control
     and in its custom XML node; accepting keeps the new in both."""
-    document = Document.open("tests/fixtures/samplelib/sample-simple.docx")
+    document = Document.open(FIXTURE_DIR / "samplelib" / "sample-simple.docx")
     control = _bound(document)
     with document.tracking(author=AUTHOR, date=DATE):
         document.fill_control(control, "E5 bound after")
@@ -195,7 +196,7 @@ def _picture(document: Document) -> str:
 def test_what_word_does_not_track_is_applied_and_said(what):
     """Tracked, an edit Word applies untracked is applied untracked here too, and the
     result's warnings say so."""
-    document = Document.open("tests/fixtures/samplelib/sample-simple.docx")
+    document = Document.open(FIXTURE_DIR / "samplelib" / "sample-simple.docx")
     with document.tracking(author=AUTHOR, date=DATE):
         result = UNTRACKED_IN_WORD[what](document)
     results = result if isinstance(result, tuple) else (result,)
@@ -207,7 +208,7 @@ def test_a_vertical_text_direction_tracks_the_cell_and_not_the_row():
     """Word records a cell's text direction (``w:tcPrChange``) and its paragraphs' indents
     (``w:pPrChange``), and changes the row's height and breaking without a record
     (measured): rejecting gives the cell back, the row keeps them."""
-    document = Document.open("tests/fixtures/samplelib/sample-simple.docx")
+    document = Document.open(FIXTURE_DIR / "samplelib" / "sample-simple.docx")
     table = document.insert_table(2, 2, after=enough(document, 1)[0].id).id
     with document.tracking(author=AUTHOR, date=DATE):
         document.set_cell(table, 0, 0, text_direction="btLr")

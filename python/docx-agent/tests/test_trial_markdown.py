@@ -4,14 +4,14 @@ a list numbers told from one whose number is typed."""
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import pytest
 
 from docx_agent import Document
+from conftest import FIXTURE_DIR  # noqa: E402
 
 DATE = "2026-10-05T09:00:00Z"
-PILOT = Path(__file__).parent / "fixtures" / "generated" / "pilot" / "agreement-summary.docx"
+PILOT = FIXTURE_DIR / "generated" / "pilot" / "agreement-summary.docx"
 
 
 def document() -> Document:

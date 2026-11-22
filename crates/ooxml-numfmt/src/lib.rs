@@ -19,5 +19,5 @@ pub mod dates;
 pub mod locale;
 
 pub use code::{classify, is_date_code, sections, tokens, Classification, Kind, Token, TokenKind};
-pub use dates::{date_of_serial, format_serial, Date};
+pub use dates::{date_of_serial, format_serial, measured_names, Date, DateNames};
 pub use locale::{canonical_language, Locale, LocaleError, EN_US};

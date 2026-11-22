@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 const FIXTURE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../python/docx-agent/tests/fixtures/generated/charts/chart-places.docx"
+    "/../../crates/ooxml-oracle/fixtures/generated/charts/chart-places.docx"
 );
 
 /// `word_fields` called with `arguments` on the fixture, laid out by a page engine; the

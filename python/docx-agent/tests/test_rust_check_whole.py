@@ -23,9 +23,10 @@ from ooxml_edit.tools import Toolbox
 from docx_agent.rust import owner as rust_owner
 from docx_agent.rust import reads
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
+from conftest import FIXTURE_DIR  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
-FIXTURES = sorted((HERE / "fixtures").rglob("*.docx"))[::3]
+FIXTURES = sorted((FIXTURE_DIR).rglob("*.docx"))[::3]
 
 INCLUDES = (["validate"], ["fields"], ["validate", "fields", "app"], ["fields", "validate"])
 

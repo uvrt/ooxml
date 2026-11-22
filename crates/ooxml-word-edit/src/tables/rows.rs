@@ -165,8 +165,8 @@ pub(crate) fn placed(doc: &WordDoc, key: &str) -> bool {
 
 impl EditTable {
     /// The change's arguments against the table as it is; the row it names.
-    fn check(&self, doc: &WordDoc, found: &Found) -> Result<usize> {
-        if placed(doc, &found.id) {
+    fn check(&self, doc: &WordDoc, found: &Found, placing: Placing) -> Result<usize> {
+        if !placing.recorded && placed(doc, &found.id) {
             return Err(EditError::Unsupported(
                 "word_edit_table rows of a table placed from a source (its record kept)".to_owned(),
             ));
@@ -230,14 +230,39 @@ impl Command<WordDoc> for EditTable {
 
     fn validate(&self, doc: &WordDoc) -> Result<()> {
         let docx = doc.docx()?;
-        self.check(doc, &find_table(doc, &docx, &self.table)?).map(|_| ())
+        self.check(doc, &find_table(doc, &docx, &self.table)?, Placing::default())
+            .map(|_| ())
     }
 
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<TableChanged> {
         let mut sink = EditSink::new(tx, self.policy.clone());
-        let out = self.edit(&mut sink)?;
+        let out = self.edit(&mut sink, Placing::default())?;
         crate::after::after_edit(&mut sink)?;
         Ok(out)
+    }
+}
+
+/// How a change is made as part of placing a source's rows ([`super::place_rows`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct Placing {
+    /// A table with a record of its source is changed too: the placing command keeps the
+    /// record.
+    pub(super) recorded: bool,
+    /// A new row is a body row: a header row's likeness made one (docx-agent's
+    /// `set_row(header=False)` after `insert_row`).
+    pub(super) body: bool,
+}
+
+impl EditTable {
+    /// The change made through `sink`, as one part of a command placing a source's rows.
+    pub(super) fn edit_placing(&self, sink: &mut EditSink<'_, '_>) -> Result<TableChanged> {
+        self.edit(
+            sink,
+            Placing {
+                recorded: true,
+                body: true,
+            },
+        )
     }
 }
 
@@ -308,10 +333,10 @@ impl EditTable {
         }))
     }
 
-    fn edit(&self, sink: &mut EditSink<'_, '_>) -> Result<TableChanged> {
+    fn edit(&self, sink: &mut EditSink<'_, '_>, placing: Placing) -> Result<TableChanged> {
         let docx = sink.docx()?;
         let found = find_table(sink.doc(), &docx, &self.table)?;
-        let index = self.check(sink.doc(), &found)?;
+        let index = self.check(sink.doc(), &found, placing)?;
         if let Some(unchanged) = self.unchanged(&found)? {
             return Ok(unchanged);
         }
@@ -346,7 +371,10 @@ impl EditTable {
         let shared = sink.doc().shared_handle();
         let orders = shared.facts.orders();
         let mut out = match self.change {
-            TableChange::InsertRow { below, plain, .. } => insert_row(sink, &mut held, index, below, plain, orders)?,
+            TableChange::InsertRow { below, plain, .. } => {
+                let beside = (below, plain, placing.body);
+                insert_row(sink, &mut held, index, beside, orders)?
+            }
             TableChange::DeleteRow { .. } => delete_row(sink, &mut held, &docx, index, old_row, orders)?,
             TableChange::DeleteColumn { .. } => super::columns::delete_column(sink, &mut held, &docx, index, orders)?,
             TableChange::CopyRow { below, .. } => super::copy_row::copy_row(sink, &mut held, index, below, orders)?,
@@ -414,8 +442,7 @@ fn insert_row(
     sink: &mut EditSink<'_, '_>,
     held: &mut Held,
     index: usize,
-    below: bool,
-    plain: bool,
+    (below, plain, body): (bool, bool, bool),
     orders: &Orders,
 ) -> Result<TableChanged> {
     let work = &mut held.work;
@@ -434,8 +461,9 @@ fn insert_row(
         neighbour,
         below,
         plain,
+        body,
     };
-    let (row, note, pending) = row_like(work, table, &beside, orders);
+    let (row, note, header_dropped, pending) = row_like(work, table, &beside, orders);
     if below {
         work.add_next(reference, row);
     } else {
@@ -465,6 +493,7 @@ fn insert_row(
     );
     // the new cells of columns whose deletion or insertion is pending go with that change
     // (round 53, R107), their records numbered before the row's own
+    let is_tracked = matches!(sink.policy(), RevisionPolicy::Tracked(_));
     let tracked = match sink.policy() {
         RevisionPolicy::Untracked if pending.is_empty() => None,
         RevisionPolicy::Untracked => {
@@ -484,12 +513,16 @@ fn insert_row(
     };
     let at = index + usize::from(below);
     let beside = merges_note(&held.work, &own_rows(&held.work, table), at);
+    // a header made a body row is not tracked, as Word does not track it (docx-agent's
+    // `set_row(header=False)`)
+    let untracked = (header_dropped && is_tracked)
+        .then(|| "Word does not track a row's height, breaking or header: applied untracked".to_owned());
     put(sink, held, tracked)?;
     sink.ensure_w14(&held.found.part, false, &[])?;
     Ok(TableChanged {
         id: Some(new_id.clone()),
         created: vec![new_id],
-        warnings: note.into_iter().chain(beside).collect(),
+        warnings: note.into_iter().chain(beside).chain(untracked).collect(),
         ..TableChanged::default()
     })
 }

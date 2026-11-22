@@ -62,6 +62,8 @@ pub(crate) struct Word {
     /// Its page engine, where the session lays it out itself, and what its host set it to
     /// be laid out with (`crate::pages`).
     pub(crate) pages: crate::pages::DocPages,
+    /// The versions its live views were given, kept within the session's memory budget.
+    pub(crate) views: crate::live_view::LiveViews,
 }
 
 impl Word {
@@ -195,6 +197,7 @@ impl Document {
                     images: ooxml_tools_word::PageImages::new(Some(Arc::clone(&context.budget))),
                     rows_written: RowsWritten::default(),
                     pages: crate::pages::DocPages::default(),
+                    views: crate::live_view::LiveViews::new(Arc::clone(&context.budget)),
                 }))
             }
             DocKind::Pptx | DocKind::Xlsx => {

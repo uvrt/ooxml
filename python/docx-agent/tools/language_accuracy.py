@@ -1,6 +1,6 @@
 """Measure :func:`docx_agent.edit.text_language.detect` on made-up text (round 49, R94).
 
-Reads ``tests/fixtures/language-samples.json`` (paragraphs written for this in each language
+Reads ``crates/ooxml-oracle/fixtures/language-samples.json`` (paragraphs written for this in each language
 the detector knows), cuts every paragraph into windows of ``n`` words (from every third word,
 so a window starts mid-sentence too) and detects each, at several ``n``.  Prints, per length:
 the windows judged (enough profile words), the judged ones right, and the windows that would
@@ -24,7 +24,7 @@ from pathlib import Path
 from docx_agent.edit.text_language import LANGUAGES, MIN_CONFIDENCE, detect
 
 ROOT = Path(__file__).resolve().parent.parent
-SAMPLES = ROOT / "tests" / "fixtures" / "language-samples.json"
+SAMPLES = ROOT.parents[1] / "crates" / "ooxml-oracle" / "fixtures" / "language-samples.json"
 LENGTHS = (3, 4, 5, 6, 8, 10, 12, 15, 20, 30)
 
 

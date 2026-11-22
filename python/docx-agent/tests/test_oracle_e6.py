@@ -32,7 +32,7 @@ import pytest
 from lxml import etree
 
 import oracle
-from conftest import fixture_id, fixture_paths
+from conftest import FIXTURE_DIR, fixture_id, fixture_paths
 from docx_agent import Document
 from docx_agent.edit import blank
 
@@ -44,7 +44,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 import e6_probe  # noqa: E402
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
-TEMPLATES = ROOT / "tests" / "fixtures" / "generated" / "templates"
+TEMPLATES = FIXTURE_DIR / "generated" / "templates"
 TYPED = ["The first paragraph Word typed into its own new document.",
          "A second paragraph, long enough to run across the width of the page more than once, so that "
          "where its lines break, and how far apart they are, says whether the two documents are laid out "
@@ -147,8 +147,8 @@ def test_word_exports_new_documents(word, name):
 
 
 TEMPLATE_SOURCES = sorted(TEMPLATES.glob("*.dot*")) + [
-    ROOT / "tests" / "fixtures" / "generated" / "markdown" / "dutch-template.docx",
-    ROOT / "tests" / "fixtures" / "generated" / "lists-and-styles.docx"]
+    FIXTURE_DIR / "generated" / "markdown" / "dutch-template.docx",
+    FIXTURE_DIR / "generated" / "lists-and-styles.docx"]
 
 
 def _from_template(path: Path, keep: bool = True) -> bytes:
