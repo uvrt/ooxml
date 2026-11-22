@@ -1,85 +1,91 @@
-//! Owns: [`Session::block_pages`], the pages a Word document's head version draws body
-//! blocks on, laid out through the call's layout (the host's page engine) within the call's
-//! limit on laying out: what a host measures once a batch has run (docx-agent's
-//! `word_format_table` `keep_together` "taller than a page", said after the batch's last op).
+//! Owns: [`SessionPages`], what a session lays its Word documents out with -- the fonts and
+//! engine options ([`PageSetup`]) and the memory budget its engines count in --, the
+//! session's default ([`crate::SessionConfig::pages`]) or one the host sets for a document
+//! ([`Session::set_pages`]: a document drawn with other font folders or in another locale);
+//! and each document's page engine ([`DocPages`]), made when a call first needs a layout its
+//! host does not give ([`Session::pages`]), kept with the document and let go when it
+//! closes.
 //!
-//! Must not: lay out but through the context's layout, or change the document.
+//! Must not: lay out (the engine does, when a tool asks), or make an engine for a document
+//! that is not a Word document.
 
-use crate::context::CallCancel;
-use crate::{CallContext, DocId, Session, SessionError};
-use ooxml_base::Cancel;
-use ooxml_word_edit::{paragraphs_of, EditError, EditLayout, FieldLayout};
+use crate::{DocId, MemoryBudget, Session, SessionError};
+use ooxml_tools_word::{EngineBudgets, EnginePages, PageSetup, WordLayout};
+use std::sync::{Arc, Mutex, PoisonError};
 
-/// Where one block asked is drawn.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BlockAt {
-    /// On these pages, numbered from 1 as docx-agent and Word number them (the layout port
-    /// counts from 0; this answer is the host's, like the session's other page reads).
-    Pages(Vec<usize>),
-    /// Outside the body (a header's, a note's): no page of the body's to break.
-    Outside,
-    /// Not known: why the layout cannot say (a block it does not draw, or names no block).
-    Unknown(String),
+/// What a session lays its Word documents out with.
+#[derive(Debug, Clone)]
+pub struct SessionPages {
+    /// The fonts and how the engines lay out.
+    pub setup: PageSetup,
+    /// The budget every engine counts in: its memos as held, its pages' paint within the
+    /// limit.
+    pub memory: Arc<MemoryBudget>,
 }
 
-/// Each block asked, in order, or why the version was not laid out at all.
-pub type BlockPages = Result<Vec<BlockAt>, String>;
+impl SessionPages {
+    fn engine(&self) -> Arc<EnginePages> {
+        Arc::new(self.setup.engine(EngineBudgets {
+            held: self.memory.holding(),
+            paint: self.memory.account(),
+        }))
+    }
+}
+
+/// One Word document's engine, and what its host set it to be laid out with.
+#[derive(Default)]
+pub(crate) struct DocPages(Mutex<Held>);
+
+#[derive(Default)]
+struct Held {
+    /// The host's setting for this document (`None`: the session's).
+    own: Option<SessionPages>,
+    engine: Option<Arc<EnginePages>>,
+}
 
 impl Session {
-    /// The pages the head version of the Word document `id` draws each of `blocks` on (body
-    /// blocks by id, as the version names them), laid out by `context`'s layout within its
-    /// limit on laying out; the outer `Err` says why the version was not laid out (no
-    /// layout handed, the limit passed or the call cancelled, a version the layout does not
-    /// lay out).
+    /// The page engine the session lays the document `id` out with: made on first use from
+    /// what [`Session::set_pages`] set for it, else the session's [`SessionPages`]; `None`
+    /// where neither is given, or for a document that is not a Word document.
     ///
     /// # Errors
-    /// [`SessionError::NotOpen`]; [`SessionError::Kind`] for a document that is not Word.
-    pub fn block_pages(
-        &self,
-        id: &DocId,
-        blocks: &[String],
-        context: &CallContext,
-    ) -> Result<BlockPages, SessionError> {
+    /// `NotOpen` where no document `id` is open.
+    pub fn pages(&self, id: &DocId) -> Result<Option<Arc<EnginePages>>, SessionError> {
         let document = self.document(id)?;
-        let word = document
-            .word()
-            .ok_or_else(|| SessionError::Kind("block pages are a Word document's".to_owned()))?;
-        let Some(layout) = context.layout.as_deref() else {
-            return Ok(Err("no layout".to_owned()));
+        let Some(word) = document.word() else {
+            return Ok(None);
         };
-        let head = word.editor.store().snapshot();
-        let cancel = CallCancel::new(context, &*self.context.cancel, &*self.context.clock);
-        let layout_cancel = cancel.layout();
-        let edit = EditLayout {
-            layout: layout as &dyn FieldLayout,
-            stop: layout_cancel
+        let mut held = word.pages.0.lock().unwrap_or_else(PoisonError::into_inner);
+        if held.engine.is_none() {
+            held.engine = held
+                .own
                 .as_ref()
-                .map_or(&cancel as &dyn Cancel, |l| l as &dyn Cancel),
-            limit: layout_cancel.as_ref().map(|l| l.limit().timeout),
-        };
-        let laid = match edit.lay_out(head.doc().package()) {
-            Ok(laid) => laid,
-            Err(error @ (EditError::LayoutStopped(_) | EditError::Unsupported(_))) => {
-                return Ok(Err(error.to_string()))
-            }
-            Err(other) => return Err(other.into()),
-        };
-        let docx = head.doc().docx()?;
-        let outside = |id: &str| {
-            paragraphs_of(head.doc(), &docx, id)
-                .ok()
-                .and_then(|found| found.first().map(|(part, _)| *part != docx.main))
-                .unwrap_or(false)
-        };
-        let ids: Vec<&str> = blocks.iter().map(String::as_str).collect();
-        Ok(Ok(ids
-            .iter()
-            .zip(laid.blocks_pages(&ids))
-            .map(|(id, found)| match found {
-                _ if outside(id) => BlockAt::Outside,
-                Ok(pages) => BlockAt::Pages(pages.into_iter().map(|page| page + 1).collect()),
-                Err(unknown) => BlockAt::Unknown(unknown.0),
-            })
-            .collect()))
+                .or(self.config.pages.as_ref())
+                .map(SessionPages::engine);
+        }
+        Ok(held.engine.clone())
+    }
+
+    /// Lay the document `id` out with `pages` from now on (`None`: with the session's): its
+    /// engine is made again when next needed. A Word document only; another kind keeps none.
+    ///
+    /// # Errors
+    /// `NotOpen` where no document `id` is open.
+    pub fn set_pages(&self, id: &DocId, pages: Option<SessionPages>) -> Result<(), SessionError> {
+        let document = self.document(id)?;
+        if let Some(word) = document.word() {
+            let mut held = word.pages.0.lock().unwrap_or_else(PoisonError::into_inner);
+            *held = Held {
+                own: pages,
+                engine: None,
+            };
+        }
+        Ok(())
+    }
+
+    /// The session's own layout of the document `id`, for a call whose host gives none.
+    pub(crate) fn own_pages(&self, id: &DocId) -> Option<Arc<dyn WordLayout>> {
+        let engine = self.pages(id).ok().flatten()?;
+        Some(engine as Arc<dyn WordLayout>)
     }
 }

@@ -9,19 +9,22 @@
 //! Owns: the tool's definition and the reply's shape, key for key as today's.
 //!
 //! With `layout: true` each block (and each block of the notes shown) gets where it is laid
-//! out, asked of the version's [`crate::Placer`] once for them all, in the place
-//! docx-agent's `state` keeps for it.
+//! out, asked once for them all -- of the host's [`crate::Placer`] where it gives one, else
+//! of the call's own layout of the version (`placing`) -- in the place docx-agent's `state`
+//! keeps for it.
 //!
-//! Must not: lay out (the host's placer does; without one `layout: true` is refused with
-//! the call that works), read addresses itself (the address resolver does), or cache
-//! between calls.
+//! Must not: lay out but through the call's layout (without a placer or a layout
+//! `layout: true` is refused with the call that works), read addresses itself (the address
+//! resolver does), or cache between calls.
 
 mod blocks;
 mod extras;
+mod placing;
 
 pub(crate) use extras::comments_with_anchors;
 
 use crate::describe::cancelled;
+use crate::pages::NotLaid;
 use crate::refusal::address_refusal;
 use crate::version::Version;
 use blocks::Writer;
@@ -120,9 +123,7 @@ pub fn word_inspect(args: &WordInspect, version: &Version<'_>, cancel: &dyn Canc
     let mut data = Value::Object(data);
     if let (Some(placer), Some(asked)) = (placer, writer.placing.take()) {
         cancel.check().map_err(cancelled)?;
-        let answers = placer
-            .place(&asked)
-            .ok_or_else(|| ToolError::internal("the layout did not place the blocks", "word_inspect:layout"))?;
+        let answers = placed(args, placer, &asked, version, &docx, cancel)?;
         crate::placements::fill(&mut data, &answers);
     }
     let mut done = Done::new(format!("Inspected {}", args.target));
@@ -131,13 +132,49 @@ pub fn word_inspect(args: &WordInspect, version: &Version<'_>, cancel: &dyn Canc
     Ok(done)
 }
 
-/// The placer `layout: true` asks (`None` without `layout`); refused where the version has
-/// none, with the call that works without.
-fn placer_of<'v>(args: &WordInspect, version: &Version<'v>) -> Result<Option<&'v dyn crate::Placer>, ToolError> {
+/// Where the blocks `asked` are placed, as `placer` says.
+fn placed(
+    args: &WordInspect,
+    placer: Placing<'_>,
+    asked: &[Vec<String>],
+    version: &Version<'_>,
+    docx: &ooxml_word_model::docx::Docx,
+    cancel: &dyn Cancel,
+) -> Result<Vec<Map<String, Value>>, ToolError> {
+    match placer {
+        Placing::Host(placer) => placer
+            .place(asked)
+            .ok_or_else(|| ToolError::internal("the layout did not place the blocks", "word_inspect:layout")),
+        Placing::Own(layout, limit) => {
+            let stop = limit.map_or(cancel, |l| l.cancel);
+            let laid = placing::Laid::new(layout, version.package, docx, stop)
+                .map_err(|why| not_laid(args, why, limit, cancel))?;
+            Ok(laid.place(asked))
+        }
+    }
+}
+
+/// Who says where blocks are placed: the host's placer, or the call's layout of the version.
+#[derive(Clone, Copy)]
+enum Placing<'v> {
+    Host(&'v dyn crate::Placer),
+    Own(&'v dyn crate::WordLayout, Option<crate::LayoutLimit<'v>>),
+}
+
+/// Who `layout: true` asks (`None` without `layout`): the host's placer where it gives one,
+/// else the call's own layout of the version; refused where the call has neither, with the
+/// call that works without.
+fn placer_of<'v>(args: &WordInspect, version: &Version<'v>) -> Result<Option<Placing<'v>>, ToolError> {
     if args.layout != Some(true) {
         return Ok(None);
     }
-    version.placer.map(Some).ok_or_else(|| {
+    if let Some(placer) = version.placer {
+        return Ok(Some(Placing::Host(placer)));
+    }
+    let own = version
+        .owned
+        .and_then(|owned| owned.layout.map(|layout| Placing::Own(layout, owned.layout_limit)));
+    own.map(Some).ok_or_else(|| {
         let mut call = args.clone();
         call.layout = None;
         ToolError::refusal(
@@ -147,6 +184,30 @@ fn placer_of<'v>(args: &WordInspect, version: &Version<'v>) -> Result<Option<&'v
         )
         .at("layout")
     })
+}
+
+/// Why the call's layout placed no blocks: the call's own stop as a timeout; the layout's
+/// limit passed, or a version it does not lay out, refused with the call that works without.
+fn not_laid(args: &WordInspect, why: NotLaid, limit: Option<crate::LayoutLimit<'_>>, cancel: &dyn Cancel) -> ToolError {
+    if let Err(stopped) = cancel.check() {
+        return cancelled(stopped);
+    }
+    let said = match (why, limit) {
+        (NotLaid::Stopped, Some(limit)) => format!(
+            "laying the document out took longer than the layout limit ({} s)",
+            limit.timeout.as_secs_f64()
+        ),
+        (NotLaid::Stopped, None) => "laying the document out was stopped".to_owned(),
+        (NotLaid::Other(reason), _) => format!("the Word layout does not lay this version out yet ({reason})"),
+    };
+    let mut call = args.clone();
+    call.layout = None;
+    ToolError::refusal(
+        Refusal::Refused,
+        format!("layout: {said}; inspect without layout"),
+        WayOut::call(try_call(&call)),
+    )
+    .at("layout")
 }
 
 /// What docx-agent gives otherwise: the final view's cells whose end Accept All takes away.

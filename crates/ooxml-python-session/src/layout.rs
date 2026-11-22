@@ -12,15 +12,15 @@
 //! every Rust call runs with it released.
 
 use crate::budget::{PyMemoryBudget, OWN_BUDGET};
-use ooxml_base::Locale;
+use crate::pages::engine_options;
 use ooxml_fonts::{Folder, Location, WordFontOptions};
 use ooxml_session::MemoryBudget;
 use ooxml_word_layout::facts::BlockKeeps;
 use ooxml_word_layout::fields::update::PageNumbers;
 use ooxml_word_layout::paint::drawings::{DrawingSlot, Layer};
-use ooxml_word_layout::paint::{Drawn, GlyphSize, PaintedLine, Rule, Span};
+use ooxml_word_layout::paint::{Drawn, PaintedLine, Rule, Span};
 use ooxml_word_layout::px::Px;
-use ooxml_word_pages::{DiskFonts, EngineBudgets, EngineOptions, FontSetup, LaidVersion, PageEngine, PageView};
+use ooxml_word_pages::{DiskFonts, EngineBudgets, FontSetup, LaidVersion, PageEngine, PageView};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyTuple};
@@ -64,6 +64,13 @@ fn exact(value: Px) -> Exact {
 #[pyclass(frozen, name = "WordFonts", module = "ooxml_core")]
 pub struct PyWordFonts {
     inner: Arc<FontSetup>,
+}
+
+impl PyWordFonts {
+    /// The fonts, as a session's engines share them.
+    pub(crate) fn setup(&self) -> Arc<FontSetup> {
+        Arc::clone(&self.inner)
+    }
 }
 
 #[pymethods]
@@ -126,6 +133,15 @@ fn laid_or_raise(engine: &Arc<Mutex<PageEngine>>, laid: Laid) -> PyResult<PyLaid
 }
 
 impl PyWordPages {
+    /// The handle of an engine the session keeps (`Session.pages`): the same engine.
+    pub(crate) fn of(pages: &ooxml_tools_word::EnginePages) -> Self {
+        use ooxml_tools_word::WordLayout;
+        Self {
+            engine: Arc::clone(pages.engine()),
+            seed: pages.seed().clone(),
+        }
+    }
+
     /// The edit core's layout port over this engine (a call's `layout`).
     pub(crate) fn port(&self) -> ooxml_tools_word::EnginePages {
         ooxml_tools_word::EnginePages::new(Arc::clone(&self.engine), self.seed.clone())
@@ -151,22 +167,7 @@ impl PyWordPages {
         numbers: (char, String, char),
         budget: Option<PyRef<'_, PyMemoryBudget>>,
     ) -> PyResult<Self> {
-        let (thousands, date_order, list_separator) = numbers;
-        let numbers = ooxml_numfmt::Locale::new(decimal, thousands, &date_order, locale, list_separator)
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        let locale = Locale::from(&numbers);
-        let glyph_size = match glyph_size {
-            "device" => GlyphSize::Device,
-            "exact" => GlyphSize::Exact,
-            other => return Err(PyValueError::new_err(format!("glyph_size {other:?}: device or exact"))),
-        };
-        let options = EngineOptions {
-            locale,
-            numbers,
-            decimal,
-            glyph_size,
-            ..EngineOptions::default()
-        };
+        let options = engine_options(locale, decimal, glyph_size, numbers)?;
         let budget = budget.map_or_else(|| MemoryBudget::new(OWN_BUDGET), |b| Arc::clone(&b.inner));
         let budgets = EngineBudgets {
             held: budget.holding(),
