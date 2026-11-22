@@ -29,7 +29,7 @@ impl Clock for Fixed {
     }
 }
 
-pub(crate) fn session(locale: Option<Locale>) -> Session {
+pub(crate) fn session_with(config: SessionConfig) -> Session {
     let context = Context {
         fonts: Arc::new(NoFonts),
         parts: Arc::new(NoParts),
@@ -37,13 +37,16 @@ pub(crate) fn session(locale: Option<Locale>) -> Session {
         budget: Arc::new(Unlimited),
         cancel: Arc::new(Never),
         limits: Limits::default(),
-        locale: locale.as_ref().map(ooxml_base::Locale::from).unwrap_or_default(),
-    };
-    let config = SessionConfig {
-        locale,
-        ..SessionConfig::default()
+        locale: config.locale.as_ref().map(ooxml_base::Locale::from).unwrap_or_default(),
     };
     Session::new(config, context)
+}
+
+pub(crate) fn session(locale: Option<Locale>) -> Session {
+    session_with(SessionConfig {
+        locale,
+        ..SessionConfig::default()
+    })
 }
 
 const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";

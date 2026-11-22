@@ -25,6 +25,7 @@
 #![forbid(unsafe_code)]
 
 mod batch;
+mod block_pages;
 mod call;
 mod changes;
 mod context;
@@ -53,8 +54,10 @@ mod rows_written;
 mod session;
 mod undo;
 mod update;
+mod values;
 
 pub use batch::{ReadBatch, ReadOp, BATCH_TIMEOUT, MAX_READ_BATCH_CHARS, READ_BATCH};
+pub use block_pages::{BlockAt, BlockPages};
 pub use call::Call;
 pub use changes::{ChangedPart, IdsSince};
 pub use context::{CallContext, CancelToken};
@@ -72,7 +75,7 @@ pub use names::DocNames;
 pub use ooxml_store::Caller;
 pub use ooxml_tools_word::{EditFn, Hosting, ReadFn, TrackingFn};
 pub use ooxml_word_model::ids::HeldId;
-pub use pages::{BlockAt, BlockPages};
+pub use pages::SessionPages;
 pub use reading_edit::ReadingEditHandler;
 pub use registry::Registry;
 pub use retired::RetiredBy;
