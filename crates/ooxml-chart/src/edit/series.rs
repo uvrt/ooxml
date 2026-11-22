@@ -93,18 +93,10 @@ impl ChartTree {
     /// The most points any source of any series holds (`point_count`).
     #[must_use]
     pub fn point_count(&self) -> usize {
-        let mut most = 0;
-        for series in 0..self.series_count() {
-            if let Some((_, ser)) = self.series(series) {
-                let mut owned = Owned::open(ser);
-                for which in POINT_SOURCES {
-                    if let Some(mut source) = reference(&mut owned, which) {
-                        most = most.max(source.count());
-                    }
-                }
-            }
-        }
-        most
+        (0..self.series_count())
+            .map(|series| self.series_point_count(series))
+            .max()
+            .unwrap_or(0)
     }
 
     /// A new point at `index` in every source of every series (`add_category`): the

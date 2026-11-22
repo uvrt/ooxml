@@ -34,6 +34,7 @@ mod serial;
 mod source;
 
 pub use labels::point_labels;
+pub(crate) use look::axis_named;
 pub use look::{
     axis_names, axis_scale, blanks, gap_width, is_dot, number_formats, series_look, Look, NumberFormats, Said, Scale,
     SeriesLook,

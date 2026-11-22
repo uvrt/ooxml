@@ -165,7 +165,7 @@ fn blank_text(positions: &[usize]) -> String {
 
 /// ooxml-edit's `chart_style_json`: `types`, `scales`, and where any series sets them,
 /// `series_format` and `point_labels`.
-fn style_json(
+pub(crate) fn style_json(
     root: &Element,
     data: &ChartData,
     out: &mut Map<String, Value>,

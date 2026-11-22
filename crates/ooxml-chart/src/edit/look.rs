@@ -192,7 +192,7 @@ fn value_labels(make: &Make, look: &LabelLook<'_>, pie: bool) -> Owned {
 
 /// `text_properties` (rotation 0, not a title): `c:txPr` in Office's chart text style, the
 /// text colour at `shade`; `sz` left out where `size` is none.
-fn text_properties(make: &Make, size: Option<u32>, shade: u32, lang: Option<&str>) -> Owned {
+pub(crate) fn text_properties(make: &Make, size: Option<u32>, shade: u32, lang: Option<&str>) -> Owned {
     let body = make
         .a("bodyPr")
         .with_attr("rot", "0")
