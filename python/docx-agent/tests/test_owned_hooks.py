@@ -24,8 +24,9 @@ from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
 from docx_agent.tools import format as docx_format  # noqa: E402
 from ooxml_edit.tools import OwnedDocument, Toolbox  # noqa: E402
 
-FIXTURES = Path(__file__).parent / "fixtures"
 ROOT = Path(__file__).resolve().parents[3]
+#: The repository\'s Word fixtures, with the oracle (as conftest.FIXTURE_DIR).
+FIXTURES = ROOT / "crates" / "ooxml-oracle" / "fixtures"
 LISTED = sorted(json.loads((ROOT / "tools" / "gates_fixtures.json").read_text()))
 
 
