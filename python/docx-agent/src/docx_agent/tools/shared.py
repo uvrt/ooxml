@@ -84,10 +84,14 @@ def new_document(call: Any, kind: str, template_blob: str | None = None, size: s
                         valid_options=list(PAGE_SIZES))
     template = call.blob(template_blob).data if template_blob else None
     if template is None and _rust_blank():
-        document = _blank(call, size, title, author)
-    else:
-        document = Document.new(page=size, title=title, author=author, created=call.now(), template=template,
-                                keep_content=False, locale=call.locale)
+        # Lane H7c: the Rust core's bytes, opened by the session alone (no Python document).
+        doc_id = call.session.open(_blank_bytes(call, size, title, author), name or "new.docx", kind=KIND,
+                                   source="new")
+        entry = call.session.entry(doc_id)
+        return Result(summary=f"Made {entry.name} as {doc_id}", created=[doc_id],
+                      data={**entry.describe(), "summary": _summary(entry.subject)})
+    document = Document.new(page=size, title=title, author=author, created=call.now(), template=template,
+                            keep_content=False, locale=call.locale)
     doc_id = call.session.adopt(document, KIND, name or "new.docx", source=template_blob or "new",
                                 size=len(template or b""))
     entry = call.session.entry(doc_id)
@@ -104,9 +108,9 @@ def _rust_blank() -> bool:
     return hasattr(ooxml_core, "new_document")
 
 
-def _blank(call: Any, size: str | None, title: str | None, author: str | None) -> Document:
-    """Lane LC1: a new blank document made by the Rust core, as ``Document.new`` makes one
-    (:func:`docx_agent.edit.blank.build`): the page, the call's locale's language and
+def _blank_bytes(call: Any, size: str | None, title: str | None, author: str | None) -> bytes:
+    """Lane LC1: a new blank document's bytes made by the Rust core, as ``Document.new`` makes
+    one (:func:`docx_agent.edit.blank.build`): the page, the call's locale's language and
     separators (en-US without one), the properties and the call's clock."""
     import ooxml_core
 
@@ -120,9 +124,7 @@ def _blank(call: Any, size: str | None, title: str | None, author: str | None) -
         language=locale.language if locale is not None else blank.FALLBACK_LANGUAGE,
         separators=blank.separators_of(locale),
         properties=(title, author, w3cdtf(created.replace(microsecond=0))))
-    document = Document.open(data)
-    document.locale = locale
-    return document
+    return bytes(data)
 
 
 def _summary(document: Document) -> dict[str, Any]:

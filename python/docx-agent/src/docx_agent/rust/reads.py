@@ -148,6 +148,9 @@ class Mirror:
         self.view_head: Any = None
         self.opened: Any = None
         self.live: Any = None
+        #: The version the owned document was opened at and the highest its history gave
+        #: (:meth:`.owner.RustOwner.opened`).
+        self.numbers_opened: tuple[int, int] = (0, 0)
         #: The tracking mode the session edits the document under (:mod:`.edits`).
         self.tracking: dict[str, Any] | None = None
         #: The view's :func:`docx_agent.layout.laid_mark` when its last Python step was
@@ -625,7 +628,7 @@ def serve_render(call: Any, arguments: dict[str, Any]) -> Result | None:
 
         if "render" in hosting.laid:
             layout, _ = word_pages(owned.held)     # none: the session says so (unported)
-        raster = host_raster(font_dirs_of(call.document))
+        raster = host_raster(font_dirs_of(owned))     # (the entry's: configure's)
     files: list[tuple[str, str, bytes]] = []
     served = serve(call, "render", arguments, lambda: None, why_not=why, layout=layout, raster=raster,
                    images=image_budgets(call) if why is None else None, files=files)

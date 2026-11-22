@@ -13,7 +13,7 @@
 //!
 //! Must not: stamp a part (the sink does), read a package, or hold global state.
 
-use ooxml_word_model::ids::{sequence_value, REACH};
+use ooxml_word_model::ids::{sequence_value, LoadedState, REACH};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -99,6 +99,32 @@ pub struct EarlierIds {
     pub highest_drawing: u64,
     /// The drawing numbers retired (docx-agent's `drawings_gone`): a copy keeps none of them.
     pub drawings: Vec<u64>,
+    /// Each retired block id's value and the id of the block that replaced it (docx-agent's
+    /// ledger's `replaced`).
+    pub replaced: Vec<(u32, String)>,
+    /// The renames: an old id and the id it names now (docx-agent's `aliases`).
+    pub aliases: Vec<(String, String)>,
+}
+
+impl EarlierIds {
+    /// What a state read back (`load_state`) says the document had: its pool's values (the
+    /// retired ones too) and cursors, its highest and retired drawing numbers, its
+    /// replacements and renames.
+    #[must_use]
+    pub fn of_state(loaded: &LoadedState) -> EarlierIds {
+        let mut drawings: Vec<u64> = loaded.drawings_gone.keys().copied().collect();
+        drawings.sort_unstable();
+        let mut replaced: Vec<(u32, String)> = loaded.replaced.iter().map(|(v, id)| (*v, id.clone())).collect();
+        replaced.sort_unstable();
+        EarlierIds {
+            values: loaded.pool.values().iter().copied().collect(),
+            cursors: loaded.pool.cursors().iter().map(|(s, k)| (s.clone(), *k)).collect(),
+            highest_drawing: loaded.highest_drawing,
+            drawings,
+            replaced,
+            aliases: loaded.aliases.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+        }
+    }
 }
 
 /// A version's ids: the pool, the sequences' cursors and the renames. Cloning shares.
@@ -136,7 +162,8 @@ impl Ids {
     }
 
     /// These ids with what the document had before it was saved and opened again
-    /// (`earlier`): its values in the pool, its cursors, its highest drawing number.
+    /// (`earlier`): its values in the pool, its cursors, its highest and retired drawing
+    /// numbers, its replacements and renames.
     #[must_use]
     pub fn with_earlier(mut self, earlier: &EarlierIds) -> Ids {
         if !earlier.values.is_empty() {
@@ -148,6 +175,12 @@ impl Ids {
         self.highest_drawing = self.highest_drawing.max(earlier.highest_drawing);
         if !earlier.drawings.is_empty() {
             Arc::make_mut(&mut self.drawings).extend(earlier.drawings.iter().copied());
+        }
+        if !earlier.replaced.is_empty() {
+            Arc::make_mut(&mut self.replaced).extend(earlier.replaced.iter().cloned());
+        }
+        if !earlier.aliases.is_empty() {
+            Arc::make_mut(&mut self.aliases).extend(earlier.aliases.iter().cloned());
         }
         self
     }
@@ -443,6 +476,7 @@ mod tests {
             cursors: Vec::new(),
             highest_drawing: 7,
             drawings: vec![5],
+            ..EarlierIds::default()
         };
         let ids = opened.clone().with_earlier(&earlier);
         let (again, _) = opened.draw(seed, 1, &sequences);

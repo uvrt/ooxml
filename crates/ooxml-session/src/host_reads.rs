@@ -10,6 +10,7 @@
 use crate::{CancelToken, Opened, SessionError};
 use ooxml_tools::ToolError;
 use ooxml_word_edit::validate::Problem;
+use ooxml_word_edit::FileKind;
 use ooxml_word_model::ids::{export_state, IdPool, Ledger, Versions};
 use ooxml_word_model::parts::parts;
 use ooxml_xml::Tree;
@@ -48,6 +49,19 @@ impl Opened {
             return Ok(None);
         };
         Ok(Some(ooxml_word_edit::validate::problems(word)?))
+    }
+
+    /// The Word file kind the version's package is (`docx`, `docm`, `dotx`, `dotm`: its main
+    /// part's content type); `None` for a document that is not a Word document, or a main part
+    /// of no Word kind.
+    ///
+    /// # Errors
+    /// The package's when its content types cannot be read.
+    pub fn file_kind(&self) -> Result<Option<&'static str>, SessionError> {
+        let Some(word) = self.word() else {
+            return Ok(None);
+        };
+        Ok(FileKind::of(word.package())?.map(FileKind::name))
     }
 
     /// What `open_document` says of the version ([`ooxml_tools_word::summary`]); `None` for

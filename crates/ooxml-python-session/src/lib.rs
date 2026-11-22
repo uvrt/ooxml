@@ -46,7 +46,8 @@ pub use version::PyVersion;
 /// Add the session API to the module `m`: `Session`, `CancelToken`, `Limits`, `CallContext`, `CallOptions`, `CallDocuments`, `HostIds`,
 /// `CallWriting`, `CallLayout`, `Version` and
 /// `tool_specs`, `tool_hosting`, `new_document`; and the Word layout's handles: `WordFonts`, `WordPages`, `LaidPages`,
-/// `LayoutFallback`, `LayoutSummary`, `MemoryBudget` and `BudgetAccount`.
+/// `LayoutFallback`, `LayoutSummary`, `MemoryBudget` and `BudgetAccount`; and the refusals of
+/// an open, `StateRefused` and `NotWordPackage`.
 ///
 /// # Errors
 /// Python's, adding a name.
@@ -74,5 +75,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<summary::PyLayoutSummary>()?;
     m.add_class::<PyPageRaster>()?;
     m.add("LayoutFallback", m.py().get_type::<LayoutFallback>())?;
+    m.add("StateRefused", m.py().get_type::<session::StateRefused>())?;
+    m.add("NotWordPackage", m.py().get_type::<session::NotWordPackage>())?;
     Ok(())
 }

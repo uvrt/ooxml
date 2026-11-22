@@ -338,7 +338,7 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
     # page numbers, a reflow): past it the call is a timeout that changes nothing
     context = context_of(call.caller, call.limits, call.limits.layout_timeout, date=_date(call),
                          typography=getattr(held, "typography", True) is not False,
-                         locale=getattr(held, "locale", None))
+                         locale=getattr(held, "locale", entry.locale))
     arguments, folded = _kept_refs(call, arguments)
     entry.flush_view()        # (in a batch: the Python ops' changes before it, the session's)
     _tracking(call, entry, context, counted)
