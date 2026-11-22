@@ -254,28 +254,50 @@ fn a_page_or_mode_it_does_not_draw_is_refused() {
     assert!(matches!(not_open, Err(ViewError::Session(_))));
 }
 
-/// A document whose page has a header, its paragraph `33333333`.
-fn with_header() -> Arc<[u8]> {
+/// A document of `body` beside `parts`, each `(name in word/, relationship kind, content
+/// type's last segment, its XML)`, related from the document as `rId1`, `rId2`...
+fn packaged(body: &str, parts: &[(&str, &str, &str, String)]) -> Arc<[u8]> {
     const REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
-    let body = paragraph("11111111", "body", false)
-        + r#"<w:sectPr><w:headerReference w:type="default" r:id="rId1"/></w:sectPr>"#;
+    const TYPE: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml";
     let document = format!("<w:document {NS}><w:body>{body}</w:body></w:document>");
-    let header = format!("<w:hdr {NS}>{}</w:hdr>", paragraph("33333333", "head", false));
-    let rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
-    let doc_rels = format!(
-        r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{REL}/header" Target="header1.xml"/></Relationships>"#
+    let rels = format!(
+        r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{REL}/officeDocument" Target="word/document.xml"/></Relationships>"#
     );
-    let types = r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/></Types>"#;
+    let related: String = parts
+        .iter()
+        .enumerate()
+        .map(|(k, (name, kind, _, _))| {
+            format!(
+                r#"<Relationship Id="rId{}" Type="{REL}/{kind}" Target="{name}"/>"#,
+                k + 1
+            )
+        })
+        .collect();
+    let doc_rels = format!(
+        r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">{related}</Relationships>"#
+    );
+    let overrides: String = parts
+        .iter()
+        .map(|(name, _, kind, _)| format!(r#"<Override PartName="/word/{name}" ContentType="{TYPE}.{kind}+xml"/>"#))
+        .collect();
+    let types = format!(
+        r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="{TYPE}.document.main+xml"/>{overrides}</Types>"#
+    );
+    let mut files = vec![
+        ("[Content_Types].xml".to_owned(), types),
+        ("_rels/.rels".to_owned(), rels),
+        ("word/document.xml".to_owned(), document),
+        ("word/_rels/document.xml.rels".to_owned(), doc_rels),
+    ];
+    files.extend(
+        parts
+            .iter()
+            .map(|(name, _, _, xml)| (format!("word/{name}"), xml.clone())),
+    );
     let mut w = Writer::new();
-    for (name, data) in [
-        ("[Content_Types].xml", types.to_owned()),
-        ("_rels/.rels", rels.to_owned()),
-        ("word/document.xml", document),
-        ("word/_rels/document.xml.rels", doc_rels),
-        ("word/header1.xml", header),
-    ] {
+    for (name, data) in files {
         let entry = NewEntry {
-            name: name.into(),
+            name,
             method: Method::Deflated,
             dos_time: 0,
             dos_date: 33,
@@ -285,6 +307,27 @@ fn with_header() -> Arc<[u8]> {
         w.add(&entry, data.as_bytes()).unwrap();
     }
     Arc::from(w.finish(b"").unwrap())
+}
+
+/// A document whose page has a header, its paragraph `33333333`.
+fn with_header() -> Arc<[u8]> {
+    let body = paragraph("11111111", "body", false)
+        + r#"<w:sectPr><w:headerReference w:type="default" r:id="rId1"/></w:sectPr>"#;
+    let header = format!("<w:hdr {NS}>{}</w:hdr>", paragraph("33333333", "head", false));
+    packaged(&body, &[("header1.xml", "header", "header", header)])
+}
+
+/// Styles whose heading (`Heading1`) is `half_points` half-points.
+fn styles(half_points: u32) -> String {
+    format!(
+        r#"<w:styles {NS}><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:rPr><w:sz w:val="{half_points}"/></w:rPr></w:style></w:styles>"#
+    )
+}
+
+/// A heading `11111111` above two pages.
+fn headed() -> String {
+    let heading = r#"<w:p w14:paraId="11111110" w14:textId="77777777"><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Title</w:t></w:r></w:p>"#;
+    heading.to_owned() + &two_pages()
 }
 
 #[test]
@@ -421,4 +464,29 @@ fn an_old_versions_pages_are_laid_out_once() {
     assert!(s.view(&d, Some(&view.token), &*layout(), &ctx()).unwrap().stale);
     drop(s);
     assert_eq!(budget.used(), 0, "every reservation given back");
+}
+
+#[test]
+fn an_older_version_is_drawn_with_its_own_styles() {
+    let original = || packaged(&headed(), &[("styles.xml", "styles", "styles", styles(32))]);
+    let lay = layout();
+    // the first version's page as drawn by a session that never saw the edit
+    let fresh = session();
+    let f = fresh.open(original(), DocKind::Docx, "d.docx").unwrap();
+    let token = fresh.view(&f, None, &*lay, &ctx()).unwrap().token;
+    let before = fresh.page_svg(&f, 1, &token, &*lay, TextMode::Text, &ctx()).unwrap();
+
+    let s = session();
+    let d = s.open(original(), DocKind::Docx, "d.docx").unwrap();
+    let lay = layout();
+    let first = s.view(&d, None, &*lay, &ctx()).unwrap();
+    let larger = vec![("word/styles.xml".to_owned(), Some(Arc::from(styles(48).as_bytes())))];
+    s.update(&d, larger, &ctx()).unwrap();
+    let second = s.view(&d, Some(&first.token), &*lay, &ctx()).unwrap();
+    assert!(second.changed.contains(&1), "the heading's page");
+    let now = s.page_svg(&d, 1, &second.token, &*lay, TextMode::Text, &ctx()).unwrap();
+    assert_ne!(now.svg, before.svg);
+    // first drawn after the styles changed: not with the engine's newer styles
+    let old = s.page_svg(&d, 1, &first.token, &*lay, TextMode::Text, &ctx()).unwrap();
+    assert_eq!(old.svg, before.svg, "the first version, with its own styles");
 }

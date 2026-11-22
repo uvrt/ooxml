@@ -14,7 +14,10 @@
 //! The head is read without a lock; the version is laid out by the host's engine within
 //! the call's limit on laying out, as `render` lays it out (`laid_to_draw`: a version the
 //! engine does not lay out yet is refused, the way out a read or a save). A kept version's
-//! page the engine no longer paints is laid out again on a spare engine
+//! page is painted by the engine only while it is the engine's last (its generation's model
+//! -- the styles, the numbering -- is the last version's: an older version painted there
+//! would draw with a later version's styles); an older one is laid out again on a spare
+//! engine
 //! ([`ooxml_tools_word::WordLayout::seed`]) once, that layout kept with the version within
 //! the session's memory budget for its other pages: an older version never becomes the
 //! engine's last. A version whose layout the budget has no room for is not kept: its token
@@ -274,7 +277,17 @@ impl Session {
                 count,
             });
         }
-        let painted = kept.version().and_then(|laid| lock(layout).page_svg(laid, page - 1));
+        // only the engine's last version: its generation's model (the styles, the numbering)
+        // is the last version's, so an older one painted there would draw with them
+        let painted = kept.version().and_then(|laid| {
+            let mut engine = lock(layout);
+            let last = engine.last().is_some_and(|last| Arc::ptr_eq(last, laid));
+            if last {
+                engine.page_svg(laid, page - 1)
+            } else {
+                None
+            }
+        });
         let (svg, mut warnings) = match painted {
             Some(painted) => painted,
             None => {
