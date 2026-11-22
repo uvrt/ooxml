@@ -24,6 +24,8 @@ from ..edit.inline import SpanError
 from ..edit.pictures import PictureError
 from ..edit.ranges import AmbiguousAnchor, AnchorNotFound
 from ..layout import read_copy, release_document
+from ..rust import hooks
+from ..rust.hooks import owned
 from ._base import checks, problem_key
 from .owner import read_version
 from .render import warm_up
@@ -88,9 +90,12 @@ def open_docx_with_state(data: bytes, state: Any) -> Document:
     return Document.open(data, ids=state)
 
 
-def id_state(document: Document) -> str:
+def id_state(document: Any) -> str:
     """The state kept beside a Word document's bytes (``Session.save``, ``Output.state``):
-    :meth:`Document.id_state`."""
+    :meth:`Document.id_state`; for one the Rust session owns, the session's
+    (:func:`docx_agent.rust.hooks.id_state`, lane H7a)."""
+    if owned(document) is not None:
+        return hooks.id_state(document)
     return document.id_state()
 
 
@@ -153,17 +158,22 @@ def detect(data: bytes, name: str) -> bool:
         return False
 
 
-def problems(document: Document) -> list[Any]:
+def problems(document: Any) -> list[Any]:
     """The format's ``problems``: :meth:`Document.validate`'s, found where the document
     changed (:mod:`docx_agent.revalidate`; ``DOCX_AGENT_FULL_VALIDATE=1``: compared with the
-    whole check at every call)."""
+    whole check at every call); for one the Rust session owns, the session's (lane H7a)."""
+    if owned(document) is not None:
+        return hooks.problems(document)
     from ..revalidate import problems as found
 
     return list(found(document))
 
 
-def summary(document: Document) -> dict[str, Any]:
-    """What ``open_document`` says of a Word document: cheap facts, no layout."""
+def summary(document: Any) -> dict[str, Any]:
+    """What ``open_document`` says of a Word document: cheap facts, no layout; for one the
+    Rust session owns, the session's reading (lane H7a)."""
+    if owned(document) is not None:
+        return hooks.summary(document)
     from .read import heading_tree
 
     title = document.properties.get("title")
@@ -172,11 +182,17 @@ def summary(document: Document) -> dict[str, Any]:
             "revisions": len(document.revisions()), "template": document.package.kind in ("dotx", "dotm")}
 
 
-def restored(document: Document) -> None:
+def restored(document: Any) -> None:
     """Parts were put back behind the document's back -- a ``batch`` op that failed, rolled
     back inside the batch's open undo step: the trees were reparsed, so every index is
     stale (what the document's own ``undo`` does after the history's).  A scoped undo or
-    redo too: what it removed or brought back is read, as an undo's is (round 37)."""
+    redo too: what it removed or brought back is read, as an undo's is (round 37).  For a
+    document the Rust session owns, what it put back is its own version: only a view made
+    of it in this process forgets what it read (lane H7a)."""
+    if owned(document) is not None:
+        document = hooks.live_view(document)
+        if document is None:
+            return
     document._invalidate()
     document._note_ids()
 
@@ -249,6 +265,17 @@ TOOL_HINTS = {
     "word_upgrade": "word_template upgrade_to_modern",
 }
 
+def closed(document: Any) -> None:
+    """What docx-agent kept for a closed document, let go (:func:`docx_agent.layout.
+    release_document`); for one the Rust session owns, the session lets go of it as its owner
+    closes it, and what was kept for a view made of it in this process goes (lane H7a)."""
+    if owned(document) is not None:
+        document = hooks.live_view(document)
+        if document is None:
+            return
+    release_document(document)
+
+
 def _owner() -> Any:
     """Lane P2c4: the Rust session as the owner of the format's documents (it takes none
     where ``ooxml_core`` has no session: the tool layer then holds the document itself)."""
@@ -282,5 +309,5 @@ FORMAT = DocumentFormat(
     read_provenance=read_provenance, restored=restored, own_facts=dict(OWN_REFUSED),
     tool_hints=TOOL_HINTS, warm_up=warm_up, touched=touched, number_texts=number_texts,
     scale_values=scale_values, state=id_state, open_with_state=open_docx_with_state,
-    read_copy=read_copy, blocks=BLOCKS, read_version=read_version, closed=release_document, owner=_owner(),
+    read_copy=read_copy, blocks=BLOCKS, read_version=read_version, closed=closed, owner=_owner(),
     serve=_serve)

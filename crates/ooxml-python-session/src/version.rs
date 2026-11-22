@@ -5,7 +5,7 @@
 //! Must not: change a document, or touch a Python object without the lock.
 
 use crate::session::to_py;
-use ooxml_session::Opened;
+use ooxml_session::{IdStateOf, Opened};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
@@ -84,6 +84,54 @@ impl PyVersion {
         let version = &self.inner;
         let found = py.detach(|| version.records()).map_err(|e| to_py(&e))?;
         Ok(found.map(|v| v.to_string()))
+    }
+
+    /// The version's validation problems, each ``(code, part, detail)`` (docx-agent's
+    /// ``validate.Problem``); ``None`` for a document that is not a Word document.
+    fn problems(&self, py: Python<'_>) -> PyResult<Option<Vec<(String, String, String)>>> {
+        let version = &self.inner;
+        let found = py.detach(|| version.problems()).map_err(|e| to_py(&e))?;
+        Ok(found.map(|list| list.into_iter().map(|p| (p.code, p.part, p.detail)).collect()))
+    }
+
+    /// What ``open_document`` says of the version (JSON text: ``title``, ``paragraphs``,
+    /// ``tables``, ``headings``, ``comments``, ``revisions``, ``template``); ``None`` for a
+    /// document that is not a Word document.
+    fn summary(&self, py: Python<'_>) -> PyResult<Option<String>> {
+        let version = &self.inner;
+        let found = py
+            .detach(|| version.summary())
+            .map_err(|e| PyValueError::new_err(e.message().to_owned()))?;
+        Ok(found.map(|v| v.to_string()))
+    }
+
+    /// The version's id state (``Document.id_state``'s string), the version numbered
+    /// ``number`` of ``last`` by the host, with the retired ids as the host numbers them:
+    /// ``gone`` and ``drawings_gone`` (``{value: number}``), ``earlier`` (``{number: words or
+    /// None}``, the changes before the document was saved) and ``said`` (``{number: words}``,
+    /// who made the others); ``None`` for a document that is not a Word document.
+    #[pyo3(signature = (number, last, *, gone, drawings_gone, earlier, said))]
+    #[allow(clippy::too_many_arguments)]
+    fn id_state(
+        &self,
+        py: Python<'_>,
+        number: i64,
+        last: i64,
+        gone: Vec<(u32, i64)>,
+        drawings_gone: Vec<(u64, i64)>,
+        earlier: Vec<(i64, Option<String>)>,
+        said: Vec<(i64, String)>,
+    ) -> PyResult<Option<String>> {
+        let host = IdStateOf {
+            version: number,
+            last,
+            gone,
+            drawings_gone,
+            earlier,
+            said,
+        };
+        let version = &self.inner;
+        py.detach(|| version.id_state(&host)).map_err(|e| to_py(&e))
     }
 
     /// What changed since `before`, as docx-agent's ``Result.touched`` entries (JSON text).

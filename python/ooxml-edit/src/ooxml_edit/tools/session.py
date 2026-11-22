@@ -201,6 +201,12 @@ class DocumentFormat:
 
     The tool layer knows no format; a library describes its own with this, and the toolbox
     opens, checks and validates documents of that kind through it.
+
+    Lane H7a: for a document the format's :attr:`owner` holds, the hooks that take a
+    document -- ``summary``, ``problems``, ``state``, ``closed`` and ``restored`` -- are given
+    an :class:`~.owned.OwnedDocument` (the owner, its handle, the version read), never the
+    entry or a Python view of it (:attr:`DocumentEntry.subject`; a hook taking the call reads
+    :attr:`~.dispatch.Call.subject`).
     """
 
     #: The kind tools are written for (``Tool.kinds``) and results report.
@@ -638,6 +644,22 @@ class DocumentEntry:
     @document.setter
     def document(self, value: Any) -> None:
         self.held = value
+
+    @property
+    def subject(self) -> Any:
+        """What the format's hooks are given for this document (lane H7a): the document
+        itself; for a read copy of a document its format's owner holds, that document at
+        the copy's version (:class:`~.owned.OwnedDocument`), so no hook reads a Python copy
+        of an owned document."""
+        live = self.live
+        if live is not None and live.owned and self.pinned is not None:
+            return live.subject_at(self.pinned)
+        return self.document
+
+    def subject_at(self, version: int) -> Any:
+        """:attr:`subject` at the committed version ``version``, for a read copy of this
+        document (an owned one's: :meth:`~.owned.OwnedEntry.subject_at`)."""
+        return self.document
 
     @property
     def history(self) -> Any:
@@ -1491,7 +1513,7 @@ class Session:
         fmt = self.formats.get(entry.kind)
         with entry.lock:
             data = entry.snapshot()
-            state = fmt.state(entry.document) if fmt is not None and fmt.state is not None else None
+            state = fmt.state(entry.subject) if fmt is not None and fmt.state is not None else None
             return SavedDocument(doc=doc_id, name=entry.name, kind=entry.kind,
                                  version=entry.version, data=data, state=state)
 
@@ -1521,7 +1543,7 @@ class Session:
                     dataset.document_closed(doc_id)     # its own source, and any it also read
             fmt = self.formats.get(entry.kind)
             if fmt is not None and fmt.closed is not None:
-                fmt.closed(entry.document)          # round 58: what the format kept for it
+                fmt.closed(entry.subject)           # round 58: what the format kept for it
             entry.release()
             # Q3: the joined bytes of its parts' states (kept by their pieces, for every
             # document) go too.
@@ -1700,7 +1722,7 @@ class Session:
                     done += 1
             finally:
                 if own.restored and fmt is not None and fmt.restored is not None:
-                    fmt.restored(entry.document)
+                    fmt.restored(entry.subject)
             return done
 
     def _scoped(self, doc_id: str, steps: int, scope: str, direction: str) -> int:
@@ -1745,7 +1767,7 @@ class Session:
                         details={"parts": exc.parts, "shared": exc.shared}) from None
             finally:
                 if done and fmt.restored is not None:
-                    fmt.restored(entry.document)
+                    fmt.restored(entry.subject)
             return done
 
     def _step(self, doc_id: str, steps: int, direction: str) -> int:

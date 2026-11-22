@@ -675,6 +675,14 @@ class Call:
         return self.entry.document
 
     @property
+    def subject(self) -> Any:
+        """What the format's hooks are given for the call's document
+        (:attr:`~.session.DocumentEntry.subject`; lane H7a: an owned document's owner handle)."""
+        if self.entry is None:
+            raise ToolError("invalid_arguments", f"{self.tool.name} names no document")
+        return self.entry.subject
+
+    @property
     def limits(self) -> Limits:
         return self.session.limits
 
@@ -916,7 +924,7 @@ class Call:
         if state and entry is not None:
             fmt = self.session.formats.get(entry.kind)
             if fmt is not None and fmt.state is not None:
-                kept = fmt.state(entry.document)
+                kept = fmt.state(entry.subject)
         output = Output(name=name, format=format, data=data,
                         doc=entry.doc_id if entry else None, validate=report, state=kept)
         self.session.add_output(output)
@@ -3380,7 +3388,7 @@ class Toolbox:
             for entry in rolled:
                 fmt = session.formats.get(entry.kind)
                 if fmt is not None and fmt.restored is not None:
-                    fmt.restored(entry.document)
+                    fmt.restored(entry.subject)
             raise
 
     def _run_op(self, session: Session, index: int, tool: Tool, arguments: dict[str, Any],
