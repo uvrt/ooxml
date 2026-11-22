@@ -20,7 +20,7 @@ pub(crate) mod values;
 
 pub(crate) use colour::ThemeColours;
 pub use found::{occurrences, range_text, Occurrence};
-pub use keeps::{keep_writes, kept_blocks, kept_package};
+pub use keeps::{body_blocks, keep_writes, kept_blocks, kept_package};
 pub use like::{differs, ParagraphLook, NOT_TAKEN, PARTS};
 pub use values::{check, theme_color_name, Property, Setting, Value};
 pub(crate) use values::{properties_of, set_child, write_paragraph, write_run};
@@ -32,13 +32,14 @@ use crate::text_range::{range, Span};
 use crate::work::Work;
 use crate::{EditError, Result, WordDoc};
 use edit::{ParagraphOp, RangeOp, Run};
+use ooxml_base::pyfmt::repr_float;
 use ooxml_store::{Command, Txn};
 use ooxml_word_model::address::{is_text_range, resolve, span_ends};
 use ooxml_word_model::docx::numbering::{membership, Lists};
 use ooxml_word_model::docx::outline::Heading;
 use ooxml_word_model::docx::Docx;
 use ooxml_word_model::ids::Entry;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// A sample's look given to the targets, less the parts the call sets itself.
 #[derive(Debug, Clone, PartialEq)]
@@ -66,6 +67,10 @@ pub struct FormatPlan {
     pub paragraph: Vec<Setting>,
     /// Run settings, in order.
     pub run: Vec<Setting>,
+    /// The targets kept together that the layout before the change draws taller than a
+    /// page, by address: their height and the least room a page gives the body, in points
+    /// (the host measures them; the keep says so).
+    pub taller: BTreeMap<String, (f64, f64)>,
 }
 
 impl FormatPlan {
@@ -125,7 +130,8 @@ pub struct Formatted {
 
 /// Whether `keep_together` keeps `address`'s blocks on one page rather than one
 /// paragraph's lines (docx-agent's `_keeps_blocks`).
-fn keeps_blocks(doc: &WordDoc, docx: &Docx, address: &str) -> bool {
+#[must_use]
+pub fn keeps_blocks(doc: &WordDoc, docx: &Docx, address: &str) -> bool {
     if is_text_range(address) || address.contains('/') {
         return false;
     }
@@ -214,7 +220,16 @@ fn target(
     let paragraphs = places(run, address)?;
     if let Some(on) = plan.keep_together {
         if kept {
-            steps.push(keep_blocks(run, address, on)?);
+            let mut step = keep_blocks(run, address, on)?;
+            if let (true, Some((height, room))) = (on, plan.taller.get(address)) {
+                step.warnings.push(format!(
+                    "{address} is {} pt tall and a page holds {} pt: it cannot be kept on one page (Word starts \
+                     it on a new page and breaks it where the page is full); keep shorter spans together",
+                    repr_float(*height),
+                    repr_float(*room)
+                ));
+            }
+            steps.push(step);
         } else {
             let keep = [Setting {
                 property: Property::KeepTogether,

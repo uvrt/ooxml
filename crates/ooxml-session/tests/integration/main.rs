@@ -4,6 +4,7 @@
 
 mod common;
 
+mod block_pages;
 mod editing;
 mod live_view;
 mod locale;

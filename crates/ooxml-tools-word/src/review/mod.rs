@@ -72,6 +72,14 @@ pub struct Editing<'a> {
     pub locale: Option<&'a ooxml_numfmt::Locale>,
     /// The host's limits on the call's reply (a listing's items per page).
     pub limits: ooxml_tools::Limits,
+    /// What the document's last check that laid it out saw, where the host keeps it
+    /// (`word_format`'s keep measured against the version before its change); `None`:
+    /// nothing is measured.
+    pub last_check: Option<&'a crate::LastCheck>,
+    /// Whether the host's batch holds the document in a step group: what an op would lay
+    /// the whole document out for (a table kept together's pages) waits for the host, which
+    /// measures it once after the batch's last op.
+    pub in_group: bool,
 }
 
 impl<'a> Editing<'a> {
@@ -105,7 +113,23 @@ impl<'a> Editing<'a> {
             rows_written: None,
             locale: None,
             limits: ooxml_tools::Limits::DEFAULT,
+            last_check: None,
+            in_group: false,
         }
+    }
+
+    /// Whether the host's batch holds the document in a step group.
+    #[must_use]
+    pub fn with_in_group(mut self, in_group: bool) -> Self {
+        self.in_group = in_group;
+        self
+    }
+
+    /// What the document's last check that laid it out saw, where the host keeps it.
+    #[must_use]
+    pub fn with_last_check(mut self, last_check: Option<&'a crate::LastCheck>) -> Self {
+        self.last_check = last_check;
+        self
     }
 
     /// The tracking mode the host keeps for the document (`None`: off).

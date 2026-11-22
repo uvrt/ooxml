@@ -13,7 +13,7 @@ use crate::options::{context_of, PyCallLayout, PyCallOptions, PyHostIds};
 use crate::pages::PyPageSetup;
 use crate::version::PyVersion;
 use ooxml_base::Locale;
-use ooxml_session::{DocId, DocKind, HeldId, RetiredBy, Session, SessionConfig, SessionError};
+use ooxml_session::{BlockAt, DocId, DocKind, HeldId, RetiredBy, Session, SessionConfig, SessionError};
 use ooxml_store::StoreConfig;
 use ooxml_tools::compact;
 use ooxml_word_edit::EarlierIds;
@@ -126,6 +126,12 @@ fn held_id(kind: &str, value: u64) -> PyResult<HeldId> {
 /// What `Session.call` answers: the reply's JSON text, its images, and what only the
 /// application reads (JSON text).
 type Reply = (String, Vec<Py<PyBytes>>, String);
+
+/// `Session.block_pages`' answer: each block's pages or why not, else why nothing was laid out.
+type BlockPagesPy = (
+    Option<Vec<(&'static str, Option<Vec<usize>>, Option<String>)>>,
+    Option<String>,
+);
 
 #[pymethods]
 impl PySession {
@@ -431,6 +437,47 @@ impl PySession {
         Ok(kept
             .and_then(|kept| kept.laid())
             .map(|seen| (seen.version, crate::summary::PyLayoutSummary { inner: seen.pages })))
+    }
+
+    /// The pages the document's head version draws each of `blocks` on (body blocks by id),
+    /// laid out by `options`' page engine (its `layout`) within the context's limit on laying
+    /// out: `(blocks, why)` -- per block `("pages", page numbers from 1, None)`, `("outside", None, None)`
+    /// for one outside the body, or `("unknown", None, why the layout cannot say)`; `blocks`
+    /// `None` with `why` where the version was not laid out (no page engine handed, the limit
+    /// passed, a version the layout does not lay out).
+    ///
+    /// # Errors
+    /// `KeyError`/`ValueError` as the session's: a document not open, not a Word document.
+    #[pyo3(signature = (doc, blocks, options = None))]
+    fn block_pages(
+        &self,
+        py: Python<'_>,
+        doc: &str,
+        blocks: Vec<String>,
+        options: Option<PyRef<'_, PyCallOptions>>,
+    ) -> PyResult<BlockPagesPy> {
+        let id = doc_id(doc, &self.inner)?;
+        let context = context_of(options.as_deref());
+        let session = &self.inner;
+        let found = py
+            .detach(|| session.block_pages(&id, &blocks, &context))
+            .map_err(|e| to_py(&e))?;
+        Ok(match found {
+            Ok(pages) => (
+                Some(
+                    pages
+                        .into_iter()
+                        .map(|at| match at {
+                            BlockAt::Pages(numbers) => ("pages", Some(numbers), None),
+                            BlockAt::Outside => ("outside", None, None),
+                            BlockAt::Unknown(why) => ("unknown", None, Some(why)),
+                        })
+                        .collect(),
+                ),
+                None,
+            ),
+            Err(why) => (None, Some(why)),
+        })
     }
 
     /// Keep `summary` (a `LayoutSummary` of the document's engine) as what the document's

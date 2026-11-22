@@ -42,7 +42,7 @@ pub(crate) fn session_with(config: SessionConfig) -> Session {
     Session::new(config, context)
 }
 
-fn session(locale: Option<Locale>) -> Session {
+pub(crate) fn session(locale: Option<Locale>) -> Session {
     session_with(SessionConfig {
         locale,
         ..SessionConfig::default()

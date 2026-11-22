@@ -14,10 +14,12 @@
 //! Must not: resolve a source (the host's datasets and other documents do), or read the
 //! document.
 
+mod keys;
 mod label;
 mod pattern;
 mod placed;
 
+pub(crate) use keys::{loose_key, natural, Run};
 pub(crate) use label::{label, what};
 pub(crate) use pattern::{date_pattern, DatePattern};
 pub(crate) use placed::{first_rows, fits, placed, runs, thousands, Placed};

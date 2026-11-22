@@ -24,7 +24,7 @@ const TEXT_START: usize = 40;
 
 /// A paragraph's direct properties: `word_format`'s name, the `w:pPr` child and the
 /// attributes that state it (none: the element itself).
-const PARAGRAPH: [(&str, &str, &[&str]); 10] = [
+pub(crate) const PARAGRAPH: [(&str, &str, &[&str]); 10] = [
     ("alignment", "jc", &[]),
     (
         "space_before",
@@ -139,7 +139,7 @@ pub(crate) fn paragraphs(
 }
 
 /// The paragraph's style, by name: the one it states, else the default.
-fn paragraph_style(side: &Side<'_>, paragraph: &Element) -> Option<String> {
+pub(crate) fn paragraph_style(side: &Side<'_>, paragraph: &Element) -> Option<String> {
     match find_path(paragraph, &["pPr", "pStyle"]) {
         Some(style) => side.style_name(style.attribute(Some(W), "val")),
         None => side.style_name(side.default_style()),

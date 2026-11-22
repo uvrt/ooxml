@@ -23,13 +23,19 @@ imported, and :meth:`Store.close` fails when a module the run imported later lie
 repository outside it (the installed reference lies outside the repository, its commit
 keyed instead).
 
-NOT_REFERENCE are the harness modules that make the cases and compare the results
-(word_*_cases.py, word_edits_compare.py): the case they make is in each result's key, and a
-comparison runs again on every run, kept result or not, so a change to them (a new case, a
-comparison rule) leaves every kept result valid.  :meth:`Store.compute` holds them to that:
-it watches (``sys.monitoring``) for any of their functions running while docx-agent computes
-a result, and :meth:`Store.close` then fails, naming it -- that code belongs in the reference
-(word_tool_reference.py, word_edits_diff.py).
+NOT_REFERENCE are the harness modules that make the cases, run the Rust side and compare the
+results: the harnesses' drivers (word_edits_diff.py, and word_reads_diff.py, whose run and
+report it shares), the case makers (every word_*_cases.py) and word_edits_compare.py.  The
+case they make is in each result's key, and a comparison runs again on every run, kept result
+or not, so a change to them (a new case, a comparison rule, the Rust side's run) leaves every
+kept result valid: only the new cases are computed.  The reference's own code -- what runs
+docx-agent on a case and reads its result (word_edits_reference.py, word_tool_reference.py),
+this module, and what chooses and guards the reference's packages (reference_packages.py,
+reference_guard.py) -- stays in the chain, and a change to it computes every case again.
+:meth:`Store.compute` holds NOT_REFERENCE to that: it watches (``sys.monitoring``) for any of
+their functions running while docx-agent computes a result, and :meth:`Store.close` then
+fails, naming it -- that code belongs in the reference (word_edits_reference.py,
+word_tool_reference.py).
 
 A package's modules are keyed with all of their package's tracked files rather than with the
 modules imported alone: the reference imports nearly every one of them (docx-agent's
@@ -67,10 +73,11 @@ ROOT = Path(__file__).resolve().parents[3]
 HARNESS = Path(__file__).resolve().parent
 #: Installed but not run by the reference (and upgraded on every run by the workflow).
 NOT_REFERENCE_DISTRIBUTIONS = {"pip"}
-#: The harness modules that make the cases and compare the results, not part of the chain
-#: (see the module's docstring).
-NOT_REFERENCE = ("word_structure_cases.py", "word_object_cases.py", "word_style_cases.py", "word_text_cases.py",
-                 "word_edits_compare.py")
+#: The harness modules that make the cases, run the Rust side and compare the results, not
+#: part of the chain (see the module's docstring): the drivers, word_edits_compare.py and every
+#: case maker (word_*_cases.py, found by name so that a new one is left out too).
+DRIVERS = ("word_edits_diff.py", "word_reads_diff.py", "word_edits_compare.py")
+NOT_REFERENCE = (*DRIVERS, *sorted(path.name for path in HARNESS.glob("word_*_cases.py")))
 DIGEST = "sha256:"
 #: The name the merged store's file has (other files in a store are merged into it).
 MERGED = "reference.jsonl.gz"

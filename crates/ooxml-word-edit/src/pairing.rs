@@ -69,7 +69,10 @@ pub struct Aligned {
     pub extra: Vec<usize>,
 }
 
-fn by_text(a: &str, b: &str) -> bool {
+/// Whether two normalised texts match (the same, or at least [`TEXT_SIMILARITY`] alike:
+/// `difflib`'s ratio).
+#[must_use]
+pub fn by_text(a: &str, b: &str) -> bool {
     if a == b {
         return true;
     }
