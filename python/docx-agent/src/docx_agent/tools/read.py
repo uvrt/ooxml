@@ -300,10 +300,12 @@ def word_inspect(call: Any, doc: str, target: str, layout: bool = False) -> Resu
 
     given = reads._refs(call, target)
     # (with layout: placed by the session's own layout of the version, its engine set to the
-    # document's fonts and locale here)
+    # document's fonts and locale here; where it has none -- docx-agent's Rust layout off, or
+    # options it does not take -- placed by docx-agent's own layout, as before)
+    engine = reads.session_layout(call) if layout else None
     return reads.serve(call, "word_inspect", {"target": given, "layout": layout or None},
                        lambda: _python_word_inspect(call, doc, target, layout), addresses=(given,),
-                       layout=reads.session_layout(call) if layout else None)
+                       layout=engine, why_not="no layout in the session" if layout and engine is None else None)
 
 
 def _python_word_inspect(call: Any, doc: str, target: str, layout: bool) -> Result:
