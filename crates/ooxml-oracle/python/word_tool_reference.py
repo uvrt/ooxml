@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import copy
 import datetime
+import io
 import json
+import zipfile
 
 from docx_agent import validate as _validate
 from docx_agent.edit import ids as _ids
@@ -36,6 +38,35 @@ def reply(reply: dict) -> dict:
                                       "total", "next_cursor") if reply.get(k) not in (None, [], {})}
 
 
+def part_texts(name: str, body: bytes) -> dict[str, str]:
+    """A changed part as the harness reports it (the Rust side's ``part_texts.rs``): its bytes
+    as text, or -- an embedded package (a chart's workbook) -- each entry's content byte for
+    byte under ``<part>!<entry>`` (text where it is UTF-8, else hex) and the entries' names,
+    order and compression methods under its own name.  Two writers' deflate streams differ
+    for the same content, so an archive is compared by what it holds; nothing else is
+    loosened."""
+    if body.startswith(b"PK\x03\x04"):
+        try:
+            with zipfile.ZipFile(io.BytesIO(body)) as archive:
+                infos = [i for i in archive.infolist() if not i.filename.endswith("/")]
+                names = [f"{i.filename} ({i.compress_type})" for i in infos]
+                out = {f"{name}!{i.filename}": _exact(archive.read(i.filename)) for i in infos}
+        except (zipfile.BadZipFile, ValueError, OSError, NotImplementedError):
+            names, out = [], {}
+        if names:
+            out[name] = "archive: " + ", ".join(names)
+            return out
+    return {name: body.decode("utf-8", "replace")}
+
+
+def _exact(data: bytes) -> str:
+    """An entry's content, exactly: its text where it is UTF-8, else ``hex:`` and its bytes."""
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return "hex:" + data.hex()
+
+
 def python_case(data: bytes, case: dict, baseline: list, toolbox, parts_of, order_of, touched_of) -> dict:
     """One case through docx-agent's toolbox: the reply and what the document became."""
     session = toolbox.session(clock=lambda: _NOW)
@@ -51,12 +82,17 @@ def python_case(data: bytes, case: dict, baseline: list, toolbox, parts_of, orde
         session.entry(doc).document.locale = Locale(**case["locale"])
     for blob in case.get("blobs") or []:                # b1, b2, ... as the session numbers them
         session.add_blob(bytes.fromhex(blob["hex"]), blob["name"], blob["mime"])
+    if case.get("datasets"):                            # d:<id>, the session's own
+        session.keep_datasets([_dataset(found) for found in case["datasets"]])
     arguments = {**case["arguments"], "doc": doc}
     answer = json.loads(json.dumps(toolbox.dispatch(session, case["tool"], arguments).to_json()))
     document = session.entry(doc).document
     out = session.save(doc).data
     before, after = parts_of(data), parts_of(out)
-    parts = {name: body.decode("utf-8", "replace") for name, body in after.items() if before.get(name) != body}
+    parts: dict = {}
+    for name, body in after.items():
+        if before.get(name) != body:
+            parts.update(part_texts(name, body))
     main = document.package.document_part()
     problems = _validate.check(document.package)
     rewritten = dict(before)
@@ -80,6 +116,19 @@ def python_case(data: bytes, case: dict, baseline: list, toolbox, parts_of, orde
     }
     session.close(doc)
     return result
+
+
+def _dataset(found: dict):
+    """A case's dataset (``{"id", "columns", "types", "rows"}``, a date as ``{"date": [y, m,
+    d]}``) as the session keeps one."""
+    from ooxml_edit.tools.datasets import Dataset, DatasetEntry
+
+    def value(v):
+        return datetime.date(*v["date"]) if isinstance(v, dict) else v
+
+    rows = tuple(tuple(value(v) for v in row) for row in found["rows"])
+    types = tuple(found["types"]) if found.get("types") is not None else None
+    return DatasetEntry(found["id"], Dataset(tuple(found["columns"]), rows, types=types))
 
 
 def _reserialized(before: dict, after: dict, main: str) -> list[str]:

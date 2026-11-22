@@ -16,24 +16,29 @@
 //!
 //! Cells written without a source ([`super::set_cells`]).
 //!
+//! Tracked, a row or column deleted that holds a pending tracked merge's first cell is
+//! refused naming the merge's changes to settle first ([`super::edit_table_pending`]).
+//!
 //! Not ported yet, said in `unported` for the host to answer its own way: `sync` and `from`
 //! (a source the dispatcher resolves: the session's datasets and other documents' rows); a
-//! change of the rows, columns or cells of a table with pending tracked structure or a
-//! placement record (refused so by the edit core); any call on a table with Accept All's
+//! change of the rows of a table with a placement record (refused so by the edit core);
+//! any call on a table with Accept All's
 //! cell ends (a cell's last paragraph mark deleted: the reply's Markdown joins cells across
 //! it, and names the cells Accept All loses with the changes that do it).
 //!
 //! Must not: change the document but through the command.
 
 use super::edit_table_args::{Side, TableAction, WordEditTable};
+use super::edit_table_pending::no_reshape_over_merge;
 use super::table_view::{table_view, AcceptedView, TableView};
 use crate::originals::{add, Watch};
 use crate::review::{needed, Editing};
 use crate::structure::common::{call, outcome, policy, refused, Outcome};
 use ooxml_base::pyfmt::repr_str;
 use ooxml_tools::{ArgEnum, ErrorCode, Refusal, ToolError, ToolResult, TryCall, WayOut};
+use ooxml_word_edit::facts::{ragged_rows, RaggedRow};
 use ooxml_word_edit::WordDoc;
-use ooxml_word_edit::{EditError, EditTable, TableChange, TableChanged};
+use ooxml_word_edit::{EditError, EditTable, Reshape, TableChange, TableChanged};
 use ooxml_word_model::docx::tables::TableGrid;
 use ooxml_word_model::docx::{find_path, Docx};
 use ooxml_word_model::ids::{TableId, W};
@@ -146,15 +151,47 @@ fn check_sync_fields(args: &WordEditTable, retry: &TryCall) -> Result<(), ToolEr
     Ok(())
 }
 
-/// A `from` given: the host's. The dispatcher resolves a source before the handler runs
-/// (an unknown dataset is its `not_found`, whatever the action), and the session's datasets
-/// and other documents' rows are not held here yet; docx-agent's handler then refuses it
-/// for another action than `set_cells`. `None` without one.
-fn from_source(args: &WordEditTable, retry: &TryCall) -> Option<ToolResult<Value>> {
-    args.from
-        .as_deref()
-        .is_some_and(|f| !f.is_empty())
-        .then(|| unported("word_edit_table from (sources)", retry))
+/// The rows a `from` names, as the host resolved them before the call (its dispatcher
+/// refuses an unknown dataset, whatever the action); `None` without a `from`, or for one
+/// naming one value (a cell's, by reference: the host's). A `from` the host gave no rows for
+/// is refused as one naming nothing.
+fn from_rows<'e>(
+    args: &WordEditTable,
+    editing: &Editing<'e>,
+    retry: &TryCall,
+) -> Result<Option<&'e crate::SourceRows>, ToolError> {
+    let Some(given) = args.from.as_deref().filter(|f| !f.is_empty()) else {
+        return Ok(None);
+    };
+    if let Some(refused) = editing.others.refused_source(given) {
+        let head = editing.editor.store().snapshot();
+        let docx = head.doc().docx().ok();
+        return Err(crate::sources::refused_source(refused, docx.as_deref(), retry));
+    }
+    match editing.others.source(given) {
+        Some(rows) => Ok(Some(rows)),
+        None if names_one_value(given) => Ok(None),
+        None => Err(crate::sources::no_rows(given, "from", retry)),
+    }
+}
+
+/// Whether a `from` names one value of one row rather than rows (docx-agent's
+/// `field_text.names_one_value`): a dataset address past its id that is no run of rows
+/// (`d:notes/#12/body`, `d:notes/Doors/body`).
+fn names_one_value(given: &str) -> bool {
+    let Some(rest) = given.strip_prefix("d:") else {
+        return false;
+    };
+    let Some((_, after)) = rest.split_once('/') else {
+        return false;
+    };
+    // a run of rows: `#9`, `#9:`, `#9:#16`, `#9:16`
+    let digits = |t: &str| t.starts_with(|c: char| ('1'..='9').contains(&c)) && t.bytes().all(|c| c.is_ascii_digit());
+    let rows = after.strip_prefix('#').is_some_and(|run| match run.split_once(':') {
+        Some((first, last)) => digits(first) && (last.is_empty() || digits(last.strip_prefix('#').unwrap_or(last))),
+        None => digits(run),
+    });
+    !rows
 }
 
 /// Refuse what belongs to `from` given without it, and `grow` without a source.
@@ -182,6 +219,7 @@ fn check_arguments(args: &WordEditTable, retry: &TryCall) -> Result<(), ToolErro
 }
 
 fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<ToolResult<Value>, ToolError> {
+    let source = from_rows(args, editing, retry)?;
     let head = editing.editor.store().snapshot();
     let docx = head
         .doc()
@@ -198,10 +236,28 @@ fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<T
         return Ok(unported("word_edit_table sync", retry));
     }
     check_sync_fields(args, retry)?;
-    if let Some(left) = from_source(args, retry) {
-        return Ok(left);
+    let given = args.from.as_deref().filter(|f| !f.is_empty());
+    if let Some(given) = given {
+        if args.action != TableAction::SetCells {
+            return Err(invalid(
+                format!("{} takes no from; from is for set_cells", args.action.as_str()),
+                "from",
+                &["set_cells"],
+                retry,
+            ));
+        }
+        if source.is_none() {
+            return Ok(unported(
+                "word_edit_table set_cells values by reference (from, {{...}})",
+                retry,
+            ));
+        }
+        if args.cells.is_some() {
+            return Err(rows_beside_cells(given, retry));
+        }
+    } else {
+        check_arguments(args, retry)?;
     }
-    check_arguments(args, retry)?;
     let mut accepted = view.accepted(&docx);
     if accepted.table.cell_ends {
         // the reply's Markdown joins cells across them, and says the cells Accept All loses
@@ -210,21 +266,52 @@ fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<T
             retry,
         ));
     }
+    if let Some(rows) = source {
+        return super::set_from::set_from(args, editing, &view, &accepted, rows, retry);
+    }
     if args.action == TableAction::SetCells {
         return super::set_cells::set_cells(args, editing, &docx, &view, &mut accepted, retry);
     }
-    let change = match change(args, editing.tracking.is_some(), &view, &mut accepted, retry)? {
+    let tracked = editing.tracking.is_some();
+    let change = match change(args, (tracked, &docx), &view, &mut accepted, retry)? {
         Ok(change) => change,
         Err(what) => return Ok(unported(&what, retry)),
     };
     Ok(finish(args, editing, &view, change, accepted.notes, retry))
 }
 
+/// A `from` naming rows beside `cells`: two forms of `set_cells` at once, refused naming
+/// what to drop for each (docx-agent's `_rows_beside_cells`, round 49, R96).
+fn rows_beside_cells(given: &str, retry: &TryCall) -> ToolError {
+    let dataset = given.starts_with("d:");
+    let base = if dataset {
+        given.split('/').next().unwrap_or(given)
+    } else {
+        given
+    };
+    let one = if dataset {
+        format!("{base}/#1/<column>")
+    } else {
+        format!("{base}/<row>/<column>")
+    };
+    let example = format!("cells: [{{row: 1, col: 2, from: '{one}'}}]");
+    invalid(
+        format!(
+            "from {given} names rows, which fill the table from index, and cells are given too: to fill the table \
+             from {given}, drop cells; to set single cells, drop the top-level from and give each cell its own \
+             value ({example})"
+        ),
+        "cells",
+        &[given, &example],
+        retry,
+    )
+}
+
 /// The change a row, column, merge or split action names, positions as the table is
 /// accepted; `Err` with what `unported` says where it is not ported yet.
 fn change(
     args: &WordEditTable,
-    tracked: bool,
+    (tracked, docx): (bool, &Docx),
     view: &TableView,
     accepted: &mut AcceptedView,
     retry: &TryCall,
@@ -246,15 +333,19 @@ fn change(
         },
         TableAction::DeleteRow => {
             let given = args.index.ok_or_else(|| needed("index", "", retry.clone()))?;
-            TableChange::DeleteRow {
-                index: row(accepted, Some(given))?.unwrap_or(usize::MAX),
+            let index = row(accepted, Some(given))?.unwrap_or(usize::MAX);
+            if tracked {
+                no_reshape_over_merge(&args.doc, docx, view, accepted, Reshape::DeleteRow(index))?;
             }
+            TableChange::DeleteRow { index }
         }
         TableAction::DeleteColumn => {
             let given = args.index.ok_or_else(|| needed("index", "", retry.clone()))?;
-            TableChange::DeleteColumn {
-                index: accepted.grid_column(given, "index", retry)?,
+            let index = accepted.grid_column(given, "index", retry)?;
+            if tracked {
+                no_reshape_over_merge(&args.doc, docx, view, accepted, Reshape::DeleteColumn(index))?;
             }
+            TableChange::DeleteColumn { index }
         }
         TableAction::CopyRow => TableChange::CopyRow {
             index: row(accepted, args.index)?,
@@ -269,14 +360,7 @@ fn change(
             }
         }
         TableAction::Merge | TableAction::Split => {
-            match super::edit_table_cells::cells_change(args, view, accepted, tracked, retry)? {
-                Some(change) => change,
-                None => {
-                    return Ok(Err(
-                        "word_edit_table split tracked in a table with pending tracked structure".to_owned(),
-                    ))
-                }
-            }
+            super::edit_table_cells::cells_change(args, (tracked, docx), view, accepted, retry)?
         }
         other => return Ok(Err(format!("word_edit_table {}", other.as_str()))),
     };
@@ -312,6 +396,7 @@ fn finish(
     let table = view.table.id.clone();
     let off_before = view.off_grid();
     let before = editing.editor.store().snapshot();
+    let ragged_before = !matches!(change, TableChange::InsertRow { .. }) && ragged(before.doc(), &table).is_some();
     let mut watched = watch(editing, before.doc(), view, change);
     let command = EditTable {
         table: args.table.clone(),
@@ -321,7 +406,8 @@ fn finish(
     // round 58 (R126): a row added looked at against the rows around it, in the call's
     // transaction
     let adds_row = matches!(change, TableChange::InsertRow { .. } | TableChange::CopyRow { .. });
-    let look = |out: &TableChanged, _: &WordDoc| adds_row.then(|| (out.table.clone(), out.id.clone()));
+    let look =
+        |out: &TableChanged, _: &WordDoc| adds_row.then(|| (out.table.clone(), out.id.iter().cloned().collect()));
     let (done, rows) = match super::rows_written::run_writing_rows(editing, &command, &table, look, retry) {
         Ok(done) => done,
         Err(EditError::Refused(message)) if matches!(change, TableChange::CopyRow { .. }) => {
@@ -350,6 +436,9 @@ fn finish(
         add(&mut result, watched.report(head.doc(), editing.doc));
     }
     result.warnings.extend(notes);
+    if !ragged_before && !matches!(change, TableChange::InsertRow { .. }) {
+        result.warnings.extend(made_ragged(head.doc(), &now));
+    }
     let off_now = head
         .doc()
         .docx()
@@ -376,6 +465,51 @@ fn finish(
     }
     result.warnings.extend(rows);
     result
+}
+
+/// The table `id` ragged (docx-agent's `_ragged`, `layout_facts.ragged_rows`: its rows'
+/// cells not all starting and ending on the same grid columns, as Accept All leaves it
+/// where pending changes reshape it -- a table off its grid too): the grid columns its
+/// widest rows cover, its other rows (at most check's 20) and whether pending changes make
+/// the shape.
+fn ragged(doc: &WordDoc, id: &str) -> Option<(usize, Vec<RaggedRow>, bool)> {
+    let docx = doc.docx().ok()?;
+    let table = docx.body()?.ids.tables().iter().find(|t| t.id == id)?;
+    let found = ragged_rows(doc, &table.element)?;
+    Some((
+        found.grid,
+        found.rows.into_iter().take(RAGGED_LISTED).collect(),
+        found.after_accept,
+    ))
+}
+
+/// Rows of a ragged table check lists (`layout_facts.CAP`).
+const RAGGED_LISTED: usize = 20;
+
+/// The warning of a change that left `table` ragged where it was not (`_made_ragged`,
+/// round 57 R125, rule 7); the call is not kept for check's `made_by` yet (the session's).
+fn made_ragged(doc: &WordDoc, table: &str) -> Option<String> {
+    let (grid, rows, after_accept) = ragged(doc, table)?;
+    let named: Vec<String> = rows
+        .iter()
+        .take(5)
+        .map(|r| format!("{} (columns {}-{})", r.row, r.covers.0, r.covers.1))
+        .collect();
+    let more = if rows.len() > 5 {
+        format!(" and {} more", rows.len() - 5)
+    } else {
+        String::new()
+    };
+    let when = if after_accept {
+        "once its tracked changes are accepted"
+    } else {
+        "now"
+    };
+    Some(format!(
+        "{table} is ragged {when}: rows {}{more} end short of the others' {grid} columns; this call made it so \
+         (undo reverses it)",
+        named.join(", ")
+    ))
 }
 
 /// A row `copy_row` does not copy, refused with the calls that add a row like it and fill
@@ -449,7 +583,7 @@ fn kept_columns(docx: &Docx, view: &TableView) -> Vec<usize> {
 }
 
 /// The rows deleted as a tracked change (`w:trPr/w:del`), by place.
-fn deleted_rows(table: &TableId) -> Vec<usize> {
+pub(super) fn deleted_rows(table: &TableId) -> Vec<usize> {
     table
         .rows
         .iter()

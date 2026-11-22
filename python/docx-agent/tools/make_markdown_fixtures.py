@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write the fixtures E2's reader is tested on, ``tests/fixtures/generated/markdown/*.docx``.
+"""Write the fixtures E2's reader is tested on, ``crates/ooxml-oracle/fixtures/generated/markdown/*.docx``.
 
 The corpus fixtures lack most of what ``to_markdown`` has to say, so these three are written
 here, by hand, with every construct on purpose.  They sit one directory below the shared
@@ -58,7 +58,7 @@ import make_fixtures as base  # noqa: E402
 from make_fixtures import (A, DECL, MC, NS, PIC, REL, W, WML, WP, WP14, content_types, png,  # noqa: E402
                            relationships)
 
-base.OUT = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "generated" / "markdown"
+base.OUT = Path(__file__).resolve().parents[3] / "crates" / "ooxml-oracle" / "fixtures" / "generated" / "markdown"
 
 W15 = "http://schemas.microsoft.com/office/word/2012/wordml"
 W16CID = "http://schemas.microsoft.com/office/word/2016/wordml/cid"

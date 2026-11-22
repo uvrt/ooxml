@@ -6,11 +6,16 @@ ci.yml's plan job runs them (`python3 -m unittest discover -s tools -p 'test_*.p
 
 from __future__ import annotations
 
+import argparse
+import contextlib
+import io
+import json
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -112,6 +117,17 @@ class AutoModes(unittest.TestCase):
                                     ".github/workflows/ci.yml", "tools/ci.py", "python/docx-agent/tests/test_x.py",
                                     "crates/ooxml-word-edit/tests/integration/x.rs"), (set(), False))
 
+    def test_the_frozen_reference_packages_run_nothing(self) -> None:
+        # the reference is installed from crates/ooxml-oracle/reference.toml's commit
+        self.assertEqual(self.modes("python/docx-agent/src/docx_agent/rust/edits.py",
+                                    "python/ooxml-edit/src/ooxml_edit/tools/served.py",
+                                    "python/docx-agent/pyproject.toml"), (set(), False))
+
+    def test_the_reads_case_makers_run_the_reads(self) -> None:
+        for name in gates.READ_CASE_MAKERS:
+            self.assertEqual(self.modes(f"crates/ooxml-oracle/python/{name}"), (set(), True), name)
+            self.assertTrue((gates.HARNESS / name).is_file(), name)
+
     def test_the_bindings_run_nothing(self) -> None:
         # the oracle binaries are not built from them (gates run docx-agent with Rust off)
         self.assertEqual(self.modes("crates/python/src/lib.rs", "crates/ooxml-python-session/src/lib.rs",
@@ -131,9 +147,10 @@ class AutoModes(unittest.TestCase):
 
     def test_code_the_gates_run_runs_every_mode(self) -> None:
         for path in ("crates/ooxml-word-edit/src/set_text.rs", "crates/ooxml-tools-word/src/describe.md",
-                     "crates/ooxml-oracle/src/edits.rs", "python/docx-agent/src/docx_agent/rust/edits.py",
-                     "python/ooxml-edit/src/ooxml_edit/tools/served.py",
-                     "python/docx-agent/tests/fixtures/generated/x.docx", "python/docx2svg/tools/make_lists.py",
+                     "crates/ooxml-oracle/src/edits.rs", "python/docx2svg/src/docx2svg/layout.py",
+                     "python/ooxml-common/src/ooxml_common/fonts/office.py",
+                     "crates/ooxml-oracle/fixtures/generated/x.docx", "python/docx2svg/tools/make_lists.py",
+                     "crates/ooxml-oracle/reference.toml", "crates/ooxml-oracle/python/reference_packages.py",
                      "crates/ooxml-oracle/python/word_edits_diff.py", "crates/ooxml-oracle/known-differences.toml",
                      "crates/ooxml-oracle/python/reference_guard.py",
                      "crates/ooxml-oracle/python/no_core/ooxml_core/__init__.py",
@@ -180,7 +197,7 @@ class AutoFixtures(unittest.TestCase):
     def test_a_tables_change_runs_the_table_fixtures(self) -> None:
         known = gates_fixtures.load()
         tables = {name for name, held in known.items() if "tables" in held}
-        for path in ("crates/ooxml-word-edit/src/tables/merge.rs", "python/docx-agent/src/docx_agent/edit/tables.py"):
+        for path in ("crates/ooxml-word-edit/src/tables/merge.rs", "crates/ooxml-tools-word/src/tables/edit.rs"):
             chosen = gates.auto_fixtures([path])
             self.assertEqual(set(chosen), tables | set(gates_fixtures.CANARIES), path)
             self.assertLess(len(chosen), len(known))
@@ -194,15 +211,15 @@ class AutoFixtures(unittest.TestCase):
         for path in ("crates/ooxml-xml/src/writer.rs", "crates/ooxml-opc/src/package.rs",
                      "crates/ooxml-store/src/lib.rs", "crates/ooxml-session/src/lib.rs",
                      "crates/ooxml-oracle/python/word_edits_diff.py", "crates/ooxml-oracle/known-differences.toml",
-                     "crates/ooxml-word-edit/src/editor.rs", "python/docx-agent/src/docx_agent/layout.py"):
+                     "crates/ooxml-word-edit/src/editor.rs", "python/docx2svg/src/docx2svg/layout.py"):
             self.assertEqual(gates.auto_fixtures([path]), gates_fixtures.ALL, path)
         self.assertEqual(gates.auto_fixtures([]), gates_fixtures.ALL)
 
     def test_a_changed_fixture_runs(self) -> None:
         name = "generated/mode14.docx"
-        chosen = gates.auto_fixtures([f"python/docx-agent/tests/fixtures/{name}"])
+        chosen = gates.auto_fixtures([f"crates/ooxml-oracle/fixtures/{name}"])
         self.assertIn(name, chosen)
-        self.assertEqual(gates.auto_fixtures(["python/docx-agent/tests/fixtures/generated/new-one.docx"]),
+        self.assertEqual(gates.auto_fixtures(["crates/ooxml-oracle/fixtures/generated/new-one.docx"]),
                          gates_fixtures.ALL)
 
     def test_paths_the_gates_do_not_run_add_nothing(self) -> None:
@@ -423,6 +440,57 @@ class HarnessCommand(unittest.TestCase):
         command, env = gates.harness_command(self.args("styled"), Path("out"), Path("r.jsonl"), [Path("a.docx")])
         self.assertEqual(command[2:], ["--styled", "--rust", "/bin/word-edits", "--results", "r.jsonl", "a.docx"])
         self.assertEqual(env, {})
+
+
+class Panics(unittest.TestCase):
+    """A shard fails on any case where Rust panicked; the unported forms are reported, not failing."""
+
+    def diff(self, totals: dict) -> tuple[int, dict, str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out"
+            line = json.dumps({"totals": totals})
+
+            def command(args, out_dir, results, files):
+                write = f"import pathlib; pathlib.Path({str(results)!r}).write_text({line!r})"
+                return [sys.executable, "-c", write], {}
+
+            args = argparse.Namespace(out=str(out), tree=tmp, gate="corpus", mode="styled", shard="1/1",
+                                      every=None, per_tool=None, fixtures=None, base=None)
+            printed = io.StringIO()
+            with mock.patch.object(gates, "harness_command", command), \
+                    mock.patch.object(gates, "documents", lambda *_: [Path(tmp) / "a.docx"]), \
+                    contextlib.redirect_stdout(printed):
+                code = gates.run_diff(args)
+            return code, json.loads((out / "summary.json").read_text()), printed.getvalue()
+
+    def test_a_panic_fails_the_shard(self) -> None:
+        code, summary, printed = self.diff({"cases": 3, "failed": 0, "panics": 1, "unported_forms": {}})
+        self.assertEqual((code, summary["panics"]), (1, 1))
+        self.assertIn("Rust panicked", printed)
+
+    def test_unported_forms_are_reported_not_failing(self) -> None:
+        forms = {"like": 2, "from/blob": 1}
+        code, summary, printed = self.diff({"cases": 3, "failed": 0, "panics": 0, "unported": 3,
+                                            "unported_forms": forms})
+        self.assertEqual((code, summary["unported_forms"]), (0, forms))
+        self.assertIn("unported: 2 like", printed)
+
+    def test_the_summary_adds_panics_and_forms_up(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            for k, (panics, forms) in enumerate([(1, {"like": 2}), (0, {"like": 1, "picture": 1})]):
+                shard = Path(tmp) / f"diff-{k}"
+                shard.mkdir()
+                (shard / "summary.json").write_text(json.dumps({
+                    "gate": "fixtures", "mode": "text", "documents": 1, "cases": 4, "differences": 0,
+                    "known": 0, "unported": 3, "panics": panics, "unported_forms": forms, "wall": 1.0,
+                    "crashed": False, "unknown": []}))
+            printed = io.StringIO()
+            with contextlib.redirect_stdout(printed):
+                gates.run_summary(argparse.Namespace(dir=tmp))
+        table = printed.getvalue()
+        self.assertIn("| text | 2 | 2 | 8 | 0 | 0 | 6 | 1 | 1 |", table)
+        self.assertIn("- text: 3 like", table)
+        self.assertIn("- text: 1 picture", table)
 
 
 if __name__ == "__main__":

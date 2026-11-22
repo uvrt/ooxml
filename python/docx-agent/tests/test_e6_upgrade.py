@@ -21,7 +21,7 @@ from docx_agent.edit.authoring import COMPAT_OPTIONS, KEPT
 from docx_agent.layout import Reflow
 from docx_agent.validate import check
 
-from conftest import fixture_id, fixture_paths
+from conftest import FIXTURE_DIR, fixture_id, fixture_paths
 from test_roundtrip import entries
 
 HERE = Path(__file__).parent
@@ -29,7 +29,7 @@ sys.path.insert(0, str(HERE.parent / "tools"))
 import e6_probe  # noqa: E402
 
 OBSERVATIONS = json.loads((HERE / "observations" / "e6-word.json").read_text(encoding="utf-8"))
-FIXTURES = HERE / "fixtures"
+FIXTURES = FIXTURE_DIR
 
 #: probe -> the document Word converted.
 CONVERTED = {

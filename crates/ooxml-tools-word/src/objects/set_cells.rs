@@ -115,7 +115,7 @@ pub(super) fn set_cells(
     };
     // round 58 (R126): the rows written looked at against the rows around them, in the
     // call's transaction
-    let look = |_: &_, doc: &WordDoc| Some((doc.ids().follow(&view.table.id), None));
+    let look = |_: &_, doc: &WordDoc| Some((doc.ids().follow(&view.table.id), Vec::new()));
     let (done, rows) = match super::rows_written::run_writing_rows(editing, &command, &view.table.id, look, retry) {
         Ok(done) => done,
         Err(error @ (EditError::Address(_) | EditError::Argument { .. } | EditError::Position(_))) => {

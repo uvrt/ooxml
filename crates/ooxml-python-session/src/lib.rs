@@ -7,7 +7,8 @@
 //! (`view`: `Session.view`, `Session.page_svg`, `UnknownToken`, `ViewRefused`); the conversion of their
 //! arguments and results (bytes copied in while the interpreter lock is held, then every
 //! Rust call made with it released, `py.detach`); the mapping of session errors to Python
-//! exceptions; a panic in a call turned into an `internal` tool error, never an abort; and
+//! exceptions (a panic in a call is the session's own `internal` reply, ooxml-session's
+//! `panics`; its message the application part's `panic`); and
 //! the adapters of the ports a session is given (`adapters`: the system clock, no fonts,
 //! no part store, an unlimited cache budget).
 //!

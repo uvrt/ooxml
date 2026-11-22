@@ -142,6 +142,9 @@ pub struct AppOnly {
     pub unchanged: bool,
     /// The files the call gives the application ([`Done::files`]).
     pub files: Vec<File>,
+    /// What a call that panicked said (its reply is an `internal` failure), for the
+    /// application's log; `None` for every call that did not.
+    pub panic: Option<String>,
 }
 
 /// How the call went.

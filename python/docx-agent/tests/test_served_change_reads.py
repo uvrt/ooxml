@@ -20,8 +20,9 @@ from ooxml_edit.tools.owned import OwnedEntry  # noqa: E402
 from docx_agent import Document  # noqa: E402
 from docx_agent.rust import reads  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
+from conftest import FIXTURE_DIR  # noqa: E402
 
-GENERATED = Path(__file__).parent / "fixtures" / "generated"
+GENERATED = FIXTURE_DIR / "generated"
 
 #: The generated documents holding tracked changes.
 REVIEWED = ["markdown/review.docx", "review-follow.docx", "tables-accepted.docx", "ids-and-markup.docx",

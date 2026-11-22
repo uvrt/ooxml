@@ -21,6 +21,7 @@
 
 mod beyond;
 mod changed;
+mod painters;
 mod parts;
 mod seed;
 mod summaries;
@@ -29,7 +30,9 @@ mod trial;
 pub use beyond::Laid;
 pub use trial::Trial;
 
-use changed::{context_may_change, notes_or_stories_changed};
+use changed::notes_or_stories_changed;
+pub(crate) use painters::ContextMark;
+use painters::{Contexts, Painter};
 pub use seed::EngineSeed;
 
 use crate::causes::{context_cause, part_reason, whole_cause, RelaidCause};
@@ -76,8 +79,11 @@ struct Generation {
     /// draw otherwise (its drawings, its stories).
     epoch: u64,
     /// Moved on where the model's context (its styles, numbering, settings, theme)
-    /// changed: a version laid out before is no longer painted in it.
+    /// changed: a version laid out before is painted by its own context's painter.
     context: u64,
+    /// The current context's mark, and the painters of the contexts left whose versions
+    /// are still held.
+    contexts: Contexts,
     /// The package the model opened last: what its context is of.
     opened: Option<Package>,
     /// What a comparison read of the pages of the version it read last: a page the next
@@ -87,17 +93,26 @@ struct Generation {
 
 impl Generation {
     /// The model's context (its styles, numbering, settings or theme) changed: a version
-    /// laid out before is no longer painted, and what was measured under the old context is
-    /// not the next version's (the measures are keyed by content), so it is laid out whole,
-    /// with fresh memos. Whether there was a version to lay it out from.
+    /// laid out before is painted by a painter of its own context from now on, and what was
+    /// measured under the old context is not the next version's (the measures are keyed by
+    /// content), so it is laid out whole, with fresh memos. Whether there was a version to
+    /// lay it out from.
     fn new_context(&mut self, locale: &Locale, budget: &Arc<dyn CacheBudget>) -> bool {
         self.context += 1;
+        self.contexts.leave();
         if self.last.is_none() {
             return false;
         }
         self.last = None;
         self.layout = new_layout(&self.fonts, locale, budget);
         true
+    }
+
+    /// Drop what the memos hold that no version in use needs, and the painters of the
+    /// contexts no version of is held: how many memo entries went.
+    fn sweep(&mut self) -> usize {
+        self.contexts.sweep();
+        self.model.sweep() + self.layout.sweep()
     }
 
     /// The last version laid out where `package` has its parts (the same version asked
@@ -470,7 +485,7 @@ impl PageEngine {
     ) -> Result<Result<Arc<LaidVersion>, Fallback>, PagesError> {
         self.note_given(package);
         let fonts = self.setup.document(package);
-        let (generation, mut cause) = self.generation_for(fonts, package);
+        let (generation, mut cause) = self.generation_for(fonts);
         let generation = self.generation.insert(generation);
         if let Some(last) = generation.last_for(package) {
             self.stats.kept += 1;
@@ -488,13 +503,13 @@ impl PageEngine {
             self.stats.fallbacks += 1;
             return Ok(Err(why));
         }
+        let others_changed = self.changed.iter().any(|name| *name != *document.main_part);
         let started = Instant::now();
         let previous = generation.last.take();
         let laid_from = generation.laid_from.take();
         let Ok(laid) = generation.lay_out(&document, previous.as_deref(), cancel) else {
             self.stats.layout_time += started.elapsed();
             self.stats.stopped += 1;
-            let others_changed = self.changed.iter().any(|name| *name != *document.main_part);
             generation.stopped(previous, laid_from, others_changed);
             return Err(PagesError::Stopped);
         };
@@ -509,7 +524,6 @@ impl PageEngine {
         let relaid = !laid.relaid.is_empty();
         self.stats.count_laid(relaid);
         let (pictures, drawings) = pictures_of(package, &document, &generation.fonts, &self.numbers);
-        let others_changed = self.changed.iter().any(|name| *name != *document.main_part);
         let with = SayWith {
             locale: &self.locale,
             glyph_size: self.glyph_size,
@@ -539,6 +553,7 @@ impl PageEngine {
             summary: std::sync::OnceLock::new(),
             epoch: generation.epoch,
             context: generation.context,
+            painted_in: generation.contexts.mark(),
             pages: std::sync::OnceLock::new(),
         });
         // The version before is no longer the one laid out from: what only it and the
@@ -548,7 +563,7 @@ impl PageEngine {
         generation.laid_from = Some(package.clone());
         // Published before the sweep: the version before, no longer held there, is swept.
         self.seed.publish(Some((package.clone(), Arc::clone(&version))));
-        let swept = generation.model.sweep() + generation.layout.sweep();
+        let swept = generation.sweep();
         self.stats.swept += swept as u64;
         Ok(Ok(version))
     }
@@ -564,13 +579,11 @@ impl PageEngine {
 
     /// The generation `fonts` lay out in: the current one where its fonts are the same,
     /// else a new one, with the cause of laying out whole where the old had a version.
-    fn generation_for(&mut self, fonts: DocumentFonts, package: &Package) -> (Generation, Option<RelaidCause>) {
-        // What a version laid out before is painted with goes with a new generation or
-        // context: the versions a comparison may yet read are digested first.
-        let leaving = self
-            .generation
-            .as_ref()
-            .is_some_and(|g| g.fonts.epoch != fonts.epoch || context_may_change(g.opened.as_ref(), package));
+    fn generation_for(&mut self, fonts: DocumentFonts) -> (Generation, Option<RelaidCause>) {
+        // What a version laid out before is painted with goes with a new generation (a new
+        // context keeps its painter): the versions a comparison may yet read are digested
+        // first.
+        let leaving = self.generation.as_ref().is_some_and(|g| g.fonts.epoch != fonts.epoch);
         if leaving {
             self.settle_watched();
         }
@@ -598,6 +611,7 @@ impl PageEngine {
             digests: crate::digest_cache::DigestCache::new(self.digest_limit),
             epoch: 0,
             context: 0,
+            contexts: Contexts::new(),
             opened: None,
             read_before: None,
         }
@@ -640,9 +654,12 @@ impl PageEngine {
             self.stats.paint_hits += 1;
             return Some(found);
         }
-        let generation = self.generation.as_mut().filter(|g| g.number == version.generation)?;
+        let painter = self
+            .generation
+            .as_mut()?
+            .painter(version, &self.locale, &self.budgets.held)?;
         let with = (self.glyph_size, self.decimal);
-        let paint = Arc::new(paint_laid(generation, &version.layout, version, page, with)?);
+        let paint = Arc::new(paint_laid(painter, &version.layout, version, page, with)?);
         self.stats.pages_painted += 1;
         if keep {
             self.painted.insert(key, Painted(Arc::clone(&paint)));
@@ -658,13 +675,14 @@ impl PageEngine {
         version: &LaidVersion,
         page: usize,
     ) -> Option<Vec<ooxml_word_layout::facts::StoryLineFact>> {
-        let generation = self.generation.as_mut().filter(|g| g.number == version.generation)?;
         if page >= version.page_count() {
             return None;
         }
-        let parts = generation
-            .layout
-            .page_parts(&mut generation.model, &version.layout, page);
+        let painter = self
+            .generation
+            .as_mut()?
+            .painter(version, &self.locale, &self.budgets.held)?;
+        let parts = painter.layout.page_parts(painter.model, &version.layout, page);
         Some(ooxml_word_layout::facts::story_line_facts(&parts))
     }
 
@@ -744,27 +762,28 @@ impl PageEngine {
 }
 
 /// Page `page` of `layout` (`version`'s, or a trial's laid out from it) painted, its text
-/// boxes laid out and painted: with `version`'s faces, pictures and drawings, in
-/// `generation`, its glyph size and decimal sign `with`.
+/// boxes laid out and painted: with `version`'s faces, pictures and drawings, by
+/// `version`'s `painter`, its glyph size and decimal sign `with`.
 fn paint_laid(
-    generation: &mut Generation,
+    painter: Painter<'_>,
     layout: &DocumentLayout,
     version: &LaidVersion,
     page: usize,
     (glyph_size, decimal): (GlyphSize, char),
 ) -> Option<PagePaint> {
-    let parts = generation.layout.page_parts(&mut generation.model, layout, page);
+    let Painter { model, layout: stories } = painter;
+    let parts = stories.page_parts(model, layout, page);
     let cx = PaintContext {
         faces: version.glyphs.as_ref(),
         names: version.names.as_ref(),
         glyph_size,
         decimal,
     };
-    let mut paint = paint_page(layout, &mut generation.model, page, &parts, &cx)?;
+    let mut paint = paint_page(layout, model, page, &parts, &cx)?;
     if let Some(drawings) = &version.drawings {
         let job = TextBoxJob {
-            layout: &mut generation.layout,
-            model: &mut generation.model,
+            layout: stories,
+            model,
             laid: layout,
             cx: &cx,
         };
