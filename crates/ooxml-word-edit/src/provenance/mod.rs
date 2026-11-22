@@ -16,7 +16,8 @@
 //! review itself before this).
 //!
 //! Values written by reference and labels are kept on their paragraphs by [`KeepText`]
-//! (the tool that wrote them says where), the item made where there is none.
+//! (the tool that wrote them says where), the item made where there is none; a chart's
+//! record is replaced or dropped by the edit that changed its data ([`store_record`]).
 //!
 //! Must not: decide where a value went, or run the follow-up but once per command, after
 //! it ([`Followed`]).

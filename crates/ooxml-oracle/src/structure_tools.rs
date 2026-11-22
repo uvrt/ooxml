@@ -226,7 +226,7 @@ fn changed_parts(package: &Package, doc: &ooxml_word_edit::WordDoc) -> Map<Strin
             .ok()
             .flatten()
             .unwrap_or_else(|| Arc::from(Vec::new()));
-        parts.insert(name, json!(String::from_utf8_lossy(&bytes)));
+        crate::part_texts::insert_part(&mut parts, name, &bytes);
     }
     parts
 }

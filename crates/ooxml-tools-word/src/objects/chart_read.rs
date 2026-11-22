@@ -49,7 +49,7 @@ pub(crate) fn chart_read_json(
 }
 
 /// ooxml-edit's `chart_json`, the chart by its `id`.
-fn chart_json(id: &str, root: &Element, data: &ChartData) -> Map<String, Value> {
+pub(crate) fn chart_json(id: &str, root: &Element, data: &ChartData) -> Map<String, Value> {
     let mut out = Map::new();
     out.insert("id".into(), Value::from(id));
     let kind = if is_dot(root) {
@@ -165,7 +165,7 @@ fn blank_text(positions: &[usize]) -> String {
 
 /// ooxml-edit's `chart_style_json`: `types`, `scales`, and where any series sets them,
 /// `series_format` and `point_labels`.
-fn style_json(
+pub(crate) fn style_json(
     root: &Element,
     data: &ChartData,
     out: &mut Map<String, Value>,

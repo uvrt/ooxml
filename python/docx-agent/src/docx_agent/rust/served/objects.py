@@ -1,5 +1,5 @@
 """The object tools' adapters (:mod:`docx_agent.rust.served`): ``word_format_table``,
-``word_drawings``, ``word_edit_table``, ``word_controls``."""
+``word_drawings``, ``word_edit_table``, ``word_controls``, ``edit_chart``."""
 
 from __future__ import annotations
 
@@ -57,3 +57,9 @@ def _rows(call: Any, source: str) -> Any:
         if error.code != "not_found" or not source.startswith("d:"):
             raise
         return error
+
+
+@adapter("edit_chart")
+def _chart(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    # (its data actions, the titles and the style actions; ``add`` answers ``unported``)
+    return {**own(arguments), "target": reads._refs(call, arguments.get("target"))}
