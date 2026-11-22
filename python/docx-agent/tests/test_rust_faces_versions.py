@@ -53,8 +53,6 @@ def _ids(session, doc):
     return paragraphs[1].id, paragraphs[-1].id, next(p.id for p in paragraphs if p.text == "Text in Beta.")
 
 
-@pytest.mark.xfail(reason="lane F's check (docx_agent.rust.check), not reached since the session serves "
-                          "the check: deleted with it in the cut's PR 2", strict=True)
 def test_a_check_says_the_faces_of_its_version_not_of_a_later_one(monkeypatch):
     with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as box:
         session = box.session(clock=CLOCK)
