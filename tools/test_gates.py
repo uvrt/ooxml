@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import gzip
 import io
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -23,6 +25,7 @@ import gates  # noqa: E402
 import gates_fixtures  # noqa: E402
 import gates_hunks  # noqa: E402
 import gates_jobs  # noqa: E402
+import gates_store  # noqa: E402
 
 CHART_PLACES = "generated/charts/chart-places.docx"
 FIXTURES = gates.FIXTURES
@@ -313,6 +316,7 @@ class JobPlan(unittest.TestCase):
     SMALL = {"set_text": 60.0, "ops": 70.0, "cells": 5.0}
 
     def jobs(self, modes, estimates, *, gate="fixtures", warm=True, shards=None) -> list[tuple[str, str]]:
+        warm = modes if warm is True else warm or []
         return [(j["modes"], j["shard"]) for j in gates_jobs.gate_jobs(gate, modes, warm=warm, shards=shards,
                                                                         estimates=estimates)]
 
@@ -441,6 +445,129 @@ class HarnessCommand(unittest.TestCase):
         self.assertEqual(command[2:], ["--styled", "--rust", "/bin/word-edits", "--results", "r.jsonl", "a.docx"])
         self.assertEqual(env, {})
 
+    def test_the_edits_harness_takes_the_cache_and_writes_the_case_keys(self) -> None:
+        args = self.args("structure")
+        args.cache = "store"
+        command, _ = gates.harness_command(args, Path("out"), Path("r.jsonl"), [Path("a.docx")])
+        parsed = self.harness_parser("word_edits_diff.py").parse_args(command[2:])
+        self.assertEqual((parsed.cache, parsed.cache_new, parsed.cache_used),
+                         ("store", str(Path("out/reference-new.jsonl.gz")), str(Path("out") / gates.USED)))
+
+
+class StoreCoverage(unittest.TestCase):
+    """The store's coverage per mode (tools/gates_store.py): the plan runs warm only the modes it
+    covers, and a merge keeps every mode the store held."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+
+    def results(self, name: str, entries: dict) -> Path:
+        path = self.tmp / name
+        gates_store.write_results(path, entries)
+        return path
+
+    def shard(self, name: str, gate: str, mode: str, documents: dict, tree=None, per_tool=0) -> Path:
+        path = self.tmp / name / gates_store.COVERAGE_NEW
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(gates_store.coverage(gate, mode, per_tool, documents, tree)))
+        return path
+
+    def stored(self, store: Path) -> dict:
+        return dict(gates_store.read_results(store / gates_store.MERGED))
+
+    def matrix(self, store: Path | None, modes: str, gates_: str = "fixtures", warm: bool = False) -> list[dict]:
+        out = io.StringIO()
+        args = (["--store", str(store)] if store else []) + (["--warm"] if warm else [])
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            gates.main(["matrix", "--gates", gates_, "--modes", modes, "--fixtures", "all", *args])
+        return json.loads(out.getvalue())["include"]
+
+    def shards(self, jobs: list[dict]) -> dict[str, int]:
+        return {mode: int(j["shard"].split("/")[1]) for j in jobs for mode in j["modes"].split(",")}
+
+    def test_a_merge_keeps_the_modes_the_run_did_not_run(self) -> None:
+        store = self.tmp / "store"
+        gates_store.merge(store, [self.results("a.jsonl.gz", {"k1": {"v": 1}})],
+                          [self.shard("a", "fixtures", "objects", {"x.docx": ["k1"]})])
+        n = gates_store.merge(store, [self.results("b.jsonl.gz", {"k2": {"v": 2}})],
+                              [self.shard("b", "fixtures", "structure", {"x.docx": ["k2"]})])
+        self.assertEqual(n, {"added": 1, "dropped": 0, "recorded": 1})
+        self.assertEqual(self.stored(store), {"k1": {"v": 1}, "k2": {"v": 2}})
+        covered = gates_store.load(store)
+        self.assertEqual(set(covered["modes"]), {"fixtures/objects", "fixtures/structure"})
+        self.assertEqual(gates_store.warm_modes(covered, "fixtures", ["objects", "structure", "style"], 0,
+                                                ["x.docx"]), {"objects", "structure"})
+
+    def test_a_case_no_longer_made_is_dropped(self) -> None:
+        store = self.tmp / "store"
+        gates_store.merge(store, [self.results("a.jsonl.gz", {"k1": {}, "k2": {}, "k3": {}})],
+                          [self.shard("a", "fixtures", "objects", {"x.docx": ["k1", "k2"]}),
+                           self.shard("a2", "fixtures", "style", {"x.docx": ["k2"]})])
+        n = gates_store.merge(store, [], [self.shard("b", "fixtures", "objects", {"x.docx": ["k1"]})])
+        # k2 is still the style mode's; k3, kept but never listed (a crashed shard's), stays
+        self.assertEqual((n["dropped"], set(self.stored(store))), (0, {"k1", "k2", "k3"}))
+        n = gates_store.merge(store, [], [self.shard("c", "fixtures", "style", {"x.docx": []})])
+        self.assertEqual((n["dropped"], set(self.stored(store))), (1, {"k1", "k3"}))
+
+    def test_a_store_of_some_modes_plans_the_others_cold(self) -> None:
+        store = self.tmp / "store"
+        fixtures = [str(f.relative_to(gates.FIXTURES)) for f in gates.documents_of(gates.FIXTURES, None)]
+        gates_store.merge(store, [], [self.shard(mode, "fixtures", mode, {name: [] for name in fixtures})
+                                      for mode in ("objects", "style")])
+        found = self.shards(self.matrix(store, "objects,style,structure"))
+        self.assertEqual(found["structure"], gates_jobs.COLD_SHARDS)
+        warm = self.shards(self.matrix(None, "objects,style", warm=True))   # as their recorded warm times size them
+        self.assertEqual((found["objects"], found["style"]), (warm["objects"], warm["style"]))
+        # a fixture the store has not covered: the mode is cold again
+        covered = gates_store.load(store)
+        del covered["modes"]["fixtures/objects"]["per_tool=0"][fixtures[0]]
+        with gzip.open(store / gates_store.COVERAGE, "wt") as handle:
+            json.dump(covered, handle)
+        found = self.shards(self.matrix(store, "objects,style"))
+        self.assertEqual((found["objects"], found["style"]), (gates_jobs.COLD_SHARDS, warm["style"]))
+
+    def test_no_store_or_no_coverage_is_cold(self) -> None:
+        self.assertEqual(set(self.shards(self.matrix(None, "objects,style")).values()), {gates_jobs.COLD_SHARDS})
+        legacy = self.tmp / "legacy"
+        self.results("legacy/reference.jsonl.gz", {"k": {}})
+        self.assertEqual(set(self.shards(self.matrix(legacy, "objects")).values()), {gates_jobs.COLD_SHARDS})
+
+    def diff(self, code: int) -> Path:
+        """A corpus shard of one document whose harness exits with ``code``: its out folder."""
+        tree, out = self.tmp / "corpus", self.tmp / f"out{code}"
+        (tree / "d").mkdir(parents=True, exist_ok=True)
+        for name in ("a.docx", "d/b.docx"):
+            (tree / name).write_bytes(b"")
+
+        def command(args, out_dir, results, files):
+            used = json.dumps({str(tree / "d" / "b.docx"): ["k1"]})
+            totals = json.dumps({"totals": {"cases": 1}})
+            write = (f"import pathlib, sys; pathlib.Path({str(results)!r}).write_text({totals!r}); "
+                     f"pathlib.Path({str(out_dir / gates.USED)!r}).write_text({used!r}); sys.exit({code})")
+            return [sys.executable, "-c", write], {}
+
+        args = argparse.Namespace(out=str(out), tree=str(tree), gate="corpus", mode="structure", shard="2/2",
+                                  every=1, per_tool=10, fixtures=None, base=None, cache="store")
+        with mock.patch.object(gates, "harness_command", command), contextlib.redirect_stdout(io.StringIO()):
+            gates.run_diff(args)
+        return out
+
+    def test_a_finished_shard_writes_its_coverage_and_a_crashed_one_none(self) -> None:
+        shard = json.loads((self.diff(0) / gates_store.COVERAGE_NEW).read_text())
+        self.assertEqual(shard, {"gate": "corpus", "mode": "structure", "per_tool": "per_tool=10",
+                                 "documents": {"d/b.docx": ["k1"]}, "tree": ["a.docx", "d/b.docx"]})
+        self.assertFalse((self.diff(3) / gates_store.COVERAGE_NEW).exists())
+
+    def test_the_corpus_plans_from_the_tree_its_last_run_found(self) -> None:
+        store = self.tmp / "store"
+        tree = ["a.docx", "b.docx"]
+        gates_store.merge(store, [], [self.shard("a", "corpus", "structure", {"a.docx": []}, tree, per_tool=10),
+                                      self.shard("b", "corpus", "structure", {"b.docx": []}, tree, per_tool=10),
+                                      self.shard("c", "corpus", "objects", {"a.docx": []}, tree, per_tool=10)])
+        found = self.shards(self.matrix(store, "structure,objects", "corpus"))
+        self.assertEqual((found["structure"], found["objects"]), (1, gates_jobs.COLD_SHARDS))
+
 
 class Panics(unittest.TestCase):
     """A shard fails on any case where Rust panicked; the unported forms are reported, not failing."""
@@ -455,7 +582,7 @@ class Panics(unittest.TestCase):
                 return [sys.executable, "-c", write], {}
 
             args = argparse.Namespace(out=str(out), tree=tmp, gate="corpus", mode="styled", shard="1/1",
-                                      every=None, per_tool=None, fixtures=None, base=None)
+                                      every=None, per_tool=None, fixtures=None, base=None, cache=None)
             printed = io.StringIO()
             with mock.patch.object(gates, "harness_command", command), \
                     mock.patch.object(gates, "documents", lambda *_: [Path(tmp) / "a.docx"]), \

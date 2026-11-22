@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import copy
 import io
+import json
 import sys
 import zipfile
 from pathlib import Path
@@ -424,6 +425,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--results", help="also write the cases with differences here (JSON lines)")
     parser.add_argument("--cache", metavar="DIR", help="docx-agent's results kept by earlier runs (reference_cache.py)")
     parser.add_argument("--cache-new", metavar="FILE", help="write the results this run computes here, to keep")
+    parser.add_argument("--cache-used", metavar="FILE",
+                        help="write each document's case keys here (JSON: the store's coverage, tools/gates_store.py)")
     parser.add_argument("files", nargs="*")
     args = parser.parse_args(argv)
     store = Store(args.cache, args.cache_new, lambda a, b: not differences(a, b)) \
@@ -432,9 +435,12 @@ def main(argv: list[str] | None = None) -> int:
     expected: dict = {}
     inputs: dict = {}
     manifest = []
+    used: dict[str, list[str]] = {}     # each document's case keys (--cache-used)
+    made: list[tuple] = []              # each document's cases, as made: (path, source, data, baseline, cases)
     for path in files_of(args):
         data = path.read_bytes()
         source = str(path)
+        used[source] = []
         if args.spacing:
             data = _french(data)
             path = Path(args.spacing) / f"{len(manifest):04d}-{path.name}"
@@ -494,8 +500,16 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as error:  # noqa: BLE001
             print(f"{path}: python failed: {error}")
             continue
+        if store:
+            used[source] = [store.key(data, case) for case in cases]
+        made.append((path, source, data, baseline, cases))
+        manifest.append({"file": str(path), "cases": cases})
+    if store:
+        # every case is made before the store is read: it keeps their results only
+        store.read({key for keys in used.values() for key in keys})
+    for path, source, data, baseline, cases in made:
         for k, case in enumerate(cases):
-            found = store.get(data, case) if store else None
+            found = store.get(used[source][k]) if store else None
             if found is None and store:
                 found = store.compute(python_case, data, case, baseline)
             elif found is None:
@@ -504,7 +518,6 @@ def main(argv: list[str] | None = None) -> int:
                 kept[(str(path), k)] = (data, case, baseline)
             expected[(str(path), k)] = found
             inputs[(str(path), k)] = {**case, "source": source}
-        manifest.append({"file": str(path), "cases": cases})
     rust = run_rust(args.rust, manifest)
     got = {key: value.get("rust") for key, value in rust.items()}
     counts = {"unported": 0, "rewritten": 0, None: 0, "again": 0}
@@ -528,6 +541,8 @@ def main(argv: list[str] | None = None) -> int:
         if store else {}
     if store:
         store.close()
+    if args.cache_used:
+        Path(args.cache_used).write_text(json.dumps(used))
     if unported:
         print(f"{unported} cases the Rust tools left to the host (unported)")
     if rewritten:

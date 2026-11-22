@@ -12,8 +12,9 @@ run-name: Gates ${{ inputs.ref || 'main' }} [${{ inputs.gates || 'fixtures,corpu
 # - fixtures, corpus: crates/ooxml-oracle/python/word_edits_diff.py's modes, docx-agent (pure
 #   Python) against the release `word-edits`, on the fixtures (crates/ooxml-oracle/fixtures) and on the documents
 #   docx2svg's tools/make_*.py make; each mode in `shards` jobs, or with shards `auto` (the
-#   default) as tools/gates_jobs.py sizes them: when the reference cache holds a store for the
-#   checkout (warm) one job per mode, the small modes of a gate sharing one; when cold three;
+#   default) as tools/gates_jobs.py sizes them: a mode the reference cache's store for the
+#   checkout covers (warm, by the store's coverage: tools/gates_store.py) in one job, the small
+#   modes of a gate sharing one; a mode it does not cover (cold) in three;
 # - reads: word_reads_diff.py's checks on the fixtures (`word-ids`, `word-reads`);
 # - seeds: the multi-writer seed runs (`--ignored`) in release;
 # - bench: the 3k-page benches on a made-up report generated here (tools/gates.py report).
@@ -99,9 +100,9 @@ jobs:
       - name: Frozen reference API
         run: |
           if python3 tools/gates.py --help | grep -q frozen-api; then python3 tools/gates.py frozen-api; fi
-      # Warm or cold: whether the reference cache holds a store for the reference code this
-      # checkout runs (its key computed as the differential jobs compute it).  Only for the edit
-      # gates with shards auto.
+      # Warm or cold, per mode: which modes the reference cache's store for the reference code
+      # this checkout runs covers (its key computed as the differential jobs compute it; the
+      # store's coverage, tools/gates_store.py).  Only for the edit gates with shards auto.
       - id: lookup
         env:
           GATES: ${{ inputs.gates || 'fixtures,corpus' }}
@@ -122,7 +123,6 @@ jobs:
           path: ${{ runner.temp }}/reference
           key: gates-reference-${{ steps.chain.outputs.chain }}-${{ github.run_id }}
           restore-keys: gates-reference-${{ steps.chain.outputs.chain }}-
-          lookup-only: true
       - id: plan
         env:
           GATES: ${{ inputs.gates || 'fixtures,corpus' }}
@@ -149,7 +149,12 @@ jobs:
           if [ "$MODES" = auto ] && ! has plan; then MODES=all; fi
           args=()
           matrix_help=$(python3 tools/gates.py matrix --help)
-          if [[ "$matrix_help" == *--warm* ]]; then
+          if [[ "$matrix_help" == *--store* ]]; then
+            # warm: the modes the store's coverage covers
+            args=(--shards "$SHARDS" --every "$EVERY" --fixtures "$fixtures")
+            if [ -n "$STORE" ]; then args+=(--store "$RUNNER_TEMP/reference"); fi
+          elif [[ "$matrix_help" == *--warm* ]]; then
+            # a ref from before the coverage: every mode warm when a store exists
             args=(--shards "$SHARDS" --every "$EVERY" --fixtures "$fixtures")
             if [ -n "$STORE" ]; then args+=(--warm); fi
           else
@@ -307,7 +312,9 @@ jobs:
         if: always() && matrix.gate != 'reads'
         with:
           name: reference-${{ steps.name.outputs.name }}
-          path: ${{ runner.temp }}/out/*/reference-new.jsonl.gz
+          path: |
+            ${{ runner.temp }}/out/*/reference-new.jsonl.gz
+            ${{ runner.temp }}/out/*/reference-coverage.json
           if-no-files-found: ignore
           retention-days: 1
 
@@ -338,8 +345,9 @@ jobs:
             echo '```'; echo "</details>"
           } >> "$GITHUB_STEP_SUMMARY"; fi
 
-  # The results the differential jobs computed, added to the store they restored (saved as a
-  # new cache entry; the next run restores the newest).
+  # The results the differential jobs computed and their coverage, added to the store they
+  # restored (saved as a new cache entry; the next run restores the newest): the store keeps
+  # every mode it held, whatever modes this run ran (tools/gates_store.py).
   reference-cache:
     needs: [plan, differential]
     if: ${{ !cancelled() && needs.differential.outputs.chain != '' }}
@@ -361,7 +369,8 @@ jobs:
         id: merge
         run: |
           shopt -s globstar nullglob
-          added=$(python3 tools/gates.py cache-merge "$RUNNER_TEMP/reference" "$RUNNER_TEMP"/new/**/reference-new.jsonl.gz)
+          added=$(python3 tools/gates.py cache-merge "$RUNNER_TEMP/reference" "$RUNNER_TEMP"/new/**/reference-new.jsonl.gz \
+            "$RUNNER_TEMP"/new/**/reference-coverage.json)
           echo "$added; the store: $(du -h "$RUNNER_TEMP/reference" | cut -f1)" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "added=${added%% *}" >> "$GITHUB_OUTPUT"
       - if: steps.merge.outputs.added != '0'
