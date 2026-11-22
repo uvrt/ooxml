@@ -15,8 +15,10 @@
 //! the call's limit on laying out, as `render` lays it out (`laid_to_draw`: a version the
 //! engine does not lay out yet is refused, the way out a read or a save). A kept version's
 //! page the engine no longer paints is laid out again on a spare engine
-//! ([`ooxml_tools_word::WordLayout::seed`]): an older version never becomes the engine's
-//! last.
+//! ([`ooxml_tools_word::WordLayout::seed`]) once, that layout kept with the version within
+//! the session's memory budget for its other pages: an older version never becomes the
+//! engine's last. A version whose layout the budget has no room for is not kept: its token
+//! is stale to a later view, and its pages are laid out on demand.
 //!
 //! Must not: hold the document's kept versions' lock while laying out or painting, lay a
 //! version out but through the host's engine or a spare of it, or draw text as outlines yet
@@ -30,8 +32,8 @@ pub use kept::VIEW_TOKENS;
 use crate::context::{CallCancel, LayoutCancel};
 use crate::document::{At, Word};
 use crate::{CallContext, DocId, DocKind, Session, SessionError};
-use kept::Kept;
 pub(crate) use kept::LiveViews;
+use kept::{Kept, Spare};
 use ooxml_base::Cancel;
 use ooxml_tools::{Refusal, ToolError, WayOut};
 use ooxml_tools_word::{laid_to_draw, EnginePages, LayoutLimit, WordLayout};
@@ -177,20 +179,32 @@ impl Session {
         };
         let number = head.number();
         let token = format!("{}-{doc}-{number}", self.nonce);
-        // `since` first: made the most recently used before this version is kept.
-        let old = since.filter(|s| *s != token).and_then(|s| word.views.get(s));
+        // `since` first: made the most recently used before this version is kept; one whose
+        // layout the budget had no room for is stale
+        let old = since
+            .filter(|s| *s != token)
+            .and_then(|s| word.views.get(s))
+            .filter(|old| old.version().is_some());
         let cancel = CallCancel::new(context, &*self.context.cancel, &*self.context.clock);
         let laying = cancel.layout();
         let limit = laying.as_ref().map(LayoutCancel::limit);
-        let now = match word.views.get(&token) {
-            Some(kept) => kept,
+        let found = word.views.get(&token);
+        let laid = match found.as_ref().and_then(|kept| kept.version()) {
+            Some(laid) => Arc::clone(laid),
             None => {
                 let laid = laid_to_draw(WHO, layout, limit, (head.doc().package(), &doc.to_string()), &cancel)
                     .map_err(ViewError::NotDrawn)?;
                 // a later view compares with it: digested before the engine stops painting it
                 lock(layout).watch(&laid);
+                laid
+            }
+        };
+        let now = match found {
+            Some(kept) => kept,
+            None => {
                 let pages = pages_of(&laid);
-                word.views.keep(Kept::new(token.clone(), laid, head, pages))
+                word.views
+                    .keep(Kept::new(token.clone(), Arc::clone(&laid), head, pages))
             }
         };
         let every = || now.pages.iter().map(|p| p.number).collect::<Vec<_>>();
@@ -202,10 +216,11 @@ impl Session {
                 true,
                 Some(format!(
                     "since {s:?} names no layout kept for this document (another document's, one from before a \
-                     restart, or older than the last {VIEW_TOKENS}): every page is listed as changed"
+                     restart, older than the last {VIEW_TOKENS}, or one the memory budget had no room for): every \
+                     page is listed as changed"
                 )),
             ),
-            (Some(_), Some(old)) => match changed(layout, old, &now, (limit, &cancel)) {
+            (Some(_), Some(old)) => match changed(layout, old, (&laid, now.pages.len()), (limit, &cancel)) {
                 Some(changed) => (changed, false, None),
                 None => (
                     every(),
@@ -259,17 +274,24 @@ impl Session {
                 count,
             });
         }
-        let painted = lock(layout).page_svg(&kept.version, page - 1);
+        let painted = kept.version().and_then(|laid| lock(layout).page_svg(laid, page - 1));
         let (svg, mut warnings) = match painted {
             Some(painted) => painted,
             None => {
-                let cancel = CallCancel::new(context, &*self.context.cancel, &*self.context.clock);
-                let laying = cancel.layout();
-                let limit = laying.as_ref().map(LayoutCancel::limit);
-                let spare = EnginePages::of(layout.seed().spare());
-                let laid = laid_to_draw(WHO, &spare, limit, (kept.at.doc().package(), &doc.to_string()), &cancel)
-                    .map_err(ViewError::NotDrawn)?;
-                let painted = lock(&spare).page_svg(&laid, page - 1);
+                let spare = match kept.spare() {
+                    Some(spare) => spare,
+                    None => {
+                        let cancel = CallCancel::new(context, &*self.context.cancel, &*self.context.clock);
+                        let laying = cancel.layout();
+                        let limit = laying.as_ref().map(LayoutCancel::limit);
+                        let package = (kept.at.doc().package(), &*doc.to_string());
+                        let spare = spared(layout, package, (limit, &cancel)).map_err(ViewError::NotDrawn)?;
+                        // the next page of this version is painted from it, not laid out again
+                        word.views.keep_spare(&kept, &spare);
+                        spare
+                    }
+                };
+                let painted = lock(&*spare.engine).page_svg(&spare.version, page - 1);
                 painted.ok_or_else(|| {
                     ViewError::NotDrawn(ToolError::internal(
                         format!("page {page} could not be drawn"),
@@ -337,33 +359,48 @@ fn points(value: ooxml_base::Q) -> f64 {
     n / d
 }
 
-/// The 1-based pages of `now` whose drawing differs from `old`'s page of the same number,
-/// and those `old` did not have: compared by the host's engine, else -- where it no longer
-/// paints `old` and made no summary of it -- with `old` laid out again on a spare engine
-/// (`stop`: the call's limit on laying out and its cancellation). `None` where neither
-/// compares them.
+/// `package` (a version of the document, and the id a refusal names it by) laid out on a
+/// spare of `layout`'s engine (`stop`: the call's limit on laying out and its
+/// cancellation).
+fn spared(
+    layout: &dyn WordLayout,
+    package: (&ooxml_opc::Package, &str),
+    (limit, cancel): (Option<LayoutLimit<'_>>, &dyn Cancel),
+) -> Result<Spare, ToolError> {
+    let engine = Arc::new(EnginePages::of(layout.seed().spare()));
+    let version = laid_to_draw(WHO, &*engine, limit, package, cancel)?;
+    Ok(Spare { engine, version })
+}
+
+/// The 1-based pages of `now` (its layout and its count of pages) whose drawing differs
+/// from `old`'s page of the same number, and those `old` did not have: compared by the
+/// host's engine, else -- where it no longer paints `old` and made no summary of it --
+/// with `old`'s spare layout, laid out on a spare engine where none is kept (`stop`: the
+/// call's limit on laying out and its cancellation). `None` where neither compares them.
 fn changed(
     layout: &dyn WordLayout,
     old: &Kept,
-    now: &Kept,
-    (limit, cancel): (Option<LayoutLimit<'_>>, &dyn Cancel),
+    (now, count): (&Arc<LaidVersion>, usize),
+    stop: (Option<LayoutLimit<'_>>, &dyn Cancel),
 ) -> Option<Vec<usize>> {
-    if Arc::ptr_eq(&old.version, &now.version) {
+    let before = old.version()?;
+    if Arc::ptr_eq(before, now) {
         return Some(Vec::new());
     }
     let none = HashMap::new();
-    let compared = lock(layout).compare(&now.version, &old.version, &none);
+    let compared = lock(layout).compare(now, before, &none);
     let mut changed = match compared {
         Some(reflow) => reflow.changed,
         None => {
-            let summary = lock(layout).summary(&now.version)?;
-            let spare = EnginePages::of(layout.seed().spare());
-            let package = old.at.doc().package();
-            let before = laid_to_draw(WHO, &spare, limit, (package, ""), cancel).ok()?;
-            let before = lock(&spare).summary(&before)?;
+            let summary = lock(layout).summary(now)?;
+            let spare = match old.spare() {
+                Some(spare) => spare,
+                None => spared(layout, (old.at.doc().package(), ""), stop).ok()?,
+            };
+            let before = lock(&*spare.engine).summary(&spare.version)?;
             summary.compare(&before, &none).changed
         }
     };
-    changed.extend(old.pages.len() + 1..=now.pages.len());
+    changed.extend(old.pages.len() + 1..=count);
     Some(changed)
 }

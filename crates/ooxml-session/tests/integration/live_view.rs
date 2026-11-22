@@ -8,11 +8,12 @@
 use crate::common::{layout, Never, NoFonts, NoParts, Unlimited};
 use crate::editing::{call, docx, session};
 use ooxml_base::context::Timestamp;
-use ooxml_base::{Clock, Context, Limits, Locale};
+use ooxml_base::{CacheBudget, Clock, Context, Limits, Locale};
 use ooxml_session::{CallContext, DocKind, Session, SessionConfig, TextMode, ViewError, VIEW_TOKENS};
 use ooxml_tools_word::EnginePages;
 use ooxml_zip::{Method, NewEntry, Writer};
 use serde_json::json;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -33,30 +34,96 @@ fn two_pages() -> String {
     paragraph("11111111", "one", false) + &paragraph("22222222", "two", true)
 }
 
-/// A session made a second after [`session`]'s.
-fn restarted() -> Session {
-    struct Later;
-    impl Clock for Later {
-        fn now(&self) -> Timestamp {
-            Timestamp {
-                seconds: 1_795_000_001,
-                nanos: 0,
-            }
-        }
-        fn monotonic(&self) -> Duration {
-            Duration::ZERO
+/// A clock that always says its seconds past the epoch.
+struct At(i64);
+
+impl Clock for At {
+    fn now(&self) -> Timestamp {
+        Timestamp {
+            seconds: self.0,
+            nanos: 0,
         }
     }
+    fn monotonic(&self) -> Duration {
+        Duration::ZERO
+    }
+}
+
+/// A session made at `seconds` past the epoch, its memory budget `budget`.
+fn made(seconds: i64, budget: Arc<dyn CacheBudget>) -> Session {
     let context = Context {
         fonts: Arc::new(NoFonts),
         parts: Arc::new(NoParts),
-        clock: Arc::new(Later),
-        budget: Arc::new(Unlimited),
+        clock: Arc::new(At(seconds)),
+        budget,
         cancel: Arc::new(Never),
         limits: Limits::default(),
         locale: Locale::default(),
     };
     Session::new(SessionConfig::default(), context)
+}
+
+/// A session made a second after [`session`]'s.
+fn restarted() -> Session {
+    made(1_795_000_001, Arc::new(Unlimited))
+}
+
+/// A memory budget whose limit a test sets, counting what it granted and how often it was
+/// asked.
+struct Counted {
+    limit: AtomicUsize,
+    used: AtomicUsize,
+    asked: AtomicUsize,
+}
+
+impl Counted {
+    fn new() -> Arc<Counted> {
+        Arc::new(Counted {
+            limit: AtomicUsize::new(usize::MAX),
+            used: AtomicUsize::new(0),
+            asked: AtomicUsize::new(0),
+        })
+    }
+
+    fn limit(&self, limit: usize) {
+        self.limit.store(limit, Ordering::SeqCst);
+    }
+
+    fn within(&self) -> bool {
+        self.used() <= self.limit.load(Ordering::SeqCst)
+    }
+
+    fn asked(&self) -> usize {
+        self.asked.load(Ordering::SeqCst)
+    }
+}
+
+impl CacheBudget for Counted {
+    fn reserve(&self, bytes: usize) -> bool {
+        self.asked.fetch_add(1, Ordering::SeqCst);
+        let after = self.used().saturating_add(bytes);
+        let fits = after <= self.limit.load(Ordering::SeqCst);
+        if fits {
+            self.used.store(after, Ordering::SeqCst);
+        }
+        fits
+    }
+    fn release(&self, bytes: usize) {
+        self.used.fetch_sub(bytes, Ordering::SeqCst);
+    }
+    fn used(&self) -> usize {
+        self.used.load(Ordering::SeqCst)
+    }
+}
+
+fn set_text(s: &Session, text: &str) {
+    let edited = call(
+        s,
+        "word_set_text",
+        json!({"doc": "d1", "target": "p:22222222", "text": text}),
+        &ctx(),
+    );
+    assert_eq!(edited["ok"], json!(true), "{edited}");
 }
 
 fn ctx() -> CallContext {
@@ -272,4 +339,86 @@ fn views_are_read_while_another_thread_edits() {
     let last = s.view(&d, None, &*lay, &ctx()).unwrap();
     let page = s.page_svg(&d, 2, &last.token, &*lay, TextMode::Text, &ctx()).unwrap();
     assert!(page.svg.contains(&format!("edit {}", rounds - 1)), "{}", page.svg);
+}
+
+#[test]
+fn sessions_made_at_the_same_moment_tell_their_tokens_apart() {
+    let one = made(1_795_000_000, Arc::new(Unlimited));
+    let two = made(1_795_000_000, Arc::new(Unlimited));
+    let a = one.open(docx(&two_pages()), DocKind::Docx, "d.docx").unwrap();
+    let b = two.open(docx(&two_pages()), DocKind::Docx, "d.docx").unwrap();
+    assert_eq!(a, b, "the same document id in each");
+    let lay = layout();
+    let theirs = two.view(&b, None, &*lay, &ctx()).unwrap();
+    let ours = one.view(&a, None, &*lay, &ctx()).unwrap();
+    assert_ne!(ours.token, theirs.token);
+    let unknown = one.page_svg(&a, 1, &theirs.token, &*lay, TextMode::Text, &ctx());
+    assert!(matches!(unknown, Err(ViewError::UnknownToken { .. })), "{unknown:?}");
+}
+
+#[test]
+fn a_layout_the_budget_has_no_room_for_lets_older_ones_go_or_is_not_kept() {
+    let budget = Counted::new();
+    let s = made(1_795_000_000, Arc::clone(&budget) as Arc<dyn CacheBudget>);
+    let d = s.open(docx(&two_pages()), DocKind::Docx, "d.docx").unwrap();
+    let lay = layout();
+    let first = s.view(&d, None, &*lay, &ctx()).unwrap();
+    let one = budget.used();
+    assert!(one > 0, "the layout kept is reserved");
+
+    // room for about one: the first is let go for the second
+    budget.limit(one + one / 2);
+    set_text(&s, "deux");
+    let second = s.view(&d, Some(&first.token), &*lay, &ctx()).unwrap();
+    assert_eq!(second.changed, [2], "compared with the first, held by the call");
+    assert!(budget.within() && budget.used() > 0);
+    let stale = s.view(&d, Some(&first.token), &*lay, &ctx()).unwrap();
+    assert!(stale.stale, "the first is let go");
+
+    // room for none: the third's layout is not kept, the second's let go
+    budget.limit(0);
+    set_text(&s, "trois");
+    let third = s.view(&d, Some(&second.token), &*lay, &ctx()).unwrap();
+    assert_eq!(budget.used(), 0);
+    let page = s.page_svg(&d, 2, &third.token, &*lay, TextMode::Text, &ctx()).unwrap();
+    assert!(page.svg.contains("trois"), "laid out on demand");
+    assert_eq!(budget.used(), 0, "nor kept after");
+    set_text(&s, "quatre");
+    let fourth = s.view(&d, Some(&third.token), &*lay, &ctx()).unwrap();
+    assert!(fourth.stale, "a version whose layout was not kept is stale");
+    assert_eq!(fourth.changed, [1, 2]);
+    assert_eq!(budget.used(), 0);
+}
+
+#[test]
+fn an_old_versions_pages_are_laid_out_once() {
+    let budget = Counted::new();
+    let s = made(1_795_000_000, Arc::clone(&budget) as Arc<dyn CacheBudget>);
+    let d = s.open(docx(&two_pages()), DocKind::Docx, "d.docx").unwrap();
+    let view = s.view(&d, None, &*layout(), &ctx()).unwrap();
+    let kept = budget.used();
+    // another engine (a host's after a restart of its engine) does not paint the version
+    let other = layout();
+    let asked = budget.asked();
+    let first = s.page_svg(&d, 1, &view.token, &*other, TextMode::Text, &ctx()).unwrap();
+    assert!(first.svg.contains(r#"data-docx-agent-id="p:11111111""#));
+    assert_eq!(budget.asked(), asked + 1, "the spare layout is reserved");
+    let spare = budget.used() - kept;
+    assert!(spare > 0);
+    let second = s.page_svg(&d, 2, &view.token, &*other, TextMode::Text, &ctx()).unwrap();
+    assert!(second.svg.contains("two"));
+    assert_eq!(
+        budget.asked(),
+        asked + 1,
+        "the next page is painted from it, not laid out again"
+    );
+    assert_eq!(budget.used(), kept + spare);
+    // let go with its version
+    for n in 0..VIEW_TOKENS {
+        set_text(&s, &format!("two {n}"));
+        s.view(&d, None, &*layout(), &ctx()).unwrap();
+    }
+    assert!(s.view(&d, Some(&view.token), &*layout(), &ctx()).unwrap().stale);
+    drop(s);
+    assert_eq!(budget.used(), 0, "every reservation given back");
 }

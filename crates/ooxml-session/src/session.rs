@@ -15,7 +15,9 @@ use ooxml_store::{StoreConfig, StoreStats};
 use ooxml_tools_word::{Placer, Version};
 use ooxml_word_edit::EarlierIds;
 use ooxml_word_model::docx::Versions;
+use std::collections::hash_map::RandomState;
 use std::collections::BTreeMap;
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 
@@ -138,8 +140,8 @@ pub struct Session {
     documents: RwLock<BTreeMap<DocId, Arc<Document>>>,
     last_id: AtomicU64,
     pub(crate) counts: Counts,
-    /// What tells this session's live-view tokens from another's (one before a restart):
-    /// eight hex digits of the moment it was made.
+    /// What tells this session's live-view tokens from another's (one made at the same
+    /// moment, one before a restart): sixteen hex digits, its own.
     pub(crate) nonce: String,
 }
 
@@ -442,14 +444,14 @@ impl Session {
     }
 }
 
-/// A session's nonce: the moment `context`'s clock says it is made, digested, as eight hex
-/// digits.
+/// A session's nonce: the moment `context`'s clock says it is made and this session's own
+/// random keys ([`RandomState`], drawn afresh for each session), hashed, as sixteen hex
+/// digits -- two sessions made at the same moment, or in two processes, tell their tokens
+/// apart.
 fn nonce(context: &Context) -> String {
-    const KEY: ooxml_base::DigestKey = ooxml_base::DigestKey::new(0x6f6f_786d_6c2d_7669, 0x6577_2d6e_6f6e_6365);
     let now = context.clock.now();
-    let mut digester = ooxml_base::Digester::new(KEY);
-    digester.update(&now.seconds.to_le_bytes());
-    digester.update(&now.nanos.to_le_bytes());
-    let digest = digester.finish();
-    digest.0.iter().take(4).map(|b| format!("{b:02x}")).collect()
+    let mut hasher = RandomState::new().build_hasher();
+    now.seconds.hash(&mut hasher);
+    now.nanos.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
 }
