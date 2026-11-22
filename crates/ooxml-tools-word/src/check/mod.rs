@@ -14,7 +14,9 @@
 //! With `copies`, each copy compared with the reference it was made from ([`copies`], lane
 //! CP1), in this document or another open one the call names.
 //!
-//! Must not: lay out but through the host's engine. A scale and a deck's arguments are not
+//! A deck's arguments read or refused as docx-agent does ([`decks`]).
+//!
+//! Must not: lay out but through the host's engine. A scale and `numbers` are not
 //! supported yet: such a call is refused as such ([`ToolError::not_supported`]); so is a
 //! check of copies of a document held as a package, a check needing the layout without the
 //! host's layout, or of a version its engine
@@ -24,6 +26,7 @@
 
 mod args;
 mod copies;
+mod decks;
 mod edit_reflow;
 mod facts;
 mod laid_facts;
@@ -93,6 +96,14 @@ pub const CHECK_NOT_LAID_OUT: &str = "check: the layout falls back";
 /// # Errors
 /// `timeout` when `cancel` asks to stop; `internal` when the version cannot be read.
 pub fn check(args: &Check, version: &Version<'_>, cancel: &dyn Cancel) -> Result<Done<Value>, ToolError> {
+    let (read, warning) = decks::read(args)?;
+    let mut done = checked(&read, version, cancel)?;
+    done.warnings.extend(warning.map(str::to_owned));
+    Ok(done)
+}
+
+/// [`check`] of the arguments as a document reads them ([`decks::read`]).
+fn checked(args: &Check, version: &Version<'_>, cancel: &dyn Cancel) -> Result<Done<Value>, ToolError> {
     let wanted = match served(args) {
         Ok(wanted) => wanted,
         Err(why) => return Err(not_supported(why, &args.doc)),
@@ -407,12 +418,7 @@ fn served(args: &Check) -> Result<Vec<CheckInclude>, &'static str> {
         .range
         .as_ref()
         .is_some_and(|r| r.iter().any(|a| !a.trim().is_empty()));
-    if args.slides.is_some()
-        || args.boxes.is_some()
-        || args.spacing.is_some()
-        || args.contrast.is_some()
-        || args.scale.is_some()
-    {
+    if args.scale.is_some() {
         return Err(CHECK_ARGUMENTS);
     }
     // An empty list is the default, as docx-agent reads it (`include or [...]`; teams' calls

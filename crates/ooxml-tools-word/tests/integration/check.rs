@@ -80,7 +80,7 @@ pub(crate) fn limited(
         .with_word(Some(&doc));
     let args = Check::from_arg(&arguments, "").unwrap();
     match check(&args, &version, &Never) {
-        Ok(done) => json!({"summary": done.summary, "data": done.data}),
+        Ok(done) => json!({"summary": done.summary, "data": done.data, "warnings": done.warnings}),
         Err(error) => json!({"not_supported": error.not_supported_form(), "error": error.to_json()}),
     }
 }
@@ -146,6 +146,70 @@ fn an_empty_include_is_the_default() {
         Some(&layout),
     );
     assert_eq!(reply["summary"], "Checked validate, reflow, fields");
+}
+
+#[test]
+fn a_decks_arguments_are_refused_naming_what_a_document_takes() {
+    let (first, _) = versions();
+    let last = LastCheck::default();
+    for (name, value) in [("boxes", json!(true)), ("spacing", json!(8)), ("contrast", json!(4.5))] {
+        let reply = checked(&first, 1, json!({"doc": "d1", name: value}), &last, None);
+        assert_eq!(reply["error"]["code"], "invalid_arguments", "{reply}");
+        assert_eq!(reply["error"]["field"], name);
+        assert_eq!(
+            reply["error"]["message"],
+            format!("{name} is for decks; for a document use include")
+        );
+        assert_eq!(reply["error"]["try_call"]["arguments"], json!({"doc": "d1"}));
+    }
+    let reply = checked(
+        &first,
+        1,
+        json!({"doc": "d1", "include": ["validate", "fit", "collisions"]}),
+        &last,
+        None,
+    );
+    assert_eq!(
+        reply["error"]["message"],
+        "fit, collisions are deck facts; a document reports validate, reflow, fields and layout"
+    );
+    assert_eq!(reply["error"]["field"], "include");
+    assert_eq!(
+        reply["error"]["valid_options"],
+        json!(["validate", "reflow", "fields", "layout"])
+    );
+}
+
+#[test]
+fn slides_are_read_as_pages_and_said_so() {
+    let (first, _) = versions();
+    let last = LastCheck::default();
+    let read = checked(
+        &first,
+        1,
+        json!({"doc": "d1", "include": ["validate"], "slides": [1, "2"]}),
+        &last,
+        None,
+    );
+    assert_eq!(
+        read["warnings"],
+        json!(["slides read as pages: a document has pages"]),
+        "{read}"
+    );
+    let beside = checked(
+        &first,
+        1,
+        json!({"doc": "d1", "include": ["validate"], "slides": [3], "pages": [1]}),
+        &last,
+        None,
+    );
+    assert_eq!(beside["warnings"], json!(["slides ignored: a document has pages"]));
+    let id = checked(&first, 1, json!({"doc": "d1", "slides": ["s:256"]}), &last, None);
+    assert_eq!(
+        id["error"]["message"],
+        "slides[0] is 's:256': a document has pages, numbered from 1 (pages: [1])"
+    );
+    assert_eq!(id["error"]["field"], "pages");
 }
 
 #[test]
