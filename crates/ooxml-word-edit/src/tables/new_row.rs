@@ -9,6 +9,7 @@
 //! Must not: put the row in the table, give it ids, or record it as a tracked change (the
 //! command does, in that order).
 
+use super::pending::{pending_column, Following};
 use super::shape::{grid_widths, own_rows, row_cells, Placed};
 use crate::names::W;
 use crate::review::xml::{find_path, insert_in_order, make};
@@ -221,8 +222,15 @@ pub(crate) struct Beside {
     pub(crate) plain: bool,
 }
 
-/// The new row (not yet in the table) and what it says of its shape.
-pub(crate) fn row_like(work: &mut Work, table: Id, beside: &Beside, orders: &Orders) -> (Id, Option<String>) {
+/// The new row (not yet in the table) and what it says of its shape; with its cells in
+/// columns whose tracked deletion or insertion is pending, for them to follow it
+/// ([`super::pending::follow_pending_columns`]).
+pub(crate) fn row_like(
+    work: &mut Work,
+    table: Id,
+    beside: &Beside,
+    orders: &Orders,
+) -> (Id, Option<String>, Vec<Following>) {
     let reference = beside.reference;
     let mut shape = reference;
     let mut note = None;
@@ -268,6 +276,7 @@ pub(crate) fn row_like(work: &mut Work, table: Id, beside: &Beside, orders: &Ord
         Some(reference)
     };
     let after_cells: Vec<Placed> = after.map(|a| row_cells(work, a)).unwrap_or_default();
+    let mut pending = Vec::new();
     for placed in row_cells(work, shape) {
         let cell = make(work, "tc", &[]);
         let own = work.find(placed.cell, W, "tcPr");
@@ -290,8 +299,16 @@ pub(crate) fn row_like(work: &mut Work, table: Id, beside: &Beside, orders: &Ord
         let paragraph = new_row_paragraph(work, placed.cell, orders);
         work.append(cell, paragraph);
         work.append(row, cell);
+        let records = pending_column(work, placed.cell);
+        if !records.is_empty() {
+            pending.push(Following {
+                cell,
+                paragraph,
+                records,
+            });
+        }
     }
-    (row, note)
+    (row, note, pending)
 }
 
 /// The merges down that `rows[at]` sits right beside without joining (`merges_beside`):

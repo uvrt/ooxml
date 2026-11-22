@@ -5,26 +5,28 @@
 //! (`_no_merge_over_pending`), and a split past a cell's span refused with the split that
 //! keeps the grid (`_no_split_past_span`, rule 2).
 //!
-//! Not ported yet, said in `unported`: a tracked split in a table with pending tracked
-//! structure (`_no_split_over_pending` names the pending merge's change to settle first).
+//! Tracked, a split of a cell a pending tracked merge makes refused naming the merge's
+//! changes to settle first (`_no_split_over_pending`, [`super::edit_table_pending`]).
 //!
 //! Must not: change the document.
 
 use super::edit_table_args::{Position, TableAction, WordEditTable};
+use super::edit_table_pending::no_reshape_over_merge;
 use super::table_view::{AcceptedView, TableView};
 use crate::review::needed;
 use ooxml_tools::{Refusal, ToolError, TryCall, WayOut};
-use ooxml_word_edit::TableChange;
+use ooxml_word_edit::{Reshape, TableChange};
+use ooxml_word_model::docx::Docx;
 use serde_json::json;
 
-/// A merge's or split's change; `None` where it is not ported yet.
+/// A merge's or split's change.
 pub(super) fn cells_change(
     args: &WordEditTable,
+    (tracked, docx): (bool, &Docx),
     view: &TableView,
     accepted: &mut AcceptedView,
-    tracked: bool,
     retry: &TryCall,
-) -> Result<Option<TableChange>, ToolError> {
+) -> Result<TableChange, ToolError> {
     let count = |n: i64| usize::try_from(n).unwrap_or(usize::MAX);
     if args.action == TableAction::Merge {
         let first = args.first.as_ref().ok_or_else(|| needed("first", "", retry.clone()))?;
@@ -34,30 +36,29 @@ pub(super) fn cells_change(
         if !tracked {
             no_merge_over_pending(args, accepted, (r1, r2), (c1, c2), "merge")?;
         }
-        return Ok(Some(TableChange::Merge {
+        return Ok(TableChange::Merge {
             first: (r1, c1),
             last: (r2, c2),
-        }));
+        });
     }
     let first = args
         .first
         .as_ref()
         .ok_or_else(|| needed("first", " (the cell to split)", retry.clone()))?;
     let (row, column) = accepted.place(first.row, first.col, "first", retry)?;
-    if tracked && ooxml_word_edit::pending_structure(&view.table.element) {
-        return Ok(None);
-    }
-    if !tracked {
+    if tracked {
+        no_reshape_over_merge(&args.doc, docx, view, accepted, Reshape::Split(row, column))?;
+    } else {
         no_merge_over_pending(args, accepted, (row, row), (column, column), "split")?;
     }
     let columns = args.columns.filter(|c| *c != 0).map(count);
     no_split_past_span(args, view, first, (row, column), columns)?;
-    Ok(Some(TableChange::Split {
+    Ok(TableChange::Split {
         row,
         column,
         rows: args.rows.map_or(1, count),
         columns,
-    }))
+    })
 }
 
 /// Untracked, a merge or split over document rows `rows` and grid columns `columns`
