@@ -143,12 +143,11 @@ fn edit(rng: &mut Rng, targets: &[String], tables: &[String], writer: u64) -> Ed
             },
             policy: policy(rng, writer),
         }),
-        _ => Edit::Format(FormatTable {
+        _ => Edit::Format(FormatTable::new(
             table,
-            formats: (0..1 + rng.below(3)).map(|_| format(rng)).collect(),
-            policy: policy(rng, writer),
-            layout: None,
-        }),
+            (0..1 + rng.below(3)).map(|_| format(rng)).collect(),
+            policy(rng, writer),
+        )),
     }
 }
 

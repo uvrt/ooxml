@@ -6,14 +6,11 @@ from __future__ import annotations
 from typing import Any
 
 from .. import reads
-from . import Fallback, adapter, own, refs_in
+from . import adapter, own, refs_in
 
 
 @adapter("word_format")
 def _format(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-    if arguments.get("keep_together"):
-        # Blocks kept together are measured against a page (Python lays them out).
-        raise Fallback("keep_together")
     find = arguments.get("find")
     finds = find if isinstance(find, list) else None if find is None else [find]
     return {**own(arguments), "targets": refs_in(call, arguments.get("targets")),
@@ -33,8 +30,6 @@ def _lists(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
 def _follow_sample(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
     sample = arguments.get("sample")
     if isinstance(sample, dict):
-        if sample.get("doc") not in (None, arguments.get("doc")):
-            # (the session names its documents its own way: the host's ids are not its)
-            raise Fallback("a sample in another document")
-        sample = {"block": reads._refs(call, sample.get("block"))}
+        # (a sample in another document: its id the host's, as the session's names take it)
+        sample = {**sample, "block": reads._refs(call, sample.get("block"))}
     return {**own(arguments), "sample": sample, "copies": refs_in(call, arguments.get("copies"))}

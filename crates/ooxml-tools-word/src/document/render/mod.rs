@@ -14,7 +14,7 @@ mod draw;
 mod sheet;
 mod store;
 
-pub use draw::Drawing;
+pub use draw::{laid_to_draw, Drawing};
 pub use store::{page_key, sheet_key, ImageKey, PageImages, MAX_IMAGES};
 
 use crate::check::MAX_RANGES;

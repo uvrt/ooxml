@@ -299,6 +299,7 @@ impl Session {
             written: &context.written,
             others: &state.others,
             tables: context.tables.as_deref(),
+            sources: &context.sources,
             counts: context.counts,
             limits: context.limits,
         };

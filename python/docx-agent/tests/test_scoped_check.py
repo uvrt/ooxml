@@ -411,7 +411,10 @@ def test_a_comparison_is_kept_while_neither_side_changes(box):
     assert all(any(d["property"] == "alignment" for d in item["differences"]) for item in fourth["items"])
 
 
-def test_the_kept_comparisons_are_bounded(box, monkeypatch):
+def test_the_kept_comparisons_are_bounded(box, monkeypatch, python_owned):
+    """docx-agent's own handler (``python_owned``): it reads the handler's cache and bound;
+    the session's are the Rust check's (unit-tested there). The cut deletes this with the
+    handler."""
     monkeypatch.setattr(scoped, "COPY_CACHE", 2)
     session = box.session()
     d1, samples, reference, made = _copies(box, session, count=4)
@@ -421,8 +424,10 @@ def test_the_kept_comparisons_are_bounded(box, monkeypatch):
     assert len(session.entry(d1).document._tool_copy_cache) == 2
 
 
-def test_the_reply_keeps_to_its_budget(box, monkeypatch):
-    """Rule 4: past the budget, differences are counted and the reply says how to read them."""
+def test_the_reply_keeps_to_its_budget(box, monkeypatch, python_owned):
+    """Rule 4: past the budget, differences are counted and the reply says how to read them.
+    docx-agent's own handler (``python_owned``: it lowers the handler's budget); the session's
+    budget is the Rust check's (unit-tested there). The cut deletes this with the handler."""
     monkeypatch.setattr(scoped, "DIFFERENCES_PER_REPLY", 1)
     session = box.session()
     d1, samples, reference, made = _copies(box, session, count=2)

@@ -5,7 +5,8 @@
 //! same page and is not painted; every other is digested in both, each page's digests
 //! kept across versions by the page as laid out ([`crate::digest_cache`]) -- with the
 //! versions a comparison may yet read ([`PageEngine::watch`]) digested whole before the
-//! engine can no longer paint them (a new generation, a new context).
+//! engine can no longer paint them (a new generation: a version of a context its generation
+//! left is painted in its own, [`super::painters`]).
 //!
 //! Must not: answer otherwise than [`crate::summary::Summary::compare`] of the two
 //! versions' whole summaries would.
@@ -41,18 +42,16 @@ impl PageEngine {
         Some(Summary { pages, known })
     }
 
-    /// Whether `version` is painted as it was laid out: of this engine's generation, and
-    /// of its model's context.
+    /// Whether `version` is painted as it was laid out: of this engine's generation (in
+    /// whichever of its contexts it was laid out).
     fn paints(&self, version: &LaidVersion) -> bool {
-        self.generation
-            .as_ref()
-            .is_some_and(|g| g.number == version.generation && g.context == version.context)
+        self.generation.as_ref().is_some_and(|g| g.number == version.generation)
     }
 
     /// `version`'s summary (docx-agent's `LayoutSummary`), made once: each page's taken as
     /// digested where a version before laid it out the same in the same context, the rest
     /// painted and digested; `None` where it was not made and `version` is no longer
-    /// painted by this engine (another generation, or a context since changed).
+    /// painted by this engine (another generation).
     pub fn summary(&mut self, version: &LaidVersion) -> Option<Arc<Summary>> {
         if let Some(found) = version.summary.get() {
             return Some(Arc::clone(found));
@@ -134,7 +133,7 @@ impl PageEngine {
     }
 
     /// Digest every version watched that this engine still paints and has no summary of
-    /// (its generation or context is about to go).
+    /// (its generation is about to go).
     pub(super) fn settle_watched(&mut self) {
         let watched: Vec<Arc<LaidVersion>> = self.watched.iter().filter_map(Weak::upgrade).collect();
         for version in &watched {
@@ -186,10 +185,13 @@ impl PageEngine {
         if !self.paints(version) {
             return None;
         }
-        let generation = self.generation.as_mut()?;
+        let painter = self
+            .generation
+            .as_mut()?
+            .painter(version, &self.locale, &self.budgets.held)?;
         let layout = &version.layout;
-        let contexts = crate::page_context::page_contexts(layout, &mut generation.model, &self.locale, KEY);
-        let donor = generation.read_before.take();
+        let contexts = crate::page_context::page_contexts(layout, painter.model, &self.locale, KEY);
+        let donor = self.generation.as_mut().and_then(|g| g.read_before.take());
         let mut pages = Vec::with_capacity(layout.page_count());
         let mut paths = Vec::with_capacity(layout.page_count());
         for page in 0..layout.page_count() {
@@ -272,14 +274,15 @@ fn body_ids<'a>(pages: &'a VersionPages, aliases: &'a HashMap<String, String>) -
 }
 
 /// Whether page `page` is the same page in both versions: the same laid page drawing the
-/// same flow items, in the same context and stories' epoch, its body lines named alike --
-/// what paints alike, digested or not.
+/// same flow items, in the same model context, page context and stories' epoch, its body
+/// lines named alike -- what paints alike, digested or not.
 fn same_page(
     (before, was): (&LaidVersion, &VersionPages),
     (now, is): (&LaidVersion, &VersionPages),
     page: usize,
 ) -> bool {
     before.epoch == now.epoch
+        && before.context == now.context
         && was.contexts.get(page) == is.contexts.get(page)
         && was.ids.get(page) == is.ids.get(page)
         && matches!(

@@ -53,6 +53,8 @@ pub struct Call<'a> {
     pub(crate) others: &'a [(String, Opened)],
     /// The tables of the open documents the host holds itself.
     pub(crate) tables: Option<&'a dyn ooxml_tools_word::HostTables>,
+    /// The rows of the sources the call names, as the host resolved them.
+    pub(crate) sources: &'a ooxml_tools_word::Sources,
     /// The pages and lines of the version's layout, where the host laid it out.
     pub(crate) counts: Option<ooxml_tools_word::LayoutCounts>,
     /// The host's limits on the call's reply.
@@ -136,12 +138,14 @@ impl Call<'_> {
         .with_tracking(tracking)
         .with_layout(self.layout.map(|layout| layout as &dyn ooxml_word_edit::FieldLayout))
         .with_layout_limit(self.layout_limit)
-        .with_others(Others::new(&others).with_tables(self.tables))
+        .with_others(Others::new(&others).with_tables(self.tables).with_sources(self.sources))
         .with_blobs(self.blobs)
         .with_written(self.written)
         .with_rows_written(Some(&word.rows_written))
         .with_limits(self.limits)
-        .with_locale(self.locale);
+        .with_locale(self.locale)
+        .with_last_check(Some(&*word.last_check))
+        .with_in_group(word.editor.store().group_mark().is_some());
         // what its edits made is the call's even where the handler panics after them: the
         // panic goes on to the session's edge (crate::panics), which says they stay
         let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&editing)));
@@ -172,7 +176,7 @@ impl Call<'_> {
         let version = self
             .doc
             .version_of()
-            .with_others(Others::new(&others).with_tables(self.tables))
+            .with_others(Others::new(&others).with_tables(self.tables).with_sources(self.sources))
             .with_owned(self.owned())
             .with_limits(self.limits)
             .with_counts(self.counts);

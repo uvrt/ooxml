@@ -242,27 +242,15 @@ range', not_found); the Rust core refuses the row as docx-agent's delete_row doe
 # ---------------------------------------------------------------------------------------------
 
 [[not_supported]]
-form = "word_edit_table sync"
-cause = "lane E1 (edit_table sync), before the release"
-
-[[not_supported]]
-form = "word_edit_table from (sources)"
-cause = "lane E1 (edit_table from), before the release"
-
-[[not_supported]]
 form = "word_edit_table *"
-cause = """the rest of edit_table's forms: values by reference, tables placed from a source, \
-Accept All's cell ends, note or comment references (deferred, objects O, p4e-plan.md)"""
-
-[[not_supported]]
-form = "keep_together's pages without a layout"
-cause = "lane E2 (keep_together in word_format and word_format_table), before the release"
+cause = """edit_table's forms not ported: values by reference, sync from one value, tables placed \
+from a source, Accept All's cell ends, note or comment references (deferred, objects O, p4e-plan.md)"""
 
 [[not_supported]]
 form = "check: *"
-cause = """check's forms the session does not give yet: arguments (copies, scale, a deck's), layout \
-facts without the host's layout, pages outside the ranges, a document not owned (lanes H7a/H7b, \
-P5; the deck arguments are pptx's)"""
+cause = """check's forms the session does not give yet: arguments (scale, a deck's), copies of a \
+document held as a package, layout facts without the host's layout, pages outside the ranges, a \
+document not owned (lanes H7a/H7b, P5; the deck arguments are pptx's)"""
 
 [[not_supported]]
 form = "render: *"

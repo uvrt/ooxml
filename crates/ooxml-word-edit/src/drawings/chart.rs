@@ -25,6 +25,7 @@ use crate::{EditError, Result, WordDoc};
 use ooxml_base::Limits;
 use ooxml_opc::name::rels_for;
 use ooxml_store::{Command, Txn};
+use ooxml_word_model::address::resolve::refuse_inside_table;
 use ooxml_word_model::docx::{find_path, style_name, Docx};
 use ooxml_xml::Tree;
 use std::sync::Arc;
@@ -178,6 +179,7 @@ impl<P: ChartParts> InsertChart<P> {
             self.at.clone()
         } else {
             let docx = sink.docx()?;
+            no_row_or_cell(&docx, &self.at)?;
             let style = continued_style(sink.doc(), &docx, &self.at);
             let inserted = insert_paragraph(sink, &self.at, (true, "", style))?;
             created.push(inserted.id.clone());
@@ -268,6 +270,15 @@ fn put_from(sink: &mut EditSink<'_, '_>, made: &ooxml_opc::Package, name: &str) 
     }
 }
 
+/// A row or cell is no block a chart's paragraph goes after: refused with its table and its
+/// paragraphs (docx-agent's `insert_paragraph(after=)` resolves block ids only).
+fn no_row_or_cell(docx: &Docx, at: &str) -> Result<()> {
+    match refuse_inside_table(docx, at, "a paragraph or table") {
+        Some(error) => Err(EditError::Address(error)),
+        None => Ok(()),
+    }
+}
+
 /// docx-agent's `_chart_size` bounds: 1-1584 pt each way.
 fn check_size((width, height): (f64, f64)) -> Result<()> {
     if [width, height].iter().all(|v| (1.0..=1584.0).contains(v)) {
@@ -304,6 +315,7 @@ impl<P: ChartParts> Command<WordDoc> for InsertChart<P> {
             crate::fields::place(doc, &docx, &self.at, true).map(|_| ())
         } else {
             let docx = doc.docx()?;
+            no_row_or_cell(&docx, &self.at)?;
             crate::paragraphs::anchor(doc, &docx, &self.at).map(|_| ())
         }
     }

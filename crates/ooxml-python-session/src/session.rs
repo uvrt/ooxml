@@ -8,10 +8,10 @@
 use crate::adapters::{context, SessionStop};
 use crate::context::{caller_context, PyCallContext};
 use crate::locale::locale_of;
-use crate::options::{context_of, PyCallOptions, PyHostIds};
+use crate::options::{context_of, PyCallLayout, PyCallOptions, PyHostIds};
 use crate::version::PyVersion;
 use ooxml_base::Locale;
-use ooxml_session::{DocId, DocKind, HeldId, RetiredBy, Session, SessionConfig, SessionError};
+use ooxml_session::{BlockAt, DocId, DocKind, HeldId, RetiredBy, Session, SessionConfig, SessionError};
 use ooxml_store::StoreConfig;
 use ooxml_tools::compact;
 use ooxml_word_edit::EarlierIds;
@@ -124,6 +124,12 @@ fn held_id(kind: &str, value: u64) -> PyResult<HeldId> {
 /// What `Session.call` answers: the reply's JSON text, its images, and what only the
 /// application reads (JSON text).
 type Reply = (String, Vec<Py<PyBytes>>, String);
+
+/// `Session.block_pages`' answer: each block's pages or why not, else why nothing was laid out.
+type BlockPagesPy = (
+    Option<Vec<(&'static str, Option<Vec<usize>>, Option<String>)>>,
+    Option<String>,
+);
 
 #[pymethods]
 impl PySession {
@@ -403,6 +409,47 @@ impl PySession {
             .map(|seen| (seen.version, crate::summary::PyLayoutSummary { inner: seen.pages })))
     }
 
+    /// The pages the document's head version draws each of `blocks` on (body blocks by id),
+    /// laid out by `options`' page engine (its `layout`) within the context's limit on laying
+    /// out: `(blocks, why)` -- per block `("pages", page numbers from 1, None)`, `("outside", None, None)`
+    /// for one outside the body, or `("unknown", None, why the layout cannot say)`; `blocks`
+    /// `None` with `why` where the version was not laid out (no page engine handed, the limit
+    /// passed, a version the layout does not lay out).
+    ///
+    /// # Errors
+    /// `KeyError`/`ValueError` as the session's: a document not open, not a Word document.
+    #[pyo3(signature = (doc, blocks, options = None))]
+    fn block_pages(
+        &self,
+        py: Python<'_>,
+        doc: &str,
+        blocks: Vec<String>,
+        options: Option<PyRef<'_, PyCallOptions>>,
+    ) -> PyResult<BlockPagesPy> {
+        let id = doc_id(doc, &self.inner)?;
+        let context = context_of(options.as_deref());
+        let session = &self.inner;
+        let found = py
+            .detach(|| session.block_pages(&id, &blocks, &context))
+            .map_err(|e| to_py(&e))?;
+        Ok(match found {
+            Ok(pages) => (
+                Some(
+                    pages
+                        .into_iter()
+                        .map(|at| match at {
+                            BlockAt::Pages(numbers) => ("pages", Some(numbers), None),
+                            BlockAt::Outside => ("outside", None, None),
+                            BlockAt::Unknown(why) => ("unknown", None, Some(why)),
+                        })
+                        .collect(),
+                ),
+                None,
+            ),
+            Err(why) => (None, Some(why)),
+        })
+    }
+
     /// Keep `summary` (a `LayoutSummary` of the document's engine) as what the document's
     /// last check saw -- a check the host made itself -- of the version `at` where given;
     /// `None`: forget what the last check saw.
@@ -543,6 +590,53 @@ impl PySession {
         let session = &self.inner;
         py.detach(|| session.note_rows_written(&id, rows))
             .map_err(|e| to_py(&e))
+    }
+
+    /// The live view of the Word document `doc` (an application's API, not a tool): its
+    /// pages at its head version, laid out by `layout`'s page engine (a `CallLayout(pages=)`)
+    /// within `context`'s limit on laying out, and those changed since the view whose token is
+    /// `since` (every page without one). Returns a dict: `token` (this version's: `since` for
+    /// the next view, `page_svg`'s token), `pages` (each `(number, blocks, width, height)`:
+    /// the ids of the body's top-level blocks it draws, in document order, its size in
+    /// points), `changed` (1-based), `since` (as given), `stale` (`since` names no version
+    /// kept: every page is changed), `note`, `version` (the state number laid out).
+    ///
+    /// # Errors
+    /// `KeyError` for a document not open; `ValueError` for one that is not Word's or a
+    /// layout without pages; `ooxml_core.ViewRefused` for a version the engine does not lay
+    /// out yet; `TimeoutError` past the limit.
+    #[pyo3(signature = (doc, since = None, *, layout, context = None))]
+    fn view<'py>(
+        &self,
+        py: Python<'py>,
+        doc: &str,
+        since: Option<&str>,
+        layout: PyRef<'_, PyCallLayout>,
+        context: Option<PyRef<'_, PyCallContext>>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        crate::view::view(py, &self.inner, (doc, since), &layout, context.as_deref())
+    }
+
+    /// Page `page` (1-based) of the version `token` names (a view's) as SVG, its paragraph
+    /// groups carrying `data-docx-agent-id` (that version's ids), its pictures embedded:
+    /// `(svg, warnings)`. `text`: `"text"` (`"outlines"` is not drawn yet).
+    ///
+    /// # Errors
+    /// `ooxml_core.UnknownToken` for a token no view of the document gave or kept;
+    /// `IndexError` for a page the version does not have; `ValueError` for a `text` there is
+    /// none of; `ooxml_core.ViewRefused` for `"outlines"`; as [`view`](Self::view).
+    #[pyo3(signature = (doc, page, token, *, layout, text = "text", context = None))]
+    fn page_svg(
+        &self,
+        doc: &str,
+        page: usize,
+        token: &str,
+        layout: PyRef<'_, PyCallLayout>,
+        text: &str,
+        context: Option<PyRef<'_, PyCallContext>>,
+    ) -> PyResult<(String, Vec<String>)> {
+        let py = layout.py();
+        crate::view::page_svg(py, &self.inner, (doc, page, token), (&layout, text), context.as_deref())
     }
 
     /// Close the document; its versions and history are let go.
