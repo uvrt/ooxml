@@ -27,9 +27,8 @@ lock*.  In order, each taken only with those before it held, never the other way
    never while laying out or waiting) -- one document's at a time (:func:`adopt` takes the
    copy's, lets it go, then the document's), and :data:`_KEEPERS_LOCK` only to make one;
 3. :data:`_RECENT_LOCK` (taken in :func:`lay_out_bytes`, with neither of the above held);
-4. a layout's drawing lock (``_Conversion.drawing``: :func:`render_svg` and
-   :mod:`docx_agent.liveview` drawing a page, or a page's digest, from a layout made
-   already), taken with nothing held but -- in :func:`render_svg` -- the document's lock, and
+4. a layout's drawing lock (``_Conversion.drawing``: :func:`render_svg` drawing a page,
+   or a page's digest, from a layout made already), taken with nothing held but -- in :func:`render_svg` -- the document's lock, and
    nothing taken or waited for under it.
 
 A layout in progress (:class:`_Flight`) is waited for only by a caller that let the
@@ -1487,10 +1486,7 @@ def _taken(blob: bytes) -> tuple:
 class _Held:
     """A layout a process holds: ``(layout, fonts, warnings)``, and what was read from it
     since (:attr:`extra`: the document opened from its bytes, its :class:`DocumentLayout`,
-    its summary), all of one state.  Round 58 (Q2): ``extra["views"]``, the layouts of the
-    versions a live view was given (:mod:`docx_agent.liveview`), go on with the lineage's
-    newest layout, each laid out again from it -- so the task that takes the lineage takes
-    them too, and no two tasks draw with the faces the versions share."""
+    its summary), all of one state."""
 
     __slots__ = ("laid", "extra", "lineage", "cost", "token")
 
@@ -1505,21 +1501,8 @@ class _Held:
 
 
 def held_cost(held: _Held) -> int:
-    """What keeping ``held`` costs: its layout's :func:`layout_cost`, and :data:`PAGE_COST`
-    for each page of a live view's layout kept with it (``extra["views"]``, each with its
-    ``laid``) that is not one of the newest layout's own -- a layout made from another
-    keeps the pages an edit did not reach, the very objects."""
-    layout = held.laid[0]
-    cost = layout_cost(layout)
-    views = held.extra.get("views")
-    if views:
-        counted = {id(page) for page in getattr(layout, "pages", None) or ()}
-        for kept in views.values():
-            for page in getattr(kept.laid[0], "pages", None) or ():
-                if id(page) not in counted:
-                    counted.add(id(page))
-                    cost += PAGE_COST
-    return cost
+    """What keeping ``held`` costs: its layout's :func:`layout_cost`."""
+    return layout_cost(held.laid[0])
 
 
 #: The layouts this process holds, by token, the newest last: one per lineage, within
@@ -1633,9 +1616,6 @@ def held_layout(data: bytes, options: dict, state: tuple, *, changed_pages: bool
         _let_go_held(lineage)
         raise
     made = _Held(laid)
-    if found is not None and found.extra.get("views"):
-        # Round 58 (Q2): a live view's versions go on with the lineage's newest layout.
-        made.extra["views"] = found.extra["views"]
     summary = found.extra.get("summary") if found is not None else None
     if summary is not None:
         # The summary of the layout this one was made from, for this one's (round 39:
@@ -2044,12 +2024,9 @@ def forget_lineage(lineage: str) -> None:
     _pages.forget(lineage)
     with _HELD_LOCK:
         dropped = [_HELD.pop(t) for t, held in list(_HELD.items()) if held.lineage == lineage]
-    # What their flows measured (docx2svg's own lineages: one per unbroken run of layouts,
-    # a live view's versions among them) goes with them.
-    measured = set()
-    for held in dropped:
-        layouts = [held.laid[0], *(version.laid[0] for version in (held.extra.get("views") or {}).values())]
-        measured.update(getattr(getattr(layout, "state", None), "lineage", None) for layout in layouts)
+    # What their flows measured (docx2svg's own lineages: one per unbroken run of layouts)
+    # goes with them.
+    measured = {getattr(getattr(held.laid[0], "state", None), "lineage", None) for held in dropped}
     for found in measured - {None}:
         _MEASURES.forget(found)
 

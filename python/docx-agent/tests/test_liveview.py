@@ -1,38 +1,29 @@
-"""Round 35, R27: an application's live view from the layout the tools share
+"""Round 35, R27, on the Rust session (lane LV3): an application's live view
 (:mod:`docx_agent.liveview`).
 
 What each test holds: ``view`` lists every page with its blocks and the pages whose drawing
-changed since a token -- the pages docx2svg's own ``changed_pages`` names for the same two
-versions; ``page_svg`` draws one page of the token's version, as ``render_svg`` draws it,
-pictures by name or embedded, text as text or outlines; the version is laid out once for
-the tools and the view together; and views beside checks and edits all finish (round 34's
-rule: no wait for a layout in progress under the document's lock).  Calls in threads are
-joined with a deadline: a deadlock fails the test, never hangs the run.  Made-up documents
-only."""
+changed since a token; ``page_svg`` draws one page of the token's version, tagged with its
+ids (the footer's from its part), pictures by name or embedded, even after the document
+moved on; tokens of another session or none are stale or unknown; the refusals give the way
+out; and views read while another thread edits.  Made-up documents only."""
 
 from __future__ import annotations
 
 import struct
 import threading
-import time
 import zlib
 
-import docx2svg
 import pytest
 
 from docx_agent import Document
-from docx_agent import layout as layout_module
-from docx_agent import liveview
 from docx_agent.liveview import UnknownToken, embed_images, page_svg, view
 
-from gates import Arrivals, Gate
+from ooxml_edit.tools import ToolError
 
 pytestmark = pytest.mark.any_faces
 
-#: How long the calls of one threaded test may take in all before it calls them deadlocked.
+#: How long the calls of the threaded test may take in all before it calls them deadlocked.
 DEADLINE = 90.0
-#: How long the slowed layout engine stalls before each layout.
-STALL = 0.4
 
 WORDS = ("lantern meadow river stone harbour quiet orchard copper valley signal morning ledger window "
          "garden timber bridge market evening canvas thread pebble summit").split()
@@ -81,170 +72,6 @@ def made() -> bytes:
     return report()
 
 
-def _body(document: Document) -> list:
-    return [p for p in document.paragraphs() if len(p.text) > 200]
-
-
-def _edits():
-    """``(name, edit(document))``: edits of each kind a writer makes."""
-
-    def text(document):
-        _body(document)[4].set_text("A shorter paragraph now.")
-
-    def longer(document):
-        paragraph = _body(document)[2]
-        paragraph.set_text(paragraph.text + " " + _text(99, 12))
-
-    def row(document):
-        document.insert_row(document.tables()[1].id, 2)
-
-    def delete(document):
-        _body(document)[6].delete()
-
-    def style(document):
-        document.styles.modify("Heading 1", size=23)
-
-    def nothing(document):
-        pass
-
-    return [(f.__name__, f) for f in (text, longer, row, delete, style, nothing)]
-
-
-# -- view --------------------------------------------------------------------------------------
-
-
-def test_the_first_view_lists_every_page_with_its_blocks(made):
-    document = Document.open(made)
-    shown = view(document)
-    layout = document.layout()
-    assert shown.page_count == layout.page_count > 3
-    assert shown.changed == list(range(1, shown.page_count + 1))
-    assert [list(p.blocks) for p in shown.pages] == [layout.blocks_on(n) for n in range(1, layout.page_count + 1)]
-    assert all(p.width > 500 and p.height > 700 for p in shown.pages)
-    again = view(document, since=shown.token)
-    assert again.token == shown.token and again.changed == [] and not again.stale
-
-
-@pytest.mark.parametrize("name, edit", _edits(), ids=[name for name, _ in _edits()])
-def test_changed_pages_are_docx2svgs_for_the_same_versions(made, name, edit):
-    document = Document.open(made)
-    shown = view(document)
-    edit(document)
-    after = view(document, since=shown.token)
-    # docx2svg's own answer for the same two versions: laid out from the one before.
-    before, _, _ = docx2svg.lay_out_docx(made, docx2svg.ConvertOptions(**layout_module.layout_options(document, {})))
-    new, _, _ = docx2svg.lay_out_docx(document.to_bytes(),
-                                      docx2svg.ConvertOptions(**layout_module.layout_options(document, {})),
-                                      previous=before)
-    assert after.changed == new.changed_pages, name
-    if name == "nothing":
-        assert after.token == shown.token and after.changed == []
-
-
-def test_changes_since_an_older_token_are_every_page_that_differs(made):
-    """Two edits on two pages, the view asked since before both."""
-    document = Document.open(made)
-    first = view(document)
-    _body(document)[0].set_text("Changed on the first chapter's page.")
-    view(document, since=first.token)
-    _body(document)[-1].set_text("Changed on the last chapter's page.")
-    since_first = view(document, since=first.token)
-    layout = document.layout()
-    on = sorted(set(layout.pages_of(_body(document)[0].id)) | set(layout.pages_of(_body(document)[-1].id)))
-    assert set(on) <= set(since_first.changed)
-
-
-def test_a_stale_token_says_so_and_lists_every_page(made):
-    document = Document.open(made)
-    shown = view(document, since="0000-not-a-token")
-    assert shown.stale and "every page" in shown.note
-    assert shown.changed == list(range(1, shown.page_count + 1))
-    other = view(Document.open(made))
-    assert view(document, since=other.token).stale                     # another document's
-
-
-def test_old_tokens_are_dropped_past_the_kept_number(made, monkeypatch):
-    monkeypatch.setattr(liveview, "VIEW_TOKENS", 2)
-    document = Document.open(made)
-    tokens = [view(document).token]
-    for k in range(2):
-        _body(document)[k].set_text(f"Edit {k}.")
-        tokens.append(view(document).token)
-    assert view(document, since=tokens[0]).stale
-    with pytest.raises(UnknownToken, match="call view"):
-        page_svg(document, 1, tokens[0])
-
-
-# -- page_svg ----------------------------------------------------------------------------------
-
-
-def test_a_page_is_drawn_as_render_svg_draws_it(made):
-    document = Document.open(made)
-    shown = view(document)
-    for number in (1, shown.page_count):
-        embedded = page_svg(document, number, shown.token, images="embedded")
-        assert embedded.svg == document.render_svg([number])[0]
-        assert embedded.images == {}
-        assert "data-docx-agent-id" in embedded.svg
-
-
-def test_pictures_come_back_by_name(made):
-    document = Document.open(made)
-    shown = view(document)
-    page = next(p.number for p in shown.pages if document.paragraphs()[1].id in p.blocks)
-    drawn = page_svg(document, page, shown.token)
-    [(name, data)] = drawn.images.items()
-    assert name.startswith("img/") and name.endswith(".png") and len(name) == len("img/") + 32 + 4
-    assert data.startswith(b"\x89PNG") and "base64," not in drawn.svg
-    assert embed_images(drawn.svg, drawn.images) == page_svg(document, page, shown.token, images="embedded").svg
-    with pytest.raises(KeyError, match="no such entry"):
-        embed_images(drawn.svg, {})
-
-
-def test_outlines_with_one_glyph_set(made):
-    document = Document.open(made)
-    shown = view(document)
-    glyphs: dict = {}
-    one = page_svg(document, 1, shown.token, text="outlines", glyphs=glyphs)
-    count = len(glyphs)
-    two = page_svg(document, 2, shown.token, text="outlines", glyphs=glyphs)
-    assert count > 0 and len(glyphs) >= count
-    for drawn in (one, two):
-        assert "<use" in drawn.svg and "<text" not in drawn.svg and "data-docx-agent-id" in drawn.svg
-    alone = page_svg(document, 1, shown.token, text="outlines")
-    assert docx2svg.embed_glyphs(one.svg, glyphs) == alone.svg
-
-
-def test_an_older_tokens_page_is_that_versions(made):
-    """The document moved on: the page drawn is the token's version, with its ids."""
-    document = Document.open(made)
-    shown = view(document)
-    target = _body(document)[0]
-    page = document.layout().pages_of(target.id)[0]
-    before = page_svg(document, page, shown.token, images="embedded").svg
-    target.set_text("Rewritten after the view.")
-    assert page_svg(document, page, shown.token, images="embedded").svg == before
-    assert Document.open(made).render_svg([page])[0] == before
-
-
-def test_refusals_say_the_way_out(made):
-    document = Document.open(made)
-    shown = view(document)
-    with pytest.raises(IndexError, match=f"1 to {shown.page_count}"):
-        page_svg(document, shown.page_count + 1, shown.token)
-    with pytest.raises(ValueError, match="text, outlines"):
-        page_svg(document, 1, shown.token, text="paths")
-    with pytest.raises(ValueError, match="external, embedded"):
-        page_svg(document, 1, shown.token, images="inline")
-    with pytest.raises(UnknownToken, match="call view"):
-        page_svg(document, 1, "nothing")
-    with pytest.raises(TypeError, match=r"\(document, page, token\) or \(session, doc, page, token\)"):
-        page_svg(document, 1)
-
-
-# -- one layout per version, shared, and no wait under the lock -----------------------------------
-
-
 def _toolbox():
     from ooxml_edit.tools import Toolbox
 
@@ -253,175 +80,162 @@ def _toolbox():
     return Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0)
 
 
-def _counted(monkeypatch, stall: float = 0.0, hold=None) -> tuple[list, threading.Event]:
-    """docx2svg's layouts counted (and each stalled by ``stall``, to mix the calls of a
-    stress run); the event is set when the first began.  ``hold``: called in the first
-    layout before it goes on -- where a test holds it until the others did what they should
-    do meanwhile (an order of events, not a stall long enough)."""
-    calls: list = []
-    started = threading.Event()
-    run = docx2svg.lay_out_docx
-
-    def counted(*args, **kwargs):
-        calls.append(1)
-        first = not started.is_set()
-        started.set()
-        if first and hold is not None:
-            hold()
-        if stall:
-            time.sleep(stall)
-        return run(*args, **kwargs)
-
-    monkeypatch.setattr(docx2svg, "lay_out_docx", counted)
-    return calls, started
-
-
-def test_a_view_after_a_check_lays_nothing_out(made, monkeypatch):
-    pytest.importorskip("ooxml_edit.tools.shared")
-    calls, _ = _counted(monkeypatch)
+@pytest.fixture
+def opened(made):
+    """``(toolbox, session, doc)``: the report open in a session."""
     with _toolbox() as box:
         session = box.session()
-        d1 = session.open(made, "report.docx")
-        assert box.dispatch(session, "check", {"doc": d1, "include": ["reflow"]}).ok
-        laid = len(calls)
-        shown = view(session, d1)
-        assert len(calls) == laid
-        assert shown.version == session.entry(d1).version
-        drawn = page_svg(session, d1, 1, shown.token)
-        assert len(calls) == laid and drawn.svg.startswith("<svg")
-        # An edit, then a check: the view of the new version finds that layout too.
-        target = _body(session.entry(d1).document)[0].id
-        assert box.dispatch(session, "word_set_text", {"doc": d1, "target": target, "text": "Shorter."}).ok
-        assert box.dispatch(session, "check", {"doc": d1}).ok
-        laid = len(calls)
-        after = view(session, d1, since=shown.token)
-        assert len(calls) == laid and after.changed
+        yield box, session, session.open(made, "report.docx")
 
 
-def _all_finish(jobs: list) -> list:
-    """Every job run in its own daemon thread, all joined by :data:`DEADLINE`: a deadlock
-    fails the test, never hangs the run.  Each job's result or error."""
-    out: list = [None] * len(jobs)
+def _set_text(box, session, doc, target: str, text: str) -> None:
+    result = box.dispatch(session, "word_set_text", {"doc": doc, "target": target, "text": text})
+    assert result.ok, result.error and result.error.to_json()
 
-    def run(k, job):
+
+def _paragraphs(shown) -> list[str]:
+    """The body paragraphs' ids, in order, as the view lists them (each once)."""
+    seen: list[str] = []
+    for page in shown.pages:
+        seen.extend(b for b in page.blocks if b.startswith("p:") and b not in seen)
+    return seen
+
+
+# -- view --------------------------------------------------------------------------------------
+
+
+def test_the_first_view_lists_every_page_with_its_blocks(opened):
+    _, session, d1 = opened
+    shown = view(session, d1)
+    assert shown.page_count > 3
+    assert shown.changed == list(range(1, shown.page_count + 1))
+    assert [p.number for p in shown.pages] == shown.changed
+    assert all(p.blocks for p in shown.pages)
+    assert any(b.startswith("t:") for p in shown.pages for b in p.blocks), "the tables too"
+    assert all(p.width > 500 and p.height > 700 for p in shown.pages)
+    assert shown.version == session.entry(d1).version
+    again = view(session, d1, since=shown.token)
+    assert again.token == shown.token and again.changed == [] and not again.stale
+
+
+def test_an_edit_changes_the_pages_it_draws_on(opened):
+    box, session, d1 = opened
+    shown = view(session, d1)
+    target = _paragraphs(shown)[-1]
+    _set_text(box, session, d1, target, "Changed on the last chapter's page.")
+    after = view(session, d1, since=shown.token)
+    on = [p.number for p in after.pages if target in p.blocks]
+    assert after.token != shown.token and on and set(on) <= set(after.changed)
+    assert 1 not in after.changed, "the title page draws nothing that changed"
+
+
+def test_a_stale_token_says_so_and_lists_every_page(opened, made):
+    _, session, d1 = opened
+    shown = view(session, d1, since="0000-not-a-token")
+    assert shown.stale and "every page" in shown.note
+    assert shown.changed == list(range(1, shown.page_count + 1))
+    with _toolbox() as other_box:
+        other = other_box.session()
+        theirs = view(other, other.open(made, "report.docx"))
+    assert view(session, d1, since=theirs.token).stale            # another session's
+
+
+# -- page_svg ----------------------------------------------------------------------------------
+
+
+def test_a_page_is_tagged_with_its_versions_ids(opened):
+    _, session, d1 = opened
+    shown = view(session, d1)
+    for page in shown.pages:
+        drawn = page_svg(session, d1, page.number, shown.token, images="embedded")
+        assert drawn.svg.startswith("<svg") and drawn.images == {}
+        for block in page.blocks:
+            assert f'data-docx-agent-id="{block}' in drawn.svg or block.startswith("t:")
+    first = page_svg(session, d1, 1, shown.token).svg
+    assert 'data-docx-agent-id="footer1/p:' in first, "the footer's paragraph tagged with its part"
+
+
+def test_pictures_come_back_by_name(opened):
+    _, session, d1 = opened
+    shown = view(session, d1)
+    page = 1                                    # the picture is in the title page's text
+    drawn = page_svg(session, d1, page, shown.token)
+    [(name, data)] = drawn.images.items()
+    assert name.startswith("img/") and name.endswith(".png") and len(name) == len("img/") + 32 + 4
+    assert data.startswith(b"\x89PNG") and "base64," not in drawn.svg
+    assert embed_images(drawn.svg, drawn.images) == page_svg(session, d1, page, shown.token, images="embedded").svg
+    with pytest.raises(KeyError, match="no such entry"):
+        embed_images(drawn.svg, {})
+
+
+def test_an_older_tokens_page_is_that_versions(opened):
+    """The document moved on: the page drawn is the token's version, with its ids."""
+    box, session, d1 = opened
+    shown = view(session, d1)
+    target = _paragraphs(shown)[1]
+    page = next(p.number for p in shown.pages if target in p.blocks)
+    before = page_svg(session, d1, page, shown.token, images="embedded").svg
+    _set_text(box, session, d1, target, "Rewritten after the view.")
+    now = view(session, d1, since=shown.token)
+    assert page in now.changed
+    assert page_svg(session, d1, page, shown.token, images="embedded").svg == before
+    assert "Rewritten" in page_svg(session, d1, page, now.token, images="embedded").svg
+
+
+def test_refusals_say_the_way_out(opened, made):
+    _, session, d1 = opened
+    shown = view(session, d1)
+    with pytest.raises(IndexError, match=f"1 to {shown.page_count}"):
+        page_svg(session, d1, shown.page_count + 1, shown.token)
+    with pytest.raises(ValueError, match="text, outlines"):
+        page_svg(session, d1, 1, shown.token, text="paths")
+    with pytest.raises(ValueError, match="external, embedded"):
+        page_svg(session, d1, 1, shown.token, images="inline")
+    with pytest.raises(ToolError, match='text="text"'):
+        page_svg(session, d1, 1, shown.token, text="outlines")
+    with pytest.raises(UnknownToken, match="call view"):
+        page_svg(session, d1, 1, "nothing")
+    with pytest.raises(TypeError, match=r"\(session, doc, page, token\)"):
+        page_svg(session, d1, 1)
+    with pytest.raises(TypeError, match="open it in one"):
+        view(made)                              # a document's bytes, outside a session
+
+
+# -- views beside edits ------------------------------------------------------------------------
+
+
+def test_views_are_read_while_another_thread_edits(opened):
+    """An edit thread and a view thread at once: every view names a version whose pages it
+    draws, and the last view shows the last edit."""
+    box, session, d1 = opened
+    body = _paragraphs(view(session, d1))[1:]
+    errors: list = []
+
+    def editing():
+        for k in range(4):
+            _set_text(box, session, d1, body[k % len(body)], f"Round {k}.")
+
+    def viewing():
+        token = None
+        for _ in range(4):
+            shown = view(session, d1, since=token)
+            for number in shown.changed[:2]:
+                assert page_svg(session, d1, number, shown.token).svg.startswith("<svg")
+            token = shown.token
+
+    def run(job):
         try:
-            out[k] = job()
+            job()
         except BaseException as error:  # noqa: BLE001 -- reported below
-            out[k] = error
+            errors.append(error)
 
-    threads = [threading.Thread(target=run, args=(k, job), daemon=True) for k, job in enumerate(jobs)]
+    threads = [threading.Thread(target=run, args=(job,), daemon=True) for job in (editing, viewing)]
     for thread in threads:
         thread.start()
-    ends = time.monotonic() + DEADLINE
     for thread in threads:
-        thread.join(max(0.0, ends - time.monotonic()))
-    hung = [t for t in threads if t.is_alive()]
-    if hung:
-        pytest.fail(f"deadlock: {len(hung)} of {len(threads)} calls still waiting after {DEADLINE:g} s")
-    errors = [r for r in out if isinstance(r, BaseException)]
+        thread.join(DEADLINE)
+    assert not any(t.is_alive() for t in threads), "deadlock"
     assert not errors, errors
-    return out
-
-
-@pytest.mark.usefixtures("python_layout")  # lane L4: the Python layout's flights
-def test_a_view_waits_for_a_checks_layout_with_the_lock_let_go(made, monkeypatch):
-    """A lone check lays the version out (held until the views asked); views asked meanwhile
-    wait for that one layout where the layouts are held (round 58: the view's task runs
-    where the toolbox's runner holds them, here in this process), the document's lock let
-    go -- one layout in all, one token."""
-    asked = Arrivals()
-    task = liveview.view_bytes
-
-    def counted(*args):
-        asked.arrive()
-        return task(*args)
-
-    monkeypatch.setattr(liveview, "view_bytes", counted)
-    monkeypatch.setattr(layout_module, "_HELD_WAIT", 60.0)
-    reached: list = []
-    # The check's layout is held until the three views asked for theirs.
-    calls, started = _counted(monkeypatch, hold=lambda: reached.append(asked.until(3)))
-    with _toolbox() as box:
-        session = box.session()
-        d1 = session.open(made, "report.docx")
-
-        def check():
-            result = box.dispatch(session, "check", {"doc": d1, "include": ["reflow"]})
-            assert result.ok, result.error
-            return result.data["reflow"]["pages"]
-
-        first = threading.Thread(target=check, daemon=True)
-        first.start()
-        assert started.wait(DEADLINE)
-        views = _all_finish([lambda: view(session, d1)] * 3)
-        first.join(DEADLINE)
-        assert not first.is_alive()
-    assert reached == [True] and asked.count == 3
-    assert len(calls) == 1
-    assert len({v.token for v in views}) == 1
-
-
-@pytest.mark.usefixtures("python_layout")  # lane L4: the Python layout's flights
-def test_a_view_by_a_thread_holding_the_lock_lays_out_on_its_own(made, monkeypatch):
-    """The application's thread holds the document's lock: its view never waits for the
-    check's layout in progress (whose owner takes that lock back) -- it lays out alone."""
-    gate = Gate()
-    calls, started = _counted(monkeypatch, hold=lambda: gate.hold("check's layout"))
-    with _toolbox() as box:
-        session = box.session()
-        d1 = session.open(made, "report.docx")
-        entry = session.entry(d1)
-        first = threading.Thread(target=lambda: box.dispatch(session, "check", {"doc": d1, "include": ["reflow"]}),
-                                 daemon=True)
-        first.start()
-        assert started.wait(DEADLINE)
-
-        def held():
-            with entry.lock:
-                return view(session, d1)
-
-        try:
-            [shown] = _all_finish([held])
-            gate.note("view")
-        finally:
-            gate.open()
-        first.join(DEADLINE)
-        assert not first.is_alive()
-    # The view came back with the check's layout still held: laid out on its own.
-    assert gate.order == ["check's layout in", "view", "check's layout out"], gate.order
-    assert shown.page_count > 3 and len(calls) == 2
-
-
-def test_views_checks_and_edits_together_all_finish(made, monkeypatch):
-    """Writers at once: lone checks, read_batches, edits and the application's views and
-    page drawing, a few rounds; every view consistent with the version it names."""
-    _counted(monkeypatch, 0.1)
-    with _toolbox() as box:
-        session = box.session()
-        d1 = session.open(made, "report.docx")
-        body = [p.id for p in _body(session.entry(d1).document)]
-        tokens: list = []
-
-        def looking():
-            shown = view(session, d1, since=tokens[-1] if tokens else None)
-            tokens.append(shown.token)
-            for number in shown.changed[:2]:
-                page_svg(session, d1, number, shown.token, text="outlines")
-            return shown
-
-        def call(name, arguments):
-            def run():
-                result = box.dispatch(session, name, arguments)
-                assert result.ok, result.error and result.error.to_json()
-                return result
-            return run
-
-        for k in range(2):
-            out = _all_finish([
-                call("check", {"doc": d1, "include": ["reflow"]}), looking,
-                call("word_set_text", {"doc": d1, "target": body[1 + k], "text": f"Round {k}."}),
-                looking, call("read_batch", {"ops": [{"tool": "check", "arguments": {"doc": d1}}]}),
-                call("check", {"doc": d1, "range": [body[3]]}), looking])
-            assert all(o is not None for o in out)
-        final = view(session, d1)
-        assert final.page_count == session.entry(d1).document.layout().page_count
+    last = view(session, d1)
+    page = next(p.number for p in last.pages if body[3] in p.blocks)
+    assert "Round 3." in page_svg(session, d1, page, last.token).svg
