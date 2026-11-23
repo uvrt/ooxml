@@ -4,9 +4,14 @@ Word 16.106 made a new blank document of (``edit/word_new.py``, measured by
 ``tools/e6_probe.py``; ROADMAP.md, "Decisions", 4), and the fixed pieces of the parts that do.
 
 Run from the repository root with docx-agent importable:
-``PYTHONPATH=python/docx-agent/src:python/ooxml-edit/src:python/ooxml-common/src python
-crates/ooxml-tools-word/data/word_new.py`` (``--check``: exit 1 when the file is not what it
-would write; docx-agent's ``tests/test_rust_new.py`` runs it so).
+``python crates/ooxml-tools-word/data/word_new.py`` (``--check``: exit 1 when the file is not
+what it would write).
+
+Since docx-agent 0.2.0 (P4e) the checkout has no ``docx_agent.edit``: run it with the frozen
+reference installed, docx-agent's Python at the commit crates/ooxml-oracle/reference.toml
+names (installed as the gates install it: .github/actions/gates-reference, local-gates.sh), or
+with ``PYTHONPATH`` pointing into a ``git archive`` of that commit.  The values it reads were
+measured from Word and are frozen there; what it writes is unchanged.
 """
 from __future__ import annotations
 

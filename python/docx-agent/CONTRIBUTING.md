@@ -89,9 +89,6 @@ and every saved document's parts are byte for byte the ones recorded. A change t
 or a saved document is not a refresh: record that transcript again
 (`goldens_replay.run(..., record=True)`) and review the diff as part of the change.
 
-The recipes in [docs/common-tasks.md](docs/common-tasks.md) are run as written by
-`tests/test_readme.py`; keep them working.
-
 ## What never goes into the repository
 
 - **No Microsoft font file**, in any form, and no font data in any fixture.

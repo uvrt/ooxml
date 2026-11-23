@@ -4,11 +4,10 @@ them an :class:`~ooxml_edit.tools.OwnedDocument` -- the owner, its handle (the
 and each answers from the session's reading of that version, never from the Python view.
 
 - :func:`summary` -- what ``open_document`` says of it (``Version.summary``);
-- :func:`problems` -- its validation problems (``Version.problems``), as
-  :class:`docx_agent.validate.Problem` items;
+- :func:`problems` -- its validation problems (``Version.problems``), as :class:`Problem`
+  items;
 - :func:`id_state` -- the state kept beside its bytes (``Version.id_state``), numbered as the
-  tool layer numbers its states, the retired ids as the session records them
-  (:func:`.owner.retired_ids`);
+  tool layer numbers its states, the retired ids as the session records them;
 - :func:`block_kind` and :func:`has_drawing` -- what a source value names in it, for the
   ``own_source`` and ``source_hint`` refusals (lane H7d: ``Version.block_kind``,
   ``Version.has_drawing``);
@@ -17,17 +16,28 @@ and each answers from the session's reading of that version, never from the Pyth
 - :func:`number_texts` and :func:`scale_values` -- what a check of numbers and a scale read
   in it (lane H7e: ``Version.number_texts``, ``Version.scale_values``), placed with the
   session's own engine for the document (:func:`.engines.session_pages`);
-- :func:`closed` and :func:`restored` -- nothing of the session's: the session lets go of the
-  document as the owner closes it, and what a batch or scoped undo puts back is its own
-  version; only what docx-agent kept in this process for a view made of it goes.
 """
 
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import Any, Mapping
 
 from . import reads
+from .args import pages_of, ranges_of
+
+
+@dataclass(frozen=True)
+class Problem:
+    """One validation problem the session found: its code, the part and what it says."""
+
+    code: str
+    part: str
+    detail: str = ""
+
+    def __str__(self) -> str:
+        return f"[{self.code}] {self.part}: {self.detail}"
 
 
 def owned(subject: Any) -> Any:
@@ -70,27 +80,35 @@ def summary(subject: Any) -> dict[str, Any]:
 def problems(subject: Any) -> list[Any]:
     """The format's ``problems`` of an owned document: the version's, as the session finds
     them (the save gate compares them with those it opened with by ``problem_key``)."""
-    from ..validate import Problem
-
     found = version_of(subject).problems() or []
     return [Problem(code, part, detail) for code, part, detail in found]
 
 
 def id_state(subject: Any) -> str:
-    """The format's ``state`` of an owned document: ``Document.id_state``'s string, from the
-    ids the session holds (the same record docx-agent's view writes; the deflate bytes may
-    differ, and either opens the other's)."""
-    from .owner import retired_ids
-
+    """The format's ``state`` of an owned document: the state kept beside its bytes, from the
+    ids the session holds, the retired ones each numbered by the tool layer's number of the
+    version that retired it (one whose call is still ending is left out until it is)."""
     mirror = _mirror(subject)
     version = version_of(subject)
     number = version.state
     last = max(number, mirror.session.highest(mirror.doc))
-    retired = retired_ids(mirror)
-    state = version.id_state(
-        number, last, gone=list(retired.gone.items()),
-        drawings_gone=list(retired.drawings_gone.items()), earlier=list(retired.earlier.items()),
-        said=list(retired.said.items()))
+    gone: dict[int, int] = {}
+    drawings_gone: dict[int, int] = {}
+    earlier: dict[int, Any] = {}
+    said: dict[int, str] = {}
+    for kind, value, seq, caller, tool, then, words in mirror.session.retired(mirror.doc):
+        if seq is not None:
+            then = mirror.numbers.get(seq)
+            if then is None:
+                continue
+            if tool:
+                context = ", ".join(f"{key}={found}" for key, found in json.loads(caller).items()) if caller else ""
+                said[then] = f"{tool} ({context})" if context else tool
+        else:
+            earlier[then] = words
+        (gone if kind == "block" else drawings_gone)[value] = then
+    state = version.id_state(number, last, gone=list(gone.items()), drawings_gone=list(drawings_gone.items()),
+                             earlier=list(earlier.items()), said=list(said.items()))
     if state is None:
         raise TypeError(f"{mirror.doc} is not a Word document")
     return str(state)
@@ -118,22 +136,13 @@ def provenance(subject: Any) -> dict[str, Any]:
     return {str(key): dict(record) for key, record in json.loads(found)["provenance"]}
 
 
-def live_view(subject: Any) -> Any:
-    """The Python view docx-agent made of an owned document in this process, as it is (not
-    made current), or ``None``."""
-    live = getattr(_mirror(subject), "live", None)
-    return live() if live is not None else None
-
-
 def number_texts(call: Any, subject: Any, scope: Mapping[str, Any]) -> list[Any]:
     """The format's ``number_texts`` for an owned document (lane H7e): the texts a check of
     numbers reads in the version, as the session reads them (``Version.number_texts``),
     each placed on its page by the session's own engine for the document."""
     from ooxml_edit.tools import NumberText
 
-    from ..tools.shared import _pages_of
-
-    pages = _pages_of(call, scope.get("slides"), scope.get("pages"))
+    pages = pages_of(call, scope.get("slides"), scope.get("pages"))
     request = {"range": _ranges(call, scope.get("range")), "pages": pages}
     found = _values(call, subject, "number_texts", request, pages, always=True)
     return [NumberText(text["at"], text["text"], tuple((a, b) for a, b in text["written"]), {"range": text["at"]},
@@ -148,9 +157,7 @@ def scale_values(call: Any, subject: Any, scale: Any, scope: Mapping[str, Any]) 
     own engine for the document."""
     from ooxml_edit.tools import ScaleValue
 
-    from ..tools.shared import _pages_of
-
-    pages = _pages_of(call, scope.get("slides"), scope.get("pages"))
+    pages = pages_of(call, scope.get("slides"), scope.get("pages"))
     request = {"scale": {"name": scale.name, "targets": list(scale.targets), "labels": scale.labels,
                          "steps": [{"fill": s.fill, "text": s.text, "label": s.label} for s in scale.steps]},
                "range": _ranges(call, scope.get("range")), "pages": pages}
@@ -171,18 +178,7 @@ def scale_values(call: Any, subject: Any, scale: Any, scope: Mapping[str, Any]) 
 def _ranges(call: Any, value: Any) -> list[str]:
     """``range`` as a list of addresses, refs resolved (a heading's range is read as its
     span by the session, as ``check`` reads it)."""
-    from ..scope import ranges_of
-    from ..tools._base import refs_resolved
-
-    return ranges_of(refs_resolved(call, value))
-
-
-def _drawn_as(call: Any) -> Any:
-    """What the document of ``call`` is laid out with -- its font folders and locale, settings
-    the toolbox keeps on its view (``set_language``), not what the view holds of the
-    document --; the toolbox session's where the call's entry is not one the session owns."""
-    owned = reads._owned(call.entry)
-    return owned.held if owned is not None else call.session
+    return [reads.refs(call, item) for item in ranges_of(value)]
 
 
 def _values(call: Any, subject: Any, method: str, request: dict[str, Any], pages: Any,
@@ -190,19 +186,10 @@ def _values(call: Any, subject: Any, method: str, request: dict[str, Any], pages
     """The session's reply to ``Version.<method>`` for ``request`` (the session's engine for
     the document given where its texts are placed: always, or where ``pages`` are asked
     for); its warnings said, its refusal raised."""
-    from ooxml_edit.tools import ToolError
-
     from .engines import session_pages
     from .refusals import refusal
 
-    engine = None
-    if always or pages is not None:
-        engine, why = session_pages(_mirror(subject), _drawn_as(call))
-        if engine is None:
-            if pages is not None:
-                raise ToolError("layout_failed", f"numbers on pages need the layout: {why}; leave pages out "
-                                "to read the whole body, or give range", field="pages")
-            call.warn("numbers: the layout failed (layout_failed): no pages said")
+    engine = session_pages(reads.owned(call.entry)) if always or pages is not None else None
     reply = getattr(version_of(subject), method)(call.entry.doc_id, json.dumps(request), engine)
     found = json.loads(reply)
     if isinstance(found, dict) and found.get("error") is not None:
@@ -210,3 +197,9 @@ def _values(call: Any, subject: Any, method: str, request: dict[str, Any], pages
     for warning in (found or {}).get("warnings", ()):
         call.warn(warning)
     return found
+
+
+def live_view(subject: Any) -> Any:
+    """A Python view made of an owned document: none exists.  (Goes with its callers, the
+    format's ``restored`` and ``closed``, in lane CUT-A2.)"""
+    return None
