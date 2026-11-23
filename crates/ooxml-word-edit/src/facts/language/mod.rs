@@ -293,6 +293,9 @@ fn read(docx: &Docx, proofing: &mut Proofing, scope: LanguageScope<'_>) -> Readi
         }
     }
     detecting.finish();
+    if let (Some(memo), true) = (memo, scope.whole) {
+        memo.sweep();
+    }
     out
 }
 

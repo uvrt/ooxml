@@ -231,7 +231,9 @@ impl Document {
             opened,
             tracking: RwLock::new(None),
             retired: Retired::default(),
-            last_check: Arc::default(),
+            last_check: Arc::new(ooxml_tools_word::LastCheck::with_languages(
+                ooxml_word_edit::facts::Detections::new(Arc::new(Budget(Arc::clone(&context.budget)))),
+            )),
             images: ooxml_tools_word::PageImages::new(Some(Arc::clone(&context.budget))),
             rows_written: RowsWritten::default(),
             made_by: MadeBy::default(),

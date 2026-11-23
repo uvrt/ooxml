@@ -108,6 +108,11 @@ fn checks_after_edits_on_a_long_document() {
         tier.bytes >> 10,
         tier.bytes / tier.entries.max(1)
     );
+    let (judged, bytes) = s.last_check(&d).unwrap().unwrap().language_judgements();
+    println!(
+        "language judgements: {judged} paragraphs, {} KB on the document's account",
+        bytes >> 10
+    );
     let ms = |d: Duration| format!("{:.1} ms", d.as_secs_f64() * 1000.0);
     println!(
         "open {}; first check {}; set one letter {}; check {}; set a longer text {}; check {}",

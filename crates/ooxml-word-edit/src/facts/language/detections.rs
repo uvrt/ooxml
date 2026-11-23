@@ -17,6 +17,24 @@ pub struct Detections {
     pub(super) paragraphs: super::judged::Judgements,
 }
 
+impl Detections {
+    /// Detections whose paragraphs' judgements are counted on `budget` (a document's
+    /// account).
+    #[must_use]
+    pub fn new(budget: Arc<dyn ooxml_derive::CacheBudget>) -> Detections {
+        Detections {
+            kept: Mutex::default(),
+            paragraphs: super::judged::Judgements::new(budget),
+        }
+    }
+
+    /// What the paragraphs' judgements hold.
+    #[must_use]
+    pub fn judgements(&self) -> ooxml_derive::MemoStats {
+        self.paragraphs.stats()
+    }
+}
+
 /// One check's detections: the kept ones read, the ones met kept for the next check.
 pub(super) struct Detecting<'d> {
     memo: Option<&'d Detections>,
