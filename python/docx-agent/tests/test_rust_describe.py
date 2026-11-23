@@ -1,19 +1,12 @@
-"""``describe`` served by the Rust session (lane P0d) against today's.
-
-The Rust definition (``crates/ooxml-tools-word``, golden ``tests/golden/describe.json``
-there) equals today's byte for byte and renders the same for every provider; the reply of
-``ooxml_core.Session.call("describe", ...)`` equals today's envelope, and its data equals
-today's in every field it gives (``RUST_DESCRIBED``), on every fixture and on a made-up
-document with threads of comments, resolved ones, footnotes beside separators and content
-controls under ``mc:Fallback``.  The fields it does not give yet are listed
-(``NOT_YET``); a new field of today's ``describe`` fails here until it is placed.
+"""``describe`` served by the Rust session (lane P0d): its reply renders for every provider, on
+a made-up document with threads of comments, resolved ones, footnotes beside separators and
+content controls under ``mc:Fallback``; a refusal keeps its way out.
 """
 from __future__ import annotations
 
 import io
 import json
 import zipfile
-from pathlib import Path
 
 import pytest
 
@@ -21,19 +14,9 @@ ooxml_core = pytest.importorskip("ooxml_core")
 if not hasattr(ooxml_core, "Session"):          # an ooxml-core before 0.9.0
     pytest.skip("ooxml_core has no Session", allow_module_level=True)
 
-from ooxml_edit.tools import Toolbox
-from ooxml_edit.tools.adapters import (anthropic_tool_result, openai_function_call_output)
+from ooxml_edit.tools.adapters import (anthropic_tool_result, openai_function_call_output)  # noqa: E402
 
-from docx_agent.rust.session import RUST_DESCRIBED, RustTools
-from docx_agent.tools import FORMAT, GROUPS, TOOLS
-from conftest import FIXTURE_DIR  # noqa: E402
-
-HERE = Path(__file__).resolve().parent
-GOLDEN = HERE.parents[2] / "crates" / "ooxml-tools-word" / "tests" / "golden" / "describe.json"
-FIXTURES = sorted((FIXTURE_DIR).rglob("*.docx"))
-
-#: Today's fields the Rust session does not give yet (ooxml_tools_word::NOT_DESCRIBED).
-NOT_YET = {"pages", "problems"}
+from docx_agent.rust.session import RustTools  # noqa: E402
 
 _W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
 _W14 = 'xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"'
@@ -47,8 +30,8 @@ def _rels(*items: tuple[str, str, str]) -> str:
 
 
 def made_up() -> bytes:
-    """The made-up document of ``crates/ooxml-tools-word/tests/integration/describe.rs``, with content
-    types so that today's library opens it."""
+    """The made-up document of ``crates/ooxml-tools-word/tests/integration/describe.rs``, with
+    content types."""
     overrides = {"/word/document.xml": _CT + "document.main+xml",
                  "/word/settings.xml": _CT + "settings+xml",
                  "/word/comments.xml": _CT + "comments+xml",
@@ -103,45 +86,6 @@ def made_up() -> bytes:
         for name, text in parts.items():
             archive.writestr(name, text)
     return out.getvalue()
-
-
-def _python_tool():
-    return {tool.name: tool for tool in TOOLS}["describe"]
-
-
-@pytest.fixture(scope="module")
-def toolbox():
-    """Today's tools, every read answered by the Python path (lane P1c: the toolbox's reads
-    are the Rust session's by default; this compares the two)."""
-    from docx_agent.rust import reads
-
-    before = reads.use_session(None)
-    try:
-        yield Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS)
-    finally:
-        reads.use_session(before)
-
-
-def _both(toolbox, data: bytes, name: str):
-    session = toolbox.session()
-    doc = session.open(data, name=name)
-    # as the model reads it: JSON (an author-less comment's key is "null")
-    today = json.loads(json.dumps(toolbox.dispatch(session, "describe", {"doc": doc}).to_json()))
-    rust = RustTools()
-    rust_doc = rust.open(data, name)
-    assert rust_doc == doc
-    return today, rust.dispatch("describe", {"doc": rust_doc})
-
-
-def _assert_equal(today: dict, result) -> None:
-    rust = result.to_json()
-    assert today["ok"] and rust["ok"], (today, rust)
-    assert {k: v for k, v in rust.items() if k != "data"} == {k: v for k, v in today.items() if k != "data"}
-    assert list(rust["data"]) == [k for k in RUST_DESCRIBED if k in rust["data"]]
-    assert set(RUST_DESCRIBED) - set(rust["data"]) <= {"tagged", "headings_note"}
-    for key in rust["data"]:
-        assert rust["data"][key] == today["data"][key], key
-    assert set(today["data"]) - set(RUST_DESCRIBED) <= NOT_YET, set(today["data"]) - set(RUST_DESCRIBED) - NOT_YET
 
 
 def test_the_rust_reply_renders_for_every_provider():

@@ -1,8 +1,8 @@
 """Layout in the worker pool, under its deadline (roadmap, "Safety and robustness": Word layout
-or reflow 30 s, ``update_fields`` 30 s).  Every layout a Word tool asks for -- describe's page
-count, the reflow in checks, ``update_fields``' passes, a TOC's page numbers, saving's
-statistics -- goes through ``Document.converter`` to a worker process; past the deadline the
-worker is killed, the call reports ``timeout``, and a changing call is rolled back."""
+or reflow 30 s, ``update_fields`` 30 s).  Every layout a Word tool asks for -- the reflow in
+checks, ``update_fields``' passes, a TOC's page numbers -- is the Rust session's, within the
+host's ``layout_timeout``: past it the call reports ``timeout``, and a changing call changes
+nothing."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from ooxml_edit.tools import Limits, Toolbox  # noqa: E402
 
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
 from conftest import FIXTURE_DIR  # noqa: E402
+import word_docs  # noqa: E402
 
 LONG = FIXTURE_DIR / "samplelib" / "sample-long.docx"
 CLOCK = lambda: dt.datetime(2026, 10, 7, 9, 0, tzinfo=dt.timezone.utc)  # noqa: E731
@@ -33,18 +34,16 @@ def test_a_reflow_check_on_a_36_page_document_stays_within_its_deadline():
         again = box.dispatch(session, "check", {"doc": d, "include": ["reflow"]})
         assert again.ok and again.data["reflow"]["since_last_check"]["changed"][:1] == [1]
         assert again.duration < box.limits.layout_timeout, again.duration
-        assert session.entry(d).document.converter is None
 
 
 def test_a_layout_past_its_deadline_is_a_timeout_and_changes_nothing():
     with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, limits=Limits(layout_timeout=0.05)) as box:
         session = box.session(clock=CLOCK)
         d = session.open(LONG.read_bytes(), LONG.name)
-        document = session.entry(d).document
-        before = document.to_bytes()
+        before = word_docs.saved(session, d)
         toc = box.dispatch(session, "word_fields", {"doc": d, "action": "insert_toc", "before": "p@body/0"})
         assert not toc.ok and toc.error.code == "timeout"
-        assert document.to_bytes() == before                   # rolled back whole
+        assert word_docs.saved(session, d) == before                   # rolled back whole
         facts = box.dispatch(session, "check", {"doc": d, "include": ["reflow"]})
         assert facts.ok and "error" in facts.data["reflow"], facts.data
         assert facts.data["reflow"]["error"].startswith("timeout")

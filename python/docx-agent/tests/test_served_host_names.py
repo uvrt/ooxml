@@ -11,11 +11,11 @@ import re
 
 import pytest
 
-from docx_agent import Document
 from docx_agent.rust import edits, reads
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from ooxml_edit.tools import Toolbox
-from ooxml_edit.tools.owned import OwnedEntry
+
+import word_docs
 
 _NAME = re.compile(r"\bd\d+\b")
 
@@ -27,13 +27,20 @@ def toolbox():
 
 
 def _report(title: str) -> bytes:
-    doc = Document.new()
     parts = [f"# {title}"]
     for c in range(1, 4):
         parts += [f"# Part {c}", f"Lantern meadow {c} by the harbour.", f"River stone number {c}."]
     parts.append("| Name | Value |\n|---|---|\n| Lantern | 1 |\n| Meadow | 2 |")
-    doc.insert_markdown("\n\n".join(parts))
-    return doc.to_bytes()
+    return _made("\n\n".join(parts))
+
+
+def _made(markdown: str) -> bytes:
+    """A blank document with ``markdown`` inserted by the toolbox, as bytes."""
+    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as box:
+        session = box.session()
+        doc = session.open(word_docs.blank(), "made.docx")
+        word_docs.call(box, session, "word_insert_markdown", doc=doc, at="end", markdown=markdown)
+        return word_docs.saved(session, doc)
 
 
 def _names_in(result) -> set[str]:
@@ -49,13 +56,13 @@ def test_a_served_reply_names_documents_as_its_host_does(toolbox):
     doc = session.open(_report("A made-up report"), "report.docx")
     other = session.open(_report("Another made-up report"), "other.docx")
     entry = session.entry(doc)
-    if not isinstance(entry, OwnedEntry):
-        pytest.skip("no Rust session to own the document")
     assert entry.handle.doc != doc, "the second host session's names are not the session's ids"
     hosts = {doc, other}
-    ids = {p.text: p.id for p in entry.document.paragraphs()}
-    table = entry.document.tables()[0].id
-    theirs = session.entry(other).document.tables()[0].id
+    ids: dict[str, str] = {}
+    for block, text in word_docs.paragraphs(session, doc):
+        ids.setdefault(text, block)
+    table = f"t:{word_docs.rows_of(word_docs.tables(session, doc)[0])[0].get(word_docs.W14_PARA)}"
+    theirs = f"t:{word_docs.rows_of(word_docs.tables(session, other)[0])[0].get(word_docs.W14_PARA)}"
     calls = [
         ("word_set_text", {"target": ids["River stone number 1."], "text": "River pebble number 1."}),
         # text the file had when opened, deleted: the reply's undo call names the document
@@ -78,7 +85,7 @@ def test_a_served_reply_names_documents_as_its_host_does(toolbox):
     assert doc in seen, "the replies name the document (the deletion's undo call)"
     answered = sum(edits.served().get(t, 0) - edits_before.get(t, 0) for t, _ in calls)
     answered += sum(reads.served().get(t, 0) - reads_before.get(t, 0) for t, _ in calls)
-    assert answered >= 6, (edits.fallbacks(), reads.fallbacks())
+    assert answered >= 6
 
 
 def test_a_reply_without_names_keeps_the_sessions_ids():
