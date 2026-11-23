@@ -14,6 +14,12 @@ Run from the repository root with docx-agent and its dependencies importable::
     python crates/ooxml-word-edit/data/generate.py --check   # exit 1 if it differs
 
 The table is data, not code: the crate reads it with ``include_str!``.
+
+Since docx-agent 0.2.0 (P4e) the checkout has no ``docx_agent.edit.builtin_styles``: run it with the frozen
+reference installed, docx-agent's Python at the commit crates/ooxml-oracle/reference.toml
+names (installed as the gates install it: .github/actions/gates-reference, local-gates.sh), or
+with ``PYTHONPATH`` pointing into a ``git archive`` of that commit.  The values it reads were
+measured from Word and are frozen there; what it writes is unchanged.
 """
 
 from __future__ import annotations

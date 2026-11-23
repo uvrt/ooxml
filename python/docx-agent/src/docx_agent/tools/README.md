@@ -65,8 +65,7 @@ the PNGs -- then finds those faces, in the worker process too (the folders are r
 where the toolbox runs and handed over). They are added to the folders Word uses and
 searched after them. Without `font_dirs` the environment variable `OOXML_FONT_DIRS`
 (folders separated by `os.pathsep`) is read; `font_dirs=[]` reads neither. No tool
-definition or prompt changes. A document opened outside the tools takes the same setting
-as `Document.font_dirs`.
+definition or prompt changes.
 
 **The user's locale.** The regional settings a document is drawn and edited in -- an
 `ooxml_common.locales.Locale` -- are configuration too, per toolbox or per session:
@@ -81,12 +80,11 @@ other = toolbox.session(locale=None)                 # en-US
 ```
 
 Every layout and render (in the worker process too, where the locale is handed over and
-keys the render cache) passes it to docx2svg -- the separator a decimal tab stop aligns
+keys the render cache) passes it to the layout -- the separator a decimal tab stop aligns
 on, a chart's decimal and thousands separators -- and the document edits in it: a new
 chart's language where the document states none, and `new_document`'s language and number
 separators (`w:decimalSymbol`, `w:listSeparator`). Without one it is en-US, never the
-server's own. No tool definition or prompt changes. A document outside the tools takes it
-as `Document.locale` (or `Document.new(locale=...)`).
+server's own. No tool definition or prompt changes.
 
 **Roles: a reviewer's tools.** A toolbox or session loads roles, additive toolsets
 (ooxml-edit 0.45.0, [TOOLS.md, "Roles"](https://github.com/uvrt/ooxml-edit/blob/main/docs/TOOLS.md)):
@@ -299,7 +297,7 @@ compact JSON record:
 Other custom XML items (a bibliography, cover-page properties, a content control's data)
 are left as they are. `word_insert_markdown`'s and `set_cells`' `from`, and `edit_chart`'s,
 write the record in the call's undo step; the last one dropped takes the item, its
-properties and the relationship away. `session.provenance(doc)` (or `Document.provenance()`)
+properties and the relationship away. `session.provenance(doc)`
 reads `{address: record}`, for the tables and charts the document has with its tracked
 changes accepted. No tool or parameter is added.
 
@@ -323,7 +321,7 @@ rules (ooxml-edit's docs/TOOLS.md). Text changed in a recorded table by the text
 (`word_set_text`, `replace_text`...) is not followed: the record says where the values were
 placed from. A table deleted as a tracked change keeps its entry, left out on reading; a
 save prunes nothing; an entry whose object is gone (another program deleted it) is left
-out on reading (`Document.provenance().ignored` counts them) and pruned by the next edit.
+out on reading and pruned by the next edit.
 
 The provider SDKs read their keys from the environment (`ANTHROPIC_API_KEY`,
 `OPENAI_API_KEY`). When the loop ends, `session.take_outputs()` holds what `save_document`
