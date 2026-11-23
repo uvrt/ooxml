@@ -4,7 +4,7 @@
 
 The question decides how durable ``p:<paraId>`` is.  Each probe is a document written here
 (or made by Word), edited through the tools (``probe_tools``: the tool host docx-agent serves),
-then handed to Word through ``python/docx-agent/tests/oracle.py``
+then handed to Word through ``crates/ooxml-oracle/word/oracle.py``
 (the machine-wide lock, docx2svg's AppleScripts) in some of these scenarios:
 
 * ``save``          -- open it and save it, no edit;

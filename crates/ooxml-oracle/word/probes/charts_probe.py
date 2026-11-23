@@ -4,7 +4,7 @@
 Probe documents are made here through the tools (``probe_tools``: ``new_document``,
 ``edit_chart``), some then given part forms no tool writes by rewriting their chart or
 diagram parts, or edited from the committed fixtures (``crates/ooxml-oracle/fixtures/generated/charts``),
-and Word -- through ``python/docx-agent/tests/oracle.py``'s machine-wide lock, no clipboard -- exports
+and Word -- through ``crates/ooxml-oracle/word/oracle.py``'s machine-wide lock, no clipboard -- exports
 each to PDF and saves it again.  What it drew is read off the PDF (text, and the face,
 size, weight and colour of a title's characters), and what it wrote off the saved file:
 

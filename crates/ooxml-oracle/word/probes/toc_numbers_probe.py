@@ -6,7 +6,7 @@ Made-up documents (``tests/toc_number_cases.py``): a stale ``TOC \\o "1-3" \\h \
 headings numbered through a list -- linked to the heading styles or on the paragraphs, a
 number then a tab, a space or nothing, numbers of many widths ("3" to "WWWWWW 3"), several
 fonts, sizes and ``toc N`` indents -- and ``toc N`` styles with right, left, inherited and
-cleared stops.  Word -- through ``python/docx-agent/tests/oracle.py``'s machine-wide lock, Normal.dotm backed up
+cleared stops.  Word -- through ``crates/ooxml-oracle/word/oracle.py``'s machine-wide lock, Normal.dotm backed up
 and restored -- runs ``update (table of contents 1)`` on each and saves it; each entry's level,
 tab stops and the texts of its runs before the page number are read back into
 ``crates/ooxml-oracle/word/observations/toc-numbers-word.json``.

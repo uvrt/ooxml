@@ -6,7 +6,7 @@ One probe document (mode 15, every row and paragraph with its paraId) holds a ta
 case, each followed by a paragraph ``After <Key>.``.  Every table is three columns by five
 rows, its first column merged down over rows 2-4 (``w:vMerge`` restart, continue, continue;
 ``End``'s over rows 3-5, the table's last); cell text ``<Key> r<i>c<j>``.  Word -- through
-``python/docx-agent/tests/oracle.py``'s machine-wide lock -- opens it, makes each case's edits by AppleScript
+``crates/ooxml-oracle/word/oracle.py``'s machine-wide lock -- opens it, makes each case's edits by AppleScript
 (from the last table up) and saves.
 
 * ``BelowLast``: the insertion point in row 4's second cell (the group's last row), Insert

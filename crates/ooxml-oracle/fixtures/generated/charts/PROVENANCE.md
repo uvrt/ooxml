@@ -10,7 +10,7 @@
 `tools/make_chart_fixtures.py` builds each input from `Document.new()`'s parts, with the
 charts, their embedded workbooks and the SmartArt data models written by
 `tools/chart_parts.py`, every byte of them by that script; Microsoft Word 16.106 for Mac
-(Dutch interface) then opened each and saved it again, through `tests/oracle.py`'s
+(Dutch interface) then opened each and saved it again, through `crates/ooxml-oracle/word/oracle.py`'s
 machine-wide lock (no clipboard, no other document open). What is committed is what Word
 wrote, with one change: `docProps/core.xml`'s author and dates replaced by `docx-agent` and
 `2026-10-04T12:00:00Z` (`normalise_properties`, which writes every other entry's bytes as

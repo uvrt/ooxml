@@ -1,4 +1,5 @@
-"""The oracle's machine-wide Word lock, without Word: a held lock means "skip", never wait."""
+"""The oracle driver's machine-wide Word lock (``word/oracle.py``), without Word: a held lock means
+"skip", never wait."""
 
 from __future__ import annotations
 
