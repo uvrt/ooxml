@@ -14,7 +14,7 @@ use crate::policy::Tracking;
 use crate::ranges::renamed_id;
 use crate::sink::EditSink;
 use crate::stamping::stamp_document;
-use crate::table_delete::{drop_separator, track_delete_table};
+use crate::table_delete::{drop_separator, own_rows, track_delete_rows, track_delete_table};
 use crate::work::Id;
 use crate::{EditError, Result};
 use ooxml_word_model::docx::Docx;
@@ -67,16 +67,7 @@ pub(crate) fn tracked_table(
             }
         }
     }
-    let nodes = work.build_content(work.root()).ok_or_else(path_error)?;
-    let draws = draws_of(&nodes, wrote.annotations);
-    let mut keys = stretch_keys(&stamped, &part, &parent, range);
-    keys.push(Key::Annotations);
-    let count = (range.1 - range.0) as usize + 1;
-    sink.splice_children(&part, (&parent, range.0 as usize, count), nodes, keys, draws)?;
-    declare(sink, &part, wrote.dated)?;
-    let gave = wrote.annotations.is_some_and(|n| n.to > n.from);
-    sink.people(gave.then_some(tracking.author.as_str()), Some(tracking.author.as_str()))?;
-    sink.release(&part, &wrote.released)?;
+    splice_back(sink, &stamped, (&part, &parent, range), &work, &wrote, tracking)?;
     if table_gone {
         renamed.retain(|(old, _)| !removed_ids.contains(old));
         return Ok(BlockDeleted {
@@ -99,6 +90,63 @@ pub(crate) fn tracked_table(
         part,
         warnings: Vec::new(),
     })
+}
+
+/// The tracked deletion of row `index` of the table at `path` (not its first) across the
+/// stretch around the table, its neighbours in it: what another author inserted in a row
+/// that was the author's own moves to the paragraph after the table, as Word moves it
+/// (round 51, R103, `rows-word.json`'s MineOtherText). Whether the row went.
+///
+/// # Errors
+/// When the table or the row is not where the caller found it.
+pub(crate) fn tracked_row_across(
+    sink: &mut EditSink<'_, '_>,
+    (part, path): (&str, &[u32]),
+    index: usize,
+    tracking: &Tracking,
+) -> Result<bool> {
+    let path_error = || EditError::Path(part.to_owned());
+    let stamped = sink.docx()?;
+    let tree = sink
+        .doc()
+        .tree(part)?
+        .ok_or_else(|| EditError::NoPart(part.to_owned()))?;
+    let ((mut work, parent, range, found), _) =
+        stretch_of(&stamped, tree.root(), (part, path), None).ok_or_else(path_error)?;
+    let &table = found.first().ok_or_else(path_error)?;
+    let row = *own_rows(&work, table).get(index).ok_or_else(path_error)?;
+    let mut gone = false;
+    let wrote = sink.track(&mut work, |work, stamp, orders| {
+        let (rows, released) = track_delete_rows(work, &[row], false, stamp, orders);
+        gone = !rows.is_empty();
+        released
+    })?;
+    splice_back(sink, &stamped, (part, &parent, range), &work, &wrote, tracking)?;
+    Ok(gone)
+}
+
+/// The stretch's work written back in place of children `range` of `parent`, with the
+/// tracked write's dates, people and released relationships.
+fn splice_back(
+    sink: &mut EditSink<'_, '_>,
+    stamped: &Docx,
+    (part, parent, range): (&str, &[u32], (u32, u32)),
+    work: &crate::work::Work,
+    wrote: &crate::sink::TextWrite,
+    tracking: &Tracking,
+) -> Result<()> {
+    let nodes = work
+        .build_content(work.root())
+        .ok_or_else(|| EditError::Path(part.to_owned()))?;
+    let draws = draws_of(&nodes, wrote.annotations);
+    let mut keys = stretch_keys(stamped, part, parent, range);
+    keys.push(Key::Annotations);
+    let count = (range.1 - range.0) as usize + 1;
+    sink.splice_children(part, (parent, range.0 as usize, count), nodes, keys, draws)?;
+    declare(sink, part, wrote.dated)?;
+    let gave = wrote.annotations.is_some_and(|n| n.to > n.from);
+    sink.people(gave.then_some(tracking.author.as_str()), Some(tracking.author.as_str()))?;
+    sink.release(part, &wrote.released)
 }
 
 /// A table whose first row went is named after its new first row (docx-agent's
