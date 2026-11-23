@@ -136,6 +136,11 @@ fn engine() -> PageEngine {
 }
 
 fn engine_in(budgets: EngineBudgets) -> PageEngine {
+    engine_with(budgets, false)
+}
+
+/// [`engine_in`], a face the folder lacks laid out with a fallback where `fallbacks`.
+fn engine_with(budgets: EngineBudgets, fallbacks: bool) -> PageEngine {
     let folder = Folder {
         location: Location::Folder,
         path: concat!(
@@ -147,7 +152,7 @@ fn engine_in(budgets: EngineBudgets) -> PageEngine {
     let options = WordFontOptions {
         substitutes: vec![("calibri".to_owned(), "Carlito".to_owned())],
         recorded_faces: false,
-        fallbacks: false,
+        fallbacks,
     };
     let setup = Arc::new(FontSetup::new(Arc::new(DiskFonts), &[folder], options));
     PageEngine::new(setup, EngineOptions::default(), budgets)
@@ -765,4 +770,55 @@ fn a_version_given_as_a_package_after_another_part_changed_says_what_a_fresh_lay
     let whole = engine().lay_out(&edited).unwrap().unwrap();
     assert_ne!(before.said(), whole.said(), "the edit changes what is said");
     assert_eq!(again.said(), whole.said());
+}
+
+/// A body of a paragraph in `early`, a few pages of paragraphs in `first`, a last
+/// paragraph in `last`, and a header in `header`.
+fn faces_package((early, first, last): (&str, &str, &str), header: &str) -> Vec<u8> {
+    let run = |face: &str, text: &str| {
+        format!(
+            r#"<w:p><w:r><w:rPr><w:rFonts w:ascii="{face}" w:hAnsi="{face}"/></w:rPr><w:t>{text}</w:t></w:r></w:p>"#
+        )
+    };
+    let mut body = run(early, "the first words");
+    body.extend((0..400).map(|k| run(first, &format!("{k} some words on a line"))));
+    body.push_str(&run(last, "the last words"));
+    body.push_str(r#"<w:sectPr><w:headerReference w:type="default" r:id="rIdH" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/></w:sectPr>"#);
+    package_parts(&body, None, Some(&run(header, "a header")))
+}
+
+/// The substituted faces in coverage's order, the version's pages, the pages painted for it.
+fn substituted_order(engine: &mut PageEngine, bytes: Vec<u8>) -> (Vec<String>, usize, u64) {
+    let version = engine.lay_out_bytes(bytes.into()).unwrap().unwrap();
+    let before = engine.stats().pages_painted;
+    let coverage = engine.coverage(&version).unwrap();
+    let order = coverage.substituted.iter().map(|s| s.family.clone()).collect();
+    (order, version.page_count(), engine.stats().pages_painted - before)
+}
+
+#[test]
+fn substituted_faces_are_ordered_as_the_body_first_draws_them() {
+    // A face the body never draws (the header's): every page is read, and it comes last.
+    let fallback_engine = || {
+        engine_with(
+            EngineBudgets {
+                held: Arc::new(Unlimited),
+                paint: Arc::new(Unlimited),
+            },
+            true,
+        )
+    };
+    let mut e = fallback_engine();
+    let package = faces_package(("Absent One", "Absent One", "Absent Three"), "Absent Two");
+    let (order, pages, painted) = substituted_order(&mut e, package);
+    assert!(pages > 3, "{pages}");
+    assert_eq!(order, ["Absent One", "Absent Three", "Absent Two"]);
+    assert_eq!(painted, u64::try_from(pages).unwrap(), "every page read");
+    // Every substituted face drawn on the first page: the pages after it are not read.
+    let mut e = fallback_engine();
+    let package = faces_package(("Absent Two", "Absent One", "Absent One"), "Absent Two");
+    let (order, pages, painted) = substituted_order(&mut e, package);
+    assert!(pages > 3, "{pages}");
+    assert_eq!(order, ["Absent Two", "Absent One"]);
+    assert_eq!(painted, 1, "only the first page read");
 }
