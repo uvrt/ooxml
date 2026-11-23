@@ -2,7 +2,7 @@
 """Measure what Word writes for a document's language, and which language tags it knows
 (round 35, R24: :meth:`docx_agent.Document.set_language`, ``docx_agent.edit.language``).
 
-Probe documents are written here and Word -- through ``python/docx-agent/tests/oracle.py``'s machine-wide
+Probe documents are written here and Word -- through ``crates/ooxml-oracle/word/oracle.py``'s machine-wide
 lock -- opens each and, by AppleScript:
 
 * ``tags``: sets each paragraph of a document to one of the languages of Word's

@@ -5,7 +5,7 @@ region wins where they overlap, which rows count as the header, how bands are co
 R129).
 
 One document (mode 15) holds a table per case, each in its own table style, every cell's
-text a label ``<case><row><column>``.  Word -- through ``python/docx-agent/tests/oracle.py``'s machine-wide
+text a label ``<case><row><column>``.  Word -- through ``crates/ooxml-oracle/word/oracle.py``'s machine-wide
 lock -- exports it as PDF; each label's fill (the smallest filled rectangle under it), text
 colour, size, weight, font and horizontal place in its cell are read from the PDF, and
 each case's border lines (filled rectangles under 2.5 pt across).

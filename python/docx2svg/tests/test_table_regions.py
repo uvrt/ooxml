@@ -1,8 +1,8 @@
 """A table style's regions as Word draws them (round 58): measured in Word 16.106 for Mac by
-docx-agent's ``tools/table_regions_probe.py`` (``python/docx-agent/tests/observations/
-table-regions-word.json``, where docx-agent's tests compare docx2svg's drawing of the whole
-probe document with Word's, cell by cell and line by line).  Here the rules themselves, on
-made-up tables."""
+``crates/ooxml-oracle/word/probes/table_regions_probe.py``
+(``crates/ooxml-oracle/word/observations/table-regions-word.json``, where docx-agent's tests
+compare docx2svg's drawing of the whole probe document with Word's, cell by cell and line by
+line).  Here the rules themselves, on made-up tables."""
 
 from __future__ import annotations
 

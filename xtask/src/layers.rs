@@ -9,9 +9,9 @@
 //! lower place in the map. A sideways or upward edge fails, as does a crate the map does
 //! not place; the allow-list of exceptions ([`ALLOWED`]) starts empty.
 //!
-//! Must not: change the graph or the map to make an edge pass. The prototype crates
-//! (`crates/core`, `crates/word`, `crates/python`) are outside the map until they are
-//! replaced: they may depend on the new crates, never the other way round. Test support
+//! Must not: change the graph or the map to make an edge pass. The prototype crate
+//! (`crates/python`) is outside the map until it is replaced: it may depend on the new
+//! crates, never the other way round. Test support
 //! (`ooxml-oracle`) may depend on any crate and is depended on by tests only.
 
 use serde_json::Value;
@@ -56,7 +56,7 @@ pub const MAP: &[(&str, Place)] = &[
     ("ooxml-render", Place::Layer(2, 1)),
     // The scene's PNG adapter: the typed writer's SVG drawn by resvg (decision 11).
     ("ooxml-raster", Place::Layer(2, 1)),
-    // ooxml-word in the design; the prototype holds that package name (lane L2)
+    // ooxml-word in the design
     ("ooxml-word-model", Place::Layer(3, 0)),
     ("ooxml-word-layout", Place::Layer(3, 1)),
     ("ooxml-word-pages", Place::Layer(3, 2)),
@@ -72,8 +72,6 @@ pub const MAP: &[(&str, Place)] = &[
     ("ooxml-python-session", Place::Layer(6, 0)),
     ("xtask", Place::Layer(6, 0)),
     ("ooxml-oracle", Place::TestSupport),
-    ("ooxml-core", Place::Prototype),
-    ("ooxml-word", Place::Prototype),
     ("ooxml-python", Place::Prototype),
 ];
 

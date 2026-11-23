@@ -10,8 +10,8 @@ run-name: Gates ${{ inputs.ref || 'main' }} [${{ inputs.gates || 'fixtures,corpu
 # changes against main can affect (tools/gates.py plan); `all` or a comma list names them.
 #   gh run watch --repo uvrt/ooxml $(gh run list --repo uvrt/ooxml --workflow gates.yml --limit 1 --json databaseId -q '.[0].databaseId')
 # - fixtures, corpus: crates/ooxml-oracle/python/word_edits_diff.py's modes, docx-agent (pure
-#   Python) against the release `word-edits`, on the fixtures (crates/ooxml-oracle/fixtures) and on the documents
-#   docx2svg's tools/make_*.py make; each mode in `shards` jobs, or with shards `auto` (the
+#   Python) against the release `word-edits`, on the fixtures (crates/ooxml-oracle/fixtures) and on the frozen
+#   corpus (crates/ooxml-oracle/corpus: docx2svg's tools/make_*.py's documents); each mode in `shards` jobs, or with shards `auto` (the
 #   default) as tools/gates_jobs.py sizes them: a mode the reference cache's store for the
 #   checkout covers (warm, by the store's coverage: tools/gates_store.py) in one job, the small
 #   modes of a gate sharing one; a mode it does not cover (cold) in three;
@@ -80,7 +80,6 @@ jobs:
       sha: ${{ steps.plan.outputs.sha }}
       seeds: ${{ contains(inputs.gates || 'fixtures,corpus', 'seeds') }}
       bench: ${{ contains(inputs.gates || 'fixtures,corpus', 'bench') }}
-      corpus: ${{ steps.plan.outputs.corpus }}
       fixtures: ${{ steps.plan.outputs.fixtures }}
     steps:
       # The whole history: modes auto compares the ref with its merge base with main.
@@ -166,9 +165,6 @@ jobs:
           echo "matrix: $matrix"
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          corpus=false
-          if [[ "$matrix" == *'"gate": "corpus"'* ]]; then corpus=true; fi
-          echo "corpus=$corpus" >> "$GITHUB_OUTPUT"
           echo "ref $REF at $(git rev-parse HEAD); gates $GATES; modes $MODES $(cat plan.txt); per_tool '${PER_TOOL}'; every $EVERY; shards $SHARDS; reference store ${STORE:-none}; fixtures $FIXTURES: $fixtures" >> "$GITHUB_STEP_SUMMARY"
 
   # The release oracle binaries, once per run.
@@ -194,36 +190,11 @@ jobs:
           path: oracles/
           retention-days: 3
 
-  # docx2svg's made-up documents, as the word-model job (rust.yml) makes them.
-  corpus:
-    needs: plan
-    if: needs.plan.outputs.corpus == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.plan.outputs.sha }}
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install
-        run: python -m pip install ./python/ooxml-common "./python/docx2svg[measure]"
-      - name: Make the corpus
-        run: python tools/gates.py corpus "$RUNNER_TEMP/corpus"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: corpus
-          path: ${{ runner.temp }}/corpus/
-          retention-days: 3
-
   # One job of tools/gates_jobs.py's: a gate's modes (one, or a bundle run one after another)
   # in one shard; each mode's results in its own folder of the job's logs.
   differential:
     name: ${{ matrix.gate }} ${{ matrix.modes || matrix.mode }} ${{ matrix.shard }}
-    needs: [plan, oracles, corpus]
-    if: >-
-      always() && needs.plan.outputs.matrix != '' && needs.oracles.result == 'success' &&
-      (needs.corpus.result == 'success' || needs.corpus.result == 'skipped')
+    needs: [plan, oracles]
     runs-on: ubuntu-latest
     timeout-minutes: 120
     outputs:
@@ -249,11 +220,6 @@ jobs:
         with:
           name: oracles
           path: ${{ runner.temp }}/oracles
-      - if: matrix.gate == 'corpus'
-        uses: actions/download-artifact@v4
-        with:
-          name: corpus
-          path: ${{ runner.temp }}/corpus
       # The store of docx-agent's results for the reference code this checkout runs.
       - name: Reference cache key
         if: matrix.gate != 'reads'
@@ -276,8 +242,6 @@ jobs:
           FIXTURES: ${{ needs.plan.outputs.fixtures }}
         run: |
           chmod +x "$RUNNER_TEMP"/oracles/*
-          tree=()
-          if [ "$GATE" = corpus ]; then tree=(--tree "$RUNNER_TEMP/corpus"); fi
           cache=()
           if [ "$GATE" != reads ]; then cache=(--cache "$RUNNER_TEMP/reference"); fi
           fixtures=()     # none from a tools/gates.py without the fixtures selection (the plan job)
@@ -288,7 +252,7 @@ jobs:
             echo "::group::$GATE $mode $SHARD"
             python tools/gates.py diff --gate "$GATE" --mode "$mode" --shard "$SHARD" --per-tool "$PER_TOOL" \
               --every "$EVERY" --bin "$RUNNER_TEMP/oracles" --out "$RUNNER_TEMP/out/$GATE-$mode-${SHARD%/*}" \
-              "${fixtures[@]}" "${tree[@]}" "${cache[@]}" || status=1
+              "${fixtures[@]}" "${cache[@]}" || status=1
             echo "::endgroup::"
           done
           exit $status

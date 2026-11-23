@@ -47,9 +47,28 @@ class KnownDifferences(unittest.TestCase):
     def test_a_case_number_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "known.toml"
-            path.write_text('[[difference]]\nmode = "structure"\ncase = 3\ncause = "x"\n')
+            path.write_text('[[difference]]\nmode = "structure"\ncase = 3\nword = "n/a"\ncause = "x"\n')
             with self.assertRaises(SystemExit):
                 gates.known_entries(path)
+
+    def test_every_entry_has_a_word_verdict(self) -> None:
+        verdicts = {entry["word"] for entry in gates.known_entries()}
+        self.assertLessEqual(verdicts, set(gates.VERDICTS))
+
+    def test_a_verdict_is_required_and_checked(self) -> None:
+        observation = "crates/ooxml-oracle/word/observations/e4-word.json#fields"
+        refused = ['', 'word = "python"\n', 'word = "rust"\n', 'word = "rust"\nobservation = "no/such.json#x"\n',
+                   f'word = "n/a"\nobservation = "{observation}"\n']
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "known.toml"
+            for verdict in refused:
+                path.write_text(f'[[difference]]\nmode = "structure"\n{verdict}cause = "x"\n')
+                with self.assertRaises(SystemExit, msg=verdict):
+                    gates.known_entries(path)
+            for verdict in ('word = "n/a"\n', 'word = "unmeasured"\n',
+                            f'word = "rust"\nobservation = "{observation}"\n'):
+                path.write_text(f'[[difference]]\nmode = "structure"\n{verdict}cause = "x"\n')
+                self.assertEqual(len(gates.known_entries(path)), 1)
 
     def test_covered_whatever_the_case_number(self) -> None:
         # the text-box SEQ field (#84), untracked and tracked, numbered as a full run and as
@@ -103,7 +122,7 @@ class DocumentCondition(unittest.TestCase):
             path = Path(folder) / "known.toml"
             for condition in ('"word/document.xml"', '{ part = "word/document.xml" }',
                               '{ lacks_namespace = "x", root = "y" }'):
-                path.write_text(f'[[difference]]\nmode = "objects"\ndocument = {condition}\ncause = "x"\n')
+                path.write_text(f'[[difference]]\nmode = "objects"\ndocument = {condition}\nword = "n/a"\ncause = "x"\n')
                 with self.assertRaises(SystemExit):
                     gates.known_entries(path)
 
@@ -151,15 +170,26 @@ class AutoModes(unittest.TestCase):
 
     def test_code_the_gates_run_runs_every_mode(self) -> None:
         for path in ("crates/ooxml-word-edit/src/set_text.rs", "crates/ooxml-tools-word/src/describe.md",
-                     "crates/ooxml-oracle/src/edits.rs", "python/docx2svg/src/docx2svg/layout.py",
-                     "python/ooxml-common/src/ooxml_common/fonts/office.py",
-                     "crates/ooxml-oracle/fixtures/generated/x.docx", "python/docx2svg/tools/make_lists.py",
+                     "crates/ooxml-oracle/src/edits.rs", "crates/ooxml-oracle/fixtures/generated/x.docx",
+                     "crates/ooxml-oracle/corpus/make_keep_probe/keep-1.docx",
                      "crates/ooxml-oracle/reference.toml", "crates/ooxml-oracle/python/reference_packages.py",
                      "crates/ooxml-oracle/python/word_edits_diff.py", "crates/ooxml-oracle/known-differences.toml",
                      "crates/ooxml-oracle/python/reference_guard.py",
                      "crates/ooxml-oracle/python/no_core/ooxml_core/__init__.py",
                      "tools/gates.py", ".github/workflows/gates.yml", "Cargo.lock", "a/new/place.txt"):
             self.assertEqual(self.modes(path), (set(gates.EDIT_MODES), True), path)
+
+    def test_the_checkouts_python_runs_in_no_gate(self) -> None:
+        # the reference is installed from its frozen commit, and the corpus is frozen
+        for path in ("python/docx2svg/src/docx2svg/layout.py", "python/docx2svg/tools/make_lists.py",
+                     "python/ooxml-common/src/ooxml_common/fonts/office.py", "python/docx2svg/pyproject.toml",
+                     "python/docx-agent/src/docx_agent/document.py"):
+            self.assertEqual(self.modes(path), (set(), False), path)
+
+    def test_the_corpus_is_frozen_in_the_checkout(self) -> None:
+        found = gates.documents(gates.DEFAULT_TREES["corpus"], 1, (1, 1))
+        self.assertEqual(len(found), 240)
+        self.assertTrue(all(f.is_relative_to(gates.CORPUS) for f in found))
 
     def test_no_change_is_every_mode(self) -> None:
         self.assertEqual(self.modes(), (set(gates.EDIT_MODES), True))
@@ -174,8 +204,6 @@ class AutoModes(unittest.TestCase):
             self.assertTrue((gates.HARNESS / name).is_file(), name)
         for name in gates.GATE_BINARIES:
             self.assertTrue((gates.ROOT / "crates" / "ooxml-oracle" / "src" / "bin" / f"{name}.rs").is_file(), name)
-        for name in gates.GATE_PACKAGES:
-            self.assertTrue((gates.ROOT / "python" / name / "src").is_dir(), name)
         self.assertEqual(set(gates.READ_MODES.values()) | {"word-edits"}, set(gates.GATE_BINARIES))
 
     def test_the_case_makers_are_not_keyed(self) -> None:
@@ -215,7 +243,7 @@ class AutoFixtures(unittest.TestCase):
         for path in ("crates/ooxml-xml/src/writer.rs", "crates/ooxml-opc/src/package.rs",
                      "crates/ooxml-store/src/lib.rs", "crates/ooxml-session/src/lib.rs",
                      "crates/ooxml-oracle/python/word_edits_diff.py", "crates/ooxml-oracle/known-differences.toml",
-                     "crates/ooxml-word-edit/src/editor.rs", "python/docx2svg/src/docx2svg/layout.py"):
+                     "crates/ooxml-word-edit/src/editor.rs"):
             self.assertEqual(gates.auto_fixtures([path]), gates_fixtures.ALL, path)
         self.assertEqual(gates.auto_fixtures([]), gates_fixtures.ALL)
 

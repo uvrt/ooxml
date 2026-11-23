@@ -724,9 +724,10 @@ def _shading(value) -> str | None:
 
 
 #: Automatic text on a table cell's fill darker than this is drawn white (the fill's Rec. 601
-#: luma, 0-255).  Measured (round 58, docx-agent's ``tools/table_regions_probe.py``, case ``A``,
-#: ``tests/observations/table-regions-word.json``): greys ``3B`` (59) and darker, ``C00000``
-#: (57.4), ``006100`` (56.9), ``203864`` (53.9), ``0000FF`` (29.1) turn it white; grey ``3C``
+#: luma, 0-255).  Measured (round 58, ``crates/ooxml-oracle/word/probes/table_regions_probe.py``,
+#: case ``A``, ``crates/ooxml-oracle/word/observations/table-regions-word.json``): greys
+#: ``3B`` (59) and darker, ``C00000`` (57.4), ``006100`` (56.9), ``203864`` (53.9),
+#: ``0000FF`` (29.1) turn it white; grey ``3C``
 #: (60), ``FF0000`` (76.2), ``008000`` (75.1), ``375623`` (70.9), ``7030A0`` (79.9) leave it
 #: black.  A shape's threshold is another (:data:`docx2svg.drawing.AUTOMATIC_WHITE_BELOW`).
 AUTOMATIC_WHITE_BELOW_CELL = 60

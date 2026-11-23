@@ -6,7 +6,7 @@ Made-up documents: "Contents", a ``TOC`` field whose cached result is ``?``, the
 paragraphs in made-up styles -- built-in headings, custom styles with and without an
 outline level, paragraphs stating their own (``w:outlineLvl``), empty ones, a heading in a
 table cell, a built-in heading whose definition lost (or changed) its outline level.  One
-copy per instruction.  Word -- through ``python/docx-agent/tests/oracle.py``'s machine-wide lock -- opens each,
+copy per instruction.  Word -- through ``crates/ooxml-oracle/word/oracle.py``'s machine-wide lock -- opens each,
 updates its fields (``update field``) and saves it; the entries it wrote (TOC level, text)
 are read back into ``crates/ooxml-oracle/word/observations/toc-word.json``.
 

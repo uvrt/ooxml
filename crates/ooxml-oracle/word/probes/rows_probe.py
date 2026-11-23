@@ -5,7 +5,7 @@ is cleared again (round 51).
 
 One probe document (mode 15, every row and paragraph with its paraId) holds a table per
 case, each followed by a paragraph ``After <Key>.``; cell text is ``<Key> r<i>c<j>``.  Word -- through
-``python/docx-agent/tests/oracle.py``'s machine-wide lock -- opens it, turns tracking on, makes each case's
+``crates/ooxml-oracle/word/oracle.py``'s machine-wide lock -- opens it, turns tracking on, makes each case's
 edits by AppleScript (from the last table up, so no case moves the tables of those above it)
 and saves; Word's own Accept All and Reject All of what it saved are read too.
 

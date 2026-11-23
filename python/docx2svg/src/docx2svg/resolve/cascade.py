@@ -203,8 +203,8 @@ def banded(chain: list[Style], conditions: tuple[str, ...]) -> tuple[str, ...]:
     A chain stating no size (or 0) draws no band of that kind: measured by
     ``make_table_border_probe.py`` (``style``), a table style with a ``band1Horz`` shading
     and no band size draws no band; Word's own table styles all state a size of 1.  Sizes
-    of 2 band two rows (columns) at a time (measured, round 58: docx-agent's
-    ``tools/table_regions_probe.py``, case ``N``)."""
+    of 2 band two rows (columns) at a time (measured, round 58:
+    ``crates/ooxml-oracle/word/probes/table_regions_probe.py``, case ``N``)."""
     sizes = {"h": 0, "v": 0}
     for style in chain:
         for kind, name in (("h", "tblStyleRowBandSize"), ("v", "tblStyleColBandSize")):

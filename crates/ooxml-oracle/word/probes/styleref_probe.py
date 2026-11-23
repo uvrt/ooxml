@@ -9,7 +9,7 @@ docx2svg's ``tests/fixtures/styleref-observations.json`` (the same documents; it
 ``tools/make_styleref_probe.py``); what Word stored after updating them is
 ``crates/ooxml-oracle/word/observations/styleref-word.json``, which the recorded-Word tests hold
 the tools' field update to (``crates/ooxml-oracle/word/index.py``).  Run (holds the machine-wide Word lock,
-``python/docx-agent/tests/oracle.py``)::
+``crates/ooxml-oracle/word/oracle.py``)::
 
     python crates/ooxml-oracle/word/probes/styleref_probe.py base:update names:update ...  Nine pages separated by page breaks: page 1 a title, a chapter title and a
 heading; page 2 none; page 3 two chapter titles after body text; page 4 one at its foot;
