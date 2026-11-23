@@ -19,7 +19,10 @@ CREATED = datetime(2026, 10, 4, tzinfo=timezone.utc)
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _W = "{%s}" % W
-_BLOCK = re.compile(r"^<!-- ((?:p|t):[0-9A-Fa-f]+)(?: ([^>]*?))? -->\n(.*?)(?=^<!-- (?:p|t):|\Z)", re.M | re.S)
+#: A block's id comment in ``word_read``'s Markdown: ``p:<paraId>``, ``t:<paraId>``, or where the
+#: document gives none, its place (``p@body/3``).
+_ID = r"(?:p|t)(?::[0-9A-Fa-f]+|@[^\s>]+)"
+_BLOCK = re.compile(rf"^<!-- ({_ID})(?: ([^>]*?))? -->\n(.*?)(?=^<!-- {_ID}|\Z)", re.M | re.S)
 
 
 def blank(*, page: str = "A4", landscape: bool = False, language: str = "en-US",
@@ -102,7 +105,7 @@ def ids(box: Any, session: Any, doc: str) -> dict[str, str]:
 
 def paragraph_ids(box: Any, session: Any, doc: str) -> list[str]:
     """The body's paragraphs' ids, in order (tables left out)."""
-    return [block for block, _ in blocks(box, session, doc) if block.startswith("p:")]
+    return [block for block, _ in blocks(box, session, doc) if block.startswith(("p:", "p@"))]
 
 
 def validation(box: Any, session: Any, doc: str) -> dict[str, Any]:
