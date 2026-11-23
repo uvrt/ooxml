@@ -1,16 +1,13 @@
-"""A batch that derives a dataset from a workbook, then syncs a Word table from it, runs on a
-draft of the Word document (round 51; ooxml-edit 0.108.0).
+"""A batch that derives a dataset from a workbook, then syncs a Word table from it, gives the
+same answers, report, workbook and datasets whether the toolbox prepares batches on drafts
+(``block_edits="always"``) or not (round 51; ooxml-edit 0.108.0).
 
 One session holds a made-up report (docx-agent, a test-only dependency) with three tables and a
 made-up workbook of sales and products.  Each batch derives with a join and a group
 (``xlsx_derive``: the workbook only read), syncs one table from the dataset and sets one
-paragraph.  On a draft, the workbook is read at its version as the derive runs; the Word change
-is applied, and the dataset kept, only while the workbook is at that version -- else the batch
-is prepared again.  So the answers, the report, the workbook and the datasets are those of the
-same calls one at a time, in the order they were applied.
-
-The report is the Rust session's (docx-agent 0.2.0): made by ``ooxml_core.new_document``,
-read through the tools alone.
+paragraph.  The report is the Rust session's (docx-agent 0.2.0: made by
+``ooxml_core.new_document``, read through the tools alone), which a draft does not hold: the
+batch runs under the documents' locks in both modes, so no result names a draft.
 """
 
 from __future__ import annotations
@@ -55,7 +52,7 @@ def report() -> bytes:
 
 def saved(box, session, doc: str) -> bytes:
     """The document's bytes as ``save_document`` writes them."""
-    result = box.dispatch(session, "save_document", {"doc": doc, "name": "out.docx"})
+    result = box.dispatch(session, "save_document", {"doc": doc, "name": "out.docx", "format": "docx"})
     assert result.ok, result.to_json()
     return session.take_outputs()[-1].data
 
@@ -121,7 +118,7 @@ def made():
     return report(), book()
 
 
-def test_a_derive_then_sync_batch_runs_on_a_draft_as_under_both_locks(made):
+def test_a_derive_then_sync_batch_is_the_same_with_drafts_or_without(made):
     out = {}
     for mode in ("off", "always"):
         with _box(mode) as box:
@@ -136,7 +133,6 @@ def test_a_derive_then_sync_batch_runs_on_a_draft_as_under_both_locks(made):
                          datasets(session))
             blocks = [r.block for r in results]
     assert out["off"] == out["always"]
-    assert blocks[1] is None                                    # the workbook's own change
-    assert all(b and b.get("lock") is None and b["tries"] == 1 for k, b in enumerate(blocks) if k != 1), blocks
+    assert blocks == [None] * 4, blocks                         # no draft holds the Rust session's report
     assert out["always"][0][0]["doc"] == "d2"                   # names its first document, as before
 

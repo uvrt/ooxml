@@ -53,7 +53,7 @@ def body_paragraphs(data: bytes) -> list[tuple[str, str]]:
 
 def saved(box, session, doc: str) -> bytes:
     """The document's bytes as ``save_document`` writes them."""
-    ok(box.dispatch(session, "save_document", {"doc": doc, "name": "report.docx"}))
+    ok(box.dispatch(session, "save_document", {"doc": doc, "name": "report.docx", "format": "docx"}))
     return session.take_outputs()[-1].data
 
 

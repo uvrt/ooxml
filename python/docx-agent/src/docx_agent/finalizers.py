@@ -3,13 +3,12 @@
 A finalizer (a ``weakref.finalize`` callback, a ``__del__``) runs wherever the collector
 happens to run: on any thread, in the middle of any code -- also while that very thread
 holds a lock the finalizer's work would take, which then never comes free (the 3.15t
-deadlock: a document collected inside :func:`docx_agent.pages.lay_out`, whose finalizer
-waited on the engines' lock the same thread held).  So docx-agent's finalizers do no work
-and take no lock: they hand the work over (:func:`later`, a ``queue.SimpleQueue``, whose
-``put`` is safe from a finalizer by design), and the work is done at a safe point
-(:func:`drain`) -- the start of a call that lays a document out or lets one go, before it
-takes any lock of its own.  The work handed over takes only the module-level leaf locks of
-the layouts and engines, never a document's.
+deadlock: a document collected while its thread held the lock its finalizer waited on).  So
+docx-agent's finalizers do no work and take no lock: they hand the work over (:func:`later`,
+a ``queue.SimpleQueue``, whose ``put`` is safe from a finalizer by design), and the work is
+done at a safe point (:func:`drain`) -- the start of a document's open, before it takes any
+lock of its own.  The work handed over (a document closed in the Rust session) takes no
+document's lock.
 """
 
 from __future__ import annotations

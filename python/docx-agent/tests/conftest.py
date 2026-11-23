@@ -26,13 +26,10 @@ NEW_CREATED = datetime(2026, 10, 4, tzinfo=timezone.utc)
 
 
 def blank_document(created: datetime = NEW_CREATED) -> bytes:
-    """A new blank document's package as the Rust core makes it (``ooxml_core.new_document``,
-    what ``new_document`` writes): A4, en-US, no title or author, made at ``created``."""
-    import ooxml_core
+    """A new blank document's package as the Rust core makes it (:func:`word_docs.blank`)."""
+    from word_docs import blank
 
-    stamp = created.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return bytes(ooxml_core.new_document(page=("A4", False), language="en-US", separators=(".", ","),
-                                         properties=(None, None, stamp)))
+    return blank(created=created)
 
 
 def new_document() -> Path:
@@ -155,13 +152,19 @@ def pytest_collection_modifyitems(config, items):
     """The slow sweeps run with ``--run-slow``.  The Word oracle never runs under xdist's
     parallel workers (ROADMAP.md, "Word is one instance per machine"): there, its tests
     skip; run ``pytest -m oracle`` without ``-n``.  A test meeting a form whose port the user
-    deferred is a strict xfail naming it (:mod:`deferred_forms`)."""
+    deferred is a strict xfail naming it (:mod:`deferred_forms`), and so is one meeting a gap
+    the Rust session has yet (:mod:`rust_gaps`)."""
     from deferred_forms import DEFERRED
+    from rust_gaps import GAPS
 
     for item in items:
-        form = DEFERRED.get(f"{item.path.name}::{item.name}")
+        key = f"{item.path.name}::{item.name}"
+        form = DEFERRED.get(key)
         if form is not None:
             item.add_marker(pytest.mark.xfail(reason=f"{form}: deferred (user)", strict=True))
+        gap = GAPS.get(key)
+        if gap is not None:
+            item.add_marker(pytest.mark.xfail(reason=f"rust gap: {gap} (lane CUT-F)", strict=True))
     if not config.getoption("--run-slow"):
         later = pytest.mark.skip(reason="an exhaustive sweep: run with --run-slow")
         for item in items:

@@ -32,11 +32,6 @@ values came from (docx-agent's provenance item, written here as docx-agent write
 Deterministic: running it again writes the same bytes.
 
     python tools/make_table_fixtures.py
-
-Since docx-agent 0.2.0 (P4e) the checkout has no Python ``Document``: this is the record of
-how the fixtures were made. Run it against the frozen reference, docx-agent's Python at the
-commit crates/ooxml-oracle/reference.toml names (installed as the gates install it:
-.github/actions/gates-reference, local-gates.sh), from a ``git archive`` of that commit.
 """
 
 from __future__ import annotations
