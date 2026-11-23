@@ -16,8 +16,6 @@ GOLDEN_CORE = "test_tools_goldens.py::test_a_golden_transcript_replays_to_the_sa
 
 #: The reason each test fails yet, by ``file::name[params]``.
 GAPS: dict[str, str] = {
-    "test_source_refs.py::test_a_documents_own_braces_and_escaped_ones_stay_text":
-        f"rust gap: word_set_text of braces naming no source is refused as by reference ({CUT_F})",
     "test_charts.py::test_chart_edit_renders[charts-d:5-category]": f"rust gap: a number given as a numeric chart's category (0.25) is refused as not a number ({CUT_B})",
     "test_charts.py::test_chart_edit[charts-d:5-category]": f"rust gap: a number given as a numeric chart's category (0.25) is refused as not a number ({CUT_B})",
     "test_charts.py::test_chart_edit[charts-d:5-add_category]": f"rust gap: a number given as a numeric chart's category (0.25) is refused as not a number ({CUT_B})",
