@@ -6,7 +6,12 @@
 //! matched -- or of a story part ([`story_model_path`]: a field's run, as the layout names
 //! what it draws).
 //!
-//! Must not: read anything outside its table, or keep anything between versions.
+//! A table's reading is kept across a document's versions ([`TableMemo`], in the document's
+//! [`super::kept::Kept`]) by the table element and the parts it was read with, both by
+//! identity: a version that shares the element and the parts reads the table as before.
+//!
+//! Must not: read anything outside its table, or keep a reading alive past the elements it
+//! was read from (they are held weakly; a reading no version can ask for is swept).
 
 use super::formatting::{Cell, Formatting};
 use crate::ids::W;
@@ -16,7 +21,7 @@ use crate::resolve::resolve_table;
 use crate::value::{text, Props, Text};
 use ooxml_xml::{Element, Node};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 /// The prefix the table's own path is given; every path below it starts with it.
 const ROOT: &str = "T";
@@ -104,12 +109,87 @@ impl TableFacts {
     }
 }
 
+/// One table's reading, and the elements it was read from, held weakly.
+#[derive(Debug)]
+struct KeptTable {
+    table: Weak<Element>,
+    roots: [Option<Weak<Element>>; 4],
+    facts: Arc<TableFacts>,
+}
+
+impl KeptTable {
+    /// Whether it was read from `table` with `formatting`'s parts.
+    fn of(&self, table: &Arc<Element>, formatting: &Formatting) -> bool {
+        std::ptr::eq(self.table.as_ptr(), Arc::as_ptr(table))
+            && self.roots.iter().zip(formatting.roots()).all(|pair| match pair {
+                (Some(kept), Some(now)) => std::ptr::eq(kept.as_ptr(), Arc::as_ptr(now)),
+                (None, None) => true,
+                _ => false,
+            })
+    }
+
+    /// Whether a version can still ask for it: its table element is held.
+    fn alive(&self) -> bool {
+        self.table.strong_count() > 0
+    }
+}
+
+/// Each table's reading kept across a document's versions, by the table element's address
+/// (a weak reference keeps the address its own while it is kept).
+#[derive(Debug, Default)]
+pub(crate) struct TableMemo {
+    tables: Mutex<TableMap>,
+}
+
+/// The readings, and how many were alive when last swept.
+#[derive(Debug, Default)]
+struct TableMap {
+    kept: HashMap<usize, KeptTable>,
+    alive: usize,
+}
+
+impl TableMemo {
+    /// The reading of `table` with `formatting`: as kept, else read and kept. Readings of
+    /// tables no version holds are swept once the memo has doubled since its last sweep.
+    fn read(&self, formatting: &Formatting, table: &Arc<Element>) -> Arc<TableFacts> {
+        let key = Arc::as_ptr(table) as usize;
+        let found = {
+            let tables = self.tables.lock().unwrap_or_else(PoisonError::into_inner);
+            tables
+                .kept
+                .get(&key)
+                .filter(|k| k.of(table, formatting))
+                .map(|k| Arc::clone(&k.facts))
+        };
+        if let Some(found) = found {
+            return found;
+        }
+        // Read outside the lock: another reader of another table is not held up.
+        let facts = Arc::new(TableFacts::read(formatting, table));
+        let kept = KeptTable {
+            table: Arc::downgrade(table),
+            roots: formatting.roots().clone().map(|r| r.as_ref().map(Arc::downgrade)),
+            facts: Arc::clone(&facts),
+        };
+        let mut tables = self.tables.lock().unwrap_or_else(PoisonError::into_inner);
+        tables.kept.insert(key, kept);
+        if tables.kept.len() > 2 * tables.alive + 64 {
+            tables.kept.retain(|_, k| k.alive());
+            tables.alive = tables.kept.len();
+        }
+        facts
+    }
+}
+
 /// The cells of one part's paragraphs as the layout model reads them: the outermost table
 /// holding a paragraph read once ([`TableFacts`]), each paragraph's cell found by its place.
 pub struct PartCells<'a> {
     formatting: &'a Formatting,
     root: &'a Arc<Element>,
     tables: HashMap<Vec<u32>, Arc<TableFacts>>,
+    /// The document's tables' readings kept across its versions, where the part is a
+    /// story part of one.
+    kept: Option<&'a TableMemo>,
 }
 
 impl<'a> PartCells<'a> {
@@ -120,6 +200,17 @@ impl<'a> PartCells<'a> {
             formatting,
             root,
             tables: HashMap::new(),
+            kept: None,
+        }
+    }
+
+    /// The cells of `story`'s paragraphs, read with `formatting`: each table's reading
+    /// kept across the document's versions.
+    #[must_use]
+    pub fn of(formatting: &'a Formatting, story: &'a super::StoryPart) -> PartCells<'a> {
+        PartCells {
+            kept: Some(story.kept.tables()),
+            ..PartCells::new(formatting, story.root())
         }
     }
 
@@ -134,11 +225,11 @@ impl<'a> PartCells<'a> {
         })?;
         let (table_at, below) = place.split_at(depth);
         let table = super::at_path(self.root, table_at)?;
-        let formatting = self.formatting;
-        let facts = self
-            .tables
-            .entry(table_at.to_vec())
-            .or_insert_with(|| Arc::new(TableFacts::read(formatting, table)));
+        let (formatting, kept) = (self.formatting, self.kept);
+        let facts = self.tables.entry(table_at.to_vec()).or_insert_with(|| match kept {
+            Some(kept) => kept.read(formatting, table),
+            None => Arc::new(TableFacts::read(formatting, table)),
+        });
         facts.cell(&model_path(table, below)?).cloned()
     }
 }

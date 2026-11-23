@@ -9,6 +9,7 @@
 //! Must not: keep anything but the latest reading of each part; hold a lock other than its
 //! own part's first-reading gate while reading.
 
+use super::cells::TableMemo;
 use super::facts::PartFacts;
 use super::texts::PartTexts;
 use std::collections::HashMap;
@@ -72,6 +73,9 @@ impl<T> Latest<T> {
 pub struct Kept {
     texts: Latest<PartTexts>,
     facts: Latest<PartFacts>,
+    /// Each table's reading (its paragraphs' cells), by the table element and the parts
+    /// it was read with, across the versions that share them.
+    tables: TableMemo,
 }
 
 impl Kept {
@@ -85,6 +89,11 @@ impl Kept {
     /// (`None`: no version has yet), kept as the latest.
     pub fn facts(&self, part: &str, read: impl FnOnce(Option<&PartFacts>) -> PartFacts) -> Arc<PartFacts> {
         self.facts.read_with(part, read)
+    }
+
+    /// The tables' readings kept across the versions.
+    pub(crate) fn tables(&self) -> &TableMemo {
+        &self.tables
     }
 }
 

@@ -206,7 +206,7 @@ fn minimum_of(minimum: &Minimum, kind: &str, caption: impl FnOnce() -> bool) -> 
 /// The size a paragraph's styles give a run with no properties of its own
 /// (`_style_size`).
 fn style_size(facts: &Facts<'_>, owner: &Owner<'_>) -> Option<f64> {
-    let mut cells = PartCells::new(facts.formatting(), owner.story.root());
+    let mut cells = PartCells::of(facts.formatting(), owner.story);
     let cell = cells.cell(&owner.place);
     Some(facts.formatting().run(owner.element, None, 'a', cell.as_ref()).size)
 }

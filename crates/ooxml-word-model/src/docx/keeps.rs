@@ -122,7 +122,7 @@ impl<'a> Keeps<'a> {
     pub fn new(formatting: &'a Formatting, story: &'a StoryPart) -> Keeps<'a> {
         Keeps {
             formatting,
-            cells: PartCells::new(formatting, story.root()),
+            cells: PartCells::of(formatting, story),
         }
     }
 

@@ -12,6 +12,7 @@ use super::laid_facts::{about, capped_values, page_facts_json, CAP};
 use super::placed::Placed;
 use super::{facts as worded, ranges_json, Trials, TRIALS, TRIAL_SECONDS};
 use crate::version::Owned;
+use crate::LastCheck;
 use ooxml_base::Cancel;
 use ooxml_tools::ToolError;
 use ooxml_word_edit::facts::{self, LanguageScope};
@@ -89,7 +90,7 @@ pub(super) fn laid(
     page_facts_json(facts, asked.minimum, coverage, &mut parts, &mut settings);
     parts.insert("settings".into(), Value::Object(settings));
     let placed = Placed::of(facts);
-    paragraph_facts(facts, &placed, doc, &mut parts)?;
+    paragraph_facts(facts, &placed, (doc, owned.last_check), &mut parts)?;
     if let Some(allowed) = asked.styles {
         style_list(facts, &placed, doc, allowed, &mut parts)?;
     }
@@ -113,7 +114,7 @@ pub(super) fn laid(
 fn paragraph_facts(
     facts: &Facts<'_>,
     placed: &Placed<'_, '_>,
-    doc: &WordDoc,
+    (doc, last_check): (&WordDoc, &LastCheck),
     parts: &mut Map<String, Value>,
 ) -> Result<(), ToolError> {
     let pages_of = |id: &str| placed.pages(id);
@@ -159,6 +160,7 @@ fn paragraph_facts(
         whole: facts.scope().is_none() && facts.whole(),
         ranges: true,
         locale: None,
+        detections: Some(last_check.languages()),
     };
     if let Some(found) = facts::text_language(doc, language).map_err(internal)? {
         parts.insert("text_language".into(), worded::text_language_json(&found, CAP));
@@ -255,6 +257,7 @@ pub(super) fn unlaid(owned: Owned<'_>, scope: Option<&Scope>, error: Value) -> R
         whole: scope.is_none(),
         ranges: false,
         locale: None,
+        detections: Some(owned.last_check.languages()),
     };
     if let Some(found) = facts::text_language(doc, language).map_err(internal)? {
         parts.insert("text_language".into(), worded::text_language_json(&found, CAP));

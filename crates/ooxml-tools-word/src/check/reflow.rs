@@ -48,9 +48,16 @@ pub struct LastCheck {
     reflow: Mutex<Option<Seen>>,
     laid: Mutex<Option<Seen>>,
     copies: super::copies::CopyCache,
+    /// The texts' languages its checks detected.
+    languages: ooxml_word_edit::facts::Detections,
 }
 
 impl LastCheck {
+    /// The texts' languages the document's checks keep.
+    pub(crate) fn languages(&self) -> &ooxml_word_edit::facts::Detections {
+        &self.languages
+    }
+
     /// The copies' comparisons the document's checks keep.
     pub(crate) fn copies(&self) -> &super::copies::CopyCache {
         &self.copies

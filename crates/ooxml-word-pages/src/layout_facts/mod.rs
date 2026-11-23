@@ -44,6 +44,7 @@ use ooxml_word_model::docx::Docx;
 use ooxml_xml::Element;
 use std::cell::OnceCell;
 use std::collections::{BTreeSet, HashMap};
+use std::sync::Arc;
 pub(crate) use tree::block_keys_top;
 
 pub use ranges::{room, BeyondFacts, Break, Extent, RangeLayout};
@@ -84,6 +85,8 @@ pub struct Facts<'a> {
     positions: HashMap<String, usize>,
     reads: &'a dyn PageReads,
     painted: Vec<OnceCell<Option<PageRead>>>,
+    /// The layout model's tables (nested ones too) by path, made when first asked.
+    model_tables: OnceCell<HashMap<&'a str, &'a Arc<ooxml_word_model::model::Table>>>,
     /// What `range` scopes the facts to (`None`: the whole document).
     scope: Option<Scope>,
 }
@@ -140,6 +143,7 @@ impl<'a> Facts<'a> {
             positions,
             reads,
             painted: (0..facts.pages.len()).map(|_| OnceCell::new()).collect(),
+            model_tables: OnceCell::new(),
             scope: None,
         }
     }
@@ -163,6 +167,17 @@ impl<'a> Facts<'a> {
     #[must_use]
     pub fn about(&self, subjects: &[&str]) -> bool {
         self.scope.as_ref().is_none_or(|s| s.about(subjects))
+    }
+
+    /// The layout model's table at `path` (nested ones too), found by an index of the
+    /// version's tables made once.
+    pub(crate) fn model_table(&self, path: &str) -> Option<&'a Arc<ooxml_word_model::model::Table>> {
+        let index = self.model_tables.get_or_init(|| {
+            let mut out = HashMap::new();
+            tables::index_tables(&self.version.layout().document.body, &mut out);
+            out
+        });
+        index.get(path).copied()
     }
 
     /// The version.

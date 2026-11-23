@@ -5,6 +5,7 @@
 mod common;
 
 mod block_pages;
+mod check_bench;
 mod editing;
 mod from_template;
 mod host_reads;
