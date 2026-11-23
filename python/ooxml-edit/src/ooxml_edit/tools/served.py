@@ -103,6 +103,9 @@ def serve_unlocked(toolbox: "Toolbox", session: Session, tool: "Tool", arguments
         if made is None:
             made = entry.owner.touched(entry.handle, entry.history.head(before), served.head)
         result.touched = [{"doc": entry.doc_id, **item} for item in made]
+        # the store's parts between the step's heads, as the owner keeps them (not a diff)
+        parts = entry.owner.parts_between(entry.handle, entry.history.head(before), served.head)
+        result.changed_parts = [{"doc": entry.doc_id, "part": part} for part in sorted(parts)]
     context.touched.setdefault(entry.doc_id, []).extend(served.touched)
     result.checks = {**toolbox._checks(session, entry, context), **result.checks}
     if turn is not None:

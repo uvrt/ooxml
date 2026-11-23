@@ -3,7 +3,8 @@
 The tools in `pptx_agent.tools`, as a model sees them. Lengths are points, colours theme names
 (`accent1`, `tx1 lumMod=75%`; PowerPoint's own names, `Text 1` or `background2`, are read
 as them) or `#RRGGBB`. Every changing call is one undo step and returns
-facts about the slides it touched (see [GUIDANCE.md](GUIDANCE.md)).
+facts about the slides it touched (see [GUIDANCE.md](GUIDANCE.md)); for the application, the
+result also lists the zip parts the call changed (`changed_parts`, [README.md](README.md)).
 
 ## Supported
 

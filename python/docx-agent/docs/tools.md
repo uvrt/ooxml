@@ -113,6 +113,13 @@ with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS) as toolbox:
   -- every other part as `{"doc", "part"}` (`docx_agent.tools.touched`). Pages are not
   named: which pages moved is known only from a new layout; render after the change and
   compare the pages' images by content instead.
+- **Every result's `changed_parts`** (the application's too, beside `touched`) lists the
+  zip parts the call changed, `{"doc": "d1", "part": "word/document.xml"}` each, by name:
+  the parts the Rust store's commit changed (the step's versions compared by identity, not
+  a diff). A co-authoring client uploads those after the call and checks an incoming
+  change against them. `docProps/app.xml` is the save's: a save writes Word's measured
+  page, line, word and character counts there when they changed, and leaves the part as
+  read when they did not. A save copies every entry whose bytes did not change as it read it -- its local header, data and central directory record -- so a deck, workbook or document saved without an edit is the bytes it was opened from, and each saved entry keeps its MS-FSSHTTPD chunk signature; entries keep their order, with no data descriptors and no ZIP64 record where no size needs one.
 
 `tests/goldens/transcripts` hold the end-to-end trial's Word tasks done with the tools alone,
 and w10-w13 (a board pack from five reports, a contract form, a picture with alt text, a

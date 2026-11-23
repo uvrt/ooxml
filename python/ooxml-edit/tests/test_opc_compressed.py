@@ -328,3 +328,48 @@ def test_recompress_is_the_same_whichever_way_a_part_is_compressed(data, monkeyp
     data = _with_big_part(data)
     monkeypatch.setattr(opc, "_ALIKE", alike)
     assert OpcPackage.open(data).to_bytes(recompress=True) == _held(data).to_bytes()
+
+
+def _office_like(data: bytes) -> bytes:
+    """``data`` written again as Office's writers mark their entries: "version needed" 1.0,
+    "version made by" 4.5 on FAT, no external attributes."""
+    out = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(data)) as source, zipfile.ZipFile(out, "w") as archive:
+        for info in source.infolist():
+            entry = zipfile.ZipInfo(info.filename, date_time=info.date_time)
+            entry.compress_type = info.compress_type
+            entry.extract_version, entry.create_version, entry.create_system = 10, 45, 0
+            archive.writestr(entry, source.read(info))
+    return out.getvalue()
+
+
+def test_a_save_without_an_edit_is_the_bytes_read(data):
+    """Co-authoring request 1: the local headers and central directory records of untouched
+    entries are copied as read, so nothing a host holds changes."""
+    office = _office_like(data)
+    assert OpcPackage.open(office).to_bytes() == office
+    package = OpcPackage.open(office)
+    package.tree(PAGE1).set("edited", "1")
+    package.mark_dirty(PAGE1)
+    saved = package.to_bytes()
+    with zipfile.ZipFile(io.BytesIO(office)) as before, zipfile.ZipFile(io.BytesIO(saved)) as after:
+        assert [i.filename for i in after.infolist()] == [i.filename for i in before.infolist()]
+        for info in after.infolist():
+            was = before.getinfo(info.filename)
+            if info.filename == PAGE1:
+                continue
+            assert (info.extract_version, info.create_version, info.create_system, info.external_attr) \
+                == (was.extract_version, was.create_version, was.create_system, was.external_attr)
+            start = was.header_offset
+            assert saved[info.header_offset:info.header_offset + 30] == office[start:start + 30]
+
+
+def test_a_replacement_with_the_bytes_read_is_the_entry_read(data):
+    """Co-authoring request 2: a part a save derives to the content it held is not written
+    again (nor compressed again)."""
+    office = _office_like(data)
+    package = OpcPackage.open(office)
+    assert package.to_bytes({PAGE1: package.read(PAGE1)}) == office
+    package.replace_part(IMAGE, package.read(IMAGE))     # replaced, with the same bytes
+    assert package.to_bytes() == office
+    assert package.to_bytes({PAGE1: package.read(PAGE1) + b" "}) != office

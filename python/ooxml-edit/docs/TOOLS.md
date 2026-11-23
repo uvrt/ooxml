@@ -171,6 +171,14 @@ entries}`; an op that changed nothing, or failed and was rolled back, has no key
 error, a read and a repeat that changed no bytes report `[]`. A live view re-renders what
 `touched` names after each call.
 
+**The parts a call changed.** Beside `touched`, `result.changed_parts` lists the zip parts
+the call changed, `{"doc": "d1", "part": "ppt/slides/slide1.xml"}` each, by document and
+name: the change's own parts (`history.Change.parts`; an owner's `parts_between` the step's
+heads), never a diff of saved files. It is what a co-authoring client uploads after the call
+and checks an incoming change against; a part a save derives (`docProps/app.xml`'s counts)
+is the save's, and a save writes it only when its bytes differ. A `batch` has the union.
+A save copies every entry whose bytes did not change as it read it -- its local header, data and central directory record -- so a package saved without an edit is the bytes it was opened from, and each saved entry keeps its MS-FSSHTTPD chunk signature; entries keep their order, with no data descriptors and no ZIP64 record where no size needs one.
+
 ```python
 result = toolbox.dispatch(session, "ppt_set_text", {"doc": "d1", "items": [...]})
 result.touched     # [{"doc": "d1", "slide": "s:258", "shapes": ["258.7"]}]

@@ -62,10 +62,10 @@ class ZipPart:
     ``name`` (as the archive spells it), its inflated ``size``, its ``crc`` and its
     compression ``method`` (:data:`zipfile.ZIP_STORED` or :data:`zipfile.ZIP_DEFLATED`)."""
 
-    __slots__ = ("name", "size", "crc", "method", "flags", "_data", "_seeks")
+    __slots__ = ("name", "size", "crc", "method", "flags", "header", "_data", "_seeks")
 
     def __init__(self, name: str, data: "bytes | memoryview", method: int, size: int,
-                 crc: int, flags: int = 0) -> None:
+                 crc: int, flags: int = 0, header: "bytes | memoryview | None" = None) -> None:
         if method not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
             raise ValueError(f"compression method {method} is not kept compressed")
         self.name = name
@@ -77,6 +77,9 @@ class ZipPart:
         #: bits), without those a writer sets for itself: a data descriptor follows
         #: (bit 3) and the name is UTF-8 (bit 11) -- :func:`entry_flags`.
         self.flags = flags
+        #: The entry's local header as the file has it, where a writer may copy it as it is
+        #: (:func:`copyable_header`); else ``None``, and a writer makes one.
+        self.header = header
         #: The notes a reader from the start left (``(compressed offset, inflated offset,
         #: inflater, crc so far)``), once one reached the end and found the part whole.
         self._seeks: "tuple | None" = None
@@ -103,7 +106,7 @@ class ZipPart:
 
     def __reduce__(self):
         return (ZipPart, (self.name, bytes(self._data), self.method, self.size, self.crc,
-                          self.flags))
+                          self.flags, None if self.header is None else bytes(self.header)))
 
     def read(self) -> bytes:
         """The whole part, inflated and checked (:class:`PartError`)."""
@@ -308,18 +311,43 @@ def entry_flags(info: zipfile.ZipInfo) -> int:
     return info.flag_bits & ~(0x8 | 0x800)
 
 
+def copyable_header(data: "bytes | memoryview", info: zipfile.ZipInfo) -> "memoryview | None":
+    """``info``'s local header in ``data`` (with its name and extra field), where a writer
+    may copy it as it is so that the entry keeps its bytes: its sizes and CRC-32 written in
+    it (no data descriptor, flag bit 3), the central directory's, and no ZIP64 record where
+    no size needs one -- what MS-FSSHTTPD's ZIP chunking reads; else ``None``."""
+    view = memoryview(data)
+    at = info.header_offset
+    (_, _, flags, _, _, _, crc, compressed, size, name_len,
+     extra_len) = _LOCAL_HEADER.unpack_from(view, at)
+    if flags & 0x8 or info.flag_bits & 0x8:
+        return None
+    if (crc, compressed, size) != (info.CRC, info.compress_size, info.file_size):
+        return None
+    extra = bytes(view[at + _LOCAL_HEADER.size + name_len:
+                       at + _LOCAL_HEADER.size + name_len + extra_len])
+    k = 0
+    while k + 4 <= len(extra):
+        tag, length = struct.unpack_from("<HH", extra, k)
+        if tag == 0x0001:      # ZIP64: its sizes are in the header, so it is needless
+            return None
+        k += 4 + length
+    return view[at:at + _LOCAL_HEADER.size + name_len + extra_len]
+
+
 class RawEntry:
     """A ZIP entry compressed by another method than stored or deflated (bzip2, LZMA),
     read whole at open as before; kept beside its bytes (``value``) so that a writer can
     copy the entry as it is while the part is still those bytes
     (:meth:`PartStore.compressed`).  The same names as a :class:`ZipPart`'s."""
 
-    __slots__ = ("name", "size", "crc", "method", "flags", "compressed", "value")
+    __slots__ = ("name", "size", "crc", "method", "flags", "compressed", "value", "header")
 
     def __init__(self, name: str, compressed: memoryview, method: int, size: int, crc: int,
-                 flags: int, value: bytes) -> None:
+                 flags: int, value: bytes, header: "memoryview | None" = None) -> None:
         self.name, self.compressed, self.method = name, compressed, method
         self.size, self.crc, self.flags, self.value = size, crc, flags, value
+        self.header = header
 
     @property
     def compressed_size(self) -> int:
@@ -445,7 +473,8 @@ def read_parts(source: "str | os.PathLike[str] | bytes | BinaryIO", normalize=No
                 if end > len(data):
                     raise zipfile.BadZipFile(f"{info.filename}: its data is cut short")
                 parts[name] = ZipPart(info.filename, view[start:end], info.compress_type,
-                                      info.file_size, info.CRC, entry_flags(info))
+                                      info.file_size, info.CRC, entry_flags(info),
+                                      copyable_header(view, info))
             else:
                 value = parts[name] = archive.read(info)
                 if not info.flag_bits & 0x1:
@@ -453,5 +482,6 @@ def read_parts(source: "str | os.PathLike[str] | bytes | BinaryIO", normalize=No
                     start = info.header_offset + _LOCAL_HEADER.size + header[9] + header[10]
                     parts._raw[name] = RawEntry(
                         info.filename, view[start:start + info.compress_size],
-                        info.compress_type, info.file_size, info.CRC, entry_flags(info), value)
+                        info.compress_type, info.file_size, info.CRC, entry_flags(info), value,
+                        copyable_header(view, info))
     return entries, parts
