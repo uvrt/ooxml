@@ -23,6 +23,8 @@ _W = "{%s}" % W
 #: document gives none, its place (``p@body/3``).
 _ID = r"(?:p|t)(?::[0-9A-Fa-f]+|@[^\s>]+)"
 _BLOCK = re.compile(rf"^<!-- ({_ID})(?: ([^>]*?))? -->\n(.*?)(?=^<!-- {_ID}|\Z)", re.M | re.S)
+#: A line of a block that names its own id at its end: a list item (``- item <!-- p:X -->``).
+_ITEM = re.compile(rf"^(.*?) ?<!-- ({_ID})(?: [^>]*?)? -->$")
 
 
 def blank(*, page: str = "A4", landscape: bool = False, language: str = "en-US",
@@ -92,7 +94,18 @@ def read(box: Any, session: Any, doc: str, **arguments: Any) -> str:
 def blocks(box: Any, session: Any, doc: str, **arguments: Any) -> list[tuple[str, str]]:
     """The body's blocks as ``word_read`` says them: (id, Markdown text), in order; an empty
     paragraph's text is ``""``."""
-    return [(found.group(1), found.group(3).strip()) for found in _BLOCK.finditer(read(box, session, doc, **arguments))]
+    out: list[tuple[str, str]] = []
+    for found in _BLOCK.finditer(read(box, session, doc, **arguments)):
+        own, items = [], []
+        for line in found.group(3).strip().split("\n"):
+            item = _ITEM.match(line)
+            if item:                    # a list item says its own id at its line's end
+                items.append((item.group(2), item.group(1)))
+            else:
+                own.append(line)
+        out.append((found.group(1), "\n".join(own).strip()))
+        out.extend(items)
+    return out
 
 
 def ids(box: Any, session: Any, doc: str) -> dict[str, str]:

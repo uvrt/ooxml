@@ -1,6 +1,6 @@
 """Round 42, R49: ``check(copies=[...])`` compares each copy's list items -- level, label,
 numbering, indents -- and every paragraph's page settings with its reference's, as Word
-applies them (:mod:`docx_agent.edit.copy_settings`): a dash among round bullets, an item a
+applies them (the Rust session's check): a dash among round bullets, an item a
 level up, a lost keep are each told, with the call that fixes it; copies that look the same
 as their sample are not, however their XML says it.  Every document here is made up."""
 
@@ -12,15 +12,17 @@ pytest.importorskip("ooxml_edit.tools.shared", reason="needs ooxml-edit (the sha
 
 from ooxml_edit.tools import Toolbox  # noqa: E402
 
-from docx_agent import Document  # noqa: E402
-from docx_agent.edit import copies as copies_module  # noqa: E402
-from docx_agent.edit import copy_settings  # noqa: E402
+from layout_reads import block_ids, effective, written  # noqa: E402
+
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
-from conftest import FIXTURE_DIR  # noqa: E402
+import word_docs  # noqa: E402
 
 pytestmark = pytest.mark.any_faces
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+#: The settings a copy's paragraphs are compared by (as Word applies them).
+SETTINGS = ("list_level", "list_format", "list_numbering", "indent_left", "indent_first",
+            "keep_with_next", "keep_lines", "page_break_before", "widow_control")
 
 SAMPLE = ("# Part title\n\nDescribe the part here, in a few sentences.\n\n"
           "- First point of the part\n    - A detail under it\n- Second point of the part\n\n"
@@ -39,26 +41,22 @@ def _ok(box, session, tool: str, /, **arguments):
     return result
 
 
-def _sample() -> tuple[bytes, list[str]]:
-    sample = Document.new()
-    sample.insert_markdown(SAMPLE, at="end")
-    blocks = [b["id"] for b in sample.blocks()]
-    sample.paragraph(blocks[1]).format(keep_with_next=True)     # the description stays with its list
-    return sample.to_bytes(), blocks
+def _sample(box, session) -> tuple[str, list[str]]:
+    sample = written(box, session, SAMPLE, "samples.docx")
+    blocks = block_ids(box, session, sample)
+    _ok(box, session, "word_format", doc=sample, targets=[blocks[1]], keep_with_next=True)   # stays with its list
+    return sample, blocks
 
 
 def _made(box, session, count: int, *, same_document: bool = False) -> tuple[str, str, str, list[list[str]]]:
     """A report of ``count`` copies of the sample: ``(report doc, sample doc, sample span, copies)``.
     ``same_document``: the sample is the report's own first chapter."""
-    data, blocks = _sample()
+    samples, blocks = _sample(box, session)
     reference = f"{blocks[0]}..{blocks[-1]}"
-    samples = session.open(data, "samples.docx")
     if same_document:
         d1 = samples
     else:
-        report = Document.new()
-        report.insert_markdown("# Report\n\nAn opening paragraph.", at="end")
-        d1 = session.open(report.to_bytes(), "report.docx")
+        d1 = written(box, session, "# Report\n\nAn opening paragraph.", "report.docx")
     made = [_ok(box, session, "word_copy_from", doc=d1, source_doc=samples, range=reference,
                 at="end").data["blocks"] for _ in range(count)]
     return d1, samples, reference, made
@@ -79,7 +77,7 @@ def _check(box, session, doc: str, made, samples, reference) -> dict:
 
 
 def _settings(item: dict) -> dict[str, dict]:
-    return {d["property"]: d for d in item["differences"] if d["property"] in copy_settings.SETTINGS}
+    return {d["property"]: d for d in item["differences"] if d["property"] in SETTINGS}
 
 
 def test_dashes_a_wrong_level_and_a_lost_keep_are_each_found_with_their_fix(box):
@@ -113,7 +111,7 @@ def test_dashes_a_wrong_level_and_a_lost_keep_are_each_found_with_their_fix(box)
     # Rule 5: the list fixes of every copy in one list of calls; follow_sample for the rest.
     assert found["list_fix"]["tool"] == "word_lists"
     assert {c["action"] for c in found["list_fix"]["calls"]} == {"format", "level"}
-    assert found["fix"]["calls"] == [{"sample": {"block": _blocks_of(session, samples, reference)[1],
+    assert found["fix"]["calls"] == [{"sample": {"block": _blocks_of(box, session, samples, reference)[1],
                                                  "doc": samples}, "copies": [made[3][1]]}]
     # The fixes make every copy follow again.
     for call in found["list_fix"]["calls"]:
@@ -124,8 +122,17 @@ def test_dashes_a_wrong_level_and_a_lost_keep_are_each_found_with_their_fix(box)
     assert again["follow"] == 4, [i["differences"] for i in again["items"]]
 
 
-def _blocks_of(session, doc: str, span: str) -> list[str]:
-    return [i for i, _ in copies_module.blocks_of(session.entry(doc).document, span)]
+def _blocks_of(box, session, doc: str, span: str) -> list[str]:
+    """The body's blocks from the span's first to its last."""
+    first, _, last = span.partition("..")
+    listed = block_ids(box, session, doc)
+    return listed[listed.index(first):listed.index(last or first) + 1]
+
+
+def _num_id(box, session, doc: str, paragraph: str):
+    """The numbering instance a paragraph's list item is in (its own or its style's)."""
+    found = _ok(box, session, "word_inspect", doc=doc, target=paragraph).data["blocks"][0].get("list")
+    return None if found is None else found["num_id"]
 
 
 def test_copies_that_look_the_same_do_not_differ(box):
@@ -135,24 +142,21 @@ def test_copies_that_look_the_same_do_not_differ(box):
     session = box.session()
     d1, samples, reference, made = _made(box, session, 3)
     _restart_numbers(box, session, d1, made)
-    document = session.entry(d1).document
     heading, point, detail = made[0][0], made[0][2], made[0][3]
     _ok(box, session, "word_format", doc=d1, targets=[heading], keep_with_next=True)
-    from docx_agent.edit import effective
-
-    applied = effective.paragraph(document, document._resolve(point)[1].element)
-    _ok(box, session, "word_format", doc=d1, targets=[point], indent_left=applied.indent_left,
-        indent_first=applied.first_line - applied.hanging)
+    indent = effective(box, session, d1, point)["indent"]
+    _ok(box, session, "word_format", doc=d1, targets=[point], indent_left=indent["left"],
+        indent_first=indent["first_line"] - indent["hanging"])
     _ok(box, session, "word_lists", doc=d1, targets=[made[1][2]], action="restart", start=1)
     # Copy 2's detail: a new list of Word's own bullets, the same "o" at the same place.
-    document.add_to_list(made[2][3], "bullet", level=1, continue_previous=False)
+    _ok(box, session, "word_lists", doc=d1, targets=[made[2][3]], action="add", kind="bullet", level=1)
     found = _check(box, session, d1, made, samples, reference)
     assert found["follow"] == 3, [item["differences"] for item in found["items"]]
     assert "list_fix" not in found and "fix" not in found
     # Their XML differs all the same.
-    assert document.list_of(made[2][3]).num_id != document.list_of(detail).num_id
-    assert document.list_of(made[1][2]).num_id != document.list_of(made[0][2]).num_id
-    states = [document._resolve(i)[1].element.find(f"{W}pPr/{W}{tag}") is not None
+    assert _num_id(box, session, d1, made[2][3]) != _num_id(box, session, d1, detail)
+    assert _num_id(box, session, d1, made[1][2]) != _num_id(box, session, d1, made[0][2])
+    states = [word_docs.element(session, d1, i).find(f"{W}pPr/{W}{tag}") is not None
               for i, tag in ((heading, "keepNext"), (made[1][0], "keepNext"), (point, "ind"), (made[1][2], "ind"))]
     assert states == [True, False, True, False]
 
@@ -211,76 +215,6 @@ def test_clear_is_the_fix_where_the_style_gives_the_reference(box):
     assert keep["fix"] == {"tool": "word_format", "calls": [{"targets": [made[0][0]], "clear": ["keep_with_next"]}]}
 
 
-# -- the light reader reads what docx2svg's whole parse reads -------------------------------------
-
-
-def _body_paragraphs(document) -> list:
-    body = document.package.tree(document.package.document_part()).find(W + "body")
-    return [p for p in body.iter(W + "p") if not any(a.tag == W + "txbxContent" for a in p.iterancestors())]
-
-
-def _both(document, monkeypatch) -> tuple[dict, dict, bool]:
-    paragraphs = _body_paragraphs(document)
-    document._tool_settings_reader = None
-    light = copy_settings.reader(document)
-    first = copy_settings.region_settings(document, paragraphs)
-    with monkeypatch.context() as patch:
-        patch.setattr(copy_settings._Light, "of", classmethod(lambda cls, document: None))
-        document._tool_settings_reader = None
-        whole = copy_settings.region_settings(document, paragraphs)
-    document._tool_settings_reader = None
-    return first, whole, isinstance(light, copy_settings._Light)
-
-
-def _made_up() -> list[bytes]:
-    out = []
-    doc = Document.new()
-    doc.insert_markdown(SAMPLE + "\n\n| A | B |\n|---|---|\n| one | two |\n| three | four |\n\n"
-                        "1. Again one\n    1. Nested a\n    2. Nested b\n2. Again two\n", at="end")
-    ids = [b["id"] for b in doc.blocks()]
-    doc.paragraph(ids[1]).format(keep_with_next=True, keep_together=True, page_break_before=True)
-    doc.restart_numbering(ids[6], at=4)
-    out.append(doc.to_bytes())
-
-    out += [path.read_bytes() for path in sorted((FIXTURE_DIR).rglob("*.docx"))]
-    return out
-
-
-def test_the_light_reader_reads_as_the_whole_parse(monkeypatch):
-    """Every body paragraph's settings and list item, read from the XML against the styles,
-    numbering and settings alone, are docx2svg's whole parse's (made-up documents and the
-    repository's fixtures; a document with a deleted paragraph mark is read whole)."""
-    light = 0
-    for data in _made_up():
-        document = Document.open(data)
-        first, whole, used = _both(document, monkeypatch)
-        assert first == whole
-        light += used
-    assert light >= 20
-    # A paragraph mark deleted (tracked): docx2svg joins the paragraphs, so the whole parse.
-    import io
-    import zipfile
-
-    from lxml import etree
-
-    source = zipfile.ZipFile(io.BytesIO(_made_up()[0]))
-    root = etree.fromstring(source.read("word/document.xml"))
-    properties = root.find(f"{W}body/{W}p[2]/{W}pPr")
-    mark = properties.find(W + "rPr")
-    if mark is None:
-        mark = etree.SubElement(properties, W + "rPr")
-    etree.SubElement(mark, W + "del", {W + "id": "90", W + "author": "Someone", W + "date": "2026-01-01T00:00:00Z"})
-    written = io.BytesIO()
-    with zipfile.ZipFile(written, "w", zipfile.ZIP_DEFLATED) as out:
-        for item in source.infolist():
-            out.writestr(item, etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
-                         if item.filename == "word/document.xml" else source.read(item.filename))
-    document = Document.open(written.getvalue())
-    first, whole, used = _both(document, monkeypatch)
-    assert first == whole and not used
-    assert isinstance(copy_settings.reader(document), copy_settings._Whole)
-
-
 def test_a_sample_in_the_same_document_is_followed_with_like(box):
     """A reference in the same document: each difference's fix is ``word_format`` ``like``
     the reference's paragraph where taking its look changes nothing else compared; where a
@@ -289,7 +223,7 @@ def test_a_sample_in_the_same_document_is_followed_with_like(box):
     calls (the tests above)."""
     session = box.session()
     d1, _, reference, made = _made(box, session, 1, same_document=True)
-    sample = _blocks_of(session, d1, reference)
+    sample = _blocks_of(box, session, d1, reference)
     copy = made[0]
     _ok(box, session, "word_lists", doc=d1, targets=[copy[2]], action="add", kind="bullet")
     _ok(box, session, "word_lists", doc=d1, targets=[copy[2]], action="format", level=0, number_format="bullet",

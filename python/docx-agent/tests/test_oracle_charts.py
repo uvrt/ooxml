@@ -1,11 +1,11 @@
-"""Word itself on chart and SmartArt edits, opt-in (``pytest -m oracle``; ROADMAP.md, "Charts
-and SmartArt").
+"""Word itself on chart edits made through ``edit_chart``, opt-in (``pytest -m oracle``;
+ROADMAP.md, "Charts and SmartArt"; SmartArt's ``edit_smartart`` is out of the Word tools
+until its port).
 
 * Every chart fixture with the edit set applied -- every chart's first value far above its
-  axis, a category and a series renamed, a category and a series added, a title; a SmartArt
-  node's text set, a node added and one removed -- **exports from Word unprompted**, its
-  PDF showing the new labels and series names, and **each value axis reaching the new
-  value**; the removed node is gone.
+  axis, a category and a series renamed, a category and a series added, a title --
+  **exports from Word unprompted**, its PDF showing the new labels and series names, and
+  **each value axis reaching the new value**.
 * **Word's chart text is docx2svg's**, by docx2svg's F.20 method: every span of text Word
   draws inside a chart -- string, face, weight, size on the device grid, the anchor of its
   advance box and its baseline within 0.5 pt -- against the text docx2svg's chart layout
@@ -14,8 +14,7 @@ and SmartArt").
   byte), the independent workbook check holds on what Word wrote, and what Word does change
   is what was measured (``c:lang`` in its interface's language, a ``c16:uniqueId`` given to
   each series docx-agent added).
-* Tracked, Word's review counts **no revision** for a chart or diagram edit, which its PDF
-  shows.
+* Tracked, Word's review counts **no revision** for a chart edit, which its PDF shows.
 """
 
 from __future__ import annotations
@@ -23,15 +22,16 @@ from __future__ import annotations
 import ctypes
 import re
 import sys
-import warnings
 from pathlib import Path
 
 import pytest
+from ooxml_edit.tools import Toolbox
 
 import oracle
-from docx_agent import Document
-from test_charts import CHARTS, check_document_charts
-from test_roundtrip import entries
+from docx_agent.tools import FORMAT, GROUPS, TOOLS
+
+import word_docs
+from test_charts import CHARTS, chart_part, charts_of, check_document_charts, entries, read
 
 pytestmark = pytest.mark.oracle
 
@@ -52,45 +52,56 @@ def _text(pdf: Path) -> str:
     return "\n".join(oracle.pdf_pages(pdf))
 
 
+@pytest.fixture(scope="module")
+def box():
+    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as toolbox:
+        yield toolbox
+
+
 # -- the edit set -------------------------------------------------------------------------------
 
 
-def chart_edit_set(document: Document) -> dict:
-    """Every chart's edits, and what each should show: ``{id: {labels, names, value}}``."""
+def _call(box, session, target: str, **arguments):
+    result = box.dispatch(session, "edit_chart", {"doc": "d1", "target": target, **arguments})
+    assert result.ok, result.to_json()
+    return result
+
+
+def chart_edit_set(box, session) -> dict:
+    """Every chart's edits, made with ``edit_chart``, and what each should show:
+    ``{id: {labels, names, value}}``."""
     expected = {}
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        for chart in document.charts():
-            tag = chart.id.replace("d:", "").replace("/", "m")
-            numeric = all(not isinstance(c, str) for c in chart.categories)
-            largest = max(v for s in chart.series for v in s.values if v is not None)
-            value = round(largest * 10 + 7)
-            chart.series[0].set_value(0, value)
-            labels, names = [], []
-            if not numeric:
-                chart.set_category(1, f"Kat{tag}")
-                chart.add_category(f"Neu{tag}", [3] * len(chart.series))
-                labels += [f"Kat{tag}", f"Neu{tag}"]
-            chart.series[0].name = f"Serie{tag}"
-            chart.add_series(f"Extra{tag}", [2] * chart.point_count)
-            pie = chart.chart_types[0] in ("pie", "doughnut")
-            if not pie:  # a pie's legend names its categories, not its series
-                names += [f"Serie{tag}", f"Extra{tag}"]
-            chart.set_title(f"Titel {tag}")
-            expected[chart.id] = {"labels": labels, "names": names, "title": f"Titel {tag}",
-                                  "value": None if pie else value}
+    for identifier in charts_of(box, session):
+        model = read(box, session, identifier)
+        tag = identifier.replace("d:", "").replace("/", "m")
+        numeric = all(not isinstance(c, str) for c in model["categories"])
+        largest = max(v for s in model["series"] for v in s["values"] if v is not None)
+        value = round(largest * 10 + 7)
+        _call(box, session, identifier, action="set_value", series="0", category="0", value=value)
+        labels, names = [], []
+        if not numeric:
+            _call(box, session, identifier, action="rename_category", category="1", text=f"Kat{tag}")
+            _call(box, session, identifier, action="add_category", text=f"Neu{tag}",
+                  values=[3] * len(model["series"]))
+            labels += [f"Kat{tag}", f"Neu{tag}"]
+        _call(box, session, identifier, action="rename_series", series="0", text=f"Serie{tag}")
+        points = len(read(box, session, identifier)["categories"])
+        _call(box, session, identifier, action="add_series", text=f"Extra{tag}", values=[2] * points)
+        pie = model["types"][0] in ("pie", "doughnut")
+        if not pie:  # a pie's legend names its categories, not its series
+            names += [f"Serie{tag}", f"Extra{tag}"]
+        _call(box, session, identifier, action="set_title", text=f"Titel {tag}")
+        expected[identifier] = {"labels": labels, "names": names, "title": f"Titel {tag}",
+                                "value": None if pie else value}
     return expected
 
 
-def diagram_edit_set(document: Document) -> dict:
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        first, second = document.diagrams()
-        first.set_text(1, "Drafted")
-        first.add_node("Celebrate")
-        second.node(0).add_child("Smaller files")
-        second.remove_node(next(n for n in second.nodes if n.text == "Stale caches"))
-    return {"shown": ["Drafted", "Celebrate", "Smaller files", "Lost formulas"], "gone": ["Stale caches"]}
+def edited(box, name: str) -> tuple[bytes, dict]:
+    """The fixture with the edit set applied: its bytes and what it should show."""
+    session = box.session()
+    session.open((CHARTS / name).read_bytes(), name)
+    expected = chart_edit_set(box, session)
+    return word_docs.saved(session, "d1"), expected
 
 
 def _numbers(text: str) -> list[float]:
@@ -109,17 +120,26 @@ def _numbers(text: str) -> list[float]:
 CHART_FIXTURES = ["charts.docx", "chart-places.docx"]
 
 
-def _extent(document: Document, identifier: str) -> tuple[float, float]:
+def _extent(data: bytes, identifier: str) -> tuple[float, float]:
     """A chart's frame in pt: its drawing's ``wp:extent``, or its group member's ``a:ext``."""
-    from docx_agent.edit.charts import locate
-
-    _, frame = locate(document, identifier)
     WP = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}"
+    WPG = "{http://schemas.microsoft.com/office/word/2010/wordprocessingGroup}"
     A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
-    extent = frame.find(WP + "extent")
-    if extent is None:
-        extent = next(frame.iter(A + "ext"))
-    return int(extent.get("cx")) / 12700, int(extent.get("cy")) / 12700
+    number = identifier.partition(":")[2].rpartition("/")[2]
+    import io
+    import zipfile
+
+    with zipfile.ZipFile(io.BytesIO(data)) as package:
+        stories = [n for n in package.namelist() if re.fullmatch(r"word/[^/]+\.xml", n)]
+    for story in stories:
+        for named in word_docs.tree(data, story).iter(WP + "docPr", WPG + "cNvPr"):
+            if named.get("id") == number:
+                frame = named.getparent()
+                extent = frame.find(WP + "extent")
+                if extent is None:
+                    extent = next(frame.iter(A + "ext"))
+                return int(extent.get("cx")) / 12700, int(extent.get("cy")) / 12700
+    raise AssertionError(f"no drawing {identifier}")
 
 
 def _in_chart(pages: list[list[tuple]], title: str, size: tuple[float, float]) -> list[tuple]:
@@ -135,34 +155,21 @@ def _in_chart(pages: list[list[tuple]], title: str, size: tuple[float, float]) -
 
 
 @pytest.mark.parametrize("name", CHART_FIXTURES)
-def test_word_exports_every_chart_edit_and_shows_it(word, name):
+def test_word_exports_every_chart_edit_and_shows_it(word, box, name):
     """Every chart shows its new labels, series names and title, and its value axis reaches
     its new value -- read inside each chart, wherever Word put it."""
-    document = Document.open(CHARTS / name)
-    expected = chart_edit_set(document)
-    outcome = word.export_pdf(document.to_bytes(), name=f"charts-oracle-{Path(name).stem}")
+    data, expected = edited(box, name)
+    outcome = word.export_pdf(data, name=f"charts-oracle-{Path(name).stem}")
     assert outcome, f"Word did not export {name}: {outcome.outcome} {outcome.detail}"
     pages = _word_spans(outcome.path)
     for identifier, shows in expected.items():
-        inside = _in_chart(pages, shows["title"], _extent(document, identifier))
+        inside = _in_chart(pages, shows["title"], _extent(data, identifier))
         texts = [s[0] for s in inside]
         for label in shows["labels"] + shows["names"]:
             assert label in texts, (identifier, label, texts)
         if shows["value"] is not None:
             numbers = _numbers("\n".join(texts))
             assert numbers and max(numbers) >= shows["value"], (identifier, shows["value"], numbers)
-
-
-def test_word_exports_every_smartart_edit_and_shows_it(word):
-    document = Document.open(CHARTS / "smartart.docx")
-    expected = diagram_edit_set(document)
-    outcome = word.export_pdf(document.to_bytes(), name="charts-oracle-smartart")
-    assert outcome, f"Word did not export smartart.docx: {outcome.outcome} {outcome.detail}"
-    text = _text(outcome.path)
-    for shown in expected["shown"]:
-        assert shown in text, shown
-    for gone in expected["gone"]:
-        assert gone not in text, gone
 
 
 # -- Word's chart text against docx2svg's (F.20) --------------------------------------------------
@@ -311,14 +318,12 @@ KNOWN = {"charts.docx": {}, "chart-places.docx": {"d:1": 5}}
 
 
 @pytest.mark.parametrize("name", CHART_FIXTURES)
-def test_words_chart_text_is_docx2svgs(word, name):
+def test_words_chart_text_is_docx2svgs(word, box, name):
     """Every chart docx2svg draws, its every text as Word draws it: 85 of 85 in the body's six
     charts, all of the group's and the floating one's; the header's, but for :data:`KNOWN`."""
     if not (DOCX2SVG_TOOLS / "read_chart_probe.py").exists():
         pytest.skip("docx2svg's checkout is not beside this one")
-    document = Document.open(CHARTS / name)
-    expected = chart_edit_set(document)
-    data = document.to_bytes()
+    data, expected = edited(box, name)
     outcome = word.export_pdf(data, name=f"charts-oracle-{Path(name).stem}")
     assert outcome
     titles = {identifier: shows["title"] for identifier, shows in expected.items()}
@@ -335,60 +340,67 @@ def test_words_chart_text_is_docx2svgs(word, name):
 
 
 @pytest.mark.parametrize("name", CHART_FIXTURES)
-def test_a_word_resave_keeps_caches_formulas_and_workbooks(word, name):
-    document = Document.open(CHARTS / name)
-    chart_edit_set(document)
-    data = document.to_bytes()
+def test_a_word_resave_keeps_caches_formulas_and_workbooks(word, box, name):
+    data, _ = edited(box, name)
     outcome = word.resave(data, name=f"charts-oracle-{Path(name).stem}")
     assert outcome, f"Word did not save {name}: {outcome.outcome} {outcome.detail}"
     saved_data = outcome.path.read_bytes()
-    ours, saved = Document.open(data), Document.open(saved_data)
-    assert [c.id for c in saved.charts()] == [c.id for c in ours.charts()]
-    for mine, theirs in zip(ours.charts(), saved.charts()):
-        assert theirs.data == mine.data, mine.id
-        root_ours, root_theirs = (d.package.tree(c.part) for d, c in ((ours, mine), (saved, theirs)))
-        C = "{http://schemas.openxmlformats.org/drawingml/2006/chart}"
+    ours, saved = box.session(), box.session()
+    ours.open(data, name)
+    saved.open(saved_data, name)
+    assert charts_of(box, saved) == charts_of(box, ours)
+    C = "{http://schemas.openxmlformats.org/drawingml/2006/chart}"
+    ours_parts, saved_parts = entries(data), entries(saved_data)
+    for identifier in charts_of(box, ours):
+        mine, theirs = read(box, ours, identifier), read(box, saved, identifier)
+        assert {k: theirs[k] for k in ("categories", "series", "title")} == \
+            {k: mine[k] for k in ("categories", "series", "title")}, identifier
+        root_ours = word_docs.tree(data, chart_part(data, identifier))
+        root_theirs = word_docs.tree(saved_data, chart_part(saved_data, identifier))
         assert [f.text for f in root_theirs.iter(C + "f")] == [f.text for f in root_ours.iter(C + "f")]
-        assert saved.package.read(theirs.workbook_part) == ours.package.read(mine.workbook_part), mine.id
+        book = mine["workbook"]["workbook"]
+        assert saved_parts[theirs["workbook"]["workbook"]] == ours_parts[book], identifier
         # What Word changes, as measured: its interface's language, and an id for each series
-        # docx-agent added (it wrote none).
+        # added (none was written).
         ids = [n.get("val") for n in root_theirs.iter() if isinstance(n.tag, str) and n.tag.endswith("}uniqueId")]
-        assert len(ids) == len(theirs.series) and len(set(ids)) == len(ids)
+        assert len(ids) == len(theirs["series"]) and len(set(ids)) == len(ids)
         assert root_theirs.find(C + "lang").get("val") == "nl-NL"  # this Word's interface
-    assert check_document_charts(saved_data, saved_data) > 0
-    assert set(entries(saved_data)) >= {n for n in entries(data) if n.startswith(("word/charts/chart",))}
-
-
-def test_a_word_resave_rewrites_each_edited_diagrams_drawing(word):
-    document = Document.open(CHARTS / "smartart.docx")
-    diagram_edit_set(document)
-    outcome = word.resave(document.to_bytes(), name="charts-oracle-smartart")
-    assert outcome
-    saved = Document.open(outcome.path.read_bytes())
-    A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
-    for diagram, mine in zip(saved.diagrams(), document.diagrams()):
-        assert diagram.texts == mine.texts
-        drawing = saved.package.tree(diagram.drawing_part)
-        drawn = " ".join("".join(t.text or "" for t in p.iter(A + "t")) for p in drawing.iter(A + "p"))
-        for text in diagram.texts:
-            assert text in drawn, (diagram.id, text)
+    assert check_document_charts(box, saved_data, saved_data) > 0
+    assert set(saved_parts) >= {n for n in ours_parts if n.startswith(("word/charts/chart",))}
 
 
 # -- tracking ----------------------------------------------------------------------------------
 
 
-def test_word_counts_no_revision_for_tracked_chart_and_diagram_edits(word):
-    sys.path.insert(0, str(ROOT / "tools"))
-    from charts_probe import _COUNT_SCRIPT
+#: Word counts the revisions and says whether it tracks (once ``tools/charts_probe.py``).
+_COUNT_SCRIPT = '''
+on run argv
+  set inputPath to item 1 of argv
+  set outputPath to item 2 of argv
+  with timeout of 170 seconds
+    tell application "Microsoft Word"
+      activate
+      open (POSIX file inputPath)
+      set d to active document
+      set n to count of revisions of d
+      set t to track revisions of d
+      save as d file name outputPath file format format document
+      close d saving no
+      quit saving no
+    end tell
+  end timeout
+  return "revisions=" & n & " tracking=" & t
+end run
+'''
 
-    document = Document.open(CHARTS / "charts.docx")
-    document.set_word_tracks_changes(True)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        with document.tracking(author="Oracle"):
-            document.chart("d:1").series[0].set_value(0, 66)
-            document.chart("d:1").add_category("Tracked", [1, 2, 3])
-    data = document.to_bytes()
+
+def test_word_counts_no_revision_for_tracked_chart_edits(word, box):
+    session = box.session()
+    session.open((CHARTS / "charts.docx").read_bytes(), "charts.docx")
+    assert box.dispatch(session, "word_set_tracking", {"doc": "d1", "on": True, "author": "Oracle"}).ok
+    _call(box, session, "d:1", action="set_value", series="0", category="0", value=66)
+    _call(box, session, "d:1", action="add_category", text="Tracked", values=[1, 2, 3])
+    data = word_docs.saved(session, "d1")
     for stale in oracle.ORACLE_DIR.glob("charts-oracle-tracked-*-counted.docx"):
         stale.unlink()
     counted = word.run_script(_COUNT_SCRIPT, data, name="charts-oracle-tracked", tag="counted")

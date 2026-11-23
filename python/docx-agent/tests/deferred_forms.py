@@ -8,6 +8,66 @@ Must not: import pytest (a plain table).
 
 #: The deferred form each test meets first, by ``file::name[params]``.
 DEFERRED: dict[str, str] = {
+    "test_icons_minsizes.py::test_an_svg_picture_is_stored_as_word_stores_one":
+        "word_drawings insert_picture of an SVG",
+    "test_icons_minsizes.py::test_a_tint_is_a_theme_colour_with_its_class_or_a_hex_colour":
+        "word_drawings insert_picture of an SVG",
+    "test_icons_minsizes.py::test_what_cannot_be_tinted_or_read_is_refused":
+        "word_drawings insert_picture of an SVG",
+    "test_icons_minsizes.py::test_an_icon_in_a_cell_tinted_and_floating":
+        "word_drawings insert_picture of an SVG",
+    "test_icons_minsizes.py::test_writers_and_check_report_text_below_its_kinds_minimum":
+        "check: min_text_size by kind",
+    "test_retired_ids.py::test_a_deleted_drawing_s_number_is_not_given_to_the_next":
+        "word_delete a picture (d:)",
+    "test_retired_ids.py::test_a_copy_into_a_reopened_document_keeps_no_drawing_number_it_retired":
+        "word_delete a picture (d:)",
+    "test_id_state.py::test_a_deleted_drawing_number_is_not_given_again_after_the_reopen":
+        "word_delete a picture (d:)",
+    "test_accept_edges_r54a.py::test_after_our_accept_the_final_view_is_the_one_before_it[a first cell's end]":
+        "word_read final view of Accept All's cell ends",
+    "test_accept_edges_r54a.py::test_after_our_accept_the_final_view_is_the_one_before_it[a later row's first cell]":
+        "word_read final view of Accept All's cell ends",
+    "test_accept_edges_r54a.py::test_after_our_accept_the_final_view_is_the_one_before_it[a middle cell's end]":
+        "word_read final view of Accept All's cell ends",
+    "test_accept_edges_r54a.py::test_accepting_by_id_or_within_the_table_gives_what_accept_all_gives[a first cell's end]":
+        "word_read final view of Accept All's cell ends",
+    "test_accept_edges_r54a.py::test_accepting_by_id_or_within_the_table_gives_what_accept_all_gives[a later row's first cell]":
+        "word_read final view of Accept All's cell ends",
+    "test_accept_edges_r54a.py::test_accepting_by_id_or_within_the_table_gives_what_accept_all_gives[a middle cell's end]":
+        "word_read final view of Accept All's cell ends",
+    "test_accept_edges_r54a.py::test_accepting_by_id_or_within_the_table_gives_what_accept_all_gives[a row's end]":
+        "word_read final view of Accept All's cell ends",
+    "test_accept_edges_r54a.py::test_accepting_by_id_or_within_the_table_gives_what_accept_all_gives[the table's last cell]":
+        "word_read final view of Accept All's cell ends",
+    "test_rows_joins_r54r.py::test_the_joins_read_as_accept_all_leaves_them":
+        "word_read final view of Accept All's cell ends",
+    "test_tracked_tables_r54.py::test_a_deleted_cell_whose_content_is_kept_widens_the_cell_before_in_the_final_view":
+        "word_read final view of Accept All's cell ends",
+    "test_tracked_reshape_r55.py::test_the_final_view_reads_the_merge_over_a_deleted_column_as_accepted":
+        "word_read final view of Accept All's cell ends",
+    "test_retired_ids.py::test_a_replaced_block_names_the_one_that_replaced_it":
+        "insert_markdown at replace:",
+    "test_id_state.py::test_a_replaced_block_still_names_its_replacement":
+        "insert_markdown at replace:",
+    "test_replace_keeps.py::test_body_paragraphs_keep_their_style_keeps_page_break_and_indent":
+        "insert_markdown at replace:",
+    "test_replace_keeps.py::test_list_items_join_the_replaced_list_at_their_levels":
+        "insert_markdown at replace:",
+    "test_replace_keeps.py::test_a_flat_list_replacing_nested_items_stays_at_their_level":
+        "insert_markdown at replace:",
+    "test_replace_keeps.py::test_markdown_wins_on_kind_level_start_and_named_styles":
+        "insert_markdown at replace:",
+    "test_replace_keeps.py::test_headings_keep_a_same_level_heading_style":
+        "insert_markdown at replace:",
+    "test_replace_keeps.py::test_more_new_paragraphs_take_the_last_donor_without_a_second_page_break":
+        "insert_markdown at replace:",
+    "test_replace_keeps.py::test_tracked_replacement_keeps_settings_and_stays_valid":
+        "insert_markdown at replace:",
+    "test_replace_keeps.py::test_the_replacement_lays_out_as_the_text_rewritten_in_place":
+        "insert_markdown at replace:",
+    "test_side_by_side_edits.py::test_a_dataset_table_put_alone_after_edits_side_by_side":
+        "word_insert_markdown from data (from, blob)",
     "test_tools_word.py::test_insert_markdown_with_every_style_role_writes_no_direct_formatting[normal0]":
         "a footnote in Markdown",
     "test_tools_word.py::test_insert_markdown_with_every_style_role_writes_no_direct_formatting[normal1]":

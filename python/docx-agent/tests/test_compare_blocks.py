@@ -11,26 +11,50 @@ pytest.importorskip("ooxml_edit.tools.shared", reason="needs ooxml-edit 0.4 (the
 
 from ooxml_edit.tools import Toolbox  # noqa: E402
 
-from docx_agent import Document  # noqa: E402
-from docx_agent.edit.compare import WIDTH_TOLERANCE, compare_blocks  # noqa: E402
+from layout_reads import block_ids, table_element, table_ids, written  # noqa: E402
+
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
+import word_docs  # noqa: E402
+
+#: How far two column widths may differ, in points, and be the same (the Rust comparison's).
+WIDTH_TOLERANCE = 0.5
+_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 SAMPLE = ("Samples.\n\n"
           "| Item | Owner | Status |\n| --- | --- | --- |\n| Sample item | Someone | Open |\n\n"
           "A closing line.")
 
 
-def _sample() -> tuple[Document, str]:
+def _sample(box, session) -> tuple[str, str]:
     """A made-up sample: a table whose header row repeats and is shaded, its body row's
-    middle cell centred vertically, a heading-styled paragraph after it."""
-    sample = Document.new()
-    sample.insert_markdown(SAMPLE, at="end")
-    table = sample.tables()[0].id
-    sample.set_table(table, header_rows=1)
+    middle cell centred vertically, a heading-styled paragraph after it.  The document and
+    the table."""
+    sample = written(box, session, SAMPLE, "samples.docx")
+    table = table_ids(box, session, sample)[0]
+    table = _ok(box, session, "word_format_table", doc=sample, table=table, scope="table",
+                header_rows=1).renamed.get(table, table)
     for column in range(3):
-        sample.set_cell(table, 0, column, shading="1F3864")
-    sample.set_cell(table, 1, 1, vertical_alignment="center")
-    return sample, table
+        _ok(box, session, "word_format_table", doc=sample, table=table, scope="cell", row=0, column=column,
+            shading="1F3864")
+    _ok(box, session, "word_format_table", doc=sample, table=table, scope="cell", row=1, column=1,
+        vertical_alignment="center")
+    return sample, table_ids(box, session, sample)[0]
+
+
+def _cell(box, session, doc: str, table: str, row: int, column: int) -> list[str]:
+    """The ids of a cell's paragraphs."""
+    found = _ok(box, session, "word_inspect", doc=doc, target=table).data["blocks"][0]
+    return [block["id"] for block in found["rows"][row][column]["blocks"]]
+
+
+def _compare(box, session, doc: str, blocks: list[str], reference: str) -> dict:
+    return _ok(box, session, "word_compare_blocks", doc=doc, blocks=blocks, reference={"block": reference}).data
+
+
+def _columns(box, session, doc: str, table: str) -> list[float]:
+    """A table's grid's column widths, in points."""
+    grid = table_element(box, session, doc, table).find(_W + "tblGrid")
+    return [int(column.get(_W + "w")) / 20 for column in grid]
 
 
 def _differences(data: dict, block: str | None = None) -> dict[str, dict]:
@@ -61,15 +85,11 @@ def _apply(box, session, doc: str, data: dict) -> int:
 
 
 def test_a_drifted_copy_from_another_document_is_fixed_toward_its_sample(box):
-    sample, reference = _sample()
     session = box.session()
-    d2 = session.open(sample.to_bytes(), "samples.docx")
-    report = Document.new()
-    report.insert_markdown("A report.", at="end")
-    d1 = session.open(report.to_bytes(), "report.docx")
+    d2, reference = _sample(box, session)
+    d1 = written(box, session, "A report.", "report.docx")
     first = _ok(box, session, "word_copy_from", doc=d1, source_doc=d2, range=reference, at="end").data["blocks"][0]
     second = _ok(box, session, "word_copy_from", doc=d1, source_doc=d2, range=reference, at="end").data["blocks"][0]
-    document = session.entry(d1).document
     # Filled: another item row in each (more rows than the sample: a difference by design).
     for table in (first, second):
         _ok(box, session, "word_edit_table", doc=d1, table=table, action="insert_row", index=1, side="after")
@@ -78,7 +98,8 @@ def test_a_drifted_copy_from_another_document_is_fixed_toward_its_sample(box):
     _ok(box, session, "word_format_table", doc=d1, table=second, scope="table", header_rows=0)
     _ok(box, session, "word_format_table", doc=d1, table=second, scope="row", row=1, shading="F2F2F2")
     _ok(box, session, "word_format_table", doc=d1, table=second, scope="column", column=0, width=100)
-    cell = document.table(second).cell(1, 2).paragraphs[0].id
+    second = table_ids(box, session, d1)[1]
+    cell = _cell(box, session, d1, second, 1, 2)[0]
     _ok(box, session, "word_format", doc=d1, targets=[cell], bold=True, alignment="center")
     _ok(box, session, "word_edit_table", doc=d1, table=second, action="merge", first={"row": 2, "col": 1},
         last={"row": 2, "col": 2})
@@ -114,16 +135,16 @@ def test_a_drifted_copy_from_another_document_is_fixed_toward_its_sample(box):
                 reference={"doc": d2, "block": reference}).data
     assert [d["property"] for d in again["differences"]] == ["rows", "rows"], again["differences"]
     assert all(d["fix"] is None for d in again["differences"])
-    assert session.entry(d1).document.validate() == []
+    assert word_docs.validation(box, session, d1)["new"] == []
 
 
-def test_paragraphs_compare_their_style_and_direct_formatting():
-    document = Document.new()
-    made = document.insert_markdown("# A heading\n\nBody text.\n\n# Another heading\n\nMore text.", at="end")
-    first, _, second, body = made.blocks[:4]
-    document.format_paragraph(second, size=20, space_after=3)
-    document.set_paragraph_style(body, "Heading 2")
-    data = document.compare_blocks([second, body], first)
+def test_paragraphs_compare_their_style_and_direct_formatting(box):
+    session = box.session()
+    d = written(box, session, "# A heading\n\nBody text.\n\n# Another heading\n\nMore text.")
+    first, _, second, body = block_ids(box, session, d)[:4]
+    _ok(box, session, "word_format", doc=d, targets=[second], size=20, space_after=3)
+    _ok(box, session, "word_format", doc=d, targets=[body], paragraph_style="Heading 2")
+    data = _compare(box, session, d, [second, body], first)
     found = _differences(data, second)
     assert set(found) == {"size", "space_after"}
     assert found["size"]["value"] == 20 and found["size"]["reference"] is None
@@ -132,41 +153,40 @@ def test_paragraphs_compare_their_style_and_direct_formatting():
     assert other["paragraph_style"]["value"] == "heading 2" and other["paragraph_style"]["reference"] == "heading 1"
     assert other["paragraph_style"]["fix"]["calls"] == [{"targets": [body], "paragraph_style": "heading 1"}]
     # A table against a paragraph: only the kind.
-    document.insert_markdown("| a | b |\n| --- | --- |\n| 1 | 2 |", at="end")
-    table = document.tables()[0].id
-    assert compare_blocks(document, [table], first)["differences"] == [
+    _ok(box, session, "word_insert_markdown", doc=d, at="end", markdown="| a | b |\n| --- | --- |\n| 1 | 2 |")
+    table = table_ids(box, session, d)[0]
+    assert _compare(box, session, d, [table], first)["differences"] == [
         {"block": table, "property": "kind", "value": "table", "reference": "paragraph", "fix": None}]
 
 
 def test_the_same_sample_in_the_same_document_and_the_width_tolerance(box):
-    sample, reference = _sample()
-    copy = sample.copy_blocks(sample, reference, at="end").blocks[0]
-    assert sample.compare_blocks([copy], reference)["same"] == [copy]
-    columns = sample.table(reference).properties["columns"]
-    sample.set_column_width(copy, 1, columns[1] + WIDTH_TOLERANCE)
-    assert sample.compare_blocks([copy], reference)["same"] == [copy]
-    sample.set_column_width(copy, 1, columns[1] + 1)
-    found = _differences(sample.compare_blocks([copy], reference))
+    session = box.session()
+    d, reference = _sample(box, session)
+    copy = _ok(box, session, "word_copy_from", doc=d, source_doc=d, range=reference, at="end").data["blocks"][0]
+    assert _compare(box, session, d, [copy], reference)["same"] == [copy]
+    columns = _columns(box, session, d, reference)
+    copy = _ok(box, session, "word_format_table", doc=d, table=copy, scope="column", column=1,
+               width=columns[1] + WIDTH_TOLERANCE).renamed.get(copy, copy)
+    assert _compare(box, session, d, [copy], reference)["same"] == [copy]
+    _ok(box, session, "word_format_table", doc=d, table=copy, scope="column", column=1, width=columns[1] + 1)
+    data = _compare(box, session, d, [copy], reference)
+    found = _differences(data)
     assert set(found) == {"widths"} and found["widths"]["columns"] == [1]
     # Through the tool, the reference in the same document: no doc in it.
-    session = box.session()
-    d = session.open(sample.to_bytes(), "samples.docx")
-    data = _ok(box, session, "word_compare_blocks", doc=d, blocks=[copy], reference={"block": reference}).data
     assert _apply(box, session, d, data) == 1
-    assert _ok(box, session, "word_compare_blocks", doc=d, blocks=[copy],
-               reference={"block": reference}).data["same"] == [copy]
+    assert _compare(box, session, d, [copy], reference)["same"] == [copy]
     error = box.dispatch(session, "word_compare_blocks", {"doc": d, "blocks": [copy],
                                                           "reference": {"doc": "d9", "block": reference}})
     assert not error.ok and error.error.code == "not_found"
 
 
 def test_table_style_and_borders_are_fixed_where_the_tool_writes_them(box):
-    sample, reference = _sample()
     session = box.session()
-    d = session.open(sample.to_bytes(), "samples.docx")
+    d, reference = _sample(box, session)
     _ok(box, session, "word_format_table", doc=d, table=reference, scope="table", borders="single")
     # Borders alone leave the table's style as it was (they set it to "single" before).
-    assert session.entry(d).document.table(reference).properties["style"] == "Table Grid"
+    style = table_element(box, session, d, reference).find(f"{_W}tblPr/{_W}tblStyle")
+    assert style is not None and style.get(_W + "val") == "TableGrid"
     _ok(box, session, "word_format_table", doc=d, table=reference, scope="cell", row=1, column=0, borders="dashed")
     copy = _ok(box, session, "word_copy_from", doc=d, source_doc=d, range=reference, at="end").data["blocks"][0]
     assert _ok(box, session, "word_compare_blocks", doc=d, blocks=[copy],
@@ -196,29 +216,33 @@ def test_table_style_and_borders_are_fixed_where_the_tool_writes_them(box):
 # -- round 26, W6: a cell's paragraphs paired by an alignment -------------------------------------
 
 
-def _two_paragraph_cell() -> tuple[Document, str, str]:
+def _two_paragraph_cell(box, session) -> tuple[str, str, str]:
     """A made-up sample whose notes cell holds a heading-styled label line and a body line,
     and a copy of it in the same document: ``(document, sample, copy)``."""
-    document = Document.new()
-    document.insert_markdown("| Item | Notes |\n| --- | --- |\n| Item one | Body text here |", at="end")
-    sample = document.tables()[0].id
-    document.table(sample).cell(1, 1).paragraphs[0].insert_before("Section label", style="Heading 2")
-    copy = document.copy_blocks(document, sample, at="end").blocks[0]
-    assert document.compare_blocks([copy], sample)["same"] == [copy]
-    return document, sample, copy
+    d = written(box, session, "| Item | Notes |\n| --- | --- |\n| Item one | Body text here |", "cells.docx")
+    sample = table_ids(box, session, d)[0]
+    [body] = _cell(box, session, d, sample, 1, 1)
+    label = _ok(box, session, "word_insert_markdown", doc=d, at=f"before:{body}",
+                markdown="Section label").data["blocks"][0]
+    _ok(box, session, "word_format", doc=d, targets=[label], paragraph_style="Heading 2")
+    sample = table_ids(box, session, d)[0]
+    copy = _ok(box, session, "word_copy_from", doc=d, source_doc=d, range=sample, at="end").data["blocks"][0]
+    assert _compare(box, session, d, [copy], sample)["same"] == [copy]
+    return d, sample, copy
 
 
-def _notes(document: Document, table: str) -> list:
-    return document.table(table).cell(1, 1).paragraphs
+def _notes(box, session, d: str, table: str) -> list[str]:
+    return _cell(box, session, d, table, 1, 1)
 
 
 def test_a_cell_missing_its_label_line_is_never_restyled_as_the_label(box):
-    document, sample, copy = _two_paragraph_cell()
-    label, body = _notes(document, copy)
-    label.delete()
-    body.set_text("Filled in by hand")
-    document.format_paragraph(body.id, bold=True)
-    data = document.compare_blocks([copy], sample)
+    session = box.session()
+    d, sample, copy = _two_paragraph_cell(box, session)
+    label, body = _notes(box, session, d, copy)
+    _ok(box, session, "word_delete", doc=d, target=label)
+    _ok(box, session, "word_set_text", doc=d, target=body, text="Filled in by hand")
+    _ok(box, session, "word_format", doc=d, targets=[body], bold=True)
+    data = _compare(box, session, d, [copy], sample)
     found = _differences(data)
     # By position the body line would pair with the label and be given its style.
     assert "paragraph_style" not in found, data["differences"]
@@ -229,75 +253,77 @@ def test_a_cell_missing_its_label_line_is_never_restyled_as_the_label(box):
     assert found["missing_paragraph"]["reference"] == {"paragraph_style": "heading 2", "text": "Section label",
                                                        "index": 0}
     # The body line pairs with the sample's body line (by style): its direct formatting is compared.
-    assert found["bold"]["paragraphs"] == [body.id]
-    assert found["bold"]["fix"] == {"tool": "word_format", "calls": [{"targets": [body.id], "clear": ["bold"]}]}
-    # Through the tool: the fixes leave only what no tool fixes.
-    session = box.session()
-    d = session.open(document.to_bytes(), "cells.docx")
-    data = _ok(box, session, "word_compare_blocks", doc=d, blocks=[copy], reference={"block": sample}).data
+    assert found["bold"]["paragraphs"] == [body]
+    assert found["bold"]["fix"] == {"tool": "word_format", "calls": [{"targets": [body], "clear": ["bold"]}]}
+    # The fixes leave only what no tool fixes.
     assert _apply(box, session, d, data) == 1
-    again = _ok(box, session, "word_compare_blocks", doc=d, blocks=[copy], reference={"block": sample}).data
+    again = _compare(box, session, d, [copy], sample)
     assert [e["property"] for e in again["differences"]] == ["paragraphs", "missing_paragraph"]
 
 
-def test_a_cell_with_a_line_the_sample_has_not_reports_it_as_extra():
-    document, copy_of_sample, sample = _two_paragraph_cell()   # the two-line cell is the copy now
-    label, body = _notes(document, sample)
-    label.delete()
-    data = document.compare_blocks([copy_of_sample], sample)
+def test_a_cell_with_a_line_the_sample_has_not_reports_it_as_extra(box):
+    session = box.session()
+    d, copy_of_sample, sample = _two_paragraph_cell(box, session)   # the two-line cell is the copy now
+    label, body = _notes(box, session, d, sample)
+    _ok(box, session, "word_delete", doc=d, target=label)
+    data = _compare(box, session, d, [copy_of_sample], sample)
     found = _differences(data)
     assert set(found) == {"paragraphs", "extra_paragraph"}, data["differences"]
     assert (found["paragraphs"]["value"], found["paragraphs"]["reference"]) == (2, 1)
     extra = found["extra_paragraph"]
-    assert extra["paragraphs"] == [_notes(document, copy_of_sample)[0].id]
+    assert extra["paragraphs"] == [_notes(box, session, d, copy_of_sample)[0]]
     assert extra["value"] == {"paragraph_style": "heading 2", "text": "Section label"}
     assert extra["reference"] is None and extra["fix"] is None
 
 
-def test_reordered_lines_are_missing_and_extra_not_restyled():
-    document, sample, copy = _two_paragraph_cell()
-    label, body = _notes(document, copy)
-    label.move(after=body.id)
-    data = document.compare_blocks([copy], sample)
+def test_reordered_lines_are_missing_and_extra_not_restyled(box):
+    session = box.session()
+    d, sample, copy = _two_paragraph_cell(box, session)
+    label, body = _notes(box, session, d, copy)
+    _ok(box, session, "word_move", doc=d, blocks=label, after=body)
+    data = _compare(box, session, d, [copy], sample)
     found = _differences(data)
     # Equal counts, but the texts say the pairs are crossed: no style fixes, no count.
     assert set(found) == {"missing_paragraph", "extra_paragraph"}, data["differences"]
     missing = found["missing_paragraph"]["reference"]
     assert found["extra_paragraph"]["value"] == {k: v for k, v in missing.items() if k != "index"}
-    assert all(d["fix"] is None for d in data["differences"])
+    assert all(d_["fix"] is None for d_ in data["differences"])
 
 
-def test_equal_counts_keep_pairing_by_position():
-    document, sample, copy = _two_paragraph_cell()
-    label, body = _notes(document, copy)
+def test_equal_counts_keep_pairing_by_position(box):
+    session = box.session()
+    d, sample, copy = _two_paragraph_cell(box, session)
+    label, body = _notes(box, session, d, copy)
     # Filled with other text and the label restyled: still compared line by line.
-    label.set_text("Another label")
-    body.set_text("Other text entirely")
-    document.set_paragraph_style(label.id, "Heading 3")
-    found = _differences(document.compare_blocks([copy], sample))
+    _ok(box, session, "word_set_text", doc=d, target=label, text="Another label")
+    _ok(box, session, "word_set_text", doc=d, target=body, text="Other text entirely")
+    _ok(box, session, "word_format", doc=d, targets=[label], paragraph_style="Heading 3")
+    found = _differences(_compare(box, session, d, [copy], sample))
     assert set(found) == {"paragraph_style"}
-    assert found["paragraph_style"]["paragraphs"] == [label.id]
-    assert found["paragraph_style"]["fix"]["calls"] == [{"targets": [label.id], "paragraph_style": "heading 2"}]
+    assert found["paragraph_style"]["paragraphs"] == [label]
+    assert found["paragraph_style"]["fix"]["calls"] == [{"targets": [label], "paragraph_style": "heading 2"}]
 
 
-def test_a_label_matching_by_text_is_restyled_and_like_lines_repeat_their_pattern():
-    document, sample, copy = _two_paragraph_cell()
-    label, body = _notes(document, copy)
+def test_a_label_matching_by_text_is_restyled_and_like_lines_repeat_their_pattern(box):
+    session = box.session()
+    d, sample, copy = _two_paragraph_cell(box, session)
+    label, body = _notes(box, session, d, copy)
     # The label's text a little edited and restyled, the body line gone: the label still
     # pairs by its text, so its style is fixed; the body line is missing.
-    body.delete()
-    label.set_text("Section labels")
-    document.set_paragraph_style(label.id, "Heading 3")
-    found = _differences(document.compare_blocks([copy], sample))
+    _ok(box, session, "word_delete", doc=d, target=body)
+    _ok(box, session, "word_set_text", doc=d, target=label, text="Section labels")
+    _ok(box, session, "word_format", doc=d, targets=[label], paragraph_style="Heading 3")
+    found = _differences(_compare(box, session, d, [copy], sample))
     assert set(found) == {"paragraphs", "missing_paragraph", "paragraph_style"}
     assert found["missing_paragraph"]["reference"]["text"] == "Body text here"
-    assert found["paragraph_style"]["fix"]["calls"] == [{"targets": [label.id], "paragraph_style": "heading 2"}]
+    assert found["paragraph_style"]["fix"]["calls"] == [{"targets": [label], "paragraph_style": "heading 2"}]
     # A sample line is the pattern for more lines like it after it: a cell filled with
     # three body lines under its label is as the sample.
-    document, sample, copy = _two_paragraph_cell()
-    _, body = _notes(document, copy)
-    body.insert_after("A second body line")
-    _notes(document, copy)[2].insert_after("A third body line")
-    assert len(_notes(document, copy)) == 4
-    data = document.compare_blocks([copy], sample)
+    d, sample, copy = _two_paragraph_cell(box, session)
+    _, body = _notes(box, session, d, copy)
+    _ok(box, session, "word_insert_markdown", doc=d, at=f"after:{body}", markdown="A second body line")
+    third = _notes(box, session, d, copy)[2]
+    _ok(box, session, "word_insert_markdown", doc=d, at=f"after:{third}", markdown="A third body line")
+    assert len(_notes(box, session, d, copy)) == 4
+    data = _compare(box, session, d, [copy], sample)
     assert data["same"] == [copy], data["differences"]

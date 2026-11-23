@@ -22,16 +22,17 @@ All shows, measured), 3 (an accept that changes nothing stays a no-op).
 
 from __future__ import annotations
 
+import re
+
 import pytest
+from docx2svg.model import Paragraph, Table
 from docx2svg.parse.document import parse_package
 from ooxml_edit.tools import Toolbox
-from facts_documents import SHAPES, _document, _edge, _p, _tbl
-from test_rows_joins_r54r import CLOCK, _ours, _render, call, ok
+from test_rows_joins_r54r import CLOCK, SHAPES, _document, _edge, _p, _tbl, call, ok
 
-from docx_agent import Document
-from docx_agent.layout_facts import accept_loses_text
-from docx_agent.markdown.read import Reader
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
+
+import word_docs
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _W = "{%s}" % W
@@ -45,50 +46,85 @@ def box():
         yield toolbox
 
 
-def _read(document: Document) -> list:
-    return _ours(Reader(document).story(document.package.document_part()))
+def _opened(box, data: bytes):
+    session = box.session(clock=CLOCK)
+    session.open(data, "edge.docx")
+    return session
 
 
-def _accepted(data: bytes) -> Document:
-    document = Document.open(data)
-    document.accept_all()
-    return Document.open(document.to_bytes())
+def _read(box, session, view: str = "final") -> str:
+    """``word_read``'s view of the document, its id comments left out."""
+    return re.sub(r" ?<!-- [^>]*-->\n?| data-id=\"[^\"]*\"", "", word_docs.read(box, session, "d1", view=view))
 
 
-def _body(document: Document):
-    return document.package.tree(document.package.document_part()).find(_W + "body")
+def _view(box, data: bytes, view: str = "final") -> str:
+    return _read(box, _opened(box, data), view)
 
 
-def _blocks(document: Document) -> list[str]:
-    return [child.tag.rpartition("}")[2] for child in _body(document) if child.tag != _W + "sectPr"]
+def _reviewed(box, data: bytes, action: str = "accept") -> bytes:
+    session = _opened(box, data)
+    ok(box, session, "word_changes", doc="d1", action=action, all=True)
+    return word_docs.saved(session, "d1")
+
+
+def _accepted(box, data: bytes) -> bytes:
+    return _reviewed(box, data, "accept")
+
+
+def _records(box, data: bytes) -> list:
+    return ok(box, _opened(box, data), "word_changes", doc="d1", action="list", detail="records").data
+
+
+def _body(data: bytes):
+    return word_docs.tree(data).find(_W + "body")
+
+
+def _blocks(data: bytes) -> list[str]:
+    return [child.tag.rpartition("}")[2] for child in _body(data) if child.tag != _W + "sectPr"]
 
 
 def _grid(table) -> list[str]:
     return [c.get(_W + "w") for c in table.findall(f"{_W}tblGrid/{_W}gridCol")]
 
 
+def _render(blocks):
+    """docx2svg's parse of a body (its final view): paragraphs' text and tables' cells."""
+    out = []
+    for b in blocks:
+        if isinstance(b, Paragraph):
+            out.append(("p", "".join(b.text.split())))
+        elif isinstance(b, Table):
+            out.append(("t", [[_render(c) for c in line] for line in b.rows]))
+    return out
+
+
+def _loses_text(box, data: bytes) -> list:
+    return ok(box, _opened(box, data), "check", doc="d1", include=["layout"]).data["layout"].get(
+        "accept_loses_text", [])
+
+
 @pytest.mark.parametrize("shape", CLEAN)
-def test_after_our_accept_the_final_view_is_the_one_before_it(shape):
+def test_after_our_accept_the_final_view_is_the_one_before_it(box, shape):
     data = _document(SHAPES[shape])
-    accepted = _accepted(data)
-    assert _read(accepted) == _read(Document.open(data))
+    accepted = _accepted(box, data)
+    assert _view(box, accepted) == _view(box, data)
     # ... and render's (docx2svg's parse of the accepted file: its final view before).
-    assert _render(parse_package(accepted.to_bytes()).body) == _render(parse_package(data).body)
-    assert accepted.revisions() == []
+    assert _render(parse_package(accepted).body) == _render(parse_package(data).body)
+    assert _records(box, accepted) == []
 
 
-def test_a_paragraph_before_a_table_joins_the_first_cells_first_paragraph():
+def test_a_paragraph_before_a_table_joins_the_first_cells_first_paragraph(box):
     data = _document(_p("Before. ", True) + _tbl([[_p("A1").replace("<w:p>", '<w:p><w:pPr><w:jc w:val="right"/>'
                                                                    "</w:pPr>"), _p("B1")]]))
-    accepted = _accepted(data)
+    accepted = _accepted(box, data)
     assert _blocks(accepted) == ["tbl", "p"]
     first = _body(accepted).find(f"{_W}tbl/{_W}tr/{_W}tc/{_W}p")
     assert "".join(t.text for t in first.iter(_W + "t")) == "Before. A1"
     assert first.find(f"{_W}pPr/{_W}jc").get(_W + "val") == "right"     # the cell paragraph's properties
 
 
-def test_a_first_cells_end_takes_the_next_cell_in_and_its_other_paragraphs_leave_the_table():
-    accepted = _accepted(_document(_edge((0, 0))))
+def test_a_first_cells_end_takes_the_next_cell_in_and_its_other_paragraphs_leave_the_table(box):
+    accepted = _accepted(box, _document(_edge((0, 0))))
     assert _blocks(accepted) == ["p", "tbl", "p"]
     table = _body(accepted).find(_W + "tbl")
     first, second = table.findall(_W + "tr")
@@ -100,17 +136,17 @@ def test_a_first_cells_end_takes_the_next_cell_in_and_its_other_paragraphs_leave
     assert _grid(table) == ["3000", "3000"]
 
 
-def test_in_a_later_row_the_table_splits_each_part_with_its_own_grid():
-    accepted = _accepted(_document(_edge((1, 0))))
+def test_in_a_later_row_the_table_splits_each_part_with_its_own_grid(box):
+    accepted = _accepted(box, _document(_edge((1, 0))))
     assert _blocks(accepted) == ["tbl", "p", "tbl", "p"]
     upper, lower = _body(accepted).findall(_W + "tbl")
     assert _grid(upper) == ["3000", "3000"] and _grid(lower) == ["3000"]
     assert lower.find(f"{_W}tr/{_W}trPr/{_W}gridAfter") is None
-    assert _read(accepted)[1] == ("p", "Kept.")
+    assert word_docs.text_of(_body(accepted).findall(_W + "p")[0]) == "Kept."
 
 
-def test_a_middle_cell_takes_in_the_rows_last_and_the_grid_loses_its_column():
-    accepted = _accepted(_document(_edge((0, 1), rows=1, columns=3)))
+def test_a_middle_cell_takes_in_the_rows_last_and_the_grid_loses_its_column(box):
+    accepted = _accepted(box, _document(_edge((0, 1), rows=1, columns=3)))
     table = _body(accepted).find(_W + "tbl")
     assert _grid(table) == ["3000", "3000"] and len(table.findall(f"{_W}tr/{_W}tc")) == 2
     assert table.find(f"{_W}tr/{_W}trPr") is None
@@ -118,10 +154,10 @@ def test_a_middle_cell_takes_in_the_rows_last_and_the_grid_loses_its_column():
 
 @pytest.mark.parametrize("at,blocks", [((0, 1), ["tbl", "p", "p", "tbl", "p"]), ((1, 1), ["tbl", "p", "p", "p"])],
                          ids=["a row's end", "the table's last cell"])
-def test_a_rows_last_cell_goes_and_its_text_moves_after_the_row_in_a_clean_file(at, blocks):
-    accepted = _accepted(_document(_edge(at)))
+def test_a_rows_last_cell_goes_and_its_text_moves_after_the_row_in_a_clean_file(box, at, blocks):
+    accepted = _accepted(box, _document(_edge(at)))
     assert _blocks(accepted) == blocks
-    texts = [b.text for b in Reader(accepted).story(accepted.package.document_part()) if hasattr(b, "text")]
+    texts = [word_docs.text_of(p) for p in _body(accepted).iter(_W + "p")]
     assert "Kept." in texts and "Last." in texts
     # No broken table: every cell spans at least one column, every row reaches the grid.
     for table in _body(accepted).iter(_W + "tbl"):
@@ -137,18 +173,16 @@ def test_a_rows_last_cell_goes_and_its_text_moves_after_the_row_in_a_clean_file(
     assert _grid(first) == ["3000", "3000"]
     short = first.findall(_W + "tr")[at[0]]
     assert short.find(f"{_W}trPr/{_W}gridAfter").get(_W + "val") == "1"
-    assert accept_loses_text(accepted) == []
+    assert _loses_text(box, accepted) == []
 
 
 @pytest.mark.parametrize("shape", list(SHAPES))
-def test_reject_stays_the_original(shape):
+def test_reject_stays_the_original(box, shape):
     data = _document(SHAPES[shape])
-    original = Document.open(data)
-    rejected = Document.open(data)
-    rejected.reject_all()
-    assert rejected.revisions() == []
-    assert _read(rejected) == _ours(Reader(original, view="original").story(original.package.document_part()))
-    assert _blocks(rejected) == _blocks(original)
+    rejected = _reviewed(box, data, "reject")
+    assert _records(box, rejected) == []
+    assert _view(box, rejected) == _view(box, data, "original")
+    assert _blocks(rejected) == _blocks(data)
 
 
 #: The chain with revision ids of its own (the shared shape gives both marks one w:id).
@@ -159,19 +193,17 @@ OWN_IDS = {**SHAPES, "chain into a nested table": _p("One. ", True) + _p("Two, t
 @pytest.mark.parametrize("shape", list(SHAPES))
 def test_accepting_by_id_or_within_the_table_gives_what_accept_all_gives(box, shape):
     data = _document(OWN_IDS[shape])
-    expected = _read(_accepted(data))
-    by_id = box.session(clock=CLOCK)
-    by_id.open(data, "edge.docx")
+    expected = _view(box, _accepted(box, data))
+    by_id = _opened(box, data)
     ids = [c["id"] for c in ok(box, by_id, "word_changes", doc="d1", action="list").data]
     ok(box, by_id, "word_changes", doc="d1", action="accept", ids=ids)
-    assert _read(by_id.entry("d1").document) == expected
-    within = box.session(clock=CLOCK)
-    within.open(data, "edge.docx")
-    table = within.entry("d1").document.tables()[0].id
+    assert _read(box, by_id) == expected
     if shape.startswith(("before", "chain")):
         return  # the mark is before the table, not within it
+    within = _opened(box, data)
+    table = next(block for block, _ in word_docs.blocks(box, within, "d1") if block.startswith("t"))
     ok(box, within, "word_changes", doc="d1", action="accept", within=table)
-    assert _read(within.entry("d1").document) == expected
+    assert _read(box, within) == expected
 
 
 def test_the_result_says_where_a_rows_last_cell_text_went_and_undo_brings_it_back(box):
@@ -190,9 +222,8 @@ def test_the_result_says_where_a_rows_last_cell_text_went_and_undo_brings_it_bac
 
 
 def test_check_and_the_table_warning_say_what_our_accept_does(box):
-    session = box.session(clock=CLOCK)
-    session.open(_document(_edge((0, 1))), "edge.docx")
-    table = session.entry("d1").document.tables()[0].id
+    session = _opened(box, _document(_edge((0, 1))))
+    table = next(block for block, _ in word_docs.blocks(box, session, "d1") if block.startswith("t"))
     result = ok(box, session, "word_edit_table", doc="d1", table=table, action="set_cells",
                 cells=[{"row": 1, "col": 0, "text": "r2c1 again"}])
     assert any("word_changes accept moves the text after the row" in w for w in result.warnings)
@@ -201,7 +232,7 @@ def test_check_and_the_table_warning_say_what_our_accept_does(box):
     assert "word_changes accept moves the text after the row" in refused.to_json()["error"]["message"]
 
 
-def test_a_cell_merged_down_by_a_pending_tracked_merge_reads_merged_in_the_final_view():
+def test_a_cell_merged_down_by_a_pending_tracked_merge_reads_merged_in_the_final_view(box):
     # docx2svg's revision probe, "cellMerge alone": render draws the cell merged down (Word's
     # Accept All); word_read's final view now reads it so, as after our accept.
     merge = '<w:cellMerge w:id="7" w:author="Editor B" w:date="2026-11-13T09:00:00Z" w:vMerge="cont" ' \
@@ -213,31 +244,15 @@ def test_a_cell_merged_down_by_a_pending_tracked_merge_reads_merged_in_the_final
     table = ('<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="3000"/>'
              f'<w:gridCol w:w="3000"/></w:tblGrid>{top}{below}</w:tbl>')
     data = _document(table)
-    assert _read(Document.open(data)) == _read(_accepted(data))
-    assert _read(Document.open(data))[0][1][1] == [[("p", "b2")]]
+    assert _view(box, data) == _view(box, _accepted(box, data))
+    # The second row's first cell is merged into the first: the row reads one cell.
+    rows = _view(box, data).split("<tr>")[1:]
+    assert rows[-1].count("<td") == 1 and "b2" in rows[-1], rows
 
 
-def test_an_accept_with_numbered_paragraphs_and_no_numbering_part_does_not_fail():
+def test_an_accept_with_numbered_paragraphs_and_no_numbering_part_does_not_fail(box):
     numbered = '<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="3"/></w:numPr><w:rPr>' \
                '<w:del w:id="5" w:author="Editor B" w:date="2026-11-13T09:00:00Z"/></w:rPr></w:pPr>' \
                '<w:r><w:t>First</w:t></w:r></w:p>'
-    document = Document.open(_document(numbered + _p("Second")))
-    document.accept_all()
-    assert [b.text for b in Reader(document).story(document.package.document_part())][0] == "FirstSecond"
-
-
-def test_a_column_scale_counts_the_rows_as_accepted(box):
-    session = box.session(clock=CLOCK)
-    session.open(Document.new().to_bytes(), "shelf.docx")
-    ok(box, session, "word_insert_markdown", doc="d1", at="end",
-       markdown="| Item | Grade |\n|---|---|\n| S-01 | 2 |\n| S-02 | 4 |\n| S-03 | 5 |\n")
-    table = session.entry("d1").document.tables()[0].id
-    ok(box, session, "word_set_tracking", doc="d1", on=True, author="Editor A")
-    ok(box, session, "word_edit_table", doc="d1", table=table, action="delete_row", index=2)
-    scale = {"name": "Grade", "steps": [{"min": 1, "fill": "C62828", "label": "Low"},
-                                        {"min": 4, "fill": "2E7D32", "label": "High"}],
-             "targets": [f"{table}/col1"]}
-    result = ok(box, session, "style_by_value", doc="d1", scale=scale, preview=True)
-    # The pending deleted row (S-02, 4) is not among the values: rows as accepted.
-    assert [(t["target"], t.get("value")) for t in result.data["targets"]] == [
-        (f"{table}/c1,1", "2"), (f"{table}/c3,1", "5")]
+    accepted = _accepted(box, _document(numbered + _p("Second")))
+    assert word_docs.text_of(_body(accepted).find(_W + "p")) == "FirstSecond"
