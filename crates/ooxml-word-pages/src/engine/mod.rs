@@ -217,6 +217,8 @@ pub struct PageEngine {
     budgets: EngineBudgets,
     /// Pages painted, by version (its serial) and page.
     painted: Memo<(u64, usize), Painted>,
+    /// The metafiles its versions' pages drew, by their parts' content.
+    pictures: Arc<crate::pictures::PictureMemo>,
     /// The serial the next version laid out takes.
     serial: u64,
     limits: Limits,
@@ -285,6 +287,7 @@ impl PageEngine {
             decimal: options.decimal,
             glyph_size: options.glyph_size,
             painted: Memo::new(Arc::clone(&budgets.paint)),
+            pictures: Arc::new(crate::pictures::PictureMemo::new(Arc::clone(&budgets.paint))),
             serial: 0,
             budgets,
             limits: options.limits,
@@ -526,7 +529,7 @@ impl PageEngine {
         }
         let relaid = !laid.relaid.is_empty();
         self.stats.count_laid(relaid);
-        let (pictures, drawings) = pictures_of(package, &document, &generation.fonts, &self.numbers);
+        let (pictures, drawings) = pictures_of(package, &document, &generation.fonts, &self.numbers, &self.pictures);
         let with = SayWith {
             locale: &self.locale,
             glyph_size: self.glyph_size,

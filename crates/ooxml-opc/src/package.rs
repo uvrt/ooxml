@@ -38,6 +38,37 @@ impl PartVersion {
             _ => false,
         }
     }
+
+    /// Its content as a key ([`PartIdentity`]).
+    pub fn identity(&self) -> PartIdentity {
+        PartIdentity(self.clone())
+    }
+}
+
+/// A part's content as a key: two are equal where their contents are the same by identity
+/// ([`PartVersion::same`]), hashed by the allocation that identity is. A key holds what it
+/// names, so no other content takes its address while the key is kept: what is worked out
+/// from a part's content (a metafile drawn, say) is kept under it, across the versions
+/// that share the part.
+#[derive(Debug, Clone)]
+pub struct PartIdentity(PartVersion);
+
+impl PartialEq for PartIdentity {
+    fn eq(&self, other: &PartIdentity) -> bool {
+        self.0.same(&other.0)
+    }
+}
+
+impl Eq for PartIdentity {}
+
+impl std::hash::Hash for PartIdentity {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match &self.0 {
+            PartVersion::Raw(raw) => (0u8, raw.index, Arc::as_ptr(&raw.tree) as usize).hash(state),
+            PartVersion::Tree(tree) => (1u8, 0usize, Arc::as_ptr(tree.root()) as usize).hash(state),
+            PartVersion::Bytes(bytes) => (2u8, 0usize, bytes.as_ptr() as usize).hash(state),
+        }
+    }
 }
 
 /// An untouched part: its entry, and its tree once something read it.
