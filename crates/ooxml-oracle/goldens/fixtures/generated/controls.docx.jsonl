@@ -492,8 +492,8 @@
 {"digest":"sha256:b488719322f0daadb7265422ec3ac5df","id":"objects:c8c07837adad0d70","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:e9a265e89251c3dfcd94f7704104bb27","id":"objects:212e87a048527bf4","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:5b51a65584f5a5b5934f923616c63809","id":"objects:e7ad26d1094bcf79","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:a7a96cefd9a12d1b8c53ef21b1bc24e2","id":"objects:13f3a261528e0927","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:886674b70ae702b16cee0a7c67ee9d3d","id":"objects:5eb7db6eb877995d","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:2b3dcbbf96865ceb54c0cdbbedd94194","id":"objects:13f3a261528e0927","source":"intended: tool rule 2 way out (fu-tools #332)"}
+{"digest":"sha256:95af118e76d7d1d9b6d505bd40117a8c","id":"objects:5eb7db6eb877995d","source":"intended: tool rule 2 way out (fu-tools #332)"}
 {"digest":"sha256:6eb1a4dc997680e48731aaea794bd967","id":"objects:8b37a3b3c0718e92","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:8961b10bdfe9158c2ca4d358b41bf179","id":"objects:f36a6a6e71d6bc13","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:4c300d0835c94c7fe3996430a9cc8003","id":"objects:eb77908f83ba32d7","source":"frozen Python a512c901, unmeasured"}
@@ -584,8 +584,8 @@
 {"digest":"sha256:b488719322f0daadb7265422ec3ac5df","id":"objects:22ad49ece59d428b","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:b383d9f9ef00bce79de9ed22f9d7e2cb","id":"objects:6a8ac0c943936f91","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:f2ecc6feced53907a26d490d8eabdfa6","id":"objects:bbf162f47761cbf4","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:a7a96cefd9a12d1b8c53ef21b1bc24e2","id":"objects:5e42ea05035deab6","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:886674b70ae702b16cee0a7c67ee9d3d","id":"objects:0efb563019fa430a","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:2b3dcbbf96865ceb54c0cdbbedd94194","id":"objects:5e42ea05035deab6","source":"intended: tool rule 2 way out (fu-tools #332)"}
+{"digest":"sha256:95af118e76d7d1d9b6d505bd40117a8c","id":"objects:0efb563019fa430a","source":"intended: tool rule 2 way out (fu-tools #332)"}
 {"digest":"sha256:2a15c231b9ff49fa3c1ed375dee3b915","id":"objects:f40d4b391fea57d3","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:8961b10bdfe9158c2ca4d358b41bf179","id":"objects:db4595fb9c0e4b39","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:4c0d813b5a39b4591e30a9ad10eac8b5","id":"objects:9022655ae4dead27","source":"frozen Python a512c901, unmeasured"}
