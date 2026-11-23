@@ -25,6 +25,14 @@ validate/provenance/...`, `doc.layout().coverage_facts()` and
 `docx_agent.layout_facts.layout_facts` are gone: the tools' `describe`, `word_read`,
 `check` and `save_document` answer the same questions through the Rust session.
 
+The tool layer (lane CUT-A2): `edit_smartart`, `style_by_value` and `word_find_asset` are out
+of `TOOLS` until the Rust session has them; `docx_format(assets=...)` raises `ValueError`
+(give `word_drawings` a picture as an image blob); `FORMAT.errors` is empty (no Python
+exception is mapped to a refusal any more); `docx_agent.tools.shared.render_pages`,
+`serialise` and `check_plan`, `docx_agent.tools.read.heading_tree` and the module
+`docx_agent.tools.text` are gone, and `docx_agent.tools.objects`, `structure` and `style`
+lose their Python handlers and constants (`ROWS_WRITTEN`, `STYLE_KEYS`, ...).
+
 `word_insert_markdown`'s note on small text written (the application's `min_text_size`
 setting) is gone: `min_text_size` is refused at release (user decision, 2026-11-22).
 `check`'s `small_text`, with `min_size`, still reports text below a size.

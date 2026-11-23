@@ -30,7 +30,7 @@ ooxml-edit's Responses round-trip test). Chat Completions has not been run live.
 | Group | Tools |
 | --- | --- |
 | `core` (always loaded) | `open_document`, `new_document`, `save_document`, `undo`, `find_text`, `replace_text`, `render`, `check`, `describe`, `word_read`, `word_set_text`, `batch`, `read_batch` |
-| `shared_misc` | `close_document`, `read_blob`, `set_properties`, `edit_chart`, `edit_smartart`, `style_by_value` |
+| `shared_misc` | `close_document`, `read_blob`, `set_properties`, `edit_chart` |
 | `word_text` | `word_inspect`, `word_insert_text`, `word_delete`, `word_insert_markdown` |
 | `word_review` | `word_set_tracking`, `word_changes`, `word_comments` |
 | `word_structure` | `word_move`, `word_copy_from`, `word_sections`, `word_headers_footers`, `word_fields`, `word_notes`, `word_links` |
@@ -125,30 +125,26 @@ sent = toolbox.definitions("anthropic", roles=["review", "accept"])
 system = toolbox.system_prompt(roles=["review", "accept"], tools=sent)  # follows `sent`
 ```
 
-### The application's settings: an asset catalogue, minimum text sizes
+### The application's settings: minimum text sizes, typography
 
 `docx_format(...)` is `FORMAT` with settings of the application's own -- never tool
-arguments, so the definitions stay the same unless a setting adds a tool (pptx-agent's
-`deck_format` takes the same two):
+arguments, so the definitions stay the same:
 
 ```python
-from ooxml_edit.tools import FolderCatalogue
 from docx_agent.tools import docx_format
 
-icons = FolderCatalogue("brand-icons")             # brand-icons/index.json: id, file, name, keywords
-fmt = docx_format(assets=icons, min_text_size={"body": 10, "table": 9, "footnote": 8, "caption": 9})
+fmt = docx_format(min_text_size={"body": 10, "table": 9, "footnote": 8, "caption": 9})
 toolbox = Toolbox(TOOLS, formats=[fmt], groups=GROUPS)
 ```
 
-- `assets` (ooxml-edit's catalogue protocol, `search` and `get`): `word_find_asset` finds
-  ids by words, and `word_drawings` `insert_picture` takes `asset` in place of `image` --
-  inline, or floating with `wrap`; `at` a position or a cell (`t:1A/c0,0`); `size_pt` or
-  `width`; `color` a theme colour (`accent2`) or `RRGGBB` to tint an SVG, as Word draws a
-  recoloured SVG (its theme class kept, so the icon follows the document's theme).
+- `assets`: an asset catalogue is not supported yet (0.2.0): `docx_format(assets=...)` raises
+  `ValueError`; give `word_drawings` `insert_picture` the picture as an image blob.
 - `min_text_size`: one number, or points per kind (`body`, `table`, `footnote`,
   `endnote`, `header`, `footer`, `caption`; a kind left out is not checked). `check`
-  reports `small_text` against it, and `word_insert_markdown` and `word_edit_table`
-  `set_cells` report the text they wrote that its styles make smaller.
+  reports `small_text` against it (as `check`'s `min_size` does). The tools that write
+  content no longer note the small text they wrote (0.2.0).
+- `typography` (default on): the spacing Word's proofing of a language expects around
+  `: ; ! ?` and guillemets in the text a call writes; `False` writes the text as given.
 
 ### Tables from data
 
@@ -202,7 +198,7 @@ text, read once): `{col: 2, rows: "*", text: "Yes"}`. `rows` is `*` (every row b
 header rows), or rows from 0 as `row` counts them, both ends written: `1..40`, `5..` (to the
 last), `..9` (from the first below the header), `7`; `a-b` and `a:b` read as `a..b`. The
 header rows are those marked to repeat, else the first row where the table's look has its
-header row on (as `style_by_value` reads a column); a range that names one writes it, with a
+header row on; a range that names one writes it, with a
 note. The column is `col` or `col_label`. A merged cell is written once; a row with no cell
 at that column is left and said. The cells are written exactly as that many one-cell entries
 write them, and a value by reference is kept on every cell it went into. The result gives,
