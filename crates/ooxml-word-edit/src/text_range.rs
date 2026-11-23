@@ -52,7 +52,8 @@ pub(crate) fn range(doc: &WordDoc, docx: &Docx, address: &str) -> Result<RangeTe
             Vec::new(),
         )));
     }
-    if let Some(cell) = cell_range(docx, address)? {
+    // a row's or cell's table followed where stamping renamed it (`t@body/0/c1,0`)
+    if let Some(cell) = cell_range(docx, &doc.ids().follow_address(address))? {
         return Ok(cell);
     }
     let followed = doc.ids().follow(address);
