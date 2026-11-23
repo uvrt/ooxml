@@ -3,16 +3,16 @@
 ``word_insert_markdown``'s ``style_map`` (a caption paragraph in Markdown), ``word_inspect``
 of a cell the table lacks (the table's rows, columns and merged cells said) and
 ``word_format_table`` ``keep_together`` on a one-row table (``test_table_keeps.py``).
-Made-up documents, ``Document.new()``'s package."""
+Made-up documents, a new blank document's package."""
 
 from __future__ import annotations
 
 import pytest
 from ooxml_edit.tools import Toolbox
 
-from docx_agent import Document
-from docx_agent.edit.document import NoCell
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
+
+import word_docs
 
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
@@ -29,17 +29,34 @@ def ok(box, session, tool: str, /, **arguments):
     return result
 
 
-def opened(box, document: Document):
+def opened(box, data: bytes):
     session = box.session()
-    return session, session.open(document.to_bytes(), "made-up.docx")
+    return session, session.open(data, "made-up.docx")
 
 
-def two_paragraphs() -> Document:
-    document = Document.new()
-    first = document.paragraphs()[0].id
-    document.insert_paragraph("Shelf one holds the spare parts", after=first)
-    document.insert_paragraph("Shelf two holds the spare tools", after=document.paragraphs()[1].id)
-    return document
+def _para(text: str, pid: str) -> str:
+    run = f'<w:r><w:t xml:space="preserve">{text}</w:t></w:r>' if text else ""
+    return f'<w:p w14:paraId="{pid}" w14:textId="77777777">{run}</w:p>'
+
+
+def two_paragraphs() -> bytes:
+    """An empty paragraph, then two of text."""
+    return word_docs.with_body(_para("", "1A000001") + _para("Shelf one holds the spare parts", "1A000002")
+                               + _para("Shelf two holds the spare tools", "1A000003"))
+
+
+def texts(session, d) -> list[str]:
+    return [text for _, text in word_docs.paragraphs(session, d)]
+
+
+def styled(session, d) -> list[tuple[str, str, str | None]]:
+    """Each body paragraph's id, text and style id."""
+    out = []
+    for p in word_docs.tree(word_docs.saved(session, d)).find(_W + "body").iter(_W + "p"):
+        style = p.find(f"{_W}pPr/{_W}pStyle")
+        out.append((f"p:{p.get(word_docs.W14_PARA)}", word_docs.text_of(p),
+                    style.get(_W + "val") if style is not None else None))
+    return out
 
 
 # -- R5a: word_delete with find and target --------------------------------------------------------
@@ -47,19 +64,15 @@ def two_paragraphs() -> Document:
 
 def test_find_with_a_target_is_find_within_it(box):
     session, d = opened(box, two_paragraphs())
-    document = session.entry(d).document
-    second = document.paragraphs()[2].id
+    second = word_docs.paragraphs(session, d)[2][0]
     result = ok(box, session, "word_delete", doc=d, find="spare ", target=second)
-    document = session.entry(d).document        # (the view as the served call left it)
-    assert [p.text for p in document.paragraphs()[1:]] == ["Shelf one holds the spare parts",
-                                                           "Shelf two holds the tools"]
+    assert texts(session, d)[1:] == ["Shelf one holds the spare parts", "Shelf two holds the tools"]
     assert result.warnings == [f"find was searched within target {second}: within names where to search"]
 
 
 def test_find_with_target_and_another_within_is_refused_and_neither_is_too(box):
     session, d = opened(box, two_paragraphs())
-    document = session.entry(d).document
-    first, second = (p.id for p in document.paragraphs()[1:])
+    first, second = (block for block, _ in word_docs.paragraphs(session, d)[1:])
     refused = box.dispatch(session, "word_delete", {"doc": d, "find": "spare", "target": second, "within": first})
     assert not refused.ok and refused.error.code == "invalid_arguments" and refused.error.field == "target"
     # The same block twice is one place to search.
@@ -70,11 +83,9 @@ def test_find_with_target_and_another_within_is_refused_and_neither_is_too(box):
 
 def test_a_target_alone_still_deletes_the_block(box):
     session, d = opened(box, two_paragraphs())
-    document = session.entry(d).document
-    second = document.paragraphs()[2].id
+    second = word_docs.paragraphs(session, d)[2][0]
     result = ok(box, session, "word_delete", doc=d, target=second)
-    document = session.entry(d).document        # (the view as the served call left it)
-    assert result.warnings == [] and len(document.paragraphs()) == 2
+    assert result.warnings == [] and len(word_docs.paragraphs(session, d)) == 2
 
 
 # -- R5b: a caption in Markdown -------------------------------------------------------------------
@@ -97,61 +108,64 @@ Table: a plain paragraph, no table beside it
 
 
 def test_a_caption_paragraph_is_written_in_the_caption_style(box):
-    session, d = opened(box, Document.new())
+    session, d = opened(box, word_docs.blank())
     result = ok(box, session, "word_insert_markdown", doc=d, at="end", markdown=CAPTIONED,
                 style_map=[{"element": "caption", "style": "Caption"}])
-    document = session.entry(d).document        # (read after the call: a held Document is not live)
     assert "style added: Caption (Caption), as Word writes it" in result.warnings
-    body = [(p.text, p.style) for p in document.paragraphs() if p.id in result.data["blocks"]]
+    body = [(text, style) for block, text, style in styled(session, d) if block in result.data["blocks"]]
     assert body == [("Before the table.", None), ("Parts on the shelf", "Caption"),
                     ("Shelf layout, seen from the door", "Caption"),
                     ("Table: a plain paragraph, no table beside it", None),
                     (":no space after the colon", None)]
 
 
-def test_the_caption_style_by_default_and_another_by_the_map():
-    document = Document.new()
-    document.styles.add("Figure note", based_on="Normal")
-    document.insert_markdown(": First\n")
-    document.insert_markdown(": Second\n", style_map={"caption": "Figure note"})
-    styles = {p.text: p.style for p in document.paragraphs()}
+def test_the_caption_style_by_default_and_another_by_the_map(box):
+    session, d = opened(box, word_docs.blank())
+    ok(box, session, "word_styles", doc=d, action="add", name="Figure note", based_on="Normal")
+    ok(box, session, "word_insert_markdown", doc=d, at="end", markdown=": First\n")
+    ok(box, session, "word_insert_markdown", doc=d, at="end", markdown=": Second\n",
+       style_map=[{"element": "caption", "style": "Figure note"}])
+    styles = {text: style for _, text, style in styled(session, d)}
     assert styles["First"] == "Caption"
-    assert document.styles.find(styles["Second"]).name == "Figure note"
+    sheet = word_docs.tree(word_docs.saved(session, d), "word/styles.xml")
+    named = next(s for s in sheet.iter(_W + "style") if s.get(_W + "styleId") == styles["Second"])
+    assert named.find(_W + "name").get(_W + "val") == "Figure note"
 
 
-def test_a_caption_in_a_quote_or_list_is_text_and_reading_is_unchanged():
-    document = Document.new()
-    document.insert_markdown("> : quoted\n\n- : listed\n\n: Shown\n")
-    texts = [p.text for p in document.paragraphs()]
-    assert ": quoted" in texts and ": listed" in texts and "Shown" in texts
+def test_a_caption_in_a_quote_or_list_is_text_and_reading_is_unchanged(box):
+    session, d = opened(box, word_docs.blank())
+    ok(box, session, "word_insert_markdown", doc=d, at="end", markdown="> : quoted\n\n- : listed\n\n: Shown\n")
+    found = texts(session, d)
+    assert ": quoted" in found and ": listed" in found and "Shown" in found
     # The reader shows a caption paragraph's style on its block, as before round 31.
-    assert "style: caption -->\nShown" in document.to_markdown()
+    assert "style: caption -->\nShown" in word_docs.read(box, session, d)
 
 
 # -- R5c: a cell the table lacks ------------------------------------------------------------------
 
 
-def merged_table() -> tuple[Document, str]:
-    document = Document.new()
-    first = document.paragraphs()[0].id
-    table = document.insert_table(2, 3, after=first, data=[["a", "b", "c"], ["d", "e", "f"]]).id
-    document.merge_cells(table, (0, 0), (1, 0))
-    document.merge_cells(table, (0, 1), (0, 2))
-    return document, document.tables()[0].id
+def merged_table(box):
+    """A 2 x 3 table, its first column merged down and its first row's last two cells across."""
+    session, d = opened(box, word_docs.blank())
+    made = ok(box, session, "word_insert_markdown", doc=d, at="end",
+              markdown="| a | b | c |\n|---|---|---|\n| d | e | f |")
+    table = next(block for block in made.created if block.startswith("t:"))
+    ok(box, session, "word_edit_table", doc=d, table=table, action="merge",
+       first={"row": 0, "col": 0}, last={"row": 1, "col": 0})
+    ok(box, session, "word_edit_table", doc=d, table=table, action="merge",
+       first={"row": 0, "col": 1}, last={"row": 0, "col": 2})
+    return session, d, table
 
 
 def test_a_missing_cell_says_the_rows_columns_and_merged_cells(box):
-    document, table = merged_table()
-    with pytest.raises(NoCell) as raised:
-        document.table(table).cell(1, 3)
-    message = str(raised.value.args[0])
-    assert message == (f"{table} has no cell at (1, 3): it has 2 row(s) (0 to 1) and 3 column(s) (0 to 2), "
-                       "counted from 0; merged: (0, 0)-(1, 0), (0, 1)-(0, 2) (a merged cell's id is its "
-                       "first position's)")
-    session, d = opened(box, document)
+    session, d, table = merged_table(box)
     refused = box.dispatch(session, "word_inspect", {"doc": d, "target": f"{table}/c2,0"})
     assert refused.error.code == "not_found" and "it has 2 row(s) (0 to 1) and 3 column(s)" in refused.error.message
     assert refused.error.valid_options == [f"{table}/c0,0", f"{table}/c0,1", f"{table}/c1,1", f"{table}/c1,2"]
+    refused = box.dispatch(session, "word_inspect", {"doc": d, "target": f"{table}/c1,3"})
+    assert refused.error.message.startswith(
+        f"{table} has no cell at (1, 3): it has 2 row(s) (0 to 1) and 3 column(s) (0 to 2), counted from 0; "
+        "merged: (0, 0)-(1, 0), (0, 1)-(0, 2) (a merged cell's id is its first position's)"), refused.error.message
     # The table's own edits say the same.
     refused = box.dispatch(session, "word_edit_table", {"doc": d, "table": table, "action": "split",
                                                         "first": {"row": 4, "col": 0}})

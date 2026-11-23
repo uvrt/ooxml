@@ -15,6 +15,8 @@ here is made up.
 
 from __future__ import annotations
 
+import io
+import zipfile
 
 import pytest
 
@@ -22,11 +24,12 @@ pytest.importorskip("ooxml_edit.tools.shared", reason="needs ooxml-edit (the sha
 
 from ooxml_edit.tools import Toolbox  # noqa: E402
 
-from docx_agent import Document  # noqa: E402
-from docx_agent.edit import copies as copies_module  # noqa: E402
-from docx_agent.scope import Scope, ranges_of  # noqa: E402
+from layout_reads import block_ids, pages_of  # noqa: E402
+
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
-from docx_agent.validate import Problem, check as validate_package, problems_in  # noqa: E402
+import word_docs  # noqa: E402
+
+_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 pytestmark = pytest.mark.any_faces
 
@@ -47,22 +50,36 @@ def _ok(box, session, tool: str, /, **arguments):
 WORDS = "lantern meadow river stone harbour quiet orchard copper valley signal".split()
 
 
+def _written(box, session, markdown: str) -> str:
+    """A new blank document holding ``markdown`` alone (its empty paragraph taken out, but
+    after a table, which Word needs a paragraph after)."""
+    doc = session.open(word_docs.blank(), "made.docx")
+    _ok(box, session, "word_insert_markdown", doc=doc, at="end", markdown=markdown)
+    listed = word_docs.blocks(box, session, doc)
+    for k, (block, text) in enumerate(listed):
+        if not text and not (k and listed[k - 1][0].startswith("t")):
+            _ok(box, session, "word_delete", doc=doc, target=block)
+    return doc
+
+
 def _report() -> tuple[bytes, list[list[str]]]:
     """Three chapters, each a heading and paragraphs over more than a page; in each, one
     paragraph made bold by hand (a direct-formatting fact).  The blocks of each chapter."""
-    doc = Document.new()
     parts = []
     for c in range(1, 4):
         parts.append(f"# Chapter {c}")
         for p in range(6 if c != 3 else 26):
             parts.append(" ".join(WORDS[(c + p + k) % len(WORDS)] for k in range(70)).capitalize() + ".")
-    doc.insert_markdown("\n\n".join(parts))
-    blocks = [b["id"] for b in doc.blocks()]
-    heads = [k for k, b in enumerate(doc.blocks()) if b["level"] is not None]
-    chapters = [blocks[a:b] for a, b in zip(heads, heads[1:] + [len(blocks)])]
-    for chapter in chapters:
-        doc.paragraph(chapter[2]).format(bold=True)
-    return doc.to_bytes(), chapters
+    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as box:
+        session = box.session()
+        doc = _written(box, session, "\n\n".join(parts))
+        listed = word_docs.blocks(box, session, doc)
+        blocks = [block for block, _ in listed]
+        heads = [k for k, (_, text) in enumerate(listed) if text.startswith("#")]
+        chapters = [blocks[a:b] for a, b in zip(heads, heads[1:] + [len(blocks)])]
+        for chapter in chapters:
+            _ok(box, session, "word_format", doc=doc, targets=[chapter[2]], bold=True)
+        return word_docs.saved(session, doc), chapters
 
 
 @pytest.fixture(scope="module")
@@ -87,8 +104,7 @@ def test_a_range_reports_its_blocks_facts_and_pages(box, made):
     result = _ok(box, session, "check", doc=d1, range=[_span(chapters[1])])
     scoped_facts = result.data["layout"]
     assert [e["para"] for e in scoped_facts["direct_formatting"]] == [chapters[1][2]]
-    layout = session.entry(d1).document.layout()
-    pages = sorted({p for b in chapters[1] for p in layout.pages_of(b)})
+    pages = sorted({p for b in chapters[1] for p in pages_of(box, session, d1, b)})
     reported = dict(result.data["range"][0])
     reported.pop("extent"), reported.pop("height")          # R26's (tests/test_range_extent.py)
     for key in ("one_page", "kept", "breaks", "fix"):         # round 36, R30's (tests/test_keep_spans.py)
@@ -125,25 +141,27 @@ def test_a_range_with_pages_keeps_the_facts_on_those_pages(box, made):
     assert any("none of the range's blocks" in w for w in result.warnings)
 
 
-def test_validate_problems_are_found_in_their_blocks(box, made):
-    data, chapters = made
-    doc = Document.open(data)
-    main = doc.package.document_part()
-    element = doc._resolve(chapters[0][1])[1].element
-    properties = element.find("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}pPr")
-    if properties is None:
-        from lxml import etree
-
-        properties = etree.SubElement(element, "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}pPr")
-        element.insert(0, properties)
+def _styled_wrongly(data: bytes, paragraph: str) -> bytes:
+    """``data`` with ``paragraph`` in a style the document does not have."""
     from lxml import etree
 
-    style = etree.SubElement(properties, "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}pStyle")
-    style.set("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val", "NoSuchStyle")
+    root = word_docs.tree(data)
+    element = word_docs.find(root, paragraph)
+    properties = element.find(_W + "pPr")
+    if properties is None:
+        properties = etree.Element(_W + "pPr")
+        element.insert(0, properties)
+    style = etree.Element(_W + "pStyle")
+    style.set(_W + "val", "NoSuchStyle")
     properties.insert(0, style)
-    doc.package.mark_dirty(main)
+    return word_docs.replaced(data, {"word/document.xml": etree.tostring(root, xml_declaration=True,
+                                                                         encoding="UTF-8", standalone=True)})
+
+
+def test_validate_problems_are_found_in_their_blocks(box, made):
+    data, chapters = made
     session = box.session()
-    d1 = session.open(doc.to_bytes(), "report.docx")
+    d1 = session.open(_styled_wrongly(data, chapters[0][1]), "report.docx")
     first = _ok(box, session, "check", doc=d1, include=["validate"], range=[_span(chapters[0])]).data["validate"]
     assert [p for p in first["problems"] if "style-missing" in p] == ["[style-missing] word/document.xml: pStyle NoSuchStyle"]
     assert first["elsewhere"] == 0
@@ -151,42 +169,55 @@ def test_validate_problems_are_found_in_their_blocks(box, made):
     assert second["problems"] == [] and second["elsewhere"] == 1 and second["baseline"] == 1
 
 
-def test_problems_in_blocks_by_what_they_carry():
+def _codes(box, session, doc: str, target: str) -> set[str]:
+    """The codes of the problems ``check`` finds in a range of one block."""
+    found = _ok(box, session, "check", doc=doc, include=["validate"], range=[target]).data["validate"]["problems"]
+    return {problem[1:problem.index("]")] for problem in found}
+
+
+def test_problems_in_blocks_by_what_they_carry(box):
     """The locator: problems a block's elements carry, or that its XML alone shows again."""
-    doc = Document.new()
-    doc.insert_markdown("First paragraph.\n\nSecond paragraph.\n\n| A | B |\n|---|---|\n| 1 | 2 |\n")
-    main = doc.package.document_part()
-    tree = doc.package.tree(main)
-    w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
-    paragraphs = tree.findall(f".//{w}body/{w}p")
-    table = tree.find(f".//{w}tbl")
     from lxml import etree
 
-    mark = etree.SubElement(paragraphs[0], w + "bookmarkStart")
-    mark.set(w + "id", "7")
-    mark.set(w + "name", "Lonely")
-    cell = table.find(f".//{w}tc")
-    for p in cell.findall(w + "p"):
+    session = box.session()
+    made = _written(box, session, "First paragraph.\n\nSecond paragraph.\n\n| A | B |\n|---|---|\n| 1 | 2 |\n")
+    first_id, second_id, table_id = [block for block, _ in word_docs.blocks(box, session, made)][:3]
+    root = word_docs.tree(word_docs.saved(session, made))
+    paragraphs = root.findall(f".//{_W}body/{_W}p")
+    table = root.find(f".//{_W}tbl")
+    mark = etree.SubElement(paragraphs[0], _W + "bookmarkStart")
+    mark.set(_W + "id", "7")
+    mark.set(_W + "name", "Lonely")
+    cell = table.find(f".//{_W}tc")
+    for p in cell.findall(_W + "p"):
         cell.remove(p)
-    etree.SubElement(cell, w + "tbl")                     # a cell ending in a table
-    doc.package.mark_dirty(main)
-    problems = validate_package(doc.package)
-    codes = {p.code for p in problems}
+    etree.SubElement(cell, _W + "tbl")                     # a cell ending in a table
+
+    def opened(name: str) -> str:
+        xml = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+        # A part no relationship names: a problem of the package, in no block.
+        data = word_docs.replaced(word_docs.saved(session, made), {"word/document.xml": xml})
+        with_orphan = io.BytesIO()
+        with zipfile.ZipFile(io.BytesIO(data)) as source, zipfile.ZipFile(with_orphan, "w") as target:
+            for info in source.infolist():
+                target.writestr(info, source.read(info.filename))
+            target.writestr("word/media/x.png", b"not an image")
+        return session.open(with_orphan.getvalue(), name)
+
+    d = opened("located.docx")
+    whole = _ok(box, session, "check", doc=d, include=["validate"]).data["validate"]["problems"]
+    codes = {problem[1:problem.index("]")] for problem in whole}
     assert {"bookmark-unpaired", "cell-not-ending-in-paragraph"} <= codes
-    first = {p.code for p in problems_in(problems, main, [paragraphs[0]])}
+    first = _codes(box, session, d, first_id)
     assert "bookmark-unpaired" in first and "cell-not-ending-in-paragraph" not in first
-    second = {p.code for p in problems_in(problems, main, [paragraphs[1]])}
-    assert not second & {"bookmark-unpaired", "cell-not-ending-in-paragraph"}
-    in_table = {p.code for p in problems_in(problems, main, [table])}
-    assert "cell-not-ending-in-paragraph" in in_table
+    assert not _codes(box, session, d, second_id) & {"bookmark-unpaired", "cell-not-ending-in-paragraph"}
+    assert "cell-not-ending-in-paragraph" in _codes(box, session, d, table_id)
+    assert not any(code.startswith("orphan") for code in first)
     # A table given as a block holds its own grid's problems.
-    row = table.find(f"{w}tr")
-    row.append(etree.fromstring(etree.tostring(row.find(f"{w}tc"))))   # the row past its grid
-    doc.package.mark_dirty(main)
-    widened = [p for p in validate_package(doc.package) if p.code.startswith("grid-")]
-    assert widened and set(widened) <= set(problems_in(widened, main, [table]))
-    # A problem of another part, or of the package, is in no block.
-    assert problems_in([Problem("orphaned-part", "word/media/x.png")], main, [paragraphs[0]]) == []
+    row = table.find(f"{_W}tr")
+    row.append(etree.fromstring(etree.tostring(row.find(f"{_W}tc"))))   # the row past its grid
+    widened = opened("widened.docx")
+    assert any(code.startswith("grid-") for code in _codes(box, session, widened, table_id))
 
 
 def test_a_range_that_names_nothing_is_refused_with_the_headings(box, made):
@@ -202,11 +233,16 @@ def test_a_range_that_names_nothing_is_refused_with_the_headings(box, made):
     assert any("Chapter 2" in option for option in error["valid_options"])
 
 
-def test_one_range_said_as_a_string_and_placeholders():
+def test_one_range_said_as_a_string_and_placeholders(box, made):
     """Rule 1: a lone string is one range; blanks and repeats are dropped."""
-    assert ranges_of("p:A..p:B") == ["p:A..p:B"]
-    assert ranges_of(["", " p:A ", "p:A"]) == ["p:A"]
-    assert ranges_of([]) == [] and ranges_of(None) == []
+    data, chapters = made
+    session = box.session()
+    d1 = session.open(data, "report.docx")
+    span = _span(chapters[0])
+    lone = _ok(box, session, "check", doc=d1, include=["validate"], range=span).data["range"]
+    assert [r["range"] for r in lone] == [span]
+    listed = _ok(box, session, "check", doc=d1, include=["validate"], range=["", f" {span} ", span]).data["range"]
+    assert [r["range"] for r in listed] == [span]
 
 
 def test_an_empty_range_is_no_range(box, made):
@@ -217,16 +253,25 @@ def test_an_empty_range_is_no_range(box, made):
     assert "range" not in result.data and "elsewhere" not in result.data["validate"]
 
 
-def test_a_cell_range_is_about_the_cell_and_its_table(made):
-    doc = Document.new()
-    doc.insert_markdown("Before.\n\n| A | B |\n|---|---|\n| one | two |\n\nAfter.\n")
-    table = doc.tables()[0]
-    scope = Scope(doc, [f"{table.id}/c1,1"])
-    assert table.id in scope.tables
-    assert scope.about({"table": table.id, "row": 1})
-    before = doc.paragraphs()[0].id
-    assert not scope.about({"para": before})
-    assert scope.about({"page": 1, "placeholders": []})                     # a page's, kept on its pages
+def test_a_cell_range_is_about_the_cell_and_its_table(box):
+    """A range naming a cell is about the cell and its table: the facts of the table's
+    paragraphs, never of a paragraph elsewhere, and the pages it is on."""
+    session = box.session()
+    d1 = _written(box, session, "Before.\n\n| A | B |\n|---|---|\n| one | two |\n\nAfter.\n")
+    before, table = block_ids(box, session, d1)[:2]
+    inspected = _ok(box, session, "word_inspect", doc=d1, target=table).data["blocks"][0]
+    cell = inspected["rows"][1][1]["blocks"][0]["id"]
+    _ok(box, session, "word_format", doc=d1, targets=[before, cell], alignment="center")
+    table = block_ids(box, session, d1)[1]
+    whole = _ok(box, session, "check", doc=d1, include=["layout"]).data["layout"]["direct_formatting"]
+    assert {before, cell} <= {e["para"] for e in whole}
+    result = _ok(box, session, "check", doc=d1, include=["layout"], range=[f"{table}/c1,1"]).data
+    scoped = {e["para"] for e in result["layout"]["direct_formatting"]}
+    assert cell in scoped and before not in scoped
+    table_paragraphs = {block["id"] for row in inspected["rows"] for c in row for block in c["blocks"]}
+    assert scoped <= table_paragraphs
+    [entry] = result["range"]
+    assert entry["range"] == f"{table}/c1,1" and entry["pages"] == [1]
 
 
 # -- R18: render(range) ----------------------------------------------------------------------------
@@ -238,8 +283,7 @@ def test_render_draws_the_pages_a_range_falls_on(box, made):
     session = box.session()
     d1 = session.open(data, "report.docx")
     result = _ok(box, session, "render", doc=d1, range=[chapters[1][1]], width=300)
-    layout = session.entry(d1).document.layout()
-    assert result.data["pages"] == layout.pages_of(chapters[1][1])
+    assert result.data["pages"] == pages_of(box, session, d1, chapters[1][1])
     assert result.data["range"][0]["pages"] == result.data["pages"]
     # More pages than a call's images: one sheet, said.
     long = _ok(box, session, "render", doc=d1, range=[_span(chapters[2])], width=300)
@@ -262,21 +306,18 @@ SAMPLE = ("# Part title\n\n"
           "Close with a short summary of the part.\n")
 
 
-def _samples() -> tuple[bytes, str]:
-    sample = Document.new()
-    sample.insert_markdown(SAMPLE, at="end")
-    sample.set_table(sample.tables()[0].id, header_rows=1)
-    blocks = [b["id"] for b in sample.blocks()]
-    return sample.to_bytes(), _span(blocks)
+def _samples(box, session) -> tuple[str, str]:
+    """A document holding the sample, its table's first row a header row; its span."""
+    sample = _written(box, session, SAMPLE)
+    table = next(block for block in block_ids(box, session, sample) if block.startswith("t"))
+    _ok(box, session, "word_format_table", doc=sample, table=table, scope="table", header_rows=1)
+    return sample, _span(block_ids(box, session, sample))
 
 
 def _copies(box, session, count: int = 6) -> tuple[str, str, str, list[str]]:
     """A samples document and a report holding ``count`` copies of its one sample."""
-    data, reference = _samples()
-    samples = session.open(data, "samples.docx")
-    report = Document.new()
-    report.insert_markdown("# Report\n\nAn opening paragraph.", at="end")
-    d1 = session.open(report.to_bytes(), "report.docx")
+    samples, reference = _samples(box, session)
+    d1 = _written(box, session, "# Report\n\nAn opening paragraph.")
     made = []
     for _ in range(count):
         blocks = _ok(box, session, "word_copy_from", doc=d1, source_doc=samples, range=reference,
@@ -289,9 +330,11 @@ def _pairs(made: list[str], samples: str, reference: str) -> list[dict]:
     return [{"blocks": c, "reference": {"doc": samples, "block": reference}} for c in made]
 
 
-def _blocks(session, doc: str, span: str) -> list[str]:
-    document = session.entry(doc).document
-    return [identifier for identifier, _ in copies_module.blocks_of(document, span)]
+def _blocks(box, session, doc: str, span: str) -> list[str]:
+    """The body's blocks from the span's first to its last."""
+    first, _, last = span.partition("..")
+    listed = block_ids(box, session, doc)
+    return listed[listed.index(first):listed.index(last or first) + 1]
 
 
 def test_copies_follow_or_not_with_fixes_and_example_text(box):
@@ -300,11 +343,11 @@ def test_copies_follow_or_not_with_fixes_and_example_text(box):
     # Copy 0 filled in full; copy 1 filled, its table's first body row shaded by hand; the
     # rest left with the sample's text.
     for k in (0, 1):
-        blocks = _blocks(session, d1, made[k])
+        blocks = _blocks(box, session, d1, made[k])
         _ok(box, session, "word_set_text", doc=d1, target=blocks[1], text=f"Part {k} keeps the books in order.")
         _ok(box, session, "word_set_text", doc=d1, target=blocks[3], text=f"Part {k} is done.")
         _ok(box, session, "word_set_text", doc=d1, target=f"{blocks[2]}/c1,0", text=f"Ledger {k}")
-    second_table = _blocks(session, d1, made[1])[2]
+    second_table = _blocks(box, session, d1, made[1])[2]
     _ok(box, session, "word_format_table", doc=d1, table=second_table, scope="row", row=1, shading="F2F2F2")
     result = _ok(box, session, "check", doc=d1, include=[], copies=_pairs(made, samples, reference))
     found = result.data["copies"]
@@ -323,7 +366,7 @@ def test_copies_follow_or_not_with_fixes_and_example_text(box):
     assert {d["property"] for d in differences} == {"shading"}
     # Rule 5: one call makes every copy follow its reference.
     assert found["fix"] == {"tool": "word_follow_sample",
-                            "calls": [{"sample": {"block": _blocks(session, samples, reference)[2],
+                            "calls": [{"sample": {"block": _blocks(box, session, samples, reference)[2],
                                                   "doc": samples}, "copies": [second_table]}]}
     for call in found["fix"]["calls"]:
         _ok(box, session, "word_follow_sample", doc=d1, **call)
@@ -339,18 +382,18 @@ def test_a_comparison_is_kept_while_neither_side_changes(box):
     first = _ok(box, session, "check", doc=d1, include=[], copies=pairs).data["copies"]
     assert first["kept"] == 0
     # An edit elsewhere in the report: every comparison kept.
-    opening = session.entry(d1).document.paragraphs()[1].id
+    opening = block_ids(box, session, d1)[1]
     _ok(box, session, "word_set_text", doc=d1, target=opening, text="Another opening paragraph.")
     second = _ok(box, session, "check", doc=d1, include=[], copies=pairs).data["copies"]
     assert second["kept"] == 6 and all(item["cached"] for item in second["items"])
     assert [i["follows"] for i in second["items"]] == [i["follows"] for i in first["items"]]
     # An edit inside copy 3: that one compared again.
-    _ok(box, session, "word_set_text", doc=d1, target=_blocks(session, d1, made[3])[1], text="Filled in.")
+    _ok(box, session, "word_set_text", doc=d1, target=_blocks(box, session, d1, made[3])[1], text="Filled in.")
     third = _ok(box, session, "check", doc=d1, include=[], copies=pairs).data["copies"]
     assert [item["cached"] for item in third["items"]] == [True, True, True, False, True, True]
     assert "example_text" in third["items"][2] and len(third["items"][3]["example_text"]) == 2
     # The reference changed: every copy compared again.
-    _ok(box, session, "word_format", doc=samples, targets=[_blocks(session, samples, reference)[1]],
+    _ok(box, session, "word_format", doc=samples, targets=[_blocks(box, session, samples, reference)[1]],
         alignment="center")
     fourth = _ok(box, session, "check", doc=d1, include=[], copies=pairs).data["copies"]
     assert fourth["kept"] == 0 and fourth["follow"] == 0
@@ -370,23 +413,19 @@ def test_copies_refused_with_the_way_out(box):
     assert "copies[0].blocks" in result.error.message
 
 
-def test_example_text_rules():
+def test_example_text_rules(box):
     """Units: sentences of three words or twenty characters, not in a header row; matched as
     whole words; a unit from an unmarked first row is marked."""
-    reference = Document.new()
-    reference.insert_markdown("Owner:\n\nState the aim. Keep it short.\n\n| Area name | Value |\n|---|---|\n"
-                              "| Put the area here | 0 |\n", at="end")
-    units = [u for u, _, _ in copies_module.example_units(reference, copies_module.blocks_of(
-        reference, _span([b["id"] for b in reference.blocks()])))]
-    assert "owner:" not in units and "state the aim." in units and "keep it short." in units
-    assert "put the area here" in units and "area name" not in units        # two words: a label
-    copy = Document.new()
-    copy.insert_markdown("Owner:\n\nState the aims. Keep it short.\n\n| Area name | Value |\n|---|---|\n"
-                         "| Put the area here | 0 |\n", at="end")
-    found = copies_module.example_text(copy, copies_module.blocks_of(copy, _span([b["id"] for b in copy.blocks()])),
-                                       reference, copies_module.blocks_of(
-                                           reference, _span([b["id"] for b in reference.blocks()])))
+    session = box.session()
+    markdown = ("{aim}\n\n| Area name | Value |\n|---|---|\n| Put the area here | 0 |\n")
+    reference = _written(box, session, "Owner:\n\n" + markdown.format(aim="State the aim. Keep it short."))
+    copy = _written(box, session, "Owner:\n\n" + markdown.format(aim="State the aims. Keep it short."))
+    pair = {"blocks": _span(block_ids(box, session, copy)),
+            "reference": {"doc": reference, "block": _span(block_ids(box, session, reference))}}
+    [item] = _ok(box, session, "check", doc=copy, include=[], copies=[pair]).data["copies"]["items"]
+    found = item["example_text"]
     texts = [t for e in found for t in e["text"]]
     assert "keep it short." in texts and "state the aim." not in texts     # "aims": another word
     assert "put the area here" in texts
+    assert "owner:" not in texts and "area name" not in texts               # a label: no unit
     assert not any(e.get("first_row") for e in found)                       # the second row

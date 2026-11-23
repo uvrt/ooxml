@@ -46,7 +46,9 @@ def test_the_parameters_are_optional_and_the_strict_set_unchanged():
     assert "orMap" not in str(edit.canonical)
     plan = anthropic_strict_plan(TOOLS, first=STRICT_FIRST)
     assert not plan["word_edit_table"]
-    assert sum(len(t.optional_parameters()) for t in TOOLS if plan[t.name]) == 24
+    # edit_smartart and style_by_value are out of TOOLS until their ports: the strict plan has
+    # that much room (24 before).
+    assert sum(len(t.optional_parameters()) for t in TOOLS if plan[t.name]) == 22
 
 
 def test_exact_keys_only_by_default(toolbox):
@@ -178,5 +180,5 @@ def test_values_keep_their_source_on_loosely_matched_rows(toolbox):
     session, table = _table(toolbox, rows(TABLE_KEYS), {"next": rows(list(reversed(DATA_KEYS)), issue="B")})
     result = _sync(toolbox, session, table, **{"from": "d:next", "loose": "table"})
     assert result.ok, result.to_json()
-    record = session.entry("d1").document.provenance()[result.data["id"]]
+    record = session.provenance("d1")[result.data["id"]]
     assert record["source"] == "d:next" and record["columns"][0]["rows"] == "7,6,5,4,3,2,1"

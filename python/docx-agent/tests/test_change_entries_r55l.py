@@ -11,8 +11,8 @@ Made-up documents only.
 * Two records sharing one ``w:id`` are listed ``rev:95`` and ``rev:95#1``; accepting several
   ids in one call resolves them all first (accepting the first had renamed the second, which
   was then refused), and an id that is not there is refused with the ids that are.
-* R119: ``docx_agent.samples`` holds ``accept_loses_text.docx``; check names its two cells,
-  accept moves their text after the row, reject keeps it.
+* R119: the sample docx-agent shipped (``accept_loses_text.docx``, its body inlined here):
+  check names its two cells, accept moves their text after the row, reject keeps it.
 
 Tool-design rules: 2 (a refused id comes with the listed ids and the list call), 5 (several
 ids, one call, one undo step), 7 (the sample shows check's fact).
@@ -23,13 +23,14 @@ from __future__ import annotations
 import datetime as dt
 import itertools
 
+import re
+
 import pytest
-from lxml import etree
 from ooxml_edit.tools import Toolbox
 
-from docx_agent import Document, samples
-from docx_agent.layout_facts import accept_loses_text
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
+
+import word_docs
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _W = "{%s}" % W
@@ -69,14 +70,17 @@ def ok(box, session, name, /, **arguments):
     return result
 
 
+def _first(session) -> str:
+    return word_docs.paragraphs(session, "d1")[0][0]
+
+
 def _edited(box, *edits: str):
     session = box.session(clock=CLOCK)
-    session.open(Document.new().to_bytes(), "report.docx")
-    first = session.entry("d1").document.paragraphs()[0].id
-    ok(box, session, "word_insert_markdown", doc="d1", at=f"after:{first}",
-       markdown=f"Field report.\n\n{MARKDOWN}\n\nAfter the table.")
+    session.open(word_docs.blank(), "report.docx")
+    made = ok(box, session, "word_insert_markdown", doc="d1", at=f"after:{_first(session)}",
+              markdown=f"Field report.\n\n{MARKDOWN}\n\nAfter the table.")
     ok(box, session, "word_set_tracking", doc="d1", on=True, author=ME)
-    table = session.entry("d1").document.tables()[-1].id
+    table = [block for block in made.data["blocks"] if block.startswith("t:")][-1]
     for edit in edits:
         ok(box, session, "word_edit_table", doc="d1", table=table, **EDITS[edit])
     return session
@@ -161,20 +165,17 @@ def test_rejecting_one_change_keeps_the_others(box):
 
 def _shared_ids(box):
     session = box.session(clock=CLOCK)
-    session.open(Document.new().to_bytes(), "notes.docx")
-    first = session.entry("d1").document.paragraphs()[0].id
-    ok(box, session, "word_insert_markdown", doc="d1", at=f"after:{first}", markdown="Alpha one.\n\nBravo two.")
+    session.open(word_docs.blank(), "notes.docx")
+    ok(box, session, "word_insert_markdown", doc="d1", at=f"after:{_first(session)}",
+       markdown="Alpha one.\n\nBravo two.")
     ok(box, session, "word_set_tracking", doc="d1", on=True, author=ME)
     ok(box, session, "replace_text", doc="d1", find="one", replace="uno")
     ok(box, session, "replace_text", doc="d1", find="two", replace="dos")
     # (The ids rewritten on a document of its bytes: the session's own is its to change.)
-    document = Document.open(session.entry("d1").document.to_bytes())
-    part = document.package.document_part()
-    for record in document.package.tree(part).iter(_W + "ins", _W + "del"):
-        record.set(_W + "id", "95")
-    document.package.mark_dirty(part)
+    data = word_docs.replaced(word_docs.saved(session, "d1"), {"word/document.xml": lambda xml: re.sub(
+        r'(<w:(?:ins|del) w:id=")\d+"', r'\g<1>95"', xml)})
     again = box.session(clock=CLOCK)
-    again.open(document.to_bytes(), "notes.docx")
+    again.open(data, "notes.docx")
     return again
 
 
@@ -190,7 +191,7 @@ def test_ids_sharing_one_w_id_are_accepted_together(box, ids):
 
 def test_an_id_not_there_is_refused_with_the_ids_that_are(box):
     session = _shared_ids(box)
-    before = session.entry("d1").document.to_bytes()
+    before = word_docs.saved(session, "d1")
     refused = call(box, session, "word_changes", doc="d1", action="accept", ids=["rev:95", "rev:96"])
     assert not refused.ok
     error = refused.to_json()["error"]
@@ -201,51 +202,88 @@ def test_an_id_not_there_is_refused_with_the_ids_that_are(box):
     way_out = error.get("try_call") or error["details"]["call"]
     assert {key: way_out[key] for key in ("tool", "arguments")} == \
         {"tool": "word_changes", "arguments": {"doc": "d1", "action": "list"}}
-    assert session.entry("d1").document.to_bytes() == before            # nothing accepted
+    assert word_docs.saved(session, "d1") == before            # nothing accepted
 
 
 # -- R119: the sample ---------------------------------------------------------------------------------
 
 
-def test_the_sample_is_installed_and_has_the_shape(box):
-    assert samples.path("accept_loses_text").is_file()
-    data = samples.read("accept_loses_text")
-    with pytest.raises(KeyError, match="accept_loses_text"):
-        samples.read("nothing")
-    found = accept_loses_text(Document.open(data))
-    assert [(e["text"], e["change"], e["author"]) for e in found] == [("Kept. Last.", "rev:901", "Editor B"),
-                                                                      ("Kept. Last.", "rev:902", "Editor B")]
-    assert [e["cell"].rsplit("/", 1)[1] for e in found] == ["c0,1", "c1,1"]
+#: The body of the sample docx-agent shipped (``docx_agent/samples/accept_loses_text.docx``): a
+#: row's last cell, and a table's last cell, whose last paragraph's mark is a pending tracked
+#: deletion by Editor B.
+SAMPLE_BODY = (
+    '<w:p w14:paraId="1A550001" w14:textId="2B660001"><w:r>'
+    '<w:t xml:space="preserve">A row\'s last cell whose last paragraph mark is a pending tracked deletion:</w:t>'
+    '</w:r></w:p><w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders>'
+    '<w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+    '<w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+    '<w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+    '<w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+    '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+    '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders></w:tblPr><w:tblGrid>'
+    '<w:gridCol w:w="3000"/><w:gridCol w:w="3000"/></w:tblGrid>'
+    '<w:tr w14:paraId="3C773850" w14:textId="4D883850"><w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/>'
+    '</w:tcPr><w:p w14:paraId="1A550002" w14:textId="2B660002"><w:r><w:t xml:space="preserve">r1c1</w:t>'
+    '</w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/></w:tcPr>'
+    '<w:p w14:paraId="1A550006" w14:textId="2B660006"><w:r><w:t xml:space="preserve">Kept.</w:t></w:r>'
+    '</w:p><w:p w14:paraId="1A550007" w14:textId="2B660007"><w:pPr><w:rPr>'
+    '<w:del w:id="901" w:author="Editor B" w:date="2026-11-13T09:00:00Z"/></w:rPr></w:pPr><w:r>'
+    '<w:t xml:space="preserve">Last.</w:t></w:r></w:p></w:tc></w:tr>'
+    '<w:tr w14:paraId="3C773851" w14:textId="4D883851"><w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/>'
+    '</w:tcPr><w:p w14:paraId="1A550004" w14:textId="2B660004"><w:r><w:t xml:space="preserve">r2c1</w:t>'
+    '</w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/></w:tcPr>'
+    '<w:p w14:paraId="1A550005" w14:textId="2B660005"><w:r><w:t xml:space="preserve">r2c2</w:t></w:r>'
+    '</w:p></w:tc></w:tr></w:tbl><w:p w14:paraId="1A550008" w14:textId="2B660008"><w:r>'
+    '<w:t xml:space="preserve">The table\'s last cell, the same:</w:t></w:r></w:p><w:tbl><w:tblPr>'
+    '<w:tblW w:w="0" w:type="auto"/><w:tblBorders>'
+    '<w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+    '<w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+    '<w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+    '<w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+    '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+    '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders></w:tblPr><w:tblGrid>'
+    '<w:gridCol w:w="3000"/><w:gridCol w:w="3000"/></w:tblGrid>'
+    '<w:tr w14:paraId="3C773860" w14:textId="4D883860"><w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/>'
+    '</w:tcPr><w:p w14:paraId="1A550009" w14:textId="2B660009"><w:r><w:t xml:space="preserve">r1c1</w:t>'
+    '</w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/></w:tcPr>'
+    '<w:p w14:paraId="1A55000A" w14:textId="2B66000A"><w:r><w:t xml:space="preserve">r1c2</w:t></w:r>'
+    '</w:p></w:tc></w:tr><w:tr w14:paraId="3C773861" w14:textId="4D883861"><w:tc><w:tcPr>'
+    '<w:tcW w:w="3000" w:type="dxa"/></w:tcPr><w:p w14:paraId="1A55000B" w14:textId="2B66000B"><w:r>'
+    '<w:t xml:space="preserve">r2c1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr>'
+    '<w:tcW w:w="3000" w:type="dxa"/></w:tcPr><w:p w14:paraId="1A55000D" w14:textId="2B66000D"><w:r>'
+    '<w:t xml:space="preserve">Kept.</w:t></w:r></w:p><w:p w14:paraId="1A55000E" w14:textId="2B66000E">'
+    '<w:pPr><w:rPr><w:del w:id="902" w:author="Editor B" w:date="2026-11-13T09:00:00Z"/></w:rPr></w:pPr>'
+    '<w:r><w:t xml:space="preserve">Last.</w:t></w:r></w:p></w:tc></w:tr></w:tbl>'
+    '<w:p w14:paraId="1A55000F" w14:textId="2B66000F"><w:r><w:t xml:space="preserve">End.</w:t></w:r>'
+    '</w:p>')
+
+
+def _loses_text(box, session) -> list[dict]:
+    return ok(box, session, "check", doc="d1", include=["layout"]).data["layout"].get("accept_loses_text", [])
+
+
+def test_check_names_the_samples_two_cells(box):
+    session = box.session(clock=CLOCK)
+    session.open(word_docs.with_body(SAMPLE_BODY), "sample.docx")
+    facts = _loses_text(box, session)
+    assert [f["fix"]["calls"][0] for f in facts] == [{"action": "reject", "ids": ["rev:901"]},
+                                                     {"action": "reject", "ids": ["rev:902"]}]
+    cells = [f["cell"] for f in facts]
+    assert [cell.rsplit("/", 1)[1] for cell in cells] == ["c0,1", "c1,1"]
     # The table ids are stable (rows carry paraIds), so the facts name them across calls.
-    assert all(e["cell"].startswith("t:") for e in found)
+    assert all(cell.startswith("t:") for cell in cells)
 
 
 def test_check_accept_and_reject_on_the_sample(box):
     session = box.session(clock=CLOCK)
-    session.open(samples.read("accept_loses_text"), "sample.docx")
-    facts = ok(box, session, "check", doc="d1", include=["layout"]).data["layout"]["accept_loses_text"]
-    assert [f["fix"]["calls"][0] for f in facts] == [{"action": "reject", "ids": ["rev:901"]},
-                                                     {"action": "reject", "ids": ["rev:902"]}]
+    session.open(word_docs.with_body(SAMPLE_BODY), "sample.docx")
     accepted = ok(box, session, "word_changes", doc="d1", action="accept", all=True)
     assert len([w for w in accepted.warnings if "now after the row" in w]) == 2
     read = ok(box, session, "word_read", doc="d1").data
     assert read.count("Kept.") == 2 and read.count("Last.") == 2
     ok(box, session, "word_undo", doc="d1")
     ok(box, session, "word_changes", doc="d1", action="reject", all=True)
-    assert accept_loses_text(session.entry("d1").document) == []
-    tree = etree.fromstring(etree.tostring(session.entry("d1").document.package.tree(
-        session.entry("d1").document.package.document_part())))
+    assert _loses_text(box, session) == []
+    tree = word_docs.tree(word_docs.saved(session, "d1"))
     cells = ["".join(t.text for t in tc.iter(_W + "t")) for tc in tree.iter(_W + "tc")]
     assert cells.count("Kept.Last.") == 2
-
-
-def test_the_sample_is_what_the_recipe_writes():
-    import importlib.util
-    from pathlib import Path
-
-    spec = importlib.util.spec_from_file_location(
-        "make_samples", Path(__file__).resolve().parents[1] / "tools" / "make_samples.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    ours, shipped = Document.open(module.accept_loses_text()), Document.open(samples.read("accept_loses_text"))
-    assert ours.to_markdown(view="markup") == shipped.to_markdown(view="markup")

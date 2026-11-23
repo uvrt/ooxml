@@ -5,7 +5,7 @@ and a table's lines measured to their last character for ``past_margins``.
 Word decides whether a row keeps with the next by the first paragraph of its first cell (a
 nested table first in that cell: its first paragraph), measured in round 24 (docx2svg's
 ``tools/make_table_keep_probe.py``); docx-agent asks docx2svg's rule
-(:func:`docx2svg.table.row_keeps_with_next`).  Made-up documents, Document.new()'s package.
+(:func:`docx2svg.table.row_keeps_with_next`).  Made-up documents in a new blank package.
 """
 
 from __future__ import annotations
@@ -16,10 +16,10 @@ import re
 import pytest
 from ooxml_edit.tools import Toolbox
 from test_tools_layout_facts import FILLER, docx, facts, ok, p, with_style
+from layout_reads import table_element, table_ids
 
-from docx_agent import Document
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
-from docx_agent.layout import PX_PER_PT
+import word_docs
 
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 KEEP = "<w:keepNext/>"
@@ -40,15 +40,38 @@ def session(box):
     return box.session()
 
 
-def _head(session, d: str) -> Document:
-    """The document as the session's head version has it: read from the Rust session's saved
-    head where it owns the document (its edits are not mirrored into a Python view), else
-    the toolbox's own document."""
-    entry = session.entry(d)
-    mirror = getattr(entry, "handle", None)
-    if getattr(mirror, "session", None) is None:
-        return entry.document
-    return Document.open(mirror.session.head(mirror.doc).save())
+def _tables(box, session, d: str) -> list[str]:
+    """The body's tables' ids as the document names them now."""
+    return table_ids(box, session, d)
+
+
+def _lead_element(row):
+    """A row's first cell's first paragraph (a nested table first in it: its first one)."""
+    cell = row.find(_W + "tc")
+    first = next(child for child in cell if child.tag in (_W + "p", _W + "tbl"))
+    while first.tag == _W + "tbl":
+        first = next(child for child in first.find(_W + "tr").find(_W + "tc") if child.tag in (_W + "p", _W + "tbl"))
+    return first
+
+
+def _lead(box, session, d: str, table: str, row: int) -> str:
+    """The id of a row's first cell's first paragraph."""
+    element = table_element(box, session, d, table).findall(_W + "tr")[row]
+    return f"p:{element.find(_W + 'tc').find(_W + 'p').get(word_docs.W14_PARA)}"
+
+
+def _props(box, session, d: str, table: str) -> dict:
+    """Whether describe says the table is kept together and kept with the next."""
+    found = next(t for t in ok(box, session, "describe", doc=d).data["tables"] if t["id"] == table)
+    return {"keep_together": found.get("keep_together", False) is True,
+            "keep_with_next": found.get("keep_with_next", False) is True}
+
+
+def _named(box, session, d: str, table: str) -> str:
+    """The id the document gives the table now (a table it named by its place takes its
+    paraId's once an edit stamps it)."""
+    assert table in _tables(box, session, d), table
+    return table
 
 
 def _cell(content: str, width: int) -> str:
@@ -92,7 +115,7 @@ def test_a_split_after_a_kept_row_by_its_first_cells_first_paragraph(box, sessio
     Word keeps a row by its first cell's first paragraph alone (0.1.23 asked every
     paragraph of the row)."""
     d = session.open(docx(p("Tables") + grid(70, **keyword) + p("End")), "kept.docx")
-    table = session.entry(d).document.tables()[0].id
+    table = _tables(box, session, d)[0]
     entries = [e for e in facts(box, session, d)["keep_with_next_at_foot"] if "table" in e]
     if not reported:
         assert entries == [], case
@@ -104,16 +127,12 @@ def test_a_split_after_a_kept_row_by_its_first_cells_first_paragraph(box, sessio
 # -- W2: a table kept together -----------------------------------------------------------------
 
 
-def _keeps(document: Document, table: str) -> list:
+def _keeps(box, session, d: str, table: str) -> list:
     """Each row's first cell's first paragraph's direct w:keepNext: True, False or None."""
-    element = document._table_entry(table)[1].element
+    element = table_element(box, session, d, table)
     out = []
     for row in element.findall(_W + "tr"):
-        cell = row.find(_W + "tc")
-        first = next(child for child in cell if child.tag in (_W + "p", _W + "tbl"))
-        while first.tag == _W + "tbl":
-            first = next(child for child in first.find(_W + "tr").find(_W + "tc") if child.tag in (_W + "p", _W + "tbl"))
-        node = first.find(f"{_W}pPr/{_W}keepNext")
+        node = _lead_element(row).find(f"{_W}pPr/{_W}keepNext")
         out.append(None if node is None else node.get(_W + "val") not in ("0", "false"))
     return out
 
@@ -125,18 +144,16 @@ def test_keep_together_where_a_style_keeps_the_rows(box, session):
     off removes the release and nothing else, and says the style still keeps the rows."""
     data = with_style(docx(p("Before") + grid(6, LABEL) + p("After")), LABEL_STYLE)
     d = session.open(data, "label.docx")
-    document = session.entry(d).document
-    table = document.tables()[0].id
-    chained = document.table_properties(table)                             # every row keeps: a chain
+    table = _tables(box, session, d)[0]
+    chained = _props(box, session, d, table)                             # every row keeps: a chain
     assert chained["keep_together"] is True and chained["keep_with_next"] is True
     made = ok(box, session, "word_format_table", doc=d, table=table, scope="table", keep_together=True)
-    document = _head(session, d)
     table = made.renamed.get(table, table)                       # stamped by the edit
-    assert table in made.changed and table == document.tables()[0].id
-    assert _keeps(document, table) == [None] * 5 + [False]
-    assert document.table_properties(table)["keep_together"] is True
-    assert document.table_properties(table)["keep_with_next"] is False
-    last = document.table(table).cell(5, 0).paragraphs[0].id
+    assert table in made.changed and table == _tables(box, session, d)[0]
+    assert _keeps(box, session, d, table) == [None] * 5 + [False]
+    assert _props(box, session, d, table)["keep_together"] is True
+    assert _props(box, session, d, table)["keep_with_next"] is False
+    last = _lead(box, session, d, table, 5)
     layout = facts(box, session, d)
     assert layout["settings"]["keep_together"] == [{"table": table, "pages": [1], "direct": [last]}]
     assert last not in {e["para"] for e in layout["direct_formatting"]}
@@ -146,11 +163,10 @@ def test_keep_together_where_a_style_keeps_the_rows(box, session):
     assert described[0]["keep_together"] is True and "keep_with_next" not in described[0]
 
     off = ok(box, session, "word_format_table", doc=d, table=table, scope="table", keep_together=False)
-    document = _head(session, d)
-    assert _keeps(document, table) == [None] * 6
+    assert _keeps(box, session, d, table) == [None] * 6
     assert off.warnings == [f"{table} is still kept together by its rows' styles (they keep with the next); "
                             "keep_together false removes only the direct keeps"]
-    assert document.table_properties(table)["keep_with_next"] is True
+    assert _props(box, session, d, table)["keep_with_next"] is True
     assert facts(box, session, d)["settings"]["keep_together"] == [
         {"table": table, "pages": [1], "direct": [], "with_next": True}]
     described = ok(box, session, "describe", doc=d).data["tables"][0]
@@ -163,15 +179,13 @@ def test_keep_together_on_plain_rows_and_off_removes_only_its_own(box, session):
     paragraphs' other direct formatting."""
     rows = grid(4, '<w:jc w:val="center"/>', KEEP)
     d = session.open(docx(p("Before") + rows + p("After")), "plain.docx")
-    document = session.entry(d).document
-    table = document.tables()[0].id
+    table = _tables(box, session, d)[0]
     ok(box, session, "word_format_table", doc=d, table=table, scope="table", keep_together=True)
-    document = _head(session, d)
-    table = document.tables()[0].id
-    assert _keeps(document, table) == [True, True, True, None]
+    table = _tables(box, session, d)[0]
+    assert _keeps(box, session, d, table) == [True, True, True, None]
     layout = facts(box, session, d)
     [kept] = layout["settings"]["keep_together"]
-    leads = [document.table(table).cell(r, 0).paragraphs[0].id for r in range(4)]
+    leads = [_lead(box, session, d, table, r) for r in range(4)]
     assert kept["direct"] == leads[:3]
     centred = {e["para"]: e for e in layout["direct_formatting"]}
     for lead in leads:              # the centring is still direct formatting; the keep is not
@@ -179,9 +193,8 @@ def test_keep_together_on_plain_rows_and_off_removes_only_its_own(box, session):
         assert centred[lead]["fix"]["calls"][0]["clear"] == ["alignment"]
 
     ok(box, session, "word_format_table", doc=d, table=table, scope="table", keep_together=False)
-    document = _head(session, d)
-    assert _keeps(document, table) == [None] * 4
-    element = document._table_entry(table)[1].element
+    assert _keeps(box, session, d, table) == [None] * 4
+    element = table_element(box, session, d, table)
     assert len(element.findall(f".//{_W}jc")) == 4               # the centring stays
     assert len(element.findall(f".//{_W}keepNext")) == 4         # the second cells' keeps stay
 
@@ -194,28 +207,25 @@ def test_keep_together_mends_a_released_row_and_keeps_a_nested_tables_first_para
     nested = grid(3, nested="", label="Outer")
     d = session.open(with_style(docx(p("Before") + body + p("Between") + nested + p("After")), LABEL_STYLE),
                      "mixed.docx")
-    document = session.entry(d).document
-    first, second = [t.id for t in document.tables()][:2]
-    assert _keeps(document, first) == [None, False, None]
+    first, second = _tables(box, session, d)[:2]
+    assert _keeps(box, session, d, first) == [None, False, None]
     ok(box, session, "word_format_table", doc=d, table=first, scope="table", keep_together=True)
-    document = _head(session, d)
-    first, second = [t.id for t in document.tables()][:2]
-    assert _keeps(document, first) == [None, None, False]
+    first, second = _tables(box, session, d)[:2]
+    assert _keeps(box, session, d, first) == [None, None, False]
     ok(box, session, "word_format_table", doc=d, table=second, scope="table", keep_together=True)
-    document = _head(session, d)
-    first, second = [t.id for t in document.tables()][:2]
-    assert _keeps(document, second) == [True, True, None]
-    element = document._table_entry(second)[1].element
+    first, second = _tables(box, session, d)[:2]
+    assert _keeps(box, session, d, second) == [True, True, None]
+    element = table_element(box, session, d, second)
     inner = [node for node in element.iter(_W + "tbl") if node is not element]
     assert all(node.find(f".//{_W}keepNext") is not None for node in inner[:2])
     assert not any(node.find(f"{_W}pPr/{_W}keepNext") is not None
                    for node in element.findall(f"{_W}tr/{_W}tc/{_W}p"))   # the outer paragraphs: none
-    assert document.table_properties(second)["keep_together"] is True
+    assert _props(box, session, d, second)["keep_together"] is True
 
 
 def test_keep_together_refuses_what_it_cannot_do(box, session):
     d = session.open(docx(p("Before") + grid(1) + p("Between") + grid(3) + p("After")), "refuse.docx")
-    three = session.entry(d).document.tables()[1].id
+    three = _tables(box, session, d)[1]
     refused = box.dispatch(session, "word_format_table", {"doc": d, "table": three, "scope": "row", "row": 0,
                                                           "keep_together": True})
     assert not refused.ok and refused.error.field == "keep_together"
@@ -225,21 +235,19 @@ def test_keep_together_on_a_one_row_table_is_a_note_and_a_batch_applies(box, ses
     """Round 31, R5d: a one-row table has nothing to keep together -- no change, said in a
     warning (refused before, which failed every op of a batch); cant_split beside it applies."""
     d = session.open(docx(p("Before") + grid(1) + p("Between") + grid(3) + p("After")), "one.docx")
-    document = session.entry(d).document
-    one, three = [t.id for t in document.tables()]
-    named = document._table_entry(one)[1].id
+    one, three = _tables(box, session, d)
+    named = _named(box, session, d, one)
     result = ok(box, session, "word_format_table", doc=d, table=one, scope="table", keep_together=True)
-    document = _head(session, d)
     assert result.summary == f"No change to {one}" and result.changed == []
     assert result.warnings[0].startswith(f"{named} has one row: nothing to keep together, left as it was")
     batch = ok(box, session, "batch", ops=[
         {"tool": "word_format_table", "arguments": {"doc": d, "table": one, "scope": "table", "cant_split": True,
                                                "keep_together": True, "keep_with_next": True}},
         {"tool": "word_format_table", "arguments": {"doc": d, "table": three, "scope": "table", "keep_together": True}}])
-    document = _head(session, d)
     assert batch.ok
-    assert document.row_properties(document.tables()[0].id, 0)["cant_split"] is True
-    assert document.table_properties(document.tables()[1].id)["keep_together"] is True
+    first_row = table_element(box, session, d, _tables(box, session, d)[0]).find(_W + "tr")
+    assert first_row.find(f"{_W}trPr/{_W}cantSplit") is not None
+    assert _props(box, session, d, _tables(box, session, d)[1])["keep_together"] is True
 
 
 def test_turning_off_a_keep_the_table_does_not_have_changes_nothing(box, session):
@@ -248,14 +256,12 @@ def test_turning_off_a_keep_the_table_does_not_have_changes_nothing(box, session
     warning saying so.  keep_with_next true without keep_together stays refused."""
     d = session.open(docx(p("Before") + grid(1) + p("Between") + grid(3) + p("Mid") + grid(3) + p("After")),
                      "off.docx")
-    document = session.entry(d).document
-    one, three, kept = [t.id for t in document.tables()]
+    one, three, kept = _tables(box, session, d)
     ok(box, session, "word_format_table", doc=d, table=kept, scope="table", keep_together=True)
-    document = _head(session, d)
-    kept = document.tables()[2].id
-    before = document.to_bytes()
-    laid = [t.id for t in document.tables()]                     # (as the head names them)
-    named = {t: document._table_entry(laid[k])[1].id for k, t in enumerate((one, three, kept))}  # t:<id>, as said
+    kept = _tables(box, session, d)[2]
+    before = word_docs.saved(session, d)
+    laid = _tables(box, session, d)                     # (as the head names them)
+    named = {t: _named(box, session, d, laid[k]) for k, t in enumerate((one, three, kept))}  # t:<id>, as said
     for table, arguments, said in (
             (three, {"keep_together": False}, " was not kept together"),
             (one, {"keep_together": False}, " was not kept together"),
@@ -264,10 +270,9 @@ def test_turning_off_a_keep_the_table_does_not_have_changes_nothing(box, session
             (three, {"keep_together": False, "keep_with_next": False}, " was not kept together"),
             (kept, {"keep_with_next": False}, "'s last row did not keep with the next")):
         result = ok(box, session, "word_format_table", doc=d, table=table, scope="table", **arguments)
-        document = _head(session, d)
         assert result.summary == f"No change to {table}" and result.changed == [], arguments
         assert result.warnings == [named[table] + said] and result.touched == [], arguments
-    assert document.to_bytes() == before
+    assert word_docs.saved(session, d) == before
     refused = box.dispatch(session, "word_format_table", {"doc": d, "table": three, "scope": "table",
                                                           "keep_with_next": True})
     assert not refused.ok and "keep_together true" in refused.error.message
@@ -283,19 +288,16 @@ def test_keep_with_next_false_releases_a_last_row_keeping_alone(box, session, ar
     """Round 27: a table not kept together whose last row keeps with the next on its own --
     keep_with_next false releases that row, and the warning says what was released."""
     d = session.open(docx(p("Before") + grid(3) + p("After")), "alone.docx")
-    document = session.entry(d).document
-    table = document.tables()[0].id
-    last = document.table(table).cell(2, 0).paragraphs[0].id
+    table = _tables(box, session, d)[0]
+    last = _lead(box, session, d, table, 2)
     ok(box, session, "word_format", doc=d, targets=[last], keep_with_next=True)
-    document = _head(session, d)
-    table = document.tables()[0].id
-    assert _keeps(document, table) == [None, None, True]
+    table = _tables(box, session, d)[0]
+    assert _keeps(box, session, d, table) == [None, None, True]
     result = ok(box, session, "word_format_table", doc=d, table=table, scope="table", **arguments)
-    document = session.entry(d).document
-    table = document.tables()[0].id
-    assert _keeps(document, table) == [None, None, None]
+    table = _tables(box, session, d)[0]
+    assert _keeps(box, session, d, table) == [None, None, None]
     assert result.summary.startswith("Formatted") and result.changed
-    named = document._table_entry(table)[1].id
+    named = _named(box, session, d, table)
     assert result.warnings == [f"{named} was not kept together: its last row's keep with the next is released"]
 
 
@@ -303,7 +305,7 @@ def test_a_label_style_table_keeps_its_warning_with_keep_together_false(box, ses
     """A table its rows' style keeps together is kept: keep_together false (nothing direct to
     remove) says it is still kept by the style (round 25), not that it was not kept."""
     d = session.open(with_style(docx(p("Before") + grid(3, LABEL) + p("After")), LABEL_STYLE), "label.docx")
-    table = session.entry(d).document.tables()[0].id
+    table = _tables(box, session, d)[0]
     result = ok(box, session, "word_format_table", doc=d, table=table, scope="table", keep_together=False)
     assert len(result.warnings) == 1 and "still kept together by its rows' styles" in result.warnings[0]
 
@@ -316,18 +318,12 @@ def test_a_table_kept_together_does_not_take_the_next_block_along(box, session):
     heading = p("Next part", ppr="<w:keepNext/>")
     body = filler + grid(10, LABEL) + heading + grid(14, LABEL, label="More") + p("End")
     d = session.open(with_style(docx(body), LABEL_STYLE), "foot.docx")
-    document = session.entry(d).document
 
-    def pages() -> list[list[int]]:
-        layout = document.layout()
-        return [sorted({w.page for r in range(len(t.rows)) for w in layout.where(t.cell(r, 0).paragraphs[0].id)})
-                for t in document.tables()]
-
-    assert pages() == [[2], [2]]
+    assert _pages(box, session, d) == [[2], [2]]
     for k in range(2):
-        ok(box, session, "word_format_table", doc=d, table=document.tables()[k].id, scope="table",
+        ok(box, session, "word_format_table", doc=d, table=_tables(box, session, d)[k], scope="table",
            keep_together=True)
-    assert pages() == [[1], [2]]
+    assert _pages(box, session, d) == [[1], [2]]
     assert len(facts(box, session, d)["settings"]["keep_together"]) == 2
 
 
@@ -345,15 +341,13 @@ def test_a_table_kept_together_taller_than_a_page_is_warned_of_and_reported_once
             + p("Then", ppr="<w:pageBreakBefore/>") + grid(4) + p("End") + p("Last", ppr="<w:pageBreakBefore/>")
             + grid(70, LABEL, label="Chain") + p("Done"))
     d = session.open(with_style(docx(body), LABEL_STYLE), "tall.docx")
-    document = session.entry(d).document
-    made = ok(box, session, "word_format_table", doc=d, table=document.tables()[0].id, scope="table",
+    made = ok(box, session, "word_format_table", doc=d, table=_tables(box, session, d)[0], scope="table",
               keep_together=True)
-    document = _head(session, d)
-    tall, other, short, chain = [t.id for t in document.tables()]
+    tall, other, short, chain = _tables(box, session, d)
     assert made.warnings == [f"{tall} is taller than a page: Word starts it on a new page and breaks it where "
                              "the page is full"]
     assert ok(box, session, "word_format_table", doc=d, table=short, scope="table", keep_together=True).warnings == []
-    tall, other, short, chain = [t.id for t in document.tables()]
+    tall, other, short, chain = _tables(box, session, d)
     layout = facts(box, session, d)
     kept = {e["table"]: e for e in layout["settings"]["keep_together"]}
     assert kept[tall]["taller_than_page"] is True and "taller_than_page" not in kept[short]
@@ -373,10 +367,13 @@ def _record(fill: int, separator: str = KEEP) -> str:
             + p("Between", ppr=separator) + grid(3, label="Box") + p("After"))
 
 
-def _pages(document: Document) -> list[list[int]]:
-    layout = document.layout()
-    return [sorted({w.page for r in range(len(t.rows)) for w in layout.where(t.cell(r, 0).paragraphs[0].id)})
-            for t in document.tables()]
+def _pages(box, session, d: str) -> list[list[int]]:
+    """Per table, the pages its rows' first cells' first paragraphs are drawn on."""
+    out = []
+    for table in _tables(box, session, d):
+        found = ok(box, session, "word_inspect", doc=d, target=table, layout=True).data["blocks"][0]
+        out.append(sorted({w["page"] for row in found["rows"] for w in row[0]["blocks"][0]["placements"]}))
+    return out
 
 
 def test_keep_with_next_takes_the_box_along_and_check_reports_the_table(box, session):
@@ -386,24 +383,21 @@ def test_keep_with_next_takes_the_box_along_and_check_reports_the_table(box, ses
     the table's keep_together with ``with_next`` (in ``settings``), no direct formatting;
     describe and table_properties say it; off removes every keep it wrote."""
     d = session.open(docx(_record(16)), "record.docx")
-    document = session.entry(d).document
-    record, after = [t.id for t in document.tables()]
+    record, after = _tables(box, session, d)
     for table in (record, after):
         ok(box, session, "word_format_table", doc=d, table=table, scope="table", keep_together=True)
-        document = _head(session, d)
-    assert _pages(document) == [[1], [2]]                        # the box alone on page 2
-    record = document.tables()[0].id
+    assert _pages(box, session, d) == [[1], [2]]                        # the box alone on page 2
+    record = _tables(box, session, d)[0]
     made = ok(box, session, "word_format_table", doc=d, table=record, scope="table", keep_together=True,
               keep_with_next=True)
-    document = _head(session, d)
     assert made.warnings == []
-    record = document.tables()[0].id
-    assert _keeps(document, record) == [True] * 4
-    assert _pages(document) == [[2], [2]]
-    properties = document.table_properties(record)
+    record = _tables(box, session, d)[0]
+    assert _keeps(box, session, d, record) == [True] * 4
+    assert _pages(box, session, d) == [[2], [2]]
+    properties = _props(box, session, d, record)
     assert properties["keep_together"] is True and properties["keep_with_next"] is True
     layout = facts(box, session, d)
-    leads = [document.table(record).cell(r, 0).paragraphs[0].id for r in range(4)]
+    leads = [_lead(box, session, d, record, r) for r in range(4)]
     entry = layout["settings"]["keep_together"][0]
     assert entry == {"table": record, "pages": [2], "direct": leads, "with_next": True}
     assert "with_next" not in layout["settings"]["keep_together"][1]
@@ -413,10 +407,9 @@ def test_keep_with_next_takes_the_box_along_and_check_reports_the_table(box, ses
     assert described["keep_together"] is True and described["keep_with_next"] is True
 
     ok(box, session, "word_format_table", doc=d, table=record, scope="table", keep_together=False)
-    document = _head(session, d)
-    record = document.tables()[0].id
-    assert _keeps(document, record) == [None] * 4
-    assert document.table_properties(record)["keep_with_next"] is False
+    record = _tables(box, session, d)[0]
+    assert _keeps(box, session, d, record) == [None] * 4
+    assert _props(box, session, d, record)["keep_with_next"] is False
 
 
 def test_keep_with_next_alone_turns_the_last_row_on_and_off(box, session):
@@ -425,28 +418,22 @@ def test_keep_with_next_alone_turns_the_last_row_on_and_off(box, session):
     keeping again removes it."""
     d = session.open(with_style(docx(p("Before") + grid(4) + p("Between") + grid(4, LABEL) + p("After")),
                                 LABEL_STYLE), "alone.docx")
-    document = session.entry(d).document
-    plain, label = [t.id for t in document.tables()]
+    plain, label = _tables(box, session, d)
     ok(box, session, "word_format_table", doc=d, table=plain, scope="table", keep_together=True)
-    document = _head(session, d)
-    plain = document.tables()[0].id
+    plain = _tables(box, session, d)[0]
     ok(box, session, "word_format_table", doc=d, table=plain, scope="table", keep_with_next=True)
-    document = _head(session, d)
-    plain = document.tables()[0].id
-    assert _keeps(document, plain) == [True] * 4
+    plain = _tables(box, session, d)[0]
+    assert _keeps(box, session, d, plain) == [True] * 4
     ok(box, session, "word_format_table", doc=d, table=plain, scope="table", keep_with_next=False)
-    document = _head(session, d)
-    plain = document.tables()[0].id
-    assert _keeps(document, plain) == [True, True, True, None]
-    label = document.tables()[1].id
+    plain = _tables(box, session, d)[0]
+    assert _keeps(box, session, d, plain) == [True, True, True, None]
+    label = _tables(box, session, d)[1]
     ok(box, session, "word_format_table", doc=d, table=label, scope="table", keep_with_next=False)
-    document = _head(session, d)
-    label = document.tables()[1].id
-    assert _keeps(document, label) == [None, None, None, False]
-    assert document.table_properties(label)["keep_with_next"] is False
+    label = _tables(box, session, d)[1]
+    assert _keeps(box, session, d, label) == [None, None, None, False]
+    assert _props(box, session, d, label)["keep_with_next"] is False
     ok(box, session, "word_format_table", doc=d, table=label, scope="table", keep_with_next=True)
-    document = _head(session, d)
-    assert _keeps(document, document.tables()[1].id) == [None] * 4
+    assert _keeps(box, session, d, _tables(box, session, d)[1]) == [None] * 4
 
 
 def test_keep_with_next_refuses_a_table_not_kept_together(box, session):
@@ -454,7 +441,7 @@ def test_keep_with_next_refuses_a_table_not_kept_together(box, session):
     with the block after it, the rest of the table left behind: measured), so keep_with_next
     is for a table kept together; with keep_together false, or for a row, it is refused."""
     d = session.open(docx(p("Before") + grid(3) + p("After")), "loose.docx")
-    table = session.entry(d).document.tables()[0].id
+    table = _tables(box, session, d)[0]
     for arguments, field in (({"scope": "table", "keep_with_next": True}, None),
                              ({"scope": "table", "keep_together": False, "keep_with_next": True}, "keep_with_next"),
                              ({"scope": "row", "row": 0, "keep_with_next": True}, "keep_with_next")):
@@ -464,7 +451,7 @@ def test_keep_with_next_refuses_a_table_not_kept_together(box, session):
             assert refused.error.field == field
         else:
             assert "keep_together true" in refused.error.message
-    assert _keeps(session.entry(d).document, table) == [None] * 3
+    assert _keeps(box, session, d, table) == [None] * 3
 
 
 def test_keep_with_next_warns_of_a_paragraph_between_that_does_not_keep(box, session):
@@ -472,22 +459,18 @@ def test_keep_with_next_warns_of_a_paragraph_between_that_does_not_keep(box, ses
     box after it start the next page alone (Word does so: measured), so the tool says which
     paragraph to keep."""
     d = session.open(docx(_record(16, separator="")), "between.docx")
-    document = session.entry(d).document
-    record, after = [t.id for t in document.tables()]
+    record, after = _tables(box, session, d)
     ok(box, session, "word_format_table", doc=d, table=after, scope="table", keep_together=True)
-    document = _head(session, d)
     made = ok(box, session, "word_format_table", doc=d, table=record, scope="table", keep_together=True,
               keep_with_next=True)
-    document = _head(session, d)
-    record, after = [t.id for t in document.tables()]
-    between = next(q.id for q in document.paragraphs() if q.text == "Between")
+    record, after = _tables(box, session, d)
+    between = next(q for q, text in word_docs.paragraphs(session, d) if text == "Between")
     assert made.warnings == [f"{between}, between {record} and {after}, does not keep with the next: {after} can "
                              f"still start a page without {record}; word_format keep_with_next true on {between} "
                              "keeps them together"]
-    assert _pages(document) == [[1], [2]]
+    assert _pages(box, session, d) == [[1], [2]]
     ok(box, session, "word_format", doc=d, targets=[between], keep_with_next=True)
-    document = _head(session, d)
-    assert _pages(document) == [[2], [2]]
+    assert _pages(box, session, d) == [[2], [2]]
 
 
 def test_a_chain_of_records_longer_than_a_page_breaks_after_a_box_and_check_says_where(box, session):
@@ -500,19 +483,18 @@ def test_a_chain_of_records_longer_than_a_page_breaks_after_a_box_and_check_says
         body += (p(f"Heading {k}", ppr=KEEP) + grid(4, label=f"Record{k}") + p("Between", ppr=KEEP)
                  + grid(3, label=f"Box{k}"))
     d = session.open(docx(body + p("After")), "chain.docx")
-    document = session.entry(d).document
     for k in range(16):
-        ok(box, session, "word_format_table", doc=d, table=document.tables()[k].id, scope="table",
+        ok(box, session, "word_format_table", doc=d, table=_tables(box, session, d)[k], scope="table",
            keep_together=True, keep_with_next=True)
-        document = _head(session, d)
-    pages = _pages(document)
+    pages = _pages(box, session, d)
     assert pages[:6] == [[2]] * 6 and pages[6:12] == [[3]] * 6 and pages[12:] == [[4]] * 4
-    tables = [t.id for t in document.tables()]
+    tables = _tables(box, session, d)
     ends = [e for e in facts(box, session, d)["keep_with_next_at_foot"] if "next" in e and "table" in e]
     headings = {e["next"] for e in ends}
     assert [e["table"] for e in ends] == [tables[5], tables[11]] and len(headings) == 2
     assert all(e["row"] == 2 and e["next_page"] == e["page"] + 1 for e in ends)
-    assert all(document.paragraph(h).text.startswith("Heading") for h in headings)
+    texts = dict(word_docs.paragraphs(session, d))
+    assert all(texts[h].startswith("Heading") for h in headings)
 
 
 # -- W3: past the margins, to the last character -----------------------------------------------
@@ -522,10 +504,7 @@ def test_a_column_wide_table_whose_lines_end_in_spaces_is_not_past_the_margin(bo
     """A table as wide as the text column with no cell margins and no borders: its lines'
     text ends inside the cell; a line's last space, which Word lets run past the edge, is
     not drawn and is no fact.  Text pushed past the edge by an indent still is."""
-    import io
-    import zipfile
-
-    section = zipfile.ZipFile(io.BytesIO(Document.new().to_bytes())).read("word/document.xml").decode()
+    section = word_docs.part(word_docs.blank())
     page = int(re.search(r'<w:pgSz w:w="(\d+)"', section).group(1))
     left, right = (int(re.search(rf'w:{side}="(\d+)"', section).group(1)) for side in ("left", "right"))
     width = page - left - right
@@ -542,27 +521,7 @@ def test_a_column_wide_table_whose_lines_end_in_spaces_is_not_past_the_margin(bo
     d = session.open(docx(p("Before") + wide(words) + p("Between") + wide("Pushed out", '<w:ind w:right="-400"/>'
                                                                          '<w:jc w:val="right"/>') + p("After")),
                      "column.docx")
-    first, second = [t.id for t in session.entry(d).document.tables()]
-    page = session.entry(d).document.layout().pages[0]
-    lines = [line for line in page.lines if re.match(r"^w:body/w:tbl\[1\]", line.path)]
-    # Lines whose last space runs past the cell's edge, as 0.1.23 measured them.
-    assert sum(max(span.end for span in line.spans) > page.column[1] + PX_PER_PT for line in lines) >= 3
+    first, second = _tables(box, session, d)
     past = {e.get("table"): e for e in facts(box, session, d)["past_margins"]}
     assert first not in past
     assert past[second]["past"]["right"] > 15
-
-
-def test_the_ink_of_a_line_leaves_out_its_spaces():
-    from fractions import Fraction
-
-    from docx2svg.layout import Span
-
-    from docx_agent.layout_facts import _ink
-
-    def span(chars: str, start: int) -> Span:
-        xs = [Fraction(start + 5 * k) for k in range(len(chars))]
-        return Span("w:p", list(chars), xs, 0, Fraction(start + 5 * len(chars)), "Face", False, False, 22)
-
-    assert _ink([span(" ab ", 10)]) == (15, 25)
-    assert _ink([span("ab", 0), span("  ", 10)]) == (0, 10)
-    assert _ink([span("   ", 0)]) is None

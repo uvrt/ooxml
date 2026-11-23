@@ -29,15 +29,17 @@ import zipfile
 import pytest
 from ooxml_edit.tools import Dataset, Result, Toolbox, string, tool
 
-from docx_agent import Document
-from docx_agent.revisions.review import DESCRIBES
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
+
+import word_docs
 
 CLOCK = lambda: dt.datetime(2026, 11, 13, 9, 0, tzinfo=dt.timezone.utc)  # noqa: E731
 ME = "Editor A"
 TABLE = ("| Site | Crew | Shift | Note |\n|---|---|---|---|\n| Harbour | Ines | Early | Pump check |\n"
          "| Orchard | Tomas | Late |  |\n| Quarry | Lena | Night | Fence repair |")
 SETS: dict[str, tuple[tuple, list[tuple]]] = {}
+#: How an earlier docx-agent began the comment it wrote describing a tracked structure change.
+DESCRIBES = "Tracked structural change:"
 
 
 @tool("rows_put", "Keep a made-up dataset.", {"id": string("Its id.")}, documents=())
@@ -63,11 +65,11 @@ def ok(box, session, name, /, **arguments):
 def report(box) -> bytes:
     """A made-up report: a heading, a line, a 4-column table (one empty cell), a line."""
     session = box.session(clock=CLOCK)
-    session.open(Document.new().to_bytes(), "crews.docx")
-    first = session.entry("d1").document.paragraphs()[0].id
+    session.open(word_docs.blank(), "crews.docx")
+    first = word_docs.paragraphs(session, "d1")[0][0]
     ok(box, session, "word_insert_markdown", at=f"after:{first}",
        markdown=f"# Crews\n\nIntro line.\n\n{TABLE}\n\nClosing line.")
-    return session.entry("d1").document.to_bytes()
+    return word_docs.saved(session, "d1")
 
 
 def _without_para_ids(data: bytes) -> bytes:
@@ -86,12 +88,25 @@ def _open(box, data: bytes, tracked: bool):
     session.open(data, "crews.docx")
     if tracked:
         ok(box, session, "word_set_tracking", on=True, author=ME)
-    return session, session.entry("d1").document.tables()[0].id
+    return session, _blocks(box, session, "t")[0]
+
+
+def _blocks(box, session, kind: str) -> list[str]:
+    """The body's top-level blocks of a kind ("p" or "t"), in order."""
+    # (the markup view: it lists every block, a pending deletion's too)
+    return [block for block, _ in word_docs.blocks(box, session, "d1", view="markup") if block.startswith(kind)]
 
 
 def _texts(session) -> list[str]:
-    return [" ".join(c.text for c in row) for row in session.entry("d1").document.tables()[0].grid()] \
-        if session.entry("d1").document.tables() else []
+    tables = word_docs.tables(session, "d1")
+    if not tables:
+        return []
+    return [" ".join(word_docs.cell_text(cell) for cell in word_docs.cells_of(row))
+            for row in word_docs.rows_of(tables[0])]
+
+
+def _comments(box, session) -> list[dict]:
+    return ok(box, session, "word_comments", action="list").data
 
 
 # -- R122: the edits say so ------------------------------------------------------------------
@@ -159,13 +174,12 @@ def test_word_delete_of_a_table_a_paragraph_and_a_span(box, report, tracked):
     assert found["cells"] == 15 and len(found["sample"]) == 5 and found["sample_left_out"] == 10
     assert "12 more" in result.summary
     session, table = _open(box, report, tracked)
-    intro = session.entry("d1").document.paragraphs()[2]
-    assert intro.text == "Intro line."
-    intro = intro.id
+    intro = _blocks(box, session, "p")[2]
+    assert "Intro line." in ok(box, session, "word_read", range=intro).data
     result = ok(box, session, "word_delete", target=intro)
     assert result.data["original_removed"]["sample"] == [{"at": intro, "text": "Intro line."}]
     session, table = _open(box, report, tracked)
-    heading = session.entry("d1").document.paragraphs()[1].id
+    heading = _blocks(box, session, "p")[1]
     result = ok(box, session, "word_delete", target=f"{heading}..{table}", force=True)
     assert (result.data["original_removed"]["paragraphs"], result.data["original_removed"]["cells"]) == (2, 15)
     # Text found and deleted is a text edit, not a block: nothing more.
@@ -211,7 +225,7 @@ def test_check_lists_the_files_text_a_pending_deletion_removes(box, report):
     assert [s["text"] for s in entry["sample"]] == ["Note", "Pump check", "Fence repair"]
     assert entry["fix"] == {"tool": "word_changes", "calls": [{"action": "reject", "ids": [entry["change"]]}]}
     # Scoped to another block: not about it.
-    intro = session.entry("d1").document.paragraphs()[2].id
+    intro = _blocks(box, session, "p")[2]
     assert ok(box, session, "check", include=["layout"], range=intro).data["layout"]["accept_loses_original"] == []
     # The fix keeps the text, and the fact is gone.
     ok(box, session, "word_changes", **entry["fix"]["calls"][0])
@@ -225,11 +239,11 @@ def test_check_says_nothing_of_untracked_deletions_or_an_earlier_sessions(box, r
     assert _facts(box, session)["accept_loses_original"] == []
     session, table = _open(box, report, True)
     ok(box, session, "word_edit_table", table=table, action="delete_row", index=1)
-    data = session.entry("d1").document.to_bytes()
+    data = word_docs.saved(session, "d1")
     later = box.session(clock=lambda: dt.datetime(2026, 11, 14, 9, 0, tzinfo=dt.timezone.utc))
     later.open(data, "crews.docx")
     assert _facts(box, later)["accept_loses_original"] == []   # pending when opened: not this session's
-    intro = later.entry("d1").document.paragraphs()[2].id
+    intro = _blocks(box, later, "p")[2]
     ok(box, later, "word_set_tracking", on=True, author="Editor B")
     ok(box, later, "word_delete", target=intro)
     lost = _facts(box, later)["accept_loses_original"]
@@ -245,30 +259,31 @@ def test_tracked_structure_changes_write_no_comment(box, report):
     ok(box, session, "word_edit_table", table=table, action="merge", first={"row": 1, "col": 0},
        last={"row": 1, "col": 1})
     ok(box, session, "word_edit_table", table=table, action="split", first={"row": 3, "col": 2}, columns=2)
-    assert session.entry("d1").document.comments() == []
+    assert _comments(box, session) == []
     listed = ok(box, session, "word_changes", action="list").data
     assert {"column deletion"} <= {c.get("structure") for c in listed}
     # The column next to it goes too now: nothing anchored in the header row stops it.
     ok(box, session, "word_edit_table", table=table, action="delete_row", index=0)
 
 
-def _with_old_comment(report: bytes) -> bytes:
+def _with_old_comment(box, report: bytes) -> bytes:
     """A document as an earlier version left it: a tracked column deletion and the comment
     that version wrote on the header cell before it."""
-    document = Document.open(report)
-    table = document.tables()[0]
-    with document.tracking(author=ME):
-        document.delete_column(table.id, 3)
-    cell = document.tables()[0].grid()[0][2]
-    document.add_comment(f"{cell.paragraphs[0].id}@0:0", f"{DESCRIBES} column 4 deleted; Word does not track "
-                                                         "deleting a column, so it is written as deleted cells.")
-    return document.to_bytes()
+    session, table = _open(box, report, True)
+    ok(box, session, "word_edit_table", table=table, action="delete_column", index=3)
+    cell = word_docs.cells_of(word_docs.rows_of(word_docs.element(session, "d1", table))[0])[2]
+    paragraph = f"p:{cell.find('{*}p').get(word_docs.W14_PARA)}"
+    ok(box, session, "word_set_tracking", on=False)
+    ok(box, session, "word_comments", action="add", author=ME, items=[{
+        "target": f"{paragraph}@0:0", "text": f"{DESCRIBES} column 4 deleted; Word does not track "
+                                              "deleting a column, so it is written as deleted cells."}])
+    return word_docs.saved(session, "d1")
 
 
 @pytest.mark.parametrize("action,index", [("delete_row", 0), ("delete_column", 2)])
 def test_an_old_describing_comment_is_kept_and_its_refusal_names_the_way_out(box, report, action, index):
-    session, table = _open(box, _with_old_comment(report), True)
-    comment = session.entry("d1").document.comments()[0].id
+    session, table = _open(box, _with_old_comment(box, report), True)
+    comment = _comments(box, session)[0]["id"]
     refused = box.dispatch(session, "word_edit_table", {"doc": "d1", "table": table, "action": action, "index": index})
     assert not refused.ok
     message = refused.to_json()["error"]["message"]
@@ -280,7 +295,7 @@ def test_an_old_describing_comment_is_kept_and_its_refusal_names_the_way_out(box
 
 
 def test_an_old_describing_comment_goes_when_its_table_is_settled(box, report):
-    session, table = _open(box, _with_old_comment(report), True)
-    assert len(session.entry("d1").document.comments()) == 1
+    session, table = _open(box, _with_old_comment(box, report), True)
+    assert len(_comments(box, session)) == 1
     ok(box, session, "word_changes", action="accept", within=table)
-    assert session.entry("d1").document.comments() == []
+    assert _comments(box, session) == []

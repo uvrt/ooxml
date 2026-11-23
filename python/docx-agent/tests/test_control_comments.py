@@ -24,10 +24,10 @@ import zipfile
 
 import pytest
 
-from docx_agent import Document
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
-from docx_agent.validate import check
 from ooxml_edit.tools import Toolbox
+
+import word_docs
 
 
 def _p(text: str, pid: int) -> str:
@@ -107,18 +107,33 @@ def _edges_body() -> str:
 
 
 def _document(body: str) -> bytes:
-    data = Document.new().to_bytes()
-    source = zipfile.ZipFile(io.BytesIO(data))
-    out = io.BytesIO()
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as archive:
-        for item in source.infolist():
-            raw = source.read(item.filename)
-            if item.filename == "word/document.xml":
-                xml = raw.decode()
-                start = xml.index("<w:body>") + len("<w:body>")
-                raw = (xml[:start] + body + xml[xml.index("<w:sectPr"):]).encode()
-            archive.writestr(item, raw)
-    return out.getvalue()
+    return word_docs.with_body(body)
+
+
+def _box() -> Toolbox:
+    return Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0)
+
+
+def _problems(data: bytes) -> list[str]:
+    """The validation problems of a document as opened."""
+    with _box() as box:
+        session = box.session()
+        doc = session.open(data, "controls.docx")
+        return word_docs.validation(box, session, doc)["problems"]
+
+
+def _controls(data: bytes) -> dict[str, str]:
+    """Each control's id (``cc:<w:id>``) by its tag."""
+    out = {}
+    for properties in word_docs.tree(data).iter("{%s}sdtPr" % word_docs.W):
+        tag, number = properties.find("{*}tag"), properties.find("{*}id")
+        if tag is not None and number is not None:
+            out[tag.get("{%s}val" % word_docs.W)] = f"cc:{number.get('{%s}val' % word_docs.W)}"
+    return out
+
+
+def _comments(box, session, doc) -> list[dict]:
+    return word_docs.call(box, session, "word_comments", doc=doc, action="list").data
 
 
 _SIMPLE = [(re.compile(r' w(?:14)?:(?:rsid\w*|paraId|textId)="[^"]*"| xml:space="preserve"'), ""),
@@ -266,16 +281,16 @@ CASES = {"levels": (_levels_body, ["tbl", "cell", "row", "startline", "endline",
 
 def commented(body, tags: list[str]) -> bytes:
     """The controls ``tags`` name commented on through the tool, in order."""
-    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as box:
+    data = _document(body())
+    by_tag = _controls(data)
+    with _box() as box:
         session = box.session()
-        session.open(_document(body()), "controls.docx")
-        found = session.entry("d1").document
-        by_tag = {c.tag: c.id for c in found.content_controls()}
+        session.open(data, "controls.docx")
         result = box.dispatch(session, "word_comments", {"doc": "d1", "action": "add", "items": [
             {"target": by_tag[tag], "text": f"On {tag}"} for tag in tags]})
         assert result.ok, result.error
         assert len(result.data["comments"]) == len(tags)
-        return session.entry("d1").document.to_bytes()   # (the view as the served call left it)
+        return word_docs.saved(session, "d1")
 
 
 @pytest.mark.parametrize("case", sorted(CASES))
@@ -283,34 +298,45 @@ def test_a_comment_on_a_control_is_anchored_as_word_anchors_one(case):
     body, tags, word = CASES[case]
     data = commented(body, tags)
     assert simple(data) == word
-    before = check(Document.open(_document(body())).package)   # the made-up styles' names
-    assert check(Document.open(data).package) == before
+    assert _problems(data) == _problems(_document(body()))   # the made-up styles' names
+
+
+def _anchored(box, session, doc) -> list[tuple[str, str]]:
+    """Each comment's text and the text it is on, as ``word_comments`` lists them (its
+    paragraphs a space apart)."""
+    return [(c["text"], c["on"]["text"]) for c in _comments(box, session, doc)]
 
 
 def test_the_comment_covers_the_controls_text():
-    done = Document.open(commented(_levels_body, CASES["levels"][1]))
-    assert [(c.text, c.anchor.text) for c in done.comments()] == [
-        ("On tbl", "A\nB\none\ntwo"), ("On cell", "C"), ("On row", "three\nfour"),
-        ("On startline", "start value"), ("On endline", "end value"),
-        ("On emptylast", "Filled."), ("On outer", "Outer text inner value more."),
-        ("On inlinerich", "rich value")]
+    with _box() as box:
+        session = box.session()
+        doc = session.open(commented(_levels_body, CASES["levels"][1]), "controls.docx")
+        assert _anchored(box, session, doc) == [
+            ("On tbl", "A B one two"), ("On cell", "C"), ("On row", "three four"),
+            ("On startline", "start value"), ("On endline", "end value"),
+            ("On emptylast", "Filled."), ("On outer", "Outer text inner value more."),
+            ("On inlinerich", "rich value")]
 
 
 def test_a_comment_on_a_control_can_be_replied_to_and_deleted():
-    before = check(Document.open(_document(_edges_body())).package)
-    document = Document.open(commented(_edges_body, ["first", "oneempty", "startppr"]))
-    for comment in document.comments(replies=False):
-        document.reply_to_comment(comment.id, "Seen.")
-    assert check(document.package) == before
-    for comment in document.comments(replies=False):
-        document.delete_comment(comment.id)
-    assert document.comments() == []
-    assert "comment" not in simple(document.to_bytes())
-    assert check(document.package) == before
+    before = _problems(_document(_edges_body()))
+    with _box() as box:
+        session = box.session()
+        doc = session.open(commented(_edges_body, ["first", "oneempty", "startppr"]), "controls.docx")
+        threads = [c["id"] for c in _comments(box, session, doc)]
+        word_docs.call(box, session, "word_comments", doc=doc, action="reply",
+                       items=[{"comment": thread, "text": "Seen."} for thread in threads])
+        assert _problems(word_docs.saved(session, doc)) == before
+        word_docs.call(box, session, "word_comments", doc=doc, action="delete",
+                       items=[{"comment": thread} for thread in threads])
+        assert _comments(box, session, doc) == []
+        data = word_docs.saved(session, doc)
+        assert "comment" not in simple(data)
+        assert _problems(data) == before
 
 
 def test_an_unknown_control_is_refused_naming_the_documents_controls():
-    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as box:
+    with _box() as box:
         session = box.session()
         session.open(_document(_edges_body()), "controls.docx")
         result = box.dispatch(session, "word_comments", {"doc": "d1", "action": "add", "items": [
@@ -321,17 +347,19 @@ def test_an_unknown_control_is_refused_naming_the_documents_controls():
 
 
 def test_removing_a_commented_control_keeps_its_comment():
-    before = check(Document.open(_document(_edges_body())).package)
-    document = Document.open(commented(_edges_body, ["first", "last", "startppr", "oneempty"]))
-    for identifier in ("cc:201", "cc:210", "cc:202", "cc:203"):
-        document.remove_control(identifier)
-    assert [(c.text, c.anchor.text) for c in document.comments()] == [
-        ("On first", "First block."), ("On last", "Last block."), ("On startppr", "centred value"),
-        ("On oneempty", "")]
+    before = _problems(_document(_edges_body()))
+    with _box() as box:
+        session = box.session()
+        doc = session.open(commented(_edges_body, ["first", "last", "startppr", "oneempty"]), "controls.docx")
+        for identifier in ("cc:201", "cc:210", "cc:202", "cc:203"):
+            word_docs.call(box, session, "word_controls", doc=doc, action="remove", control=identifier)
+        assert _anchored(box, session, doc) == [
+            ("On first", "First block."), ("On last", "Last block."), ("On startppr", "centred value"),
+            ("On oneempty", "")]
+        data = word_docs.saved(session, doc)
     # The marks Word wrote beside the controls no longer say they are beside one.
-    assert "displacedByCustomXml" not in simple(document.to_bytes())
-    assert check(document.package) == before
-    Document.open(document.to_bytes())
+    assert "displacedByCustomXml" not in simple(data)
+    assert _problems(data) == before
 
 
 # -- Word itself -----------------------------------------------------------------------------

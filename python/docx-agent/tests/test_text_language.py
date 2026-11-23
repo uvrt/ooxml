@@ -1,36 +1,30 @@
-"""The language a text is written in, next to its tag (round 49, R94:
-:mod:`docx_agent.edit.text_language`, ``check``'s layout fact ``text_language``).
+"""The language a text is written in, next to its tag (round 49, R94: ``check``'s layout fact
+``text_language``).
 
-The detector's measured claims hold on the made-up samples (``crates/ooxml-oracle/fixtures/
-language-samples.json``, ``tools/language_accuracy.py``); the fact lists what differs, folds
-a whole document under the wrong default into one entry with the fix, groups consecutive
-paragraphs, counts what agrees, and stays capped.  The documents are made up here.
+The fact lists what differs, folds a whole document under the wrong default into one entry
+with the fix, groups consecutive paragraphs, counts what agrees, and stays capped.  The
+documents are made up here, through the toolbox.
 """
 
 from __future__ import annotations
 
 import datetime
 import json
-import sys
-from pathlib import Path
 
 import pytest
 from lxml import etree
 
 from ooxml_edit.tools import Toolbox
 
-from docx_agent import Document
-from docx_agent.edit import text_language
-from docx_agent.edit.text_language import (LANGUAGES, MIN_CONFIDENCE, MIN_WORDS, PROFILES, detect,
-                                           words_of)
-from docx_agent.tools import GROUPS, TOOLS, docx_format
+from docx_agent.tools import FORMAT, GROUPS, TOOLS
+
+import word_docs
 from conftest import FIXTURE_DIR  # noqa: E402
 
-ROOT = Path(__file__).resolve().parent.parent
-SAMPLES = json.loads((FIXTURE_DIR / "language-samples.json").read_text(encoding="utf-8"))
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 CLOCK = lambda: datetime.datetime(2026, 11, 10, 12, 0)  # noqa: E731
-
+#: The detector's: the confidence a listed mismatch has at least.
+MIN_CONFIDENCE = 0.5
 FR = ["Les copies de sauvegarde tournent chaque nuit et sont gardées pendant trente jours au moins.",
       "Un fichier supprimé par erreur peut être remis en place depuis le portail par chaque personne.",
       "Pour tout ce qui a plus d'un mois, il faut passer par l'équipe technique qui le fera vite."]
@@ -40,20 +34,21 @@ EN = ["The new office opens on the second floor next month, and the teams near t
 NL = "De fietsroute begint bij het oude station en volgt het kanaal over een afstand van twaalf kilometer."
 
 
-def made_up(*texts: str, language: str = "en-GB") -> Document:
-    document = Document.new(language=language)
-    first = document.paragraphs()[0]
-    first.set_text(texts[0])
-    last = first.id
-    for text in texts[1:]:
-        last = document.insert_paragraph(text, after=last).id
-    return Document.open(document.to_bytes())
+def made_up(*texts: str, language: str = "en-GB") -> bytes:
+    """A blank document in ``language``, a paragraph per text (paraIds ``1A000001`` on)."""
+    body = "".join(f'<w:p w14:paraId="{0x1A000001 + k:08X}" w14:textId="77777777"><w:r>'
+                   f'<w:t xml:space="preserve">{text}</w:t></w:r></w:p>' for k, text in enumerate(texts))
+    return word_docs.with_body(body, word_docs.blank(language=language))
 
 
-def tag_runs(document: Document, starts: str, language: str, *, no_proof: bool = False) -> Document:
+def ids_of(data: bytes) -> list[str]:
+    return [f"p:{p.get(word_docs.W14_PARA)}" for p in word_docs.tree(data).iter(_W + "p")]
+
+
+def tag_runs(data: bytes, starts: str, language: str, *, no_proof: bool = False) -> bytes:
     """Each run of the paragraphs starting with ``starts`` tagged ``language`` (``w:lang``)."""
-    part = document.package.document_part()
-    for paragraph in document.package.tree(part).iter(_W + "p"):
+    root = word_docs.tree(data)
+    for paragraph in root.iter(_W + "p"):
         text = "".join(t.text or "" for t in paragraph.iter(_W + "t"))
         if not text.startswith(starts):
             continue
@@ -65,13 +60,20 @@ def tag_runs(document: Document, starts: str, language: str, *, no_proof: bool =
             if no_proof:
                 etree.SubElement(properties, _W + "noProof")
             etree.SubElement(properties, _W + "lang").set(_W + "val", language)
-    document.package.mark_dirty(part)
-    return Document.open(document.to_bytes())
+    return word_docs.replaced(data, {"word/document.xml": etree.tostring(
+        root, xml_declaration=True, encoding="UTF-8", standalone=True)})
+
+
+#: The detector's (``crates/ooxml-word-edit/src/facts/language``): the fewest words it judges,
+#: and the tag each language's text is written under.
+MIN_WORDS = 8
+TAGS = {"en": "en-US", "fr": "fr-FR", "nl": "nl-NL", "de": "de-DE", "es": "es-ES", "it": "it-IT", "pt": "pt-PT"}
+SAMPLES = json.loads((FIXTURE_DIR / "language-samples.json").read_text(encoding="utf-8"))
 
 
 @pytest.fixture(scope="module")
 def box():
-    with Toolbox(TOOLS, formats=[docx_format()], groups=GROUPS, workers=0) as toolbox:
+    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as toolbox:
         yield toolbox
 
 
@@ -81,9 +83,9 @@ def _ok(box, session, tool, **arguments):
     return result
 
 
-def fact(box, document: Document, **arguments) -> tuple[dict, object]:
+def fact(box, data: bytes, **arguments) -> tuple[dict, object]:
     session = box.session(clock=CLOCK)
-    session.open(document.to_bytes(), "made-up.docx")
+    session.open(data, "made-up.docx")
     found = _ok(box, session, "check", doc="d1", include=["layout"], **arguments).data["layout"]
     return found.get("text_language"), session
 
@@ -91,64 +93,30 @@ def fact(box, document: Document, **arguments) -> tuple[dict, object]:
 # -- the detector, as measured ------------------------------------------------------------------
 
 
-def _windows(text: str, n: int) -> list[str]:
+def _windows(text: str, n: int, step: int = 3) -> list[str]:
     words = text.split()
-    return [" ".join(words[i:i + n]) for i in range(0, len(words) - n + 1, 3)]
+    return [" ".join(words[i:i + n]) for i in range(0, len(words) - n + 1, step)]
 
 
-def test_the_measured_accuracy_holds_at_the_minimum_length():
-    """At MIN_WORDS words, cut anywhere in the made-up text of every set: no window is listed
-    as another language (wrong and MIN_CONFIDENCE sure), 97% of those judged are right."""
-    judged = right = wrong_and_sure = 0
-    for name in ("tuning", "held_out", "fresh"):
-        for language in LANGUAGES:
-            for paragraph in SAMPLES[name][language]:
-                for window in _windows(paragraph, MIN_WORDS):
-                    found = detect(window)
-                    if found.language is None:
-                        continue
-                    judged += 1
-                    right += found.language == language
-                    wrong_and_sure += found.language != language and found.confidence >= MIN_CONFIDENCE
-    assert wrong_and_sure == 0
-    assert judged > 1200 and right / judged >= 0.97
+def test_the_measured_accuracy_holds_at_the_minimum_length(box):
+    """The fresh samples (written after the detector's last change) cut into windows of
+    MIN_WORDS words from every third word, each a paragraph of a document tagged its own
+    language: check lists none as another language (no false positive), and judges more than
+    150 of them."""
+    from xml.sax.saxutils import escape
 
-
-def test_every_whole_sample_paragraph_is_its_language():
-    """126 paragraphs of 35-55 words: all right; all but 5 Portuguese ones (close to Spanish
-    and Italian: 0.39-0.46) sure enough to be listed were they tagged wrong."""
-    unsure = []
-    for name in ("tuning", "held_out", "fresh"):
-        for language in LANGUAGES:
-            for paragraph in SAMPLES[name][language]:
-                found = detect(paragraph)
-                assert found.language == language, (paragraph, found)
-                if found.confidence < MIN_CONFIDENCE:
-                    unsure.append(language)
-    assert unsure == ["pt"] * 5
-
-
-def test_too_few_words_or_function_words_are_not_judged():
-    assert detect("Le rapport annuel").language is None                       # 3 words
-    assert detect("Jan Peeters, Marie Dubois, Hans Weber, Ana Ruiz, Luca Neri, Emma Smith").language is None
-    assert detect("Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor "
-                  "incididunt ut labore et dolore magna aliqua").language is None
-    assert words_of("l’équipe qu'il dell'anno") == ["l'", "équipe", "qu'", "il", "dell'", "anno"]
-
-
-def test_the_tool_reproduces_the_measurement():
-    sys.path.insert(0, str(ROOT / "tools"))
-    try:
-        import language_accuracy
-    finally:
-        sys.path.pop(0)
-    result = language_accuracy.measure(SAMPLES["fresh"], MIN_WORDS)
-    assert result["total"]["false_positives"] == 0 and result["total"]["judged"] > 150
-
-
-def test_the_profiles_are_function_words_of_each_language():
-    assert set(PROFILES) == set(LANGUAGES) == {"en", "fr", "nl", "de", "es", "it", "pt"}
-    assert all(40 <= len(words) <= 120 for words in PROFILES.values())
+    judged = listed = 0
+    for language, paragraphs in SAMPLES["fresh"].items():
+        windows = [w for paragraph in paragraphs for w in _windows(paragraph, MIN_WORDS)]
+        data = made_up(*(escape(w) for w in windows), language=TAGS[language])
+        found, _ = fact(box, data)
+        assert found is not None, language
+        judged += found["document"]["paragraphs"]
+        listed += sum(entry.get("paragraphs", 1) for entry in found.get("mismatched", []))
+        listed += found.get("mismatched_left_out", 0)
+        assert found["document"]["detected"] == language, (language, found["document"])
+    assert listed == 0
+    assert judged > 150
 
 
 # -- the fact -----------------------------------------------------------------------------------
@@ -171,7 +139,7 @@ def test_a_document_in_another_language_than_its_default_is_one_entry_with_the_f
 def test_a_passage_in_another_language_is_listed_and_consecutive_paragraphs_are_one_range(box):
     document = made_up(*EN, *FR[:2], "Annexe", FR[2], *EN, NL)
     found, _ = fact(box, document)
-    ids = [p.id for p in document.paragraphs()]
+    ids = ids_of(document)
     assert found["document"] == {"tag": "en-GB", "source": "default", "detected": "en",
                                  "share": found["document"]["share"], "words": found["document"]["words"],
                                  "paragraphs": 10}
@@ -211,7 +179,7 @@ def test_the_list_is_capped_and_says_what_was_left_out(box):
 
 def test_a_range_says_what_its_words_are_and_proposes_no_document_fix(box):
     document = made_up(*EN, *FR, *EN)
-    ids = [p.id for p in document.paragraphs()]
+    ids = ids_of(document)
     found, _ = fact(box, document, range=f"{ids[3]}..{ids[5]}")
     assert "document" not in found and found["checked"]["detected"] == "fr"
     assert "fix" not in found["checked"] and "mismatched" not in found["checked"]
@@ -226,10 +194,11 @@ def test_a_document_too_short_to_judge_has_no_fact(box):
     assert found is None
 
 
-def test_the_fix_takes_a_tag_the_document_already_names():
-    document = made_up(*FR)
-    styles = document.package.tree(document.package.styles_part())
-    style = next(s for s in styles.iter(_W + "style") if s.get(_W + "type") == "paragraph")
-    etree.SubElement(etree.SubElement(style, _W + "rPr"), _W + "lang").set(_W + "val", "fr-BE")
-    assert text_language.tag_for(document, "fr") == "fr-BE"
-    assert text_language.tag_for(document, "pt") == "pt-PT"
+def test_the_fix_takes_a_tag_the_document_already_names(box):
+    """A style no paragraph uses names fr-BE: the fix sets that tag, not fr-FR."""
+    style = ('<w:style w:type="paragraph" w:customStyle="1" w:styleId="NoteBelge"><w:name w:val="Note belge"/>'
+             '<w:basedOn w:val="Normal"/><w:rPr><w:lang w:val="fr-BE"/></w:rPr></w:style>')
+    data = word_docs.replaced(made_up(*FR), {"word/styles.xml": lambda xml: xml.replace("</w:styles>",
+                                                                                          style + "</w:styles>")})
+    found, _ = fact(box, data)
+    assert found["document"]["fix"]["calls"] == [{"action": "set_language", "language": "fr-BE"}]

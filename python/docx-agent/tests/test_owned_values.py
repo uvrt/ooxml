@@ -2,94 +2,46 @@
 
 The docx format's ``number_texts`` and ``scale_values`` hooks, given the call's subject (an
 ``OwnedDocument`` for an owned document), read the version as the session reads it
-(``Version.number_texts``, ``Version.scale_values``) and place it with the session's own engine,
-never the Python view.  ``check``'s numbers and scale on an owned document equal docx-agent's
-Python on the same document held by the tool layer itself, for every listed gate fixture and
-for made-up documents with tables, labels and values written by reference.
+(``Version.number_texts``, ``Version.scale_values``) and place it with the session's own engine.
+Made-up documents only.
 """
 
 from __future__ import annotations
-
-import dataclasses
-import json
-from pathlib import Path
 
 import pytest
 
 ooxml_core = pytest.importorskip("ooxml_core")
 
-from docx_agent import Document  # noqa: E402
 from docx_agent.rust import hooks  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
 from ooxml_edit.tools import OwnedDocument, Toolbox  # noqa: E402
 
-ROOT = Path(__file__).resolve().parents[3]
-#: The repository\'s Word fixtures, with the oracle (as conftest.FIXTURE_DIR).
-FIXTURES = ROOT / "crates" / "ooxml-oracle" / "fixtures"
-LISTED = sorted(json.loads((ROOT / "tools" / "gates_fixtures.json").read_text()))
+import word_docs  # noqa: E402
 
 STEPS = [{"min": 0, "max": 1.99, "fill": "C62828", "label": "Low"},
          {"min": 2, "max": 3.49, "fill": "F9A825", "label": "Mid"},
          {"min": 3.5, "fill": "2E7D32", "label": "High"}]
+REPORT = ("# Results\n\nThe mean was 3.4 across 12 sites in 2024.\n\n"
+          "| site | score |\n|---|---|\n| A | 1.5 |\n| B | 3 |\n| C | 4.2 |\n\nLow\n\n2.75")
 
 
 @pytest.fixture(scope="module")
-def boxes():
-    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as owned, \
-            Toolbox(TOOLS, formats=[dataclasses.replace(FORMAT, owner=None)], groups=GROUPS, workers=0) as held:
-        yield owned, held
+def box():
+    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as made:
+        yield made
 
 
-def _both(boxes, data: bytes, name: str, **arguments):
-    """``check`` with ``arguments`` on ``data`` owned by the Rust session, and held by the tool
-    layer itself (docx-agent's Python hooks): their replies, as JSON."""
-    out, sessions = [], []
-    for box in boxes:
-        session = box.session()
-        doc = session.open(data, name)
-        sessions.append((session, doc))
-        out.append(box.dispatch(session, "check", {"doc": doc, **arguments}).to_json())
-    entry = sessions[0][0].entry(sessions[0][1])
-    if not entry.owned:
-        pytest.skip("no Rust session owns the document here")
-    assert isinstance(entry.subject, OwnedDocument)
-    assert not sessions[1][0].entry(sessions[1][1]).owned
-    return out
-
-
-def _same(owned, held, key):
-    def part(reply):
-        data = reply.get("data") or {}
-        return {"error": reply.get("error"), "part": data.get(key), "warnings": reply.get("warnings")}
-    assert part(owned) == part(held)
-
-
-def _targets(document: Document) -> list[str]:
-    """Scale targets a fixture holds: paragraphs, a range, cells, columns, a reference, and
-    targets that name nothing or something else."""
-    out: list[str] = []
-    for paragraph in document.paragraphs()[:4]:
-        out += [paragraph.id, f"{paragraph.id}@0:2"]
-    for table in document.tables()[:2]:
-        out += [f"{table.id}/c1,0", f"{table.id}/col0", f"{table.id}/col1", table.id]
-    return out + ["{{d:scores/*/score}}", "p:7FFFFFFF", "t:7FFFFFFF/col1"]
-
-
-def _report() -> bytes:
-    document = Document.new()
-    document.insert_markdown("# Results\n\nThe mean was 3.4 across 12 sites in 2024.\n\n"
-                             "| site | score |\n|---|---|\n| A | 1.5 |\n| B | 3 |\n| C | 4.2 |\n\n"
-                             "Low\n\n2.75")
-    return document.to_bytes()
-
-
-def test_the_owned_document_s_reads_are_the_session_s(boxes, monkeypatch):
+def test_the_owned_document_s_reads_are_the_session_s(box, monkeypatch):
     seen = []
     for name in ("number_texts", "scale_values"):
         real = getattr(hooks, name)
         monkeypatch.setattr(hooks, name, lambda *a, _real=real, _name=name: seen.append(_name) or _real(*a))
-    data = _report()
-    table = Document.open(data).tables()[0].id
-    _both(boxes, data, "report.docx", include=["numbers"])
-    _both(boxes, data, "report.docx", scale={"name": "Score", "steps": STEPS, "targets": [f"{table}/col1"]})
-    assert seen == ["number_texts", "scale_values"]
+    session = box.session()
+    doc = session.open(word_docs.blank(), "report.docx")
+    word_docs.call(box, session, "word_insert_markdown", doc=doc, at="end", markdown=REPORT)
+    assert isinstance(session.entry(doc).subject, OwnedDocument)
+    table = next(block for block, _ in word_docs.blocks(box, session, doc) if block.startswith("t:"))
+    numbers = box.dispatch(session, "check", {"doc": doc, "include": ["numbers"]})
+    scale = box.dispatch(session, "check", {"doc": doc, "scale": {"name": "Score", "steps": STEPS,
+                                                                  "targets": [f"{table}/col1"]}})
+    assert seen == ["number_texts", "scale_values"], (numbers.to_json(), scale.to_json())

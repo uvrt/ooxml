@@ -27,17 +27,14 @@ from __future__ import annotations
 
 import datetime as dt
 
+import re
+
 import pytest
-from docx2svg.model import Paragraph, Table
-from docx2svg.parse.document import parse_package
 from ooxml_edit.tools import Dataset, Result, Toolbox, string, tool
 
-from docx_agent import Document
-from docx_agent.layout_facts import accept_loses_text
-from docx_agent.markdown import to_markdown
-from docx_agent.markdown.read import ParagraphRecord, Reader, TableRecord
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
-from facts_documents import SHAPES, _document, _edge
+
+import word_docs
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _W = "{%s}" % W
@@ -48,6 +45,49 @@ ROWS = [("Area", "Lead", "Phase", "Remark"), ("Harbour", "Ines", "draft", "await
 MARKDOWN = "\n".join(["| " + " | ".join(ROWS[0]) + " |", "|---|---|---|---|"]
                      + ["| " + " | ".join(r) + " |" for r in ROWS[1:]])
 SETS: dict[str, tuple[tuple, list[tuple]]] = {}
+
+
+# -- a table's edges as Accept All leaves them (made-up XML) -------------------------------------
+
+
+def _p(text: str, deleted_mark: bool = False) -> str:
+    mark = f'<w:pPr><w:rPr><w:del w:id="9{len(text)}" w:author="Editor B" w:date="2026-11-13T09:00:00Z"/>' \
+           '</w:rPr></w:pPr>' if deleted_mark else ""
+    return f"<w:p>{mark}<w:r><w:t xml:space=\"preserve\">{text}</w:t></w:r></w:p>"
+
+
+def _tc(content: str) -> str:
+    return f'<w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/></w:tcPr>{content}</w:tc>'
+
+
+def _tbl(rows: list[list[str]]) -> str:
+    grid = "".join('<w:gridCol w:w="3000"/>' for _ in rows[0])
+    return (f'<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid>{grid}</w:tblGrid>'
+            + "".join("<w:tr>" + "".join(_tc(c) for c in row) + "</w:tr>" for row in rows) + "</w:tbl>")
+
+
+def _edge(at: tuple[int, int], rows: int = 2, columns: int = 2) -> str:
+    """A table whose cell ``at`` ends in a paragraph whose mark is a pending deletion."""
+    cells = [[_p(f"r{r + 1}c{c + 1}") for c in range(columns)] for r in range(rows)]
+    cells[at[0]][at[1]] = _p("Kept.") + _p("Last.", deleted_mark=True)
+    return _tbl(cells)
+
+
+SHAPES = {
+    "before a table": _p("Before. ", True) + _tbl([[_p("A1"), _p("B1")]]),
+    "chain into a nested table": _p("One. ", True) + _p("Two. ", True)
+    + _tbl([[_tbl([[_p("Inner"), _p("Side")]]) + _p("Under"), _p("B1")]]),
+    "a first cell's end": _edge((0, 0)),
+    "a later row's first cell": _edge((1, 0)),
+    "a middle cell's end": _edge((0, 1), rows=1, columns=3),
+    "a row's end": _edge((0, 1)),
+    "the table's last cell": _edge((1, 1)),
+}
+
+
+def _document(body: str) -> bytes:
+    """A blank document whose body is ``body`` and a last paragraph ``End.``."""
+    return word_docs.with_body(body + _p("End."))
 
 
 @tool("rows_put", "Keep a made-up dataset.", {"id": string("Its id.")}, documents=())
@@ -76,26 +116,41 @@ def ok(box, session, name, /, **arguments):
 def _deleted_row(box, deleted: int = 2):
     """The report table, row ``deleted`` deleted as a tracked change (tracking left on)."""
     session = box.session(clock=CLOCK)
-    session.open(Document.new().to_bytes(), "report.docx")
-    first = session.entry("d1").document.paragraphs()[0].id
-    ok(box, session, "word_insert_markdown", doc="d1", at=f"after:{first}",
-       markdown=f"Field report.\n\n{MARKDOWN}\n\nAfter the table.")
+    session.open(word_docs.blank(), "report.docx")
+    first = word_docs.paragraphs(session, "d1")[0][0]
+    made = ok(box, session, "word_insert_markdown", doc="d1", at=f"after:{first}",
+              markdown=f"Field report.\n\n{MARKDOWN}\n\nAfter the table.")
     ok(box, session, "word_set_tracking", doc="d1", on=True, author=ME)
-    table = session.entry("d1").document.tables()[-1].id
-    ok(box, session, "word_edit_table", doc="d1", table=table, action="delete_row", index=deleted)
-    return session, session.entry("d1").document.tables()[-1].id
+    table = [block for block in made.data["blocks"] if block.startswith("t:")][-1]
+    done = ok(box, session, "word_edit_table", doc="d1", table=table, action="delete_row", index=deleted)
+    return session, done.data.get("id", table)
 
 
 def _texts(session, table):
-    t = session.entry("d1").document.table(table)
-    return [[t.cell(r, c).text for c in range(t.column_count)] for r in range(len(t.rows))]
+    return word_docs.table_texts(session, "d1", table)
+
+
+def _rows(session, table):
+    return word_docs.rows_of(word_docs.element(session, "d1", table))
 
 
 def _first_cells(session, table):
     """Each document row's first cell's text, deleted text included."""
-    entry = session.entry("d1").document._table_entry(table)[1]
     return ["".join(n.text or "" for n in row.find(_W + "tc").iter(_W + "t", _W + "delText"))
-            for row, _ in entry.rows]
+            for row in _rows(session, table)]
+
+
+def _table_ids(box, session) -> list[str]:
+    return [block for block, _ in word_docs.blocks(box, session, "d1") if block.startswith("t")]
+
+
+def _loses_text(box, session) -> list[dict]:
+    return ok(box, session, "check", doc="d1", include=["layout"]).data["layout"].get("accept_loses_text", [])
+
+
+def _read(box, session, ids: bool = True) -> str:
+    text = word_docs.read(box, session, "d1")
+    return text if ids else re.sub(r"<!-- [^>]*-->\n?| data-id=\"[^\"]*\"", "", text)
 
 
 # -- rows as accepted ---------------------------------------------------------------------------
@@ -107,7 +162,7 @@ def test_row_positions_skip_a_row_whose_deletion_is_pending(box):
                 cells=[{"row": 2, "col": 3, "text": "three gaps"}])
     assert result.data["rows"] == 3 and result.data["rows_deleted_pending"] == [2]
     assert _texts(session, table)[3][3] == "three gaps"            # Quarry, not the deleted Orchard
-    deleted = session.entry("d1").document._table_entry(table)[1].rows[2][0]
+    deleted = _rows(session, table)[2]
     assert "signed off" in "".join(n.text for n in deleted.iter(_W + "delText"))   # left as it was
     assert any("document row 2 ('Orchard') has a tracked deletion" in w and "cell ids keep" in w
                for w in result.warnings)
@@ -140,7 +195,7 @@ def test_row_label_and_a_column_fill_count_the_rows_as_accepted(box):
 def test_delete_row_and_format_row_count_the_rows_as_accepted(box):
     session, table = _deleted_row(box)
     ok(box, session, "word_format_table", doc="d1", table=table, scope="row", row=2, shading="FFEEDD")
-    element = session.entry("d1").document._table_entry(table)[1].rows[3][0]
+    element = _rows(session, table)[3]
     assert element.find(f".//{_W}shd") is not None
     result = ok(box, session, "word_edit_table", doc="d1", table=table, action="delete_row", index=2)
     assert result.data["rows"] == 2 and result.data["rows_deleted_pending"] == [2, 3]
@@ -159,10 +214,8 @@ def test_an_insert_beside_a_pending_deleted_row_goes_beside_the_row_named(box, i
         assert rows == ["Area", "Harbour", "", "Orchard", "Quarry"]
     else:
         assert rows == ["Area", "Harbour", "Orchard", "", "Quarry"]
-    document = session.entry("d1").document
-    accepted = Document.open(document.to_bytes())
-    accepted.accept_all()
-    assert len(accepted.tables()[-1].rows) == 4
+    ok(box, session, "word_changes", doc="d1", action="accept", all=True)
+    assert len(word_docs.rows_of(word_docs.tables(session, "d1")[-1])) == 4
 
 
 def test_a_merge_over_a_pending_deleted_row_is_refused_with_the_accept(box):
@@ -198,49 +251,26 @@ def test_sync_and_describe_count_the_rows_as_accepted(box):
 # -- the final view at a table's edge -----------------------------------------------------------
 
 
-def _ours(blocks):
-    out = []
-    for b in blocks:
-        if isinstance(b, ParagraphRecord):
-            out.append(("p", "".join(b.text.split())))
-        elif isinstance(b, TableRecord):
-            out.append(("t", [[_ours(c.records) for c in line] for line in b.rows]))
-    return out
-
-
-def _render(blocks):
-    out = []
-    for b in blocks:
-        if isinstance(b, Paragraph):
-            out.append(("p", "".join(b.text.split())))
-        elif isinstance(b, Table):
-            out.append(("t", [[_render(c) for c in line] for line in b.rows]))
-    return out
-
-
-@pytest.mark.parametrize("shape", list(SHAPES))
-def test_the_final_view_reads_what_render_draws_at_a_tables_edge(shape):
-    data = _document(SHAPES[shape])
-    document = Document.open(data)
-    ours = _ours(Reader(document).story(document.package.document_part()))
-    assert ours == _render(parse_package(data).body)
-
-
-def test_the_joins_read_as_accept_all_leaves_them():
-    document = Document.open(_document(SHAPES["before a table"]))
-    markdown = to_markdown(document, ids=False)
+def test_the_joins_read_as_accept_all_leaves_them(box):
+    session = box.session(clock=CLOCK)
+    session.open(_document(SHAPES["before a table"]), "edge.docx")
+    markdown = _read(box, session, ids=False)
     assert "| Before. A1 | B1 |" in markdown and "\nBefore." not in markdown
-    split = to_markdown(Document.open(_document(SHAPES["a later row's first cell"])), ids=True)
+    session = box.session(clock=CLOCK)
+    session.open(_document(SHAPES["a later row's first cell"]), "edge.docx")
+    split = _read(box, session)
     # The paragraph leaves the table, which goes on after it as the same table.
     assert "Kept." in split.split("continued from row 1")[0] and "Last.r2c2" in split.split("continued")[1]
-    gone = to_markdown(Document.open(_document(SHAPES["a row's end"])), ids=False)
+    session = box.session(clock=CLOCK)
+    session.open(_document(SHAPES["a row's end"]), "edge.docx")
+    gone = _read(box, session, ids=False)
     assert "Kept." not in gone and "Last." not in gone and "r1c1" in gone
 
 
 def test_a_table_read_alone_takes_the_paragraph_joined_into_it(box):
     session = box.session(clock=CLOCK)
     session.open(_document(SHAPES["before a table"]), "edge.docx")
-    table = session.entry("d1").document.tables()[0].id
+    table = _table_ids(box, session)[0]
     read = ok(box, session, "word_read", doc="d1", range=table)
     assert "Before. A1" in read.data
 
@@ -248,7 +278,7 @@ def test_a_table_read_alone_takes_the_paragraph_joined_into_it(box):
 def test_positions_follow_the_cells_accept_all_takes_in_and_removes(box):
     session = box.session(clock=CLOCK)
     session.open(_document(_edge((0, 1), rows=1, columns=3)), "edge.docx")
-    table = session.entry("d1").document.tables()[0].id
+    table = _table_ids(box, session)[0]
     read = ok(box, session, "word_edit_table", doc="d1", table=table, action="set_cells",
               cells=[{"row": 0, "col": 0, "text": "r1c1"}])
     assert read.data["columns"] == 2         # the third cell is taken into the second
@@ -257,7 +287,7 @@ def test_positions_follow_the_cells_accept_all_takes_in_and_removes(box):
     assert past.to_json()["error"]["valid_options"] == ["0", "1"]
     session = box.session(clock=CLOCK)
     session.open(_document(_edge((0, 1))), "edge.docx")
-    table = session.entry("d1").document.tables()[0].id
+    table = _table_ids(box, session)[0]
     refused = call(box, session, "word_edit_table", doc="d1", table=table, action="set_cells",
                    cells=[{"row": 0, "col": 1, "text": "lost"}])
     assert refused.to_json()["error"]["code"] == "refused" and "moves the text after the row" in refused.to_json()["error"]["message"]
@@ -277,19 +307,21 @@ def test_check_names_the_text_accept_all_loses_with_the_reject_that_keeps_it(box
     assert entry["cell"].endswith("/c0,1" if shape == "a row's end" else "/c1,1")
     assert entry["fix"] == {"tool": "word_changes", "calls": [{"action": "reject", "ids": [entry["change"]]}]}
     ok(box, session, "word_changes", doc="d1", **entry["fix"]["calls"][0])
-    assert accept_loses_text(session.entry("d1").document) == []
+    assert _loses_text(box, session) == []
     assert "Kept." in ok(box, session, "word_read", doc="d1").data
 
 
-def test_no_loss_where_the_next_cell_takes_the_text_in():
+def test_no_loss_where_the_next_cell_takes_the_text_in(box):
     for shape in ("a first cell's end", "a middle cell's end", "before a table"):
-        assert accept_loses_text(Document.open(_document(SHAPES[shape]))) == []
+        session = box.session(clock=CLOCK)
+        session.open(_document(SHAPES[shape]), "edge.docx")
+        assert _loses_text(box, session) == [], shape
 
 
 def test_an_edit_of_the_table_says_what_accept_all_loses(box):
     session = box.session(clock=CLOCK)
     session.open(_document(SHAPES["a row's end"]), "edge.docx")
-    table = session.entry("d1").document.tables()[0].id
+    table = _table_ids(box, session)[0]
     result = ok(box, session, "word_edit_table", doc="d1", table=table, action="set_cells",
                 cells=[{"row": 1, "col": 0, "text": "r2c1 again"}])
     assert any("Word's Accept All drops this cell and its text from view" in w and "word_changes reject rev:" in w

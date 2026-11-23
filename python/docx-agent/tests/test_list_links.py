@@ -30,10 +30,11 @@ import zipfile
 
 import pytest
 
-from docx_agent import Document, EditError
-from docx_agent.edit.numbering import problems
-from docx_agent.layout_facts import numbering_skips_level
-from docx_agent.validate import check
+from ooxml_edit.tools import Toolbox
+
+from docx_agent.tools import FORMAT, GROUPS, TOOLS
+
+import word_docs
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 NS = ('xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
@@ -114,15 +115,55 @@ def make(body=BODY, linked: bool = True, section: str = "%2.") -> bytes:
     return out.getvalue()
 
 
-def style_numpr(document: Document, style_id: str) -> str | None:
-    root = document.package.tree(document.package.styles_part())
+@pytest.fixture(scope="module")
+def box():
+    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as toolbox:
+        yield toolbox
+
+
+def dispatch(box, session, tool, /, **arguments):
+    return box.dispatch(session, tool, arguments)
+
+
+def opened(box, data: bytes):
+    session = box.session()
+    session.open(data, "levels.docx")
+    return session
+
+
+def modify(box, session, name, **arguments):
+    """``word_styles`` ``modify``: its result, which must be ok."""
+    result = dispatch(box, session, "word_styles", doc="d1", action="modify", name=name, **arguments)
+    assert result.ok, result.to_json()
+    return result
+
+
+def list_format(box, session, paragraph, **arguments):
+    """``word_lists`` ``format`` of the paragraph's level: its result, which must be ok."""
+    result = dispatch(box, session, "word_lists", doc="d1", targets=[paragraph], action="format", **arguments)
+    assert result.ok, result.to_json()
+    return result
+
+
+def paragraph_ids(box, session) -> list[str]:
+    """The paragraphs' ids as ``word_read`` names them, in order (a document without paraIds
+    has positional ones, ``p@body/0``; a list item's comment ends its line)."""
+    return re.findall(r"<!-- (p(?::[0-9A-Fa-f]+|@[\w/]+))", word_docs.read(box, session, "d1"))
+
+
+def _part(session, name):
+    return word_docs.tree(word_docs.saved(session, "d1"), name)
+
+
+def style_numpr(session, style_id: str) -> str | None:
+    root = _part(session, "word/styles.xml")
     node = next(s for s in root.iter(W + "style") if s.get(W + "styleId") == style_id)
     found = node.find(f"{W}pPr/{W}numPr")
     return None if found is None else re.sub(r' xmlns:\w+="[^"]+"', "", _xml(found))
 
 
-def level_xml(document: Document, level: int) -> str:
-    root = document.package.tree(document.package.numbering_part())
+def level_xml(session, level: int) -> str:
+    root = _part(session, "word/numbering.xml")
     lvl = next(n for n in root.iter(W + "lvl") if n.get(W + "ilvl") == str(level))
     return re.sub(r' xmlns:\w+="[^"]+"', "", _xml(lvl))
 
@@ -133,13 +174,13 @@ def _xml(node) -> str:
     return etree.tostring(node).decode()
 
 
-def lines(document: Document) -> list[tuple[str, float | None, float | None]]:
+def lines(data: bytes) -> list[tuple[str, float | None, float | None]]:
     """docx2svg's lines: (label, its x, the text's x), in points."""
     import docx2svg
 
     out = []
     scale = 2480 / 595.3
-    for svg in docx2svg.convert_docx_to_svg(document.to_bytes()):
+    for svg in docx2svg.convert_docx_to_svg(data):
         for line in re.findall(r'<g data-docx-line="\d+"[^>]*>(.*?)</g>', svg, re.S):
             label, lx, tx = "", None, None
             for attrs, body in re.findall(r"<text ([^>]*)>([^<]*)</text>", line):
@@ -152,14 +193,30 @@ def lines(document: Document) -> list[tuple[str, float | None, float | None]]:
     return out
 
 
-def labels(document: Document) -> list[str]:
-    return [label for label, _, _ in lines(document)]
+def labels(data: bytes) -> list[str]:
+    return [label for label, _, _ in lines(data)]
 
 
-def valid(document: Document) -> None:
-    assert problems(document) == []
-    reopened = Document.open(document.to_bytes())
-    assert [str(p) for p in check(reopened.package) if p.code.startswith(("numbering", "style"))] == []
+def labels_of(session) -> list[str]:
+    return labels(word_docs.saved(session, "d1"))
+
+
+def valid(box, session) -> None:
+    """No numbering or style problem the document did not open with."""
+    found = word_docs.validation(box, session, "d1")
+    assert [p for p in found["new"] if p.startswith(("numbering", "style"))] == [], found
+
+
+def skips(box, session) -> list[dict]:
+    result = dispatch(box, session, "check", doc="d1", include=["layout"])
+    assert result.ok, result.to_json()
+    return result.data["layout"].get("numbering_skips_level", [])
+
+
+def undone_is_opened(box, session, opened_as: bytes, steps: int = 1) -> None:
+    for _ in range(steps):
+        assert dispatch(box, session, "undo", doc="d1").ok
+    assert word_docs.saved(session, "d1") == opened_as
 
 
 # -- W13: a style inheriting a linked level -------------------------------------------------------
@@ -167,73 +224,72 @@ def valid(document: Document) -> None:
 
 def test_a_style_based_on_a_linked_style_numbers_at_its_level():
     # Word numbers them so (measured): 1. a. 2. a. b. 3.
-    assert labels(Document.open(make())) == ["1.", "a.", "2.", "a.", "b.", "3.", "", ""]
+    assert labels(make()) == ["1.", "a.", "2.", "a.", "b.", "3.", "", ""]
 
 
-def test_none_stops_a_link_the_style_inherits():
-    data = make()
-    document = Document.open(data)
-    result = document.styles.modify("Front title", numbering=None)
+def test_none_stops_a_link_the_style_inherits(box):
+    session = opened(box, make())
+    before = word_docs.saved(session, "d1")
+    result = modify(box, session, "Front title", numbering={"list": "none"})
     assert result.changed and not result.warnings
-    assert style_numpr(document, "FrontTitle") == '<w:numPr><w:numId w:val="0"/></w:numPr>'    # as Word
-    assert style_numpr(document, "ChapterTitle") is not None                  # the base keeps its link
-    document.styles.modify("Figure title", numbering=None)
+    assert style_numpr(session, "FrontTitle") == '<w:numPr><w:numId w:val="0"/></w:numPr>'    # as Word
+    assert style_numpr(session, "ChapterTitle") is not None                  # the base keeps its link
+    modify(box, session, "Figure title", numbering={"list": "none"})
     # Word's numbers (measured): the two unnumbered, the paragraphs after counting on.
-    assert labels(document) == ["1.", "a.", "", "", "b.", "2.", "", ""]
-    front = document.paragraphs()[2].id
-    assert document.list_of(front) is None
-    assert numbering_skips_level(document) == []
-    valid(document)
-    assert document.undo() and document.undo()
-    assert document.to_bytes() == Document.open(data).to_bytes()
+    assert labels_of(session) == ["1.", "a.", "", "", "b.", "2.", "", ""]
+    assert skips(box, session) == []
+    valid(box, session)
+    undone_is_opened(box, session, before, steps=2)
 
 
-def test_none_on_a_style_with_its_own_link_and_an_inherited_one_stops_both():
-    document = Document.open(make())
-    document.styles.modify("Front title", numbering={"list": 1, "level": 2})
-    assert style_numpr(document, "FrontTitle") == '<w:numPr><w:ilvl w:val="2"/><w:numId w:val="1"/></w:numPr>'
-    document.styles.modify("Front title", numbering=None)
-    assert style_numpr(document, "FrontTitle") == '<w:numPr><w:numId w:val="0"/></w:numPr>'
-    assert labels(document)[2] == ""
-    valid(document)
+def test_none_on_a_style_with_its_own_link_and_an_inherited_one_stops_both(box):
+    session = opened(box, make())
+    modify(box, session, "Front title", numbering={"list": "1", "level": 2})
+    assert style_numpr(session, "FrontTitle") == '<w:numPr><w:ilvl w:val="2"/><w:numId w:val="1"/></w:numPr>'
+    modify(box, session, "Front title", numbering={"list": "none"})
+    assert style_numpr(session, "FrontTitle") == '<w:numPr><w:numId w:val="0"/></w:numPr>'
+    assert labels_of(session)[2] == ""
+    valid(box, session)
 
 
 @pytest.mark.parametrize("name", ["Aside title", "Front title"])
-def test_none_on_a_style_that_numbers_nothing_says_so(name):
-    document = Document.open(make())
+def test_none_on_a_style_that_numbers_nothing_says_so(box, name):
+    session = opened(box, make())
     if name == "Front title":
-        document.styles.modify(name, numbering=None)              # numbering none already
+        modify(box, session, name, numbering={"list": "none"})           # numbering none already
+
     def parts():
-        return [_xml(document.package.tree(part)) for part in (document.package.styles_part(),
-                                                               document.package.numbering_part())]
+        return [_xml(_part(session, part)) for part in ("word/styles.xml", "word/numbering.xml")]
 
     before = parts()
-    result = document.styles.modify(name, numbering=None)
+    result = modify(box, session, name, numbering={"list": "none"})
     assert not result.changed
+    assert result.summary == f"Modified style {name}: numbers nothing, left as it was"
     assert result.warnings == [f"{name!r} numbers nothing, neither its own nor through based_on: left as it was"]
     assert parts() == before
 
 
-def test_linking_a_level_names_the_styles_that_inherit_it():
-    document = Document.open(make(linked=False))
-    assert labels(document)[:3] == ["", "a.", ""]
-    result = document.styles.modify("Chapter title", numbering={"list": 1, "level": 0})
+def test_linking_a_level_names_the_styles_that_inherit_it(box):
+    session = opened(box, make(linked=False))
+    assert labels_of(session)[:3] == ["", "a.", ""]
+    result = modify(box, session, "Chapter title", numbering={"list": "1", "level": 0})
     assert result.warnings == ["'Front title' is based on 'Chapter title': it numbers at level 0 of list 1 "
                                "too, its 1 paragraph(s) (numbering none on it stops that)"]
-    assert style_numpr(document, "FrontTitle") is None            # Word leaves it as it was
-    assert labels(document)[:3] == ["1.", "a.", "2."]
+    assert style_numpr(session, "FrontTitle") is None            # Word leaves it as it was
+    assert labels_of(session)[:3] == ["1.", "a.", "2."]
     # A style based on it that stops numbering is not named.
-    document.styles.modify("Front title", numbering=None)
-    result = document.styles.modify("Chapter title", numbering={"list": 1, "level": 0})
+    modify(box, session, "Front title", numbering={"list": "none"})
+    result = modify(box, session, "Chapter title", numbering={"list": "1", "level": 0})
     assert result.warnings == []
 
 
-def test_a_list_number_of_zero_is_no_numbering_everywhere():
-    document = Document.open(make())
-    document.styles.modify("Front title", numbering=None)
-    document.styles.modify("Figure title", numbering=None)
-    with pytest.raises(EditError, match="'Front title' is in no list"):
-        document.styles.modify("Aside title", numbering={"list": "Front title", "level": 1})
+def test_a_list_number_of_zero_is_no_numbering_everywhere(box):
+    session = opened(box, make())
+    modify(box, session, "Front title", numbering={"list": "none"})
+    modify(box, session, "Figure title", numbering={"list": "none"})
+    result = dispatch(box, session, "word_styles", doc="d1", action="modify", name="Aside title",
+                      numbering={"list": "Front title", "level": 1})
+    assert not result.ok and "'Front title' is in no list" in result.error.message, result.to_json()
 
 
 # -- W14: a level's positions and what follows its number ----------------------------------------
@@ -250,81 +306,65 @@ W14_BODY = [("First" + LONG, "ChapterTitle"), ("Second" + LONG, "SectionTitle"),
     ({"number_at": 54, "text_at": 18}, '<w:ind w:left="360" w:firstLine="720"/>', 124.8, None),
     ({"text_at": 54}, '<w:ind w:left="1080" w:hanging="1080"/>', 70.8, 124.8),     # the number stays at 0
 ])
-def test_number_and_text_positions_are_the_levels_indent(arguments, ind, label_x, text_x):
-    data = make(W14_BODY)
-    document = Document.open(data)
-    second = document.paragraphs()[1].id
-    document.set_list_format(second, **arguments)
-    assert ind in level_xml(document, 1)
-    label, lx, tx = lines(document)[next(k for k, line in enumerate(lines(document)) if line[0] == "a.")]
+def test_number_and_text_positions_are_the_levels_indent(box, arguments, ind, label_x, text_x):
+    session = opened(box, make(W14_BODY))
+    before = word_docs.saved(session, "d1")
+    second = paragraph_ids(box, session)[1]
+    list_format(box, session, second, **arguments)
+    assert ind in level_xml(session, 1)
+    drawn = lines(word_docs.saved(session, "d1"))
+    label, lx, tx = drawn[next(k for k, line in enumerate(drawn) if line[0] == "a.")]
     assert lx == label_x and (text_x is None or tx == text_x)
-    valid(document)
-    assert document.undo() and document.to_bytes() == Document.open(data).to_bytes()
+    valid(box, session)
+    undone_is_opened(box, session, before)
 
 
-def test_follow_and_the_tab_stop_are_written_as_word_writes_them():
-    document = Document.open(make(W14_BODY))
-    second = document.paragraphs()[1].id
-    document.set_list_format(second, follow="space")
-    assert '<w:suff w:val="space"/><w:lvlText' in level_xml(document, 1)
-    document.set_list_format(second, follow="nothing")
-    assert '<w:suff w:val="nothing"/>' in level_xml(document, 1)
-    document.set_list_format(second, follow="tab", number_at=18, text_at=54, tab_at=90)
-    xml = level_xml(document, 1)
+def test_follow_and_the_tab_stop_are_written_as_word_writes_them(box):
+    session = opened(box, make(W14_BODY))
+    second = paragraph_ids(box, session)[1]
+    list_format(box, session, second, follow="space")
+    assert '<w:suff w:val="space"/><w:lvlText' in level_xml(session, 1)
+    list_format(box, session, second, follow="nothing")
+    assert '<w:suff w:val="nothing"/>' in level_xml(session, 1)
+    list_format(box, session, second, follow="tab", number_at=18, text_at=54, tab_at=90)
+    xml = level_xml(session, 1)
     assert "w:suff" not in xml                                    # a tab is the default: Word writes none
     assert '<w:pPr><w:tabs><w:tab w:val="num" w:pos="1800"/></w:tabs><w:ind w:left="1080" w:hanging="720"/>' in xml
-    document.set_list_format(second, tab_at=36)                   # one num tab stop, moved
-    xml = level_xml(document, 1)
+    list_format(box, session, second, tab_at=36)                   # one num tab stop, moved
+    xml = level_xml(session, 1)
     assert xml.count("<w:tab ") == 1 and '<w:tab w:val="num" w:pos="720"/>' in xml
     # A label then text in the paragraph's line (docx2svg as Word: the tab at 54 pt's text indent).
-    assert [line for line in lines(document) if line[0] == "a."][0][1:] == (88.8, 106.8)
-    valid(document)
+    assert [line for line in lines(word_docs.saved(session, "d1")) if line[0] == "a."][0][1:] == (88.8, 106.8)
+    valid(box, session)
 
 
-@pytest.mark.parametrize("arguments, says", [
-    ({"follow": "dash"}, "follow is one of tab, space, nothing"),
-    ({"number_at": 2000}, "number_at is in points"),
-    ({"tab_at": "1"}, "tab_at is in points"),
+@pytest.mark.parametrize("arguments, field", [
+    ({"follow": "dash"}, "follow"),
+    ({"number_at": 2000}, "number_at"),
+    ({"tab_at": "1"}, "tab_at"),
 ])
-def test_positions_out_of_range_are_refused(arguments, says):
-    document = Document.open(make(W14_BODY))
-    with pytest.raises(EditError, match=says):
-        document.set_list_format(document.paragraphs()[1].id, **arguments)
+def test_positions_out_of_range_are_refused(box, arguments, field):
+    session = opened(box, make(W14_BODY))
+    result = dispatch(box, session, "word_lists", doc="d1", targets=[paragraph_ids(box, session)[1]],
+                      action="format", **arguments)
+    assert not result.ok and result.error.field == field, result.to_json()
 
 
 # -- the tools: word_lists format, word_styles describe, check -----------------------------------
 
 
-@pytest.fixture(scope="module")
-def box():
-    from ooxml_edit.tools import Toolbox
-
-    from docx_agent.tools import FORMAT, GROUPS, TOOLS
-
-    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as toolbox:
-        yield toolbox
-
-
-def dispatch(box, session, tool, /, **arguments):
-    return box.dispatch(session, tool, arguments)
-
-
 def test_word_lists_sets_a_levels_positions(box):
-    session = box.session()
-    session.open(make(W14_BODY), "positions.docx")
-    second = session.entry("d1").document.paragraphs()[1].id
-    result = dispatch(box, session, "word_lists", doc="d1", targets=[second], action="format",
-                      number_at=18, text_at=54, follow="space")
-    assert result.ok, result.to_json()
-    xml = level_xml(session.entry("d1").document, 1)
+    session = opened(box, make(W14_BODY))
+    second = paragraph_ids(box, session)[1]
+    list_format(box, session, second, number_at=18, text_at=54, follow="space")
+    xml = level_xml(session, 1)
     assert '<w:suff w:val="space"/>' in xml and '<w:ind w:left="1080" w:hanging="720"/>' in xml
     result = dispatch(box, session, "word_lists", doc="d1", targets=[second], action="format", follow="dash")
     assert not result.ok and result.error.field == "follow"
 
 
 def test_word_styles_describe_says_the_list_level(box):
-    session = box.session()
-    session.open(make(), "levels.docx")
+    session = opened(box, make())
 
     def described(name):
         result = dispatch(box, session, "word_styles", doc="d1", action="describe", name=name)
@@ -334,24 +374,17 @@ def test_word_styles_describe_says_the_list_level(box):
     assert described("Chapter title") == {"list": 1, "level": 0, "own": True}
     assert described("Figure title") == {"list": 1, "level": 1, "own": False, "from": "Section title"}
     assert described("Aside title") is None
-    result = dispatch(box, session, "word_styles", doc="d1", action="modify", name="Front title",
-                      numbering={"list": "none"})
-    assert result.ok and result.summary == "Modified style Front title: unlinked from its list level"
+    result = modify(box, session, "Front title", numbering={"list": "none"})
+    assert result.summary == "Modified style Front title: unlinked from its list level"
     assert described("Front title") == {"list": "none"}
-    result = dispatch(box, session, "word_styles", doc="d1", action="modify", name="Aside title",
-                      numbering={"list": "none"})
-    assert result.ok and result.summary == "Modified style Aside title: numbers nothing, left as it was"
+    result = modify(box, session, "Aside title", numbering={"list": "none"})
+    assert result.summary == "Modified style Aside title: numbers nothing, left as it was"
     assert result.warnings and not result.changed
 
 
 def test_numbering_skips_level_names_its_paragraph_para(box):
     lone = [("Lone first", "SectionTitle"), ("Lone second", "SectionTitle")]
-    document = Document.open(make(lone, section="%1.%2"))
-    [entry] = numbering_skips_level(document)
-    first = document.paragraphs()[0].id
+    session = opened(box, make(lone, section="%1.%2"))
+    first = paragraph_ids(box, session)[0]
+    [entry] = skips(box, session)
     assert entry["para"] == first and list(entry)[0] == "para" and "first" not in entry
-    session = box.session()
-    session.open(make(lone, section="%1.%2"), "lone.docx")
-    result = dispatch(box, session, "check", doc="d1", include=["layout"])
-    [entry] = result.data["layout"]["numbering_skips_level"]
-    assert entry["para"] == first and "first" not in entry

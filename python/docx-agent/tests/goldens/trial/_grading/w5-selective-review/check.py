@@ -5,7 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common import INPUTS, main, norm  # noqa: E402
 
-from docx_agent import Document  # noqa: E402
+from reading import Document  # noqa: E402
 
 INPUT = INPUTS / "w5-selective-review/input/remote-working-guideline.docx"
 
@@ -16,10 +16,8 @@ def texts(d):
 
 def expected(chen: str):
     d = Document.open(INPUT)
-    for r in d.revisions(author="Alice Moreau"):
-        pass
-    d.accept([r.id for r in d.revisions(author="Alice Moreau")])
-    d.reject([r.id for r in d.revisions(author="Bob Lindqvist")])
+    d.accept(author="Alice Moreau")
+    d.reject(author="Bob Lindqvist")
     if chen == "accept":
         d.accept_all()
     else:

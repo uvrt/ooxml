@@ -16,7 +16,7 @@ from ooxml_edit.tools import Toolbox  # noqa: E402
 from test_tables_from_data import GRID, _session, _table, call, ds_put, failed, ok, texts  # noqa: E402
 
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
-from docx_agent.tools.objects import _table_entry  # noqa: E402
+import word_docs  # noqa: E402
 
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
@@ -39,7 +39,7 @@ def edit(toolbox, session, table, **arguments):
 
 
 def _rows(session, table):
-    return [row for row, _ in _table_entry(session.entry("d1").document, table).rows]
+    return word_docs.rows_of(word_docs.element(session, "d1", table))
 
 
 def _fills(row) -> list[str | None]:

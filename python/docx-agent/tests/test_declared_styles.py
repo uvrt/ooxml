@@ -8,35 +8,67 @@ import json
 from pathlib import Path
 
 import pytest
+from ooxml_edit.tools import Toolbox
 
-from docx_agent import Document
-from docx_agent.edit.design import theme_rgb
+from docx_agent.tools import FORMAT, GROUPS, TOOLS
+import word_docs
 from conftest import FIXTURE_DIR  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 SWATCHES = json.loads((ROOT / "tests" / "observations" / "theme-tints-word.json").read_text())["swatches"]
 
 
-@pytest.mark.parametrize("swatch", SWATCHES, ids=lambda s: f"{s['theme']}-{s['tint']}-{s['shade']}")
-def test_a_theme_colour_with_its_tint_or_shade_is_what_word_draws(swatch):
-    document = Document.new()
-    ours = theme_rgb(document, swatch["theme"], swatch["tint"], swatch["shade"])
-    assert swatch["word"] == swatch["fill"]
-    assert ours == swatch["word"]
+@pytest.fixture(scope="module")
+def box():
+    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS) as toolbox:
+        yield toolbox
 
 
-def made() -> Document:
-    document = Document.new()
-    document.styles.add("Chapter title", based_on="heading 1", bold=True)
-    document.styles.add("Quiet note", based_on="Normal", italic=True)
-    document.styles.add("Marker", kind="character", bold=True)
-    document.paragraphs()[0].set_text("Hello")
-    return document
+def _ok(box, session, tool: str, **arguments):
+    result = box.dispatch(session, tool, arguments)
+    assert result.ok, result.to_json()
+    return result
 
 
-def test_declared_styles_lists_used_and_unused_styles_resolved():
-    document = made()
-    facts = document.design_facts(["declared_styles"])
+def _with_styles(styles: str) -> bytes:
+    return word_docs.replaced(word_docs.blank(), {
+        "word/styles.xml": lambda xml: xml.replace("</w:styles>", styles + "</w:styles>")})
+
+
+def _declared(box, session, d: str) -> dict[str, dict]:
+    facts = _ok(box, session, "word_design_facts", doc=d, include=["declared_styles"]).data
+    return {s["name"]: s for s in facts["declared_styles"]}
+
+
+def test_a_theme_colour_with_its_tint_or_shade_is_what_word_draws(box):
+    """Each swatch's colour as a style's text colour (its w:val a decoy): the RGB Word draws."""
+    styles = ""
+    for k, swatch in enumerate(SWATCHES):
+        assert swatch["word"] == swatch["fill"]
+        tint = f' w:themeTint="{swatch["tint"]}"' if swatch["tint"] else ""
+        shade = f' w:themeShade="{swatch["shade"]}"' if swatch["shade"] else ""
+        styles += (f'<w:style w:type="character" w:customStyle="1" w:styleId="Swatch{k}"><w:name w:val="Swatch {k}"/>'
+                   f'<w:rPr><w:color w:val="FF00FF" w:themeColor="{swatch["theme"]}"{tint}{shade}/></w:rPr></w:style>')
+    session = box.session()
+    declared = _declared(box, session, session.open(_with_styles(styles), "swatches.docx"))
+    for k, swatch in enumerate(SWATCHES):
+        assert declared[f"Swatch {k}"]["look"]["color"] == swatch["word"], swatch
+
+
+def _made(box, session) -> str:
+    d = session.open(word_docs.blank(), "styles.docx")
+    _ok(box, session, "word_styles", doc=d, action="add", name="Chapter title", based_on="heading 1", bold=True)
+    _ok(box, session, "word_styles", doc=d, action="add", name="Quiet note", based_on="Normal", italic=True)
+    _ok(box, session, "word_styles", doc=d, action="add", name="Marker", kind="character", bold=True)
+    first = word_docs.paragraph_ids(box, session, d)[0]
+    _ok(box, session, "word_set_text", doc=d, target=first, text="Hello")
+    return d
+
+
+def test_declared_styles_lists_used_and_unused_styles_resolved(box):
+    session = box.session()
+    d = _made(box, session)
+    facts = _ok(box, session, "word_design_facts", doc=d, include=["declared_styles"]).data
     styles = {s["name"]: s for s in facts["declared_styles"]}
     assert styles["Normal"]["used"] and styles["Normal"]["default"]
     assert set(styles["Normal"]["look"]) >= {"font", "size", "color", "space_after"}
@@ -51,7 +83,7 @@ def test_declared_styles_lists_used_and_unused_styles_resolved():
     used = [s["used"] for s in facts["declared_styles"]]
     assert used == sorted(used, reverse=True)
     # Not in the default kinds.
-    assert "declared_styles" not in document.design_facts()
+    assert "declared_styles" not in _ok(box, session, "word_design_facts", doc=d).data
 
 
 #: A made-up table style: accent1 borders, a header row filled accent1 with white bold text,
@@ -68,14 +100,11 @@ TABLE_STYLE = (
     'w:themeFill="accent1" w:themeFillTint="33"/></w:tcPr></w:tblStylePr></w:style>')
 
 
-def test_a_table_style_lists_its_parts_and_places_with_theme_colours():
-    from lxml import etree
-
-    document = made()
-    document.styles._ensure("Table Grid", "table")      # and Normal Table, its base
-    document.styles._root().append(etree.fromstring(TABLE_STYLE))
-    document._invalidate()
-    styles = {s["name"]: s for s in document.design_facts(["declared_styles"])["declared_styles"]}
+def test_a_table_style_lists_its_parts_and_places_with_theme_colours(box):
+    session = box.session()
+    d = session.open(_with_styles(TABLE_STYLE.replace(
+        ' xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"', "")), "ledger.docx")
+    styles = _declared(box, session, d)
     ledger = styles["Ledger"]
     assert ledger["type"] == "table" and ledger["used"] is False and ledger["parts"] == ["firstRow", "band1Horz"]
     header, band = ledger["places"]["header_row"], ledger["places"]["band1"]
@@ -99,54 +128,34 @@ NEIGHBOUR_DRAWN = {
 }
 
 
-def rust_labels(expected: list[dict]) -> list[dict]:
-    """docx-agent's declared styles with the theme labels the Rust session adds."""
-    out = json.loads(json.dumps(expected))
+def test_the_tool_pages_declared_styles_by_size(box):
+    path = FIXTURE_DIR / "wordto" / "sample-10pages.docx"
+    session = box.session()
+    d1 = session.open(path.read_bytes(), "template.docx")
+    seen, cursor, pages = [], None, 0
+    while True:
+        arguments = {"doc": d1, "include": ["declared_styles", "theme"]}
+        if cursor:
+            arguments["cursor"] = cursor
+        result = _ok(box, session, "word_design_facts", **arguments)
+        assert len(json.dumps(result.data)) <= box.limits.max_result_chars - 1500
+        assert ("theme" in result.data) == (cursor is None)     # later pages: the styles only
+        seen += result.data["declared_styles"]
+        pages += 1
+        cursor = result.next_cursor
+        if cursor is None:
+            break
+    assert pages > 1 and len({s["name"] for s in seen}) == len(seen)
+    assert result.summary.endswith(f"of {len(seen)}")
+    # The theme colour of a band cell's edge a neighbouring place's border draws, named.
     labelled = 0
-    for style in out:
+    for style in seen:
         family = next((f for f in NEIGHBOUR_DRAWN if style["name"].startswith(f)), None)
         if family is None:
             continue
         border, places = NEIGHBOUR_DRAWN[family]
         for place, edges in places.items():
             for edge in edges:
-                borders = style["places"][place]["borders"]
-                assert borders[edge] == border, (style["name"], place, edge)
-                borders[edge] = f"{border} (background1)"
+                assert style["places"][place]["borders"][edge] == f"{border} (background1)", (style["name"], place)
         labelled += 1
     assert labelled == 14       # Dark List and Colorful List, each with its six accents
-    return out
-
-
-def test_the_tool_pages_declared_styles_by_size():
-    from ooxml_edit.tools import Toolbox
-
-    from docx_agent.rust import reads
-    from docx_agent.tools import FORMAT, GROUPS, TOOLS
-    from docx_agent.tools._base import tool_names
-
-    path = FIXTURE_DIR / "wordto" / "sample-10pages.docx"
-    every = Document.open(path.read_bytes()).design_facts(["declared_styles"])["declared_styles"]
-    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS) as toolbox:
-        session = toolbox.session()
-        d1 = session.open(path.read_bytes(), "template.docx")
-        seen, cursor, pages = [], None, 0
-        while True:
-            arguments = {"doc": d1, "include": ["declared_styles", "theme"]}
-            if cursor:
-                arguments["cursor"] = cursor
-            result = toolbox.dispatch(session, "word_design_facts", arguments)
-            assert result.ok, result.error and result.error.to_json()
-            assert len(json.dumps(result.data)) <= toolbox.limits.max_result_chars - 1500
-            assert ("theme" in result.data) == (cursor is None)     # later pages: the styles only
-            seen += result.data["declared_styles"]
-            pages += 1
-            cursor = result.next_cursor
-            if cursor is None:
-                break
-    expected = tool_names(every, "look")     # keep_lines, as the tools say it
-    assert [(s["name"], s["type"]) for s in seen] == [(s["name"], s["type"]) for s in expected] and pages > 1
-    if reads.served().get("word_design_facts"):
-        expected = rust_labels(expected)
-    assert seen == expected
-    assert result.summary.endswith(f"of {len(every)}")

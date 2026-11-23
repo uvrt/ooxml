@@ -31,9 +31,9 @@ pytest.importorskip("ooxml_edit.tools.textfacts", reason="needs ooxml-edit 0.33 
 from ooxml_common.locales import Locale  # noqa: E402
 from ooxml_edit.tools import Dataset, Toolbox, tool  # noqa: E402
 
-from docx_agent import Document  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
-from docx_agent.validate import check  # noqa: E402
+import word_docs  # noqa: E402
+from kept_records import text_facts  # noqa: E402
 
 from test_tables_from_data import GRID, _session, call, failed, ok  # noqa: E402
 
@@ -73,13 +73,33 @@ def insert(toolbox, session, **arguments):
     return call(toolbox, session, "word_insert_markdown", **{"doc": "d1", "at": "end", **arguments})
 
 
-def document(session):
-    return session.entry("d1").document
+def saved(session, doc: str = "d1") -> bytes:
+    return word_docs.saved(session, doc)
 
 
-def body_xml(session) -> str:
-    data = document(session).to_bytes()
-    return zipfile.ZipFile(io.BytesIO(data)).read("word/document.xml").decode()
+def body_xml(session, doc: str = "d1") -> str:
+    return word_docs.part(saved(session, doc))
+
+
+def _style(paragraph) -> str | None:
+    found = paragraph.find(f"{{{word_docs.W}}}pPr/{{{word_docs.W}}}pStyle")
+    return None if found is None else found.get(f"{{{word_docs.W}}}val")
+
+
+def paragraphs(session, doc: str = "d1") -> list[tuple[str, str | None, str]]:
+    """Every paragraph of the body (in tables too), as (id, style id, text)."""
+    root = word_docs.tree(saved(session, doc))
+    return [(f"p:{p.get(word_docs.W14_PARA)}", _style(p), word_docs.text_of(p))
+            for p in root.find(f"{{{word_docs.W}}}body").iter(f"{{{word_docs.W}}}p")]
+
+
+def cell(session, table: str, row: int, column: int):
+    """A table's cell element."""
+    return word_docs.cells_of(word_docs.rows_of(word_docs.element(session, "d1", table))[row])[column]
+
+
+def cell_text(session, table: str, row: int, column: int) -> str:
+    return word_docs.cell_text(cell(session, table, row, column))
 
 
 # -- R65: one field as Markdown -----------------------------------------------------------------
@@ -90,25 +110,25 @@ def test_markdown_from_is_refused_as_an_unknown_argument_naming_from(toolbox, se
     unknown argument gets -- its field, the tool's arguments -- naming ``from``, not the
     nearest spelling (``markdown``, which would write the reference as text); nothing is
     written (rule 2)."""
-    before = document(session).to_bytes()
+    before = saved(session)
     error = failed(insert(toolbox, session, markdown_from="d:notes/#1/body"), "invalid_arguments")
     assert error.message == "unknown argument 'markdown_from'; did you mean 'from'?"
     usual = failed(insert(toolbox, session, markdown_source="d:notes/#1/body"), "invalid_arguments")
     assert error.field == "markdown_from" and error.valid_options == usual.valid_options
     assert "from" in error.valid_options
-    assert document(session).to_bytes() == before
+    assert saved(session) == before
     # In a batch too, as its op.
     result = call(toolbox, session, "batch", ops=[{"tool": "word_insert_markdown", "arguments": {
         "doc": "d1", "at": "end", "markdown_from": "d:notes/#1/body"}}])
     assert not result.ok and "did you mean 'from'" in result.error.message
-    assert document(session).to_bytes() == before
+    assert saved(session) == before
 
 
 def test_from_writes_the_fields_markdown(toolbox, session):
     result = ok(insert(toolbox, session, **{"from": "d:notes/#1/body"}))
     assert not [w for w in result.warnings if "read as" in w]
-    paragraphs = document(session).paragraphs()[1:]
-    assert [(p.style, p.text) for p in paragraphs] == [
+    found = paragraphs(session)[1:]
+    assert [(style, text) for _, style, text in found] == [
         (None, "Opening paragraph with emphasis and 41 items."), (None, "Second paragraph."),
         ("ListBullet", "first point"), ("ListBullet", "second point"), ("ListBullet2", "detail a"),
         ("ListBullet2", "detail b"), ("ListBullet", "third point"),
@@ -130,7 +150,7 @@ def test_a_field_is_the_same_markdown_as_typing_it(toolbox):
 
 def test_each_paragraph_keeps_the_field_as_its_source(toolbox, session):
     result = ok(insert(toolbox, session, **{"from": "d:notes/#1/body"}))
-    kept = document(session).text_facts()
+    kept = text_facts(session, "d1")
     assert set(kept) == set(result.data["blocks"])
     first = kept[result.data["blocks"][0]]
     assert first == [{"source": "d:notes/#1/body", "text": "Opening paragraph with emphasis and 41 items.",
@@ -147,7 +167,7 @@ def test_several_fields_in_one_call_each_with_its_blocks(toolbox, session):
         {"from": "d:notes/Doors/body", "chars": len(BODY), "blocks": blocks[1:10]},
         {"from": "d:notes/Roof/body", "text": "Short roof text.", "blocks": [blocks[11]]},
         {"from": "d:notes/Roof/score", "text": "4.0"}]          # a figure in a sentence: as before
-    assert document(session).paragraph(blocks[11]).text == "Short roof text."
+    assert word_docs.text_of(word_docs.element(session, "d1", blocks[11])) == "Short roof text."
 
 
 def test_tables_in_fields_line_up_with_their_separator(toolbox, session):
@@ -175,7 +195,7 @@ def test_a_value_that_is_not_text_is_refused_with_the_way_out(toolbox, session):
 def test_an_unknown_dataset_row_or_field_names_what_there_is(toolbox, session, source, code, options):
     error = failed(insert(toolbox, session, **{"from": source}), code)
     assert error.field == "from" and error.valid_options == options
-    assert len(document(session).paragraphs()) == 1                  # nothing written
+    assert len(paragraphs(session)) == 1                             # nothing written
 
 
 def test_a_tables_options_with_one_field_are_refused(toolbox, session):
@@ -196,22 +216,22 @@ def test_one_field_of_another_documents_table(toolbox, session):
 
 
 def test_set_text_writes_a_field_and_says_where(toolbox, session):
-    target = document(session).paragraphs()[0].id
+    target = paragraphs(session)[0][0]
     result = ok(call(toolbox, session, "word_set_text", doc="d1", target=target,
                      text="{{d:notes/Doors/summary}}"))
-    assert document(session).paragraphs()[0].text == "Doors are mostly fine."
+    assert paragraphs(session)[0][2] == "Doors are mostly fine."
     assert result.data["facts"] == [{"from": "d:notes/Doors/summary", "text": "Doors are mostly fine.",
-                                     "blocks": [document(session).paragraphs()[0].id]}]
+                                     "blocks": [paragraphs(session)[0][0]]}]
     # A field over two lines is two paragraphs, as a \n in text is.
     result = ok(call(toolbox, session, "word_set_text", doc="d1",
                      items=[{"target": target, "text": "{{d:notes/Roof/summary}}"}]))
-    assert [p.text for p in document(session).paragraphs()] == ["Roof needs work.", "Soon."]
-    assert result.data["facts"][0]["blocks"] == [p.id for p in document(session).paragraphs()]
+    assert [text for _, _, text in paragraphs(session)] == ["Roof needs work.", "Soon."]
+    assert result.data["facts"][0]["blocks"] == [block for block, _, _ in paragraphs(session)]
     assert "text" not in result.data["facts"][0] and result.data["facts"][0]["chars"] == 22
 
 
 def test_a_figure_in_a_sentence_is_reported_as_before(toolbox, session):
-    target = document(session).paragraphs()[0].id
+    target = paragraphs(session)[0][0]
     result = ok(call(toolbox, session, "word_set_text", doc="d1", target=target,
                      text="Rated {{d:notes/Roof/score:0.0}}."))
     assert result.data["facts"] == [{"from": "d:notes/Roof/score", "text": "4.0"}]
@@ -233,14 +253,14 @@ def test_a_cells_from_is_one_value_with_a_number_format(toolbox):
                      cells=[{"row": 1, "col": 1, "from": "d:notes/#1/score:0.0"},
                             {"row": 1, "col": 0, "from": "d:notes/#1/topic"},
                             {"row": 2, "col": 1, "text": "about {{d:notes/Roof/score:0.00}}"}]))
-    view = document(session).table(table)
-    assert [view.cell(r, c).text for r in (1, 2) for c in (0, 1)] == ["Doors", "2,5", "c", "about 4,00"]
+    assert [cell_text(session, table, r, c) for r in (1, 2) for c in (0, 1)] == ["Doors", "2,5", "c", "about 4,00"]
     assert result.data["facts"] == [
         {"from": "d:notes/#1/score", "text": "2,5", "cell": f"{table}/c1,1"},
         {"from": "d:notes/#1/topic", "text": "Doors", "cell": f"{table}/c1,0"},
         {"from": "d:notes/Roof/score", "text": "4,00", "cell": f"{table}/c2,1"}]
-    kept = document(session).text_facts()
-    assert kept[view.cell(1, 1).paragraphs[0].id] == [{"source": "d:notes/#1/score", "format": "0.0",
+    kept = text_facts(session, "d1")
+    first = cell(session, table, 1, 1).find(f"{{{word_docs.W}}}p")
+    assert kept[f"p:{first.get(word_docs.W14_PARA)}"] == [{"source": "d:notes/#1/score", "format": "0.0",
                                                          "text": "2,5", "p": 0, "at": 0}]
 
 
@@ -249,7 +269,7 @@ def test_a_top_level_one_value_from_with_places_is_each_cells(toolbox, session):
     result = ok(call(toolbox, session, "word_edit_table", doc="d1", table=table, action="set_cells",
                      cells=[{"row": 2, "col": 1}], **{"from": "d:notes/#2/score:0.0"}))
     assert result.warnings[0] == "from d:notes/#2/score:0.0 (one value) read as the from of each of the 1 cell(s) given"
-    assert document(session).table(table).cell(2, 1).text == "4.0"
+    assert cell_text(session, table, 2, 1) == "4.0"
 
 
 def test_a_top_level_one_value_from_alone_gives_the_call_that_works(toolbox, session):
@@ -280,7 +300,7 @@ def test_a_strict_placeholder_beside_a_cells_from_is_no_text(toolbox, session):
     table = _table(toolbox, session)
     ok(call(toolbox, session, "word_edit_table", doc="d1", table=table, action="set_cells",
             cells=[{"row": 1, "col": 1, "text": "", "from": "d:notes/#3/score:0.0"}]))
-    assert document(session).table(table).cell(1, 1).text == "3.5"
+    assert cell_text(session, table, 1, 1) == "3.5"
 
 
 def test_set_cells_text_without_references_is_unchanged(toolbox, session):
@@ -288,7 +308,7 @@ def test_set_cells_text_without_references_is_unchanged(toolbox, session):
     result = ok(call(toolbox, session, "word_edit_table", doc="d1", table=table, action="set_cells",
                      cells=[{"row": 1, "col": 1, "text": "plain {{name}}"}]))
     assert "facts" not in result.data
-    assert document(session).table(table).cell(1, 1).text == "plain {{name}}"
+    assert cell_text(session, table, 1, 1) == "plain {{name}}"
 
 
 # -- round 49, R96: a cell's own from beside a top-level one-value from -------------------------
@@ -302,8 +322,7 @@ def test_a_cells_own_from_or_text_wins_and_the_top_level_value_fills_the_rest(to
                             {"row": 2, "col": 0, "text": "plain"},
                             {"row": 1, "col": 0, "text": "", "from": ""}],         # strict placeholders: none
                      **{"from": "d:notes/#2/score:0.0"}))
-    view = document(session).table(table)
-    assert [view.cell(r, c).text for r in (1, 2) for c in (0, 1)] == ["4.0", "4.0", "plain", "3.5"]
+    assert [cell_text(session, table, r, c) for r in (1, 2) for c in (0, 1)] == ["4.0", "4.0", "plain", "3.5"]
     assert result.warnings[0] == ("from d:notes/#2/score:0.0 (one value) read as the from of each of the 2 "
                                   "cell(s) given without their own; 2 kept their own")
     assert [fact["from"] for fact in result.data["facts"]] == ["d:notes/#2/score", "d:notes/#3/score",
@@ -315,15 +334,14 @@ def test_the_top_level_value_fills_a_column_entry_with_rows(toolbox, session):
     ok(call(toolbox, session, "word_edit_table", doc="d1", table=table, action="set_cells",
             cells=[{"col": 1, "rows": "1..2"}, {"row": 2, "col": 0, "from": "d:notes/#1/topic"}],
             **{"from": "d:notes/Walls/score:0.00"}))
-    view = document(session).table(table)
-    assert [view.cell(r, c).text for r in (1, 2) for c in (0, 1)] == ["a", "3.50", "Doors", "3.50"]
+    assert [cell_text(session, table, r, c) for r in (1, 2) for c in (0, 1)] == ["a", "3.50", "Doors", "3.50"]
 
 
 def test_every_cell_with_its_own_value_leaves_the_top_level_one_unused_said(toolbox, session):
     table = _table(toolbox, session)
     result = ok(call(toolbox, session, "word_edit_table", doc="d1", table=table, action="set_cells",
                      cells=[{"row": 1, "col": 1, "from": "d:notes/#1/topic"}], **{"from": "d:notes/#2/topic"}))
-    assert document(session).table(table).cell(1, 1).text == "Doors"
+    assert cell_text(session, table, 1, 1) == "Doors"
     assert result.warnings[0] == ("from d:notes/#2/topic (one value) filled no cell: each of the 1 cell(s) "
                                   "gives its own from or text, which it keeps")
 
@@ -363,12 +381,17 @@ def simple(xml: str) -> str:
     return re.sub(r'w:id="(\d+)"', lambda m: f'w:id="{numbers.setdefault(m.group(1), str(len(numbers)))}"', body)
 
 
-def three_tables() -> Document:
-    document = Document.new()
-    document.insert_markdown("Alpha before.\n\n| A | B |\n|---|---|\n| one | two |\n| three | four |\n\nMiddle one.\n\n"
-                             "| C | D |\n|---|---|\n| five | six |\n\nMiddle two.\n\n| E | F |\n|---|---|\n"
-                             "| seven | eight |\n| nine | ten |\n\nOmega after.")
-    return document
+THREE = ("Alpha before.\n\n| A | B |\n|---|---|\n| one | two |\n| three | four |\n\nMiddle one.\n\n"
+         "| C | D |\n|---|---|\n| five | six |\n\nMiddle two.\n\n| E | F |\n|---|---|\n"
+         "| seven | eight |\n| nine | ten |\n\nOmega after.")
+
+
+def three_tables(toolbox):
+    """A new document of three tables between paragraphs: its session and id."""
+    session = toolbox.session()
+    doc = session.open(word_docs.blank(), "tables.docx")
+    ok(toolbox.dispatch(session, "word_insert_markdown", {"doc": doc, "at": "end", "markdown": THREE}))
+    return session, doc
 
 
 #: Word 16.106's body after "select the text object of row 2 of table 3, add a comment;
@@ -395,82 +418,94 @@ WORD_BODY = (
     '<w:p><w:r><w:t>Omega after.</w:t></w:r></w:p>')
 
 
-def _tables(document: Document) -> list[str]:
-    return [b["id"] for b in document.state()["blocks"] if b["id"].startswith("t:")]
+def _tables(toolbox, session, doc) -> list[str]:
+    return [block for block, _ in word_docs.blocks(toolbox, session, doc) if block.startswith("t:")]
 
 
-def commented(document: Document) -> Document:
+def _row(session, doc, table: str, index: int) -> str:
+    """A row's id (``tr:<paraId>``)."""
+    return f"tr:{word_docs.rows_of(word_docs.element(session, doc, table))[index].get(word_docs.W14_PARA)}"
+
+
+def _comments(toolbox, session, doc) -> list[tuple[str, str]]:
+    """Each comment's text and the text it is on, as word_comments lists them."""
+    listed = ok(toolbox.dispatch(session, "word_comments", {"doc": doc, "action": "list"})).data
+    return [(found["text"], found["on"]["text"]) for found in listed]
+
+
+def commented(toolbox):
     """The three comments of :data:`WORD_BODY`, through the tool."""
-    one, two, three = _tables(document)
-    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as box:
-        session = box.session()
-        session.open(document.to_bytes(), "tables.docx")
-        found = session.entry("d1").document
-        row = found.table(three).rows[1].id
-        result = ok(box.dispatch(session, "word_comments", {"doc": "d1", "action": "add", "items": [
-            {"target": row, "text": "Row two of table three"}, {"target": two, "text": "Table two"},
-            {"target": one, "text": "Whole table one"}]}))
-        assert len(result.data["comments"]) == 3
-        return Document.open(session.entry("d1").document.to_bytes())   # (the view as the served call left it)
+    session, doc = three_tables(toolbox)
+    one, two, three = _tables(toolbox, session, doc)
+    result = ok(toolbox.dispatch(session, "word_comments", {"doc": doc, "action": "add", "items": [
+        {"target": _row(session, doc, three, 1), "text": "Row two of table three"}, {"target": two, "text": "Table two"},
+        {"target": one, "text": "Whole table one"}]}))
+    assert len(result.data["comments"]) == 3
+    return session, doc
 
 
-def test_a_comment_on_a_table_or_row_is_anchored_as_word_anchors_one():
-    done = commented(three_tables())
-    xml = zipfile.ZipFile(io.BytesIO(done.to_bytes())).read("word/document.xml").decode()
-    assert simple(xml) == WORD_BODY
-    assert [(c.text, c.anchor.text) for c in done.comments()] == [
-        ("Row two of table three", "seven\neight"), ("Table two", "C\nD\nfive\nsix"),
-        ("Whole table one", "A\nB\none\ntwo\nthree\nfour")]
-    assert check(done.package) == []
+def test_a_comment_on_a_table_or_row_is_anchored_as_word_anchors_one(toolbox):
+    session, doc = commented(toolbox)
+    assert simple(body_xml(session, doc)) == WORD_BODY
+    assert _comments(toolbox, session, doc) == [
+        ("Row two of table three", "seven eight"), ("Table two", "C D five six"),
+        ("Whole table one", "A B one two three four")]
+    assert word_docs.validation(toolbox, session, doc)["new"] == []
 
 
-def test_a_comment_on_a_tables_last_row_ends_after_the_table():
-    document = three_tables()
-    one = _tables(document)[0]
-    document.add_comment(document.table(one).rows[-1].id, "Last row")
-    body = simple(zipfile.ZipFile(io.BytesIO(document.to_bytes())).read("word/document.xml").decode())
+def test_a_comment_on_a_tables_last_row_ends_after_the_table(toolbox):
+    session, doc = three_tables(toolbox)
+    one = _tables(toolbox, session, doc)[0]
+    ok(toolbox.dispatch(session, "word_comments", {"doc": doc, "action": "add", "items": [
+        {"target": _row(session, doc, one, -1), "text": "Last row"}]}))
+    body = simple(body_xml(session, doc))
     assert ('<w:p><w:commentRangeStart w:id="0"/><w:r><w:t>three</w:t></w:r></w:p>' in body
             and '</w:tr></w:tbl><w:commentRangeEnd w:id="0"/><w:p><w:r><REF 24><w:commentReference w:id="0"/>'
                 '</w:r><w:r><w:t>Middle one.</w:t>' in body)
 
 
-def test_a_cell_or_paragraph_target_is_text_as_before():
-    document = three_tables()
-    one = _tables(document)[0]
-    created = document.add_comment(f"{one}/c1,0", "A cell").id
-    assert document.comment(created).anchor.text == "one"
-    body = simple(zipfile.ZipFile(io.BytesIO(document.to_bytes())).read("word/document.xml").decode())
+def test_a_cell_or_paragraph_target_is_text_as_before(toolbox):
+    session, doc = three_tables(toolbox)
+    one = _tables(toolbox, session, doc)[0]
+    ok(toolbox.dispatch(session, "word_comments", {"doc": doc, "action": "add", "items": [
+        {"target": f"{one}/c1,0", "text": "A cell"}]}))
+    assert _comments(toolbox, session, doc) == [("A cell", "one")]
+    body = simple(body_xml(session, doc))
     assert '<w:commentRangeStart w:id="0"/><w:r><w:t>one</w:t></w:r><w:commentRangeEnd w:id="0"/>' in body
 
 
 @pytest.mark.parametrize("what", ["paragraph after the table", "row after the row", "the commented table",
                                   "the commented row"])
-def test_deleting_around_a_commented_table_keeps_the_document_whole(what):
-    done = commented(three_tables())
-    one, _two, three = _tables(done)
-    count = len(done.comments())
+def test_deleting_around_a_commented_table_keeps_the_document_whole(toolbox, what):
+    session, doc = commented(toolbox)
+    one, _two, three = _tables(toolbox, session, doc)
+    count = len(_comments(toolbox, session, doc))
+
+    def edit(tool, **arguments):
+        ok(toolbox.dispatch(session, tool, {"doc": doc, **arguments}))
+
     if what == "paragraph after the table":
-        after = done.state()["blocks"][2]["id"]
-        assert done.paragraph(after).text == "Middle one."
-        done.delete_block(after)
+        after, text = word_docs.blocks(toolbox, session, doc)[2]
+        assert text == "Middle one."
+        edit("word_delete", target=after)
         # The reference opens the next paragraph, as Word's form has it.
-        assert "<w:p><w:r><REF 24><w:commentReference" in simple(
-            zipfile.ZipFile(io.BytesIO(done.to_bytes())).read("word/document.xml").decode())
+        assert "<w:p><w:r><REF 24><w:commentReference" in simple(body_xml(session, doc))
     elif what == "row after the row":
-        done.delete_row(three, 2)
-        body = simple(zipfile.ZipFile(io.BytesIO(done.to_bytes())).read("word/document.xml").decode())
+        edit("word_edit_table", table=three, action="delete_row", index=2)
+        body = simple(body_xml(session, doc))
         assert '</w:tr></w:tbl><w:commentRangeEnd w:id="2"/><w:p><w:r><REF 24><w:commentReference w:id="2"/>' in body
     elif what == "the commented table":
-        done.delete_block(one)
+        edit("word_delete", target=one)
     else:
-        done.delete_row(three, 1)
-    assert len(done.comments()) == count
-    assert check(done.package) == []
-    Document.open(done.to_bytes())
+        edit("word_edit_table", table=three, action="delete_row", index=1)
+    assert len(_comments(toolbox, session, doc)) == count
+    assert word_docs.validation(toolbox, session, doc)["new"] == []
+    other = toolbox.session()
+    other.open(saved(session, doc), "again.docx")
 
 
 @pytest.mark.oracle
-def test_word_anchors_a_selected_table_so():
+def test_word_anchors_a_selected_table_so(toolbox):
     """Word itself: select a row, a table, comment (the measurement of :data:`WORD_BODY`)."""
     import oracle
 
@@ -497,7 +532,8 @@ end run
 '''
     try:
         with oracle.session() as word:
-            out = word.run_script(script, three_tables().to_bytes(), name="r68-table-comment", tag="word")
+            session, doc = three_tables(toolbox)
+            out = word.run_script(script, saved(session, doc), name="r68-table-comment", tag="word")
     except oracle.WordBusy as busy:
         pytest.skip(str(busy))
     assert out.ok, out.detail
