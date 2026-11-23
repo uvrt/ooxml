@@ -26,13 +26,10 @@ NEW_CREATED = datetime(2026, 10, 4, tzinfo=timezone.utc)
 
 
 def blank_document(created: datetime = NEW_CREATED) -> bytes:
-    """A new blank document's package as the Rust core makes it (``ooxml_core.new_document``,
-    what ``new_document`` writes): A4, en-US, no title or author, made at ``created``."""
-    import ooxml_core
+    """A new blank document's package as the Rust core makes it (:func:`word_docs.blank`)."""
+    from word_docs import blank
 
-    stamp = created.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return bytes(ooxml_core.new_document(page=("A4", False), language="en-US", separators=(".", ","),
-                                         properties=(None, None, stamp)))
+    return blank(created=created)
 
 
 def new_document() -> Path:
