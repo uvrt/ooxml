@@ -65,11 +65,11 @@ pub(super) struct SayWith<'a> {
     pub(super) drawn_changed: bool,
 }
 
-/// What `laid` says (its warnings and approximations); the pages the version before kept
-/// said again as they were.
+/// What `laid` says (its warnings and approximations); the pages the version before
+/// (`before`) kept said again as they were, and their first pages taken from it.
 pub(super) fn say(
     generation: &mut Generation,
-    laid: &ooxml_word_layout::DocumentLayout,
+    (laid, before): (&ooxml_word_layout::DocumentLayout, Option<&LaidVersion>),
     drawings: Option<&WordDrawings>,
     with: &SayWith<'_>,
 ) -> crate::warnings::Said {
@@ -92,7 +92,7 @@ pub(super) fn say(
     };
     crate::warnings::said(
         &mut generation.model,
-        laid,
+        (laid, before.map(|b| &b.layout)),
         &mut painter,
         with.locale,
         &mut generation.said,
