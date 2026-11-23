@@ -1,14 +1,16 @@
-//! Owns: what the Rust layout does not lay out or draw as docx2svg does yet, found in a
-//! version before or after it is laid out. Two kinds:
+//! Owns: what the layout does not lay out or draw yet, found in a version before or after
+//! it is laid out. Two kinds:
 //!
-//! - **layout** ([`unsupported`]): the pages or the facts would differ; the caller lays the
-//!   whole document out another way (docx2svg's Python layout, frozen for this);
+//! - **layout** ([`unsupported`], [`stopped`]): the pages or the facts would be wrong; the
+//!   version is not laid out, and the tools refuse it as not supported yet, with a way out
+//!   (`ooxml_tools_word::NotLaid::Unsupported`);
 //! - **paint** (a page's paint's own `unpainted`, and drawings for their painters): the
-//!   layout and its facts are docx2svg's, but that page's SVG is not yet; a caller drawing
-//!   such a page draws it another way.
+//!   layout and its facts stand, but part of that page is not drawn yet; `render` says so
+//!   in its notes.
 //!
-//! Each reason is one of [`REASONS`], a stable label for a counter. The tests are
-//! conservative: a document is sent back where a case might apply, never laid out wrong.
+//! Each reason is one of [`REASONS`], a stable label (a counter's, and the noun a tool's
+//! refusal names). The tests are conservative: a document is refused where a case might
+//! apply, never laid out wrong.
 //!
 //! Must not: lay out, draw, or guess past what the model says.
 
@@ -78,8 +80,7 @@ enum Story {
     Note,
 }
 
-/// Why a version cannot be laid out by the Rust layout as docx2svg lays it out, before it
-/// is: the first case found, in the body, its headers and footers, and its notes.
+/// Why a version cannot be laid out yet, found before it is: the first case found, in the body, its headers and footers, and its notes.
 pub fn unsupported(document: &WordDocument) -> Option<Fallback> {
     let mut scan = Scan { found: None };
     scan.story(&document.body, Story::Body);
@@ -97,8 +98,8 @@ pub fn unsupported(document: &WordDocument) -> Option<Fallback> {
     scan.found
 }
 
-/// Why a version laid out cannot be taken as docx2svg's: the layout stopped, or a story
-/// was not measured.
+/// Why a version laid out cannot be answered: the layout stopped, or a story was not
+/// measured.
 pub fn stopped(layout: &DocumentLayout) -> Option<Fallback> {
     if let Some(stop) = &layout.pagination.stopped {
         return Some(fallback(LAYOUT_STOPPED, &stop.reason));

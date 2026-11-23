@@ -40,7 +40,7 @@ use pyo3::prelude::*;
 
 pub use budget::{PyBudgetAccount, PyMemoryBudget};
 pub use context::{PyCallContext, PyCancelToken, PyLimits};
-pub use layout::{LayoutFallback, PyLaidPages, PyWordFonts, PyWordPages};
+pub use layout::{PyLaidPages, PyWordFonts, PyWordPages};
 pub use options::{PyCallDocuments, PyCallLayout, PyCallOptions, PyCallWriting};
 pub use pages::PyPageSetup;
 pub use raster::PyPageRaster;
@@ -50,7 +50,7 @@ pub use version::PyVersion;
 /// Add the session API to the module `m`: `Session`, `CancelToken`, `Limits`, `CallContext`, `CallOptions`, `CallDocuments`,
 /// `CallWriting`, `CallLayout`, `Version` and
 /// `tool_specs`, `tool_hosting`, `new_document`; and the Word layout's handles: `WordFonts`, `WordPages`, `LaidPages`,
-/// `LayoutFallback`, `LayoutSummary`, `MemoryBudget` and `BudgetAccount`; the live view's `UnknownToken` and
+/// `LayoutSummary`, `MemoryBudget` and `BudgetAccount`; the live view's `UnknownToken` and
 /// `ViewRefused`; and the refusals of an open, `StateRefused` and `NotWordPackage`.
 ///
 /// # Errors
@@ -78,7 +78,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyBudgetAccount>()?;
     m.add_class::<summary::PyLayoutSummary>()?;
     m.add_class::<PyPageRaster>()?;
-    m.add("LayoutFallback", m.py().get_type::<LayoutFallback>())?;
     m.add("UnknownToken", m.py().get_type::<view::UnknownToken>())?;
     m.add("ViewRefused", m.py().get_type::<view::ViewRefused>())?;
     m.add("StateRefused", m.py().get_type::<session::StateRefused>())?;

@@ -16,7 +16,7 @@ import e3_probe  # noqa: E402
 OBSERVED = observed("e3-word.json")
 #: The observation's cases these tests compare with (index.py lists why the others are not).
 READS = {"text", "text-accept", "text-reject", "tables", "tables-accept", "tables-reject", "cells-accept",
-         "cells-reject"}
+         "cells-reject", "join-untracked"}
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _W = "{%s}" % W
 _NS = " ".join(f'xmlns:{prefix}="{uri}"' for prefix, uri in (
@@ -133,8 +133,8 @@ def _fill(value, paragraph: str):
 
 #: Where the tools' form differs from Word's.
 TEXT_DIFFERENCES = {
-    "Bold": "Word's AppleScript bold (the probe's step) writes w:b alone; the tools write w:b and w:bCs, as "
-            "Word's Bold command does on text of both scripts -- to measure with the command itself",
+    "Bold": "Word's AppleScript bold property (the probe's step) writes w:b alone; the tools write w:b and "
+            "w:bCs, as Word's own Bold command does (measured: followups-word.json, bold-command)",
 }
 
 
@@ -190,11 +190,12 @@ TABLE_EDITS = {
 UNTRACKED_IN_WORD = {"ColDel", "MergeH", "MergeV"}
 
 
-#: Where the observation and the tools part (to measure again before either side changes).
+#: Where the observation and the tools part.
 TABLE_DIFFERENCES = {
-    ("ColIns", "reject"): "the observation's Reject All keeps the inserted column's empty cells; docx-agent's "
-                          "ROADMAP (E3, 'Insert a column', measured) says Word's Reject All removes them, as the "
-                          "tools do -- to remeasure",
+    ("ColIns", "reject"): "Word tracks its own column insert as the new cells' marks only, so its Reject All "
+                          "keeps the empty cells; the tools also record the old grid, and Word's Reject All of "
+                          "that form removes the column as the tools' does (measured: followups-word.json, "
+                          "colins-tools-reject)",
 }
 
 
@@ -229,7 +230,33 @@ def test_accepting_or_rejecting_recorded_cell_revisions_is_words(box, review):
     ours, words = by_key(document.body()), word(f"cells-{review}")
     if review == "reject":
         # Word's Reject All of a cell's last paragraph, inserted, takes the cell's first
-        # paragraph out of the table (InsertLast): the tools keep the table, the paragraph
-        # rejected.  A difference not yet judged against Word's own rule.
+        # paragraph out of the table and the cell with it (InsertLast); its reject of that
+        # revision alone keeps the table, as the tools' Reject All does -- a deliberate rule
+        # (test_followups_recorded.py, insertlast-reject-one).
         ours.pop("InsertLast"), words.pop("InsertLast")
     assert ours == words
+
+
+# -- an untracked join -------------------------------------------------------------------------
+
+#: ``join-untracked``: each deletion, tracking off, as a ``word_delete`` target (``{A}``/``{B}``
+#: the case's two paragraphs).
+JOINS = {"Mark": "{Mark}@11..{Marked}@0", "JoinA": "{JoinA}@11..{JoinB}@6"}
+#: Word's untracked join depends on how it is made (followups-word.json, join-content): typing a
+#: backspace over JoinA's ``kappa.``, mark and ``JoinB `` keeps the mark; recorded, not judged.
+JOIN_DIFFERENCES = {
+    "JoinA": "Word's backspace over a selection across JoinA's mark keeps the mark (no join); its content-set "
+             "deletion joins with JoinB's properties, its accepted tracked deletion with JoinA's -- the tools "
+             "join with JoinA's",
+}
+
+
+@pytest.mark.parametrize("key", [pytest.param(k, marks=pytest.mark.xfail(reason=JOIN_DIFFERENCES[k], strict=True))
+                                 if k in JOIN_DIFFERENCES else k for k in JOINS])
+def test_an_untracked_join_is_words(box, key):
+    """``join-untracked``: a paragraph's mark deleted with tracking off joins it to the next
+    with the first one's properties (``Mark``)."""
+    document = Opened(box, e3_probe.join_document())
+    ids = located(document)
+    document.call("word_delete", target=JOINS[key].format(**ids))
+    assert by_key(document.body())[key] == word("join-untracked")[key]

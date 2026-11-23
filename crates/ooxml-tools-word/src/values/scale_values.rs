@@ -20,7 +20,7 @@
 
 use super::scale::{py_strip, ReadScale};
 use super::targets::{column_target, reference_matches, reference_target};
-use super::{cell_of, lay_out, pages_refused};
+use super::{cell_of, lay_out, not_laid, pages_failed, pages_refused, without_pages};
 use crate::objects::{read_look, table_view};
 use crate::pages::WordLayout;
 use crate::written::py_space;
@@ -188,9 +188,15 @@ pub fn scale_values(
         None => None,
         Some(_) => match lay_out(layout, doc.package(), cancel) {
             Some(Ok(laid)) => Some(laid),
-            Some(Err((code, message))) => return Err(pages_refused("numbers", code, &message)),
+            Some(Err(why)) if why.unlaid().is_some() => {
+                return Err(pages_refused("scale", why, without_pages(name, range, &[], &["scale"])))
+            }
+            Some(Err(why)) => {
+                let (code, message) = not_laid(why);
+                return Err(pages_failed("numbers", code, &message));
+            }
             None => {
-                return Err(pages_refused(
+                return Err(pages_failed(
                     "numbers",
                     "layout_failed",
                     "no layout of this document here",

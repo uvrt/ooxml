@@ -194,10 +194,10 @@ fn not_laid(args: &WordInspect, why: NotLaid, limit: Option<crate::LayoutLimit<'
     if let Err(stopped) = cancel.check() {
         return cancelled(stopped);
     }
-    if why.in_note() {
+    if let Some(what) = why.unlaid() {
         let mut call = args.clone();
         call.layout = None;
-        let form = format!("word_inspect layout: {}", crate::pages::UNLAID_NOTE);
+        let form = format!("word_inspect layout: {what}");
         return ToolError::not_supported(&form, WayOut::call(try_call(&call))).at("layout");
     }
     let said = match (why, limit) {

@@ -25,8 +25,10 @@ def test_every_observation_is_in_the_index_and_nothing_else():
 
 
 def test_every_probe_in_the_folder_is_an_observations():
+    """Each probe in ``probes`` writes an observation (the Word suite, ``suite``, writes its own)."""
     probes = {p.name for p in (WORD / "probes").glob("*_probe.py")}
-    assert probes == {Path(entry["probe"]).name for entry in index.OBSERVATIONS.values()}
+    assert probes == {Path(entry["probe"]).name for entry in index.OBSERVATIONS.values()
+                      if Path(entry["probe"]).parent.name == "probes"}
 
 
 def _reads(path: Path, cases: set[str]) -> set[str]:

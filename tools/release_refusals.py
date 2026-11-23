@@ -59,7 +59,12 @@ READER: dict[str, str | None] = {
         "later calls)",
     "edit_chart*":
         "`edit_chart` with values from a dataset or table (`from`)",
-    "*a footnote or endnote the layout cannot lay out": None,
+    "* the layout cannot lay out":
+        "`render`, the live view, `check` with `reflow`, `layout`, or numbers or a scale on `pages`, and "
+        "`word_inspect` with `layout` of a document "
+        "holding something the page layout cannot lay out yet: a frame, a text box or a drawing text wraps beside "
+        "in a header, footer or note; a drop cap outside the body's top level; a text box holding a floating "
+        "drawing",
     "copy_from *": None,
     "a list number docx-agent cannot read": None,
     "a theme whose colours docx-agent cannot read": None,

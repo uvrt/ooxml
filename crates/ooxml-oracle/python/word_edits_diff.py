@@ -52,6 +52,7 @@ from docx_agent import validate as _validate  # noqa: E402
 from reference_cache import Store, compact  # noqa: E402
 from word_edits_compare import settle as _compare  # noqa: E402
 from word_edits_reference import python_case  # noqa: E402
+import word_reads_diff  # noqa: E402
 from word_reads_diff import differences, files_of, report, run_rust  # noqa: E402
 import word_object_cases  # noqa: E402
 import word_structure_cases  # noqa: E402
@@ -427,8 +428,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cache-new", metavar="FILE", help="write the results this run computes here, to keep")
     parser.add_argument("--cache-used", metavar="FILE",
                         help="write each document's case keys here (JSON: the store's coverage, tools/gates_store.py)")
+    parser.add_argument("--record", help="record the cases and the Rust answers for goldens here (goldens.py)")
+    parser.add_argument("--record-tree", action="append", default=[], help="a folder whose documents have case files")
     parser.add_argument("files", nargs="*")
     args = parser.parse_args(argv)
+    word_reads_diff.record(args.record, args.record_tree)
     store = Store(args.cache, args.cache_new, lambda a, b: not differences(a, b)) \
         if args.cache or args.cache_new else None
     kept: dict = {}         # the cases whose result is a kept one: what docx-agent needs to run them again
@@ -445,6 +449,8 @@ def main(argv: list[str] | None = None) -> int:
             data = _french(data)
             path = Path(args.spacing) / f"{len(manifest):04d}-{path.name}"
             path.write_bytes(data)
+            if word_reads_diff.RECORDER is not None:
+                word_reads_diff.RECORDER.own(str(path), source)
         try:
             document = Document.open(data)
             baseline = _validate.check(document.package)

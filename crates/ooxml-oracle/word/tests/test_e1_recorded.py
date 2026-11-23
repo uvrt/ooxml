@@ -95,23 +95,25 @@ def test_a_default_list_is_words(box, kind, fmt):
     assert {p["style"] for p in OBSERVED["default_lists"]["paragraphs"]} == {"List Paragraph"}
 
 
-#: The recorded no-density case disagrees with the tools and with docx-agent's ROADMAP (E1: "a
-#: picture stating no density placed at 96 dpi"): Word's extent for 96 x 48 px is 609600 x
-#: 304800 EMU, 144 dpi.  To measure again in Word before either side changes.
-NO_DENSITY = ("the observation's no-density picture is 144 dpi (609600 EMU for 96 px), the tools place it at "
-              "96 dpi as docx-agent's E1 notes say Word does: to remeasure")
+#: The no-density case: Word 16.106 for Mac places it at 144 dpi (609600 EMU for 96 px, measured
+#: again in ``followups-word.json``); the tools place it at 96 dpi, Windows Word's convention, by
+#: decision (``test_followups_recorded.py``). Unmeasured on Windows.
+NO_DENSITY_WINDOWS = {"cx": 914400, "cy": 457200}
 
 
 @pytest.mark.parametrize("case, picture", [
-    pytest.param("no-density 96x48 px", e1_probe.png(96, 48, (200, 30, 30)),
-                 marks=pytest.mark.xfail(reason=NO_DENSITY, strict=True)),
+    ("no-density 96x48 px", e1_probe.png(96, 48, (200, 30, 30))),
     ("300 dpi 300x150 px", e1_probe.png(300, 150, (30, 30, 200), dpi=300)),
 ])
 def test_a_picture_takes_the_size_word_gives_it(box, case, picture):
-    """``pictures``: a picture without a density is 96 dpi; one with is its own."""
+    """``pictures``: a picture without a density is 96 dpi (by decision, above); one with is its own."""
     document = Opened(box, e1_probe.probe_document())
     blob = document.session.add_blob(picture, "picture.png")
     target = document.paragraph_ids()[-1]
     document.call("word_drawings", action="insert_picture", image=blob, at=f"{target}@0", alt_text=case)
     extent = re.search(r'<wp:extent cx="(\d+)" cy="(\d+)"/>', document.part())
-    assert {"cx": int(extent.group(1)), "cy": int(extent.group(2))} == OBSERVED["pictures"][case]
+    expected = OBSERVED["pictures"][case]
+    if case.startswith("no-density"):
+        assert expected == {"cx": 609600, "cy": 304800}  # Mac Word's 144 dpi
+        expected = NO_DENSITY_WINDOWS
+    assert {"cx": int(extent.group(1)), "cy": int(extent.group(2))} == expected

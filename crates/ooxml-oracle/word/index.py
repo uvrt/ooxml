@@ -15,9 +15,6 @@ from __future__ import annotations
 #: The keys of an observation that are its notes, not Word's answers.
 NOTES = frozenset({"_about", "source", "word"})
 
-#: A case no tool can reach yet, to be read when one does.
-_NOT_YET = "not read yet: the same edit through the tools is still to be written"
-
 OBSERVATIONS: dict[str, dict] = {
     "charts-word.json": {
         "probe": "crates/ooxml-oracle/word/probes/charts_probe.py",
@@ -47,7 +44,6 @@ OBSERVATIONS: dict[str, dict] = {
         "probe": "crates/ooxml-oracle/word/probes/e3_probe.py",
         "readers": ["crates/ooxml-oracle/word/tests/test_e3_recorded.py"],
         "unread": {
-            "join-untracked": _NOT_YET + " (a deletion across a paragraph mark, tracking off)",
             "cells-pdf": "Word's PDF text of the recorded cell revisions: what Word draws, the renderers' "
                          "concern",
         },
@@ -61,17 +57,9 @@ OBSERVATIONS: dict[str, dict] = {
     },
     "e5-word.json": {
         "probe": "crates/ooxml-oracle/word/probes/e5_probe.py",
-        "readers": ["crates/ooxml-oracle/word/tests/test_e5_recorded.py"],
-        "unread": {
-            "tables-tracked": _NOT_YET + " (the table cases with tracking on)",
-            "merges-tracked": _NOT_YET + " (the merge cases with tracking on)",
-            "mergeforms-accept": _NOT_YET + " (Word's Accept All of tracked merge forms)",
-            "mergeforms-reject": _NOT_YET + " (Word's Reject All of tracked merge forms)",
-            "drawings-tracked": _NOT_YET + " (the drawing cases with tracking on)",
-            "controls": _NOT_YET + " (content controls, word_controls)",
-            "controls-tracked": _NOT_YET + " (content controls with tracking on)",
-            "controls-saved": _NOT_YET + " (a bound control's value after Word's save)",
-        },
+        "readers": ["crates/ooxml-oracle/word/tests/test_e5_recorded.py",
+                    "crates/ooxml-oracle/word/tests/test_e5_tracked_recorded.py"],
+        "unread": {},
     },
     "e6-word.json": {
         "probe": "crates/ooxml-oracle/word/probes/e6_probe.py",
@@ -84,8 +72,12 @@ OBSERVATIONS: dict[str, dict] = {
             "resave-all-11": "as resave-11, every legacy option set",
             "resave-all-14": "as resave-11, mode 14",
             "resave-14-sample": "as resave-11, a corpus document",
-            "copy-formatted-tracked": _NOT_YET + " (a copy between documents with tracking on)",
         },
+    },
+    "followups-word.json": {
+        "probe": "crates/ooxml-oracle/word/probes/followups_probe.py",
+        "readers": ["crates/ooxml-oracle/word/tests/test_followups_recorded.py"],
+        "unread": {},
     },
     "language-word.json": {
         "probe": "crates/ooxml-oracle/word/probes/language_probe.py",
@@ -138,6 +130,11 @@ OBSERVATIONS: dict[str, dict] = {
     "toc-word.json": {
         "probe": "crates/ooxml-oracle/word/probes/toc_probe.py",
         "readers": ["crates/ooxml-oracle/word/tests/test_toc_recorded.py"],
+        "unread": {},
+    },
+    "suite-word.json": {
+        "probe": "crates/ooxml-oracle/word/suite/test_word_suite.py",
+        "readers": ["crates/ooxml-oracle/word/tests/test_suite_recorded.py"],
         "unread": {},
     },
     "tracking-word.json": {
