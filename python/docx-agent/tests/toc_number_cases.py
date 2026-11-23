@@ -1,6 +1,9 @@
 """Made-up documents for the round-32 TOC probes (R12 numbered headings, R14 toc N tab stops):
-the inputs of tools/toc_numbers_probe.py and tests/test_toc_numbers.py."""
-import io, zipfile
+the inputs of tests/test_toc_numbers.py (and once of tools/toc_numbers_probe.py), and
+:func:`entries`, what a TOC update wrote, as the probe read Word's."""
+import io, re, zipfile
+
+from lxml import etree
 
 NS = ('xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
       'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"')
@@ -271,3 +274,28 @@ CASES3 = {
                                 '<w:name w:val="toc 1"/><w:basedOn w:val="TocBase"/>')
                        .replace('</w:styles>', BASE_TAB + '</w:styles>'), numbering()),
 }
+
+
+W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+
+def entries(data: bytes) -> list[dict]:
+    """Each TOC entry Word wrote: level (Word renames the toc styles in its own language),
+    tab stops, and its runs' texts before the page number's tab (a tab run as ``\\t``)."""
+    root = etree.fromstring(zipfile.ZipFile(io.BytesIO(data)).read("word/document.xml"))
+    out = []
+    for p in root.iter(W + "p"):
+        style = p.find(f"{W}pPr/{W}pStyle")
+        found = re.match(r"\D+(\d)$", style.get(W + "val") if style is not None else "")
+        if not found or not style.get(W + "val").lower().startswith(("toc", "inhopg")):
+            continue
+        tabs = [[t.get(W + "val"), int(t.get(W + "pos"))] + ([t.get(W + "leader")] if t.get(W + "leader") else [])
+                for t in p.iterfind(f"{W}pPr/{W}tabs/{W}tab")]
+        runs = []
+        for r in (p.find(W + "hyperlink") if p.find(W + "hyperlink") is not None else p).iter(W + "r"):
+            if r.find(W + "fldChar") is not None or r.find(W + "instrText") is not None:
+                break
+            t = r.find(W + "t")
+            runs.append(t.text if t is not None else ("\t" if r.find(W + "tab") is not None else ""))
+        out.append({"level": int(found.group(1)), "tabs": tabs, "runs": runs[:-1] if runs[-1:] == ["\t"] else runs})
+    return out

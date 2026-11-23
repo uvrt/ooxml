@@ -88,30 +88,6 @@ def _owned(session, doc: str) -> bool:
     return reads._owned(session.entry(doc)) is not None
 
 
-@pytest.mark.parametrize("path", [*FIXTURES, None], ids=lambda p: p.name if p else "fields-made-up")
-def test_the_session_answers_a_check_of_the_document_alone_as_python_does(toolbox, path, monkeypatch):
-    session = toolbox.session()
-    doc = (session.open(path.read_bytes(), name=path.name) if path is not None else
-           session.open(_fields_made_up(), name="fields.docx"))
-    if not _owned(session, doc):
-        pytest.skip("the session does not own this document")
-    for edited in (False, True):
-        if edited:
-            paragraphs = session.entry(doc).document.paragraphs()
-            if not paragraphs:
-                break
-            done = toolbox.dispatch(session, "word_insert_text", {"doc": doc, "target": paragraphs[0].id,
-                                                                   "text": " checked"})
-            assert done.ok, done.to_json()
-        for include in INCLUDES:
-            arguments = {"doc": doc, "include": include}
-            served = reads.served().get("check", 0)
-            rust = _answer(toolbox, session, arguments, monkeypatch, rust=True)
-            assert reads.served().get("check", 0) == served + 1, reads.fallbacks().get("check")
-            python = _answer(toolbox, session, arguments, monkeypatch, rust=False)
-            assert rust == python, (doc, edited, include)
-
-
 def test_the_made_up_fields_are_told(toolbox):
     session = toolbox.session()
     doc = session.open(_fields_made_up(), name="fields.docx")

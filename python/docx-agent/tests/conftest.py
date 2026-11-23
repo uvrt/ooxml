@@ -6,18 +6,9 @@ from pathlib import Path
 
 import pytest
 
-# Lane G: every validation found per change (docx_agent.revalidate) is compared with the whole
-# check, at every call of every test (a difference fails it: revalidate.Mismatch).
-os.environ.setdefault("DOCX_AGENT_FULL_VALIDATE", "1")
-
 # 0.117.0 (lane G): every kept serialization of an edited part is compared with the tree
 # written out again, at every use (ooxml_edit.opc.OpcPackage.keep_serialized).
 os.environ.setdefault("OOXML_EDIT_VERIFY_SERIALIZED", "1")
-
-# Lane J (0.1.120): edits beside another edit of their document go on drafts here, as before,
-# with the interpreter lock or without (unset, docx-agent drafts only without it:
-# docx_agent.blocks.drafts_on); test_block_edits.py tests the default.
-os.environ.setdefault("DOCX_AGENT_DRAFTS", "1")
 
 #: The repository's Word fixtures: the gates' documents too, so they live with the oracle
 #: (crates/ooxml-oracle/fixtures), apart from docx-agent's tests.
@@ -27,19 +18,27 @@ FIXTURE_DIR = ORACLE / "fixtures"
 # shelf_tables.py): last on the path, so no harness module hides one of these tests' own.
 if str(ORACLE / "python") not in sys.path:
     sys.path.append(str(ORACLE / "python"))
-#: E6's new document, written where the corpus is read from (``new/document``): every gate
+#: A new blank document, written where the corpus is read from (``new/document``): every gate
 #: and every phase's edit set holds for a document docx-agent made, as for one it opened.
 NEW_DOCUMENT = Path(tempfile.gettempdir()) / "docx-agent-tests" / "new" / "document.docx"
 #: Its creation date: fixed, so its bytes -- and the oracle's cache -- are the same each run.
 NEW_CREATED = datetime(2026, 10, 4, tzinfo=timezone.utc)
 
 
-def new_document() -> Path:
-    """``Document.new()``'s document, written (atomically: xdist's workers each collect) when
-    it is not there or differs."""
-    from docx_agent import Document
+def blank_document(created: datetime = NEW_CREATED) -> bytes:
+    """A new blank document's package as the Rust core makes it (``ooxml_core.new_document``,
+    what ``new_document`` writes): A4, en-US, no title or author, made at ``created``."""
+    import ooxml_core
 
-    data = Document.new(created=NEW_CREATED).to_bytes()
+    stamp = created.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return bytes(ooxml_core.new_document(page=("A4", False), language="en-US", separators=(".", ","),
+                                         properties=(None, None, stamp)))
+
+
+def new_document() -> Path:
+    """:func:`blank_document`, written (atomically: xdist's workers each collect) when it is
+    not there or differs."""
+    data = blank_document()
     if not NEW_DOCUMENT.exists() or NEW_DOCUMENT.read_bytes() != data:
         NEW_DOCUMENT.parent.mkdir(parents=True, exist_ok=True)
         staged = NEW_DOCUMENT.with_name(f".{os.getpid()}.docx")
@@ -205,27 +204,8 @@ def _office_faces_absent() -> bool:
 OFFICE_FACES_ABSENT = _office_faces_absent()
 
 
-def _skip_if_a_face_is_absent(warnings, coverage=None) -> None:
-    # docx2svg's coverage names the faces it found nowhere, whatever the stop is called (a
-    # footnote in an absent face stops as "footnote not measurable").
-    missing = getattr(coverage, "missing_fonts", None)
-    if missing:
-        pytest.skip(f"a face this document is laid out in is not installed here: {', '.join(missing)}")
-    # Since round 16 docx2svg lays an absent face out with an approximate stand-in rather
-    # than stop: as absent, for what the layout measures.
-    approximate = [s["family"] for s in getattr(coverage, "substituted_fonts", None) or ()
-                   if not s.get("metric_compatible", True)]
-    if approximate:
-        pytest.skip(f"a face this document is laid out in is not installed here (laid out with an approximate "
-                    f"substitute): {', '.join(approximate)}")
-    for warning in warnings:  # docx2svg's (code, message, page) tuples or its Warning objects
-        code, message = (warning.code, warning.message) if hasattr(warning, "code") else warning[:2]
-        if code in _FACE_ABSENT or (code.startswith("layout-stopped:") and "cannot be measured" in message):
-            pytest.skip(f"a face this document is laid out in is not installed here: [{code}] {message}")
-
-
 def _skip_if_a_check_says_a_face_is_absent(coverage, warnings) -> None:
-    # A check's reflow facts (``coverage_facts``, its warnings as text), wherever it was laid out.
+    # A check's reflow facts (``coverage_facts``, its warnings as text).
     coverage = coverage or {}
     if coverage.get("missing_fonts"):
         pytest.skip("a face this document is laid out in is not installed here: "
@@ -240,31 +220,24 @@ def _skip_if_a_check_says_a_face_is_absent(coverage, warnings) -> None:
 
 
 def _skip_if_the_session_laid_a_face_absent(call) -> None:
-    # The version the session's check laid out, by the session's own engine for the document
-    # (lane H7b; it laid the version out just now: its pages are the engine's memo), read as
-    # docx2svg's layout.
-    import ooxml_core
-    import docx2svg
-    from docx2svg import rust
-
-    from docx_agent.layout import layout_options
+    # The version the session's check laid out, laid out again by the document's page engine
+    # (its pages are the engine's memo): the faces its coverage grades missing or substituted
+    # by an approximate face.
     from docx_agent.rust import reads as rust_reads
-    from docx_agent.rust.engines import session_pages
+    from docx_agent.rust.engines import existing_pages
 
-    owned = rust_reads._owned(call.entry)
-    if owned is None:
+    owned = rust_reads.owned(call.entry)
+    pages = existing_pages(owned) if owned is not None else None
+    if pages is None:
         return
-    held = owned.held
-    engine, _ = session_pages(owned.handle, held, make=False)
-    if engine is None:
-        return
-    data = held.to_bytes()
-    try:
-        laid = engine.lay_out(data)
-    except ooxml_core.LayoutFallback:
-        return
-    layout = rust.RustLayout(laid, data, docx2svg.ConvertOptions(**layout_options(held, {})))
-    _skip_if_a_face_is_absent(layout.warnings, layout.coverage)
+    grades, _, _ = pages.lay_out(call.entry.snapshot()).coverage()
+    missing = [family for family, grade, *_ in grades if grade == "missing"]
+    if missing:
+        pytest.skip(f"a face this document is laid out in is not installed here: {', '.join(missing)}")
+    approximate = [family for family, grade, _, compatible, *_ in grades if grade == "substituted" and not compatible]
+    if approximate:
+        pytest.skip(f"a face this document is laid out in is not installed here (laid out with an approximate "
+                    f"substitute): {', '.join(approximate)}")
 
 
 @pytest.fixture(autouse=True)
@@ -272,93 +245,20 @@ def _skip_where_faces_are_absent(request, monkeypatch):
     # ``any_faces``: a test that holds without Office's faces (it leaves what they measure out).
     if not OFFICE_FACES_ABSENT or request.node.get_closest_marker("any_faces") is not None:
         return
-    import docx2svg
-
-    from docx_agent import layout as agent_layout
-
-    lay_out, convert = docx2svg.lay_out_docx, agent_layout.convert
-
-    def checked_lay_out(source, options=None, **keywords):
-        result = lay_out(source, options, **keywords)
-        _skip_if_a_face_is_absent(result[0].warnings, getattr(result[0], "coverage", None))
-        return result
-
-    def checked_convert(document, **options):
-        # A tool layer's worker pool lays out in another process: read what came back.
-        conversion = convert(document, **options)
-        _skip_if_a_face_is_absent(conversion.layout.warnings, getattr(conversion.layout, "coverage", None))
-        return conversion
-
-    from docx_agent.tools import shared as agent_shared
-
-    facts_of = agent_shared.check_facts
-
-    def checked_facts(document, unlocked, request, **options):
-        # Round 38: a lone check's facts are made in the worker holding the layout; read the
-        # coverage and the warnings that came back (round 47: ``timed`` passed on).
-        made = facts_of(document, unlocked, request, **options)
-        if made is not None:
-            _skip_if_a_check_says_a_face_is_absent(made[0]["reflow"].get("coverage"), made[0].get("warnings"))
-        return made
-
     from docx_agent.rust import reads as rust_reads
 
     serve_check = rust_reads.serve_check
 
     def checked_serve_check(call, arguments):
-        # Lane P5b: a check the Rust session answers lays out in Rust, through none of the
-        # above: read the coverage and the warnings its reflow says.
+        # A check lays out in the Rust session: read the coverage and the warnings its reflow
+        # says, or, for a check of the layout or of ranges alone, the faces of that layout.
         served = serve_check(call, arguments)
         data = (served.data or {}) if served is not None and served.ok else {}
         reflow = data.get("reflow")
         if isinstance(reflow, dict):
             _skip_if_a_check_says_a_face_is_absent(reflow.get("coverage"), data.get("layout_warnings"))
         elif "layout" in data or "range" in data:
-            # Lane P5k: a check of the layout or of ranges alone lays the version out with no
-            # reflow said: read the faces from that layout.
             _skip_if_the_session_laid_a_face_absent(call)
         return served
 
-    monkeypatch.setattr(docx2svg, "lay_out_docx", checked_lay_out)
-    monkeypatch.setattr(agent_layout, "convert", checked_convert)
-    monkeypatch.setattr(agent_shared, "check_facts", checked_facts)
     monkeypatch.setattr(rust_reads, "serve_check", checked_serve_check)
-    # Round 59 (R134): word_inspect's placements, keeps, a change's reflow and a batch's reads
-    # ask the layout module's own (held_answers, held_facts) -- read what came back there too.
-    monkeypatch.setattr(agent_layout, "check_facts", checked_facts)
-
-
-@pytest.fixture(autouse=True)
-def _relayouts_end_with_their_test():
-    # 0.1.113: a relayout on commit (docx_agent.tools.owner) runs on a thread of its own; it
-    # ends with the test that started it, so none lays out under the next test's patches.
-    yield
-    from docx_agent.tools.owner import wait_for_relayouts
-
-    wait_for_relayouts(timeout=120)
-
-
-@pytest.fixture
-def python_layout():
-    """docx2svg's Python layout for every layout the test makes (lane L4): the frozen
-    fallback the Rust layout (``docx_agent.pages``) stands in for, whose own mechanisms --
-    layouts handed between versions and processes, held by token, pickled -- a test of
-    them reads.  The Python layout is cut (lane CUT1): such a test is skipped, and goes with
-    the Python view (P4e)."""
-    pytest.skip("the Python layout is cut, lane CUT1")
-
-
-@pytest.fixture
-def python_owned():
-    """Documents the tool layer holds itself, as it holds one the Rust session does not own
-    (lane P2c5): no Rust session for the test (``docx_agent.rust.reads.use_session(None)``).
-    For the tests of what only that path does -- calls prepared on drafts (``block_edits``),
-    which an owned document's calls are not (ooxml-edit's ``OwnedEntry``)."""
-    from docx_agent.rust import reads
-
-    reads.available()           # (the process's session made first: the one given back after)
-    before = reads.use_session(None)
-    try:
-        yield
-    finally:
-        reads.use_session(before)

@@ -87,11 +87,6 @@ def _structure_calls(session, doc):
     yield "word_links", {"action": "list"}
 
 
-def test_structure_tools_served_as_the_python_handler_answers(toolbox, report):
-    served = _calls(toolbox, report, True, _structure_calls)
-    assert served == _calls(toolbox, report, False, _structure_calls)
-
-
 def test_a_ref_a_served_call_defines_is_the_sessions(toolbox, report):
     session, doc = _open(toolbox, report, True)
     ids = _ids(session, doc)

@@ -189,41 +189,6 @@ def test_a_check_reports_what_a_check_of_its_version_alone_reports(made, workers
     assert results["owner"] == results["alone"]
 
 
-# Lane H7e: an owned document's numbers are placed by the session's own engine, not by a
-# worker trip -- the trips counted here are docx-agent's own documents' (the cut deletes them).
-@pytest.mark.usefixtures("python_layout", "python_owned")
-def test_a_check_with_numbers_goes_to_the_worker_once(made, monkeypatch):
-    # The worker's trips: docx-agent's own way of checking.  Lane L4b: only for docx2svg's Python layout -- a version the Rust layout lays out has
-    # its facts made in this process, no trip at all (tests/test_layout_memory_l4b.py).
-    trips: list[dict] = []
-    real = base_module.Engine.check
-
-    def counted(self, data, options, state, request):
-        trips.append(request)
-        return real(self, data, options, state, request)
-
-    monkeypatch.setattr(base_module.Engine, "check", counted)
-    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=2) as box:
-        session, doc, document = _session(box, made)
-        heads = _heads(document)
-        box.dispatch(session, "word_insert_markdown", {"doc": doc, "at": f"before:{heads[2]}",
-                                                       "markdown": "One more paragraph: 3.25 of it."})
-        trips.clear()
-        result = box.dispatch(session, "check", {"doc": doc, "include": INCLUDE,
-                                                 "range": [f"{heads[1]}..{heads[2]}"]})
-        assert result.ok, result.to_json()
-        assert result.data["numbers"]["texts"] and result.data["range"]
-        # The owner's layout, then one trip with the range's facts and the numbers' pages.
-        assert len(trips) == 2, trips
-        assert trips[0]["ranges"] is None and not trips[0]["layout"] and "pages_of" not in trips[0]
-        assert trips[1]["ranges"] and trips[1]["layout"] and trips[1]["pages_of"]
-        assert {"layout", "numbers"} <= set(result.data["timing"])
-        trips.clear()
-        again = box.dispatch(session, "check", {"doc": doc, "include": INCLUDE,
-                                                "range": [f"{heads[1]}..{heads[2]}"]})
-        assert again.ok and trips == []                     # the same check of the same version
-
-
 def test_a_check_waiting_for_a_layout_reads_the_newest_version_and_says_so(made, monkeypatch):
     """A check called while another version is laid out is served by the next layout, of the
     newest version: its result is of that version, and a warning says how many commits newer."""

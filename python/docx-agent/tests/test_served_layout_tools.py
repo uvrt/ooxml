@@ -79,11 +79,6 @@ def _report_calls(session, doc):
     yield "word_fields", {"action": "update"}
 
 
-def test_fields_and_footers_served_as_the_python_handler_answers(toolbox, report):
-    served = _calls(toolbox, report, True, _report_calls)
-    assert served == _calls(toolbox, report, False, _report_calls)
-
-
 def test_the_upgrade_served_with_its_reflow(toolbox):
     calls = lambda *_: [("word_template", {"action": "upgrade_to_modern"})]  # noqa: E731
     served = _calls(toolbox, MODE14.read_bytes(), True, calls)

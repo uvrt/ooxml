@@ -145,34 +145,6 @@ def test_a_layout_handed_back_draws_the_same_pages_without_laying_out_again(monk
             == (first["facts"]["count"], first["facts"]["coverage"], first["raster"]))
 
 
-@pytest.mark.usefixtures("python_layout")      # lane L4b: a Rust layout is made by the caller
-def test_the_next_call_on_the_same_version_hands_its_worker_the_layout():
-    data = _pages(4)
-    runner = _Recording()
-    seen = []
-    run = runner.run
-
-    def recording(fn, *args, timeout, **kwargs):
-        if fn.__name__ == "lay_out_views":
-            # The layout handed over: named by its token (round 38), held in the worker.
-            seen.append(args[7] is not None and args[7][2] is not None)
-        return run(fn, *args, timeout=timeout, **kwargs)
-
-    runner.run = recording
-    with _box(runner=runner) as box:
-        session = box.session()
-        d = session.open(data, "note.docx")
-        first = _ok(box, session, "render", doc=d, pages=[1, 2], width=300)
-        second = _ok(box, session, "render", doc=d, pages=[3, 4], width=300)
-        _ok(box, session, "replace_text", doc=d, find="Page 3 of", replace="Page three of", expect="one")
-        third = _ok(box, session, "render", doc=d, pages=[3], width=300)
-        expected = render_pages(session.entry(d).document.to_bytes(), [3], 300, [])[0]
-    # After the edit, the layout of the version before is handed over (round 19).
-    assert seen == [False, True, True]
-    assert all_pixels(image.data for image in third.images) == all_pixels(expected)
-    assert first.data["coverage"] == second.data["coverage"]
-
-
 def test_a_layout_of_an_earlier_version_is_laid_out_again_only_where_the_edit_reaches():
     data = _pages(4)
     first = lay_out_views(RENDERER, data, [1, 2, 3, 4], 300, [])

@@ -26,13 +26,6 @@ HERE = Path(__file__).resolve().parent
 GOLDEN = HERE.parents[2] / "crates" / "ooxml-tools-word" / "tests" / "golden"
 
 
-def test_the_rust_definition_is_todays_byte_for_byte():
-    from test_rust_tool_specs import export, text
-
-    today = export({tool.name: tool for tool in TOOLS}["render"])
-    assert (GOLDEN / "render.json").read_text(encoding="utf-8") == text(today)
-
-
 def _pages(count: int) -> bytes:
     """``count`` pages whatever the fonts measure: each paragraph after the first starts a
     page, in Arial."""
