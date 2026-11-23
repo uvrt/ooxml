@@ -60,7 +60,8 @@ READER: dict[str, str | None] = {
     "edit_chart*":
         "`edit_chart` with values from a dataset or table (`from`)",
     "* the layout cannot lay out":
-        "`render`, the live view, `check` with `reflow` or `layout` and `word_inspect` with `layout` of a document "
+        "`render`, the live view, `check` with `reflow`, `layout`, or numbers or a scale on `pages`, and "
+        "`word_inspect` with `layout` of a document "
         "holding something the page layout cannot lay out yet: a frame, a text box or a drawing text wraps beside "
         "in a header, footer or note; a drop cap outside the body's top level; a text box holding a floating "
         "drawing",

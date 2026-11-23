@@ -142,6 +142,7 @@ CASES = {
         (_header_frame, "check", {"include": ["reflow"]}),
         (DROP_CAP_IN_A_CELL, "render", {}),
         (_boxed_shape, "word_inspect", {"target": "body", "layout": True}),
+        (_header_frame, "check", {"include": ["numbers"], "pages": [1]}),
     ],
     "word_read final view of Accept All's cell ends": [(CELL_ENDS, "word_read", {"view": "final"})],
     "word_inspect of Accept All's cell ends": [(CELL_ENDS, "word_inspect", {"target": "p@body/1"})],
