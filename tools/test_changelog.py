@@ -63,11 +63,13 @@ class ChangelogTest(unittest.TestCase):
         add(pkg, "Lane.added.md", "x")
         add(pkg, "lane.improved.md", "x")
         add(pkg, "lane-b.fixed.md", "  \n")
-        add(pkg, "lane-c.removed.md", "Gone.")
+        add(pkg, "lane-c.removed.md", "Gone.\n\nInstead: `other`.")
+        add(pkg, "lane-d.removed.md", "Gone, nothing said.")
         found, wrong = changelog.fragments(pkg)
         self.assertEqual([f.path.name for f in found], ["lane-c.removed.md"])
-        self.assertEqual(len(wrong), 3)
-        self.assertEqual(len(changelog.problems(pkg)), 3)
+        self.assertEqual(len(wrong), 4)
+        self.assertTrue(any("lane-d.removed.md" in w and "Instead:" in w for w in wrong), wrong)
+        self.assertEqual(len(changelog.problems(pkg)), 4)
 
     def test_release_into_a_new_section(self) -> None:
         pkg = make_package(self.py, "pkg", "1.3.0", HEAD + "## 1.2.0 -- unreleased\n\nOld text.\n")
@@ -95,10 +97,10 @@ class ChangelogTest(unittest.TestCase):
             "## 1.1.0 -- unreleased\n\nOlder.\n"))
         # At the end of the file too.
         pkg = make_package(self.py, "last", "1.0.0", HEAD + "## 1.0.0\n\nText.\n")
-        add(pkg, "lane.removed.md", "Removed r.")
+        add(pkg, "lane.removed.md", "Removed r. Instead: s.")
         changelog.release("v2026.11.22", [pkg], {"last": "0.9.0"}, locks=[])
         self.assertEqual((pkg / "CHANGELOG.md").read_text(encoding="utf-8"),
-                         HEAD + "## 1.0.0\n\nText.\n\n### Removed\n\nRemoved r.\n")
+                         HEAD + "## 1.0.0\n\nText.\n\n### Removed\n\nRemoved r. Instead: s.\n")
 
     def test_a_wrong_fragment_writes_nothing(self) -> None:
         good = make_package(self.py, "good", "1.0.0", HEAD + "## 1.0.0\n")
@@ -155,7 +157,7 @@ class ChangelogTest(unittest.TestCase):
         # Raised by hand since 0.1.24 (before versions were set at release): kept.
         self.assertEqual(changelog.release_versions([pkg], {"pkg": "0.1.24"}), {pkg: ("0.1.25", "0.1.25")})
         self.assertEqual(changelog.release_versions([pkg]), {pkg: ("0.1.25", "0.1.26")})
-        add(pkg, "b.removed.md", "Gone.\n")
+        add(pkg, "b.removed.md", "Gone. Instead: c.\n")
         self.assertEqual(changelog.release_versions([pkg], {"pkg": "0.1.24"}), {pkg: ("0.1.25", "0.2.0")})
 
     def test_a_crates_version_and_its_lock(self) -> None:
@@ -207,6 +209,47 @@ class RefusalTest(unittest.TestCase):
     def test_release_notes_refuse_waiting_fragments(self) -> None:
         self.assertTrue(release_notes.TAG_PATTERN.fullmatch("v2026.11.22.1"))
         self.assertFalse(release_notes.TAG_PATTERN.fullmatch("check-only"))
+
+
+class ReleaseNotesTest(unittest.TestCase):
+    """tools/release_notes.py's sections above the versions table."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.py = Path(self.tmp.name)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_removed_entries(self) -> None:
+        text = HEAD + ("## 0.3.0 -- v2026.11.24\n\n### Changed\n\nC.\n\n### Removed\n\nTool x is gone.\n"
+                       "Instead: y.\n\n## 0.2.0 -- v2026.11.23\n\n### Removed\n\nOlder.\n")
+        pkg = make_package(self.py, "pkg", "0.3.0", text)
+        add(pkg, "w.removed.md", "Waiting z. Instead: q.\n")
+        add(pkg, "w.fixed.md", "Fixed.\n")
+        self.assertEqual(release_notes.removed_entries("v2026.11.24", [pkg]),
+                         [("pkg", "Tool x is gone.\nInstead: y."), ("pkg", "Waiting z. Instead: q.")])
+        self.assertEqual(release_notes.removed_entries("v2026.11.25", [pkg]), [("pkg", "Waiting z. Instead: q.")])
+
+    def test_spec_changes(self) -> None:
+        before = {"a": {"x", "y"}, "b": {"x"}, "gone": set()}
+        after = {"a": {"x", "z"}, "b": {"x"}, "new": {"p"}}
+        self.assertEqual(release_notes.spec_changes(before, after), [
+            "- `gone`: withdrawn", "- `a`: argument `y` removed", "- `a`: argument `z` added", "- `new`: new tool"])
+        self.assertEqual(release_notes.spec_changes(after, after), [])
+
+    def test_refused_forms(self) -> None:
+        path = self.py / "known.toml"
+        path.write_text('[[not_supported]]\nform = "word_x *"\ncause = """x\'s forms not ported: a, b \\\n'
+                        '(deferred, lane Q)"""\n\n[[difference]]\nmode = "m"\n', encoding="utf-8")
+        self.assertEqual(release_notes.refused(path), [("word_x *", "x's forms not ported: a, b")])
+        forms = release_notes.refused(release_notes.ROOT / release_notes.KNOWN)
+        self.assertTrue(forms and all(form and cause for form, cause in forms))
+
+    def test_the_specs_are_read_at_a_commit(self) -> None:
+        specs = release_notes.specs_at("HEAD")
+        self.assertIn("describe", specs)
+        self.assertIn("word_read", specs)
 
 
 if __name__ == "__main__":
