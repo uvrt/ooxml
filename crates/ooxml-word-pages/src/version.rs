@@ -57,14 +57,14 @@ pub(crate) struct Unpainted {
     /// What a comparison reads of each page.
     pub(crate) pages: OnceLock<Arc<VersionPages>>,
     /// Each page's context ([`crate::page_context`]).
-    pub(crate) contexts: OnceLock<Arc<[ooxml_base::Digest]>>,
+    pub(crate) contexts: OnceLock<Arc<[crate::page_context::PageContext]>>,
 }
 
 /// What a comparison reads of a version's pages without painting them.
 #[derive(Debug)]
 pub(crate) struct VersionPages {
     /// Each page's context ([`crate::page_context`]).
-    pub(crate) contexts: Arc<[ooxml_base::Digest]>,
+    pub(crate) contexts: Arc<[crate::page_context::PageContext]>,
     /// Each page as laid out (`None`: a page with no laid page of its own).
     pub(crate) pages: Vec<Option<crate::digest_cache::PageRef>>,
     /// Each page's body lines' paragraph paths, in drawing order.

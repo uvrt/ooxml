@@ -7,6 +7,11 @@
 //! page, the same items and the same context paint alike; the body's field values are in
 //! its items already (a paragraph whose field shows another value is a new one).
 //!
+//! A page's context is also digested in two parts ([`PageContext`]): what its body is
+//! painted in (its `PageInfo`, its section, its line numbers) and what only its stories
+//! show (the counts and the `STYLEREF` texts): a page whose stories show another page
+//! count has its body painted as before.
+//!
 //! Must not: paint, or digest what is not the page's own (one page more changes only the
 //! pages whose counts it changes, not every page's).
 
@@ -16,13 +21,24 @@ use ooxml_word_layout::DocumentLayout;
 use ooxml_word_model::Model;
 use std::collections::BTreeMap;
 
+/// A page's context, digested: whole, and in its body's and its stories' parts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct PageContext {
+    /// Everything (what a page's digests depend on).
+    pub(crate) whole: Digest,
+    /// What its body is painted in: its `PageInfo`, section and line numbers.
+    pub(crate) body: Digest,
+    /// What only its stories show: the counts and its `STYLEREF` texts.
+    pub(crate) stories: Digest,
+}
+
 /// Each page's context (0-based, blank pages counted), digested under `key`.
 pub(crate) fn page_contexts(
     layout: &DocumentLayout,
     model: &mut Model,
     locale: &ooxml_base::Locale,
     key: DigestKey,
-) -> Vec<Digest> {
+) -> Vec<PageContext> {
     let sections: Vec<Digest> = layout
         .document
         .sections
@@ -47,10 +63,15 @@ pub(crate) fn page_contexts(
             let counts = page_counts(layout, info.section);
             let section = sections.get(info.section).copied().unwrap_or_default().0;
             let referenced = references.get(&page).map(Vec::as_slice).unwrap_or_default();
-            Digest::of(
-                key,
-                format!("{info:?}|{counts:?}|{section:?}|{referenced:?}|{:?}", numbers.on(page)).as_bytes(),
-            )
+            let numbered = numbers.on(page);
+            PageContext {
+                whole: Digest::of(
+                    key,
+                    format!("{info:?}|{counts:?}|{section:?}|{referenced:?}|{numbered:?}").as_bytes(),
+                ),
+                body: Digest::of(key, format!("{info:?}|{section:?}|{numbered:?}").as_bytes()),
+                stories: Digest::of(key, format!("{counts:?}|{referenced:?}").as_bytes()),
+            }
         })
         .collect()
 }

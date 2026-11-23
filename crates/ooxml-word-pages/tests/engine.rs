@@ -843,7 +843,7 @@ fn a_check_after_a_local_edit_reads_again_only_the_pages_it_changed() {
     let pages = first.page_count();
     assert!(pages > 4, "{pages}");
     let _ = reads(&mut e, &first);
-    assert_eq!(e.stats().pages_read, (u64::try_from(pages).unwrap(), 0));
+    assert_eq!(e.stats().pages_read, (u64::try_from(pages).unwrap(), 0, 0));
     // A paragraph near the end edited in place: only its page is painted again.
     let bytes = package(&paragraphs(300, Some(290)));
     let edited = e.lay_out_bytes(bytes.clone().into()).unwrap().unwrap();
@@ -885,7 +885,7 @@ fn page_reads_are_held_within_the_paint_budget() {
     let again = reads(&mut e, &first);
     // Nothing granted: nothing kept, every page painted again, the reads the same.
     let pages = u64::try_from(first.page_count()).unwrap();
-    assert_eq!(e.stats().pages_read, (2 * pages, 0));
+    assert_eq!(e.stats().pages_read, (2 * pages, 0, 0));
     let mut cold = engine();
     let whole = cold.lay_out_bytes(bytes.into()).unwrap().unwrap();
     assert_eq!(again, reads(&mut cold, &whole));
@@ -910,4 +910,39 @@ fn page_reads_go_with_the_versions_that_held_their_pages() {
     let _ = e.lay_out_bytes(other(1).into()).unwrap().unwrap();
     let _ = e.lay_out_bytes(other(2).into()).unwrap().unwrap();
     assert_eq!(paint.used(), 0);
+}
+
+/// `n` paragraphs, a header showing the page count.
+fn counted(n: usize) -> Vec<u8> {
+    let mut body = paragraphs(n, None);
+    body.push_str(r#"<w:sectPr><w:headerReference w:type="default" r:id="rIdH" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/></w:sectPr>"#);
+    let header = r#"<w:p><w:pPr><w:pBdr><w:bottom w:val="single" w:sz="4" w:space="1" w:color="auto"/></w:pBdr></w:pPr><w:r><w:t xml:space="preserve">Pages: </w:t></w:r><w:fldSimple w:instr=" NUMPAGES "><w:r><w:t>1</w:t></w:r></w:fldSimple></w:p>"#;
+    package_parts(&body, None, Some(header))
+}
+
+#[test]
+fn a_page_added_at_the_end_has_the_pages_before_it_paint_only_their_stories() {
+    let mut e = engine();
+    let first = e.lay_out_bytes(counted(300).into()).unwrap().unwrap();
+    let _ = reads(&mut e, &first);
+    // Paragraphs added at the end: one page more, so every header shows another count.
+    let bytes = counted(330);
+    let longer = e.lay_out_bytes(bytes.clone().into()).unwrap().unwrap();
+    assert!(longer.page_count() > first.page_count());
+    let before = e.stats().pages_read;
+    let warm = reads(&mut e, &longer);
+    let after = e.stats().pages_read;
+    let (painted, taken, stories) = (after.0 - before.0, after.1 - before.1, after.2 - before.2);
+    assert!(
+        stories + 2 >= u64::try_from(first.page_count()).unwrap(),
+        "{painted} {taken} {stories}"
+    );
+    assert!(painted <= 3, "{painted} {taken} {stories}");
+    let mut cold = engine();
+    let whole = cold.lay_out_bytes(bytes.into()).unwrap().unwrap();
+    assert_eq!(
+        warm,
+        reads(&mut cold, &whole),
+        "the reads joined are the reads made cold"
+    );
 }
