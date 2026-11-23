@@ -6,7 +6,7 @@
 
 use crate::paragraph::{MeasuredParagraph, Unmeasured};
 use crate::table::TableFlow;
-use ooxml_word_model::model::{Block, Paragraph, SectionProps, Table};
+use ooxml_word_model::model::{Block, Paragraph, Run, SectionProps, Table};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -22,12 +22,16 @@ pub(super) struct Kept {
 
 /// Measures kept per block by `Arc`: the model shares an unchanged block's `Arc`
 /// between versions, and each entry holds its block, so an address names one block for
-/// as long as it is kept. Valid for one set of parts (styles, numbering, settings, theme)
+/// as long as it is kept. A paragraph the model moved to another place (a new `Arc`, its
+/// path the only change) is found by its runs' `Arc`, which it shares: a measure does
+/// not read the path. Valid for one set of parts (styles, numbering, settings, theme)
 /// and faces: [`MeasureCache::clear`] when they change.
 #[derive(Debug, Default)]
 pub struct MeasureCache {
     pub(super) blocks: HashMap<usize, Kept>,
     pub(super) tables: HashMap<usize, KeptTable>,
+    /// A kept paragraph's runs (their `Arc`'s address) -> its block's key in `blocks`.
+    by_runs: HashMap<usize, usize>,
 }
 
 /// A table's flow and what it was measured from beyond the table: its section, the
@@ -46,6 +50,7 @@ impl MeasureCache {
     pub fn clear(&mut self) {
         self.blocks.clear();
         self.tables.clear();
+        self.by_runs.clear();
     }
 
     /// How many blocks are kept.
@@ -59,16 +64,38 @@ impl MeasureCache {
     }
 
     pub(super) fn get(
-        &self,
+        &mut self,
         paragraph: &Arc<Paragraph>,
         section: &Arc<SectionProps>,
         label: Option<&str>,
     ) -> Option<Result<Arc<MeasuredParagraph>, Unmeasured>> {
-        let kept = self.blocks.get(&(Arc::as_ptr(paragraph) as usize))?;
-        let same = Arc::ptr_eq(&kept.paragraph, paragraph)
-            && (Arc::ptr_eq(&kept.section, section) || kept.section == *section)
-            && kept.label.as_deref() == label;
-        same.then(|| kept.measured.clone())
+        let fits = |kept: &Kept| {
+            (Arc::ptr_eq(&kept.section, section) || kept.section == *section) && kept.label.as_deref() == label
+        };
+        if let Some(kept) = self.blocks.get(&key_of(paragraph)) {
+            if Arc::ptr_eq(&kept.paragraph, paragraph) {
+                return fits(kept).then(|| kept.measured.clone());
+            }
+        }
+        // The paragraph moved: the same paragraph at another place.
+        let at = *self.by_runs.get(&runs_key(paragraph))?;
+        let kept = self.blocks.get(&at)?;
+        if !(kept.paragraph.same_apart_from_place(paragraph) && fits(kept)) {
+            return None;
+        }
+        let moved = Kept {
+            paragraph: Arc::clone(paragraph),
+            ..kept.clone()
+        };
+        let measured = moved.measured.clone();
+        self.insert(moved);
+        Some(measured)
+    }
+
+    /// Keep `kept`'s measure, by its paragraph and its paragraph's runs.
+    pub(super) fn insert(&mut self, kept: Kept) {
+        self.by_runs.insert(runs_key(&kept.paragraph), key_of(&kept.paragraph));
+        self.blocks.insert(key_of(&kept.paragraph), kept);
     }
 
     /// Keep only the top-level paragraphs of `bodies` (a new version's, each pass's):
@@ -84,5 +111,17 @@ impl MeasureCache {
             .collect();
         self.blocks.retain(|k, _| live.contains(k));
         self.tables.retain(|k, _| live.contains(k));
+        let blocks = &self.blocks;
+        self.by_runs.retain(|_, k| blocks.contains_key(k));
     }
+}
+
+/// A paragraph's key in [`MeasureCache::blocks`]: its `Arc`'s address.
+fn key_of(paragraph: &Arc<Paragraph>) -> usize {
+    Arc::as_ptr(paragraph) as usize
+}
+
+/// A paragraph's runs' key in [`MeasureCache::by_runs`]: their `Arc`'s address.
+fn runs_key(paragraph: &Paragraph) -> usize {
+    Arc::as_ptr(&paragraph.runs).cast::<Run>() as usize
 }

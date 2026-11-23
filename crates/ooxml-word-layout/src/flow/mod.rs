@@ -641,15 +641,12 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
             label: label.as_deref(),
         };
         let measured = measure_paragraph(&mcx, &mut self.state.measurer, &job).map(Arc::new);
-        self.state.cache.blocks.insert(
-            Arc::as_ptr(paragraph) as usize,
-            Kept {
-                paragraph: Arc::clone(paragraph),
-                section: Arc::clone(&geometry.props),
-                label,
-                measured: measured.clone(),
-            },
-        );
+        self.state.cache.insert(Kept {
+            paragraph: Arc::clone(paragraph),
+            section: Arc::clone(&geometry.props),
+            label,
+            measured: measured.clone(),
+        });
         measured
     }
 

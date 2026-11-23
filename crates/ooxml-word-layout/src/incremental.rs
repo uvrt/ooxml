@@ -48,7 +48,7 @@ pub fn same_item(old: &FlowItem, new: &FlowItem) -> bool {
                 && a.role == b.role
                 && a.continuation == b.continuation
                 && a.anchors == b.anchors
-                && a.source == b.source
+                && same_source(a.source.as_deref(), b.source.as_deref())
                 && a.drop_cap == b.drop_cap
                 && a.note_forms == b.note_forms
         }
@@ -59,6 +59,16 @@ pub fn same_item(old: &FlowItem, new: &FlowItem) -> bool {
                 && a.notes == b.notes
         }
         (FlowItem::Stop(a), FlowItem::Stop(b)) => a.section == b.section && a.reason == b.reason,
+        _ => false,
+    }
+}
+
+/// Whether two items' sources break their lines alike (their paragraphs perhaps at other
+/// places).
+fn same_source(a: Option<&crate::rebreak::ParaSource>, b: Option<&crate::rebreak::ParaSource>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => std::ptr::eq(a, b) || a.same_apart_from_place(b),
+        (None, None) => true,
         _ => false,
     }
 }
@@ -126,6 +136,9 @@ fn moved(page: &LaidPage, by: Shift) -> LaidPage {
     for wrap in &mut out.wraps {
         wrap.drop_cap = wrap.drop_cap.map(|k| k.saturating_add_signed(items));
         wrap.table = wrap.table.map(|k| k.saturating_add_signed(items));
+        if let Some((key, _)) = &mut wrap.drawing {
+            key.block = key.block.saturating_add_signed(blocks);
+        }
     }
     out.start = shift(&page.start, items);
     out.end = shift(&page.end, items);

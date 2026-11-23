@@ -230,6 +230,34 @@ impl Paragraph {
     pub fn text(&self) -> String {
         self.runs.iter().map(|r| &*r.text).collect()
     }
+
+    /// Whether `other` is this paragraph at another place: everything but its path the
+    /// same. The model gives a paragraph it kept by its content and moved the same parts
+    /// (`Arc`s), so there this is a few pointer compares.
+    pub fn same_apart_from_place(&self, other: &Paragraph) -> bool {
+        // Every field named, so that a new one is weighed here.
+        let Paragraph {
+            runs,
+            properties,
+            table_style_id,
+            table_conditions,
+            path: _,
+            para_id,
+            joins,
+            mark_deleted,
+            section,
+            bookmarks,
+        } = self;
+        *runs == other.runs
+            && *properties == other.properties
+            && *table_style_id == other.table_style_id
+            && *table_conditions == other.table_conditions
+            && *para_id == other.para_id
+            && *joins == other.joins
+            && *mark_deleted == other.mark_deleted
+            && *section == other.section
+            && *bookmarks == other.bookmarks
+    }
 }
 
 /// `w:tblLook`: which of the table style's regions the table turns on.
