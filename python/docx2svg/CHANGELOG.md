@@ -5,7 +5,7 @@ docx2svg has not been released to PyPI. Each version that reaches `main` is tagg
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) records every measurement in detail.
 
-## 0.14.0 -- unreleased
+## 0.14.0 -- v2026.11.23
 
 - **`docx2svg.rust` keeps less again (lane L4f):** lines' heights, cells' stacked lines,
   geometries, cells' resolved formats and painted spans' pens are kept compact or shared in
@@ -45,6 +45,28 @@ snapshot commit; the development history before it is summarised here.
   its markup, `drawing.markup_faces`), so the rasteriser is handed their files: a page whose
   body named no such face drew the chart's words and numbers in whatever face answered the
   generic family, or, where none did (Linux with the open substitutes), none at all.
+
+### Added
+
+`docx2svg.rust.page_setup(options)` (lane H7b): what a Rust session lays its documents out
+with for these options -- an `ooxml_core.PageSetup` of the fonts `word_fonts` finds, the
+engines' locale, decimal tab and glyph size, counted in the process's memory budget -- and `engine_key(options)`, what an engine for them is made for -- so the
+session keeps each document's engine itself; `None` for options the Rust layout does not take.
+
+### Fixed
+
+`docx2svg.rust` (lane CL1): a version whose body holds a paragraph the Rust layout draws as a
+placeholder is laid out in Rust (it fell back to the Python layout before): its
+`placeholders` and its coverage (`partial`, the placeholder's block not among
+`blocks_laid_out`) come from Rust. With `paginate.CARRY_ON` off the Rust layout is not used
+(it always carries on): the fallback is counted as `layout stops`.
+
+`docx2svg.rust` (lane LT1): a page laid out in Rust gives its text boxes' lines -- each
+floating drawing's `lines`, in page coordinates -- and `RustPage.text_lines()` lists them in
+paint order with the page's own, as docx2svg's Python layout does (ooxml-core's
+`LaidPages.page`). Before, a paragraph in a text box was drawn in the page's SVG but was
+not among its lines: docx-agent's `ids_on_page` left it out and `drawn_faces` missed its
+faces.
 
 ## 0.13.1 -- unreleased
 

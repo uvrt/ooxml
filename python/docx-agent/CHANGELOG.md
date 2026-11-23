@@ -5,6 +5,493 @@ docx-agent has not been released to PyPI. Each version that reaches `main` is ta
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) has the detail of every phase.
 
+## 0.2.0 -- v2026.11.23
+
+### Added
+
+- **`check`'s `copies` in Rust** (lane CP1): each copy compared with the reference it was
+  made from -- its blocks paired with the reference's, `word_compare_blocks`' differences,
+  the list items and page settings as Word applies them (level, label, where a numbered
+  item starts, indents, keeps; `run_on` runs), the reference's example text left in the
+  copy, `fix` and `list_fix` within the reply's budget, and the comparisons a document's
+  checks keep -- is answered by the Rust session, its refusals as docx-agent's.
+- **An empty `include` is the default** in the Rust `check` too (validate, reflow, fields),
+  as docx-agent reads it.
+
+Lane E1b: `word_edit_table` `sync` is served by the Rust session: the table kept in step with a
+source's rows by a key column (`key`, `remove`, `loose`, `match`, `from_columns`, `date_format`)
+in one command -- rows of new keys added beside the data rows (key order or the source's), the
+cells that differ rewritten, the rows of keys gone listed or deleted, the table's record of its
+source kept or dropped with each cell's source kept instead -- with docx-agent's replies and
+refusals.
+
+Lane E1: `word_edit_table` `set_cells` from a source (`from: d:<id>` or a table of another
+open document, with `from_columns`, `header`, `date_format`, `index` and `grow`) is served by
+the Rust session: the host resolves the source as its dispatcher does and hands the rows over
+with the call (`CallDocuments(sources=...)`); the table's record of the source is kept as
+before. A served reply that says where its time went (`data.timing`) gets the checks' parts
+added, as the Python path's does.
+
+Lane E1c: `word_edit_table` on a table placed from a source is served by the Rust session: a row
+or column inserted, copied or deleted, cells merged or split, or cells written without a source
+keep the table's record of where its values came from true as docx-agent's `_Kept` does (moved,
+narrowed or dropped, under the table's id after the change). `sync`'s record now counts a tracked
+deletion of a row that is the author's own pending insertion as Word makes it: the row removed
+outright. New fixture `tables-placed.docx`.
+
+Lane E1d: `word_edit_table` `set_cells` with values by reference is served by the Rust session: a
+cell's `from`, a top-level `from` naming one value (read as each cell's without its own, said in a
+warning; alone, refused with the call that works) and `{{...}}` references in a cell's text, said in
+the reply's `facts` and kept where they went as docx-agent does (a column fill's in every cell). The
+adapter resolves each cell's value with `call.fact` and hands the session the values, and the
+refusal of a row or column a dataset lacks, which the session gives where the handler does.
+
+Lane L1: `set_properties` is served by the Rust session (`ooxml_tools_word::SetProperties`,
+the edit core's `SetCoreProperties`): the title, author, language and subject set in
+`docProps/core.xml` as docx-agent writes them -- a new element where Word writes it, the part
+made with its relationship and content type when the package has none, no step when every
+value already is the one given -- and the four read back.
+
+Lane LC1: `new_document` without a template makes the document with the Rust core
+(`ooxml_core.new_document`) and opens it; from a template it is made as before.
+
+Lane LC1: `save_document` is served by the Rust session for a document it owns: the session
+writes the file, which comes back beside the reply; the output and its id state, the save gate
+and the coverage stay the host's, and the host hands the session its layout's pages and lines
+when the body changed. A refusal is answered by the Python path, as for the other served reads.
+
+Lane LF6: a table of contents over numbered headings is rebuilt by the Rust field update
+too: each numbered heading's entry shows its list number -- then a tab, with a left stop after
+the number measured with the layout's fonts, or a space -- as `_TocLooks.number_stop` writes
+it; it was left to the Python handler. A generated fixture, `toc-numbered.docx`
+(`tools/make_toc_fixtures.py`), holds headings numbered every way.
+
+Phase P2, lane P2d3: `word_insert_markdown` given references in `markdown` or `from`
+naming one field of one row is served: the session writes a value whose source holds
+Markdown of its own as it (the host hands that Markdown over with the value), names the
+blocks each value standing alone made in `data.facts` (with the note where they do not line
+up), and keeps them as docx-agent's `_fields_placed` and `keep_written` do
+(`rust.edits.KEEPS_WRITTEN`, `rust.edits.Adapted`). `from` a table of rows stays with the
+Python handler.
+
+Phase P2, lane P2e2: `word_delete` with `find` and `within` (or `find` with a `target`,
+searched within it, said in a warning) and `word_insert_text` with `find` and `within` are
+served by the Rust session: the find searches the paragraphs a block, span, heading's range
+or other scope holds, as `Document.anchor(text, within=)`; `within` and `target` naming other
+blocks is refused as docx-agent refuses it. Before, the session answered them `unported`.
+
+Phase P2, lane P2c17: the last editing group runs in the Rust session (each declared
+`Hosting::SERVED` in Rust):
+`word_changes`, `word_comments`, `word_controls`, `word_set_tracking` (the document's
+tracking mode set in the session and on the entry together), `word_copy_from` (a source in
+the same session) and `word_edit_table` for the actions that write no rows; set_cells,
+insert_row, copy_row and sync stay with the Python handler (round 58's row look, R126, is
+Python's).
+
+Lane RD1: `render` is served by the Rust session for a document it owns, outside a batch. The
+session lays the document out with the document's page engine and draws the pages in Rust,
+the same pixels as today's renderer, rasterised at once on threads with the interpreter lock
+let go and no worker processes. It keeps each page's image for the next call and gives the
+images back as files, which the host makes the reply's images. `fast` draws the exact image:
+in Rust that costs less than today's approximate one. A refusal is answered by the Python
+path, as for the other served reads.
+
+### Changed
+
+Lane CUT1: `word_follow_sample` with a sample in another open document is served by the Rust
+session (its arguments name the documents as the host does), no longer by the Python handler.
+The tests that meet a form whose port is deferred until after the release are strict xfails
+naming the form (`tests/deferred_forms.py`); the tests of docx2svg's Python layout
+(`python_layout`) are skipped.
+
+Lane CUT1: a form the Rust session does not support yet is its refusal (`refused`, with
+`details.not_supported` and a way out), not a fallback to the Python handler: the `unported`
+fallbacks (edits and reads) are gone.
+
+Lane E2: `word_format` `keep_together` true is served by the Rust session (no fallback to the
+Python handler); `word_format_table` is handed the document's page engine, so its
+`keep_together` is served too.
+Inside a `batch`, `word_format_table` `keep_together` is measured once the batch's last op ran
+(round 28, W8): the adapter defers it and asks the session `block_pages` for the table's pages,
+with the call's writing settings, and places docx-agent's "taller than a page" warning in the
+op's warnings.
+
+Lane E3: `word_edit_table`'s rows, columns, merges and splits of a table with pending tracked
+structure (a cell deleted, inserted or merged, a row deleted) are served by the Rust session,
+no longer left to the Python path ("pending tracked structure", "split tracked"): a new row's
+cells follow the pending column changes beside them, a tracked row or column deletion gives
+back the text a pending merge took from its cells, a tracked merge takes in a pending merge
+whole (counted as made) and leaves out a row or cell whose deletion is pending, a tracked
+split's new rows lose their cells under a pending column deletion; a tracked reshape that
+would move a pending merge to another cell is refused naming the changes to settle first, by
+id. A change that leaves the table ragged (as Accept All leaves it) says so, as docx-agent
+said it.
+
+Lane G8: the editing tools the Rust session serves, and what their edits read from the host
+(blobs, the page engine, values written by reference), come from the registry's export
+(`ooxml_core.tool_hosting`, declared by each Rust tool), not from lists in `rust/edits.py`
+(`SERVED`, `BLOBS`, `LAID`, `KEEPS_WRITTEN` are gone: `docx_agent.rust.served.hosting()`).
+A tool whose arguments need the host first has an adapter registered with
+`@adapter("<tool>")` in its group's module of `docx_agent.rust.served`; the others go as
+given. The same tools are served as before (`tests/test_served_hosting.py`).
+
+Lane GS1 (tests): the golden transcripts pin a saved document by its parts, not its zip bytes.
+`output.parts_sha256` (`tests/goldens_replay.py`, `package_digest`) hashes each part's name and
+uncompressed bytes, by name; `save_document`'s `size` stays in the reply and in `data_keys` but
+is out of `data_sha` (`ENCODING_FIELDS`). The same parts deflated by zlib (the Python save) and
+zlib-rs (the Rust session's) differ in size, and the two write some parts in another order;
+Word sees neither, so the goldens now hold on both paths. `tools/refresh_goldens.py` compares
+the parts the same way.
+
+Lane H1: the ops of a `batch` are served by the Rust session (the "batch op" fallback is
+gone). The batch is one step group of the session's (`ooxml_core.Session.open_group`): one
+undo step, all or none where atomic, and a failed op taken back alone where not. Its reads
+read what its earlier ops made, and a Python op's change is in the session before the next
+op runs. Every session version of a step made of several is numbered as the step
+(`rust.reads.Mirror.keep(first=...)`), so the ids its earlier versions retired are in the
+record (`retired_ids`).
+
+Lane H2: no "a draft" or "a document with a draft" fallback for a served edit. ooxml-edit
+prepares no call of a document the Rust session owns on a draft, so those conditions never
+held; they are gone from `rust/edits`. Another document that a call holds as a reader of a
+committed version of an owned document now names that document in the session, instead of
+falling back as "a document the session does not own".
+
+Lane H2: a call with a ref name the tool layer folds (camelCase, hyphenated) is served by the
+Rust session (the "a ref name to fold" fallback is gone): the name is folded -- or refused,
+changing nothing -- before the edit, and the reply's refs and warning are the Python
+handler's. A tracking mode the session refuses (never so: the host keeps only a mode
+`word_set_tracking` took) is the call's refusal instead of a fallback.
+
+Lane H4: `word_changes`' reading actions, `list` and `preview`, are answered by the Rust
+session on the version the call reads (they were docx-agent's own handlers), paged by the
+application's `max_list_items`. A preview on a document the session owns counts the records
+this session wrote from the document as the session opened it: docx-agent's handler counted
+none of them once its view had been read again from the session's version (`this_session`
+0 where every record was this session's).
+
+Lane H7a: for a document the Rust session owns, the format's `summary`, `problems`, `state`,
+`closed` and `restored` hooks no longer read the Python view. They get ooxml-edit's
+`OwnedDocument` and answer from the session's reading of the version
+(`docx_agent.rust.hooks`): the same summary and problems as before, and the same id-state
+record. `closed` and `restored` let go only of what was kept for a view made in this process.
+
+Lane H7b: a document the Rust session owns is laid out by the session's own engine
+(`ooxml_core.Session.pages`), set to the document's font folders and locale (its own, as
+`docx_agent.layout.layout_options` resolves them: another language or other folders lay it out
+with those) -- not by an engine docx-agent made in this process. `check`'s reflow, `render`, the
+edits that read the pages and the edits whose checks take the session's reflow (these only with
+an engine the document has already) use it, and `word_inspect`'s `layout: true` places the blocks
+in Rust from that layout (no Python callback onto the Python layout any more). Where docx-agent's
+Rust layout is off (`docx_agent.pages.available`), no document gets an engine.
+
+Lane H7c: a Word document opened in a toolbox session (`Session.open`, `open_document`) is opened by the Rust session alone. No Python `Document` is parsed: `RustOwner.open_data` opens the bytes, and the id state with them (retired ids, who retired them, the versions). The refusals are `Document.open`'s: `IdStateError` for a wrong state, "not a Word package" for a package without a main part. A template warns `TemplateOpened`. A blank `new_document` is the Rust core's bytes, opened the same way. An edit's locale and render's font folders come from the entry. The tools that still read the Python view of such a document fail until the cut (lane CUT1) lands.
+
+Lane H7d: for a document the Rust session owns, the format's `own_source`, `source_hint` and
+`read_provenance` hooks read only the session (`docx_agent.rust.hooks`). What a source value
+names there (a table, a paragraph, a content control, or part of one), whether a `d:N` drawing
+is there, and the records of placed values come from the session's reading of the version, with
+the same replies as before. `store_provenance` refuses the owner's handle as `internal`: the
+session's tools keep their own records. A handler of docx-agent's that places values (a table
+from data) hands it the document it edits, as before.
+
+Lane H7e: for a document the Rust session owns, the format's `number_texts` and `scale_values`
+hooks no longer read the Python view. They read the call's subject (ooxml-edit's
+`OwnedDocument`) through the session (`docx_agent.rust.hooks`): the texts a check of numbers
+reads and the values a scale's targets hold, each with the step it is styled as now, as the
+session reads the version, placed on their pages by the session's own engine for the document.
+`tools._base.refs_resolved` resolves refs in an address without reading a heading's range.
+The engine is set to the document's own font folders and locale. A check of ranges the
+document's Rust owner (lane F) would answer goes to docx-agent's handler where the last check
+was the session's, so its `since_last_check` is measured from what that check saw.
+
+- **The live view is the Rust session's (lane LV3).** `docx_agent.liveview.view(session,
+  doc)` and `page_svg(session, doc, page, token)` keep their names and answers (`View`,
+  `ViewPage`, `PageSvg`, `UnknownToken`) and call `ooxml_core.Session.view` / `page_svg`
+  with the document's page engine: a token is `<session>-<doc>-<state number>`, the last
+  four versions are kept within the session's memory budget, a page of an older version is
+  drawn from its own layout. `ooxml_core.UnknownToken` is raised as `UnknownToken`, a
+  version the session does not lay out yet (and `text="outlines"`, not drawn in Rust yet:
+  the way out `text="text"`) as the session's refusal (`ToolError`). `externalise_images`
+  and `embed_images` are unchanged. `view(document)` / `page_svg(document, ...)` on a
+  document outside a session raise `TypeError` naming the way out (open it in a session).
+  The worker tasks `view_bytes` / `page_bytes`, the token list kept in Python, the lock
+  handling and their layouts kept with the shared layout (`extra["views"]`) are gone.
+
+Phase P2, lane P2d3: the Rust session's calls and edits are given their options as one
+`ooxml_core.CallOptions` (`rust.owner.options`): context, the open documents the call names
+(`rust.owner.documents`, a `CallDocuments`: versions read and the host's names for them),
+placer, page engine, blobs, values written by reference.
+
+Phase P2, lane P2e1: a refusal is not a fallback. A served edit or read the Rust session
+refuses answers with that refusal -- docx-agent's code, message and field, with the session's
+way out (`valid_options`, `try_call`) -- no longer handed to the Python handler for its
+wording (`docx_agent.rust.refusals`).
+An id a change removed is refused as docx-agent's view refuses it (which change removed it,
+and the way on), from the session's retired-id record.
+The served refusals answer as docx-agent does where they differed: a cell the table lacks
+(its rows, columns and merged cells), a cell given where a block is wanted (`word_delete`), a
+section named by a cell (its table's; a bookmark, range, note or other held id is left to the
+Python handler), `word_set_text`'s styles (an empty `paragraph_style` names none; an unknown
+one `not_found` at its item's field with the styles there are, a span's at its text).
+
+Phase P2, lane P2e1: an id a change removed is refused by the Rust session in docx-agent's
+words (which change removed it, the version as the tool layer numbers it, who made it, and the
+way on; a block one block replaced is said replaced with that block, and the way on names
+it), the host only passing the refusal through; the tool layer gives the session each
+version's number as it numbers it (`Session.number_version`). A served call's writes (a
+tracked edit's revision, a comment) are dated by the session's clock to the second
+(`CallContext(date=...)`), so a session with its own clock is served by the Rust session, no
+longer answered by the Python handler. `word_inspect` of a place id a stamping renamed is no longer left to the host (`unported`
+"a place id renamed"): the session follows the renames or refuses it.
+
+Phase P2, lane P2c18: served comments and content controls placed by id no longer read
+the whole document: concurrent writers elsewhere commit past them instead of queueing
+behind them (the review mix at ~3k pages).
+
+Phase P2, lane P2c19: `word_edit_table` set_cells, insert_row and copy_row run in the Rust
+session, round 58's R126 step with them (the rows written kept for check's
+`row_text_format`, the column's formatting taken into a cell that was empty, the warning for
+a row unlike the rows around it). The rows written are the session's record for a document
+it owns (`rust.owner.SessionRows`): rows the Python handler writes (sync, `from`) go into it
+too.
+
+- **`edit_chart`'s `read` is answered by the Rust session** (lane P4c16) where it answers it
+  whole: the reply is today's key for key, the embedded workbook included. A chart part or
+  workbook the Rust core cannot read as ooxml-edit words it, a deleted or renamed id, and
+  every other action stay docx-agent's own.
+
+- **`edit_chart`'s `set_values`, `set_value`, `rename_series` and `rename_category` are
+  answered by the Rust session** (lane P4c17): the chart's caches and its embedded workbook
+  changed as ooxml-edit changes them (a cell's value, its shared string, the sheet's
+  dimension and its tables' column names), or the cache only with today's warning. Values
+  given `from` a table, a name compared beyond ASCII, a cell holding a formula, a workbook
+  the Rust core cannot read, and every other action stay docx-agent's own.
+
+- **`edit_chart`'s `add_category`, `remove_category`, `add_series`, `remove_series`,
+  `set_legend`, `show_data_labels`, `hide_data_labels` and `set_gap_width` are answered by
+  the Rust session** (lane P4c18): the chart's caches changed as ooxml-edit changes them
+  (points renumbered, per-point formats kept on their points, a new series copied from the
+  last with its own unique id) and the embedded workbook kept in step (cells moved, cleared
+  and written, formulas grown and shrunk, tables shifted and their columns named again), or
+  the cache only with today's warning. `set_title` and `set_axis_title`, value labels in a
+  document whose defaults name no language, a table reference that is not a plain area,
+  and clearing a cell holding a formula stay docx-agent's own.
+
+- **`edit_chart`'s `set_title` and `set_axis_title` are answered by the Rust session**
+  (lane P4c18, part b2): a title made in order or taken away, its text written into its
+  rich text with the formatting kept character by character as ooxml-edit's
+  `replace_body_text` keeps it (the same `difflib` opcodes, now in `ooxml_base::difflib`),
+  a title drawn from a cell written in its cache and its workbook cell, and the chart's
+  `autoTitleDeleted` kept true. New title text in a document whose defaults name no
+  language stays docx-agent's own.
+
+- **`edit_chart`'s style actions are answered by the Rust session** (lane P4c19, part 1a):
+  `set_axis_scale` (bounds, units, number format, reversed with the crossing axis moved,
+  `auto`, the axis a scale without one is for), `set_gridlines`, `format_series`,
+  `format_point` (a point made from its series' look) and `set_text_style` (each part, or
+  all of the text and the chart's default), checked in ooxml-edit's order and words.
+  `set_series_type` and `set_point_labels` stay docx-agent's own, as does text styling that
+  makes new text properties in a document whose defaults name no language.
+- **Series and category names that only NFKC matches are served too**: the loose comparison
+  folds with NFKC and Python's `casefold` as Python 3.12 (Unicode 15.0) does
+  (`unicode-normalization` 0.1.26); a name holding a character newer than Unicode 15.0 that
+  the newer data changes stays docx-agent's own.
+
+- **`edit_chart`'s `set_series_type` and `set_point_labels` are answered by the Rust
+  session** (lane P4c21, part 1): a column chart's series drawn as a line, on the secondary
+  axes (a value axis at the right and its hidden category axis made as PowerPoint makes
+  them) or back as a column, an emptied plot taken out with the axes no other plot uses;
+  a label per point at a position its plot takes, in the series' label style, and with
+  `cells` written into the embedded workbook too (Value From Cells), or taken away --
+  checked in ooxml-edit's order and words. Point labels in a document whose defaults name
+  no language stay docx-agent's own (the session's locale decides them).
+
+- **`edit_chart`'s `add` is answered by the Rust session** (lanes P4c22, P4c23): a new
+  inline chart in a paragraph of its own after the target (a heading's, title's or
+  subtitle's followed by `Normal`) or at a position in a paragraph, as Word inserts one --
+  the chart part in Word's look and the document's theme, the embedded workbook holding the
+  same numbers, their relationships and content types -- with its scale, minor gridlines,
+  value labels, colours and text style in the same undo step; checked in docx-agent's and
+  ooxml-edit's order and words. Values `from` a table, category dates and a document whose
+  defaults name no language stay docx-agent's own.
+
+Lane P5k: `check` with the layout's facts is answered by the Rust session (`include: ["layout"]`,
+`range`, `min_size`, `styles`, `pages`, and the application's `min_text_size` given as one number):
+the facts read from the pages and from the document alone, in the same order, kept to the
+ranges' blocks and pages, each range's extent, keeps and what its keep does; past the call's
+limit on laying out, the facts read from the document alone. A document whose rows this session
+wrote with `word_edit_table` here (or made ragged), a refused range and `pages` holding none of
+the ranges' blocks are still checked here.
+A header's, footer's or note's paragraph is placed on each page asked for that draws it (its
+`pages`, and whether `pages` keeps it), as here.
+A changing call measured against the version before it (`word_format`'s `keep_together` saying
+a span cannot be kept on one page, the reflow after an edit) reads the pages the session's last
+check laid out, a check of the layout or of ranges alone too.
+
+Lane P5m: an edit the Rust session serves without the document's lock reports the reflow the
+session measured after it, where the document's page engine is at hand and laid out the version
+before (or the session's last check saw it). Where docx-agent's own layout before compares, the
+edit is Python's under the lock, as before.
+
+Lane U3: the Rust session numbers an owned document's states; docx-agent reads them
+(`Version.state`) for its versions, its kept versions and the record of retired ids, and its
+owner answers the tool layer's history from the session (`Session.numbers`, `numbered`,
+`highest`, `continue_numbers`). Calls the session serves side by side no longer wait for one
+another to be numbered.
+
+Lane U4: `undo` on a Word document is answered by the Rust session's `undo` tool, with today's
+replies; who made each step is the session's record. The caller's context goes to the session in
+the order given (`CallContext(context=...)`).
+Lane U5: "nothing (of yours) to undo/redo" now lists the document's steps and who made each in
+`valid_options`, and the undo or redo the other way in `try_call` where that one works. A session
+with its own clock undoes through the same tool.
+
+Lane Z2 (P4e): the Word fixtures moved to `crates/ooxml-oracle/fixtures`, apart from docx-agent's
+tests (they are the gates' documents too, and the gates' reference is frozen at a commit), and
+the made-up documents the oracle's fact cases share with the tests (`facts_documents.py`,
+`shelf_tables.py`) to `crates/ooxml-oracle/python`. The tests' `conftest.py` names the fixtures
+(`FIXTURE_DIR`) and puts that folder last on the path; the fixture writers in `tools/` write
+there. No change to the library.
+
+### Fixed
+
+- **`edit_chart`'s data actions answered by the Rust session keep the chart's record of where
+  its values came from true** (lane C1), as ooxml-edit's `RECORD_ACTIONS` do: `add_category`
+  and `remove_category` drop the record; `rename_category` drops its categories; `set_values`
+  and `set_value` drop the changed series' entry; `rename_series` renames it and
+  `remove_series` drops it -- in the chart part's own record and in the document's records,
+  in the edit's undo step.
+
+- A read the Rust session lays out or draws for (`check`, `render`, `describe`, `word_inspect`'s layout) runs with
+  the document's lock let go outside a batch again: an edit made meanwhile no longer waits for it. A `check` that
+  lays the document out between a batch's changes says so again (`ops[n]: check laid the document out between the
+  batch's changes, holding it: ...`).
+
+Lane H3: an application's own `Limits` (`max_result_chars`, `max_list_items`) no longer send
+every read to the Python path (the fallback "limits"): the Rust session is handed them per
+call, reads and edits alike. A served `word_comments` list pages by `max_list_items` (it
+paged by 50 whatever the limit) and keeps its page's `next_cursor` and `total` (they were
+dropped).
+
+Lane LT1: `layout().where` (and `page_of`) of a layout made in Rust places a paragraph in a
+text box on the page that draws it, as for docx2svg's Python layout; it said `not-drawn`,
+and `ids_on_page` left it out, though the page's SVG drew it (docx2svg's text boxes' lines,
+lane LT1).
+
+- A Python tool's step bridged to the Rust session hands over the view's id ledger too
+  (`ooxml_core.HostIds`): the session's next edit draws the paraId docx-agent's own next draw
+  gives (an id the tool drew and did not write is not drawn again), and a block the tool stamped
+  is found by its old id (`t@body/0/c2,2` after a row insert) (lane P2e6).
+- `docx_format(typography=False)`: a writing call is served by the session, its context saying
+  the text is written as given (`ooxml_core.CallContext(typography=False)`); no
+  `edit_fallbacks{reason="typography off"}` any more (lane P2e7).
+- A served write whose text got its language's spacing says how many spaces it wrote as no-break
+  spaces, as docx-agent's handler does (`word_controls` `fill` among them) (lane P2e7).
+- A served `word_insert_markdown` whose `table_cell` style's indents run its text past the cell's
+  edge, or leave it no width, says so with the style and where the indent comes from, as
+  docx-agent's handler does (round 21, T4) (lane P2e7).
+- **Served refusals as docx-agent words them (lane P2e8).** A served `word_edit_table` naming a
+  workbook's table (`t:stock`, `d2/t:stock`) says it is a table of that document (round 56,
+  R120); a served `word_insert_text` whose `ref` holds an address gives the call that places
+  it (`details.call`) or the item (`details.item`).
+- **A served edit stops laying out at the host's `layout_timeout` (lane TA).** An edit the
+  Rust session serves (a table of contents, a field's page numbers) lays the document out
+  within `Limits.layout_timeout`, as a served read does: past it the call is a timeout that
+  changes nothing (was: the session's own limit).
+
+Phase P2, lane P2e2: a served `word_inspect` follows the renames the session's edits made: an
+id by place (`p@body/1`, `t@body/0` and its rows and cells) stamping renamed names the block it
+named before, as docx-agent's view reads it (`Ids.follow_address`).
+
+- **`edit_chart`'s messages write a number from the arguments as docx-agent does** (lane
+  P4c20): a bound, unit, line width or text size given as `9.0` reads `9.0` in the refusal
+  (`the minimum (9.0) must be below the maximum (3.0)`), one given as `9` reads `9`. A null
+  key inside `scale` or `style` is left out on both paths, as the validator drops it.
+
+Lane P5a5: `check` with a `range` that names a table lists that table's own grid problems
+(a row past its grid, a vertical merge off its column) in the range, not in `elsewhere`:
+`validate.problems_in` reads a table given as a block as the whole check reads the tables
+below a part's root.
+
+**The document's locale reaches the Rust session (lane P5q).** A served `word_fields` call
+passes the document's `locale` in its `CallContext`, so a table of contents' `\t` styles are
+read as `_list_separator` and `_field_language` read them (the locale's list separator and
+language, else the document's own language) instead of from `w:themeFontLang` alone.
+
+Lane P5t: `check(range=[...])` answered by the Rust session refuses a range as docx-agent does
+(`not_found` for one that names nothing or holds no paragraph, with the body's headings as the
+ways in) instead of handing it back; names a heading's range as the span it is
+(`h:p:A` -> `p:A..p:C`); counts a text box's lines in its paragraph's extent; and reports
+`one_page`, `kept`, `breaks` and `fix` for a paragraph of a table's cell given alone, and for a
+span of paragraphs holding text boxes.
+
+- **Train 12's objects differences** (lane X12): `edit_chart`'s `add` on a row or cell id is
+  refused as docx-agent refuses it (`invalid_arguments` naming the table and the cell's
+  paragraphs), not charted in the cell's first paragraph; `word_edit_table`'s ragged warning
+  reads the table's shape as docx-agent's `ragged_rows` does, a table off its grid too, so a
+  change on a table already ragged no longer says it made it so.
+
+### Removed
+
+**docx-agent 0.2.0: the Python view and the public `Document` API are gone (P4e, lane CUT-C).**
+A Word document is opened, edited, checked, laid out and saved by the Rust session
+(`ooxml_core`) alone; docx-agent is the tool layer on it (`docx_agent.tools`: `TOOLS`,
+`FORMAT`, `GROUPS`, `block_of`, `blocks_between`) and the live view
+(`docx_agent.liveview`). Nothing falls back to Python: a form the Rust session does not
+have yet is refused `not_supported`, with the way out.
+
+Removed from the package (`from docx_agent import ...`): `AmbiguousAnchor`,
+`AnchorNotFound`, `Bookmark`, `Cell`, `Change`, `Chart`, `ChartDataWarning`,
+`ChartEditError`, `Comment`, `ContentControl`, `DEFAULT_STYLE_MAP`, `DeletedId`,
+`Diagram`, `DiagramDrawingDropped`, `Document`, `Drawing`, `EditError`, `EditResult`,
+`Field`, `Hyperlink`, `ListMembership`, `Member`, `Note`, `Paragraph`, `Picture`,
+`Revision`, `Row`, `Rule`, `Run`, `Section`, `Story`, `StyleMap`, `Table`, `TextRange`,
+`Tracking`, `UntrackedChartEdit` and `copy_blocks`. `__version__` stays.
+
+Removed modules: `docx_agent.edit` (every submodule: the document, its stories, tables,
+drawings, charts and SmartArt, fields, notes, sections, styles, numbering, properties,
+importing, the blank document and Word's built-in styles), `docx_agent.markdown` (the
+Markdown reader and writer, `StyleMap`), `docx_agent.revisions` (tracked changes, review,
+stamping), `docx_agent.oxml`, `docx_agent.samples` (with `accept_loses_text.docx`),
+`docx_agent.layout`, `docx_agent.layout_facts`, `docx_agent.blocks`,
+`docx_agent.revalidate`, `docx_agent.validate`, `docx_agent.state`, `docx_agent.scope`,
+`docx_agent.pages`, `docx_agent.incremental` and `docx_agent.bodyscan`. In the library that means `Document.open/new/to_markdown/layout/
+validate/provenance/...`, `doc.layout().coverage_facts()` and
+`docx_agent.layout_facts.layout_facts` are gone: the tools' `describe`, `word_read`,
+`check` and `save_document` answer the same questions through the Rust session.
+
+The tool layer (lane CUT-A2): `edit_smartart`, `style_by_value` and `word_find_asset` are out
+of `TOOLS` until the Rust session has them; `docx_format(assets=...)` raises `ValueError`
+(give `word_drawings` a picture as an image blob); `FORMAT.errors` is empty (no Python
+exception is mapped to a refusal any more); `docx_agent.tools.shared.render_pages`,
+`serialise` and `check_plan`, `docx_agent.tools.read.heading_tree` and the module
+`docx_agent.tools.text` are gone, and `docx_agent.tools.objects`, `structure` and `style`
+lose their Python handlers and constants (`ROWS_WRITTEN`, `STYLE_KEYS`, ...).
+
+`word_insert_markdown`'s note on small text written (the application's `min_text_size`
+setting) is gone: `min_text_size` is refused at release (user decision, 2026-11-22).
+`check`'s `small_text`, with `min_size`, still reports text below a size.
+
+The dependencies on `lxml` (ooxml-edit still brings it), `markdown-it-py` and `mdit-py-plugins` go with them (pyproject.toml);
+`docx2svg` stays, for the page engine's font folders and the live view.
+
+Removed from the repository: `docs/api-tour.md` and `docs/common-tasks.md` (the library's
+tour and recipes), `examples/review_comments.py`, and the probes under `tools/`
+(`chart_parts`, `charts_probe`, `e1_probe` to `e6_probe`, `language_accuracy`,
+`language_probe`, `merged_rows_probe`, `paraid_probe`, `row_format_probe`, `rows_probe`,
+`select_commonmark_examples`, `separator_probe`, `styleref_probe`, `table_regions_probe`,
+`theme_tint_probe`, `toc_numbers_probe`, `toc_probe`, `tracked_report`,
+`tracked_report_bench`, `tracking_probe`, `trial_probe`, `typography_probe`). Their
+measurements stay recorded in the tests' observations and the CHANGELOG. The fixture
+makers (`tools/make_*.py`, `make_samples.py`) stay as the record of how the fixtures were
+made; they run against the frozen reference (crates/ooxml-oracle/reference.toml).
+
+Lane CUT2: the Rust owner of lane F is gone (`docx_agent.rust.check`, `mirror`, `parser`,
+`records`, `exporter`, `fields`, `classes`) with the `DOCX_AGENT_RUST` and
+`DOCX_AGENT_RUST_FIELDS` switches: checks and fields updates are the Rust session's, and the
+host no longer numbers the session's versions (`Session.number_version`).
+
 ## 0.1.140 -- unreleased
 
 Phase P2, lane P2c17: a call the Rust session answers names documents as the host does

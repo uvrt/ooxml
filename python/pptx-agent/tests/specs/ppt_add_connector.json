@@ -1,0 +1,165 @@
+{
+ "description": "Add connectors: straight, elbow or curved lines that stay attached to shapes, or run between points.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "items": {
+    "description": "The connectors.",
+    "items": {
+     "additionalProperties": false,
+     "properties": {
+      "from": {
+       "additionalProperties": false,
+       "description": "A shape (and side) or a point.",
+       "properties": {
+        "shape": {
+         "description": "Shape to attach to, or $ref.",
+         "type": "string"
+        },
+        "side": {
+         "description": "Default auto: facing the other end.",
+         "enum": [
+          "auto",
+          "top",
+          "right",
+          "bottom",
+          "left"
+         ],
+         "type": "string"
+        },
+        "x": {
+         "description": "Or a point: x, y.",
+         "type": "number"
+        },
+        "y": {
+         "type": "number"
+        }
+       },
+       "type": "object"
+      },
+      "kind": {
+       "enum": [
+        "straight",
+        "elbow",
+        "curved"
+       ],
+       "type": "string"
+      },
+      "line": {
+       "additionalProperties": false,
+       "description": "end=triangle draws an arrow.",
+       "properties": {
+        "color": {
+         "description": "none hides it.",
+         "type": "string"
+        },
+        "dash": {
+         "enum": [
+          "solid",
+          "dash",
+          "dot",
+          "dashDot",
+          "lgDash",
+          "sysDash",
+          "sysDot"
+         ],
+         "type": "string"
+        },
+        "end": {
+         "description": "Arrowhead.",
+         "enum": [
+          "arrow",
+          "diamond",
+          "none",
+          "oval",
+          "stealth",
+          "triangle"
+         ],
+         "type": "string"
+        },
+        "start": {
+         "description": "Arrowhead.",
+         "enum": [
+          "arrow",
+          "diamond",
+          "none",
+          "oval",
+          "stealth",
+          "triangle"
+         ],
+         "type": "string"
+        },
+        "width": {
+         "type": "number"
+        }
+       },
+       "type": "object"
+      },
+      "name": {
+       "type": "string"
+      },
+      "ref": {
+       "description": "Ref name (a-z, 0-9, _): later arguments write $name.",
+       "type": "string"
+      },
+      "to": {
+       "additionalProperties": false,
+       "description": "A shape (and side) or a point.",
+       "properties": {
+        "shape": {
+         "description": "Shape to attach to, or $ref.",
+         "type": "string"
+        },
+        "side": {
+         "description": "Default auto: facing the other end.",
+         "enum": [
+          "auto",
+          "top",
+          "right",
+          "bottom",
+          "left"
+         ],
+         "type": "string"
+        },
+        "x": {
+         "description": "Or a point: x, y.",
+         "type": "number"
+        },
+        "y": {
+         "type": "number"
+        }
+       },
+       "type": "object"
+      }
+     },
+     "required": [
+      "kind",
+      "from",
+      "to"
+     ],
+     "type": "object"
+    },
+    "type": "array"
+   },
+   "key": {
+    "description": "Retry key: a repeat with the same key makes nothing new.",
+    "type": "string"
+   },
+   "slide": {
+    "description": "Slide, s:256 or $ref; needed when an end is a point.",
+    "type": "string"
+   }
+  },
+  "required": [
+   "doc",
+   "items"
+  ],
+  "type": "object"
+ },
+ "name": "ppt_add_connector",
+ "strict": false
+}

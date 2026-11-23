@@ -1,0 +1,81 @@
+{
+ "description": "Review comment threads on slides and shapes: list, add, reply, resolve, reopen, edit, delete, many at once. Comments do not change the slides.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "action": {
+    "description": "What to do.",
+    "enum": [
+     "list",
+     "add",
+     "reply",
+     "resolve",
+     "reopen",
+     "edit",
+     "delete"
+    ],
+    "type": "string"
+   },
+   "author": {
+    "description": "add, reply: the author's name.",
+    "type": "string"
+   },
+   "cursor": {
+    "description": "next_cursor of the previous page.",
+    "type": "string"
+   },
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "items": {
+    "description": "The comments to act on (not list).",
+    "items": {
+     "additionalProperties": false,
+     "properties": {
+      "comment": {
+       "description": "The comment (c:...), except for add.",
+       "type": "string"
+      },
+      "ref": {
+       "description": "add, reply: ref name for the new comment.",
+       "type": "string"
+      },
+      "resolve": {
+       "description": "reply: also resolve the thread.",
+       "type": "boolean"
+      },
+      "target": {
+       "description": "add: the slide (s:256) or shape (256.5) it is on.",
+       "type": "string"
+      },
+      "text": {
+       "description": "add, reply, edit: the text; \\n between paragraphs.",
+       "type": "string"
+      }
+     },
+     "type": "object"
+    },
+    "type": "array"
+   },
+   "open_only": {
+    "description": "list: only unresolved threads.",
+    "type": "boolean"
+   },
+   "slides": {
+    "description": "list: only these slides, numbers or ids (s:256). Default all.",
+    "items": {
+     "type": "string"
+    },
+    "type": "array"
+   }
+  },
+  "required": [
+   "doc",
+   "action"
+  ],
+  "type": "object"
+ },
+ "name": "ppt_comments",
+ "strict": false
+}

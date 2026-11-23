@@ -1,0 +1,40 @@
+{
+ "description": "Read slides with shape ids. outline: Markdown, each block under its shape id (escaped; never paste it back as text). geometry: each shape's kind, box, z-order, fill, line, text, font sizes and drawn text colour with its source. compact: id, kind, box, fill, text size and colour, first words per shape. svg: an SVG per slide, data-id per shape.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "cursor": {
+    "description": "next_cursor of the previous page.",
+    "type": "string"
+   },
+   "detail": {
+    "description": "What to show.",
+    "enum": [
+     "outline",
+     "geometry",
+     "compact",
+     "svg"
+    ],
+    "type": "string"
+   },
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "slides": {
+    "description": "Slide numbers from 1, or ids (s:256, $ref); layouts L2, masters M0. Default all.",
+    "items": {
+     "type": "string"
+    },
+    "type": "array"
+   }
+  },
+  "required": [
+   "doc",
+   "detail"
+  ],
+  "type": "object"
+ },
+ "name": "ppt_read_slides",
+ "strict": false
+}

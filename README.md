@@ -118,16 +118,25 @@ example `pip install ./python/ooxml-common ./python/ooxml-edit ./python/docx2svg
   `fixed`, `removed`, holding the entry as the changelog would. CI's plan job refuses a
   `CHANGELOG.md` change on any branch but a release branch (`release/<tag>`); the build job
   checks each version against its changelog and fragments (`python tools/changelog.py check`).
-  A version is still raised in the pull request that needs it.
+  A pull request does not raise a package's version or its floors on the other packages
+  here: the release sets them from the fragments waiting (below).
 - Releases (`.github/workflows/release.yml`): pushing a date tag builds and checks every
   distribution, creates the GitHub Release and deploys the package index of every release
   to GitHub Pages (`tools/simple_index.py`, tests `tools/test_simple_index.py`); a manual
   run only builds and checks, the index install included. To cut release `<tag>`
   (`v<YYYY>.<MM>.<DD>`, `.<N>` for a second the same day): on a branch `release/<tag>` from
-  main, `python tools/changelog.py release <tag>` writes every package's fragments into its
-  `CHANGELOG.md` under its version and deletes them; merge that pull request, then tag the
-  merge commit. The release workflow refuses a tag while fragments are waiting
-  (`tools/release_notes.py`).
+  main, `python tools/changelog.py release <tag>` sets the version of every package with
+  fragments waiting, from its version at the last release tag (a `removed` fragment raises
+  the minor version while the package is 0.x, any other kind the patch version), raises that
+  package's floors on the other packages to their versions in this release, writes the
+  fragments into its `CHANGELOG.md` under the new version and deletes them
+  (`python tools/changelog.py versions` shows the versions beforehand); merge that pull
+  request, then tag the merge commit. The release workflow refuses a tag while fragments
+  are waiting (`tools/release_notes.py`). Its notes say what was removed and what to use
+  instead (every `removed` fragment needs an `Instead:` line; `changelog.py check` refuses
+  one without), which tools' definitions changed since the release before, and which forms
+  are refused until a later release. The day before the tag, send the team the preview:
+  `python tools/release_notes.py <tag> --preview`.
 
 ## History
 

@@ -1,0 +1,116 @@
+{
+ "description": "Facts as the document will show: text that does not fit, collisions, validation problems, and on request design or layout facts. Facts, not verdicts.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "boxes": {
+    "description": "Decks: also text boxes that overlap where their text does not. Default false.",
+    "type": "boolean"
+   },
+   "contrast": {
+    "description": "Decks: also text below this contrast ratio with what is behind it; 4.5 is WCAG's.",
+    "type": "number"
+   },
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "include": {
+    "description": "Default: fit, collisions, validate.",
+    "items": {
+     "enum": [
+      "fit",
+      "collisions",
+      "facts",
+      "design",
+      "validate",
+      "layout",
+      "app",
+      "numbers"
+     ],
+     "type": "string"
+    },
+    "type": "array"
+   },
+   "scale": {
+    "additionalProperties": false,
+    "description": "As style_by_value's: its values with the wrong step or none.",
+    "properties": {
+     "name": {
+      "type": "string"
+     },
+     "show": {
+      "enum": [
+       "value",
+       "label"
+      ],
+      "type": "string"
+     },
+     "steps": {
+      "items": {
+       "additionalProperties": false,
+       "properties": {
+        "fill": {
+         "type": "string"
+        },
+        "label": {
+         "type": "string"
+        },
+        "max": {
+         "type": "number"
+        },
+        "min": {
+         "type": "number"
+        },
+        "text": {
+         "enum": [
+          "auto",
+          "white",
+          "black"
+         ],
+         "type": "string"
+        },
+        "value": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "fill"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "targets": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "steps",
+     "targets"
+    ],
+    "type": "object"
+   },
+   "slides": {
+    "description": "Decks: slide numbers from 1, or ids (s:256, $ref). Default all.",
+    "items": {
+     "type": "string"
+    },
+    "type": "array"
+   },
+   "spacing": {
+    "description": "Decks: also the gaps, padding and frame clearances below this, pt; 8 is usual.",
+    "type": "number"
+   }
+  },
+  "required": [
+   "doc"
+  ],
+  "type": "object"
+ },
+ "name": "check",
+ "strict": false
+}

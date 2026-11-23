@@ -1,0 +1,18 @@
+{
+ "description": "Open an input blob as a deck or document. Returns its doc id and a summary; describe it next.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "blob": {
+    "description": "Blob handle, e.g. b1.",
+    "type": "string"
+   }
+  },
+  "required": [
+   "blob"
+  ],
+  "type": "object"
+ },
+ "name": "open_document",
+ "strict": false
+}

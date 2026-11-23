@@ -1,0 +1,18 @@
+{
+ "description": "Close a document, discarding unsaved changes. The session holds a few documents at a time: close a source once you have taken what you need.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   }
+  },
+  "required": [
+   "doc"
+  ],
+  "type": "object"
+ },
+ "name": "close_document",
+ "strict": false
+}

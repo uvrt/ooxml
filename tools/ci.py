@@ -73,7 +73,8 @@ BINDINGS = "ooxml-core bindings"
 #: runs.  ``uses`` is the transitive closure of what is installed, so it is the dependency
 #: graph the path filter follows.  ``pr_uses``, where given, replaces it on a pull request: the
 #: package's own dependencies without the siblings only its tests install (a push to main
-#: still runs the suite against every one of them).
+#: still runs the suite against every one of them).  ``"windows": False``: no Windows leg on
+#: any event (_select).
 PACKAGES: dict[str, dict] = {
     "ooxml-common": {
         # ooxml-edit is test only (tests/test_dates.py, test_numfmt.py read it); the font
@@ -148,6 +149,10 @@ PACKAGES: dict[str, dict] = {
         # The suite takes about 18 minutes on one Linux runner: split into this many jobs
         # on Linux (SHARDS below).
         "shards": 4,
+        # No Windows leg, nightly either: production runs Linux only, and docx-agent has no
+        # code of its own for Windows (its nightly Windows failures were in its tests'
+        # deadlines and locks, R4 #8).
+        "windows": False,
         "compile": ["src", "tests", "tools"],
         "mypy": False,
         "fonts": True,
@@ -390,8 +395,10 @@ FULL_LEGS: dict[str, str | None] = {"linux": "all", "windows": "newest", "macos"
 RUNNERS = {"linux": "ubuntu-latest", "windows": "windows-latest", "macos": "macos-latest"}
 
 
-def _select(name: str, versions: list[str], which: str | None) -> list[str]:
-    if which is None:
+def _select(name: str, versions: list[str], which: str | None, os_: str = "linux") -> list[str]:
+    """The Pythons ``name`` runs on ``os_`` for ``which`` (LEGS); none on an OS the
+    package opts out of (PACKAGES' ``"windows": False``)."""
+    if which is None or PACKAGES[name].get(os_, True) is False:
         return []
     if which == "all":
         return versions
@@ -427,7 +434,7 @@ def plan(event: str, changed: list[str] | None) -> dict[str, str]:
     for name in names:
         versions = _pythons(name)
         for os_, runner in RUNNERS.items():
-            for v in _select(name, versions, legs[os_]):
+            for v in _select(name, versions, legs[os_], os_):
                 leg: dict[str, str | bool | int] = {"package": name, "os": runner, "python": v}
                 if os_ == "linux" and v == versions[-1]:
                     # The coverage leg (PACKAGES' "coverage"): Linux, the newest Python,

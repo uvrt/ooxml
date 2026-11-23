@@ -1,0 +1,89 @@
+{
+ "description": "Insert a picture from an image blob on a slide, or replace a picture's image (target), keeping its frame, height or width. An SVG stays vector, with a PNG fallback made for it; ppt_set_shape fill and line recolour it. Returns its address and native size.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "anchor": {
+    "description": "Replacing: the point that stays put. Default top_left.",
+    "enum": [
+     "top_left",
+     "top",
+     "top_right",
+     "left",
+     "center",
+     "right",
+     "bottom_left",
+     "bottom",
+     "bottom_right"
+    ],
+    "type": "string"
+   },
+   "box": {
+    "additionalProperties": false,
+    "description": "Default: native size at the content area's top left.",
+    "properties": {
+     "h": {
+      "type": "number"
+     },
+     "w": {
+      "type": "number"
+     },
+     "x": {
+      "type": "number"
+     },
+     "y": {
+      "type": "number"
+     }
+    },
+    "required": [
+     "x",
+     "y",
+     "w",
+     "h"
+    ],
+    "type": "object"
+   },
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "image": {
+    "description": "Image blob handle, e.g. b2.",
+    "type": "string"
+   },
+   "keep": {
+    "description": "Replacing: what of the frame stays. Default frame.",
+    "enum": [
+     "frame",
+     "height",
+     "width",
+     "none"
+    ],
+    "type": "string"
+   },
+   "key": {
+    "description": "Retry key: a repeat with the same key makes nothing new.",
+    "type": "string"
+   },
+   "ref": {
+    "description": "Ref name (a-z, 0-9, _): later arguments write $name.",
+    "type": "string"
+   },
+   "slide": {
+    "description": "Slide to insert on, s:256 or $ref.",
+    "type": "string"
+   },
+   "target": {
+    "description": "Or the picture to replace or placeholder to fill.",
+    "type": "string"
+   }
+  },
+  "required": [
+   "doc",
+   "image"
+  ],
+  "type": "object"
+ },
+ "name": "ppt_add_picture",
+ "strict": false
+}

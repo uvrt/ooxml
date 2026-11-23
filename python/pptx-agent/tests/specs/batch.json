@@ -1,0 +1,41 @@
+{
+ "description": "Run calls to several tools in order as one undo step, checks once at the end; a failing op is skipped with its error. Not for render, save_document or session tools.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "atomic": {
+    "description": "All or none.",
+    "type": "boolean"
+   },
+   "ops": {
+    "description": "The calls in order, at most 200; later ops may use earlier refs.",
+    "items": {
+     "additionalProperties": false,
+     "properties": {
+      "arguments": {
+       "additionalProperties": true,
+       "description": "That tool's arguments.",
+       "type": "object"
+      },
+      "tool": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "tool",
+      "arguments"
+     ],
+     "type": "object"
+    },
+    "minItems": 1,
+    "type": "array"
+   }
+  },
+  "required": [
+   "ops"
+  ],
+  "type": "object"
+ },
+ "name": "batch",
+ "strict": false
+}

@@ -1,0 +1,47 @@
+{
+ "description": "A workbook's sheets, one action a call: add (name, position), rename (sheet, name: every reference rewritten), clear (Clear All: references to it stay; regenerate a sheet this way), delete (refused while anything refers to it, listing what; force: #REF!), hide, unhide.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "action": {
+    "description": "What to do.",
+    "enum": [
+     "add",
+     "rename",
+     "clear",
+     "delete",
+     "hide",
+     "unhide"
+    ],
+    "type": "string"
+   },
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "force": {
+    "description": "delete: write #REF! into what refers to it. clear: into formulas naming its tables.",
+    "type": "boolean"
+   },
+   "name": {
+    "description": "add, rename: the new name (31 characters at most).",
+    "type": "string"
+   },
+   "position": {
+    "description": "add: 1 is the first tab; default the end.",
+    "type": "integer"
+   },
+   "sheet": {
+    "description": "The sheet: its name or #id.",
+    "type": "string"
+   }
+  },
+  "required": [
+   "doc",
+   "action"
+  ],
+  "type": "object"
+ },
+ "name": "xlsx_manage_sheets",
+ "strict": false
+}

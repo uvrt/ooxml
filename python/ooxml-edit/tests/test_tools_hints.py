@@ -220,3 +220,44 @@ def test_the_batch_definition_does_not_advertise_comment(toolbox):
     batch = next(item for item in toolbox.definitions("anthropic") if item["name"] == "batch")
     assert set(batch["input_schema"]["properties"]["ops"]["items"]["properties"]) == {
         "tool", "arguments"}
+
+
+# -- a withdrawn tool is refused with its way out (decision 6, R4 #11c) -----------------------------
+
+
+WITHDRAWN = dataclasses.replace(HINTED, withdrawn={"t_find_asset": "give the picture as a blob to t_add_picture.",
+                                                   "t_add_pictures": "call t_add_picture once per picture.",
+                                                   "t_arrange": "a tool here serves this name."})
+
+
+@pytest.fixture
+def withdrawing():
+    CHECKS.clear()
+    with Toolbox(TEXT_TOOLS + DECK_TOOLS + HINT_TOOLS, formats=[DECK, WITHDRAWN], groups=shared.GROUPS) as box:
+        yield box
+
+
+def test_a_withdrawn_tool_is_refused_with_its_way_out(withdrawing):
+    session = _session(withdrawing)
+    for name in ("t_find_asset", "functions.t_find_asset"):
+        error = withdrawing.dispatch(session, name, {"doc": "d1"}).error
+        assert error.code == "refused"
+        assert error.message == ("t_find_asset is withdrawn until the Rust session has it; give the picture "
+                                 "as a blob to t_add_picture.")
+        assert error.details == {"not_supported": "t_find_asset (withdrawn)"}
+    # never read as the tool its name is like
+    error = withdrawing.dispatch(session, "t_add_pictures", {"doc": "d1"}).error
+    assert error.code == "refused"
+    assert error.message.endswith("call t_add_picture once per picture.")
+    # a name a tool serves is that tool
+    assert "t_arrange" not in withdrawing.withdrawn
+    assert withdrawing.dispatch(session, "t_arrange", {"doc": "d1", "action": "group"}).ok
+
+
+def test_a_withdrawn_tool_in_a_batch_fails_its_op(withdrawing):
+    session = _session(withdrawing)
+    ops = _ops(("t_add", {"doc": "d1", "items": [{"text": "one"}]}), ("t_find_asset", {"doc": "d1"}))
+    partial = withdrawing.dispatch(session, "batch", {"ops": ops})
+    assert partial.data["failed"] == [1]
+    assert partial.data["ops"][1]["error"]["code"] == "refused"
+    assert partial.data["ops"][1]["error"]["details"] == {"not_supported": "t_find_asset (withdrawn)"}

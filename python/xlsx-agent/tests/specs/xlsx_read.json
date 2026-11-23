@@ -1,0 +1,85 @@
+{
+ "description": "Cells by address, typed, row by row, each with its address; paged. Options add number formats, formula text (f), comments, hyperlinks, merged areas. cut says what a page left out; pass next_cursor back for more.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "cells_only": {
+    "description": "A cell or range inside a table: read just those cells, as stored, not its table rows. Default false.",
+    "type": "boolean"
+   },
+   "columns": {
+    "description": "Only these columns of a t: or d: target (or of the table rows a cell is in), in order.",
+    "items": {
+     "type": "string"
+    },
+    "type": "array"
+   },
+   "comments": {
+    "description": "Add comment (author, text).",
+    "type": "boolean"
+   },
+   "cursor": {
+    "description": "next_cursor of the previous page, with the same target.",
+    "type": "string"
+   },
+   "doc": {
+    "description": "Document id; not needed for a dataset (d:).",
+    "type": "string"
+   },
+   "formats": {
+    "description": "Add format, the number format code.",
+    "type": "boolean"
+   },
+   "formulas": {
+    "description": "Add f, the formula text.",
+    "type": "boolean"
+   },
+   "hyperlinks": {
+    "description": "Add link (url or location).",
+    "type": "boolean"
+   },
+   "key": {
+    "description": "Column holding target's key (Code for t:Parts/BX-17) if several key_candidates; not one to read.",
+    "type": "string"
+   },
+   "limit": {
+    "description": "Rows per page. Default 50, at most 500.",
+    "type": "integer"
+   },
+   "markdown": {
+    "description": "Text as Markdown (**bold**, lists). Default false.",
+    "type": "boolean"
+   },
+   "max_chars": {
+    "description": "Characters per page. Default and at most 24000.",
+    "type": "integer"
+   },
+   "merges": {
+    "description": "List the merged areas over the rows.",
+    "type": "boolean"
+   },
+   "sources": {
+    "description": "d: only: add each value's source cells (8, more counted); for one value, all, paged.",
+    "type": "boolean"
+   },
+   "target": {
+    "description": "A cell or range (Stock!A1:H40, Stock!A:C, 'Q3 sales'!$K$83), table or region (t:Products: its data rows), column (t:Products[Price]), row (t:Products/#5, t:Products/SKU-0042) or value; * is every row (t:Products/*/Price); or a dataset (d:by_region), as tables. A cell or range inside one table's data rows reads those whole table rows.",
+    "type": "string"
+   },
+   "text_chars": {
+    "description": "Characters per text. Default 2000.",
+    "type": "integer"
+   },
+   "validations": {
+    "description": "List data validations over the target (type, cells, list source).",
+    "type": "boolean"
+   }
+  },
+  "required": [
+   "target"
+  ],
+  "type": "object"
+ },
+ "name": "xlsx_read",
+ "strict": false
+}

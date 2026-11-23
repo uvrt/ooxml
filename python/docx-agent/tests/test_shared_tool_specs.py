@@ -13,9 +13,10 @@ import json
 import ooxml_core
 import pytest
 
-from ooxml_edit.tools import shared
+from ooxml_edit.tools import Toolbox, shared
 
-from docx_agent.tools import TOOLS, WORD_TOOLS
+from docx_agent.tools import FORMAT, GROUPS, TOOLS, WORD_TOOLS
+from docx_agent.tools.format import WITHDRAWN
 from docx_agent.tools.shared import HANDLERS
 from test_rust_tool_specs import export, text
 
@@ -46,6 +47,20 @@ def test_every_rust_spec_is_a_tool_of_the_toolbox():
 def test_the_tools_out_until_ported_are_not_offered():
     names = {tool.name for tool in TOOLS}
     assert not names & {"edit_smartart", "style_by_value", "word_find_asset"}
+
+
+@pytest.mark.parametrize("name", sorted(WITHDRAWN))
+def test_a_withdrawn_tool_is_refused_with_its_way_out(name):
+    # decision 6 (R4 #11c): not an unknown tool, nor read as another tool's name (rule 2)
+    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS) as toolbox:
+        session = toolbox.session()
+        error = toolbox.dispatch(session, name, {"doc": "d1"}).error
+    assert error.code == "refused"
+    assert error.details == {"not_supported": f"{name} (withdrawn)"}
+    assert error.message.endswith(WITHDRAWN[name])
+    # every tool a way out names is a tool here
+    named = {word.strip(".,:;()") for word in WITHDRAWN[name].split()}
+    assert named & {tool.name for tool in TOOLS}
 
 
 @pytest.mark.parametrize("tool", WORD_TOOLS, ids=lambda tool: tool.name)

@@ -1,0 +1,60 @@
+{
+ "description": "Duplicate, move or delete a slide, import one from another deck, find one by its title, delete its empty placeholders (not a title or one with a fill), or set_layout as PowerPoint's Layout menu. Returns the slide order.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "action": {
+    "description": "What to do.",
+    "enum": [
+     "duplicate",
+     "move",
+     "delete",
+     "find_by_title",
+     "delete_empty_placeholders",
+     "set_layout",
+     "import"
+    ],
+    "type": "string"
+   },
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "layout": {
+    "description": "set_layout: L2 or its name. import: source copies the source's layout in if missing.",
+    "type": "string"
+   },
+   "notes": {
+    "description": "duplicate, import: the copy's notes.",
+    "type": "string"
+   },
+   "ref": {
+    "description": "duplicate, import: ref name for the copy.",
+    "type": "string"
+   },
+   "slide": {
+    "description": "The slide, s:256 or $ref (import: in source_doc).",
+    "type": "string"
+   },
+   "source_doc": {
+    "description": "import: the deck to copy from, d2.",
+    "type": "string"
+   },
+   "title": {
+    "description": "find_by_title: the title.",
+    "type": "string"
+   },
+   "to": {
+    "description": "move, duplicate, import: new position from 1. Default after it; import: last.",
+    "type": "integer"
+   }
+  },
+  "required": [
+   "doc",
+   "action"
+  ],
+  "type": "object"
+ },
+ "name": "ppt_manage_slides",
+ "strict": true
+}
