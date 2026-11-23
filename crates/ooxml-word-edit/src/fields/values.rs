@@ -1,7 +1,8 @@
 //! Owns: what a field update writes for a field (docx-agent's `_value`, `_sequence_value`,
 //! `format_date`): page numbers and `STYLEREF` from the layout ([`super::LaidFields`]),
 //! `REF` from its bookmark's text, `SEQ` counted through the document, `DATE` from the
-//! call's date in its picture; a table of contents is rebuilt elsewhere (`super::toc`).
+//! call's date in its picture (and back: a date typed in a picture, `day_in_picture`); a table
+//! of contents is rebuilt elsewhere (`super::toc`).
 //!
 //! Must not: write anything.
 
@@ -167,6 +168,125 @@ pub fn format_date(picture: &str, day: Day) -> String {
     out
 }
 
+/// The day `text` names as written in `picture` (`5-10-2026` in `d-M-yyyy`), the way back
+/// from [`format_date`]: the day and month in one or two digits, or a month or day name in
+/// full or its first three letters (English, any case); the year in four digits (two name
+/// no century, so they are not read); a time of day read and left; any run of spaces and
+/// punctuation where the picture has one. `None` for text the picture does not read, or a
+/// day its month lacks.
+#[must_use]
+pub fn day_in_picture(picture: &str, text: &str) -> Option<Day> {
+    let mut reader = Reader {
+        chars: text.trim().chars().collect(),
+        at: 0,
+    };
+    let (mut year, mut month, mut day) = (None, None, None);
+    let mut gap = false;
+    for token in picture_tokens(picture) {
+        let first = token.chars().next()?;
+        let len = token.chars().count();
+        let was_gap = std::mem::take(&mut gap);
+        match first {
+            'd' if len <= 2 => day = Some(reader.number(2)?),
+            'd' => {
+                reader.name(&DAYS)?;
+            }
+            'M' if len <= 2 => month = Some(reader.number(2)?),
+            'M' => month = Some(u32::try_from(reader.name(&MONTHS)? + 1).ok()?),
+            'y' if len >= 2 => {
+                let from = reader.at;
+                let read = reader.number(4)?;
+                if reader.at - from != 4 {
+                    return None;
+                }
+                year = Some(i64::from(read));
+            }
+            'H' | 'h' | 'm' | 's' => {
+                reader.number(2)?;
+            }
+            'A' | 'a' if len == 5 => reader.letters(),
+            '\'' => reader.literal(token.trim_matches('\''))?,
+            c if c.is_alphanumeric() => reader.literal(&token)?,
+            _ => {
+                gap = true;
+                if !was_gap {
+                    reader.gap()?;
+                }
+            }
+        }
+    }
+    let (year, month, day) = (year?, month?, day?);
+    let whole = reader.at == reader.chars.len();
+    (whole && (1..=days_in(year, month)).contains(&day)).then_some(Day { year, month, day })
+}
+
+/// Text read from its start, as [`day_in_picture`] reads it.
+struct Reader {
+    chars: Vec<char>,
+    at: usize,
+}
+
+impl Reader {
+    /// A number of one to `most` digits.
+    fn number(&mut self, most: usize) -> Option<u32> {
+        let rest = self.chars.get(self.at..).unwrap_or_default();
+        let digits: String = rest.iter().take(most).take_while(|c| c.is_ascii_digit()).collect();
+        self.at += digits.len();
+        digits.parse().ok()
+    }
+
+    /// A run of letters.
+    fn letters(&mut self) {
+        while self.chars.get(self.at).is_some_and(|c| c.is_alphabetic()) {
+            self.at += 1;
+        }
+    }
+
+    /// Which of `names` the next letters are, in full or their first three, in any case.
+    fn name(&mut self, names: &[&str]) -> Option<usize> {
+        let from = self.at;
+        self.letters();
+        let word = self.chars.get(from..self.at)?.iter().collect::<String>().to_lowercase();
+        names.iter().position(|name| {
+            let name = name.to_lowercase();
+            word == name || (word.chars().count() == 3 && name.starts_with(&word))
+        })
+    }
+
+    /// `literal`, in any case.
+    fn literal(&mut self, literal: &str) -> Option<()> {
+        for want in literal.chars() {
+            let got = self.chars.get(self.at)?;
+            if !got.to_lowercase().eq(want.to_lowercase()) {
+                return None;
+            }
+            self.at += 1;
+        }
+        Some(())
+    }
+
+    /// A run of one or more spaces and punctuation.
+    fn gap(&mut self) -> Option<()> {
+        let from = self.at;
+        while self.chars.get(self.at).is_some_and(|c| !c.is_alphanumeric()) {
+            self.at += 1;
+        }
+        (self.at > from).then_some(())
+    }
+}
+
+/// The days of `month` in `year` (Gregorian); none for no month.
+fn days_in(year: i64, month: u32) -> u32 {
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    match month {
+        2 if leap => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        1..=12 => 31,
+        _ => 0,
+    }
+}
+
 /// Every `SEQ` field's text, counted through the document in story order whether
 /// updated or not, by its part and number: the text, or `None` where Word draws an error.
 pub(crate) fn sequence_values(fields: &[Located]) -> HashMap<(String, usize), Option<String>> {
@@ -308,4 +428,56 @@ fn bookmark_place(doc: &WordDoc, docx: &Docx, marks: &Marks<'_>, name: &str) -> 
 fn bookmark_text(doc: &WordDoc, docx: &Docx, marks: &Marks<'_>, name: &str) -> Option<String> {
     let found = bookmark_range(docx, &marks.get(name)?).ok()?;
     Span::of(doc, docx, &found).ok().map(|s| s.text())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{day_in_picture, format_date, Day};
+
+    fn day(year: i64, month: u32, day: u32) -> Option<Day> {
+        Some(Day { year, month, day })
+    }
+
+    #[test]
+    fn a_date_is_read_in_its_picture() {
+        assert_eq!(day_in_picture("d-M-yyyy", "5-10-2026"), day(2026, 10, 5));
+        assert_eq!(day_in_picture("dd/MM/yyyy", " 05/10/2026 "), day(2026, 10, 5));
+        assert_eq!(day_in_picture("MMMM d, yyyy", "october 5, 2026"), day(2026, 10, 5));
+        assert_eq!(day_in_picture("dddd d MMM yyyy", "Mon 5 Oct 2026"), day(2026, 10, 5));
+        assert_eq!(
+            day_in_picture("d 'de' MMMM yyyy", "5 de October 2026"),
+            day(2026, 10, 5)
+        );
+    }
+
+    #[test]
+    fn a_date_read_back_is_the_date_written() {
+        let written = day(2028, 2, 29).unwrap_or(Day {
+            year: 0,
+            month: 0,
+            day: 0,
+        });
+        for picture in [
+            "d-M-yyyy",
+            "dd.MM.yyyy",
+            "d MMMM yyyy",
+            "dddd, MMMM dd, yyyy",
+            "yyyy-MM-dd",
+        ] {
+            assert_eq!(
+                day_in_picture(picture, &format_date(picture, written)),
+                Some(written),
+                "{picture}"
+            );
+        }
+    }
+
+    #[test]
+    fn text_the_picture_does_not_read_is_no_date() {
+        assert_eq!(day_in_picture("d-M-yyyy", "5-10-26"), None); // a two-digit year: no century
+        assert_eq!(day_in_picture("d-M-yyyy", "31-9-2026"), None); // September has 30 days
+        assert_eq!(day_in_picture("d-M-yyyy", "5-10-2026 later"), None);
+        assert_eq!(day_in_picture("d MMMM yyyy", "5 Octobre 2026"), None);
+        assert_eq!(day_in_picture("d-M-yyyy", "soon"), None);
+    }
 }

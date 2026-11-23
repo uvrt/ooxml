@@ -15,7 +15,7 @@
 use super::bound::Binding;
 use super::{located, property_in, rewrite, ControlEdited, InParagraph, Rewrite};
 use crate::delete::stretch_keys;
-use crate::fields::{format_date, Day};
+use crate::fields::{day_in_picture, format_date, Day};
 use crate::names::{W, W14};
 use crate::policy::RevisionPolicy;
 use crate::sink::{EditSink, TextWrite};
@@ -60,6 +60,8 @@ struct Planned {
     checked: Option<bool>,
     /// What a bound control's node holds once filled.
     node: String,
+    /// How the value was read, where not as given (a date in the control's picture).
+    note: Option<String>,
 }
 
 impl FillControl {
@@ -117,6 +119,7 @@ impl FillControl {
                         full_date: None,
                         checked: Some(*value),
                         node: if *value { "true" } else { "false" }.to_owned(),
+                        note: None,
                     });
                 }
             }
@@ -127,6 +130,7 @@ impl FillControl {
             full_date: None,
             checked: None,
             node: text.clone(),
+            note: None,
         };
         match kind {
             "checkbox" => {
@@ -135,13 +139,12 @@ impl FillControl {
                 ));
             }
             "date" => {
-                let day = Day::parse(&text)
-                    .filter(|_| text.get(..10).is_some_and(iso_date))
-                    .ok_or_else(|| EditError::Refused(format!("{} is not a date", repr_str(&text))))?;
                 let picture = property(&found.element, W, "date")
                     .and_then(|d| d.find(Some(W), "dateFormat"))
                     .and_then(|f| f.attribute(Some(W), "val"))
                     .unwrap_or("d-M-yyyy");
+                let (day, note) = date_in(&text, picture, id)?;
+                planned.note = note;
                 planned.text = format_date(picture, day);
                 planned.node = format!("{:04}-{:02}-{:02}T00:00:00", day.year, day.month, day.day);
                 planned.full_date = Some(format!("{}Z", planned.node));
@@ -169,6 +172,33 @@ impl FillControl {
         }
         Ok(planned)
     }
+}
+
+/// The day `text` names for control `id`: ISO 8601, or as the control shows a date in its
+/// `picture` (Word takes one typed so), then with a note of how it was read.
+///
+/// # Errors
+/// `refused` for text that is neither, with both forms as the way out.
+fn date_in(text: &str, picture: &str, id: &str) -> Result<(Day, Option<String>)> {
+    if let Some(day) = Day::parse(text).filter(|_| text.get(..10).is_some_and(iso_date)) {
+        return Ok((day, None));
+    }
+    let day = day_in_picture(picture, text).ok_or_else(|| {
+        EditError::Refused(format!(
+            "{} is not a date: give it as YYYY-MM-DD, or as {id} shows one ({})",
+            repr_str(text),
+            repr_str(picture)
+        ))
+    })?;
+    let note = format!(
+        "{} read in {id}'s picture {} as {:04}-{:02}-{:02}",
+        repr_str(text),
+        repr_str(picture),
+        day.year,
+        day.month,
+        day.day
+    );
+    Ok((day, Some(note)))
 }
 
 /// Whether `text` is a date as `date.fromisoformat` reads ten characters: `YYYY-MM-DD`,
@@ -241,6 +271,7 @@ impl FillControl {
         Ok(ControlEdited {
             id: Some(self.control.clone()),
             renamed,
+            warnings: planned.note.into_iter().collect(),
             ..ControlEdited::default()
         })
     }
@@ -331,7 +362,7 @@ fn sdt_properties(sdt: &ooxml_xml::Element) -> Option<u32> {
 /// A control in the line given `text` (`_fill_inline`): in its first text run's
 /// formatting (else the control's), a placeholder's style dropped; untracked its content
 /// replaced, tracked its shown runs deleted and the new run inserted after them.
-fn fill_inline(sink: &mut EditSink<'_, '_>, work: &mut Work, sdt: Id, text: &str) -> Result<TextWrite> {
+pub(super) fn fill_inline(sink: &mut EditSink<'_, '_>, work: &mut Work, sdt: Id, text: &str) -> Result<TextWrite> {
     let content = match work.find(sdt, W, "sdtContent") {
         Some(c) => c,
         None => {
@@ -401,13 +432,25 @@ fn set_properties(work: &mut Work, sdt: Id, planned: &Planned) {
     }
 }
 
-/// [`set_properties`] on the `w:sdtPr` `properties`.
-fn properties_of(work: &mut Work, properties: Id, planned: &Planned) {
+/// A control (`sdt` in `work`) that shows its content, not its placeholder.
+pub(super) fn drop_placeholder(work: &mut Work, sdt: Id) {
+    if let Some(properties) = work.find(sdt, W, "sdtPr") {
+        no_placeholder(work, properties);
+    }
+}
+
+/// The `w:sdtPr` `properties` without `w:showingPlcHdr`.
+fn no_placeholder(work: &mut Work, properties: Id) {
     for node in work.children(properties).to_vec() {
         if work.is(node, W, "showingPlcHdr") {
             work.remove(node);
         }
     }
+}
+
+/// [`set_properties`] on the `w:sdtPr` `properties`.
+fn properties_of(work: &mut Work, properties: Id, planned: &Planned) {
+    no_placeholder(work, properties);
     if let (Some(value), Some(checkbox)) = (planned.checked, work.find(properties, W14, "checkbox")) {
         let state = match work.find(checkbox, W14, "checked") {
             Some(s) => s,

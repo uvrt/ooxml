@@ -259,12 +259,15 @@ def test_a_control_filled_is_what_word_writes_typing_into_it(box, case, key):
     assert ours == controls_by_key(OBSERVED[case]["blocks"])[key]
 
 
-@pytest.mark.xfail(reason="a date typed in the control's own picture (d-M-yyyy, as Word takes it) is refused: "
-                          "'5-10-2026' is not a date; the ISO date is filled", strict=True)
 def test_a_date_control_takes_a_date_in_its_own_picture(box):
+    """``controls``: Word takes a date typed in the control's own picture (``5-10-2026`` in
+    ``d-M-yyyy``); so do the tools (tool rule 1), writing what Word wrote, with a note of how
+    the text was read."""
     document = Opened(box, e5_probe.controls_document())
     ids = {c["tag"]: c["id"] for c in document.call("word_controls", action="list").data}
-    document.call("word_controls", action="fill", control=ids["Date"], value="5-10-2026")
+    result = document.call("word_controls", action="fill", control=ids["Date"], value="5-10-2026")
+    assert any("2026-10-05" in w for w in result.to_json()["warnings"])
+    assert controls_by_key(document.body())["Date"] == controls_by_key(OBSERVED["controls"]["blocks"])["Date"]
 
 
 def test_a_drop_down_is_filled_by_its_item_where_word_refuses_typing(box):
@@ -285,14 +288,22 @@ def test_a_bound_control_filled_writes_its_node_where_words_typing_does_not(box)
         assert "<when>Typed into bound</when>" in filled(box, case).part("customXml/item1.xml")
 
 
-#: A bound control's cache that disagrees with its node, the document only opened and saved.
-STALE_CACHE = ("Word shows a bound control's node on opening and saves it in the content ('Bound from XML'); "
-               "the tools leave an untouched control's stale cache as it is")
-
-
-@pytest.mark.parametrize("key", [pytest.param("Bound", marks=pytest.mark.xfail(reason=STALE_CACHE, strict=True)),
-                                 *(k for k in e5_probe.CONTROL_CASES if k != "Bound")])
+@pytest.mark.parametrize("key", list(e5_probe.CONTROL_CASES))
 def test_a_control_only_saved_is_words(box, key):
-    """``controls-saved``: Word's open and save of the controls probe, no edit."""
+    """``controls-saved``: Word's open and save of the controls probe, no edit -- a bound
+    control whose cache is stale (``Bound``) saved showing its node, as Word shows it on
+    opening."""
     ours = controls_by_key(Opened(box, e5_probe.controls_document()).body())[key]
     assert ours == controls_by_key(OBSERVED["controls-saved"]["blocks"])[key]
+
+
+def test_a_stale_bound_control_reads_as_its_node(box):
+    """``controls-saved``: the tools read a bound control whose cache is stale as Word shows it,
+    its node's text, and leave the node as Word's save leaves it."""
+    document = Opened(box, e5_probe.controls_document())
+    listed = {c["tag"]: c["value"] for c in document.call("word_controls", action="list").data}
+    assert listed["Bound"] == "Bound from XML"
+    def node(xml: str) -> str:
+        return re.sub(r"^<\?xml[^>]*\?>\s*", "", xml)
+
+    assert node(document.part("customXml/item1.xml")) == node(OBSERVED["controls-saved"]["customXml/item1.xml"])
