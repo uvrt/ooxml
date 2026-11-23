@@ -55,7 +55,7 @@ def report() -> bytes:
 
 def saved(box, session, doc: str) -> bytes:
     """The document's bytes as ``save_document`` writes them."""
-    result = box.dispatch(session, "save_document", {"doc": doc, "name": "out.docx"})
+    result = box.dispatch(session, "save_document", {"doc": doc, "name": "out.docx", "format": "docx"})
     assert result.ok, result.to_json()
     return session.take_outputs()[-1].data
 

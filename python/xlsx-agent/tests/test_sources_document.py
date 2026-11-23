@@ -75,7 +75,7 @@ def styled(toolbox, session, blocks: list[str], doc: str = "d1") -> list[tuple[s
 
 def saved(toolbox, session, doc: str = "d1") -> bytes:
     """The document's bytes as ``save_document`` writes them."""
-    ok(toolbox.dispatch(session, "save_document", {"doc": doc, "name": "out.docx"}))
+    ok(toolbox.dispatch(session, "save_document", {"doc": doc, "name": "out.docx", "format": "docx"}))
     return session.take_outputs()[-1].data
 
 
