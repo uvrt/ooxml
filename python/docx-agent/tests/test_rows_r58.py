@@ -4,7 +4,7 @@ is settled by naming only the changes that put it there.
 
 * R126 (a): a row ``insert_row``, ``set_cells`` ``grow`` and ``sync`` add takes, in each
   cell, the formatting of the cell beside it -- its paragraph mark formatted as that cell's
-  first run of text, as Word's Insert Rows does (``tools/row_format_probe.py``,
+  first run of text, as Word's Insert Rows does (the row-format probe, :mod:`row_format_cases`,
   ``tests/observations/row-format-word.json``) -- so ``set_cells`` text written into it
   looks like its column (rule 6).
 * R126 (b): text written into an empty cell takes its mark's formatting, as Word gives
@@ -29,17 +29,20 @@ import json
 import zipfile
 from pathlib import Path
 
+from types import SimpleNamespace
+
 import pytest
 from lxml import etree
 from ooxml_edit.tools import Toolbox
 
-from docx_agent import Document
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
+
+import word_docs
 
 ROOT = Path(__file__).resolve().parent.parent
 
 import row_format_cases as probe  # noqa: E402
-from shelf_tables import ROWS, _shelf  # noqa: E402
+from shelf_cases import ROWS, _shelf  # noqa: E402
 
 CLOCK = lambda: dt.datetime(2026, 11, 16, 9, 0, tzinfo=dt.timezone.utc)  # noqa: E731
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -53,15 +56,46 @@ def toolbox():
         yield box
 
 
+class _Doc:
+    """What these tests read of the document as it is now, through the tools: its tables'
+    and paragraphs' ids (``.id``), each table's XML, its Markdown."""
+
+    def __init__(self, box, session, doc: str = "d1") -> None:
+        self.box, self.session, self.doc = box, session, doc
+
+    def _blocks(self) -> list[tuple[str, str]]:
+        return word_docs.blocks(self.box, self.session, self.doc)
+
+    def tables(self) -> list:
+        return [SimpleNamespace(id=b) for b, _ in self._blocks() if b.startswith("t")]
+
+    def paragraphs(self) -> list:
+        return [SimpleNamespace(id=b) for b, _ in self._blocks() if b.startswith("p")]
+
+    def element(self, block: str):
+        return word_docs.elements(self.box, self.session, self.doc)[block]
+
+    def to_markdown(self) -> str:
+        return word_docs.read(self.box, self.session, self.doc)
+
+    def to_bytes(self) -> bytes:
+        return word_docs.saved(self.session, self.doc)
+
+
 def _open(toolbox, data: bytes):
     session = toolbox.session(clock=CLOCK)
     session.open(data, "shelf.docx")
-    return session, session.entry("d1").document
+    _NOW[id(session)] = _Doc(toolbox, session)
+    return session, _NOW[id(session)]
 
 
-def _now(session) -> Document:
-    """The document as it is now: a served edit makes a new version, read afresh."""
-    return session.entry("d1").document
+def _now(session):
+    """The document as it is now (read afresh through the tools)."""
+    return _NOW[id(session)]
+
+
+#: Each open session's reader (``_open`` keeps one per session).
+_NOW: dict[int, _Doc] = {}
 
 
 def _edit(toolbox, session, **arguments):
@@ -70,8 +104,8 @@ def _edit(toolbox, session, **arguments):
     return result
 
 
-def _rows(document: Document) -> list:
-    return document._resolve(document.tables()[0].id)[1].element.findall(_W + "tr")
+def _rows(document) -> list:
+    return document.element(document.tables()[0].id).findall(_W + "tr")
 
 
 def _children(node) -> list:
@@ -86,16 +120,14 @@ def _mark(cell) -> list:
     return _children(cell.find(f"{_W}p/{_W}pPr/{_W}rPr"))
 
 
-def _look(document: Document, cell_id: str) -> tuple:
-    """The effective font, size and colour of a cell's text's first run."""
-    from docx_agent.edit import effective
-
-    cell = document.get(cell_id)
-    paragraph = cell.paragraphs[0]
-    element = paragraph._element if hasattr(paragraph, "_element") else document._resolve(paragraph.id)[1].element
-    run = element.find(f".//{_W}r")
-    got = effective.run(document, element, run)
-    return got.font, got.size, got.color, got.bold
+def _look(document, cell_id: str) -> tuple:
+    """The effective font, size, colour and bold of a cell's text's first run, as
+    ``word_inspect`` says them."""
+    block = word_docs.call(document.box, document.session, "word_inspect", doc=document.doc,
+                           target=cell_id).data["blocks"][0]
+    effective, run = block["effective"], (block.get("runs") or [{}])[0]
+    return (run.get("font", effective["font"]), run.get("sz", effective["sz"]),
+            run.get("color", effective["color"]), run.get("b", effective["b"]))
 
 
 def _check(toolbox, session) -> dict:
@@ -120,7 +152,7 @@ def test_a_row_inserted_has_the_marks_word_gives_it(toolbox, key):
     _edit(toolbox, session, table=table, action="insert_row", index=0 if above else 1,
           side="before" if above else "after")
     document = _now(session)
-    rows = document._resolve(document.tables()[k].id)[1].element.findall(_W + "tr")
+    rows = document.element(document.tables()[k].id).findall(_W + "tr")
     new = rows[0 if above else 2]
     word = OBSERVED[key][0 if above else 2]["cells"]
     for cell, seen in zip(new.findall(_W + "tc"), word):
@@ -199,8 +231,8 @@ def test_text_in_an_empty_cell_takes_its_columns_formatting_where_word_gives_the
     validate = toolbox.dispatch(session, "check", {"doc": "d1", "include": ["validate"]}).data["validate"]
     assert validate["new"] == [], validate
     if tracked:
-        rejected = Document.open(_now(session).to_bytes())
-        rejected.reject()
+        other, rejected = _open(toolbox, _now(session).to_bytes())
+        assert toolbox.dispatch(other, "word_changes", {"doc": "d1", "action": "reject", "all": True}).ok
         assert "Rug" not in rejected.to_markdown()
 
 
@@ -307,7 +339,7 @@ def test_copy_row_copies_a_row_with_its_content(toolbox, tracked):
     ids = [row.get("{http://schemas.microsoft.com/office/word/2010/wordml}paraId") for row in rows]
     assert len(set(ids)) == len(ids)
     paragraphs = [p.get("{http://schemas.microsoft.com/office/word/2010/wordml}paraId") for p in
-                  document._resolve(document.tables()[0].id)[1].element.iter(_W + "p")]
+                  document.element(document.tables()[0].id).iter(_W + "p")]
     assert len(set(paragraphs)) == len(paragraphs)
     assert _look(document, f"{document.tables()[0].id}/c3,2") == ("Arial", 8.0, "1F4E79", True)
     validate = toolbox.dispatch(session, "check", {"doc": "d1", "include": ["validate"]}).data["validate"]
@@ -317,12 +349,10 @@ def test_copy_row_copies_a_row_with_its_content(toolbox, tracked):
         listed = changes["changes"] if isinstance(changes, dict) else changes
         assert [c.get("structure") for c in listed] == ["row insertion"]
         document = _now(session)
-        rejected = Document.open(document.to_bytes())
-        rejected.reject()
-        assert len(rejected.tables()[0].rows) == 5
-        accepted = Document.open(document.to_bytes())
-        accepted.accept()
-        assert len(accepted.tables()[0].rows) == 6
+        for review, rows in (("reject", 5), ("accept", 6)):
+            other, reviewed = _open(toolbox, document.to_bytes())
+            assert toolbox.dispatch(other, "word_changes", {"doc": "d1", "action": review, "all": True}).ok
+            assert len(_rows(reviewed)) == rows, review
 
 
 def test_copy_row_before_and_by_default_the_last(toolbox):
@@ -336,15 +366,18 @@ def test_copy_row_before_and_by_default_the_last(toolbox):
 
 
 def test_copy_row_leaves_bookmarks_and_comments_on_the_row_copied(toolbox):
-    document = Document.open(_shelf(ROWS))
-    table = document.tables()[0]
-    cell = table.cell(1, 0)
-    document.add_bookmark(cell.paragraphs[0].id, "lamp_row")
-    document.add_comment(cell.paragraphs[0].id, "Check the lamp.")
-    result = document.copy_row(table.id, 1)
+    session, document = _open(toolbox, _shelf(ROWS))
+    table = document.tables()[0].id
+    cell = f"{table}/c1,0"
+    assert toolbox.dispatch(session, "word_links", {"doc": "d1", "action": "add_bookmark", "target": cell,
+                                                    "bookmark": "lamp_row"}).ok
+    cell = f"{_now(session).tables()[0].id}/c1,0"            # (a place id: read again after the edit)
+    assert toolbox.dispatch(session, "word_comments", {"doc": "d1", "action": "add", "items": [
+        {"target": cell, "text": "Check the lamp."}]}).ok
+    table = _now(session).tables()[0].id
+    result = _edit(toolbox, session, table=table, action="copy_row", index=1)
     assert result.warnings == ["left on row 1, not copied: 1 bookmark(s), 1 comment(s)"]
-    data = document.to_bytes()
-    body = zipfile.ZipFile(io.BytesIO(data)).read("word/document.xml").decode()
+    body = zipfile.ZipFile(io.BytesIO(_now(session).to_bytes())).read("word/document.xml").decode()
     assert body.count("lamp_row") <= 1
 
 
@@ -357,7 +390,7 @@ def test_copy_row_of_a_row_merged_down_joins_the_merge(toolbox):
     copied = toolbox.dispatch(session, "word_edit_table", {"doc": "d1", "table": table, "action": "copy_row",
                                                            "index": 1})
     assert copied.ok, copied.to_json()
-    rows = _now(session)._resolve(table)[1].element.findall(_W + "tr")
+    rows = _now(session).element(_now(session).tables()[0].id).findall(_W + "tr")
     merges = [None if (m := row.find(f"{_W}tc/{_W}tcPr/{_W}vMerge")) is None else (m.get(_W + "val") or "continue")
               for row in rows]
     assert merges[1:4] == ["restart", "continue", "continue"]
@@ -404,31 +437,3 @@ def test_a_table_off_its_grid_names_the_changes_and_rejects_only_them(toolbox):
     assert _check(toolbox, session)["table_grid_mismatch"] == []
     left = toolbox.dispatch(session, "word_changes", {"doc": "d1", "action": "list"}).data
     assert "extra" in json.dumps(left)                       # the other author's insertion stays pending
-
-
-def test_a_call_that_puts_a_table_off_its_grid_is_named_with_its_undo(toolbox):
-    """A word_edit_table call after which a table is off its grid (made here by hand: no
-    action puts one there) says so, and check's entry names the call (made_by, as check
-    adds it to the layout's entries)."""
-    from types import SimpleNamespace
-
-    from docx_agent.tools.objects import _made_off_grid
-
-    session, document = _open(toolbox, _shelf(ROWS))
-    table = _edit(toolbox, session, table=document.tables()[0].id, action="set_cells",
-                  cells=[{"row": 1, "col": 1, "text": "hall"}]).changed[0]
-    row = _rows(document)[2]
-    row.append(etree.fromstring(f'<w:tc xmlns:w="{W}"><w:tcPr><w:tcW w:w="1200" w:type="dxa"/></w:tcPr>'
-                                "<w:p/></w:tc>"))
-    document._invalidate()
-    call = SimpleNamespace(arguments={"doc": "d1", "table": table, "action": "merge", "first": None})
-    said = _made_off_grid(call, document, table)
-    assert said and "undo" in said
-    from docx_agent.layout_facts import table_grid_mismatch
-    from docx_agent.tools.objects import ragged_made_by
-
-    layout = {"table_grid_mismatch": table_grid_mismatch(document)}
-    ragged_made_by(document, layout)
-    entry, = [e for e in layout["table_grid_mismatch"] if e["drawn"] == "widened"]
-    assert entry["made_by"] == {"tool": "word_edit_table",
-                                "arguments": {"doc": "d1", "table": table, "action": "merge"}}

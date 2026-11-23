@@ -153,11 +153,12 @@ def pytest_collection_modifyitems(config, items):
     from rust_gaps import GAPS
 
     for item in items:
-        key = f"{item.path.name}::{item.name}"
-        form = DEFERRED.get(key)
+        # A test's own id, or its name alone for every one of its parameters.
+        keys = (f"{item.path.name}::{item.name}", f"{item.path.name}::{item.originalname}")
+        form = next((DEFERRED[k] for k in keys if k in DEFERRED), None)
         if form is not None:
             item.add_marker(pytest.mark.xfail(reason=f"{form}: deferred (user)", strict=True))
-        gap = GAPS.get(key)
+        gap = next((GAPS[k] for k in keys if k in GAPS), None)
         if gap is not None:
             item.add_marker(pytest.mark.xfail(reason=gap, strict=True))
     if not config.getoption("--run-slow"):

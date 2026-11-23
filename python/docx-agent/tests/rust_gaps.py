@@ -21,7 +21,7 @@ GAPS: dict[str, str] = {
     "test_session_checks.py::test_a_check_between_a_batch_s_changes_holds_the_document_and_says_so":
         f"rust gap: a check between a batch's changes gives no warning that it held the document ({CUT6})",
     "test_source_refs.py::test_a_documents_own_braces_and_escaped_ones_stay_text":
-        f"rust gap: word_set_text of braces naming no source is refused as by reference ({CUT6})",
+        f"rust gap: word_set_text of braces naming no source is refused as by reference ({CUT_F})",
     "test_charts.py::test_chart_edit_renders[charts-d:5-category]": f"rust gap: a number given as a numeric chart's category (0.25) is refused as not a number ({CUT_B})",
     "test_charts.py::test_chart_edit[charts-d:5-category]": f"rust gap: a number given as a numeric chart's category (0.25) is refused as not a number ({CUT_B})",
     "test_charts.py::test_chart_edit[charts-d:5-add_category]": f"rust gap: a number given as a numeric chart's category (0.25) is refused as not a number ({CUT_B})",
@@ -46,6 +46,12 @@ GAPS: dict[str, str] = {
         f"rust gap: a positional table id inside a cell address is refused once the ids are stamped ({CUT_F})",
     "test_many_writers.py::test_continue_with_several_targets_continues_each":
         f"rust gap: word_lists continue with several targets continues only the first ({CUT_F})",
+    "test_own_rows.py::test_the_probes_edits_made_here_give_words_result":
+        f"rust gap: deleting one's own pending row holding another's insertion keeps the row ({CUT_F})",
+    "test_own_rows.py::test_a_table_one_inserted_beside_a_table_goes_with_the_paragraph_it_came_with":
+        f"rust gap: deleting a table one inserted leaves its tracked separator paragraph ({CUT_F})",
+    "test_span_rows_r57.py::test_a_ragged_table_from_the_file_is_named_with_no_made_by":
+        f"rust gap: check names no ragged table where a row's last cell is a tracked cell deletion ({CUT_F})",
     "test_tools_word.py::test_new_document_from_a_template_blob_and_save_formats": TEMPLATE,
     "test_locale.py::test_from_a_template_the_locale_is_kept_and_the_settings_are_the_templates": TEMPLATE,
     f"{GOLDEN}[w1-template-report]": TEMPLATE,

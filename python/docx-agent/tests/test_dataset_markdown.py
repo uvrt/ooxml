@@ -25,6 +25,7 @@ from ooxml_edit.tools import Dataset, Toolbox, tool
 
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 
+import word_docs
 from test_tables_from_data import GRID, _session, call, ok
 
 if not hasattr(Dataset, "markdown_at"):
@@ -62,9 +63,16 @@ def insert(toolbox, session, **arguments):
     return ok(call(toolbox, session, "word_insert_markdown", **{"doc": "d1", "at": "end", **arguments}))
 
 
+def _style(paragraph) -> str | None:
+    found = paragraph.find(f"{{{word_docs.W}}}pPr/{{{word_docs.W}}}pStyle")
+    return None if found is None else found.get(f"{{{word_docs.W}}}val")
+
+
 def made(session, result):
-    document = session.entry("d1").document
-    return [(document.paragraph(b).style, document.paragraph(b).text) for b in result.data["blocks"]]
+    """Each block the call made: its paragraph style id (``None``: Normal) and text."""
+    root = word_docs.tree(word_docs.saved(session, "d1"))
+    found = [word_docs.find(root, block) for block in result.data["blocks"]]
+    return [(_style(p), word_docs.text_of(p)) for p in found]
 
 
 def typed(toolbox, session, markdown):
@@ -82,7 +90,7 @@ def test_from_writes_the_fields_markdown_as_list_items_nested(toolbox, session):
     assert made(session, result) == typed(toolbox, session, LISTED_MD)
     assert result.data["facts"] == [{"from": "d:notes/#1/body", "chars": len(LISTED_MD),
                                      "blocks": result.data["blocks"]}]
-    data = session.entry("d1").document.to_bytes()
+    data = word_docs.saved(session, "d1")
     xml = zipfile.ZipFile(io.BytesIO(data)).read("word/document.xml").decode()
     assert 'w:rStyle w:val="Strong"' in xml and 'w:rStyle w:val="Emphasis"' in xml
 
@@ -119,6 +127,6 @@ def test_a_table_cell_takes_the_value_itself(toolbox, session):
     result = ok(call(toolbox, session, "word_insert_markdown", doc="d1", at="end",
                      **{"from": "d:notes", "from_columns": ["topic", "body"]}))
     table = next(b for b in result.data["blocks"] if b.startswith("t:"))
-    found = session.entry("d1").document.table(table)
-    assert [found.cell(1, c).text for c in (0, 1)] == ["Doors", LISTED.replace("\n", "\x0b")]
-    assert [found.cell(2, c).text for c in (0, 1)] == ["Roof", TYPED.replace("\n", "\x0b")]
+    found = word_docs.table_texts(session, "d1", table)
+    assert found[1][:2] == ["Doors", LISTED.replace("\n", "\x0b")]
+    assert found[2][:2] == ["Roof", TYPED.replace("\n", "\x0b")]

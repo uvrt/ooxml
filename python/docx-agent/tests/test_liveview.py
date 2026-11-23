@@ -15,7 +15,8 @@ import zlib
 
 import pytest
 
-from docx_agent import Document
+import re
+
 from docx_agent.liveview import UnknownToken, embed_images, page_svg, view
 
 from ooxml_edit.tools import ToolError
@@ -48,7 +49,12 @@ def _png(width: int, height: int, color=(40, 120, 200)) -> bytes:
 def report(chapters: int = 3) -> bytes:
     """A made-up report of some six pages: chapters on new pages, a table each, a picture,
     a footer with the page number."""
-    doc = Document.new()
+    from ooxml_edit.tools import Toolbox
+
+    from docx_agent.tools import FORMAT, GROUPS, TOOLS
+
+    import word_docs
+
     parts = ["# Report title", _text(0, 2)]
     for c in range(1, chapters + 1):
         parts.append(f"# Chapter {c}")
@@ -56,15 +62,24 @@ def report(chapters: int = 3) -> bytes:
             parts.append(_text(c * 10 + p, 6))
         parts.append("| Item | Owner | Amount |\n|---|---|---|\n"
                      + "\n".join(f"| Item {c}.{k} | {WORDS[k % len(WORDS)]} | {k * 7} |" for k in range(8)))
-    doc.insert_markdown("\n\n".join(parts))
-    for paragraph in doc.paragraphs():
-        if paragraph.text.startswith("Chapter "):
-            paragraph.format(page_break_before=True)
-    doc.insert_picture(f"{doc.paragraphs()[1].id}@0", _png(40, 30), width=60)
-    section = doc.sections()[0]
-    doc.add_footer(section.id, "default", "Page ")
-    doc.insert_field(f"{section.footer().paragraphs[0].id}@5", "PAGE", result="1")
-    return doc.to_bytes()
+    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as box:
+        session = box.session()
+        doc = session.open(word_docs.blank(), "report.docx")
+
+        def call(tool, **arguments):
+            return word_docs.call(box, session, tool, doc=doc, **arguments)
+
+        call("word_insert_markdown", at="end", markdown="\n\n".join(parts))
+        found = word_docs.paragraphs(session, doc)
+        heads = [block for block, text in found if text.startswith("Chapter ")]
+        call("word_format", targets=heads, page_break_before=True)
+        image = session.add_blob(_png(40, 30), "picture.png", "image/png")
+        call("word_drawings", action="insert_picture", image=image, at=f"{found[1][0]}@0", width=60,
+             alt_text="A made-up picture")
+        call("word_headers_footers", section="s:body", which="footer", action="set", text="Page ")
+        footer = re.search(r"<!-- (footer\d+/p:[0-9A-F]+)", word_docs.read(box, session, doc, stories="all")).group(1)
+        call("word_fields", action="insert_field", at=f"{footer}@5", instruction="PAGE")
+        return word_docs.saved(session, doc)
 
 
 @pytest.fixture(scope="module")

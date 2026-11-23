@@ -17,7 +17,6 @@ Made-up tables only.
 
 from __future__ import annotations
 
-import contextlib
 import datetime as dt
 import io
 import json
@@ -28,9 +27,9 @@ import pytest
 from lxml import etree
 from ooxml_edit.tools import Toolbox
 
-from docx_agent import Document
-from docx_agent.edit.errors import EditError
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
+
+import word_docs
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -58,6 +57,25 @@ def _call(box, session, tool: str, /, **arguments):
     return box.dispatch(session, tool, arguments)
 
 
+def _ok(box, session, tool: str, /, **arguments):
+    result = box.dispatch(session, tool, arguments)
+    assert result.ok, result.to_json()
+    return result
+
+
+def _table_ids(session, doc="d1") -> list[str]:
+    return [f"t:{word_docs.rows_of(t)[0].get(word_docs.W14_PARA)}" for t in word_docs.tables(session, doc)]
+
+
+def _probe(box, tracked: bool = False):
+    """The probe's document opened (tracking on by Editor A where ``tracked``): the session."""
+    session = box.session(clock=CLOCK)
+    session.open(probe.document(), "merged.docx")
+    if tracked:
+        _ok(box, session, "word_set_tracking", doc="d1", on=True, author="Editor A")
+    return session
+
+
 def _shape(table: etree._Element) -> list[list[tuple]]:
     """Per row, per cell: ``(vMerge, text, mark inserted)``; and whether the row is inserted."""
     out = []
@@ -81,20 +99,20 @@ def _tables(data: bytes) -> list[etree._Element]:
 
 
 @pytest.mark.parametrize("key", list(INSERTS))
-def test_insert_row_beside_a_merge_down_is_what_word_makes(key):
-    document = Document.open(probe.document())
-    table = document.tables()[probe.TABLES.index(key)].id
+def test_insert_row_beside_a_merge_down_is_what_word_makes(toolbox, key):
+    session = _probe(toolbox, key.startswith("Tracked"))
+    table = _table_ids(session)[probe.TABLES.index(key)]
     index, below = INSERTS[key]
-    with document.tracking(author="Editor A") if key.startswith("Tracked") else contextlib.nullcontext():
-        document.insert_row(table, index, below=below)
-    assert _shape(_tables(document.to_bytes())[probe.TABLES.index(key)]) == _observed(key)
+    _ok(toolbox, session, "word_edit_table", doc="d1", table=table, action="insert_row", index=index,
+        side="after" if below else "before")
+    assert _shape(_tables(word_docs.saved(session, "d1"))[probe.TABLES.index(key)]) == _observed(key)
 
 
 @pytest.mark.parametrize("key", ["BelowLast", "AboveFirst", "End"])
 def test_a_row_beside_a_merge_says_so_with_the_merge_that_joins_it(toolbox, key):
     session = toolbox.session()
     d = session.open(probe.document(), "merged.docx")
-    table = session.entry(d).document.tables()[probe.TABLES.index(key)].id
+    table = _table_ids(session, d)[probe.TABLES.index(key)]
     index, below = INSERTS[key]
     result = _call(toolbox, session, "word_edit_table", doc=d, table=table, action="insert_row", index=index,
                           side="after" if below else "before")
@@ -106,7 +124,7 @@ def test_a_row_beside_a_merge_says_so_with_the_merge_that_joins_it(toolbox, key)
     merged = _call(toolbox, session, "word_edit_table", doc=d, table=table, action="merge",
                           first={"row": first[0], "col": 0}, last={"row": last[0], "col": 0})
     assert merged.ok, merged
-    shape = _shape(_tables(session.entry(d).document.to_bytes())[probe.TABLES.index(key)])
+    shape = _shape(_tables(word_docs.saved(session, d))[probe.TABLES.index(key)])
     assert [row[1][0] for row in shape[first[0]:last[0] + 1]] == ["restart"] + ["continue"] * (last[0] - first[0])
     # Rule 3: the same call again changes nothing and is no error.
     again = _call(toolbox, session, "word_edit_table", doc=d, table=table, action="merge",
@@ -117,7 +135,7 @@ def test_a_row_beside_a_merge_says_so_with_the_merge_that_joins_it(toolbox, key)
 def test_a_row_inside_a_merge_says_nothing_of_it(toolbox):
     session = toolbox.session()
     d = session.open(probe.document(), "merged.docx")
-    table = session.entry(d).document.tables()[probe.TABLES.index("Inside")].id
+    table = _table_ids(session, d)[probe.TABLES.index("Inside")]
     result = _call(toolbox, session, "word_edit_table", doc=d, table=table, action="insert_row", index=2)
     assert result.ok and not any("merge down" in w for w in result.warnings)
 
@@ -129,12 +147,13 @@ COPIES = {"first above": ((1, False), ("PasteAboveFirst", 1)), "last below": ((3
 
 
 @pytest.mark.parametrize("case", list(COPIES))
-def test_copy_row_outside_a_merge_is_the_row_word_pastes_there(case):
+def test_copy_row_outside_a_merge_is_the_row_word_pastes_there(toolbox, case):
     (index, below), (key, at) = COPIES[case]
-    document = Document.open(probe.document())
-    table = document.tables()[probe.TABLES.index("Inside")].id
-    result = document.copy_row(table, index, below=below)
-    rows = _shape(_tables(document.to_bytes())[probe.TABLES.index("Inside")])
+    session = _probe(toolbox)
+    table = _table_ids(session)[probe.TABLES.index("Inside")]
+    result = _ok(toolbox, session, "word_edit_table", doc="d1", table=table, action="copy_row", index=index,
+                 side="after" if below else "before")
+    rows = _shape(_tables(word_docs.saved(session, "d1"))[probe.TABLES.index("Inside")])
     new = rows[index + 1 if below else index]
     word = _observed(key)[at]
     assert [c[0] for c in new[1:]] == [c[0] for c in word[1:]] == [None, None, None]
@@ -144,12 +163,12 @@ def test_copy_row_outside_a_merge_is_the_row_word_pastes_there(case):
 
 @pytest.mark.parametrize("tracked", [False, True])
 @pytest.mark.parametrize("index, below", [(1, True), (2, True), (2, False), (3, False)])
-def test_copy_row_inside_a_merge_joins_it(index, below, tracked):
-    document = Document.open(probe.document())
-    table = document.tables()[probe.TABLES.index("Inside")].id
-    with document.tracking(author="Editor A") if tracked else contextlib.nullcontext():
-        document.copy_row(table, index, below=below)
-    rows = _shape(_tables(document.to_bytes())[probe.TABLES.index("Inside")])
+def test_copy_row_inside_a_merge_joins_it(toolbox, index, below, tracked):
+    session = _probe(toolbox, tracked)
+    table = _table_ids(session)[probe.TABLES.index("Inside")]
+    _ok(toolbox, session, "word_edit_table", doc="d1", table=table, action="copy_row", index=index,
+        side="after" if below else "before")
+    rows = _shape(_tables(word_docs.saved(session, "d1"))[probe.TABLES.index("Inside")])
     at = index + 1 if below else index
     assert [row[1][0] for row in rows] == [None, "restart", "continue", "continue", "continue", None]
     copied = _shape(_tables(probe.document())[probe.TABLES.index("Inside")])[index]
@@ -157,7 +176,7 @@ def test_copy_row_inside_a_merge_joins_it(index, below, tracked):
     # Tracked, as Word tracks a row it inserts there: the row and every mark inserted.
     assert rows[at][0] is tracked and all(c[2] is tracked for c in rows[at][1:])
     # Rule 6: the joined cell's paragraph is formatted as the row copied had it.
-    table_element = _tables(document.to_bytes())[probe.TABLES.index("Inside")]
+    table_element = _tables(word_docs.saved(session, "d1"))[probe.TABLES.index("Inside")]
     spacing = table_element.findall(_W + "tr")[at].find(f"{_W}tc/{_W}p/{_W}pPr/{_W}spacing")
     assert spacing is not None and spacing.get(_W + "after") == "0"
 
@@ -165,23 +184,21 @@ def test_copy_row_inside_a_merge_joins_it(index, below, tracked):
 def test_copy_row_is_one_undo_step_and_no_longer_refused(toolbox):
     session = toolbox.session(clock=CLOCK)
     d = session.open(probe.document(), "merged.docx")
-    before = session.entry(d).document.to_bytes()
-    table = session.entry(d).document.tables()[probe.TABLES.index("Inside")].id
+    before = word_docs.saved(session, d)
+    table = _table_ids(session, d)[probe.TABLES.index("Inside")]
     assert _call(toolbox, session, "word_set_tracking", doc=d, on=True, author="Editor A").ok
     result = _call(toolbox, session, "word_edit_table", doc=d, table=table, action="copy_row", index=2)
     assert result.ok, result
     assert _call(toolbox, session, "undo", doc=d).ok
-    after = _shape(_tables(session.entry(d).document.to_bytes())[probe.TABLES.index("Inside")])
+    after = _shape(_tables(word_docs.saved(session, d))[probe.TABLES.index("Inside")])
     assert after == _shape(_tables(before)[probe.TABLES.index("Inside")])
 
 
 def test_copy_row_keeps_its_other_refusals_with_the_way_out(toolbox):
-    document = Document.open(probe.document())
-    table = document.tables()[probe.TABLES.index("Inside")].id
-    document.insert_footnote(document.table(table).cell(2, 1).paragraphs[0].id, "A note.")
-    session = toolbox.session(clock=CLOCK)
-    d = session.open(document.to_bytes(), "merged.docx")
-    table = session.entry(d).document.tables()[probe.TABLES.index("Inside")].id
+    session = _probe(toolbox)
+    d = "d1"
+    table = _table_ids(session, d)[probe.TABLES.index("Inside")]
+    _ok(toolbox, session, "word_notes", doc=d, action="insert", at=f"{table}/c2,1", text="A note.")
     result = _call(toolbox, session, "word_edit_table", doc=d, table=table, action="copy_row", index=2)
     assert not result.ok and "footnote" in result.error.message
     assert [c["arguments"]["action"] for c in result.error.details["calls"]] == ["insert_row", "set_cells"]
@@ -189,28 +206,33 @@ def test_copy_row_keeps_its_other_refusals_with_the_way_out(toolbox):
 
 # -- frames ------------------------------------------------------------------------------------
 
-def merged_sample() -> tuple[Document, str]:
+def merged_sample(box):
     """A made-up three-column table: a header row, body rows whose first column is merged down
-    over two groups (rows 1-2, rows 3-5), a shaded third column."""
-    document = Document.new()
-    table = document.insert_table(6, 3, after=document.paragraphs()[0].id, style="Table Grid").id
-    document.set_table(table, look={"first_row": True, "last_row": False, "first_column": False,
-                                    "last_column": False, "banded_rows": False, "banded_columns": False})
+    over two groups (rows 1-2, rows 3-5), a shaded third column: the session and the table."""
+    session = box.session(clock=CLOCK)
+    session.open(word_docs.blank(), "sample.docx")
     texts = [["Shelf", "Item", "Count"], ["Top", "jars", "4"], ["", "tins", "2"], ["Low", "bags", "7"],
              ["", "boxes", "1"], ["", "crates", "3"]]
-    for r, row in enumerate(texts):
-        for c, text in enumerate(row):
-            if text:
-                document.table(table).cell(r, c).paragraphs[0].set_text(text)
-        document.format_cell(table, r, 2, shading="DEEAF6")
-    document.set_row(table, 0, header=True)
-    document.merge_cells(table, (1, 0), (2, 0))
-    document.merge_cells(table, (3, 0), (5, 0))
-    return Document.open(document.to_bytes()), table
+    markdown = "\n".join(["| " + " | ".join(texts[0]) + " |", "|---|---|---|"]
+                         + ["| " + " | ".join(row) + " |" for row in texts[1:]])
+    first = word_docs.paragraph_ids(box, session, "d1")[0]
+    made = _ok(box, session, "word_insert_markdown", doc="d1", at=f"after:{first}", markdown=markdown)
+    table = next(b for b in made.data["blocks"] if b.startswith("t:"))
+
+    def fmt(**arguments):
+        _ok(box, session, "word_format_table", doc="d1", table=table, **arguments)
+
+    fmt(scope="table", look=["header_row"], header_rows=1)
+    for r in range(6):
+        fmt(scope="cell", row=r, column=2, shading="DEEAF6")
+    for first_row, last_row in ((1, 2), (3, 5)):
+        _ok(box, session, "word_edit_table", doc="d1", table=table, action="merge",
+            first={"row": first_row, "col": 0}, last={"row": last_row, "col": 0})
+    return session, table
 
 
-def _merges(document: Document, table: str) -> list[str | None]:
-    rows = document._resolve(table)[1].element.findall(_W + "tr")
+def _merges(session, table: str) -> list[str | None]:
+    rows = word_docs.element(session, "d1", table).findall(_W + "tr")
     out = []
     for row in rows:
         merge = row.find(f"{_W}tc/{_W}tcPr/{_W}vMerge")
@@ -230,14 +252,15 @@ def _merges(document: Document, table: str) -> list[str | None]:
     # Every cell given: no merges.
     ("| A | 1 | 1 |\n| B | 2 | 2 |", [None, None, None]),
 ])
-def test_a_frame_copy_merges_its_body_down_as_the_text_says(markdown, merges):
-    document, sample = merged_sample()
+def test_a_frame_copy_merges_its_body_down_as_the_text_says(toolbox, markdown, merges):
+    session, sample = merged_sample(toolbox)
     head = "| Shelf | Item | Count |\n|---|---|---|\n"
-    result = document.insert_markdown(head + markdown + "\n", at="end", table_like=sample)
-    new = next(b for b in result.blocks if b.startswith("t:"))
-    assert _merges(document, new) == merges
+    result = _ok(toolbox, session, "word_insert_markdown", doc="d1", at="end", markdown=head + markdown + "\n",
+                 like=sample)
+    new = next(b for b in result.data["blocks"] if b.startswith("t:"))
+    assert _merges(session, new) == merges
     # Each continuing cell is empty; the third column keeps the sample's shading.
-    rows = document._resolve(new)[1].element.findall(_W + "tr")
+    rows = word_docs.element(session, "d1", new).findall(_W + "tr")
     for row, merge in zip(rows, merges):
         if merge == "continue":
             assert not "".join(t.text or "" for t in row.find(_W + "tc").iter(_W + "t"))
@@ -247,16 +270,16 @@ def test_a_frame_copy_merges_its_body_down_as_the_text_says(markdown, merges):
 
 
 @pytest.mark.any_faces
-def test_a_frame_copy_with_merges_renders_like_the_sample():
+def test_a_frame_copy_with_merges_renders_like_the_sample(toolbox):
     # The sample and its copy, one after the other on a page, drawn by docx2svg: the same
     # rules, shading and text, each relative to its table's top.
     import docx2svg
 
-    document, sample = merged_sample()
+    session, sample = merged_sample(toolbox)
     markdown = ("| Shelf | Item | Count |\n|---|---|---|\n| Top | jars | 4 |\n|  | tins | 2 |\n| Low | bags | 7 |\n"
                 "|  | boxes | 1 |\n|  | crates | 3 |\n")
-    document.insert_markdown(markdown, at="end", table_like=sample)
-    svg = docx2svg.convert_docx_to_svg(document.to_bytes())[0]
+    _ok(toolbox, session, "word_insert_markdown", doc="d1", at="end", markdown=markdown, like=sample)
+    svg = docx2svg.convert_docx_to_svg(word_docs.saved(session, "d1"))[0]
     first, second = _drawn(svg, 1), _drawn(svg, 2)
     assert first and len(first) == len(second)
     for a, b in zip(first, second):   # within a pixel: the two tables' tops round differently
@@ -288,20 +311,24 @@ def _drawn(svg: str, table: int) -> list[tuple]:
 
 
 def test_a_frame_copy_keeps_the_refusals_with_the_way_out(toolbox):
-    document, sample = merged_sample()
+    session, sample = merged_sample(toolbox)
     head = "| Shelf | Item | Count |\n|---|---|---|\n"
-    with pytest.raises(EditError, match="2 column"):
-        document.insert_markdown("| Shelf | Item |\n|---|---|\n| A | 1 |\n", at="end", table_like=sample)
+    refused = _call(toolbox, session, "word_insert_markdown", doc="d1", at="end",
+                    markdown="| Shelf | Item |\n|---|---|\n| A | 1 |\n", like=sample)
+    assert not refused.ok and "2 column" in refused.error.message
     # Text in a header row's cell merged into the one above (the sample's two header rows,
     # their second column merged down) is refused: the text goes in the merge's first cell.
-    header, table = merged_sample()
-    header.set_row(table, 1, header=True)
-    header.merge_cells(table, (0, 1), (1, 1))
-    with pytest.raises(EditError, match="merged into the cell above"):
-        header.insert_markdown(head + "| A | 1 | 1 |\n| B | 2 | 2 |\n", at="end", table_like=table)
-    made = header.insert_markdown(head + "| A |  | 1 |\n| B | 2 | 2 |\n", at="end", table_like=table)
-    new = next(b for b in made.blocks if b.startswith("t:"))
-    rows = header._resolve(new)[1].element.findall(_W + "tr")
+    session, table = merged_sample(toolbox)
+    _ok(toolbox, session, "word_format_table", doc="d1", table=table, scope="table", header_rows=2)
+    _ok(toolbox, session, "word_edit_table", doc="d1", table=table, action="merge", first={"row": 0, "col": 1},
+        last={"row": 1, "col": 1})
+    refused = _call(toolbox, session, "word_insert_markdown", doc="d1", at="end",
+                    markdown=head + "| A | 1 | 1 |\n| B | 2 | 2 |\n", like=table)
+    assert not refused.ok and "merged into the cell above" in refused.error.message
+    made = _ok(toolbox, session, "word_insert_markdown", doc="d1", at="end",
+               markdown=head + "| A |  | 1 |\n| B | 2 | 2 |\n", like=table)
+    new = next(b for b in made.data["blocks"] if b.startswith("t:"))
+    rows = word_docs.element(session, "d1", new).findall(_W + "tr")
     assert rows[1].findall(_W + "tc")[1].find(f"{_W}tcPr/{_W}vMerge") is not None
 
 
