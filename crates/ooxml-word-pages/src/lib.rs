@@ -11,8 +11,8 @@
 //!   painter of its drawings ([`drawings::WordDrawings`]): pictures, shapes, groups and
 //!   charts, as docx2svg paints them;
 //! - what the layout cannot lay out yet, found before a version is laid out
-//!   ([`support::unsupported`]): the caller lays such a document out another way
-//!   ([`Fallback`]), counted, never silently;
+//!   ([`support::unsupported`]): the answer is why ([`Fallback`]: a reason and where), which
+//!   the tools refuse as not supported yet, with a way out -- never laid out another way;
 //! - one document's engine ([`PageEngine`]): the Word model's and the layout's memos, kept
 //!   between versions, and the last version laid out, which the next is laid out from;
 //! - one version laid out ([`LaidVersion`]): its facts (made once, when first asked), its

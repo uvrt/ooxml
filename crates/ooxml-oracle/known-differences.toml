@@ -491,11 +491,13 @@ form = "edit_chart*"
 cause = "edit_chart's forms not ported (chart chain leftovers, values from tables; deferred, objects O)"
 
 [[not_supported]]
-form = "*a footnote or endnote the layout cannot lay out"
+form = "* the layout cannot lay out"
 cause = """check, render, the live view and word_inspect layout of a version the Word layout does not \
-lay out because of a note (a frame, a text box, a drawing text wraps beside or a STYLEREF field \
-in a footnote or endnote): docx-agent laid such a version out in Python (lane CL1; refused at \
-release, ported after)"""
+lay out yet, by what it holds: a footnote or endnote (a frame, a text box, a drawing text wraps \
+beside or a STYLEREF field in one, or one the layout stops at), a header or footer (a frame or a \
+drawing text wraps beside in one, or one it cannot measure), a text box, a drop cap outside the \
+body's top level, or a block the layout stops at. docx-agent laid such a version out in Python \
+(lanes CL1, fu-docx2svg: no fallback at release; ported after)"""
 
 [[not_supported]]
 form = "copy_from *"

@@ -25,7 +25,8 @@ keyed instead).
 
 NOT_REFERENCE are the harness modules that make the cases, run the Rust side and compare the
 results: the harnesses' drivers (word_edits_diff.py, and word_reads_diff.py, whose run and
-report it shares), the case makers (every word_*_cases.py) and word_edits_compare.py.  The
+report it shares), the case makers (every word_*_cases.py), word_edits_compare.py and what
+records the cases and answers for goldens (goldens.py) and runs the Rust side (oracle_run.py).  The
 case they make is in each result's key, and a comparison runs again on every run, kept result
 or not, so a change to them (a new case, a comparison rule, the Rust side's run) leaves every
 kept result valid: only the new cases are computed.  The reference's own code -- what runs
@@ -81,7 +82,9 @@ NOT_REFERENCE_DISTRIBUTIONS = {"pip"}
 #: part of the chain (see the module's docstring): the drivers, word_edits_compare.py and every
 #: case maker (word_*_cases.py, found by name so that a new one is left out too).
 DRIVERS = ("word_edits_diff.py", "word_reads_diff.py", "word_edits_compare.py")
-NOT_REFERENCE = (*DRIVERS, *sorted(path.name for path in HARNESS.glob("word_*_cases.py")))
+#: What records a run's cases and the Rust side's answers for goldens (the drivers' --record).
+RECORDING = ("goldens.py", "oracle_run.py")
+NOT_REFERENCE = (*DRIVERS, *RECORDING, *sorted(path.name for path in HARNESS.glob("word_*_cases.py")))
 DIGEST = "sha256:"
 #: The name the merged store's file has (other files in a store are merged into it).
 MERGED = "reference.jsonl.gz"
