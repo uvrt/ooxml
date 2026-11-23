@@ -355,6 +355,12 @@ class DocumentFormat:
     #: a plural or another prefix.  Only wording: the call still fails, its message naming
     #: the tool to use.  An entry naming a tool or action the toolbox lacks is ignored.
     tool_hints: dict[str, str] = field(default_factory=dict)
+    #: Tools the format no longer serves, by name, each with what to call instead (a
+    #: sentence the refusal ends with).  A call of one is refused ``refused``, with
+    #: ``details.not_supported`` ``"<name> (withdrawn)"`` and that way out, never answered
+    #: as an unknown tool nor read as another tool's name.  A name the toolbox has as a
+    #: tool (another format's) is served as usual.
+    withdrawn: dict[str, str] = field(default_factory=dict)
     #: What a changing call changed, for the application (``Result.touched``; the model
     #: never sees it): ``touched(document, change)`` -> entries (dicts), where ``change``
     #: is a :class:`~ooxml_edit.history.Change` -- its ``parts`` the part names whose bytes
