@@ -35,14 +35,17 @@ pub mod trials;
 pub mod uncertain;
 
 use crate::line_text::LineText;
+use crate::page_entry::PageEntry;
 use crate::page_read::{PageBoxes, PageRead};
 use crate::LaidVersion;
 use ooxml_word_layout::facts::LineFact;
 use ooxml_word_layout::px::Px;
 use ooxml_word_model::docx::formatting::{EffectiveParagraph, Formatting};
 use ooxml_word_model::docx::Docx;
+use ooxml_word_model::model::Table;
+use ooxml_word_model::resolve::{resolve_table, ResolvedTable};
 use ooxml_xml::Element;
-use std::cell::OnceCell;
+use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 pub(crate) use tree::block_keys_top;
@@ -52,10 +55,17 @@ pub use scope::{Range, Scope, ScopeError};
 pub use tree::{Block, BlockKind};
 pub use trials::{Blank, KeepEffect, Side, TrialBlocks};
 
-/// Each page as a check reads its paint (`PageEngine::page_read`).
+/// Each page as a check reads its paint (`PageEngine::page_read`): its entry in the page
+/// tier.
 pub trait PageReads {
-    /// The 0-based page `page`'s lines' text and boxes (`None`: the page is not painted).
-    fn page_read(&self, page: usize) -> Option<PageRead>;
+    /// The 0-based page `page`'s entry: its lines' text and boxes, and its facts'
+    /// contributions (`None`: the page is not painted).
+    fn page_read(&self, page: usize) -> Option<Arc<PageEntry>>;
+
+    /// A table of the version's layout model resolved as the layout resolved it, from the
+    /// engine's block tier (`PageEngine::resolved_table`); `None` where the engine no
+    /// longer has it (the facts resolve it themselves, the same way).
+    fn resolved_table(&self, table: &Table) -> Option<Arc<ResolvedTable>>;
 }
 
 /// One body line where it is drawn: its 1-based page and the line.
@@ -84,7 +94,9 @@ pub struct Facts<'a> {
     /// Each top-level block's place among them, by path.
     positions: HashMap<String, usize>,
     reads: &'a dyn PageReads,
-    painted: Vec<OnceCell<Option<PageRead>>>,
+    painted: Vec<OnceCell<Option<Arc<PageEntry>>>>,
+    /// Each table of the layout model resolved, by its address, when first asked.
+    resolved: RefCell<HashMap<usize, Arc<ResolvedTable>>>,
     /// The layout model's tables (nested ones too) by path, made when first asked.
     model_tables: OnceCell<HashMap<&'a str, &'a Arc<ooxml_word_model::model::Table>>>,
     /// What `range` scopes the facts to (`None`: the whole document).
@@ -153,6 +165,7 @@ impl<'a> Facts<'a> {
             positions,
             reads,
             painted: (0..facts.pages.len()).map(|_| OnceCell::new()).collect(),
+            resolved: RefCell::new(HashMap::new()),
             model_tables: OnceCell::new(),
             scope: None,
         }
@@ -188,6 +201,21 @@ impl<'a> Facts<'a> {
             out
         });
         index.get(path).copied()
+    }
+
+    /// `table` (of the version's layout model) resolved as the layout resolved it: from the
+    /// engine's block tier, once per check.
+    pub(crate) fn resolved_table(&self, table: &Arc<Table>) -> Arc<ResolvedTable> {
+        let key = Arc::as_ptr(table) as usize;
+        if let Some(found) = self.resolved.borrow().get(&key) {
+            return Arc::clone(found);
+        }
+        let made = self
+            .reads
+            .resolved_table(table)
+            .unwrap_or_else(|| Arc::new(resolve_table(&tables::sources(self), table)));
+        self.resolved.borrow_mut().insert(key, Arc::clone(&made));
+        made
     }
 
     /// The version.
@@ -303,26 +331,25 @@ impl<'a> Facts<'a> {
         &self.formatting
     }
 
-    /// The 0-based page `page` as a check reads it, painted once.
-    fn read(&self, page: usize) -> Option<&PageRead> {
+    /// The 0-based page `page`'s entry in the page tier: its read and its facts'
+    /// contributions, painted once.
+    #[must_use]
+    pub fn entry(&self, page: usize) -> Option<&PageEntry> {
         self.painted
             .get(page)?
             .get_or_init(|| self.reads.page_read(page))
-            .as_ref()
+            .as_deref()
+    }
+
+    /// The 0-based page `page` as a check reads it, painted once.
+    fn read(&self, page: usize) -> Option<&PageRead> {
+        self.entry(page).map(PageEntry::read)
     }
 
     /// The 0-based page `page`'s lines' text, painted once.
     #[must_use]
     pub fn texts(&self, page: usize) -> Option<&[LineText]> {
         self.read(page).map(|r| r.texts.as_slice())
-    }
-
-    /// Every line of text the 0-based page `page` draws, its text boxes' after its own
-    /// (docx2svg's `Page.text_lines`, which docx-agent's text sizes read), painted once.
-    pub fn text_lines(&self, page: usize) -> impl Iterator<Item = &LineText> {
-        self.read(page)
-            .into_iter()
-            .flat_map(|r| r.texts.iter().chain(&r.box_texts))
     }
 
     /// What the 0-based page `page` draws beside its lines, painted once.

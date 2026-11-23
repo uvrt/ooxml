@@ -401,7 +401,7 @@ jobs:
       - name: Seeds
         run: |
           start=$(date +%s)
-          cargo test --locked --release -p ooxml-word-edit -p ooxml-word-layout -p ooxml-store -p ooxml-session --no-run
+          cargo test --locked --release -p ooxml-word-edit -p ooxml-word-layout -p ooxml-store -p ooxml-session -p ooxml-tools-word --no-run
           status=0
           echo "| run | result | wall (s) |" > "$RUNNER_TEMP/seeds.md"
           echo "|---|---|---:|" >> "$RUNNER_TEMP/seeds.md"
@@ -419,6 +419,8 @@ jobs:
             run "ooxml-word-edit ${t%%::*}" cargo test --locked --release -p ooxml-word-edit --test integration -- --ignored --nocapture --exact "$t"
           done
           run "ooxml-word-layout relayout sixty_seeds" cargo test --locked --release -p ooxml-word-layout --test integration -- --ignored --nocapture --exact relayout::sixty_seeds
+          # A warm check equals a cold one after random edits (61 seeds x 10 versions; found #329).
+          run "ooxml-tools-word check_warm many_seeds" cargo test --locked --release -p ooxml-tools-word --test integration -- --ignored --nocapture --exact check_warm::many_seeds
           run "ooxml-store, ooxml-session" cargo test --locked --release -p ooxml-store -p ooxml-session -- --include-ignored --nocapture
           {
             echo "### seeds ($(( $(date +%s) - start )) s with the build)"

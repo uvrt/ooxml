@@ -13,6 +13,26 @@ use std::sync::{Arc, Mutex, PoisonError};
 #[derive(Debug, Default)]
 pub struct Detections {
     kept: Mutex<Arc<HashMap<String, Detected>>>,
+    /// Each paragraph's judgement, by the elements it read.
+    pub(super) paragraphs: super::judged::Judgements,
+}
+
+impl Detections {
+    /// Detections whose paragraphs' judgements are counted on `budget` (a document's
+    /// account).
+    #[must_use]
+    pub fn new(budget: Arc<dyn ooxml_derive::CacheBudget>) -> Detections {
+        Detections {
+            kept: Mutex::default(),
+            paragraphs: super::judged::Judgements::new(budget),
+        }
+    }
+
+    /// What the paragraphs' judgements hold.
+    #[must_use]
+    pub fn judgements(&self) -> ooxml_derive::MemoStats {
+        self.paragraphs.stats()
+    }
 }
 
 /// One check's detections: the kept ones read, the ones met kept for the next check.

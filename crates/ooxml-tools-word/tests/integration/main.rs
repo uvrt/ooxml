@@ -6,6 +6,7 @@ mod common;
 
 mod check;
 mod check_layout;
+mod check_warm;
 mod compare;
 mod controls;
 mod describe;

@@ -10,7 +10,7 @@
 use crate::edits::Unlimited;
 use ooxml_opc::Package;
 use ooxml_word_pages::layout_facts::{Facts, PageReads, Scope, ScopeError};
-use ooxml_word_pages::page_read::PageRead;
+use ooxml_word_pages::page_entry::PageEntry;
 use ooxml_word_pages::{LaidVersion, PageEngine};
 use serde_json::{json, Map, Value};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -31,9 +31,19 @@ struct Painted<'e> {
 }
 
 impl PageReads for Painted<'_> {
-    fn page_read(&self, page: usize) -> Option<PageRead> {
+    fn page_read(&self, page: usize) -> Option<Arc<PageEntry>> {
         let mut engine = self.engine.lock().unwrap_or_else(PoisonError::into_inner);
         engine.page_read(&self.version, page)
+    }
+
+    fn resolved_table(
+        &self,
+        table: &ooxml_word_model::model::Table,
+    ) -> Option<Arc<ooxml_word_model::resolve::ResolvedTable>> {
+        self.engine
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .resolved_table(&self.version, table)
     }
 }
 

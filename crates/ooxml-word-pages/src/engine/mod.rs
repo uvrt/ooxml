@@ -537,7 +537,7 @@ impl PageEngine {
             others_changed,
             drawn_changed: notes_or_stories_changed(opened.as_ref(), package),
         };
-        let said = say(generation, &laid, drawings.as_ref(), &with);
+        let said = say(generation, (&laid, previous.as_deref()), drawings.as_ref(), &with);
         self.stats.pages_said = generation.said.stats();
         let ids = version_ids(generation, package, &document.main_part);
         self.serial += 1;

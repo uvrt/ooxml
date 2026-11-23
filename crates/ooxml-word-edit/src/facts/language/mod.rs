@@ -8,6 +8,7 @@
 
 mod detect;
 mod detections;
+mod judged;
 
 pub use detect::{detect, words_of, Detected, LANGUAGES, MIN_WORDS};
 use detections::Detecting;
@@ -25,6 +26,7 @@ use ooxml_word_model::docx::{Docx, StoryPart};
 use ooxml_word_model::typography::RunContext;
 use ooxml_xml::Element;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 /// A paragraph is listed as another language than its tag at least this sure.
 pub const MIN_CONFIDENCE: f64 = 0.5;
@@ -260,11 +262,28 @@ fn read(docx: &Docx, proofing: &mut Proofing, scope: LanguageScope<'_>) -> Readi
         unclear: 0,
     };
     let mut detecting = Detecting::new(scope.detections, scope.whole);
+    let styles = proofing.styles.as_ref().map(|t| Arc::clone(t.root()));
+    let memo = scope.detections.map(|d| &d.paragraphs);
     for placed in paragraphs(docx) {
         if scope.keep.is_some_and(|keep| !keep(&placed.paragraph.id)) {
             continue;
         }
-        match judge(proofing, &placed, &mut detecting) {
+        let of = judged::Of {
+            paragraph: &placed.paragraph.element,
+            table: placed.table.as_ref().map(Option::as_ref),
+            styles: styles.as_ref(),
+        };
+        let found = match memo.and_then(|m| m.get(&of)) {
+            Some(kept) => kept.named(&placed.paragraph.id),
+            None => {
+                let found = judge(proofing, &placed, &mut detecting);
+                if let Some(memo) = memo {
+                    memo.keep(&of, judged::Judgement::of(&found));
+                }
+                found
+            }
+        };
+        match found {
             Ok(found) => out.judged.push(found),
             Err(Unjudged::TooShort) => {
                 out.short.insert(placed.paragraph.id.clone());
@@ -274,6 +293,9 @@ fn read(docx: &Docx, proofing: &mut Proofing, scope: LanguageScope<'_>) -> Readi
         }
     }
     detecting.finish();
+    if let (Some(memo), true) = (memo, scope.whole) {
+        memo.sweep();
+    }
     out
 }
 
