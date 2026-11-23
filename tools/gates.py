@@ -157,11 +157,30 @@ def known_entries(path: Path = KNOWN) -> list[dict]:
         if "case" in entry:
             # a case's number changes with the run's sampling and with each case maker added
             raise SystemExit(f"{path}: a known difference names its case by input, not by number: {entry}")
+        check_verdict(path, entry)
         condition = entry.get("document")
         if condition is not None and (not isinstance(condition, dict) or "lacks_namespace" not in condition
                                       or set(condition) - DOCUMENT_KEYS):
             raise SystemExit(f"{path}: a document condition takes lacks_namespace (and part): {entry}")
     return entries
+
+
+#: A known difference's verdict against Word (``word``): measured and the Rust core's answer
+#: (with its ``observation``), nothing in Word to measure, or not measured yet.
+VERDICTS = ("rust", "n/a", "unmeasured")
+
+
+def check_verdict(path: Path, entry: dict) -> None:
+    """Refuses an entry without a ``word`` verdict, a ``rust`` verdict whose ``observation``
+    (``file#case``) names no file of the repository, and an observation on another verdict."""
+    verdict = entry.get("word")
+    if verdict not in VERDICTS:
+        raise SystemExit(f"{path}: every known difference needs a word verdict ({' | '.join(VERDICTS)}): {entry}")
+    observation = entry.get("observation")
+    if verdict == "rust" and not (isinstance(observation, str) and (ROOT / observation.split("#")[0]).is_file()):
+        raise SystemExit(f"{path}: a word = \"rust\" verdict names its Word observation (a repository file): {entry}")
+    if verdict != "rust" and observation is not None:
+        raise SystemExit(f"{path}: only a word = \"rust\" verdict names an observation: {entry}")
 
 
 def allowed_forms(path: Path = KNOWN) -> list[dict]:
