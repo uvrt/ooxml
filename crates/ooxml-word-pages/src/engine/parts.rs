@@ -9,7 +9,7 @@ use super::{Generation, KEY};
 use crate::drawing_said::DrawingWarnings;
 use crate::drawings::WordDrawings;
 use crate::fonts::DocumentFonts;
-use crate::pictures::PackagePictures;
+use crate::pictures::{PackagePictures, PictureMemo};
 use crate::version::LaidVersion;
 use ooxml_base::Locale;
 use ooxml_derive::CacheBudget;
@@ -36,14 +36,16 @@ pub(super) fn version_ids(generation: &mut Generation, package: &Package, main: 
     crate::ids::VersionIds::new(root, ids)
 }
 
-/// A version's pictures (its package less its text parts) and its drawings' painter.
+/// A version's pictures (its package less its text parts, its metafiles' drawings kept in
+/// `memo`) and its drawings' painter, writing charts' numbers in `numbers`.
 pub(super) fn pictures_of(
     package: &Package,
     document: &ooxml_word_model::WordDocument,
     fonts: &DocumentFonts,
     numbers: &ooxml_numfmt::Locale,
+    memo: &Arc<PictureMemo>,
 ) -> (Option<PackagePictures>, Option<WordDrawings>) {
-    let pictures = PackagePictures::new(package);
+    let pictures = PackagePictures::new(package).map(|p| p.with_memo(Arc::clone(memo)));
     let drawings = pictures.clone().map(|p| {
         let inks: Arc<dyn crate::drawings::vml::Inks> = Arc::clone(&fonts.inks);
         WordDrawings::new(document, p, numbers.clone(), Some(inks))
