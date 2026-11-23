@@ -229,7 +229,7 @@ pub(crate) fn page_summary(digests: crate::engine::PageDigests, version: &crate:
             let body = in_body(&path, story.is_some());
             SummaryLine {
                 id: if body {
-                    version.ids.all().get(&path).cloned()
+                    version.ids.id_of(&path).map(Text::from)
                 } else {
                     None
                 },
@@ -251,5 +251,5 @@ pub(crate) fn named_alike(page: &PageSummary, version: &crate::version::LaidVers
     page.lines
         .iter()
         .filter(|l| l.body)
-        .all(|l| version.ids.all().get(&l.path) == l.id.as_ref())
+        .all(|l| version.ids.id_of(&l.path) == l.id.as_deref())
 }

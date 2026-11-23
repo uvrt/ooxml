@@ -87,7 +87,7 @@ impl LaidVersion {
     /// The id of the paragraph, table or row at body path `path` (`w:body/w:p[3]`), as the
     /// tool names it in this version's bytes.
     pub fn id_of(&self, path: &str) -> Option<&str> {
-        self.ids.all().get(path).map(|id| &**id)
+        self.ids.id_of(path)
     }
 
     /// The tool's ids of the body's top-level blocks (paragraphs and tables, those of its
@@ -108,11 +108,6 @@ impl LaidVersion {
         found.sort();
         found.dedup_by(|a, b| a.1 == b.1);
         found.into_iter().map(|(_, id)| id).collect()
-    }
-
-    /// Its body blocks by the tool's ids (every block named, once, when first asked).
-    pub fn block_ids(&self) -> &crate::ids::BlockIds {
-        self.ids.all()
     }
 
     /// The body path (`w:body/w:p[3]`) of the paragraph, table or row the tool's id `id`
