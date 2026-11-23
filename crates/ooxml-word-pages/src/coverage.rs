@@ -270,7 +270,8 @@ impl PageEngine {
         let found = version.glyphs().coverage();
         let (mut substituted, missing) = graded(&found);
         if substituted.len() >= 2 {
-            let faces = self.body_faces(version)?;
+            let families: Vec<&str> = substituted.iter().map(|s| &*s.family).collect();
+            let faces = self.body_faces(version, &families)?;
             let (mut first, rest): (Vec<_>, Vec<_>) = substituted
                 .into_iter()
                 .partition(|s| faces.iter().any(|f| **f == *s.family));
@@ -320,9 +321,14 @@ impl PageEngine {
 
     /// The faces `version`'s body lines draw text in, each once, in the order drawn page by
     /// page (every page painted, not kept); `None` where it is not of this generation.
-    fn body_faces(&mut self, version: &LaidVersion) -> Option<Vec<Text>> {
+    fn body_faces(&mut self, version: &LaidVersion, wanted: &[&str]) -> Option<Vec<Text>> {
         let mut faces: Vec<Text> = Vec::new();
         for page in 0..version.page_count() {
+            // Once every face asked about is drawn, the pages after it cannot change the
+            // order they are first drawn in.
+            if wanted.iter().all(|w| faces.iter().any(|f| **f == **w)) {
+                break;
+            }
             let paint = self.painted_page(version, page, false)?;
             for line in paint.lines.iter().filter(|l| l.story.is_none()) {
                 for span in &line.spans {

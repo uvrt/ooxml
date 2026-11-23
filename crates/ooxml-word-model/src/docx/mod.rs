@@ -67,6 +67,8 @@ pub struct StoryPart {
     pub ids: PartIds,
     facts: OnceLock<Arc<PartFacts>>,
     texts: OnceLock<Arc<PartTexts>>,
+    /// Where a layout path's indexed steps are among the tree's long parents' children.
+    paths: crate::read::paths::ChildIndex,
     /// The document's latest readings of the part: the paragraphs and blocks this version
     /// shares with the version that read them are taken from them.
     kept: Arc<Kept>,
@@ -92,8 +94,17 @@ impl StoryPart {
             ids,
             facts: OnceLock::new(),
             texts: OnceLock::new(),
+            paths: crate::read::paths::ChildIndex::default(),
             kept: Arc::clone(kept),
         }
+    }
+
+    /// The element a layout path names in the part, and its place (child indexes from the
+    /// root): [`crate::read::paths::resolve_path`], each long parent's children counted
+    /// once for the part's every caller.
+    #[must_use]
+    pub fn resolve_path(&self, path: &str) -> Option<(&Arc<Element>, Vec<u32>)> {
+        crate::read::paths::resolve_indexed(self.root(), path, &self.paths)
     }
 
     /// The part's root element.

@@ -31,6 +31,9 @@ pub struct VersionIds {
     /// when a path is first asked: a path is then found in time of its depth, not of its
     /// place in the body.
     body_counts: OnceLock<Vec<u32>>,
+    /// Where a layout path's indexed steps are among the main part's long parents'
+    /// children, made as paths are asked.
+    paths: ooxml_word_model::read::paths::ChildIndex,
 }
 
 impl VersionIds {
@@ -40,6 +43,7 @@ impl VersionIds {
             part: Some((root, ids)),
             all: OnceLock::new(),
             body_counts: OnceLock::new(),
+            paths: ooxml_word_model::read::paths::ChildIndex::default(),
         }
     }
 
@@ -98,7 +102,7 @@ impl VersionIds {
     /// box's paragraph's `…/w:r[2]/wp:anchor[1]/wps:txbx/w:txbxContent/w:p[1]` too).
     pub fn place_of_path(&self, path: &str) -> Option<Vec<u32>> {
         let (root, _) = self.part.as_ref()?;
-        ooxml_word_model::read::paths::resolve_path(root, path).map(|(_, place)| place)
+        ooxml_word_model::read::paths::resolve_indexed(root, path, &self.paths).map(|(_, place)| place)
     }
 
     /// What it holds beyond the version's tree, bytes, roughly.

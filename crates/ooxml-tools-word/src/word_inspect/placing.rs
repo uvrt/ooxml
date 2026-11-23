@@ -14,7 +14,6 @@ use ooxml_base::Cancel;
 use ooxml_opc::Package;
 use ooxml_word_layout::px::Px;
 use ooxml_word_model::docx::Docx;
-use ooxml_word_model::read::paths::resolve_path;
 use ooxml_word_pages::layout_facts::{points, story_kind};
 use ooxml_word_pages::line_text::LineText;
 use ooxml_word_pages::LaidVersion;
@@ -176,7 +175,7 @@ impl<'v> Laid<'v> {
     /// The id of the paragraph at `path` of the part `part`.
     fn id_at(&self, part: &str, path: &str) -> Option<String> {
         let story = self.docx.part(part)?;
-        let (_, place) = resolve_path(story.root(), path)?;
+        let (_, place) = story.resolve_path(path)?;
         story.ids.paragraph_at(&place).map(|p| p.id)
     }
 }

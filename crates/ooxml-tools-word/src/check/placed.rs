@@ -9,7 +9,6 @@
 //!
 //! Must not: lay out or paint but through the facts' pages.
 
-use ooxml_word_model::read::paths::resolve_path;
 use ooxml_word_pages::layout_facts::{story_kind, Facts};
 use std::cell::OnceCell;
 use std::collections::{BTreeSet, HashMap};
@@ -92,7 +91,7 @@ impl<'f, 'a> Placed<'f, 'a> {
     /// The id of the paragraph at `path` (`w:hdr/w:p[1]`) of the part `part`.
     fn id_at(&self, part: &str, path: &str) -> Option<String> {
         let story = self.facts.docx().part(part)?;
-        let (_, place) = resolve_path(story.root(), path)?;
+        let (_, place) = story.resolve_path(path)?;
         story.ids.paragraph_at(&place).map(|p| p.id)
     }
 }

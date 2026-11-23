@@ -193,7 +193,7 @@ fn indexed(step: &str, name: &str) -> Option<usize> {
 /// root), by docx2svg's path rules (`ooxml_word_model::read::paths`): a text box's
 /// paragraphs, rows in content controls and notes by id too.
 pub(crate) fn resolve<'a>(story: &'a StoryPart, path: &str) -> Option<(&'a Arc<Element>, Vec<u32>)> {
-    ooxml_word_model::read::paths::resolve_path(story.root(), path)
+    story.resolve_path(path)
 }
 
 /// A paragraph's `w:pStyle`: `None` where it has none, `Some(None)` where it names no

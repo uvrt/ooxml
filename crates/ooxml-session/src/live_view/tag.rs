@@ -9,7 +9,6 @@
 
 use ooxml_word_model::docx::{Docx, StoryPart};
 use ooxml_word_model::ids::W;
-use ooxml_word_model::read::paths::resolve_path;
 use std::collections::HashMap;
 
 /// What opens a paragraph's group.
@@ -101,7 +100,7 @@ fn paragraph_id(docx: &Docx, path: &str, part: Option<&str>) -> Option<String> {
             }
         }
     };
-    let (element, place) = resolve_path(story.tree.root(), path)?;
+    let (element, place) = story.resolve_path(path)?;
     if !element.name().is(Some(W), "p") {
         return None;
     }
