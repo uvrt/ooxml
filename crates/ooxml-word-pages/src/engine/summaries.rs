@@ -242,7 +242,7 @@ impl PageEngine {
             return made.pages.get(page).cloned();
         }
         let key = crate::page_said::page_key(&version.layout, page);
-        let context = pages.contexts.get(page).copied().unwrap_or_default();
+        let context = pages.contexts.get(page).copied().unwrap_or_default().whole;
         if let Some(key) = &key {
             let found = self
                 .generation

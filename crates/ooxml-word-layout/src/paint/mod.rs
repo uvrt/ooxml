@@ -18,6 +18,7 @@ mod cell_floats;
 mod decorate;
 pub mod drawings;
 mod line_numbers;
+mod page_stories;
 mod paragraphs;
 mod positions;
 mod separators;
@@ -28,6 +29,7 @@ pub mod text_box;
 
 pub use body_paths::body_line_paths;
 pub use line_numbers::{LineNumber, LineNumbers};
+pub use page_stories::paint_stories;
 pub use positions::{line_positions, Positions, Setting, TabSpan};
 
 use crate::engine::DocumentLayout;
