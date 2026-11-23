@@ -139,6 +139,14 @@ def test_recompress_writes_what_every_part_held_inflated_writes(data, edit):
     assert package.to_bytes(recompress=True) == held.to_bytes()
 
 
+def _records(data: bytes) -> dict[str, bytes]:
+    """Each entry's local record -- header, data, data descriptor -- by name."""
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        infos = sorted(archive.infolist(), key=lambda info: info.header_offset)
+        ends = [info.header_offset for info in infos[1:]] + [archive.start_dir]
+    return {info.filename: data[info.header_offset:end] for info, end in zip(infos, ends)}
+
+
 def _odd_zip() -> bytes:
     """A package as other writers make one: a data descriptor after each entry (a writer
     that cannot seek), an extra field in a local header, a stored entry, a bzip2 entry, a
@@ -176,7 +184,10 @@ def _odd_zip() -> bytes:
     return buffer.getvalue()
 
 
-def test_odd_entries_are_copied_into_a_valid_archive(tmp_path):
+def test_odd_entries_are_copied_as_they_are_into_a_valid_archive(tmp_path):
+    """An untouched entry is copied byte for byte -- its data descriptor, extra field and
+    ZIP64 record too (co-authoring request 1: its chunk is what a host holds); a new part
+    has none of them."""
     data = _odd_zip()
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         flags = {info.filename: info.flag_bits for info in archive.infolist()}
@@ -188,8 +199,12 @@ def test_odd_entries_are_copied_into_a_valid_archive(tmp_path):
     with zipfile.ZipFile(io.BytesIO(saved)) as archive:
         assert archive.testzip() is None
         infos = {info.filename: info for info in archive.infolist()}
+        new = infos.pop("doc/new.xml")
+        assert not new.flag_bits & 0x8 and new.extra == b""
         for info in infos.values():
-            assert not info.flag_bits & 0x8 and info.extra == b""
+            assert info.flag_bits & 0x8
+        before, after = _records(data), _records(saved)
+        assert {name: after[name] for name in before} == before
         assert infos["doc/bz.xml"].compress_type == zipfile.ZIP_BZIP2
         assert infos["doc/stored.bin"].compress_type == zipfile.ZIP_STORED
     for path in OpcPackage.open(data).part_names:
@@ -328,3 +343,82 @@ def test_recompress_is_the_same_whichever_way_a_part_is_compressed(data, monkeyp
     data = _with_big_part(data)
     monkeypatch.setattr(opc, "_ALIKE", alike)
     assert OpcPackage.open(data).to_bytes(recompress=True) == _held(data).to_bytes()
+
+
+def _office_like(data: bytes) -> bytes:
+    """``data`` written again as Office's writers mark their entries: "version needed" 1.0,
+    "version made by" 4.5 on FAT, no external attributes."""
+    out = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(data)) as source, zipfile.ZipFile(out, "w") as archive:
+        for info in source.infolist():
+            entry = zipfile.ZipInfo(info.filename, date_time=info.date_time)
+            entry.compress_type = info.compress_type
+            entry.extract_version, entry.create_version, entry.create_system = 10, 45, 0
+            archive.writestr(entry, source.read(info))
+    return out.getvalue()
+
+
+def test_a_save_without_an_edit_is_the_bytes_read(data):
+    """Co-authoring request 1: the local headers and central directory records of untouched
+    entries are copied as read, so nothing a host holds changes."""
+    office = _office_like(data)
+    assert OpcPackage.open(office).to_bytes() == office
+    package = OpcPackage.open(office)
+    package.tree(PAGE1).set("edited", "1")
+    package.mark_dirty(PAGE1)
+    saved = package.to_bytes()
+    with zipfile.ZipFile(io.BytesIO(office)) as before, zipfile.ZipFile(io.BytesIO(saved)) as after:
+        assert [i.filename for i in after.infolist()] == [i.filename for i in before.infolist()]
+        for info in after.infolist():
+            was = before.getinfo(info.filename)
+            if info.filename == PAGE1:
+                continue
+            assert (info.extract_version, info.create_version, info.create_system, info.external_attr) \
+                == (was.extract_version, was.create_version, was.create_system, was.external_attr)
+            start = was.header_offset
+            assert saved[info.header_offset:info.header_offset + 30] == office[start:start + 30]
+
+
+def test_a_replacement_with_the_bytes_read_is_the_entry_read(data):
+    """Co-authoring request 2: a part a save derives to the content it held is not written
+    again (nor compressed again)."""
+    office = _office_like(data)
+    package = OpcPackage.open(office)
+    assert package.to_bytes({PAGE1: package.read(PAGE1)}) == office
+    package.replace_part(IMAGE, package.read(IMAGE))     # replaced, with the same bytes
+    assert package.to_bytes() == office
+    assert package.to_bytes({PAGE1: package.read(PAGE1) + b" "}) != office
+
+
+def test_a_copied_entry_keeps_its_central_record_whatever_zipfile_writes(data, monkeypatch):
+    """The central directory record of an entry copied as read is the one read, not what
+    this Python's zipfile writes from its fields: 3.15's drops the UTF-8 flag of an ASCII
+    name (a deck from Google Slides flags every name 0x0808)."""
+    import struct
+
+    flagged = bytearray(data)
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        infos, at = archive.infolist(), archive.start_dir
+    for info in infos:
+        flagged[info.header_offset + 6:info.header_offset + 8] = \
+            (info.flag_bits | 0x800).to_bytes(2, "little")
+        name_len, extra_len, comment_len = struct.unpack_from("<3H", flagged, at + 28)
+        flagged[at + 8:at + 10] = (info.flag_bits | 0x800).to_bytes(2, "little")
+        at += 46 + name_len + extra_len + comment_len
+    flagged = bytes(flagged)
+
+    def ascii_unflagged(self):          # as 3.15 writes a record's name and flags
+        try:
+            return self.filename.encode("ascii"), self.flag_bits & ~0x800
+        except UnicodeEncodeError:
+            return self.filename.encode("utf-8"), self.flag_bits | 0x800
+
+    monkeypatch.setattr(zipfile.ZipInfo, "_encodeFilenameFlags", ascii_unflagged)
+    assert OpcPackage.open(flagged).to_bytes() == flagged
+    package = OpcPackage.open(flagged)
+    package.tree(PAGE1).set("edited", "1")
+    package.mark_dirty(PAGE1)
+    saved = package.to_bytes()
+    with zipfile.ZipFile(io.BytesIO(saved)) as archive:
+        flags = {info.filename: info.flag_bits for info in archive.infolist()}
+    assert flags.pop(PAGE1) & 0x800 == 0 and all(flag & 0x800 for flag in flags.values())

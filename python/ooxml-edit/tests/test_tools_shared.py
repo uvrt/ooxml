@@ -1014,10 +1014,16 @@ def test_a_changing_call_says_which_parts_it_changed_for_the_application_not_the
     added = call(toolbox, session, "t_add", doc="d1", items=[{"text": "a"}])
     assert added.touched == [{"doc": "d1", "part": synthetic.MAIN}]
     assert "touched" not in added.to_json() and synthetic.MAIN not in added.to_text()
+    # the zip parts it changed, for a co-authoring client: here the same entries
+    assert added.changed_parts == [{"doc": "d1", "part": synthetic.MAIN}]
+    assert "changed_parts" not in added.to_json()
     assert call(toolbox, session, "t_read", doc="d1").touched == []
+    assert call(toolbox, session, "t_read", doc="d1").changed_parts == []
     assert call(toolbox, session, "t_fail", doc="d1").touched == []
+    assert call(toolbox, session, "t_fail", doc="d1").changed_parts == []
     undone = call(toolbox, session, "undo", doc="d1")
     assert undone.touched == [{"doc": "d1", "part": synthetic.MAIN}]
+    assert undone.changed_parts == [{"doc": "d1", "part": synthetic.MAIN}]
     assert call(toolbox, session, "undo", doc="d1", redo=True).touched == undone.touched
 
 
@@ -1032,6 +1038,7 @@ def test_a_batch_reports_the_union_and_what_each_applied_op_changed(toolbox, ses
     assert result.ok and result.data["failed"] == [2]
     assert result.touched == [{"doc": "d1", "part": synthetic.MAIN},
                               {"doc": "d2", "part": synthetic.PAGE2}]
+    assert result.changed_parts == result.touched
     assert result.touched_by_op == {0: [{"doc": "d1", "part": synthetic.MAIN}],
                                     3: [{"doc": "d2", "part": synthetic.PAGE2}],
                                     4: [{"doc": "d1", "part": synthetic.MAIN}]}
@@ -1045,6 +1052,7 @@ def test_a_batch_reports_the_union_and_what_each_applied_op_changed(toolbox, ses
     refused = call(toolbox, session, "batch", atomic=True, ops=_ops(
         ("t_set", {"doc": "d1", "target": "item:1", "text": "D"}), ("t_fail", {"doc": "d1"})))
     assert not refused.ok and refused.touched == [] and refused.touched_by_op == {}
+    assert refused.changed_parts == []
 
 
 def test_a_format_says_what_changed_in_its_own_addresses_and_parts_stand_in_if_it_fails(
