@@ -128,8 +128,13 @@ class PlanTest(unittest.TestCase):
                 versions = ci._pythons(name)
                 self.assertEqual(versions[0], ci.PACKAGES[name]["min_python"])
                 self.assertEqual(_legs(out, "linux")[name], versions, event)
-                self.assertEqual(_legs(out, "windows")[name], ["3.15"], event)
+                if ci.PACKAGES[name].get("windows", True):
+                    self.assertEqual(_legs(out, "windows")[name], ["3.15"], event)
+                else:
+                    self.assertNotIn(name, _legs(out, "windows"), event)
                 self.assertEqual(_legs(out, "macos")[name], ["3.15"], event)
+            # production is Linux only: docx-agent has no Windows leg (R4 #8)
+            self.assertNotIn("docx-agent", _legs(out, "windows"))
 
     def test_free_threaded_legs_linux_only(self) -> None:
         for event in ("pull_request", "push", "schedule", "workflow_dispatch"):

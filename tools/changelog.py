@@ -14,7 +14,8 @@ Markdown paragraphs or a list.  A pull request may hold several fragments (``<to
         The build job's version check (tools/ci.py build-check), every package by default:
         pyproject.toml's version (ooxml-core: its crate's) is not older than CHANGELOG.md's
         top version section, and newer only with fragments waiting; ``__version__`` agrees;
-        every fragment's name is ``<topic>.<kind>.md`` and it is not empty.  A pull request
+        every fragment's name is ``<topic>.<kind>.md`` and it is not empty; a ``removed``
+        one says what to use instead (an ``Instead:`` line, for the release notes).  A pull request
         does not raise a version: the release sets it (below).
     python tools/changelog.py pending
         The fragments waiting for a release, one per line.
@@ -69,6 +70,8 @@ RELEASE_BRANCH = "release/"
 #: The Cargo.lock files a crate's version is written to (ooxml-core's, by set_version).
 LOCKS = [ROOT / "Cargo.lock", ROOT / "fuzz" / "Cargo.lock"]
 VERSION = re.compile(r"\d+(?:\.\d+)+")
+#: What a ``removed`` fragment says to use instead (tools/release_notes.py quotes it).
+INSTEAD = "Instead:"
 
 
 @dataclass(frozen=True)
@@ -155,6 +158,9 @@ def fragments(folder: Path) -> tuple[list[Fragment], list[str]]:
             wrong.append(f"{CHANGES}/{path.name}: name it <topic>.<kind>.md, kind one of {', '.join(KINDS)}")
         elif not path.read_text(encoding="utf-8").strip():
             wrong.append(f"{CHANGES}/{path.name} is empty")
+        elif match["kind"] == "removed" and INSTEAD not in path.read_text(encoding="utf-8"):
+            wrong.append(f"{CHANGES}/{path.name} says what is removed but not what to use: add a line "
+                         f"'{INSTEAD} <the tool, argument or call that does it now>' (the release notes quote it)")
         else:
             found.append(Fragment(path, match["kind"]))
     found.sort(key=lambda f: (KINDS.index(f.kind), f.path.name))
