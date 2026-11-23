@@ -20,9 +20,9 @@ READER: dict[str, str] = {
         "deleting a row or column that holds a footnote, endnote or comment reference; splitting a cell "
         "in a row that reaches past the table's grid",
     "check: *":
-        "`check` with `scale` or with a deck's parts in `include` (`fit`, `collisions`, `facts`, `design`, "
-        "`numbers`); `copies` against a document held only as a file package; the layout parts when no "
-        "page layout is at hand or the layout cannot lay out the version; a document held only for reading",
+        "`check`'s `copies` against a document held only as a file package; its layout parts when no "
+        "page layout is at hand or the layout cannot lay out the version; a check of a document held only "
+        "for reading (`scale` and `include: [\"numbers\"]` are served)",
     "render: *":
         "`render` when no page layout is at hand, or of a document held only for reading",
     "* of a document the session does not own":
