@@ -21,7 +21,8 @@ from __future__ import annotations
 import json
 import threading
 from collections import Counter, OrderedDict
-from typing import Any, Callable
+from contextlib import contextmanager
+from typing import Any, Callable, Iterator
 
 from ooxml_edit.tools import Result, ToolError
 
@@ -214,8 +215,13 @@ def serve(call: Any, tool: str, arguments: dict[str, Any], *,
     laid = None
     if layout is not None or raster is not None:
         laid = ooxml_core.CallLayout(layout, raster=raster, image_budgets=images)
-    reply, given_files, app = mirror.session.call(tool, json.dumps(given), ooxml_core.CallOptions(
-        context=made, documents=ooxml_core.CallDocuments(at=[version, *pinned], names=names), layout=laid))
+    options = ooxml_core.CallOptions(
+        context=made, documents=ooxml_core.CallDocuments(at=[version, *pinned], names=names), layout=laid)
+    # A read that lays out or draws runs with the document's lock let go (outside a batch,
+    # where ooxml-edit lets it go): it reads the version taken above, and an edit meanwhile
+    # does not wait for it.
+    with _unlocked(call, laid is not None):
+        reply, given_files, app = mirror.session.call(tool, json.dumps(given), options)
     _count(tool)
     envelope = json.loads(reply)
     error = envelope.get("error")
@@ -226,6 +232,18 @@ def serve(call: Any, tool: str, arguments: dict[str, Any], *,
         files.extend((found["name"], found["format"], data)
                      for found, data in zip(app.get("files") or [], given_files))
     return (answer or _result)(envelope)
+
+
+@contextmanager
+def _unlocked(call: Any, slow: bool) -> Iterator[None]:
+    """The call's document locks let go for a slow read (``slow``: one that lays out or
+    draws) where the call may let them go (:meth:`ooxml_edit.tools.Call.unlocked`), else
+    held."""
+    if not slow:
+        yield
+        return
+    with call.unlocked():
+        yield
 
 
 def _result(envelope: dict[str, Any]) -> Result:
@@ -266,7 +284,26 @@ def serve_check(call: Any, arguments: dict[str, Any]) -> Result:
     from .engines import session_pages
 
     layout = session_pages(entry) if laid_check(arguments) else None
-    return serve(call, "check", arguments, layout=layout, others=("copies[].reference.doc",))
+    held = layout is not None and call.in_batch
+    before = _laid(layout) if held else 0
+    result = serve(call, "check", arguments, layout=layout, others=("copies[].reference.doc",))
+    if held and _laid(layout) > before:
+        # Between a batch's changes (after the last one ooxml-edit runs it once the batch is
+        # done, the lock let go): it laid the document out holding it.
+        call.warn(BATCH_CHECK)
+    return result
+
+
+#: What a check that laid the document out between a batch's changes says: the way out.
+BATCH_CHECK = ("check laid the document out between the batch's changes, holding it: other calls waited. "
+               "Put check after the batch's last change (or call it alone): there it lets the document go "
+               "while it lays out")
+
+
+def _laid(pages: Any) -> int:
+    """The versions the page engine ``pages`` laid out so far, whole or again in part."""
+    stats = dict(pages.stats())
+    return int(stats["full"] + stats["relaid"])
 
 
 def laid_check(arguments: dict[str, Any]) -> bool:
