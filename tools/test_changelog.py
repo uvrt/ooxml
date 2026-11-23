@@ -6,14 +6,17 @@ from __future__ import annotations
 
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import changelog  # noqa: E402
 import ci  # noqa: E402
 import release_notes  # noqa: E402
+import release_refusals  # noqa: E402
 
 HEAD = "# Changelog\n\nWhat this package is.\n\n"
 
@@ -237,14 +240,86 @@ class ReleaseNotesTest(unittest.TestCase):
         self.assertEqual(release_notes.spec_changes(before, after), [
             "- `gone`: withdrawn", "- `a`: argument `y` removed", "- `a`: argument `z` added", "- `new`: new tool"])
         self.assertEqual(release_notes.spec_changes(after, after), [])
+        # a package the base release had no definitions for: a count, not every tool as new
+        self.assertEqual(release_notes.spec_changes({}, after), ["- first snapshot of 3 tools; no comparison"])
+        self.assertEqual(release_notes.spec_changes({}, {}), [])
 
     def test_refused_forms(self) -> None:
         path = self.py / "known.toml"
-        path.write_text('[[not_supported]]\nform = "word_x *"\ncause = """x\'s forms not ported: a, b \\\n'
-                        '(deferred, lane Q)"""\n\n[[difference]]\nmode = "m"\n', encoding="utf-8")
-        self.assertEqual(release_notes.refused(path), [("word_x *", "x's forms not ported: a, b")])
-        forms = release_notes.refused(release_notes.ROOT / release_notes.KNOWN)
-        self.assertTrue(forms and all(form and cause for form, cause in forms))
+        path.write_text('[[not_supported]]\nform = "word_read *"\ncause = "c (deferred, lane Q)"\n\n'
+                        '[[not_supported]]\nform = "no layout"\ncause = "c"\n\n'
+                        '[[not_supported]]\nform = "a field update that needs the layout"\ncause = "c"\n\n'
+                        '[[difference]]\nmode = "m"\n', encoding="utf-8")
+        said = {"word_read *": "`word_read` of x", "no layout": "y", "a field update that needs the layout": "y"}
+        with mock.patch.dict(release_refusals.READER, said):
+            # the reader's words, not the cause; two forms said alike, said once
+            self.assertEqual(release_notes.refused(path), ["`word_read` of x", "y"])
+        with mock.patch.dict(release_refusals.READER, {**said, "no layout": None, "a field update that needs the layout": None}):
+            self.assertEqual(release_notes.refused(path), ["`word_read` of x"])  # None: not listed
+        path.write_text('[[not_supported]]\nform = "unsaid *"\ncause = "c"\n', encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "unsaid"):
+            release_notes.refused(path)
+
+    def test_every_refused_form_is_said_for_the_team(self) -> None:
+        known = tomllib.loads((release_notes.ROOT / release_notes.KNOWN).read_text(encoding="utf-8"))
+        forms = [e["form"] for e in known["not_supported"]]
+        self.assertEqual(sorted(release_refusals.READER), sorted(forms),
+                         "tools/release_refusals.py READER names exactly known-differences.toml's "
+                         "[[not_supported]] forms: add or remove an entry with the form")
+        said = release_notes.refused(release_notes.ROOT / release_notes.KNOWN)
+        self.assertTrue(said)
+        for text in said:  # no internal causes: who ports it, the host, the Python package
+            for word in ("deferred", "lane", "docx-agent", "the host", "objects O", "p4e", "ported"):
+                self.assertNotIn(word, text)
+
+    def test_entries_and_headlines(self) -> None:
+        lines = ["- **Bold lead (round 60, R1).** More text", "  continued.", "- `tool` is faster on long",
+                 "  documents: the cache. On a report: 68 s -> 21 s.", "", "Lane E1b: `x` `sync` is served by",
+                 "the session: rows (`key`, `remove`) kept.", "", "  ", "Phase P2, lane P2e1: a refusal is not a",
+                 "fallback.", "- `DocumentFormat.withdrawn` (lane ph1): tools a format no longer serves, each",
+                 "  with what to call instead."]
+        found = release_notes.entries(lines)
+        self.assertEqual(found, [
+            "**Bold lead (round 60, R1).** More text continued.",
+            "`tool` is faster on long documents: the cache. On a report: 68 s -> 21 s.",
+            "Lane E1b: `x` `sync` is served by the session: rows (`key`, `remove`) kept.",
+            "Phase P2, lane P2e1: a refusal is not a fallback.",
+            "`DocumentFormat.withdrawn` (lane ph1): tools a format no longer serves, each with what to call instead."])
+        self.assertEqual([release_notes.headline(entry) for entry in found], [
+            "Bold lead.",
+            "`tool` is faster on long documents.",
+            "`x` `sync` is served by the session.",
+            "A refusal is not a fallback.",
+            "`DocumentFormat.withdrawn`: tools a format no longer serves, each with what to call instead."])
+        # a period or parenthesis inside code is the code's
+        self.assertEqual(release_notes.headline("`a.b (c)` grew (see x). Then y."), "`a.b (c)` grew.")
+
+    def test_changed_entries(self) -> None:
+        text = HEAD + ("## 0.3.0 -- v2026.11.24\n\n### Added\n\n- New x.\n\n### Changed\n\n"
+                       "- **Moved probes** (lane Z). Nothing the package does changes.\n- Faster y.\n\n"
+                       "### Fixed\n\n- Fixed z.\n\n### Removed\n\nGone. Instead: q.\n\n"
+                       "## 0.2.0 -- v2026.11.23\n\n### Fixed\n\n- Older.\n")
+        library = make_package(self.py, "ooxml-common", "0.3.0", HEAD)
+        add(library, "a.fixed.md", "- Library fix.\n")
+        tools = make_package(self.py, "docx-agent", "0.3.0", text)
+        add(tools, "w.changed.md", "- Waiting change.\n")
+        add(tools, "w.removed.md", "Waiting z. Instead: q.\n")
+        self.assertEqual(release_notes.changed_entries("v2026.11.24", [library, tools]), [
+            ("docx-agent", "Fixed z."), ("docx-agent", "New x."), ("docx-agent", "Faster y."),
+            ("docx-agent", "Waiting change."), ("docx-agent", "Moved probes."), ("ooxml-common", "Library fix.")])
+
+    def test_preview_versions_are_the_release_s(self) -> None:
+        fixed = make_package(self.py, "pkg-a", "0.3.0", HEAD + "## 0.3.0 -- v1\n")
+        add(fixed, "x.fixed.md", "Fixed.\n")
+        removed = make_package(self.py, "pkg-b", "0.3.0", HEAD + "## 0.3.0 -- v1\n")
+        add(removed, "x.removed.md", "Gone. Instead: y.\n")
+        make_package(self.py, "pkg-c", "0.3.0", HEAD + "## 0.3.0 -- v1\n")
+        with mock.patch.object(changelog, "last_release", return_value=None):  # no release yet: from today's
+            raised = release_notes.release_versions(None, changelog.packages(self.py))
+        self.assertEqual(raised, {"pkg-a": "0.3.1", "pkg-b": "0.4.0"})
+        items = release_notes.versions({"docx-agent": "9.9.9"})
+        self.assertEqual(dict(items)["docx-agent"], "9.9.9")
+        self.assertEqual({name for name, _ in items}, {name for name, _ in release_notes.versions()})
 
     def test_the_specs_are_read_at_a_commit(self) -> None:
         specs = release_notes.specs_at("HEAD", release_notes.SPECS["docx-agent"])

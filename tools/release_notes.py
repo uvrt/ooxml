@@ -8,16 +8,23 @@ Prints Markdown, for the team that calls the tools:
   CHANGELOG.md section for TAG (``## <version> -- TAG``), and the ``*.removed.md`` fragments
   still waiting (a preview); ``tools/changelog.py check`` holds every such fragment to an
   ``Instead:`` line.
+- **Changed and fixed**: per package (TOOL_PACKAGES first), one line for each entry of
+  its ``### Fixed``, ``### Added`` and ``### Changed`` sections for TAG and of its fragments
+  still waiting (a preview), in that order, an entry that says "Nothing the package does
+  changes" last: its bold lead, else its first sentence, without parentheses (headline).
 - **Tool definitions that changed**: per package, the tools and top-level arguments its
   committed definitions (SPECS, one JSON per tool, each folder held to what the package
   sends by a test) lost or gained since REF (default: the release tag before TAG, or before
-  HEAD when TAG is not tagged yet).
+  HEAD when TAG is not tagged yet); a package with no definitions at REF gets its count.
 - **Refused at this release, returning later**: the forms ``[[not_supported]]`` in KNOWN
-  names, each with its cause; the refusal itself names the call that works.
+  names that a call through docx-agent's Toolbox is refused in, each said for the team
+  (release_refusals.READER, not the cause written for whoever ports it); the refusal itself
+  names the call that works.
 - links to the support matrices (SUPPORTED);
 - a table of the distributions the release carries (the seven packages, the font bundle,
   and ooxml-core once it is built), each with the version its pyproject.toml names, then how
-  to install from the release.
+  to install from the release.  A preview shows the versions ``tools/changelog.py release``
+  will set (from the newest release tag, or ``--since``), not today's.
 
 With DIST_DIR, every distribution named must have a wheel and an sdist there, so the notes
 never list a file the release lacks.  For a release tag (TAG_PATTERN, as release.yml's
@@ -40,6 +47,7 @@ import tomllib
 from pathlib import Path
 
 import changelog
+import release_refusals
 
 ROOT = Path(__file__).resolve().parent.parent
 REPO = "uvrt/ooxml"
@@ -58,6 +66,15 @@ KNOWN = "crates/ooxml-oracle/known-differences.toml"
 SUPPORTED = ["python/docx-agent/src/docx_agent/tools/SUPPORTED.md",
              "python/pptx-agent/src/pptx_agent/tools/SUPPORTED.md"]
 
+#: The packages the team calls, and the Rust core their tools run on: their changes lead
+#: "Changed and fixed".
+TOOL_PACKAGES = ("docx-agent", "pptx-agent", "xlsx-agent", "ooxml-core")
+#: The kinds "Changed and fixed" lists, most visible to a caller first (``removed`` has its
+#: own section).
+CHANGED_KINDS = ("fixed", "added", "changed")
+#: What an entry that changes nothing a caller sees says: it is listed last.
+INTERNAL = "Nothing the package does changes"
+
 #: The distributions a release carries, in dependency order, by their pyproject.toml.
 DISTRIBUTIONS = [
     "python/ooxml-common",
@@ -72,7 +89,8 @@ DISTRIBUTIONS = [
 ]
 
 
-def versions() -> list[tuple[str, str]]:
+def versions(raised: dict[str, str] | None = None) -> list[tuple[str, str]]:
+    """Each distribution's name and version: its pyproject.toml's, or ``raised``'s by name."""
     out = []
     for rel in DISTRIBUTIONS:
         path = ROOT / rel / "pyproject.toml"
@@ -84,8 +102,19 @@ def versions() -> list[tuple[str, str]]:
         if version is None:  # maturin: the version of the crate its manifest-path names
             manifest = ROOT / rel / data["tool"]["maturin"]["manifest-path"]
             version = tomllib.loads(manifest.read_text(encoding="utf-8"))["package"]["version"]
-        out.append((project["name"], version))
+        out.append((project["name"], (raised or {}).get(project["name"], version)))
     return out
+
+
+def release_versions(since: str | None, folders: list[Path] | None = None) -> dict[str, str]:
+    """The version ``tools/changelog.py release`` sets, by package name, of each package with
+    fragments waiting among ``folders`` (default: every package): from its version at
+    ``since`` (default: the newest release tag)."""
+    folders = changelog.packages() if folders is None else folders
+    since = since or changelog.last_release()
+    bases = changelog.bases_at(since, folders) if since else {}
+    return {changelog.project_name(folder): new
+            for folder, (_, new) in changelog.release_versions(folders, bases).items()}
 
 
 def _norm(name: str) -> str:
@@ -109,26 +138,121 @@ def _git(*args: str) -> str | None:
     return run.stdout if run.returncode == 0 else None
 
 
+def tag_section(folder: Path, tag: str) -> dict[str, list[str]]:
+    """The lines under each ``### <Kind>`` heading of the package's CHANGELOG.md section for
+    ``tag`` (``## <version> -- <tag>``), by kind in lower case; empty without that section."""
+    heading = re.compile(r"^## \S+ -- " + re.escape(tag) + r"\s*$")
+    lines = (folder / "CHANGELOG.md").read_text(encoding="utf-8").splitlines()
+    start = next((i for i, line in enumerate(lines) if heading.match(line)), None)
+    if start is None:
+        return {}
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+    out: dict[str, list[str]] = {}
+    kind = None
+    for line in lines[start + 1:end]:
+        if line.startswith("### "):
+            kind = line[4:].strip().lower()
+            out.setdefault(kind, [])
+        elif kind is not None:
+            out[kind].append(line)
+    return out
+
+
 def removed_entries(tag: str, folders: list[Path]) -> list[tuple[str, str]]:
     """``(package, entry)`` for each ``### Removed`` text in a package's section for ``tag``
     and each ``*.removed.md`` fragment still waiting."""
     out = []
-    heading = re.compile(r"^## \S+ -- " + re.escape(tag) + r"\s*$")
     for folder in folders:
-        lines = (folder / "CHANGELOG.md").read_text(encoding="utf-8").splitlines()
-        start = next((i for i, line in enumerate(lines) if heading.match(line)), None)
-        if start is not None:
-            end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
-            body = lines[start + 1:end]
-            at = next((i for i, line in enumerate(body) if line.strip() == "### Removed"), None)
-            if at is not None:
-                stop = next((i for i in range(at + 1, len(body)) if body[i].startswith("### ")), len(body))
-                text = "\n".join(body[at + 1:stop]).strip()
-                if text:
-                    out.append((folder.name, text))
+        text = "\n".join(tag_section(folder, tag).get("removed", [])).strip()
+        if text:
+            out.append((folder.name, text))
         for fragment in changelog.fragments(folder)[0]:
             if fragment.kind == "removed":
                 out.append((folder.name, fragment.path.read_text(encoding="utf-8").strip()))
+    return out
+
+
+def entries(lines: list[str]) -> list[str]:
+    """The entries of a section's or a fragment's lines, each on one line: each top-level list
+    item (with the lines indented under it) and each other paragraph."""
+    out: list[str] = []
+    last = None  # what out[-1] is: "item", "paragraph", or None once a blank line closed it
+    for line in lines:
+        if not line.strip():
+            last = "item" if last == "item" else None  # an indented line may still continue an item
+        elif line.startswith(("- ", "* ")):
+            out.append(line[2:])
+            last = "item"
+        elif (last == "item" and line[0].isspace()) or last == "paragraph":
+            out[-1] += " " + line
+        else:
+            out.append(line)
+            last = "paragraph"
+    return [" ".join(entry.split()) for entry in out]
+
+
+def _plain(text: str) -> str:
+    """``text`` without its parenthesised asides (outside code spans) and the space before them."""
+    out: list[str] = []
+    depth, code = 0, False
+    for char in text:
+        if char == "`" and depth == 0:
+            code = not code
+        elif not code and char == "(":
+            depth += 1
+            if depth == 1:
+                while out and out[-1] == " ":
+                    out.pop()
+            continue
+        elif not code and char == ")" and depth:
+            depth -= 1
+            continue
+        if depth == 0:
+            out.append(char)
+    return "".join(out)
+
+
+def _cut(text: str, marks: str) -> int | None:
+    """Where the first of ``marks`` followed by a space (or the end) stands outside code spans."""
+    code = False
+    for at, char in enumerate(text):
+        if char == "`":
+            code = not code
+        elif not code and char in marks and (at + 1 == len(text) or text[at + 1] == " "):
+            return at
+    return None
+
+
+def headline(entry: str) -> str:
+    """One line for an entry: its bold lead (``**...**``), else its first sentence -- up to its
+    first colon where that leaves five words or more -- capitalised, without a ``Lane X:`` prefix or
+    parenthesised asides (who did it, measurements, examples)."""
+    text = re.sub(r"^(Phase [\w.-]+, )?[Ll]ane [\w-]+:\s*", "", entry.strip())
+    lead = re.match(r"\*\*(.+?)\*\*", text)
+    text = _plain(lead.group(1) if lead else text).strip()
+    if not lead:
+        end = _cut(text, ".")
+        text = text if end is None else text[:end]
+        colon = _cut(text, ":;")
+        if colon is not None and len(text[:colon].split()) >= 5:
+            text = text[:colon]
+    text = text.rstrip(" .:;")
+    return text[:1].upper() + text[1:] + "."
+
+
+def changed_entries(tag: str, folders: list[Path]) -> list[tuple[str, str]]:
+    """``(package, line)`` of each fixed, added or changed entry in a package's section for
+    ``tag`` and in its fragments still waiting: TOOL_PACKAGES first, then the others in
+    DISTRIBUTIONS' order; in a package CHANGED_KINDS' order, an entry saying INTERNAL last."""
+    order = [*TOOL_PACKAGES, *(Path(rel).name for rel in DISTRIBUTIONS)]
+    out = []
+    for folder in sorted(folders, key=lambda f: order.index(f.name) if f.name in order else len(order)):
+        found = [(kind, entry) for kind, lines in tag_section(folder, tag).items() for entry in entries(lines)]
+        found += [(f.kind, entry) for f in changelog.fragments(folder)[0]
+                  for entry in entries(f.path.read_text(encoding="utf-8").splitlines())]
+        found = [(kind, entry) for kind, entry in found if kind in CHANGED_KINDS]
+        found.sort(key=lambda k: (INTERNAL in k[1], CHANGED_KINDS.index(k[0])))
+        out += [(folder.name, headline(entry)) for _, entry in found]
     return out
 
 
@@ -162,7 +286,10 @@ def specs_at(ref: str, folder: str) -> dict[str, set[str]]:
 
 
 def spec_changes(before: dict[str, set[str]], after: dict[str, set[str]]) -> list[str]:
-    """The tools and arguments gone or new between two definitions' sets, as list lines."""
+    """The tools and arguments gone or new between two definitions' sets, as list lines; a
+    count where there were no definitions before (nothing to compare with)."""
+    if not before and after:
+        return [f"- first snapshot of {len(after)} tools; no comparison"]
     lines = [f"- `{name}`: withdrawn" for name in sorted(set(before) - set(after))]
     for name in sorted(set(before) & set(after)):
         lines += [f"- `{name}`: argument `{arg}` removed" for arg in sorted(before[name] - after[name])]
@@ -171,12 +298,16 @@ def spec_changes(before: dict[str, set[str]], after: dict[str, set[str]]) -> lis
     return lines
 
 
-def refused(path: Path) -> list[tuple[str, str]]:
-    """``(form, cause)`` of each ``[[not_supported]]`` entry, the cause without its
-    parenthesised note of who ports it."""
-    entries = tomllib.loads(path.read_text(encoding="utf-8")).get("not_supported", [])
-    return [(e["form"], re.sub(r"\s*\([^()]*\)\s*$", "", " ".join(e.get("cause", "").split())))
-            for e in entries if "form" in e]
+def refused(path: Path) -> list[str]:
+    """What is refused, for the team: release_refusals.READER of each ``[[not_supported]]``
+    form, each said once; a form READER says ``None`` of is not listed."""
+    forms = [e["form"] for e in tomllib.loads(path.read_text(encoding="utf-8")).get("not_supported", [])
+             if "form" in e]
+    unsaid = [form for form in forms if form not in release_refusals.READER]
+    if unsaid:
+        raise ValueError(f"tools/release_refusals.py does not say what these forms refuse: {unsaid}")
+    said = [release_refusals.READER[form] for form in forms]
+    return list(dict.fromkeys(text for text in said if text is not None))
 
 
 def changes(tag: str, since: str | None) -> str:
@@ -189,6 +320,12 @@ def changes(tag: str, since: str | None) -> str:
     parts = ["## Removed, and what to call instead", ""]
     removed = removed_entries(tag, changelog.packages())
     parts += [f"**{package}**: {text}\n" for package, text in removed] or ["Nothing removed.", ""]
+    parts += ["## Changed and fixed", ""]
+    changed = changed_entries(tag, changelog.packages())
+    for package in dict.fromkeys(package for package, _ in changed):
+        parts += [f"**{package}**", "", *(f"- {line}" for p, line in changed if p == package), ""]
+    if not changed:
+        parts += ["Nothing else changed.", ""]
     parts += ["## Tool definitions that changed", ""]
     if since is None:
         parts += ["(no earlier release tag to compare with)", ""]
@@ -198,8 +335,12 @@ def changes(tag: str, since: str | None) -> str:
             diff = spec_changes(specs_at(since, folder), specs_at(head, folder))
             parts += [f"**{package}**", "", *(diff or ["- none"]), ""]
     parts += ["## Refused at this release, returning later", "",
-              "Each is refused `not_supported`; the refusal names the call that works instead.", ""]
-    parts += [f"- `{form}`: {cause}" for form, cause in refused(ROOT / KNOWN)] or ["- none"]
+              ("docx-agent's Word tools refuse these calls as not supported yet (code `refused`, the form in "
+               "`details.not_supported`); each refusal names a call that works instead (`try_call`) or "
+               "lists what is supported (`valid_options`)."), ""]
+    parts += [f"- {text}." for text in refused(ROOT / KNOWN)] or ["- none"]
+    parts += ["", ("Other, rarer forms may be refused too; each such refusal names the form and its way out. "
+                   "Each tool's SUPPORTED.md, linked below, is the full list.")]
     links = [f"[{Path(p).parts[1]}](https://github.com/{REPO}/blob/{tag if tagged else 'main'}/{p})"
              for p in SUPPORTED if (ROOT / p).exists()]
     parts += ["", "What each tool supports: " + ", ".join(links) + ".", ""]
@@ -241,7 +382,8 @@ def main(argv: list[str]) -> int:
     parser.add_argument("tag")
     parser.add_argument("dist", nargs="?", type=Path)
     parser.add_argument("--since", help="the release to compare the tools' definitions with")
-    parser.add_argument("--preview", action="store_true", help="changelog fragments may still wait")
+    parser.add_argument("--preview", action="store_true",
+                        help="changelog fragments may still wait; the versions are those the release will set")
     args = parser.parse_args(argv)
     if TAG_PATTERN.fullmatch(args.tag) and not args.preview:
         waiting = changelog.pending(changelog.packages())
@@ -250,7 +392,7 @@ def main(argv: list[str]) -> int:
                   "on a release branch first):\n  " + "\n  ".join(str(p.relative_to(ROOT)) for p in waiting),
                   file=sys.stderr)
             return 1
-    items = versions()
+    items = versions(release_versions(args.since) if args.preview else None)
     if args.dist is not None:
         missing = check(args.dist, items)
         if missing:
