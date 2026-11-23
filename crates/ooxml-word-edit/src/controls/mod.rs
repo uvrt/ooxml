@@ -1,7 +1,8 @@
 //! Owns: content controls (`w:sdt`) as docx-agent's `edit/controls.py` edits them --
 //! [`InsertControl`] (a control in the line, as Word 365 writes one), [`FillControl`]
 //! (filled as typing into it would: its text, a check box's state, a date's `w:fullDate`)
-//! and [`RemoveControl`] (taken out, its content kept) -- and what they share: a control by
+//! and [`RemoveControl`] (taken out, its content kept); a bound control refreshed from its
+//! node as Word opens the document ([`refresh`]) -- and what they share: a control by
 //! id, the paragraph a control in the line stands in, rewritten through the sink by the
 //! policy (`rewrite`).
 //!
@@ -17,12 +18,14 @@ mod bound;
 mod fill;
 mod insert;
 mod number;
+mod refresh;
 mod remove;
 mod sync;
 
 pub use fill::{FillControl, Filling};
 pub(crate) use insert::hoist;
 pub use insert::{ControlKind, InsertControl};
+pub(crate) use refresh::opened_store;
 pub use remove::RemoveControl;
 pub(crate) use sync::sync_bound_controls;
 

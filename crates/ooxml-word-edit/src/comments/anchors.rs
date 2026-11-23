@@ -43,6 +43,16 @@ pub(super) enum Anchor {
     Control(Control),
 }
 
+impl Anchor {
+    /// The part it is in.
+    pub(super) fn part(&self) -> &str {
+        match self {
+            Anchor::Range { part, .. } | Anchor::Block { part, .. } => part,
+            Anchor::Control(control) => control.part(),
+        }
+    }
+}
+
 /// What `place` anchors a comment to: a whole table or row (`t:...`, `tr:...`, `t:X/r1`;
 /// `_commented_block`), else the text range it names.
 ///
