@@ -37,8 +37,11 @@ const INDEXED_FROM: usize = 64;
 /// holds for as long as the index is kept with it.
 #[derive(Debug, Default)]
 pub struct ChildIndex {
-    places: Mutex<HashMap<(usize, String), Arc<[u32]>>>,
+    places: Mutex<HashMap<ParentName, Arc<[u32]>>>,
 }
+
+/// A parent element (its address) and a child's local name.
+type ParentName = (usize, String);
 
 impl ChildIndex {
     /// The child indexes of `parent`'s children named `name`, in order; kept where it has
