@@ -12,8 +12,9 @@ use crate::paginate::{LaidPage, LineStore, PageContext, Pagination, Paginator, P
 use ooxml_word_model::model::Block;
 use std::sync::Arc;
 
-/// Items `[a, b_old)` of the old flow are `[a, b_new)` of the new one; the rest are the
-/// same.
+/// Items `[a - shift, b_old)` of the old flow are `[a, b_new)` of the new one, `shift`
+/// being what the changes before it added (`b_new - b_old` of the one before); the rest
+/// are the same. `a` and `b_new` index the new flow, `b_old` the old one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Change {
     /// The first changed item.
@@ -64,10 +65,10 @@ pub fn same_item(old: &FlowItem, new: &FlowItem) -> bool {
 }
 
 /// Whether two items' sources break their lines alike (their paragraphs perhaps at other
-/// places).
+/// places, [`ooxml_word_model::model::Paragraph::lays_out_as`]).
 fn same_source(a: Option<&crate::rebreak::ParaSource>, b: Option<&crate::rebreak::ParaSource>) -> bool {
     match (a, b) {
-        (Some(a), Some(b)) => std::ptr::eq(a, b) || a.same_apart_from_place(b),
+        (Some(a), Some(b)) => std::ptr::eq(a, b) || a.lays_out_as(b),
         (None, None) => true,
         _ => false,
     }
@@ -335,10 +336,12 @@ pub fn repaginate(
             lines: shifted(&page.lines_before, shift.items),
         });
         let change = changes.get(i).copied().unwrap_or(*first);
-        let delta = isize::try_from(change.b_new).unwrap_or(0) - isize::try_from(change.b_old).unwrap_or(0);
+        // What every change up to this one added: `b_new` indexes the new flow, `b_old` the
+        // old one.
+        let items = isize::try_from(change.b_new).unwrap_or(0) - isize::try_from(change.b_old).unwrap_or(0);
         let mut joined = None;
         let mut until = |state: &Resume| {
-            joined = joins(old, change, shift.items + delta, placed, state);
+            joined = joins(old, change, items, placed, state);
             joined.is_some()
         };
         let (fresh, stop) = Paginator::new(cx).run(resume, &mut until);
@@ -348,7 +351,6 @@ pub fn repaginate(
         out.stopped = fresh.stopped;
         let (Some(q), Some(state)) = (joined, stop) else { break };
         stats.joined = Some(q);
-        let items = shift.items + delta;
         let start = old.pages.get(q).map_or(0, |page| page.start.item);
         shift = Shift {
             items,

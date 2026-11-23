@@ -46,9 +46,8 @@ pub struct ParaSource {
 
 impl ParaSource {
     /// Whether `other` breaks its paragraph's lines as this does, its paragraph perhaps at
-    /// another place: the lines do not read the path (a page's lines name their paragraph by
-    /// its block, the path is read from the version's body).
-    pub fn same_apart_from_place(&self, other: &ParaSource) -> bool {
+    /// another place or with other bookmarks ([`Paragraph::lays_out_as`]).
+    pub fn lays_out_as(&self, other: &ParaSource) -> bool {
         // Every field named, so that a new one is weighed here.
         let ParaSource {
             paragraph,
@@ -58,7 +57,7 @@ impl ParaSource {
             first_column,
             notes,
         } = self;
-        (Arc::ptr_eq(paragraph, &other.paragraph) || paragraph.same_apart_from_place(&other.paragraph))
+        (Arc::ptr_eq(paragraph, &other.paragraph) || paragraph.lays_out_as(&other.paragraph))
             && *resolved == other.resolved
             && *geometry == other.geometry
             && *columns == other.columns

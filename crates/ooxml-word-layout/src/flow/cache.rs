@@ -22,10 +22,11 @@ pub(super) struct Kept {
 
 /// Measures kept per block by `Arc`: the model shares an unchanged block's `Arc`
 /// between versions, and each entry holds its block, so an address names one block for
-/// as long as it is kept. A paragraph the model moved to another place (a new `Arc`, its
-/// path the only change) is found by its runs' `Arc`, which it shares: a measure does
-/// not read the path. Valid for one set of parts (styles, numbering, settings, theme)
-/// and faces: [`MeasureCache::clear`] when they change.
+/// as long as it is kept. A paragraph the model moved to another place (a new `Arc` sharing
+/// its runs' `Arc`) is found by its runs, and taken where it lays out as the kept one
+/// ([`Paragraph::lays_out_as`]: a measure reads neither its path nor its bookmarks). Valid
+/// for one set of parts (styles, numbering, settings, theme) and faces:
+/// [`MeasureCache::clear`] when they change.
 #[derive(Debug, Default)]
 pub struct MeasureCache {
     pub(super) blocks: HashMap<usize, Kept>,
@@ -80,7 +81,7 @@ impl MeasureCache {
         // The paragraph moved: the same paragraph at another place.
         let at = *self.by_runs.get(&runs_key(paragraph))?;
         let kept = self.blocks.get(&at)?;
-        if !(kept.paragraph.same_apart_from_place(paragraph) && fits(kept)) {
+        if !(kept.paragraph.lays_out_as(paragraph) && fits(kept)) {
             return None;
         }
         let moved = Kept {

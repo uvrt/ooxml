@@ -1,17 +1,19 @@
 //! Owns: a version's flow made again from the same pass's flow of the version before
 //! (section 7: per-block facts under their context): the top-level blocks that changed --
-//! by `Arc`, list label or place in the endnotes -- each widened to the blocks whose items
-//! read it (the blocks beside it, a drop cap and the paragraph that carries it); only
+//! where the two bodies differ ([`super::align`]: a paragraph moved to another place is the
+//! same), or by list label or place in the endnotes -- each widened to the blocks whose
+//! items read it (the blocks beside it, a drop cap and the paragraph that carries it); only
 //! those made again, every other item taken from the old flow, moved where blocks were
-//! added or removed; and the changes between the two flows the paginator restarts from
-//! ([`FlowMaker::again`]).
+//! added or removed (its paragraph the one at its new place); and the changes between the
+//! two flows the paginator restarts from ([`FlowMaker::again`]).
 //!
 //! Must not: make an item differently than [`FlowMaker::build`] makes it: the result is
 //! the flow built from scratch (the relayout property in `tests/integration/relayout.rs` checks the
 //! pages laid out from it).
 
+use super::align::{aligned, Window};
 use super::{source, FlowItem, FlowMaker, ParaItem, StopItem, TableItem};
-use crate::incremental::{block_changes, same_item, Change};
+use crate::incremental::{same_item, Change};
 use crate::notes::NoteRole;
 use crate::tables::table_paragraphs;
 use ooxml_word_model::model::Block;
@@ -29,15 +31,6 @@ pub struct OldFlow<'o> {
     pub labels: &'o [Option<String>],
     /// Per top-level block, what of the endnotes placed in the flow it is.
     pub roles: &'o [Option<NoteRole>],
-}
-
-/// Blocks `[a, b_old)` of the old body are `[a + shift, b_new)` of the new one: `a` in
-/// the new body's indices, `b_old` in the old's.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Window {
-    a: usize,
-    b_old: usize,
-    b_new: usize,
 }
 
 fn paragraphs_of(blocks: &[Block]) -> usize {
@@ -113,6 +106,26 @@ fn window_change(before: &[FlowItem], made: &[FlowItem], start: usize, old_end: 
     })
 }
 
+/// A kept item whose paragraph the model moved to another place (`body`'s block there is
+/// the same paragraph at its new path), given that paragraph: its lines are broken from it.
+fn at_place(item: FlowItem, body: &[Block]) -> FlowItem {
+    let FlowItem::Para(p) = &item else { return item };
+    let (Some(source), Some(Block::Paragraph(now))) = (&p.source, body.get(p.body)) else {
+        return item;
+    };
+    if Arc::ptr_eq(&source.paragraph, now) {
+        return item;
+    }
+    let source = crate::rebreak::ParaSource {
+        paragraph: Arc::clone(now),
+        ..(**source).clone()
+    };
+    FlowItem::Para(Arc::new(ParaItem {
+        source: Some(Arc::new(source)),
+        ..(**p).clone()
+    }))
+}
+
 /// The body index of an item's first block.
 fn body_of(item: &FlowItem) -> usize {
     match item {
@@ -166,7 +179,8 @@ impl FlowMaker<'_, '_> {
                 - self.firsts.get(w.a).copied().unwrap_or(self.paragraphs.len());
             let old_start = w.a.saturating_add_signed(-shift);
             let old_paragraphs = paragraphs_of(old.body.get(old_start..w.b_old).unwrap_or_default());
-            shift += isize::try_from(w.b_new).unwrap_or(0) - isize::try_from(w.b_old).unwrap_or(0);
+            // What the windows up to this one added: `b_new` indexes the new body, `b_old` the old.
+            shift = isize::try_from(w.b_new).unwrap_or(0) - isize::try_from(w.b_old).unwrap_or(0);
             pshift += isize::try_from(new_paragraphs).unwrap_or(0) - isize::try_from(old_paragraphs).unwrap_or(0);
             at = w.b_new;
         }
@@ -205,15 +219,7 @@ impl FlowMaker<'_, '_> {
     /// changes between the two; `None` where it must be built whole (the body's drawings
     /// that text wraps beside, or its drop caps, changed whether there are any).
     pub fn again(mut self, old: &OldFlow<'_>) -> Option<(super::Flow, Vec<Change>)> {
-        let found = block_changes(old.body, self.cx.blocks)
-            .into_iter()
-            .map(|c| Window {
-                a: c.a,
-                b_old: c.b_old,
-                b_new: c.b_new,
-            })
-            .collect();
-        let windows = self.widened(old, found);
+        let windows = self.widened(old, aligned(old.body, self.cx.blocks));
         // Each window's old items and its drop caps.
         let mut drops: Vec<Vec<usize>> = Vec::with_capacity(windows.len());
         let mut old_ranges: Vec<Range<usize>> = Vec::with_capacity(windows.len());
@@ -225,7 +231,8 @@ impl FlowMaker<'_, '_> {
             let from = items.partition_point(|i| body_of(i) < old_a);
             let to = items.partition_point(|i| body_of(i) < w.b_old);
             old_ranges.push(from..to);
-            shift += isize::try_from(w.b_new).unwrap_or(0) - isize::try_from(w.b_old).unwrap_or(0);
+            // What the windows up to this one added: `b_new` indexes the new body, `b_old` the old.
+            shift = isize::try_from(w.b_new).unwrap_or(0) - isize::try_from(w.b_old).unwrap_or(0);
         }
         let drops_outside = old.flow.items.iter().enumerate().any(|(k, item)| {
             item.para().is_some_and(|p| p.drop_cap.is_some()) && !old_ranges.iter().any(|r| r.contains(&k))
@@ -244,7 +251,7 @@ impl FlowMaker<'_, '_> {
         let mut next_old = 0;
         for ((w, range), window_drops) in windows.iter().zip(&old_ranges).zip(&drops) {
             let kept = old.flow.items.get(next_old..range.start).unwrap_or_default();
-            items.extend(kept.iter().map(|i| shift.moved(i)));
+            items.extend(kept.iter().map(|i| at_place(shift.moved(i), self.cx.blocks)));
             let made = self.items_in(w.a..w.b_new, window_drops);
             let before = old.flow.items.get(range.clone()).unwrap_or_default();
             changes.extend(window_change(before, &made, items.len(), range.end));
@@ -255,22 +262,12 @@ impl FlowMaker<'_, '_> {
             );
             let new_paragraphs = paragraphs_of(self.cx.blocks.get(w.a..w.b_new).unwrap_or_default());
             items.extend(made);
-            shift.body += isize::try_from(w.b_new).unwrap_or(0) - isize::try_from(w.b_old).unwrap_or(0);
+            shift.body = isize::try_from(w.b_new).unwrap_or(0) - isize::try_from(w.b_old).unwrap_or(0);
             shift.block += isize::try_from(new_paragraphs).unwrap_or(0) - isize::try_from(old_paragraphs).unwrap_or(0);
             next_old = range.end;
         }
         let rest = old.flow.items.get(next_old..).unwrap_or_default();
-        items.extend(rest.iter().map(|i| shift.moved(i)));
-        if old.flow.items.len() != items.len() && changes.len() > 1 {
-            // Flows of other lengths: one change from the first to the last.
-            if let (Some(first), Some(last)) = (changes.first().copied(), changes.last().copied()) {
-                changes = vec![Change {
-                    a: first.a,
-                    b_old: last.b_old,
-                    b_new: last.b_new,
-                }];
-            }
-        }
+        items.extend(rest.iter().map(|i| at_place(shift.moved(i), self.cx.blocks)));
         let flow = super::Flow {
             items,
             separators: self.separators,

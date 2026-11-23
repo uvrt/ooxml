@@ -231,10 +231,12 @@ impl Paragraph {
         self.runs.iter().map(|r| &*r.text).collect()
     }
 
-    /// Whether `other` is this paragraph at another place: everything but its path the
-    /// same. The model gives a paragraph it kept by its content and moved the same parts
-    /// (`Arc`s), so there this is a few pointer compares.
-    pub fn same_apart_from_place(&self, other: &Paragraph) -> bool {
+    /// Whether `other` lays out as this paragraph does wherever it stands: everything the
+    /// same but its path and its bookmarks. A layout names a paragraph's lines by its block
+    /// and reads its path from the version's body; its bookmarks are read from the body by
+    /// the fields that look them up. The model gives a paragraph it kept by its content and
+    /// moved the same parts (`Arc`s), so there this is a few pointer compares.
+    pub fn lays_out_as(&self, other: &Paragraph) -> bool {
         // Every field named, so that a new one is weighed here.
         let Paragraph {
             runs,
@@ -246,7 +248,7 @@ impl Paragraph {
             joins,
             mark_deleted,
             section,
-            bookmarks,
+            bookmarks: _,
         } = self;
         *runs == other.runs
             && *properties == other.properties
@@ -256,7 +258,6 @@ impl Paragraph {
             && *joins == other.joins
             && *mark_deleted == other.mark_deleted
             && *section == other.section
-            && *bookmarks == other.bookmarks
     }
 }
 
