@@ -1267,6 +1267,15 @@ def part_entries(change: Any) -> list[dict[str, Any]]:
     return [{"part": part} for part in sorted(change.parts)]
 
 
+def changed_parts(entry: Any, change: Any) -> list[dict[str, str]]:
+    """``Result.changed_parts`` for what ``change`` did to ``entry``'s document: each zip part
+    whose bytes changed, ``{"doc", "part"}``, in name order (the parts the store's change
+    names -- an owner's, between the heads it went from and to)."""
+    if change is None:
+        return []
+    return [{"doc": entry.doc_id, "part": part} for part in sorted(change.parts)]
+
+
 def doc_order(doc_id: str) -> tuple[int, str]:
     """The order locks are taken in: ``d2`` before ``d10``."""
     match = _DOC_ID.match(doc_id)

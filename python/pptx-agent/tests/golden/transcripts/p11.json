@@ -4,8 +4,8 @@
   {
    "file": "input/delivery-process.pptx",
    "as": "document",
-   "sha256": "1a648902de527fc144f92d914f09f86397d119daeafdd4cfc4f974dbeef72d9e",
-   "content_sha256": "ede52a82845e18e21c9bc67008f5d6d38356cadf8f42f1fa162a5bf2a5406639"
+   "sha256": "262992b239d7542487b933aada5d5e5c25da4256f8860fd4625ff082102dd5c8",
+   "content_sha256": "6ec7054740994d7d869f06a48917649b7cd9df467eecebe940a6b676353ac368"
   }
  ],
  "calls": [
@@ -121,9 +121,9 @@
  ],
  "output": {
   "name": "delivery-process.pptx",
-  "sha256": "68cc95690e0cbf83d0a7b0efa2305151a26b2301d7f104557e4f3d758d260bfe",
+  "sha256": "e366eac84d13fd87e987788ff57b8971d20108514a52a30b6aaec9dabc08808b",
   "calls": 5,
-  "content_sha256": "f356b38526e7f0a4e038ec3e6c68221fcd48fde250330000db7e39178f6cf886"
+  "content_sha256": "621820f2ff76c6a66a36209d26ccdb28328df66dc0c9447e00537b8f0fad4e19"
  },
  "sizes": [
   {

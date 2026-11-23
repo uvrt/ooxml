@@ -150,9 +150,14 @@ def digest(line: dict) -> str:
     return digest_of(normalised(line))
 
 
+#: A golden's digest: the first 32 hex digits (128 bits) of the SHA-256, as goldens are
+#: compared within one case; the 170,000 goldens' digests are most of their files' size.
+DIGEST_HEX = 32
+
+
 def digest_of(answer: dict) -> str:
     """The digest of an answer already normalised."""
-    return DIGEST + _sha(canonical(answer))
+    return DIGEST + _sha(canonical(answer))[:DIGEST_HEX]
 
 
 def compact(result):
