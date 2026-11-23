@@ -1,6 +1,6 @@
 //! Owns: what laying out a version can answer instead of a layout -- a package that does
-//! not open or a layout stopped ([`PagesError`]), or a document the layout cannot lay out yet ([`Fallback`]),
-//! which its caller lays out another way and counts by reason.
+//! not open or a layout stopped ([`PagesError`]), or a document the layout cannot lay out
+//! yet ([`Fallback`]), which the tools refuse as not supported yet, with a way out.
 //!
 //! Must not: decide what the caller does with either.
 
@@ -19,8 +19,8 @@ pub enum PagesError {
     Stopped,
 }
 
-/// A document the Rust layout does not lay out as docx2svg does yet: the reason, stable
-/// and short (a counter's label), and where it was found.
+/// A document the layout does not lay out yet: the reason, stable and short (the form a
+/// tool refuses it in), and where it was found. Nothing lays it out another way.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{reason} ({at})")]
 pub struct Fallback {

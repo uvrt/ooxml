@@ -31,7 +31,7 @@ use ooxml_word_layout::fields::update::{drawn_text, style_reference_known, PageN
 use ooxml_word_model::value::Text;
 use ooxml_word_pages::summary::Summary;
 use ooxml_word_pages::{
-    EngineBudgets, EngineOptions, EngineSeed, Fallback, FontSetup, LaidVersion, PageEngine, PagesError,
+    support, EngineBudgets, EngineOptions, EngineSeed, Fallback, FontSetup, LaidVersion, PageEngine, PagesError,
 };
 use std::sync::{Arc, Mutex};
 
@@ -61,10 +61,20 @@ pub trait WordLayout: FieldLayout {
     }
 }
 
-/// The form refused, as not supported yet, of a version the layout does not lay out because
-/// of a footnote or an endnote (one with a frame, a text box, a drawing text wraps beside or
-/// a `STYLEREF` field; [`NotLaid::in_note`]).
+/// What a version the layout does not lay out holds, as a tool's not_supported form names
+/// it (`"<tool>: <what>"`, [`NotLaid::unlaid`]): a footnote or an endnote (one with a frame,
+/// a text box, a drawing text wraps beside or a `STYLEREF` field, or one the layout stops
+/// at; [`NotLaid::in_note`]).
 pub const UNLAID_NOTE: &str = "a footnote or endnote the layout cannot lay out";
+/// A header or footer: one with a frame or a drawing text wraps beside, or one the layout
+/// cannot measure.
+pub const UNLAID_HEADER_FOOTER: &str = "a header or footer the layout cannot lay out";
+/// A text box holding what the layout does not lay out in one.
+pub const UNLAID_TEXT_BOX: &str = "a text box the layout cannot lay out";
+/// A drop cap anywhere but among the body's top-level paragraphs.
+pub const UNLAID_DROP_CAP: &str = "a drop cap the layout cannot lay out";
+/// A block the layout stops at (a table it cannot place, a paragraph it cannot measure).
+pub const UNLAID_BLOCK: &str = "a block the layout cannot lay out";
 
 /// How long laying a version out may take in a call (docx-agent's
 /// `Limits.layout_timeout`), counted from the call's start: past it, what reads the layout
@@ -95,16 +105,38 @@ pub enum NotLaid {
 
 impl NotLaid {
     /// Whether it is a version not laid out because of a note: the place it names is in a
-    /// footnote or an endnote.
+    /// footnote or an endnote, or the layout stopped at a note.
     #[must_use]
     pub fn in_note(&self) -> bool {
         match self {
-            NotLaid::Unsupported(fallback) => {
-                let at = format!(" at {}", fallback.at);
+            NotLaid::Unsupported(why) if why.reason == support::LAYOUT_STOPPED => {
+                why.at.starts_with("footnote ") || why.at.starts_with("endnote ")
+            }
+            NotLaid::Unsupported(why) => {
+                let at = format!(" at {}", why.at);
                 at.contains(" at w:footnote[") || at.contains(" at w:endnote[")
             }
             _ => false,
         }
+    }
+
+    /// What the version holds that the layout cannot lay out yet, as a not_supported form
+    /// names it ([`UNLAID_NOTE`] and its kin); `None` where it was laid out but stopped or
+    /// could not be read.
+    #[must_use]
+    pub fn unlaid(&self) -> Option<&'static str> {
+        let NotLaid::Unsupported(why) = self else {
+            return None;
+        };
+        if self.in_note() {
+            return Some(UNLAID_NOTE);
+        }
+        Some(match why.reason {
+            support::TEXT_BOX => UNLAID_TEXT_BOX,
+            support::DROP_CAP => UNLAID_DROP_CAP,
+            support::TEXT_BESIDE_DRAWING | support::FRAME | support::STORY_UNSUPPORTED => UNLAID_HEADER_FOOTER,
+            _ => UNLAID_BLOCK,
+        })
     }
 }
 
@@ -362,5 +394,45 @@ impl LaidFields for Laid<'_> {
                 blank: info.blank,
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unsupported(reason: &'static str, at: &str) -> NotLaid {
+        NotLaid::Unsupported(Fallback {
+            reason,
+            at: at.to_owned(),
+        })
+    }
+
+    #[test]
+    fn what_a_version_not_laid_out_holds_names_its_form() {
+        let cases = [
+            (support::TEXT_BOX, "w:footnote[2]/w:p[1]", UNLAID_NOTE),
+            (support::LAYOUT_STOPPED, "footnote 3 cannot be laid out", UNLAID_NOTE),
+            (support::FRAME, "w:hdr[1]/w:p[1]", UNLAID_HEADER_FOOTER),
+            (support::TEXT_BESIDE_DRAWING, "w:ftr[1]/w:p[2]", UNLAID_HEADER_FOOTER),
+            (support::STORY_UNSUPPORTED, "rId8: a text box", UNLAID_HEADER_FOOTER),
+            (support::TEXT_BOX, "w:body[1]/w:p[4]", UNLAID_TEXT_BOX),
+            (
+                support::DROP_CAP,
+                "w:body[1]/w:tbl[1]/w:tr[1]/w:tc[1]/w:p[1]",
+                UNLAID_DROP_CAP,
+            ),
+            (support::LAYOUT_STOPPED, "unresolved", UNLAID_BLOCK),
+        ];
+        for (reason, at, form) in cases {
+            assert_eq!(unsupported(reason, at).unlaid(), Some(form), "{reason} at {at}");
+        }
+    }
+
+    #[test]
+    fn a_version_stopped_or_unread_is_not_an_unlaid_form() {
+        assert_eq!(NotLaid::Stopped.unlaid(), None);
+        assert_eq!(NotLaid::Unreadable("zip".into()).unlaid(), None);
+        assert_eq!(NotLaid::NotTheEngines.unlaid(), None);
     }
 }

@@ -22,12 +22,13 @@ pub use scale_values::{scale_values, ScaleValue, ScaleValues, ValueHandle};
 use crate::pages::{NotLaid, WordLayout};
 use ooxml_base::Cancel;
 use ooxml_opc::Package;
-use ooxml_tools::{Failure, ToolError};
+use ooxml_tools::{Failure, ToolError, TryCall, WayOut};
 use ooxml_word_model::docx::tables::cells_at;
 use ooxml_word_model::docx::{at_path, StoryPart};
 use ooxml_word_model::ids::W;
 use ooxml_word_pages::layout_facts::story_kind;
 use ooxml_word_pages::LaidVersion;
+use serde_json::Value;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
@@ -77,18 +78,54 @@ pub(crate) fn not_laid(why: NotLaid) -> (&'static str, String) {
     }
 }
 
-/// The layout a read places its texts with: the version laid out, or why it was not
-/// (`Err((code, message))`); `None` where the host gives no layout.
+/// The layout a read places its texts with: the version laid out, or why it was not; `None`
+/// where the host gives no layout.
 pub(crate) fn lay_out(
     layout: Option<&dyn WordLayout>,
     package: &Package,
     cancel: &dyn Cancel,
-) -> Option<Result<Pages, (&'static str, String)>> {
-    layout.map(|layout| Pages::of(layout, package, cancel).map_err(not_laid))
+) -> Option<Result<Pages, NotLaid>> {
+    layout.map(|layout| Pages::of(layout, package, cancel))
+}
+
+/// The pages asked for (`pages`) refused because the version was not laid out (`why`): as
+/// not supported yet where it holds what the layout cannot lay out (`check <what> on pages:
+/// <what it holds>`, the way out `instead`: the check without `pages`), else as the
+/// layout's failure ([`pages_failed`]).
+pub(crate) fn pages_refused(what: &str, why: NotLaid, instead: TryCall) -> ToolError {
+    if let Some(held) = why.unlaid() {
+        let form = format!("check {what} on pages: {held}");
+        return ToolError::not_supported(&form, WayOut::call(instead)).at("pages");
+    }
+    let (code, message) = not_laid(why);
+    pages_failed(what, code, &message)
+}
+
+/// A check of `what` in the document `doc` (the host's name) without `pages`: `arguments`
+/// besides `doc` and `range` (where given), `fill` the arguments the caller gives again.
+pub(crate) fn without_pages(
+    doc: &str,
+    range: Option<&[String]>,
+    arguments: &[(&str, Value)],
+    fill: &[&str],
+) -> TryCall {
+    let mut given = serde_json::Map::new();
+    given.insert("doc".into(), Value::from(doc));
+    for (name, value) in arguments {
+        given.insert((*name).to_owned(), value.clone());
+    }
+    if let Some(range) = range.filter(|r| !r.is_empty()) {
+        given.insert("range".into(), Value::from(range.to_vec()));
+    }
+    TryCall {
+        tool: "check".to_owned(),
+        arguments: given,
+        fill: fill.iter().map(|f| (*f).to_owned()).collect(),
+    }
 }
 
 /// The pages asked for (`pages`) a layout's failure refuses, in docx-agent's words.
-pub(crate) fn pages_refused(what: &str, code: &'static str, message: &str) -> ToolError {
+pub(crate) fn pages_failed(what: &str, code: &'static str, message: &str) -> ToolError {
     let message =
         format!("{what} on pages need the layout: {message}; leave pages out to read the whole body, or give range");
     let code = if code == "timeout" {
