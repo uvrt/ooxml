@@ -106,9 +106,14 @@ impl PageRef {
             && self.items.iter().zip(other.items.iter()).all(|(a, b)| a.same(b))
     }
 
+    /// Whether a version still holds its laid page.
+    pub(crate) fn alive(&self) -> bool {
+        self.page.strong_count() > 0
+    }
+
     /// What it holds besides itself: a weak reference holds its value's allocation (not
     /// what the value holds).
-    fn weight(&self) -> usize {
+    pub(crate) fn weight(&self) -> usize {
         std::mem::size_of::<LaidPage>()
             + self.items.len()
                 * (std::mem::size_of::<WeakItem>() + std::mem::size_of::<ooxml_word_layout::flow::ParaItem>())

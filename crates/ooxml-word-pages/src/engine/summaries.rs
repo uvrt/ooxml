@@ -44,7 +44,7 @@ impl PageEngine {
 
     /// Whether `version` is painted as it was laid out: of this engine's generation (in
     /// whichever of its contexts it was laid out).
-    fn paints(&self, version: &LaidVersion) -> bool {
+    pub(super) fn paints(&self, version: &LaidVersion) -> bool {
         self.generation.as_ref().is_some_and(|g| g.number == version.generation)
     }
 
@@ -187,18 +187,11 @@ impl PageEngine {
     /// What a comparison reads of `version`'s pages without painting them, made once;
     /// `None` where this engine no longer paints it.
     fn version_pages(&mut self, version: &LaidVersion) -> Option<Arc<VersionPages>> {
-        if let Some(found) = version.pages.get() {
+        if let Some(found) = version.unpainted.pages.get() {
             return Some(Arc::clone(found));
         }
-        if !self.paints(version) {
-            return None;
-        }
-        let painter = self
-            .generation
-            .as_mut()?
-            .painter(version, &self.locale, &self.budgets.held)?;
+        let contexts = self.page_contexts(version)?;
         let layout = &version.layout;
-        let contexts = crate::page_context::page_contexts(layout, painter.model, &self.locale, KEY);
         let donor = self.generation.as_mut().and_then(|g| g.read_before.take());
         let mut pages = Vec::with_capacity(layout.page_count());
         let mut paths = Vec::with_capacity(layout.page_count());
@@ -229,7 +222,7 @@ impl PageEngine {
             paths,
             ids,
         });
-        let made = Arc::clone(version.pages.get_or_init(|| made));
+        let made = Arc::clone(version.unpainted.pages.get_or_init(|| made));
         if let Some(generation) = self.generation.as_mut() {
             generation.read_before = Some(Arc::clone(&made));
         }

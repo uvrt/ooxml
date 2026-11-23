@@ -822,3 +822,92 @@ fn substituted_faces_are_ordered_as_the_body_first_draws_them() {
     assert_eq!(order, ["Absent Two", "Absent One"]);
     assert_eq!(painted, 1, "only the first page read");
 }
+
+/// Every page of `version` as a check reads it.
+fn reads(
+    engine: &mut PageEngine,
+    version: &ooxml_word_pages::LaidVersion,
+) -> Vec<ooxml_word_pages::page_read::PageRead> {
+    (0..version.page_count())
+        .map(|k| engine.page_read(version, k).unwrap())
+        .collect()
+}
+
+#[test]
+fn a_check_after_a_local_edit_reads_again_only_the_pages_it_changed() {
+    let mut e = engine();
+    let first = e
+        .lay_out_bytes(package(&paragraphs(300, None)).into())
+        .unwrap()
+        .unwrap();
+    let pages = first.page_count();
+    assert!(pages > 4, "{pages}");
+    let _ = reads(&mut e, &first);
+    assert_eq!(e.stats().pages_read, (u64::try_from(pages).unwrap(), 0));
+    // A paragraph near the end edited in place: only its page is painted again.
+    let bytes = package(&paragraphs(300, Some(290)));
+    let edited = e.lay_out_bytes(bytes.clone().into()).unwrap().unwrap();
+    let before = e.stats().pages_read;
+    let warm = reads(&mut e, &edited);
+    let (painted, taken) = (e.stats().pages_read.0 - before.0, e.stats().pages_read.1 - before.1);
+    assert!(
+        painted <= 2 && taken + painted == u64::try_from(pages).unwrap(),
+        "{painted} {taken}"
+    );
+    let mut cold = engine();
+    let whole = cold.lay_out_bytes(bytes.into()).unwrap().unwrap();
+    assert_eq!(
+        warm,
+        reads(&mut cold, &whole),
+        "the reads taken are the reads made cold"
+    );
+    // A paragraph added at the start: every later paragraph's path moved, so every page
+    // is read again, and the reads are the cold ones.
+    let mut moved = String::from("<w:p><w:r><w:t>added first</w:t></w:r></w:p>");
+    moved.push_str(&paragraphs(300, Some(290)));
+    let bytes = package(&moved);
+    let shifted = e.lay_out_bytes(bytes.clone().into()).unwrap().unwrap();
+    let warm = reads(&mut e, &shifted);
+    let mut cold = engine();
+    let whole = cold.lay_out_bytes(bytes.into()).unwrap().unwrap();
+    assert_eq!(warm, reads(&mut cold, &whole));
+}
+
+#[test]
+fn page_reads_are_held_within_the_paint_budget() {
+    let mut e = engine_in(EngineBudgets {
+        held: Arc::new(Unlimited),
+        paint: Arc::new(Nothing),
+    });
+    let bytes = package(&paragraphs(120, None));
+    let first = e.lay_out_bytes(bytes.clone().into()).unwrap().unwrap();
+    let _ = reads(&mut e, &first);
+    let again = reads(&mut e, &first);
+    // Nothing granted: nothing kept, every page painted again, the reads the same.
+    let pages = u64::try_from(first.page_count()).unwrap();
+    assert_eq!(e.stats().pages_read, (2 * pages, 0));
+    let mut cold = engine();
+    let whole = cold.lay_out_bytes(bytes.into()).unwrap().unwrap();
+    assert_eq!(again, reads(&mut cold, &whole));
+}
+
+#[test]
+fn page_reads_go_with_the_versions_that_held_their_pages() {
+    let paint = Arc::new(Counted::default());
+    let mut e = engine_in(EngineBudgets {
+        held: Arc::new(Unlimited),
+        paint: Arc::clone(&paint) as Arc<dyn CacheBudget>,
+    });
+    let first = e
+        .lay_out_bytes(package(&paragraphs(120, None)).into())
+        .unwrap()
+        .unwrap();
+    let _ = reads(&mut e, &first);
+    assert!(paint.used() > 0, "the reads are counted");
+    drop(first);
+    // Other versions laid out (each sweeps): the reads of pages no version holds go.
+    let other = |n| package(&format!("<w:p><w:r><w:t>another document {n}</w:t></w:r></w:p>"));
+    let _ = e.lay_out_bytes(other(1).into()).unwrap().unwrap();
+    let _ = e.lay_out_bytes(other(2).into()).unwrap().unwrap();
+    assert_eq!(paint.used(), 0);
+}

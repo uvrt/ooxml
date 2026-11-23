@@ -23,6 +23,7 @@ mod beyond;
 mod changed;
 mod painters;
 mod parts;
+mod reads;
 mod seed;
 mod summaries;
 mod trial;
@@ -75,6 +76,8 @@ struct Generation {
     /// What each page digested to, by the page as laid out and its context, across the
     /// generation's versions.
     digests: crate::digest_cache::DigestCache,
+    /// What a check read of each page, across the generation's versions.
+    reads: crate::page_reads::ReadMemo,
     /// Moved on where a part beside the main one changed: a page laid out the same may
     /// draw otherwise (its drawings, its stories).
     epoch: u64,
@@ -112,7 +115,7 @@ impl Generation {
     /// contexts no version of is held: how many memo entries went.
     fn sweep(&mut self) -> usize {
         self.contexts.sweep();
-        self.model.sweep() + self.layout.sweep()
+        self.model.sweep() + self.layout.sweep() + self.reads.sweep()
     }
 
     /// The last version laid out where `package` has its parts (the same version asked
@@ -554,7 +557,7 @@ impl PageEngine {
             epoch: generation.epoch,
             context: generation.context,
             painted_in: generation.contexts.mark(),
-            pages: std::sync::OnceLock::new(),
+            unpainted: crate::version::Unpainted::default(),
         });
         // The version before is no longer the one laid out from: what only it and the
         // memos held goes now, not with every version kept.
@@ -609,6 +612,7 @@ impl PageEngine {
             said: crate::page_said::PageMemo::default(),
             ids: None,
             digests: crate::digest_cache::DigestCache::new(self.digest_limit),
+            reads: crate::page_reads::ReadMemo::new(Arc::clone(&self.budgets.paint)),
             epoch: 0,
             context: 0,
             contexts: Contexts::new(),
@@ -692,13 +696,6 @@ impl PageEngine {
     pub fn line_texts(&mut self, version: &LaidVersion, page: usize) -> Option<Vec<crate::line_text::LineText>> {
         let paint = self.painted_page(version, page, false)?;
         Some(paint.lines.iter().map(crate::line_text::LineText::of).collect())
-    }
-
-    /// Page `page` of `version` as a check reads it ([`crate::page_read`]): its lines' text
-    /// and the boxes beside them from one paint, not kept (as [`PageEngine::line_texts`]).
-    pub fn page_read(&mut self, version: &LaidVersion, page: usize) -> Option<crate::page_read::PageRead> {
-        let paint = self.painted_page(version, page, false)?;
-        Some(crate::page_read::PageRead::of(&paint))
     }
 
     /// Page `page` of `version` as a reader sees it.
