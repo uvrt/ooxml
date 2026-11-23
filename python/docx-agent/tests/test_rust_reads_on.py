@@ -78,7 +78,7 @@ def test_an_id_a_served_edit_deleted_is_refused_naming_it(toolbox):
 
 def test_a_placer_callback_holds_no_rust_lock_another_thread_needs():
     """While Rust waits for a placer (the interpreter lock taken back), another thread's
-    calls on the same document and session -- a commit, a read, a read_batch -- finish:
+    calls on the same document and session -- an edit, a read, a read_batch -- finish:
     no session, document or memo lock is held across the callback (a deadlock pinned)."""
     import threading
 
@@ -90,7 +90,7 @@ def test_a_placer_callback_holds_no_rust_lock_another_thread_needs():
     done: list[str] = []
 
     def other() -> None:
-        session.commit(doc, {"word/document.xml": _part(data, "word/document.xml")})
+        _commit(session, doc)
         at_head = ooxml_core.CallOptions(documents=ooxml_core.CallDocuments(at=[head]))
         session.call("word_read", json.dumps({"doc": doc}), at_head)
         session.call("read_batch", json.dumps({"ops": [{"tool": "describe", "arguments": {"doc": doc}},
@@ -126,7 +126,7 @@ def test_a_placer_callback_holds_no_rust_lock_another_thread_needs():
     def write() -> None:
         try:
             for _ in range(5):
-                session.commit(doc, {"word/document.xml": _part(data, "word/document.xml")})
+                _commit(session, doc)
                 session.call("describe", json.dumps({"doc": doc}))
         except BaseException as error:  # noqa: BLE001
             errors.append(error)
@@ -139,9 +139,7 @@ def test_a_placer_callback_holds_no_rust_lock_another_thread_needs():
     assert not any(t.is_alive() for t in threads) and not errors, errors
 
 
-def _part(data: bytes, name: str) -> bytes:
-    import io
-    import zipfile
-
-    with zipfile.ZipFile(io.BytesIO(data)) as archive:
-        return archive.read(name)
+def _commit(session, doc: str) -> None:
+    """A change committed to ``doc`` by the session (an edit through a tool)."""
+    reply, _app, made = session.edit("word_insert_markdown", json.dumps({"doc": doc, "markdown": "More.", "at": "end"}))
+    assert json.loads(reply)["ok"] and made is not None, reply

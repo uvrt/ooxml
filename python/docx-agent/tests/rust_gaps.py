@@ -16,23 +16,10 @@ GOLDEN_CORE = "test_tools_goldens.py::test_a_golden_transcript_replays_to_the_sa
 
 #: The reason each test fails yet, by ``file::name[params]``.
 GAPS: dict[str, str] = {
-    "test_charts.py::test_chart_edit_renders[charts-d:5-category]": f"rust gap: a number given as a numeric chart's category (0.25) is refused as not a number ({CUT_B})",
-    "test_charts.py::test_chart_edit[charts-d:5-category]": f"rust gap: a number given as a numeric chart's category (0.25) is refused as not a number ({CUT_B})",
-    "test_charts.py::test_chart_edit[charts-d:5-add_category]": f"rust gap: a number given as a numeric chart's category (0.25) is refused as not a number ({CUT_B})",
-    "test_block_of.py::test_a_revision_and_an_endnote_give_their_block": f"rust gap: block_of/blocks_between of nested, story and annotation ids ({CUT_B})",
-    "test_block_of.py::test_a_top_level_block_is_its_own": f"rust gap: block_of/blocks_between of nested, story and annotation ids ({CUT_B})",
-    "test_block_of.py::test_an_unknown_id_is_not_found_and_a_span_is_refused": f"rust gap: block_of/blocks_between of nested, story and annotation ids ({CUT_B})",
-    "test_block_of.py::test_annotations_give_the_block_that_holds_them": f"rust gap: block_of/blocks_between of nested, story and annotation ids ({CUT_B})",
-    "test_block_of.py::test_blocks_between_spans_top_level_blocks_from_nested_ends": f"rust gap: block_of/blocks_between of nested, story and annotation ids ({CUT_B})",
-    "test_block_of.py::test_nested_ids_give_the_top_level_block": f"rust gap: block_of/blocks_between of nested, story and annotation ids ({CUT_B})",
-    "test_batch_cost.py::test_a_mixed_batch_gives_the_results_each_op_gives_and_lays_out_once":
-        f"rust gap: a mixed batch lays the document out for several of its ops, not once ({CUT6})",
     "test_own_rows.py::test_the_probes_edits_made_here_give_words_result":
         f"rust gap: deleting one's own pending row holding another's insertion keeps the row ({CUT_F})",
     "test_own_rows.py::test_a_table_one_inserted_beside_a_table_goes_with_the_paragraph_it_came_with":
         f"rust gap: deleting a table one inserted leaves its tracked separator paragraph ({CUT_F})",
-    "test_tools_word.py::test_new_document_from_a_template_blob_and_save_formats": TEMPLATE,
-    "test_locale.py::test_from_a_template_the_locale_is_kept_and_the_settings_are_the_templates": TEMPLATE,
     f"{GOLDEN}[w1-template-report]": TEMPLATE,
     f"{GOLDEN_CORE}[w1-template-report]": TEMPLATE,
 }
