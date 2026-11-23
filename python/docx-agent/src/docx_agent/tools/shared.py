@@ -125,16 +125,21 @@ def find_text(call: Any, doc: str, text: str, regex: bool = False, slides: list 
                                            "stories": stories, "cursor": cursor})
 
 
-def render(call: Any, doc: str, **arguments: Any) -> Result:
+def render(call: Any, doc: str, range: Any = None, fast: Any = None, **arguments: Any) -> Result:
     """Laid out by the document's page engine, its pages drawn in Rust
-    (:func:`docx_agent.rust.reads.serve_render`)."""
-    return reads.serve_render(call, arguments)
+    (:func:`docx_agent.rust.reads.serve_render`).  ``range`` and ``fast`` are named:
+    ooxml-edit hands them only to a handler that takes them."""
+    return reads.serve_render(call, {**arguments, "range": range, "fast": fast})
 
 
-def check(call: Any, doc: str, **arguments: Any) -> Result:
+def check(call: Any, doc: str, range: Any = None, copies: Any = None, min_size: Any = None, styles: Any = None,
+          **arguments: Any) -> Result:
     """The document's facts, the session's (:func:`docx_agent.rust.reads.serve_check`): it
-    keeps what the check saw for the next one's ``since_last_check``."""
-    return reads.serve_check(call, arguments)
+    keeps what the check saw for the next one's ``since_last_check``.  ``range``, ``copies``,
+    ``min_size`` and ``styles`` are named: ooxml-edit hands them only to a handler that
+    takes them."""
+    return reads.serve_check(call, {**arguments, "range": range, "copies": copies, "min_size": min_size,
+                                    "styles": styles})
 
 
 #: The shared tools' Word handlers, by name.
