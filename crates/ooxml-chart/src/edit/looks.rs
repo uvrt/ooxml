@@ -121,26 +121,17 @@ impl ChartTree {
         self.change_series(series, |ser| {
             let (owner, order) = match point {
                 None => (ser, SER_ORDER),
-                Some(point) => {
-                    let at = data_point(ser, &make, &plot, point);
-                    // found or made just now
-                    (ser.at(at).unwrap_or_else(|| unreachable!("a c:dPt")), DPT_ORDER)
-                }
+                Some(point) => (data_point(ser, &make, &plot, point), DPT_ORDER),
             };
-            let shape_at = match owner.place("spPr") {
-                Some(at) => at,
-                None => owner.insert_ordered(Some(order), make.c("spPr")),
-            };
-            if let Some(shape) = owner.at(shape_at) {
-                if let Some(fill) = &fill {
-                    set_fill(shape, &make, fill.as_ref());
-                }
-                if line.is_some() || width.is_some() || look.dash.is_some() {
-                    let colour = line.as_ref().and_then(Option::as_ref);
-                    set_line(shape, &make, colour, line.is_none(), width, look.dash.as_deref());
-                }
-                effects(shape, &make);
+            let shape = owner.child_or_insert("spPr", Some(order), || make.c("spPr"));
+            if let Some(fill) = &fill {
+                set_fill(shape, &make, fill.as_ref());
             }
+            if line.is_some() || width.is_some() || look.dash.is_some() {
+                let colour = line.as_ref().and_then(Option::as_ref);
+                set_line(shape, &make, colour, line.is_none(), width, look.dash.as_deref());
+            }
+            effects(shape, &make);
             if look.markers() {
                 let fill = marker_fill.as_ref().map(Option::as_ref);
                 let marker = MarkerLook {
@@ -169,19 +160,21 @@ impl ChartTree {
 }
 
 /// The series' `c:dPt` for point `index`, made from the series' look where there is none
-/// (`_data_point`): its place.
-fn data_point(ser: &mut Owned, make: &Make, plot: &str, index: usize) -> usize {
+/// (`_data_point`), opened.
+fn data_point<'a>(ser: &'a mut Owned, make: &Make, plot: &str, index: usize) -> &'a mut Owned {
     let wanted = index.to_string();
     let points = ser.places("dPt");
     let idx_of = |ser: &Owned, at: usize| {
         ser.read(at)
             .and_then(|d| child(&d, "idx").and_then(|n| attr(n, "val")).map(str::to_owned))
     };
-    if let Some(&at) = points
+    let found = points
         .iter()
-        .find(|&&at| idx_of(ser, at).as_deref() == Some(wanted.as_str()))
-    {
-        return at;
+        .copied()
+        .find(|&at| idx_of(ser, at).as_deref() == Some(wanted.as_str()));
+    // the point found, put back opened where it was
+    if let Some(point) = found.and_then(|at| ser.remove(at).map(|point| (at, point))) {
+        return ser.put(point.0, point.1);
     }
     let mut point = make.c("dPt").with(make.c("idx").with_attr("val", &wanted));
     if matches!(plot, "barChart" | "bar3DChart" | "bubbleChart") {
@@ -203,10 +196,7 @@ fn data_point(ser: &mut Owned, make: &Make, plot: &str, index: usize) -> usize {
             .is_some_and(|v| v > index as u64)
     });
     match later {
-        Some(at) => {
-            ser.insert(at, point);
-            at
-        }
-        None => ser.insert_ordered(Some(SER_ORDER), point),
+        Some(at) => ser.put(at, point),
+        None => ser.put_ordered(Some(SER_ORDER), point),
     }
 }

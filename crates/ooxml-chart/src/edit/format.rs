@@ -262,12 +262,7 @@ pub(crate) fn replace(parent: &mut Owned, names: &[&str], new: Option<Owned>, or
 
 /// The child `name` of `parent`, made by `new` where `order` puts it where there is none.
 pub(crate) fn made<'a>(parent: &'a mut Owned, name: &str, order: Order, new: impl FnOnce() -> Owned) -> &'a mut Owned {
-    let at = match parent.place(name) {
-        Some(at) => at,
-        None => parent.insert_ordered(Some(order), new()),
-    };
-    // found or made just now
-    parent.at(at).unwrap_or_else(|| unreachable!("an element child"))
+    parent.child_or_insert(name, Some(order), new)
 }
 
 /// A solid fill of `colour`, or none (`set_fill`).
@@ -431,29 +426,14 @@ pub(crate) fn style_characters(properties: &mut Owned, make: &Make, look: &TextL
 
 /// The `a:defRPr` of a `c:txPr` (its first paragraph's), made where missing (`defaults_of`).
 pub(crate) fn defaults_of<'a>(text: &'a mut Owned, make: &Make) -> &'a mut Owned {
-    let paragraph = match text.place("p") {
-        Some(at) => at,
-        None => {
-            text.push(make.top(make.a("p")));
-            text.elements().last().map_or(0, |(at, _)| *at)
-        }
-    };
-    let paragraph = text.at(paragraph).unwrap_or_else(|| unreachable!("an element child"));
+    let paragraph = text.child_or_insert("p", None, || make.top(make.a("p")));
     paragraph_defaults(paragraph, make)
 }
 
 /// A paragraph's `a:pPr/a:defRPr`, each made where missing (`a:pPr` first).
 fn paragraph_defaults<'a>(paragraph: &'a mut Owned, make: &Make) -> &'a mut Owned {
-    if paragraph.place("pPr").is_none() {
-        paragraph.insert(0, make.a("pPr"));
-    }
-    let properties = paragraph.child("pPr").unwrap_or_else(|| unreachable!("made just now"));
-    if properties.place("defRPr").is_none() {
-        properties.push(make.a("defRPr"));
-    }
-    properties
-        .child("defRPr")
-        .unwrap_or_else(|| unreachable!("made just now"))
+    let properties = paragraph.child_or_put("pPr", || make.a("pPr"), |_| 0);
+    properties.child_or_insert("defRPr", None, || make.a("defRPr"))
 }
 
 /// Every character-properties element of a `c:rich` body (`rich_character_properties`):

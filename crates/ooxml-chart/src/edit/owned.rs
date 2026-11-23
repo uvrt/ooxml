@@ -4,7 +4,8 @@
 //! closed into an [`Element`] again when the change is done. A child is put among its
 //! siblings where a schema sequence wants it ([`Owned::insert_ordered`], ooxml-edit's
 //! `insert_in_order`), and a child taken out leaves the text around it (`remove` keeps a
-//! tail).
+//! tail). A child found or made is handed back opened ([`Owned::child_or_insert`],
+//! [`Owned::put`]): what is put in is what is changed, with nothing to look up again.
 //!
 //! Must not: know what a chart is.
 
@@ -15,11 +16,60 @@ use std::sync::Arc;
 /// A schema sequence: the local names of each step (a choice lists several).
 pub(crate) type Order = &'static [&'static [&'static str]];
 
-/// One child of an [`Owned`] element: as it was, or opened.
+/// One child of an [`Owned`] element: the node as it was (`kept`) until it is opened,
+/// then the element opened (`open`, the one read and closed); made only by
+/// [`Child::kept`] and [`Child::empty`] (then given its element at once).
 #[derive(Debug, Clone)]
-enum Child {
-    Kept(Node),
-    Open(Owned),
+struct Child {
+    kept: Option<Node>,
+    open: Option<Owned>,
+}
+
+impl Child {
+    /// A node as it was.
+    fn kept(node: Node) -> Child {
+        Child {
+            kept: Some(node),
+            open: None,
+        }
+    }
+
+    /// A child about to be given its element ([`Option::insert`] on `open` hands it back).
+    fn empty() -> Child {
+        Child { kept: None, open: None }
+    }
+
+    /// The node as it was, where it is not opened.
+    fn node(&self) -> Option<&Node> {
+        self.kept.as_ref()
+    }
+
+    /// Its local name, where it is an element.
+    fn local(&self) -> Option<&str> {
+        match (&self.open, &self.kept) {
+            (Some(open), _) => Some(open.local()),
+            (None, Some(Node::Element(e))) => Some(local(e)),
+            _ => None,
+        }
+    }
+
+    /// The element, opened (where it is one).
+    fn element(&mut self) -> Option<&mut Owned> {
+        if let Some(Node::Element(e)) = &self.kept {
+            let opened = Owned::open(e);
+            self.kept = None;
+            return Some(self.open.insert(opened));
+        }
+        self.open.as_mut()
+    }
+
+    /// The node it closes into.
+    fn close(self) -> Option<Node> {
+        match self.open {
+            Some(owned) => Some(Node::Element(Arc::new(owned.close()))),
+            None => self.kept,
+        }
+    }
 }
 
 /// An element opened for changes.
@@ -38,7 +88,7 @@ impl Owned {
             name: Arc::clone(element.name()),
             namespaces: element.namespaces().to_vec(),
             attributes: element.attributes().to_vec(),
-            children: element.children().iter().cloned().map(Child::Kept).collect(),
+            children: element.children().iter().cloned().map(Child::kept).collect(),
         }
     }
 
@@ -59,14 +109,7 @@ impl Owned {
 
     /// The element closed again.
     pub(crate) fn close(self) -> Element {
-        let children = self
-            .children
-            .into_iter()
-            .map(|child| match child {
-                Child::Kept(node) => node,
-                Child::Open(owned) => Node::Element(Arc::new(owned.close())),
-            })
-            .collect();
+        let children = self.children.into_iter().filter_map(Child::close).collect();
         Element::new(self.name, self.namespaces, self.attributes, children)
     }
 
@@ -143,9 +186,9 @@ impl Owned {
     pub(crate) fn text(&self) -> String {
         let mut out = String::new();
         for child in &self.children {
-            match child {
-                Child::Kept(Node::Text(text)) => out.push_str(text),
-                Child::Kept(Node::EntityRef(_)) => {}
+            match child.node() {
+                Some(Node::Text(text)) => out.push_str(text),
+                Some(Node::EntityRef(_)) => {}
                 _ => break,
             }
         }
@@ -157,11 +200,11 @@ impl Owned {
         let first = self
             .children
             .iter()
-            .position(|c| !matches!(c, Child::Kept(Node::Text(_))))
+            .position(|c| !matches!(c.node(), Some(Node::Text(_))))
             .unwrap_or(self.children.len());
         self.children.drain(..first);
         if !value.is_empty() {
-            self.children.insert(0, Child::Kept(Node::Text(Atom::from(value))));
+            self.children.insert(0, Child::kept(Node::Text(Atom::from(value))));
         }
     }
 
@@ -169,7 +212,7 @@ impl Owned {
     /// set to `""`, `<c:v></c:v>`).
     pub(crate) fn with_text(mut self, value: &str) -> Owned {
         self.set_text("");
-        self.children.insert(0, Child::Kept(Node::Text(Atom::from(value))));
+        self.children.insert(0, Child::kept(Node::Text(Atom::from(value))));
         self
     }
 
@@ -178,11 +221,7 @@ impl Owned {
         self.children
             .iter()
             .enumerate()
-            .filter_map(|(i, c)| match c {
-                Child::Kept(Node::Element(e)) => Some((i, local(e).to_owned())),
-                Child::Open(o) => Some((i, o.local().to_owned())),
-                Child::Kept(_) => None,
-            })
+            .filter_map(|(i, c)| c.local().map(|name| (i, name.to_owned())))
             .collect()
     }
 
@@ -202,23 +241,17 @@ impl Owned {
 
     /// The element child at `place`, read (closed again where it was opened).
     pub(crate) fn read(&self, place: usize) -> Option<Arc<Element>> {
-        match self.children.get(place)? {
-            Child::Kept(Node::Element(e)) => Some(Arc::clone(e)),
-            Child::Open(o) => Some(Arc::new(o.clone().close())),
-            Child::Kept(_) => None,
+        let child = self.children.get(place)?;
+        match (&child.open, &child.kept) {
+            (Some(open), _) => Some(Arc::new(open.clone().close())),
+            (None, Some(Node::Element(e))) => Some(Arc::clone(e)),
+            _ => None,
         }
     }
 
     /// The element child at `place`, opened for changes.
     pub(crate) fn at(&mut self, place: usize) -> Option<&mut Owned> {
-        let child = self.children.get_mut(place)?;
-        if let Child::Kept(Node::Element(e)) = child {
-            *child = Child::Open(Owned::open(e));
-        }
-        match child {
-            Child::Open(o) => Some(o),
-            Child::Kept(_) => None,
-        }
+        self.children.get_mut(place)?.element()
     }
 
     /// The first element child named `name`, opened.
@@ -230,47 +263,67 @@ impl Owned {
     /// The first child named `name`, made in schema order (`order`) where there is none,
     /// in the namespace of `like` (ooxml-edit's `subelement`).
     pub(crate) fn sub(&mut self, like: &ooxml_xml::Name, name: &str, order: Option<Order>) -> &mut Owned {
-        let place = match self.place(name) {
-            Some(place) => place,
-            None => self.insert_ordered(order, Owned::like(like, name)),
-        };
-        // the place was found or made just now
-        self.at(place).unwrap_or_else(|| unreachable!("an element child"))
+        self.child_or_insert(name, order, || Owned::like(like, name))
     }
 
-    /// Take out the child at `place` (the text around it stays).
+    /// The first element child named `name`, opened; where there is none, the one `make`
+    /// makes, put where `order` wants it (last where there is no order).
+    pub(crate) fn child_or_insert(
+        &mut self,
+        name: &str,
+        order: Option<Order>,
+        make: impl FnOnce() -> Owned,
+    ) -> &mut Owned {
+        self.child_or_put(name, make, |me| me.ordered_place(order, name))
+    }
+
+    /// The first element child named `name`, opened; where there is none, the one `make`
+    /// makes, put in before the child at the place `place` gives (past the last: last).
+    pub(crate) fn child_or_put(
+        &mut self,
+        name: &str,
+        make: impl FnOnce() -> Owned,
+        place: impl FnOnce(&Owned) -> usize,
+    ) -> &mut Owned {
+        // a child found is taken out and put back opened, where it was
+        let (at, child) = match self.place(name) {
+            Some(at) => (at, self.remove(at).unwrap_or_else(make)),
+            None => (place(self), make()),
+        };
+        self.put(at, child)
+    }
+
+    /// Take out the element child at `place` (the text around it stays); `None` where
+    /// there is none.
     pub(crate) fn remove(&mut self, place: usize) -> Option<Owned> {
-        if place >= self.children.len() {
-            return None;
-        }
-        match self.children.remove(place) {
-            Child::Kept(Node::Element(e)) => Some(Owned::open(&e)),
-            Child::Open(o) => Some(o),
-            Child::Kept(other) => {
-                self.children.insert(place, Child::Kept(other));
-                None
-            }
-        }
+        self.children.get_mut(place)?.element()?;
+        self.children.remove(place).open
     }
 
     /// Put `child` in before the child at `place`.
     pub(crate) fn insert(&mut self, place: usize, child: Owned) {
+        self.put(place, child);
+    }
+
+    /// Put `child` in before the child at `place` (past the last: last); the child as it
+    /// is there, to change it.
+    pub(crate) fn put(&mut self, place: usize, child: Owned) -> &mut Owned {
         let place = place.min(self.children.len());
-        self.children.insert(place, Child::Open(child));
+        self.children.insert_mut(place, Child::empty()).open.insert(child)
     }
 
     /// Put a text node in before the child at `place`.
     pub(crate) fn insert_text(&mut self, place: usize, text: &str) {
         let place = place.min(self.children.len());
-        self.children.insert(place, Child::Kept(Node::Text(Atom::from(text))));
+        self.children.insert(place, Child::kept(Node::Text(Atom::from(text))));
     }
 
     /// The text right after the element child at `place` (lxml's `.tail`).
     pub(crate) fn tail(&self, place: usize) -> String {
         let mut out = String::new();
         for child in self.children.iter().skip(place + 1) {
-            match child {
-                Child::Kept(Node::Text(text)) => out.push_str(text),
+            match child.node() {
+                Some(Node::Text(text)) => out.push_str(text),
                 _ => break,
             }
         }
@@ -281,7 +334,7 @@ impl Owned {
     /// `addnext` puts an element).
     pub(crate) fn after(&self, place: usize) -> usize {
         (place + 1..self.children.len())
-            .find(|&i| !matches!(self.children.get(i), Some(Child::Kept(Node::Text(_)))))
+            .find(|&i| !matches!(self.children.get(i).and_then(Child::node), Some(Node::Text(_))))
             .unwrap_or(self.children.len())
     }
 
@@ -290,19 +343,17 @@ impl Owned {
     pub(crate) fn take_elements(&mut self, from: &mut Owned) {
         let mut moving = false;
         for child in std::mem::take(&mut from.children) {
-            match child {
-                Child::Kept(Node::Element(_)) | Child::Open(_) => {
-                    moving = true;
+            if child.local().is_some() {
+                moving = true;
+                self.children.push(child);
+            } else if moving && matches!(child.node(), Some(Node::Text(_))) {
+                self.children.push(child);
+            } else {
+                moving = matches!(child.node(), Some(Node::Comment(_) | Node::Pi(_)));
+                if moving {
                     self.children.push(child);
-                }
-                Child::Kept(Node::Text(_)) if moving => self.children.push(child),
-                other => {
-                    moving = matches!(other, Child::Kept(Node::Comment(_)) | Child::Kept(Node::Pi(_)));
-                    if moving {
-                        self.children.push(other);
-                    } else {
-                        from.children.push(other);
-                    }
+                } else {
+                    from.children.push(child);
                 }
             }
         }
@@ -310,23 +361,37 @@ impl Owned {
 
     /// Put `child` last.
     pub(crate) fn push(&mut self, child: Owned) {
-        self.children.push(Child::Open(child));
+        self.put(usize::MAX, child);
     }
 
     /// Put `child` where `order` wants it: before the first sibling ranked after it
     /// (siblings it does not name rank last), else last; last where `order` does not name it
     /// or there is none. Its place.
     pub(crate) fn insert_ordered(&mut self, order: Option<Order>, child: Owned) -> usize {
+        let at = self.ordered_place(order, child.local());
+        self.insert(at, child);
+        at
+    }
+
+    /// Put `child` where `order` wants it ([`Owned::insert_ordered`]); the child as it is
+    /// there, to change it.
+    pub(crate) fn put_ordered(&mut self, order: Option<Order>, child: Owned) -> &mut Owned {
+        let at = self.ordered_place(order, child.local());
+        self.put(at, child)
+    }
+
+    /// Where `order` wants a child named `name` (local): before the first sibling ranked
+    /// after it (siblings it does not name rank last), else last; last where `order` does
+    /// not name it or there is none.
+    fn ordered_place(&self, order: Option<Order>, name: &str) -> usize {
         let rank = |name: &str| order.and_then(|o| o.iter().position(|step| step.contains(&name)));
-        let at = match rank(child.local()) {
+        match rank(name) {
             Some(own) => self
                 .elements()
                 .into_iter()
-                .find(|(_, name)| rank(name).is_none_or(|other| other > own))
+                .find(|(_, other)| rank(other).is_none_or(|other| other > own))
                 .map_or(self.children.len(), |(i, _)| i),
             None => self.children.len(),
-        };
-        self.insert(at, child);
-        at
+        }
     }
 }
