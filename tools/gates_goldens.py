@@ -117,7 +117,9 @@ def _golden(record: dict, source: str | None) -> dict:
     if record.get("not_supported"):
         return {"id": record["id"], "not_supported": record["not_supported"],
                 "source": record.get("source") or source}
-    return {"id": record["id"], "digest": record["digest"], "source": record.get("source") or source}
+    # the digest of the record's own normalised answer (the record's may be of another length)
+    return {"id": record["id"], "digest": goldens.digest_of(record["output"]),
+            "source": record.get("source") or source}
 
 
 def bless(folder: Path, source: str | None = None, run: str | None = None, write: bool = True,
@@ -159,10 +161,10 @@ def bless(folder: Path, source: str | None = None, run: str | None = None, write
                                "known difference)")
                 continue
             new[record["id"]] = golden
-            changes[(record["mode"], kind)] += 1
+            changes[(tree, record["mode"], kind)] += 1
         removed = [i for i in new if i not in {c["id"] for c in cases}] if frozen_modes else []
         for i in removed:
-            changes[(i.split(":")[0], "removed")] += 1
+            changes[(tree, i.split(":")[0], "removed")] += 1
             new.pop(i)
         order = {c["id"]: n for n, c in enumerate(cases)}
         if frozen_modes:
@@ -190,11 +192,15 @@ def bless(folder: Path, source: str | None = None, run: str | None = None, write
 
 
 def summary(changes: Counter, refused: list[str], partial: set, run: str | None) -> list[str]:
-    """The bless's changes by mode and kind (Markdown lines)."""
+    """The bless's changes by tree (fixtures: the fixtures and reads gates; corpus), mode and
+    kind (Markdown lines)."""
     kinds = ("new", "changed", "served", "refused", "removed", "unchanged")
-    modes = sorted({mode for mode, _ in changes})
-    out = ["| mode | " + " | ".join(kinds) + " |", "|---|" + "---:|" * len(kinds)]
-    out += [f"| {mode} | " + " | ".join(str(changes[(mode, k)]) for k in kinds) + " |" for mode in modes]
+    rows = sorted({(tree, mode) for tree, mode, _ in changes})
+    out = ["| tree | mode | " + " | ".join(kinds) + " |", "|---|---|" + "---:|" * len(kinds)]
+    out += [f"| {tree} | {mode} | " + " | ".join(str(changes[(tree, mode, k)]) for k in kinds) + " |"
+            for tree, mode in rows]
+    out.append("| all | | " + " | ".join(str(sum(n for (_, _, k), n in changes.items() if k == kind))
+                                         for kind in kinds) + " |")
     if run:
         out += ["", f"Full outputs (the normalised answers): the record artifacts of {run}."]
     if partial:

@@ -38,7 +38,7 @@ from lxml import etree
 # REL_IMAGE is re-exported: ooxml_edit.opc.REL_IMAGE is public (tests/test_public_api.py).
 from ooxml_common.opc import (CONTENT_TYPES_PART, REL_IMAGE as REL_IMAGE, REL_OFFICE_DOCUMENT,
                               normalize_part_path)
-from ooxml_common.zipparts import PartStore, RawEntry, ZipPart, read_parts
+from ooxml_common.zipparts import PartStore, RawEntry, ZipPart, read_parts, with_central_records
 
 from .xml import Element, parse_xml, serialize
 
@@ -1111,6 +1111,16 @@ class OpcPackage:
 
     # -- saving ----------------------------------------------------------------------------
 
+    def _as_read(self, path: str, data: bytes | None) -> "ZipPart | RawEntry | None":
+        """The entry ``path`` was read with, where ``data`` -- what a save would write for
+        it -- is the bytes read: an edit undone by another, a derived part brought up to
+        date to what it held.  The sizes are compared first, so a part that grew or shrank
+        is not inflated."""
+        entry = self._original.compressed(path)
+        if data is None or entry is None or not entry.copyable or entry.size != len(data):
+            return None
+        return entry if self._original[path] == data else None
+
     def to_bytes(self, replacements: dict[str, bytes] | None = None, *,
                  recompress: bool = False) -> bytes:
         buffer = io.BytesIO()
@@ -1130,23 +1140,42 @@ class OpcPackage:
         without changing the package: what a format layer derives at save time.  Only
         existing parts can be replaced.
 
-        A part still as it was read is copied as its compressed entry was -- its data as
-        it is, never inflated or compressed again; its header written anew (sizes and
-        CRC-32 in it, no data descriptor, no extra field but ZIP64's where a size needs
-        it).  An edited, added or replaced part is compressed as before, by its entry's
-        method.  ``recompress`` (a host's choice; no tool sets it) compresses every part
+        A part still as it was read is copied as its entry was, byte for byte -- its local
+        header, its data (never inflated or compressed again), its data descriptor if it
+        has one, and its central directory record but for the offset.  So a package saved
+        without a change is the bytes read, and a saved entry keeps its MS-FSSHTTPD chunk
+        signature: a co-authoring host is sent only the entries that changed.  A part
+        edited, added or replaced is compressed as before, by its entry's method -- unless
+        its bytes are the ones read (a derived part brought up to date to the same
+        content, an edit undone by another) and its header holds its sizes (no data
+        descriptor, no needless ZIP64: :func:`~ooxml_common.zipparts.local_record`): then
+        it is copied as read.  ``recompress`` (a host's choice; no tool sets it) compresses every part
         again instead, as before 0.101.0: the bytes zipfile writes for the parts' bytes.
         """
         replacements = {normalize_part_path(k): v for k, v in (replacements or {}).items()}
-        with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
+        buffer = io.BytesIO()
+        #: The central directory record each entry copied as read keeps (by its ZipInfo).
+        kept: dict[int, Any] = {}
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
             for info in self._entries:
                 path = normalize_part_path(info.filename)
                 data = replacements.get(path) if path in self._parts else None
                 untouched = None
+                if not recompress and path in self._parts \
+                        and (data is not None or path in self._dirty
+                             or self._parts.compressed(path) is None):
+                    # written anew -- unless it is the bytes read
+                    if data is None:
+                        data = self.read(path)
+                    as_read = self._as_read(path, data)
+                    if as_read is not None:
+                        _copy_entry(archive, info, as_read, kept, as_read=True)
+                        continue
                 if data is None and path not in self._dirty and not recompress:
                     entry_read = self._parts.compressed(path)
                     if entry_read is not None:
-                        _copy_entry(archive, info, entry_read)
+                        _copy_entry(archive, info, entry_read, kept,
+                                    as_read=entry_read is self._original.compressed(path))
                         continue
                 if data is None and path not in self._dirty:
                     stored = self._parts.stored(path)
@@ -1176,15 +1205,28 @@ class OpcPackage:
                 with archive.open(entry, "w") as out:
                     for piece in untouched.chunks():
                         out.write(piece)
+            order = [kept.get(id(info)) for info in archive.filelist]
+        target.write(with_central_records(buffer.getvalue(), order))
 
 
-def _copy_entry(archive: zipfile.ZipFile, info: zipfile.ZipInfo, entry: "ZipPart | RawEntry") -> None:
+def _copy_entry(archive: zipfile.ZipFile, info: zipfile.ZipInfo, entry: "ZipPart | RawEntry",
+                kept: "dict[int, Any]", *, as_read: bool = False) -> None:
     """Append ``entry`` -- a part's compressed data as it was read -- to ``archive`` as it
-    is, under ``info``'s name, time and attributes.  The header is made anew, as zipfile
-    makes one for an entry whose sizes are known: the entry's method, size, compressed
-    size and CRC-32, its flags that describe the data (no data descriptor; the UTF-8 flag
-    from the name), no extra field (ZIP64's only where a size or offset needs it, which
-    zipfile adds, here and in the central directory)."""
+    is, under ``info``'s name, time and attributes.  Where it is the entry ``info`` was read
+    with (``as_read``) and kept its local record (:attr:`ZipPart.header`), its header and
+    data descriptor are written as they are, and its central directory record as read is
+    noted in ``kept`` (put back after zipfile writes the directory, the offset its own:
+    :func:`~ooxml_common.zipparts.with_central_records`).  Else the header is made anew, as zipfile makes one for an entry
+    whose sizes are known: the entry's method, size, compressed size and CRC-32, its flags
+    that describe the data (no data descriptor; the UTF-8 flag from the name), no extra
+    field (ZIP64's only where a size or offset needs it, which zipfile adds, here and in
+    the central directory)."""
+    if as_read and entry.header is not None:
+        out = copy.copy(info)
+        _append(archive, out, (entry.header, entry.compressed, entry.descriptor))
+        if entry.central is not None:
+            kept[id(out)] = entry.central
+        return
     out = zipfile.ZipInfo(info.filename, date_time=info.date_time)
     out.compress_type = entry.method
     # As zipfile gives an entry it writes (its _open_to_write): rw------- when none.
@@ -1194,13 +1236,22 @@ def _copy_entry(archive: zipfile.ZipFile, info: zipfile.ZipInfo, entry: "ZipPart
     out.file_size = entry.size
     out.compress_size = entry.compressed_size
     out.CRC = entry.crc
+    _append(archive, out, (None, entry.compressed, b""))
+
+
+def _append(archive: zipfile.ZipFile, out: zipfile.ZipInfo, pieces: tuple) -> None:
+    """Write an entry -- its local header (``None``: ``out``'s, made by zipfile), its
+    compressed data and its data descriptor -- at the end of ``archive``'s entries, and
+    list ``out`` for its central directory."""
+    header, compressed, descriptor = pieces
     fp = archive.fp
     assert fp is not None
     if getattr(archive, "_seekable", True):
         fp.seek(archive.start_dir)
     out.header_offset = fp.tell()
-    fp.write(out.FileHeader(None))
-    fp.write(entry.compressed)
+    fp.write(out.FileHeader(None) if header is None else header)
+    fp.write(compressed)
+    fp.write(descriptor)
     archive.start_dir = fp.tell()
     archive.filelist.append(out)
     archive.NameToInfo[out.filename] = out

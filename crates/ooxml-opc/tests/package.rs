@@ -274,3 +274,121 @@ fn two_trees_are_the_same_part_by_structure_as_by_the_bytes_they_write() {
         .unwrap();
     assert_eq!(edited.changed_parts(&first), [name]);
 }
+
+#[test]
+fn a_touched_part_with_the_bytes_read_is_its_entry_as_read() {
+    // co-authoring request 1: written again unchanged, a part keeps its entry -- local
+    // header and central record as read, so its MS-FSSHTTPD chunk is the one a host holds
+    let mut bytes = made_up();
+    // mark every record as another writer does: "version made by" 4.5 on FAT, "version
+    // needed" 1.0 (central records at 4 and 6, local headers at 4)
+    let directory = bytes.windows(4).position(|w| w == b"PK\x01\x02").unwrap();
+    let mut at = 0;
+    while at + 4 <= bytes.len() {
+        match &bytes[at..at + 4] {
+            b"PK\x03\x04" => bytes[at + 4..at + 6].copy_from_slice(&10u16.to_le_bytes()),
+            b"PK\x01\x02" if at >= directory => {
+                bytes[at + 4..at + 6].copy_from_slice(&45u16.to_le_bytes());
+                bytes[at + 6..at + 8].copy_from_slice(&10u16.to_le_bytes());
+            }
+            _ => {}
+        }
+        at += 1;
+    }
+    let p = open(&bytes);
+    let png = p.read("word/media/a.png").unwrap().unwrap();
+    let same = p.with_bytes("word/media/a.png", png).save().unwrap();
+    assert_eq!(same, bytes, "the same bytes: the entry as read");
+    let other = p
+        .with_bytes("word/media/a.png", Arc::from(&b"\x89PNG\r\nx"[..]))
+        .save()
+        .unwrap();
+    let again = Archive::read(Arc::from(other), &Default::default()).unwrap();
+    let png = again
+        .entries()
+        .iter()
+        .find(|e| e.meta().name == "word/media/a.png")
+        .unwrap();
+    assert_eq!((png.meta().version_needed, png.meta().version_made_by & 0xff), (20, 20));
+    assert!(again.header_copyable(png));
+}
+
+/// A package whose every entry is stored with a data descriptor (flag bit 3, zero sizes in
+/// the local header, the descriptor after the data), as writers that cannot seek make one.
+fn with_descriptors(parts: &[(&str, &[u8])]) -> Vec<u8> {
+    let crc = |data: &[u8]| {
+        let mut c = !0u32;
+        for b in data {
+            c ^= u32::from(*b);
+            for _ in 0..8 {
+                c = if c & 1 != 0 { c >> 1 ^ 0xEDB8_8320 } else { c >> 1 };
+            }
+        }
+        !c
+    };
+    let (mut out, mut central) = (Vec::new(), Vec::new());
+    for (name, data) in parts {
+        let offset = out.len() as u32;
+        let (crc, size, name_len) = (crc(data), data.len() as u32, name.len() as u16);
+        let fields = |v: &mut Vec<u8>, sizes: bool| {
+            for x in [20u16, 0x8, 0, 0x6000, 0x5a21] {
+                v.extend_from_slice(&x.to_le_bytes());
+            }
+            for x in if sizes { [crc, size, size] } else { [0, 0, 0] } {
+                v.extend_from_slice(&x.to_le_bytes());
+            }
+            v.extend_from_slice(&name_len.to_le_bytes());
+            v.extend_from_slice(&0u16.to_le_bytes());
+        };
+        out.extend_from_slice(b"PK\x03\x04");
+        fields(&mut out, false);
+        out.extend_from_slice(name.as_bytes());
+        out.extend_from_slice(data);
+        out.extend_from_slice(b"PK\x07\x08");
+        for x in [crc, size, size] {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        central.extend_from_slice(b"PK\x01\x02");
+        central.extend_from_slice(&20u16.to_le_bytes());
+        fields(&mut central, true);
+        central.extend_from_slice(&[0; 6]); // comment length, disk, internal attributes
+        central.extend_from_slice(&(0o600u32 << 16).to_le_bytes());
+        central.extend_from_slice(&offset.to_le_bytes());
+        central.extend_from_slice(name.as_bytes());
+    }
+    let (at, size, count) = (out.len() as u32, central.len() as u32, parts.len() as u16);
+    out.append(&mut central);
+    out.extend_from_slice(b"PK\x05\x06\0\0\0\0");
+    for x in [count, count] {
+        out.extend_from_slice(&x.to_le_bytes());
+    }
+    for x in [size, at] {
+        out.extend_from_slice(&x.to_le_bytes());
+    }
+    out.extend_from_slice(&[0, 0]);
+    out
+}
+
+#[test]
+fn an_untouched_entry_with_a_data_descriptor_is_copied_as_it_is() {
+    // co-authoring request 1: an untouched entry keeps its bytes, descriptor and all (its
+    // chunk is what a host holds); a touched one is written anew, without a descriptor,
+    // even with the bytes read -- its header does not hold its sizes
+    let bytes = with_descriptors(&[
+        ("[Content_Types].xml", TYPES.as_bytes()),
+        ("_rels/.rels", ROOT_RELS.as_bytes()),
+        ("word/document.xml", DOC.as_bytes()),
+    ]);
+    let p = open(&bytes);
+    let read = Archive::read(Arc::from(bytes.clone()), &Default::default()).unwrap();
+    assert!(read.entries().iter().all(|e| !read.header_copyable(e)));
+    assert_eq!(p.save().unwrap(), bytes, "an unchanged package saves byte for byte");
+    let doc = p.read("word/document.xml").unwrap().unwrap();
+    let saved = p.with_bytes("word/document.xml", doc).save().unwrap();
+    let again = Archive::read(Arc::from(saved.clone()), &Default::default()).unwrap();
+    let flags: Vec<u16> = again.entries().iter().map(|e| e.meta().flags).collect();
+    assert_eq!(flags, [0x8, 0x8, 0]);
+    let doc_at = bytes.windows(17).position(|w| w == b"word/document.xml").unwrap() - 30;
+    assert_eq!(saved[..doc_at], bytes[..doc_at], "the other entries as read");
+    assert_eq!(again.read_entry(&again.entries()[2]).unwrap(), DOC.as_bytes());
+}

@@ -485,11 +485,15 @@ class HarnessCommand(unittest.TestCase):
 
 class StoreCoverage(unittest.TestCase):
     """The store's coverage per mode (tools/gates_store.py): the plan runs warm only the modes it
-    covers, and a merge keeps every mode the store held."""
+    covers, and a merge keeps every mode the store held.  Against docx-agent: on goldens every
+    mode is planned warm (no store), so the checkout's goldens are left out here."""
 
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp)
+        patcher = mock.patch.object(gates.gates_goldens, "on_goldens", lambda gate: False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def results(self, name: str, entries: dict) -> Path:
         path = self.tmp / name

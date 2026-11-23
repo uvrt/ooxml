@@ -11,6 +11,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import MappingProxyType
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -21,6 +22,8 @@ from gates_goldens import goldens
 
 CASE = {"tool": "word_fields", "arguments": {"doc": "d1", "action": "list"}}
 OTHER = {"tool": "word_notes", "arguments": {"doc": "d1", "action": "list"}}
+ONE = MappingProxyType({"rust": {"x": 1}})
+NINE = MappingProxyType({"rust": {"x": 9}})
 
 
 class Bless(unittest.TestCase):
@@ -47,9 +50,10 @@ class Bless(unittest.TestCase):
             f'"reference": {"true" if reference else "false"}}}')
         return out
 
-    def line(self, case: dict, digest="sha256:1", source="frozen Python a512c901, unmeasured", **more) -> dict:
+    def line(self, case: dict, output=ONE, source="frozen Python a512c901, unmeasured", **more) -> dict:
         return {"tree": "fixtures", "document": "a.docx", "mode": "structure", "id": goldens.case_id("structure", case),
-                "case": case, "digest": digest, "output": {}, "source": source, **more}
+                "case": case, "digest": goldens.digest_of(dict(output)), "output": dict(output), "source": source,
+                **more}
 
     def test_finish_gives_each_case_its_source(self) -> None:
         tree = self.tmp / "tree"
@@ -73,36 +77,36 @@ class Bless(unittest.TestCase):
 
     def test_a_reference_record_freezes_the_cases_and_their_goldens(self) -> None:
         folder = self.record("a", [self.line(CASE), self.line(OTHER, source="known difference: x"),
-                                   {**self.line({"case": "r"}, digest=None), "not_supported": "f", "python": {"y": 1}}])
+                                   {**self.line({"case": "r"}), "not_supported": "f", "python": {"y": 1}}])
         code, lines = gates_goldens.bless(self.tmp / "run", run="https://example.invalid/run/1")
         self.assertEqual(code, 0, lines)
         cases = goldens.read_lines(goldens.CASES / "fixtures" / "a.docx.jsonl")
         self.assertEqual([c["case"] for c in cases], [CASE, OTHER, {"case": "r"}])
         blessed = goldens.goldens_of("fixtures", "a.docx")
-        self.assertEqual([g.get("digest") for g in blessed.values()], ["sha256:1", "sha256:1", None])
+        self.assertEqual([g.get("digest") for g in blessed.values()], [goldens.digest_of(dict(ONE)), goldens.digest_of(dict(ONE)), None])
         self.assertEqual(goldens.read_lines(goldens.PENDING / "fixtures" / "a.docx.jsonl.gz")[0]["python"], {"y": 1})
-        self.assertIn("| structure | 3 | 0 | 0 | 0 | 0 | 0 |", lines)
+        self.assertIn("| fixtures | structure | 3 | 0 | 0 | 0 | 0 | 0 |", lines)
         self.assertIn("https://example.invalid/run/1", "\n".join(lines))
         # again: nothing changes, and a case no longer made is removed with its golden
         folder.joinpath(gates_goldens.RECORD).unlink()
         self.record("a", [self.line(CASE)])
         code, lines = gates_goldens.bless(self.tmp / "run")
-        self.assertIn("| structure | 0 | 0 | 0 | 0 | 2 | 1 |", lines)
+        self.assertIn("| fixtures | structure | 0 | 0 | 0 | 0 | 2 | 1 |", lines)
         self.assertEqual(list(goldens.goldens_of("fixtures", "a.docx")), [goldens.case_id("structure", CASE)])
 
     def test_a_changed_answer_needs_a_source(self) -> None:
         self.record("a", [self.line(CASE)])
         gates_goldens.bless(self.tmp / "run")
-        changed = self.record("a", [{**self.line(CASE, digest="sha256:9"), "source": None}], reference=False)
+        changed = self.record("a", [{**self.line(CASE, output=NINE), "source": None}], reference=False)
         code, lines = gates_goldens.bless(self.tmp / "run")
         self.assertEqual(code, 1)
         self.assertIn("without a source", "\n".join(lines))
         self.assertEqual(goldens.goldens_of("fixtures", "a.docx")[goldens.case_id("structure", CASE)]["digest"],
-                         "sha256:1")
+                         goldens.digest_of(dict(ONE)))
         code, lines = gates_goldens.bless(changed.parent, source="Word 16.106: e4-word.json#fields")
         self.assertEqual(code, 0, lines)
         golden = goldens.goldens_of("fixtures", "a.docx")[goldens.case_id("structure", CASE)]
-        self.assertEqual((golden["digest"], golden["source"]), ("sha256:9", "Word 16.106: e4-word.json#fields"))
+        self.assertEqual((golden["digest"], golden["source"]), (goldens.digest_of(dict(NINE)), "Word 16.106: e4-word.json#fields"))
         # a golden run's record keeps the case list
         self.assertEqual(len(goldens.read_lines(goldens.CASES / "fixtures" / "a.docx.jsonl")), 1)
 
@@ -150,9 +154,10 @@ class DiffOnGoldens(unittest.TestCase):
             return subprocess.CompletedProcess(command, 1)
 
         with tempfile.TemporaryDirectory() as tmp:
-            args = argparse.Namespace(record=True, reference=False, out=tmp, tree=None, gate="fixtures", mode="objects",
-                                      shard="1/1", every=1, per_tool=0, fixtures="generated/controls.docx",
-                                      base=None, cache=None, bin="/bin", **more)
+            options = {"gate": "fixtures", "per_tool": 0, **more}
+            args = argparse.Namespace(record=True, reference=False, out=tmp, tree=None, mode="objects", shard="1/1",
+                                      every=1, fixtures="generated/controls.docx", base=None, cache=None, bin="/bin",
+                                      **options)
             with mock.patch.object(gates_goldens, "on_goldens", lambda gate: on_goldens), \
                     mock.patch.object(gates.subprocess, "run", run), \
                     mock.patch.object(gates, "known_entries", lambda: [{"mode": "objects", "cause": "c",
@@ -170,11 +175,28 @@ class DiffOnGoldens(unittest.TestCase):
         # a known difference does not cover a case on goldens
         self.assertEqual((summary["differences"], summary["known"], summary["goldens"]), (1, 1, True))
 
+    def test_the_corpus_freeze_is_not_sampled_again(self) -> None:
+        command, _ = self.run_diff(True, gate="corpus", per_tool=10)
+        self.assertEqual(command[command.index("--per-tool") + 1], "0")
+        command, _ = self.run_diff(True, gate="corpus", per_tool=3)
+        self.assertEqual(command[command.index("--per-tool") + 1], "3")
+
     def test_without_goldens_the_reference_records(self) -> None:
         command, summary = self.run_diff(False)
         self.assertTrue(command[1].endswith("word_edits_diff.py"), command)
         self.assertIn("--record", command)
         self.assertEqual((summary["differences"], summary["known"], summary["goldens"]), (0, 1, False))
+
+
+    def test_goldens_plan_every_mode_warm(self) -> None:
+        printed = io.StringIO()
+        with mock.patch.object(gates_goldens, "on_goldens", lambda gate: True), contextlib.redirect_stdout(printed), \
+                contextlib.redirect_stderr(io.StringIO()):
+            gates.main(["matrix", "--gates", "fixtures,corpus", "--modes", "all", "--fixtures", "all"])
+        jobs = json.loads(printed.getvalue())["include"]
+        self.assertTrue(jobs)
+        # warm: sized by the recorded warm times, never the cold three shards a mode
+        self.assertFalse([job for job in jobs if job["shard"].endswith("/3")])
 
 
 if __name__ == "__main__":
