@@ -8,7 +8,7 @@
 //! their paragraphs and listed (`data.facts`).
 //!
 //! Must not: write the document but through the command, or answer a call it does not
-//! port otherwise than by saying so ([`Unported`]).
+//! support yet, refused ([`Unported`]).
 
 use super::{by_reference, Unported};
 use crate::describe::short;
@@ -61,8 +61,8 @@ pub struct WordSetText {
 
 /// `word_set_text` on the document `editing` names. A failed reply is
 /// `invalid_arguments` for a call without exactly one of target and items, without text,
-/// or with a span; the address resolver's refusal of a target; `unported` (nothing
-/// changed) for what the Rust core does not write yet.
+/// or with a span; the address resolver's refusal of a target; `refused` (nothing
+/// changed) for what is not supported yet.
 #[must_use]
 pub fn word_set_text(args: &WordSetText, editing: &Editing<'_>) -> ToolResult<Value> {
     run(args, editing).unwrap_or_else(ToolResult::failed)
@@ -112,7 +112,7 @@ fn run(args: &WordSetText, editing: &Editing<'_>) -> Result<ToolResult<Value>, T
         .iter()
         .any(|(target, text, ..)| by_reference(target) || text.contains("{{"))
     {
-        return Ok(Unported::Reference.reply());
+        return Err(Unported::Reference.refusal(try_call(args), &["text", "target"]));
     }
     if let Some((target, _, _, prefix)) = work.iter().find(|(target, ..)| target.contains("..")) {
         return Err(ToolError::refusal(

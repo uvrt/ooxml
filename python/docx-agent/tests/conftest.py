@@ -155,7 +155,14 @@ def pytest_addoption(parser):
 def pytest_collection_modifyitems(config, items):
     """The slow sweeps run with ``--run-slow``.  The Word oracle never runs under xdist's
     parallel workers (ROADMAP.md, "Word is one instance per machine"): there, its tests
-    skip; run ``pytest -m oracle`` without ``-n``."""
+    skip; run ``pytest -m oracle`` without ``-n``.  A test meeting a form whose port the user
+    deferred is a strict xfail naming it (:mod:`deferred_forms`)."""
+    from deferred_forms import DEFERRED
+
+    for item in items:
+        form = DEFERRED.get(f"{item.path.name}::{item.name}")
+        if form is not None:
+            item.add_marker(pytest.mark.xfail(reason=f"{form}: deferred (user)", strict=True))
     if not config.getoption("--run-slow"):
         later = pytest.mark.skip(reason="an exhaustive sweep: run with --run-slow")
         for item in items:
@@ -332,14 +339,13 @@ def _relayouts_end_with_their_test():
 
 
 @pytest.fixture
-def python_layout(monkeypatch):
+def python_layout():
     """docx2svg's Python layout for every layout the test makes (lane L4): the frozen
     fallback the Rust layout (``docx_agent.pages``) stands in for, whose own mechanisms --
     layouts handed between versions and processes, held by token, pickled -- a test of
-    them reads."""
-    from docx_agent import pages
-
-    monkeypatch.setattr(pages, "available", lambda: False)
+    them reads.  The Python layout is cut (lane CUT1): such a test is skipped, and goes with
+    the Python view (P4e)."""
+    pytest.skip("the Python layout is cut, lane CUT1")
 
 
 @pytest.fixture

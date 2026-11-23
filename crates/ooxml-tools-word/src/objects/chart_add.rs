@@ -7,13 +7,13 @@
 //! paragraph made for it, the ref named.
 //!
 //! Not here yet: a document whose defaults name no language (the session's locale
-//! decides the new text's: `unported`).
+//! decides the new text's: refused as not supported yet).
 //!
 //! Must not: change the document but through the command.
 
 use super::chart_add_plan::{add_plan, workbook, Finish, Look};
 use super::chart_data::{ChartDataEdit, DataAction, Warnings};
-use super::chart_keeper::{refused as data_refused, sheets_error, unported as chart_unported};
+use super::chart_keeper::{not_supported as chart_not_supported, refused as data_refused, sheets_error};
 use super::chart_read::chart_json;
 use super::chart_style::{add_scale, colour_given, text_look, ChartStyleEdit, StyleAction};
 use super::{EditChart, ScaleArg};
@@ -41,7 +41,7 @@ pub(super) struct NewParts(NewChart);
 impl ChartParts for NewParts {
     fn parts(&self, part: &str, workbook_rel: &str) -> Result<(Tree, Arc<[u8]>), EditError> {
         let space = self.0.chart_space(part, workbook_rel, &ooxml_word_model::ids::sha256);
-        let book = workbook(&self.0).map_err(|_| chart_unported("a new chart's workbook past its last column"))?;
+        let book = workbook(&self.0).map_err(|_| chart_not_supported("a new chart's workbook past its last column"))?;
         let bytes = book.write().map_err(sheets_error)?;
         Ok((Tree::from_root(Arc::new(space)), Arc::from(bytes)))
     }
@@ -97,7 +97,8 @@ impl AddChart {
                     .package
                     .tree(part)?
                     .ok_or_else(|| EditError::NoPart(part.to_owned()))?;
-                let data = chart_data(tree.root()).map_err(|_| chart_unported("a new chart the model cannot read"))?;
+                let data =
+                    chart_data(tree.root()).map_err(|_| chart_not_supported("a new chart the model cannot read"))?;
                 return add_scale(address, tree.root(), &data, scale, self.finish.axis)
                     .map(Edit::Style)
                     .map_err(refuse);
@@ -190,7 +191,6 @@ pub(super) fn add(
     editing: &Editing<'_>,
     lang: Option<String>,
 ) -> Result<ToolResult<Value>, ToolError> {
-    let summary = format!("add on {}", args.target);
     let read = call(
         "edit_chart",
         &[
@@ -200,11 +200,10 @@ pub(super) fn add(
         ],
     );
     let Some(lang) = lang else {
-        let mut done = ooxml_tools::Done::new(summary);
-        done.unported.push(
-            "edit_chart add: a document whose defaults name no language (the session's locale decides)".to_owned(),
-        );
-        return Ok(ToolResult::done(done));
+        return Err(ToolError::not_supported(
+            "edit_chart add: a document whose defaults name no language (the session's locale decides)",
+            ooxml_tools::WayOut::call(read),
+        ));
     };
     let plan = add_plan(args, lang.clone(), &read)?;
     let command = AddChart {

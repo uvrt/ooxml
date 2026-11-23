@@ -48,7 +48,7 @@ pub fn word_drawings(args: &WordDrawings, editing: &Editing<'_>) -> ToolResult<V
     }
 }
 
-fn unported(what: &str, retry: &TryCall) -> ToolResult<Value> {
+fn not_supported(what: &str, retry: &TryCall) -> ToolResult<Value> {
     refused(EditError::Unsupported(what.to_owned()), retry.clone())
 }
 
@@ -90,7 +90,7 @@ fn run(args: &WordDrawings, editing: &Editing<'_>, list: &TryCall) -> Result<Too
         DrawingAction::InsertPicture => super::drawings_picture::insert_picture(args, editing, list),
         DrawingAction::InsertTextBox | DrawingAction::InsertShape => {
             if args.reference.is_some() {
-                return Ok(unported("word_drawings ref", list));
+                return Ok(not_supported("word_drawings ref", list));
             }
             let command = insert_shape(args, editing, list)?;
             let said = |out: &DrawingEdited| Said {
@@ -266,7 +266,7 @@ fn listed(editing: &Editing<'_>, list: &TryCall) -> Result<ToolResult<Value>, To
     for drawing in &seen {
         if drawing.member {
             // docx-agent's `Member` has no size: its listing fails
-            return Ok(unported("word_drawings list of a chart in a group", list));
+            return Ok(not_supported("word_drawings list of a chart in a group", list));
         }
         let extent = drawing.element.find(Some(WP), "extent");
         let size = |k: &str| {

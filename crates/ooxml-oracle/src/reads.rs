@@ -108,9 +108,9 @@ fn call(tool: &str, arguments: &Value, version: &Version<'_>) -> Value {
 /// owns it (a check's validation compares with the problems it opened with), handed a page
 /// engine laying out with `fonts` (docx-agent's, as the case gives them) where given, within
 /// `layout_timeout` seconds where given, after the calls `before` (each `{"tool",
-/// "arguments"}`, through the same session and engine). A reply that says part of it is not
-/// given yet (`unported`) is an error naming what; a call before it that fails is an error
-/// naming that call; a call that panicked (the session's `internal` reply) is `{"panic": ...}`.
+/// "arguments"}`, through the same session and engine). A form not supported yet is its refusal (a
+/// call before it refused so, too); a call before it that fails otherwise is an error naming
+/// that call; a call that panicked (the session's `internal` reply) is `{"panic": ...}`.
 fn through_session(
     tool: &str,
     arguments: &Value,
@@ -139,9 +139,9 @@ fn through_session(
         if let Some(panic) = crate::panics::of_reply(&done) {
             return panic;
         }
-        // A call left to the host leaves the case to it, as the case's own call would.
-        if let Some(why) = done.unported().first() {
-            return json!({"error": {"code": "unported", "message": why}});
+        // A form not supported yet refuses the case, as the case's own call would.
+        if done.not_supported_form().is_some() {
+            return json!({"error": done.to_json().get("error")});
         }
         if let Some(error) = done.to_json().get("error") {
             return json!({"error": {"code": "before", "message": format!("call {k} ({name}): {error}")}});
@@ -150,9 +150,6 @@ fn through_session(
     let result = session.call(tool, arguments.clone(), &context);
     if let Some(panic) = crate::panics::of_reply(&result) {
         return panic;
-    }
-    if let Some(why) = result.unported().first() {
-        return json!({"error": {"code": "unported", "message": why}});
     }
     let envelope = result.to_json();
     match envelope.get("error") {

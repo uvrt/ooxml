@@ -386,14 +386,14 @@ fn a_check_of_the_document_alone_is_the_sessions() {
         json!({"doc": "d1", "include": ["validate"], "range": "p:11111111"}),
     ] {
         let result = s.call("check", asked, &CallContext::default());
-        assert_eq!(result.unported(), [ooxml_tools_word::CHECK_NO_LAYOUT.to_owned()]);
+        assert_eq!(result.not_supported_form(), Some(ooxml_tools_word::CHECK_NO_LAYOUT));
     }
     for asked in [
         json!({"doc": "d1"}),
         json!({"doc": "d1", "include": ["validate", "reflow"]}),
     ] {
         let result = s.call("check", asked, &CallContext::default());
-        assert_eq!(result.unported(), [ooxml_tools_word::CHECK_NO_LAYOUT.to_owned()]);
+        assert_eq!(result.not_supported_form(), Some(ooxml_tools_word::CHECK_NO_LAYOUT));
     }
 }
 
@@ -493,7 +493,7 @@ fn styled_text_is_written_and_values_by_reference_left_to_the_host() {
         json!({"doc": "d1", "target": "p:22222222", "text": "a {{d:1/#1/name}} word"}),
         &context,
     );
-    assert!(!by_reference.unported().is_empty());
+    assert!(by_reference.not_supported_form().is_some());
     assert!(!body_of(&s, &d).contains("name"));
     // styled text is written, its runs listed
     let styled = call(

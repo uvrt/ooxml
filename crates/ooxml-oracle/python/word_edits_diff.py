@@ -520,7 +520,7 @@ def main(argv: list[str] | None = None) -> int:
             inputs[(str(path), k)] = {**case, "source": source}
     rust = run_rust(args.rust, manifest)
     got = {key: value.get("rust") for key, value in rust.items()}
-    counts = {"unported": 0, "rewritten": 0, None: 0, "again": 0}
+    counts = {"not_supported": 0, "rewritten": 0, None: 0, "again": 0}
     for key, want in expected.items():
         have = got.get(key)
         if key in kept:     # compared with the parts as digests; on a difference docx-agent runs it again
@@ -536,20 +536,20 @@ def main(argv: list[str] | None = None) -> int:
             counts["again"] += 1
         got[key], tag = _compare(want, have)
         counts[tag] += 1
-    unported, rewritten = counts["unported"], counts["rewritten"]
+    not_supported, rewritten = counts["not_supported"], counts["rewritten"]
     cache = {"kept": len(kept) - counts["again"], "computed": len(expected) - len(kept) + counts["again"]} \
         if store else {}
     if store:
         store.close()
     if args.cache_used:
         Path(args.cache_used).write_text(json.dumps(used))
-    if unported:
-        print(f"{unported} cases the Rust tools left to the host (unported)")
+    if not_supported:
+        print(f"{not_supported} cases the Rust tools refused as not supported yet")
     if rewritten:
         print(f"{rewritten} cases where docx-agent's touched counts blocks only re-serialized (equal "
               "once the body before is read as lxml writes it)")
     return report(expected, got, results=args.results, inputs=inputs,
-                  counts={"unported": unported, "rewritten": rewritten, **cache})
+                  counts={"not_supported": not_supported, "rewritten": rewritten, **cache})
 
 
 if __name__ == "__main__":

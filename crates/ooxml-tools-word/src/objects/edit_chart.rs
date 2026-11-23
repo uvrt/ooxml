@@ -47,7 +47,7 @@ pub fn edit_chart_read(args: &EditChart, version: &Version<'_>, cancel: &dyn Can
     let summary = format!("Read {}", args.target);
     let (part, root) = match chart_of(args, &docx, "read")? {
         Ok(found) => found,
-        Err(why) => return Ok(unported(summary, &why)),
+        Err(why) => return Err(not_supported(args, &why)),
     };
     crate::review::stopped(cancel)?;
     match chart_read_json(&args.target, &docx.package, &part, &root) {
@@ -56,7 +56,7 @@ pub fn edit_chart_read(args: &EditChart, version: &Version<'_>, cancel: &dyn Can
             done.data = Some(data);
             Ok(done)
         }
-        Err(why) => Ok(unported(summary, why.0)),
+        Err(why) => Err(not_supported(args, why.0)),
     }
 }
 
@@ -69,11 +69,11 @@ pub fn edit_chart(args: &EditChart, editing: &Editing<'_>) -> ToolResult<Value> 
     let action = args.action.as_str();
     let summary = format!("{action} on {}", args.target);
     if args.action == ChartAction::Read {
-        return ToolResult::done(unported(summary, &format!("edit_chart {action}")));
+        return ToolResult::failed(not_supported(args, &format!("edit_chart {action}")));
     }
     if args.from.is_some() || args.columns.is_some() || args.date_format.is_some() || args.blanks.is_some() {
         // values from a table, with their provenance records: the host's (KeepText later)
-        return ToolResult::done(unported(summary, &format!("edit_chart {action} from")));
+        return ToolResult::failed(not_supported(args, &format!("edit_chart {action} from")));
     }
     let ran = if args.action == ChartAction::Add {
         let lang = editing
@@ -143,7 +143,7 @@ fn chart_action(args: &EditChart, editing: &Editing<'_>, summary: String) -> Res
     };
     let data = match read_data(chart_of(args, &docx, args.action.as_str())?) {
         Ok(data) => data,
-        Err(why) => return Ok(ToolResult::done(unported(summary, &why))),
+        Err(why) => return Err(not_supported(args, &why)),
     };
     let style = STYLE_ACTIONS.contains(&args.action);
     let action = if style {
@@ -154,7 +154,7 @@ fn chart_action(args: &EditChart, editing: &Editing<'_>, summary: String) -> Res
     let action = match action {
         Ok(action) => action,
         Err(Stop::Refused(error)) => return Err(error),
-        Err(Stop::Unported(why)) => return Ok(ToolResult::done(unported(summary, why))),
+        Err(Stop::NotSupported(why)) => return Err(not_supported(args, why)),
     };
     let (drawing, address) = (args.target.clone(), args.target.clone());
     let ran = match action {
@@ -326,7 +326,7 @@ fn shape_action(
             let series = args.series.as_ref().map(|_| series()).transpose()?;
             let lang = default_language(docx);
             if show && lang.is_none() {
-                return Err(Stop::Unported(
+                return Err(Stop::NotSupported(
                     "edit_chart show_data_labels: a document whose defaults name no language (the session's locale decides)",
                 ));
             }
@@ -437,14 +437,14 @@ fn default_language(docx: &Docx) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn unported(summary: String, what: &str) -> Done<Value> {
-    let mut done = Done::new(summary);
-    done.unported.push(what.to_owned());
-    done
+/// `what` refused as not supported yet, reading the chart as the way out.
+fn not_supported(args: &EditChart, what: &str) -> ToolError {
+    let read = json!({"doc": args.doc, "target": args.target, "action": "read"});
+    crate::refusal::not_supported(what, "edit_chart", read, &[])
 }
 
 /// Registers `edit_chart` (the group's [`super::register`]): the host asks the session first
-/// (its data actions that change points in place; the rest answer `unported`).
+/// (its data actions that change points in place; the rest are refused as not supported yet).
 pub(crate) fn register(r: &mut impl crate::Registrar) {
     r.reading_edit::<EditChart>(edit_chart_read, edit_chart, crate::Hosting::SERVED);
 }

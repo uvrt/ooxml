@@ -194,9 +194,8 @@ impl PySession {
     /// `CallOptions`: who calls, the versions read, the placer, the page engine, the reply's
     /// `limit`, ...): returns the reply as JSON text -- the whole envelope, or within the
     /// limit as the model is sent it --, the files the call gives the application (bytes:
-    /// `save_document`'s), and what only the application reads, as JSON text: `unported`,
-    /// what of the answer is not yet given as the Python tool gives it (a list of reasons),
-    /// `files`, each file's `name` and `format` in the order of the bytes, and `panic`, what a
+    /// `save_document`'s), and what only the application reads, as JSON text: `files`, each
+    /// file's `name` and `format` in the order of the bytes, and `panic`, what a
     /// call that panicked said (else `null`; its reply is an `internal` failure). Never raises
     /// for the call's own failure: that is the reply's `error`, with its way out.
     #[pyo3(signature = (name, arguments, options = None))]
@@ -211,7 +210,7 @@ impl PySession {
                 .iter()
                 .map(|f| serde_json::json!({"name": f.name, "format": f.format}))
                 .collect();
-            let app = serde_json::json!({"unported": result.unported(), "files": named, "panic": result.app.panic});
+            let app = serde_json::json!({"files": named, "panic": result.app.panic});
             let text = match limit {
                 Some(limit) => result.to_text(Some(limit)),
                 None => compact(&Value::Object(result.to_json())),
@@ -225,7 +224,7 @@ impl PySession {
     /// Run the editing tool `name` as [`call`](Self::call) does, with `options` (a
     /// `CallOptions`: who calls, the page engine, the blobs, the values written by reference;
     /// no limit, no images): returns the envelope's JSON text, the application's JSON text
-    /// (`unported`, `panic`), and what the call's edits made -- `(first, last, touched, validation,
+    /// (`panic`), and what the call's edits made -- `(first, last, touched, validation,
     /// before, reflow)`: the number of the version its first edit made, the version its last
     /// made (held), what it touched as JSON text (`None` where it made more than one version),
     /// the last version's validation as [`validation`](Self::validation) gives it, the state
@@ -254,7 +253,7 @@ impl PySession {
         let session = &self.inner;
         let (text, app, made) = py.detach(|| {
             let (result, made) = session.edit(name, Value::String(arguments), &context);
-            let app = serde_json::json!({"unported": result.unported(), "panic": result.app.panic});
+            let app = serde_json::json!({"panic": result.app.panic});
             (compact(&Value::Object(result.to_json())), compact(&app), made)
         });
         let made = made.map(|m| {

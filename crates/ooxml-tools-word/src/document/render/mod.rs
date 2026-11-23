@@ -30,9 +30,9 @@ pub const DEFAULT_WIDTH: i64 = 1000;
 /// What the summary says of the view drawn.
 const FINAL_VIEW: &str = "(final view: changes accepted, comments hidden)";
 
-/// What `unported` says of a call on a document the session does not own.
+/// The form refused of a call on a document the session does not own.
 pub const RENDER_NOT_OWNED: &str = "render: not owned";
-/// What `unported` says of a call the host handed no page engine or raster.
+/// The form refused of a call the host handed no page engine or raster.
 pub const RENDER_NO_LAYOUT: &str = "render: no layout";
 
 /// `render`'s sheet: the pages tiled into one labelled image.
@@ -72,10 +72,9 @@ pub struct Render {
     pub fast: Option<bool>,
 }
 
-fn unported(why: &str) -> Done<Value> {
-    let mut done = Done::new("");
-    done.unported.push(why.to_owned());
-    done
+/// `why` refused as not supported yet, reading the document's text as the way out.
+fn not_supported(why: &str, doc: &str) -> ToolError {
+    crate::refusal::not_supported(why, "word_read", json!({"doc": doc}), &[])
 }
 
 /// `render` of a Word document at one version.
@@ -86,10 +85,10 @@ fn unported(why: &str) -> Done<Value> {
 /// yet; `timeout` past the call's layout limit.
 pub fn render(args: &Render, version: &Version<'_>, cancel: &dyn Cancel) -> Result<Done<Value>, ToolError> {
     let Some(owned) = version.owned else {
-        return Ok(unported(RENDER_NOT_OWNED));
+        return Err(not_supported(RENDER_NOT_OWNED, &args.doc));
     };
     let (Some(layout), Some(drawing)) = (owned.layout, owned.drawing) else {
-        return Ok(unported(RENDER_NO_LAYOUT));
+        return Err(not_supported(RENDER_NO_LAYOUT, &args.doc));
     };
     let mut warnings: Vec<String> = Vec::new();
     let asked = pages_of(args, &mut warnings)?;

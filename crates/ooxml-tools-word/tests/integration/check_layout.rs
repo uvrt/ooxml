@@ -74,9 +74,9 @@ fn min_size_and_styles_ask_for_the_layout() {
     assert!(!facts["small_text"].as_array().unwrap().is_empty(), "{facts}");
     assert_eq!(facts["styles_unknown"], json!(["No Such Style"]));
     assert!(!facts["styles_not_allowed"].as_array().unwrap().is_empty(), "{facts}");
-    // without the host's layout, the host answers
+    // without the host's layout: not supported yet
     let reply = checked(&first, 1, json!({"doc": "d1", "include": ["layout"]}), &last, None);
-    assert_eq!(reply["unported"], CHECK_NO_LAYOUT);
+    assert_eq!(reply["not_supported"], CHECK_NO_LAYOUT);
 }
 
 #[test]

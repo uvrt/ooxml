@@ -23,8 +23,8 @@ compare layouts (Python lays them out) it runs under the lock (:func:`serve`).
 The Python handler answers instead -- on the view, committed through the bridge, counted by
 tool and reason (:func:`fallbacks`, ``edit_fallbacks{tool,reason}``), never silently -- where
 the session does not answer as it yet: values written by reference in a tool that does not
-keep them yet (``Hosting.keeps_written``), and what the session says it leaves to the host
-(its ``unported``: a find within a block, a picture, regex, ...).  A format whose writes are
+keep them yet (``Hosting.keeps_written``).  A form the session does not support yet is its
+refusal (``details.not_supported``), not a fallback.  A format whose writes are
 not spaced by their language (``docx_format(typography=False)``) is served: the call's
 context says so (``CallContext(writing=CallWriting(typography=False))``, lane P2e7).  The Rust handler changes
 nothing in each of those.
@@ -229,7 +229,7 @@ def _set_mode(entry: Any, given: dict[str, Any], context: Any, names: dict[str, 
     with mirror.lock:
         reply, app, made = mirror.session.edit("word_set_tracking", json.dumps(given), options(
             context=context, documents=documents(names=names)))
-        if json.loads(reply).get("error") is None and not json.loads(app).get("unported"):
+        if json.loads(reply).get("error") is None:
             wanted = {"on": True, "author": given.get("author")} if given.get("on") else None
             entry.tracking = wanted
             mirror.tracking = wanted
@@ -374,12 +374,10 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
         timing.add("update", time.perf_counter() - started)
     envelope = json.loads(reply)
     error = envelope.get("error")
-    unported = json.loads(app).get("unported") or []
     if made is None and error is not None:
-        # A refusal is the call's answer, in docx-agent's words with Rust's way out (lane P2e1).
+        # A refusal is the call's answer, in docx-agent's words with Rust's way out (lane P2e1);
+        # a form not supported yet too (its ``details.not_supported``).
         raise refusal(error)
-    if made is None and unported:
-        raise Fallback(unported[0])
     result = _result(envelope)
     refs = envelope.get("refs") or {}
     for name, address in refs.items():

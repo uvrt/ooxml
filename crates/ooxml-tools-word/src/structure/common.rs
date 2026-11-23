@@ -1,7 +1,6 @@
 //! Owns: what the structure tools share -- an edit's outcome as docx-agent's `outcome`
 //! writes the reply (ids made, changed, removed and renamed, warnings), an edit's refusal
-//! as the tool's (an edit not ported yet said in `unported`, for the host to answer its own
-//! way), the arguments docx-agent's `need` and `one_of` ask for, text found once
+//! as the tool's (an edit not supported yet refused as such), the arguments docx-agent's `need` and `one_of` ask for, text found once
 //! (`find_range`), the edit policy of the host's tracking mode, and the `ref` of a tool
 //! making blocks (docx-agent's `named` and `name_blocks`).
 //!
@@ -95,13 +94,8 @@ pub(crate) fn outcome(edits: &[Outcome], summary: String, data: Option<Value>) -
     result
 }
 
-/// An edit's refusal as the tool's reply: one not ported yet is said in `unported`.
+/// An edit's refusal as the tool's reply (one not supported yet refused as such).
 pub(crate) fn refused(error: EditError, call: TryCall) -> ToolResult<Value> {
-    if let EditError::Unsupported(what) = error {
-        let mut done = Done::new(String::new());
-        done.unported.push(what);
-        return ToolResult::done(done);
-    }
     ToolResult::failed(edit_refusal(error, "", call))
 }
 

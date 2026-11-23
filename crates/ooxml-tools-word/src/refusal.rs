@@ -1,6 +1,7 @@
 //! Owns: an address the Word model refused ([`AddressError`]) as the tool's refusal, coded
 //! as docx-agent's tools code it (`not_found`, `invalid_arguments`, `refused`, `unit`),
-//! with its way out: the ids that would do, and a call that works.
+//! with its way out: the ids that would do, and a call that works; and a form not supported
+//! yet, refused with the call of a form that is ([`not_supported`]).
 //!
 //! Must not: word the refusal (the address resolver does) or resolve addresses.
 
@@ -27,4 +28,18 @@ pub(crate) fn address_refused(error: AddressError, call: TryCall) -> ToolError {
         None => WayOut::call(call),
     };
     ToolError::refusal(code, error.message, way_out)
+}
+
+/// A form not supported yet (`form`, its stable id), refused with the call of `tool` with
+/// `arguments` as the way out, `fill` the arguments in it to give otherwise.
+pub(crate) fn not_supported(form: &str, tool: &str, arguments: serde_json::Value, fill: &[&str]) -> ToolError {
+    let call = TryCall {
+        tool: tool.to_owned(),
+        arguments: match arguments {
+            serde_json::Value::Object(map) => map,
+            _ => serde_json::Map::new(),
+        },
+        fill: fill.iter().map(|f| (*f).to_owned()).collect(),
+    };
+    ToolError::not_supported(form, WayOut::call(call))
 }

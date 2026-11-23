@@ -57,6 +57,9 @@ pub struct WordInspect {
 pub fn word_inspect(args: &WordInspect, version: &Version<'_>, cancel: &dyn Cancel) -> Result<Done<Value>, ToolError> {
     let placer = placer_of(args, version)?;
     let docx = version.docx()?;
+    if let Some(refusal) = not_supported(&docx, args) {
+        return Err(refusal);
+    }
     let mut reader = Reader::new(&docx, ViewName::Final);
     let mut first = args.clone();
     first.target = "body".to_owned();
@@ -127,7 +130,6 @@ pub fn word_inspect(args: &WordInspect, version: &Version<'_>, cancel: &dyn Canc
         crate::placements::fill(&mut data, &answers);
     }
     let mut done = Done::new(format!("Inspected {}", args.target));
-    done.unported = unported(&docx);
     done.data = Some(data);
     Ok(done)
 }
@@ -210,13 +212,20 @@ fn not_laid(args: &WordInspect, why: NotLaid, limit: Option<crate::LayoutLimit<'
     .at("layout")
 }
 
-/// What docx-agent gives otherwise: the final view's cells whose end Accept All takes away.
-fn unported(docx: &ooxml_word_model::docx::Docx) -> Vec<String> {
+/// An inspection not supported yet: of a document with cells whose end Accept All takes
+/// away, refused with reading the target in the markup view as the way out.
+fn not_supported(docx: &ooxml_word_model::docx::Docx, args: &WordInspect) -> Option<ToolError> {
     let shared = ooxml_word_model::markdown::read::Shared::of(docx);
-    if shared.cell_ends(docx) {
-        return vec![crate::CELL_ENDS.to_owned()];
+    if !shared.cell_ends(docx) {
+        return None;
     }
-    Vec::new()
+    let read = json!({"doc": args.doc, "range": args.target, "view": "markup"});
+    Some(crate::refusal::not_supported(
+        &format!("word_inspect of {}", crate::CELL_ENDS),
+        "word_read",
+        read,
+        &[],
+    ))
 }
 
 /// Whether Python reads `value` as false (`if state.get(key)`).

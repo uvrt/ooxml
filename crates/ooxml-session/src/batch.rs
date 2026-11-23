@@ -129,7 +129,6 @@ impl Session {
         let mut left: Vec<(usize, Left)> = Vec::new();
         let mut used = MARGIN;
         let mut pinned = pinned_by(context);
-        let mut unported = Vec::new();
         for (index, op) in ops.iter().enumerate() {
             if clock.monotonic().saturating_sub(started) > BATCH_TIMEOUT {
                 left.push((index, Left::Deadline));
@@ -149,18 +148,15 @@ impl Session {
                 continue;
             }
             used += size;
-            unported.extend(result.unported().iter().map(|why| format!("ops[{index}]: {why}")));
             answers.push((one, index, result.is_error()));
         }
         let mut combined = combine(&ops, &answers, &left, cap);
-        combined.unported.clone_from(&unported);
         while !answers.is_empty() && compact(&Value::Object(envelope(&combined))).chars().count() > cap {
             if let Some((_, index, _)) = answers.pop() {
                 left.push((index, Left::Budget));
                 left.sort_by_key(|(k, _)| *k);
             }
             combined = combine(&ops, &answers, &left, cap);
-            combined.unported.clone_from(&unported);
         }
         Ok(combined)
     }

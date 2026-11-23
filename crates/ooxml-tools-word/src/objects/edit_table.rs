@@ -26,9 +26,8 @@
 //! A table placed from a source keeps its record of where its values came from true
 //! through the change (docx-agent's `_Kept`, [`KeepingRecord`]).
 //!
-//! Not ported yet, said in `unported` for the host to answer its own way: any call on a
-//! table with Accept All's
-//! cell ends (a cell's last paragraph mark deleted: the reply's Markdown joins cells across
+//! Refused as not supported yet ([`ToolError::not_supported`]): any call on a table with
+//! Accept All's cell ends (a cell's last paragraph mark deleted: the reply's Markdown joins cells across
 //! it, and names the cells Accept All loses with the changes that do it).
 //!
 //! Must not: change the document but through the command.
@@ -91,7 +90,7 @@ fn invalid(message: String, field: &str, options: &[&str], retry: &TryCall) -> T
     ToolError::refusal(Refusal::InvalidArguments, message, way_out).at(field)
 }
 
-pub(super) fn unported(what: &str, retry: &TryCall) -> ToolResult<Value> {
+pub(super) fn not_supported(what: &str, retry: &TryCall) -> ToolResult<Value> {
     refused(EditError::Unsupported(what.to_owned()), retry.clone())
 }
 
@@ -266,7 +265,7 @@ fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<T
     let mut accepted = view.accepted(&docx);
     if accepted.table.cell_ends {
         // the reply's Markdown joins cells across them, and says the cells Accept All loses
-        return Ok(unported(
+        return Ok(not_supported(
             &format!("word_edit_table on a table with {}", crate::CELL_ENDS),
             retry,
         ));
@@ -280,7 +279,7 @@ fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<T
     let tracked = editing.tracking.is_some();
     let change = match change(args, (tracked, &docx), &view, &mut accepted, retry)? {
         Ok(change) => change,
-        Err(what) => return Ok(unported(&what, retry)),
+        Err(what) => return Ok(not_supported(&what, retry)),
     };
     Ok(finish(args, editing, &view, change, accepted.notes, retry))
 }
@@ -297,7 +296,7 @@ fn sync(
 ) -> Result<ToolResult<Value>, ToolError> {
     let Some(rows) = source else {
         if args.from.as_deref().is_some_and(|f| !f.is_empty()) {
-            return Ok(unported("word_edit_table sync from one value", retry));
+            return Ok(not_supported("word_edit_table sync from one value", retry));
         }
         return Err(invalid(
             "sync takes from: the rows to keep the table in step with, e.g. {action: 'sync', from: 'd:<id>', key: \
@@ -310,7 +309,7 @@ fn sync(
     };
     let accepted = view.accepted(docx);
     if accepted.table.cell_ends {
-        return Ok(unported(
+        return Ok(not_supported(
             &format!("word_edit_table on a table with {}", crate::CELL_ENDS),
             retry,
         ));
@@ -346,7 +345,7 @@ fn rows_beside_cells(given: &str, retry: &TryCall) -> ToolError {
 }
 
 /// The change a row, column, merge or split action names, positions as the table is
-/// accepted; `Err` with what `unported` says where it is not ported yet.
+/// accepted; `Err` with the form refused where it is not supported yet.
 fn change(
     args: &WordEditTable,
     (tracked, docx): (bool, &Docx),

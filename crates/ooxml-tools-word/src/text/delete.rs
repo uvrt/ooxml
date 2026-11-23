@@ -5,9 +5,9 @@
 //! view reported (`data.original_removed`, round 57).
 //!
 //! Must not: write the document but through the commands, or answer a call it does not
-//! port otherwise than by saying so ([`Unported`]).
+//! support yet, refused ([`Unported`]).
 
-use super::{by_reference, Unported};
+use super::{by_reference, not_supported, Unported};
 use crate::describe::short;
 use crate::originals::{add, Watch};
 use crate::review::edit_refusal;
@@ -48,8 +48,8 @@ pub struct WordDelete {
 /// `word_delete` on the document `editing` names. A find with a target searches within it
 /// (said in a warning). A failed reply is `invalid_arguments`
 /// for a call giving neither find nor target, or a within other than its target, and for
-/// a heading whose content would stay; the find's, range's or block's refusal; `unported`
-/// (nothing changed) for what the Rust core does not do yet.
+/// a heading whose content would stay; the find's, range's or block's refusal; `refused`
+/// (nothing changed) for what is not supported yet.
 #[must_use]
 pub fn word_delete(args: &WordDelete, editing: &Editing<'_>) -> ToolResult<Value> {
     run(args, editing).unwrap_or_else(ToolResult::failed)
@@ -68,8 +68,8 @@ fn run(args: &WordDelete, editing: &Editing<'_>) -> Result<ToolResult<Value>, To
         )
         .at("find"));
     }
-    if let Some(unported) = unported(args) {
-        return Ok(unported.reply());
+    if let Some(refusal) = not_supported_form(args, &call) {
+        return Err(refusal);
     }
     let policy = editing.policy();
     let collapse_space = args.collapse_space.unwrap_or(false);
@@ -111,16 +111,24 @@ fn run(args: &WordDelete, editing: &Editing<'_>) -> Result<ToolResult<Value>, To
     blocks(args, editing, &target, &call)
 }
 
-/// What of the call is not ported: a picture, a heading's range without its end, an
-/// address by reference.
-fn unported(args: &WordDelete) -> Option<Unported> {
+/// What of the call is not supported yet, refused: a picture, a heading's range without its
+/// end, an address by reference.
+fn not_supported_form(args: &WordDelete, call: &TryCall) -> Option<ToolError> {
     let target = args.target.as_deref().unwrap_or_default();
     if args.target.as_deref().is_some_and(by_reference) || args.within.as_deref().is_some_and(by_reference) {
-        return Some(Unported::Reference);
+        return Some(Unported::Reference.refusal(call.clone(), &["target", "within"]));
     }
-    let picture = args.find.is_none() && target.starts_with("d:");
-    let heading = args.find.is_none() && target.starts_with("h:") && !target.contains("..");
-    (picture || heading).then_some(Unported::Form)
+    if args.find.is_none() && target.starts_with("d:") {
+        return Some(not_supported("word_delete a picture (d:)", call.clone(), &["target"]));
+    }
+    if args.find.is_none() && target.starts_with("h:") && !target.contains("..") {
+        return Some(not_supported(
+            "word_delete a heading without its end",
+            call.clone(),
+            &["target"],
+        ));
+    }
+    None
 }
 
 /// Where the find searches, and the note saying so: `within`, or the target given with it

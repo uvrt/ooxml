@@ -62,7 +62,7 @@ fn reflow_json(reflow: &PageReflow) -> Value {
 
 /// `word_template` (docx-agent's): the document brought into compatibility mode 15, with
 /// the reflow; a document already in it is left as it is. Without the host's layout, a
-/// document to convert is left to the host (`unported`).
+/// document to convert is refused as not supported yet.
 #[must_use]
 pub fn word_template(args: &WordTemplate, editing: &Editing<'_>) -> ToolResult<Value> {
     if let Err(error) = crate::review::stopped(editing.cancel) {
@@ -78,7 +78,7 @@ pub fn word_template(args: &WordTemplate, editing: &Editing<'_>) -> ToolResult<V
         Err(error) => return ToolResult::failed(edit_refusal(error, "", again)),
     };
     if editing.layout.is_none() && !modern {
-        let why = EditError::Unsupported("the reflow without the layout".to_owned());
+        let why = EditError::Unsupported("word_template reflow without the layout".to_owned());
         return refused(why, again);
     }
     converted(editing, &again, editing.edit_layout())

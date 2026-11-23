@@ -4,8 +4,8 @@
 //!
 //! Owns: the tools' definitions (descriptions beside them), their handlers -- each call's
 //! edits one command through the editor (one history step), written under the document's
-//! tracking mode -- and what a call needs that is not ported yet, said in `unported`
-//! before anything changes ([`Unported`]) for the host to answer its own way.
+//! tracking mode -- and what a call needs that is not supported yet, refused before
+//! anything changes ([`Unported`]).
 //!
 //! Must not: hold sessions or documents by id, keep state between calls, or write the
 //! document but through a command.
@@ -24,21 +24,17 @@ pub use replace_text::{replace_text, Expect, ReplaceStories, ReplaceText};
 pub use set_text::{word_set_text, SetTextItem, WordSetText};
 
 use crate::Editing;
-use ooxml_tools::{Done, ToolResult};
+use ooxml_tools::{ToolError, TryCall, WayOut};
 use ooxml_word_edit::RevisionPolicy;
-use serde_json::Value;
 
-/// What a text tool's call needs that the Rust core does not do as docx-agent does yet.
+/// What a text tool's call needs that the Rust core does not do yet: each is refused as not
+/// supported ([`ToolError::not_supported`]), its form named `"<tool> <what>"`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Unported {
-    /// Text with `**strong**`, `*emphasis*`, `[text]{Style}` or escapes (lane P2b3).
+    /// Text with `**strong**`, `*emphasis*`, `[text]{Style}` or escapes.
     Styled,
-    /// A value written by reference (`{{d:...}}`) or a `$ref` address: the host's.
+    /// A value written by reference (`{{d:...}}`) or a `$ref` address.
     Reference,
-    /// A paragraph style set with the text.
-    ParagraphStyle,
-    /// An address form or option the handler does not serve yet.
-    Form,
     /// Content from data the host holds: rows or a field (`from`), a blob.
     HostData,
     /// Blocks whose look new ones take (`like`).
@@ -46,29 +42,35 @@ pub enum Unported {
 }
 
 impl Unported {
-    /// What `unported` says.
+    /// What the form's id says after the tool's name.
     #[must_use]
-    pub fn reason(self) -> &'static str {
+    pub fn what(self) -> &'static str {
         match self {
-            Unported::Styled => "styled text (strong, emphasis, character styles)",
-            Unported::Reference => "values or addresses by reference",
-            Unported::ParagraphStyle => "a paragraph style set with the text",
-            Unported::Form => "an address form or option not ported",
-            Unported::HostData => "content from the host's data (from, blob)",
-            Unported::Like => "blocks looking like given ones (like)",
+            Unported::Styled => "styled text",
+            Unported::Reference => "by reference",
+            Unported::HostData => "from data (from, blob)",
+            Unported::Like => "like",
         }
     }
 
-    /// The reply saying so: nothing changed, the host answers the call its own way.
+    /// The refusal: `call` (the same call) is the way out, with `fill` the arguments to give
+    /// literally.
     #[must_use]
-    pub fn reply(self) -> ToolResult<Value> {
-        let mut done = Done::new(String::new());
-        done.unported.push(self.reason().to_owned());
-        ToolResult::done(done)
+    pub fn refusal(self, call: TryCall, fill: &[&str]) -> ToolError {
+        let form = format!("{} {}", call.tool, self.what());
+        not_supported(&form, call, fill)
     }
 }
 
-/// What of `text`, written as a tool writes it, is not ported yet.
+/// A form of a text tool's call not supported yet, refused with `call` as the way out and
+/// `fill` the arguments to give otherwise.
+#[must_use]
+pub(crate) fn not_supported(form: &str, mut call: TryCall, fill: &[&str]) -> ToolError {
+    call.fill.extend(fill.iter().map(|f| (*f).to_owned()));
+    ToolError::not_supported(form, WayOut::call(call))
+}
+
+/// What of `text`, written as a tool writes it, is not supported yet.
 pub(crate) fn text_unported(text: &str) -> Option<Unported> {
     if text.contains("{{") {
         return Some(Unported::Reference);

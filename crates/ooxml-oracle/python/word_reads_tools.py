@@ -7,7 +7,7 @@ for laying out and waiting, :data:`LAYING_OUT`) and its ``validation`` (the save
 comparison, which the tool layer adds around either); every other field must be equal.
 ``check``'s cases are the facts the Rust session gives whole (``validate``, ``fields``,
 ``app``, and ``reflow``, ``layout`` and ``range`` laid out by a page engine with docx-agent's
-fonts); one it leaves to the host fails as ``unported``.
+fonts); one it does not support yet is its refusal (``details.not_supported``), judged by tools/gates.py.
 
 The addressed cases (``ranges``, ``inspect``, ``find``, ``batch``) are made per document from
 what it holds: its first, a middle and its last body paragraph, a span of five blocks, its
@@ -266,9 +266,20 @@ def python_replies(toolbox, path, what: str) -> dict:
     return out
 
 
+def comparable_error(error: dict) -> dict:
+    """An error as the sides are compared: its code and message, and the form a Rust tool
+    refused as not supported yet (``details.not_supported``) where it names one, so that
+    word_reads_diff.py's report leaves the case to tools/gates.py's allow-list."""
+    out = {"code": error.get("code"), "message": error.get("message")}
+    details = error.get("details")
+    if isinstance(details, dict) and details.get("not_supported"):
+        out["details"] = {"not_supported": details["not_supported"]}
+    return out
+
+
 def comparable(tool: str, reply: dict) -> dict:
     if reply.get("error") is not None:
-        return {"error": {"code": reply["error"].get("code"), "message": reply["error"].get("message")}}
+        return {"error": comparable_error(reply["error"])}
     data = reply.get("data")
     if tool == "read_batch":
         data = {**data, "ops": [{k: v for k, v in op.items() if k not in ("doc", "version")}
@@ -277,7 +288,7 @@ def comparable(tool: str, reply: dict) -> dict:
             if op.get("tool") == "describe" and isinstance(op.get("data"), dict):
                 op["data"] = comparable("describe", {"data": op["data"]})["data"]
             if "error" in op:
-                op["error"] = {"code": op["error"].get("code"), "message": op["error"].get("message")}
+                op["error"] = comparable_error(op["error"])
             op.pop("warnings", None)
     if tool == "describe":
         data = {k: v for k, v in data.items() if k not in NOT_DESCRIBED}

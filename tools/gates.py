@@ -29,8 +29,9 @@ A ``diff`` writes the harness's log, its cases with differences (JSON lines) and
 (JSON) into ``--out``.  It fails when a case differs and no entry of the known differences
 (crates/ooxml-oracle/known-differences.toml, each with its cause) covers it, and on any case
 where the Rust side panicked (``panics``: the oracle's catch or the session's ``internal``
-reply).  The cases the Rust tools leave to the host are reported by form (``unported_forms``),
-not failing yet.
+reply), and on any case the Rust tools refused as not supported yet in a form the allow-list
+(``[[not_supported]]`` in known-differences.toml: the deferred forms and those a port lane
+has not landed yet) does not name; the forms are reported (``not_supported_forms``).
 
 Modes ``auto`` (the dispatch's default): the edit modes, and whether the reads' checks run,
 picked from the files the branch changes against origin/main (``git diff origin/main...``):
@@ -157,6 +158,22 @@ def known_entries(path: Path = KNOWN) -> list[dict]:
                                       or set(condition) - DOCUMENT_KEYS):
             raise SystemExit(f"{path}: a document condition takes lacks_namespace (and part): {entry}")
     return entries
+
+
+def allowed_forms(path: Path = KNOWN) -> list[dict]:
+    """The forms the Rust tools may refuse as not supported yet: each ``[[not_supported]]``
+    entry's ``form`` (a glob on ``details.not_supported``), with its ``cause``."""
+    entries = tomllib.loads(path.read_text()).get("not_supported", [])
+    for entry in entries:
+        if not entry.get("form") or not entry.get("cause") or set(entry) - {"form", "cause"}:
+            raise SystemExit(f"{path}: a form not supported yet takes a form and a cause: {entry}")
+    return entries
+
+
+def unlisted_forms(forms: dict[str, int], allowed: list[dict]) -> dict[str, int]:
+    """The forms in ``forms`` (form: cases) that no allowed glob names."""
+    return {form: count for form, count in forms.items()
+            if not any(fnmatch.fnmatchcase(form, entry["form"]) for entry in allowed)}
 
 
 def _contains(have, want) -> bool:
@@ -287,17 +304,24 @@ def run_diff(args) -> int:
     crashed = done is not None and done.returncode not in (0, 1) or (files and not totals)
     if args.cache and not crashed and (out / USED).is_file():
         write_coverage(args, out, tree, only)
+    forms = totals.get("not_supported_forms", {})
+    unlisted = unlisted_forms(forms, allowed_forms())
     summary = {"gate": args.gate, "mode": args.mode, "shard": args.shard, "every": args.every,
                "per_tool": args.per_tool, "documents": len(files),
                "cases": totals.get("cases", 0), "differences": len(unknown), "known": len(known),
-               "unported": totals.get("unported", 0), "panics": totals.get("panics", 0),
-               "unported_forms": totals.get("unported_forms", {}), "wall": round(wall, 1), "crashed": bool(crashed),
+               "not_supported": sum(forms.values()), "panics": totals.get("panics", 0),
+               "not_supported_forms": forms, "unlisted_forms": unlisted, "wall": round(wall, 1),
+               "crashed": bool(crashed),
                **({"kept": totals["kept"], "computed": totals["computed"]} if "kept" in totals else {}),
                "unknown": unknown[:50]}
     (out / "summary.json").write_text(json.dumps(summary, indent=1))
-    print(json.dumps({k: v for k, v in summary.items() if k not in ("unknown", "unported_forms")}))
-    for form, count in list(summary["unported_forms"].items())[:20]:
-        print(f"unported: {count} {form}")     # reported, not failing yet (P4e PR 4 refuses them)
+    print(json.dumps({k: v for k, v in summary.items()
+                      if k not in ("unknown", "not_supported_forms", "unlisted_forms")}))
+    for form, count in list(forms.items())[:20]:
+        print(f"not supported: {count} {form}")
+    for form, count in unlisted.items():
+        print(f"::error::{args.gate}/{args.mode} {args.shard}: {count} cases refused as not supported yet in a "
+              f"form the allow-list does not name: {form!r} (known-differences.toml [[not_supported]])")
     for case in unknown[:50]:
         errors = f"; errors {json.dumps(case['errors'])[:300]}" if case.get("errors") else ""
         print(f"::error::{args.gate}/{args.mode}: {case['file']} [{case['case']}] differs (log.txt has the paths)"
@@ -307,7 +331,7 @@ def run_diff(args) -> int:
     if summary["panics"]:
         print(f"::error::{args.gate}/{args.mode} {args.shard}: {summary['panics']} cases where Rust panicked "
               "(log.txt: 'rust panicked')")
-    return 1 if unknown or crashed or summary["panics"] else 0
+    return 1 if unknown or crashed or summary["panics"] or unlisted else 0
 
 
 def run_cache_key(args) -> int:
@@ -553,7 +577,7 @@ def run_summary(args) -> int:
     for path in sorted(Path(args.dir).rglob("summary.json")):
         s = json.loads(path.read_text())
         row = rows.setdefault((s["gate"], s["mode"]), {"shards": 0, "documents": 0, "cases": 0, "differences": 0,
-                                                       "known": 0, "unported": 0, "panics": 0, "wall": 0.0,
+                                                       "known": 0, "not_supported": 0, "panics": 0, "wall": 0.0,
                                                        "crashed": 0, "unknown": [], "forms": {}})
         row["shards"] += 1
         for key in ("kept", "computed"):
@@ -562,20 +586,21 @@ def run_summary(args) -> int:
         row["wall"] = max(row["wall"], s["wall"])
         row["crashed"] += s["crashed"]
         row["unknown"] += s["unknown"]
-        for key in ("documents", "cases", "differences", "known", "unported"):
+        for key in ("documents", "cases", "differences", "known"):
             row[key] += s[key]
+        row["not_supported"] += s.get("not_supported", 0)
         row["panics"] += s.get("panics", 0)
-        for form, count in s.get("unported_forms", {}).items():
+        for form, count in s.get("not_supported_forms", {}).items():
             row["forms"][form] = row["forms"].get(form, 0) + count
     out = []
     for gate in dict.fromkeys(g for g, _ in rows):
-        out += [f"### {gate}", "", "| mode | shards | documents | cases | differences | known | unported | "
+        out += [f"### {gate}", "", "| mode | shards | documents | cases | differences | known | not supported | "
                 "panics | slowest shard (s) |", "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
         for (g, mode), r in rows.items():
             if g == gate:
                 flag = " (harness failed)" if r["crashed"] else ""
                 out.append(f"| {mode}{flag} | {r['shards']} | {r['documents']} | {r['cases']:,} | "
-                           f"{r['differences']} | {r['known']} | {r['unported']} | {r['panics']} | "
+                           f"{r['differences']} | {r['known']} | {r['not_supported']} | {r['panics']} | "
                            f"{r['wall']:.0f} |")
         cached = [f"{mode} {r['kept']:,} of {r['kept'] + r['computed']:,}" for (g, mode), r in rows.items()
                   if g == gate and "kept" in r]
@@ -584,7 +609,8 @@ def run_summary(args) -> int:
         forms = [f"{mode}: {count} {form}" for (g, mode), r in rows.items() if g == gate
                  for form, count in sorted(r["forms"].items(), key=lambda x: -x[1])[:10]]
         if forms:
-            out += ["", "Unported forms (reported, not failing yet):", "", *(f"- {f}" for f in forms)]
+            out += ["", "Refused as not supported yet (a form outside the allow-list fails its shard):", "",
+                    *(f"- {f}" for f in forms)]
         out.append("")
         for (g, mode), r in rows.items():
             for case in r["unknown"][:20] if g == gate else []:

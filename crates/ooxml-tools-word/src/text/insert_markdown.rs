@@ -9,18 +9,18 @@
 //! and named in the reply's `data.facts` ([`super::fields`]), every value found in the
 //! paragraphs written kept on its place.
 //!
-//! Left to the host (`unported`, nothing changed): rows or a field as the content (`from`),
+//! Refused as not supported yet (nothing changed): rows or a field as the content (`from`),
 //! a blob (`blob`), references not yet written (`{{...}}`) and a place given by reference
 //! (`$name`), list items or tables like given blocks (`like`, a style map naming a
 //! paragraph), and what the command does not write yet (pictures, footnotes, `replace:`).
 //!
 //! Must not: write the document but through the command, or answer a call it does not
-//! port otherwise than by saying so ([`Unported`]).
+//! support yet, refused ([`Unported`]).
 
 use super::fields::{placed_blocks, with_markdown};
 use super::Unported;
 use crate::review::{edit_refusal, Editing};
-use crate::structure::common::{blocks_ref_as_place, is_place, name_blocks, outcome, refused, Outcome};
+use crate::structure::common::{blocks_ref_as_place, is_place, name_blocks, outcome, Outcome};
 use crate::written::{self, Written};
 use ooxml_tools::{ArgEnum, Outcome as Replied, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::{InsertMarkdown, MarkdownInserted, MarkdownOptions, TextKeep, WriteMap};
@@ -144,7 +144,7 @@ pub struct WordInsertMarkdown {
 /// `word_insert_markdown` on the document `editing` names: the Markdown written at `at` as
 /// one command. A failed reply is `invalid_arguments` for a `ref` holding an address or a
 /// style map the edit core cannot read, the edit's refusal (a place the document lacks, raw
-/// HTML, a style it lacks); `unported` (nothing changed) for what is the host's.
+/// HTML, a style it lacks); `refused` (nothing changed) for what is not supported yet.
 #[must_use]
 pub fn word_insert_markdown(args: &WordInsertMarkdown, editing: &Editing<'_>) -> ToolResult<Value> {
     run(args, editing).unwrap_or_else(ToolResult::failed)
@@ -156,7 +156,11 @@ fn run(args: &WordInsertMarkdown, editing: &Editing<'_>) -> Result<ToolResult<Va
         return Err(blocks_ref_as_place(name, &args.at));
     }
     if let Some(unported) = unported(args) {
-        return Ok(unported.reply());
+        let mut call = try_call(args);
+        if !call.arguments.contains_key("markdown") {
+            call.arguments.insert("markdown".into(), Value::from("A paragraph."));
+        }
+        return Err(unported.refusal(call, &["markdown"]));
     }
     let call = try_call(args);
     let pairs: Vec<(String, Option<String>)> = args
@@ -202,7 +206,6 @@ fn run(args: &WordInsertMarkdown, editing: &Editing<'_>) -> Result<ToolResult<Va
     };
     match written::run_keeping(editing, &command, finish) {
         Ok((_, result)) => Ok(result),
-        Err(error @ ooxml_word_edit::EditError::Unsupported(_)) => Ok(refused(error, call)),
         Err(error) => Ok(ToolResult::failed(edit_refusal(error, "", call))),
     }
 }

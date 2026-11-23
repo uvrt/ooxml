@@ -130,8 +130,8 @@ pub fn word_changes(args: &WordChanges, editing: &Editing<'_>) -> ToolResult<Val
 }
 
 /// `word_changes`' `list` and `preview` on the version a session's call pins (the
-/// session's [`ReadsWhen`] calls), refused as [`word_changes`] refuses them; left to the
-/// host (`unported`) on a package the session does not own as a Word document.
+/// session's [`ReadsWhen`] calls), refused as [`word_changes`] refuses them, and as not
+/// supported yet on a package the session does not own as a Word document.
 ///
 /// # Errors
 /// As [`word_changes`]'.
@@ -142,11 +142,12 @@ pub fn word_changes_read(
 ) -> Result<Done<Value>, ToolError> {
     super::stopped(cancel)?;
     let Some(owned) = version.owned else {
-        let mut reply = Done::new(String::new());
-        reply
-            .unported
-            .push("word_changes of a document the session does not own".to_owned());
-        return Ok(reply);
+        return Err(crate::refusal::not_supported(
+            "word_changes of a document the session does not own",
+            "word_changes",
+            serde_json::json!({"doc": args.doc, "action": "list"}),
+            &["doc"],
+        ));
     };
     let reading = Reading {
         doc: owned.doc,
