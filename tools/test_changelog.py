@@ -250,10 +250,12 @@ class ReleaseNotesTest(unittest.TestCase):
                         '[[not_supported]]\nform = "no layout"\ncause = "c"\n\n'
                         '[[not_supported]]\nform = "a field update that needs the layout"\ncause = "c"\n\n'
                         '[[difference]]\nmode = "m"\n', encoding="utf-8")
-        with mock.patch.dict(release_refusals.READER, {"word_read *": "`word_read` of x"}):
+        said = {"word_read *": "`word_read` of x", "no layout": "y", "a field update that needs the layout": "y"}
+        with mock.patch.dict(release_refusals.READER, said):
             # the reader's words, not the cause; two forms said alike, said once
-            self.assertEqual(release_notes.refused(path), [
-                "`word_read` of x", "`word_fields` updates that need page numbers when no page layout is at hand"])
+            self.assertEqual(release_notes.refused(path), ["`word_read` of x", "y"])
+        with mock.patch.dict(release_refusals.READER, {**said, "no layout": None, "a field update that needs the layout": None}):
+            self.assertEqual(release_notes.refused(path), ["`word_read` of x"])  # None: not listed
         path.write_text('[[not_supported]]\nform = "unsaid *"\ncause = "c"\n', encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "unsaid"):
             release_notes.refused(path)

@@ -17,8 +17,9 @@ Prints Markdown, for the team that calls the tools:
   sends by a test) lost or gained since REF (default: the release tag before TAG, or before
   HEAD when TAG is not tagged yet); a package with no definitions at REF gets its count.
 - **Refused at this release, returning later**: the forms ``[[not_supported]]`` in KNOWN
-  names, each said for the team (release_refusals.READER, not the cause written for whoever
-  ports it); the refusal itself names the call that works.
+  names that a call through docx-agent's Toolbox is refused in, each said for the team
+  (release_refusals.READER, not the cause written for whoever ports it); the refusal itself
+  names the call that works.
 - links to the support matrices (SUPPORTED);
 - a table of the distributions the release carries (the seven packages, the font bundle,
   and ooxml-core once it is built), each with the version its pyproject.toml names, then how
@@ -299,13 +300,14 @@ def spec_changes(before: dict[str, set[str]], after: dict[str, set[str]]) -> lis
 
 def refused(path: Path) -> list[str]:
     """What is refused, for the team: release_refusals.READER of each ``[[not_supported]]``
-    form, each said once."""
+    form, each said once; a form READER says ``None`` of is not listed."""
     forms = [e["form"] for e in tomllib.loads(path.read_text(encoding="utf-8")).get("not_supported", [])
              if "form" in e]
     unsaid = [form for form in forms if form not in release_refusals.READER]
     if unsaid:
         raise ValueError(f"tools/release_refusals.py does not say what these forms refuse: {unsaid}")
-    return list(dict.fromkeys(release_refusals.READER[form] for form in forms))
+    said = [release_refusals.READER[form] for form in forms]
+    return list(dict.fromkeys(text for text in said if text is not None))
 
 
 def changes(tag: str, since: str | None) -> str:
@@ -333,7 +335,7 @@ def changes(tag: str, since: str | None) -> str:
             diff = spec_changes(specs_at(since, folder), specs_at(head, folder))
             parts += [f"**{package}**", "", *(diff or ["- none"]), ""]
     parts += ["## Refused at this release, returning later", "",
-              ("The Word tools refuse these calls as not supported yet (code `refused`, the form in "
+              ("docx-agent's Word tools refuse these calls as not supported yet (code `refused`, the form in "
                "`details.not_supported`); each refusal names a call that works instead (`try_call`) or "
                "lists what is supported (`valid_options`)."), ""]
     parts += [f"- {text}." for text in refused(ROOT / KNOWN)] or ["- none"]
