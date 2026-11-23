@@ -330,6 +330,7 @@ pub(crate) fn is_empty(paragraph: &Paragraph) -> bool {
 pub use crate::borders::paragraph_borders;
 
 mod again;
+mod align;
 mod cache;
 mod carried;
 mod drop;
@@ -561,8 +562,8 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
         next.saturating_sub(first)
     }
 
-    /// A table's flow, kept by its `Arc` while its section, the paragraph before it and
-    /// its cells' labels are the same.
+    /// A table's flow, kept by its `Arc` while its section, the paragraph before it (at
+    /// any place) and its cells' labels are the same.
     fn table_flow(
         &mut self,
         table: &Arc<Table>,
@@ -575,7 +576,8 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
             let same = Arc::ptr_eq(&kept.table, table)
                 && *kept.section == *geometry.props
                 && match (&kept.previous, &previous) {
-                    (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                    // The paragraph before it is read for its style only: moved, it is the same.
+                    (Some(a), Some(b)) => Arc::ptr_eq(a, b) || a.lays_out_as(b),
                     (None, None) => true,
                     _ => false,
                 }
@@ -641,15 +643,12 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
             label: label.as_deref(),
         };
         let measured = measure_paragraph(&mcx, &mut self.state.measurer, &job).map(Arc::new);
-        self.state.cache.blocks.insert(
-            Arc::as_ptr(paragraph) as usize,
-            Kept {
-                paragraph: Arc::clone(paragraph),
-                section: Arc::clone(&geometry.props),
-                label,
-                measured: measured.clone(),
-            },
-        );
+        self.state.cache.insert(Kept {
+            paragraph: Arc::clone(paragraph),
+            section: Arc::clone(&geometry.props),
+            label,
+            measured: measured.clone(),
+        });
         measured
     }
 

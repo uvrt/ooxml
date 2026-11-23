@@ -589,7 +589,52 @@ fn outputs_equal(
     }
 }
 
+/// `relaid` (laid out by `kept` from `previous`) equals the version `body` laid out whole
+/// in a fresh engine and model: each pass's flow and pages, the fields, the facts taken
+/// from the version before, and every page's SVG.
+fn verify(
+    at: &str,
+    (kept, kept_model): (&mut WordLayout, &mut Model),
+    (relaid, previous): (&DocumentLayout, &DocumentLayout),
+    (body, settings, parts): (&str, Option<&str>, &[Part<'_>]),
+) {
+    let mut fresh_model = model();
+    let fresh_document = open_with(&mut fresh_model, body, settings, parts);
+    let mut fresh = engine();
+    let whole = fresh.lay_out(&mut fresh_model, &fresh_document);
+    assert!(
+        whole.pagination.stopped.is_none(),
+        "{at}: stopped {:?}",
+        whole.pagination.stopped
+    );
+    same_passes(relaid, &whole, at);
+    assert!(
+        relaid.pagination == whole.pagination,
+        "{at}: pages differ; stats {:?}",
+        relaid.relaid
+    );
+    assert_eq!(relaid.fields, whole.fields, "{at}: fields differ");
+    assert_eq!((relaid.passes, relaid.settled), (whole.passes, whole.settled), "{at}");
+    let known = LayoutFacts::of(previous);
+    let _ = known.first_pages();
+    let carried = LayoutFacts::after(relaid, previous, &known);
+    let made = LayoutFacts::of(&whole);
+    assert!(carried == made, "{at}: the facts taken from the version before differ");
+    assert_eq!(
+        carried.first_pages(),
+        made.first_pages(),
+        "{at}: the first pages carried from the version before differ"
+    );
+    outputs_equal(at, (kept, kept_model, relaid), (&mut fresh, &mut fresh_model, &whole));
+}
+
 fn check(seed: u64, versions: usize) -> Seen {
+    check_edits(seed, versions, 1)
+}
+
+/// [`check`], each version made by `edits` edits (blocks added or removed in several
+/// places: windows of other lengths one after another).
+fn check_edits(seed: u64, versions: usize, edits: usize) -> Seen {
     let mut seen = Seen::default();
     let mut rng = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
     let mut specs: Vec<Spec> = (0..40).map(|k| spec(&mut rng, k)).collect();
@@ -603,50 +648,19 @@ fn check(seed: u64, versions: usize) -> Seen {
     let first = open_with(&mut kept_model, &xml(&specs), settings, &extra.parts());
     let mut previous = kept.lay_out(&mut kept_model, &first);
     for version in 0..versions {
-        edit(&mut rng, &mut specs, &mut extra);
+        for _ in 0..edits {
+            edit(&mut rng, &mut specs, &mut extra);
+        }
         let body = xml(&specs);
         let parts = extra.parts();
         let document = open_with(&mut kept_model, &body, settings, &parts);
         let relaid = kept.relayout(&mut kept_model, &document, &previous);
-        let mut fresh_model = model();
-        let fresh_document = open_with(&mut fresh_model, &body, settings, &parts);
-        let mut fresh = engine();
-        let whole = fresh.lay_out(&mut fresh_model, &fresh_document);
-        assert!(
-            whole.pagination.stopped.is_none(),
-            "seed {seed} version {version}: stopped {:?}",
-            whole.pagination.stopped
-        );
-        same_passes(&relaid, &whole, &format!("seed {seed} version {version}"));
-        assert!(
-            relaid.pagination == whole.pagination,
-            "seed {seed} version {version}: pages differ; stats {:?}",
-            relaid.relaid
-        );
-        assert_eq!(
-            relaid.fields, whole.fields,
-            "seed {seed} version {version}: fields differ"
-        );
-        assert_eq!(
-            (relaid.passes, relaid.settled),
-            (whole.passes, whole.settled),
-            "seed {seed} version {version}"
-        );
         let at = format!("seed {seed} version {version}");
-        let known = LayoutFacts::of(&previous);
-        let _ = known.first_pages();
-        let carried = LayoutFacts::after(&relaid, &previous, &known);
-        let made = LayoutFacts::of(&whole);
-        assert!(carried == made, "{at}: the facts taken from the version before differ");
-        assert_eq!(
-            carried.first_pages(),
-            made.first_pages(),
-            "{at}: the first pages carried from the version before differ"
-        );
-        outputs_equal(
+        verify(
             &at,
-            (&mut kept, &mut kept_model, &relaid),
-            (&mut fresh, &mut fresh_model, &whole),
+            (&mut kept, &mut kept_model),
+            (&relaid, &previous),
+            (&body, settings, &parts),
         );
         let pages = &relaid.pagination.pages;
         seen.notes += pages.iter().filter(|p| !p.notes.is_empty()).count();
@@ -672,6 +686,53 @@ fn relayout_equals_full_layout() {
         seen.notes > 0 && seen.bands > 0 && seen.wraps > 0 && seen.endnotes > 0,
         "the documents exercise notes and drawings: {seen:?}"
     );
+}
+
+/// Blocks added in three places and removed in a fourth, each version: the paragraphs
+/// after each are the same paragraphs at other places, so the windows between them keep
+/// their items, and the pages join again after each window.
+#[test]
+fn blocks_added_and_removed_in_several_places() {
+    let mut rng = Rng(23);
+    let plain = |rng: &mut Rng, k: usize| {
+        let mut s = spec(rng, k);
+        s.section = None;
+        s
+    };
+    let mut specs: Vec<Spec> = (0..240).map(|k| plain(&mut rng, k)).collect();
+    let extra = Extra::new(&mut rng);
+    let parts = extra.parts();
+    let mut kept_model = model();
+    let mut kept = engine();
+    let first = open_with(&mut kept_model, &xml(&specs), None, &parts);
+    let mut previous = kept.lay_out(&mut kept_model, &first);
+    let mut joined = 0;
+    for version in 0..4 {
+        for place in [3 + version, 90, 170] {
+            let added = plain(&mut rng, 1000 + 10 * place + version);
+            specs.insert(place, added);
+        }
+        specs.remove(130);
+        let body = xml(&specs);
+        let document = open_with(&mut kept_model, &body, None, &parts);
+        let relaid = kept.relayout(&mut kept_model, &document, &previous);
+        joined += relaid.relaid.iter().filter(|s| s.joined.is_some()).count();
+        verify(
+            &format!("version {version}"),
+            (&mut kept, &mut kept_model),
+            (&relaid, &previous),
+            (&body, None, &parts),
+        );
+        previous = relaid;
+    }
+    assert!(joined > 0, "the pages joined after a window");
+}
+
+#[test]
+fn relayout_equals_full_layout_after_several_edits() {
+    for seed in 11..=14 {
+        let _ = check_edits(seed, 6, 4);
+    }
 }
 
 #[test]

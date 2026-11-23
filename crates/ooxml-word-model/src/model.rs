@@ -230,6 +230,35 @@ impl Paragraph {
     pub fn text(&self) -> String {
         self.runs.iter().map(|r| &*r.text).collect()
     }
+
+    /// Whether `other` lays out as this paragraph does wherever it stands: everything the
+    /// same but its path and its bookmarks. A layout names a paragraph's lines by its block
+    /// and reads its path from the version's body; its bookmarks are read from the body by
+    /// the fields that look them up. The model gives a paragraph it kept by its content and
+    /// moved the same parts (`Arc`s), so there this is a few pointer compares.
+    pub fn lays_out_as(&self, other: &Paragraph) -> bool {
+        // Every field named, so that a new one is weighed here.
+        let Paragraph {
+            runs,
+            properties,
+            table_style_id,
+            table_conditions,
+            path: _,
+            para_id,
+            joins,
+            mark_deleted,
+            section,
+            bookmarks: _,
+        } = self;
+        *runs == other.runs
+            && *properties == other.properties
+            && *table_style_id == other.table_style_id
+            && *table_conditions == other.table_conditions
+            && *para_id == other.para_id
+            && *joins == other.joins
+            && *mark_deleted == other.mark_deleted
+            && *section == other.section
+    }
 }
 
 /// `w:tblLook`: which of the table style's regions the table turns on.

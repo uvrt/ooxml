@@ -341,6 +341,16 @@ fn element_key(key: DigestKey, colours: Digest, content: Digest, fields: &Fields
     d.finish()
 }
 
+/// Whether two lists hold the same blocks (the same `Arc`s).
+fn same_blocks(a: &[Block], b: &[Block]) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b).all(|(x, y)| match (x, y) {
+            (Block::Paragraph(p), Block::Paragraph(q)) => Arc::ptr_eq(p, q),
+            (Block::Table(t), Block::Table(u)) => Arc::ptr_eq(t, u),
+            _ => false,
+        })
+}
+
 /// A paragraph taken from the memo, at its new place.
 fn moved(block: &Block, here: &str) -> Block {
     match block {
@@ -383,16 +393,34 @@ impl Model {
             }
             count += 1;
             let content = self.bodies.of(self.key, node);
-            let key = element_key(self.key, colours_d, content, &fields, (name != "p").then_some(here));
+            let paragraph = name == "p";
+            // A paragraph taken to a new place is kept there too (by its content and its
+            // place): the versions after it, where it stays, share its blocks.
+            let placed = paragraph.then(|| element_key(self.key, colours_d, content, &fields, Some(here)));
+            if let Some(Kept(kept)) = placed.as_ref().and_then(|placed| self.elements.get(placed)) {
+                fields.cached.extend(kept.cached.iter().cloned());
+                out.extend(kept.blocks.iter().cloned());
+                continue;
+            }
+            let key = element_key(self.key, colours_d, content, &fields, (!paragraph).then_some(here));
             if let Some(Kept(kept)) = self.elements.get(&key) {
                 fields.cached.extend(kept.cached.iter().cloned());
-                if name == "p" {
-                    // A paragraph is kept by its content wherever it stands: it takes its new
-                    // place. Any other element is kept at its own place (its key holds it),
-                    // and the paragraphs in it keep their paths below it.
-                    out.extend(kept.blocks.iter().map(|b| moved(b, here)));
-                } else {
-                    out.extend(kept.blocks.iter().cloned());
+                match placed {
+                    // A paragraph is kept by its content wherever it stands: it takes its
+                    // new place. Any other element is kept at its own place (its key holds
+                    // it), and the paragraphs in it keep their paths below it.
+                    Some(placed) => {
+                        let blocks: Arc<[Block]> = kept.blocks.iter().map(|b| moved(b, here)).collect();
+                        out.extend(blocks.iter().cloned());
+                        if !same_blocks(&blocks, &kept.blocks) {
+                            let at_place = BodyElement {
+                                blocks,
+                                cached: Arc::clone(&kept.cached),
+                            };
+                            self.elements.insert(placed, Kept(Arc::new(at_place)));
+                        }
+                    }
+                    None => out.extend(kept.blocks.iter().cloned()),
                 }
                 continue;
             }

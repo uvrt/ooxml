@@ -20,6 +20,7 @@ mod held_targets;
 mod keeps;
 mod objects;
 mod reads;
+mod relayout_report;
 mod review;
 mod structure;
 mod style;

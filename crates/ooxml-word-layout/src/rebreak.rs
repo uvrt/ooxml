@@ -44,6 +44,28 @@ pub struct ParaSource {
     pub notes: Vec<(i64, NoteLines)>,
 }
 
+impl ParaSource {
+    /// Whether `other` breaks its paragraph's lines as this does, its paragraph perhaps at
+    /// another place or with other bookmarks ([`Paragraph::lays_out_as`]).
+    pub fn lays_out_as(&self, other: &ParaSource) -> bool {
+        // Every field named, so that a new one is weighed here.
+        let ParaSource {
+            paragraph,
+            resolved,
+            geometry,
+            columns,
+            first_column,
+            notes,
+        } = self;
+        (Arc::ptr_eq(paragraph, &other.paragraph) || paragraph.lays_out_as(&other.paragraph))
+            && *resolved == other.resolved
+            && *geometry == other.geometry
+            && *columns == other.columns
+            && *first_column == other.first_column
+            && *notes == other.notes
+    }
+}
+
 /// A line broken for a column other than its paragraph's first (one of unequal columns).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColumnLine {
