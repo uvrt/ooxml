@@ -6,8 +6,8 @@
 //! `chart_block`) -- their arguments checked in ooxml-edit's order and the chart part
 //! changed (`ooxml_chart::edit`), one [`EditGraphic`](ooxml_word_edit::EditGraphic) command.
 //!
-//! Not here yet: point labels in a document whose defaults name no language (the session's
-//! locale decides it; the handler refuses them as not supported yet).
+//! New text is in the language `edit_chart` gives (`chart_language`: the document's
+//! default language, else the call's locale's).
 //!
 //! Must not: resolve a series or category by name but through `chart_names`, or write but
 //! through the command.
@@ -73,13 +73,13 @@ pub(crate) enum StyleAction {
         labels: Option<Vec<String>>,
         position: Option<&'static str>,
         cells: bool,
-        lang: Option<String>,
+        lang: String,
     },
     /// The text's look, of one part or all; new text properties in `lang`.
     Text {
         part: Option<&'static str>,
         look: TextLook,
-        lang: Option<String>,
+        lang: String,
     },
 }
 
@@ -130,15 +130,14 @@ impl GraphicEdit for ChartStyleEdit {
                 let host = TextHost {
                     labels: Some(WORD_TEXT_SIZES.0),
                     data_labels: Some(WORD_TEXT_SIZES.1),
-                    lang: lang.as_deref(),
+                    lang: Some(lang.as_str()),
                 };
                 chart
                     .set_text_style(address, *part, look, &host)
                     .map_err(|stop| match stop {
                         TextStop::Refused(error) => refusal(error),
-                        TextStop::NeedsLanguage(_) => not_supported(
-                            "set_text_style: a document whose defaults name no language (the session's locale decides)",
-                        ),
+                        // (unreachable: the text is given its language, `chart_language`)
+                        TextStop::NeedsLanguage(_) => not_supported("set_text_style without a language"),
                     })?;
             }
         }
@@ -201,7 +200,7 @@ impl ChartStyleEdit {
             position: code,
             cells: formula.as_deref(),
             size: Some(WORD_TEXT_SIZES.1),
-            lang: lang.as_deref(),
+            lang: Some(lang.as_str()),
             part,
         };
         chart.set_point_labels(*series, &look, &ooxml_word_model::ids::sha256);
@@ -216,7 +215,7 @@ pub(super) fn planned(
     data: &ChartData,
     root: &Element,
     read: &TryCall,
-    lang: Option<String>,
+    lang: String,
 ) -> Result<StyleAction, Stop> {
     let action = args.action.as_str();
     let plan = Plan { args, data, root, read };
@@ -262,11 +261,6 @@ pub(super) fn planned(
         }
         ChartAction::SetPointLabels => {
             let series = series.ok_or_else(|| plan.need_series())?;
-            if args.labels.is_some() && lang.is_none() {
-                return Err(Stop::NotSupported(
-                    "set_point_labels: a document whose defaults name no language (the session's locale decides)",
-                ));
-            }
             Ok(StyleAction::PointLabels {
                 series,
                 labels: args.labels.clone(),

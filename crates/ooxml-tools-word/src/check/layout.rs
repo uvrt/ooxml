@@ -93,7 +93,7 @@ pub(super) fn laid(
     if let Some(allowed) = asked.styles {
         style_list(facts, &placed, doc, allowed, &mut parts)?;
     }
-    table_facts(facts, doc, &mut parts)?;
+    table_facts(facts, doc, owned.made_by, &mut parts)?;
     session_facts(owned, facts.scope(), &mut parts)?;
     let range = facts.scope().map(|_| {
         let trials = Trials {
@@ -168,7 +168,12 @@ fn paragraph_facts(
 
 /// The facts about tables read from the document alone, on the pages asked for (each with
 /// its table's pages): `table_grid_mismatch` and `accept_loses_text`.
-fn table_facts(facts: &Facts<'_>, doc: &WordDoc, parts: &mut Map<String, Value>) -> Result<(), ToolError> {
+fn table_facts(
+    facts: &Facts<'_>,
+    doc: &WordDoc,
+    made_by: Option<&crate::MadeBy>,
+    parts: &mut Map<String, Value>,
+) -> Result<(), ToolError> {
     let wanted = |table: &str| -> bool {
         facts.scope().is_none_or(|s| s.holds(table)) && facts.shown(facts.table_pages_of(table))
     };
@@ -185,6 +190,9 @@ fn table_facts(facts: &Facts<'_>, doc: &WordDoc, parts: &mut Map<String, Value>)
             set(&mut json, "pages", Value::from(pages));
             mismatched.push(json);
         }
+    }
+    if let Some(made_by) = made_by {
+        made_by.add_to(&mut mismatched);
     }
     capped_values(facts.scope(), parts, "table_grid_mismatch", mismatched);
     let mut lost = Vec::new();
@@ -228,10 +236,11 @@ pub(super) fn unlaid(owned: Owned<'_>, scope: Option<&Scope>, error: Value) -> R
     );
     let wanted = |table: &str| scope.is_none_or(|s| s.holds(table));
     let grid = facts::table_grid_mismatch(doc, Some(&wanted)).map_err(internal)?;
-    parts.insert(
-        "table_grid_mismatch".into(),
-        kept(grid.iter().map(worded::grid_mismatch_json).collect()),
-    );
+    let mut grid: Vec<Value> = grid.iter().map(worded::grid_mismatch_json).collect();
+    if let Some(made_by) = owned.made_by {
+        made_by.add_to(&mut grid);
+    }
+    parts.insert("table_grid_mismatch".into(), kept(grid));
     let lost: Vec<Value> = facts::accept_loses_text(doc)
         .map_err(internal)?
         .iter()
@@ -266,8 +275,7 @@ pub(super) fn unlaid_ranges(scope: &Scope) -> Value {
 
 /// The facts of what this session did to the document: the file's text a pending change
 /// of it takes out (`accept_loses_original`), and the rows its table edits wrote that look
-/// unlike the rows around (`row_text_format`; the session keeps no record of those yet, so
-/// none are listed).
+/// unlike the rows around (`row_text_format`, of the rows the host's record holds).
 fn session_facts(owned: Owned<'_>, scope: Option<&Scope>, parts: &mut Map<String, Value>) -> Result<(), ToolError> {
     let opened = owned.opened.docx().map_err(internal)?;
     let found = facts::accept_loses_original(owned.doc, opened).map_err(internal)?;
@@ -278,7 +286,8 @@ fn session_facts(owned: Owned<'_>, scope: Option<&Scope>, parts: &mut Map<String
         found.iter().map(worded::lost_original_json).collect(),
     );
     let wanted = |table: &str| scope.is_none_or(|s| s.holds(table));
-    let rows = facts::row_text_format(owned.doc, &BTreeSet::new(), Some(&wanted)).map_err(internal)?;
+    let written = owned.rows_written.map(crate::RowsWritten::ids).unwrap_or_default();
+    let rows = facts::row_text_format(owned.doc, &written, Some(&wanted)).map_err(internal)?;
     capped_values(
         None,
         parts,

@@ -26,6 +26,7 @@
 
 mod batch;
 mod block_pages;
+mod blocks_of;
 mod call;
 mod changes;
 mod context;
@@ -58,6 +59,7 @@ mod values;
 
 pub use batch::{ReadBatch, ReadOp, BATCH_TIMEOUT, MAX_READ_BATCH_CHARS, READ_BATCH};
 pub use block_pages::{BlockAt, BlockPages};
+pub use blocks_of::{BlockFound, BlockRefused};
 pub use call::Call;
 pub use changes::{ChangedPart, IdsSince};
 pub use context::{CallContext, CancelToken};
