@@ -1,4 +1,5 @@
 import os
+import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +14,11 @@ os.environ.setdefault("OOXML_EDIT_VERIFY_SERIALIZED", "1")
 #: (crates/ooxml-oracle/fixtures), apart from docx-agent's tests.
 ORACLE = Path(__file__).resolve().parents[3] / "crates" / "ooxml-oracle"
 FIXTURE_DIR = ORACLE / "fixtures"
+#: Word's recorded answers to the probes (crates/ooxml-oracle/word/observations), which the
+#: tests holding the tools to Word read; the probes' made-up documents (word/cases) are
+#: importable as modules (rows_cases, ...).
+OBSERVATIONS = ORACLE / "word" / "observations"
+sys.path.insert(0, str(ORACLE / "word" / "cases"))
 #: A new blank document, written where the corpus is read from (``new/document``): every gate
 #: and every phase's edit set holds for a document docx-agent made, as for one it opened.
 NEW_DOCUMENT = Path(tempfile.gettempdir()) / "docx-agent-tests" / "new" / "document.docx"

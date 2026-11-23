@@ -481,5 +481,5 @@ fn reply(
 
 /// Registers `word_format` (the crate's [`crate::register`]).
 pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.edit::<WordFormat>(word_format, crate::Hosting::SERVED);
+    r.edit::<WordFormat>(word_format, crate::Hosting::PLAIN);
 }

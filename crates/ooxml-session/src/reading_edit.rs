@@ -35,12 +35,12 @@ impl<T: ToolArgs + ReadsWhen> ReadingEditHandler<T> {
             kinds: kinds.to_vec(),
             read,
             edit,
-            hosting: Hosting::HOST,
+            hosting: Hosting::PLAIN,
             args: PhantomData,
         }
     }
 
-    /// The tool hosted as `hosting` says (default: the host answers its calls).
+    /// The tool reading from the host what `hosting` says (default: nothing).
     #[must_use]
     pub fn hosted(self, hosting: Hosting) -> Self {
         Self { hosting, ..self }

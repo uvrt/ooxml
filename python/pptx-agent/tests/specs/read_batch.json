@@ -1,0 +1,37 @@
+{
+ "description": "Read many things in one call: reading calls (describe, find, check, query, render...), each answered as alone, in its own size budget. Use it for any two or more reads. Changes nothing.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "ops": {
+    "description": "The reading calls, at most 200.",
+    "items": {
+     "additionalProperties": false,
+     "properties": {
+      "arguments": {
+       "additionalProperties": true,
+       "description": "That tool's arguments.",
+       "type": "object"
+      },
+      "tool": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "tool",
+      "arguments"
+     ],
+     "type": "object"
+    },
+    "minItems": 1,
+    "type": "array"
+   }
+  },
+  "required": [
+   "ops"
+  ],
+  "type": "object"
+ },
+ "name": "read_batch",
+ "strict": false
+}

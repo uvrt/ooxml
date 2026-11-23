@@ -1,5 +1,5 @@
-//! A session end to end on made-up packages: open, describe through dispatch, the
-//! bridge's updates (snapshots unchanged by later commits, parallel writers equal to a
+//! A session end to end on made-up packages: open, describe through dispatch, versions a
+//! test makes of parts (snapshots unchanged by later commits, parallel writers equal to a
 //! serial count), save, close, refusals with their way out, cancellation and deadlines.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
@@ -27,6 +27,17 @@ impl Clock for Ticking {
 
 fn session() -> Session {
     Session::new(SessionConfig::default(), session_context())
+}
+
+/// `parts` committed as a version a test makes, and the head it leaves.
+fn committed(
+    s: &Session,
+    d: &ooxml_session::DocId,
+    parts: Vec<(String, Option<Arc<[u8]>>)>,
+    context: &CallContext,
+) -> Result<(ooxml_session::Updated, ooxml_session::Opened), SessionError> {
+    let updated = s.update(d, parts, context)?;
+    Ok((updated, s.snapshot(d)?))
 }
 
 fn session_context() -> Context {
@@ -284,7 +295,7 @@ fn a_call_reads_the_version_its_context_names() {
     let d = s.open(Arc::from(docx()), DocKind::Docx, "a.docx").unwrap();
     let context = CallContext::default();
     let two = format!("<w:document {W}><w:body><w:sdt/><w:sdt/></w:body></w:document>");
-    let (updated, first) = s.commit(&d, vec![put("word/document.xml", &two)], &context).unwrap();
+    let (updated, first) = committed(&s, &d, vec![put("word/document.xml", &two)], &context).unwrap();
     assert_eq!((updated.version, first.version()), (1, 1));
     let three = format!("<w:document {W}><w:body><w:sdt/><w:sdt/><w:sdt/></w:body></w:document>");
     s.update(&d, vec![put("word/document.xml", &three)], &context).unwrap();
@@ -302,7 +313,7 @@ fn a_call_reads_the_version_its_context_names() {
     let read = Value::Object(s.call("read_batch", batch, &at).to_json());
     assert_eq!(read["data"]["ops"][0]["data"]["controls"], json!(2));
     // nothing to commit: the version it ran on, held
-    let (same, held) = s.commit(&d, Vec::new(), &context).unwrap();
+    let (same, held) = committed(&s, &d, Vec::new(), &context).unwrap();
     assert_eq!((same.changed, held.version()), (false, 2));
 }
 
@@ -349,20 +360,20 @@ fn a_part_parsed_again_shares_what_did_not_change() {
     let body = |middle: &str| {
         format!("<w:document {W}><w:body><w:p><w:r><w:t>one</w:t></w:r></w:p>{middle}<w:p><w:r><w:t>three</w:t></w:r></w:p></w:body></w:document>")
     };
-    let (_, first) = s
-        .commit(
-            &d,
-            vec![put("word/document.xml", &body("<w:p><w:r><w:t>two</w:t></w:r></w:p>"))],
-            &context,
-        )
-        .unwrap();
-    let (_, second) = s
-        .commit(
-            &d,
-            vec![put("word/document.xml", &body("<w:p><w:r><w:t>2</w:t></w:r></w:p>"))],
-            &context,
-        )
-        .unwrap();
+    let (_, first) = committed(
+        &s,
+        &d,
+        vec![put("word/document.xml", &body("<w:p><w:r><w:t>two</w:t></w:r></w:p>"))],
+        &context,
+    )
+    .unwrap();
+    let (_, second) = committed(
+        &s,
+        &d,
+        vec![put("word/document.xml", &body("<w:p><w:r><w:t>2</w:t></w:r></w:p>"))],
+        &context,
+    )
+    .unwrap();
     let blocks = |o: &ooxml_session::Opened| -> Vec<Arc<ooxml_xml::Element>> {
         let tree = o.package().tree("word/document.xml").unwrap().unwrap();
         let body = tree.root().child_elements().next().cloned().unwrap();
@@ -437,7 +448,7 @@ fn a_window_read_counts_lists_from_its_marks_across_versions() {
         put("word/numbering.xml", &numbering),
         put("word/document.xml", &numbered(300, None)),
     ];
-    let (_, v1) = s.commit(&d, first, &context).unwrap();
+    let (_, v1) = committed(&s, &d, first, &context).unwrap();
     let span = |at: &ooxml_session::Opened, a: usize, b: usize| -> String {
         let context = CallContext {
             at: vec![at.clone()],
@@ -454,13 +465,13 @@ fn a_window_read_counts_lists_from_its_marks_across_versions() {
     assert!(span(&v1, 250, 251).contains("251. item 250"));
     assert!(span(&v1, 200, 200).contains("201. item 200"));
     // an edit at 150: the marks before it kept, those after it counted again
-    let (_, v2) = s
-        .commit(
-            &d,
-            vec![put("word/document.xml", &numbered(300, Some((150, "changed"))))],
-            &context,
-        )
-        .unwrap();
+    let (_, v2) = committed(
+        &s,
+        &d,
+        vec![put("word/document.xml", &numbered(300, Some((150, "changed"))))],
+        &context,
+    )
+    .unwrap();
     assert!(span(&v2, 260, 260).contains("261. item 260"));
     assert!(span(&v2, 100, 100).contains("101. item 100"));
     assert!(span(&v2, 150, 150).contains("151. changed"));
@@ -505,7 +516,7 @@ fn a_call_is_handed_the_other_documents_it_names_pinned() {
     let d2 = s.open(Arc::from(docx()), DocKind::Docx, "b.docx").unwrap();
     let context = CallContext::default();
     let two = format!("<w:document {W}><w:body><w:sdt/><w:sdt/></w:body></w:document>");
-    let (_, first) = s.commit(&d2, vec![put("word/document.xml", &two)], &context).unwrap();
+    let (_, first) = committed(&s, &d2, vec![put("word/document.xml", &two)], &context).unwrap();
     s.update(
         &d2,
         vec![put("word/document.xml", &two.replace("<w:sdt/>", "<w:sdt/><w:sdt/>"))],

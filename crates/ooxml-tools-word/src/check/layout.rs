@@ -12,6 +12,7 @@ use super::laid_facts::{about, capped_values, page_facts_json, CAP};
 use super::placed::Placed;
 use super::{facts as worded, ranges_json, Trials, TRIALS, TRIAL_SECONDS};
 use crate::version::Owned;
+use crate::LastCheck;
 use ooxml_base::Cancel;
 use ooxml_tools::ToolError;
 use ooxml_word_edit::facts::{self, LanguageScope};
@@ -22,7 +23,7 @@ use ooxml_word_pages::page_read::PageRead;
 use ooxml_word_pages::{LaidVersion, PageEngine};
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 
 /// The layout facts' keys in the order docx-agent writes them (each `<key>_left_out` right
 /// after its key).
@@ -60,7 +61,7 @@ pub(super) struct Painted<'e> {
 
 impl PageReads for Painted<'_> {
     fn page_read(&self, page: usize) -> Option<PageRead> {
-        let mut engine = self.engine.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut engine = ooxml_word_pages::lock_engine(self.engine);
         engine.page_read(&self.version, page)
     }
 }
@@ -89,7 +90,7 @@ pub(super) fn laid(
     page_facts_json(facts, asked.minimum, coverage, &mut parts, &mut settings);
     parts.insert("settings".into(), Value::Object(settings));
     let placed = Placed::of(facts);
-    paragraph_facts(facts, &placed, doc, &mut parts)?;
+    paragraph_facts(facts, &placed, (doc, owned.last_check), &mut parts)?;
     if let Some(allowed) = asked.styles {
         style_list(facts, &placed, doc, allowed, &mut parts)?;
     }
@@ -113,7 +114,7 @@ pub(super) fn laid(
 fn paragraph_facts(
     facts: &Facts<'_>,
     placed: &Placed<'_, '_>,
-    doc: &WordDoc,
+    (doc, last_check): (&WordDoc, &LastCheck),
     parts: &mut Map<String, Value>,
 ) -> Result<(), ToolError> {
     let pages_of = |id: &str| placed.pages(id);
@@ -154,12 +155,9 @@ fn paragraph_facts(
     let keep = |id: &str| -> bool {
         facts.scope().is_none_or(|s| s.paragraphs.contains(id)) && (facts.whole() || facts.shown(pages_of(id)))
     };
-    let language = LanguageScope {
-        keep: Some(&keep),
-        whole: facts.scope().is_none() && facts.whole(),
-        ranges: true,
-        locale: None,
-    };
+    let language = LanguageScope::new(facts.scope().is_none() && facts.whole(), true)
+        .keeping(&keep)
+        .with_detections(last_check.languages());
     if let Some(found) = facts::text_language(doc, language).map_err(internal)? {
         parts.insert("text_language".into(), worded::text_language_json(&found, CAP));
     }
@@ -250,12 +248,9 @@ pub(super) fn unlaid(owned: Owned<'_>, scope: Option<&Scope>, error: Value) -> R
         .collect();
     parts.insert("accept_loses_text".into(), Value::from(lost));
     let keep = |id: &str| scope.is_none_or(|s| s.paragraphs.contains(id));
-    let language = LanguageScope {
-        keep: Some(&keep),
-        whole: scope.is_none(),
-        ranges: false,
-        locale: None,
-    };
+    let language = LanguageScope::new(scope.is_none(), false)
+        .keeping(&keep)
+        .with_detections(owned.last_check.languages());
     if let Some(found) = facts::text_language(doc, language).map_err(internal)? {
         parts.insert("text_language".into(), worded::text_language_json(&found, CAP));
     }

@@ -1,0 +1,48 @@
+{
+ "description": "Find text: each match's address, kind and context, in order, across slides, notes, tables, SmartArt, a document's stories and a workbook's cells, names and comments.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "cursor": {
+    "description": "next_cursor of the previous page.",
+    "type": "string"
+   },
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "regex": {
+    "description": "text is a Python regex. Default false.",
+    "type": "boolean"
+   },
+   "slides": {
+    "description": "Decks: slide numbers from 1, or ids (s:256, $ref). Default all.",
+    "items": {
+     "type": "string"
+    },
+    "type": "array"
+   },
+   "stories": {
+    "description": "Body (default): the slides; layouts, masters, or all.",
+    "enum": [
+     "body",
+     "all",
+     "layouts",
+     "masters"
+    ],
+    "type": "string"
+   },
+   "text": {
+    "description": "Text to find.",
+    "type": "string"
+   }
+  },
+  "required": [
+   "doc",
+   "text"
+  ],
+  "type": "object"
+ },
+ "name": "find_text",
+ "strict": false
+}

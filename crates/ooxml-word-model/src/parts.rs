@@ -10,6 +10,7 @@
 
 use ooxml_opc::{OpcError, Package, Relationship};
 use ooxml_xml::{Element, Node};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// WordprocessingML's main namespace.
@@ -38,17 +39,52 @@ pub const REL_COMMENTS_IDS: &str = "http://schemas.microsoft.com/office/2016/09/
 /// The core properties.
 pub const REL_CORE: &str = "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties";
 
+/// A part's relationships as a dictionary by id keeps them: each id once, at the place it
+/// first appears, with the last relationship of that id -- read in one pass, each id's
+/// found at once ([`PartRelationships::get`]). A version's reading keeps one per part
+/// (`crate::docx::Docx::relationships`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PartRelationships {
+    items: Vec<Relationship>,
+    by_id: HashMap<String, usize>,
+}
+
+impl PartRelationships {
+    /// The relationships of `source` in `package`.
+    ///
+    /// # Errors
+    /// Its relationships part is not XML.
+    pub fn read(package: &Package, source: &str) -> Result<PartRelationships, OpcError> {
+        let mut out = PartRelationships::default();
+        for rel in package.relationships(source)?.iter() {
+            match out.by_id.get(&rel.id).and_then(|&k| out.items.get_mut(k)) {
+                Some(slot) => *slot = rel.clone(),
+                None => {
+                    out.by_id.insert(rel.id.clone(), out.items.len());
+                    out.items.push(rel.clone());
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// The relationship of id `id` (the last of that id).
+    #[must_use]
+    pub fn get(&self, id: &str) -> Option<&Relationship> {
+        self.by_id.get(id).and_then(|&k| self.items.get(k))
+    }
+
+    /// Every relationship, each id once, in the order ids first appear.
+    #[must_use]
+    pub fn items(&self) -> &[Relationship] {
+        &self.items
+    }
+}
+
 /// The relationships of `source` as a dictionary by id keeps them: each id once, at the
 /// place it first appears, with the last relationship of that id.
 pub fn relationships(package: &Package, source: &str) -> Result<Vec<Relationship>, OpcError> {
-    let mut out: Vec<Relationship> = Vec::new();
-    for rel in package.relationships(source)?.iter() {
-        match out.iter_mut().find(|r| r.id == rel.id) {
-            Some(slot) => *slot = rel.clone(),
-            None => out.push(rel.clone()),
-        }
-    }
-    Ok(out)
+    Ok(PartRelationships::read(package, source)?.items)
 }
 
 /// The internal targets of `source`'s relationships of type `rel_type`, in order.

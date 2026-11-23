@@ -77,6 +77,7 @@ pub(crate) fn opened_version<'a>(
         drawing: None,
         rows_written: editing.rows_written,
         made_by: editing.made_by,
+        tracking: editing.tracking.map(|t| t.author.as_str()),
     };
     Version::new("case.docx", editing.opened.package(), 1, versions)
         .with_others(editing.others)

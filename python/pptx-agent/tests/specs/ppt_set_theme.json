@@ -1,0 +1,72 @@
+{
+ "description": "Set the theme's colours and fonts; every theme reference in the deck follows. Returns the theme and its colour roles.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "colors": {
+    "description": "Theme colour slots to set.",
+    "items": {
+     "additionalProperties": false,
+     "properties": {
+      "hex": {
+       "description": "#RRGGBB.",
+       "type": "string"
+      },
+      "slot": {
+       "enum": [
+        "dk1",
+        "lt1",
+        "dk2",
+        "lt2",
+        "accent1",
+        "accent2",
+        "accent3",
+        "accent4",
+        "accent5",
+        "accent6",
+        "hlink",
+        "folHlink",
+        "bg1",
+        "tx1",
+        "bg2",
+        "tx2"
+       ],
+       "type": "string"
+      }
+     },
+     "required": [
+      "slot",
+      "hex"
+     ],
+     "type": "object"
+    },
+    "type": "array"
+   },
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "fonts": {
+    "additionalProperties": false,
+    "description": "Theme fonts.",
+    "properties": {
+     "major": {
+      "description": "Headings.",
+      "type": "string"
+     },
+     "minor": {
+      "description": "Body.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   }
+  },
+  "required": [
+   "doc"
+  ],
+  "type": "object"
+ },
+ "name": "ppt_set_theme",
+ "strict": false
+}

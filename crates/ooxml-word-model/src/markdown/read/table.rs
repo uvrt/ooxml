@@ -5,6 +5,9 @@
 //! blocks; the paragraphs whose marks are deleted just before the table joined into its first
 //! cell's first paragraph.
 //!
+//! A row whose deletion is pending goes whole in the final view, and a merge whose first
+//! row goes starts at its first kept cell (Word's Accept All, round 60 R137).
+//!
 //! Not yet ported (listed in the lane's hand-back): Accept All's cell ends (a cell whose
 //! last mark is deleted taking the next cell in), and a deleted cell whose content is kept
 //! widening the cell before it.
@@ -13,6 +16,7 @@
 
 use super::{child_at, index, CellRecord, Item2, Placed, Reader, Record, TableRecord};
 use crate::docx::find_path;
+use crate::docx::tables::{cell_merge, merge_heads, VMerge};
 use crate::docx::text::View;
 use crate::ids::W;
 use crate::xmlread::py_int;
@@ -142,6 +146,7 @@ impl Reader<'_> {
             columns,
             prefix,
             counting_header: true,
+            heads: self.merge_heads(&root, &entry.rows),
             ..Grid::default()
         };
         for (r, (row_path, _)) in entry.rows.iter().enumerate() {
@@ -204,7 +209,7 @@ impl Reader<'_> {
         let mut gone_here = HashSet::new();
         let mut column = usize::try_from(int_val(find_path(&row.element, &["trPr", "gridBefore"]), 0)).unwrap_or(0);
         let all = cells(row);
-        for tc in &all {
+        for (n, tc) in all.iter().enumerate() {
             let span = usize::try_from(int_val(find_path(&tc.element, &["tcPr", "gridSpan"]), 1).max(1)).unwrap_or(1);
             if self.cell_hidden(&tc.element) {
                 // one whose content is not deleted widens the cell before it, as Word's
@@ -215,7 +220,10 @@ impl Reader<'_> {
                     }
                     _ => gone_here.extend(column..column + span),
                 }
-            } else if let (true, Some(origin)) = (self.continues(&tc.element), grid.origins.get(&column).copied()) {
+            } else if let (true, Some(origin)) = (
+                self.continues(&tc.element) && !grid.heads.contains_key(&(r, n)),
+                grid.origins.get(&column).copied(),
+            ) {
                 if let Some(cell) = grid.rows.get_mut(origin.0).and_then(|l| l.get_mut(origin.1)) {
                     cell.row_span += 1;
                 }
@@ -251,6 +259,25 @@ impl Reader<'_> {
         }
     }
 
+    /// In the final view, the cells continuing a merge whose rows above them go that start
+    /// it or stand alone ([`crate::docx::tables::merge_heads`]).
+    fn merge_heads(&self, root: &Arc<Element>, rows: &[(Box<[u32]>, String)]) -> HashMap<(usize, usize), VMerge> {
+        if self.view != View::Current {
+            return HashMap::new();
+        }
+        // the rows by their place in the table, as the reader counts them
+        let Some(elements) = rows
+            .iter()
+            .map(|(path, _)| crate::docx::at_path(root, path).cloned())
+            .collect::<Option<Vec<Arc<Element>>>>()
+        else {
+            return HashMap::new();
+        };
+        let refs: Vec<&Element> = elements.iter().map(|e| &**e).collect();
+        let kept = |row: &Element| find_path(row, &["trPr", "del"]).is_none();
+        merge_heads(&refs, &kept, &|cell| cell_merge(cell, true))
+    }
+
     /// Whether a cell continues a vertical merge (a pending tracked one as accepting leaves it).
     fn continues(&self, tc: &Element) -> bool {
         if self.view == View::Current {
@@ -268,6 +295,8 @@ impl Reader<'_> {
 struct Grid {
     columns: usize,
     origins: HashMap<usize, (usize, usize)>,
+    /// The cells continuing a merge the final view starts again or leaves alone.
+    heads: HashMap<(usize, usize), VMerge>,
     rows: Vec<Vec<CellRecord>>,
     hidden: Vec<HashSet<usize>>,
     header_rows: usize,

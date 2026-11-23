@@ -1,0 +1,143 @@
+{
+ "description": "Check a workbook against a schema: required sheets and tables, key, and per column type, required, unique, min/max, step, enum, the column's drop-down list, pattern. Problems by code and address, never cell text; counts always; paged.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "cursor": {
+    "description": "next_cursor of the previous page, with the same call.",
+    "type": "string"
+   },
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "schema": {
+    "additionalProperties": false,
+    "description": "What the workbook must hold.",
+    "properties": {
+     "sheets": {
+      "description": "Required sheets.",
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "tables": {
+      "items": {
+       "additionalProperties": false,
+       "description": "A table or region to check.",
+       "properties": {
+        "columns": {
+         "items": {
+          "additionalProperties": false,
+          "description": "A column to check, by its header.",
+          "properties": {
+           "case": {
+            "description": "Text in enum or list. Default exact.",
+            "enum": [
+             "exact",
+             "ignore"
+            ],
+            "type": "string"
+           },
+           "enum": {
+            "description": "Allowed values.",
+            "items": {
+             "type": "string"
+            },
+            "type": "array"
+           },
+           "max": {
+            "type": "string"
+           },
+           "min": {
+            "description": "As filter values; needs type.",
+            "type": "string"
+           },
+           "name": {
+            "type": "string"
+           },
+           "pattern": {
+            "description": "Regex text must fully match.",
+            "type": "string"
+           },
+           "required": {
+            "description": "No blanks.",
+            "type": "boolean"
+           },
+           "step": {
+            "description": "Values are min (or 0) plus whole steps: 0.5 for halves.",
+            "type": "number"
+           },
+           "type": {
+            "enum": [
+             "number",
+             "percent",
+             "date",
+             "time",
+             "datetime",
+             "text",
+             "bool",
+             "error"
+            ],
+            "type": "string"
+           },
+           "unique": {
+            "type": "boolean"
+           },
+           "validation_list": {
+            "description": "Allowed: the column's own drop-down list.",
+            "type": "boolean"
+           }
+          },
+          "required": [
+           "name"
+          ],
+          "type": "object"
+         },
+         "type": "array"
+        },
+        "header_rows": {
+         "type": "integer"
+        },
+        "headers": {
+         "items": {
+          "type": "string"
+         },
+         "type": "array"
+        },
+        "key": {
+         "description": "Key columns: unique together, never blank.",
+         "items": {
+          "type": "string"
+         },
+         "type": "array"
+        },
+        "name": {
+         "type": "string"
+        },
+        "range": {
+         "type": "string"
+        },
+        "table": {
+         "description": "t:Products; or declare one: range, name, header_rows, headers.",
+         "type": "string"
+        }
+       },
+       "type": "object"
+      },
+      "type": "array"
+     }
+    },
+    "type": "object"
+   }
+  },
+  "required": [
+   "doc",
+   "schema"
+  ],
+  "type": "object"
+ },
+ "name": "xlsx_validate_data",
+ "strict": false
+}

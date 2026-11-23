@@ -1,0 +1,175 @@
+{
+ "description": "Replace the text of shapes, table cells or speaker notes (256/notes): text keeps the formatting, paragraphs (the text spec) states it. Returns each target's fit.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "items": {
+    "description": "Targets and their text.",
+    "items": {
+     "additionalProperties": false,
+     "properties": {
+      "frame": {
+       "additionalProperties": false,
+       "description": "Text frame.",
+       "properties": {
+        "anchor": {
+         "enum": [
+          "top",
+          "middle",
+          "bottom"
+         ],
+         "type": "string"
+        },
+        "autofit": {
+         "description": "Default none.",
+         "enum": [
+          "none",
+          "normal",
+          "shape"
+         ],
+         "type": "string"
+        },
+        "insets": {
+         "additionalProperties": false,
+         "description": "Default 7.2, 3.6, 7.2, 3.6.",
+         "properties": {
+          "bottom": {
+           "type": "number"
+          },
+          "left": {
+           "type": "number"
+          },
+          "right": {
+           "type": "number"
+          },
+          "top": {
+           "type": "number"
+          }
+         },
+         "required": [
+          "left",
+          "top",
+          "right",
+          "bottom"
+         ],
+         "type": "object"
+        },
+        "wrap": {
+         "description": "Default true.",
+         "type": "boolean"
+        }
+       },
+       "type": "object"
+      },
+      "paragraphs": {
+       "description": "Text spec, instead of text.",
+       "items": {
+        "additionalProperties": false,
+        "properties": {
+         "align": {
+          "enum": [
+           "left",
+           "center",
+           "right",
+           "justify"
+          ],
+          "type": "string"
+         },
+         "bullet": {
+          "enum": [
+           "none",
+           "bullet",
+           "number"
+          ],
+          "type": "string"
+         },
+         "level": {
+          "description": "0-8.",
+          "type": "integer"
+         },
+         "line_spacing": {
+          "description": "Times single.",
+          "type": "number"
+         },
+         "runs": {
+          "items": {
+           "additionalProperties": false,
+           "properties": {
+            "bold": {
+             "type": "boolean"
+            },
+            "color": {
+             "type": "string"
+            },
+            "font": {
+             "type": "string"
+            },
+            "hyperlink": {
+             "description": "URL.",
+             "type": "string"
+            },
+            "italic": {
+             "type": "boolean"
+            },
+            "size": {
+             "type": "number"
+            },
+            "text": {
+             "description": "\\v breaks the line.",
+             "type": "string"
+            },
+            "underline": {
+             "type": "boolean"
+            }
+           },
+           "required": [
+            "text"
+           ],
+           "type": "object"
+          },
+          "type": "array"
+         },
+         "space_after": {
+          "type": "number"
+         },
+         "space_before": {
+          "type": "number"
+         }
+        },
+        "required": [
+         "runs"
+        ],
+        "type": "object"
+       },
+       "type": "array"
+      },
+      "target": {
+       "description": "Shape 256.5, cell 256.7/cell1,2, notes 256/notes, or $ref.",
+       "type": "string"
+      },
+      "text": {
+       "description": "Plain text; \\n paragraphs, \\v line breaks.",
+       "type": "string"
+      }
+     },
+     "required": [
+      "target"
+     ],
+     "type": "object"
+    },
+    "type": "array"
+   }
+  },
+  "required": [
+   "doc",
+   "items"
+  ],
+  "type": "object"
+ },
+ "name": "ppt_set_text",
+ "strict": false
+}

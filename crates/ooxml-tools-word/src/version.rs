@@ -178,6 +178,9 @@ pub struct Owned<'a> {
     /// The session's calls that left a table ragged or off its grid (`check`'s
     /// `table_grid_mismatch` `made_by`); `None`: the host keeps none.
     pub made_by: Option<&'a crate::MadeBy>,
+    /// Who the document's edits are tracked as when the call started (`describe`'s
+    /// `tracking`); `None`: untracked.
+    pub tracking: Option<&'a str>,
 }
 
 /// A table of another open document the host holds itself (a workbook's `t:stock`), as a

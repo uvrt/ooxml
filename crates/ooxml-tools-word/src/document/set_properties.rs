@@ -107,5 +107,5 @@ fn set(args: &SetProperties, editing: &Editing<'_>) -> Result<Done<Value>, ToolE
 
 /// Registers `set_properties` (the group's [`super::register`]).
 pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.edit::<SetProperties>(set_properties, crate::Hosting::SERVED);
+    r.edit::<SetProperties>(set_properties, crate::Hosting::PLAIN);
 }

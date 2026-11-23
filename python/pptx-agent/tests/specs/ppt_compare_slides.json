@@ -1,0 +1,48 @@
+{
+ "description": "Compare a run of like slides shape by shape: where name, box, text size, colour, font, text layout (alignment, spacing, bullets, anchor, insets, autofit), fill, outline, table rows, widths or borders differ from the majority or a reference; near-misses, layout and tables with a fix. Measures only.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "cursor": {
+    "description": "next_cursor of the previous page.",
+    "type": "string"
+   },
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "reference": {
+    "additionalProperties": false,
+    "description": "Expected values: fixes go toward it.",
+    "properties": {
+     "doc": {
+      "description": "Default doc.",
+      "type": "string"
+     },
+     "slide": {
+      "description": "s:300.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "slide"
+    ],
+    "type": "object"
+   },
+   "slides": {
+    "description": "Slide numbers from 1, or ids (s:256, $ref); at least two (one with reference).",
+    "items": {
+     "type": "string"
+    },
+    "type": "array"
+   }
+  },
+  "required": [
+   "doc",
+   "slides"
+  ],
+  "type": "object"
+ },
+ "name": "ppt_compare_slides",
+ "strict": false
+}

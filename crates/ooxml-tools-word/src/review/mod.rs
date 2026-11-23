@@ -39,7 +39,7 @@ pub struct Editing<'a> {
     pub caller: &'a Caller,
     /// The document as it was opened (what a session's own edits are told from).
     pub opened: &'a WordDoc,
-    /// The tracking mode the host keeps for the document: edits by this author are
+    /// The tracking mode the session keeps for the document: edits by this author are
     /// tracked changes (`None`: off).
     pub tracking: Option<&'a Tracking>,
     /// The document's id, for the calls a refusal offers.
@@ -49,8 +49,8 @@ pub struct Editing<'a> {
     /// The call's time as the session's clock reads it (ISO 8601): the day a `DATE` field
     /// shows.
     pub date: &'a str,
-    /// The layout of the document's versions, where the host keeps one (`word_fields`'
-    /// results); `None`: a result that needs it is left to the host.
+    /// The layout of the document's versions (`word_fields`' results); `None`: a call whose
+    /// result needs it is refused as not supported, with the way out.
     pub layout: Option<&'a dyn FieldLayout>,
     /// How long laying a version out may take in the call, where the host limits it
     /// (`None`: only the call's cancellation stops it).
@@ -58,7 +58,7 @@ pub struct Editing<'a> {
     /// The other open documents the call names, each at the version pinned for the call.
     pub others: crate::Others<'a>,
     /// The session's blobs, where the host hands them over (`word_drawings`' pictures);
-    /// `None`: a call that reads one is left to the host.
+    /// `None`: a call that reads one is refused as not supported, with the way out.
     pub blobs: Option<&'a dyn crate::Blobs>,
     /// The values the host wrote into the call's arguments for references (`{{d:...}}`),
     /// which the call keeps on the paragraphs they went into; empty: none.
@@ -140,7 +140,7 @@ impl<'a> Editing<'a> {
         self
     }
 
-    /// The tracking mode the host keeps for the document (`None`: off).
+    /// The tracking mode the session keeps for the document (`None`: off).
     #[must_use]
     pub fn with_tracking(mut self, tracking: Option<&'a Tracking>) -> Self {
         self.tracking = tracking;

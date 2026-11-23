@@ -635,6 +635,70 @@ class Panics(unittest.TestCase):
         self.assertIn("- text: 1 picture", table)
 
 
+class UnusedEntries(unittest.TestCase):
+    """The summary lists the known differences no case of the run matched -- those it could
+    have used (a mode it ran, in a gate the entry admits) -- and the forms not supported yet
+    no refusal matched: the stale entries a full run shows."""
+
+    ENTRIES = (
+        {"mode": "text", "input": {"tool": "a"}, "cause": "used"},
+        {"mode": "text", "gate": "fixtures", "file": "x.docx", "cause": "stale"},
+        {"mode": "text", "gate": "corpus", "cause": "a gate the run did not run"},
+        {"mode": "objects", "cause": "a mode the run did not run"},
+    )
+    ALLOWED = ({"form": "like *", "cause": "refused"}, {"form": "gone *", "cause": "never refused"})
+
+    def shard(self, **over) -> dict:
+        used = {gates.entry_key(self.ENTRIES[0]): 2}
+        return {"gate": "fixtures", "mode": "text", "documents": 1, "cases": 4, "differences": 0, "known": 2,
+                "not_supported": 1, "panics": 0, "not_supported_forms": {"like this": 1}, "wall": 1.0,
+                "crashed": False, "unknown": [], "used": used, "whole": True, "every": 1, "per_tool": 0, **over}
+
+    def test_an_entry_or_form_no_case_matched_is_listed(self) -> None:
+        unused, idle = gates.unused_entries([self.shard(), self.shard(used={})], list(self.ENTRIES),
+                                            list(self.ALLOWED))
+        self.assertEqual([e["cause"] for e in unused], ["stale"])
+        self.assertEqual([e["form"] for e in idle], ["gone *"])
+
+    def test_the_summary_says_whether_the_list_is_a_hint(self) -> None:
+        for over, said in (({}, "each entry below is stale"), ({"whole": False}, "a hint only"),
+                           ({"per_tool": 3}, "a hint only")):
+            with tempfile.TemporaryDirectory() as tmp:
+                (Path(tmp) / "diff-0").mkdir()
+                (Path(tmp) / "diff-0" / "summary.json").write_text(json.dumps(self.shard(**over)))
+                printed = io.StringIO()
+                with mock.patch.object(gates, "known_entries", lambda: list(self.ENTRIES)), \
+                        mock.patch.object(gates, "allowed_forms", lambda: list(self.ALLOWED)), \
+                        contextlib.redirect_stdout(printed):
+                    gates.run_summary(argparse.Namespace(dir=tmp))
+            table = printed.getvalue()
+            self.assertIn("### Known differences no case matched", table)
+            self.assertIn(said, table)
+            self.assertIn('file "x.docx"', table)
+            self.assertIn("- not supported: `gone *`", table)
+            self.assertNotIn("used", table.split("no case matched")[1].split("not supported")[0])
+
+    def test_a_shard_counts_the_entries_its_cases_matched(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out"
+            lines = [json.dumps({"file": str(Path(tmp) / "a.docx"), "case": 0, "input": {"tool": "a"}}),
+                     json.dumps({"totals": {"cases": 1, "panics": 0, "not_supported_forms": {}}})]
+
+            def command(args, out_dir, results, files):
+                write = f"import pathlib; pathlib.Path({str(results)!r}).write_text({chr(10).join(lines)!r})"
+                return [sys.executable, "-c", write], {}
+
+            args = argparse.Namespace(out=str(out), tree=tmp, gate="fixtures", mode="text", shard="1/1",
+                                      every=1, per_tool=0, fixtures="all", base=None, cache=None)
+            with mock.patch.object(gates, "harness_command", command), \
+                    mock.patch.object(gates, "documents", lambda *_: [Path(tmp) / "a.docx"]), \
+                    mock.patch.object(gates, "known_entries", lambda: list(self.ENTRIES)), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                gates.run_diff(args)
+            summary = json.loads((out / "summary.json").read_text())
+        self.assertEqual(summary["used"], {gates.entry_key(self.ENTRIES[0]): 1})
+
+
 class ReadsRefusals(unittest.TestCase):
     """The reads gate judges a case Rust refused as not supported yet by the allow-list, as
     the edit gates do: the harness's compared reply keeps the form (``details.not_supported``,

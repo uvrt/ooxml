@@ -38,6 +38,37 @@ impl PartVersion {
             _ => false,
         }
     }
+
+    /// Its content as a key ([`PartIdentity`]).
+    pub fn identity(&self) -> PartIdentity {
+        PartIdentity(self.clone())
+    }
+}
+
+/// A part's content as a key: two are equal where their contents are the same by identity
+/// ([`PartVersion::same`]), hashed by the allocation that identity is. A key holds what it
+/// names, so no other content takes its address while the key is kept: what is worked out
+/// from a part's content (a metafile drawn, say) is kept under it, across the versions
+/// that share the part.
+#[derive(Debug, Clone)]
+pub struct PartIdentity(PartVersion);
+
+impl PartialEq for PartIdentity {
+    fn eq(&self, other: &PartIdentity) -> bool {
+        self.0.same(&other.0)
+    }
+}
+
+impl Eq for PartIdentity {}
+
+impl std::hash::Hash for PartIdentity {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match &self.0 {
+            PartVersion::Raw(raw) => (0u8, raw.index, Arc::as_ptr(&raw.tree) as usize).hash(state),
+            PartVersion::Tree(tree) => (1u8, 0usize, Arc::as_ptr(tree.root()) as usize).hash(state),
+            PartVersion::Bytes(bytes) => (2u8, 0usize, bytes.as_ptr() as usize).hash(state),
+        }
+    }
 }
 
 /// An untouched part: its entry, and its tree once something read it.
@@ -121,9 +152,17 @@ impl Package {
 
     /// The parts that differ from `before`: each part added or whose content is not the
     /// same, in archive order, then each part removed, in `before`'s. A part is the same by
-    /// identity ([`PartVersion::same`]), else by its bytes -- two archive entries by their
-    /// stored bytes, without inflating them; else as each reads -- so that two packages
-    /// opened from bytes apart agree on the parts they share.
+    /// identity ([`PartVersion::same`]); two trees by structure (equal trees write equal
+    /// bytes, and the comparison stops at the nodes both share, so an edit costs its path,
+    /// not the part's size), and a stored part whose tree was read and a tree the same way
+    /// (an edit's tree shares what it did not change with the stored part's); else by its
+    /// bytes -- two archive entries by their stored
+    /// bytes, without inflating them; else as each reads -- so that two packages opened
+    /// from bytes apart agree on the parts they share.
+    ///
+    /// Two trees of another structure that would write the same bytes (a text split in two
+    /// nodes, say) count as changed: a reader may be told of a part that did not change,
+    /// never not told of one that did.
     pub fn changed_parts(&self, before: &Package) -> Vec<String> {
         let mut changed: Vec<String> = self
             .part_names()
@@ -147,14 +186,23 @@ impl Package {
         if mine.content.same(&theirs.content) {
             return true;
         }
-        if let (PartVersion::Raw(a), PartVersion::Raw(b)) = (&mine.content, &theirs.content) {
-            if let (Ok(x), Ok(y)) = (self.entry(a.index), other.entry(b.index)) {
-                let (m, n) = (x.meta(), y.meta());
-                return m.crc32 == n.crc32
-                    && m.size == n.size
-                    && m.method == n.method
-                    && self.archive.stored_data(x) == other.archive.stored_data(y);
+        match (&mine.content, &theirs.content) {
+            (PartVersion::Tree(a), PartVersion::Tree(b)) => return a == b,
+            (PartVersion::Raw(raw), PartVersion::Tree(tree)) | (PartVersion::Tree(tree), PartVersion::Raw(raw)) => {
+                if let Some(Ok(parsed)) = raw.tree.get() {
+                    return parsed == tree;
+                }
             }
+            (PartVersion::Raw(a), PartVersion::Raw(b)) => {
+                if let (Ok(x), Ok(y)) = (self.entry(a.index), other.entry(b.index)) {
+                    let (m, n) = (x.meta(), y.meta());
+                    return m.crc32 == n.crc32
+                        && m.size == n.size
+                        && m.method == n.method
+                        && self.archive.stored_data(x) == other.archive.stored_data(y);
+                }
+            }
+            _ => {}
         }
         matches!((self.read(name), other.read(name)), (Ok(Some(x)), Ok(Some(y))) if x == y)
     }

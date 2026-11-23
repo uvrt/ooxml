@@ -33,7 +33,7 @@ use ooxml_word_pages::summary::Summary;
 use ooxml_word_pages::{
     EngineBudgets, EngineOptions, EngineSeed, Fallback, FontSetup, LaidVersion, PageEngine, PagesError,
 };
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 
 /// The host's layout of a document's versions, as Word's tools are handed it: the edit
 /// core's port ([`FieldLayout`], what an edit reads of the pages), and the document's page
@@ -53,25 +53,18 @@ pub trait WordLayout: FieldLayout {
     /// Why it was not laid out: stopped, or a version the engine does not lay out yet (in
     /// its words).
     fn laid(&self, package: &Package, cancel: &dyn Cancel) -> Result<Arc<LaidVersion>, NotLaid> {
-        let mut engine = self.engine().lock().unwrap_or_else(PoisonError::into_inner);
+        let mut engine = ooxml_word_pages::lock_engine(self.engine());
         match engine.lay_out_until(package, cancel) {
             Err(PagesError::Stopped) => Err(NotLaid::Stopped),
-            found => laid(found).map_err(NotLaid::Other),
+            found => laid(found),
         }
     }
 }
 
 /// The form refused, as not supported yet, of a version the layout does not lay out because
 /// of a footnote or an endnote (one with a frame, a text box, a drawing text wraps beside or
-/// a `STYLEREF` field; [`unlaid_note`]).
+/// a `STYLEREF` field; [`NotLaid::in_note`]).
 pub const UNLAID_NOTE: &str = "a footnote or endnote the layout cannot lay out";
-
-/// Whether a version was not laid out because of a note: `why`, [`NotLaid::Other`]'s words
-/// (`<reason> at <path>`), names a place in a footnote or an endnote.
-#[must_use]
-pub fn unlaid_note(why: &str) -> bool {
-    why.contains(" at w:footnote[") || why.contains(" at w:endnote[")
-}
 
 /// How long laying a version out may take in a call (docx-agent's
 /// `Limits.layout_timeout`), counted from the call's start: past it, what reads the layout
@@ -84,13 +77,48 @@ pub struct LayoutLimit<'a> {
     pub timeout: std::time::Duration,
 }
 
-/// Why [`WordLayout::laid`] laid no version out.
+/// Why [`WordLayout::laid`] laid no version out, or a check could not read the version it
+/// laid out.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NotLaid {
     /// Its `cancel` stopped it.
     Stopped,
-    /// The engine does not lay it out (in its words).
-    Other(String),
+    /// A version the layout does not lay out yet: why, and where.
+    Unsupported(Fallback),
+    /// The version could not be read (in the engine's words).
+    Unreadable(String),
+    /// The version laid out is not the engine's (another generation of it laid it out).
+    NotTheEngines,
+    /// The version's pages could not be compared with the last check's (in its words).
+    Uncompared(String),
+}
+
+impl NotLaid {
+    /// Whether it is a version not laid out because of a note: the place it names is in a
+    /// footnote or an endnote.
+    #[must_use]
+    pub fn in_note(&self) -> bool {
+        match self {
+            NotLaid::Unsupported(fallback) => {
+                let at = format!(" at {}", fallback.at);
+                at.contains(" at w:footnote[") || at.contains(" at w:endnote[")
+            }
+            _ => false,
+        }
+    }
+}
+
+impl std::fmt::Display for NotLaid {
+    /// The reason in the engine's words (`<reason> at <where>` for a version it does not lay
+    /// out yet).
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NotLaid::Stopped => f.write_str("laying the document out was stopped"),
+            NotLaid::Unsupported(fallback) => write!(f, "{} at {}", fallback.reason, fallback.at),
+            NotLaid::Unreadable(why) | NotLaid::Uncompared(why) => f.write_str(why),
+            NotLaid::NotTheEngines => f.write_str("the version laid out is not the engine's"),
+        }
+    }
 }
 
 /// The edit core's layout port over a page engine.
@@ -152,12 +180,13 @@ impl PageSetup {
     }
 }
 
-/// A version laid out, or why not, in the port's words.
-fn laid(found: Result<Result<Arc<LaidVersion>, Fallback>, PagesError>) -> Result<Arc<LaidVersion>, String> {
+/// A version laid out, or why not.
+fn laid(found: Result<Result<Arc<LaidVersion>, Fallback>, PagesError>) -> Result<Arc<LaidVersion>, NotLaid> {
     match found {
         Ok(Ok(version)) => Ok(version),
-        Ok(Err(fallback)) => Err(format!("{} at {}", fallback.reason, fallback.at)),
-        Err(error) => Err(error.to_string()),
+        Ok(Err(fallback)) => Err(NotLaid::Unsupported(fallback)),
+        Err(PagesError::Stopped) => Err(NotLaid::Stopped),
+        Err(error) => Err(NotLaid::Unreadable(error.to_string())),
     }
 }
 
@@ -169,10 +198,10 @@ fn summarised(engine: &mut PageEngine, package: &Package, cancel: &dyn Cancel) -
     if matches!(found, Err(PagesError::Stopped)) {
         return Err(LayOutError::Stopped);
     }
-    let version = laid(found).map_err(LayOutError::Unsupported)?;
+    let version = laid(found).map_err(|why| LayOutError::Unsupported(why.to_string()))?;
     engine
         .contents(&version)
-        .ok_or_else(|| LayOutError::Unsupported("the version laid out is not the engine's".to_owned()))
+        .ok_or_else(|| LayOutError::Unsupported(NotLaid::NotTheEngines.to_string()))
 }
 
 impl WordLayout for EnginePages {
@@ -188,19 +217,19 @@ impl WordLayout for EnginePages {
 impl FieldLayout for EnginePages {
     fn lay_out(&self, package: &Package, cancel: &dyn Cancel) -> Result<Box<dyn LaidFields + '_>, LayOutError> {
         let found = {
-            let mut engine = self.engine.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut engine = ooxml_word_pages::lock_engine(&self.engine);
             engine.lay_out_until(package, cancel)
         };
         if matches!(found, Err(PagesError::Stopped)) {
             return Err(LayOutError::Stopped);
         }
-        let version = laid(found).map_err(LayOutError::Unsupported)?;
+        let version = laid(found).map_err(|why| LayOutError::Unsupported(why.to_string()))?;
         Ok(Box::new(Laid::new(version, &self.engine)))
     }
 
     fn reflow(&self, before: &Package, after: &Package, cancel: &dyn Cancel) -> Result<PageReflow, LayOutError> {
         let (was, now) = {
-            let mut engine = self.engine.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut engine = ooxml_word_pages::lock_engine(&self.engine);
             (
                 summarised(&mut engine, before, cancel)?,
                 summarised(&mut engine, after, cancel)?,
@@ -248,7 +277,7 @@ impl<'e> Laid<'e> {
         if let Some(page) = self.numbers.drawn_on(&path) {
             return Ok(page);
         }
-        let mut engine = self.engine.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut engine = ooxml_word_pages::lock_engine(self.engine);
         engine
             .first_page_in_text_box(&self.version, id)
             .ok_or_else(|| Unknown(format!("{path} is not drawn")))
@@ -292,7 +321,7 @@ impl LaidFields for Laid<'_> {
             }
             FieldPlace::Page(page) => (page, Some(run.part)),
         };
-        let mut engine = self.engine.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut engine = ooxml_word_pages::lock_engine(self.engine);
         style_reference_known(&self.version.layout().document, engine.locale(), instruction).map_err(unknown)?;
         let painted = engine
             .paint(&self.version, page)

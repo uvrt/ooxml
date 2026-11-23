@@ -1,0 +1,173 @@
+{
+ "description": "Change shapes' position, size, rotation, flips, fill, gradient, outline, geometry or name; only the fields given change. Text and frames: ppt_set_text, ppt_format_text.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "items": {
+    "description": "Shapes and their changes.",
+    "items": {
+     "additionalProperties": false,
+     "properties": {
+      "adjustments": {
+       "description": "Preset adjustments.",
+       "items": {
+        "additionalProperties": false,
+        "properties": {
+         "name": {
+          "description": "adj, adj1...",
+          "type": "string"
+         },
+         "value": {
+          "description": "1/100000 of the shorter side.",
+          "type": "number"
+         }
+        },
+        "required": [
+         "name",
+         "value"
+        ],
+        "type": "object"
+       },
+       "type": "array"
+      },
+      "fill": {
+       "description": "Colour, none or inherit.",
+       "type": "string"
+      },
+      "flip_h": {
+       "type": "boolean"
+      },
+      "flip_v": {
+       "type": "boolean"
+      },
+      "gradient": {
+       "additionalProperties": false,
+       "properties": {
+        "angle": {
+         "description": "Degrees. Default 90.",
+         "type": "number"
+        },
+        "stops": {
+         "items": {
+          "additionalProperties": false,
+          "properties": {
+           "color": {
+            "type": "string"
+           },
+           "position": {
+            "description": "0-100 %.",
+            "type": "number"
+           }
+          },
+          "required": [
+           "position",
+           "color"
+          ],
+          "type": "object"
+         },
+         "type": "array"
+        }
+       },
+       "required": [
+        "stops"
+       ],
+       "type": "object"
+      },
+      "h": {
+       "type": "number"
+      },
+      "line": {
+       "additionalProperties": false,
+       "properties": {
+        "color": {
+         "description": "none hides it.",
+         "type": "string"
+        },
+        "dash": {
+         "enum": [
+          "solid",
+          "dash",
+          "dot",
+          "dashDot",
+          "lgDash",
+          "sysDash",
+          "sysDot"
+         ],
+         "type": "string"
+        },
+        "end": {
+         "description": "Arrowhead.",
+         "enum": [
+          "arrow",
+          "diamond",
+          "none",
+          "oval",
+          "stealth",
+          "triangle"
+         ],
+         "type": "string"
+        },
+        "start": {
+         "description": "Arrowhead.",
+         "enum": [
+          "arrow",
+          "diamond",
+          "none",
+          "oval",
+          "stealth",
+          "triangle"
+         ],
+         "type": "string"
+        },
+        "width": {
+         "type": "number"
+        }
+       },
+       "type": "object"
+      },
+      "name": {
+       "type": "string"
+      },
+      "preset": {
+       "description": "New geometry, e.g. roundRect.",
+       "type": "string"
+      },
+      "rotation": {
+       "description": "Degrees clockwise.",
+       "type": "number"
+      },
+      "target": {
+       "description": "Shape, e.g. 256.5 or $ref.",
+       "type": "string"
+      },
+      "w": {
+       "type": "number"
+      },
+      "x": {
+       "type": "number"
+      },
+      "y": {
+       "type": "number"
+      }
+     },
+     "required": [
+      "target"
+     ],
+     "type": "object"
+    },
+    "type": "array"
+   }
+  },
+  "required": [
+   "doc",
+   "items"
+  ],
+  "type": "object"
+ },
+ "name": "ppt_set_shape",
+ "strict": false
+}

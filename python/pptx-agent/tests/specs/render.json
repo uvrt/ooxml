@@ -1,0 +1,43 @@
+{
+ "description": "Render slides or pages to PNG to look at them, at most 4 per call. Images cost tokens; the result states how many.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "sheet": {
+    "additionalProperties": false,
+    "description": "Up to 30 in one labelled image; {} for defaults.",
+    "properties": {
+     "columns": {
+      "type": "integer"
+     },
+     "width": {
+      "description": "Each tile's px.",
+      "type": "integer"
+     }
+    },
+    "type": "object"
+   },
+   "slides": {
+    "description": "Decks: slide numbers from 1, or ids (s:256, $ref); layouts L2, masters M0.",
+    "items": {
+     "type": "string"
+    },
+    "type": "array"
+   },
+   "width": {
+    "description": "Pixels, 200-2576. Default 1280 (slides), 1000 (pages).",
+    "type": "integer"
+   }
+  },
+  "required": [
+   "doc"
+  ],
+  "type": "object"
+ },
+ "name": "render",
+ "strict": false
+}

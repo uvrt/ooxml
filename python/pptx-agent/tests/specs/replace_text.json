@@ -1,0 +1,58 @@
+{
+ "description": "Replace text, keeping its formatting. expect=one needs exactly one match (else the error lists them); all replaces every match. Returns the count and addresses.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "expect": {
+    "description": "Matches expected.",
+    "enum": [
+     "one",
+     "all"
+    ],
+    "type": "string"
+   },
+   "find": {
+    "description": "Text to replace.",
+    "type": "string"
+   },
+   "regex": {
+    "description": "find is a Python regex. Default false.",
+    "type": "boolean"
+   },
+   "replace": {
+    "description": "Replacement; with regex, \\1 is a group.",
+    "type": "string"
+   },
+   "slides": {
+    "description": "Decks: slide numbers from 1, or ids (s:256, $ref). Default all.",
+    "items": {
+     "type": "string"
+    },
+    "type": "array"
+   },
+   "stories": {
+    "description": "Body (default): the slides; layouts, masters, or all.",
+    "enum": [
+     "body",
+     "all",
+     "layouts",
+     "masters"
+    ],
+    "type": "string"
+   }
+  },
+  "required": [
+   "doc",
+   "find",
+   "replace",
+   "expect"
+  ],
+  "type": "object"
+ },
+ "name": "replace_text",
+ "strict": true
+}

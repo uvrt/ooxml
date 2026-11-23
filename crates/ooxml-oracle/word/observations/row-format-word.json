@@ -1,0 +1,716 @@
+{
+ "_about": "What Word 16.106 for Mac wrote for crates/ooxml-oracle/word/probes/row_format_probe.py: rows added by Insert Rows Above/Below beside rows whose runs carry the formatting (their marks none, or other), words typed into them and into empty cells. Each cell's paragraph properties and runs; rsids, ids, authors and dates dropped or replaced. Regenerate with python crates/ooxml-oracle/word/probes/row_format_probe.py.",
+ "Below": [
+  {
+   "trPr": "",
+   "cells": [
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "Below"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "text r1"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:jc w:val=\"center\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:b/><w:bCs/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "11"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "trPr": "",
+   "cells": [
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "Below"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "text r2"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:jc w:val=\"center\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:b/><w:bCs/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "12"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "trPr": "",
+   "cells": [
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "new"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "typed"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:jc w:val=\"center\"/><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:b/><w:bCs/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:b/><w:bCs/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "99"
+      ]
+     ]
+    }
+   ]
+  }
+ ],
+ "Above": [
+  {
+   "trPr": "",
+   "cells": [
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "new"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "typed"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:jc w:val=\"center\"/><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:b/><w:bCs/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:b/><w:bCs/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "99"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "trPr": "",
+   "cells": [
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "Above"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "text r1"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:jc w:val=\"center\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:b/><w:bCs/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "11"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "trPr": "",
+   "cells": [
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "Above"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "text r2"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:jc w:val=\"center\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:b/><w:bCs/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "12"
+      ]
+     ]
+    }
+   ]
+  }
+ ],
+ "Blank": [
+  {
+   "trPr": "",
+   "cells": [
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "Blank"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "text r1"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:jc w:val=\"center\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:b/><w:bCs/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "11"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "trPr": "",
+   "cells": [
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "Blank"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "text r2"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:jc w:val=\"center\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:b/><w:bCs/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "12"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "trPr": "",
+   "cells": [
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr></w:pPr>",
+     "runs": []
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr></w:pPr>",
+     "runs": []
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:jc w:val=\"center\"/><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:b/><w:bCs/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr></w:pPr>",
+     "runs": []
+    }
+   ]
+  }
+ ],
+ "Marked": [
+  {
+   "trPr": "",
+   "cells": [
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:rPr><w:rFonts w:ascii=\"Courier New\" w:hAnsi=\"Courier New\" w:cs=\"Courier New\"/><w:color w:val=\"C00000\"/><w:sz w:val=\"28\"/><w:szCs w:val=\"28\"/></w:rPr></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "Marked"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:rPr><w:rFonts w:ascii=\"Courier New\" w:hAnsi=\"Courier New\" w:cs=\"Courier New\"/><w:color w:val=\"C00000\"/><w:sz w:val=\"28\"/><w:szCs w:val=\"28\"/></w:rPr></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "text r1"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:jc w:val=\"center\"/><w:rPr><w:rFonts w:ascii=\"Courier New\" w:hAnsi=\"Courier New\" w:cs=\"Courier New\"/><w:color w:val=\"C00000\"/><w:sz w:val=\"28\"/><w:szCs w:val=\"28\"/></w:rPr></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:b/><w:bCs/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "11"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "trPr": "",
+   "cells": [
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:rPr><w:rFonts w:ascii=\"Courier New\" w:hAnsi=\"Courier New\" w:cs=\"Courier New\"/><w:color w:val=\"C00000\"/><w:sz w:val=\"28\"/><w:szCs w:val=\"28\"/></w:rPr></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "Marked"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:rPr><w:rFonts w:ascii=\"Courier New\" w:hAnsi=\"Courier New\" w:cs=\"Courier New\"/><w:color w:val=\"C00000\"/><w:sz w:val=\"28\"/><w:szCs w:val=\"28\"/></w:rPr></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "text r2"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:jc w:val=\"center\"/><w:rPr><w:rFonts w:ascii=\"Courier New\" w:hAnsi=\"Courier New\" w:cs=\"Courier New\"/><w:color w:val=\"C00000\"/><w:sz w:val=\"28\"/><w:szCs w:val=\"28\"/></w:rPr></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:b/><w:bCs/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "12"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "trPr": "",
+   "cells": [
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "new"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "typed"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:jc w:val=\"center\"/><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:b/><w:bCs/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:b/><w:bCs/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "99"
+      ]
+     ]
+    }
+   ]
+  }
+ ],
+ "Mixed": [
+  {
+   "trPr": "",
+   "cells": [
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:b/><w:color w:val=\"C00000\"/></w:rPr>",
+       "Lead"
+      ],
+      [
+       "",
+       " Mixed"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "text r1"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:jc w:val=\"center\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:b/><w:bCs/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "11"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "trPr": "",
+   "cells": [
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:b/><w:color w:val=\"C00000\"/></w:rPr>",
+       "Lead"
+      ],
+      [
+       "",
+       " Mixed"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "text r2"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:jc w:val=\"center\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:b/><w:bCs/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "12"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "trPr": "",
+   "cells": [
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:rPr><w:b/><w:color w:val=\"C00000\"/></w:rPr></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:b/><w:color w:val=\"C00000\"/></w:rPr>",
+       "new"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "typed"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:jc w:val=\"center\"/><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:b/><w:bCs/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:b/><w:bCs/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "99"
+      ]
+     ]
+    }
+   ]
+  }
+ ],
+ "Empty": [
+  {
+   "trPr": "",
+   "cells": [
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "Empty"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "text r1"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:jc w:val=\"center\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:b/><w:bCs/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "11"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "trPr": "",
+   "cells": [
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "Empty"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/></w:pPr>",
+     "runs": [
+      [
+       "",
+       "typed"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:jc w:val=\"center\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:b/><w:bCs/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "12"
+      ]
+     ]
+    }
+   ]
+  }
+ ],
+ "EmptyMarked": [
+  {
+   "trPr": "",
+   "cells": [
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "EmptyMarked"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "text r1"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:jc w:val=\"center\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:b/><w:bCs/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "11"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "trPr": "",
+   "cells": [
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "EmptyMarked"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "typed"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:jc w:val=\"center\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:b/><w:bCs/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "12"
+      ]
+     ]
+    }
+   ]
+  }
+ ],
+ "Tracked": [
+  {
+   "trPr": "",
+   "cells": [
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "Tracked"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "text r1"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:jc w:val=\"center\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:b/><w:bCs/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "11"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "trPr": "",
+   "cells": [
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "Tracked"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "text r2"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:jc w:val=\"center\"/></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:b/><w:bCs/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "12"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "trPr": "<w:trPr><w:ins w:author=\"{author}\" w:date=\"{date}\"/></w:trPr>",
+   "cells": [
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:rPr><w:ins w:author=\"{author}\" w:date=\"{date}\"/><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "new"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:rPr><w:ins w:author=\"{author}\" w:date=\"{date}\"/><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "typed"
+      ]
+     ]
+    },
+    {
+     "pPr": "<w:pPr><w:spacing w:after=\"0\"/><w:jc w:val=\"center\"/><w:rPr><w:ins w:author=\"{author}\" w:date=\"{date}\"/><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:b/><w:bCs/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr></w:pPr>",
+     "runs": [
+      [
+       "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/><w:b/><w:bCs/><w:color w:val=\"1F4E79\"/><w:sz w:val=\"16\"/><w:szCs w:val=\"16\"/></w:rPr>",
+       "99"
+      ]
+     ]
+    }
+   ]
+  }
+ ]
+}

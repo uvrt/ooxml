@@ -145,7 +145,8 @@ fn is_utc_second(date: &str) -> bool {
 /// come from the pages (`word_fields`, a header's page number, `word_template`'s reflow)
 /// lays its versions out with, and `check` and `render` read the pages of. `raster`: the
 /// faces pages are drawn with (a `PageRaster` of the system's fonts and the font folders),
-/// from which `render` draws each document's pages; `None`: `render` is left to the host.
+/// from which `render` draws each document's pages; `None`: `render` is refused as not
+/// supported (`render: no layout`), with the way out.
 /// `image_budgets`: the host's budgets of images kept across calls, as they stand when the
 /// call starts -- `(name, limit, used)`, `name` `"session"` or `"round"` -- which `render`
 /// refuses past, worded as the host words it (the call's own limit is the context's
@@ -210,7 +211,8 @@ impl PyCallLayout {
 /// `documents`: what the call needs about the open documents it names (a `CallDocuments`:
 /// the versions it reads and the host's names for them). `layout`: what it reads of the
 /// document's layout (a `CallLayout`: the page engine, the raster, the placer); `None`:
-/// what needs them is left to the host. `blobs`: the host's blobs, an object with `blob(handle)` (`(name, mime, bytes)` or
+/// the session's own page engine where it has one, else a call that needs the pages is
+/// refused as not supported, with the way out. `blobs`: the host's blobs, an object with `blob(handle)` (`(name, mime, bytes)` or
 /// `None`) and `listed()` (`[(handle, name)]`), asked with the lock taken back
 /// (`word_drawings` insert_picture). `written`: the values the host wrote into the arguments
 /// for references, as JSON text (`[{"field", "start", "end", "text", "record", "brief"}]`,

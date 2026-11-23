@@ -1,9 +1,10 @@
 //! Owns: [`LikeTheColumn`], text a call wrote into cells that were empty given the
 //! formatting of the same column's text in a row around it (docx-agent's
 //! `_like_the_column`, round 58, R126 b; the team's ask, a departure from Word, which gives
-//! such text the document default -- measured, `tools/row_format_probe.py`, `Empty`): in a
-//! cell whose paragraph marks and runs of text carry no run formatting of their own (a
-//! revision record aside), each run's properties become a copy of the source cell's first
+//! such text the document default -- measured,
+//! `crates/ooxml-oracle/word/probes/row_format_probe.py`, `Empty`): in a cell whose
+//! paragraph marks and runs of text carry no run formatting of their own (a revision record
+//! aside), each run's properties become a copy of the source cell's first
 //! run of text's (its own revision record kept, the source's property change left out).
 //! Written untracked, as docx-agent writes it, inside the call's step.
 //!

@@ -237,8 +237,7 @@ fn with_layout(
     let started = Instant::now();
     let laid = match laid {
         Ok(laid) => laid,
-        Err(NotLaid::Other(why)) if crate::pages::unlaid_note(&why) => return Ok(Some(CHECK_UNLAID_NOTE)),
-        Err(NotLaid::Other(_)) => return Ok(Some(CHECK_NOT_LAID_OUT)),
+        Err(why) if why.in_note() => return Ok(Some(CHECK_UNLAID_NOTE)),
         Err(NotLaid::Stopped) => {
             // The call's own stop ends it; the layout's limit passed is said, and the
             // check goes on (docx-agent's `reflow.error`), with the facts read from the
@@ -248,6 +247,7 @@ fn with_layout(
             timing.insert("facts".into(), seconds(started));
             return Ok(None);
         }
+        Err(_) => return Ok(Some(CHECK_NOT_LAID_OUT)),
     };
     // The ranges' pages, among those asked for: the pages the facts are read on.
     let on: Option<BTreeSet<usize>> = c.scope.map(|s| s.pages(&laid).into_iter().flatten().collect());
@@ -275,10 +275,10 @@ fn with_layout(
     if let (true, Some(docx)) = (layout_wanted, c.docx) {
         if !reflow_wanted {
             // Laid out, no reflow: kept as the version's pages a changing call measures from.
-            c.owned.last_check.set_laid(Some(Seen {
-                version: Some(c.version.number),
+            c.owned.last_check.set_laid(Seen {
+                version: c.version.number,
                 pages: Summarised::watched(Arc::clone(&laid), Arc::clone(layout.engine())),
-            }));
+            });
         }
         let (found, range) = layout_facts(c, layout, &laid, docx, pages.as_deref(), stop)?;
         if let Some(range) = range {
@@ -502,16 +502,19 @@ fn reflow_facts(
 ) -> Result<Value, NotLaid> {
     let found = reflow::laid_facts(layout, laid)?;
     let mut facts = found.facts;
-    let last = owned.last_check.get();
     let aliases = owned.doc.ids().aliases();
     let now = Summarised::watched(Arc::clone(laid), Arc::clone(layout.engine()));
-    if let Some(since) = reflow::since(last.as_ref(), &now, version.number, aliases, pages).map_err(NotLaid::Other)? {
+    // (what the last check saw, and this one kept in its place, in one step: two checks
+    // side by side each measure from the one before it)
+    let last = owned.last_check.replace(Seen {
+        version: version.number,
+        pages: now.clone(),
+    });
+    if let Some(since) =
+        reflow::since(last.as_ref(), &now, version.number, aliases, pages).map_err(NotLaid::Uncompared)?
+    {
         facts.insert("since_last_check".into(), since);
     }
-    owned.last_check.set(Some(Seen {
-        version: Some(version.number),
-        pages: now,
-    }));
     if let Some(warnings) = found.warnings {
         facts.insert("layout_warnings".into(), warnings);
     }

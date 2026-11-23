@@ -118,6 +118,9 @@ fn the_tracking_mode_is_kept_and_review_tools_edit() {
         &context,
     );
     assert_eq!(on["data"]["author"], json!("Bo"), "{on}");
+    // the mode is the session's: describe says it
+    let described = call(&s, "describe", json!({"doc": "d1"}), &context);
+    assert_eq!(described["data"]["tracking"], json!({"author": "Bo"}), "{described}");
     let listed = call(&s, "word_changes", json!({"doc": "d1", "action": "list"}), &context);
     assert_eq!(listed["ok"], json!(true), "{listed}");
     let accepted = call(
@@ -137,6 +140,50 @@ fn the_tracking_mode_is_kept_and_review_tools_edit() {
     assert!(body_of(&s, &d).contains("w:ins"));
     let off = call(&s, "word_set_tracking", json!({"doc": "d1", "on": false}), &context);
     assert_eq!(off["data"]["tracking"], json!(false), "{off}");
+    let described = call(&s, "describe", json!({"doc": "d1"}), &context);
+    assert_eq!(described["data"]["tracking"], Value::Null, "{described}");
+}
+
+#[test]
+fn edits_beside_tracking_switches_are_written_under_the_mode_they_commit_under() {
+    // R2 #6: the mode is read for an edit's whole call, so a switch never falls between an
+    // edit's prepare and its commit: every edit is either a tracked change by the author on
+    // or a plain edit, and each switch's reply sees the edits before it committed
+    let s = session();
+    s.open(docx(&paragraph("11111111", "one")), DocKind::Docx, "a.docx")
+        .unwrap();
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            for k in 0..20 {
+                let on = k % 2 == 0;
+                let given = if on {
+                    json!({"doc": "d1", "on": true, "author": "Bo"})
+                } else {
+                    json!({"doc": "d1", "on": false})
+                };
+                let set = call(&s, "word_set_tracking", given, &as_caller("switch"));
+                assert_eq!(set["ok"], json!(true), "{set}");
+            }
+        });
+        for w in 0..2 {
+            let s = &s;
+            scope.spawn(move || {
+                for k in 0..10 {
+                    let text = format!("writer {w} edit {k}");
+                    let edited = call(
+                        s,
+                        "word_set_text",
+                        json!({"doc": "d1", "target": "p:11111111", "text": text}),
+                        &as_caller(&format!("w{w}")),
+                    );
+                    assert_eq!(edited["ok"], json!(true), "{edited}");
+                }
+            });
+        }
+    });
+    // the last switch turned tracking off
+    let described = call(&s, "describe", json!({"doc": "d1"}), &as_caller("r"));
+    assert_eq!(described["data"]["tracking"], Value::Null, "{described}");
 }
 
 #[test]
@@ -522,7 +569,7 @@ fn a_version_names_the_parts_it_changed_since_another() {
         .unwrap();
     let context = as_caller("w1");
     let before = s.snapshot(&d).unwrap();
-    assert!(before.changed_since(&before).unwrap().is_empty());
+    assert!(before.parts_changed_since(&before).unwrap().is_empty());
     let set = call(
         &s,
         "word_set_text",
@@ -531,19 +578,9 @@ fn a_version_names_the_parts_it_changed_since_another() {
     );
     assert_eq!(set["ok"], json!(true), "{set}");
     let after = s.snapshot(&d).unwrap();
-    let changed = after.changed_since(&before).unwrap();
-    let names: Vec<&str> = changed.iter().map(|(name, _)| name.as_str()).collect();
-    assert_eq!(names, ["word/document.xml"]);
-    let body = changed[0].1.as_deref().map(String::from_utf8_lossy).unwrap_or_default();
-    assert!(body.contains("two words"), "{body}");
-    // the other way round: the earlier version's bytes
-    let back = before.changed_since(&after).unwrap();
-    assert!(back[0]
-        .1
-        .as_deref()
-        .map(String::from_utf8_lossy)
-        .unwrap_or_default()
-        .contains("one word"));
+    assert_eq!(after.parts_changed_since(&before).unwrap(), ["word/document.xml"]);
+    // the other way round: the same part
+    assert_eq!(before.parts_changed_since(&after).unwrap(), ["word/document.xml"]);
 }
 
 #[test]

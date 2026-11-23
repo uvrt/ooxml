@@ -5,6 +5,7 @@
 mod common;
 
 mod block_pages;
+mod check_bench;
 mod editing;
 mod from_template;
 mod host_reads;
@@ -13,6 +14,7 @@ mod locale;
 mod pages;
 mod panics;
 mod registry;
+mod row_deletions;
 mod rows_written;
 mod session;
 mod values;

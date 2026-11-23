@@ -12,8 +12,7 @@ its saved bytes are the session's.  :class:`RustOwner` is the format's
 - undo and redo are the session's own ``undo`` tool; the save is the session's bytes;
 - a changing call's checks read the session's validation (:func:`owned_validation`).
 
-There is no Python view: the protocol's view methods (``follow``, ``bridge``, ``reader``'s
-document) refuse as ``internal``, so a path that still reads one is found at once.
+No Python document of it is made: the tool layer holds none (:mod:`ooxml_edit.tools.owned`).
 """
 
 from __future__ import annotations
@@ -25,7 +24,6 @@ from collections.abc import Mapping
 from typing import Any
 
 from ooxml_edit.errors import ArgumentError
-from ooxml_edit.tools import ToolError
 
 from .. import finalizers
 from . import reads
@@ -93,10 +91,6 @@ def documents(**given: Any) -> Any:
     return ooxml_core.CallDocuments(**given)
 
 
-def _no_view(what: str) -> ToolError:
-    return ToolError("internal", f"{what}: a Word document has no Python view; the Rust session holds it")
-
-
 class RustOwner:
     """The Rust session as the owner of docx-agent's documents in a toolbox session; its
     handle per document is the :class:`~.reads.Mirror` the reads use.  ``settings``: the
@@ -145,10 +139,6 @@ class RustOwner:
         state's, ``(0, 0)`` for bytes opened alone): the tool layer's numbers go on from them."""
         return mirror.numbers_opened
 
-    def open(self, document: Any) -> Any:
-        """(A Python document is never held: documents are opened from their bytes.)"""
-        raise _no_view("a Python document handed to the owner")
-
     def head(self, mirror: "reads.Mirror") -> Any:
         return mirror.session.head(mirror.doc)
 
@@ -158,13 +148,6 @@ class RustOwner:
     def touched(self, mirror: "reads.Mirror", before: Any, after: Any) -> list[dict[str, Any]]:
         return json.loads(after.touched_since(before))
 
-    def follow(self, mirror: "reads.Mirror", document: Any, head: Any, number: int, last: int) -> None:
-        raise _no_view("the view followed")
-
-    def bridge(self, mirror: "reads.Mirror", tool: str, caller: Mapping[str, Any] | None,
-               parts: dict[str, bytes | None]) -> Any:
-        raise _no_view(f"{tool} changed the view")
-
     def history(self, mirror: "reads.Mirror", name: str, steps: int, redo: bool,
                 caller: Mapping[str, Any] | None) -> dict[str, Any]:
         """The session's ``undo`` tool on the document, named ``name`` in its reply."""
@@ -172,15 +155,6 @@ class RustOwner:
         reply, _images, _app = mirror.session.call("undo", json.dumps(arguments), options(
             context=context_of(caller), documents=documents(names={name: mirror.doc})))
         return json.loads(reply)
-
-    def reader(self, mirror: "reads.Mirror", head: Any, number: int) -> Any:
-        """What would make a Python reader of ``head``: none is made (the reads are the
-        session's); one asked for refuses."""
-
-        def make(data: bytes) -> Any:
-            raise _no_view(f"a reader of version {number}")
-
-        return make
 
     def keep(self, mirror: "reads.Mirror", head: Any, first: int | None = None) -> None:
         with mirror.lock:
@@ -206,20 +180,18 @@ class RustOwner:
 
     def open_group(self, mirror: "reads.Mirror") -> "_Group":
         with mirror.lock:
-            return _Group(mirror.session.open_group(mirror.doc), mirror.tracking)
+            return _Group(mirror.session.open_group(mirror.doc))
 
-    def group_mark(self, mirror: "reads.Mirror", group: "_Group") -> tuple[Any, Any]:
+    def group_mark(self, mirror: "reads.Mirror", group: "_Group") -> Any:
         with mirror.lock:
-            return group.steps.mark(), mirror.tracking
+            return group.steps.mark()
 
-    def revert_group(self, mirror: "reads.Mirror", group: "_Group", mark: tuple[Any, Any] | None,
+    def revert_group(self, mirror: "reads.Mirror", group: "_Group", mark: Any,
                      caller: Mapping[str, Any] | None) -> Any:
-        """What the group committed after ``mark`` taken back (the session's tracking mode
-        too, as it was then): the new head, or ``None``."""
+        """What the group committed after ``mark`` taken back (the session restores its
+        tracking mode as it was then): the new head, or ``None``."""
         with mirror.lock:
-            made = group.steps.revert(mark[0] if mark is not None else None, context=context_of(caller))
-            mirror.tracking = mark[1] if mark is not None else group.tracking
-            return made
+            return group.steps.revert(mark, context=context_of(caller))
 
     def close_group(self, mirror: "reads.Mirror", group: "_Group", caller: Mapping[str, Any] | None,
                     tool: str | None = None) -> Any:
@@ -241,14 +213,12 @@ class RustOwner:
 
 
 class _Group:
-    """A document's open step group: the session's (``ooxml_core.StepGroup``) and the
-    tracking mode the session edited under when it opened."""
+    """A document's open step group: the session's (``ooxml_core.StepGroup``)."""
 
-    __slots__ = ("steps", "tracking")
+    __slots__ = ("steps",)
 
-    def __init__(self, steps: Any, tracking: Any) -> None:
+    def __init__(self, steps: Any) -> None:
         self.steps = steps
-        self.tracking = tracking
 
 
 def group_reflow(entry: Any, head: int) -> Any:

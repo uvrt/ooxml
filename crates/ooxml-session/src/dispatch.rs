@@ -9,7 +9,7 @@
 use crate::batch::{MAX_READ_BATCH_CHARS, READ_BATCH};
 use crate::call::Call;
 use crate::context::{revision_date, CallCancel, LayoutCancel};
-use crate::document::{At, Document};
+use crate::document::{At, Document, Word};
 use crate::session::Opened;
 use crate::undo::UNDO;
 use crate::{CallContext, DocId, DocKind, DocNames, Session, SessionError};
@@ -288,10 +288,11 @@ impl Session {
             return ToolResult::failed(ToolError::internal("no document", "session:dispatch"));
         };
         let document = self.document(&doc.id).ok();
+        let word = document.as_deref().and_then(Document::word);
         let call = Call {
             doc,
             name: &state.named,
-            word: document.as_deref().and_then(Document::word),
+            word,
             caller: &context.caller,
             cancel,
             date: context
@@ -314,6 +315,7 @@ impl Session {
             sources: &context.sources,
             counts: context.counts,
             limits: context.limits,
+            tracking: word.and_then(Word::tracking),
         };
         let result = tool.run(arguments, &call);
         // An id a version removed, refused as one the document lacks: said as such.

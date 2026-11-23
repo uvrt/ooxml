@@ -1,7 +1,7 @@
 """Made-up "Shelf" tables, shared by docx-agent's ``test_rows_r58`` and the reads oracle's facts
 cases (``word_facts_cases.py``), which run without pytest.
 
-Each is a one-part document written as docx-agent's ``tools/e3_probe.py`` writes its probes
+Each is a one-part document written as ``crates/ooxml-oracle/word/probes/e3_probe.py`` writes its probes
 (``_package``: its styles, settings and section, byte for byte), here so that the oracle needs
 nothing of docx-agent's tools (the gates' reference is frozen: reference_packages.py).
 """

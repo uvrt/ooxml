@@ -20,7 +20,7 @@ use ooxml_word_pages::LaidVersion;
 use serde_json::{json, Map, Value};
 use std::cell::OnceCell;
 use std::collections::HashMap;
-use std::sync::{Arc, PoisonError};
+use std::sync::Arc;
 
 /// One line drawn, as a block's placements read it.
 #[derive(Debug, Clone, Copy)]
@@ -128,7 +128,7 @@ impl<'v> Laid<'v> {
             let pages = self.version.facts().pages.len();
             for page in 0..pages {
                 let read = {
-                    let mut engine = self.layout.engine().lock().unwrap_or_else(PoisonError::into_inner);
+                    let mut engine = ooxml_word_pages::lock_engine(self.layout.engine());
                     engine.page_read(&self.version, page)
                 };
                 let Some(read) = read else {

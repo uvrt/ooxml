@@ -8,7 +8,7 @@
 use crate::summary::{Reflow, Summary};
 use crate::{LaidVersion, PageEngine};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 
 /// A version's summary as a comparison holds it.
 #[derive(Clone)]
@@ -34,7 +34,7 @@ impl std::fmt::Debug for Summarised {
 }
 
 fn lock(engine: &Mutex<PageEngine>) -> std::sync::MutexGuard<'_, PageEngine> {
-    engine.lock().unwrap_or_else(PoisonError::into_inner)
+    crate::lock_engine(engine)
 }
 
 impl Summarised {

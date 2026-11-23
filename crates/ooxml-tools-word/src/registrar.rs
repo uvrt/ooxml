@@ -1,8 +1,8 @@
 //! Owns: how a Word tool registers itself where it is defined -- the [`Registrar`] port a
 //! registry implements (`ooxml-session`'s `Registry`), the handler shapes it takes
-//! ([`ReadFn`], [`EditFn`], [`TrackingFn`]), and what a host needs to know to hand a call
-//! to the session ([`Hosting`]) -- and [`register`], every Word tool in the order a model
-//! is shown them.
+//! ([`ReadFn`], [`EditFn`], [`TrackingFn`]), and what an editing tool's calls read from
+//! the host ([`Hosting`]) -- and [`register`], every Word tool in the order a model is shown
+//! them.
 //!
 //! To add a tool: a `register` function in its handler's module (one `Registrar` call: its
 //! arguments' struct, its handler, its [`Hosting`]), called from its group's `register` (or,
@@ -26,16 +26,12 @@ pub type EditFn<T> = fn(&T, &Editing<'_>) -> ToolResult<Value>;
 /// and the mode the session keeps from now on (`None`: unchanged).
 pub type TrackingFn<T> = fn(&T, &Editing<'_>) -> (ToolResult<Value>, Option<Tracked>);
 
-/// What a host (docx-agent) needs to know of a tool to hand its calls to the session that
-/// owns the document: exported with the registry (`ooxml_core.tool_hosting`). An editing
-/// tool declares it with its handler; a reading tool the host hands over (`render`, whose
-/// pages come from the host's page engine) with [`Registrar::hosted_read`], the others
-/// being the host's ([`Hosting::HOST`]).
+/// What an editing tool's calls read from the host (docx-agent) beside their arguments:
+/// exported with the registry (`ooxml_core.tool_hosting`). Every tool is the session's to
+/// answer; an editing tool declares this with its handler, a reading tool reads nothing of
+/// the host's ([`Hosting::PLAIN`]).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[allow(clippy::struct_excessive_bools)] // independent facts, each exported by name
 pub struct Hosting {
-    /// The host asks the session first for the tool's edits.
-    pub served: bool,
     /// Its edits read the session's blobs (an inserted picture's bytes).
     pub blobs: bool,
     /// Its calls read the document's pages: the host hands the session its page engine.
@@ -45,18 +41,11 @@ pub struct Hosting {
 }
 
 impl Hosting {
-    /// The host answers the tool's calls itself.
-    pub const HOST: Self = Self {
-        served: false,
+    /// Its calls read nothing of the host's beside their arguments.
+    pub const PLAIN: Self = Self {
         blobs: false,
         layout: false,
         keeps_written: false,
-    };
-
-    /// The host asks the session first.
-    pub const SERVED: Self = Self {
-        served: true,
-        ..Self::HOST
     };
 
     /// Its edits read the session's blobs.
@@ -84,7 +73,6 @@ impl Hosting {
     #[must_use]
     pub fn export(self) -> Value {
         let mut out = Map::new();
-        out.insert("served".into(), Value::Bool(self.served));
         out.insert("blobs".into(), Value::Bool(self.blobs));
         out.insert("layout".into(), Value::Bool(self.layout));
         out.insert("keeps_written".into(), Value::Bool(self.keeps_written));
@@ -94,12 +82,8 @@ impl Hosting {
 
 /// Where Word's tools register: a registry of the tools a session dispatches.
 pub trait Registrar {
-    /// The reading tool `T`, answered by `run`; its calls are the host's to hand over
-    /// ([`Hosting::HOST`]).
+    /// The reading tool `T`, answered by `run`.
     fn read<T: ToolArgs + 'static>(&mut self, run: ReadFn<T>);
-
-    /// The reading tool `T`, answered by `run`, hosted as `hosting` says.
-    fn hosted_read<T: ToolArgs + 'static>(&mut self, run: ReadFn<T>, hosting: Hosting);
 
     /// The editing tool `T`, answered by `run`, hosted as `hosting` says.
     fn edit<T: ToolArgs + 'static>(&mut self, run: EditFn<T>, hosting: Hosting);

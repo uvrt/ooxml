@@ -19,12 +19,12 @@ use crate::{DocKind, SessionError};
 use ooxml_base::Context;
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Committed, Snapshot, Store, StoreConfig, StoreStats};
-use ooxml_tools_word::{MadeBy, RowsWritten, Tracked};
+use ooxml_tools_word::{MadeBy, RowsWritten};
 use ooxml_word_edit::validate::Delta;
-use ooxml_word_edit::{EarlierIds, Editor, RevisionPolicy, Tracking, WordDoc};
+use ooxml_word_edit::{EarlierIds, Editor, WordDoc};
 use ooxml_word_model::docx::Versions;
 use ooxml_word_model::ids::LoadedState;
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 /// The context's cache budget, as the edit core's caches reserve from it.
 pub(crate) struct Budget(pub(crate) Arc<dyn ooxml_base::CacheBudget>);
@@ -49,7 +49,9 @@ pub(crate) struct Word {
     pub(crate) editor: Editor,
     /// The version it was opened as.
     pub(crate) opened: Snapshot<WordDoc>,
-    /// Who its edits are tracked as (`None`: untracked), as `word_set_tracking` left it.
+    /// Who its edits are tracked as (`None`: untracked), as `word_set_tracking` left it: the
+    /// session's alone (no host keeps a copy). An edit reads it for its whole call, so a
+    /// change of it never falls between an edit's prepare and its commit.
     tracking: RwLock<Option<String>>,
     /// The ids its versions removed, and who removed each.
     pub(crate) retired: Retired,
@@ -74,23 +76,26 @@ pub(crate) struct Word {
 }
 
 impl Word {
-    /// The author edits are tracked as, if any.
+    /// The author edits are tracked as now, if any.
     pub(crate) fn tracking(&self) -> Option<String> {
-        self.tracking.read().unwrap_or_else(PoisonError::into_inner).clone()
+        self.tracking_read().clone()
     }
 
-    /// Keep the mode `word_set_tracking` left.
-    pub(crate) fn set_tracking(&self, mode: Tracked) {
-        let author = match mode {
-            Tracked::On(author) => Some(author),
-            Tracked::Off => None,
-        };
-        *self.tracking.write().unwrap_or_else(PoisonError::into_inner) = author;
+    /// The tracking mode, held for an edit's whole call: `word_set_tracking` and a step
+    /// group's revert wait until the edits holding it have committed. (A panic while it is
+    /// held leaves the plain value whole: the poison is ignored.)
+    pub(crate) fn tracking_read(&self) -> RwLockReadGuard<'_, Option<String>> {
+        self.tracking.read().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The tracking mode, held alone (`word_set_tracking`'s whole call).
+    pub(crate) fn tracking_write(&self) -> RwLockWriteGuard<'_, Option<String>> {
+        self.tracking.write().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// The tracking author a step group's revert goes back to (`None`: untracked).
     pub(crate) fn restore_tracking(&self, author: Option<String>) {
-        *self.tracking.write().unwrap_or_else(PoisonError::into_inner) = author;
+        *self.tracking_write() = author;
     }
 
     /// `version`'s problems against those the document opened with: what the save gate
@@ -98,18 +103,6 @@ impl Word {
     pub(crate) fn validation(&self, version: &Snapshot<WordDoc>) -> Result<Delta, SessionError> {
         let now = ooxml_word_edit::validate::problems(version.doc())?;
         Ok(Delta::of(self.editor.baseline(), &now))
-    }
-
-    /// The revision policy an edit made now is written under: tracked as the mode's
-    /// author, dated `date` (ISO 8601, the session's clock), or untracked.
-    pub(crate) fn policy(&self, date: &str) -> RevisionPolicy {
-        match self.tracking() {
-            Some(author) => RevisionPolicy::Tracked(Tracking {
-                author,
-                date: date.to_owned(),
-            }),
-            None => RevisionPolicy::Untracked,
-        }
     }
 }
 
@@ -302,7 +295,7 @@ impl Document {
         }
     }
 
-    /// Commit the bridge's update as `caller`, made by `tool`: the version it leaves,
+    /// Commit a test's update of parts as `caller`, made by `tool`: the version it leaves,
     /// whether it changed anything, and how many times it was prepared. A Word document's
     /// retired ids note what it removed.
     pub(crate) fn update(

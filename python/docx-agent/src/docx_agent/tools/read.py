@@ -35,16 +35,13 @@ def describe(call: Any, doc: str) -> Result:
 
 def _described(call: Any, envelope: dict[str, Any]) -> Result:
     """``describe``'s answer: the session's data (its ``pages`` too: the count, or the
-    layout's refusal as ``<code>: <message>``) with what the host holds (``name``,
-    ``tracking``, ``problems``) in their places, and ``memory``."""
+    layout's refusal as ``<code>: <message>``; its ``tracking``, the session's mode) with
+    what the host holds (``name``, ``problems``) in their places, and ``memory``."""
     entry = call.entry
     data: dict[str, Any] = {"name": entry.name}
     for key, value in envelope["data"].items():
         if key == "name":
             continue
-        if key == "tracking":
-            value = ({"author": entry.tracking["author"]} if entry.tracking and entry.tracking.get("on")
-                     else None)
         data[key] = value
         if key == "controls":
             data["problems"] = [str(p) for p in entry.baseline_problems][:20]

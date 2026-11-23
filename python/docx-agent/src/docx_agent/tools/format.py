@@ -152,10 +152,21 @@ def scale_values(call: Any, scale: Any, scope: Any) -> list[Any]:
     return hooks.scale_values(call, call.subject, scale, scope)
 
 
+#: The tools out of docx-agent since 0.2.0 until the Rust session has them, each with what
+#: to call instead (a call of one is refused with this way out, not as an unknown tool).
+WITHDRAWN = {
+    "edit_smartart": "SmartArt is kept as it is; word_drawings inserts a text box or a shape "
+                     "(insert_text_box, insert_shape) to draw the diagram's content instead.",
+    "style_by_value": "check with scale lists the values with the wrong step or none; style each "
+                      "with word_format_table (shading, for a cell) or word_format (color).",
+    "word_find_asset": "give the picture as an image blob: word_drawings with action insert_picture "
+                       "and image.",
+}
+
 FORMAT = DocumentFormat(
     kind=KIND, open=_opened_by_the_session, detect=detect, problems=hooks.problems, problem_key=problem_key,
     validation=session_validation, warnings=(TemplateOpened,), prompt=PROMPT, summary=summary, checks=checks,
     strict_first=STRICT_FIRST, source_hint=source_hint, own_source=own_source, read_provenance=hooks.provenance,
     own_facts=dict(OWN_REFUSED), tool_hints=TOOL_HINTS, touched=touched, number_texts=number_texts,
     scale_values=scale_values, state=hooks.id_state, open_with_state=_opened_by_the_session, owner=OWNER,
-    serve=serve_owned)
+    serve=serve_owned, withdrawn=dict(WITHDRAWN))

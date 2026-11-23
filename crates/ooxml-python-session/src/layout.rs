@@ -24,7 +24,7 @@ use ooxml_word_pages::{DiskFonts, EngineBudgets, FontSetup, LaidVersion, PageEng
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyTuple};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 
 pyo3::create_exception!(
     ooxml_core,
@@ -116,7 +116,7 @@ pub struct PyWordPages {
 }
 
 fn lock(engine: &Mutex<PageEngine>) -> std::sync::MutexGuard<'_, PageEngine> {
-    engine.lock().unwrap_or_else(PoisonError::into_inner)
+    ooxml_word_pages::lock_engine(engine)
 }
 
 type Laid = Result<Result<Arc<LaidVersion>, ooxml_word_pages::Fallback>, ooxml_word_pages::PagesError>;

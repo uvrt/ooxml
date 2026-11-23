@@ -26,12 +26,16 @@ keys (its coverage: tools/gates_store.py); ``cache-merge`` adds both to the stor
 without it: a kept result whose comparison finds a difference is computed again in full.
 
 A ``diff`` writes the harness's log, its cases with differences (JSON lines) and a summary
-(JSON) into ``--out``.  It fails when a case differs and no entry of the known differences
+(JSON, with the known differences each case matched: ``used``) into ``--out``.  It fails when a case differs and no entry of the known differences
 (crates/ooxml-oracle/known-differences.toml, each with its cause) covers it, and on any case
 where the Rust side panicked (``panics``: the oracle's catch or the session's ``internal``
 reply), and on any case the Rust tools refused as not supported yet in a form the allow-list
 (``[[not_supported]]`` in known-differences.toml: the deferred forms and those a port lane
 has not landed yet) does not name; the forms are reported (``not_supported_forms``).
+The ``summary`` lists the entries of known-differences.toml no case of the run matched (an
+entry for a mode the run ran, in a gate its ``gate`` admits; a ``[[not_supported]]`` form no
+refusal matched): stale entries, for the nightly full run to show (a sampled run's list is
+only a hint; the summary says when it is one).
 
 Modes ``auto`` (the dispatch's default): the edit modes, and whether the reads' checks run,
 picked from the files the branch changes against origin/main (``git diff origin/main...``):
@@ -228,6 +232,49 @@ def covering(entries: list[dict], gate: str, mode: str, relative: str, case, sou
     return None
 
 
+def entry_key(entry: dict) -> str:
+    """A known difference named by what it matches (its mode, gate, file, input and document
+    condition), the same in every shard of a run: what a shard's ``used`` counts by."""
+    return json.dumps({k: entry[k] for k in ("mode", "gate", "file", "input", "document") if k in entry},
+                      sort_keys=True)
+
+
+def unused_entries(summaries: list[dict], entries: list[dict] | None = None,
+                   allowed: list[dict] | None = None) -> tuple[list[dict], list[dict]]:
+    """The known differences no case of a run's shards (``summaries``) matched, among those
+    the run could have used -- an entry whose mode a shard ran, in a gate its ``gate``
+    admits -- and the ``[[not_supported]]`` forms no refusal of the run matched (where it ran
+    any shard)."""
+    entries = known_entries() if entries is None else entries
+    allowed = allowed_forms() if allowed is None else allowed
+    ran = {(s["gate"], s["mode"]) for s in summaries}
+    used = {key for s in summaries for key in s.get("used", {})}
+    unused = [entry for entry in entries
+              if any(mode == entry["mode"] and entry.get("gate", gate) == gate for gate, mode in ran)
+              and entry_key(entry) not in used]
+    refused = {form for s in summaries for form in s.get("not_supported_forms", {})}
+    idle = [entry for entry in allowed
+            if summaries and not any(fnmatch.fnmatchcase(form, entry["form"]) for form in refused)]
+    return unused, idle
+
+
+def unused_report(summaries: list[dict]) -> list[str]:
+    """The summary's section on the entries no case matched (Markdown lines)."""
+    unused, idle = unused_entries(summaries)
+    if not unused and not idle:
+        return []
+    sampled = any(not s.get("whole", False) or (s.get("every") or 1) > 1 or s.get("per_tool") for s in summaries)
+    out = ["### Known differences no case matched", "",
+           "Sampled run (fixtures picked, every or per_tool): a hint only; the nightly full run is the record."
+           if sampled else "A full run: each entry below is stale (remove it, or say why it stays).", ""]
+    for entry in unused:
+        where = ", ".join(f"{k} {json.dumps(entry[k])}" for k in ("gate", "file", "input", "document") if k in entry)
+        out.append(f"- difference, {entry['mode']}: {where} -- {entry['cause'].splitlines()[0][:120]}")
+    out += [f"- not supported: `{entry['form']}` -- {entry['cause'].splitlines()[0][:120]}" for entry in idle]
+    out.append("")
+    return out
+
+
 def harness_command(args, out: Path, results: Path, files: list[Path]) -> tuple[list[str], dict[str, str]]:
     """The harness run for ``diff``'s mode, and the variables it adds to the environment.
 
@@ -294,10 +341,14 @@ def run_diff(args) -> int:
     totals = lines.pop()["totals"] if lines and "totals" in lines[-1] else {}
     entries = known_entries()
     unknown, known = [], []
+    used: dict[str, int] = {}
     for case in lines:
         source = (case.get("input") or {}).get("source") or case["file"]
         relative = os.path.relpath(source, tree)
         entry = covering(entries, args.gate, args.mode, relative, case, source)
+        if entry:
+            key = entry_key(entry)
+            used[key] = used.get(key, 0) + 1
         (known if entry else unknown).append({"file": relative, "case": case["case"],
                                               "cause": entry and entry["cause"],
                                               **({"errors": case["errors"]} if case.get("errors") else {})})
@@ -311,12 +362,12 @@ def run_diff(args) -> int:
                "cases": totals.get("cases", 0), "differences": len(unknown), "known": len(known),
                "not_supported": sum(forms.values()), "panics": totals.get("panics", 0),
                "not_supported_forms": forms, "unlisted_forms": unlisted, "wall": round(wall, 1),
-               "crashed": bool(crashed),
+               "crashed": bool(crashed), "whole": only is None, "used": used,
                **({"kept": totals["kept"], "computed": totals["computed"]} if "kept" in totals else {}),
                "unknown": unknown[:50]}
     (out / "summary.json").write_text(json.dumps(summary, indent=1))
     print(json.dumps({k: v for k, v in summary.items()
-                      if k not in ("unknown", "not_supported_forms", "unlisted_forms")}))
+                      if k not in ("unknown", "not_supported_forms", "unlisted_forms", "used")}))
     for form, count in list(forms.items())[:20]:
         print(f"not supported: {count} {form}")
     for form, count in unlisted.items():
@@ -574,8 +625,8 @@ def run_durations(args) -> int:
 def run_summary(args) -> int:
     """Per gate: each mode's shards added up, as Markdown tables."""
     rows: dict[tuple[str, str], dict] = {}
-    for path in sorted(Path(args.dir).rglob("summary.json")):
-        s = json.loads(path.read_text())
+    summaries = [json.loads(path.read_text()) for path in sorted(Path(args.dir).rglob("summary.json"))]
+    for s in summaries:
         row = rows.setdefault((s["gate"], s["mode"]), {"shards": 0, "documents": 0, "cases": 0, "differences": 0,
                                                        "known": 0, "not_supported": 0, "panics": 0, "wall": 0.0,
                                                        "crashed": 0, "unknown": [], "forms": {}})
@@ -617,6 +668,7 @@ def run_summary(args) -> int:
                 errors = f": {json.dumps(case['errors'])[:300]}" if case.get("errors") else ""
                 out.append(f"- {mode}: `{case['file']}` [{case['case']}]{errors}")
         out.append("")
+    out += unused_report(summaries)
     print("\n".join(out))
     return 0
 

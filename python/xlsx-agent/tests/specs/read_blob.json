@@ -1,0 +1,22 @@
+{
+ "description": "Read a text input blob (CSV, Markdown, plain text, JSON) a page at a time. Open documents with open_document; place images with a picture tool.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "blob": {
+    "description": "Blob handle, e.g. b2.",
+    "type": "string"
+   },
+   "cursor": {
+    "description": "next_cursor of the previous page.",
+    "type": "string"
+   }
+  },
+  "required": [
+   "blob"
+  ],
+  "type": "object"
+ },
+ "name": "read_blob",
+ "strict": false
+}

@@ -1,0 +1,42 @@
+{
+ "description": "Change a SmartArt diagram's node text, or add and remove nodes. Returns the nodes.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "action": {
+    "description": "What to do.",
+    "enum": [
+     "set_text",
+     "add_node",
+     "remove_node",
+     "add_child"
+    ],
+    "type": "string"
+   },
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "node": {
+    "description": "Node number from 0 (add_child: the parent).",
+    "type": "integer"
+   },
+   "target": {
+    "description": "Address as a read tool printed it, or $ref.",
+    "type": "string"
+   },
+   "text": {
+    "description": "The node's text.",
+    "type": "string"
+   }
+  },
+  "required": [
+   "doc",
+   "target",
+   "action"
+  ],
+  "type": "object"
+ },
+ "name": "edit_smartart",
+ "strict": true
+}

@@ -66,6 +66,13 @@ PYTHONS = ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
 #: and, within it, its bindings (BINDINGS).  ``uses`` names them as it names siblings.
 MODULE = "ooxml-core"
 BINDINGS = "ooxml-core bindings"
+#: The oracle's own Python tests (crates/ooxml-oracle/pytest.ini: the harness's, python/tests,
+#: and the recorded-Word tier, word/tests): run in docx-agent's environment (its tool host) by
+#: docx-agent's suite (its ``also_tests``), so they run whenever docx-agent's tests do, and a
+#: change to them or to what they read (ORACLE_TEST_PREFIXES) selects docx-agent's legs.
+ORACLE_TESTS = "ooxml-oracle tests"
+ORACLE_TEST_PREFIXES = ("crates/ooxml-oracle/python/", "crates/ooxml-oracle/word/", "crates/ooxml-oracle/pytest.ini",
+                        "crates/ooxml-oracle/reference.toml")
 
 #: Each package: the monorepo packages its test run uses (itself included; a package's
 #: tests run when any of them changes), its siblings to install (pip requirement paths,
@@ -73,7 +80,8 @@ BINDINGS = "ooxml-core bindings"
 #: runs.  ``uses`` is the transitive closure of what is installed, so it is the dependency
 #: graph the path filter follows.  ``pr_uses``, where given, replaces it on a pull request: the
 #: package's own dependencies without the siblings only its tests install (a push to main
-#: still runs the suite against every one of them).
+#: still runs the suite against every one of them).  ``"windows": False``: no Windows leg on
+#: any event (_select).
 PACKAGES: dict[str, dict] = {
     "ooxml-common": {
         # ooxml-edit is test only (tests/test_dates.py, test_numfmt.py read it); the font
@@ -138,7 +146,9 @@ PACKAGES: dict[str, dict] = {
     },
     "docx-agent": {
         # ooxml-core (the Rust core, built here by maturin) serves its checks of ranges.
-        "uses": ["ooxml-common", "ooxml-edit", "docx2svg", "ooxml-core", "docx-agent"],
+        "uses": ["ooxml-common", "ooxml-edit", "docx2svg", "ooxml-core", "docx-agent", ORACLE_TESTS],
+        # The oracle's tests (ORACLE_TESTS), run after the suite on its first shard, GIL legs only.
+        "also_tests": "crates/ooxml-oracle",
         "siblings": ["ooxml-common", "ooxml-edit", "docx2svg[png]", "ooxml-core"],
         "extras": "dev,png",
         "min_python": "3.10",
@@ -148,6 +158,10 @@ PACKAGES: dict[str, dict] = {
         # The suite takes about 18 minutes on one Linux runner: split into this many jobs
         # on Linux (SHARDS below).
         "shards": 4,
+        # No Windows leg, nightly either: production runs Linux only, and docx-agent has no
+        # code of its own for Windows (its nightly Windows failures were in its tests'
+        # deadlines and locks, R4 #8).
+        "windows": False,
         "compile": ["src", "tests", "tools"],
         "mypy": False,
         "fonts": True,
@@ -256,6 +270,8 @@ def _units(path: str) -> set[str]:
         units.add(MODULE)
         if path.startswith(BINDING_PREFIXES + RUST_WORKSPACE):
             units.add(BINDINGS)
+    if path.startswith(ORACLE_TEST_PREFIXES):
+        units.add(ORACLE_TESTS)
     parts = path.split("/")
     if len(parts) > 2 and parts[0] == "python" and parts[1] in PACKAGES and not _is_notes(path):
         units.add(parts[1])
@@ -390,8 +406,10 @@ FULL_LEGS: dict[str, str | None] = {"linux": "all", "windows": "newest", "macos"
 RUNNERS = {"linux": "ubuntu-latest", "windows": "windows-latest", "macos": "macos-latest"}
 
 
-def _select(name: str, versions: list[str], which: str | None) -> list[str]:
-    if which is None:
+def _select(name: str, versions: list[str], which: str | None, os_: str = "linux") -> list[str]:
+    """The Pythons ``name`` runs on ``os_`` for ``which`` (LEGS); none on an OS the
+    package opts out of (PACKAGES' ``"windows": False``)."""
+    if which is None or PACKAGES[name].get(os_, True) is False:
         return []
     if which == "all":
         return versions
@@ -427,7 +445,7 @@ def plan(event: str, changed: list[str] | None) -> dict[str, str]:
     for name in names:
         versions = _pythons(name)
         for os_, runner in RUNNERS.items():
-            for v in _select(name, versions, legs[os_]):
+            for v in _select(name, versions, legs[os_], os_):
                 leg: dict[str, str | bool | int] = {"package": name, "os": runner, "python": v}
                 if os_ == "linux" and v == versions[-1]:
                     # The coverage leg (PACKAGES' "coverage"): Linux, the newest Python,
@@ -548,7 +566,17 @@ def test(name: str, event: str, free_threading: bool, coverage: bool = False,
                                "--sort=cover"], cwd=cwd).returncode
     if not code and spec.get("fixture_check") and not free_threading and first:
         code = fixture_check(cwd)
+    if not code and spec.get("also_tests") and not free_threading and first:
+        code = also_test(ROOT / spec["also_tests"], spec["pytest"])
     return code
+
+
+def also_test(folder: Path, pytest_args: list[str]) -> int:
+    """The suite of ``folder`` (its own pytest.ini), in this environment: a package's
+    ``also_tests``."""
+    cmd = [sys.executable, "-m", "pytest", "-q", *(a for a in pytest_args if not a.startswith("--durations"))]
+    print(f"+ (in {folder.relative_to(ROOT)})", " ".join(cmd), flush=True)
+    return subprocess.run(cmd, cwd=folder).returncode
 
 
 #: Each sharded package's recorded time per test file, in seconds summed over its tests,

@@ -4,7 +4,8 @@
 //! again, take it as it is), and what a story's window reads keep (its blocks grouped in a
 //! view, and the list counters at places along it: `markdown::read::window`), and its
 //! sections (`super::sections::sections`, which a field's page and a table of contents
-//! read for every field) -- with the
+//! read for every field), and each part's relationships (a hyperlink, a diagram and a
+//! section's header read them by id) -- with the
 //! version before's, which a window read takes what is still true of from.
 //!
 //! Must not: be shared between versions (a new version's reading starts empty but for the
@@ -22,6 +23,9 @@ pub type MarkdownKey = (Option<String>, ViewName, Stories);
 /// A story's window readings' key: its part and the view.
 pub type WindowKey = (String, ViewName);
 
+/// A part's relationships as read, or why they could not be.
+type RelationshipsRead = Result<Arc<crate::parts::PartRelationships>, ooxml_opc::OpcError>;
+
 /// Markdown reads kept per version, at most.
 const READS_KEPT: usize = 16;
 
@@ -30,6 +34,8 @@ const READS_KEPT: usize = 16;
 pub struct Derived {
     reading: OnceLock<Arc<Shared>>,
     sections: OnceLock<Vec<super::sections::Section>>,
+    /// Each part's relationships, read once ([`crate::parts::PartRelationships`]).
+    relationships: Mutex<HashMap<String, RelationshipsRead>>,
     markdown: Mutex<HashMap<MarkdownKey, Arc<String>>>,
     windows: Mutex<HashMap<WindowKey, Arc<Kept>>>,
     /// The version before's window readings.
@@ -62,6 +68,27 @@ impl Derived {
             earlier,
             ..Derived::default()
         }
+    }
+
+    /// The relationships of the part `source` of `docx`'s package, read once.
+    ///
+    /// # Errors
+    /// Its relationships part is not XML.
+    pub(crate) fn relationships(&self, docx: &super::Docx, source: &str) -> RelationshipsRead {
+        if let Some(found) = self
+            .relationships
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(source)
+        {
+            return found.clone();
+        }
+        let read = crate::parts::PartRelationships::read(&docx.package, source).map(Arc::new);
+        self.relationships
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(source.to_owned(), read.clone());
+        read
     }
 
     /// The version's sections (`docx`'s), read once.

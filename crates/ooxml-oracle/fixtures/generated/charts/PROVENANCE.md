@@ -31,7 +31,7 @@ and `c:showDLblsOverMax`; the embedded workbooks renamed `Microsoft_Excel-werkbl
 (its interface's word) and **kept byte for byte**; `w:noProof` on each drawing's run and
 rsids; a text box's and a group's VML fallback -- the group's with a PNG of the chart
 (`word/media/image1.png`), which Word does not redraw when the chart changes (measured,
-`tools/charts_probe.py`, `places`); and no paraIds (Word 16.106 writes none for a document
+`crates/ooxml-oracle/word/probes/charts_probe.py`, `places`); and no paraIds (Word 16.106 writes none for a document
 that has none).
 
 `charts.docx` (mode 15) holds six inline charts, each with its workbook (categories down

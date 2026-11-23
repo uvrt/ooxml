@@ -1,7 +1,7 @@
 //! Owns: the tool [`Registry`]: each tool's [`ToolSpec`] made once when it is registered,
 //! the document kinds each serves, lookup by name, and the export per kind for the Python
-//! adapters -- the specs (`tool_specs`) and how a host hands each tool's calls to the
-//! session (`tool_hosting`, [`Hosting`]).
+//! adapters -- the specs (`tool_specs`) and what each tool's calls read from the host
+//! (`tool_hosting`, [`Hosting`]).
 //!
 //! The tools register themselves where they are defined: the registry is a
 //! [`ooxml_tools_word::Registrar`], and [`Registry::standard`] hands it to
@@ -130,7 +130,7 @@ impl Registry {
         out
     }
 
-    /// How a host hands each tool serving `kind` its calls ([`Tool::hosting`]), by name,
+    /// What each tool serving `kind` reads from the host ([`Tool::hosting`]), by name,
     /// sorted: what `tool_hosting(kind)` gives the Python adapters.
     #[must_use]
     pub fn hosting(&self, kind: DocKind) -> Map<String, Value> {
@@ -152,10 +152,6 @@ impl Registry {
 impl Registrar for Registry {
     fn read<T: ToolArgs + 'static>(&mut self, run: ReadFn<T>) {
         self.register(Arc::new(ReadHandler::<T>::new(&[DocKind::Docx], run)));
-    }
-
-    fn hosted_read<T: ToolArgs + 'static>(&mut self, run: ReadFn<T>, hosting: Hosting) {
-        self.register(Arc::new(ReadHandler::<T>::new(&[DocKind::Docx], run).hosted(hosting)));
     }
 
     fn edit<T: ToolArgs + 'static>(&mut self, run: EditFn<T>, hosting: Hosting) {

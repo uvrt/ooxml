@@ -9,6 +9,7 @@ mod control_delete;
 mod copy_writers;
 mod history;
 mod interleave;
+mod kept_reads;
 mod object_bench;
 mod object_writers;
 mod review_reads;

@@ -442,3 +442,45 @@ fn text_is_found_within_the_paragraphs_an_address_holds() {
         "{nowhere}"
     );
 }
+
+/// A row inside a row content control is one of its table's rows, as Word counts it
+/// (Table.Rows.Count is 2 for this table, Word 16.106; lane ph1-quirks): `/r1` names it.
+#[test]
+fn a_row_inside_a_row_content_control_is_counted_as_word_counts_it() {
+    let cell = |id: &str, text: &str| {
+        format!(r#"<w:tc><w:p w14:paraId="{id}"><w:r><w:t xml:space="preserve">{text}</w:t></w:r></w:p></w:tc>"#)
+    };
+    let body = format!(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="4500"/></w:tblGrid><w:tr w14:paraId="7B000001">{}</w:tr><w:sdt><w:sdtPr><w:id w:val="313"/><w:richText/></w:sdtPr><w:sdtContent><w:tr w14:paraId="7B000004">{}</w:tr></w:sdtContent></w:sdt></w:tbl><w:p w14:paraId="7B000009"/>"#,
+        cell("7B000002", "Item"),
+        cell("7B000005", "Row in a control")
+    );
+    let (editor, opened) = editor(package(&body, None));
+    let caller = Caller::anonymous();
+    let call = WordComments {
+        doc: "d1".into(),
+        action: CommentAction::Add,
+        items: Some(vec![new_item(Some("t:7B000001/r1"), None, "On a row", None)]),
+        author: Some("Reviewer".into()),
+        open_only: None,
+        cursor: None,
+    };
+    let added = json(&word_comments(
+        &call,
+        &editing(&CallEditor::new(&editor), &opened, &caller),
+    ));
+    assert!(added["error"].is_null(), "{added}");
+    let head = editor.store().snapshot();
+    let document = String::from_utf8(
+        head.doc()
+            .package()
+            .read("word/document.xml")
+            .unwrap()
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    let start = document.find("<w:commentRangeStart").unwrap();
+    let row = document.find(r#"w14:paraId="7B000004""#).unwrap();
+    assert!(start > row, "the comment is on the row in the control: {document}");
+}

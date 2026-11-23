@@ -1,7 +1,7 @@
 """Write ``src/document/new_document/word_new.rs``: the parts of a new blank document that
 do not depend on the call, as docx-agent's ``edit/blank.py`` writes them from the values
 Word 16.106 made a new blank document of (``edit/word_new.py``, measured by
-``tools/e6_probe.py``; ROADMAP.md, "Decisions", 4), and the fixed pieces of the parts that do.
+``crates/ooxml-oracle/word/probes/e6_probe.py``; ROADMAP.md, "Decisions", 4), and the fixed pieces of the parts that do.
 
 Run from the repository root with docx-agent importable:
 ``python crates/ooxml-tools-word/data/word_new.py`` (``--check``: exit 1 when the file is not

@@ -124,11 +124,11 @@ def test_the_last_group_served(toolbox, report, other, calls):
 def test_tracking_set_by_a_served_call_is_the_documents(toolbox, report):
     session = toolbox.session()
     doc = session.open(report, "report.docx")
-    entry = session.entry(doc)
     on = toolbox.dispatch(session, "word_set_tracking", {"doc": doc, "on": True, "author": "Reviewer B"})
     assert on.ok, on.error
-    assert entry.tracking == {"on": True, "author": "Reviewer B"}
-    assert entry.handle.tracking == entry.tracking
+    # the mode is the session's alone: describe says it
+    described = toolbox.dispatch(session, "describe", {"doc": doc})
+    assert described.data["tracking"] == {"author": "Reviewer B"}, described.data
     target = _ids(toolbox, session, doc)["River stone number 3."]
     written = toolbox.dispatch(session, "word_set_text", {"doc": doc, "target": target, "text": "River pebble."})
     assert written.ok, written.error
@@ -136,4 +136,4 @@ def test_tracking_set_by_a_served_call_is_the_documents(toolbox, report):
     assert "Reviewer B" in json.dumps(listed.data)
     off = toolbox.dispatch(session, "word_set_tracking", {"doc": doc, "on": False})
     assert off.ok, off.error
-    assert entry.tracking is None and entry.handle.tracking is None
+    assert toolbox.dispatch(session, "describe", {"doc": doc}).data["tracking"] is None

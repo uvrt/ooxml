@@ -1,0 +1,93 @@
+{
+ "description": "Write cells, typed: each item an address and exactly one of text (always literal, =x too), number, bool, date (YYYY-MM-DD, YYYY-MM-DD hh:mm[:ss] or hh:mm; a General cell gets Excel's format, a number format needs format), formula (=D10*2), blank or markdown. One step; any refusal changes nothing. Afterwards every formula value reads cache invalidated: Excel recalculates on open. describe's writable is all you may write.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "cells": {
+    "description": "At most 5,000.",
+    "items": {
+     "additionalProperties": false,
+     "properties": {
+      "address": {
+       "description": "A cell with its sheet (Stock!D10), or a value by row key (t:stock/P-7/Quantity).",
+       "type": "string"
+      },
+      "blank": {
+       "description": "true: remove the value, keep the format.",
+       "type": "boolean"
+      },
+      "bool": {
+       "type": "boolean"
+      },
+      "date": {
+       "type": "string"
+      },
+      "expect": {
+       "description": "The cell's type now, else refused.",
+       "enum": [
+        "empty",
+        "blank",
+        "text",
+        "number",
+        "bool",
+        "error",
+        "formula"
+       ],
+       "type": "string"
+      },
+      "expect_value": {
+       "description": "Its value now as read (dates YYYY-MM-DD), else refused.",
+       "type": "string"
+      },
+      "format": {
+       "description": "A date format to give the cell: yyyy-mm-dd.",
+       "type": "string"
+      },
+      "formula": {
+       "type": "string"
+      },
+      "markdown": {
+       "description": "**bold**, *italic*, ~~strike~~, lines, - and 1. lists.",
+       "type": "string"
+      },
+      "number": {
+       "type": "number"
+      },
+      "row": {
+       "description": "New key (t:...): the free capacity row it starts in.",
+       "type": "integer"
+      },
+      "text": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "address"
+     ],
+     "type": "object"
+    },
+    "minItems": 1,
+    "type": "array"
+   },
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "replace_formulas": {
+    "description": "Write over cells holding a formula. Default false.",
+    "type": "boolean"
+   },
+   "revision": {
+    "description": "The doc's version you read; refused if it changed.",
+    "type": "integer"
+   }
+  },
+  "required": [
+   "doc",
+   "cells"
+  ],
+  "type": "object"
+ },
+ "name": "xlsx_set_cells",
+ "strict": true
+}

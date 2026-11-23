@@ -3,7 +3,7 @@
 ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python module
 `ooxml_core`. Its version is the `crates/python` crate's.
 
-## 0.10.0 -- unreleased
+## 0.10.0 -- v2026.11.23
 
 - **A call names documents as its host does (lane P2c17).** `Session.call` and
   `Session.edit` take `names` (`{the host's name: the session's id}`; `CallContext.names`,
@@ -168,6 +168,416 @@ ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python mod
   document's readings are kept for its latest versions: a read of a version read before
   reads nothing again, a block or span is read alone, and a new version reads only the story
   parts that changed; formatting is resolved once per style and property set.
+
+### Added
+
+`check` in Rust (lane CL1): a body paragraph holding a drawing the layout does not model (a
+VML shape it cannot read, an embedded object) is laid out as a placeholder of its estimated
+lines, as docx2svg does with `CARRY_ON`, and the layout carries on after it: `reflow`'s
+coverage is `partial`, lists the placeholder (page, reason, `at`, message) and leaves its
+block out of `blocks_laid_out`, `layout_warnings` say `layout-placeholder:drawing`, and
+`layout`'s `uncertain` names the page. Before, the whole document fell back to the host
+(`check: the layout falls back`). The page is not painted in Rust (docx2svg's marked box is
+not what Word draws): its SVG says so. `pages` holding none of a range's blocks read no
+page's facts and say so in a warning, as docx-agent does (before: `check: pages outside the
+ranges`, answered by the host). `LaidPages` gives `placeholders()` and `blocks_laid_out`.
+
+**New ids drawn where the change lands (lane D1, part a).** Writers that each make new
+paragraphs or rows from one version (`word_insert_markdown`, new paragraphs, rows,
+sections, notes) no longer conflict over the ids they draw: an edit's new ids are
+stand-ins drawn again where its commit lands (`Change::Draw`, `ooxml_word_edit::Drawn`),
+so each gets the ids the commit order gives, byte for byte as docx-agent in that order.
+The store keeps keys created under stand-ins apart and resolves them at commit
+(`DocModel::created`, `resolve`, `begin`); replies name the ids as drawn
+(`ooxml_tools_word::resolve_drawn`). A stand-in written where no draw reaches is pinned
+(its sequence read: a conflict, as before).
+
+Lane E1b: the Rust `word_edit_table` runs `sync` (a table kept in step with a source's rows by
+key, the host handing the rows over as for `set_cells` `from`); `PlaceRows` adds rows beside any
+row, deletes rows and keeps or drops the table's record in the same step.
+
+Lane E1: `CallDocuments(sources=...)`: the rows of the sources a call names, as the host
+resolved them (JSON text: ooxml-edit's `Rows` per value as the call gives it). The Rust
+`word_edit_table` writes `set_cells` from them: the block placed from `index`, rows grown
+after the last with `grow`, the table's record of the source kept, the refusals of a block
+that does not fit as docx-agent words them.
+
+Lane E1c: `KeepingRecord` runs an `EditTable` or `SetCells` keeping the table's record of its source
+true in the same step; `tracked_row_fates` says how a tracked deletion would treat each row.
+
+Lane E1d: `word_edit_table` keeps values written by reference (`Hosting::keeps_written`); a
+source the host refused may name the argument it refused (`field`, with its `code`), for a cell's
+one value.
+
+Lane E2: `keep_together` is the Rust session's in `word_format` and `word_format_table`. A span,
+table or section `word_format` keeps on one page that the version before the change is drawn
+taller than a page in -- where the document's last check laid that very version out -- is said
+so ("cannot be kept on one page"); nothing is laid out for it. `word_format_table` takes the
+document's page engine (its hosting declares the layout) and lays the version it made out for
+the "taller than a page" warning; where no layout is handed, or laying out stops or is not
+done, the keep is made and the warning says its pages are not known, as docx-agent says it.
+`Session.block_pages(doc, blocks, options)`: the pages the head version draws each body block on,
+numbered from 1 as the session's other page reads number them, laid out by the options' page
+engine within the call's limit on laying out (`("pages", numbers, None)`, `("outside", ...)`,
+`("unknown", None, why)`, or no blocks and why nothing was laid out). Inside a step group
+`word_format_table` leaves a table kept together unmeasured, for the host to ask after its batch.
+
+Lane G8: `ooxml_core.tool_hosting(kind)`: how a host hands each tool its calls, as JSON
+(`{name: {"served", "blobs", "layout", "keeps_written"}}`), each Rust tool's
+`ooxml_tools_word::Hosting`. The tools register themselves where they are defined
+(`ooxml_tools_word::Registrar`, `register`); `Registry::standard` no longer lists them, and
+`Call` and the handlers are in modules of their own (`call.rs`, `handlers.rs`). The
+definitions (`tool_specs`) are unchanged, byte for byte.
+
+Lane H1: step groups. `Session.open_group(doc)` gives a `StepGroup`. The commits made until
+`StepGroup.close(context=...)` are one undo step of the context's caller. `mark()` and
+`revert(mark)` take back what was committed after a mark (by default since the group
+opened), as a new version that no redo brings back, with the tracking mode as it was then.
+Plain redo is held while the group is open and given back when it commits nothing. Undo
+and redo are refused while a group is open. This is built on `ooxml_store::Store`'s
+`open_group`, `group_mark`, `revert_group` and `close_group`.
+
+Lane H3: `ooxml_core.CallContext(max_result_chars=, max_list_items=)`, the host's limits on a
+call's reply (24,000 characters and 50 items unless given; 0 is refused), carried in the
+session's `CallContext` as `ooxml_tools::Limits`: reading tools are handed them with
+`Version::with_limits`, editing tools with `Editing::with_limits`. `find_text`, `word_read`,
+`word_design_facts`, `word_changes` (list, preview), `word_comments` (list) and `read_batch`
+page by them where they paged by the defaults. `ooxml_tools_word::Version` is made with
+`Version::new` and `with_*` setters (`non_exhaustive`).
+
+Lane H7a: `Version.problems()` gives the version's validation problems as `(code, part, detail)`.
+`Version.summary()` gives what `open_document` says of a Word document (JSON). Both read the
+version in Rust. `Version.id_state(number, last, gone=, drawings_gone=, earlier=, said=)` gives
+the version's id state from the ids the session holds, with the host's numbers. Its record is
+docx-agent's `Document.id_state` record; the deflate bytes may differ, and either side opens the
+other's state.
+
+The session keeps each Word document's page engine itself (lane H7b). `ooxml_core.PageSetup(fonts,
+*, locale, decimal, glyph_size, numbers, budget)` is what it lays documents out with (a
+`WordFonts`, the engines' options as `WordPages` takes them, a `MemoryBudget`);
+`Session(pages=...)` sets it for every document, `Session.set_pages(doc, pages)` for one (other
+font folders or another locale), and `Session.pages(doc)` gives the document's engine as a
+`WordPages`, made on first use. A call whose host gives no layout is laid out by that engine where
+the session has one (the reflow after an edit is still measured only with the host's layout), and
+`word_inspect`'s `layout: true` places the blocks from the session's own layout of the version
+where the host gives no placer: each block's pages, tops, bottoms, lines, story and column, as
+docx-agent read them from a Rust layout.
+
+Lane H7c: `Session.open_state(data, state, *, name)` opens a Word document's bytes with the id state saved beside them. The ids are read against the parts as they are parsed, once. No retired id is given again, and the ids the state retired are the session's record (`retired`). It returns the document's id and the state's `version` and `last`. `Version.file_kind()` gives the package's Word kind (`docx`, `docm`, `dotx`, `dotm`). Two new exceptions: `StateRefused`, raised for a state that is not these bytes' (docx-agent's words, with the way out), and `NotWordPackage`, raised for a package without a Word main part. Both are `ValueError`s.
+
+Lane H7d: `Version.block_kind(id)` says what kind of block an id names in a Word version:
+`"paragraph"`, `"table"` or `"content control"` (a block-level one). A renamed id is followed.
+It gives `None` when the id names none of the blocks. `Version.has_drawing(id)` says whether the
+version has the drawing `d:N`.
+
+`Version.number_texts(doc, request, pages=None)` and `Version.scale_values(doc, request,
+pages=None)` (lane H7e): what a check of numbers and a scale read in a Word version -- the
+body's and the cells' texts with their spans written by reference, a scale's targets' values
+with the step each is styled as now -- within a check's range and on its pages, placed by a
+`WordPages` engine where one is given (JSON in, JSON out; a refusal as `{"error": ...}`).
+
+Lane L1: `set_properties` is a Rust tool (`tool_specs("docx")` lists it, its definition
+docx-agent's byte for byte; `tool_hosting` serves it).
+
+Lane LC1: `ooxml_core.new_document(page=(size, landscape), language=, separators=(decimal,
+list), properties=(title, author, created))` makes a new blank document's package in Rust,
+entry for entry and byte for byte the package docx-agent's `edit/blank.py` writes (Word
+16.106's new blank document: its styles, settings, font table and theme, generated from
+docx-agent's measured values by `crates/ooxml-tools-word/data/word_new.py`).
+
+Lane LC1: `save_document` is a Rust tool (`tool_specs("docx")` lists it, its definition
+docx-agent's byte for byte). It writes the version as a .docx or .dotx (a .docm or .dotm kept
+when the document is one and the name says so) -- refused when it holds macros the kind cannot
+carry, the main part retyped, `app.xml`'s statistics refreshed when the main part changed
+since the document was opened -- cleaned when asked (orphaned parts, rsids, web divisions, an
+external template link), or as Markdown. `Session.call` returns the files a call gives the
+application in its second slot (bytes), each one's `name` and `format` in the application's
+JSON (`files`); `CallContext(writing=CallWriting(layout_counts=(pages, lines)))` hands a call the
+host's layout statistics.
+
+- **The Word live view on the session (lane LV2).** `Session.view(doc, since=None, *, layout,
+  context=None)` gives the head version's pages (each `(number, blocks, width, height)`: the
+  ids of the body's top-level blocks it draws, in document order, its size in points), the
+  pages whose drawing changed since an earlier view's token (every page without one; those
+  the earlier version did not have too), and a token, `<session nonce>-<doc>-<state
+  number>` (the nonce hashed with the session's own random keys: two sessions made at the
+  same moment tell their tokens apart); `stale` with a `note` where `since` names no version
+  kept (another session's, older than the last four, or one whose layout the memory budget
+  had no room for). `Session.page_svg(doc, page, token, *, layout, text="text",
+  context=None)` draws one page of the version a token names as SVG, its paragraph groups
+  tagged with that version's ids (`data-docx-agent-id`, a header's, footer's or note's
+  paragraph's from its part), even after the document moved on: a version the engine no
+  longer paints is laid out again on a spare engine once, that layout kept with it for its
+  other pages, never becoming the engine's last.
+  Both lay out with `layout`'s page engine (`CallLayout(pages=)`) within the context's
+  limit on laying out, with the interpreter lock released; a version the engine does not
+  lay out yet, and `text="outlines"`, raise `ooxml_core.ViewRefused` (as `render` refuses);
+  an unknown token `ooxml_core.UnknownToken`. In Rust: `ooxml_session::Session::view` and
+  `page_svg` (`live_view`, the kept versions counted in the session's memory budget by
+  their layouts' weight: a layout that does not fit lets the least recently used go, and
+  where it still does not fit is not kept, its pages laid out on demand), `ooxml_tools_word::laid_to_draw` (render's laying out within the
+  call's limit, shared), `ooxml_word_pages::LaidVersion::top_blocks`.
+
+- **A refusal of a removed id in docx-agent's words (lane P2e1).** A call refused `not_found`
+  that names an id a version removed says which change removed it, from the document's
+  retired-id record (a block one block replaced: "replaced with <id>", "or use <id>");
+  `Session.number_version(doc, version, number)` takes the host's number
+  of a version.
+- **A call's date from the host (lane P2e1).** `CallContext(writing=CallWriting(date=...))`: the moment the call's
+  writes are dated by, UTC to the second; without one, the session's clock, now to the second
+  too (was: to the minute).
+- **A call's typography from the host (lane P2e7).** `CallWriting(typography=False)`: the text
+  the call writes is written as given, none of the spacing its language wants (docx-agent's
+  `docx_format(typography=False)`); by default it is spaced, and the reply says how many spaces
+  it wrote as no-break spaces. A served `insert_markdown` names a `table_cell` style whose
+  indents do not fit its cells (round 21, T4).
+- **`ooxml_core.CallWriting` (lane P2e8).** How a call writes, its date, typography and the host's
+  layout statistics a save writes (`layout_counts`), grouped in one `CallContext` setting
+  beside main's reply limits.
+- **Other documents' tables in a refusal (lane P2e8).** `CallDocuments(tables=callable)`: the
+  tables of the open documents the host holds itself (`[(name, doc, kind)]`, a workbook's
+  `t:stock`), asked only where `word_edit_table` refuses a table not in its document, which
+  it then names as one of them with the `sync` call that keeps a table in step with its rows.
+
+**The pages a check of the layout alone laid out are kept (lane P5r).** The session keeps,
+beside what its last check with `reflow` saw (`since_last_check`, as before), what its last
+check that laid the document out saw, with `reflow` or not (`LastCheck::laid`; a check of
+`layout` or of ranges sets only that one). `Session.last_laid(doc)` reads it: `(version,
+summary)` or `None`.
+
+Lane P5m: `Session.edit` measures the reflow a changing call's checks report, after the call's
+edits, where the options' page engine laid out the version its first edit was applied to (or the
+document's last check saw it): docx-agent's `reflow_json` form, `"stale: call check"` past 20
+pages, or a `timeout: …` where laying the new version out passed the call's `layout_timeout`. It
+is the fifth item of what the call made (JSON text, `None` where none was measured).
+Lane P5o: the measure never waits for the page engine and is never dropped for it: where another
+call holds the engine, the version before and the version after are laid out on a spare engine of
+its kind (`WordPages`' seed: the same fonts, options and budgets, nothing laid out) and compared
+there; what the engine laid out last is read from that seed without its lock.
+
+**A call's locale (lane P5q).** `CallWriting(locale=...)` (a `CallContext`'s `writing`) and `Session(locale=...)` take
+ooxml-common's `Locale` (or a BCP 47 tag, read as `Locale(language=tag)`): a table of
+contents' `\t` styles are split on its list separator and found in its language, in
+docx-agent's order -- the call's locale, then the session's where the host set one, then
+the document's own language (`w:themeFontLang`, then the default run language).
+`Session()` without a locale is en-US as before and sets none for its calls. One locale type
+across the crates: `ooxml_numfmt::Locale`, from which a context's tag
+(`ooxml_base::Locale`) is derived.
+
+The Rust page engine lays out and paints a text box holding an inline drawing that is not
+a picture (a chart, a shape, SmartArt), as docx2svg does: the drawing is painted inside the
+text box's drawing, after the box's pictures and before its text, and what its painter says
+is said with the box's warnings. Such a document fell back to the Python layout before
+(`support::TEXT_BOX`). A text box holding a drawing with text of its own, or a floating
+drawing text wraps around, still falls back.
+
+Lane RD1: `ooxml_core.CallLayout(pages, *, raster=None, image_budgets=None, placer=None)` is
+what a call reads of the document's layout. It goes to `CallOptions(layout=...)` in place of
+the `placer=` and `layout=` keywords. `render` is a Rust tool (`tool_specs("docx")` lists it,
+and its definition is docx-agent's byte for byte). It draws pages and sheets of pages from
+the host's `WordPages`, with a document raster made from `raster` (the system's fonts and the
+font folders) for the faces the pages draw. Images are kept per document within the session's
+memory budget. `image_budgets` are the host's session and round budgets of
+images as they stand (`[("session", limit, used), ("round", limit, used)]`); `render` refuses
+images past them, worded as docx-agent words it. `tool_hosting("docx")` says `render` is
+served with the host's page engine: a reading tool now declares its hosting too.
+
+Lane U1: the store numbers a document's states as the tool layer numbers them
+(`ooxml_store::Version::number`): the state opened 0, a step one more than the highest number
+given, a plain undo or redo the number of the state it brings back; given in publish order in the
+store's commit section. `Store::numbered(n)` finds the head-most kept state with a number. The
+session's `Opened::number` reads it.
+A step group is one step and one number (lane U2): its commits carry one more than the highest
+number given when it opened, given for good only when it closes having made a step; a revert of
+all its commits brings back the number it opened on.
+Lane U3: `Version.state` (the state number; `number` stays the session's count of versions);
+`Session.numbered(doc, n)`, `Session.highest(doc)`, `Session.numbers(doc)` (the highest number,
+the steps undo can reach and redo can bring back, each `(before, after, seq, caller)`) and
+`Session.continue_numbers(doc, state, highest)` for a document opened again. `Session.edit`'s
+made tuple ends with the state number the call's step went from. A changing call's
+`result.version` and `Session.undo`/`redo`'s version are state numbers (`Store::listed`,
+`Store::highest`, `Store::continue_numbers`; `StepInfo::number`/`from_number`).
+
+Lane U4: `undo` is a tool of the session's own (beside `read_batch`): the session's undo or redo
+of a document's latest steps, or with a named caller that caller's own, in today's words -- the
+later step and who made it when a caller's latest change is not the latest (`entangled`), and a
+caller's own redo refused as `entangled` while another caller's undo is the next to redo. The
+session keeps who made each step (tool and caller, by state number) as a call, a bridged step or
+a step group's close is numbered; `CallContext(context=...)` gives the caller's context in the
+order the host gave it (the replies name it so), `StepGroup.close(tool=...)` the batch's tool.
+A caller's own undo or redo checks and moves the history in one step of the store's
+(`Store::undo_newest`, `Store::redo_next`), so no commit lands between them.
+Lane U5: "nothing (of yours) to undo/redo" is refused with its way out (tool rule 2), a deliberate
+change from docx-agent's reply: `valid_options` lists the document's steps, newest first, each with
+who made it (`version`, `tool`, `context`; `yours`, `undone`), then the oldest state kept
+(`{"version": n, "oldest": true}`), at most 10 on each side of the head (`details.left_out` counts
+the rest); `try_call` is the undo or redo the other way where that one would work. The way-out-less
+`ToolError::nothing_to_offer` is gone.
+
+### Changed
+
+Lane CUT1: a form a Word tool does not support yet is one refusal, said one way
+(`ooxml_tools::ToolError::not_supported`): code `refused`, "<form> is not supported yet", the
+form's stable id in `details.not_supported` and a way out (a call of a supported form). The
+reply's application-only `unported` reasons are gone (`Done::unported`,
+`ToolResult::unported`, `Session.call`/`edit`'s `app["unported"]`): no call is handed back to
+the host any more. `ToolResult::not_supported_form` names a refusal's form.
+
+- **`ooxml_core.CallOptions` (lane P2d3).** `Session.call(name, arguments, options)` and
+  `Session.edit(name, arguments, options)` take what one call runs with as one
+  `CallOptions(context=, limit=, documents=, placer=, layout=, blobs=, written=)` in place of
+  their growing keyword arguments (the `too_many_arguments` allowances gone); `edit`
+  refuses options with a `limit`. What a call needs about the other open documents it names
+  is one `CallDocuments(at=, names=)` (the versions it reads, the host's names for them; lane
+  P2c17's `names=` keyword moved here). docx-agent's callers moved to it.
+
+Lane P5e: a served `check`'s `reflow` keeps the version it saw, not its page summary. A
+first check paints no page for a summary (it has nothing to compare with); the next check
+compares the two versions page by page in the document's page engine
+(`PageEngine::compare`): a page both versions lay out the same, in the same page context,
+is the same page and is not painted, every other page is digested in both, and each page's
+digests are kept across versions (bounded per document, dropped with the engine's
+generation). A page's context is its own (its number, its section's and the document's
+page counts, its section's properties, its header's `STYLEREF` texts, its line numbers):
+one page more no longer makes every page digested again. A version a later check may still
+compare with is digested whole before a change of styles, numbering, settings, theme or
+fonts makes it unpaintable. `Session.last_check()`'s `LayoutSummary` is that version,
+summarised when Python reads its pages or compares it. Answers are unchanged.
+
+Lanes TB and RD2: a call's reply limits are one `ooxml_core.Limits(result_chars=, list_items=,
+images_per_call=, image_edge=)` (the session's `Limits`; 24,000 characters, 50 items, 4 images
+of at most 2,576 pixels unless given, 0 refused; `render` draws within the last two), passed as
+`CallContext(limits=...)` in place of `CallContext(max_result_chars=, max_list_items=)`.
+
+**A panic is the session's own reply (lane Z1).** `ooxml_session::Session::call` and
+`Session::edit` (and each of a batch's ops, and `undo` and `read_batch`) catch a panic in a
+tool themselves, so every host gets it the same way -- the oracles' binaries as well as this
+module: an `internal` failure, "the call failed inside the library; nothing changed" (or that
+what it changed before it failed stays, as its step), the same call as its `try_call` (retry,
+else report), and `details.trace` = `panic:<tool>:<n>: <what it said>`. The panic's message
+is the application part's `panic` (`Session.call`'s and `Session.edit`'s app JSON; `null` for
+every other call), and the calls that panicked are counted by tool: `SessionStats::panics`,
+`Session.panics()` and `Session.stats()`'s `panics`. The module no longer catches panics
+itself.
+
+### Fixed
+
+Lane CUT1: `check` of a document given a deck's arguments answers as docx-agent did instead of
+refusing them as not supported yet: `slides` read as the document's pages (warned "slides read as
+pages: a document has pages", or ignored beside `pages`; a slide id refused naming `pages`), and
+`boxes`, `spacing`, `contrast` and a deck's facts in `include` refused as `invalid_arguments`
+naming what a document takes.
+
+Lane D3: setting a long text to a wholly different one no longer spins for minutes. The text
+diff behind set_text, tracked replacements and paragraph pairing finds each longest match with
+a suffix automaton (the same opcodes as Python's `difflib`, autojunk off), and a diff that
+would examine more than four million elements keeps only the common start and end, with one
+change between.
+
+Lane LT1: `LaidPages.page` gives each drawing its text boxes' `lines` (rows as the page's
+`lines`, in page coordinates; none with `lines=False`), from the page's paint
+(`PageView.text_box_lines` in ooxml-word-pages).
+
+A document owner logs each pass before readers see the snapshot it made: a reader woken by a
+new snapshot, or one reading the latest at once, finds that pass in the owner's statistics
+(`stats`). Before, the pass was logged after the snapshot was published, and a reader could
+read the log one pass behind (the flaky test `owner::commits_in_version_order_and_coalesced`).
+
+- `Session.bridge(..., ids=HostIds(drawn={seed: index}, aliases={old: new}))`: what the bridged tool's id
+  ledger holds beside the parts. An id it drew and did not write is not drawn again (the session's
+  next edit draws the id docx-agent's own next draw gives), and a block it stamped is found by its
+  old id in the session's reads and edits (lane P2e6).
+
+Lane P2e3: where the Rust core reads a character as Python does, it reads Python's own
+predicate (`ooxml_base::pystr`, tables generated from CPython 3.12 by
+`tools/pystr_tables.py`): automatic hyphenation's letters (`str.isalpha`, not Unicode's
+Alphabetic: combining vowel signs and letter numbers are no letters) and the digits beside a
+word (`str.isdigit`); a number format's `[ColorN]` (`isdigit`: a vulgar fraction is no
+colour number); the bookmark-name check (`re`'s `\w` and `\d`); and which paragraphs' records
+the Rust export makes (a paragraph with a non-ASCII digit stays Python's, one with another
+numeric character no longer does).
+
+Lane P4f8/P4f9: `copy_from` reads what its destination's paragraphs use (`Key::StyleUse`: each
+paragraph's style, list and whether it is blank) for the body style `unmapped: body` maps to
+and the list `lists: continue` joins. A concurrent `set_text` that gave a blank paragraph text,
+or a list edit that took the items before the place out of their list, wrote block keys only,
+so a copy prepared before it could commit a body style or list a serial run would not give; it
+is now prepared again.
+The style uses are a derived key (`DocModel::derived`, new in the store): a copy that read them
+is prepared again (or a step that read them keeps an earlier one from undoing), but two edits that
+both alter them (two insertions from one version, two paragraphs given text) commit without a
+conflict and undo past each other.
+
+Lane P5l: an edit that lays the document out (a field update, a page cross-reference, a table's
+keep_together pages, word_template's reflow) keeps the call's `layout_timeout`: past it, the call is a `timeout` that
+changes nothing ("laying the document out did not finish within N s"), as docx-agent says it.
+
+A page engine given each version as its package (`PageEngine::lay_out`, a session's
+path) now finds the parts that version changed from the one given before, by identity,
+else by bytes (`ooxml_opc::Package::changed_parts`). Before, it kept the list from the last version given
+as bytes or touched parts: after a session's edit of a part beside the document part (a
+diagram's, a chart's, the relationships), the pages the edit did not reach were said again
+with the warnings of the version before, and a version laid out whole for its styles did
+not name the styles part as its cause.
+
+`check`'s `reflow.coverage.approximations` from a Rust layout now lists each entry as
+docx-agent does: a glyph a face lacks with its text as the `reason` and an empty `message`
+(docx2svg's `coverage_of` records it so), any other by the part of its code after the colon
+(the whole code where it has none). Before, a glyph's entry said `reason: "glyph"` and put its
+text in `message`.
+
+`check`'s keep trials measure the blank at a page's foot as docx-agent does: up to the
+page's footnotes (their separator's line) and below the lines its body's text boxes draw,
+which the layout's facts leave out. The Rust check said a page with footnotes was blank
+down to its text area's bottom.
+
+A `PAGE`, `NUMPAGES` or `SECTIONPAGES` field (and a `PAGEREF` to a bookmark) in a paragraph of
+a body text box gets its result from the page the box draws that paragraph on, as docx-agent
+and Word do; the Rust update left it empty and warned that the layout cannot say, the body's
+lines not drawing the box's paragraphs.
+
+Lane PG1: a version laid out before a style edit (its styles, numbering, settings or theme)
+is painted and measured in its own styles, by the page engine itself: its pages' SVG, lines,
+headers, footers, notes and text boxes were drawn with the edit's styles (a pinned render
+of an older version, a reflow measured from the version before a style edit). A comparison
+across a style edit reports its change without the version before being digested first,
+and a trial from a version before one is not laid out (nothing of it read in the current
+version).
+
+Lane RD3: `render` refuses in docx-agent's order. A sheet of named pages too tall even at the
+narrowest tile, at the shortest page the sections declare (`w:pgSz`), is refused as `limit`
+before whether the document has those pages (`not_found`), and before anything is laid out;
+so are the image limits, and a `range` that does not resolve. The version is laid out only
+when a call needs its pages.
+
+Lane U2: a call is one commit, so one undo step and one state number. `word_drawings
+insert_picture` (its own paragraph, the alignment, the picture, the float) and the calls that keep
+values written by reference (`word_set_text`, `word_insert_text`, `word_replace_text`,
+`word_insert_markdown`) now run their commands in one transaction. Before this they committed
+several times, and a part that refused late left the earlier parts in the document. Debug builds
+check that a call commits at most once.
+`word_edit_table`'s rows written (`set_cells`, `insert_row`, `copy_row`): the text written into
+an empty cell given its column's formatting now runs in the transaction of the call's command, so
+the call is one commit, one undo step and one state number; the rows are kept in the session's
+record only once the call is committed, by the ids it drew.
+
+### Removed
+
+P4e (lane CUT-B, part 2): the bridge's bindings are gone with the Python view they served --
+`Session.update`, `commit`, `bridge`, `bridge_calls`, `seed_retired`, `rows_written`,
+`note_rows_written` and `HostIds`. A host changes a Word document through the session's tools
+(`Session.edit`). New: `Session.new_from_template` (a new document's bytes from a template's),
+`StepGroup.reflow` (a step group's reflow, measured once before it closes; its ops measure none
+of their own) and numeric chart categories.
+
+Lane CUT2: the module is the Rust session's API alone. The prototype's functions and classes
+are gone with the crates behind them (`crates/core`, `crates/word`): `Snap`, `Owner`,
+`SnapshotE`, `Parser`, `open_document`, `commit`, `call`, `close_document`, `check`,
+`field_pages`, `documents`, `spin`, `spin_held`, `noop`, `opcodes`, the tree and body digests
+(`tree_digests`, `unit_starts`, `index_walk`, `index_walks`, `body_others`, `BodySpans`,
+`body_blocks`, `common_ends`, `common_prefix_of`, `common_suffix_of`, `Starts`, `write_plan`,
+`write_assemble`). `Session.number_version` is gone too: the session numbers each step it
+ends (a call, a step group, an undo or redo, a revert) in its record of retired ids itself.
 
 ## 0.9.0 -- released in v2026.11.17.1
 

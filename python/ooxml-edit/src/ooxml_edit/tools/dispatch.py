@@ -1093,6 +1093,10 @@ class Toolbox:
         #: no tool.
         self.tool_hints: dict[str, str] = {name: target for fmt in self.formats.values()
                                            for name, target in fmt.tool_hints.items()}
+        #: The formats' :attr:`~.session.DocumentFormat.withdrawn` tools no tool here serves,
+        #: each with its way out.
+        self.withdrawn: dict[str, str] = {name: instead for fmt in self.formats.values()
+                                          for name, instead in fmt.withdrawn.items() if name not in self.tools}
         self.limits = limits or Limits()
         #: The validate gate's override: the application's to set, never the model's.
         self.allow_new_problems = allow_new_problems
@@ -1167,6 +1171,8 @@ class Toolbox:
         if not isinstance(name, str) or name in self.tools:
             return name
         bare = name.rsplit(".", 1)[1] if "." in name else name
+        if bare in self.withdrawn:      # refused with its way out (_no_tool), not read as another
+            return bare
         meant = bare if bare in self.tools else \
             tool_alias(bare, self.tools, self.tool_hints) if aliases else None
         if meant is None:
@@ -1186,18 +1192,22 @@ class Toolbox:
 
     def _no_tool(self, name: Any, roles: Sequence[str] | None, *,
                  batch: bool = False, within: str = "batch") -> ToolError:
-        """``invalid_arguments`` for a name that is no tool: the tools, and their actions,
-        it most likely means (:func:`.hints.tool_hints`: ``x_add_chart``, ``edit_chart``
+        """``refused`` for a withdrawn tool (:attr:`withdrawn`: ``details.not_supported`` and
+        its way out); otherwise ``invalid_arguments`` for a name that is no tool: the tools,
+        and their actions, it most likely means (:func:`.hints.tool_hints`: ``x_add_chart``, ``edit_chart``
         with action ``add``), else the names close to it -- of ``roles``' tools (all
         without).  A hint outside the roles is named with the role it needs, never in
         ``valid_options``; inside ``batch`` (or ``within``: ``read_batch``, whose options
         are the reading tools), one it cannot run is to be called alone."""
+        bare = str(name).rsplit(".", 1)[-1]        # a namespace is no part of the likeness
+        if bare in self.withdrawn:
+            return ToolError("refused", f"{bare} is withdrawn until the Rust session has it; {self.withdrawn[bare]}",
+                             field="tool" if batch else None, details={"not_supported": f"{bare} (withdrawn)"})
         roles = tuple(ROLES if roles is None else roles)
         tools = [tool for tool in self.tools.values() if tool.roles & set(roles)
                  and (within != "read_batch" or _reads_some(tool))]
         found = tool_hints(name, self.tools, self.tool_hints)
         usable = [hint for hint in found if self._hint_role(hint, roles) is None]
-        bare = str(name).rsplit(".", 1)[-1]        # a namespace is no part of the likeness
         near = difflib.get_close_matches(bare, [tool.name for tool in tools], 5, 0.5)
         message = f"no tool {name!r}"
         if usable:
@@ -2160,8 +2170,6 @@ class Toolbox:
         reason = self._block_sources_changed(session, context, read)
         if reason is not None:
             return reason
-        if (entry.tracking or None) != (committed.tracking or None):
-            return "tracking was switched"
         return None
 
     @staticmethod

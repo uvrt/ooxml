@@ -44,6 +44,7 @@ use ooxml_word_model::docx::Docx;
 use ooxml_xml::Element;
 use std::cell::OnceCell;
 use std::collections::{BTreeSet, HashMap};
+use std::sync::Arc;
 pub(crate) use tree::block_keys_top;
 
 pub use ranges::{room, BeyondFacts, Break, Extent, RangeLayout};
@@ -84,6 +85,8 @@ pub struct Facts<'a> {
     positions: HashMap<String, usize>,
     reads: &'a dyn PageReads,
     painted: Vec<OnceCell<Option<PageRead>>>,
+    /// The layout model's tables (nested ones too) by path, made when first asked.
+    model_tables: OnceCell<HashMap<&'a str, &'a Arc<ooxml_word_model::model::Table>>>,
     /// What `range` scopes the facts to (`None`: the whole document).
     scope: Option<Scope>,
 }
@@ -110,10 +113,20 @@ impl<'a> Facts<'a> {
         let mut by_block: HashMap<&str, Vec<Drawn<'_>>> = HashMap::new();
         let mut by_table: HashMap<&str, BTreeSet<usize>> = HashMap::new();
         let facts = version.facts();
+        // A paragraph's lines stand together: whether the version names it is asked once.
+        let mut named: Option<(&str, bool)> = None;
         for (index, page) in facts.pages.iter().enumerate() {
             for line in &page.lines {
                 let path: &str = &line.path;
-                if story_kind(path) != "body" || version.id_of(path).is_none() {
+                let is_named = match named {
+                    Some((last, known)) if last == path => known,
+                    _ => {
+                        let known = story_kind(path) == "body" && version.id_of(path).is_some();
+                        named = Some((path, known));
+                        known
+                    }
+                };
+                if !is_named {
                     continue;
                 }
                 let drawn = Drawn { page: index + 1, line };
@@ -140,6 +153,7 @@ impl<'a> Facts<'a> {
             positions,
             reads,
             painted: (0..facts.pages.len()).map(|_| OnceCell::new()).collect(),
+            model_tables: OnceCell::new(),
             scope: None,
         }
     }
@@ -163,6 +177,17 @@ impl<'a> Facts<'a> {
     #[must_use]
     pub fn about(&self, subjects: &[&str]) -> bool {
         self.scope.as_ref().is_none_or(|s| s.about(subjects))
+    }
+
+    /// The layout model's table at `path` (nested ones too), found by an index of the
+    /// version's tables made once.
+    pub(crate) fn model_table(&self, path: &str) -> Option<&'a Arc<ooxml_word_model::model::Table>> {
+        let index = self.model_tables.get_or_init(|| {
+            let mut out = HashMap::new();
+            tables::index_tables(&self.version.layout().document.body, &mut out);
+            out
+        });
+        index.get(path).copied()
     }
 
     /// The version.

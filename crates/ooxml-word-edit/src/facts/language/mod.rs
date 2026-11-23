@@ -7,8 +7,11 @@
 //! or word the fact (the tool layer does).
 
 mod detect;
+mod detections;
 
 pub use detect::{detect, words_of, Detected, LANGUAGES, MIN_WORDS};
+use detections::Detecting;
+pub use detections::Detections;
 
 use super::proofing::{all_text, paragraphs, primary, Placed, Proofing};
 use super::py_space;
@@ -41,6 +44,41 @@ pub struct LanguageScope<'a> {
     pub ranges: bool,
     /// The session's language tag: the tag a fix sets where it is the language found.
     pub locale: Option<&'a str>,
+    /// The texts' languages the document's checks keep (`None`: each text detected).
+    pub detections: Option<&'a Detections>,
+}
+
+impl<'a> LanguageScope<'a> {
+    /// Every paragraph read, each text detected afresh, no session tag; `whole` and `ranges`
+    /// as on the fields.
+    #[must_use]
+    pub fn new(whole: bool, ranges: bool) -> Self {
+        Self {
+            keep: None,
+            whole,
+            ranges,
+            locale: None,
+            detections: None,
+        }
+    }
+
+    /// Only the paragraphs (by id) `keep` holds.
+    #[must_use]
+    pub fn keeping(self, keep: &'a dyn Fn(&str) -> bool) -> Self {
+        Self {
+            keep: Some(keep),
+            ..self
+        }
+    }
+
+    /// The texts' languages the document's checks keep, read instead of detected again.
+    #[must_use]
+    pub fn with_detections(self, detections: &'a Detections) -> Self {
+        Self {
+            detections: Some(detections),
+            ..self
+        }
+    }
 }
 
 /// `check`'s `text_language`.
@@ -221,11 +259,12 @@ fn read(docx: &Docx, proofing: &mut Proofing, scope: LanguageScope<'_>) -> Readi
         short: HashSet::new(),
         unclear: 0,
     };
+    let mut detecting = Detecting::new(scope.detections, scope.whole);
     for placed in paragraphs(docx) {
         if scope.keep.is_some_and(|keep| !keep(&placed.paragraph.id)) {
             continue;
         }
-        match judge(proofing, &placed) {
+        match judge(proofing, &placed, &mut detecting) {
             Ok(found) => out.judged.push(found),
             Err(Unjudged::TooShort) => {
                 out.short.insert(placed.paragraph.id.clone());
@@ -234,6 +273,7 @@ fn read(docx: &Docx, proofing: &mut Proofing, scope: LanguageScope<'_>) -> Readi
             Err(Unjudged::NoText) => {}
         }
     }
+    detecting.finish();
     out
 }
 
@@ -243,7 +283,11 @@ type Tagged = (Option<String>, Option<String>);
 /// A paragraph's tag and detected language (`_judge`), or why it is not judged. Its runs'
 /// text (`w:t`; a text box's paragraphs left to themselves), without the text Word does not
 /// proof or that is code.
-fn judge(proofing: &mut Proofing, placed: &Placed) -> std::result::Result<Judged, Unjudged> {
+fn judge(
+    proofing: &mut Proofing,
+    placed: &Placed,
+    detecting: &mut Detecting<'_>,
+) -> std::result::Result<Judged, Unjudged> {
     let element = &placed.paragraph.element;
     let raw = all_text(element);
     if words_of(&raw).len() < MIN_WORDS {
@@ -294,7 +338,7 @@ fn judge(proofing: &mut Proofing, placed: &Placed) -> std::result::Result<Judged
             take(written, run.find(Some(W), "rPr").map(|r| &**r));
         }
     }
-    let found = detect(&text);
+    let found = detecting.detect(&text);
     let Some(language) = found.language.filter(|_| !chars.is_empty()) else {
         return Err(if found.words < MIN_WORDS {
             Unjudged::TooShort

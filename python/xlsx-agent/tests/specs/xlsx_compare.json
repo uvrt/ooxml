@@ -1,0 +1,57 @@
+{
+ "description": "Compare two open workbooks, a (older) and b (newer): sheets by id, tables by name, rows by key (added, removed), cells by type and value (old and new, by key; number vs text is a type change), columns added, removed, renamed. A key two rows share is reported, never paired. First: changes per column (numbers, dates: up, down, largest); totals; paged.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "a": {
+    "description": "Older document id.",
+    "type": "string"
+   },
+   "b": {
+    "description": "Newer document id.",
+    "type": "string"
+   },
+   "cells": {
+    "description": "Every cell by address instead: formulas by text, even if values match; names, validations, merges, conditional formats; changes outside the write policy.",
+    "type": "boolean"
+   },
+   "columns": {
+    "description": "Compare only these columns' cells.",
+    "items": {
+     "type": "string"
+    },
+    "type": "array"
+   },
+   "cursor": {
+    "description": "next_cursor of the previous page, with the same call.",
+    "type": "string"
+   },
+   "formula_text": {
+    "description": "With cells: formulas' text.",
+    "type": "boolean"
+   },
+   "key": {
+    "description": "Key column. Default the declared or only key column in both.",
+    "type": "string"
+   },
+   "table_b": {
+    "description": "b's name for the one table given, if it differs.",
+    "type": "string"
+   },
+   "tables": {
+    "description": "Tables or regions, same name in both (t:Products). Default every table.",
+    "items": {
+     "type": "string"
+    },
+    "type": "array"
+   }
+  },
+  "required": [
+   "a",
+   "b"
+  ],
+  "type": "object"
+ },
+ "name": "xlsx_compare",
+ "strict": false
+}

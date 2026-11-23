@@ -23,9 +23,8 @@
 //! read another library's internals. Nothing here depends on an interpreter lock: every
 //! value is immutable and `Send + Sync`; a [`Model`] is owned by one task at a time.
 //!
-//! The package is named `ooxml-word-model` while the prototype `crates/word` holds the name
-//! `ooxml-word` (its `word-check` binary is built by name in CI); it takes the design's name
-//! when the prototype is retired.
+//! The design calls it `ooxml-word`; the package keeps the name `ooxml-word-model` it was
+//! given beside the prototype that held that name (since retired).
 #![forbid(unsafe_code)]
 
 pub mod address;
