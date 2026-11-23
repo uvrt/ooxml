@@ -4,7 +4,7 @@ Every editing tool (what its edits read from the host declared by the Rust tool 
 exported with the registry: :func:`docx_agent.rust.served.hosting`; its arguments as the
 session takes them: :func:`docx_agent.rust.served.arguments_for`) runs there: the call's arguments, its ``$name``
 refs resolved, go to ``Session.edit`` with the call's caller, its date (the session clock's,
-to the second) and the document's tracking mode; the versions the call's edits made are the
+to the second) -- the document's tracking mode is the session's alone; the versions the call's edits made are the
 call's step (:meth:`~ooxml_edit.tools.owned.OwnedEntry.served`, numbered in the order the
 session made them), its reply the result.
 
@@ -28,7 +28,6 @@ from collections import Counter
 from typing import Any, Callable
 
 from ooxml_edit.tools import Result, ToolError
-from ooxml_edit.tools.session import StepOwner
 from ooxml_edit.tools.session import folded_warning
 
 from . import reads
@@ -122,46 +121,6 @@ def _kept_refs(call: Any, arguments: dict[str, Any]) -> tuple[dict[str, Any], di
     if isinstance(items, list):
         out = {**out, "items": [kept(item) if isinstance(item, dict) else item for item in items]}
     return out, folded
-
-
-def _tracking(call: Any, entry: Any, context: Any, counted: bool) -> None:
-    """The session's tracking mode of the document made the call's (``entry.tracking``); a
-    version that made (the settings written) is a step of its own, ``word_set_tracking``'s."""
-    mirror = entry.handle
-    with mirror.lock:
-        wanted = entry.tracking or None
-        if mirror.tracking == wanted:
-            return
-        arguments: dict[str, Any] = {"doc": mirror.doc, "on": bool(wanted)}
-        if wanted and wanted.get("author"):
-            arguments["author"] = wanted["author"]
-        reply, _app, made = mirror.session.edit("word_set_tracking", json.dumps(arguments), options(context=context))
-        error = json.loads(reply).get("error")
-        if made is None and error is not None:
-            # (Never so: the host keeps only a mode word_set_tracking took, lane H2.)  The
-            # session's refusal is the call's: nothing is changed.
-            raise ToolError(error["code"], error["message"], field=error.get("field"),
-                            valid_options=error.get("valid_options"), details=error.get("details"))
-        mirror.tracking = wanted
-    if made is not None:
-        first, head, _touched, _validation, before, _reflow = made
-        entry.served(first, head, StepOwner(dict(call.caller), "word_set_tracking"), counted=counted,
-                     before=before)
-
-
-def _set_mode(entry: Any, given: dict[str, Any], context: Any, names: dict[str, str]) -> tuple[str, str, Any]:
-    """``word_set_tracking`` served: the session's tracking mode of the document and the
-    host's (``entry.tracking``, which later calls are made under and :func:`_tracking` keeps
-    the session to) set together, under the mirror's lock, where the session sets it."""
-    mirror = entry.handle
-    with mirror.lock:
-        reply, app, made = mirror.session.edit("word_set_tracking", json.dumps(given), options(
-            context=context, documents=documents(names=names)))
-        if json.loads(reply).get("error") is None:
-            wanted = {"on": True, "author": given.get("author")} if given.get("on") else None
-            entry.tracking = wanted
-            mirror.tracking = wanted
-    return reply, app, made
 
 
 def _host_tables(session: Any) -> Callable[[], list[tuple[str, str, str]]]:
@@ -260,7 +219,6 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
     # the host's limit on laying the document out holds in an edit as in a read
     context = call_context(call, entry)
     arguments, folded = _kept_refs(call, arguments)
-    _tracking(call, entry, context, counted)
     adapted = _served.arguments_for(call, tool, arguments)
     written = adapted.written if isinstance(adapted, Adapted) else _written(call)
     sources = adapted.sources if isinstance(adapted, Adapted) else None
@@ -270,13 +228,10 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
     timing = _timing(call, arguments)
     started = time.perf_counter()
     blobs = _Blobs(call.session) if tool in _served.hosting().blobs else None
-    if tool == "word_set_tracking":
-        reply, _app, made = _set_mode(entry, given, context, names)
-    else:
-        laid = ooxml_core.CallLayout(layout) if layout is not None else None
-        reply, _app, made = mirror.session.edit(tool, json.dumps(given), options(
-            context=context, layout=laid, blobs=blobs, written=written,
-            documents=documents(names=names, tables=_host_tables(call.session), sources=sources)))
+    laid = ooxml_core.CallLayout(layout) if layout is not None else None
+    reply, _app, made = mirror.session.edit(tool, json.dumps(given), options(
+        context=context, layout=laid, blobs=blobs, written=written,
+        documents=documents(names=names, tables=_host_tables(call.session), sources=sources)))
     if timing is not None:
         timing.add("update", time.perf_counter() - started)
     _count(tool)

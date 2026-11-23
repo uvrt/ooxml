@@ -1,9 +1,9 @@
 //! Owns: `word_set_tracking` (docx-agent's `word_set_tracking`): the session's tracking
-//! mode for the document -- handed back to the host, which keeps it and tracks later
+//! mode for the document -- handed back to the session, which keeps it and tracks later
 //! edits by its author -- and, when asked, Word's own Track Changes switch, set through
 //! the edit core's [`SetWordTracking`].
 //!
-//! Must not: keep the mode itself (the host does).
+//! Must not: keep the mode itself (the session does).
 
 use super::Editing;
 use ooxml_tools::{Done, ToolArgs, ToolError, ToolResult, TryCall};
@@ -39,7 +39,7 @@ pub enum Tracked {
     On(String),
 }
 
-/// `word_set_tracking`: the reply, and the mode the host keeps from now on (`None`: the
+/// `word_set_tracking`: the reply, and the mode the session keeps from now on (`None`: the
 /// call failed and the mode stays as it was).
 #[must_use]
 pub fn word_set_tracking(args: &WordSetTracking, editing: &Editing<'_>) -> (ToolResult<Value>, Option<Tracked>) {

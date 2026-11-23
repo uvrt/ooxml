@@ -59,6 +59,9 @@ pub struct Call<'a> {
     pub(crate) counts: Option<ooxml_tools_word::LayoutCounts>,
     /// The host's limits on the call's reply.
     pub(crate) limits: ooxml_tools::Limits,
+    /// Who the document's edits are tracked as when the call started (what a read says of
+    /// it; an edit reads the mode for its whole call instead: [`Call::edit`]).
+    pub(crate) tracking: Option<String>,
 }
 
 impl Call<'_> {
@@ -101,6 +104,7 @@ impl Call<'_> {
             }),
             rows_written: Some(&word.rows_written),
             made_by: Some(&word.made_by),
+            tracking: self.tracking.as_deref(),
         })
     }
 
@@ -121,18 +125,57 @@ impl Call<'_> {
     /// made are kept for the call (its `made`), and the ids its edits drew as stand-ins are
     /// named in the reply as they were drawn where the edits landed
     /// ([`ooxml_tools_word::resolve_drawn`]); the spaces their language spacing wrote are
-    /// counted in it ([`ooxml_tools_word::note_spaced`]).
+    /// counted in it ([`ooxml_tools_word::note_spaced`]). The tracking mode is read for the
+    /// whole call ([`Word::tracking_read`]): a `word_set_tracking` waits until the call has
+    /// committed, so its edits are written under the mode they commit under.
     pub(crate) fn edit(
         &self,
         word: &Word,
         arguments: Option<&serde_json::Map<String, Value>>,
         run: impl FnOnce(&Editing<'_>) -> ToolResult<Value>,
     ) -> ToolResult<Value> {
-        let policy = word.policy(&self.date);
-        let tracking = match &policy {
-            ooxml_word_edit::RevisionPolicy::Tracked(tracking) => Some(tracking),
-            ooxml_word_edit::RevisionPolicy::Untracked => None,
-        };
+        let mode = word.tracking_read();
+        self.edit_under(word, mode.as_deref(), arguments, run)
+    }
+
+    /// [`Call::edit`] of a tool that also sets the tracking mode (`word_set_tracking`): the
+    /// mode held alone for the whole call (no other edit of the document runs meanwhile),
+    /// and the mode `run` leaves kept as it ends.
+    pub(crate) fn edit_tracking(
+        &self,
+        word: &Word,
+        arguments: Option<&serde_json::Map<String, Value>>,
+        run: impl FnOnce(&Editing<'_>) -> (ToolResult<Value>, Option<ooxml_tools_word::Tracked>),
+    ) -> ToolResult<Value> {
+        let mut mode = word.tracking_write();
+        let mut left = None;
+        let result = self.edit_under(word, mode.as_deref(), arguments, |editing| {
+            let (result, set) = run(editing);
+            left = set;
+            result
+        });
+        if let Some(set) = left {
+            *mode = match set {
+                ooxml_tools_word::Tracked::On(author) => Some(author),
+                ooxml_tools_word::Tracked::Off => None,
+            };
+        }
+        result
+    }
+
+    /// [`Call::edit`] with edits tracked as `author` (`None`: untracked).
+    fn edit_under(
+        &self,
+        word: &Word,
+        author: Option<&str>,
+        arguments: Option<&serde_json::Map<String, Value>>,
+        run: impl FnOnce(&Editing<'_>) -> ToolResult<Value>,
+    ) -> ToolResult<Value> {
+        let tracking = author.map(|author| ooxml_word_edit::Tracking {
+            author: author.to_owned(),
+            date: self.date.clone(),
+        });
+        let tracking = tracking.as_ref();
         let editor = CallEditor::new(&word.editor).with_setup(self.setup);
         let others = self.other_versions();
         let editing = Editing::new(

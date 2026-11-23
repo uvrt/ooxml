@@ -183,16 +183,10 @@ impl<T: ToolArgs> Tool for EditHandler<T> {
                 ))
             }
         };
-        call.edit(word, arguments.as_object(), |editing| match &self.run {
-            EditRun::Plain(run) => run(&args, editing),
-            EditRun::Tracking(run) => {
-                let (result, mode) = run(&args, editing);
-                if let Some(mode) = mode {
-                    word.set_tracking(mode);
-                }
-                result
-            }
-        })
+        match &self.run {
+            EditRun::Plain(run) => call.edit(word, arguments.as_object(), |editing| run(&args, editing)),
+            EditRun::Tracking(run) => call.edit_tracking(word, arguments.as_object(), |editing| run(&args, editing)),
+        }
     }
 
     fn run_outside(&self, arguments: &Value, editing: &Editing<'_>, _: &Version<'_>) -> ToolResult<Value> {

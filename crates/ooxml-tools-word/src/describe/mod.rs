@@ -100,8 +100,12 @@ pub fn describe(_args: &Describe, version: &Version<'_>, cancel: &dyn Cancel) ->
         Value::from(reader.compatibility_mode(&main)?),
     );
     data.insert("properties".into(), Value::Object(reader.properties()?));
-    // The Rust session keeps no tracking state yet: no session tracks changes (phase P2).
-    data.insert("tracking".into(), Value::Null);
+    // the session's tracking mode: who later edits are tracked as
+    let tracking = version.owned.and_then(|owned| owned.tracking);
+    data.insert(
+        "tracking".into(),
+        tracking.map_or(Value::Null, |author| serde_json::json!({"author": author})),
+    );
     cancel.check().map_err(cancelled)?;
     let headings = read.headings();
     let full = headings.len() >= 80;

@@ -561,16 +561,16 @@ class OwnedEntry(DocumentEntry):
         if owned is None:
             return
         if committed is not None and committed.version == version:
-            if committed.refs != self.refs or (committed.tracking or None) != (self.tracking or None):
+            if committed.refs != self.refs:
                 self.committed = committed.with_refs(
                     dict(self.refs), dict(self.ref_states.get(version, self.refs)),
-                    dict(self.ref_owners), tracking=self.tracking)
+                    dict(self.ref_owners))
                 self._told()
             return
         head = owned.head()
         self.committed = Committed(version, head.save, _no_reader_copy,
                                    dict(self.refs), dict(self.ref_states.get(version, self.refs)),
-                                   tracking=self.tracking, owners=dict(self.owners),
+                                   owners=dict(self.owners),
                                    seq=self.change_seq, ref_owners=dict(self.ref_owners))
         self._told()
 
