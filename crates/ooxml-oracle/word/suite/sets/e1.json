@@ -1,0 +1,25 @@
+{"set": "e1",
+ "about": "E1's edits: direct and style formatting, lists, a picture; plain and tracked.",
+ "cases": [
+  {"name": "format", "document": "generated/lists-and-styles.docx", "calls": [
+    {"tool": "word_format", "arguments": {"targets": ["$p2"], "bold": true, "color": "C00000"}},
+    {"tool": "word_format", "arguments": {"targets": ["$p6"], "paragraph_style": "heading 2"}},
+    {"tool": "word_format", "arguments": {"targets": ["$p12"], "alignment": "center", "space_after": 12, "indent_left": 18}},
+    {"tool": "word_format", "arguments": {"find": [{"text": "third quarter"}], "italic": true, "highlight": "yellow"}}]},
+  {"name": "format-tracked", "document": "generated/lists-and-styles.docx", "tracked": "Writer A", "calls": [
+    {"tool": "word_format", "arguments": {"targets": ["$p2"], "bold": true}},
+    {"tool": "word_format", "arguments": {"targets": ["$p6"], "paragraph_style": "heading 2"}},
+    {"tool": "word_format", "arguments": {"targets": ["$p12"], "alignment": "right"}}]},
+  {"name": "lists", "document": "new", "calls": [
+    {"tool": "word_insert_markdown", "arguments": {"at": "end", "markdown": "Lists made by the tools.\n\nAlpha\n\nBeta\n\nGamma\n\nDelta\n\nEpsilon\n"}},
+    {"tool": "word_lists", "arguments": {"targets": ["$p2", "$p3", "$p4"], "action": "add", "kind": "number"}},
+    {"tool": "word_lists", "arguments": {"targets": ["$p3"], "action": "level", "level": 1}},
+    {"tool": "word_lists", "arguments": {"targets": ["$p5", "$p6"], "action": "add", "kind": "bullet"}}]},
+  {"name": "lists-tracked", "document": "generated/lists-and-styles.docx", "tracked": "Writer A", "calls": [
+    {"tool": "word_lists", "arguments": {"targets": ["$p7"], "action": "restart", "start": 4}},
+    {"tool": "word_lists", "arguments": {"targets": ["$p6"], "action": "add", "kind": "bullet"}},
+    {"tool": "word_lists", "arguments": {"targets": ["$p5"], "action": "level", "level": 0}}]},
+  {"name": "picture", "document": "new", "blobs": [["square.png", "png:120x80"]], "calls": [
+    {"tool": "word_insert_markdown", "arguments": {"at": "end", "markdown": "A picture follows.\n\nText after the picture.\n"}},
+    {"tool": "word_drawings", "arguments": {"action": "insert_picture", "image": "$b1", "at": "after:$p2", "alt_text": "A blue rectangle", "width": 144}}]}
+ ]}

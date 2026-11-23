@@ -1,0 +1,21 @@
+{"set": "e3",
+ "about": "E3's tracked edits: text set, inserted and deleted, paragraphs and table rows, comments.",
+ "cases": [
+  {"name": "text", "document": "generated/review-follow.docx", "tracked": "Writer A", "calls": [
+    {"tool": "word_set_text", "arguments": {"target": "$p5", "text": "Fourth plain words were edited here."}},
+    {"tool": "word_insert_text", "arguments": {"find": "keeps the opening", "text": " (inserted)"}},
+    {"tool": "word_delete", "arguments": {"find": "wait to be "}},
+    {"tool": "word_delete", "arguments": {"target": "$p7"}}]},
+  {"name": "untracked-over-tracked", "document": "generated/review-follow.docx", "calls": [
+    {"tool": "word_set_text", "arguments": {"target": "$p3", "text": "Another plain paragraph, rewritten."}},
+    {"tool": "word_delete", "arguments": {"target": "$p6"}}]},
+  {"name": "rows", "document": "generated/review-follow.docx", "tracked": "Writer A", "calls": [
+    {"tool": "word_edit_table", "arguments": {"table": "$t1", "action": "insert_row", "index": 0}},
+    {"tool": "word_edit_table", "arguments": {"table": "$t1", "action": "set_cells", "cells": [{"row": 1, "col": 0, "text": "Inserted"}, {"row": 1, "col": 1, "text": "Row"}]}},
+    {"tool": "word_edit_table", "arguments": {"table": "$t1", "action": "delete_row", "index": 2}}]},
+  {"name": "comments", "document": "generated/review-follow.docx", "calls": [
+    {"tool": "word_comments", "arguments": {"action": "add", "author": "Writer A", "items": [{"find": "Plain paragraphs come first", "text": "Why first?"}, {"target": "$p4", "text": "A note on the whole paragraph."}]}}]},
+  {"name": "accepted-tables", "document": "generated/tables-accepted.docx", "tracked": "Writer B", "calls": [
+    {"tool": "word_edit_table", "arguments": {"table": "$t1", "action": "set_cells", "cells": [{"row": 1, "col": 1, "text": "11"}]}},
+    {"tool": "word_set_text", "arguments": {"target": "$p2", "text": "A row deleted as a tracked change, and edited."}}]}
+ ]}

@@ -31,6 +31,13 @@ pub(super) struct Control {
     id: String,
 }
 
+impl Control {
+    /// The part it is in.
+    pub(super) fn part(&self) -> &str {
+        &self.part
+    }
+}
+
 /// The content control `identifier` names (`cc:...`, `cc@...`).
 ///
 /// # Errors

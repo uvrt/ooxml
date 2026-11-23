@@ -1,0 +1,25 @@
+{"set": "e4",
+ "about": "E4's structure: sections, headers and footers, notes, a table of contents, captions and fields.",
+ "cases": [
+  {"name": "toc-update", "document": "generated/toc-numbered.docx", "calls": [
+    {"tool": "word_fields", "arguments": {"action": "update"}}]},
+  {"name": "report", "document": "new", "calls": [
+    {"tool": "word_insert_markdown", "arguments": {"at": "end", "markdown": "Contents follow.\n\n# Introduction\n\nThe introduction's text, long enough to fill a line or so of the page and a little more besides.\n\n## Scope\n\nWhat is in scope.\n\n# Method\n\nHow it was done.\n\n## Data\n\nWhere the data came from.\n\n# Results\n\nWhat was found.\n"}},
+    {"tool": "word_sections", "arguments": {"action": "insert_break", "after": "$p8", "start": "nextPage"}},
+    {"tool": "word_sections", "arguments": {"action": "insert_break", "after": "$p4", "start": "nextPage"}},
+    {"tool": "word_headers_footers", "arguments": {"section": "s:body", "which": "footer", "action": "set", "text": "Report", "page_number": "page_x_of_y"}},
+    {"tool": "word_headers_footers", "arguments": {"section": "s:body", "which": "header", "action": "set", "text": "A made-up report"}},
+    {"tool": "word_notes", "arguments": {"action": "insert", "kind": "footnote", "find": "What is in scope", "text": "A footnote on scope."}},
+    {"tool": "word_notes", "arguments": {"action": "insert", "kind": "endnote", "find": "How it was done", "text": "An endnote on method."}},
+    {"tool": "word_fields", "arguments": {"action": "insert_toc", "after": "$p1", "levels": "1-2"}},
+    {"tool": "word_fields", "arguments": {"action": "insert_caption", "after": "$p-1", "label": "Table", "text": ": a caption"}},
+    {"tool": "word_fields", "arguments": {"action": "insert_field", "find": "Where the data came from", "instruction": "NUMPAGES"}},
+    {"tool": "word_fields", "arguments": {"action": "update"}}]},
+  {"name": "landscape", "document": "generated/lists-and-styles.docx", "calls": [
+    {"tool": "word_sections", "arguments": {"action": "insert_break", "after": "$p5", "start": "nextPage"}},
+    {"tool": "word_sections", "arguments": {"action": "set", "section": "s:body", "orientation": "landscape", "margins": {"left": 54, "right": 54}}},
+    {"tool": "word_sections", "arguments": {"action": "set", "section": "s:body", "columns": 2}}]},
+  {"name": "notes-tracked", "document": "generated/review-follow.docx", "tracked": "Writer A", "calls": [
+    {"tool": "word_notes", "arguments": {"action": "insert", "kind": "footnote", "find": "closes the opening", "text": "A tracked footnote."}},
+    {"tool": "word_headers_footers", "arguments": {"section": "s:body", "which": "footer", "action": "set", "text": "Page", "page_number": "after_text"}}]}
+ ]}

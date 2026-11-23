@@ -75,7 +75,7 @@ fn past(work: &Work, node: Id, like: impl Fn(&Work, Id) -> bool) -> Id {
 }
 
 /// Whether a comment marker or reference of `w:id` `id` is at or below `element`.
-fn holds(element: &Element, id: &str) -> bool {
+pub(super) fn holds(element: &Element, id: &str) -> bool {
     holds_any(
         element,
         id,

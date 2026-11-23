@@ -30,7 +30,7 @@ pub use pages::{
 };
 pub use story::{SetStoryNumbered, StoryNumber, StoryNumbered};
 pub use update::UpdateFields;
-pub use values::{format_date, Day};
+pub use values::{day_in_picture, format_date, Day};
 
 use crate::{Result, WordDoc};
 

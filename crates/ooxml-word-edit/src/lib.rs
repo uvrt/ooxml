@@ -121,7 +121,7 @@ mod work;
 
 pub use beside::{DeletePlaced, InsertBeside, Placed, Side, TextPlace};
 pub use comments::{
-    AddComments, CommentEdit, CommentEdited, CommentEdits, CommentMade, CommentWrite, EditCommentText, Who,
+    AddComments, CommentEdit, CommentEdited, CommentEdits, CommentMade, CommentWrite, EditCommentText, ItemMade, Who,
 };
 pub use controls::{ControlEdited, ControlKind, FillControl, Filling, InsertControl, RemoveControl};
 pub use copying::{

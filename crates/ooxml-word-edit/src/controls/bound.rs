@@ -77,6 +77,25 @@ impl Binding {
         })
     }
 
+    /// The text of the node the binding names, where it holds text alone (`None` where it
+    /// holds an element or anything but text).
+    ///
+    /// # Errors
+    /// As [`Binding::node`].
+    pub(crate) fn text(&self, doc: &WordDoc, docx: &Docx) -> Result<Option<String>> {
+        let (part, path) = self.node(doc, docx)?;
+        let tree = doc.tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
+        let node = ooxml_word_model::docx::at_path(tree.root(), &path).ok_or_else(|| EditError::Path(part.clone()))?;
+        let mut text = String::new();
+        for child in node.children().iter() {
+            match child {
+                Node::Text(t) => text.push_str(t),
+                _ => return Ok(None),
+            }
+        }
+        Ok(Some(text))
+    }
+
     /// The node written with `value`, its children gone (`_write_bound`); nothing when it
     /// holds that text already.
     ///

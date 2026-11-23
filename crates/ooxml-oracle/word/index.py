@@ -132,6 +132,11 @@ OBSERVATIONS: dict[str, dict] = {
         "readers": ["crates/ooxml-oracle/word/tests/test_toc_recorded.py"],
         "unread": {},
     },
+    "suite-word.json": {
+        "probe": "crates/ooxml-oracle/word/suite/test_word_suite.py",
+        "readers": ["crates/ooxml-oracle/word/tests/test_suite_recorded.py"],
+        "unread": {},
+    },
     "tracking-word.json": {
         "probe": "crates/ooxml-oracle/word/probes/tracking_probe.py",
         "readers": ["python/docx-agent/tests/test_own_insertions.py"],
