@@ -616,14 +616,15 @@ fn verify(
     assert_eq!(relaid.fields, whole.fields, "{at}: fields differ");
     assert_eq!((relaid.passes, relaid.settled), (whole.passes, whole.settled), "{at}");
     let known = LayoutFacts::of(previous);
-    let _ = known.first_pages();
     let carried = LayoutFacts::after(relaid, previous, &known);
     let made = LayoutFacts::of(&whole);
     assert!(carried == made, "{at}: the facts taken from the version before differ");
+    let first = made.first_pages();
+    assert_eq!(**relaid.first_pages(), first, "{at}: the relaid first pages differ");
     assert_eq!(
-        carried.first_pages(),
-        made.first_pages(),
-        "{at}: the first pages carried from the version before differ"
+        **whole.first_pages(),
+        first,
+        "{at}: the first pages found without placing a line differ"
     );
     outputs_equal(at, (kept, kept_model, relaid), (&mut fresh, &mut fresh_model, &whole));
 }

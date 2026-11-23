@@ -83,6 +83,8 @@ pub struct LayoutMemo {
     page_facts: std::sync::OnceLock<Arc<[std::sync::OnceLock<Option<crate::facts::PageFacts>>]>>,
     /// Its body's paragraphs in document order, cells included.
     paragraphs: std::sync::OnceLock<Arc<[Arc<ooxml_word_model::model::Paragraph>]>>,
+    /// Each body paragraph path's first page.
+    first_pages: std::sync::OnceLock<Arc<std::collections::HashMap<ooxml_word_model::value::Text, usize>>>,
     /// Per section, the pages it has content on (`SECTIONPAGES`).
     section_pages: std::sync::OnceLock<Arc<std::collections::BTreeMap<usize, usize>>>,
 }
@@ -123,6 +125,15 @@ impl DocumentLayout {
             .get(page)?
             .get_or_init(|| crate::facts::PageFacts::of(self, page))
             .as_ref()
+    }
+
+    /// Each body paragraph path's first page (0-based), made when first asked without
+    /// placing a line: what its facts' [`crate::facts::LayoutFacts::first_pages`] say. A
+    /// field update's page numbers read it for every field and reference.
+    pub fn first_pages(&self) -> &Arc<std::collections::HashMap<ooxml_word_model::value::Text, usize>> {
+        self.memo
+            .first_pages
+            .get_or_init(|| Arc::new(crate::facts::first_pages_of(self)))
     }
 
     /// The list labels of the text boxes anchored in its body

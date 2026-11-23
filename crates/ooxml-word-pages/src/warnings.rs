@@ -76,16 +76,13 @@ fn blocks_hold_drawing(blocks: &[Block]) -> bool {
 }
 
 /// What `layout` says, its paragraphs and tables resolved in `model`; `drawings` paints
-/// the pages that hold drawings for what their painters say.
-///
-/// `facts` are the version's, made here where its page-number fields need them (and kept
-/// for its readers), else left for them.
+/// the pages that hold drawings for what their painters say. It makes none of the
+/// layout's facts: its page-number fields read only where paragraphs are first drawn.
 pub fn said(
     model: &mut Model,
     layout: &DocumentLayout,
     drawings: &mut dyn PageDrawings,
     locale: &Locale,
-    facts: &std::sync::OnceLock<ooxml_word_layout::facts::LayoutFacts>,
     memo: &mut crate::page_said::PageMemo,
 ) -> Said {
     let mut out = Said::default();
@@ -98,7 +95,7 @@ pub fn said(
         );
     }
     body_style_references(layout, locale, &mut out);
-    body_fields(layout, facts, &mut out);
+    body_fields(layout, &mut out);
     if !layout.settled {
         out.warn(
             "field-layout-unsettled",
@@ -285,11 +282,7 @@ fn shared_page_notes(layout: &DocumentLayout, page: usize, out: &mut Said) {
 }
 
 /// The body's page-number fields that cannot be computed (`_computed_fields`).
-fn body_fields(
-    layout: &DocumentLayout,
-    facts: &std::sync::OnceLock<ooxml_word_layout::facts::LayoutFacts>,
-    out: &mut Said,
-) {
+fn body_fields(layout: &DocumentLayout, out: &mut Said) {
     let paragraphs = layout.body_paragraphs();
     let has = paragraphs.iter().any(|p| {
         p.runs
@@ -299,8 +292,7 @@ fn body_fields(
     if !has {
         return;
     }
-    let facts = facts.get_or_init(|| ooxml_word_layout::facts::LayoutFacts::of(layout));
-    let numbers = PageNumbers::new(layout, facts);
+    let numbers = PageNumbers::new(layout);
     let marks = bookmarks(paragraphs);
     for paragraph in paragraphs.iter() {
         for run in paragraph.runs.iter() {

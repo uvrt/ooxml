@@ -220,6 +220,29 @@ fn a_poisoned_engine_is_made_again_from_its_seed() {
 }
 
 #[test]
+fn facts_are_made_when_asked_never_while_laying_out_from_the_last_version_whose_were() {
+    let mut kept = engine();
+    let first = kept
+        .lay_out_bytes(Arc::from(package(&paragraphs(120, None))))
+        .unwrap()
+        .unwrap();
+    assert!(!first.has_facts(), "laying out makes no facts");
+    let _ = first.facts();
+    // Two edits, neither version asked: the second's facts are made from the first's.
+    let second = kept
+        .lay_out_bytes(Arc::from(package(&paragraphs(120, Some(60)))))
+        .unwrap()
+        .unwrap();
+    let edited = package(&paragraphs(120, Some(90)));
+    let third = kept.lay_out_bytes(Arc::from(edited.clone())).unwrap().unwrap();
+    assert!(!second.has_facts() && !third.has_facts());
+    let whole = engine().lay_out_bytes(Arc::from(edited)).unwrap().unwrap();
+    assert_eq!(third.facts(), whole.facts());
+    assert!(!second.has_facts());
+    assert_eq!(second.facts().pages.len(), whole.facts().pages.len());
+}
+
+#[test]
 fn a_version_given_by_its_touched_parts_is_the_version_given_whole() {
     let mut kept = engine();
     kept.lay_out_bytes(Arc::from(package(&paragraphs(40, None))))

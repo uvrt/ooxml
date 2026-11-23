@@ -33,7 +33,12 @@ fn carried_equal_whole(before: &str, after: &str) -> usize {
     let first = open(&mut kept_model, before, None);
     let previous = kept.lay_out(&mut kept_model, &first);
     let known = LayoutFacts::of(&previous);
-    let old = known.first_pages().clone();
+    let old = known.first_pages();
+    assert_eq!(
+        **previous.first_pages(),
+        old,
+        "the first pages found without placing a line differ"
+    );
     let document = open(&mut kept_model, after, None);
     let relaid = kept.relayout(&mut kept_model, &document, &previous);
     let carried = LayoutFacts::after(&relaid, &previous, &known);
@@ -43,6 +48,16 @@ fn carried_equal_whole(before: &str, after: &str) -> usize {
     let made = LayoutFacts::of(&whole);
     assert!(carried == made, "the facts taken from the version before differ");
     assert_eq!(carried.first_pages(), made.first_pages(), "the first pages differ");
+    assert_eq!(
+        **relaid.first_pages(),
+        made.first_pages(),
+        "the relaid layout's first pages differ"
+    );
+    assert_eq!(
+        **whole.first_pages(),
+        made.first_pages(),
+        "the whole layout's first pages differ"
+    );
     made.first_pages()
         .iter()
         .filter(|(path, page)| old.get(*path) != Some(page))

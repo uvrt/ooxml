@@ -16,12 +16,15 @@ use ooxml_word_layout::paint::{Drawn, FaceNames, PaintedLine, Rule};
 use ooxml_word_layout::px::Px;
 use ooxml_word_layout::{DocumentLayout, WordGlyphs};
 use ooxml_word_model::value::Text;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 /// One version laid out, immutable.
 pub struct LaidVersion {
     pub(crate) layout: DocumentLayout,
     pub(crate) facts: OnceLock<LayoutFacts>,
+    /// The version its facts are made from when first asked (the pages both share take
+    /// theirs from it), let go once they are made ([`crate::engine`]'s `facts_source`).
+    pub(crate) facts_from: Mutex<Option<Arc<LaidVersion>>>,
     pub(crate) pictures: Option<PackagePictures>,
     pub(crate) drawings: Option<crate::drawings::WordDrawings>,
     pub(crate) glyphs: Arc<WordGlyphs>,
@@ -135,9 +138,23 @@ impl LaidVersion {
         self.layout.page_count()
     }
 
-    /// What a check reads of it: made once, when first asked for.
+    /// What a check reads of it: made once, when first asked for -- the pages it shares
+    /// with the version its facts are made from taking theirs from that one's
+    /// ([`LayoutFacts::after`]), the rest made ([`LayoutFacts::of`]). Never made while it
+    /// is laid out.
     pub fn facts(&self) -> &LayoutFacts {
-        self.facts.get_or_init(|| LayoutFacts::of(&self.layout))
+        self.facts.get_or_init(|| {
+            let from = self.facts_from.lock().unwrap_or_else(PoisonError::into_inner).take();
+            match from.as_deref().and_then(|v| Some((v, v.facts.get()?))) {
+                Some((before, known)) => LayoutFacts::after(&self.layout, &before.layout, known),
+                None => LayoutFacts::of(&self.layout),
+            }
+        })
+    }
+
+    /// The version its facts are to be made from, while they are not made.
+    pub(crate) fn facts_source(&self) -> Option<Arc<LaidVersion>> {
+        self.facts_from.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
     /// Page `page`'s facts (0-based, blank pages counted), on their own: the whole

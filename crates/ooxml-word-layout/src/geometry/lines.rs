@@ -136,6 +136,84 @@ pub(crate) fn body_lines(layout: &DocumentLayout, laid: &LaidPage, frame: &PageF
         .collect()
 }
 
+/// What a body line a page draws is of, before it is placed on device pixels: its
+/// source, its body paragraph and its top-level block, as its [`DrawnLine`] holds them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LineOf {
+    /// Where it comes from.
+    pub(crate) source: LineSource,
+    /// Its paragraph among the body's paragraphs ([`DrawnLine::block`]).
+    pub(crate) block: Option<usize>,
+    /// The top-level body block of a drop cap's paragraph ([`DrawnLine::body`]).
+    pub(crate) body: Option<usize>,
+}
+
+impl From<&DrawnLine> for LineOf {
+    fn from(line: &DrawnLine) -> LineOf {
+        LineOf {
+            source: line.source,
+            block: line.block,
+            body: line.body,
+        }
+    }
+}
+
+/// What each body line page `laid` (`height` px high) draws is of, in [`body_lines`]'
+/// order, without placing any: the lines it draws are those, one for one (what a reader of
+/// which paragraphs a page draws asks, not where).
+pub(crate) fn body_lines_of(layout: &DocumentLayout, laid: &LaidPage, height: i64) -> Vec<LineOf> {
+    let mut by_item: Vec<(usize, LineOf)> = Vec::new();
+    for placed in &laid.lines {
+        if let Some(drop) = drop_cap_of(layout, placed) {
+            let line = LineOf {
+                source: LineSource::DropCap { item: placed.item },
+                block: None,
+                body: Some(drop.body),
+            };
+            by_item.extend(drop.measured.heights.iter().map(|_| (placed.item, line)));
+        }
+        if let Some((item, ..)) = flow_drawn(layout, laid, placed) {
+            let line = LineOf {
+                source: LineSource::Flow { item: placed.item },
+                block: Some(item.block),
+                body: Some(item.body),
+            };
+            by_item.push((placed.item, line));
+        }
+    }
+    let height = Px::int(height);
+    for placed in &laid.rows {
+        let Some(FlowItem::Table(t)) = layout.flow.items.get(placed.item) else {
+            continue;
+        };
+        let flow = placed.flow(t);
+        let flow: &dyn crate::table::TableFlow = flow.as_ref();
+        for line in flow.lines(&placed.row) {
+            if row_line_height(flow, &line, height).is_some() {
+                let of = LineOf {
+                    source: LineSource::Cell {
+                        item: placed.item,
+                        block: line.block,
+                    },
+                    block: Some(t.block + line.block),
+                    body: Some(t.body),
+                };
+                by_item.push((placed.item, of));
+            }
+        }
+    }
+    by_item.sort_by_key(|(item, _)| *item);
+    let opening = opening_of(layout, laid).map(|(item, _)| LineOf {
+        source: LineSource::Opening { item },
+        block: None,
+        body: None,
+    });
+    opening
+        .into_iter()
+        .chain(by_item.into_iter().map(|(_, line)| line))
+        .collect()
+}
+
 /// The left edge a placed line starts from: its column's.
 fn line_left(layout: &DocumentLayout, placed: &PlacedLine, frame: &PageFrame) -> Px {
     match placed.column {
@@ -144,16 +222,26 @@ fn line_left(layout: &DocumentLayout, placed: &PlacedLine, frame: &PageFrame) ->
     }
 }
 
-/// A paragraph's placed line, where it draws anything.
-fn flow_line(layout: &DocumentLayout, laid: &LaidPage, placed: &PlacedLine, frame: &PageFrame) -> Option<DrawnLine> {
+/// A paragraph's placed line where it draws anything: its paragraph item, its height and
+/// whether it is the paragraph's last.
+fn flow_drawn<'l>(
+    layout: &'l DocumentLayout,
+    laid: &LaidPage,
+    placed: &PlacedLine,
+) -> Option<(&'l crate::flow::ParaItem, LineHeight, bool)> {
     let item = layout.flow.items.get(placed.item)?.para()?;
     let measured = measured_on(layout, laid, placed.item)?;
     if item.placeholder.is_some() || measured.undrawn.contains(&placed.line) {
         // A placeholder's lines hold no text (`Layout._box` draws its extent instead).
         return None;
     }
-    let height = measured.heights.get(placed.line)?;
-    let last = placed.line + 1 == measured.heights.len();
+    let height = measured.heights.get(placed.line)?.clone();
+    Some((item, height, placed.line + 1 == measured.heights.len()))
+}
+
+/// A paragraph's placed line, where it draws anything.
+fn flow_line(layout: &DocumentLayout, laid: &LaidPage, placed: &PlacedLine, frame: &PageFrame) -> Option<DrawnLine> {
+    let (item, height, last) = flow_drawn(layout, laid, placed)?;
     let space_after = if last {
         let same_next = layout
             .flow
@@ -166,7 +254,7 @@ fn flow_line(layout: &DocumentLayout, laid: &LaidPage, placed: &PlacedLine, fram
     } else {
         Px::ZERO
     };
-    let b = LineBox::new(height.clone(), placed.space_before, space_after);
+    let b = LineBox::new(height, placed.space_before, space_after);
     Some(DrawnLine {
         source: LineSource::Flow { item: placed.item },
         block: Some(item.block),
@@ -186,14 +274,7 @@ fn flow_line(layout: &DocumentLayout, laid: &LaidPage, placed: &PlacedLine, fram
 /// that paragraph's top past the drop cap's space before, one under the other, each
 /// baseline from the foot of its line (`_drop_cap`).
 fn drop_cap_lines(layout: &DocumentLayout, placed: &PlacedLine, frame: &PageFrame) -> Vec<DrawnLine> {
-    let Some(drop) = layout
-        .flow
-        .items
-        .get(placed.item)
-        .and_then(FlowItem::para)
-        .and_then(|p| p.drop_cap.as_ref())
-        .filter(|_| placed.line == 0)
-    else {
+    let Some(drop) = drop_cap_of(layout, placed) else {
         return Vec::new();
     };
     let column = line_left(layout, placed, frame);
@@ -226,11 +307,31 @@ fn drop_cap_lines(layout: &DocumentLayout, placed: &PlacedLine, frame: &PageFram
     out
 }
 
+/// The drop cap a placed line is drawn with: the one dropping into its paragraph, with
+/// that paragraph's first line.
+fn drop_cap_of<'l>(layout: &'l DocumentLayout, placed: &PlacedLine) -> Option<&'l crate::flow::DropCap> {
+    layout
+        .flow
+        .items
+        .get(placed.item)
+        .and_then(FlowItem::para)
+        .and_then(|p| p.drop_cap.as_deref())
+        .filter(|_| placed.line == 0)
+}
+
+/// The flow item a page the endnotes go on to opens with, and its continuation
+/// separator's line height.
+fn opening_of(layout: &DocumentLayout, laid: &LaidPage) -> Option<(usize, LineHeight)> {
+    laid.opens?;
+    let item = laid.start.item;
+    let height = layout.flow.items.get(item)?.para()?.continuation.clone()?;
+    Some((item, height))
+}
+
 /// The line a page the endnotes go on to opens with: the continuation separator's.
 fn opening_line(layout: &DocumentLayout, laid: &LaidPage, frame: &PageFrame) -> Option<DrawnLine> {
     let opening = laid.opens?;
-    let item = laid.start.item;
-    let height: LineHeight = layout.flow.items.get(item)?.para()?.continuation.clone()?;
+    let (item, height) = opening_of(layout, laid)?;
     let b = LineBox::new(height, Px::ZERO, Px::ZERO);
     Some(DrawnLine {
         source: LineSource::Opening { item },
@@ -268,6 +369,20 @@ fn table_lines(layout: &DocumentLayout, laid: &LaidPage, frame: &PageFrame) -> V
     out
 }
 
+/// The height of a table's cell line, where it is drawn: a line not drawn, or starting at
+/// or below `height` (the page's edge), is not (`_table_drawn`).
+fn row_line_height(
+    flow: &dyn crate::table::TableFlow,
+    line: &crate::table::CellLine,
+    height: Px,
+) -> Option<LineHeight> {
+    if !line.drawn || line.top >= height {
+        return None;
+    }
+    flow.paragraph(line.block)
+        .and_then(|m| m.heights.get(line.line).cloned())
+}
+
 /// The lines a placed row of table item `item` draws, on whole device px, as `flow` (the
 /// item's table, or the table laid out in the row's room) placed it; a line that starts
 /// below `height` (the page's edge) is not drawn (`_table_drawn`).
@@ -280,13 +395,7 @@ pub(crate) fn row_lines(
 ) -> Vec<DrawnLine> {
     let mut out = Vec::new();
     for line in flow.lines(row) {
-        if !line.drawn || line.top >= height {
-            continue;
-        }
-        let Some(h) = flow
-            .paragraph(line.block)
-            .and_then(|m| m.heights.get(line.line).cloned())
-        else {
+        let Some(h) = row_line_height(flow, &line, height) else {
             continue;
         };
         let b = LineBox::new(h, line.space_before, line.space_after);
