@@ -63,6 +63,9 @@ pub(crate) struct Word {
     /// The calls of this session that left a table ragged or off its grid (rounds 57 and
     /// 58): `check`'s `table_grid_mismatch` names them (`made_by`).
     pub(crate) made_by: MadeBy,
+    /// The version the open step group started from (its number and package), for the
+    /// reflow a batch's checks measure once after its last op ([`crate::Session::group_reflow`]).
+    pub(crate) group_start: std::sync::Mutex<Option<(u64, Package)>>,
     /// Its page engine, where the session lays it out itself, and what its host set it to
     /// be laid out with (`crate::pages`).
     pub(crate) pages: crate::pages::DocPages,
@@ -239,6 +242,7 @@ impl Document {
             images: ooxml_tools_word::PageImages::new(Some(Arc::clone(&context.budget))),
             rows_written: RowsWritten::default(),
             made_by: MadeBy::default(),
+            group_start: std::sync::Mutex::default(),
             pages: crate::pages::DocPages::default(),
             views: crate::live_view::LiveViews::new(Arc::clone(&context.budget)),
         })))
