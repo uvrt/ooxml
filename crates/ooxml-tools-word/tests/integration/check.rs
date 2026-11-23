@@ -76,6 +76,8 @@ pub(crate) fn limited(
             layout: layout.map(|l| l as &dyn ooxml_tools_word::WordLayout),
             layout_limit: limit,
             drawing: None,
+            rows_written: None,
+            made_by: None,
         }))
         .with_word(Some(&doc));
     let args = Check::from_arg(&arguments, "").unwrap();

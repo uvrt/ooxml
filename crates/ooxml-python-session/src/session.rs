@@ -429,6 +429,14 @@ impl PySession {
         Ok(found.as_deref().map(PyWordPages::of))
     }
 
+    /// What the document `doc` keeps in the session's memory budget now, bytes (its page
+    /// engine's: what it holds of the version in use, and its pages' paint): describe's
+    /// `memory.document`.
+    fn document_memory(&self, doc: &str) -> PyResult<usize> {
+        let id = doc_id(doc, &self.inner)?;
+        self.inner.document_memory(&id).map_err(|e| to_py(&e))
+    }
+
     /// Lay the Word document `doc` out with `pages` (a `PageSetup`) from now on -- a
     /// document drawn with other fonts or in another locale than the session's; `None`:
     /// with the session's. Its engine is made again when next needed.

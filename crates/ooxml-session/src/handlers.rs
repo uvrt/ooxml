@@ -185,7 +185,8 @@ impl<T: ToolArgs> Tool for EditHandler<T> {
             let message = format!("{} edits Word documents the session owns", self.spec.name);
             return ToolResult::failed(ToolError::failure(Failure::Internal, message));
         };
-        let args = match T::from_arg(&Value::Object(arguments), "") {
+        let arguments = Value::Object(arguments);
+        let args = match T::from_arg(&arguments, "") {
             Ok(args) => args,
             Err(e) => {
                 return ToolResult::failed(ToolError::internal(
@@ -194,7 +195,7 @@ impl<T: ToolArgs> Tool for EditHandler<T> {
                 ))
             }
         };
-        call.edit(word, |editing| match &self.run {
+        call.edit(word, arguments.as_object(), |editing| match &self.run {
             EditRun::Plain(run) => run(&args, editing),
             EditRun::Tracking(run) => {
                 let (result, mode) = run(&args, editing);

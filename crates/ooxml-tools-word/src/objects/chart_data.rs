@@ -58,7 +58,7 @@ pub(crate) enum DataAction {
         number_format: Option<String>,
         /// The labels' size (Word's look) and the document's language.
         size: Option<u32>,
-        lang: Option<String>,
+        lang: String,
     },
     /// The bar plots' gap width.
     GapWidth { percent: i64 },
@@ -68,7 +68,7 @@ pub(crate) enum DataAction {
         axis: Option<&'static str>,
         text: Option<String>,
         sizes: (u32, u32),
-        lang: Option<String>,
+        lang: String,
     },
 }
 
@@ -122,7 +122,7 @@ impl GraphicEdit for ChartDataEdit {
                 let look = LabelLook {
                     size: *size,
                     number_format: number_format.as_deref(),
-                    lang: lang.as_deref(),
+                    lang: Some(lang.as_str()),
                 };
                 edit.data_labels(&self.address, *show, *series, &look)?;
             }
@@ -136,7 +136,7 @@ impl GraphicEdit for ChartDataEdit {
                 let look = TitleLook {
                     title: sizes.0,
                     axis_title: sizes.1,
-                    lang: lang.as_deref(),
+                    lang: Some(lang.as_str()),
                 };
                 edit.title(*axis, text.as_deref(), &look)?;
             }
@@ -448,9 +448,8 @@ impl Edit<'_> {
         };
         let edit = done
             .map_err(|_| {
-                not_supported(
-                    "a new title in a document whose defaults name no language (the session's locale decides)",
-                )
+                // (unreachable: every title is given its language, `chart_language`)
+                not_supported("a new title without a language")
             })?
             .map_err(data_refusal)?;
         if edit.changed {

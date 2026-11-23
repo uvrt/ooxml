@@ -12,11 +12,11 @@
 use crate::{CancelToken, Opened, SessionError};
 use ooxml_tools::ToolError;
 use ooxml_word_edit::validate::Problem;
+use ooxml_word_edit::FileKind;
 use ooxml_word_model::address::direct;
 use ooxml_word_model::docx::controls::controls;
 use ooxml_word_model::docx::drawings::all_drawings;
 use ooxml_word_model::ids::Entry;
-use ooxml_word_edit::FileKind;
 use ooxml_word_model::ids::{export_state, IdPool, Ledger, Versions};
 use ooxml_word_model::parts::parts;
 use ooxml_xml::Tree;

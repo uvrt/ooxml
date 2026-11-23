@@ -9,7 +9,8 @@
 //! Must not: lay out (the engine does, when a tool asks), or make an engine for a document
 //! that is not a Word document.
 
-use crate::{DocId, MemoryBudget, Session, SessionError};
+use crate::{Account, DocId, MemoryBudget, Session, SessionError};
+use ooxml_derive::CacheBudget;
 use ooxml_tools_word::{EngineBudgets, EnginePages, PageSetup, WordLayout};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -24,11 +25,14 @@ pub struct SessionPages {
 }
 
 impl SessionPages {
-    fn engine(&self) -> Arc<EnginePages> {
-        Arc::new(self.setup.engine(EngineBudgets {
-            held: self.memory.holding(),
-            paint: self.memory.account(),
-        }))
+    /// A new engine of a document, and its accounts in the session's budget.
+    fn engine(&self) -> (Arc<EnginePages>, [Arc<Account>; 2]) {
+        let (held, paint) = (self.memory.holding(), self.memory.account());
+        let engine = self.setup.engine(EngineBudgets {
+            held: Arc::clone(&held) as _,
+            paint: Arc::clone(&paint) as _,
+        });
+        (Arc::new(engine), [held, paint])
     }
 }
 
@@ -41,6 +45,8 @@ struct Held {
     /// The host's setting for this document (`None`: the session's).
     own: Option<SessionPages>,
     engine: Option<Arc<EnginePages>>,
+    /// The engine's accounts: what it holds of the version in use, and its pages' paint.
+    accounts: Vec<Arc<Account>>,
 }
 
 impl Session {
@@ -57,11 +63,15 @@ impl Session {
         };
         let mut held = word.pages.0.lock().unwrap_or_else(PoisonError::into_inner);
         if held.engine.is_none() {
-            held.engine = held
+            let made = held
                 .own
                 .as_ref()
                 .or(self.config.pages.as_ref())
                 .map(SessionPages::engine);
+            if let Some((engine, accounts)) = made {
+                held.engine = Some(engine);
+                held.accounts = accounts.into();
+            }
         }
         Ok(held.engine.clone())
     }
@@ -77,10 +87,25 @@ impl Session {
             let mut held = word.pages.0.lock().unwrap_or_else(PoisonError::into_inner);
             *held = Held {
                 own: pages,
-                engine: None,
+                ..Held::default()
             };
         }
         Ok(())
+    }
+
+    /// What the document `id` keeps in the session's memory budget now, bytes: its page
+    /// engine's accounts (what it holds of the version in use, and its pages' paint); 0
+    /// where it has no engine.
+    ///
+    /// # Errors
+    /// `NotOpen` where no document `id` is open.
+    pub fn document_memory(&self, id: &DocId) -> Result<usize, SessionError> {
+        let document = self.document(id)?;
+        let Some(word) = document.word() else {
+            return Ok(0);
+        };
+        let held = word.pages.0.lock().unwrap_or_else(PoisonError::into_inner);
+        Ok(held.accounts.iter().map(|a| a.used()).sum())
     }
 
     /// The session's own layout of the document `id`, for a call whose host gives none.

@@ -39,6 +39,7 @@ use super::table_view::{table_view, AcceptedView, TableView};
 use crate::originals::{add, Watch};
 use crate::review::{needed, Editing};
 use crate::structure::common::{call, outcome, policy, refused, Outcome};
+use crate::TableShape;
 use ooxml_base::pyfmt::repr_str;
 use ooxml_tools::{ArgEnum, ErrorCode, Refusal, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::facts::{ragged_rows, RaggedRow};
@@ -474,8 +475,17 @@ fn finish(
         add(&mut result, watched.report(head.doc(), editing.doc));
     }
     result.warnings.extend(notes);
+    if now != table {
+        if let Some(made_by) = editing.made_by {
+            made_by.renamed(&table, &now);
+        }
+    }
     if !ragged_before && !matches!(change, TableChange::InsertRow { .. }) {
-        result.warnings.extend(made_ragged(head.doc(), &now));
+        if let Some(said) = made_ragged(head.doc(), &now) {
+            // round 57 (R125): the call kept for check's `made_by`
+            editing.note_made(TableShape::Ragged, &now, "word_edit_table");
+            result.warnings.push(said);
+        }
     }
     let off_now = head
         .doc()
@@ -484,7 +494,8 @@ fn finish(
         .and_then(|docx| table_view(head.doc(), &docx, &now, retry).ok())
         .is_some_and(|v| v.off_grid());
     if !off_before && off_now {
-        // round 58 (R128): the call is not kept for check's `made_by` yet (the session's)
+        // round 58 (R128): the call kept for check's `made_by`
+        editing.note_made(TableShape::OffGrid, &now, "word_edit_table");
         result.warnings.push(format!(
             "{now} is off its grid now (a row's cells do not reach across its columns: check's \
              table_grid_mismatch); this call made it so (undo reverses it)"
@@ -525,7 +536,7 @@ fn ragged(doc: &WordDoc, id: &str) -> Option<(usize, Vec<RaggedRow>, bool)> {
 const RAGGED_LISTED: usize = 20;
 
 /// The warning of a change that left `table` ragged where it was not (`_made_ragged`,
-/// round 57 R125, rule 7); the call is not kept for check's `made_by` yet (the session's).
+/// round 57 R125, rule 7).
 fn made_ragged(doc: &WordDoc, table: &str) -> Option<String> {
     let (grid, rows, after_accept) = ragged(doc, table)?;
     let named: Vec<String> = rows

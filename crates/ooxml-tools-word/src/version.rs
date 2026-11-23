@@ -172,6 +172,12 @@ pub struct Owned<'a> {
     pub layout_limit: Option<crate::LayoutLimit<'a>>,
     /// What the call draws pages with, where the host hands a raster (`render`).
     pub drawing: Option<crate::Drawing<'a>>,
+    /// The rows the session's table edits wrote (`check`'s `row_text_format`); `None`: the
+    /// host keeps none.
+    pub rows_written: Option<&'a crate::RowsWritten>,
+    /// The session's calls that left a table ragged or off its grid (`check`'s
+    /// `table_grid_mismatch` `made_by`); `None`: the host keeps none.
+    pub made_by: Option<&'a crate::MadeBy>,
 }
 
 /// A table of another open document the host holds itself (a workbook's `t:stock`), as a
