@@ -16,6 +16,14 @@ shard of the documents at a time:
     python tools/gates.py cache-merge STORE FILE...       # kept results and coverage added to a store
     python tools/gates.py frozen-api                      # the harness uses only the frozen reference's names
     python tools/gates.py durations DIR [--write]         # a run's warm times per mode (tools/gates_durations.json)
+    python tools/gates.py bless DIR [--source S] [--run URL]  # goldens from a run's records (tools/gates_goldens.py)
+
+Goldens (crates/ooxml-oracle/python/goldens.py, cases/README.md): where the checkout has a
+tree's goldens, ``diff`` runs that gate on them -- the frozen cases through the Rust oracle
+alone (golden_gate.py), each answer's digest against its golden; the known differences are
+in the goldens already.  ``--reference`` runs docx-agent instead.  ``--record`` writes the
+shard's cases and answers as a record (with docx-agent: each with its source -- the frozen
+Python, a known difference's cause); ``bless`` turns a run's records into goldens.
 
 The reference cache (crates/ooxml-oracle/python/reference_cache.py): with ``--cache STORE``
 a ``diff`` of an edit mode uses docx-agent's results kept in STORE where their key (the code
@@ -73,6 +81,7 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 import gates_fixtures
+import gates_goldens
 import gates_hunks
 import gates_jobs
 import gates_store
@@ -127,7 +136,8 @@ READ_CASE_MAKERS = ("word_facts_cases.py", "word_laid_facts_cases.py", "facts_do
 #: The rest of the harness the gates run: the edits harness (it imports word_reads_diff.py),
 #: what keeps the Rust core out of the reference (reference_guard.py and its no_core/ stand-in)
 #: and where the reference is imported from (reference_packages.py).
-GATE_HARNESS = ("word_edits_", "word_tool_reference", "word_reads_", "reference_cache", "reference_guard",
+GATE_HARNESS = ("word_edits_", "word_tool_reference", "word_reads_", "reference_cache", "reference_guard", "golden",
+                "oracle_run",
                 "reference_packages")
 GATE_HARNESS_FOLDERS = ("crates/ooxml-oracle/python/no_core/",)
 #: The oracle binaries the gates run, and what each answers.
@@ -353,11 +363,23 @@ def run_diff(args) -> int:
         only = None if chosen == gates_fixtures.ALL else chosen
     files = documents(tree, args.every, (k, n), only)
     results = out / "results.jsonl"
-    command, extra = harness_command(args, out, results, files)
+    # goldens hold the frozen trees' cases: a tree named by --tree runs against docx-agent
+    golden = gates_goldens.on_goldens(args.gate) and not args.reference and not args.tree
+    meta = {"gate": args.gate, "mode": args.mode, "per_tool": args.per_tool, "every": args.every}
+    if golden:      # the Rust oracle alone, on the frozen cases (golden_gate.py)
+        binary = Path(args.bin) / READ_MODES.get(args.mode, "word-edits")
+        command, extra = gates_goldens.golden_command(meta, binary, tree, results, out if args.record else None,
+                                                      [str(f.relative_to(tree)) for f in files], made=k == 1), {}
+    else:
+        command, extra = harness_command(args, out, results, files)
+        if args.record:
+            command += ["--record", str(out / gates_goldens.RAW), "--record-tree", str(tree)]
     env = {**os.environ, "DOCX_AGENT_RUST": "0", "PYTHONWARNINGS": "ignore", **extra}
     started = time.monotonic()
     with open(out / "log.txt", "w") as log:
-        done = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, env=env, cwd=ROOT) if files else None
+        # on goldens a shard of no documents still runs the made-up documents' cases
+        done = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, env=env, cwd=ROOT) \
+            if files or golden else None
     wall = time.monotonic() - started
     lines = [json.loads(x) for x in results.read_text().splitlines()] if results.exists() else []
     totals = lines.pop()["totals"] if lines and "totals" in lines[-1] else {}
@@ -367,21 +389,27 @@ def run_diff(args) -> int:
     for case in lines:
         source = (case.get("input") or {}).get("source") or case["file"]
         relative = os.path.relpath(source, tree)
-        entry = covering(entries, args.gate, args.mode, relative, case, source)
+        # on goldens the known differences are in the goldens already
+        entry = None if golden else covering(entries, args.gate, args.mode, relative, case, source)
         if entry:
             key = entry_key(entry)
             used[key] = used.get(key, 0) + 1
         (known if entry else unknown).append({"file": relative, "case": case["case"],
                                               "cause": entry and entry["cause"],
                                               **({"errors": case["errors"]} if case.get("errors") else {})})
-    crashed = done is not None and done.returncode not in (0, 1) or (files and not totals)
+    crashed = done is not None and done.returncode not in (0, 1) or (done is not None and not totals)
     if args.cache and not crashed and (out / USED).is_file():
         write_coverage(args, out, tree, only)
+    if args.record and not golden and not crashed:
+        gates_goldens.finish(out, meta, tree, lambda file, case: covering(
+            entries, args.gate, args.mode, os.path.relpath(file or tree / gates_goldens.goldens.MADE, tree),
+            {"input": case}, file))
     forms = totals.get("not_supported_forms", {})
     unlisted = unlisted_forms(forms, allowed_forms())
     summary = {"gate": args.gate, "mode": args.mode, "shard": args.shard, "every": args.every,
                "per_tool": args.per_tool, "documents": len(files),
-               "cases": totals.get("cases", 0), "differences": len(unknown), "known": len(known),
+               "cases": totals.get("cases", 0), "differences": len(unknown),
+               "known": totals.get("golden_known", 0) if golden else len(known), "goldens": golden,
                "not_supported": sum(forms.values()), "panics": totals.get("panics", 0),
                "not_supported_forms": forms, "unlisted_forms": unlisted, "wall": round(wall, 1),
                "crashed": bool(crashed), "whole": only is None, "used": used,
@@ -405,6 +433,14 @@ def run_diff(args) -> int:
         print(f"::error::{args.gate}/{args.mode} {args.shard}: {summary['panics']} cases where Rust panicked "
               "(log.txt: 'rust panicked')")
     return 1 if unknown or crashed or summary["panics"] or unlisted else 0
+
+
+def run_bless(args) -> int:
+    """Goldens from a run's records (tools/gates_goldens.py): the changes by mode and kind."""
+    code, lines = gates_goldens.bless(Path(args.dir), args.source, args.run, write=not args.check,
+                                      default_per_tool=default_per_tool)
+    print("\n".join(lines))
+    return code
 
 
 def run_cache_key(args) -> int:
@@ -617,7 +653,9 @@ def run_matrix(args) -> int:
         gate_modes = list(READ_MODES if gate == "reads" else modes)
         count = len(fixtures) if gate in TREES and fixtures is not None else None     # the corpus: as recorded
         estimates = {mode: gates_jobs.estimate(durations, gate, mode, count) for mode in gate_modes}
-        warm = [] if shards or gate == "reads" else warm_modes(args, gate, gate_modes, per_tool, fixtures)
+        # on goldens every mode is quick (no docx-agent): planned as warm modes are
+        warm = [] if shards or gate == "reads" else list(gate_modes) if gates_goldens.on_goldens(gate) \
+            else warm_modes(args, gate, gate_modes, per_tool, fixtures)
         if not shards and gate != "reads":
             shapes.append(f"{gate} warm: {','.join(warm) or '(none)'}")
         jobs = gates_jobs.gate_jobs(gate, gate_modes, warm=warm, shards=shards, estimates=estimates)
@@ -707,6 +745,8 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--cache", help="the reference cache's store (edit modes; reference_cache.py)")
     d.add_argument("--fixtures", default="all", help="fixtures and reads: all, auto or a comma list of fixtures")
     d.add_argument("--base", default="origin/main", help="--fixtures auto: the changes since this one's merge base")
+    d.add_argument("--reference", action="store_true", help="against docx-agent (the frozen reference), not goldens")
+    d.add_argument("--record", action="store_true", help="record the cases and answers for goldens (bless)")
     c = sub.add_parser("corpus")
     c.add_argument("out")
     r = sub.add_parser("report")
@@ -737,13 +777,19 @@ def main(argv: list[str] | None = None) -> int:
     du = sub.add_parser("durations", help="a run's warm times per mode (from its diff-* logs)")
     du.add_argument("dir")
     du.add_argument("--write", action="store_true", help="merge them into tools/gates_durations.json")
+    b = sub.add_parser("bless", help="goldens from a run's records (its downloaded record artifacts)")
+    b.add_argument("dir")
+    b.add_argument("--source", help="the source of answers whose record has none: a Word observation "
+                   "(Word 16.106: <file>#<case>) or the tool rule behind the change")
+    b.add_argument("--run", help="the run whose record artifacts hold the full outputs (its URL)")
+    b.add_argument("--check", action="store_true", help="print the changes, write nothing")
     k = sub.add_parser("cache-merge")
     k.add_argument("store")
     k.add_argument("files", nargs="*")
     args = parser.parse_args(argv)
     return {"diff": run_diff, "corpus": run_corpus, "report": run_report, "matrix": run_matrix,
             "summary": run_summary, "plan": run_plan, "fixtures": run_fixtures, "cache-key": run_cache_key, "cache-merge": run_cache_merge,
-            "durations": run_durations, "frozen-api": run_frozen_api}[args.command](args)
+            "durations": run_durations, "frozen-api": run_frozen_api, "bless": run_bless}[args.command](args)
 
 
 if __name__ == "__main__":
