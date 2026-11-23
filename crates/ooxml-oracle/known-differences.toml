@@ -225,6 +225,140 @@ for a pending tracked merge's first cell and fails with Python's IndexError ('li
 range', not_found); the Rust core refuses the row as docx-agent's delete_row does untracked \
 ('t:... has no row 99', refused). A docx-agent crash, not copied."""
 
+# Lane ph1-quirks (python-quirks.md, R4 #5 item 10): word_format_table on a table addressed by
+# position (t@body/N, N counting every body table: a table whose rows have no ids). The format
+# cases take a document's first three tables, the keeps cases its first eight, so N stays small;
+# one entry per N up to 15 (a corpus document with an unstamped table further on would show as a
+# new difference). Its stamping gives the table an id; the reply names it once.
+
+[[difference]]
+mode = "objects"
+input = { tool = "word_format_table", arguments = { table = "t@body/0" } }
+cause = """ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it \
+(t:...), with the rename from the address asked in renamed (tool rules: one name per block); \
+docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host \
+sees the stamped id either way)."""
+
+[[difference]]
+mode = "objects"
+input = { tool = "word_format_table", arguments = { table = "t@body/1" } }
+cause = """ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it \
+(t:...), with the rename from the address asked in renamed (tool rules: one name per block); \
+docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host \
+sees the stamped id either way)."""
+
+[[difference]]
+mode = "objects"
+input = { tool = "word_format_table", arguments = { table = "t@body/2" } }
+cause = """ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it \
+(t:...), with the rename from the address asked in renamed (tool rules: one name per block); \
+docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host \
+sees the stamped id either way)."""
+
+[[difference]]
+mode = "objects"
+input = { tool = "word_format_table", arguments = { table = "t@body/3" } }
+cause = """ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it \
+(t:...), with the rename from the address asked in renamed (tool rules: one name per block); \
+docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host \
+sees the stamped id either way)."""
+
+[[difference]]
+mode = "objects"
+input = { tool = "word_format_table", arguments = { table = "t@body/4" } }
+cause = """ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it \
+(t:...), with the rename from the address asked in renamed (tool rules: one name per block); \
+docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host \
+sees the stamped id either way)."""
+
+[[difference]]
+mode = "objects"
+input = { tool = "word_format_table", arguments = { table = "t@body/5" } }
+cause = """ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it \
+(t:...), with the rename from the address asked in renamed (tool rules: one name per block); \
+docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host \
+sees the stamped id either way)."""
+
+[[difference]]
+mode = "objects"
+input = { tool = "word_format_table", arguments = { table = "t@body/6" } }
+cause = """ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it \
+(t:...), with the rename from the address asked in renamed (tool rules: one name per block); \
+docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host \
+sees the stamped id either way)."""
+
+[[difference]]
+mode = "objects"
+input = { tool = "word_format_table", arguments = { table = "t@body/7" } }
+cause = """ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it \
+(t:...), with the rename from the address asked in renamed (tool rules: one name per block); \
+docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host \
+sees the stamped id either way)."""
+
+[[difference]]
+mode = "objects"
+input = { tool = "word_format_table", arguments = { table = "t@body/8" } }
+cause = """ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it \
+(t:...), with the rename from the address asked in renamed (tool rules: one name per block); \
+docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host \
+sees the stamped id either way)."""
+
+[[difference]]
+mode = "objects"
+input = { tool = "word_format_table", arguments = { table = "t@body/9" } }
+cause = """ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it \
+(t:...), with the rename from the address asked in renamed (tool rules: one name per block); \
+docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host \
+sees the stamped id either way)."""
+
+[[difference]]
+mode = "objects"
+input = { tool = "word_format_table", arguments = { table = "t@body/10" } }
+cause = """ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it \
+(t:...), with the rename from the address asked in renamed (tool rules: one name per block); \
+docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host \
+sees the stamped id either way)."""
+
+[[difference]]
+mode = "objects"
+input = { tool = "word_format_table", arguments = { table = "t@body/11" } }
+cause = """ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it \
+(t:...), with the rename from the address asked in renamed (tool rules: one name per block); \
+docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host \
+sees the stamped id either way)."""
+
+[[difference]]
+mode = "objects"
+input = { tool = "word_format_table", arguments = { table = "t@body/12" } }
+cause = """ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it \
+(t:...), with the rename from the address asked in renamed (tool rules: one name per block); \
+docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host \
+sees the stamped id either way)."""
+
+[[difference]]
+mode = "objects"
+input = { tool = "word_format_table", arguments = { table = "t@body/13" } }
+cause = """ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it \
+(t:...), with the rename from the address asked in renamed (tool rules: one name per block); \
+docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host \
+sees the stamped id either way)."""
+
+[[difference]]
+mode = "objects"
+input = { tool = "word_format_table", arguments = { table = "t@body/14" } }
+cause = """ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it \
+(t:...), with the rename from the address asked in renamed (tool rules: one name per block); \
+docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host \
+sees the stamped id either way)."""
+
+[[difference]]
+mode = "objects"
+input = { tool = "word_format_table", arguments = { table = "t@body/15" } }
+cause = """ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it \
+(t:...), with the rename from the address asked in renamed (tool rules: one name per block); \
+docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host \
+sees the stamped id either way)."""
+
 # ---------------------------------------------------------------------------------------------
 # Forms the Rust tools refuse as not supported yet (lane CUT1: ToolError::not_supported, code
 # `refused`, the form in details.not_supported). The reference (the frozen docx-agent) answers

@@ -130,13 +130,14 @@ fn table_of(address: &str) -> &str {
     address.rsplit_once("/c").map_or(address, |(table, _)| table)
 }
 
-/// What a target is, in the words a target that names nothing is told (the doubled braces
-/// are docx-agent's: listed in python-quirks.md).
+/// What a target is, in the words a target that names nothing is told (values by reference
+/// as a target is written, `{{d:...}}`).
 const TARGETS: &str =
     "a target is a paragraph, a range p:A@4:5, a cell t:X/c1,2, a column t:X/col2 or {{d:...}} values";
 
-/// What a target is, in the words a target of another kind is told.
-const KINDS: &str = "a target is a paragraph, a range, a cell, a table's column or {d:...} values";
+/// What a target is, in the words a target of another kind is told (values by reference as
+/// a target is written, as [`TARGETS`] says them).
+const KINDS: &str = "a target is a paragraph, a range, a cell, a table's column or {{d:...}} values";
 
 /// The values `scale`'s targets hold in the version `doc` (read as `docx`, named `name` in
 /// the host's words), within `range` (`check`'s) and on `pages`, placed by `layout`.
