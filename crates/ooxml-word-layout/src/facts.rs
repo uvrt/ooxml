@@ -24,6 +24,7 @@ use crate::px::Px;
 use ooxml_word_model::model::Block;
 use ooxml_word_model::value::Text;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 /// One line a page draws, as a check reads it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -368,26 +369,53 @@ impl LayoutFacts {
 /// [`LayoutFacts::of`] reads them -- those of a page of a known section -- found without
 /// placing a line ([`crate::geometry::body_lines_of`]).
 pub(crate) fn first_pages_of(layout: &DocumentLayout) -> std::collections::HashMap<Text, usize> {
-    let paths = layout.line_paths();
-    let body = &layout.document.body;
     let mut first = std::collections::HashMap::new();
-    for page in 0..layout.page_count() {
-        let section = layout
-            .pagination
-            .info
-            .get(page)
-            .and_then(|info| layout.sections.get(info.section));
-        let (Some(section), Some(laid)) = (section, layout.laid_page(page)) else {
-            continue;
-        };
-        let height = crate::geometry::device_px(section.props.page_size.height);
-        for line in crate::geometry::body_lines_of(layout, laid, height) {
-            if let Some(path) = paths.path(line, body) {
-                first.entry(path).or_insert(page);
-            }
+    for (page, paths) in layout.page_paths().iter().enumerate() {
+        for path in paths.iter() {
+            first.entry(Text::clone(path)).or_insert(page);
         }
     }
     first
+}
+
+/// The body paragraph paths page `page` of `layout` draws lines of, each once, in the order
+/// first drawn (none for a blank page or one of an unknown section): the page's part of
+/// [`first_pages_of`].
+pub(crate) fn page_paths_of(layout: &DocumentLayout, page: usize) -> Arc<[Text]> {
+    let section = layout
+        .pagination
+        .info
+        .get(page)
+        .and_then(|info| layout.sections.get(info.section));
+    let (Some(section), Some(laid)) = (section, layout.laid_page(page)) else {
+        return Arc::from(Vec::new());
+    };
+    let (paths, body) = (layout.line_paths(), &layout.document.body);
+    let height = crate::geometry::device_px(section.props.page_size.height);
+    let mut seen = std::collections::HashSet::new();
+    crate::geometry::body_lines_of(layout, laid, height)
+        .into_iter()
+        .filter_map(|line| paths.path(line, body))
+        .filter(|path| seen.insert(Text::clone(path)))
+        .collect()
+}
+
+/// Page `page`'s paths ([`page_paths_of`]) as `before` (laid out before `layout`) made
+/// them, where `layout` kept the page as `before` laid it out: the very same laid page, of
+/// the same place and section, its page as tall; the paths of the body's paragraphs are
+/// the caller's to have compared.
+pub(crate) fn kept_page_paths(
+    layout: &DocumentLayout,
+    before: &DocumentLayout,
+    known: &[Arc<[Text]>],
+    page: usize,
+) -> Option<Arc<[Text]>> {
+    let info = layout.pagination.info.get(page)?;
+    let height = |l: &DocumentLayout| l.sections.get(info.section).map(|s| s.props.page_size.height);
+    let same = std::sync::Arc::ptr_eq(laid_arc(layout, page)?, laid_arc(before, page)?)
+        && before.pagination.info.get(page) == Some(info)
+        && height(layout) == height(before);
+    same.then(|| known.get(page).cloned()).flatten()
 }
 
 /// The top-level body block `layout` stopped at, if it did.

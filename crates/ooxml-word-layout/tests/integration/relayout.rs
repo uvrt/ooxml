@@ -620,6 +620,11 @@ pub(crate) fn verify(
     let made = LayoutFacts::of(&whole);
     assert!(carried == made, "{at}: the facts taken from the version before differ");
     let first = made.first_pages();
+    assert_eq!(
+        **relaid.first_pages_after(previous),
+        first,
+        "{at}: the kept first pages differ"
+    );
     assert_eq!(**relaid.first_pages(), first, "{at}: the relaid first pages differ");
     assert_eq!(
         **whole.first_pages(),

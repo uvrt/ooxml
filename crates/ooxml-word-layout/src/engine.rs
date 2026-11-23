@@ -83,6 +83,8 @@ pub struct LayoutMemo {
     page_facts: std::sync::OnceLock<Arc<[std::sync::OnceLock<Option<crate::facts::PageFacts>>]>>,
     /// Its body's paragraphs in document order, cells included.
     paragraphs: std::sync::OnceLock<Arc<[Arc<ooxml_word_model::model::Paragraph>]>>,
+    /// Each page's body paragraph paths, in the order first drawn.
+    page_paths: std::sync::OnceLock<Arc<[Arc<[ooxml_word_model::value::Text]>]>>,
     /// Each body paragraph path's first page.
     first_pages: std::sync::OnceLock<Arc<std::collections::HashMap<ooxml_word_model::value::Text, usize>>>,
     /// Per section, the pages it has content on (`SECTIONPAGES`).
@@ -134,6 +136,39 @@ impl DocumentLayout {
         self.memo
             .first_pages
             .get_or_init(|| Arc::new(crate::facts::first_pages_of(self)))
+    }
+
+    /// Each page's body paragraph paths, each once, in the order first drawn (its part of
+    /// [`DocumentLayout::first_pages`]), made when first asked.
+    pub fn page_paths(&self) -> &Arc<[Arc<[ooxml_word_model::value::Text]>]> {
+        self.memo.page_paths.get_or_init(|| {
+            (0..self.page_count())
+                .map(|k| crate::facts::page_paths_of(self, k))
+                .collect()
+        })
+    }
+
+    /// [`DocumentLayout::first_pages`], made from `before`'s pages (the version laid out
+    /// before it) where `before` made them: a page kept as `before` laid it out takes its
+    /// paths from there, the rest are walked -- all walked where the body's paragraphs'
+    /// paths differ. Equal to [`DocumentLayout::first_pages`] made alone.
+    pub fn first_pages_after(
+        &self,
+        before: &DocumentLayout,
+    ) -> &Arc<std::collections::HashMap<ooxml_word_model::value::Text, usize>> {
+        if let Some(known) = before.memo.page_paths.get() {
+            if self.mode15 == before.mode15 && self.line_paths() == before.line_paths() {
+                self.memo.page_paths.get_or_init(|| {
+                    (0..self.page_count())
+                        .map(|k| {
+                            crate::facts::kept_page_paths(self, before, known, k)
+                                .unwrap_or_else(|| crate::facts::page_paths_of(self, k))
+                        })
+                        .collect()
+                });
+            }
+        }
+        self.first_pages()
     }
 
     /// The list labels of the text boxes anchored in its body

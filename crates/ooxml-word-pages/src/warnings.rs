@@ -77,10 +77,11 @@ fn blocks_hold_drawing(blocks: &[Block]) -> bool {
 
 /// What `layout` says, its paragraphs and tables resolved in `model`; `drawings` paints
 /// the pages that hold drawings for what their painters say. It makes none of the
-/// layout's facts: its page-number fields read only where paragraphs are first drawn.
+/// layout's facts: its page-number fields read only where paragraphs are first drawn --
+/// taken from `before`'s pages (the version laid out before it) for the pages it kept.
 pub fn said(
     model: &mut Model,
-    layout: &DocumentLayout,
+    (layout, before): (&DocumentLayout, Option<&DocumentLayout>),
     drawings: &mut dyn PageDrawings,
     locale: &Locale,
     memo: &mut crate::page_said::PageMemo,
@@ -95,7 +96,7 @@ pub fn said(
         );
     }
     body_style_references(layout, locale, &mut out);
-    body_fields(layout, &mut out);
+    body_fields(layout, before, &mut out);
     if !layout.settled {
         out.warn(
             "field-layout-unsettled",
@@ -282,7 +283,7 @@ fn shared_page_notes(layout: &DocumentLayout, page: usize, out: &mut Said) {
 }
 
 /// The body's page-number fields that cannot be computed (`_computed_fields`).
-fn body_fields(layout: &DocumentLayout, out: &mut Said) {
+fn body_fields(layout: &DocumentLayout, before: Option<&DocumentLayout>, out: &mut Said) {
     let paragraphs = layout.body_paragraphs();
     let has = paragraphs.iter().any(|p| {
         p.runs
@@ -291,6 +292,10 @@ fn body_fields(layout: &DocumentLayout, out: &mut Said) {
     });
     if !has {
         return;
+    }
+    if let Some(before) = before {
+        // the first pages made from the pages kept: what `PageNumbers` reads
+        layout.first_pages_after(before);
     }
     let numbers = PageNumbers::new(layout);
     let marks = bookmarks(paragraphs);
