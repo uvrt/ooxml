@@ -4,8 +4,10 @@ name: Release
 # `.<N>` for a second release the same day -- builds the sdists and wheels of every
 # distribution in this repository (the seven packages and pptx2svg's font bundle, each at
 # the version its pyproject.toml names), checks that they install from one page as the
-# README says, and attaches them to the GitHub Release of that tag, with notes listing
-# each distribution and its version (tools/release_notes.py).
+# README says, and attaches them to the GitHub Release of that tag, with notes
+# (tools/release_notes.py): what was removed and what to use instead, the tools'
+# definitions that changed since the release before, the forms refused until a later
+# release, and each distribution and its version.
 #
 # A manual run (workflow_dispatch, on any branch: `gh workflow run release.yml --ref
 # <branch>`) and a pull request that changes this file or the scripts it runs do everything
@@ -89,6 +91,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The notes compare the tools' definitions with the release before (its tag).
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
