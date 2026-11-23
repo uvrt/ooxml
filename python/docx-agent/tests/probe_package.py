@@ -2,7 +2,7 @@
 document of the given body, Normal's styles and settings (``tools/make_fixtures.py``).  The
 tests that hold the tools to Word's observations build their documents with it.
 
-Must not: import pytest or docx-agent's library (a plain builder of package bytes).
+Must not: import pytest or docx-agent's library (it only writes package bytes).
 """
 
 from __future__ import annotations
