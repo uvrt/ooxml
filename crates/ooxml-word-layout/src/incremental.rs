@@ -335,13 +335,12 @@ pub fn repaginate(
             carry: std::sync::Arc::clone(&page.carried),
             lines: shifted(&page.lines_before, shift.items),
         });
-        let change = changes.get(i).copied().unwrap_or(*first);
-        // What every change up to this one added: `b_new` indexes the new flow, `b_old` the
-        // old one.
-        let items = isize::try_from(change.b_new).unwrap_or(0) - isize::try_from(change.b_old).unwrap_or(0);
         let mut joined = None;
         let mut until = |state: &Resume| {
-            joined = joins(old, change, items, placed, state);
+            joined = passed(changes, i, state).and_then(|change| {
+                let items = added(change);
+                joins(old, change, items, placed, state).map(|q| (q, items))
+            });
             joined.is_some()
         };
         let (fresh, stop) = Paginator::new(cx).run(resume, &mut until);
@@ -349,7 +348,9 @@ pub fn repaginate(
         out.pages.extend(fresh.pages);
         out.info.extend(fresh.info);
         out.stopped = fresh.stopped;
-        let (Some(q), Some(state)) = (joined, stop) else { break };
+        let (Some((q, items)), Some(state)) = (joined, stop) else {
+            break;
+        };
         stats.joined = Some(q);
         let start = old.pages.get(q).map_or(0, |page| page.start.item);
         shift = Shift {
@@ -380,6 +381,33 @@ pub fn repaginate(
         }
     }
     (out, stats)
+}
+
+/// What every change up to `change` added: `b_new` indexes the new flow, `b_old` the old
+/// one.
+fn added(change: Change) -> isize {
+    isize::try_from(change.b_new).unwrap_or(0) - isize::try_from(change.b_old).unwrap_or(0)
+}
+
+/// The last of `changes` from the `i`th on that a new page starting at `state` is past
+/// (the item before the page too, where the page reads it): what the old pages' items are
+/// moved by there. `None` where the page starts within a change, or before the `i`th ends.
+fn passed(changes: &[Change], i: usize, state: &Resume) -> Option<Change> {
+    // A page starting at a paragraph's first line reads the item before it (its space
+    // after, at the page's top).
+    let reads_before = usize::from(state.position.line == 0 && state.position.part.is_empty());
+    let item = state.position.item;
+    let mut last = None;
+    for change in changes.get(i..).unwrap_or_default() {
+        if item < change.a {
+            break;
+        }
+        if item < change.b_new + reads_before {
+            return None;
+        }
+        last = Some(*change);
+    }
+    last
 }
 
 /// How far old item `start`'s paragraph blocks moved, it being item `start + items` now.

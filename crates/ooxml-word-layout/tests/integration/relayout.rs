@@ -592,7 +592,7 @@ fn outputs_equal(
 /// `relaid` (laid out by `kept` from `previous`) equals the version `body` laid out whole
 /// in a fresh engine and model: each pass's flow and pages, the fields, the facts taken
 /// from the version before, and every page's SVG.
-fn verify(
+pub(crate) fn verify(
     at: &str,
     (kept, kept_model): (&mut WordLayout, &mut Model),
     (relaid, previous): (&DocumentLayout, &DocumentLayout),
