@@ -309,7 +309,7 @@ def find_in_pdf(pages: list[list[PdfChar]], text: str) -> list[PdfChar] | None:
 
 def word_script(lines: list[str]) -> str:
     """An AppleScript for :func:`run_script`: Word opens the input, runs ``lines`` on it
-    (the document is ``d``), saves it to the output and quits (once ``tools/e3_probe.py``)."""
+    (the document is ``d``), saves it to the output and quits (once ``crates/ooxml-oracle/word/probes/e3_probe.py``)."""
     body = "\n      ".join(line.replace("\n", "\n      ") for line in lines)
     return f'''
 on run argv

@@ -2,7 +2,7 @@
 
 * ``insert_row`` inside a merge down joins it -- the new row's cell continues the merge --
   and above its first row or below its last stays outside it, as Word's Insert Rows does
-  (``tools/merged_rows_probe.py``, ``tests/observations/merged-rows-word.json``: every case
+  (``crates/ooxml-oracle/word/probes/merged_rows_probe.py``, ``crates/ooxml-oracle/word/observations/merged-rows-word.json``: every case
   run here on the document Word was given, and compared with what Word saved).  Beside a
   merge, the result says so with the merge call that joins the row (rule 2).
 * ``copy_row`` copies a row with a cell merged down (refused until now): inside the merge
@@ -34,11 +34,12 @@ import word_docs
 ROOT = Path(__file__).resolve().parent.parent
 
 import merged_rows_cases as probe  # noqa: E402
+from conftest import OBSERVATIONS  # noqa: E402
 
 CLOCK = lambda: dt.datetime(2026, 11, 17, 9, 0, tzinfo=dt.timezone.utc)  # noqa: E731
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _W = "{%s}" % W
-OBSERVED = json.loads((ROOT / "tests" / "observations" / "merged-rows-word.json").read_text(encoding="utf-8"))
+OBSERVED = json.loads((OBSERVATIONS / "merged-rows-word.json").read_text(encoding="utf-8"))
 
 #: Each Word case as docx-agent's call: ``(row index from 0, below)``.  Word's insertion point
 #: in a merged cell is in the merge's first row (``…Merged``: row 2 of the probe's).

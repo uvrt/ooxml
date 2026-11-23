@@ -372,7 +372,7 @@ def test_a_word_resave_keeps_caches_formulas_and_workbooks(word, box, name):
 # -- tracking ----------------------------------------------------------------------------------
 
 
-#: Word counts the revisions and says whether it tracks (once ``tools/charts_probe.py``).
+#: Word counts the revisions and says whether it tracks (once ``crates/ooxml-oracle/word/probes/charts_probe.py``).
 _COUNT_SCRIPT = '''
 on run argv
   set inputPath to item 1 of argv

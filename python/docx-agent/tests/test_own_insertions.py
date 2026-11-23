@@ -1,5 +1,5 @@
 """Formatting changes on what is one's own pending insertion (round 50, R98), as Word records
-them (``tools/tracking_probe.py``, ``tests/observations/tracking-word.json``):
+them (``crates/ooxml-oracle/word/probes/tracking_probe.py``, ``crates/ooxml-oracle/word/observations/tracking-word.json``):
 
 * paragraphs typed one after another at a container's end keep no ``w:pPrChange`` but on the
   last one, which holds the container's old mark -- the change recorded on a mark passes on
@@ -21,9 +21,10 @@ from ooxml_edit.tools import Toolbox
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 
 import word_docs
+from conftest import OBSERVATIONS  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-OBSERVED = json.loads((ROOT / "tests" / "observations" / "tracking-word.json").read_text(encoding="utf-8"))
+OBSERVED = json.loads((OBSERVATIONS / "tracking-word.json").read_text(encoding="utf-8"))
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 AUTHOR = "Writer"
 

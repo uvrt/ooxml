@@ -1,6 +1,6 @@
 """Round 51 (R103): a tracked deletion of a row or table that is the author's own pending
 insertion removes it outright, as Word does (the rows probe, :mod:`rows_cases`,
-``tests/observations/rows-word.json``):
+``crates/ooxml-oracle/word/observations/rows-word.json``):
 
 * a row wholly one's own insertion (its mark, its cells' marks, every run) goes, no record
   left -- deleted by ``delete_row``, a table's deletion, a ``sync`` removal;
@@ -32,8 +32,9 @@ import word_docs
 
 ROOT = Path(__file__).resolve().parent.parent
 import rows_cases as rows_probe  # noqa: E402
+from conftest import OBSERVATIONS  # noqa: E402
 
-OBSERVED = json.loads((ROOT / "tests" / "observations" / "rows-word.json").read_text(encoding="utf-8"))
+OBSERVED = json.loads((OBSERVATIONS / "rows-word.json").read_text(encoding="utf-8"))
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _W = "{%s}" % W
 ME, OTHER = "Writer", rows_probe.OTHER
@@ -116,7 +117,7 @@ def _cell_paragraph(session, table, row, column, doc="d1") -> str:
 
 
 def _made_as_word_made_them(box):
-    """The probe's document, and the probe's edits (once ``tools/rows_probe.py``'s script),
+    """The probe's document, and the probe's edits (once ``crates/ooxml-oracle/word/probes/rows_probe.py``'s script),
     tracked by the probe's Word user, made through the tools: the session."""
     session = box.session(clock=CLOCK)
     session.open(rows_probe.document(ME), "rows.docx")
@@ -354,7 +355,7 @@ def test_a_control_deleted_with_its_table_deletes_the_table_tracked(box):
 
 # -- the paragraph a table came with (round 51) ------------------------------------------------
 
-SEPARATOR = json.loads((ROOT / "tests" / "observations" / "separator-word.json").read_text(encoding="utf-8"))
+SEPARATOR = json.loads((OBSERVATIONS / "separator-word.json").read_text(encoding="utf-8"))
 
 
 def _separator_observed(name: str) -> list[tuple]:
@@ -367,7 +368,7 @@ def _separator_observed(name: str) -> list[tuple]:
 
 
 def test_word_puts_a_new_table_beside_a_table_and_deleting_it_leaves_no_trace():
-    """The measured facts (the separator probe, once ``tools/separator_probe.py``): Word inserts a table next to a table
+    """The measured facts (the separator probe, once ``crates/ooxml-oracle/word/probes/separator_probe.py``): Word inserts a table next to a table
     with no paragraph between, and deleting it leaves the document as it was; a table
     inserted at the end of a paragraph's text splits it, and the split stays."""
     made, deleted = _separator_observed("made"), _separator_observed("deleted")

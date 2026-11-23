@@ -66,6 +66,13 @@ PYTHONS = ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
 #: and, within it, its bindings (BINDINGS).  ``uses`` names them as it names siblings.
 MODULE = "ooxml-core"
 BINDINGS = "ooxml-core bindings"
+#: The oracle's own Python tests (crates/ooxml-oracle/pytest.ini: the harness's, python/tests,
+#: and the recorded-Word tier, word/tests): run in docx-agent's environment (its tool host) by
+#: docx-agent's suite (its ``also_tests``), so they run whenever docx-agent's tests do, and a
+#: change to them or to what they read (ORACLE_TEST_PREFIXES) selects docx-agent's legs.
+ORACLE_TESTS = "ooxml-oracle tests"
+ORACLE_TEST_PREFIXES = ("crates/ooxml-oracle/python/", "crates/ooxml-oracle/word/", "crates/ooxml-oracle/pytest.ini",
+                        "crates/ooxml-oracle/reference.toml")
 
 #: Each package: the monorepo packages its test run uses (itself included; a package's
 #: tests run when any of them changes), its siblings to install (pip requirement paths,
@@ -139,7 +146,9 @@ PACKAGES: dict[str, dict] = {
     },
     "docx-agent": {
         # ooxml-core (the Rust core, built here by maturin) serves its checks of ranges.
-        "uses": ["ooxml-common", "ooxml-edit", "docx2svg", "ooxml-core", "docx-agent"],
+        "uses": ["ooxml-common", "ooxml-edit", "docx2svg", "ooxml-core", "docx-agent", ORACLE_TESTS],
+        # The oracle's tests (ORACLE_TESTS), run after the suite on its first shard, GIL legs only.
+        "also_tests": "crates/ooxml-oracle",
         "siblings": ["ooxml-common", "ooxml-edit", "docx2svg[png]", "ooxml-core"],
         "extras": "dev,png",
         "min_python": "3.10",
@@ -261,6 +270,8 @@ def _units(path: str) -> set[str]:
         units.add(MODULE)
         if path.startswith(BINDING_PREFIXES + RUST_WORKSPACE):
             units.add(BINDINGS)
+    if path.startswith(ORACLE_TEST_PREFIXES):
+        units.add(ORACLE_TESTS)
     parts = path.split("/")
     if len(parts) > 2 and parts[0] == "python" and parts[1] in PACKAGES and not _is_notes(path):
         units.add(parts[1])
@@ -555,7 +566,17 @@ def test(name: str, event: str, free_threading: bool, coverage: bool = False,
                                "--sort=cover"], cwd=cwd).returncode
     if not code and spec.get("fixture_check") and not free_threading and first:
         code = fixture_check(cwd)
+    if not code and spec.get("also_tests") and not free_threading and first:
+        code = also_test(ROOT / spec["also_tests"], spec["pytest"])
     return code
+
+
+def also_test(folder: Path, pytest_args: list[str]) -> int:
+    """The suite of ``folder`` (its own pytest.ini), in this environment: a package's
+    ``also_tests``."""
+    cmd = [sys.executable, "-m", "pytest", "-q", *(a for a in pytest_args if not a.startswith("--durations"))]
+    print(f"+ (in {folder.relative_to(ROOT)})", " ".join(cmd), flush=True)
+    return subprocess.run(cmd, cwd=folder).returncode
 
 
 #: Each sharded package's recorded time per test file, in seconds summed over its tests,

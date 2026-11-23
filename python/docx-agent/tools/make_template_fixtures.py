@@ -6,7 +6,7 @@
     1 redefined, a paragraph and a character style of its own, header, footer), a bullet
     list, a header and a footer, Letter paper with a 1000-twip top margin, even and odd
     headers, a body of four paragraphs, and properties (title, subject, author, keywords,
-    company) -- the probe's template (``tools/e6_probe.py``, ``template``), which Word made
+    company) -- the probe's template (``crates/ooxml-oracle/word/probes/e6_probe.py``, ``template``), which Word made
     a document from.
 ``brand-macros.dotm``
     the same as a macro-enabled template: a VBA project and its ``vbaData.xml``, both

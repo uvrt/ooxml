@@ -39,9 +39,9 @@ and then `pytest -m oracle -q` (the oracle never runs under `-n`).
 - **Provider tests** (`-m provider`) call a model provider's API; skipped without
   `ANTHROPIC_API_KEY`.
 
-`tools/paraid_probe.py` repeats the paraId measurement, and `tools/e1_probe.py` to
-`tools/e6_probe.py` the measurements of what Word writes for each phase's edits,
-`tools/charts_probe.py` those of what Word does with charts and SmartArt.
+`crates/ooxml-oracle/word/probes/paraid_probe.py` repeats the paraId measurement, and `crates/ooxml-oracle/word/probes/e1_probe.py` to
+`crates/ooxml-oracle/word/probes/e6_probe.py` the measurements of what Word writes for each phase's edits,
+`crates/ooxml-oracle/word/probes/charts_probe.py` those of what Word does with charts and SmartArt.
 
 ## Golden transcripts
 

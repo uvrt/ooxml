@@ -1,6 +1,6 @@
 """Round 32, R12 and R14: a table of contents' entries for numbered headings, and its right
 tab stop next to a ``toc N`` style's own, as Word's own update writes them (measured once with
-``tools/toc_numbers_probe.py``: ``tests/observations/toc-numbers-word.json``).  The update is
+``crates/ooxml-oracle/word/probes/toc_numbers_probe.py``: ``crates/ooxml-oracle/word/observations/toc-numbers-word.json``).  The update is
 ``word_fields`` ``update`` on the Rust session."""
 
 from __future__ import annotations
@@ -8,7 +8,6 @@ from __future__ import annotations
 import io
 import json
 import zipfile
-from pathlib import Path
 
 import pytest
 from lxml import etree
@@ -18,8 +17,9 @@ from docx_agent.tools import FORMAT, GROUPS, TOOLS
 
 import toc_number_cases
 from toc_number_cases import W, entries
+from conftest import OBSERVATIONS  # noqa: E402
 
-OBSERVED = json.loads((Path(__file__).parent / "observations" / "toc-numbers-word.json").read_text())["cases"]
+OBSERVED = json.loads((OBSERVATIONS / "toc-numbers-word.json").read_text())["cases"]
 CASES = {**toc_number_cases.CASES, **toc_number_cases.CASES2, **toc_number_cases.CASES3}
 
 

@@ -1,5 +1,5 @@
 """Spacing around punctuation by the text's language (round 35, R21:
-measured in ``tests/observations/typography-word.json``), through the toolbox.
+measured in ``crates/ooxml-oracle/word/observations/typography-word.json``), through the toolbox.
 
 Text a call writes in French gets a no-break space (U+00A0) before ``: ; ! ?`` and inside
 guillemets -- an ordinary space it wrote made U+00A0, a missing one put in -- and nothing
@@ -22,9 +22,10 @@ from ooxml_edit.tools import Toolbox
 from docx_agent.tools import GROUPS, TOOLS, docx_format
 
 import word_docs
+from conftest import OBSERVATIONS  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-OBSERVED = json.loads((ROOT / "tests" / "observations" / "typography-word.json").read_text(encoding="utf-8"))
+OBSERVED = json.loads((OBSERVATIONS / "typography-word.json").read_text(encoding="utf-8"))
 NB = "{U+00A0}"
 NBSP = "\u00a0"
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"

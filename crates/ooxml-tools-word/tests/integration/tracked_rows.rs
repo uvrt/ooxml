@@ -1,8 +1,9 @@
-//! Tracked row deletions as Word makes them (round 51, R103; docx-agent's
-//! `tests/observations/rows-word.json`): a table's last row that is the author's own pending
-//! insertion, holding another author's insertion, goes, and what the other author inserted
-//! moves to the paragraph after the table, deleted; a table the author inserted beside a
-//! table, deleted, goes with the empty paragraph it came with, the document as it was.
+//! Tracked row deletions as Word makes them (round 51, R103; Word's observation
+//! `crates/ooxml-oracle/word/observations/rows-word.json`): a table's last row that is the
+//! author's own pending insertion, holding another author's insertion, goes, and what the
+//! other author inserted moves to the paragraph after the table, deleted; a table the author
+//! inserted beside a table, deleted, goes with the empty paragraph it came with, the
+//! document as it was.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
 use crate::common::{Never, Still, Unlimited, R, W};

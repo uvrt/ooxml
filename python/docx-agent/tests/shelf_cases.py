@@ -3,7 +3,7 @@
 from docx-agent's tests), so these tests need nothing of the oracle.  Must not: import pytest
 or docx-agent.
 
-Each is a one-part document written as docx-agent's ``tools/e3_probe.py`` writes its probes
+Each is a one-part document written as ``crates/ooxml-oracle/word/probes/e3_probe.py`` writes its probes
 (``_package``: its styles, settings and section, byte for byte), here so that the oracle needs
 nothing of docx-agent's tools (the gates' reference is frozen: reference_packages.py).
 """

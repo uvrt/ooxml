@@ -5,7 +5,7 @@ is settled by naming only the changes that put it there.
 * R126 (a): a row ``insert_row``, ``set_cells`` ``grow`` and ``sync`` add takes, in each
   cell, the formatting of the cell beside it -- its paragraph mark formatted as that cell's
   first run of text, as Word's Insert Rows does (the row-format probe, :mod:`row_format_cases`,
-  ``tests/observations/row-format-word.json``) -- so ``set_cells`` text written into it
+  ``crates/ooxml-oracle/word/observations/row-format-word.json``) -- so ``set_cells`` text written into it
   looks like its column (rule 6).
 * R126 (b): text written into an empty cell takes its mark's formatting, as Word gives
   typed text (measured: the document default where the mark has none, not the column's);
@@ -43,11 +43,12 @@ ROOT = Path(__file__).resolve().parent.parent
 
 import row_format_cases as probe  # noqa: E402
 from shelf_cases import ROWS, _shelf  # noqa: E402
+from conftest import OBSERVATIONS  # noqa: E402
 
 CLOCK = lambda: dt.datetime(2026, 11, 16, 9, 0, tzinfo=dt.timezone.utc)  # noqa: E731
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _W = "{%s}" % W
-OBSERVED = json.loads((ROOT / "tests" / "observations" / "row-format-word.json").read_text(encoding="utf-8"))
+OBSERVED = json.loads((OBSERVATIONS / "row-format-word.json").read_text(encoding="utf-8"))
 
 
 @pytest.fixture(scope="module")

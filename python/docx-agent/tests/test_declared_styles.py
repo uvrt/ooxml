@@ -1,6 +1,6 @@
 """word_design_facts' ``declared_styles`` (production round 21, T7): every declared style,
-used or not, resolved, theme colours as the RGB Word draws (``tools/theme_tint_probe.py``,
-``tests/observations/theme-tints-word.json``)."""
+used or not, resolved, theme colours as the RGB Word draws (``crates/ooxml-oracle/word/probes/theme_tint_probe.py``,
+``crates/ooxml-oracle/word/observations/theme-tints-word.json``)."""
 
 from __future__ import annotations
 
@@ -12,10 +12,10 @@ from ooxml_edit.tools import Toolbox
 
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 import word_docs
-from conftest import FIXTURE_DIR  # noqa: E402
+from conftest import OBSERVATIONS, FIXTURE_DIR  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-SWATCHES = json.loads((ROOT / "tests" / "observations" / "theme-tints-word.json").read_text())["swatches"]
+SWATCHES = json.loads((OBSERVATIONS / "theme-tints-word.json").read_text())["swatches"]
 
 
 @pytest.fixture(scope="module")
