@@ -78,11 +78,12 @@ impl Graphic {
 /// The part `part`'s relationship `id` names, where it is internal.
 fn related(docx: &Docx, part: &str, id: Option<&str>) -> Option<String> {
     let id = id?;
-    crate::parts::relationships(&docx.package, part)
+    docx.relationships(part)
         .ok()?
-        .into_iter()
-        .find(|r| r.id == id && !r.external)?
+        .get(id)
+        .filter(|r| !r.external)?
         .target_part
+        .clone()
 }
 
 /// The diagram `frame` of the part `part` holds: `None` where it names none, or its data
