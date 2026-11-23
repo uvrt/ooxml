@@ -69,6 +69,36 @@ def master_placeholder(package, master_part: str | None, kind: str) -> Element |
     return None
 
 
+def placeholder_parents(shape) -> list[tuple[Element, str]]:
+    """The placeholders a placeholder ``shape`` (a :class:`~pptx_agent.Shape`) takes its
+    fill and outline from when it states none, nearest first, each with the part it is in:
+    on a slide its layout's placeholder, then that one's master placeholder; on a layout
+    its master's.  Empty for a shape that is not a placeholder, a master's, or a slide's
+    placeholder its layout has no match for -- as pptx2svg resolves it."""
+    placeholder = shape.placeholder
+    host = shape._slide
+    package = host.document.package
+    kind = getattr(host, "kind", None)
+    if placeholder is None or kind == "master":
+        return []
+    chain: list[tuple[Element, str]] = []
+    if kind == "layout":
+        layout_part, wanted = host.part_path, placeholder.type
+    else:
+        layout_part = layout_of(package, host.part_path)
+        layout_shape = host._layout_placeholder(placeholder)
+        if layout_part is None or layout_shape is None:
+            return []
+        chain.append((layout_shape, layout_part))
+        node = placeholder_of(layout_shape)
+        wanted = node.get("type") if node is not None else None
+    master_part = master_of(package, layout_part)
+    master_shape = master_placeholder(package, master_part, master_kind(wanted))
+    if master_part is not None and master_shape is not None:
+        chain.append((master_shape, master_part))
+    return chain
+
+
 def list_styles(package, master_part: str | None, own: Element | None,
                 layout_shape: Element | None, kind: str | None,
                 is_placeholder: bool, table_cell: bool = False) -> list[Element | None]:

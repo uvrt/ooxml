@@ -620,7 +620,11 @@ a heading is too tight is the application's rule. `check` with `spacing` reports
 run whose WCAG 2 contrast ratio is below `minimum` (large text, 18 pt or 14 pt bold, two
 thirds of it), lowest first, each a `Contrast` with `color`, `behind`, `ratio`, `source`
 (where the colour comes from, `effective.color_origin`) and `over` (the shape's own fill,
-the shape beneath, or the slide's background). The colour is the one PowerPoint draws:
+the shape beneath, or the slide's background). The shapes beneath include those the slide
+shows from its layout and master (`"L2.5"`, `"M0.7"`), under its own -- none from the
+master under a layout with `showMasterSp="0"`, none from either on a slide that hides
+background graphics -- and a placeholder that states no fill has its layout's or master's
+(`Shape.effective_fill`), all measured in PowerPoint. The colour is the one PowerPoint draws:
 a text box takes the presentation's `defaultTextStyle`, not the master's `otherStyle`
 (measured; `ooxml_common.drawingml.text_chain`). A picture, table or chart behind the text
 gives `behind: "unknown"`. `check` with `contrast` reports the same.

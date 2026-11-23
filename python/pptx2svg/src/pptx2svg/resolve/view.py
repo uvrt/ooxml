@@ -316,13 +316,16 @@ def _font_scheme(theme: s.SourceTheme) -> m.FontScheme:
 def resolve_slide(context: ResolveContext) -> m.Slide:
     slide, layout, master = context.slide, context.layout, context.master
 
+    # Measured in PowerPoint 16 (pptx-agent round 60, R144): a slide's showMasterSp="0"
+    # ("Hide background graphics") hides its layout's shapes as well as its master's; a
+    # layout's hides only the master's.
     show_master = slide.show_master_shapes and (layout.show_master_shapes if layout else True)
 
     elements: list[m.SlideElement] = []
     if show_master and master is not None:
         context.id_prefix = "mst:"
         elements.extend(_resolve_template_elements(context, master.shapes, master.part_path))
-    if layout is not None:
+    if layout is not None and slide.show_master_shapes:
         context.id_prefix = "lay:"
         elements.extend(_resolve_template_elements(context, layout.shapes, layout.part_path))
     context.part_path = slide.part_path
@@ -501,6 +504,23 @@ def _resolve_shape(context: ResolveContext, shape: s.SourceShape) -> m.ShapeElem
     placeholder_type = (
         (shape.placeholder.type or "obj") if shape.placeholder is not None else None
     )
+    # A placeholder's fill and outline: its own, else its layout placeholder's, else its
+    # master placeholder's -- each ``a:spPr`` child whole, its relationships (a picture
+    # fill) read in the part it comes from.  Measured in PowerPoint 16 (pptx-agent round
+    # 60, R144): a layout title's fill and line show on the slide's title, a master body's
+    # fill through a layout body that states none, and the slide's own ``a:noFill`` hides
+    # it.
+    chain = [
+        (shape, None),
+        (layout_shape, context.layout.part_path if context.layout else None),
+        (master_shape, context.master.part_path if context.master else None),
+    ]
+    fill_source, fill_part = _nearest(chain, "fill")
+    with _in_part(context, fill_part):
+        fill = _resolve_shape_fill(context, fill_source, shape.style)
+    outline_source, outline_part = _nearest(chain, "outline")
+    with _in_part(context, outline_part):
+        outline = _resolve_shape_outline(context, outline_source, shape.style)
 
     text_body = None
     if shape.text_body is not None:
@@ -524,8 +544,8 @@ def _resolve_shape(context: ResolveContext, shape: s.SourceShape) -> m.ShapeElem
     return m.ShapeElement(
         transform=_resolve_transform(context, transform),
         geometry=_resolve_geometry(geometry),
-        fill=_resolve_shape_fill(context, shape.fill, shape.style),
-        outline=_resolve_shape_outline(context, shape.outline, shape.style),
+        fill=fill,
+        outline=outline,
         text_body=text_body,
         text_transform=(
             _resolve_transform(context, shape.text_transform)
@@ -539,6 +559,17 @@ def _resolve_shape(context: ResolveContext, shape: s.SourceShape) -> m.ShapeElem
         alt_text=shape.alt_text or shape.name,
         hyperlink=_resolve_hyperlink(context, shape.hyperlink_rel_id),
     )
+
+
+def _nearest(chain: list[tuple[s.SourceShape | None, str | None]], attribute: str):
+    """The first ``attribute`` stated along a placeholder's ``(shape, part)`` chain, and
+    the part it was read from (``None``: the shape's own); ``(None, None)`` when none
+    states it."""
+    for node, part in chain:
+        value = getattr(node, attribute) if node is not None else None
+        if value is not None:
+            return value, part
+    return None, None
 
 
 def _font_reference_defaults(style: s.SourceShapeStyle | None) -> s.SourceRunProperties | None:

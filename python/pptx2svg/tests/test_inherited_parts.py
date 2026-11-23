@@ -208,3 +208,21 @@ def test_a_slides_own_background_image_still_reads_the_slides_relationships():
     svg = _svg(deck)
     assert _b64(RIGHT) in svg
     assert _b64(WRONG) not in svg
+
+
+def test_a_placeholders_picture_fill_from_its_layout_is_read_from_the_layout():
+    """A slide placeholder stating no fill is drawn with its layout placeholder's
+    (measured, R144; ``test_template_shapes.py``) -- a picture fill's ``r:embed`` read in
+    the layout's relationships."""
+    picture = ('<a:blipFill><a:blip r:embed="rId90"/><a:stretch><a:fillRect/></a:stretch>'
+               "</a:blipFill>")
+
+    def layout(xml: str) -> str:
+        start = xml.index('name="Title 1"')
+        close = xml.index("</p:spPr>", start)
+        return xml[:close] + picture + xml[close:]
+
+    deck = _deck({LAYOUT: layout}, {LAYOUT: RIGHT, SLIDE: WRONG})
+    svg = _svg(deck)
+    assert _b64(RIGHT) in svg
+    assert _b64(WRONG) not in svg

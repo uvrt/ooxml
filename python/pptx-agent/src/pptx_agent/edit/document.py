@@ -861,20 +861,34 @@ class Shape(ShapeFactory):
 
     @property
     def effective_fill(self) -> Fill | None:
-        """The fill as drawn: the explicit :attr:`fill`, else the one the shape's style
-        names (``p:style/a:fillRef``: the theme's fill style in the reference's colour) --
+        """The fill as drawn: the explicit :attr:`fill`; for a placeholder that states
+        none, its layout placeholder's, else that one's master placeholder's (measured in
+        PowerPoint 16: a layout title's fill shows on the slide's title, a master body's
+        through a layout body that states none); else the one the shape's style names
+        (``p:style/a:fillRef``: the theme's fill style in the reference's colour) --
         ``Fill("solid", color=Color("accent1"))`` for a new :meth:`add_shape` shape,
-        ``Fill("none")`` for a style that names none.  ``None`` when neither says: a
-        placeholder's fill comes from its layout.
+        ``Fill("none")`` for a style that names none.  ``None`` when nothing says: no fill.
 
         For example::
 
             box = slide.add_shape("rect", 0, 0, 914400, 914400)
             box.fill, box.effective_fill.color           # None, Color('accent1')
+            deck.layout("Title Only").placeholder("title").fill = "#003366"
+            slide.shape("256.2").effective_fill.color    # Color('#003366'), the layout's
         """
         explicit = self.fill
         if explicit is not None:
             return explicit
+        from .inherit import placeholder_parents
+
+        package = self._slide.document.package
+        for parent, part in placeholder_parents(self):
+            inherited = read_fill(parent.find(qn("p:spPr")))
+            if inherited is not None:
+                if inherited.kind == "image":
+                    inherited = dataclasses.replace(
+                        inherited, image_part=package.related_part(part, inherited.image_rel_id))
+                return inherited
         reference = find(self._element, "p:style/a:fillRef")
         if reference is None:
             return None
@@ -3346,6 +3360,10 @@ class Document(CommentOps):
         self.history = History(package)
         self._slides: list[Slide] | None = None
         self._sheets: dict[str, _TemplateSheet] = {}
+        # The Slide and sheet objects handed out before the last reset, so the next listing
+        # hands out the same ones (:meth:`_reset_caches`).
+        self._known_slides: dict[tuple[int, str], Slide] = {}
+        self._known_sheets: dict[str, _TemplateSheet] = {}
         # The ids this Document has seen, so none is handed out twice while it is open
         # (:meth:`Slide._next_shape_ids`, :meth:`_new_slide_entry`).  Kept here, outside the
         # package, because undo, redo and a batch's rollback restore the package only: an
@@ -3728,9 +3746,13 @@ class Document(CommentOps):
                 print(slide.slide_id, len(slide.shapes))
         """
         if self._slides is None:
+            known = self._known_slides
             self._slides = [
-                Slide(self, slide_id, path) for slide_id, path in self.package.slide_parts()
+                known.get((slide_id, normalize_part_path(path))) or Slide(self, slide_id, path)
+                for slide_id, path in self.package.slide_parts()
             ]
+            self._known_slides = {(slide.slide_id, slide.part_path): slide
+                                  for slide in self._slides}
         return self._slides
 
     def slide(self, slide_id: "int | str | Slide") -> Slide:
@@ -3836,7 +3858,10 @@ class Document(CommentOps):
                         if t.part_path == part_path), None)
             if key is None:
                 raise KeyError(f"{part_path} is not a layout or master of this deck")
-            sheet = self._sheets[part_path] = _TemplateSheet(self, key, part_path)
+            known = self._known_sheets.get(part_path)
+            if known is None or known.slide_id != key:
+                known = _TemplateSheet(self, key, part_path)
+            sheet = self._sheets[part_path] = self._known_sheets[part_path] = known
         return sheet
 
     def _template_by_key(self, key: str) -> "Layout | Master":
@@ -4266,7 +4291,13 @@ class Document(CommentOps):
         return changed
 
     def _reset_caches(self) -> None:
-        # restore() reparsed the trees, so every cached Element reference is stale.
+        """The slide list and every shape index are rebuilt on next use: restore() reparsed
+        the trees, and adding, moving or deleting a slide changed the list.  The Slide and
+        layout/master objects a caller holds stay this deck's: the next listing hands out
+        the same objects (their indexes dropped here), so a shape added through an older
+        one is found through ``deck.shape`` too -- not a second object with a stale index."""
+        for host in [*self._known_slides.values(), *self._known_sheets.values()]:
+            host._index = None
         self._slides = None
         self._sheets = {}
 
