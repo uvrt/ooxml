@@ -592,7 +592,7 @@ fn outputs_equal(
 /// `relaid` (laid out by `kept` from `previous`) equals the version `body` laid out whole
 /// in a fresh engine and model: each pass's flow and pages, the fields, the facts taken
 /// from the version before, and every page's SVG.
-fn verify(
+pub(crate) fn verify(
     at: &str,
     (kept, kept_model): (&mut WordLayout, &mut Model),
     (relaid, previous): (&DocumentLayout, &DocumentLayout),
@@ -777,31 +777,4 @@ fn an_edit_late_in_the_body_lays_out_few_pages() {
     let stats = after.relaid.first().copied().unwrap();
     assert!(stats.restart > 0, "{stats:?}");
     assert!(stats.laid < after.pagination.pages.len() / 2, "{stats:?}");
-}
-
-/// A body of three alike copies of the same paragraphs: one paragraph of the second copy
-/// made longer and one of the third deleted. The bodies align by content, so the changes
-/// between the flows are several windows -- one adding as many items as a copy holds (the
-/// old paragraph is found again in the third copy), a later one taking them away again --
-/// and a new page past a later window lines up with an old one by that window's shift, not
-/// the first's (it kept stale pages at the end).
-#[test]
-fn a_page_past_several_windows_joins_by_the_last_window_s_shift() {
-    let words = |k: usize| "word ".repeat(3 + (k * 7) % 40);
-    let copy: Vec<String> = (0..24).map(|k| para("", &run(&words(k)))).collect();
-    let three: Vec<String> = copy.iter().chain(&copy).chain(&copy).cloned().collect();
-    for longer in [9, 15, 21] {
-        let mut m = model();
-        let mut e = engine();
-        let d = open(&mut m, &three.concat(), None);
-        let before = e.lay_out(&mut m, &d);
-        let mut blocks = three.clone();
-        blocks[24 + longer] = para("", &run(&format!("{} and a few more words", words(longer))));
-        blocks.remove(48 + 14);
-        let body = blocks.concat();
-        let d = open(&mut m, &body, None);
-        let after = e.relayout(&mut m, &d, &before);
-        let at = format!("paragraph {longer} longer");
-        verify(&at, (&mut e, &mut m), (&after, &before), (&body, None, &[]));
-    }
 }
