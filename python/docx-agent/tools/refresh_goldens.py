@@ -4,6 +4,7 @@
     python tools/refresh_goldens.py w2 w4           # those whose name starts so
     python tools/refresh_goldens.py --dry-run       # say what would change, write nothing
     python tools/refresh_goldens.py --new-keys coverage.status,coverage.approximations
+    python tools/refresh_goldens.py --rerecord w2   # record what the session now returns, saying each change
 
 Each transcript is replayed (``tests/goldens_replay.py``) and every call's expectation is
 written as it now comes out: ``data_sha``, ``data_keys`` and ``data_sha_core`` with the rest.
@@ -19,6 +20,11 @@ and every saved output's parts (names and uncompressed bytes: ``goldens_replay.p
 are byte for byte the ones recorded.  So a refresh records what the code
 now returns *about* the same results; a change that alters a result or a saved document is a
 different change, to be reviewed as one, and is not something this tool waves through.
+
+``--rerecord`` is that change (P4e: the transcripts recorded on docx-agent's Python, re-recorded
+on the Rust session): every call's expectation and the output's digest are written as they
+now come out, and every field that changed is listed, call by call, for review.  A transcript
+whose calls no longer all succeed is not written.
 """
 
 from __future__ import annotations
@@ -94,11 +100,41 @@ def refresh(path: Path, new_keys: list[str]) -> tuple[dict, list[str], int]:
     return transcript, problems, changed
 
 
+def rerecord(path: Path) -> tuple[dict, list[str]]:
+    """The transcript with every expectation as the session now returns it, and the list of
+    what changed (``<call> <tool> <field>: old -> new``)."""
+    from test_tools_goldens import inputs_of
+
+    transcript = json.loads(path.read_text(encoding="utf-8"))
+    results, outputs = goldens_replay.replay(transcript, inputs_of(transcript))
+    changes = []
+    for index, (call, got) in enumerate(zip(transcript["calls"], results)):
+        old = call["expect"]
+        for field in sorted(set(old) | set(got)):
+            if old.get(field) != got.get(field):
+                changes.append(f"{path.stem} call {index} ({call['tool']}) {field}: "
+                               f"{json.dumps(old.get(field), ensure_ascii=False)[:200]} -> "
+                               f"{json.dumps(got.get(field), ensure_ascii=False)[:200]}")
+        call["expect"] = got
+    if len(results) != len(transcript["calls"]):
+        changes.append(f"{path.stem}: replayed {len(results)} of {len(transcript['calls'])} calls")
+    if outputs:
+        last = outputs[-1]
+        digest = goldens_replay.package_digest(last.data)
+        if transcript.get("output") != {"name": last.name, "parts_sha256": digest}:
+            changes.append(f"{path.stem} output: {transcript.get('output')} -> "
+                           f"{{'name': {last.name!r}, 'parts_sha256': {digest!r}}}")
+        transcript["output"] = {"name": last.name, "parts_sha256": digest}
+    return transcript, changes
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("names", nargs="*", help="transcripts whose name starts with one of these (default: all)")
     parser.add_argument("--new-keys", default="", help="comma-separated keys a change added to results")
     parser.add_argument("--dry-run", action="store_true", help="write nothing")
+    parser.add_argument("--rerecord", action="store_true",
+                        help="record every expectation as it now comes out, listing each change")
     args = parser.parse_args(argv)
 
     from conftest import OFFICE_FACES_ABSENT
@@ -110,6 +146,17 @@ def main(argv: list[str] | None = None) -> int:
     new_keys = [key.strip() for key in args.new_keys.split(",") if key.strip()]
     paths = [p for p in sorted(TRANSCRIPTS.glob("*.json"))
              if not args.names or any(p.stem.startswith(name) for name in args.names)]
+    if args.rerecord:
+        for path in paths:
+            transcript, changes = rerecord(path)
+            failing = [c["tool"] for c in transcript["calls"] if not c["expect"]["ok"]]
+            print(f"{path.stem}: {len(changes)} change(s)" + (f"; not written, a call fails: {failing}"
+                                                               if failing else ""))
+            for change in changes:
+                print("  " + change)
+            if not failing and changes and not args.dry_run:
+                path.write_text(json.dumps(transcript, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+        return 0
     refreshed, problems = [], []
     for path in paths:
         transcript, found, changed = refresh(path, new_keys)

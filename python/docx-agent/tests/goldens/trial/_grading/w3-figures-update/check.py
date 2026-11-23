@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common import INPUTS, main, norm  # noqa: E402
 
-from docx_agent import Document  # noqa: E402
+from reading import Document  # noqa: E402
 
 INPUT = INPUTS / "w3-figures-update/input/regional-sales-update.docx"
 NEW = {"North": [5.2, 5.4, 5.5, 5.9], "South": [3.9, 3.8, 4.3, 4.6], "West": [4.0, 4.5, 4.7, 5.3]}

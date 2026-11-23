@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common import INPUTS, main, norm  # noqa: E402
 
-from docx_agent import Document  # noqa: E402
+from reading import Document  # noqa: E402
 
 INPUT = INPUTS / "w2-review-comments/input/hosting-agreement-summary.docx"
 
