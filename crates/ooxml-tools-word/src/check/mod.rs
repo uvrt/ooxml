@@ -86,10 +86,10 @@ pub const MAX_RANGES: usize = 20;
 pub const CHECK_NOT_OWNED: &str = "check: a document the session does not own";
 /// The form refused of a `reflow` the host hands no layout for.
 pub const CHECK_NO_LAYOUT: &str = "check: no layout";
-/// The form refused of a `reflow` of a version the host's engine does not lay out.
-pub const CHECK_NOT_LAID_OUT: &str = "check: the layout falls back";
-/// The form refused of a check of a version the engine does not lay out because of a note.
-pub const CHECK_UNLAID_NOTE: &str = "check: a footnote or endnote the layout cannot lay out";
+/// The form refused of a `reflow` or layout facts of a version whose layout cannot be read
+/// (not the engine's, or not compared with the last check's); one the layout does not lay
+/// out is refused as `check: <what>` ([`crate::NotLaid::unlaid`]).
+pub const CHECK_NOT_LAID_OUT: &str = "check: a layout that cannot be read";
 
 /// `check` of a Word document at one version.
 ///
@@ -162,7 +162,7 @@ fn checked(args: &Check, version: &Version<'_>, cancel: &dyn Cancel) -> Result<D
             (&mut data, &mut timing),
             &mut warnings,
         )? {
-            return Err(not_supported(why, &args.doc));
+            return Err(not_supported(&why, &args.doc));
         }
     }
     finish(owned, &wanted, scope.as_ref(), (data, timing), warnings)
@@ -220,7 +220,7 @@ fn with_layout(
     (reflow_wanted, layout_wanted): (bool, bool),
     (data, timing): (&mut Map<String, Value>, &mut Map<String, Value>),
     warnings: &mut Vec<String>,
-) -> Result<Option<&'static str>, ToolError> {
+) -> Result<Option<String>, ToolError> {
     let started = Instant::now();
     let last = layout
         .engine()
@@ -237,7 +237,6 @@ fn with_layout(
     let started = Instant::now();
     let laid = match laid {
         Ok(laid) => laid,
-        Err(why) if why.in_note() => return Ok(Some(CHECK_UNLAID_NOTE)),
         Err(NotLaid::Stopped) => {
             // The call's own stop ends it; the layout's limit passed is said, and the
             // check goes on (docx-agent's `reflow.error`), with the facts read from the
@@ -247,7 +246,12 @@ fn with_layout(
             timing.insert("facts".into(), seconds(started));
             return Ok(None);
         }
-        Err(_) => return Ok(Some(CHECK_NOT_LAID_OUT)),
+        Err(why) => {
+            let form = why
+                .unlaid()
+                .map_or_else(|| CHECK_NOT_LAID_OUT.to_owned(), |what| format!("check: {what}"));
+            return Ok(Some(form));
+        }
     };
     // The ranges' pages, among those asked for: the pages the facts are read on.
     let on: Option<BTreeSet<usize>> = c.scope.map(|s| s.pages(&laid).into_iter().flatten().collect());
@@ -262,7 +266,7 @@ fn with_layout(
     let mut reflow = None;
     if reflow_wanted {
         let Ok(mut facts) = reflow_facts(layout, &laid, c.version, c.owned, c.args.pages.as_deref()) else {
-            return Ok(Some(CHECK_NOT_LAID_OUT));
+            return Ok(Some(CHECK_NOT_LAID_OUT.to_owned()));
         };
         if let (Some(pages), Some(Value::Array(changed))) = (
             pages.as_ref().filter(|_| on.is_some()),

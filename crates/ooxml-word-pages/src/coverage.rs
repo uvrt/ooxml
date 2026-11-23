@@ -1,5 +1,5 @@
-//! Owns: how much of a document a version laid out covers, as docx2svg's Rust layout says
-//! it (`docx2svg.rust.RustLayout._coverage_and_warnings`, its `Coverage`): the faces laid
+//! Owns: how much of a document a version laid out covers, as docx2svg's layout says it
+//! (its `Coverage`): the faces laid
 //! out with a substitute (in the order the body's lines draw them where two or more are,
 //! `coverage.in_layout_order`) and the ones missing, the places laid out by a rule no probe
 //! measured (the layout's approximations, then each glyph measured with another face), and
@@ -8,7 +8,7 @@
 //!
 //! A version laid out here is partial in docx2svg's sense by a missing face, or by a
 //! paragraph the layout carried on past as a placeholder (`Coverage.placeholders`: such a
-//! body block is not laid out); a layout that stops is a fallback ([`crate::Fallback`]).
+//! body block is not laid out); a layout that stops is not laid out ([`crate::Fallback`]).
 //!
 //! Must not: lay out, or word the report as a tool does (`check` compacts it).
 
