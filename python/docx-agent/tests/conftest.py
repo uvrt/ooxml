@@ -152,13 +152,19 @@ def pytest_collection_modifyitems(config, items):
     """The slow sweeps run with ``--run-slow``.  The Word oracle never runs under xdist's
     parallel workers (ROADMAP.md, "Word is one instance per machine"): there, its tests
     skip; run ``pytest -m oracle`` without ``-n``.  A test meeting a form whose port the user
-    deferred is a strict xfail naming it (:mod:`deferred_forms`)."""
+    deferred is a strict xfail naming it (:mod:`deferred_forms`), and so is one meeting a gap
+    the Rust session has yet (:mod:`rust_gaps`)."""
     from deferred_forms import DEFERRED
+    from rust_gaps import GAPS
 
     for item in items:
-        form = DEFERRED.get(f"{item.path.name}::{item.name}")
+        key = f"{item.path.name}::{item.name}"
+        form = DEFERRED.get(key)
         if form is not None:
             item.add_marker(pytest.mark.xfail(reason=f"{form}: deferred (user)", strict=True))
+        gap = GAPS.get(key)
+        if gap is not None:
+            item.add_marker(pytest.mark.xfail(reason=f"rust gap: {gap} (lane CUT-F)", strict=True))
     if not config.getoption("--run-slow"):
         later = pytest.mark.skip(reason="an exhaustive sweep: run with --run-slow")
         for item in items:
