@@ -135,6 +135,59 @@ def _num_id(box, session, doc: str, paragraph: str):
     return None if found is None else found["num_id"]
 
 
+def _word_bullets(box) -> object:
+    """Word's own bullet definition (``w:abstractNum``), as ``word_lists`` ``add`` writes it
+    into a new blank document."""
+    session = box.session()
+    d = session.open(word_docs.blank(), "bullets.docx")
+    first = block_ids(box, session, d)[0]
+    _ok(box, session, "word_set_text", doc=d, target=first, text="Item")
+    _ok(box, session, "word_lists", doc=d, targets=[first], action="add", kind="bullet")
+    return next(word_docs.tree(word_docs.saved(session, d), "word/numbering.xml").iter(W + "abstractNum"))
+
+
+def _in_a_list_of_its_own(box, session, report: str, samples: str, paragraph: str, level: int):
+    """``report`` with ``paragraph`` in a new list instance (``w:num``) over Word's own bullet
+    definition at ``level``, as Word's Bullets button starts one; the samples and the report
+    opened in a new session in the order they were (their ids and paraIds kept):
+    ``(session, report, samples)``."""
+    import copy
+
+    from lxml import etree
+
+    data = word_docs.saved(session, report)
+    root, numbering = word_docs.tree(data), word_docs.tree(data, "word/numbering.xml")
+    abstract = copy.deepcopy(_word_bullets(box))
+    abstract_id = str(max(int(a.get(W + "abstractNumId")) for a in numbering.iter(W + "abstractNum")) + 1)
+    abstract.set(W + "abstractNumId", abstract_id)
+    nsid = abstract.find(W + "nsid")
+    if nsid is not None:
+        nsid.set(W + "val", "5C0FFEE1")
+    last_abstract = list(numbering.iter(W + "abstractNum"))[-1]
+    last_abstract.addnext(abstract)
+    num_id = str(max(int(n.get(W + "numId")) for n in numbering.iter(W + "num")) + 1)
+    num = etree.SubElement(numbering, W + "num", {W + "numId": num_id})
+    etree.SubElement(num, W + "abstractNumId", {W + "val": abstract_id})
+    properties = word_docs.find(root, paragraph).find(W + "pPr")
+    numbered = properties.find(W + "numPr")
+    if numbered is not None:
+        properties.remove(numbered)
+    numbered = etree.fromstring(f'<w:numPr xmlns:w="{W[1:-1]}"><w:ilvl w:val="{level}"/>'
+                                f'<w:numId w:val="{num_id}"/></w:numPr>')
+    style = properties.find(W + "pStyle")
+    (style.addnext if style is not None else lambda node: properties.insert(0, node))(numbered)
+
+    def xml(node) -> bytes:
+        return etree.tostring(node, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+    changed = word_docs.replaced(data, {"word/document.xml": xml(root), "word/numbering.xml": xml(numbering)})
+    fresh = box.session()
+    reopened_samples = fresh.open(word_docs.saved(session, samples), "samples.docx")
+    reopened = fresh.open(changed, "report.docx")
+    assert (reopened_samples, reopened) == (samples, report)
+    return fresh, reopened, reopened_samples
+
+
 def test_copies_that_look_the_same_do_not_differ(box):
     """The same look stated otherwise: a keep the heading's style gives, stated again; a
     list item's indent stated as its list gives it; the bullets restarted (a new instance,
@@ -148,8 +201,9 @@ def test_copies_that_look_the_same_do_not_differ(box):
     _ok(box, session, "word_format", doc=d1, targets=[point], indent_left=indent["left"],
         indent_first=indent["first_line"] - indent["hanging"])
     _ok(box, session, "word_lists", doc=d1, targets=[made[1][2]], action="restart", start=1)
-    # Copy 2's detail: a new list of Word's own bullets, the same "o" at the same place.
-    _ok(box, session, "word_lists", doc=d1, targets=[made[2][3]], action="add", kind="bullet", level=1)
+    # Copy 2's detail: a new list of Word's own bullets, the same "o" at the same place (an
+    # instance of its own, which no tool makes: written in the package, the documents reopened).
+    session, d1, samples = _in_a_list_of_its_own(box, session, d1, samples, made[2][3], level=1)
     found = _check(box, session, d1, made, samples, reference)
     assert found["follow"] == 3, [item["differences"] for item in found["items"]]
     assert "list_fix" not in found and "fix" not in found

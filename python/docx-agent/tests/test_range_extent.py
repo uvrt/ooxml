@@ -139,17 +139,18 @@ def test_columns_are_counted_and_the_extent_spans_them(box):
 
 
 def test_what_is_not_drawn_has_no_extent(box):
-    """A paragraph hidden whole (its runs and its mark): not drawn, so its own range has no
-    extent; a one-line paragraph beside it has one, on its page."""
+    """An id the document does not have is drawn nowhere: a range of it is refused, naming
+    the range (rule 2), never an empty extent read as a place; a one-line paragraph's extent is
+    one entry, on its page."""
     session = box.session()
-    hidden = ('<w:p w14:paraId="00000501" w14:textId="77777777"><w:pPr><w:rPr><w:vanish/></w:rPr></w:pPr>'
-              '<w:r><w:rPr><w:vanish/></w:rPr><w:t>Hidden.</w:t></w:r></w:p>')
-    shown = '<w:p w14:paraId="00000502" w14:textId="77777777"><w:r><w:t>One.</w:t></w:r></w:p>'
-    d1 = session.open(word_docs.with_body(shown + hidden + shown.replace("00000502", "00000503")), "hidden.docx")
-    found = _check(box, session, doc=d1, range=["p:00000501", "p:00000502"]).data["range"]
-    assert found[0].get("extent", []) == [] and found[0].get("pages", []) == []
-    [extent] = found[1]["extent"]
-    assert extent["page"] == 1 and extent["bottom"] > extent["top"]
+    d1 = written(box, session, "One.\n\nTwo.")
+    missing = box.dispatch(session, "check", {"doc": d1, "range": ["p:00000000"]})
+    assert not missing.ok and missing.error.code == "not_found" and missing.error.field == "range"
+    first = block_ids(box, session, d1)[0]
+    [extent] = _check(box, session, doc=d1, range=[first]).data["range"][0]["extent"]
+    [placed] = where(box, session, d1, first)
+    assert (extent["page"], extent["top"], extent["bottom"]) == (1, placed["top"], placed["bottom"])
+    assert placed["lines"] == 1
 
 
 def test_a_long_range_lists_its_first_pages_and_counts_the_rest(box):

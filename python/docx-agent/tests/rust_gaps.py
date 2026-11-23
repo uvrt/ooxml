@@ -27,14 +27,10 @@ GAPS: dict[str, str] = {
     "test_block_of.py::test_a_top_level_block_is_its_own": f"rust gap: block_of/blocks_between of nested, story and annotation ids ({CUT_B})",
     "test_block_of.py::test_an_unknown_id_is_not_found_and_a_span_is_refused": f"rust gap: block_of/blocks_between of nested, story and annotation ids ({CUT_B})",
     "test_block_of.py::test_annotations_give_the_block_that_holds_them": f"rust gap: block_of/blocks_between of nested, story and annotation ids ({CUT_B})",
-    "test_block_of.py::test_blocks_between_refuses_a_reversed_span_as_the_span_tools_do": f"rust gap: block_of/blocks_between of nested, story and annotation ids ({CUT_B})",
     "test_block_of.py::test_blocks_between_spans_top_level_blocks_from_nested_ends": f"rust gap: block_of/blocks_between of nested, story and annotation ids ({CUT_B})",
     "test_block_of.py::test_nested_ids_give_the_top_level_block": f"rust gap: block_of/blocks_between of nested, story and annotation ids ({CUT_B})",
-    "test_block_of.py::test_what_is_not_in_the_body_is_none": f"rust gap: block_of/blocks_between of nested, story and annotation ids ({CUT_B})",
     "test_batch_cost.py::test_a_mixed_batch_gives_the_results_each_op_gives_and_lays_out_once":
         f"rust gap: a mixed batch lays the document out for several of its ops, not once ({CUT6})",
-    "test_range_extent.py::test_what_is_not_drawn_has_no_extent":
-        f"rust gap: a paragraph hidden whole (w:vanish) is given an extent; Word draws nothing ({CUT_F})",
     "test_retired_ids.py::test_a_positional_table_id_in_a_cell_address_resolves_after_the_ids_are_stamped":
         f"rust gap: a positional table id inside a cell address is refused once the ids are stamped ({CUT_F})",
     "test_many_writers.py::test_continue_with_several_targets_continues_each":
