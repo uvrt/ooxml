@@ -20,7 +20,7 @@ from ooxml_edit.tools import Result, ToolError, shared
 
 from ..rust import reads
 from . import handlers
-from .read import describe, laid
+from .read import describe
 
 KIND = "docx"
 PAGE_SIZES = ("A4", "Letter", "Legal", "A5", "A3")
@@ -92,7 +92,7 @@ def _blank_bytes(call: Any, size: str | None, title: str | None, author: str | N
 
 def save_document(call: Any, doc: str, name: str, format: str, clean: bool = False) -> Result:
     """The file written by the Rust session (its bytes come back beside the reply); the output
-    and its id state (``call.output``) are the host's, the coverage the session's layout's."""
+    and its id state (``call.output``) are the host's, the coverage the session's."""
     files: list[tuple[str, str, bytes]] = []
 
     def answer(envelope: dict[str, Any]) -> Result:
@@ -103,25 +103,15 @@ def save_document(call: Any, doc: str, name: str, format: str, clean: bool = Fal
         replied = envelope.get("data") or {}
         if replied.get("cleaned") is not None:
             result.data["cleaned"] = replied["cleaned"]
-        result.data["coverage"] = replied["coverage"] if "coverage" in replied else _coverage(call)
+        # How much of the document the layout could lay out: a check that passed on a complete
+        # layout is told from one that could not see everything.  TODO(lane CUT-B): the
+        # session's reply carries it; until then a save says none.
+        if "coverage" in replied:
+            result.data["coverage"] = replied["coverage"]
         return result
 
     return reads.serve(call, "save_document", {"name": name, "format": format, "clean": clean or None},
                        answer=answer, files=files)
-
-
-def _coverage(call: Any) -> dict[str, Any]:
-    """How much of the document the layout could lay out: a check that passed on a complete
-    layout is told from one that could not see everything (TODO(lane CUT-B): the save's
-    reply gives it, :func:`.read.laid`)."""
-    import ooxml_core
-
-    try:
-        return dict(laid(call).coverage)
-    except ToolError as error:
-        return {"error": f"{error.code}: {error.message}"}
-    except ooxml_core.LayoutFallback as error:
-        return {"error": f"not_supported: this document's layout: {error}"}
 
 
 # -- find_text, render, check -------------------------------------------------------------------

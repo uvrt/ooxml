@@ -17,9 +17,8 @@ def laid(call: Any) -> Any:
     """The version the call reads laid out by the session's page engine for the document
     (``ooxml_core.LaidPages``).
 
-    TODO(lane CUT-B): the session's ``describe`` gives the pages, and ``save_document`` its
-    coverage and layout counts, from its own engine; until then the host lays the version out
-    with that engine here."""
+    TODO(lane CUT-B): the session's ``describe`` gives the pages from its own engine; until
+    then the host lays the version out with that engine here, for :func:`pages`."""
     engine = reads.session_layout(call)
     _mirror, version = reads.version_read(call.entry)
     return engine.lay_out(bytes(version.save()))
