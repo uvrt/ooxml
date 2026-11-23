@@ -32,10 +32,8 @@ from __future__ import annotations
 
 import argparse
 import base64
-import collections
 import functools
 import json
-import subprocess
 import sys
 import tempfile
 import zlib
@@ -56,6 +54,8 @@ _core_guard()
 
 from docx_agent import Document  # noqa: E402
 from docx_agent.edit import ids as _ids  # noqa: E402
+from goldens import Recorder  # noqa: E402
+from oracle_run import RUST_TALLY, not_supported_form, refused as _refused, run_lines  # noqa: E402
 
 
 def decode_state(state: str) -> dict:
@@ -117,49 +117,23 @@ def differences(a, b, path: str = "", out: list | None = None, limit: int = 200)
     return out
 
 
-#: What the Rust side's lines said beyond their results, over this process's run (one harness
-#: run per process): the cases that panicked (``{"panic": ...}``: the oracle's own catch, or
-#: the session's ``internal`` reply), and the cases refused as not supported yet, by form
-#: (:func:`not_supported_form`).  :func:`report` adds both to the totals: tools/gates.py fails
-#: on any panic and on a form its allow-list does not name.
-RUST_TALLY: dict = {"panics": 0, "not_supported_forms": collections.Counter()}
+#: The run's recorder for goldens (``--record``: :func:`record`), or None.
+RECORDER: Recorder | None = None
 
 
-def not_supported_form(value) -> str | None:
-    """The form a Rust result was refused as not supported yet (``details.not_supported`` of
-    its error, or an edit oracle's ``not_supported``), if it was."""
-    if not isinstance(value, dict):
-        return None
-    if value.get("not_supported"):
-        return str(value["not_supported"])
-    for error in (value.get("error"), (value.get("reply") or {}).get("error")):
-        if isinstance(error, dict) and isinstance(error.get("details"), dict) \
-                and error["details"].get("not_supported"):
-            return str(error["details"]["not_supported"])
-    return None
+def record(path: str | None, trees: list[str]) -> None:
+    """Records this run's cases and the Rust side's answers for goldens into ``path``
+    (goldens.py's Recorder; ``trees``: the folders whose documents have case files)."""
+    global RECORDER
+    RECORDER = Recorder(path, trees) if path else None
 
 
-def _tally(line: dict) -> None:
-    for key, value in line.items():
-        if key in ("file", "case") or not isinstance(value, dict):
-            continue
-        if "panic" in value:
-            RUST_TALLY["panics"] += 1
-            print(f"{line.get('file')} [{line.get('case')}]: rust panicked: {str(value['panic'])[:300]}")
-        form = not_supported_form(value)
-        if form:
-            RUST_TALLY["not_supported_forms"][form] += 1
-
-
-def run_rust(binary: str, manifest: list[dict]) -> dict[str, dict]:
-    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
-        json.dump(manifest, handle)
-    done = subprocess.run([binary, handle.name], capture_output=True, text=True, check=True)
-    Path(handle.name).unlink()
-    lines = [json.loads(x) for x in done.stdout.splitlines()]
-    for line in lines:
-        _tally(line)
-    return {(r["file"], r.get("case")): r for r in lines}
+def run_rust(binary: str, manifest: list[dict]) -> dict[tuple, dict]:
+    """The Rust side's answers to ``manifest`` (oracle_run.py), recorded where the run records."""
+    found = run_lines(binary, manifest)
+    if RECORDER is not None:
+        RECORDER.manifest(manifest, found, _refused)
+    return found
 
 
 def files_of(args) -> list[Path]:
@@ -182,6 +156,8 @@ def check_ids(args) -> int:
             new, state, notes = edited(data)
             again = scratch / f"{n}-{path.name}"
             again.write_bytes(new)
+            if RECORDER is not None:
+                RECORDER.own(str(again), str(path))
             expected[(str(again), None)] = python_ids(Document.open(new, ids=state))
             expected[(str(again), None)]["notes"] = notes
             manifest.append({"file": str(again), "state": state})
@@ -218,9 +194,12 @@ def report(expected: dict, rust: dict, ignore: tuple = (), results: str | None =
     for key, want in expected.items():
         got = rust.get(key)
         want = {k: v for k, v in want.items() if k not in ignore}
-        if not_supported_form(got):
+        refused = not_supported_form(got) or (RECORDER is not None and RECORDER.refused(key))
+        found = [] if refused else differences(want, got) if got is not None else ["no rust result"]
+        if RECORDER is not None:
+            RECORDER.verdict(key, bool(found), refused or None, want)
+        if refused:
             continue
-        found = differences(want, got) if got is not None else ["no rust result"]
         name = key[0] if key[1] is None else f"{key[0]} [{key[1]}]"
         if found:
             failed += 1
@@ -233,6 +212,8 @@ def report(expected: dict, rust: dict, ignore: tuple = (), results: str | None =
             lines.append({"file": key[0], "case": key[1], "input": (inputs or {}).get(key), "differences": found,
                           **({"errors": errors} if errors else {})})
     print(f"{len(expected)} cases, {failed} with differences")
+    if RECORDER is not None:
+        RECORDER.close()
     panics, forms = RUST_TALLY["panics"], dict(RUST_TALLY["not_supported_forms"].most_common())
     if panics:
         print(f"{panics} cases where the Rust side panicked")
@@ -250,8 +231,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--rust", required=True, help="the word-ids or word-reads binary")
     parser.add_argument("--tree", action="append", help="every .docx below this folder")
     parser.add_argument("--results", help="also write the cases with differences here (JSON lines)")
+    parser.add_argument("--record", help="record the cases and the Rust answers for goldens here (goldens.py)")
+    parser.add_argument("--record-tree", action="append", default=[], help="a folder whose documents have case files")
     parser.add_argument("files", nargs="*")
     args = parser.parse_args(argv)
+    record(args.record, args.record_tree)
     if args.what == "ids":
         return check_ids(args)
     if args.what == "laid":

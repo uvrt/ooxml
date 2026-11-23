@@ -576,7 +576,7 @@ class StoreCoverage(unittest.TestCase):
                      f"pathlib.Path({str(out_dir / gates.USED)!r}).write_text({used!r}); sys.exit({code})")
             return [sys.executable, "-c", write], {}
 
-        args = argparse.Namespace(out=str(out), tree=str(tree), gate="corpus", mode="structure", shard="2/2",
+        args = argparse.Namespace(record=False, reference=False, out=str(out), tree=str(tree), gate="corpus", mode="structure", shard="2/2",
                                   every=1, per_tool=10, fixtures=None, base=None, cache="store")
         with mock.patch.object(gates, "harness_command", command), contextlib.redirect_stdout(io.StringIO()):
             gates.run_diff(args)
@@ -611,7 +611,7 @@ class Panics(unittest.TestCase):
                 write = f"import pathlib; pathlib.Path({str(results)!r}).write_text({line!r})"
                 return [sys.executable, "-c", write], {}
 
-            args = argparse.Namespace(out=str(out), tree=tmp, gate="corpus", mode="styled", shard="1/1",
+            args = argparse.Namespace(record=False, reference=False, out=str(out), tree=tmp, gate="corpus", mode="styled", shard="1/1",
                                       every=None, per_tool=None, fixtures=None, base=None, cache=None)
             printed = io.StringIO()
             with mock.patch.object(gates, "harness_command", command), \
@@ -716,8 +716,8 @@ class UnusedEntries(unittest.TestCase):
                 write = f"import pathlib; pathlib.Path({str(results)!r}).write_text({chr(10).join(lines)!r})"
                 return [sys.executable, "-c", write], {}
 
-            args = argparse.Namespace(out=str(out), tree=tmp, gate="fixtures", mode="text", shard="1/1",
-                                      every=1, per_tool=0, fixtures="all", base=None, cache=None)
+            args = argparse.Namespace(record=False, reference=False, out=str(out), tree=tmp, gate="fixtures", mode="text",
+                                      shard="1/1", every=1, per_tool=0, fixtures="all", base=None, cache=None)
             with mock.patch.object(gates, "harness_command", command), \
                     mock.patch.object(gates, "documents", lambda *_: [Path(tmp) / "a.docx"]), \
                     mock.patch.object(gates, "known_entries", lambda: list(self.ENTRIES)), \
