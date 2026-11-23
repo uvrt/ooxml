@@ -1314,5 +1314,151 @@
     }
    }
   }
+ },
+ "tools": {
+  "toc-numbered, word_fields update": {
+   "input": {
+    "paragraphs": {
+     "blocks": 16,
+     "without an id": 0
+    },
+    "rows": {
+     "blocks": 1,
+     "without an id": 1
+    }
+   },
+   "save": {
+    "paragraphs": {
+     "blocks": 25,
+     "without an id": 0,
+     "ids kept by Word": 25
+    },
+    "rows": {
+     "blocks": 1,
+     "without an id": 0,
+     "ids kept by Word": 1
+    }
+   }
+  },
+  "toc-numbered, word_move": {
+   "input": {
+    "paragraphs": {
+     "blocks": 16,
+     "without an id": 0
+    },
+    "rows": {
+     "blocks": 1,
+     "without an id": 1
+    }
+   },
+   "save": {
+    "paragraphs": {
+     "blocks": 16,
+     "without an id": 0,
+     "ids kept by Word": 16
+    },
+    "rows": {
+     "blocks": 1,
+     "without an id": 0,
+     "ids kept by Word": 1
+    }
+   }
+  },
+  "factor row, word_fields update": {
+   "input": {
+    "paragraphs": {
+     "blocks": 6,
+     "without an id": 1
+    },
+    "rows": {
+     "blocks": 1,
+     "without an id": 1
+    }
+   },
+   "save": {
+    "paragraphs": {
+     "blocks": 6,
+     "without an id": 0,
+     "ids kept by Word": 6
+    },
+    "rows": {
+     "blocks": 1,
+     "without an id": 0,
+     "ids kept by Word": 1
+    }
+   }
+  },
+  "factor header, word_fields update": {
+   "input": {
+    "paragraphs": {
+     "blocks": 6,
+     "without an id": 2
+    },
+    "rows": {
+     "blocks": 0,
+     "without an id": 0
+    }
+   },
+   "save": {
+    "paragraphs": {
+     "blocks": 6,
+     "without an id": 0,
+     "ids kept by Word": 6
+    },
+    "rows": {
+     "blocks": 0,
+     "without an id": 0,
+     "ids kept by Word": 0
+    }
+   }
+  },
+  "factor picture, word_fields update": {
+   "input": {
+    "paragraphs": {
+     "blocks": 6,
+     "without an id": 1
+    },
+    "rows": {
+     "blocks": 0,
+     "without an id": 0
+    }
+   },
+   "save": {
+    "paragraphs": {
+     "blocks": 6,
+     "without an id": 0,
+     "ids kept by Word": 6
+    },
+    "rows": {
+     "blocks": 0,
+     "without an id": 0,
+     "ids kept by Word": 0
+    }
+   }
+  },
+  "factor missing, word_fields update": {
+   "input": {
+    "paragraphs": {
+     "blocks": 6,
+     "without an id": 2
+    },
+    "rows": {
+     "blocks": 0,
+     "without an id": 0
+    }
+   },
+   "save": {
+    "paragraphs": {
+     "blocks": 6,
+     "without an id": 0,
+     "ids kept by Word": 6
+    },
+    "rows": {
+     "blocks": 0,
+     "without an id": 0,
+     "ids kept by Word": 0
+    }
+   }
+  }
  }
 }

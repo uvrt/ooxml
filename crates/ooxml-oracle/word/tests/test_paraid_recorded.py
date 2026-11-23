@@ -3,7 +3,9 @@
 textId only when every paragraph of the document has a valid, unique paraId below 0x80000000
 (``factors``: one missing or out of range and it drops them all, a repeat it replaces).  The
 tools' stamping on a document's first edit makes every paragraph so, and Word kept the ids
-of documents the tools stamped (``decided``)."""
+of documents the tools stamped (``decided``), and every id of the tools' outputs, also where the
+input had a row, header paragraph, picture or paragraph without one and the tool wrote none of
+them (``tools``: stamped at commit, whatever the tool)."""
 
 from __future__ import annotations
 
@@ -14,7 +16,7 @@ import paraid_probe  # noqa: E402
 
 OBSERVED = observed("paraid-durability.json")
 #: The observation's keys these tests compare with (index.py lists why the others are not).
-READS = {"factors", "decided"}
+READS = {"factors", "decided", "tools"}
 
 
 def test_word_keeps_ids_only_where_every_paragraph_has_a_good_one():
@@ -40,3 +42,19 @@ def test_the_tools_stamp_every_paragraph_as_word_keeps_them(mode):
     assert all(ids) and all(int(i, 16) < 0x80000000 for i in ids)
     assert len(set(ids)) == len(ids)
     assert all(text_id for _, _, text_id in paragraphs)
+
+
+def test_word_keeps_every_id_of_the_tools_outputs():
+    for name, result in OBSERVED["tools"].items():
+        assert any(kind["without an id"] for kind in result["input"].values()), name
+        for kind, counts in result["save"].items():
+            assert counts["without an id"] == 0, (name, kind)
+            assert counts["ids kept by Word"] == counts["blocks"], (name, kind)
+
+
+@pytest.mark.parametrize("name", sorted(paraid_probe.TOOL_WRITES))
+def test_the_tools_outputs_are_what_word_was_handed(name):
+    """Each measured write, made again: no block of its output without an id."""
+    _, output = paraid_probe.tool_write(name)
+    for kind, counts in paraid_probe.durability(output, output).items():
+        assert counts["without an id"] == 0, (name, kind)

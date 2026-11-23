@@ -3,15 +3,19 @@
 //! every story, without a valid and unique `w14:paraId` gets a fresh paraId and textId from
 //! its part's sequence, every drawing without an anchorId and editId gets them, and the
 //! renames are recorded; a paragraph whose text changed gets a new textId
-//! ([`new_text_id`]).
+//! ([`new_text_id`]); and the invariant every version a command makes keeps
+//! ([`Stamped`]): no paragraph, row or drawing of any story without a valid and unique id,
+//! however the command wrote it.
 //!
 //! Must not: write but through the sink, or stamp a block twice (a stamped block's id is
 //! valid, and is left alone).
 
-use crate::doc::Key;
+use crate::doc::{Key, WordDoc};
 use crate::names::{W14, WP, WP14};
+use crate::policy::RevisionPolicy;
 use crate::sink::{ensured_head, EditSink};
-use crate::Result;
+use crate::{EditError, Result};
+use ooxml_store::{Command, Txn};
 use ooxml_word_model::docx::{live_paths, Docx, StoryPart};
 use ooxml_word_model::ids::{valid_long_hex, IdState, ParagraphId, TableId};
 use ooxml_xml::{Attribute, Element, Head, Name, Node, QName};
@@ -21,6 +25,35 @@ use std::sync::Arc;
 /// Attributes to set on an element, in order: each one's name (with the prefix it is
 /// written with there) and value.
 type Attrs = Vec<(Name, String)>;
+
+/// A command, then every block it left without a durable id stamped, in its transaction,
+/// when it changed anything. Word drops every paraId of a document holding one paragraph or
+/// table row without a valid, unique paraId, or one drawing without its ids, when it saves
+/// it (crates/ooxml-oracle/word/observations/paraid-durability.json, factors), and the
+/// block ids rest on paraIds: so no version a command makes may hold one. Most commands
+/// stamp the document before they edit it; this stamps what they wrote without ids (a
+/// field's update, a part they rewrote), and costs nothing on a stamped story (its index
+/// counts what lacks an id).
+pub(crate) struct Stamped<'c, C>(pub(crate) &'c C);
+
+impl<C: Command<WordDoc, Error = EditError>> Command<WordDoc> for Stamped<'_, C> {
+    type Out = C::Out;
+    type Error = EditError;
+
+    fn validate(&self, doc: &WordDoc) -> Result<()> {
+        self.0.validate(doc)
+    }
+
+    fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<C::Out> {
+        let out = self.0.prepare(tx)?;
+        if !tx.changes().is_empty() {
+            let mut sink = EditSink::new(tx, RevisionPolicy::Untracked);
+            let docx = sink.docx()?;
+            stamp_document(&mut sink, &docx)?;
+        }
+        Ok(out)
+    }
+}
 
 /// Stamp every block of every story that needs an id; the renames, in the order made.
 ///
