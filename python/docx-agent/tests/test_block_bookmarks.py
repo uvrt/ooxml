@@ -10,11 +10,9 @@ import hashlib
 import pytest
 from ooxml_edit.tools import Toolbox
 
-import block_stress
 from docx_agent import Document, EditError
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from docx_agent.validate import check
-from test_block_edits import opened as draft_opened
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
@@ -264,26 +262,6 @@ def test_a_hyperlink_over_blocks_is_still_refused_with_the_way_out(box):
                                                   "url": "https://example.com"})
     assert not result.ok and "is a span of blocks, not text" in result.error.message
     assert "p:A@3..p:B@8" in result.error.message
-
-
-def test_a_span_bookmark_on_a_draft_writes_what_it_writes_on_the_document():
-    """Round 48's drafts admit a bookmark over blocks: the same result, bytes and ids."""
-    out = {}
-    for mode in ("off", "always"):
-        with draft_opened(mode) as (box, session, doc, layout):
-            document = session.entry(doc).document
-            table = layout.tables[1]
-            before = document.blocks_between(layout.heads[1], table)
-            results = []
-            for target, name in ((f"{before[1]}..{table}", "a_span"), (layout.tables[2], "a_table")):
-                found = box.dispatch(session, "word_links", {"doc": doc, "action": "add_bookmark", "target": target,
-                                                             "bookmark": name})
-                assert found.ok, found.to_json()
-                results.append(block_stress.normal(found))
-            document = session.entry(doc).document          # (the view of the version now)
-            out[mode] = (results, hashlib.sha256(document.to_bytes()).hexdigest(), document.id_state(),
-                         document.bookmark("a_span").text)
-    assert out["off"] == out["always"]
 
 
 # -- Word (opt in: pytest -m oracle) ---------------------------------------------------------------

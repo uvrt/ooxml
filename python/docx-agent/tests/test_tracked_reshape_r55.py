@@ -398,8 +398,7 @@ def test_words_accept_and_reject_equal_ours(box, case, action):
 
     import oracle
 
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-    from e3_probe import review_script
+    from oracle import review_script
 
     steps = ORDERS[case][0] if case in ORDERS else CASES[case]
     data = _made(box, steps).to_bytes()

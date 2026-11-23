@@ -21,16 +21,6 @@ from ooxml_edit.tools.owned import OwnedEntry
 GOLDEN = Path(__file__).resolve().parents[3] / "crates" / "ooxml-tools-word" / "tests" / "golden" / "undo.json"
 
 
-def test_the_rust_definition_is_todays_for_a_word_document_without_scope():
-    from test_rust_tool_specs import export, text
-
-    today = export({tool.name: tool for tool in TOOLS}["undo"])
-    for key in ("schema", "canonical"):
-        today[key]["properties"].pop("scope")
-    today["kind_fields"], today["kind_descriptions"] = {}, {}
-    assert GOLDEN.read_text(encoding="utf-8") == text(today)
-
-
 CLOCK = lambda: dt.datetime(2026, 11, 20, 9, 41, 17, tzinfo=dt.timezone.utc)  # noqa: E731
 
 

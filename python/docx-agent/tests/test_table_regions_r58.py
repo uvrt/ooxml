@@ -32,9 +32,8 @@ from docx_agent import Document, EditError
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tools"))
 
-import table_regions_probe as probe  # noqa: E402
+import table_regions_cases as probe  # noqa: E402
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _W = "{%s}" % W

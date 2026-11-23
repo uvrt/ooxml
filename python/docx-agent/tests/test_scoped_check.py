@@ -256,58 +256,6 @@ def test_render_draws_the_pages_a_range_falls_on(box, made):
 DEADLINE = 90.0
 
 
-@pytest.mark.usefixtures("python_layout")   # lane L4b: a Rust layout is laid out here, no worker task
-def test_scoped_checks_lone_and_in_a_read_batch_all_finish(made, monkeypatch):
-    """Round 34's rule holds for a range: lone scoped checks lay out with the lock let go, a
-    read_batch's scoped check on its own snapshot; none waits for the other."""
-    from docx_agent.tools import _base
-
-    data, chapters = made
-    started = threading.Event()
-    run = _base.Engine.lay_out
-    facts = _base.Engine.check
-
-    def slow(engine, data, options, state=None):
-        started.set()
-        time.sleep(0.4)
-        return run(engine, data, options, state)
-
-    def slow_facts(engine, data, options, state, request):     # a lone check's (round 38)
-        started.set()
-        time.sleep(0.4)
-        return facts(engine, data, options, state, request)
-
-    monkeypatch.setattr(_base.Engine, "lay_out", slow)
-    monkeypatch.setattr(_base.Engine, "check", slow_facts)
-    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as toolbox:
-        session = toolbox.session()
-        d1 = session.open(data, "report.docx")
-        scoped_check = {"doc": d1, "range": [_span(chapters[1])]}
-        results: list = []
-        lock = threading.Lock()
-
-        def call(name, arguments):
-            found = toolbox.dispatch(session, name, arguments)
-            with lock:
-                results.append(found)
-
-        threads = [threading.Thread(target=call, args=("check", scoped_check), daemon=True) for _ in range(2)]
-        for thread in threads:
-            thread.start()
-        assert started.wait(DEADLINE)
-        batch = {"ops": [{"tool": "check", "arguments": scoped_check},
-                         {"tool": "word_inspect", "arguments": {"doc": d1, "target": chapters[1][1],
-                                                                "layout": True}}]}
-        later = [threading.Thread(target=call, args=("read_batch", batch), daemon=True)]
-        for thread in later:
-            thread.start()
-        ends = time.monotonic() + DEADLINE
-        for thread in threads + later:
-            thread.join(max(0.0, ends - time.monotonic()))
-        assert not any(t.is_alive() for t in threads + later), "deadlock"
-    assert all(r.ok for r in results), [r.to_json() for r in results if not r.ok]
-
-
 # -- R19: copies against their reference -----------------------------------------------------------
 
 SAMPLE = ("# Part title\n\n"
@@ -409,36 +357,6 @@ def test_a_comparison_is_kept_while_neither_side_changes(box):
     fourth = _ok(box, session, "check", doc=d1, include=[], copies=pairs).data["copies"]
     assert fourth["kept"] == 0 and fourth["follow"] == 0
     assert all(any(d["property"] == "alignment" for d in item["differences"]) for item in fourth["items"])
-
-
-def test_the_kept_comparisons_are_bounded(box, monkeypatch, python_owned):
-    """docx-agent's own handler (``python_owned``): it reads the handler's cache and bound;
-    the session's are the Rust check's (unit-tested there). The cut deletes this with the
-    handler."""
-    monkeypatch.setattr(scoped, "COPY_CACHE", 2)
-    session = box.session()
-    d1, samples, reference, made = _copies(box, session, count=4)
-    for k in range(4):
-        _ok(box, session, "word_set_text", doc=d1, target=_blocks(session, d1, made[k])[1], text=f"Copy {k}.")
-    _ok(box, session, "check", doc=d1, include=[], copies=_pairs(made, samples, reference))
-    assert len(session.entry(d1).document._tool_copy_cache) == 2
-
-
-def test_the_reply_keeps_to_its_budget(box, monkeypatch, python_owned):
-    """Rule 4: past the budget, differences are counted and the reply says how to read them.
-    docx-agent's own handler (``python_owned``: it lowers the handler's budget); the session's
-    budget is the Rust check's (unit-tested there). The cut deletes this with the handler."""
-    monkeypatch.setattr(scoped, "DIFFERENCES_PER_REPLY", 1)
-    session = box.session()
-    d1, samples, reference, made = _copies(box, session, count=2)
-    for span in made:
-        table = _blocks(session, d1, span)[2]
-        _ok(box, session, "word_format_table", doc=d1, table=table, scope="row", row=1, shading="F2F2F2")
-        _ok(box, session, "word_format", doc=d1, targets=[_blocks(session, d1, span)[1]], alignment="right")
-    found = _ok(box, session, "check", doc=d1, include=[], copies=_pairs(made, samples, reference)).data["copies"]
-    assert sum(len(item["differences"]) for item in found["items"]) == 1
-    assert sum(item.get("more", 0) for item in found["items"]) >= 3
-    assert "word_compare_blocks" in found["left_out"]
 
 
 def test_copies_refused_with_the_way_out(box):

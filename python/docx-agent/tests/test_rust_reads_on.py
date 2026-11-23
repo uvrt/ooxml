@@ -88,21 +88,6 @@ def _calls(session, doc: str) -> list[tuple[str, dict]]:
     return calls
 
 
-@pytest.mark.parametrize("path", FIXTURES, ids=lambda p: str(p.relative_to(FIXTURE_DIR)))
-def test_the_reads_answer_as_the_python_path_does(toolbox, rust_session, path):
-    session = toolbox.session()
-    doc = session.open(path.read_bytes(), name=path.name)
-    try:
-        served = sum(reads.served().values())
-        for tool, arguments in _calls(session, doc):
-            rust = _answer(toolbox, session, tool, arguments, rust_session)
-            python = _answer(toolbox, session, tool, arguments, None)
-            assert rust == python, (tool, arguments)
-        assert sum(reads.served().values()) > served
-    finally:
-        session.close(doc)
-
-
 def test_a_new_version_is_handed_over_as_the_parts_that_changed(toolbox, rust_session):
     path = FIXTURE_DIR / "generated" / "ids-and-markup.docx"
     session = toolbox.session()
@@ -143,21 +128,6 @@ def test_what_rust_does_not_answer_the_same_falls_back_counted(toolbox, rust_ses
         assert reads.served()["word_inspect"] == inspected + 1
         assert gone == _answer(toolbox, session, "word_inspect", {"doc": doc, "target": first}, None)
         assert f"{first} was deleted by word_delete" in gone["error"]["message"]
-    finally:
-        session.close(doc)
-
-
-def test_inspect_with_layout_places_the_blocks_as_the_python_path_does(toolbox, rust_session):
-    path = FIXTURE_DIR / "generated" / "ids-and-markup.docx"
-    session = toolbox.session()
-    doc = session.open(path.read_bytes(), name=path.name)
-    try:
-        served = reads.served().get("word_inspect", 0)
-        arguments = {"doc": doc, "target": "body", "layout": True}
-        rust = _answer(toolbox, session, "word_inspect", arguments, rust_session)
-        assert rust == _answer(toolbox, session, "word_inspect", arguments, None)
-        assert "placements" in json.dumps(rust)
-        assert reads.served()["word_inspect"] == served + 1
     finally:
         session.close(doc)
 

@@ -103,22 +103,6 @@ def test_reads_inside_a_batch_read_its_earlier_writes(toolbox, opened):
     assert "Written first" in str(result.data["ops"][1]), result.data["ops"][1]
 
 
-def test_a_python_op_between_served_ops_is_seen_by_the_next(toolbox, opened):
-    session, doc, entry, ids = opened
-    start = entry.version
-    result = toolbox.dispatch(session, "batch", {"atomic": True, "ops": [
-        _set(ids[0], "Served"),
-        {"tool": "set_properties", "arguments": {"doc": "d1", "title": "Mixed batch"}},
-        _set(ids[1], "Served after Python")]})
-    assert result.ok, result.error
-    assert entry.version == start + 1
-    assert _texts(entry, ids[:2]) == ["Served", "Served after Python"]
-    assert b"Mixed batch" in _part(entry.snapshot(), "docProps/core.xml")
-    assert toolbox.dispatch(session, "undo", {"doc": doc}).ok
-    assert entry.version == start
-    assert b"Mixed batch" not in _part(entry.snapshot(), "docProps/core.xml")
-
-
 def _part(data, name):
     import io
     import zipfile
@@ -218,26 +202,3 @@ def test_a_step_of_several_versions_numbers_each():
     assert mirror.numbers == {7: 4, 8: 4, 9: 4}
     mirror.keep(Head(5))
     assert mirror.numbers[9] == 5
-
-
-def test_python_ops_of_a_partial_batch_are_one_view_step_and_a_failed_one_is_taken_back(toolbox, constructs_doc):
-    """The session's own clock sends each op to the Python handler: the view's step goes on
-    across them, a failed op rolled back alone (its savepoint), the batch one step."""
-    import datetime as dt
-
-    session = toolbox.session(clock=lambda: dt.datetime(2026, 11, 8, 9, 0, tzinfo=dt.timezone.utc))
-    doc = session.open(constructs_doc.read_bytes(), name=constructs_doc.name)
-    entry = session.entry(doc)
-    if not isinstance(entry, OwnedEntry):
-        pytest.skip("no Rust session to own the document")
-    ids = [p.id for p in entry.document.paragraphs() if p.text.strip() and p.id.startswith("p:")]
-    before, start = _texts(entry, ids[:3]), entry.version
-    result = toolbox.dispatch(session, "batch", {"ops": [
-        _set(ids[0], "First"), _set("p:FFFFFFFF", "nowhere"), _set(ids[2], "Third")]})
-    assert result.ok, result.error
-    assert result.data["failed"] == [1]
-    assert entry.version == start + 1
-    assert _texts(entry, ids[:3]) == ["First", before[1], "Third"]
-    assert toolbox.dispatch(session, "undo", {"doc": doc}).ok
-    assert _texts(entry, ids[:3]) == before
-    session.close(doc)

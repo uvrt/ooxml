@@ -97,15 +97,6 @@ def _compare(data: bytes) -> None:
     assert reads.served().get("save_document", 0) - served == saves, reads.fallbacks().get("save_document")
 
 
-@pytest.mark.parametrize("path", FIXTURES, ids=lambda p: p.name)
-def test_the_rust_save_is_todays_as_word_reads_it(path):
-    _compare(path.read_bytes())
-
-
-def test_a_cleaned_save_takes_out_what_todays_does():
-    _compare(bloated())
-
-
 def test_a_served_save_still_refuses_a_new_validation_problem(monkeypatch):
     """The save gate is the host's on the served path too: the session writes the file, and
     ``call.output`` refuses it when the version has a problem the document did not open

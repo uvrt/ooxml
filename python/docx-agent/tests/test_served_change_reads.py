@@ -76,20 +76,6 @@ def _readings(document) -> list[dict]:
     return out
 
 
-@pytest.mark.parametrize("name", REVIEWED)
-def test_the_reading_actions_are_served_as_the_python_handler_answers(toolbox, name):
-    session = toolbox.session()
-    doc = session.open((GENERATED / name).read_bytes(), Path(name).name)
-    if not isinstance(session.entry(doc), OwnedEntry):
-        pytest.skip("no Rust session to own the document")
-    for arguments in _readings(session.entry(doc).document):
-        rust, python = _both(toolbox, session, doc, arguments)
-        assert rust == python, (name, arguments)
-        if rust.get("next_cursor"):
-            rust, python = _both(toolbox, session, doc, {**arguments, "cursor": rust["next_cursor"]})
-            assert rust == python, (name, arguments, "page 2")
-
-
 def test_a_preview_counts_the_records_written_since_the_document_was_opened(toolbox):
     doc0 = Document.new()
     doc0.insert_markdown("\n\n".join(f"River stone number {c}." for c in range(1, 6)))

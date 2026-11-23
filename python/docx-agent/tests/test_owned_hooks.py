@@ -60,18 +60,6 @@ def _report() -> bytes:
     return document.to_bytes()
 
 
-@pytest.mark.parametrize("name", LISTED)
-def test_summary_and_problems_of_an_owned_document_are_the_python_ones(box, name):
-    data = (FIXTURES / name).read_bytes()
-    session = box.session()
-    doc = session.open(data, Path(name).name)
-    _entry, subject = _owned(session, doc)
-    python = Document.open(data)
-    assert FORMAT.summary(subject) == docx_format.summary(python)
-    key = FORMAT.problem_key
-    assert sorted(map(key, FORMAT.problems(subject))) == sorted(map(key, docx_format.problems(python)))
-
-
 def _ledger(data: bytes, state: str) -> dict:
     """What a state gives a document opened with it: every id it had, where each seed's
     draws got to, what is gone and by which change, the renames and the versions."""

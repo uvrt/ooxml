@@ -384,8 +384,7 @@ def test_words_accept_and_reject_of_a_tracked_merge_equal_ours(box, case, action
 
     import oracle
 
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-    from e3_probe import review_script
+    from oracle import review_script
 
     first, last, empty = MERGES[case]
     session, table = _opened(box, empty=empty)

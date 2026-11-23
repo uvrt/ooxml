@@ -34,9 +34,8 @@ from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from test_liveview import report
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tools"))
 
-import table_regions_probe as probe  # noqa: E402
+import table_regions_cases as probe  # noqa: E402
 
 pytestmark = pytest.mark.any_faces
 

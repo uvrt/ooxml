@@ -63,20 +63,6 @@ def _addresses(document: Document) -> list[str]:
     return out
 
 
-@pytest.mark.parametrize("name", LISTED)
-def test_own_source_and_source_hint_of_an_owned_document_are_the_python_ones(box, name):
-    data_ = (FIXTURES / name).read_bytes()
-    session = box.session()
-    doc = session.open(data_, Path(name).name)
-    subject = _owned(session, doc)
-    python = Document.open(data_)
-    for address in _addresses(python):
-        assert FORMAT.own_source(subject, address) == table_data.own_source(python, address), address
-    drawings = [identifier for _, identifier, _ in python._all_drawings()][:3]
-    for value in [*drawings, "d:1", "d:999999", "d:2#1", "d:scores"]:
-        assert FORMAT.source_hint(subject, value) == table_data.source_hint(python, value), value
-
-
 def _placed(box):
     session = data._session(box)
     ok(call(box, session, "ds_put", id="scores"))

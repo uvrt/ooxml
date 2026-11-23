@@ -34,9 +34,8 @@ from docx_agent.edit.errors import EditError
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tools"))
 
-import merged_rows_probe as probe  # noqa: E402
+import merged_rows_cases as probe  # noqa: E402
 
 CLOCK = lambda: dt.datetime(2026, 11, 17, 9, 0, tzinfo=dt.timezone.utc)  # noqa: E731
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"

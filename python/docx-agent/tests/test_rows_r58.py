@@ -38,9 +38,8 @@ from docx_agent import Document
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tools"))
 
-import row_format_probe as probe  # noqa: E402
+import row_format_cases as probe  # noqa: E402
 from shelf_tables import ROWS, _shelf  # noqa: E402
 
 CLOCK = lambda: dt.datetime(2026, 11, 16, 9, 0, tzinfo=dt.timezone.utc)  # noqa: E731
