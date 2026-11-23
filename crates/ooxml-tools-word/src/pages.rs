@@ -63,6 +63,18 @@ pub trait WordLayout: FieldLayout {
     }
 }
 
+/// The form refused, as not supported yet, of a version the layout does not lay out because
+/// of a footnote or an endnote (one with a frame, a text box, a drawing text wraps beside or
+/// a `STYLEREF` field; [`unlaid_note`]).
+pub const UNLAID_NOTE: &str = "a footnote or endnote the layout cannot lay out";
+
+/// Whether a version was not laid out because of a note: `why`, [`NotLaid::Other`]'s words
+/// (`<reason> at <path>`), names a place in a footnote or an endnote.
+#[must_use]
+pub fn unlaid_note(why: &str) -> bool {
+    why.contains(" at w:footnote[") || why.contains(" at w:endnote[")
+}
+
 /// How long laying a version out may take in a call (docx-agent's
 /// `Limits.layout_timeout`), counted from the call's start: past it, what reads the layout
 /// says so (`check`'s `reflow.error`) and the call goes on.

@@ -98,9 +98,6 @@ fn a_row_undone_stays_named_and_is_not_found() {
     assert_eq!(s.undo(&d, 1, &CallContext::default()).unwrap().count, 1);
     assert!(s.rows_written(&d).unwrap().contains(made));
     assert!(!body_of(&s, &d).contains(made.as_str()));
-    // the host's own writes go into the same record
-    s.note_rows_written(&d, vec!["0A000002".into()]).unwrap();
-    assert_eq!(s.rows_written(&d).unwrap().len(), 2);
 }
 
 #[test]

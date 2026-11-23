@@ -180,7 +180,11 @@ impl Session {
     ///
     /// # Errors
     /// [`SessionError::NotOpen`].
-    pub fn seed_retired(&self, id: &DocId, given: Vec<(HeldId, u64, Option<String>)>) -> Result<(), SessionError> {
+    pub(crate) fn seed_retired(
+        &self,
+        id: &DocId,
+        given: Vec<(HeldId, u64, Option<String>)>,
+    ) -> Result<(), SessionError> {
         let document = self.document(id)?;
         if let Some(word) = document.word() {
             word.retired.seed(given);

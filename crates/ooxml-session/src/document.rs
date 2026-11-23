@@ -27,7 +27,7 @@ use ooxml_word_model::ids::LoadedState;
 use std::sync::{Arc, PoisonError, RwLock};
 
 /// The context's cache budget, as the edit core's caches reserve from it.
-struct Budget(Arc<dyn ooxml_base::CacheBudget>);
+pub(crate) struct Budget(pub(crate) Arc<dyn ooxml_base::CacheBudget>);
 
 impl ooxml_derive::CacheBudget for Budget {
     fn reserve(&self, bytes: usize) -> bool {
