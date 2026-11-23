@@ -19,7 +19,7 @@ use crate::ranges::renamed_id;
 use crate::set_text::block_key;
 use crate::sink::EditSink;
 use crate::stamping::stamp_document;
-use crate::table_delete::{drop_separator, own_table, separator_of};
+use crate::table_delete::{block_sibling, drop_separator, own_table, separator_of};
 use crate::validate::Orders;
 use crate::work::{Id, Work};
 use crate::{EditError, Result};
@@ -69,6 +69,33 @@ fn separator(root: &Arc<Element>, docx: &Docx, planned: &Planned, author: &str) 
     Some((path, id))
 }
 
+/// The blocks just before and after a table and its separator paragraph (siblings at
+/// `table` and `separator`): whether the separator still keeps two tables apart, or is its
+/// container's last block, is read from them once the table goes.
+fn beside_pair(root: &Arc<Element>, table: &[u32], separator: &[u32]) -> Vec<Vec<u32>> {
+    let (Some((&a, above)), Some((&b, _))) = (table.split_last(), separator.split_last()) else {
+        return Vec::new();
+    };
+    let Some(parent) = (if above.is_empty() {
+        Some(root)
+    } else {
+        at_path(root, above)
+    }) else {
+        return Vec::new();
+    };
+    let (first, last) = (a.min(b) as usize, a.max(b) as usize);
+    [block_sibling(parent, first, -1), block_sibling(parent, last, 1)]
+        .into_iter()
+        .flatten()
+        .filter_map(|k| u32::try_from(k).ok())
+        .map(|k| {
+            let mut out = above.to_vec();
+            out.push(k);
+            out
+        })
+        .collect()
+}
+
 /// The block removed outright.
 fn outright(
     sink: &mut EditSink<'_, '_>,
@@ -87,6 +114,7 @@ fn outright(
     let mut wanted: Vec<&[u32]> = vec![&path];
     if let Some((at, _)) = &separator {
         paths.push(at.clone());
+        paths.extend(beside_pair(tree.root(), &path, at));
         wanted.push(at);
     }
     let (mut work, parent, range, found) = editable(tree.root(), &paths, &wanted).ok_or_else(path_error)?;

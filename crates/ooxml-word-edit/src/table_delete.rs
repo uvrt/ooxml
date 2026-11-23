@@ -133,6 +133,13 @@ fn paragraph_after(work: &Work, row: Id, going: &[Id]) -> Option<Id> {
         .find(|p| !inside.contains(p) && !in_rows(work, *p, going))
 }
 
+/// Whether a tracked deletion by `author` moves what another author inserted in `row` past
+/// its table: a row [`Fate::Relocate`] with no paragraph after it inside the work (the
+/// table's last), which only a work holding the table's neighbours can move.
+pub(crate) fn relocates_past_table(work: &Work, row: Id, author: &str) -> bool {
+    row_fate(work, row, author) == Fate::Relocate && paragraph_after(work, row, &[row]).is_none()
+}
+
 /// A deleted row's cell paragraph mark (docx-agent's `_delete_cell_mark`).
 fn delete_cell_mark(work: &mut Work, paragraph: Id, own: bool, stamp: &mut Stamp, orders: &Orders) {
     let Some(record) = mark_record(work, paragraph) else {
@@ -283,7 +290,7 @@ fn is_block(element: &Element) -> bool {
 
 /// The place of the block beside child `index` of `parent` (before it for `step` -1),
 /// a section break or the end stopping the search (docx-agent's `_block_sibling`).
-fn block_sibling(parent: &Element, index: usize, step: isize) -> Option<usize> {
+pub(crate) fn block_sibling(parent: &Element, index: usize, step: isize) -> Option<usize> {
     let children = parent.children().to_vec();
     let mut k = index.checked_add_signed(step)?;
     loop {

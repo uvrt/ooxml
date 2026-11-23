@@ -26,4 +26,5 @@ mod style;
 mod template_bench;
 mod text;
 mod text_box_fields;
+mod tracked_rows;
 mod word_read;
