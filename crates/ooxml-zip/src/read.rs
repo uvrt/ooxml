@@ -236,7 +236,7 @@ impl Archive {
     /// again unchanged: its local header holds its sizes and CRC-32 (no data descriptor,
     /// flag bit 3, here or in the central record), the central record's, and no ZIP64 extra
     /// field where no size needs one -- what MS-FSSHTTPD's ZIP chunking reads from the
-    /// header (ooxml-common's `zipparts.copyable_header`, the same rule).
+    /// header (ooxml-common's `zipparts.local_record`, its `copyable`: the same rule).
     pub fn header_copyable(&self, entry: &Entry) -> bool {
         let meta = &entry.meta;
         let mut f = Fields::new(&self.bytes, entry.local.start + 6);

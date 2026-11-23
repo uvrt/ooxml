@@ -172,13 +172,17 @@ def changed_entries(before: bytes, after: bytes) -> set[str]:
             if chunk.signature not in held and chunk.kind in ("entry", "header", "data")}
 
 
-def office_chunked(data: bytes) -> bool:
-    """Whether ``data`` chunks as Office's own saves do, without directory entries (not
-    parts, so a package does not keep them): the input a save keeps byte for byte."""
-    if layout_problems(data):
-        return False
+def has_directories(data: bytes) -> bool:
+    """Whether ``data`` has directory entries: not parts, so a package does not keep them
+    (the one way a save without an edit is not the bytes read)."""
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
-        return not any(name.endswith("/") for name in archive.namelist())
+        return any(name.endswith("/") for name in archive.namelist())
+
+
+def new_problems(before: bytes, after: bytes) -> list[str]:
+    """:func:`layout_problems` of ``after`` that ``before`` did not have: a save keeps an
+    untouched entry as it was read, a data descriptor too, and adds none of its own."""
+    return sorted(set(layout_problems(after)) - set(layout_problems(before)))
 
 
 def input_order(data: bytes) -> list[str]:
@@ -187,3 +191,46 @@ def input_order(data: bytes) -> list[str]:
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         infos = sorted(archive.infolist(), key=lambda info: info.header_offset)
     return [info.filename for info in infos if not info.is_dir()]
+
+
+class _Unseekable(io.RawIOBase):
+    """A stream zipfile cannot seek back into, so it follows each entry with a data
+    descriptor (as some writers do)."""
+
+    def __init__(self, out: io.BytesIO) -> None:
+        self._out = out
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, data) -> int:
+        return self._out.write(data)
+
+    def tell(self) -> int:
+        raise OSError("unseekable")
+
+    def flush(self) -> None:
+        pass
+
+
+def with_data_descriptors(data: bytes) -> bytes:
+    """``data``'s entries written again (same names, order, times, methods and bytes) with a
+    data descriptor after each: a made-up package of the kind such writers make."""
+    out = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(data)) as source, \
+            zipfile.ZipFile(_Unseekable(out), "w") as archive:
+        for info in source.infolist():
+            entry = zipfile.ZipInfo(info.filename, date_time=info.date_time)
+            entry.compress_type = info.compress_type
+            with archive.open(entry, "w") as target:
+                target.write(source.read(info))
+    return out.getvalue()
+
+
+def entry_records(data: bytes) -> dict[str, bytes]:
+    """Each entry's local record -- header, data and any data descriptor -- by name: up to
+    the next entry's header, the last up to the central directory."""
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        infos = sorted(archive.infolist(), key=lambda info: info.header_offset)
+        ends = [info.header_offset for info in infos[1:]] + [archive.start_dir]
+    return {info.filename: data[info.header_offset:end] for info, end in zip(infos, ends)}

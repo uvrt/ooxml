@@ -139,6 +139,14 @@ def test_recompress_writes_what_every_part_held_inflated_writes(data, edit):
     assert package.to_bytes(recompress=True) == held.to_bytes()
 
 
+def _records(data: bytes) -> dict[str, bytes]:
+    """Each entry's local record -- header, data, data descriptor -- by name."""
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        infos = sorted(archive.infolist(), key=lambda info: info.header_offset)
+        ends = [info.header_offset for info in infos[1:]] + [archive.start_dir]
+    return {info.filename: data[info.header_offset:end] for info, end in zip(infos, ends)}
+
+
 def _odd_zip() -> bytes:
     """A package as other writers make one: a data descriptor after each entry (a writer
     that cannot seek), an extra field in a local header, a stored entry, a bzip2 entry, a
@@ -176,7 +184,10 @@ def _odd_zip() -> bytes:
     return buffer.getvalue()
 
 
-def test_odd_entries_are_copied_into_a_valid_archive(tmp_path):
+def test_odd_entries_are_copied_as_they_are_into_a_valid_archive(tmp_path):
+    """An untouched entry is copied byte for byte -- its data descriptor, extra field and
+    ZIP64 record too (co-authoring request 1: its chunk is what a host holds); a new part
+    has none of them."""
     data = _odd_zip()
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         flags = {info.filename: info.flag_bits for info in archive.infolist()}
@@ -188,8 +199,12 @@ def test_odd_entries_are_copied_into_a_valid_archive(tmp_path):
     with zipfile.ZipFile(io.BytesIO(saved)) as archive:
         assert archive.testzip() is None
         infos = {info.filename: info for info in archive.infolist()}
+        new = infos.pop("doc/new.xml")
+        assert not new.flag_bits & 0x8 and new.extra == b""
         for info in infos.values():
-            assert not info.flag_bits & 0x8 and info.extra == b""
+            assert info.flag_bits & 0x8
+        before, after = _records(data), _records(saved)
+        assert {name: after[name] for name in before} == before
         assert infos["doc/bz.xml"].compress_type == zipfile.ZIP_BZIP2
         assert infos["doc/stored.bin"].compress_type == zipfile.ZIP_STORED
     for path in OpcPackage.open(data).part_names:

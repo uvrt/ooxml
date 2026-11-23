@@ -203,7 +203,7 @@ gives the same from a watch: `with deck.history.watch() as change: ...`, then
 call changed, `{"doc": "d1", "part": "ppt/slides/slide1.xml"}` each, by name -- what the
 client uploads after the call and checks an incoming change against; `[]` for a read, a
 save, an error. `docProps/app.xml` is the save's: brought up to date when the slides' counts
-or titles changed, left as read when they did not. A save copies every entry whose bytes did not change as it read it -- its local header, data and central directory record -- so a deck, workbook or document saved without an edit is the bytes it was opened from, and each saved entry keeps its MS-FSSHTTPD chunk signature; entries keep their order, with no data descriptors and no ZIP64 record where no size needs one.
+or titles changed, left as read when they did not. A save copies every entry whose bytes did not change as it read it, byte for byte -- its local header, data, data descriptor if it has one, and central directory record -- so a deck, workbook or document saved without an edit is the bytes it was opened from, and each saved entry keeps its MS-FSSHTTPD chunk signature; entries keep their order, and a part written anew has no data descriptor and no ZIP64 record where no size needs one.
 
 ### Tables from data
 

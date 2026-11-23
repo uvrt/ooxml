@@ -71,10 +71,11 @@ the application's, never the model's): the zip parts the call changed, `{"doc": 
 and checks an incoming change against; `[]` for a read, a save, an error. A first write of a
 session also changes `xl/workbook.xml` (`fullCalcOnLoad`, so Excel recalculates) and the
 shared strings where it writes text; both are listed. A save copies every entry whose bytes
-did not change as it read it -- its local header, data and central directory record -- so a
-workbook saved without an edit is the bytes it was opened from, and each saved entry keeps
-its MS-FSSHTTPD chunk signature; entries keep their order, with no data descriptors and no
-ZIP64 record where no size needs one.
+did not change as it read it, byte for byte -- its local header, data, data descriptor if it
+has one, and central directory record -- so a workbook saved without an edit is the bytes it
+was opened from, and each saved entry keeps its MS-FSSHTTPD chunk signature; entries keep
+their order, and a part written anew has no data descriptor and no ZIP64 record where no
+size needs one.
 
 **Writing cells** (`xlsx_set_cells`, E3). Each item of `cells` is an `address` and
 exactly one of `text` (always literal, `"=x"` too), `number`, `bool`, `date` (`YYYY-MM-DD`,

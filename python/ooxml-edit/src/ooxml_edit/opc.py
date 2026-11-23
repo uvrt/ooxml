@@ -1117,7 +1117,7 @@ class OpcPackage:
         date to what it held.  The sizes are compared first, so a part that grew or shrank
         is not inflated."""
         entry = self._original.compressed(path)
-        if data is None or entry is None or entry.size != len(data):
+        if data is None or entry is None or not entry.copyable or entry.size != len(data):
             return None
         return entry if self._original[path] == data else None
 
@@ -1140,17 +1140,16 @@ class OpcPackage:
         without changing the package: what a format layer derives at save time.  Only
         existing parts can be replaced.
 
-        A part still as it was read is copied as its compressed entry was -- its data as
-        it is, never inflated or compressed again; its local header and its central
-        directory record as read too, where the header holds its sizes and CRC-32 (no data
-        descriptor, no needless ZIP64 record: :func:`~ooxml_common.zipparts.copyable_header`),
-        else written anew (sizes and CRC-32 in it, no data descriptor, no extra field but
-        ZIP64's where a size needs it).  So a package saved without a change is the bytes
-        read, and a saved part keeps its MS-FSSHTTPD chunk signature: a co-authoring host
-        is sent only the entries that changed.  A part edited, added or replaced is
-        compressed as before, by its entry's method -- unless its bytes are the ones read
-        (a derived part brought up to date to the same content, an edit undone by
-        another): then it is copied as read.  ``recompress`` (a host's choice; no tool sets it) compresses every part
+        A part still as it was read is copied as its entry was, byte for byte -- its local
+        header, its data (never inflated or compressed again), its data descriptor if it
+        has one, and its central directory record but for the offset.  So a package saved
+        without a change is the bytes read, and a saved entry keeps its MS-FSSHTTPD chunk
+        signature: a co-authoring host is sent only the entries that changed.  A part
+        edited, added or replaced is compressed as before, by its entry's method -- unless
+        its bytes are the ones read (a derived part brought up to date to the same
+        content, an edit undone by another) and its header holds its sizes (no data
+        descriptor, no needless ZIP64: :func:`~ooxml_common.zipparts.local_record`): then
+        it is copied as read.  ``recompress`` (a host's choice; no tool sets it) compresses every part
         again instead, as before 0.101.0: the bytes zipfile writes for the parts' bytes.
         """
         replacements = {normalize_part_path(k): v for k, v in (replacements or {}).items()}
@@ -1209,8 +1208,8 @@ def _copy_entry(archive: zipfile.ZipFile, info: zipfile.ZipInfo, entry: "ZipPart
                 as_read: bool = False) -> None:
     """Append ``entry`` -- a part's compressed data as it was read -- to ``archive`` as it
     is, under ``info``'s name, time and attributes.  Where it is the entry ``info`` was read
-    with (``as_read``) and kept its local header (:attr:`ZipPart.header`), that is written
-    as it is, and the central directory record is
+    with (``as_read``) and kept its local record (:attr:`ZipPart.header`), its header and
+    data descriptor are written as they are, and the central directory record is
     ``info``'s as read but for the header's offset (zipfile still adds ZIP64's where an
     offset needs it).  Else the header is made anew, as zipfile makes one for an entry
     whose sizes are known: the entry's method, size, compressed size and CRC-32, its flags
@@ -1219,7 +1218,7 @@ def _copy_entry(archive: zipfile.ZipFile, info: zipfile.ZipInfo, entry: "ZipPart
     the central directory)."""
     if as_read and entry.header is not None:
         out = copy.copy(info)
-        _append(archive, out, (entry.header, entry.compressed))
+        _append(archive, out, (entry.header, entry.compressed, entry.descriptor))
         return
     out = zipfile.ZipInfo(info.filename, date_time=info.date_time)
     out.compress_type = entry.method
@@ -1230,14 +1229,14 @@ def _copy_entry(archive: zipfile.ZipFile, info: zipfile.ZipInfo, entry: "ZipPart
     out.file_size = entry.size
     out.compress_size = entry.compressed_size
     out.CRC = entry.crc
-    _append(archive, out, (None, entry.compressed))
+    _append(archive, out, (None, entry.compressed, b""))
 
 
 def _append(archive: zipfile.ZipFile, out: zipfile.ZipInfo, pieces: tuple) -> None:
-    """Write an entry -- its local header (``None``: ``out``'s, made by zipfile) and its
-    compressed data -- at the end of ``archive``'s entries, and list ``out`` for its
-    central directory."""
-    header, compressed = pieces
+    """Write an entry -- its local header (``None``: ``out``'s, made by zipfile), its
+    compressed data and its data descriptor -- at the end of ``archive``'s entries, and
+    list ``out`` for its central directory."""
+    header, compressed, descriptor = pieces
     fp = archive.fp
     assert fp is not None
     if getattr(archive, "_seekable", True):
@@ -1245,6 +1244,7 @@ def _append(archive: zipfile.ZipFile, out: zipfile.ZipInfo, pieces: tuple) -> No
     out.header_offset = fp.tell()
     fp.write(out.FileHeader(None) if header is None else header)
     fp.write(compressed)
+    fp.write(descriptor)
     archive.start_dir = fp.tell()
     archive.filelist.append(out)
     archive.NameToInfo[out.filename] = out

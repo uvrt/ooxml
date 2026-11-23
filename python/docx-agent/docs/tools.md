@@ -119,7 +119,7 @@ with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS) as toolbox:
   a diff). A co-authoring client uploads those after the call and checks an incoming
   change against them. `docProps/app.xml` is the save's: a save writes Word's measured
   page, line, word and character counts there when they changed, and leaves the part as
-  read when they did not. A save copies every entry whose bytes did not change as it read it -- its local header, data and central directory record -- so a deck, workbook or document saved without an edit is the bytes it was opened from, and each saved entry keeps its MS-FSSHTTPD chunk signature; entries keep their order, with no data descriptors and no ZIP64 record where no size needs one.
+  read when they did not. A save copies every entry whose bytes did not change as it read it, byte for byte -- its local header, data, data descriptor if it has one, and central directory record -- so a deck, workbook or document saved without an edit is the bytes it was opened from, and each saved entry keeps its MS-FSSHTTPD chunk signature; entries keep their order, and a part written anew has no data descriptor and no ZIP64 record where no size needs one.
 
 `tests/goldens/transcripts` hold the end-to-end trial's Word tasks done with the tools alone,
 and w10-w13 (a board pack from five reports, a contract form, a picture with alt text, a

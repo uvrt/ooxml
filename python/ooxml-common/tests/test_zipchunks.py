@@ -1,7 +1,7 @@
 """The MS-FSSHTTPD chunking check (tests/support/zipchunks.py) against the probe side's test
 vectors (fixtures/zipchunks-vectors.json: made-up files, from
 agent-work/coauth-2026-11/vectors), and the local headers a package keeps for a writer to
-copy (zipparts.copyable_header)."""
+copy (zipparts.local_record)."""
 
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ from ooxml_common.zipparts import read_parts
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE / "support"))
-from zipchunks import (MIB, changed_chunks, entry_names, layout_problems,  # noqa: E402
-                       zip_chunks)
+from zipchunks import (MIB, changed_chunks, entry_names, entry_records,  # noqa: E402
+                       layout_problems, zip_chunks)
 
 VECTORS = json.loads((HERE / "fixtures" / "zipchunks-vectors.json").read_text())
 ANALYSED = ["v1-small-entries.zip", "v2-large-entries.zip"]
@@ -137,10 +137,16 @@ def test_a_needless_zip64_record_is_a_layout_problem():
     assert any("ZIP64" in problem for problem in layout_problems(bytes(patched)))
 
 
-def test_a_package_keeps_a_copyable_header_only():
+def test_a_package_keeps_each_entry_s_local_record():
     plain = _zip({"a.xml": b"<a/>"})
     _, parts = read_parts(plain)
-    header = parts.stored("a.xml").header
-    assert header is not None and bytes(header) == plain[:len(header)]
-    _, parts = read_parts(_zip({"a.xml": b"<a/>"}, seekable=False))
-    assert parts.stored("a.xml").header is None       # sizes in a data descriptor
+    part = parts.stored("a.xml")
+    assert bytes(part.header) == plain[:len(part.header)] and part.copyable
+    assert bytes(part.descriptor) == b""
+    described = _zip({"a.xml": b"<a/>"}, seekable=False)
+    _, parts = read_parts(described)
+    part = parts.stored("a.xml")
+    # sizes in a data descriptor: kept to copy, but not a header to write the content under
+    assert not part.copyable and bytes(part.descriptor)[:4] == b"PK\x07\x08"
+    record = bytes(part.header) + bytes(part.compressed) + bytes(part.descriptor)
+    assert entry_records(described)["a.xml"] == record
