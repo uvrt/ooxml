@@ -1,0 +1,13 @@
+{"set": "e6",
+ "about": "E6's copies between documents and moves within one.",
+ "cases": [
+  {"name": "copy", "document": "new", "second": "generated/lists-and-styles.docx", "calls": [
+    {"tool": "word_insert_markdown", "arguments": {"at": "end", "markdown": "Copied below.\n"}},
+    {"tool": "word_copy_from", "arguments": {"source_doc": "d2", "at": "end", "range": "p:5A000002..p:5A00000A", "styles": "use_destination"}}]},
+  {"name": "copy-keep-source", "document": "generated/review-follow.docx", "second": "generated/lists-and-styles.docx", "calls": [
+    {"tool": "word_copy_from", "arguments": {"source_doc": "d2", "at": "after:$p2", "range": "p:5A000001..p:5A000005", "styles": "keep_source"}}]},
+  {"name": "move", "document": "generated/toc-numbered.docx", "calls": [
+    {"tool": "word_move", "arguments": {"section_heading": "$p12", "before": "$p6"}}]},
+  {"name": "move-tracked", "document": "generated/review-follow.docx", "tracked": "Writer A", "calls": [
+    {"tool": "word_move", "arguments": {"blocks": "$p3", "after": "$p6"}}]}
+ ]}

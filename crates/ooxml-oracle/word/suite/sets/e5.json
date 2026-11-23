@@ -1,0 +1,21 @@
+{"set": "e5",
+ "about": "E5's tables and drawings: rows, columns, merges and formatting; a text box and a shape.",
+ "cases": [
+  {"name": "table-edits", "document": "new", "calls": [
+    {"tool": "word_insert_markdown", "arguments": {"at": "end", "markdown": "A table follows.\n\n| Region | Q1 | Q2 |\n|---|---|---|\n| North | 1 | 2 |\n| South | 3 | 4 |\n| East | 5 | 6 |\n\nAfter the table.\n"}},
+    {"tool": "word_edit_table", "arguments": {"table": "$t1", "action": "insert_column", "index": 2}},
+    {"tool": "word_edit_table", "arguments": {"table": "$t1", "action": "set_cells", "cells": [{"row": 0, "col": 3, "text": "Q3"}, {"row": 1, "col": 3, "text": "7"}]}},
+    {"tool": "word_edit_table", "arguments": {"table": "$t1", "action": "insert_row", "index": 3}},
+    {"tool": "word_edit_table", "arguments": {"table": "$t1", "action": "merge", "first": {"row": 2, "col": 1}, "last": {"row": 2, "col": 2}}},
+    {"tool": "word_edit_table", "arguments": {"table": "$t1", "action": "delete_row", "index": 1}}]},
+  {"name": "table-format", "document": "generated/table-keeps.docx", "calls": [
+    {"tool": "word_format_table", "arguments": {"table": "$t1", "scope": "table", "style": "Table Grid", "header_rows": 1, "alignment": "center"}},
+    {"tool": "word_format_table", "arguments": {"table": "$t2", "scope": "row", "row": 0, "shading": "DDEBF7", "height": 28}},
+    {"tool": "word_format_table", "arguments": {"table": "$t4", "scope": "column", "column": 1, "width": 200, "vertical_alignment": "center"}}]},
+  {"name": "table-edits-tracked", "document": "generated/review-follow.docx", "tracked": "Writer A", "calls": [
+    {"tool": "word_edit_table", "arguments": {"table": "$t1", "action": "insert_row", "index": 1}},
+    {"tool": "word_edit_table", "arguments": {"table": "$t1", "action": "set_cells", "cells": [{"row": 2, "col": 0, "text": "Tracked"}]}}]},
+  {"name": "drawings", "document": "generated/lists-and-styles.docx", "calls": [
+    {"tool": "word_drawings", "arguments": {"action": "insert_text_box", "find": "Between the lists.", "text": "A text box", "width": 144, "height": 48, "wrap": "square", "align": "right"}},
+    {"tool": "word_drawings", "arguments": {"action": "insert_shape", "find": "The target paragraph", "preset": "ellipse", "text": "A shape", "width": 96, "height": 64}}]}
+ ]}
