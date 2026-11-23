@@ -77,7 +77,9 @@ this package uses; what each earlier version added is in that package's CHANGELO
 - `markdown-it-py>=3.0`, `mdit-py-plugins>=0.4`: the Markdown outline in docx-agent's
   dialect (CommonMark with GFM tables and strikethrough; the plugins carry docx-agent's
   footnotes, which a slide has no place for, so the two stay one dialect).
-- `pptx2svg>=0.2.0` (`render`, `png` and `dev` extras): rendering, optional so the edit
+- `pptx2svg>=0.3.9` (`render`, `png` and `dev` extras): rendering, optional so the edit
   layer can be used headless. 0.2.0 is pptx2svg's first tagged version and carries
-  everything used here (`table_row_heights`, `convert_pptx_to_agent_svg`,
-  `ConvertOptions.templates`), so nothing checks for an older one.
+  most of what is used here (`table_row_heights`, `convert_pptx_to_agent_svg`,
+  `ConvertOptions.templates`); 0.3.9 hides a layout's shapes on a slide that hides
+  background graphics and draws a placeholder with its layout's or master's fill and
+  outline, which `Slide.contrast` measures against (round 60, R144).

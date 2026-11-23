@@ -9,9 +9,13 @@ problem is the application's to say.  For each shape's text (a group's members i
   (:mod:`ooxml_common.drawingml.text_chain`, the one pptx2svg draws with), with where it
   comes from (:func:`.effective.color_origin`: ``"defaultTextStyle lvl1"``...);
 * **what is behind it** -- the shape's own fill as drawn; where it has none, the shapes
-  beneath it whose drawn box holds the centre of its box, topmost first; then the slide's
-  background (the slide's, else its layout's, else its master's).  Fills and backgrounds as
-  pptx2svg resolves them.  A fill with alpha is blended over what is under it.  A gradient
+  beneath it whose drawn box holds the centre of its box, topmost first: the slide's, then
+  those the slide shows from its layout and its master (measured in PowerPoint 16: drawn
+  under the slide's shapes, master lowest; none from the master where the layout says
+  ``showMasterSp="0"``, none from either where the slide does -- "Hide background
+  graphics"), addressed ``L<n>.<id>`` / ``M<n>.<id>``; then the slide's background (the
+  slide's, else its layout's, else its master's).  Fills and backgrounds as pptx2svg
+  resolves them -- a placeholder's inherited from its layout's or master's.  A fill with alpha is blended over what is under it.  A gradient
   counts as its **worst stop** (the one of least contrast with the text), a pattern as the
   worse of its two colours.  A picture, a picture fill, a table, a chart or a SmartArt
   diagram behind the text, or a background picture, makes it ``"unknown"``: not sampled
@@ -59,7 +63,8 @@ class Contrast:
     """One shape's text at its least contrast: ``color`` and ``behind`` ``#RRGGBB``
     (``behind`` ``"unknown"`` and ``ratio`` ``None`` where a picture or the like is behind
     it), ``over`` the topmost layer behind the text (``"fill"``, the address of a shape
-    beneath, ``"background"``; blended with those under it when translucent), ``source`` where the colour comes from, ``large`` WCAG's large
+    beneath -- ``"L2.5"`` / ``"M0.7"`` for one the layout or master draws --,
+    ``"background"``; blended with those under it when translucent), ``source`` where the colour comes from, ``large`` WCAG's large
     text (held to two thirds of the threshold)."""
 
     shape: str
@@ -165,9 +170,36 @@ class _Layers:
                 self._walk(element.children)
 
     def element(self, shape):
+        """``shape``'s resolved element: a slide shape's ``<sldId>.<id>``, a layout's or
+        master's ``lay:<id>`` / ``mst:<id>`` -- ``None`` where pptx2svg draws none."""
         from .fit import _raw_id
 
-        return self.by_id.get(f"{shape._slide.slide_id}.{_raw_id(shape)}")
+        prefix = _TEMPLATE_PREFIX.get(getattr(shape._slide, "kind", None))
+        if prefix is None:
+            prefix = f"{shape._slide.slide_id}."
+        return self.by_id.get(f"{prefix}{_raw_id(shape)}")
+
+
+#: The resolved model's id prefixes for the shapes a slide shows from its layout and master.
+_TEMPLATE_PREFIX = {"layout": "lay:", "master": "mst:"}
+
+
+def _shown_from_templates(slide: "Slide", layers: _Layers) -> list:
+    """The layout's and master's shapes drawn on ``slide``, back to front: the master's,
+    then the layout's -- their placeholders left out (the slide's own stand in for them),
+    and so is what pptx2svg does not draw (the master's under a layout or slide that hides
+    it, the layout's under a slide that does).  One rule for both, the renderer's."""
+    from .fit import _flatten
+
+    layout = slide.layout
+    if layout is None:
+        return []
+    drawn = []
+    for template in (layout.master, layout):
+        for shape in _flatten(template.shapes):
+            if shape.placeholder is None and layers.element(shape) is not None:
+                drawn.append(shape)
+    return drawn
 
 
 def _behind(shape, beneath: list, layers: _Layers):
@@ -220,6 +252,7 @@ def contrast(slide: "Slide", *, minimum: float = DEFAULT_MINIMUM) -> ContrastRep
 
     layers = _Layers(slide)
     shapes = _flatten(slide.shapes)
+    shown = _shown_from_templates(slide, layers)
     measured: list[Contrast] = []
     unknown: list[Contrast] = []
     for index, shape in enumerate(shapes):
@@ -230,7 +263,7 @@ def contrast(slide: "Slide", *, minimum: float = DEFAULT_MINIMUM) -> ContrastRep
             continue
         words = frame.text.split()
         text = " ".join(words[:WORDS]) + ("…" if len(words) > WORDS else "")
-        behind, over = _behind(shape, shapes[:index], layers)
+        behind, over = _behind(shape, shown + shapes[:index], layers)
         worst = None
         for paragraph in frame.paragraphs:
             host, element = paragraph._frame._host(), paragraph._element()
