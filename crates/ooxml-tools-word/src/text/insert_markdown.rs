@@ -10,8 +10,8 @@
 //! paragraphs written kept on its place.
 //!
 //! Refused as not supported yet (nothing changed): rows or a field as the content (`from`),
-//! a blob (`blob`), references not yet written (`{{...}}`) and a place given by reference
-//! (`$name`), list items or tables like given blocks (`like`, a style map naming a
+//! a blob (`blob`), a place given by reference (`$name`; braces reaching the tool are literal
+//! text, the host having written its references as their values), list items or tables like given blocks (`like`, a style map naming a
 //! paragraph), and what the command does not write yet (pictures, footnotes, `replace:`).
 //!
 //! Must not: write the document but through the command, or answer a call it does not
@@ -288,8 +288,7 @@ fn unported(args: &WordInsertMarkdown) -> Option<Unported> {
     if from_data {
         return Some(Unported::HostData);
     }
-    let by_reference = args.at.contains('$') || args.markdown.as_deref().is_some_and(|m| m.contains("{{"));
-    if by_reference {
+    if args.at.contains('$') {
         return Some(Unported::Reference);
     }
     // a style map naming a paragraph for a construct is read as like (docx-agent's `_levels_like`)
