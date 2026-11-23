@@ -12,12 +12,13 @@ mod anchors;
 mod control;
 pub(crate) mod delete;
 mod edits;
+mod margins;
 mod reply;
 mod size;
 mod text;
 mod write;
 
-pub use add::{AddComments, CommentMade, CommentWrite, Who};
+pub use add::{AddComments, CommentMade, CommentWrite, ItemMade, Who};
 pub use edits::{CommentEdit, CommentEdited, CommentEdits};
 pub use text::EditCommentText;
 pub(crate) use write::{append, complete, last_para};

@@ -36,6 +36,16 @@ def _parts(data: bytes) -> dict[str, bytes]:
         return {name: archive.read(name) for name in archive.namelist() if _STORIES.match(name)}
 
 
+def _margin_comments(parts: dict[str, bytes]) -> set[str]:
+    """The ``w:id`` of every comment marked in a header or footer part."""
+    out: set[str] = set()
+    for name, body in parts.items():
+        if re.match(r"word/(header|footer)\d*\.xml$", name):
+            found = re.findall(rb'<w:comment(?:RangeStart|RangeEnd|Reference) [^>]*?w:id="(\d+)"', body)
+            out |= {k.decode() for k in found}
+    return out
+
+
 def _text(element: Any, tags: tuple[str, ...]) -> str:
     return "".join(node.text or "" for node in element.iter(*(_W + t for t in tags)))
 
@@ -66,12 +76,23 @@ def kept_facts(data: bytes) -> dict[str, Any]:
       (``e4/report``, ``e4/notes-tracked``), which are no story's content and which no tool
       addresses, so they are left out; and Word writes notes parts holding nothing but those to a
       document that had none (``trial/w1-template-report``), so a story with no paragraph left is
-      no story."""
+      no story.
+
+    And one rule where the tools part from Word on purpose: a comment marked in a header or
+    footer is left out, on both sides.  Word drops such a comment on its own save
+    (``trial/w2-review-comments``: the input's comment in its header gone after Word's re-save,
+    every other comment kept); the tools never write one (``word_comments`` refuses the item,
+    with the body as its way out) and never delete what the file already holds."""
     from lxml import etree
 
+    parts = _parts(data)
+    dropped = _margin_comments(parts)
     out: dict[str, Any] = {}
-    for name, body in sorted(_parts(data).items()):
+    for name, body in sorted(parts.items()):
         root = etree.fromstring(body)
+        if name == "word/comments.xml":
+            for comment in [c for c in root.iter(_W + "comment") if c.get(_W + "id") in dropped]:
+                comment.getparent().remove(comment)
         story = name.removeprefix("word/").removesuffix(".xml")
         paragraphs = []
         for paragraph in root.iter(_W + "p"):
