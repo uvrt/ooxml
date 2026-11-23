@@ -154,9 +154,10 @@ class DiffOnGoldens(unittest.TestCase):
             return subprocess.CompletedProcess(command, 1)
 
         with tempfile.TemporaryDirectory() as tmp:
-            args = argparse.Namespace(record=True, reference=False, out=tmp, tree=None, gate="fixtures", mode="objects",
-                                      shard="1/1", every=1, per_tool=0, fixtures="generated/controls.docx",
-                                      base=None, cache=None, bin="/bin", **more)
+            options = {"gate": "fixtures", "per_tool": 0, **more}
+            args = argparse.Namespace(record=True, reference=False, out=tmp, tree=None, mode="objects", shard="1/1",
+                                      every=1, fixtures="generated/controls.docx", base=None, cache=None, bin="/bin",
+                                      **options)
             with mock.patch.object(gates_goldens, "on_goldens", lambda gate: on_goldens), \
                     mock.patch.object(gates.subprocess, "run", run), \
                     mock.patch.object(gates, "known_entries", lambda: [{"mode": "objects", "cause": "c",
@@ -173,6 +174,12 @@ class DiffOnGoldens(unittest.TestCase):
         self.assertTrue(command[command.index("--rust") + 1].endswith("word-edits"))
         # a known difference does not cover a case on goldens
         self.assertEqual((summary["differences"], summary["known"], summary["goldens"]), (1, 1, True))
+
+    def test_the_corpus_freeze_is_not_sampled_again(self) -> None:
+        command, _ = self.run_diff(True, gate="corpus", per_tool=10)
+        self.assertEqual(command[command.index("--per-tool") + 1], "0")
+        command, _ = self.run_diff(True, gate="corpus", per_tool=3)
+        self.assertEqual(command[command.index("--per-tool") + 1], "3")
 
     def test_without_goldens_the_reference_records(self) -> None:
         command, summary = self.run_diff(False)
