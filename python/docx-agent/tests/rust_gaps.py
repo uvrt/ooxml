@@ -17,15 +17,12 @@ GOLDEN_CORE = "test_tools_goldens.py::test_a_golden_transcript_replays_to_the_sa
 #: The reason each test fails yet, by ``file::name[params]``.
 GAPS: dict[str, str] = {
     "test_source_refs.py::test_a_documents_own_braces_and_escaped_ones_stay_text":
-        f"rust gap: word_set_text of braces naming no source is refused as by reference ({CUT6})",
+        f"rust gap: word_set_text of braces naming no source is refused as by reference ({CUT_F})",
     "test_charts.py::test_chart_edit_renders[charts-d:5-category]": f"rust gap: a number given as a numeric chart's category (0.25) is refused as not a number ({CUT_B})",
     "test_charts.py::test_chart_edit[charts-d:5-category]": f"rust gap: a number given as a numeric chart's category (0.25) is refused as not a number ({CUT_B})",
     "test_charts.py::test_chart_edit[charts-d:5-add_category]": f"rust gap: a number given as a numeric chart's category (0.25) is refused as not a number ({CUT_B})",
-    "test_style_lists.py::test_continue_drops_direct_numbering_where_the_style_numbers_the_items": f"rust gap: word_lists continue keeps the direct numbering of an item its style numbers ({CUT_F})",
     "test_follow_sample.py::test_report_actionable_leaves_the_copies_own_out_counted":
         f"rust gap: word_follow_sample's report \"\" is refused, not read as the default ({CUT_F})",
-    "test_copy_settings.py::test_copies_that_look_the_same_do_not_differ":
-        f"rust gap: word_lists add bullet level 1 on an item its style numbers stays at level 0 ({CUT_F})",
     "test_block_of.py::test_a_revision_and_an_endnote_give_their_block": f"rust gap: block_of/blocks_between of nested, story and annotation ids ({CUT_B})",
     "test_block_of.py::test_a_top_level_block_is_its_own": f"rust gap: block_of/blocks_between of nested, story and annotation ids ({CUT_B})",
     "test_block_of.py::test_an_unknown_id_is_not_found_and_a_span_is_refused": f"rust gap: block_of/blocks_between of nested, story and annotation ids ({CUT_B})",
@@ -42,6 +39,10 @@ GAPS: dict[str, str] = {
         f"rust gap: a positional table id inside a cell address is refused once the ids are stamped ({CUT_F})",
     "test_many_writers.py::test_continue_with_several_targets_continues_each":
         f"rust gap: word_lists continue with several targets continues only the first ({CUT_F})",
+    "test_own_rows.py::test_the_probes_edits_made_here_give_words_result":
+        f"rust gap: deleting one's own pending row holding another's insertion keeps the row ({CUT_F})",
+    "test_own_rows.py::test_a_table_one_inserted_beside_a_table_goes_with_the_paragraph_it_came_with":
+        f"rust gap: deleting a table one inserted leaves its tracked separator paragraph ({CUT_F})",
     "test_tools_word.py::test_new_document_from_a_template_blob_and_save_formats": TEMPLATE,
     "test_locale.py::test_from_a_template_the_locale_is_kept_and_the_settings_are_the_templates": TEMPLATE,
     f"{GOLDEN}[w1-template-report]": TEMPLATE,

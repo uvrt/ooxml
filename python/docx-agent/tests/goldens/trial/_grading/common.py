@@ -63,7 +63,7 @@ def xlsx_grid(data: bytes) -> dict:
     """{(row, col): value} of the first worksheet of an xlsx (grader-side reader)."""
     import io
     import zipfile
-    from lxml import etree
+    import xml.etree.ElementTree as etree
 
     ns = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
     z = zipfile.ZipFile(io.BytesIO(data))

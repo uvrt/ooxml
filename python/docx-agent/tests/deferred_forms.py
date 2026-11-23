@@ -6,8 +6,23 @@ line here goes with the port.  Keyed by the test's file and name as pytest names
 Must not: import pytest (a plain table).
 """
 
-#: The deferred form each test meets first, by ``file::name[params]``.
+#: The deferred form each test meets first, by ``file::name[params]`` (or ``file::name``: each
+#: of its parameters).
 DEFERRED: dict[str, str] = {
+    "test_dataset_text.py::test_deleting_around_a_commented_table_keeps_the_document_whole[row after the row]":
+        "word_edit_table delete_row of a row holding a note or comment reference",
+    "test_merged_rows_r59.py::test_a_frame_copy_merges_its_body_down_as_the_text_says":
+        "word_insert_markdown like",
+    "test_merged_rows_r59.py::test_a_frame_copy_with_merges_renders_like_the_sample":
+        "word_insert_markdown like",
+    "test_merged_rows_r59.py::test_a_frame_copy_keeps_the_refusals_with_the_way_out":
+        "word_insert_markdown like",
+    "test_table_regions_r58.py::test_a_markdown_table_takes_the_frame_rows_cells_and_text_formatting":
+        "word_insert_markdown like",
+    "test_table_regions_r58.py::test_a_frame_with_no_text_is_an_empty_markdown_table":
+        "word_insert_markdown like",
+    "test_table_regions_r58.py::test_like_takes_a_table_and_paragraphs_together":
+        "word_insert_markdown like",
     "test_icons_minsizes.py::test_an_svg_picture_is_stored_as_word_stores_one":
         "word_drawings insert_picture of an SVG",
     "test_icons_minsizes.py::test_a_tint_is_a_theme_colour_with_its_class_or_a_hex_colour":

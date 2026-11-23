@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common import INPUTS, main, norm, xlsx_grid  # noqa: E402
 
-from docx_agent import Document  # noqa: E402
+from reading import Document  # noqa: E402
 
 INPUT = INPUTS / "w14-supplier-radar/input/supplier-assessment.docx"
 CSV = INPUTS / "w14-supplier-radar/input/supplier-scores.csv"

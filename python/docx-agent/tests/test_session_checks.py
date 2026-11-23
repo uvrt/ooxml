@@ -22,6 +22,7 @@ import threading
 import pytest
 from ooxml_edit.tools import Toolbox
 
+from docx_agent.rust.reads import BATCH_CHECK
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from word_docs import blank, blocks, call, paragraphs, saved
 
@@ -29,10 +30,6 @@ pytestmark = pytest.mark.any_faces
 
 WORDS = "lantern meadow river stone harbour quiet orchard copper valley signal".split()
 INCLUDE = ["validate", "layout", "reflow", "fields"]
-#: docx-agent's warning for a check between a batch's changes (``tools/shared.py`` BATCH_CHECK).
-BATCH_CHECK = ("check laid the document out between the batch's changes, holding it: other calls waited. "
-               "Put check after the batch's last change (or call it alone): there it lets the document go "
-               "while it lays out")
 
 
 def _text(seed: int, words: int) -> str:

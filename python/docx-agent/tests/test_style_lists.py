@@ -294,6 +294,8 @@ def _direct_items(box, session, ids: list[str]):
     body = word_docs.tree(data)
     for identifier in ids:
         ppr = word_docs.find(body, identifier).find(W + "pPr")
+        for old in ppr.findall(W + "numPr"):         # one numPr per paragraph: the new one replaces it
+            ppr.remove(old)
         numpr = etree.Element(W + "numPr")
         etree.SubElement(numpr, W + "ilvl").set(W + "val", "0")
         etree.SubElement(numpr, W + "numId").set(W + "val", num_id)

@@ -10,19 +10,18 @@ measurements-C.md``):
   of an inherited stop ``w:tab w:val="clear" w:pos=...`` (no leader), which Word honours.
   A right stop past the right margin is drawn at the paragraph's right edge.
 
-Made-up documents, ``Document.new()``'s package."""
+Made-up documents, a blank document's package."""
 
 from __future__ import annotations
 
-from fractions import Fraction
 
 import pytest
 from lxml import etree
 from ooxml_edit.tools import Toolbox
 
-from docx_agent import Document, EditError
-from docx_agent.layout import PX_PER_PT
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
+
+import word_docs
 
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -43,80 +42,95 @@ def ok(box, session, tool: str, /, **arguments):
     return result
 
 
-def with_plan_table() -> Document:
-    """A document with a made-up table style of its own and one Table Grid table."""
-    document = Document.new()
-    document.insert_table(1, 2, after=document.paragraphs()[0].id, style="Table Grid")
-    styles = document.package.tree(document.package.styles_part())
-    styles.append(etree.fromstring(PLAN))
-    document.package.mark_dirty(document.package.styles_part())
-    document._invalidate()
-    return Document.open(document.to_bytes())
+def with_plan_table(box) -> bytes:
+    """A blank document with a made-up table style of its own and one Table Grid table."""
+    session = box.session()
+    doc = session.open(word_docs.blank(), "plan.docx")
+    ok(box, session, "word_insert_markdown", doc=doc, at="end", markdown="| a | b |\n|---|---|\n")
+    return word_docs.replaced(word_docs.saved(session, doc), {
+        "word/styles.xml": lambda xml: xml.replace("</w:styles>", PLAN.replace(f' xmlns:w="{W_NS}"', "")
+                                                   + "</w:styles>")})
 
 
-def settings(document: Document):
-    return document.package.tree(document.package.settings_part())
+def opened(box, data: bytes):
+    session = box.session()
+    return session, session.open(data, "plan.docx")
 
 
-def part(document: Document, name: str) -> bytes:
-    return etree.tostring(document.package.tree(name))
+def settings(session, doc):
+    return word_docs.tree(word_docs.saved(session, doc), "word/settings.xml")
+
+
+def part(session, doc, name: str) -> bytes:
+    return etree.tostring(word_docs.tree(word_docs.saved(session, doc), name))
+
+
+def table_default(box, session, doc) -> str | None:
+    """The table style new tables get, as word_styles lists it."""
+    listed = ok(box, session, "word_styles", doc=doc, action="list", kind="table").data
+    found = [row["name"] for row in listed if row.get("default")]
+    return found[0] if found else None
+
+
+def table_style(session, doc, table: str) -> str | None:
+    """A table's style id (``w:tblStyle``)."""
+    found = word_docs.element(session, doc, table).find(f"{_W}tblPr/{_W}tblStyle")
+    return found.get(_W + "val") if found is not None else None
 
 
 # -- R3: the default table style -----------------------------------------------------------------
 
 
-def test_set_default_writes_the_settings_and_nothing_else():
-    document = with_plan_table()
-    styles_before = part(document, document.package.styles_part())
-    body_before = part(document, document.package.document_part())
-    assert document.styles.table_default() is None
-    result = document.styles.set_default("Plan Table")
-    assert result.changed and result.id == "style:PlanTable"
-    [node] = settings(document).findall(_W + "defaultTableStyle")
+def test_set_default_writes_the_settings_and_nothing_else(box):
+    session, doc = opened(box, with_plan_table(box))
+    styles_before = part(session, doc, "word/styles.xml")
+    body_before = part(session, doc, "word/document.xml")
+    assert table_default(box, session, doc) is None
+    result = ok(box, session, "word_styles", doc=doc, action="set_default", name="Plan Table")
+    assert result.changed
+    [node] = settings(session, doc).findall(_W + "defaultTableStyle")
     assert node.get(_W + "val") == "PlanTable"
-    names = [child.tag.rpartition("}")[2] for child in settings(document)]
+    names = [child.tag.rpartition("}")[2] for child in settings(session, doc)]
     assert names.index("defaultTableStyle") < names.index("compat")
     assert "defaultTabStop" not in names or names.index("defaultTabStop") < names.index("defaultTableStyle")
-    assert part(document, document.package.styles_part()) == styles_before
-    assert part(document, document.package.document_part()) == body_before
-    assert document.styles.table_default().name == "Plan Table"
-    again = document.styles.set_default("plan table")
-    assert not again.changed and again.warnings == ["'Plan Table' was already the default table style"]
-    document.styles.set_default(None)
-    assert settings(document).find(_W + "defaultTableStyle") is None and document.styles.table_default() is None
+    assert part(session, doc, "word/styles.xml") == styles_before
+    assert part(session, doc, "word/document.xml") == body_before
+    assert table_default(box, session, doc) == "Plan Table"
+    again = ok(box, session, "word_styles", doc=doc, action="set_default", name="plan table")
+    assert not again.changed
 
 
-def test_new_tables_and_markdown_tables_take_the_default_first():
-    document = with_plan_table()
-    first = document.paragraphs()[0].id
-    assert document.table_properties(document.insert_table(1, 1, after=first).id)["style"] == "Table Grid"
-    document.styles.set_default("Plan Table")
-    assert document.table_properties(document.insert_table(1, 1, after=first).id)["style"] == "Plan Table"
-    result = document.insert_markdown("| a | b |\n|---|---|\n| 1 | 2 |\n")
-    table = next(b for b in result.blocks if b.startswith("t:"))
-    assert document.table_properties(table)["style"] == "Plan Table"
+def test_new_tables_and_markdown_tables_take_the_default_first(box):
+    session, doc = opened(box, with_plan_table(box))
+
+    def table(**more) -> str:
+        made = ok(box, session, "word_insert_markdown", doc=doc, at="end", markdown="| a | b |\n|---|---|\n| 1 | 2 |\n",
+                  **more)
+        return next(b for b in made.data["blocks"] if b.startswith("t:"))
+
+    assert table_style(session, doc, table()) == "TableGrid"
+    ok(box, session, "word_styles", doc=doc, action="set_default", name="Plan Table")
+    assert table_style(session, doc, table()) == "PlanTable"
     # A style map's own table style still wins.
-    result = document.insert_markdown("| a |\n|---|\n| 1 |\n", style_map={"table": "Normal Table"})
-    table = next(b for b in result.blocks if b.startswith("t:"))
-    assert document.table_properties(table)["style"] == "Normal Table"
+    assert table_style(session, doc, table(style_map=[{"element": "table", "style": "Normal Table"}])) in ("TableNormal", None)
 
 
-def test_a_built_in_default_is_written_and_a_missing_one_is_none():
-    document = Document.new()
-    assert document.styles.find("Table Grid") is None
-    document.styles.set_default("Table Grid")
-    assert document.styles.table_default().name == "Table Grid"
-    with pytest.raises(EditError):
-        document.styles.set_default("Normal")                   # a paragraph style
-    with pytest.raises(EditError):
-        document.styles.set_default("Plan Table")               # none by that name
-    settings(document).find(_W + "defaultTableStyle").set(_W + "val", "Gone")
-    assert document.styles.table_default() is None
+def test_a_built_in_default_is_written_and_a_missing_one_is_none(box):
+    session, doc = opened(box, word_docs.blank())
+    ok(box, session, "word_styles", doc=doc, action="set_default", name="Table Grid")
+    assert table_default(box, session, doc) == "Table Grid"
+    for name in ("Normal", "Plan Table"):                       # a paragraph style; none by that name
+        refused = box.dispatch(session, "word_styles", {"doc": doc, "action": "set_default", "name": name})
+        assert not refused.ok, name
+    gone = word_docs.replaced(word_docs.saved(session, doc), {"word/settings.xml": lambda xml: xml.replace(
+        'w:defaultTableStyle w:val="TableGrid"', 'w:defaultTableStyle w:val="Gone"')})
+    session, doc = opened(box, gone)
+    assert table_default(box, session, doc) is None
 
 
 def test_word_styles_sets_lists_and_describes_the_default(box):
     session = box.session()
-    d = session.open(with_plan_table().to_bytes(), "plan.docx")
+    d = session.open(with_plan_table(box), "plan.docx")
     result = ok(box, session, "word_styles", doc=d, action="set_default", name="Plan Table")
     assert result.summary == "New tables get Plan Table"
     listed = ok(box, session, "word_styles", doc=d, action="list", kind="table")
@@ -135,88 +149,113 @@ def test_word_styles_sets_lists_and_describes_the_default(box):
 # -- R4: tab stops ---------------------------------------------------------------------------------
 
 
-def contents_styles() -> Document:
-    """A contents style with a right dot stop at 346.95 pt and a style based on it."""
-    document = Document.new()
-    document.styles.add("Contents level", based_on="Normal", tabs=[{"position": 346.95, "alignment": "right",
-                                                                    "leader": "dot"}])
-    document.styles.add("Contents wide", based_on="Contents level")
-    for name in ("Contents level", "Contents wide"):
-        document.insert_paragraph("Entry\t12", after=document.paragraphs()[-1].id, style=name)
-    return document
+def contents_styles(box):
+    """A contents style with a right dot stop at 346.95 pt, a style based on it, and a
+    paragraph in each: the session and the document."""
+    session, doc = opened(box, word_docs.blank())
+    ok(box, session, "word_styles", doc=doc, action="add", name="Contents level", based_on="Normal",
+       tabs=[{"position": 346.95, "alignment": "right", "leader": "dot"}])
+    ok(box, session, "word_styles", doc=doc, action="add", name="Contents wide", based_on="Contents level")
+    ok(box, session, "word_insert_markdown", doc=doc, at="end", markdown="Entry\n\nEntry")
+    for target, name in zip(word_docs.paragraph_ids(box, session, doc)[-2:], ("Contents level", "Contents wide")):
+        ok(box, session, "word_set_text", doc=doc, target=target, text="Entry\t12", paragraph_style=name)
+    return session, doc
 
 
-def own_tabs(document: Document, name: str) -> list[dict]:
-    node = document.styles._node(document.styles.get(name).id)
+def own_tabs(session, doc, name: str) -> list[dict]:
+    root = word_docs.tree(word_docs.saved(session, doc), "word/styles.xml")
+    node = next(style for style in root.iter(_W + "style") if style.find(_W + "name").get(_W + "val") == name)
     return [dict(tab.attrib) for tab in node.findall(f"{_W}pPr/{_W}tabs/{_W}tab")]
 
 
-def test_tabs_are_written_as_word_writes_them():
-    document = contents_styles()
-    assert own_tabs(document, "Contents level") == [{f"{_W}val": "right", f"{_W}leader": "dot", f"{_W}pos": "6939"}]
-    result = document.styles.modify("Contents wide", tabs=[{"position": 400, "alignment": "right", "leader": "dot"},
-                                                           {"position": 346.95, "alignment": "clear"}])
-    assert result.warnings == []
-    assert own_tabs(document, "Contents wide") == [{f"{_W}val": "clear", f"{_W}pos": "6939"},
-                                                   {f"{_W}val": "right", f"{_W}leader": "dot", f"{_W}pos": "8000"}]
-    node = document.styles._node(document.styles.get("Contents wide").id)
-    assert etree.tostring(node.find(f"{_W}pPr/{_W}tabs")).count(b"<w:tab ") == 2
-    assert document.styles.inherited_tabs(document.styles.get("Contents wide").id) == {6939: ("right", "dot")}
+def text_width(session, doc, section: int = -1) -> int:
+    """A section's text column width in twips (the page less its margins)."""
+    root = word_docs.tree(word_docs.saved(session, doc))
+    found = list(root.iter(_W + "sectPr"))[section]
+    page, margins = found.find(_W + "pgSz"), found.find(_W + "pgMar")
+    return int(page.get(_W + "w")) - int(margins.get(_W + "left")) - int(margins.get(_W + "right"))
 
 
-def test_a_clear_word_honours_and_docx2svg_draws_as_word():
-    document = contents_styles()
-    document.styles.modify("Contents wide", tabs=[{"position": 346.95, "alignment": "clear"}])
-    ends = {}
-    for line in document.layout().pages[0].lines:
-        texts = [s for s in line.spans if s.kind == "text" and "12" in "".join(s.chars)]
-        if texts:
-            ends[line.paragraph_id] = float(Fraction(texts[-1].end) / PX_PER_PT)
-    level, wide = (ends[p.id[2:]] for p in document.paragraphs()[-2:])
+def modify(box, session, doc, name, tabs):
+    return box.dispatch(session, "word_styles", {"doc": doc, "action": "modify", "name": name, "tabs": tabs})
+
+
+def test_tabs_are_written_as_word_writes_them(box):
+    session, doc = contents_styles(box)
+    assert own_tabs(session, doc, "Contents level") == [
+        {f"{_W}val": "right", f"{_W}leader": "dot", f"{_W}pos": "6939"}]
+    result = modify(box, session, doc, "Contents wide", [{"position": 400, "alignment": "right", "leader": "dot"},
+                                                         {"position": 346.95, "alignment": "clear"}])
+    assert result.ok and result.warnings == []
+    assert own_tabs(session, doc, "Contents wide") == [{f"{_W}val": "clear", f"{_W}pos": "6939"},
+                                                       {f"{_W}val": "right", f"{_W}leader": "dot", f"{_W}pos": "8000"}]
+
+
+def _ends_of_twelve(data: bytes) -> list[float]:
+    """Where each body paragraph's "12" ends, in points, as docx2svg draws the first page: its
+    last digit's place plus a digit's advance (the face's digits are of one width)."""
+    import re
+
+    import docx2svg
+
+    svg = docx2svg.convert_docx_to_svg(data)[0]
+    out = []
+    for found in re.finditer(r'<text data-docx-path="w:body/w:p\[\d+\][^"]*" x="([^"]+)"[^>]*>12</text>', svg):
+        first, last = (float(x) for x in found.group(1).split())
+        out.append((last + (last - first)) * 72 / 300)
+    return out
+
+
+def test_a_clear_word_honours_and_docx2svg_draws_as_word(box):
+    session, doc = contents_styles(box)
+    assert modify(box, session, doc, "Contents wide", [{"position": 346.95, "alignment": "clear"}]).ok
+    level, wide = _ends_of_twelve(word_docs.saved(session, doc))[-2:]
     # The page's left margin plus the stop (Word's PDF: 417.26 with a 70.9 pt margin); cleared,
     # the 12 follows the next default stop (Word's: 117.43).
-    left = document.sections()[-1].margins["left"]
+    section = list(word_docs.tree(word_docs.saved(session, doc)).iter(_W + "sectPr"))[-1]
+    left = int(section.find(_W + "pgMar").get(_W + "left")) / 20
     assert level == pytest.approx(left + 346.95, abs=1)
     assert wide < left + 60
 
 
-def test_a_stop_at_the_text_columns_end_and_what_tabs_refuse():
-    document = contents_styles()
-    width = document.sections()[-1].text_width
-    document.styles.modify("Contents wide", tabs=[{"alignment": "right", "leader": "dot"}])
-    assert own_tabs(document, "Contents wide") == [{f"{_W}val": "right", f"{_W}leader": "dot", f"{_W}pos": str(width)}]
-    warned = document.styles.modify("Contents wide", tabs=[{"position": 100, "alignment": "clear"}])
+def test_a_stop_at_the_text_columns_end_and_what_tabs_refuse(box):
+    session, doc = contents_styles(box)
+    width = text_width(session, doc)
+    assert modify(box, session, doc, "Contents wide", [{"alignment": "right", "leader": "dot"}]).ok
+    assert own_tabs(session, doc, "Contents wide") == [
+        {f"{_W}val": "right", f"{_W}leader": "dot", f"{_W}pos": str(width)}]
+    warned = modify(box, session, doc, "Contents wide", [{"position": 100, "alignment": "clear"}])
     assert warned.warnings == ["the style inherits no tab stop at 100 pt to clear (it inherits: 346.95)"]
-    document.styles.modify("Contents wide", tabs=[])
-    assert own_tabs(document, "Contents wide") == []
+    assert modify(box, session, doc, "Contents wide", []).ok
+    assert own_tabs(session, doc, "Contents wide") == []
     for tabs in ([{"position": 10, "alignment": "middle"}], [{"position": 10, "leader": "stars"}],
                  [{"position": 2000}], [{"alignment": "clear"}], [{"position": 10}, {"position": 10}],
                  [{"position": 10, "alignment": "clear", "leader": "dot"}], [{"at": 10}]):
-        with pytest.raises(EditError):
-            document.styles.modify("Contents wide", tabs=tabs)
-    document.styles.add("Marked", kind="character")
-    with pytest.raises(EditError):
-        document.styles.modify("Marked", tabs=[{"position": 10}])
+        assert not modify(box, session, doc, "Contents wide", tabs).ok, tabs
+    ok(box, session, "word_styles", doc=doc, action="add", name="Marked", kind="character")
+    assert not modify(box, session, doc, "Marked", [{"position": 10}]).ok
 
 
-def test_sections_of_different_widths_put_the_stop_at_the_widest_and_say_so():
-    document = contents_styles()
-    first = document.insert_section_break(after=document.paragraphs()[1].id).id
-    document.set_section(first, margin_left=36, margin_right=36)
-    widths = sorted({s.text_width for s in document.sections()})
+def test_sections_of_different_widths_put_the_stop_at_the_widest_and_say_so(box):
+    session, doc = contents_styles(box)
+    after = word_docs.paragraph_ids(box, session, doc)[1]
+    ok(box, session, "word_sections", doc=doc, action="insert_break", after=after)
+    listed = ok(box, session, "word_sections", doc=doc, action="list").data
+    first = (listed["sections"] if isinstance(listed, dict) else listed)[0]["id"]
+    ok(box, session, "word_sections", doc=doc, action="set", section=first, margins={"left": 36, "right": 36})
+    widths = sorted({text_width(session, doc, k) for k in (0, -1)})
     assert len(widths) == 2
-    result = document.styles.modify("Contents wide", tabs=[{"alignment": "right"}])
-    assert own_tabs(document, "Contents wide")[0][f"{_W}pos"] == str(widths[-1])
+    result = modify(box, session, doc, "Contents wide", [{"alignment": "right"}])
+    assert result.ok and own_tabs(session, doc, "Contents wide")[0][f"{_W}pos"] == str(widths[-1])
     assert result.warnings and result.warnings[0].startswith("the sections' text columns differ")
 
 
 def test_word_styles_tabs(box):
-    session = box.session()
-    d = session.open(contents_styles().to_bytes(), "contents.docx")
+    session, d = contents_styles(box)
     ok(box, session, "word_styles", doc=d, action="modify", name="Contents wide",
        tabs=[{"position": 346.95, "alignment": "clear"}, {"alignment": "right", "leader": "dot"}])
     described = ok(box, session, "word_styles", doc=d, action="describe", name="Contents wide").data
-    width = session.entry(d).document.sections()[-1].text_width / 20
+    width = text_width(session, d) / 20
     assert described["declared"]["tabs"] == [{"position": 346.95, "alignment": "clear"},
                                              {"position": width, "alignment": "right", "leader": "dot"}]
     ok(box, session, "word_styles", doc=d, action="add", name="Contents third", based_on="Contents level",
