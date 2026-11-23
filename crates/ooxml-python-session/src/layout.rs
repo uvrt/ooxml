@@ -1,9 +1,9 @@
 //! Owns: the Word layout's Python handles (lane L4) -- `ooxml_core.WordFonts` (a machine's
 //! fonts for one set of folders, scanned once), `ooxml_core.WordPages` (one document's page
 //! engine: its versions laid out, each from the one before) and `ooxml_core.LaidPages`
-//! (one version laid out: its pages, facts, page numbers, page views and SVG), and
-//! `ooxml_core.LayoutFallback`, raised for a version the Rust layout does not lay out as
-//! docx2svg does yet; and `ooxml_core.MemoryBudget` (lane L4b), the session's memory
+//! (one version laid out: its pages, facts, page numbers, page views and SVG; a version the
+//! layout does not lay out yet raises `NotImplementedError`, naming why and where); and
+//! `ooxml_core.MemoryBudget` (lane L4b), the session's memory
 //! budget its engines count in and its host's kept layouts reserve from. Exact lengths
 //! cross as `(numerator, denominator)` pairs.
 //!
@@ -21,17 +21,10 @@ use ooxml_word_layout::paint::drawings::{DrawingSlot, Layer};
 use ooxml_word_layout::paint::{Drawn, PaintedLine, Rule, Span};
 use ooxml_word_layout::px::Px;
 use ooxml_word_pages::{DiskFonts, EngineBudgets, FontSetup, LaidVersion, PageEngine, PageView};
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyNotImplementedError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyTuple};
 use std::sync::{Arc, Mutex};
-
-pyo3::create_exception!(
-    ooxml_core,
-    LayoutFallback,
-    pyo3::exceptions::PyException,
-    "A version the Rust layout does not lay out as docx2svg does yet: args (reason, where)."
-);
 
 /// An exact length as `(numerator, denominator)`.
 type Exact = (i128, i128);
@@ -127,7 +120,9 @@ fn laid_or_raise(engine: &Arc<Mutex<PageEngine>>, laid: Laid) -> PyResult<PyLaid
             version,
             engine: Arc::clone(engine),
         }),
-        Ok(Err(fallback)) => Err(LayoutFallback::new_err((fallback.reason, fallback.at))),
+        Ok(Err(unsupported)) => Err(PyNotImplementedError::new_err(format!(
+            "the Word layout does not lay this version out yet: {unsupported}"
+        ))),
         Err(error) => Err(PyValueError::new_err(error.to_string())),
     }
 }
@@ -181,8 +176,8 @@ impl PyWordPages {
     }
 
     /// Lay out the version whose package is `data`, from the last version laid out: only
-    /// the parts whose stored bytes changed are read again. Raises `LayoutFallback` for a
-    /// version the Rust layout does not lay out as docx2svg does yet.
+    /// the parts whose stored bytes changed are read again. Raises `NotImplementedError` for a
+    /// version the layout does not lay out yet (why and where).
     fn lay_out(&self, py: Python<'_>, data: &[u8]) -> PyResult<PyLaidPages> {
         let bytes: Arc<[u8]> = Arc::from(data);
         let engine = &self.engine;

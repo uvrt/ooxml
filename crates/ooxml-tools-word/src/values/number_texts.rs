@@ -13,7 +13,7 @@
 //! Must not: read the numbers in a text (the host's tool layer does), or lay out but through
 //! the layout given.
 
-use super::{cell_of, lay_out, pages_refused};
+use super::{cell_of, lay_out, not_laid, pages_failed, pages_refused, without_pages};
 use crate::pages::WordLayout;
 use ooxml_base::pystr::is_digit;
 use ooxml_base::Cancel;
@@ -79,16 +79,18 @@ pub fn number_texts(
     let mut out = NumberTexts::default();
     let laid = match lay_out(layout, doc.package(), cancel) {
         Some(Ok(laid)) => Some(laid),
-        Some(Err((code, message))) => {
+        Some(Err(why)) => {
             if pages.is_some() {
-                return Err(pages_refused("numbers", code, &message));
+                let instead = without_pages(name, range, &[("include", serde_json::json!(["numbers"]))], &[]);
+                return Err(pages_refused("numbers", why, instead));
             }
+            let (code, _) = not_laid(why);
             out.warnings
                 .push(format!("numbers: the layout failed ({code}): no pages said"));
             None
         }
         None if pages.is_some() => {
-            return Err(pages_refused(
+            return Err(pages_failed(
                 "numbers",
                 "layout_failed",
                 "no layout of this document here",

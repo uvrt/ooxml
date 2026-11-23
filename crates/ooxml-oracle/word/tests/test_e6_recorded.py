@@ -18,7 +18,8 @@ OBSERVED = observed("e6-word.json")
 #: The observation's cases these tests compare with (index.py lists why the others are not).
 READS = {"new", "new-typed", "new-compared", "as-template", "convert-11", "convert-all-11", "convert-all-12",
          "convert-all-14", "convert-14-fe", "convert-12", "convert-14", "convert-14-sample", "copy-formatted",
-         "copy-insert-file", "paste-default", "paste-destination", "paste-keep", "paste-merge"}
+         "copy-insert-file", "paste-default", "paste-destination", "paste-keep", "paste-merge",
+         "copy-formatted-tracked"}
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 TEMPLATE_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml"
 
@@ -204,3 +205,50 @@ def test_keep_source_and_merge_write_the_look_direct_as_word(box, policy, case):
     for text, block in ours.items():
         for path in ("pPr/rPr", "r/rPr"):
             assert _tags(block, path) == _tags(word[text], path), (text, path)
+
+
+# -- copying with tracking on ------------------------------------------------------------------
+
+#: Where the tools' tracked copy is shaped otherwise than Word's.
+TRACKED_COPY_DIFFERENCES = {
+    "Source last paragrap": "Word inserts the copy before the destination's empty last paragraph, every "
+                            "copied mark inserted; the tools fill that paragraph with the copy's last, so its "
+                            "mark is the destination's own (not inserted) and Reject All leaves it with an "
+                            "empty w:pPr",
+}
+
+
+def _shape(block: str) -> tuple[bool, bool]:
+    """A copied block's revisions: whether each paragraph mark in it is inserted, and whether
+    all its text is inside insertions."""
+    paragraphs = re.findall(r"<w:p(?: [^>]*)?>.*?</w:p>", block)
+    marks = all(re.match(r"<w:p(?: [^>]*)?><w:pPr>.*?<w:rPr>.*?<w:ins\b.*?</w:pPr>", p) for p in paragraphs)
+    outside = re.sub(r"<w:ins\b[^>]*>.*?</w:ins>", "", block)
+    return marks, not re.search(r"<w:t(?: [^>]*)?>[^<]+</w:t>", outside)
+
+
+def _tracked_copies() -> list[str]:
+    return list(_word_blocks("copy-formatted-tracked"))
+
+
+@pytest.mark.parametrize("key", [pytest.param(k, marks=pytest.mark.xfail(reason=TRACKED_COPY_DIFFERENCES[k],
+                                                                           strict=True))
+                                 if k in TRACKED_COPY_DIFFERENCES else k for k in _tracked_copies()])
+def test_a_tracked_copy_is_inserted_as_word_inserts_it(box, key):
+    """``copy-formatted-tracked``: with tracking on, every copied paragraph's mark and text (a
+    table's rows too) are insertions, as Word's."""
+    document = Opened(box, e6_probe.copy_document("destination"), "destination.docx")
+    document.session.open(e6_probe.copy_document("source"), "source.docx")
+    document.track("Writer")
+    source = [block for block, _ in word_docs.blocks(document.box, document.session, "d2")]
+    document.call("word_copy_from", source_doc="d2", at="end", range=f"{source[0]}..{source[-1]}",
+                  styles="use_destination")
+    ours = {}
+    seen = False
+    for block in document.body():
+        text = "".join(re.findall(r"<w:t(?: [^>]*)?>([^<]*)</w:t>", block))
+        if text.startswith("Destination end."):
+            seen = True
+        elif seen and text:
+            ours[text[:20]] = block
+    assert _shape(ours[key]) == _shape(_word_blocks("copy-formatted-tracked")[key])

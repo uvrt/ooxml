@@ -53,6 +53,11 @@ on:
       fixtures:
         description: "The fixtures for fixtures and reads (auto: those holding the features the branch's changes touch, and the canaries -- tools/gates_fixtures.py; all; or a comma list)"
         default: auto
+      record:
+        # true: each differential job also records its cases and the Rust answers for goldens
+        # (tools/gates_goldens.py), uploaded as record-* artifacts for `tools/gates.py bless`.
+        description: "Record the cases and answers for goldens (true or false)"
+        default: "false"
       shards:
         # auto: the plan job looks the reference cache's store up (warm: one shard a mode, the
         # gate's small modes in one job; cold: 3) -- tools/gates_jobs.py; a number wins.
@@ -64,7 +69,7 @@ on:
     - cron: "0 2 * * *"
 
 concurrency:
-  group: gates-${{ inputs.ref || 'main' }}-${{ inputs.gates || 'fixtures,corpus' }}-${{ inputs.modes || 'all' }}-${{ inputs.per_tool }}-${{ inputs.every || '1' }}-${{ inputs.shards || 'auto' }}-${{ inputs.fixtures || 'all' }}
+  group: gates-${{ inputs.ref || 'main' }}-${{ inputs.gates || 'fixtures,corpus' }}-${{ inputs.modes || 'all' }}-${{ inputs.per_tool }}-${{ inputs.every || '1' }}-${{ inputs.shards || 'auto' }}-${{ inputs.fixtures || 'all' }}-${{ inputs.record || 'false' }}
   cancel-in-progress: true
 
 env:
@@ -81,6 +86,10 @@ jobs:
       seeds: ${{ contains(inputs.gates || 'fixtures,corpus', 'seeds') }}
       bench: ${{ contains(inputs.gates || 'fixtures,corpus', 'bench') }}
       fixtures: ${{ steps.plan.outputs.fixtures }}
+      # true where the checkout has the goldens (crates/ooxml-oracle/goldens/fixtures and corpus):
+      # the edit and read gates run the Rust oracles on the frozen cases alone -- no docx-agent,
+      # no reference cache (tools/gates.py diff on goldens).
+      goldens: ${{ steps.goldens.outputs.goldens }}
     steps:
       # The whole history: modes auto compares the ref with its merge base with main.
       - uses: actions/checkout@v4
@@ -94,9 +103,16 @@ jobs:
           ref: ${{ github.sha }}
           path: .gates-ci
           sparse-checkout: .github/actions
+      - id: goldens
+        run: |
+          goldens=false
+          if [ -d crates/ooxml-oracle/goldens/fixtures ] && [ -d crates/ooxml-oracle/goldens/corpus ]; then goldens=true; fi
+          echo "goldens=$goldens" >> "$GITHUB_OUTPUT"
       # The harness at this ref names only what the frozen reference has (the reference's commit is
       # in this full fetch): tools/gates_frozen.py.  A ref from before the freeze has no such check.
+      # On goldens the gates run no reference.
       - name: Frozen reference API
+        if: steps.goldens.outputs.goldens != 'true'
         run: |
           if python3 tools/gates.py --help | grep -q frozen-api; then python3 tools/gates.py frozen-api; fi
       # Warm or cold, per mode: which modes the reference cache's store for the reference code
@@ -104,11 +120,12 @@ jobs:
       # store's coverage, tools/gates_store.py).  Only for the edit gates with shards auto.
       - id: lookup
         env:
+          GOLDENS: ${{ steps.goldens.outputs.goldens }}
           GATES: ${{ inputs.gates || 'fixtures,corpus' }}
           SHARDS: ${{ inputs.shards || 'auto' }}
         run: |
           lookup=false
-          if [ "$SHARDS" = auto ]; then case ",$GATES," in *,fixtures,*|*,corpus,*) lookup=true;; esac; fi
+          if [ "$SHARDS" = auto ] && [ "$GOLDENS" != true ]; then case ",$GATES," in *,fixtures,*|*,corpus,*) lookup=true;; esac; fi
           echo "lookup=$lookup" >> "$GITHUB_OUTPUT"
       - if: steps.lookup.outputs.lookup == 'true'
         uses: ./.gates-ci/.github/actions/gates-reference
@@ -213,8 +230,14 @@ jobs:
           ref: ${{ github.sha }}
           path: .gates-ci
           sparse-checkout: .github/actions
-      # docx-agent is the reference: pure Python, so not ooxml-core (DOCX_AGENT_RUST=0 too).
-      - uses: ./.gates-ci/.github/actions/gates-reference
+      # docx-agent is the reference: pure Python, so not ooxml-core (DOCX_AGENT_RUST=0 too).  On
+      # goldens Python alone runs the gate (stdlib).
+      - if: needs.plan.outputs.goldens != 'true'
+        uses: ./.gates-ci/.github/actions/gates-reference
+      - if: needs.plan.outputs.goldens == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - uses: ./.gates-ci/.github/actions/substitute-fonts
       - uses: actions/download-artifact@v4
         with:
@@ -222,11 +245,11 @@ jobs:
           path: ${{ runner.temp }}/oracles
       # The store of docx-agent's results for the reference code this checkout runs.
       - name: Reference cache key
-        if: matrix.gate != 'reads'
+        if: matrix.gate != 'reads' && needs.plan.outputs.goldens != 'true'
         id: chain
         run: echo "chain=$(python tools/gates.py cache-key)" >> "$GITHUB_OUTPUT"
       - name: Restore docx-agent's kept results
-        if: matrix.gate != 'reads'
+        if: matrix.gate != 'reads' && needs.plan.outputs.goldens != 'true'
         uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/reference
@@ -240,10 +263,14 @@ jobs:
           PER_TOOL: ${{ matrix.per_tool }}
           EVERY: ${{ inputs.every || '1' }}
           FIXTURES: ${{ needs.plan.outputs.fixtures }}
+          RECORD: ${{ inputs.record || 'false' }}
+          GOLDENS: ${{ needs.plan.outputs.goldens }}
         run: |
           chmod +x "$RUNNER_TEMP"/oracles/*
+          record=()
+          if [ "$RECORD" = true ]; then record=(--record); fi
           cache=()
-          if [ "$GATE" != reads ]; then cache=(--cache "$RUNNER_TEMP/reference"); fi
+          if [ "$GATE" != reads ] && [ "$GOLDENS" != true ]; then cache=(--cache "$RUNNER_TEMP/reference"); fi
           fixtures=()     # none from a tools/gates.py without the fixtures selection (the plan job)
           if [ -n "$FIXTURES" ]; then fixtures=(--fixtures "$FIXTURES"); fi
           # Each mode on its own: one failing still lets the others run.
@@ -252,7 +279,7 @@ jobs:
             echo "::group::$GATE $mode $SHARD"
             python tools/gates.py diff --gate "$GATE" --mode "$mode" --shard "$SHARD" --per-tool "$PER_TOOL" \
               --every "$EVERY" --bin "$RUNNER_TEMP/oracles" --out "$RUNNER_TEMP/out/$GATE-$mode-${SHARD%/*}" \
-              "${fixtures[@]}" "${cache[@]}" || status=1
+              "${fixtures[@]}" "${cache[@]}" "${record[@]}" || status=1
             echo "::endgroup::"
           done
           exit $status
@@ -272,6 +299,18 @@ jobs:
             ${{ runner.temp }}/out/*/results.jsonl
             ${{ runner.temp }}/out/*/summary.json
           retention-days: 14
+      # The goldens' records (record true): the cases, the normalised Rust answers (the full
+      # outputs the goldens' digests are of) and the documents frozen as inputs.
+      - uses: actions/upload-artifact@v4
+        if: always() && inputs.record == 'true'
+        with:
+          name: record-${{ steps.name.outputs.name }}
+          path: |
+            ${{ runner.temp }}/out/*/golden-record.jsonl.gz
+            ${{ runner.temp }}/out/*/golden-record.json
+            ${{ runner.temp }}/out/*/inputs/*.docx
+          if-no-files-found: ignore
+          retention-days: 90
       - uses: actions/upload-artifact@v4
         if: always() && matrix.gate != 'reads'
         with:
