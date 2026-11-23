@@ -91,8 +91,9 @@ def _blank_bytes(call: Any, size: str | None, title: str | None, author: str | N
 
 
 def save_document(call: Any, doc: str, name: str, format: str, clean: bool = False) -> Result:
-    """The file written by the Rust session (its bytes come back beside the reply); the output
-    and its id state (``call.output``) are the host's, the coverage the session's."""
+    """The file written by the Rust session (its bytes come back beside the reply), its
+    ``app.xml`` pages and lines and the reply's coverage from the document's page engine; the
+    output and its id state (``call.output``) are the host's."""
     files: list[tuple[str, str, bytes]] = []
 
     def answer(envelope: dict[str, Any]) -> Result:
@@ -104,14 +105,12 @@ def save_document(call: Any, doc: str, name: str, format: str, clean: bool = Fal
         if replied.get("cleaned") is not None:
             result.data["cleaned"] = replied["cleaned"]
         # How much of the document the layout could lay out: a check that passed on a complete
-        # layout is told from one that could not see everything.  TODO(lane CUT-B): the
-        # session's reply carries it; until then a save says none.
-        if "coverage" in replied:
-            result.data["coverage"] = replied["coverage"]
+        # layout is told from one that could not see everything (the session's engine's).
+        result.data["coverage"] = replied["coverage"]
         return result
 
     return reads.serve(call, "save_document", {"name": name, "format": format, "clean": clean or None},
-                       answer=answer, files=files)
+                       answer=answer, layout=reads.session_layout(call), files=files)
 
 
 # -- find_text, render, check -------------------------------------------------------------------

@@ -92,3 +92,50 @@ fn a_host_placer_comes_before_the_session_s_layout() {
     let read = Value::Object(s.call("word_inspect", arguments, &context).to_json());
     assert_eq!(read["data"]["blocks"][0]["unknown"]["reason"], json!("host"));
 }
+
+fn called(session: &ooxml_session::Session, tool: &str, arguments: Value) -> Value {
+    Value::Object(session.call(tool, arguments, &CallContext::default()).to_json())
+}
+
+#[test]
+fn describe_check_and_save_read_the_pages_of_the_session_s_engine() {
+    let s = session_with(SessionConfig {
+        pages: Some(pages()),
+        ..SessionConfig::default()
+    });
+    s.open(docx(None), DocKind::Docx, "d.docx").unwrap();
+    let described = called(&s, "describe", json!({"doc": "d1"}));
+    let keys: Vec<&String> = described["data"].as_object().unwrap().keys().take(2).collect();
+    assert_eq!(keys, ["name", "pages"], "{described}");
+    assert_eq!(described["data"]["pages"], json!(1));
+    let checked = called(&s, "check", json!({"doc": "d1", "include": ["reflow"]}));
+    assert_eq!(checked["data"]["reflow"]["pages"], json!(1), "{checked}");
+    let saved = called(
+        &s,
+        "save_document",
+        json!({"doc": "d1", "name": "d.docx", "format": "docx"}),
+    );
+    let coverage = &saved["data"]["coverage"];
+    assert_eq!(coverage["complete"], json!(true), "{saved}");
+    assert_eq!(coverage["pages"], json!(1));
+}
+
+#[test]
+fn without_an_engine_describe_says_no_pages_and_a_save_says_why_it_has_no_coverage() {
+    let s = session_with(SessionConfig::default());
+    s.open(docx(None), DocKind::Docx, "d.docx").unwrap();
+    let described = called(&s, "describe", json!({"doc": "d1"}));
+    assert!(described["data"].get("pages").is_none(), "{described}");
+    let saved = called(
+        &s,
+        "save_document",
+        json!({"doc": "d1", "name": "d.docx", "format": "docx"}),
+    );
+    assert!(
+        saved["data"]["coverage"]["error"]
+            .as_str()
+            .unwrap()
+            .starts_with("layout_failed: "),
+        "{saved}"
+    );
+}

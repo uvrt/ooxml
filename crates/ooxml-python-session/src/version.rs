@@ -5,9 +5,9 @@
 //! Must not: change a document, or touch a Python object without the lock.
 
 use crate::session::to_py;
-use ooxml_session::{IdStateOf, Opened};
+use ooxml_session::{BlockRefused, IdStateOf, Opened};
 use ooxml_tools_word::WordLayout;
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyKeyError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
 use serde_json::Value;
@@ -150,6 +150,29 @@ impl PyVersion {
         py.detach(|| version.block_kind(id)).map_err(|e| to_py(&e))
     }
 
+    /// The id of the body's top-level block holding ``id`` (any id the tools take: a
+    /// nested paragraph, a range, a row or cell, a drawing, a note's or comment's
+    /// reference, a bookmark, a section's break), a renamed id followed; ``None`` for what
+    /// is not in the body. Raises ``KeyError`` for an id the version lacks, ``ValueError``
+    /// for a ref or a span.
+    fn block_of(&self, py: Python<'_>, id: &str) -> PyResult<Option<String>> {
+        let version = &self.inner;
+        let found = py.detach(|| version.block_of(id)).map_err(|e| to_py(&e))?;
+        found.map_err(refused)
+    }
+
+    /// The ids of the body's top-level blocks from the one holding ``first`` through the
+    /// one holding ``last`` (``block_of``), in order. Raises ``KeyError`` for an id the
+    /// version lacks, ``ValueError`` for an end outside the body or a span the wrong way
+    /// round.
+    fn blocks_between(&self, py: Python<'_>, first: &str, last: &str) -> PyResult<Vec<String>> {
+        let version = &self.inner;
+        let found = py
+            .detach(|| version.blocks_between(first, last))
+            .map_err(|e| to_py(&e))?;
+        found.map_err(refused)
+    }
+
     /// Whether the version has the drawing ``id`` (``d:3``, ``d:3#1``).
     fn has_drawing(&self, py: Python<'_>, id: &str) -> PyResult<bool> {
         let version = &self.inner;
@@ -205,6 +228,15 @@ impl PyVersion {
         let (now, then) = (&self.inner, &before.inner);
         let found = py.detach(|| now.ids_since(then)).map_err(|e| to_py(&e))?;
         Ok((found.given, found.renamed))
+    }
+}
+
+/// A block refused as Python says it: an id the version lacks a `KeyError`, else a
+/// `ValueError`.
+fn refused(why: BlockRefused) -> PyErr {
+    match why {
+        BlockRefused::NotFound(message) => PyKeyError::new_err(message),
+        BlockRefused::Refused(message) => PyValueError::new_err(message),
     }
 }
 

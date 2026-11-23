@@ -176,6 +176,14 @@ impl PageEngine {
         })
     }
 
+    /// The lines the body draws on `version`'s pages, all pages together (docx-agent's
+    /// `layout_statistics`: `app.xml`'s `Lines`); `None` where this engine no longer
+    /// paints it.
+    pub fn body_lines(&mut self, version: &LaidVersion) -> Option<usize> {
+        let pages = self.version_pages(version)?;
+        Some(pages.paths.iter().map(|page| page.len()).sum())
+    }
+
     /// What a comparison reads of `version`'s pages without painting them, made once;
     /// `None` where this engine no longer paints it.
     fn version_pages(&mut self, version: &LaidVersion) -> Option<Arc<VersionPages>> {

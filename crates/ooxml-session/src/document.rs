@@ -19,7 +19,7 @@ use crate::{DocKind, SessionError};
 use ooxml_base::Context;
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Committed, Snapshot, Store, StoreConfig, StoreStats};
-use ooxml_tools_word::{RowsWritten, Tracked};
+use ooxml_tools_word::{MadeBy, RowsWritten, Tracked};
 use ooxml_word_edit::validate::Delta;
 use ooxml_word_edit::{EarlierIds, Editor, RevisionPolicy, Tracking, WordDoc};
 use ooxml_word_model::docx::Versions;
@@ -60,6 +60,9 @@ pub(crate) struct Word {
     /// The rows this session's `word_edit_table` calls added or wrote into (round 58,
     /// R126): `check`'s `row_text_format` reads them.
     pub(crate) rows_written: RowsWritten,
+    /// The calls of this session that left a table ragged or off its grid (rounds 57 and
+    /// 58): `check`'s `table_grid_mismatch` names them (`made_by`).
+    pub(crate) made_by: MadeBy,
     /// Its page engine, where the session lays it out itself, and what its host set it to
     /// be laid out with (`crate::pages`).
     pub(crate) pages: crate::pages::DocPages,
@@ -235,6 +238,7 @@ impl Document {
             last_check: Arc::default(),
             images: ooxml_tools_word::PageImages::new(Some(Arc::clone(&context.budget))),
             rows_written: RowsWritten::default(),
+            made_by: MadeBy::default(),
             pages: crate::pages::DocPages::default(),
             views: crate::live_view::LiveViews::new(Arc::clone(&context.budget)),
         })))

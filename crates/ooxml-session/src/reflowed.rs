@@ -1,9 +1,10 @@
 //! Owns: the reflow a changing call's checks report, made after the call's edits
 //! ([`CallMade::reflow`](crate::CallMade::reflow)): from the version its first edit was
-//! applied to, where the document's last check saw it or the host's engine laid it out
-//! last, to the version its last edit made (`ooxml_tools_word::reflow_after_edit`).
+//! applied to, where the document's last check saw it or its engine (the host's, else the
+//! session's own) laid it out last, to the version its last edit made
+//! (`ooxml_tools_word::reflow_after_edit`).
 //!
-//! Must not: lay out but through the host's layout (its engine, or a spare made from its
+//! Must not: lay out but through the call's layout (its engine, or a spare made from its
 //! seed where another call holds the engine), or change what the last check saw.
 
 use crate::document::Document;

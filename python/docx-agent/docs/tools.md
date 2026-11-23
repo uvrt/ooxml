@@ -23,7 +23,7 @@ with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS) as toolbox:
 
 - **The tools:** the Word handlers of the shared tools (`open_document`, `new_document`,
   `save_document`, `undo`, `describe`, `find_text`, `replace_text`, `render`, `check`,
-  charts, properties, `close_document`, `read_blob`, `batch`) and 25 Word tools:
+  charts, properties, `close_document`, `read_blob`, `batch`) and 27 Word tools:
   `word_read` (Markdown with ids,
   paged), `word_set_text`, `word_insert_text`, `word_delete`, `word_insert_markdown`,
   `word_format` (every run and paragraph property, in points; or the look of a given paragraph, `like`: its style, list level, indents and keeps), tracking mode, tracked

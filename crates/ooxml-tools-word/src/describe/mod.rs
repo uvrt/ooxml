@@ -4,9 +4,12 @@
 //! and its data keyed and ordered as docx-agent's reply is: the fields the package parts
 //! give ([`package`]) and those the Word model's reading gives ([`document`]).
 //!
-//! Must not: lay out (`pages`, the Rust layout's switch, phase PL step L4), validate
-//! (`problems`, phase P2), or read state the session does not hold: those fields are
-//! [`NOT_DESCRIBED`].
+//! With the document's engine (the host's, else the session's own), `pages` after `name`:
+//! the version's page count as its engine lays it out, or why not (docx-agent's `_pages`,
+//! `"<code>: <message>"`); without one there is none.
+//!
+//! Must not: lay out but through the version's engine, validate (`problems`, phase P2), or
+//! read state the session does not hold: those fields are [`NOT_DESCRIBED`].
 
 mod document;
 pub(crate) use document::sections_json;
@@ -36,6 +39,7 @@ pub struct Describe {
 /// `headings_note` only where today's has them).
 pub const DESCRIBED: &[&str] = &[
     "name",
+    "pages",
     "compatibility_mode",
     "properties",
     "tracking",
@@ -54,10 +58,7 @@ pub const DESCRIBED: &[&str] = &[
 ];
 
 /// The keys of today's data that it does not give yet, and why (the hand-back's list).
-pub const NOT_DESCRIBED: &[(&str, &str)] = &[
-    ("pages", "the Word layout (phase PL, step L4)"),
-    ("problems", "validation on open (phase P2)"),
-];
+pub const NOT_DESCRIBED: &[(&str, &str)] = &[("problems", "validation on open (phase P2)")];
 
 /// The compatibility mode of a document whose settings name none: Word 2007's.
 const DEFAULT_COMPATIBILITY_MODE: i64 = 12;
@@ -86,6 +87,14 @@ pub fn describe(_args: &Describe, version: &Version<'_>, cancel: &dyn Cancel) ->
     let read = document::Reading::new(&docx);
     let mut data = Map::new();
     data.insert("name".into(), Value::from(name));
+    let laid = version
+        .owned
+        .and_then(|owned| crate::laid_reads::laid(&owned, package, cancel));
+    if let Some(laid) = laid {
+        cancel.check().map_err(cancelled)?;
+        let pages = laid.map_or_else(Value::from, |laid| Value::from(laid.pages()));
+        data.insert("pages".into(), pages);
+    }
     data.insert(
         "compatibility_mode".into(),
         Value::from(reader.compatibility_mode(&main)?),
