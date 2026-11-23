@@ -1,7 +1,8 @@
-//! Owns: a page as a check reads it ([`PageEngine::page_read`]), taken from the
-//! generation's [`crate::page_reads::ReadMemo`] where a version before read the page laid
-//! out the same, in the same context and at the same places; else painted (not kept) and
-//! read, and the read kept. And each page's context ([`PageEngine::page_contexts`]), made
+//! Owns: a page as a check reads it ([`PageEngine::page_read`]): its entry in the page
+//! tier (its read and its facts' contributions), taken from the generation's
+//! [`crate::page_reads::ReadMemo`] where a version before read the page laid out the same,
+//! in the same context and at the same places; else painted (not kept) and read, and the
+//! entry kept. And each page's context ([`PageEngine::page_contexts`]), made
 //! once per version: what a page's read and its digests depend on beyond its laid page.
 //!
 //! Must not: keep a page's paint for the read (the paint memo keeps a reader's pages).
@@ -9,6 +10,7 @@
 use super::painters::Painter;
 use super::{PageEngine, KEY};
 use crate::page_context::PageContext;
+use crate::page_entry::PageEntry;
 use crate::page_read::PageRead;
 use crate::page_reads::{places, Found, ReadOf, Split};
 use crate::text_boxes::{text_boxes, TextBoxJob};
@@ -21,7 +23,7 @@ impl PageEngine {
     /// and the boxes beside them, from one paint (not kept), or as a version before read
     /// the page where it is laid out the same in the same context at the same places --
     /// with only its stories painted again where they show other values.
-    pub fn page_read(&mut self, version: &LaidVersion, page: usize) -> Option<PageRead> {
+    pub fn page_read(&mut self, version: &LaidVersion, page: usize) -> Option<Arc<PageEntry>> {
         let key = crate::page_said::page_key(&version.layout, page);
         let context = match &key {
             Some(_) => self.page_contexts(version)?.get(page).copied(),
@@ -37,34 +39,35 @@ impl PageEngine {
         let Some(of) = of else {
             let paint = self.painted_page(version, page, false)?;
             self.stats.pages_read.0 += 1;
-            return Some(PageRead::of(&paint));
+            return Some(Arc::new(PageEntry::new(PageRead::of(&paint))));
         };
         match self.generation.as_mut().and_then(|g| g.reads.get(&of)) {
-            Some(Found::Whole(read)) => {
+            Some(Found::Whole(entry)) => {
                 self.stats.pages_read.1 += 1;
-                Some(PageRead::clone(&read))
+                Some(entry)
             }
             Some(Found::Body(kept, split)) => {
-                let read = split.joined(&kept, self.stories_read(version, page)?);
+                let read = split.joined(kept.read(), self.stories_read(version, page)?);
                 self.stats.pages_read.2 += 1;
-                self.keep_read(&of, &read, Some(split));
-                Some(read)
+                Some(self.keep_read(&of, read, Some(split)))
             }
             None => {
                 let paint = self.painted_page(version, page, false)?;
                 let read = PageRead::of(&paint);
                 self.stats.pages_read.0 += 1;
                 let split = self.stories_read(version, page).and_then(|s| Split::of(&read, &s));
-                self.keep_read(&of, &read, split);
-                Some(read)
+                Some(self.keep_read(&of, read, split))
             }
         }
     }
 
-    fn keep_read(&mut self, of: &ReadOf<'_>, read: &PageRead, split: Option<Split>) {
+    /// `read` as the page `of` names, its entry kept in the page tier.
+    fn keep_read(&mut self, of: &ReadOf<'_>, read: PageRead, split: Option<Split>) -> Arc<PageEntry> {
+        let entry = Arc::new(PageEntry::new(read));
         if let Some(generation) = self.generation.as_mut() {
-            generation.reads.insert(of, Arc::new(read.clone()), split);
+            generation.reads.insert(of, Arc::clone(&entry), split);
         }
+        entry
     }
 
     /// Page `page` of `version`'s stories (its header, footer and footnotes) painted on
@@ -93,6 +96,13 @@ impl PageEngine {
             paint.text_boxes = text_boxes(job, drawings, &paint, page);
         }
         Some(PageRead::of(&paint))
+    }
+
+    /// What the page tier holds now (its entries: each page's read and its facts'
+    /// contributions, on the paint budget's bounded account): its entries and bytes, the
+    /// lookups it answered and missed.
+    pub fn page_tier(&self) -> ooxml_derive::MemoStats {
+        self.generation.as_ref().map(|g| g.reads.stats()).unwrap_or_default()
     }
 
     /// Each page's context of `version` ([`crate::page_context`]), made once; `None` where

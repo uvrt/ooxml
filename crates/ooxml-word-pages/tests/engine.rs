@@ -887,7 +887,7 @@ fn reads(
     version: &ooxml_word_pages::LaidVersion,
 ) -> Vec<ooxml_word_pages::page_read::PageRead> {
     (0..version.page_count())
-        .map(|k| engine.page_read(version, k).unwrap())
+        .map(|k| engine.page_read(version, k).unwrap().read().clone())
         .collect()
 }
 

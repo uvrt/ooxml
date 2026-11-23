@@ -9,6 +9,7 @@
 
 use super::tree::resolve;
 use super::{story_kind, Facts};
+use crate::page_read::PageRead;
 use ooxml_word_model::docx::cells::PartCells;
 use ooxml_word_model::docx::StoryPart;
 use ooxml_xml::Element;
@@ -71,6 +72,76 @@ pub struct TextSizes {
     pub small: Option<Vec<SmallText>>,
 }
 
+/// One size of text one paragraph's lines draw on a page: the first of those lines (its
+/// place among the page's lines, its text boxes' after its own), the text's kind, its size
+/// (half points) and its characters that are not white space, every such line's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Sized {
+    /// The first line drawing it.
+    pub line: usize,
+    /// Its kind of text (before a caption's minimum is asked for).
+    pub kind: &'static str,
+    /// Its size, half points.
+    pub half_points: i64,
+    /// Its characters.
+    pub chars: usize,
+}
+
+/// One page's contribution to the text sizes (the page tier's, [`crate::page_entry`]):
+/// the smallest size of each kind it draws, and each size each paragraph's lines draw, in
+/// the order first drawn. A pure function of the page's read: the minimum, the scope and
+/// the paragraphs' ids are the fold's ([`text_sizes`]).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SizesPart {
+    /// The smallest size (half points) of each kind, in the order the kinds are first drawn.
+    pub smallest: Vec<(&'static str, i64)>,
+    /// Each paragraph's sizes by kind, in the order first drawn.
+    pub sized: Vec<Sized>,
+}
+
+impl SizesPart {
+    /// The contribution of a page read as `read`.
+    #[must_use]
+    pub fn of(read: &PageRead) -> SizesPart {
+        let mut out = SizesPart::default();
+        let mut at: HashMap<(&str, Option<&str>, i64), usize> = HashMap::new();
+        for (k, line) in read.texts.iter().chain(&read.box_texts).enumerate() {
+            let kind = kind_of(&line.path, line.story.as_ref().map(|(kind, _)| *kind));
+            let story = line.story.as_ref().map(|(_, part)| part.as_str());
+            for &(half_points, chars) in &line.sizes {
+                match out.smallest.iter_mut().find(|(named, _)| *named == kind) {
+                    Some((_, least)) => *least = (*least).min(half_points),
+                    None => out.smallest.push((kind, half_points)),
+                }
+                match at.get(&(line.path.as_str(), story, half_points)) {
+                    Some(&found) => {
+                        if let Some(sized) = out.sized.get_mut(found) {
+                            sized.chars += chars;
+                        }
+                    }
+                    None => {
+                        at.insert((line.path.as_str(), story, half_points), out.sized.len());
+                        out.sized.push(Sized {
+                            line: k,
+                            kind,
+                            half_points,
+                            chars,
+                        });
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// What the contribution of a page read as `read` holds at most, bytes.
+    #[must_use]
+    pub fn weight_of(read: &PageRead) -> usize {
+        let sizes: usize = read.texts.iter().chain(&read.box_texts).map(|l| l.sizes.len()).sum();
+        std::mem::size_of::<SizesPart>() + sizes * std::mem::size_of::<Sized>()
+    }
+}
+
 /// A line's paragraph: its id, element and place in its part, and the part.
 #[derive(Clone)]
 struct Owner<'a> {
@@ -87,79 +158,141 @@ struct Seen {
     min: f64,
 }
 
-/// `smallest_text`, and `small_text` with a minimum.
+/// What [`text_sizes`] folds the pages' contributions into.
+struct Fold<'f, 'a> {
+    facts: &'f Facts<'a>,
+    minimum: Option<&'f Minimum>,
+    least: Option<f64>,
+    smallest: BTreeMap<String, f64>,
+    /// Each line's paragraph, by its part and path, found once.
+    owners: HashMap<(String, String), Option<Owner<'a>>>,
+    small: Vec<((String, String, i64), Seen, Owner<'a>)>,
+    at: HashMap<(String, String, i64), usize>,
+    captions: HashMap<String, bool>,
+}
+
+/// `smallest_text`, and `small_text` with a minimum: a fold over the pages' contributions
+/// ([`SizesPart`]), in page order, a paragraph named only where its text is below the
+/// minimum (or the facts are scoped to some paragraphs).
 #[must_use]
 pub fn text_sizes(facts: &Facts<'_>, minimum: Option<&Minimum>) -> TextSizes {
-    let least = minimum.and_then(Minimum::least);
-    let mut out = TextSizes::default();
-    let mut owners: HashMap<(String, String), Option<Owner<'_>>> = HashMap::new();
-    let mut small: Vec<((String, String, i64), Seen, Owner<'_>)> = Vec::new();
-    let mut at: HashMap<(String, String, i64), usize> = HashMap::new();
-    let mut captions: HashMap<String, bool> = HashMap::new();
+    let mut fold = Fold {
+        facts,
+        minimum,
+        least: minimum.and_then(Minimum::least),
+        smallest: BTreeMap::new(),
+        owners: HashMap::new(),
+        small: Vec::new(),
+        at: HashMap::new(),
+        captions: HashMap::new(),
+    };
     for number in 1..=facts.page_count() {
         if !facts.shown([number]) {
             continue;
         }
-        for line in facts.text_lines(number - 1) {
-            let part = part_of(facts, &line.path, line.story.as_ref().map(|(_, p)| p.as_str()));
-            let owner = owners
-                .entry((part.clone(), line.path.clone()))
-                .or_insert_with(|| owner(facts, &part, &line.path))
-                .clone();
-            if let Some(scope) = facts.scope() {
-                // a range's facts: its paragraphs' text only
-                if owner.as_ref().is_none_or(|o| !scope.paragraphs.contains(&o.id)) {
-                    continue;
+        if let Some(entry) = facts.entry(number - 1) {
+            fold.page(number, entry.read(), entry.sizes());
+        }
+    }
+    let mut out = TextSizes {
+        smallest: fold.smallest,
+        small: None,
+    };
+    out.smallest.retain(|_, v| *v < 10_000.0);
+    if let Some(minimum) = minimum {
+        out.small = Some(entries(facts, fold.small, matches!(minimum, Minimum::PerKind(_))));
+    }
+    out
+}
+
+impl<'a> Fold<'_, 'a> {
+    /// The 1-based page `number`'s contribution, its read `read`, folded in.
+    fn page(&mut self, number: usize, read: &PageRead, part: &SizesPart) {
+        if self.facts.scope().is_none() {
+            for &(kind, half_points) in &part.smallest {
+                self.smallest_is(kind, half_points);
+            }
+            let Some(least) = self.least else { return };
+            for sized in part.sized.iter().filter(|s| size(s.half_points) < least) {
+                if let Some(owner) = self.owner(read, sized) {
+                    self.small(number, sized, &owner);
                 }
             }
-            let kind = kind_of(&line.path, line.story.as_ref().map(|(k, _)| *k));
-            for &(half_points, chars) in &line.sizes {
-                #[allow(clippy::cast_precision_loss)]
-                let size = half_points as f64 / 2.0;
-                let smallest = out.smallest.entry(kind.to_owned()).or_insert(10_000.0);
-                if size < *smallest {
-                    *smallest = size;
-                }
-                let (Some(least), Some(minimum), Some(owner)) = (least, minimum, owner.as_ref()) else {
-                    continue;
-                };
-                if size >= least {
-                    continue;
-                }
-                let caption = || {
-                    *captions
-                        .entry(owner.id.clone())
-                        .or_insert_with(|| facts.is_caption(owner.element))
-                };
-                let (named, min) = minimum_of(minimum, kind, caption);
-                let Some(min) = min.filter(|m| size < *m) else { continue };
-                let key = (owner.id.clone(), named, half_points);
-                match at.get(&key).and_then(|k| small.get_mut(*k)) {
-                    Some((_, seen, _)) => {
-                        seen.chars += chars;
-                        seen.pages.insert(number);
-                    }
-                    None => {
-                        at.insert(key.clone(), small.len());
-                        small.push((
-                            key,
-                            Seen {
-                                chars,
-                                pages: BTreeSet::from([number]),
-                                min,
-                            },
-                            owner.clone(),
-                        ));
-                    }
-                }
+            return;
+        }
+        for sized in &part.sized {
+            // a range's facts: its paragraphs' text only
+            let Some(owner) = self.owner(read, sized) else { continue };
+            if !self.facts.scope().is_some_and(|s| s.paragraphs.contains(&owner.id)) {
+                continue;
+            }
+            self.smallest_is(sized.kind, sized.half_points);
+            if self.least.is_some_and(|least| size(sized.half_points) < least) {
+                self.small(number, sized, &owner);
             }
         }
     }
-    out.smallest.retain(|_, v| *v < 10_000.0);
-    if let Some(minimum) = minimum {
-        out.small = Some(entries(facts, small, matches!(minimum, Minimum::PerKind(_))));
+
+    fn smallest_is(&mut self, kind: &str, half_points: i64) {
+        let smallest = self.smallest.entry(kind.to_owned()).or_insert(10_000.0);
+        *smallest = smallest.min(size(half_points));
     }
-    out
+
+    /// The paragraph `sized`'s line on a page read as `read` is of, found once.
+    fn owner(&mut self, read: &PageRead, sized: &Sized) -> Option<Owner<'a>> {
+        let line = read
+            .texts
+            .get(sized.line)
+            .or_else(|| read.box_texts.get(sized.line.checked_sub(read.texts.len())?))?;
+        let part = part_of(self.facts, &line.path, line.story.as_ref().map(|(_, p)| p.as_str()));
+        let facts = self.facts;
+        self.owners
+            .entry((part, line.path.clone()))
+            .or_insert_with_key(|(part, path)| owner(facts, part, path))
+            .clone()
+    }
+
+    /// `sized`, of `owner`, on the 1-based page `number`, kept where below its minimum.
+    fn small(&mut self, number: usize, sized: &Sized, owner: &Owner<'a>) {
+        let Some(minimum) = self.minimum else { return };
+        let facts = self.facts;
+        let captions = &mut self.captions;
+        let caption = || {
+            *captions
+                .entry(owner.id.clone())
+                .or_insert_with(|| facts.is_caption(owner.element))
+        };
+        let (named, min) = minimum_of(minimum, sized.kind, caption);
+        let Some(min) = min.filter(|m| size(sized.half_points) < *m) else {
+            return;
+        };
+        let key = (owner.id.clone(), named, sized.half_points);
+        match self.at.get(&key).and_then(|k| self.small.get_mut(*k)) {
+            Some((_, seen, _)) => {
+                seen.chars += sized.chars;
+                seen.pages.insert(number);
+            }
+            None => {
+                self.at.insert(key.clone(), self.small.len());
+                self.small.push((
+                    key,
+                    Seen {
+                        chars: sized.chars,
+                        pages: BTreeSet::from([number]),
+                        min,
+                    },
+                    owner.clone(),
+                ));
+            }
+        }
+    }
+}
+
+/// A size in points, from half points.
+fn size(half_points: i64) -> f64 {
+    #[allow(clippy::cast_precision_loss)]
+    let points = half_points as f64 / 2.0;
+    points
 }
 
 /// The entries of what was drawn small, smallest first, each with its styles' size.
