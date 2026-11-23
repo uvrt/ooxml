@@ -60,12 +60,10 @@ fn a_table_s_cells_kept_across_versions_are_read_as_cold_after_an_edit_in_a_tabl
 }
 
 fn language(doc: &WordDoc, detections: Option<&Detections>) -> Option<ooxml_word_edit::facts::TextLanguage> {
-    let scope = LanguageScope {
-        keep: None,
-        whole: true,
-        ranges: true,
-        locale: None,
-        detections,
+    let scope = LanguageScope::new(true, true);
+    let scope = match detections {
+        Some(kept) => scope.with_detections(kept),
+        None => scope,
     };
     text_language(doc, scope).unwrap()
 }

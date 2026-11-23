@@ -155,13 +155,9 @@ fn paragraph_facts(
     let keep = |id: &str| -> bool {
         facts.scope().is_none_or(|s| s.paragraphs.contains(id)) && (facts.whole() || facts.shown(pages_of(id)))
     };
-    let language = LanguageScope {
-        keep: Some(&keep),
-        whole: facts.scope().is_none() && facts.whole(),
-        ranges: true,
-        locale: None,
-        detections: Some(last_check.languages()),
-    };
+    let language = LanguageScope::new(facts.scope().is_none() && facts.whole(), true)
+        .keeping(&keep)
+        .with_detections(last_check.languages());
     if let Some(found) = facts::text_language(doc, language).map_err(internal)? {
         parts.insert("text_language".into(), worded::text_language_json(&found, CAP));
     }
@@ -252,13 +248,9 @@ pub(super) fn unlaid(owned: Owned<'_>, scope: Option<&Scope>, error: Value) -> R
         .collect();
     parts.insert("accept_loses_text".into(), Value::from(lost));
     let keep = |id: &str| scope.is_none_or(|s| s.paragraphs.contains(id));
-    let language = LanguageScope {
-        keep: Some(&keep),
-        whole: scope.is_none(),
-        ranges: false,
-        locale: None,
-        detections: Some(owned.last_check.languages()),
-    };
+    let language = LanguageScope::new(scope.is_none(), false)
+        .keeping(&keep)
+        .with_detections(owned.last_check.languages());
     if let Some(found) = facts::text_language(doc, language).map_err(internal)? {
         parts.insert("text_language".into(), worded::text_language_json(&found, CAP));
     }

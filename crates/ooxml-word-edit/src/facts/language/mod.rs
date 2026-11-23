@@ -48,6 +48,39 @@ pub struct LanguageScope<'a> {
     pub detections: Option<&'a Detections>,
 }
 
+impl<'a> LanguageScope<'a> {
+    /// Every paragraph read, each text detected afresh, no session tag; `whole` and `ranges`
+    /// as on the fields.
+    #[must_use]
+    pub fn new(whole: bool, ranges: bool) -> Self {
+        Self {
+            keep: None,
+            whole,
+            ranges,
+            locale: None,
+            detections: None,
+        }
+    }
+
+    /// Only the paragraphs (by id) `keep` holds.
+    #[must_use]
+    pub fn keeping(self, keep: &'a dyn Fn(&str) -> bool) -> Self {
+        Self {
+            keep: Some(keep),
+            ..self
+        }
+    }
+
+    /// The texts' languages the document's checks keep, read instead of detected again.
+    #[must_use]
+    pub fn with_detections(self, detections: &'a Detections) -> Self {
+        Self {
+            detections: Some(detections),
+            ..self
+        }
+    }
+}
+
 /// `check`'s `text_language`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextLanguage {
