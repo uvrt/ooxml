@@ -1,0 +1,81 @@
+{
+ "description": "Keep values you judged from a column's text, one per row by key, as dataset d:<id> {key, column, note}; each value's source is the cell judged. Lists rows with text but no value (not_recorded). Same id replaces it unless add.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "add": {
+    "description": "Add to d:<id> instead of replacing it.",
+    "type": "boolean"
+   },
+   "column": {
+    "description": "Values' column name.",
+    "type": "string"
+   },
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "id": {
+    "description": "Dataset id.",
+    "type": "string"
+   },
+   "key": {
+    "description": "Key column; matched exactly.",
+    "type": "string"
+   },
+   "source": {
+    "description": "Column judged.",
+    "type": "string"
+   },
+   "table": {
+    "description": "Table (t:Products).",
+    "type": "string"
+   },
+   "type": {
+    "description": "number: values must be numbers.",
+    "enum": [
+     "text",
+     "number"
+    ],
+    "type": "string"
+   },
+   "values": {
+    "description": "One per key.",
+    "items": {
+     "additionalProperties": false,
+     "properties": {
+      "key": {
+       "type": "string"
+      },
+      "note": {
+       "description": "Short reason.",
+       "type": "string"
+      },
+      "value": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "key",
+      "value"
+     ],
+     "type": "object"
+    },
+    "minItems": 1,
+    "type": "array"
+   }
+  },
+  "required": [
+   "doc",
+   "table",
+   "key",
+   "source",
+   "column",
+   "id",
+   "values"
+  ],
+  "type": "object"
+ },
+ "name": "xlsx_record_values",
+ "strict": false
+}

@@ -1,0 +1,55 @@
+{
+ "description": "Make copies of a sample slide follow its revised design: box, shapes added or removed, fill, outline, tables, text formatting; each copy keeps its text, values and pictures. Per copy: what changed, what could not follow and why, new overflows. One undo step.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "copies": {
+    "description": "Default every slide made from it (its layout, its shapes' ids and names).",
+    "items": {
+     "type": "string"
+    },
+    "type": "array"
+   },
+   "doc": {
+    "description": "Document id: the copies' deck.",
+    "type": "string"
+   },
+   "preview": {
+    "description": "Report only, change nothing.",
+    "type": "boolean"
+   },
+   "remove": {
+    "description": "Copy shapes the sample lacks: auto (those most copies have) deleted, all, or none.",
+    "enum": [
+     "auto",
+     "all",
+     "none"
+    ],
+    "type": "string"
+   },
+   "report": {
+    "description": "actionable: not_followed without kind own.",
+    "enum": [
+     "all",
+     "actionable"
+    ],
+    "type": "string"
+   },
+   "sample": {
+    "description": "The sample slide, s:300 or $ref.",
+    "type": "string"
+   },
+   "sample_doc": {
+    "description": "The sample's deck when another, d2.",
+    "type": "string"
+   }
+  },
+  "required": [
+   "doc",
+   "sample"
+  ],
+  "type": "object"
+ },
+ "name": "ppt_follow_sample",
+ "strict": false
+}

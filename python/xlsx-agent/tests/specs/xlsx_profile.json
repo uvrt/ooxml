@@ -1,0 +1,34 @@
+{
+ "description": "Full profile of a table's or region's columns, describe's drill-down: types and mix, fill, min/max/mean, distinct values, text lengths (chars, words, longest cell), formula share, allowed values, flags with first addresses. Paged by column.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "columns": {
+    "description": "Only these columns, by name. Default all.",
+    "items": {
+     "type": "string"
+    },
+    "type": "array"
+   },
+   "cursor": {
+    "description": "next_cursor of the previous page, with the same target.",
+    "type": "string"
+   },
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "target": {
+    "description": "A table or region (t:Products), or one column (t:Products[Price]).",
+    "type": "string"
+   }
+  },
+  "required": [
+   "doc",
+   "target"
+  ],
+  "type": "object"
+ },
+ "name": "xlsx_profile",
+ "strict": false
+}

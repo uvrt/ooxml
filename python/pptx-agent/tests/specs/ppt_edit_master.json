@@ -1,0 +1,98 @@
+{
+ "description": "Slide masters and layouts: a layout placeholder's prompt text, Insert > Header & Footer, adding, duplicating, renaming or deleting layouts and adding their placeholders. Their shapes' text, fill and box: ppt_set_text, ppt_set_shape (L2.5, M0.7); new shapes: the add tools with slide L2 or M0. Returns the slides affected.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "action": {
+    "description": "What to do.",
+    "enum": [
+     "set_prompt",
+     "set_footer",
+     "add_layout",
+     "duplicate_layout",
+     "rename_layout",
+     "delete_layout",
+     "add_placeholder"
+    ],
+    "type": "string"
+   },
+   "box": {
+    "additionalProperties": false,
+    "description": "add_placeholder: points.",
+    "properties": {
+     "h": {
+      "type": "number"
+     },
+     "w": {
+      "type": "number"
+     },
+     "x": {
+      "type": "number"
+     },
+     "y": {
+      "type": "number"
+     }
+    },
+    "required": [
+     "x",
+     "y",
+     "w",
+     "h"
+    ],
+    "type": "object"
+   },
+   "date": {
+    "description": "set_footer: auto (updates), fixed text, or leave out for none.",
+    "type": "string"
+   },
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "on_title_slide": {
+    "description": "set_footer. Default false.",
+    "type": "boolean"
+   },
+   "reassign_to": {
+    "description": "delete_layout: the layout its slides move to.",
+    "type": "string"
+   },
+   "slide_number": {
+    "description": "set_footer. Default true.",
+    "type": "boolean"
+   },
+   "slides": {
+    "description": "set_footer: only these slides (Apply), numbers or ids (s:256). Default all (Apply to All: masters and layouts too). add_placeholder: also add it to these.",
+    "items": {
+     "type": "string"
+    },
+    "type": "array"
+   },
+   "target": {
+    "description": "set_prompt: the layout placeholder, L2.3. Layout actions: the layout, L2 or its name (add_layout: the one to follow; add_placeholder: or L2.7 to add to slides).",
+    "type": "string"
+   },
+   "text": {
+    "description": "set_prompt: the prompt, \\n for the next level. set_footer: the footer; empty: none. Other actions: the name.",
+    "type": "string"
+   },
+   "type": {
+    "description": "add_placeholder.",
+    "enum": [
+     "body",
+     "content",
+     "pic",
+     "title"
+    ],
+    "type": "string"
+   }
+  },
+  "required": [
+   "doc",
+   "action"
+  ],
+  "type": "object"
+ },
+ "name": "ppt_edit_master",
+ "strict": false
+}

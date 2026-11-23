@@ -247,9 +247,12 @@ class ReleaseNotesTest(unittest.TestCase):
         self.assertTrue(forms and all(form and cause for form, cause in forms))
 
     def test_the_specs_are_read_at_a_commit(self) -> None:
-        specs = release_notes.specs_at("HEAD")
+        specs = release_notes.specs_at("HEAD", release_notes.SPECS["docx-agent"])
         self.assertIn("describe", specs)
         self.assertIn("word_read", specs)
+        self.assertIn("doc", specs["word_read"])
+        # a Claude definition's input_schema too
+        self.assertIn("doc", release_notes.specs_at("HEAD", release_notes.SPECS["pptx-agent"])["check"])
 
 
 if __name__ == "__main__":

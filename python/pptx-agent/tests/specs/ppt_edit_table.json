@@ -1,0 +1,216 @@
+{
+ "description": "Change a table: cell text by position or label, insert or delete rows and columns, merge or split cells, column widths, row heights, cell fill and borders, its style and Table Design flags. Cell text formatting: ppt_format_text on cells. Returns the table after.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "action": {
+    "description": "What to do.",
+    "enum": [
+     "set_cells",
+     "insert_row",
+     "delete_row",
+     "insert_column",
+     "delete_column",
+     "merge",
+     "split",
+     "set_widths",
+     "set_heights",
+     "fit_rows",
+     "format_cells",
+     "set_style",
+     "set_flags"
+    ],
+    "type": "string"
+   },
+   "borders": {
+    "description": "format_cells: borders.",
+    "items": {
+     "additionalProperties": false,
+     "properties": {
+      "color": {
+       "type": "string"
+      },
+      "side": {
+       "enum": [
+        "top",
+        "bottom",
+        "left",
+        "right",
+        "all"
+       ],
+       "type": "string"
+      },
+      "width": {
+       "description": "0 removes.",
+       "type": "number"
+      }
+     },
+     "required": [
+      "side",
+      "width"
+     ],
+     "type": "object"
+    },
+    "type": "array"
+   },
+   "cells": {
+    "description": "set_cells: the cells.",
+    "items": {
+     "additionalProperties": false,
+     "properties": {
+      "col": {
+       "description": "From 0.",
+       "type": "integer"
+      },
+      "col_label": {
+       "description": "Or the column's label (header row).",
+       "type": "string"
+      },
+      "row": {
+       "description": "From 0.",
+       "type": "integer"
+      },
+      "row_label": {
+       "description": "Or the row's label (first column).",
+       "type": "string"
+      },
+      "text": {
+       "description": "Keeps the cell's formatting.",
+       "type": "string"
+      }
+     },
+     "required": [
+      "text"
+     ],
+     "type": "object"
+    },
+    "type": "array"
+   },
+   "columns": {
+    "description": "format_cells, set_widths: columns from 0. Default all.",
+    "items": {
+     "type": "integer"
+    },
+    "type": "array"
+   },
+   "date_format": {
+    "description": "Dates of from as e.g. d mmmm yyyy or dd/mm/yyyy.",
+    "type": "string"
+   },
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "fill": {
+    "description": "format_cells: colour or none.",
+    "type": "string"
+   },
+   "flags": {
+    "additionalProperties": false,
+    "description": "set_flags: on or off; others stay.",
+    "properties": {
+     "banded_columns": {
+      "type": "boolean"
+     },
+     "banded_rows": {
+      "type": "boolean"
+     },
+     "first_column": {
+      "type": "boolean"
+     },
+     "first_row": {
+      "type": "boolean"
+     },
+     "last_column": {
+      "type": "boolean"
+     },
+     "last_row": {
+      "type": "boolean"
+     }
+    },
+    "type": "object"
+   },
+   "from": {
+    "description": "set_cells: rows of d:<id> or t:<table>, from row index.",
+    "type": "string"
+   },
+   "from_columns": {
+    "description": "from's columns, in order. Default all.",
+    "items": {
+     "type": "string"
+    },
+    "type": "array"
+   },
+   "header": {
+    "description": "from's header texts; [] none. Default column names.",
+    "items": {
+     "type": "string"
+    },
+    "type": "array"
+   },
+   "index": {
+    "description": "insert_*: new row/column's position, default last; delete_*: which; set_cells from: first row.",
+    "type": "integer"
+   },
+   "like": {
+    "description": "insert_*: copy this row/column's formatting.",
+    "type": "integer"
+   },
+   "rows": {
+    "description": "format_cells, set_heights, fit_rows: rows from 0. Default all.",
+    "items": {
+     "type": "integer"
+    },
+    "type": "array"
+   },
+   "sizes": {
+    "description": "set_widths/set_heights: one per column/row (or per columns/rows).",
+    "items": {
+     "type": "number"
+    },
+    "type": "array"
+   },
+   "span": {
+    "additionalProperties": false,
+    "description": "merge: the cells to join; split: a merged cell.",
+    "properties": {
+     "col": {
+      "type": "integer"
+     },
+     "row": {
+      "type": "integer"
+     },
+     "to_col": {
+      "description": "merge. Default col.",
+      "type": "integer"
+     },
+     "to_row": {
+      "description": "merge. Default row.",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "row",
+     "col"
+    ],
+    "type": "object"
+   },
+   "style": {
+    "description": "Table style name or id; describe lists the deck's own.",
+    "type": "string"
+   },
+   "target": {
+    "description": "The table, e.g. 256.7 or $ref.",
+    "type": "string"
+   }
+  },
+  "required": [
+   "doc",
+   "target",
+   "action"
+  ],
+  "type": "object"
+ },
+ "name": "ppt_edit_table",
+ "strict": false
+}

@@ -1,0 +1,263 @@
+{
+ "description": "Figures computed here, never by you, from a table's or dataset's rows. min/max of dates are dates; first/last by row order. Kept as dataset d:<id> (xlsx_read reads it; derive from it again); every value lists its source cells; cells left out are counted by reason. where/join/fill without group_by, measures, bins, pivot: the rows (sort, top apply; a count: measures [{fn: count}]).",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "bins": {
+    "additionalProperties": false,
+    "description": "Group by ranges of a number or date column: [a, b), the last [a, b].",
+    "properties": {
+     "as": {
+      "type": "string"
+     },
+     "column": {
+      "type": "string"
+     },
+     "edges": {
+      "description": "Increasing, written as filter values.",
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "column",
+     "edges"
+    ],
+    "type": "object"
+   },
+   "coerce": {
+    "description": "Opt in: read numbers or dates stored as text.",
+    "items": {
+     "enum": [
+      "number_as_text",
+      "date_as_text"
+     ],
+     "type": "string"
+    },
+    "type": "array"
+   },
+   "doc": {
+    "description": "Document id; not needed for a dataset (d:).",
+    "type": "string"
+   },
+   "fill": {
+    "description": "After join: each blank of column takes the same row's value of the fill's from column, e.g. {column: \"Limit\", from: \"Default\"}. Sources kept, marked filled.",
+    "items": {
+     "additionalProperties": false,
+     "properties": {
+      "coerce": {
+       "enum": [
+        "number",
+        "date"
+       ],
+       "type": "string"
+      },
+      "column": {
+       "type": "string"
+      },
+      "from": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "column",
+      "from"
+     ],
+     "type": "object"
+    },
+    "type": "array"
+   },
+   "from": {
+    "description": "Table or region (t:Products), or dataset (d:by_region).",
+    "type": "string"
+   },
+   "group_by": {
+    "description": "Columns to group by.",
+    "items": {
+     "type": "string"
+    },
+    "type": "array"
+   },
+   "id": {
+    "description": "Dataset id: by_region (letters, digits, _ . -).",
+    "type": "string"
+   },
+   "join": {
+    "additionalProperties": false,
+    "description": "First, add another table's columns to each row of the outer from, by key, e.g. {from: \"t:Issues\", on: [\"Ref\", \"Items\"], columns: [\"Issue\"]}. Every row kept (blank if unmatched); several matches: each added cell a list.",
+    "properties": {
+     "columns": {
+      "description": "This join's table's columns to add. Default: all but its key.",
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "from": {
+      "description": "The table (t:) or dataset (d:) to join.",
+      "type": "string"
+     },
+     "on": {
+      "description": "Two names: [key column of the outer from (the rows joined to), key column of this join's table]. A list cell (a split column) matches by any of its items.",
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "from",
+     "on"
+    ],
+    "type": "object"
+   },
+   "measures": {
+    "description": "Default: count of rows.",
+    "items": {
+     "additionalProperties": false,
+     "properties": {
+      "as": {
+       "description": "Its column's name.",
+       "type": "string"
+      },
+      "column": {
+       "description": "None: count or share of rows.",
+       "type": "string"
+      },
+      "fn": {
+       "enum": [
+        "count",
+        "sum",
+        "mean",
+        "median",
+        "min",
+        "max",
+        "first",
+        "last",
+        "share",
+        "distinct"
+       ],
+       "type": "string"
+      }
+     },
+     "required": [
+      "fn"
+     ],
+     "type": "object"
+    },
+    "type": "array"
+   },
+   "pivot": {
+    "description": "A column whose values become columns.",
+    "type": "string"
+   },
+   "pivot_values": {
+    "description": "The pivot's columns, in this order, written as filter values (\"\" for the blank cells); a value without rows still gets its column (count 0, other measures blank). Rows of a value not listed are left out and named in pivot_unlisted.",
+    "items": {
+     "type": "string"
+    },
+    "type": "array"
+   },
+   "round": {
+    "description": "Decimals, half away from zero; reported values only.",
+    "type": "integer"
+   },
+   "sort": {
+    "description": "By output column (group_by, a measure's as), not input; first decides first. Blanks last.",
+    "items": {
+     "additionalProperties": false,
+     "properties": {
+      "column": {
+       "type": "string"
+      },
+      "desc": {
+       "type": "boolean"
+      }
+     },
+     "required": [
+      "column"
+     ],
+     "type": "object"
+    },
+    "type": "array"
+   },
+   "split": {
+    "additionalProperties": false,
+    "description": "After fill: a row per part of column's text, other cells repeated.",
+    "properties": {
+     "by": {
+      "description": "Default: line breaks.",
+      "type": "string"
+     },
+     "column": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "column"
+    ],
+    "type": "object"
+   },
+   "top": {
+    "description": "Keep the first rows after sorting.",
+    "type": "integer"
+   },
+   "where": {
+    "description": "Filters, all met. value as JSON writes it: 12.5, true, dates ISO (2026-01-05), percent as the fraction. gte/lte: numbers, dates, times. contains: text, case ignored; eq/in match exactly; contains_any: any of values.",
+    "items": {
+     "additionalProperties": false,
+     "properties": {
+      "column": {
+       "type": "string"
+      },
+      "loose": {
+       "description": "Text ignoring case and all white space.",
+       "type": "boolean"
+      },
+      "op": {
+       "enum": [
+        "eq",
+        "in",
+        "gte",
+        "lte",
+        "contains",
+        "contains_any",
+        "words_gt",
+        "blank",
+        "not_blank",
+        "is_true",
+        "is_false"
+       ],
+       "type": "string"
+      },
+      "value": {
+       "type": "string"
+      },
+      "values": {
+       "description": "For in, contains_any.",
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
+      }
+     },
+     "required": [
+      "column",
+      "op"
+     ],
+     "type": "object"
+    },
+    "type": "array"
+   }
+  },
+  "required": [
+   "from",
+   "id"
+  ],
+  "type": "object"
+ },
+ "name": "xlsx_derive",
+ "strict": false
+}

@@ -1,0 +1,107 @@
+{
+ "description": "Rows of a table, region or dataset that meet every filter, sorted, each cell typed with its address; total is the count of all matches. Paged as xlsx_read.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "columns": {
+    "description": "Columns to give, by name. Default all.",
+    "items": {
+     "type": "string"
+    },
+    "type": "array"
+   },
+   "cursor": {
+    "description": "next_cursor of the previous page, with the same call.",
+    "type": "string"
+   },
+   "doc": {
+    "description": "Document id; not needed for a dataset (d:).",
+    "type": "string"
+   },
+   "limit": {
+    "description": "Rows per page. Default 50, at most 500.",
+    "type": "integer"
+   },
+   "sort": {
+    "description": "Sort keys, first decides first. Other types, then blanks, last.",
+    "items": {
+     "additionalProperties": false,
+     "properties": {
+      "column": {
+       "type": "string"
+      },
+      "desc": {
+       "type": "boolean"
+      }
+     },
+     "required": [
+      "column"
+     ],
+     "type": "object"
+    },
+    "type": "array"
+   },
+   "table": {
+    "description": "A table or region (t:Products, t:Stock!A1) or dataset (d:by_region).",
+    "type": "string"
+   },
+   "text_chars": {
+    "description": "Characters per text. Default 2000.",
+    "type": "integer"
+   },
+   "where": {
+    "description": "Filters, all met. value as JSON writes it: 12.5, true, dates ISO (2026-01-05), percent as the fraction. gte/lte: numbers, dates, times. contains: text, case ignored; eq/in match exactly; contains_any: any of values.",
+    "items": {
+     "additionalProperties": false,
+     "properties": {
+      "column": {
+       "type": "string"
+      },
+      "loose": {
+       "description": "Text ignoring case and all white space.",
+       "type": "boolean"
+      },
+      "op": {
+       "enum": [
+        "eq",
+        "in",
+        "gte",
+        "lte",
+        "contains",
+        "contains_any",
+        "words_gt",
+        "blank",
+        "not_blank",
+        "is_true",
+        "is_false"
+       ],
+       "type": "string"
+      },
+      "value": {
+       "type": "string"
+      },
+      "values": {
+       "description": "For in, contains_any.",
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
+      }
+     },
+     "required": [
+      "column",
+      "op"
+     ],
+     "type": "object"
+    },
+    "type": "array"
+   }
+  },
+  "required": [
+   "table"
+  ],
+  "type": "object"
+ },
+ "name": "xlsx_query",
+ "strict": false
+}

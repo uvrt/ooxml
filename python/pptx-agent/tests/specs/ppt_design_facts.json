@@ -1,0 +1,68 @@
+{
+ "description": "Measured design facts of a slide, no verdicts: palette and theme roles, sets of like shapes with their colours and legend, empty regions, alignment near-misses, shape vocabulary, text sizes, lines over text.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "include": {
+    "description": "Facts to report. Default all.",
+    "items": {
+     "enum": [
+      "palette",
+      "groups",
+      "empty",
+      "alignment",
+      "vocabulary",
+      "text_sizes",
+      "z_order"
+     ],
+     "type": "string"
+    },
+    "type": "array"
+   },
+   "region": {
+    "additionalProperties": false,
+    "description": "Only shapes centred here. Default the slide (content area for empty regions).",
+    "properties": {
+     "h": {
+      "type": "number"
+     },
+     "w": {
+      "type": "number"
+     },
+     "x": {
+      "type": "number"
+     },
+     "y": {
+      "type": "number"
+     }
+    },
+    "required": [
+     "x",
+     "y",
+     "w",
+     "h"
+    ],
+    "type": "object"
+   },
+   "slide": {
+    "description": "Slide, s:256 or $ref.",
+    "type": "string"
+   },
+   "within": {
+    "description": "Near-miss tolerance. Default 2.",
+    "type": "number"
+   }
+  },
+  "required": [
+   "doc",
+   "slide"
+  ],
+  "type": "object"
+ },
+ "name": "ppt_design_facts",
+ "strict": false
+}

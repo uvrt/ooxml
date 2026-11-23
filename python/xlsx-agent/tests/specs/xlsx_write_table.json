@@ -1,0 +1,84 @@
+{
+ "description": "Write headers and rows from a first cell (Stock!B2), or append rows to a table (t:Orders: it grows, calculated columns and totals follow). One step; refused over non-empty cells (unless overwrite), merges or tables. Returns the range written.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "at": {
+    "description": "Stock!B2, or t:<table> to append.",
+    "type": "string"
+   },
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "from": {
+    "description": "d:<id>: a dataset's columns and rows instead.",
+    "type": "string"
+   },
+   "headers": {
+    "description": "Column names: the first row.",
+    "items": {
+     "type": "string"
+    },
+    "type": "array"
+   },
+   "name": {
+    "description": "Table name.",
+    "type": "string"
+   },
+   "overwrite": {
+    "description": "Write over non-empty cells.",
+    "type": "boolean"
+   },
+   "rows": {
+    "description": "Cells as in xlsx_set_cells; {} blank.",
+    "items": {
+     "items": {
+      "additionalProperties": false,
+      "properties": {
+       "blank": {
+        "type": "boolean"
+       },
+       "bool": {
+        "type": "boolean"
+       },
+       "date": {
+        "type": "string"
+       },
+       "formula": {
+        "type": "string"
+       },
+       "markdown": {
+        "type": "string"
+       },
+       "number": {
+        "type": "number"
+       },
+       "text": {
+        "type": "string"
+       }
+      },
+      "type": "object"
+     },
+     "type": "array"
+    },
+    "type": "array"
+   },
+   "style": {
+    "description": "Table style; default the workbook's.",
+    "type": "string"
+   },
+   "table": {
+    "description": "Make an Excel table: filters, banding.",
+    "type": "boolean"
+   }
+  },
+  "required": [
+   "doc",
+   "at"
+  ],
+  "type": "object"
+ },
+ "name": "xlsx_write_table",
+ "strict": false
+}

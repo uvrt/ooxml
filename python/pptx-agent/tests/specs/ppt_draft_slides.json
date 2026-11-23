@@ -1,0 +1,27 @@
+{
+ "description": "Draft whole slides from Markdown in the deck's layouts: # starts a slide (its title), lists fill the body, tables become tables, ![alt](b2) a picture blob, Notes: speaker notes.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "at": {
+    "description": "First new slide's position from 1. Default last.",
+    "type": "integer"
+   },
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "markdown": {
+    "description": "The outline.",
+    "type": "string"
+   }
+  },
+  "required": [
+   "doc",
+   "markdown"
+  ],
+  "type": "object"
+ },
+ "name": "ppt_draft_slides",
+ "strict": true
+}

@@ -1,0 +1,47 @@
+{
+ "description": "Add a slide from a layout, optionally with title, body text and notes. Returns its id and placeholders.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "at": {
+    "description": "Position from 1. Default last.",
+    "type": "integer"
+   },
+   "body": {
+    "description": "Body text: a paragraph per line, two spaces of indent per level.",
+    "type": "string"
+   },
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "key": {
+    "description": "Retry key: a repeat with the same key makes nothing new.",
+    "type": "string"
+   },
+   "layout": {
+    "description": "Layout name, from describe, e.g. Title and Content.",
+    "type": "string"
+   },
+   "notes": {
+    "description": "Speaker notes.",
+    "type": "string"
+   },
+   "ref": {
+    "description": "Ref name for the slide.",
+    "type": "string"
+   },
+   "title": {
+    "description": "Title text.",
+    "type": "string"
+   }
+  },
+  "required": [
+   "doc",
+   "layout"
+  ],
+  "type": "object"
+ },
+ "name": "ppt_add_slide",
+ "strict": true
+}

@@ -1,0 +1,35 @@
+{
+ "description": "Rows of a table or dataset, each with the rows it rests on and why: source (its values' rows), names (rows its text names by key, and those they name), lists (rows whose text names its key). Every value in full, each row once; what did not fit is listed.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "depth": {
+    "description": "How far names are followed. Default 2.",
+    "type": "integer"
+   },
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "max_chars": {
+    "description": "Characters per reply. Default and at most 24000.",
+    "type": "integer"
+   },
+   "rows": {
+    "description": "t:Items/I-4, t:Items/{I-4,I-7}, t:Items/#3:#9, d:by_owner/#2, a whole table or dataset.",
+    "items": {
+     "type": "string"
+    },
+    "minItems": 1,
+    "type": "array"
+   }
+  },
+  "required": [
+   "doc",
+   "rows"
+  ],
+  "type": "object"
+ },
+ "name": "xlsx_trace",
+ "strict": false
+}
