@@ -328,6 +328,25 @@ EDITS = [_edit_value, _edit_blank, _edit_values, _edit_category, _edit_series_na
          _edit_legend]
 
 
+#: What the stamping of a version writes: the blocks' and drawings' ids (test_stamped_writes.py),
+#: and the compatibility note that names their namespace.
+_W14 = "http://schemas.microsoft.com/office/word/2010/wordml"
+_WP14 = "http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing"
+_MC = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+_IDS = {f"{{{_W14}}}paraId", f"{{{_W14}}}textId", f"{{{_W14}}}anchorId", f"{{{_WP14}}}anchorId",
+        f"{{{_WP14}}}editId", f"{{{_MC}}}Ignorable"}
+
+
+def _without_ids(xml: bytes) -> bytes:
+    """``xml`` as Word reads it, the stamping's ids left out: canonical, only the namespaces
+    used declared."""
+    root = etree.fromstring(xml)
+    for element in root.iter():
+        for name in [n for n in element.attrib if n in _IDS]:
+            del element.attrib[name]
+    return etree.tostring(root, method="c14n", exclusive=True)
+
+
 def _applied(box, session, chart_id: str, edit):
     """The edit's calls made, each ok; what to read back, and the text it shows."""
     calls, read_back, shown = edit(read(box, session, chart_id))
@@ -365,7 +384,11 @@ def test_chart_edit(box, fixture, chart_id, edit):
     assert check_document_charts(box, edited, data) > 0
     assert word_docs.validation(box, session, "d1")["new"] == before["new"]
     changed = {name for name, content in entries(edited).items() if entries(data).get(name) != content}
-    assert changed and all(n.startswith(("word/charts/", "word/embeddings/")) for n in changed), changed
+    charts = {n for n in changed if n.startswith(("word/charts/", "word/embeddings/"))}
+    assert charts, changed
+    # beside the chart, only the ids every version a tool makes gives each block that lacked one
+    for name in changed - charts:
+        assert _without_ids(entries(edited)[name]) == _without_ids(entries(data)[name]), name
     # One undo step per call.
     undone = box.dispatch(session, "undo", {"doc": "d1", "steps": 50})
     assert undone.ok and undone.data["steps"] == steps, undone.to_json()
