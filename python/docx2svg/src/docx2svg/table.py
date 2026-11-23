@@ -203,10 +203,10 @@ def _region_borders(part: dict, outer: dict[str, bool]) -> dict:
     the region's edges, ``insideH`` / ``insideV`` between its cells -- so each side of the
     cell takes the one for where it is (``outer``: which sides are on the region's edge).
 
-    Measured (round 58, docx-agent's ``tools/table_regions_probe.py``, cases ``E``, ``F``,
-    ``Q``): a row band's ``left`` is drawn at its row's start only, its ``right`` at the
-    end, its ``insideV`` between the cells; a column region's ``top`` on the table's first
-    row only, ``bottom`` on its last, ``insideH`` between the rows; a band of two rows has
+    Measured (round 58, ``crates/ooxml-oracle/word/probes/table_regions_probe.py``, cases
+    ``E``, ``F``, ``Q``): a row band's ``left`` is drawn at its row's start only, its
+    ``right`` at the end, its ``insideV`` between the cells; a column region's ``top`` on
+    the table's first row only, ``bottom`` on its last, ``insideH`` between the rows; a band of two rows has
     its ``top`` over the first, ``insideH`` between them, ``bottom`` under the second."""
     if not any(key.startswith("tcBorders.") for key in part):
         return part

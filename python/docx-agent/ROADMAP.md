@@ -2810,8 +2810,8 @@ holds, tables cover the data and are named after their headers, shared-string co
 right; Word keeps caches, formulas and workbooks byte for byte, and the check holds on what
 Word saved. Edit Data opens that workbook.
 
-**Fixtures** (`crates/ooxml-oracle/fixtures/generated/charts`, `tools/make_chart_fixtures.py`, provenance
-in its `PROVENANCE.md`): written here, then saved by Word -- `charts.docx` (clustered
+**Fixtures** (`crates/ooxml-oracle/fixtures/generated/charts`, `tools/make_chart_fixtures.py` at the
+frozen reference, provenance in its `PROVENANCE.md`): written here, then saved by Word -- `charts.docx` (clustered
 columns, a line, a pie, a doughnut, a scatter, columns with a line), `chart-places.docx`
 (a chart in the header, a footnote, a text box, a group, and floating), `smartart.docx`
 (Basic Block List, Vertical Bullet List, laid out by Word from data models alone). One
