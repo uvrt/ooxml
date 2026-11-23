@@ -4,7 +4,7 @@ when paragraphs are typed one after another at a document's end, and which parag
 deleted paragraph mark keeps (round 50).
 
 Probe documents are written here (mode 15, every paragraph with its paraId), and Word --
-through ``python/docx-agent/tests/oracle.py``'s machine-wide lock -- opens each, turns tracking on, makes the
+through ``crates/ooxml-oracle/word/oracle.py``'s machine-wide lock -- opens each, turns tracking on, makes the
 edits by AppleScript and saves; the joins are accepted with Word's own ``accept all
 revisions`` too, and exported in its final view (No Markup).
 

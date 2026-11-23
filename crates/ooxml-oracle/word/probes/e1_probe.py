@@ -4,7 +4,7 @@ built-in styles on first use, its default bullet and number lists, and an insert
 picture's size.
 
 A probe document is written here (mode 15, the handful of styles ``make_fixtures.py``
-writes, no latent styles), and Word -- through ``python/docx-agent/tests/oracle.py``'s machine-wide lock --
+writes, no latent styles), and Word -- through ``crates/ooxml-oracle/word/oracle.py``'s machine-wide lock --
 opens it and, by AppleScript:
 
 * applies each built-in paragraph style to a paragraph of its own and each built-in

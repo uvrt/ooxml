@@ -3,7 +3,7 @@
 (round 35, R21: ``docx_agent.edit.typography``).
 
 Probe documents are written here (one run per paragraph, the language on the run) and Word
--- through ``python/docx-agent/tests/oracle.py``'s machine-wide lock -- opens each and, by AppleScript:
+-- through ``crates/ooxml-oracle/word/oracle.py``'s machine-wide lock -- opens each and, by AppleScript:
 
 * ``proofing``: waits until its grammar check settles (the count of its grammatical errors
   the same three times running, two seconds apart) and lists the paragraphs it flags, for

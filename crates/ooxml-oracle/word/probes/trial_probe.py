@@ -3,7 +3,7 @@
 not) disagrees with its file's extension: the end-to-end trial's template finding
 (ROADMAP.md, "Trial findings").
 
-Through ``python/docx-agent/tests/oracle.py``'s machine-wide lock, Word, by AppleScript, opens and exports to
+Through ``crates/ooxml-oracle/word/oracle.py``'s machine-wide lock, Word, by AppleScript, opens and exports to
 PDF each of these, staged under the extension named (a dialog -- Word's "cannot open" or
 repair prompt -- blocks the export: ``rejected``):
 

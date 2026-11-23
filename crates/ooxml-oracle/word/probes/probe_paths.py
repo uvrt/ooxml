@@ -6,7 +6,7 @@ through the oracle driver's machine-wide lock) write Word's observations into
 tools to them on any machine.  Importing this module puts on ``sys.path``: the probes' folder
 (they share helpers), the probe documents (:data:`CASES`), docx-agent's fixture makers
 (``python/docx-agent/tools``: ``make_fixtures``) and the oracle driver
-(``python/docx-agent/tests/oracle.py``).
+(``crates/ooxml-oracle/word/oracle.py``).
 
 Must not: import pytest or docx-agent's library.
 """
@@ -28,7 +28,7 @@ CASES = ORACLE / "word" / "cases"
 FIXTURES = ORACLE / "fixtures"
 DOCX_AGENT = ROOT / "python" / "docx-agent"
 
-for _path in (CASES, HERE):
+for _path in (CASES, HERE, ORACLE / "word"):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 for _path in (DOCX_AGENT / "tools", DOCX_AGENT / "tests"):

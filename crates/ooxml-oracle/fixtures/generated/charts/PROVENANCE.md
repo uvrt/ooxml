@@ -13,7 +13,7 @@ with the charts, their embedded workbooks and the SmartArt data models written b
 `Document`, which P4e deleted, so they are retired from the checkout: they are kept at the
 frozen reference (the commit `crates/ooxml-oracle/reference.toml` names, under
 `python/docx-agent/tools/`) and run from a `git archive` of it; Microsoft Word 16.106 for Mac
-(Dutch interface) then opened each and saved it again, through `tests/oracle.py`'s
+(Dutch interface) then opened each and saved it again, through `crates/ooxml-oracle/word/oracle.py`'s
 machine-wide lock (no clipboard, no other document open). What is committed is what Word
 wrote, with one change: `docProps/core.xml`'s author and dates replaced by `docx-agent` and
 `2026-10-04T12:00:00Z` (`normalise_properties`, which writes every other entry's bytes as

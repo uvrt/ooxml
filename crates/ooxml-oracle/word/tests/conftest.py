@@ -12,6 +12,8 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+#: The oracle driver (``word/oracle.py``), for its own tests.
+sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 
 @pytest.fixture(scope="session")
