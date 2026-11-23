@@ -323,13 +323,6 @@ in a footnote or endnote): docx-agent laid such a version out in Python (lane CL
 release, ported after)"""
 
 [[not_supported]]
-form = "*a document whose defaults name no language (the session's locale decides)"
-cause = """the chart forms that make new text in a document whose defaults name no language: \
-set_point_labels, set_text_style, show_data_labels, a new title, add (docx-agent's session locale \
-decides the language; lane CUT-B ports them on the cut2 stack before the release and removes \
-this entry)"""
-
-[[not_supported]]
 form = "copy_from *"
 cause = "copy_from at a place by reference, a source held only as a package (deferred)"
 

@@ -134,8 +134,15 @@ fn an_id_s_top_level_block_and_a_span_s_blocks() {
     assert!(matches!(of("p:0A0000FF"), Err(BlockRefused::NotFound(_))));
     assert!(matches!(of("$intro"), Err(BlockRefused::Refused(_))));
     assert!(matches!(of("p:0A000001..p:0A000002"), Err(BlockRefused::Refused(_))));
-    assert_eq!(of("p:0A000002/r0"), Ok(Some("p:0A000002".to_owned())), "a run: its paragraph's block");
-    assert!(matches!(of("t:0A000003/c9,9"), Err(BlockRefused::NotFound(_))), "a cell off the table");
+    assert_eq!(
+        of("p:0A000002/r0"),
+        Ok(Some("p:0A000002".to_owned())),
+        "a run: its paragraph's block"
+    );
+    assert!(
+        matches!(of("t:0A000003/c9,9"), Err(BlockRefused::NotFound(_))),
+        "a cell off the table"
+    );
     let between = version.blocks_between("p:0A000002", "p:0A000004").unwrap();
     assert_eq!(between, Ok(vec!["p:0A000002".to_owned(), "t:0A000003".to_owned()]));
 }

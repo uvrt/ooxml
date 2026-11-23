@@ -285,7 +285,7 @@ fn app_template(sink: &mut EditSink<'_, '_>, name: &str) -> Result<()> {
         .map(|r| r.target.trim_start_matches('/').to_owned())
         .filter(|p| package.has_part(p));
     let Some(part) = found else {
-        return Ok(());
+        return new_app(sink, &package);
     };
     sink.read(Key::Part(Arc::from(part.as_str())));
     let held = sink.doc().clone();
@@ -307,6 +307,38 @@ fn app_template(sink: &mut EditSink<'_, '_>, name: &str) -> Result<()> {
         space.mark_dirty(&part);
     }
     space.finish_changed(sink)
+}
+
+/// A new document's `app.xml` (docx-agent's `app_xml()`: Word's element order, one page,
+/// nothing counted, the template `Normal.dotm`).
+const NEW_APP: &str = concat!(
+    r#"<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" "#,
+    r#"xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">"#,
+    "<Template>Normal.dotm</Template><TotalTime>0</TotalTime><Pages>1</Pages><Words>0</Words>",
+    "<Characters>0</Characters><Application>docx-agent</Application><DocSecurity>0</DocSecurity>",
+    "<Lines>0</Lines><Paragraphs>0</Paragraphs><ScaleCrop>false</ScaleCrop><Company></Company>",
+    "<LinksUpToDate>false</LinksUpToDate><CharactersWithSpaces>0</CharactersWithSpaces>",
+    "<SharedDoc>false</SharedDoc><HyperlinksChanged>false</HyperlinksChanged></Properties>"
+);
+const APP_TYPE: &str = "application/vnd.openxmlformats-officedocument.extended-properties+xml";
+
+/// `docProps/app.xml` made where the template has none ([`NEW_APP`]), with its relationship
+/// from the package and its content type.
+fn new_app(sink: &mut EditSink<'_, '_>, package: &ooxml_opc::Package) -> Result<()> {
+    let part = "docProps/app.xml";
+    for name in [part, CONTENT_TYPES_PART, ooxml_opc::name::rels_for("").as_str()] {
+        sink.read(Key::Part(Arc::from(name)));
+    }
+    let tree = ooxml_xml::parse(NEW_APP.as_bytes(), &ooxml_base::Limits::default().xml)
+        .map_err(|e| EditError::Refused(e.to_string()))?;
+    let root = Arc::unwrap_or_clone(Arc::clone(tree.root()));
+    let made = crate::new_part::add_part(package, "", part, root, APP_TYPE, REL_APP)?;
+    for name in [part, CONTENT_TYPES_PART, ooxml_opc::name::rels_for("").as_str()] {
+        if let Some(tree) = made.tree(name).map_err(crate::doc::ModelError::from)? {
+            sink.put(name, tree)?;
+        }
+    }
+    Ok(())
 }
 
 /// Every section's page `(width, height)` (portrait), turned as the section is

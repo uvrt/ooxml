@@ -47,5 +47,7 @@ fn bytes_that_are_no_word_document_are_refused() {
         author: None,
         created: "2026-11-23T09:00:00Z".to_owned(),
     };
-    assert!(s.new_from_template(std::sync::Arc::from(&b"not a zip"[..]), &made).is_err());
+    assert!(s
+        .new_from_template(std::sync::Arc::from(&b"not a zip"[..]), &made)
+        .is_err());
 }
