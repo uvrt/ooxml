@@ -47,9 +47,9 @@ cause = """#84: docx-agent's _write_result takes as the old result only runs wit
 in a text box every run has one, so it writes the value as a new run beside the empty result run. \
 Rust writes the value into the result run, as docx-agent does everywhere outside a text box."""
 
-# Lane P5s (#240): page numbers inserted in chart-places' text box (at, after, before its first
-# paragraph), untracked and tracked: both write the result now (the Rust layout lays the box out,
-# lane P5n); docx-agent writes it as #84's SEQ above.
+# Lane P5s (#240): page numbers (PAGE, and NUMPAGES: the page count) inserted in chart-places'
+# text box (at, after, before its first paragraph), untracked and tracked: both write the result
+# now (the Rust layout lays the box out, lane P5n); docx-agent writes it as #84's SEQ above.
 [[difference]]
 gate = "fixtures"
 mode = "structure"
@@ -57,8 +57,8 @@ file = "generated/charts/chart-places.docx"
 input = { tool = "word_fields", arguments = { action = "insert_field", at = "p@body/2@2", instruction = "PAGE" } }
 cause = """#240 as #84: in a text box docx-agent's _write_result finds no old result run (every run \
 has a w:r ancestor) and writes the value as a new run beside the empty result run; Rust writes \
-the value into the result run, as docx-agent does outside a text box. Same value (Word's: the \
-page the box is drawn on); Word sees no difference but the empty run."""
+the value into the result run, as docx-agent does outside a text box. Same value: the number of \
+the page the box is drawn on (Word's PAGE); Word sees no difference but the empty run."""
 
 [[difference]]
 gate = "fixtures"
@@ -67,8 +67,9 @@ file = "generated/charts/chart-places.docx"
 input = { tool = "word_fields", arguments = { action = "insert_field", at = "p@body/2", instruction = "NUMPAGES" } }
 cause = """#240 as #84: in a text box docx-agent's _write_result finds no old result run (every run \
 has a w:r ancestor) and writes the value as a new run beside the empty result run; Rust writes \
-the value into the result run, as docx-agent does outside a text box. Same value (Word's: the \
-page the box is drawn on); Word sees no difference but the empty run."""
+the value into the result run, as docx-agent does outside a text box. Same value: the document's \
+page count (Word's NUMPAGES; chart-places has 2 pages in Word 16.106 and in the Rust layout, lane \
+ph1-quirks); Word sees no difference but the empty run."""
 
 [[difference]]
 gate = "fixtures"
@@ -77,8 +78,8 @@ file = "generated/charts/chart-places.docx"
 input = { tool = "word_fields", arguments = { action = "insert_field", after = "p@body/2", instruction = "PAGE" } }
 cause = """#240 as #84: in a text box docx-agent's _write_result finds no old result run (every run \
 has a w:r ancestor) and writes the value as a new run beside the empty result run; Rust writes \
-the value into the result run, as docx-agent does outside a text box. Same value (Word's: the \
-page the box is drawn on); Word sees no difference but the empty run."""
+the value into the result run, as docx-agent does outside a text box. Same value: the number of \
+the page the box is drawn on (Word's PAGE); Word sees no difference but the empty run."""
 
 [[difference]]
 gate = "fixtures"
@@ -87,8 +88,8 @@ file = "generated/charts/chart-places.docx"
 input = { tool = "word_fields", arguments = { action = "insert_field", before = "p@body/2", instruction = "PAGE" } }
 cause = """#240 as #84: in a text box docx-agent's _write_result finds no old result run (every run \
 has a w:r ancestor) and writes the value as a new run beside the empty result run; Rust writes \
-the value into the result run, as docx-agent does outside a text box. Same value (Word's: the \
-page the box is drawn on); Word sees no difference but the empty run."""
+the value into the result run, as docx-agent does outside a text box. Same value: the number of \
+the page the box is drawn on (Word's PAGE); Word sees no difference but the empty run."""
 
 # Lane P5s (#240): a header's page number set on chart-places, untracked and tracked.
 [[difference]]
@@ -113,27 +114,19 @@ input = { tool = "word_fields", arguments = { action = "update" } }
 cause = """#84: docx-agent's session adds its TemplateOpened warning (the host's, not the tool's) \
 to an update that changes nothing."""
 
-# P4b8: a comment on a row the table holds inside a row content control.
-[[difference]]
-gate = "fixtures"
-mode = "structure"
-file = "generated/controls.docx"
-input = { tool = "word_comments", arguments = { action = "add", items = [{ target = "t:7B000001/r1", text = "On the last row" }] } }
-cause = """P4b8: docx-agent's Table.rows counts the row inside the row content control, its table \
-entry's rows do not, so _add_block_comment fails with an internal IndexError ("list index out \
-of range"). Rust finds no such row either and refuses the address as text, naming the forms it \
-takes."""
-
-# The same, the case that names the row as the table's last.
+# P4b8, ph1-quirks: a comment on row r1 of controls.docx's table, which has one row since
+# b9fb6e86 took the row content control out of the fixture (the "last row" case is no longer
+# made). Word counts a row inside a row content control as a table row (Table.Rows.Count 2 on
+# the fixture before b9fb6e86, Word 16.106), and the Rust core addresses it as r1 there.
 [[difference]]
 gate = "fixtures"
 mode = "structure"
 file = "generated/controls.docx"
 input = { tool = "word_comments", arguments = { action = "add", items = [{ target = "t:7B000001/r1", text = "On a row" }] } }
-cause = """P4b8: docx-agent's Table.rows counts the row inside the row content control, its table \
-entry's rows do not, so _add_block_comment fails with an internal IndexError ("list index out \
-of range"). Rust finds no such row either and refuses the address as text, naming the forms it \
-takes."""
+cause = """P4b8, ph1-quirks: a row past the table's last: docx-agent's _add_block_comment indexes the \
+rows unchecked and fails with Python's IndexError ("list index out of range", not_found); the \
+Rust core refuses the address ("t:7B000001/r1 names no row of its table", not_found). A \
+docx-agent crash, not copied."""
 
 # word_controls insert at a position past its paragraph's text, untracked and tracked (one per
 # document with a paragraph; the case's tag marks it).
@@ -392,28 +385,28 @@ before the deletion, and the detached row's paragraphs come back as new proxies,
 is named. A docx-agent leftover (the paragraphs are gone, as an untracked deletion reports), not \
 copied."""
 
-# Lane E1e (#282): cells written in tables-placed's tables, both placed from a source (cells
-# mode, and spacing's French text in a cell). The document-level comparison has no record to keep.
+# Lane E1e (#282), ph1-quirks: cells written in tables-placed's tables, both placed from a source
+# (cells mode, and spacing's French text in a cell). The Rust side writes them as word_edit_table
+# does, keeping the tables' records true; the document-level reference has no record to keep.
 [[difference]]
 gate = "fixtures"
 mode = "cells"
 file = "generated/tables-placed.docx"
 input = { op = "set_cells" }
-cause = """#282: the Rust core's SetCells refuses a table with a record of its source ("not \
-supported yet: ... its record is kept through KeepingRecord"), the command word_edit_table runs \
-(docx-agent's _Kept: a cell written takes its column out of the record); docx-agent's \
-document-level set_cells, this mode's reference, writes the cells and leaves the record saying \
-they hold the source's values. The tool-level set_cells on these tables is compared in the \
-objects mode, without differences."""
+cause = """#282, ph1-quirks: the oracle writes the cells through KeepingRecord, as word_edit_table's \
+set_cells does (docx-agent's _Kept): a cell written inside the placed block takes its column out \
+of the table's record (customXml/item1.xml); docx-agent's document-level set_cells, this mode's \
+reference, writes the same cells and leaves the record saying they hold the source's values. Our \
+record contract, which Word does not read; the tool-level set_cells on these tables is compared \
+in the objects mode, without differences."""
 
 [[difference]]
 gate = "fixtures"
 mode = "spacing"
 file = "generated/tables-placed.docx"
 input = { op = "set_cells" }
-cause = """#282: as the cells mode's entry for this document -- SetCells refuses a table placed \
-from a source (KeepingRecord keeps its record), docx-agent's document-level set_cells leaves \
-the record stale."""
+cause = """#282, ph1-quirks: as the cells mode's entry for this document -- the record kept true \
+through KeepingRecord, docx-agent's document-level set_cells leaves it stale."""
 
 # Lane E1e (#282): rejections touching tables-placed's first table (its pending row, rev:904,
 # inside the block its record describes).

@@ -7,7 +7,8 @@
 //! The manifest is a JSON list of `{"file": path, "cases": [{"op", "target", "text",
 //! "tracked": {"author", "date"} or null, ...}]}` (`op`: `set_text` when absent,
 //! `set_text_paragraphs` (set_text in lines), `insert_paragraph` with `after` and `style`,
-//! `set_paragraph_style` with `style` (null: the default), `delete` (a block), `set_cells` with `writes`,
+//! `set_paragraph_style` with `style` (null: the default), `delete` (a block), `set_cells` with `writes`
+//! (a table's record of its source kept, as `word_edit_table` keeps it),
 //! `insert_markdown` with `markdown`, `html`, `emphasis`, `style_map` ([`crate::edits_markdown`]),
 //! `set_text_styled` with `style` (word_set_text's item: [`crate::edits_styled`]),
 //! `insert_text`, `delete_text`, `replace` with `find`, `case`, `count`, `keep`, `accept`
@@ -24,9 +25,9 @@ use ooxml_word_edit::find::{Literal, Pattern};
 use ooxml_word_edit::touched::Touched;
 use ooxml_word_edit::validate::problems;
 use ooxml_word_edit::{
-    CellWrite, DeleteBlock, DeleteText, EditError, Edited, Editor, InsertParagraph, InsertText, Keep, RangesEdited,
-    ReplaceText, Review, Reviewed, RevisionPolicy, Selection, SetCells, SetParagraphStyle, SetText, TextEdited,
-    Tracking, WordDoc,
+    CellWrite, DeleteBlock, DeleteText, EditError, Edited, Editor, InsertParagraph, InsertText, Keep, KeepingRecord,
+    RangesEdited, ReplaceText, Review, Reviewed, RevisionPolicy, Selection, SetCells, SetParagraphStyle, SetText,
+    TextEdited, Tracking, WordDoc,
 };
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
@@ -293,13 +294,14 @@ fn set_cells(editor: &Editor, caller: &Caller, package: &Package, case: &Value) 
                 .collect()
         })
         .unwrap_or_default();
-    let command = SetCells {
+    // as word_edit_table writes cells: a table placed from a source keeps its record true
+    let command = KeepingRecord(SetCells {
         table: case.get("target").and_then(Value::as_str).unwrap_or("").to_owned(),
         writes,
         stamping: false,
         policy: policy(case),
         accepted: None,
-    };
+    });
     editor.run(caller, &command).map(|done| {
         let edits: Vec<Value> = done
             .out
