@@ -1,5 +1,11 @@
 # Roadmap
 
+> **Since 0.2.0 this file is history.** The Python view and the `Document` API it plans
+> (phases E0 to E6, `docx_agent.edit`, `markdown`, `revisions`, `layout`, ...) were deleted
+> when the Rust session took the document over (P4e; CHANGELOG.md, 0.2.0). What it records
+> of Word -- the measurements and the decisions -- still holds; the module names and APIs
+> it names do not exist any more.
+
 Working plan for `docx-agent`: an AI-editable Word layer, the counterpart of `pptx-agent`.
 Written to be picked up cold: every phase says what is missing, where it goes, how to
 approach it, what must be measured before it, and how to know it is done.

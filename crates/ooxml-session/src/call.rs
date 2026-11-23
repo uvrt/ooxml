@@ -99,6 +99,8 @@ impl Call<'_> {
                 images: &word.images,
                 budgets: self.image_budgets,
             }),
+            rows_written: Some(&word.rows_written),
+            made_by: Some(&word.made_by),
         })
     }
 
@@ -114,12 +116,18 @@ impl Call<'_> {
     }
 
     /// `run` with the editing state of the Word document `word` (the call's): the session's
-    /// editor, the call's caller, tracking mode and host context; the versions its edits
+    /// editor, the call's caller, tracking mode and host context, and its `arguments` as
+    /// taken (what the session's records keep of a call); the versions its edits
     /// made are kept for the call (its `made`), and the ids its edits drew as stand-ins are
     /// named in the reply as they were drawn where the edits landed
     /// ([`ooxml_tools_word::resolve_drawn`]); the spaces their language spacing wrote are
     /// counted in it ([`ooxml_tools_word::note_spaced`]).
-    pub(crate) fn edit(&self, word: &Word, run: impl FnOnce(&Editing<'_>) -> ToolResult<Value>) -> ToolResult<Value> {
+    pub(crate) fn edit(
+        &self,
+        word: &Word,
+        arguments: Option<&serde_json::Map<String, Value>>,
+        run: impl FnOnce(&Editing<'_>) -> ToolResult<Value>,
+    ) -> ToolResult<Value> {
         let policy = word.policy(&self.date);
         let tracking = match &policy {
             ooxml_word_edit::RevisionPolicy::Tracked(tracking) => Some(tracking),
@@ -142,6 +150,8 @@ impl Call<'_> {
         .with_blobs(self.blobs)
         .with_written(self.written)
         .with_rows_written(Some(&word.rows_written))
+        .with_made_by(Some(&word.made_by))
+        .with_arguments(arguments)
         .with_limits(self.limits)
         .with_locale(self.locale)
         .with_last_check(Some(&*word.last_check))

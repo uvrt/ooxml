@@ -7,7 +7,7 @@ import json
 from typing import Any
 
 from .. import reads
-from . import Adapted, Fallback, adapter, own, sided, sources_json, written_json
+from . import Adapted, adapter, not_supported, own, sided, sources_json, written_json
 
 
 #: keep_together on a table taller than a page (docx-agent's ``TALLER_THAN_PAGE``, round 25).
@@ -16,7 +16,7 @@ TALLER_THAN_PAGE = "taller than a page: Word starts it on a new page and breaks 
 
 @adapter("word_format_table")
 def _format_table(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-    table = reads._refs(call, arguments.get("table"))
+    table = reads.refs(call, arguments.get("table"))
     if arguments.get("keep_together") and getattr(getattr(call.entry, "history", None), "grouped", False):
         # Round 28, W8: in a batch (the session's step group) the session leaves a table kept
         # together unmeasured; it is measured once the batch's last op ran, from one layout.
@@ -34,13 +34,12 @@ def _taller_after(call: Any, result: Any, table: str) -> None:
 
     from ..edits import call_context
     from ..owner import options
-    from ...pages import word_pages
+    from ..engines import session_pages
 
     entry = call.entry
     table = result.renamed.get(table, table)
-    engine, _why = word_pages(entry.held)
-    laid = ooxml_core.CallLayout(engine) if engine is not None else None
-    context = call_context(call, entry.held)
+    laid = ooxml_core.CallLayout(session_pages(entry))
+    context = call_context(call, entry)
     mirror = entry.handle
     found, _not_laid = mirror.session.block_pages(mirror.doc, [table], options(context=context, layout=laid))
     kind, pages = (found[0][0], found[0][1]) if found else ("unknown", None)
@@ -61,9 +60,10 @@ def _taller_after(call: Any, result: Any, table: str) -> None:
 @adapter("word_drawings")
 def _drawings(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
     if arguments.get("asset") is not None:
-        # The application's asset catalogue is the host's (ooxml_edit.tools.assets).
-        raise Fallback("a catalogue asset")
-    return {**own(arguments), "target": reads._refs(call, arguments.get("target")),
+        # The application's asset catalogue is the host's: its handler makes the asset a
+        # blob of the session's and gives it as ``image``.
+        raise not_supported("word_drawings asset", "give the picture as an image blob", field="asset")
+    return {**own(arguments), "target": reads.refs(call, arguments.get("target")),
             "at": sided(call, arguments.get("at"))}
 
 
@@ -71,7 +71,7 @@ def _drawings(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
 def _edit_table(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
     # The rows a call adds or writes into are looked at against the rows around them by the
     # session too (round 58, R126), and kept in its record (owner.SessionRows).
-    given = {**own(arguments), "table": reads._refs(call, arguments.get("table"))}
+    given = {**own(arguments), "table": reads.refs(call, arguments.get("table"))}
     source = arguments.get("from") or None      # "": a strict decoder's placeholder for none
     facts = list(getattr(call, "facts", None) or ())
     from ...tools import field_text
@@ -124,7 +124,7 @@ def _cell_froms(arguments: dict[str, Any], source: Any) -> list[tuple[int, str]]
 
 @adapter("word_controls")
 def _controls(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-    return {**own(arguments), **{k: reads._refs(call, arguments.get(k)) for k in ("control", "at")}}
+    return {**own(arguments), **{k: reads.refs(call, arguments.get(k)) for k in ("control", "at")}}
 
 
 def _rows(call: Any, source: str) -> Any:
@@ -143,4 +143,4 @@ def _rows(call: Any, source: str) -> Any:
 @adapter("edit_chart")
 def _chart(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
     # (its data actions, the titles, the style actions and ``add``)
-    return {**own(arguments), "target": reads._refs(call, arguments.get("target"))}
+    return {**own(arguments), "target": reads.refs(call, arguments.get("target"))}

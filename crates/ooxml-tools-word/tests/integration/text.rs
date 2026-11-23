@@ -10,7 +10,9 @@ use ooxml_base::Limits;
 use ooxml_opc::Package;
 use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools::ToolArgs;
-use ooxml_tools_word::{word_delete, word_insert_text, CallEditor, Editing, WordDelete, WordInsertText};
+use ooxml_tools_word::{
+    word_delete, word_insert_text, word_set_text, CallEditor, Editing, WordDelete, WordInsertText, WordSetText,
+};
 use ooxml_word_edit::Editor;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -32,6 +34,7 @@ fn calls(calls: &[(&str, Value)]) -> Vec<Value> {
             arguments["doc"] = json!("d1");
             let result = match *tool {
                 "word_delete" => word_delete(&WordDelete::accept(arguments, Some("docx")).unwrap().0, &editing),
+                "word_set_text" => word_set_text(&WordSetText::accept(arguments, Some("docx")).unwrap().0, &editing),
                 _ => word_insert_text(&WordInsertText::accept(arguments, Some("docx")).unwrap().0, &editing),
             };
             Value::Object(result.to_json())
@@ -121,4 +124,26 @@ fn an_insertion_beside_a_find_within_a_block() {
     ]);
     assert_eq!(replies[0]["summary"], "Inserted text at 1 place(s)", "{}", replies[0]);
     assert_eq!(replies[1]["summary"], "Deleted 'item two'", "{}", replies[1]);
+}
+
+#[test]
+fn braces_reaching_the_tool_are_written_as_text() {
+    // The host writes every reference as its value before the call: braces left are the
+    // document's own text (a template's placeholder), written and found as they are.
+    let replies = calls(&[
+        (
+            "word_set_text",
+            json!({"target": "p:5A000004", "text": "Dear {{name}}, see {{TODO: a/b}}."}),
+        ),
+        (
+            "word_insert_text",
+            json!({"find": "Dear", "within": "p:5A000004", "text": " {{x}}"}),
+        ),
+        ("word_delete", json!({"find": "{{name}}", "within": "p:5A000004"})),
+        ("word_delete", json!({"find": "{{TODO: a/b}}", "within": "p:5A000004"})),
+    ]);
+    assert_eq!(replies[0]["ok"], json!(true), "{}", replies[0]);
+    assert_eq!(replies[1]["summary"], "Inserted text at 1 place(s)", "{}", replies[1]);
+    assert_eq!(replies[2]["summary"], "Deleted '{{name}}'", "{}", replies[2]);
+    assert_eq!(replies[3]["summary"], "Deleted '{{TODO: a/b}}'", "{}", replies[3]);
 }

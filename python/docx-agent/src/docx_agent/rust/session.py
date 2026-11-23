@@ -1,25 +1,11 @@
-"""Word tools served by the Rust session (lane P0d), for the switch-over that routes
-docx-agent's reading tools through Rust (phase PL, step L4).
+"""Word tools of the Rust session as an application holds them itself.
 
-:class:`RustTools` holds an :class:`ooxml_core.Session`: documents opened from their bytes,
-each later version's touched parts handed over (:meth:`RustTools.update`: the bridge's way
-in, docs/architecture/README.md section 13), and tool calls run there with the interpreter
-lock let go (:meth:`RustTools.dispatch`).  The tools' definitions come from Rust
-(``ooxml_core.tool_specs``) as :class:`~ooxml_edit.tools.Tool` values, and their results as
-:class:`RustResult`, so the provider adapters (:mod:`ooxml_edit.tools.adapters`) render both
-unchanged for Claude and OpenAI.
-
-The Rust session serves the reading tools so far (phase P1): ``describe`` with every field of
-today's but ``pages`` and ``problems`` (``RUST_DESCRIBED``; ``tests/test_rust_describe.py``
-holds them equal to today's on every fixture), ``word_read``, ``word_inspect`` (``layout``
-with a placer the host gives), ``find_text`` (a regular expression where its meaning is
-certainly Python's) and ``read_batch`` over them, equal to today's on every fixture but
-drawings' chart and SmartArt summaries (``tests/test_rust_word_read.py``,
-``tests/test_rust_reads.py``).  A version read once is kept for the calls after it, and a
-new version (:meth:`RustTools.update`) reads only the story parts that changed.  docx-agent's
-own toolbox answers its reading tools through the same session by default
-(:mod:`docx_agent.rust.reads`, lane P1c); this module is the session's tools as an
-application would hold them itself.
+:class:`RustTools` holds an :class:`ooxml_core.Session`: documents opened from their bytes
+and tool calls run there with the interpreter lock let go (:meth:`RustTools.dispatch`).  The
+tools' definitions come from Rust (``ooxml_core.tool_specs``) as
+:class:`~ooxml_edit.tools.Tool` values (:func:`tool_of`, which docx-agent's toolbox defines
+its tools by too), and their results as :class:`RustResult`, so the provider adapters
+(:mod:`ooxml_edit.tools.adapters`) render them for Claude and OpenAI.
 """
 from __future__ import annotations
 
@@ -33,13 +19,6 @@ from ooxml_edit.tools.adapters import definitions_for, results_for
 from ooxml_edit.tools.results import Result, ToolError
 
 KIND = "docx"
-
-#: The keys of ``describe``'s data the Rust session gives, in their order there (``tagged``
-#: and ``headings_note`` only where today's has them).
-RUST_DESCRIBED = ("name", "compatibility_mode", "properties", "tracking", "headings", "sections", "styles_in_use",
-                  "comments", "revisions", "fields", "tables", "drawings", "notes", "controls", "tagged",
-                  "headings_note")
-
 
 def _runs_in_rust(call: Any, **arguments: Any) -> Result:
     raise ToolError("internal", "this tool runs in the Rust session: RustTools.dispatch")
@@ -145,11 +124,6 @@ class RustTools:
     def open(self, data: bytes, name: str) -> str:
         """Open a document's bytes; its id (``d1``)."""
         return self.session.open(data, kind=self.kind, name=name)
-
-    def update(self, doc: str, parts: Mapping[str, bytes | None], *, context: Any = None) -> int:
-        """Hand over a version's touched parts (``None`` removes one): the new version."""
-        version, _changed, _attempts = self.session.update(doc, dict(parts), context=context)
-        return version
 
     def dispatch(self, name: str, arguments: Mapping[str, Any] | str, *,
                  context: Any = None) -> RustResult:

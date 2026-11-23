@@ -1,184 +1,163 @@
-"""The regional settings a document is drawn and edited in: ``Document.locale``, and through
-the tool layer ``Toolbox(locale=...)`` -- to every layout and render (in the worker process
-too), to new charts, to the language of new chart text where the document states none, and
-to a new document's language and separators.  en-US unless given, never the machine's.
-
-The one accepted change of output: a new blank document's ``w:decimalSymbol`` and
-``w:listSeparator`` are the locale's, so without one they are en-US's ``.`` and ``,`` where
-they were the measuring Word's ``,`` and ``;``.  A locale with a decimal comma writes what
-was written before, part for part (the digests below are of main before the change).
+"""The regional settings a document is drawn and edited in, through the tool layer
+``Toolbox(locale=...)`` -- to every layout and render (in the worker process too), to new
+charts, to the language of new chart text where the document states none, and to a new
+document's language and separators.  en-US unless given, never the machine's.
 """
 
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
-import io
 import json
-import re
-import warnings
-import zipfile
 
 import pytest
 from ooxml_common.locales import EN_US, Locale
 from ooxml_edit.tools import Toolbox
 
-import docx2svg
-from docx_agent import Document
-from docx_agent.edit import blank
+from docx_agent.rust import engines, reads
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
+
+import word_docs
 from pixels import pixels
 
 DUTCH = Locale(decimal_separator=",", thousands_separator=".", date_order="dmy", language="nl-NL",
                list_separator=";")
-#: The separators of the Word the new document was measured on, with the language a new
-#: document had by default: what ``Document.new()`` wrote before the locale.
-COMMA = Locale(decimal_separator=",", thousands_separator=".", date_order="dmy", language="en-US",
-               list_separator=";")
-#: Every document here is made at this time, so none depends on the day the test runs.
-CREATED = dt.datetime(2026, 10, 7, 12, 0, tzinfo=dt.timezone.utc)
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 C = "{http://schemas.openxmlformats.org/drawingml/2006/chart}"
-
-#: Digests of the parts (:func:`_parts_digest`) of ``Document.new(created=CREATED, ...)`` on
-#: main before the locale: separators ``,`` and ``;`` (``.`` and ``,`` for Letter).
-BEFORE = {
-    (): "9049b9401ab2c9c19f027c20bd6bd6a8a05dff6cd62b4f076b1fbbfd4cc234a7",
-    (("page", "Letter"),): "29ad6fd8c49d83d9c3c8d7019a354a31db0dcc10ed5cfef2577c4238a9c14293",
-    (("language", "nl-NL"),): "915bd13a4991e5eb5eaf4b41d57d919e8eaa86cf7d9211b6db1027e6d35a29a0",
-}
-
-
-def _parts_digest(data: bytes) -> str:
-    """The package's parts, names and bytes, hashed: independent of the zip's compression."""
-    digest = hashlib.sha256()
-    with zipfile.ZipFile(io.BytesIO(data)) as archive:
-        for name in sorted(archive.namelist()):
-            digest.update(name.encode() + b"\0" + archive.read(name) + b"\0")
-    return digest.hexdigest()
-
-
-def _settings(document: Document) -> tuple[str, str]:
-    root = document.package.tree("word/settings.xml")
-    return root.find(W + "decimalSymbol").get(W + "val"), root.find(W + "listSeparator").get(W + "val")
-
-
-# -- a new document ------------------------------------------------------------------------------
-
-
-def test_without_a_locale_a_new_document_is_en_us():
-    document = Document.new(created=CREATED)
-    assert document.locale is None and _settings(document) == (".", ",")
-    assert Document.new(locale=EN_US, created=CREATED).to_bytes() == document.to_bytes()
-    letter = Document.new(page="Letter", created=CREATED)
-    assert _settings(letter) == (".", ",")
-    # Letter wrote en-US's separators before: unchanged.
-    assert _parts_digest(letter.to_bytes()) == BEFORE[(("page", "Letter"),)]
-
-
-@pytest.mark.parametrize("options", [(), (("language", "nl-NL"),)])
-def test_a_comma_locale_writes_what_was_written_before(options):
-    document = Document.new(created=CREATED, locale=COMMA, **dict(options))
-    assert _settings(document) == (",", ";")
-    assert _parts_digest(document.to_bytes()) == BEFORE[options]
-
-
-def test_a_new_document_takes_the_locales_language_and_separators():
-    document = Document.new(locale=DUTCH, created=CREATED)
-    assert document.locale is DUTCH and _settings(document) == (",", ";")
-    styles = document.package.tree("word/styles.xml")
-    assert styles.find(f"{W}docDefaults/{W}rPrDefault/{W}rPr/{W}lang").get(W + "val") == "nl-NL"
-    assert document.package.tree("word/settings.xml").find(W + "themeFontLang").get(W + "val") == "nl-NL"
-    german = Document.new(locale=DUTCH, language="de-DE", created=CREATED)
-    styles = german.package.tree("word/styles.xml")
-    assert styles.find(f"{W}docDefaults/{W}rPrDefault/{W}rPr/{W}lang").get(W + "val") == "de-DE"
-
-
-def test_from_a_template_the_locale_is_kept_and_the_settings_are_the_templates():
-    template = Document.new(created=CREATED).to_bytes()
-    document = Document.new(template=template, locale=DUTCH, created=CREATED)
-    assert document.locale is DUTCH and _settings(document) == (".", ",")
-
-
-def test_the_deprecated_blank_locale_writes_what_it_wrote():
-    with pytest.warns(DeprecationWarning):
-        legacy = blank.Locale(margin=1000)
-    with pytest.warns(DeprecationWarning):
-        document = Document.new(locale=legacy, created=CREATED)
-    assert document.locale is None and _settings(document) == (",", ";")
-    margins = document.package.tree("word/document.xml").find(f"{W}body/{W}sectPr/{W}pgMar")
-    assert margins.get(W + "left") == "1000"
-    with pytest.warns(DeprecationWarning):
-        metric = Document.new(locale=blank.METRIC, created=CREATED)
-    assert _parts_digest(metric.to_bytes()) == BEFORE[()]
-    with pytest.warns(DeprecationWarning):
-        us = Document.new(locale=blank.US, page="Letter", created=CREATED)
-    assert _parts_digest(us.to_bytes()) == BEFORE[(("page", "Letter"),)]
-
-
-def test_page_defaults_and_locale_are_separate():
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", DeprecationWarning)
-        document = Document.new(page_defaults=blank.US, locale=DUTCH, created=CREATED)
-    root = document.package.tree("word/settings.xml")
-    assert root.find(W + "defaultTabStop").get(W + "val") == "720" and _settings(document) == (",", ";")
-
-
-# -- charts and renders --------------------------------------------------------------------------
-
-
-def _chart_document(locale=None) -> Document:
-    document = Document.new(locale=locale, created=CREATED)
-    document.insert_chart(document.paragraphs()[0].id, "column", ["Q1", "Q2"],
-                          [{"name": "North", "values": [0.4, 1.3]}])
-    return document
-
-
-def _numbers(svg: str) -> set[str]:
-    return set(re.findall(r">([0-9][0-9.,]*)<", svg))
-
-
-def _chart_lang(document: Document) -> str:
-    (part,) = [p for p in document.package.part_names if p.startswith("word/charts/chart")]
-    return document.package.tree(part).find(f"{C}lang").get("val")
-
-
-def test_a_new_chart_takes_the_locales_language_where_the_document_states_none():
-    document = Document.new(created=CREATED)
-    styles = document.package.tree("word/styles.xml")
-    node = styles.find(f"{W}docDefaults/{W}rPrDefault/{W}rPr/{W}lang")
-    node.getparent().remove(node)
-    document.package.mark_dirty("word/styles.xml")
-    document.locale = DUTCH
-    document.insert_chart(document.paragraphs()[0].id, "pie", ["a", "b"], [{"name": "s", "values": [1, 2]}])
-    assert _chart_lang(document) == "nl-NL"
-    # A document that states its language keeps it.
-    stated = Document.new(language="de-DE", created=CREATED)
-    stated.locale = DUTCH
-    stated.insert_chart(stated.paragraphs()[0].id, "pie", ["a", "b"], [{"name": "s", "values": [1, 2]}])
-    assert _chart_lang(stated) == "de-DE"
-
-
-def test_a_render_takes_the_locale():
-    english = _numbers(_chart_document().render_svg()[0])
-    dutch = _numbers(_chart_document(DUTCH).render_svg()[0])
-    assert "0.2" in english and "0,2" in dutch and "0.2" not in dutch
-    # an option given to the call wins
-    assert "0.2" in _numbers(_chart_document(DUTCH).render_svg(locale=EN_US)[0])
-
-
-def test_the_png_takes_the_locale():
-    if "resvg" not in docx2svg.available_backends():
-        pytest.skip("needs resvg-py")
-    assert _chart_document(DUTCH).render_png(width=320) != _chart_document(DUTCH).render_png(width=320,
-                                                                                             locale=EN_US)
-
-
-# -- the tool layer ------------------------------------------------------------------------------
 
 
 def _box(**options) -> Toolbox:
     return Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, **options)
+
+
+def _settings(data: bytes) -> tuple[str, str]:
+    root = word_docs.tree(data, "word/settings.xml")
+    return root.find(W + "decimalSymbol").get(W + "val"), root.find(W + "listSeparator").get(W + "val")
+
+
+def _blank(locale=None, language: str | None = None) -> bytes:
+    """A new blank document as one made in ``locale`` is (its language and separators)."""
+    locale = locale or EN_US
+    return word_docs.blank(language=language or locale.language,
+                           separators=(locale.decimal_separator, locale.list_separator))
+
+
+def _with_chart(box, data: bytes, chart_type: str = "column", **session_options):
+    """A session holding ``data`` with a chart added after its first paragraph."""
+    session = box.session(**session_options)
+    session.open(data, "chart.docx")
+    first = word_docs.paragraph_ids(box, session, "d1")[0]
+    if chart_type == "column":
+        arguments = {"categories": ["Q1", "Q2"], "data": [{"name": "North", "values": [0.4, 1.3]}]}
+    else:
+        arguments = {"categories": ["a", "b"], "data": [{"name": "s", "values": [1, 2]}]}
+    word_docs.call(box, session, "edit_chart", doc="d1", target=first, action="add", chart_type=chart_type,
+                   **arguments)
+    return session
+
+
+def _chart_lang(session) -> str:
+    data = word_docs.saved(session, "d1")
+    return word_docs.tree(data, word_docs.chart_part(data, "d:1")).find(f"{C}lang").get("val")
+
+
+# -- a new document: new_document ---------------------------------------------------------------
+
+#: Every document here is made at this time (the session's clock), so none depends on the day.
+CREATED = dt.datetime(2026, 10, 7, 12, 0, tzinfo=dt.timezone.utc)
+#: The separators of the Word the new document was measured on, with en-US's language.
+COMMA = Locale(decimal_separator=",", thousands_separator=".", date_order="dmy", language="en-US",
+               list_separator=";")
+
+
+def _made(locale=None, **arguments) -> bytes:
+    """``new_document``'s package in a session with ``locale`` (none: the toolbox's, en-US)."""
+    with _box(workers=0) as box:
+        session = box.session(clock=lambda: CREATED, **({"locale": locale} if locale is not None else {}))
+        made = box.dispatch(session, "new_document", {"kind": "docx", **arguments})
+        assert made.ok, made.to_json()
+        return word_docs.saved(session, made.created[0])
+
+
+def _language(data: bytes) -> tuple[str, str]:
+    """The default language (``w:docDefaults``) and the theme's (``w:themeFontLang``)."""
+    styles = word_docs.tree(data, "word/styles.xml")
+    default = styles.find(f"{W}docDefaults/{W}rPrDefault/{W}rPr/{W}lang").get(W + "val")
+    return default, word_docs.tree(data, "word/settings.xml").find(W + "themeFontLang").get(W + "val")
+
+
+def _page(data: bytes) -> tuple[str, str]:
+    size = word_docs.tree(data).find(f"{W}body/{W}sectPr/{W}pgSz")
+    return size.get(W + "w"), size.get(W + "h")
+
+
+def test_without_a_locale_a_new_document_is_en_us():
+    data = _made()
+    assert _settings(data) == (".", ",") and _language(data) == ("en-US", "en-US")
+    assert _page(data) == ("11906", "16838")                                  # A4
+    assert _made(EN_US) == data
+    letter = _made(size="Letter")
+    assert _settings(letter) == (".", ",") and _page(letter) == ("12240", "15840")
+
+
+@pytest.mark.parametrize("language", ["en-US", "nl-NL"])
+def test_a_comma_locale_writes_its_separators_and_language(language):
+    data = _made(Locale(decimal_separator=",", thousands_separator=".", date_order="dmy", language=language,
+                        list_separator=";"))
+    assert _settings(data) == (",", ";") and _language(data) == (language, language)
+
+
+def test_a_new_document_takes_the_locales_language_and_separators():
+    data = _made(DUTCH)
+    assert _settings(data) == (",", ";") and _language(data) == ("nl-NL", "nl-NL")
+
+
+def test_the_properties_are_the_calls_and_the_date_the_sessions_clock():
+    core = word_docs.part(_made(DUTCH, title="Verslag", author="Schrijver A"), "docProps/core.xml")
+    assert "<dc:title>Verslag</dc:title>" in core and "<dc:creator>Schrijver A</dc:creator>" in core
+    assert "2026-10-07T12:00:00Z" in core
+
+
+def test_the_page_size_and_the_locale_are_separate():
+    data = _made(DUTCH, size="Letter")
+    root = word_docs.tree(data, "word/settings.xml")
+    assert root.find(W + "defaultTabStop").get(W + "val") == "720" and _settings(data) == (",", ";")
+    assert _page(data) == ("12240", "15840")
+
+
+def test_from_a_template_the_locale_is_kept_and_the_settings_are_the_templates():
+    """A new document from a template made without a locale: the template's separators kept
+    (en-US's), the session's locale the document's."""
+    template = _made()
+    with _box(workers=0, locale=DUTCH) as box:
+        session = box.session(clock=lambda: CREATED)
+        blob = session.add_blob(template, "template.dotx")
+        made = box.dispatch(session, "new_document", {"kind": "docx", "template_blob": blob})
+        assert made.ok, made.to_json()
+        data = word_docs.saved(session, made.created[0])
+        assert _settings(data) == (".", ",") and _language(data) == ("en-US", "en-US")
+        assert engines.locale_of(reads.owned(session.entry(made.created[0]))) == DUTCH
+
+
+# -- charts ----------------------------------------------------------------------------------------
+
+
+def test_a_new_chart_takes_the_locales_language_where_the_document_states_none():
+    def unstated(xml: str) -> str:
+        from lxml import etree
+
+        root = etree.fromstring(xml.encode("utf-8"))
+        node = root.find(f"{W}docDefaults/{W}rPrDefault/{W}rPr/{W}lang")
+        node.getparent().remove(node)
+        return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True).decode()
+
+    with _box(workers=0, locale=DUTCH) as box:
+        session = _with_chart(box, word_docs.replaced(_blank(), {"word/styles.xml": unstated}), "pie")
+        assert _chart_lang(session) == "nl-NL"
+        # A document that states its language keeps it.
+        assert _chart_lang(_with_chart(box, _blank(language="de-DE"), "pie")) == "de-DE"
+
+
+# -- the tool layer ------------------------------------------------------------------------------
 
 
 def _render(box: Toolbox, data: bytes, **session_options) -> tuple:
@@ -189,76 +168,53 @@ def _render(box: Toolbox, data: bytes, **session_options) -> tuple:
     return pixels(result.images[0].data)
 
 
-def _direct(data: bytes, locale) -> tuple:
-    document = Document.open(data)
-    document.locale = locale
-    return pixels(document.render_png(pages=[1], width=320)[0])
-
-
-@pytest.fixture
+@pytest.fixture(scope="module")
 def chart_bytes() -> bytes:
-    if "resvg" not in docx2svg.available_backends():
-        pytest.skip("needs resvg-py")
-    return _chart_document().to_bytes()
+    with _box(workers=0) as box:
+        return word_docs.saved(_with_chart(box, _blank()), "d1")
 
 
-def test_the_toolbox_locale_reaches_the_document_and_the_worker(chart_bytes):
-    english, dutch = _direct(chart_bytes, None), _direct(chart_bytes, DUTCH)
-    assert english != dutch
+@pytest.fixture(scope="module")
+def drawn(chart_bytes) -> tuple:
+    """The chart's page drawn in-process in English and in Dutch."""
+    with _box(workers=0) as english, _box(workers=0, locale=DUTCH) as dutch:
+        return _render(english, chart_bytes), _render(dutch, chart_bytes)
+
+
+def test_the_toolbox_locale_reaches_the_document_and_the_worker(chart_bytes, drawn):
+    english, dutch = drawn
+    assert english != dutch                                            # 0.2 against 0,2 on the axis
     with _box(workers=1) as plain:
         assert _render(plain, chart_bytes) == english
     with _box(workers=1, locale=DUTCH) as configured:
-        session = configured.session()
-        session.open(chart_bytes, "chart.docx")
-        assert session.entry("d1").document.locale is DUTCH
         assert _render(configured, chart_bytes) == dutch               # in the worker, in Dutch
         assert _render(configured, chart_bytes, locale=EN_US) == english
-    with _box(workers=0, locale=DUTCH) as in_process:
-        assert _render(in_process, chart_bytes) == dutch
 
 
 def test_the_render_cache_is_keyed_by_the_locale(chart_bytes):
     with _box(workers=0) as box:
-        session = box.session()
-        session.open(chart_bytes, "chart.docx")
-        first = box.dispatch(session, "render", {"doc": "d1", "pages": [1], "width": 320})
-        session.entry("d1").document.locale = DUTCH
-        second = box.dispatch(session, "render", {"doc": "d1", "pages": [1], "width": 320})
-    assert first.images[0].data != second.images[0].data
+        first = _render(box, chart_bytes)
+        second = _render(box, chart_bytes, locale=DUTCH)
+    assert first != second
 
 
-def test_a_subprocess_worker_gets_the_locale_from_its_arguments(chart_bytes):
+def test_a_subprocess_worker_gets_the_locale_from_its_arguments(chart_bytes, drawn):
     """What a daemonic process renders with: the locale crosses as an argument."""
     from ooxml_edit.tools import SubprocessPool
 
     with _box(runner=SubprocessPool(1), locale=DUTCH) as box:
-        assert _render(box, chart_bytes) == _direct(chart_bytes, DUTCH)
+        assert _render(box, chart_bytes) == drawn[1]
 
 
-def test_the_layout_in_the_worker_takes_the_locale():
-    """``check``'s layout takes the document's options, the locale among them: in the
-    worker pool (``Engine``) on the Python path, or -- a check the Rust session serves
-    (lane P5b) -- by the document's page engine in this process, made for its options."""
+def test_the_layout_takes_the_locale(chart_bytes):
+    """``check``'s layout is the document's page engine's, made for its options: the
+    session's locale among them."""
     with _box(workers=1, locale=DUTCH) as box:
         session = box.session()
-        session.open(_chart_document().to_bytes(), "chart.docx")
+        session.open(chart_bytes, "chart.docx")
         result = box.dispatch(session, "check", {"doc": "d1", "include": ["reflow"]})
         assert result.ok, result.error
-        document = session.entry("d1").document
-        if document._layout_kept is not None:
-            # Kept by the options it was laid out with (round 38: by its token, in the worker).
-            assert repr(DUTCH) in document._layout_kept[0][1]
-            return
-        # Served: laid out by the page engine made for the document's options (its fonts and
-        # locale: docx2svg.rust's engine key), none other made for it.
-        from docx_agent import pages
-        from docx_agent.layout import layout_options, lineage
-
-        options = docx2svg.ConvertOptions(**layout_options(document, {}))
-        assert options.locale == DUTCH
-        made = [engine for (line, _), engine in pages._ENGINES.items() if line == lineage(document)]
-        assert made and all(engine.fits(options) for engine in made)
-        assert made[0].key[1] == "," and made[0].key[3] == "nl-NL"
+        assert engines.locale_of(reads.owned(session.entry("d1"))) == DUTCH
 
 
 def test_new_document_takes_the_session_locale():
@@ -266,12 +222,11 @@ def test_new_document_takes_the_session_locale():
         session = box.session()
         made = box.dispatch(session, "new_document", {"kind": "docx"})
         assert made.ok, made.error
-        document = session.entry("d1").document
-        assert document.locale is DUTCH and _settings(document) == (",", ";")
+        assert _settings(word_docs.saved(session, "d1")) == (",", ";")
     with _box() as box:
         session = box.session()
         assert box.dispatch(session, "new_document", {"kind": "docx"}).ok
-        assert _settings(session.entry("d1").document) == (".", ",")
+        assert _settings(word_docs.saved(session, "d1")) == (".", ",")
 
 
 def test_the_definitions_and_prompt_do_not_change():

@@ -201,9 +201,20 @@ impl<'p> Keeper<'p> {
 pub(crate) fn refused(message: &str) -> EditError {
     EditError::Argument {
         field: String::new(),
-        message: message.trim_matches(['\'', '"']).to_owned(),
+        message: unquoted(message).to_owned(),
         options: Vec::new(),
     }
+}
+
+/// `message` without the quotes a Python `KeyError`'s text has at both ends (one quoted at
+/// its start only, `'0.25' is not a number`, keeps them).
+fn unquoted(message: &str) -> &str {
+    for quote in ['\'', '"'] {
+        if let Some(inner) = message.strip_prefix(quote).and_then(|m| m.strip_suffix(quote)) {
+            return inner;
+        }
+    }
+    message
 }
 
 pub(crate) fn not_supported(what: &str) -> EditError {

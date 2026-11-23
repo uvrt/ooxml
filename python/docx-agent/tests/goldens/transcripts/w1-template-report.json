@@ -89,8 +89,8 @@
    "expect": {
     "ok": true,
     "summary": "Read the document (final)",
-    "data_sha": "c09d9625eb021f12",
-    "data_sha_core": "c09d9625eb021f12"
+    "data_sha": "18cef6cc8d67609d",
+    "data_sha_core": "18cef6cc8d67609d"
    }
   },
   {
@@ -141,61 +141,61 @@
     "ok": true,
     "summary": "Inserted 27 block(s)",
     "created": [
-     "p:5FCB534E",
-     "p:4C32E1FB",
-     "p:16425160",
-     "p:3B212964",
-     "p:12972045",
-     "p:4B50F4CD",
-     "p:77B9C794",
-     "p:69E36C9F",
-     "p:058B17C9",
-     "p:6A70E1A8",
-     "p:73D22116",
-     "p:7C9523C2",
-     "p:599FE6A2",
-     "p:20FFCF19",
+     "p:4630598B",
+     "p:58C17D47",
+     "p:0D5C0E97",
+     "p:619A6E8C",
+     "p:676FEA6E",
+     "p:675EF9F9",
+     "p:6E80C291",
+     "p:0DAC5866",
+     "p:78688CBC",
+     "p:48C5246E",
+     "p:248828D0",
+     "p:4D332FBE",
+     "p:1234B65C",
+     "p:36070FA6",
      "t:60D6847F",
-     "p:3EB3FF6C",
-     "p:767E7C15",
-     "p:2F9E5978",
-     "p:654112D5",
-     "p:31B189E1",
-     "p:4329EC82",
-     "p:439BA4A8",
-     "p:70439822",
-     "p:11698B22",
-     "p:05252BEE",
-     "p:3052721F",
-     "p:43450195",
-     "p:78481EA1",
-     "p:20C1ECE5",
-     "p:41D60541",
-     "p:6FCDB881",
-     "p:55291651",
-     "p:30AEBD05",
-     "p:05F235FF",
-     "p:3B981BD3",
-     "p:7246E0D2",
-     "p:76D8DF86",
-     "p:2858FDA4",
-     "p:5832C491",
-     "p:58A00099",
-     "p:178A91E8",
-     "p:155E1469",
-     "p:501EA2C0",
-     "p:77D549B7",
-     "p:145D2F5A",
-     "p:68A8FA7E",
-     "p:7BE1A003",
-     "p:42B49479",
-     "p:7044C786",
-     "p:222313BB",
-     "p:4EB57B2A",
-     "p:25D3FA36"
+     "p:07C803C5",
+     "p:60298A4C",
+     "p:27E7AE38",
+     "p:60369964",
+     "p:1F26B5EE",
+     "p:60958C75",
+     "p:4858D3EC",
+     "p:758E9D76",
+     "p:26260A64",
+     "p:45B82272",
+     "p:572523AB",
+     "p:7C67CAA0",
+     "p:0266EA72",
+     "p:564183E6",
+     "p:350AF9C3",
+     "p:0E520C6F",
+     "p:403E9315",
+     "p:15A61193",
+     "p:658FFCC3",
+     "p:55B20AB5",
+     "p:42B75B13",
+     "p:658F5B73",
+     "p:75115466",
+     "p:4D25C6C5",
+     "p:30F454F4",
+     "p:2E97A7A2",
+     "p:1B5E5B09",
+     "p:5537ACEF",
+     "p:5FC27608",
+     "p:402877DE",
+     "p:0744A550",
+     "p:725F4478",
+     "p:7BAEC000",
+     "p:72936EEA",
+     "p:7830CC8B",
+     "p:69CDABA9",
+     "p:2B051846"
     ],
     "removed": [
-     "p:5FCB534E"
+     "p:4630598B"
     ],
     "warnings": [
      "style added: Strong (Strong), as Word writes it",
@@ -205,11 +205,11 @@
      "style added: Table Grid (TableGrid), as Word writes it",
      "style added: List Number (ListNumber), as Word writes it"
     ],
-    "data_sha": "631ebe33d0c9bd0a",
+    "data_sha": "b4f2b7d241f1e1c9",
     "data_keys": [
      "blocks"
     ],
-    "data_sha_core": "631ebe33d0c9bd0a"
+    "data_sha_core": "b4f2b7d241f1e1c9"
    }
   },
   {
@@ -220,8 +220,8 @@
    "expect": {
     "ok": true,
     "summary": "Read the document (final)",
-    "data_sha": "bdec0665640fb9e8",
-    "data_sha_core": "bdec0665640fb9e8"
+    "data_sha": "86f2224edb235f18",
+    "data_sha_core": "86f2224edb235f18"
    }
   },
   {
@@ -229,7 +229,7 @@
    "arguments": {
     "doc": "d1",
     "action": "insert_toc",
-    "after": "p:4C32E1FB",
+    "after": "p:58C17D47",
     "levels": "1-2"
    },
    "expect": {
@@ -246,7 +246,7 @@
      "p:0061C2CE",
      "p:141B495C",
      "p:41466755",
-     "p:279A4C0B"
+     "p:08988EF6"
     ]
    }
   },
@@ -260,8 +260,8 @@
    "expect": {
     "ok": true,
     "summary": "Read the document (markup)",
-    "data_sha": "9a24fc09eec5cac4",
-    "data_sha_core": "9a24fc09eec5cac4"
+    "data_sha": "c6952d52090930cc",
+    "data_sha_core": "c6952d52090930cc"
    }
   },
   {
@@ -325,6 +325,6 @@
  ],
  "output": {
   "name": "annual-water-quality-report.docx",
-  "parts_sha256": "0d368f32e796593e576319f7a816e254a793c2d20239381422f789ac4a62f9cc"
+  "parts_sha256": "981a59f397ff6b74a4988662fd1c56581fd8c91d7fca88d142b039053f251ce8"
  }
 }

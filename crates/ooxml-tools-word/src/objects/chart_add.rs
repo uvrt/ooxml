@@ -6,8 +6,8 @@
 //! leaves nothing -- and the reply: the chart as every `edit_chart` result gives it, the
 //! paragraph made for it, the ref named.
 //!
-//! Not here yet: a document whose defaults name no language (the session's locale
-//! decides the new text's: refused as not supported yet).
+//! The new text is in `lang` (`edit_chart`'s `chart_language`: the document's default
+//! language, else the call's locale's).
 //!
 //! Must not: change the document but through the command.
 
@@ -111,7 +111,7 @@ impl AddChart {
                 series: None,
                 number_format: None,
                 size: Some(WORD_LABEL_SIZE),
-                lang: Some(self.lang.clone()),
+                lang: self.lang.clone(),
             }),
             Look::Series { series, key, colour } => {
                 let given = colour_given(Some(colour));
@@ -138,7 +138,7 @@ impl AddChart {
             Look::Text { style, part } => Edit::Style(StyleAction::Text {
                 part: part.map(ArgEnum::as_str),
                 look: text_look(Some(style)).map_err(refuse)?,
-                lang: Some(self.lang.clone()),
+                lang: self.lang.clone(),
             }),
         })
     }
@@ -186,11 +186,7 @@ impl Command<WordDoc> for AddChart {
 
 /// `add`: a new inline chart in a paragraph of its own after the target (or at a position
 /// in one), with the look its arguments give.
-pub(super) fn add(
-    args: &EditChart,
-    editing: &Editing<'_>,
-    lang: Option<String>,
-) -> Result<ToolResult<Value>, ToolError> {
+pub(super) fn add(args: &EditChart, editing: &Editing<'_>, lang: String) -> Result<ToolResult<Value>, ToolError> {
     let read = call(
         "edit_chart",
         &[
@@ -199,12 +195,6 @@ pub(super) fn add(
             ("action", json!("read")),
         ],
     );
-    let Some(lang) = lang else {
-        return Err(ToolError::not_supported(
-            "edit_chart add: a document whose defaults name no language (the session's locale decides)",
-            ooxml_tools::WayOut::call(read),
-        ));
-    };
     let plan = add_plan(args, lang.clone(), &read)?;
     let command = AddChart {
         insert: InsertChart {

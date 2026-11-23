@@ -1,6 +1,6 @@
 //! A session owning Word documents (phase P2, lane P2c) on made-up packages: the editing
 //! tools run on the document's editor with the tracking mode the session keeps; the
-//! session's undo and redo, and a caller's own; the save gate; the bridge's update adding
+//! session's undo and redo, and a caller's own; the save gate; an update of parts given as bytes adding
 //! the ids it brings to the ledger.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
@@ -8,7 +8,7 @@ use crate::common::{Never, NoFonts, NoParts, Unlimited};
 use ooxml_base::context::Timestamp;
 use ooxml_base::{Clock, Context, Limits, Locale};
 use ooxml_session::{
-    CallContext, Caller, DocId, DocKind, HeldId, HostIds, RetiredBy, Session, SessionConfig, SessionError, Undone,
+    CallContext, Caller, DocId, DocKind, HeldId, RetiredBy, Session, SessionConfig, SessionError, Undone,
 };
 use ooxml_zip::{Method, NewEntry, Writer};
 use serde_json::{json, Value};
@@ -241,12 +241,11 @@ fn as_writer(agent: &str) -> CallContext {
     }
 }
 
-fn bridged(s: &Session, d: &DocId, body: &str, context: &CallContext) {
-    let parts = vec![(
-        "word/document.xml".to_owned(),
-        Some(Arc::from(document(body).as_bytes())),
-    )];
-    s.bridge(d, "word_rewrite", parts, HostIds::default(), context).unwrap();
+/// The paragraph `p:11111111`'s text set to `text` by `context`'s caller (one step).
+fn written(s: &Session, text: &str, context: &CallContext) {
+    let arguments = json!({"doc": "d1", "target": "p:11111111", "text": text});
+    let done = call(s, "word_set_text", arguments, context);
+    assert_eq!(done["ok"], json!(true), "{done}");
 }
 
 #[test]
@@ -267,22 +266,22 @@ fn the_undo_tool_answers_in_todays_words() {
         (nothing["doc"].clone(), nothing["version"].clone()),
         (json!("d1"), json!(0))
     );
-    bridged(&s, &d, &paragraph("11111111", "by a"), &a);
-    bridged(&s, &d, &paragraph("11111111", "by b"), &b);
+    written(&s, "by a", &a);
+    written(&s, "by b", &b);
     let refused = undo(json!({"doc": "d1"}), &a);
     assert_eq!(refused["version"], json!(2));
     assert_eq!(refused["error"]["code"], json!("entangled"));
     assert_eq!(
         refused["error"]["message"],
         json!(
-            "your latest change to d1 (word_rewrite, version 1) is not the latest: word_rewrite by turn=1, \
+            "your latest change to d1 (word_set_text, version 1) is not the latest: word_set_text by turn=1, \
              agent=b changed d1 after it (version 2), and undoing yours would take back what came after. \
              Change it back with an edit, or ask whoever made the later change to undo it first"
         )
     );
     assert_eq!(
         refused["error"]["details"],
-        json!({"version": 1, "later": [{"version": 2, "tool": "word_rewrite", "context": {"turn": 1, "agent": "b"}}]})
+        json!({"version": 1, "later": [{"version": 2, "tool": "word_set_text", "context": {"turn": 1, "agent": "b"}}]})
     );
     let undone = undo(json!({"doc": "d1", "steps": 3}), &b);
     assert_eq!(undone["summary"], json!("Undid 1 of your own step(s) of d1"));
@@ -309,7 +308,7 @@ fn the_undo_tool_answers_in_todays_words() {
     assert!(body_of(&s, &d).contains("by b"));
     // a new step drops every own undo with plain redo
     assert_eq!(undo(json!({"doc": "d1", "steps": 2}), &own)["data"]["steps"], json!(2));
-    bridged(&s, &d, &paragraph("11111111", "again"), &a);
+    written(&s, "again", &a);
     let none = undo(json!({"doc": "d1", "redo": true}), &b);
     assert_eq!(none["error"]["code"], json!("refused"));
     assert_eq!(none["error"]["valid_options"][0]["context"]["agent"], json!("a"));
@@ -331,21 +330,21 @@ fn the_undo_tool_answers_in_todays_words() {
 }
 
 #[test]
-fn the_save_gate_refuses_new_problems_and_the_bridge_feeds_the_ledger() {
+fn the_save_gate_refuses_new_problems_and_parts_given_feed_the_ledger() {
     let s = session();
     let d = s
         .open(docx(&paragraph("11111111", "one")), DocKind::Docx, "a.docx")
         .unwrap();
     assert!(s.validation(&d).unwrap().unwrap().new.is_empty());
     s.save_checked(&d).unwrap();
-    // a bridged tool repeats a paragraph id: a new problem, and saving is refused
+    // parts given that repeat a paragraph id: a new problem, and saving is refused
     let twice = format!("{}{}", paragraph("11111111", "one"), paragraph("11111111", "two"));
     put(&s, &d, &twice, &CallContext::default());
     match s.save_checked(&d) {
         Err(SessionError::NewProblems { new }) => assert!(!new.is_empty()),
         other => panic!("{other:?}"),
     }
-    // ids a bridged tool brings are in the ledger, and stay there after undo
+    // ids parts given bring are in the ledger, and stay there after undo
     let fresh = format!("{}{}", paragraph("11111111", "one"), paragraph("3A3A3A3A", "two"));
     put(&s, &d, &fresh, &CallContext::default());
     s.save_checked(&d).unwrap();
@@ -398,103 +397,30 @@ fn a_check_of_the_document_alone_is_the_sessions() {
 }
 
 #[test]
-fn bridged_calls_are_counted_by_tool() {
-    let s = session();
-    let d = s
-        .open(docx(&paragraph("11111111", "one")), DocKind::Docx, "a.docx")
-        .unwrap();
-    let parts = |text: &str| {
-        vec![(
-            "word/document.xml".to_owned(),
-            Some(Arc::from(document(&paragraph("11111111", text)).as_bytes())),
-        )]
-    };
-    let (updated, opened) = s
-        .bridge(
-            &d,
-            "word_format",
-            parts("two"),
-            HostIds::default(),
-            &CallContext::default(),
-        )
-        .unwrap();
-    assert_eq!((updated.version, opened.version()), (1, 1));
-    s.bridge(
-        &d,
-        "word_format",
-        parts("three"),
-        HostIds::default(),
-        &CallContext::default(),
-    )
-    .unwrap();
-    s.bridge(
-        &d,
-        "word_move",
-        parts("four"),
-        HostIds::default(),
-        &CallContext::default(),
-    )
-    .unwrap();
-    let counts: Vec<(String, u64)> = s.bridge_calls().into_iter().collect();
-    assert_eq!(counts, vec![("word_format".to_owned(), 2), ("word_move".to_owned(), 1)]);
-}
-
-#[test]
-fn the_hosts_renames_and_draws_beside_bridged_parts_are_the_documents() {
-    // the paragraph a session's next insert makes, after a bridge with `host`
-    let next = |host: HostIds| {
-        let s = session();
-        let d = s
-            .open(docx(&paragraph("11111111", "one")), DocKind::Docx, "a.docx")
-            .unwrap();
-        let parts = vec![(
-            "word/document.xml".to_owned(),
-            Some(Arc::from(document(&paragraph("11111111", "two")).as_bytes())),
-        )];
-        s.bridge(&d, "word_format", parts, host, &CallContext::default())
-            .unwrap();
-        // the block the host's tool renamed is found by its old id (no fifth paragraph here)
-        let read = s.call(
-            "word_read",
-            json!({"doc": "d1", "range": "p@body/5"}),
-            &CallContext::default(),
-        );
-        let found = !read.is_error();
-        let made = s.call(
-            "word_insert_markdown",
-            json!({"doc": "d1", "at": "after:p:11111111", "markdown": "three"}),
-            &CallContext::default(),
-        );
-        assert!(!made.is_error(), "{:?}", made.to_json());
-        (found, made.to_json()["created"].clone())
-    };
-    let (unknown, first) = next(HostIds::default());
-    let host = HostIds {
-        drawn: vec![("word/document.xml".to_owned(), 7)],
-        aliases: vec![("p@body/5".to_owned(), "p:11111111".to_owned())],
-    };
-    let (renamed, later) = next(host);
-    assert!(renamed && !unknown);
-    // the session's draw starts past the host's
-    assert!(first.as_array().is_some_and(|c| !c.is_empty()), "{first}");
-    assert_ne!(first, later);
-}
-
-#[test]
 fn styled_text_is_written_and_values_by_reference_left_to_the_host() {
     let s = session();
     let d = s
         .open(docx(&paragraph("22222222", "two word there")), DocKind::Docx, "a.docx")
         .unwrap();
     let context = as_caller("w1");
-    // what is not ported yet changes nothing and says so to the host
+    // a target by reference ("$name") is the host's to resolve: nothing changes, and the
+    // host is told so
     let by_reference = s.call(
+        "word_set_text",
+        json!({"doc": "d1", "target": "$picked", "text": "a picked word"}),
+        &context,
+    );
+    assert!(by_reference.not_supported_form().is_some());
+    assert!(!body_of(&s, &d).contains("picked"));
+    // braces reaching the tool are literal text (the host resolves real references first)
+    let braces = call(
+        &s,
         "word_set_text",
         json!({"doc": "d1", "target": "p:22222222", "text": "a {{d:1/#1/name}} word"}),
         &context,
     );
-    assert!(by_reference.not_supported_form().is_some());
-    assert!(!body_of(&s, &d).contains("name"));
+    assert_eq!(braces["ok"], json!(true), "{braces}");
+    assert!(body_of(&s, &d).contains("a {{d:1/#1/name}} word"));
     // styled text is written, its runs listed
     let styled = call(
         &s,
@@ -639,22 +565,18 @@ fn retired_ids_say_who_removed_them_and_an_undone_deletion_is_back() {
     };
     assert_eq!((caller.as_deref(), tool.as_deref()), (Some("w1"), Some("word_delete")));
     assert_eq!(Some(*seq), deleted["version"].as_u64());
-    // the bridge's update removes another, as its tool
-    s.bridge(
-        &d,
-        "word_move",
-        vec![(
-            "word/document.xml".to_owned(),
-            Some(Arc::from(document(&paragraph("11111111", "one")).as_bytes())),
-        )],
-        HostIds::default(),
+    // another caller's deletion removes another, as its call
+    let again = call(
+        &s,
+        "word_delete",
+        json!({"doc": "d1", "target": "p:33333333"}),
         &as_caller("w2"),
-    )
-    .unwrap();
+    );
+    assert!(again.get("error").is_none(), "{again}");
     let retired = s.retired(&d).unwrap();
     assert_eq!(retired.len(), 2, "{retired:?}");
     assert!(
-        matches!(&retired[1], (HeldId::Block(0x3333_3333), RetiredBy::Step { tool: Some(t), .. }) if &**t == "word_move")
+        matches!(&retired[1], (HeldId::Block(0x3333_3333), RetiredBy::Step { caller: Some(c), .. }) if &**c == "w2")
     );
     // undone, both are back; redone, the first is removed again by the call that removed it
     assert_eq!(s.undo(&d, 2, &CallContext::default()).unwrap().count, 2);
@@ -665,10 +587,6 @@ fn retired_ids_say_who_removed_them_and_an_undone_deletion_is_back() {
         matches!(retired.as_slice(), [(HeldId::Block(0x2222_2222), RetiredBy::Step { tool: Some(t), .. })] if &**t == "word_delete"),
         "{retired:?}"
     );
-    // a state's earlier deletions are given by the host and kept as given
-    s.seed_retired(&d, vec![(HeldId::Drawing(4), 3, Some("word_delete (agent=a)".into()))])
-        .unwrap();
-    assert_eq!(s.retired(&d).unwrap().len(), 2);
 }
 
 fn part_of(session: &Session, doc: &DocId, name: &str) -> Option<String> {
@@ -849,12 +767,11 @@ fn the_history_is_listed_in_state_numbers() {
 #[test]
 fn nothing_to_undo_lists_the_steps_nearest_the_head_and_says_how_many_were_left_out() {
     let s = session();
-    let d = s
-        .open(docx(&paragraph("11111111", "one")), DocKind::Docx, "a.docx")
+    s.open(docx(&paragraph("11111111", "one")), DocKind::Docx, "a.docx")
         .unwrap();
     let a = as_writer("a");
     for n in 0..12 {
-        bridged(&s, &d, &paragraph("11111111", &format!("step {n}")), &a);
+        written(&s, &format!("step {n}"), &a);
     }
     let refused = call(&s, "undo", json!({"doc": "d1"}), &as_writer("c"));
     let error = &refused["error"];
@@ -863,7 +780,7 @@ fn nothing_to_undo_lists_the_steps_nearest_the_head_and_says_how_many_were_left_
     assert_eq!(listed.len(), 10, "{refused}");
     assert_eq!(
         listed[0],
-        json!({"version": 12, "tool": "word_rewrite", "context": {"turn": 1, "agent": "a"}})
+        json!({"version": 12, "tool": "word_set_text", "context": {"turn": 1, "agent": "a"}})
     );
     assert_eq!(error["details"], json!({"left_out": {"undo": 2, "redo": 0}}));
     assert!(error.get("try_call").is_none(), "{refused}");

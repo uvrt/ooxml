@@ -108,10 +108,7 @@ fn run(args: &WordSetText, editing: &Editing<'_>) -> Result<ToolResult<Value>, T
             vec![(target, text.clone(), named_style(&args.paragraph_style), String::new())]
         }
     };
-    if work
-        .iter()
-        .any(|(target, text, ..)| by_reference(target) || text.contains("{{"))
-    {
+    if work.iter().any(|(target, ..)| by_reference(target)) {
         return Err(Unported::Reference.refusal(try_call(args), &["text", "target"]));
     }
     if let Some((target, _, _, prefix)) = work.iter().find(|(target, ..)| target.contains("..")) {

@@ -459,6 +459,61 @@ fn a_table_of_contents_numbers_its_new_bookmarks_on_from_the_largest() {
     assert_eq!(ids, ["7", "5", "8", "6"], "{xml}");
 }
 
+/// The document.xml of a table of contents inserted over one Heading1 paragraph, the
+/// styles `toc 1` (its paragraph properties `toc_ppr`, based on `TocBase`) and `TocBase`
+/// (a right dot stop at 9070).
+fn toc_over_based_stop(toc_ppr: &str) -> String {
+    let body = concat!(
+        r#"<w:p w14:paraId="10000001" w14:textId="20000001"><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>One</w:t></w:r></w:p>"#,
+        r#"<w:p w14:paraId="10000002" w14:textId="20000001"><w:r><w:t>Body</w:t></w:r></w:p>"#,
+    );
+    let styles = format!(
+        concat!(
+            r#"<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/>"#,
+            r#"<w:pPr><w:outlineLvl w:val="0"/></w:pPr></w:style>"#,
+            r#"<w:style w:type="paragraph" w:styleId="TocBase"><w:name w:val="Toc Base"/><w:basedOn w:val="Normal"/>"#,
+            r#"<w:pPr><w:tabs><w:tab w:val="right" w:leader="dot" w:pos="9070"/></w:tabs></w:pPr></w:style>"#,
+            r#"<w:style w:type="paragraph" w:styleId="TOC1"><w:name w:val="toc 1"/><w:basedOn w:val="TocBase"/>"#,
+            r#"<w:pPr>{}</w:pPr></w:style>"#,
+        ),
+        toc_ppr
+    );
+    let (reply, editor) = call_on(
+        package_of(body, &styles),
+        json!({"doc": "d1", "action": "insert_toc", "after": "p:10000002"}),
+        None,
+        word_fields,
+    );
+    assert_eq!(
+        reply["summary"],
+        json!("Inserted a table of contents fld:body/0"),
+        "{reply}"
+    );
+    let head = editor.store().snapshot();
+    let xml = head
+        .doc()
+        .package()
+        .read("word/document.xml")
+        .unwrap()
+        .unwrap()
+        .to_vec();
+    String::from_utf8(xml).unwrap()
+}
+
+#[test]
+fn a_toc_style_clearing_its_inherited_stop_gets_the_right_stop() {
+    // Word (tests/observations/toc-numbers-word.json, t-clear): a `toc 1` whose own clear
+    // takes away the stop its base gives it has no stop left, so the entry carries the
+    // right dot stop; where the base's stop stands (t-inherit) the entry relies on it.
+    let cleared = toc_over_based_stop(r#"<w:tabs><w:tab w:val="clear" w:pos="9070"/></w:tabs>"#);
+    assert!(
+        cleared.contains(r#"<w:tab w:val="right" w:leader="dot" w:pos=""#),
+        "{cleared}"
+    );
+    let inherited = toc_over_based_stop("");
+    assert!(!inherited.contains(r#"<w:tab w:val="right""#), "{inherited}");
+}
+
 #[test]
 fn a_numbered_heading_s_entry_shows_its_number() {
     // Level 1 is followed by a tab (Word's default): the number in its own run, a tab run,

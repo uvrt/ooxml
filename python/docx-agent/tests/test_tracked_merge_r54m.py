@@ -23,14 +23,14 @@ the view follow Word's Accept All, measured).
 from __future__ import annotations
 
 import datetime as dt
+import re
 
 import pytest
 from ooxml_edit.tools import Dataset, Result, Toolbox, string, tool
 
-from docx_agent import Document
-from docx_agent.layout_facts import table_grid_mismatch
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
-from docx_agent.validate import grid_problems
+
+import word_docs
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _W = "{%s}" % W
@@ -68,11 +68,11 @@ def ok(box, session, name, /, **arguments):
 
 def _opened(box, tracked: bool = True, empty: tuple[int, int] | None = None):
     session = box.session(clock=CLOCK)
-    session.open(Document.new().to_bytes(), "report.docx")
-    first = session.entry("d1").document.paragraphs()[0].id
-    ok(box, session, "word_insert_markdown", doc="d1", at=f"after:{first}",
-       markdown=f"Field report.\n\n{MARKDOWN}\n\nAfter the table.")
-    table = session.entry("d1").document.tables()[-1].id
+    session.open(word_docs.blank(), "report.docx")
+    first = word_docs.paragraphs(session, "d1")[0][0]
+    made = ok(box, session, "word_insert_markdown", doc="d1", at=f"after:{first}",
+              markdown=f"Field report.\n\n{MARKDOWN}\n\nAfter the table.")
+    table = [block for block in made.data["blocks"] if block.startswith("t:")][-1]
     if empty is not None:
         ok(box, session, "word_edit_table", doc="d1", table=table, action="set_cells",
            cells=[{"row": empty[0], "col": empty[1], "text": ""}])
@@ -81,16 +81,44 @@ def _opened(box, tracked: bool = True, empty: tuple[int, int] | None = None):
     return session, table
 
 
-def _document(session) -> Document:
-    return session.entry("d1").document
+def _document(session) -> bytes:
+    """The document's bytes as they are now."""
+    return word_docs.saved(session, "d1")
 
 
-def _shape(document: Document) -> list[list[tuple]]:
-    """Each row's cells: (grid column, span, vertical merge, text)."""
-    table = document.tables()[-1]
-    _part, entry = table._entry()
+def _opened_data(box, data: bytes):
+    session = box.session(clock=CLOCK)
+    session.open(data, "report.docx")
+    return session
+
+
+def _reviewed(box, data: bytes, action: str) -> bytes:
+    session = _opened_data(box, data)
+    ok(box, session, "word_changes", doc="d1", action=action, all=True)
+    return word_docs.saved(session, "d1")
+
+
+def _markdown(box, data: bytes) -> str:
+    return re.sub(r" ?<!-- [^>]*-->\n?| data-id=\"[^\"]*\"", "", word_docs.read(box, _opened_data(box, data), "d1"))
+
+
+def _comments(box, data: bytes) -> list[str]:
+    return [c["text"] for c in ok(box, _opened_data(box, data), "word_comments", doc="d1", action="list").data]
+
+
+def _settled_cleanly(box, data: bytes) -> None:
+    """No validation problem (a row off its grid among them) and no grid mismatch."""
+    session = _opened_data(box, data)
+    checked = ok(box, session, "check", doc="d1", include=["validate", "layout"]).data
+    assert checked["validate"]["problems"] == [], checked["validate"]
+    assert checked["layout"].get("table_grid_mismatch", []) == []
+
+
+def _shape(data: bytes) -> list[list[tuple]]:
+    """Each row's cells of the body's last table: (grid column, span, vertical merge, text)."""
+    table = [b for b in word_docs.body_blocks(word_docs.tree(data)) if b.tag == _W + "tbl"][-1]
     out = []
-    for row, _ in entry.rows:
+    for row in word_docs.rows_of(table):
         column, line = 0, []
         for cell in row.iter(_W + "tc"):
             properties = cell.find(_W + "tcPr")
@@ -123,23 +151,20 @@ def test_a_tracked_merge_keeps_the_table_on_its_grid_and_accepts_as_the_untracke
     session, table = _opened(box, empty=empty)
     original = _shape(_document(session))
     ok(box, session, "word_edit_table", doc="d1", table=table, action="merge", first=first, last=last)
-    document = _document(session)
-    data = document.to_bytes()
+    data = _document(session)
     # Pending: the rows reach exactly across the grid (no grid change recorded, no mismatch).
-    assert table_grid_mismatch(document) == []
-    assert all(grid_problems(t._entry()[1].element) == [] for t in document.tables())
-    assert b"tblGridChange" not in data and b"tcPrChange" not in data
+    _settled_cleanly(box, data)
+    xml = word_docs.part(data)
+    assert "tblGridChange" not in xml and "tcPrChange" not in xml
     # Accepted here = merged untracked; rejected = the original.
     plain_session, plain_table = _opened(box, tracked=False, empty=empty)
     ok(box, plain_session, "word_edit_table", doc="d1", table=plain_table, action="merge", first=first, last=last)
-    accepted = Document.open(data)
-    accepted.accept_all()
+    accepted = _reviewed(box, data, "accept")
     assert _shape(accepted) == _shape(_document(plain_session))
-    rejected = Document.open(data)
-    rejected.reject_all()
+    rejected = _reviewed(box, data, "reject")
     assert _shape(rejected) == original
     for settled in (accepted, rejected):
-        assert all(grid_problems(t._entry()[1].element) == [] for t in settled.tables())
+        _settled_cleanly(box, settled)
 
 
 def test_the_cell_merged_away_keeps_its_text_and_marks(box):
@@ -148,7 +173,7 @@ def test_the_cell_merged_away_keeps_its_text_and_marks(box):
     session, table = _opened(box)
     ok(box, session, "word_edit_table", doc="d1", table=table, action="merge",
        first={"row": 1, "col": 0}, last={"row": 1, "col": 1})
-    root = _document(session).package.tree(_document(session).package.document_part())
+    root = word_docs.tree(_document(session))
     row = list(root.iter(_W + "tr"))[1]
     lead, away = list(row.iter(_W + "tc"))[:2]
     assert lead.find(f"{_W}tcPr/{_W}gridSpan") is None
@@ -178,25 +203,21 @@ def test_a_comment_in_the_cell_merged_away_is_written_once_and_settles_as_word_d
     ok(box, session, "word_set_tracking", doc="d1", on=True, author=ME)
     ok(box, session, "word_edit_table", doc="d1", table=table, action="merge",
        first={"row": 1, "col": 0}, last={"row": 1, "col": 1})
-    data = _document(session).to_bytes()
-    root = _document(session).package.tree(_document(session).package.document_part())
+    data = _document(session)
+    root = word_docs.tree(data)
     for tag in ("commentReference", "commentRangeStart", "commentRangeEnd"):
         ids = [node.get(_W + "id") for node in root.iter(_W + tag)]
         assert len(ids) == len(set(ids)), (tag, ids)
-    accepted = Document.open(data)
-    accepted.accept_all()
-    assert [c.text for c in accepted.comments()] == ["Check the name."]
-    rejected = Document.open(data)
-    rejected.reject_all()
-    assert [c.text for c in rejected.comments()] == []
+    assert _comments(box, _reviewed(box, data, "accept")) == ["Check the name."]
+    assert _comments(box, _reviewed(box, data, "reject")) == []
 
 
 def test_a_merge_already_made_is_a_no_op(box):
     session, table = _opened(box)
-    before = _document(session).to_bytes()
+    before = _document(session)
     same = ok(box, session, "word_edit_table", doc="d1", table=table, action="merge",
               first={"row": 1, "col": 1}, last={"row": 1, "col": 1})
-    assert same.to_json()["changed"] == [] or _document(session).to_bytes() == before
+    assert same.to_json()["changed"] == [] or _document(session) == before
 
 
 # -- positions count the table as accepted --------------------------------------------------------
@@ -230,9 +251,8 @@ def test_set_cells_col_skips_a_column_whose_deletion_is_pending(box):
     assert _final_rows(box, session)[1] == "| Harbour | ready | awaits figures |"
     assert any("grid column 1 ('Lead')" in w and "col 1 is grid column 2" in w for w in written.warnings)
     # The deleted column is untouched: its deletion still pending, Reject All gives it back.
-    rejected = Document.open(_document(session).to_bytes())
-    rejected.reject_all()
-    assert "| Harbour | Ines | draft | awaits figures |" in rejected.to_markdown(ids=False)
+    rejected = _reviewed(box, _document(session), "reject")
+    assert "| Harbour | Ines | draft | awaits figures |" in _markdown(box, rejected)
 
 
 def test_a_position_before_the_deleted_column_says_nothing(box):
@@ -318,12 +338,8 @@ def test_a_column_inserted_beside_a_pending_deletion_lands_where_accept_all_has_
        cells=[{"row": 0, "col": new, "text": "New"}])
     assert inserted.data["columns"] == 4
     assert _final_rows(box, session)[0] == header
-    accepted = Document.open(_document(session).to_bytes())
-    accepted.accept_all()
-    assert header in accepted.to_markdown(ids=False)
-    rejected = Document.open(_document(session).to_bytes())
-    rejected.reject_all()
-    assert "| Area | Lead | Phase | Remark |" in rejected.to_markdown(ids=False)
+    assert header in _markdown(box, _reviewed(box, _document(session), "accept"))
+    assert "| Area | Lead | Phase | Remark |" in _markdown(box, _reviewed(box, _document(session), "reject"))
 
 
 def test_word_format_table_column_counts_the_columns_as_accepted(box):
@@ -331,7 +347,7 @@ def test_word_format_table_column_counts_the_columns_as_accepted(box):
     formatted = ok(box, session, "word_format_table", doc="d1", table=table, scope="column", column=1,
                    shading="FFEE99")
     assert any("col 1 is grid column 2" in w for w in formatted.warnings)
-    root = _document(session).package.tree(_document(session).package.document_part())
+    root = word_docs.tree(_document(session))
     shaded = [k for k, cell in enumerate(list(root.iter(_W + "tr"))[1].iter(_W + "tc"))
               if cell.find(f"{_W}tcPr/{_W}shd") is not None]
     assert shaded == [2]
@@ -339,13 +355,13 @@ def test_word_format_table_column_counts_the_columns_as_accepted(box):
 
 def test_untracked_a_merge_over_a_pending_deletion_is_refused_with_the_way_out(box):
     session, table = _deleted(box, tracked=False)
-    before = _document(session).to_bytes()
+    before = _document(session)
     refused = call(box, session, "word_edit_table", doc="d1", table=table, action="merge",
                    first={"row": 1, "col": 0}, last={"row": 1, "col": 1})
     error = refused.to_json()["error"]
     assert error["code"] == "refused"
     assert error["details"]["fix"] == {"tool": "word_changes", "calls": [{"action": "accept", "within": table}]}
-    assert _document(session).to_bytes() == before
+    assert _document(session) == before
     # Beside it, untracked, a merge works -- on the columns as accepted.
     merged = ok(box, session, "word_edit_table", doc="d1", table=table, action="merge",
                 first={"row": 1, "col": 1}, last={"row": 1, "col": 2})
@@ -379,25 +395,20 @@ def test_without_a_pending_change_positions_are_the_grid_columns(box):
 def test_words_accept_and_reject_of_a_tracked_merge_equal_ours(box, case, action):
     """Word's own Accept All / Reject All of the merge form give the table docx-agent's
     own Accept All / Reject All give: the same cells, spans, merges and text (widths Word re-saves its own way)."""
-    import sys
-    from pathlib import Path
 
     import oracle
 
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-    from e3_probe import review_script
+    from oracle import review_script
 
     first, last, empty = MERGES[case]
     session, table = _opened(box, empty=empty)
     ok(box, session, "word_edit_table", doc="d1", table=table, action="merge", first=first, last=last)
-    data = _document(session).to_bytes()
+    data = _document(session)
     try:
         with oracle.session() as word:
             outcome = word.run_script(review_script(action), data, name=f"r54m-{case}", tag=action, timeout=200)
             assert outcome, f"Word did not {action}: {outcome.outcome} {outcome.detail}"
-            theirs = Document.open(outcome.path.read_bytes())
+            theirs = outcome.path.read_bytes()
     except oracle.WordBusy as busy:
         pytest.skip(str(busy))
-    ours = Document.open(data)
-    ours.accept_all() if action == "accept" else ours.reject_all()
-    assert _shape(theirs) == _shape(ours)
+    assert _shape(theirs) == _shape(_reviewed(box, data, action))

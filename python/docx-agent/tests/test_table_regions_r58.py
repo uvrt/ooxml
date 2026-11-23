@@ -21,20 +21,20 @@ from __future__ import annotations
 import datetime as dt
 import json
 import re
-import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from lxml import etree
 from ooxml_edit.tools import Toolbox
 
-from docx_agent import Document, EditError
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tools"))
+import word_docs
 
-import table_regions_probe as probe  # noqa: E402
+ROOT = Path(__file__).resolve().parent.parent
+
+import table_regions_cases as probe  # noqa: E402
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _W = "{%s}" % W
@@ -67,28 +67,43 @@ def refused(box, session, tool: str, /, **arguments):
     return result.error
 
 
-def with_table(rows: int = 4, columns: int = 3) -> tuple[Document, str]:
-    document = Document.new()
-    table = document.insert_table(rows, columns, after=document.paragraphs()[0].id).id
-    return document, table
+def with_table(box, rows: int = 4, columns: int = 3):
+    """A blank document with a table of ``rows`` x ``columns`` empty cells: the session and
+    the table."""
+    session = box.session(clock=CLOCK)
+    session.open(word_docs.blank(), "plain.docx")
+    first = word_docs.paragraph_ids(box, session, "d1")[0]
+    markdown = "\n".join(["|" + " |" * columns, "|" + "---|" * columns] + ["|" + " |" * columns] * (rows - 1))
+    made = ok(box, session, "word_insert_markdown", doc="d1", at=f"after:{first}", markdown=markdown)
+    return session, next(b for b in made.data["blocks"] if b.startswith("t:"))
 
 
-def style_node(document: Document, name: str):
-    style = document.styles.get(name, "table")
-    return document.styles._node(style.id)
+def _styles(session):
+    return word_docs.tree(word_docs.saved(session, "d1"), "word/styles.xml")
+
+
+def style_node(session, name: str):
+    return next(node for node in _styles(session).iter(_W + "style")
+                if node.get(_W + "type") == "table" and node.find(_W + "name").get(_W + "val") == name)
+
+
+def default_table_style(session) -> str:
+    return next(node.get(_W + "styleId") for node in _styles(session).iter(_W + "style")
+                if node.get(_W + "type") == "table" and node.get(_W + "default") == "1")
 
 
 # -- the style: written as Word writes it, read back (rules 1, 3, 4, 6) --------------------------
 
 
-def test_a_table_style_is_added_with_its_regions_as_word_writes_them():
-    document, _ = with_table()
-    result = document.styles.add("Ledger", "table", size=9, shading="FBFBFB", regions=LEDGER)
-    node = style_node(document, "Ledger")
+def test_a_table_style_is_added_with_its_regions_as_word_writes_them(box):
+    session, _ = with_table(box)
+    result = ok(box, session, "word_styles", doc="d1", action="add", name="Ledger", kind="table", size=9,
+                shading="FBFBFB", regions=LEDGER)
+    node = style_node(session, "Ledger")
     # As Word writes a new table style (measured): custom, based on Normal Table, the whole
     # table's shading in its own w:tcPr, a band size in its w:tblPr.
     assert node.get(_W + "customStyle") == "1"
-    assert node.find(_W + "basedOn").get(_W + "val") == document.styles.default("table").id
+    assert node.find(_W + "basedOn").get(_W + "val") == default_table_style(session)
     assert node.find(f"{_W}tcPr/{_W}shd").get(_W + "fill") == "FBFBFB"
     assert node.find(f"{_W}tblPr/{_W}tblStyleRowBandSize").get(_W + "val") == "1"
     assert any("band_size 1" in w for w in result.warnings)
@@ -102,11 +117,9 @@ def test_a_table_style_is_added_with_its_regions_as_word_writes_them():
 
 
 def test_word_styles_describes_regions_and_the_looks_they_need(box):
-    document, table = with_table()
-    document.set_table(table, look={"first_row": True, "first_column": False, "banded_rows": True,
-                                    "last_row": False, "last_column": False, "banded_columns": False})
-    session = box.session()
-    d = session.open(document.to_bytes(), "ledger.docx")
+    session, table = with_table(box)
+    d = "d1"
+    ok(box, session, "word_format_table", doc=d, table=table, scope="table", look=["header_row", "banded_rows"])
     added = ok(box, session, "word_styles", doc=d, action="add", name="Ledger", kind="table", regions=LEDGER)
     assert added.data["regions"]["header_row"] == {"color": "FFFFFF", "bold": True, "shading": "1F3864",
                                                    "borders": {"bottom": "single 1.5 pt"}}
@@ -125,10 +138,9 @@ def test_word_styles_describes_regions_and_the_looks_they_need(box):
 
 
 def test_modify_sets_what_is_given_keeps_the_rest_and_says_a_no_op(box):
-    document, _ = with_table()
-    document.styles.add("Ledger", "table", regions=LEDGER)
-    session = box.session()
-    d = session.open(document.to_bytes(), "ledger.docx")
+    session, _ = with_table(box)
+    d = "d1"
+    ok(box, session, "word_styles", doc=d, action="add", name="Ledger", kind="table", regions=LEDGER)
     result = ok(box, session, "word_styles", doc=d, action="modify", name="Ledger",
                 regions=[{"region": "header_row", "shading": "C00000"}, {"region": "first_column", "clear": True},
                          {"region": "last_column", "italic": True}])
@@ -148,29 +160,21 @@ def test_modify_sets_what_is_given_keeps_the_rest_and_says_a_no_op(box):
 
 
 def test_regions_say_a_table_style_and_names_are_read_as_meant(box):
-    document, _ = with_table()
-    session = box.session()
-    d = session.open(document.to_bytes(), "plain.docx")
+    session, _ = with_table(box)
+    d = "d1"
     # Rule 1: regions given with no kind: a table style, said.
     result = ok(box, session, "word_styles", doc=d, action="add", name="Grid Look",
                 regions=[{"region": "banded_columns", "shading": "EEEEEE", "band_size": 2}])
     assert result.warnings[0] == "regions given: added as a table style (kind table)"
     assert result.data["regions"]["banded_columns"] == {"shading": "EEEEEE", "band_size": 2}
-    # The API reads other names for a region (Word's list's, the XML's, look's own), said.
-    document.styles.add("Other", "table", regions=[{"region": "last_row", "bold": True},
-                                                   {"region": "odd banded rows", "italic": True},
-                                                   {"region": "nwCell", "color": "FF0000"}])
-    read = document.styles._node(document.styles.get("Other").id)
-    assert {p.get(_W + "type") for p in read.findall(_W + "tblStylePr")} == {"lastRow", "band1Horz", "nwCell"}
     # The nulls a strict decoder fills in are nothing (rule 1).
     ok(box, session, "word_styles", doc=d, action="modify", name="Grid Look",
        regions=[{"region": "header_row", "shading": None, "borders": None, "band_size": None, "bold": True}])
 
 
 def test_refusals_carry_the_way_out(box):
-    document, _ = with_table()
-    session = box.session()
-    d = session.open(document.to_bytes(), "plain.docx")
+    session, _ = with_table(box)
+    d = "d1"
     error = refused(box, session, "word_styles", doc=d, action="add", name="Mid", kind="table",
                     regions=[{"region": "third_column", "shading": "EEEEEE"}])
     assert error.field == "regions[0].region" and "banded_columns" in error.valid_options
@@ -180,20 +184,20 @@ def test_refusals_carry_the_way_out(box):
     error = refused(box, session, "word_styles", doc=d, action="describe", name="Normal",
                     regions=[{"region": "header_row", "bold": True}])
     assert error.field == "regions"
-    with pytest.raises(EditError, match="no table style region"):
-        document.styles.add("Mid", "table", regions=[{"region": "middle column", "bold": True}])
-    with pytest.raises(EditError, match="border color"):
-        document.styles.add("Mid", "table", regions=[{"region": "header_row",
-                                                      "borders": {"style": "single", "color": "accent1"}}])
+    refused(box, session, "word_styles", doc=d, action="add", name="Mid", kind="table",
+            regions=[{"region": "middle column", "bold": True}])
+    error = refused(box, session, "word_styles", doc=d, action="add", name="Mid", kind="table",
+                    regions=[{"region": "header_row", "borders": {"style": "single", "color": "accent1"}}])
+    assert "color" in error.message
 
 
-def test_band_size_is_the_banded_regions_and_a_stated_size_is_kept():
-    document, _ = with_table()
-    result = document.styles.add("Bands", "table", regions=[{"region": "header_row", "band_size": 2, "bold": True},
-                                                            {"region": "even_banded_rows", "shading": "EEEEEE",
-                                                             "band_size": 3}])
+def test_band_size_is_the_banded_regions_and_a_stated_size_is_kept(box):
+    session, _ = with_table(box)
+    result = ok(box, session, "word_styles", doc="d1", action="add", name="Bands", kind="table",
+                regions=[{"region": "header_row", "band_size": 2, "bold": True},
+                         {"region": "even_banded_rows", "shading": "EEEEEE", "band_size": 3}])
     assert any("band_size is the banded regions'" in w for w in result.warnings)
-    node = style_node(document, "Bands")
+    node = style_node(session, "Bands")
     assert node.find(f"{_W}tblPr/{_W}tblStyleRowBandSize").get(_W + "val") == "3"
     assert node.find(f"{_W}tblPr/{_W}tblStyleColBandSize") is None
 
@@ -293,15 +297,16 @@ def test_docx2svg_draws_region_borders_as_word_does(drawn, case):
     assert _edges(lines[case]) == _edges(OBSERVED[f"{case}_lines"])
 
 
-def test_the_effective_formatting_is_the_regions_as_word_draws_them():
-    """``word_inspect``'s effective formatting is docx2svg's cascade (``Run.effective``): the
-    column band over the row band (C), bands of two (N), the corner over the header row (K)."""
-    document = Document.open(probe.document())
-    tables = document.tables()
+def test_the_effective_formatting_is_the_regions_as_word_draws_them(box):
+    """``word_inspect``'s effective formatting is docx2svg's cascade: the column band over the
+    row band (C), bands of two (N), the corner over the header row (K)."""
+    session = box.session()
+    session.open(probe.document(), "regions.docx")
+    tables = [b for b, _ in word_docs.blocks(box, session, "d1") if b.startswith("t")]
 
-    def run(case: str, r: int, c: int):
+    def run(case: str, r: int, c: int) -> SimpleNamespace:
         k = [x[0] for x in probe.CASES].index(case)
-        return tables[k].cell(r, c).paragraphs[0].runs[0].effective
+        return _effective(box, session, f"{tables[k]}/c{r},{c}")
 
     assert run("C", 1, 1).color == probe.COLOURS["band1Vert"] and run("C", 1, 1).size == probe.SIZES["band1Vert"] / 2
     assert run("C", 2, 1).color == probe.COLOURS["band1Vert"]
@@ -310,44 +315,56 @@ def test_the_effective_formatting_is_the_regions_as_word_draws_them():
     assert run("W", 0, 0).color == probe.COLOURS["own"] and run("V", 0, 0).color in ("auto", "000000")
 
 
+def _effective(box, session, cell: str, doc: str = "d1") -> SimpleNamespace:
+    """A cell's first run's text and effective font, size, colour and bold, as word_inspect
+    says them."""
+    block = ok(box, session, "word_inspect", doc=doc, target=cell).data["blocks"][0]
+    effective, run = block["effective"], (block.get("runs") or [{}])[0]
+    return SimpleNamespace(text=run.get("t", ""), font=run.get("font", effective["font"]),
+                           size=run.get("sz", effective["sz"]), color=run.get("color", effective["color"]),
+                           bold=run.get("b", effective["b"]))
+
+
 # -- a new table in another's frame (rules 2, 5) ---------------------------------------------------
 
 
-def frame_sample() -> tuple[Document, str]:
+def frame_sample(box):
     """A made-up four-column table: a header row, two body rows that alternate a shaded third
-    column, a total row; Arial 8 coloured text, the third column centred."""
-    document = Document.new()
-    table = document.insert_table(4, 4, after=document.paragraphs()[0].id, style="Table Grid").id
-    document.set_table(table, look={"first_row": True, "last_row": True, "first_column": False,
-                                    "last_column": False, "banded_rows": False, "banded_columns": False})
+    column, a total row; Arial 8 coloured text, the third column centred: the session and the
+    table."""
+    session = box.session(clock=CLOCK)
+    session.open(word_docs.blank(), "frame.docx")
     texts = [["Item", "Count", "Mid", "Note"], ["a", "1", "x", "n"], ["b", "2", "y", "m"], ["Sum", "3", "", ""]]
-    for r, row in enumerate(texts):
-        for c, text in enumerate(row):
-            if text:
-                document.table(table).cell(r, c).paragraphs[0].set_text(text)
+    markdown = "\n".join(["| " + " | ".join(texts[0]) + " |", "|---|---|---|---|"]
+                         + ["| " + " | ".join(row) + " |" for row in texts[1:]])
+    first = word_docs.paragraph_ids(box, session, "d1")[0]
+    made = ok(box, session, "word_insert_markdown", doc="d1", at=f"after:{first}", markdown=markdown)
+    table = next(b for b in made.data["blocks"] if b.startswith("t:"))
+
+    def fmt(**arguments):
+        ok(box, session, "word_format_table", doc="d1", table=table, **arguments)
+
+    fmt(scope="table", look=["header_row", "total_row"], header_rows=1)
     for r, fill in ((0, "1F3864"), (1, "DEEAF6"), (2, "BDD7EE"), (3, "1F3864")):
-        document.format_cell(table, r, 2, shading=fill, vertical_alignment="center")
+        fmt(scope="cell", row=r, column=2, shading=fill, vertical_alignment="center")
     for r in range(4):
-        for c in range(4):
-            paragraph = document.table(table).cell(r, c).paragraphs[0]
-            for run in paragraph.runs:
-                run.format(font="Arial", size=8, color="2F5496", bold=(r == 0))
-    document.set_row(table, 0, header=True)
-    return Document.open(document.to_bytes()), table
+        cells = [f"{table}/c{r},{c}" for c in range(4) if texts[r][c]]
+        ok(box, session, "word_format", doc="d1", targets=cells, font="Arial", size=8, color="2F5496", bold=(r == 0))
+    return session, table
 
 
-def _rows(document: Document, table: str):
-    return document._resolve(table)[1].element.findall(_W + "tr")
+def _rows(session, table: str):
+    return word_docs.element(session, "d1", table).findall(_W + "tr")
 
 
-def test_a_markdown_table_takes_the_frame_rows_cells_and_text_formatting():
-    document, sample = frame_sample()
+def test_a_markdown_table_takes_the_frame_rows_cells_and_text_formatting(box):
+    session, sample = frame_sample(box)
     markdown = ("| Name | Qty | **Key** | Remark |\n|---|---|---|---|\n" + "".join(
         f"| r{k} | {k} | k{k} | |\n" for k in range(5)) + "| Total | 10 | | |\n")
-    result = document.insert_markdown(markdown, at="end", table_like=sample)
-    new = next(b for b in result.blocks if b.startswith("t:"))
-    rows = _rows(document, new)
-    old = _rows(document, sample)
+    result = ok(box, session, "word_insert_markdown", doc="d1", at="end", markdown=markdown, like=sample)
+    new = next(b for b in result.data["blocks"] if b.startswith("t:"))
+    rows = _rows(session, new)
+    old = _rows(session, sample)
     assert len(rows) == 7
     # Header first, body rows repeated in their order (two alternating looks), total last.
     fills = [row.findall(_W + "tc")[2].find(f"{_W}tcPr/{_W}shd").get(_W + "fill") for row in rows]
@@ -357,26 +374,25 @@ def test_a_markdown_table_takes_the_frame_rows_cells_and_text_formatting():
         etree.tostring(old[1].find(_W + "tc").find(_W + "tcPr"))
     # The table's own properties and grid are the sample's.
     for tag in ("tblPr", "tblGrid"):
-        assert etree.tostring(document._resolve(new)[1].element.find(_W + tag)) == \
-            etree.tostring(document._resolve(sample)[1].element.find(_W + tag))
+        assert etree.tostring(word_docs.element(session, "d1", new).find(_W + tag)) == \
+            etree.tostring(word_docs.element(session, "d1", sample).find(_W + tag))
     # The text takes each cell's text formatting, the Markdown's emphasis over it.
-    table = document.table(new)
-    run = table.cell(1, 0).paragraphs[0].runs[0]
-    assert (run.text, run.effective.font, run.effective.size, run.effective.color) == ("r0", "Arial", 8.0, "2F5496")
-    key = table.cell(0, 2).paragraphs[0].runs[0]
-    assert key.text == "Key" and key.effective.bold and key.effective.font == "Arial"
-    assert table.cell(1, 3).paragraphs[0].text == ""
+    run = _effective(box, session, f"{new}/c1,0")
+    assert (run.text, run.font, run.size, run.color) == ("r0", "Arial", 8.0, "2F5496")
+    key = _effective(box, session, f"{new}/c0,2")
+    assert key.text == "Key" and key.bold and key.font == "Arial"
+    texts = word_docs.table_texts(session, "d1", new)
+    assert texts[1][3] == ""
     # No text from the sample.
-    assert "Sum" not in "".join(p.text for row in range(7) for c in range(4)
-                                for p in table.cell(row, c).paragraphs)
+    assert "Sum" not in "".join(text for row in texts for text in row)
 
 
-def test_a_frame_with_no_text_is_an_empty_markdown_table():
-    document, sample = frame_sample()
-    result = document.insert_markdown("| | | | |\n|---|---|---|---|\n| | | | |\n| | | | |\n| | | | |\n",
-                                      at="end", table_like=sample)
-    new = next(b for b in result.blocks if b.startswith("t:"))
-    rows = _rows(document, new)
+def test_a_frame_with_no_text_is_an_empty_markdown_table(box):
+    session, sample = frame_sample(box)
+    result = ok(box, session, "word_insert_markdown", doc="d1", at="end", like=sample,
+                markdown="| | | | |\n|---|---|---|---|\n| | | | |\n| | | | |\n| | | | |\n")
+    new = next(b for b in result.data["blocks"] if b.startswith("t:"))
+    rows = _rows(session, new)
     assert len(rows) == 4 and rows[0].find(f"{_W}trPr/{_W}tblHeader") is not None
     assert all(not "".join(t.text or "" for t in row.iter(_W + "t")) for row in rows)
     # Each empty cell's mark is formatted as the sample's first run: text typed later takes it.
@@ -385,14 +401,13 @@ def test_a_frame_with_no_text_is_an_empty_markdown_table():
 
 
 def test_a_frame_copy_is_tracked_as_an_insertion_and_undone_in_one_step(box):
-    document, sample = frame_sample()
-    session = box.session(clock=CLOCK)
-    d = session.open(document.to_bytes(), "frame.docx")
+    session, sample = frame_sample(box)
+    d = "d1"
     ok(box, session, "word_set_tracking", doc=d, on=True, author="Editor A")
     result = ok(box, session, "word_insert_markdown", doc=d, at="end", like=sample,
                 markdown="| A | B | C | D |\n|---|---|---|---|\n| 1 | 2 | 3 | 4 |\n")
     new = next(b for b in result.data["blocks"] if b.startswith("t:"))
-    table = session.entry(d).document._resolve(new)[1].element
+    table = word_docs.element(session, d, new)
     assert all(row.find(f"{_W}trPr/{_W}ins") is not None for row in table.findall(_W + "tr"))
     assert all(p.find(f"{_W}pPr/{_W}rPr/{_W}ins") is not None for p in table.iter(_W + "p"))
     assert all(r.getparent().tag == _W + "ins" for r in table.iter(_W + "r"))
@@ -403,9 +418,8 @@ def test_a_frame_copy_is_tracked_as_an_insertion_and_undone_in_one_step(box):
 
 
 def test_frames_refuse_what_they_cannot_copy_with_the_way_out(box):
-    document, sample = frame_sample()
-    session = box.session()
-    d = session.open(document.to_bytes(), "frame.docx")
+    session, sample = frame_sample(box)
+    d = "d1"
     error = refused(box, session, "word_insert_markdown", doc=d, at="end", like=sample,
                     markdown="| A | B |\n|---|---|\n| 1 | 2 |\n")
     assert error.field == "like" and '"columns": 4' in error.message and "| | | | |" in error.message
@@ -416,24 +430,29 @@ def test_frames_refuse_what_they_cannot_copy_with_the_way_out(box):
     assert "one table" in error.message
     # A sample merged down in its body rows: refused until round 59 (R136), now its merges
     # follow the Markdown's empty cells (tests/test_merged_rows_r59.py).
-    merged, table = frame_sample()
-    merged.merge_cells(table, (1, 0), (2, 0))
-    merged.insert_markdown("| A | B | C | D |\n|---|---|---|---|\n| 1 | 2 | 3 | 4 |\n", table_like=table)
+    merged, table = frame_sample(box)
+    ok(box, merged, "word_edit_table", doc="d1", table=table, action="merge", first={"row": 1, "col": 0},
+       last={"row": 2, "col": 0})
+    ok(box, merged, "word_insert_markdown", doc="d1", at="end", like=table,
+       markdown="| A | B | C | D |\n|---|---|---|---|\n| 1 | 2 | 3 | 4 |\n")
     # Merged across: the text goes in the merged cell's first column, the others empty.
-    across, table = frame_sample()
-    across.merge_cells(table, (0, 0), (0, 1))
-    with pytest.raises(EditError, match="spans columns 0-1"):
-        across.insert_markdown("| A | B | C | D |\n|---|---|---|---|\n| 1 | 2 | 3 | 4 |\n", table_like=table)
-    result = across.insert_markdown("| A | | C | D |\n|---|---|---|---|\n| 1 | 2 | 3 | 4 |\n", table_like=table)
-    new = next(b for b in result.blocks if b.startswith("t:"))
+    across, table = frame_sample(box)
+    ok(box, across, "word_edit_table", doc="d1", table=table, action="merge", first={"row": 0, "col": 0},
+       last={"row": 0, "col": 1})
+    error = refused(box, across, "word_insert_markdown", doc="d1", at="end", like=table,
+                    markdown="| A | B | C | D |\n|---|---|---|---|\n| 1 | 2 | 3 | 4 |\n")
+    assert "spans columns 0-1" in error.message
+    result = ok(box, across, "word_insert_markdown", doc="d1", at="end", like=table,
+                markdown="| A | | C | D |\n|---|---|---|---|\n| 1 | 2 | 3 | 4 |\n")
+    new = next(b for b in result.data["blocks"] if b.startswith("t:"))
     first = _rows(across, new)[0].findall(_W + "tc")
     assert len(first) == 3 and first[0].find(f"{_W}tcPr/{_W}gridSpan").get(_W + "val") == "2"
 
 
-def test_like_takes_a_table_and_paragraphs_together():
-    document, sample = frame_sample()
-    item = document.insert_paragraph("An item", after=document.paragraphs()[0].id).id
-    document.add_to_list(item, "bullet")
-    result = document.insert_markdown("- one\n\n| A | B | C | D |\n|---|---|---|---|\n| 1 | 2 | 3 | 4 |\n",
-                                      at="end", like={1: item}, table_like=sample)
-    assert sum(b.startswith("t:") for b in result.blocks) == 1
+def test_like_takes_a_table_and_paragraphs_together(box):
+    session, sample = frame_sample(box)
+    made = ok(box, session, "word_insert_markdown", doc="d1", at="end", markdown="- An item")
+    item = made.data["blocks"][0]
+    result = ok(box, session, "word_insert_markdown", doc="d1", at="end", like=[item, sample],
+                markdown="- one\n\n| A | B | C | D |\n|---|---|---|---|\n| 1 | 2 | 3 | 4 |\n")
+    assert sum(b.startswith("t:") for b in result.data["blocks"]) == 1

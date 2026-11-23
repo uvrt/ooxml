@@ -383,7 +383,7 @@ def run_report(args) -> int:
     base = out.with_name(out.stem + "-base.docx")
     for command in ([str(REPORT / "make_report.py"), str(base), str(args.base)],
                     [str(REPORT / "grow_report.py"), str(base), str(out), str(args.chapters)]):
-        subprocess.run([sys.executable, *command], check=True, env={**os.environ, "DOCX_AGENT_RUST": "0"})
+        subprocess.run([sys.executable, *command], check=True)
     return 0
 
 

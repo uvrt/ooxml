@@ -58,7 +58,7 @@ pub(crate) enum DataAction {
         number_format: Option<String>,
         /// The labels' size (Word's look) and the document's language.
         size: Option<u32>,
-        lang: Option<String>,
+        lang: String,
     },
     /// The bar plots' gap width.
     GapWidth { percent: i64 },
@@ -68,7 +68,7 @@ pub(crate) enum DataAction {
         axis: Option<&'static str>,
         text: Option<String>,
         sizes: (u32, u32),
-        lang: Option<String>,
+        lang: String,
     },
 }
 
@@ -122,7 +122,7 @@ impl GraphicEdit for ChartDataEdit {
                 let look = LabelLook {
                     size: *size,
                     number_format: number_format.as_deref(),
-                    lang: lang.as_deref(),
+                    lang: Some(lang.as_str()),
                 };
                 edit.data_labels(&self.address, *show, *series, &look)?;
             }
@@ -136,7 +136,7 @@ impl GraphicEdit for ChartDataEdit {
                 let look = TitleLook {
                     title: sizes.0,
                     axis_title: sizes.1,
-                    lang: lang.as_deref(),
+                    lang: Some(lang.as_str()),
                 };
                 edit.title(*axis, text.as_deref(), &look)?;
             }
@@ -251,7 +251,15 @@ impl Edit<'_> {
     }
 
     fn rename_category(&mut self, category: usize, text: &str) -> Result<(), EditError> {
-        let label = Point::Text(text.to_owned());
+        let given = self.category_label(text);
+        let label = match &given {
+            PointValue::Number(n) if n.fract() == 0.0 && n.abs() < 1e15 => {
+                #[allow(clippy::cast_possible_truncation)] // whole and below 10^15
+                Point::Int(*n as i64)
+            }
+            PointValue::Number(n) => Point::Float(*n),
+            _ => Point::Text(text.to_owned()),
+        };
         let mut with_categories = Vec::new();
         for series in 0..self.chart.series_count() {
             if let Some(source) = self.chart.source(series, Which::Categories) {
@@ -268,7 +276,6 @@ impl Edit<'_> {
             return Ok(());
         }
         self.ran = true;
-        let given = PointValue::Text(text.to_owned());
         let mut written: Vec<String> = Vec::new();
         for (series, source) in with_categories {
             if self.set(series, Which::Categories, category, &given)? {
@@ -286,6 +293,18 @@ impl Edit<'_> {
 impl Edit<'_> {
     /// `add_category` (last): a value per series, the cells beside the data checked free,
     /// the caches and the workbook's lines grown.
+    /// A category's label as given: a number where the chart's categories are numeric and
+    /// the text reads as one (the tool's `text` is a string, so a model's number label
+    /// arrives as text; docx-agent took the number), else the text.
+    fn category_label(&self, text: &str) -> PointValue {
+        let numeric = (0..self.chart.series_count())
+            .any(|s| self.chart.source(s, Which::Categories).is_some_and(|r| r.numeric()));
+        match text.trim().parse::<f64>() {
+            Ok(number) if numeric && number.is_finite() => PointValue::Number(number),
+            _ => PointValue::Text(text.to_owned()),
+        }
+    }
+
     fn add_category(&mut self, address: &str, text: &str, values: Option<&[Option<f64>]>) -> Result<(), EditError> {
         let count = self.chart.point_count();
         let series = self.chart.series_count();
@@ -301,7 +320,7 @@ impl Edit<'_> {
             let free = block.start + u32::try_from(count).unwrap_or(u32::MAX);
             block.check_free(address, &mut self.keeper, &sources, &[free], None)?;
         }
-        let label = PointValue::Text(text.to_owned());
+        let label = self.category_label(text);
         self.chart
             .insert_category(count, Some(&label), &per_series)
             .map_err(data_refusal)?;
@@ -448,9 +467,8 @@ impl Edit<'_> {
         };
         let edit = done
             .map_err(|_| {
-                not_supported(
-                    "a new title in a document whose defaults name no language (the session's locale decides)",
-                )
+                // (unreachable: every title is given its language, `chart_language`)
+                not_supported("a new title without a language")
             })?
             .map_err(data_refusal)?;
         if edit.changed {

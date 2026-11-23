@@ -25,9 +25,10 @@ import zipfile
 
 import pytest
 
-from docx_agent import Document
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from ooxml_edit.tools import Toolbox
+
+import word_docs
 
 _BORDERS = ('<w:tblBorders>' + "".join(f'<w:{s} w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
             for s in ("top", "left", "bottom", "right", "insideH", "insideV")) + '</w:tblBorders>')
@@ -86,7 +87,7 @@ def _body() -> str:
 
 
 def document_bytes(*, mode: int = 15, borders: bool = True) -> bytes:
-    data = Document.new().to_bytes()
+    data = word_docs.blank()
     source = zipfile.ZipFile(io.BytesIO(data))
     out = io.BytesIO()
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -147,21 +148,30 @@ OPTIONS = {"mode 15": {}, "no borders": {"borders": False}, "mode 14": {"mode": 
 WORD_NESTED = f'<w:tblStyle w:val="ProbeGrid"/>{_PCT}</w:tblPr>{_grid(1387, 1387)}'
 
 
+def _table_ids(data: bytes) -> tuple[list[str], list[str]]:
+    """The top-level tables' ids and the nested ones', in document order."""
+    w = f"{{{word_docs.W}}}"
+    root = word_docs.tree(data)
+    top = [t for t in word_docs.body_blocks(root) if t.tag == w + "tbl"]
+
+    def named(table) -> str:
+        return f"t:{word_docs.rows_of(table)[0].get(word_docs.W14_PARA)}"
+
+    nested = [t for t in root.iter(w + "tbl") if all(t is not other for other in top)]
+    return [named(t) for t in top], [named(t) for t in nested]
+
+
 def fitted(data: bytes, which: list[int] | None = None, **extra) -> tuple[bytes, list]:
     """Tables ``which`` (indexes among the top-level ones; ``None``: the nested one) fitted
     through the tool; the results."""
     with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as box:
         session = box.session()
         session.open(data, "tables.docx")
-        found = session.entry("d1").document
-        top = [b["id"] for b in found.state()["blocks"] if b["id"].startswith("t:")]
-        targets = [top[k] for k in which] if which is not None else [
-            t.id for t in found.tables() if t.id not in top]
+        top, nested = _table_ids(data)
+        targets = [top[k] for k in which] if which is not None else nested
         results = [box.dispatch(session, "word_format_table", {"doc": "d1", "table": t, "scope": "table",
                                                                "width_of": "window", **extra}) for t in targets]
-        # the entry's document now: a call the Rust core serves commits a new version, so
-        # the document read before the calls is not the edited one
-        return session.entry("d1").document.to_bytes(), results
+        return word_docs.saved(session, "d1"), results
 
 
 @pytest.mark.parametrize("case", sorted(WORD))
@@ -225,15 +235,18 @@ def test_a_width_with_the_window_is_refused_naming_the_way():
 
 
 def test_fitting_tracked_is_a_property_change_word_can_reject():
-    document = Document.open(document_bytes())
-    table = [b["id"] for b in document.state()["blocks"] if b["id"].startswith("t:")][2]
-    before = tables(document.to_bytes())
-    with document.tracking("Reviewer"):
-        document.fit_table_to_window(table)
-    xml = zipfile.ZipFile(io.BytesIO(document.to_bytes())).read("word/document.xml").decode()
-    assert "<w:tblPrChange" in xml and "<w:tcPrChange" in xml and "<w:tblGridChange" in xml
-    document.reject_all()
-    assert tables(document.to_bytes()) == before
+    data = document_bytes()
+    table = _table_ids(data)[0][2]
+    before = tables(data)
+    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as box:
+        session = box.session()
+        session.open(data, "tables.docx")
+        word_docs.call(box, session, "word_set_tracking", doc="d1", on=True, author="Reviewer")
+        word_docs.call(box, session, "word_format_table", doc="d1", table=table, scope="table", width_of="window")
+        xml = word_docs.part(word_docs.saved(session, "d1"))
+        assert "<w:tblPrChange" in xml and "<w:tcPrChange" in xml and "<w:tblGridChange" in xml
+        word_docs.call(box, session, "word_changes", doc="d1", action="reject", all=True)
+        assert tables(word_docs.saved(session, "d1")) == before
 
 
 # -- Word itself -----------------------------------------------------------------------------

@@ -2,23 +2,21 @@
 header removed or linked where the section has none of its own, unlinked where it has one,
 and a drawing floated or put in the line where it is so -- each succeeds with no change, a
 warning saying why.  (A table's keeps off: ``test_table_keeps.py``; the drawings' library
-half: ``test_e5_units.py``.)  Made-up documents, Document.new()'s package."""
+half was the library's.)  Made-up documents in a new blank package."""
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 
 import pytest
 from ooxml_edit.tools import Toolbox
 from test_tools_layout_facts import docx, ok, p
+from layout_reads import ids_of
 
-from docx_agent import Document
+import word_docs
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 
-import e5_probe  # noqa: E402
+from probe_package import picture_document  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -32,29 +30,19 @@ def session(box):
     return box.session()
 
 
-def test_remove_from_list_of_a_paragraph_in_no_list_changes_nothing():
-    document = Document.open(docx(p("Plain") + p("Item")))
-    plain, item = [x.id for x in document.paragraphs()]
-    before = document.to_bytes()
-    result = document.remove_from_list(plain)
-    assert not result.changed and result.warnings == [f"{plain} was not in a list"]
-    assert document.to_bytes() == before
-
-
 def test_word_lists_remove_over_a_span_takes_out_the_items_and_names_the_rest(box, session):
     """A span of items and plain paragraphs was refused at the first plain one; now the
     items leave their list and one warning names the paragraphs that were in none."""
     d = session.open(docx(p("Lead") + p("One") + p("Two") + p("Tail")), "lists.docx")
-    document = session.entry(d).document
-    lead, one, two, tail = [x.id for x in document.paragraphs()]
+    lead, one, two, tail = ids_of(session, d)
     ok(box, session, "word_lists", doc=d, targets=[f"{one}..{two}"], action="add", kind="number")
-    one, two = [x.id for x in document.paragraphs()[1:3]]
+    one, two = ids_of(session, d)[1:3]
     result = ok(box, session, "word_lists", doc=d, targets=[f"{lead}..{tail}"], action="remove")
-    assert all(document.list_of(x.id) is None for x in document.paragraphs())
+    assert word_docs.tree(word_docs.saved(session, d)).find(".//{*}numPr") is None
     assert result.warnings == [f"2 paragraph(s) were not in a list, left as they were: {lead}, {tail}"]
-    before = document.to_bytes()
+    before = word_docs.saved(session, d)
     again = ok(box, session, "word_lists", doc=d, targets=[lead], action="remove")
-    assert again.changed == [] and again.touched == [] and document.to_bytes() == before
+    assert again.changed == [] and again.touched == [] and word_docs.saved(session, d) == before
     assert again.warnings == [f"1 paragraph(s) were not in a list, left as they were: {lead}"]
 
 
@@ -84,9 +72,8 @@ def test_unlink_a_header_of_its_own_already(box, session):
 
 
 def test_word_drawings_inline_and_float_what_is_so_already(box, session):
-    d = session.open(e5_probe.drawings_document(), "drawings.docx")
-    document = session.entry(d).document
-    picture = document.pictures()[0].id
+    d = session.open(picture_document(), "drawings.docx")
+    picture = "d:1"
     result = ok(box, session, "word_drawings", doc=d, action="inline", target=picture)
     assert result.summary == f"No change to {picture}" and result.changed == [] and result.touched == []
     assert result.warnings == [f"{picture} is inline already"]
@@ -94,21 +81,20 @@ def test_word_drawings_inline_and_float_what_is_so_already(box, session):
     result = ok(box, session, "word_drawings", doc=d, action="float", target=picture)
     assert result.summary == f"No change to {picture}" and result.warnings == [f"{picture} floats already"]
     result = ok(box, session, "word_drawings", doc=d, action="float", target=picture, wrap="square")
-    document = session.entry(d).document  # (the view as the served call left it)
-    assert result.changed == [picture] and document.drawing(picture).wrapping["wrap"] == "square"
+    assert result.changed == [picture]
+    assert word_docs.tree(word_docs.saved(session, d)).find(".//{*}anchor/{*}wrapSquare") is not None
 
 
 def test_a_bookmark_already_there_changes_nothing(box, session):
     """Round 27: the same name over exactly the same text is as asked; elsewhere refused."""
     d = session.open(docx(p("Alpha beta gamma") + p("Delta")), "marks.docx")
-    document = session.entry(d).document
-    first, second = [x.id for x in document.paragraphs()]
+    first, second = ids_of(session, d)
     ok(box, session, "word_links", doc=d, action="add_bookmark", target=f"{first}@6:10", bookmark="Mark")
-    first = document.paragraphs()[0].id
-    before = document.to_bytes()
+    first = ids_of(session, d)[0]
+    before = word_docs.saved(session, d)
     result = ok(box, session, "word_links", doc=d, action="add_bookmark", target=f"{first}@6:10", bookmark="mark")
     assert result.warnings == ["bm:Mark marks this text already"] and result.touched == []
-    assert result.summary == "No change: bm:Mark marks this text already" and document.to_bytes() == before
+    assert result.summary == "No change: bm:Mark marks this text already" and word_docs.saved(session, d) == before
     for target in (f"{first}@0:5", f"{second}@0:5"):
         refused = box.dispatch(session, "word_links", {"doc": d, "action": "add_bookmark", "target": target,
                                                        "bookmark": "Mark"})

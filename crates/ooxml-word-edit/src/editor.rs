@@ -17,6 +17,7 @@ use crate::{EditError, Result};
 use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, Command, CommitTiming, Snapshot, Store, StoreConfig};
+use ooxml_word_model::ids::LoadedState;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -98,6 +99,26 @@ impl Editor {
         earlier: &EarlierIds,
     ) -> Result<Editor> {
         let doc = WordDoc::open_with(package, budget, earlier)?;
+        Editor::of_doc(doc, config, clock)
+    }
+
+    /// The document whose first version is `package`, opened again with the id state saved
+    /// beside its bytes ([`WordDoc::open_with_state`]); and what the state recorded.
+    ///
+    /// # Errors
+    /// As [`WordDoc::open_with_state`].
+    pub fn open_with_state(
+        package: Package,
+        config: StoreConfig,
+        clock: Arc<dyn Clock>,
+        budget: Arc<dyn CacheBudget>,
+        state: &str,
+    ) -> Result<(Editor, LoadedState)> {
+        let (doc, loaded) = WordDoc::open_with_state(package, budget, state)?;
+        Ok((Editor::of_doc(doc, config, clock)?, loaded))
+    }
+
+    fn of_doc(doc: WordDoc, config: StoreConfig, clock: Arc<dyn Clock>) -> Result<Editor> {
         let baseline = problems(&doc)?;
         Ok(Editor {
             store: Store::new(doc, config, Arc::clone(&clock)),

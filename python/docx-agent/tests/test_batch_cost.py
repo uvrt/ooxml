@@ -1,73 +1,68 @@
 """What a batch of Word ops costs does not grow with the document (round 28, W8), and its
-results are the ones the ops gave before: the same with and without what makes it so.
+results are the ones each op gives alone.
 
-What each op of a batch repeated over the whole document, and what it does now:
-
-* the layout ``keep_together`` reads for its warning (a table taller than a page): laid
-  out once, after the batch's last op (``Call.defer``), not after every op;
-* ``word_edit_table``'s table as Markdown: the table read alone (``Reader.block``), the
-  list items before it counted, not the whole body read for it;
-* the effective formatting's paragraphs: found as asked (``_Model._found``), not every
-  paragraph's path resolved from the root after every edit;
-* the id index, the drawings without ids, the ids in use and the section breaks: found by
-  lxml's walk (or XPath).
+The Rust session serves every op of a batch: ``keep_together``'s warning (a table taller than
+a page) is read from one layout after the batch's last op, not one per op, and
+``word_edit_table``'s table as Markdown counts the list items before it.
 
 The golden-style test runs one mixed batch -- formatting, cells set, rows, keeps that warn,
-text, Markdown, a failing op -- and each of its ops alone, with all of that switched off and
-on, and compares every result and the document's bytes."""
+text, Markdown, a failing op -- and each of its ops alone, and compares the results."""
 
 from __future__ import annotations
 
 import contextlib
 import datetime as dt
-import json
-from pathlib import Path
+import functools
 
 import pytest
 
-pytest.importorskip("ooxml_edit.tools.shared", reason="needs ooxml-edit 0.4 (the shared tools)")
+from ooxml_edit.tools import Limits, Toolbox
 
-from ooxml_edit.tools import Limits, Toolbox  # noqa: E402
+from docx_agent.rust import edits as _edits
+from docx_agent.rust import reads as _reads
+from docx_agent.rust.engines import session_pages
+from docx_agent.tools import FORMAT, GROUPS, TOOLS
 
-from docx_agent import Document  # noqa: E402
-from docx_agent.edit import effective as _effective  # noqa: E402
-from docx_agent.edit import ids as _ids  # noqa: E402
-from docx_agent.edit.numbering import membership  # noqa: E402
-from docx_agent.edit.sections import W_BODY, W_PPR, W_SECTPR, in_body, section_id  # noqa: E402
-from docx_agent.markdown.read import Reader  # noqa: E402
-from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
-
-from conftest import fixture_id, fixture_paths  # noqa: E402
+import word_docs
 
 CLOCK = lambda: dt.datetime(2026, 11, 3, 9, 0, tzinfo=dt.timezone.utc)  # noqa: E731
 
 
+@functools.lru_cache(maxsize=1)
 def report() -> bytes:
     """Three tables: the first with a list item in a cell that counts on from the body's
     list, followed by a paragraph and a table (a keep with the next warns); the third taller
     than a page."""
-    doc = Document.new()
     rows = "\n".join(f"| Line {k} | {k * 3} |" for k in range(70))
-    doc.insert_markdown("\n\n".join([
-        "# Report title", "An opening paragraph.", "1. First step\n2. Second step",
-        "| Name | Count |\n|---|---|\n| North | 4 |\n| South | 5 |",
-        "A paragraph between two tables.",
-        "| Kind | Share |\n|---|---|\n| Paper | 40 |\n| Glass | 60 |",
-        "# Chapter title", "Some words before the long table.",
-        "| Line | Value |\n|---|---|\n" + rows,
-        "A closing paragraph.",
-    ]))
-    listed = next(p for p in doc.paragraphs() if membership(doc, doc._resolve(p.id)[1].element) is not None)
-    number = membership(doc, doc._resolve(listed.id)[1].element).num_id
-    doc.add_to_list(doc.tables()[0].cell(1, 0).paragraphs[0].id, number)
-    return doc.to_bytes()
+    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as box:
+        session = box.session(clock=CLOCK)
+        doc = session.open(word_docs.blank(), "report.docx")
+        word_docs.call(box, session, "word_insert_markdown", doc=doc, at="end", markdown="\n\n".join([
+            "# Report title", "An opening paragraph.", "1. First step\n2. Second step",
+            "| Name | Count |\n|---|---|\n| North | 4 |\n| South | 5 |",
+            "A paragraph between two tables.",
+            "| Kind | Share |\n|---|---|\n| Paper | 40 |\n| Glass | 60 |",
+            "# Chapter title", "Some words before the long table.",
+            "| Line | Value |\n|---|---|\n" + rows,
+            "A closing paragraph.",
+        ]))
+        first = word_docs.tables(session, doc)[0]
+        cell = word_docs.cells_of(word_docs.rows_of(first)[1])[0].find("{*}p")
+        target = f"p:{cell.get(word_docs.W14_PARA)}"
+        step = next(block for block, text in word_docs.paragraphs(session, doc) if text == "First step")
+        # the body list's own definition and level, as the cell's paragraph takes it on
+        word_docs.call(box, session, "word_format", doc=doc, targets=[target], like=step)
+        return word_docs.saved(session, doc)
 
 
-def mixed(doc: str, document: Document) -> list[dict]:
-    first, second, long = [t.id for t in document.tables()]
-    texts = [p.id for p in document.paragraphs() if p.text.startswith(("An opening", "A closing", "Some words"))]
+def mixed(box, session, doc: str) -> list[dict]:
+    first, second, long = [block for block, _ in word_docs.blocks(box, session, doc) if block.startswith("t:")]
+    texts = [block for block, text in word_docs.paragraphs(session, doc)
+             if text.startswith(("An opening", "A closing", "Some words"))]
+
     def op(tool, **arguments):
         return {"tool": tool, "arguments": {"doc": doc, **arguments}}
+
     return [
         op("word_format_table", table=first, scope="table", borders="single"),
         op("word_edit_table", table=first, action="set_cells", cells=[{"row": 2, "col": 1, "text": "6"}]),
@@ -99,102 +94,53 @@ def _plain(result) -> dict:
             "touched_by_op": {str(k): v for k, v in result.touched_by_op.items()}}
 
 
+def _laid(session, doc) -> int:
+    """The versions the document's page engine laid out so far, whole or again in part."""
+    stats = dict(session_pages(_reads.owned(session.entry(doc))).stats())
+    return int(stats["full"] + stats["relaid"])
+
+
 def _run(box, data: bytes, during=contextlib.nullcontext) -> dict:
-    """The mixed batch's results and bytes, and each op's alone; ``during``: a context the
-    batch itself runs in (what it costs, counted)."""
+    """The mixed batch's results and each op's alone; ``during``: a context the batch itself
+    runs in (what it costs, counted)."""
     session = box.session(clock=CLOCK)
     doc = session.open(data, "report.docx")
-    document = session.entry(doc).document
-    document.layout()                  # laid out before: the checks' reflow compares with it
-    ops = mixed(doc, document)
-    with during():
+    # laid out before: the checks' reflow compares with it
+    assert box.dispatch(session, "check", {"doc": doc, "include": ["reflow"]}).ok
+    ops = mixed(box, session, doc)
+    with during(session, doc):
         batch = _plain(box.dispatch(session, "batch", {"ops": ops}))
-    # (the document after the batch: a served op makes a new version, read afresh)
-    out = {"batch": batch, "bytes": session.entry(doc).document.to_bytes().hex()}
+    out = {"batch": batch}
     alone = []
     for op in ops:
         single = box.session(clock=CLOCK)
         single.open(data, "report.docx")
-        single.entry(doc).document.layout()
+        assert box.dispatch(single, "check", {"doc": doc, "include": ["reflow"]}).ok
         alone.append(_plain(box.dispatch(single, op["tool"], op["arguments"])))
     out["alone"] = alone
     return out
 
 
-def _unoptimised(monkeypatch, box) -> None:
-    monkeypatch.setattr(box, "batch_defers", False)
-    monkeypatch.setattr(Reader, "block", lambda self, part, identifier: None)
-
-    def every(self, element):
-        self._map_all()
-        return self._paragraphs.get(id(element))
-
-    monkeypatch.setattr(_effective._Model, "_found", every)
-
-
-# Lane E2b: with every op served, laid == 1 and follows <= handled + 1 do not hold yet: the
-# failing op's roll back (ooxml-edit _run_alone's fmt.restored(entry.document)) makes the view
-# follow, and the Python batch check lays the followed view out again rather than taking the
-# layout Session.block_pages made.  Both are the Python view's; the view cut (lane CUT1)
-# removes this mark.
-@pytest.mark.xfail(strict=False, reason="Python view path: _run_alone's restored() follow + the Python batch "
-                   "check not sharing the session layout; removed by lane CUT1 (the view cut)")
-def test_a_mixed_batch_gives_the_results_it_gave_before(box, monkeypatch):
+def test_a_mixed_batch_gives_the_results_each_op_gives_and_lays_out_once(box):
     data = report()
-    read_alone = []
-    block = Reader.block
-
-    def counted(self, part, identifier):
-        found = block(self, part, identifier)
-        read_alone.append(found is not None)
-        return found
-
-    from docx_agent import pages
-    from docx_agent.rust import edits as _edits
-    from docx_agent.rust import owner as _owner
-
     cost: dict = {}
-    follow = _owner.RustOwner.follow
-
-    def followed(self, *args, **kwargs):
-        cost["follows"] = cost.get("follows", 0) + 1
-        return follow(self, *args, **kwargs)
-
-    def layouts() -> int:
-        return sum(int(s["full"] + s["relaid"]) for s in (e.stats() for e in list(pages._ENGINES.values())))
 
     @contextlib.contextmanager
-    def counting():
-        """What the batch costs where the Rust session serves its ops: the editing calls it
-        answered and those left to docx-agent's handlers, the times the Python view followed
-        the session's head, the versions the page engine laid out."""
-        served, fallbacks, laid = _edits.served(), _edits.fallbacks(), layouts()
-        with monkeypatch.context() as patch:
-            patch.setattr(_owner.RustOwner, "follow", followed)
-            yield
+    def counting(session, doc):
+        """What the batch costs: the editing calls the session answered and the versions the
+        page engine laid out."""
+        served, laid = _edits.served(), _laid(session, doc)
+        yield
         cost["served"] = {k: v - served.get(k, 0) for k, v in _edits.served().items()}
-        handled = [sum(n for reasons in f.values() for n in reasons.values()) for f in (fallbacks, _edits.fallbacks())]
-        cost["handled"] = handled[1] - handled[0]
-        cost["laid"] = layouts() - laid
+        cost["laid"] = _laid(session, doc) - laid
 
-    with monkeypatch.context() as patch:
-        patch.setattr(Reader, "block", counted)
-        fast = _run(box, data, counting)
-    with monkeypatch.context() as patch:
-        _unoptimised(patch, box)
-        slow = _run(box, data)
-    tables = sum(op["tool"] == "word_edit_table" for op in mixed("d1", Document.open(data)))
-    if cost["served"].get("word_edit_table"):
-        # Served (lane P2e1): every word_edit_table op is the session's, which reads its table
-        # in Rust; the Python view is not rebuilt for the ops it serves -- it follows the
-        # session's head only for an op left to docx-agent's handler, and once for the
-        # batch's checks -- and the document is laid out once, after the last op.
-        assert cost["served"]["word_edit_table"] == tables, cost
-        assert cost.get("follows", 0) <= cost["handled"] + 1, cost
-        assert not pages.available() or cost["laid"] == 1, cost
-    else:
-        assert any(read_alone)                     # the tables were read alone
-    assert json.dumps(fast, sort_keys=True, default=str) == json.dumps(slow, sort_keys=True, default=str)
+    fast = _run(box, data, counting)
+    probe = box.session(clock=CLOCK)
+    tables = sum(op["tool"] == "word_edit_table" for op in mixed(box, probe, probe.open(data, "report.docx")))
+    # Every word_edit_table op is the session's, which reads its table in Rust; the document
+    # is laid out once, after the last op.
+    assert cost["served"]["word_edit_table"] == tables, cost
+    assert cost["laid"] == 1, cost
     batch = fast["batch"]["result"]
     warnings = batch["warnings"]
     taller = [w for w in warnings if "taller than a page" in w]
@@ -206,46 +152,23 @@ def test_a_mixed_batch_gives_the_results_it_gave_before(box, monkeypatch):
     assert fast["alone"][3]["result"]["warnings"] == [taller[0].removeprefix("ops[3]: ")]
 
 
-def test_keep_together_lays_the_document_out_once_per_batch(box, monkeypatch):
-    data = report()
+def test_keep_together_lays_the_document_out_once_per_batch(box):
     session = box.session(clock=CLOCK)
-    doc = session.open(data, "report.docx")
-    tables = [t.id for t in session.entry(doc).document.tables()]
+    doc = session.open(report(), "report.docx")
+    tables = [block for block, _ in word_docs.blocks(box, session, doc) if block.startswith("t:")]
     ops = [{"tool": "word_format_table", "arguments": {"doc": doc, "table": t, "scope": "table",
                                                        "keep_together": True}} for t in tables * 2]
-    from docx_agent import layout as layout_module
-    from docx_agent import pages
-
-    laid = []
-    noted = layout_module.note_made
-
-    def counting(document, facts):
-        if isinstance(facts, dict) and facts.get("made") not in (None, "same"):
-            laid.append(facts["made"])
-        return noted(document, facts)
-
-    def rust_layouts() -> int:
-        """The versions the Rust page engines laid out so far, whole or again in part."""
-        return sum(int(s["full"] + s["relaid"]) for s in (e.stats() for e in list(pages._ENGINES.values())))
-
-    # Round 59 (R134): each table's placements are read in the worker holding the layout
-    # (a task per table), the document laid out there once.  Where ooxml_core has the Rust
-    # layout (lane L4b) the document's engine lays it out in this process instead, counted
-    # by the engine: Python's layout is not asked at all.
-    monkeypatch.setattr(layout_module, "note_made", counting)
-    before = rust_layouts()
+    before = _laid(session, doc)
     result = box.dispatch(session, "batch", {"ops": ops})
     assert result.ok and sum("taller than a page" in w for w in result.warnings) == 2
-    made = rust_layouts() - before if pages.available() else len(laid)
-    assert made == 1                               # after the last op; each op's own would be six
-    assert not pages.available() or not laid       # the one layout, in one place
+    assert _laid(session, doc) - before == 1       # after the last op; each op's own would be six
 
 
 def test_a_batch_past_its_deadline_says_what_was_not_run(box):
-    data = report()
     session = box.session(clock=CLOCK, limits=Limits(batch_timeout=0.0))
-    doc = session.open(data, "report.docx")
-    tables = [t.id for t in session.entry(doc).document.tables()]
+    doc = session.open(report(), "report.docx")
+    before = word_docs.saved(session, doc)
+    tables = [block for block, _ in word_docs.blocks(box, session, doc) if block.startswith("t:")]
     ops = [{"tool": "word_format_table", "arguments": {"doc": doc, "table": t, "scope": "table",
                                                        "borders": "single"}} for t in tables]
     result = box.dispatch(session, "batch", {"ops": ops})
@@ -254,83 +177,4 @@ def test_a_batch_past_its_deadline_says_what_was_not_run(box):
                                                "seconds": result.error.details["not_run"]["seconds"]}
     assert "Not run: 3 op(s), ops[0]..ops[2]" in result.error.message
     assert "resend them as smaller batches" in result.error.message
-    assert session.entry(doc).document.to_bytes() == Document.open(data).to_bytes()
-
-
-# -- the walks lxml does now find what the Python walks found -------------------------------------
-
-
-def _walk(root, tags):
-    """The Python walk ``live_elements`` was: ``tags`` in document order, no ``mc:Fallback``."""
-    out, stack = [], [iter(root)]
-    while stack:
-        for node in stack[-1]:
-            tag = node.tag
-            if not isinstance(tag, str) or tag == _ids.MC_FALLBACK:
-                continue
-            if tag in tags:
-                out.append(node)
-            if len(node):
-                stack.append(iter(node))
-                break
-        else:
-            stack.pop()
-    return out
-
-
-def _records(document):
-    """``_section_records`` as it was: over the index's paragraphs."""
-    part = document.package.document_part()
-    out = []
-    for entry in document._index(part).paragraphs:
-        properties = entry.element.find(W_PPR)
-        sect = properties.find(W_SECTPR) if properties is not None else None
-        if sect is not None and in_body(entry.element):
-            out.append((section_id(entry.id), sect, entry.element))
-    last = document.package.tree(part).find(W_BODY).find(W_SECTPR)
-    return out + ([("s:body", last, None)] if last is not None else [])
-
-
-def _section_of(document, identifier):
-    """``section_of`` as it was: by every element's place in the tree."""
-    part, entry = document._resolve(identifier)
-    nodes = list(document.package.tree(part).iter())  # held: one proxy per element, stable id()s
-    order = {id(node): k for k, node in enumerate(nodes)}
-    records = _records(document)
-    for found, _, paragraph in records:
-        if paragraph is None or order[id(paragraph)] >= order[id(entry.element)]:
-            return found
-    return records[-1][0]
-
-
-TAGS = [frozenset({_ids.W_P, _ids.W_TR, _ids.W_TBL}), frozenset({_ids.WP_INLINE, _ids.WP_ANCHOR}),
-        frozenset({_ids._W + "sdt"}), frozenset({_ids._W + "ins", _ids._W + "del"})]
-
-
-@pytest.mark.parametrize("path", fixture_paths(), ids=fixture_id)
-def test_the_walks_find_what_they_found(path: Path):
-    document = Document.open(path.read_bytes())
-    for part in document._parts():
-        root = document.package.tree(part)
-        for node in [root, *list(root.iter(_ids.W_TBL, _ids.MC_FALLBACK))[:20]]:
-            for tags in TAGS:
-                assert _ids.live_elements(node, tags) == _walk(node, tags)
-        used = set()
-        for node in root.iter(_ids.W_P, _ids.W_TR, _ids.WP_INLINE, _ids.WP_ANCHOR):
-            for name in (_ids.PARA_ID, _ids.TEXT_ID, _ids.ANCHOR_ID, _ids.EDIT_ID):
-                raw = node.get(name)
-                if raw is not None and _ids._HEX.fullmatch(raw):
-                    used.add(int(raw, 16))
-        assert _ids.used_long_hex([root]) == used
-    assert document._section_records() == _records(document)
-    body = document._index(document.package.document_part())
-    for identifier in [e.id for e in body.paragraphs] + [t.id for t in body.tables]:
-        assert document.section_of(identifier).id == _section_of(document, identifier)
-    eager, lazy = _effective._Model(document), _effective._Model(document)
-    eager._map_all()
-    for part in document._parts():
-        for element in document.package.tree(part).iter(_ids.W_P):
-            want, got = eager._paragraphs.get(id(element)), lazy._found(element)
-            assert (want and want.path) == (got and got.path)
-            if lazy._mapped:
-                lazy = _effective._Model(document)
+    assert word_docs.saved(session, doc) == before

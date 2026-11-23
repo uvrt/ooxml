@@ -20,6 +20,7 @@ mod describe;
 mod document;
 mod drawn_reply;
 mod find_text;
+mod laid_reads;
 mod objects;
 mod originals;
 mod pages;

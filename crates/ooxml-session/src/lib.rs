@@ -2,7 +2,7 @@
 //!
 //! Owns: a [`Session`] holding documents by [`DocId`], each one's versions in an
 //! `ooxml-store` [`ooxml_store::Store`] over its package ([`PackageDoc`]); opening, saving
-//! and closing; the bridge's commit of a version's touched parts ([`Session::update`],
+//! and closing; a commit of parts given as bytes ([`Session::update`],
 //! section 13); the tool [`Registry`], each tool's spec made once and the kinds it serves;
 //! dispatch of a call ([`Session::call`]): arguments taken as meant, the document found,
 //! the handler run on a snapshot, the reply as a [`ooxml_tools::ToolResult`]; and a call's
@@ -26,12 +26,14 @@
 
 mod batch;
 mod block_pages;
+mod blocks_of;
 mod call;
 mod changes;
 mod context;
 mod dispatch;
 mod document;
 mod error;
+mod from_template;
 mod group;
 mod handlers;
 mod history;
@@ -58,6 +60,7 @@ mod values;
 
 pub use batch::{ReadBatch, ReadOp, BATCH_TIMEOUT, MAX_READ_BATCH_CHARS, READ_BATCH};
 pub use block_pages::{BlockAt, BlockPages};
+pub use blocks_of::{BlockFound, BlockRefused};
 pub use call::Call;
 pub use changes::{ChangedPart, IdsSince};
 pub use context::{CallContext, CancelToken};
@@ -74,11 +77,11 @@ pub use model::{ModelError, PackageDoc, PartChange, PartContent};
 pub use names::DocNames;
 pub use ooxml_store::Caller;
 pub use ooxml_tools_word::{EditFn, Hosting, ReadFn, TrackingFn};
-pub use ooxml_word_model::ids::HeldId;
+pub use ooxml_word_model::ids::{HeldId, IdStateError};
 pub use pages::SessionPages;
 pub use reading_edit::ReadingEditHandler;
 pub use registry::Registry;
 pub use retired::RetiredBy;
 pub use session::{Opened, Session, SessionConfig, SessionStats};
 pub use undo::{Undo, UNDO};
-pub use update::{HostIds, PartUpdate, Updated};
+pub use update::{PartUpdate, Updated};

@@ -62,6 +62,9 @@ fn not_supported(who: &str, doc: &str, why: &str) -> ToolError {
         arguments: json!({"doc": doc}).as_object().cloned().unwrap_or_default(),
         fill: Vec::new(),
     };
+    if crate::pages::unlaid_note(why) {
+        return ToolError::not_supported(&format!("{who}: {}", crate::pages::UNLAID_NOTE), WayOut::call(call));
+    }
     ToolError::refusal(
         Refusal::Refused,
         format!(

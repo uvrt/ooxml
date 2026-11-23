@@ -14,6 +14,7 @@ so when given a drawing, and no argument that takes a drawing is a source.
 from __future__ import annotations
 
 import datetime as dt
+import functools
 import json
 
 import pytest
@@ -24,8 +25,8 @@ from ooxml_common.locales import Locale  # noqa: E402
 from ooxml_edit.tools import (Dataset, DocumentFormat, Result, ToolError, Toolbox,  # noqa: E402
                               string, strict_problems, tool)
 
-from docx_agent import Document  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
+import word_docs  # noqa: E402
 
 CLOCK = lambda: dt.datetime(2026, 10, 13, 12, 0, tzinfo=dt.timezone.utc)  # noqa: E731
 
@@ -113,12 +114,17 @@ def toolbox():
 DRAWING = "d:1"
 
 
+@functools.lru_cache(maxsize=1)
 def _new_document() -> bytes:
-    document = Document.new()
-    paragraph = document.paragraphs()[0]
-    paragraph.set_text("Checks")
-    document.insert_shape(f"{document.paragraphs()[0].id}@0", "rect", width=40, height=40)
-    return document.to_bytes()
+    """A blank document whose paragraph reads "Checks", a 40 x 40 point rectangle in it."""
+    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as box:
+        session = box.session(clock=CLOCK)
+        doc = session.open(word_docs.blank(), "report.docx")
+        first = word_docs.paragraph_ids(box, session, doc)[0]
+        ok(box.dispatch(session, "word_set_text", {"doc": doc, "target": first, "text": "Checks"}))
+        ok(box.dispatch(session, "word_drawings", {"doc": doc, "action": "insert_shape", "at": f"{first}@0",
+                                                   "preset": "rect", "width": 40, "height": 40}))
+        return word_docs.saved(session, doc)
 
 
 def _session(toolbox, **options):
@@ -154,9 +160,17 @@ def insert(toolbox, session, **arguments):
     return call(toolbox, session, "word_insert_markdown", **{"doc": "d1", "at": "end", **arguments})
 
 
-def texts(session, table: str) -> list[list[str]]:
-    view = session.entry("d1").document.table(table)
-    return [[view.cell(r, c).text for c in range(view.column_count)] for r in range(len(view.rows))]
+def texts(session, table: str, doc: str = "d1") -> list[list[str]]:
+    return word_docs.table_texts(session, doc, table)
+
+
+def body(session, doc: str = "d1"):
+    """The document part as it is now, parsed."""
+    return word_docs.tree(word_docs.saved(session, doc))
+
+
+def body_tables(session, doc: str = "d1") -> list:
+    return word_docs.tables(session, doc)
 
 
 # -- the definitions -----------------------------------------------------------------------------
@@ -213,10 +227,8 @@ def test_a_table_from_a_dataset_header_rows_and_provenance(toolbox, session):
     assert placed["header_row"] == 0 and placed["first_row"] == 1
     assert placed["columns"][1] == {"col": 1, "column": "rating", "rows": "1-3",
                                     "sources": ["G!B2", "G!B3", "G!B4"]}
-    document = session.entry("d1").document
-    assert list(document.provenance()) == [table]       # kept in the file (test_provenance)
-    xml = document.package.tree(document.package.document_part())
-    tbl = xml.find(".//{*}tbl")
+    assert list(session.provenance("d1")) == [table]       # kept in the file (test_provenance)
+    tbl = body(session).find(".//{*}tbl")
     assert tbl.find("{*}tr/{*}trPr/{*}tblHeader") is not None      # the header row repeats
     assert result.checks["validate"]["new"] == []
 
@@ -234,8 +246,9 @@ def test_columns_are_picked_and_ordered_by_name_and_default_to_all(toolbox, sess
 
 def test_a_values_lines_are_line_breaks_in_one_paragraph(toolbox, session):
     data = ok(insert(toolbox, session, **{"from": "d:scores", "from_columns": ["note"]})).data
-    cell = session.entry("d1").document.table(data["id"]).cell(3, 0)
-    assert len(cell.paragraphs) == 1 and cell.text == "late\vvery"
+    row = word_docs.rows_of(word_docs.element(session, "d1", data["id"]))[3]
+    cell = word_docs.cells_of(row)[0]
+    assert len(cell.findall("{*}p")) == 1 and word_docs.cell_text(cell) == "late\vvery"
 
 
 def test_a_header_given_or_none(toolbox, session):
@@ -246,8 +259,7 @@ def test_a_header_given_or_none(toolbox, session):
                                           "header": []})).data
     assert none["rows"] == 3 and texts(session, none["id"])[0] == ["Alpha"]
     assert none["from"]["header_row"] is None and none["from"]["first_row"] == 0
-    document = session.entry("d1").document
-    tbl = document.package.tree(document.package.document_part()).findall(".//{*}tbl")[-1]
+    tbl = body_tables(session)[-1]
     assert tbl.find(".//{*}tblHeader") is None
     look = tbl.find("{*}tblPr/{*}tblLook")
     assert look.get("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}firstRow") == "0"
@@ -269,8 +281,7 @@ def test_text_goes_in_literally_not_as_markdown(toolbox, session):
         ok(box.dispatch(own, "ds_marks", {}))
         data = ok(box.dispatch(own, "word_insert_markdown", {"doc": "d1", "at": "end",
                                                               "from": "d:marks"})).data
-        view = own.entry("d1").document.table(data["id"])
-        assert view.cell(1, 0).text == "**not bold** | [x](y) <b>"
+        assert texts(own, data["id"])[1][0] == "**not bold** | [x](y) <b>"
 
 
 def test_numbers_are_written_in_the_sessions_locale(toolbox):
@@ -303,8 +314,7 @@ def test_a_row_range_of_a_source_is_a_table_whose_header_repeats(toolbox, sessio
     assert placed["source"] == "d:scores/#2:"
     assert placed["columns"][1] == {"col": 1, "column": "rating", "rows": "1-2",
                                     "sources": ["G!B3", "G!B4"]}
-    document = session.entry("d1").document
-    tbl = document.package.tree(document.package.document_part()).findall(".//{*}tbl")[-1]
+    tbl = body_tables(session)[-1]
     assert tbl.find("{*}tr/{*}trPr/{*}tblHeader") is not None      # Word repeats it per page
     failed(insert(toolbox, session, **{"from": "d:scores/#2:#9"}), "invalid_arguments")
 
@@ -333,10 +343,10 @@ def test_a_source_too_big_is_refused_never_cut(toolbox, session):
     ok(call(toolbox, session, "ds_put", id="cells", size="100x60"))
     error = failed(insert(toolbox, session, **{"from": "d:cells"}), "limit")
     assert "5,000" in error.message and "nothing is cut" in error.message
-    tables = len(session.entry("d1").document.tables())
+    tables = len(body_tables(session))
     ok(call(toolbox, session, "ds_put", id="fits", size="99x50"))
     ok(insert(toolbox, session, **{"from": "d:fits"}))                 # 100 x 50: 5,000 cells
-    assert len(session.entry("d1").document.tables()) == tables + 1
+    assert len(body_tables(session)) == tables + 1
 
 
 def test_too_many_rows_from_a_source_without_a_row_range_is_refused_not_internal():
@@ -356,7 +366,7 @@ def test_too_many_rows_from_a_source_without_a_row_range_is_refused_not_internal
         assert "filter the source or split it" in error.message
         assert "place fewer" not in error.message
         assert error.field == "from" and error.valid_options == []
-        assert session.entry("d1").document.tables() == []
+        assert body_tables(session) == []
 
 
 def test_a_value_a_cell_cannot_take_is_refused_naming_it():
@@ -374,17 +384,17 @@ def test_a_value_a_cell_cannot_take_is_refused_naming_it():
                                     {"doc": "d1", "at": "end", "from": "d:odd"}),
                        "invalid_arguments")
         assert "G!A3" in error.message and "not a finite number" in error.message
-        assert session.entry("d1").document.tables() == []
+        assert body_tables(session) == []
 
 
 def test_a_new_table_from_a_source_is_one_undo_step_and_tracks(toolbox, session):
     ok(insert(toolbox, session, **{"from": "d:scores"}))
     ok(call(toolbox, session, "undo", doc="d1"))
-    assert session.entry("d1").document.tables() == []
+    assert body_tables(session) == []
     ok(call(toolbox, session, "word_set_tracking", doc="d1", on=True, author="Reviewer"))
     result = ok(insert(toolbox, session, **{"from": "d:scores", "from_columns": ["check"]}))
     assert result.checks["validate"]["new"] == []
-    assert session.entry("d1").document.revisions()
+    assert word_docs.revisions(session, "d1")
 
 
 # -- an existing table: word_edit_table set_cells ----------------------------------------------
@@ -487,7 +497,7 @@ def test_set_cells_from_a_source_is_one_undo_step(toolbox, session):
 
 def test_a_drawings_id_as_from_is_named_a_drawing_not_a_dataset(toolbox, session):
     drawing = DRAWING
-    assert session.entry("d1").document.drawing(drawing) is not None
+    assert body(session).find(f".//{{*}}docPr[@id='{drawing[2:]}']") is not None
     error = failed(insert(toolbox, session, **{"from": drawing}), "not_found")
     assert error.field == "from"
     assert f"{drawing} is a drawing in this document, not a dataset" in error.message
@@ -559,7 +569,7 @@ def test_a_date_columns_iso_text_is_written_in_the_sessions_locale(toolbox, loca
     table = result.data["id"]
     assert [row[1] for row in texts(session, table)[1:]] == due
     # The record names the cells, never their values.
-    kept = session.entry("d1").document.provenance()[table]
+    kept = session.provenance("d1")[table]
     assert kept["columns"][1]["sources"] == ["G!C2", "G!C3", "G!C4"]
     assert not any(text in json.dumps(kept) for text in due + ["2026-01-05"])
     # set_cells writes the same.
@@ -578,7 +588,7 @@ def test_an_unlabelled_iso_column_is_written_as_it_is(toolbox):
 @pytest.mark.parametrize("locale, key", [(None, "en-US"), (DUTCH, "nl-BE")])
 def test_a_chart_from_a_date_column_and_set_values_matched_either_way(toolbox, locale, key):
     session = _dated(toolbox, locale)
-    anchor = session.entry("d1").document.paragraphs()[0].id
+    anchor = word_docs.paragraph_ids(toolbox, session, "d1")[0]
     made = ok(call(toolbox, session, "edit_chart", doc="d1", target=anchor, action="add",
                    chart_type="column",
                    **{"from": "d:dated", "columns": ["due", "rating"]})).created[-1]
@@ -646,7 +656,7 @@ def test_a_charts_dates_are_kept_in_the_locales_code(toolbox):
     from lxml import etree
 
     session = _dated(toolbox, _locale("fr-FR"))
-    anchor = session.entry("d1").document.paragraphs()[0].id
+    anchor = word_docs.paragraph_ids(toolbox, session, "d1")[0]
     made = ok(call(toolbox, session, "edit_chart", doc="d1", target=anchor, action="add",
                    chart_type="column", date_format="d mmmm yyyy",
                    **{"from": "d:dated", "columns": ["due", "rating"]})).created[-1]
@@ -662,11 +672,10 @@ def test_a_charts_dates_are_kept_in_the_locales_code(toolbox):
     error = failed(call(toolbox, session, "edit_chart", doc="d1", target=made, action="set_value",
                         series="rating", category="46063", value=2), "not_found")
     assert "named as YYYY-MM-DD" in error.message and "2026-02-10" in error.valid_options
-    document = session.entry("d1").document
-    chart = document.chart(made)
-    root = etree.fromstring(document.package.read(chart.part))
+    data = word_docs.saved(session, "d1")
+    root = etree.fromstring(word_docs.part(data, word_docs.chart_part(data, made)).encode("utf-8"))
     ns = {"c": "http://schemas.openxmlformats.org/drawingml/2006/chart"}
     assert root.xpath("string(//c:cat//c:formatCode)", namespaces=ns) == r"[$-40C]d\ mmmm\ yyyy"
     assert root.xpath("string(//c:catAx/c:auto/@val)", namespaces=ns) == "0"
     # The Markdown outline's chart line lists them as dates too.
-    assert "categories: 2026-01-05, 2026-02-10, 2026-03-15" in document.to_markdown()
+    assert "categories: 2026-01-05, 2026-02-10, 2026-03-15" in word_docs.read(toolbox, session, "d1")

@@ -21,17 +21,12 @@ its own `pyproject.toml`, version, changelog and tests:
 
 A Cargo workspace at the root, its crates under `crates/`:
 
-- `crates/core` (`ooxml-core`): format-neutral -- one owner per document fed by change sets,
-  immutable snapshots, exact units, font metrics and measuring;
-- `crates/word` (`ooxml-word`): Word's layout on the core -- line breaking, pagination,
-  tables, field passes, incremental relayout -- equal to docx2svg's, and the `word-check`
-  binary that compares the two;
-- `crates/python`: the PyO3 module `ooxml_core` (`open_document`, `commit`, `call`,
-  `close_document`), built by maturin from `python/ooxml-core`.
+- `crates/python`: the PyO3 module `ooxml_core` -- the Rust session's API
+  (ooxml-python-session: `Session`, `CallOptions`, `tool_specs`, ...), built by maturin from
+  `python/ooxml-core`.
 
-`cargo test --workspace` runs the Rust tests; `python/ooxml-core/tests` compares the Rust
-layout with docx2svg's on made-up documents (`cargo build --release -p ooxml-word`, `pip
-install ./python/ooxml-core`, then `pytest` there). Wheels, for Linux x86_64 and aarch64 only (production
+`cargo test --workspace` runs the Rust tests; `python/ooxml-core/tests` tests the module's
+session API (`pip install ./python/ooxml-core`, then `pytest` there). Wheels, for Linux x86_64 and aarch64 only (production
 runs Linux): one abi3 wheel per platform for CPython 3.10 and later, and one for the
 free-threaded 3.15t. On macOS and Windows, pip builds ooxml-core from its sdist, which
 needs a Rust toolchain.

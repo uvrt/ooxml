@@ -25,8 +25,9 @@ from lxml import etree
 from ooxml_edit.tools import Toolbox
 
 import docx2svg
-from docx_agent import Document
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
+
+import word_docs
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _W = "{%s}" % W
@@ -56,17 +57,30 @@ def ok(box, session, name, /, **arguments):
 
 def _opened(box, tracked: bool = True):
     session = box.session(clock=CLOCK)
-    session.open(Document.new().to_bytes(), "report.docx")
-    first = session.entry("d1").document.paragraphs()[0].id
-    ok(box, session, "word_insert_markdown", doc="d1", at=f"after:{first}",
-       markdown=f"Field report.\n\n{MARKDOWN}\n\nAfter the table.")
+    session.open(word_docs.blank(), "report.docx")
+    first = word_docs.paragraphs(session, "d1")[0][0]
+    made = ok(box, session, "word_insert_markdown", doc="d1", at=f"after:{first}",
+              markdown=f"Field report.\n\n{MARKDOWN}\n\nAfter the table.")
     if tracked:
         ok(box, session, "word_set_tracking", doc="d1", on=True, author=ME)
-    return session, session.entry("d1").document.tables()[-1].id
+    return session, [block for block in made.data["blocks"] if block.startswith("t:")][-1]
 
 
-def _document(session) -> Document:
-    return session.entry("d1").document
+def _data(session) -> bytes:
+    return word_docs.saved(session, "d1")
+
+
+def _accepted(box, data: bytes) -> bytes:
+    session = box.session(clock=CLOCK)
+    session.open(data, "accepted.docx")
+    ok(box, session, "word_changes", doc="d1", action="accept", all=True)
+    return word_docs.saved(session, "d1")
+
+
+def _read(box, data: bytes, view: str = "final") -> str:
+    session = box.session(clock=CLOCK)
+    session.open(data, "read.docx")
+    return re.sub(r" ?<!-- [^>]*-->\n?| data-id=\"[^\"]*\"", "", word_docs.read(box, session, "d1", view=view))
 
 
 def _glyph_lines(data: bytes) -> list[tuple]:
@@ -111,29 +125,11 @@ def test_render_draws_a_tracked_column_deletion_as_accept_all_leaves_it(box):
     narrower (measured round 54); docx2svg draws the tracked document exactly so."""
     session, table = _opened(box)
     ok(box, session, "word_edit_table", doc="d1", table=table, action="delete_column", index=2)
-    tracked = _document(session).to_bytes()
-    accepted = Document.open(tracked)
-    accepted.accept_all()
-    grid = [c.get(_W + "w") for c in accepted.package.tree(accepted.package.document_part()).iter(_W + "gridCol")]
+    tracked = _data(session)
+    accepted = _accepted(box, tracked)
+    grid = [c.get(_W + "w") for c in word_docs.tree(accepted).iter(_W + "gridCol")]
     assert grid == ["2268", "2268", "2268"]
-    assert _svg(tracked) == _svg(accepted.to_bytes())
-
-
-@pytest.mark.usefixtures("python_owned")   # the application's own edit: not yet an owned document's step
-def test_an_inserted_cell_is_left_out_of_the_original_view(box):
-    session, table = _opened(box)
-    with session.lock(["d1"]) as [entry]:      # the application's own change
-        document = entry.document
-        part = document.package.document_part()
-        cell = next(document.package.tree(part).iter(_W + "tc"))
-        properties = cell.find(_W + "tcPr")
-        with document.batch():
-            properties.append(etree.Element(_W + "cellIns", {_W + "id": "900", _W + "author": ME,
-                                                              _W + "date": "2026-11-12T09:00:00Z"}))
-            document.package.mark_dirty(part)
-    reopened = Document.open(document.to_bytes())
-    assert "Area" not in reopened.to_markdown(view="original", ids=False)
-    assert "Area" in reopened.to_markdown(view="final", ids=False)
+    assert _svg(tracked) == _svg(accepted)
 
 
 # -- R111 ----------------------------------------------------------------------------------------
@@ -209,8 +205,7 @@ def test_every_tracked_table_change_is_listed_under_its_author(box, name, tool, 
     assert all(c["date"] for c in changes), name
     # Every record written carries the author and date, except the grid change, which
     # the schema gives none (as Word writes it).
-    document = _document(session)
-    root = document.package.tree(document.package.document_part())
+    root = word_docs.tree(_data(session))
     for record in root.iter(*RECORDS):
         if record.tag in NO_AUTHOR:
             assert record.get(_W + "author") is None
@@ -222,16 +217,16 @@ def test_a_grid_change_from_another_document_without_its_partner_is_listed_as_fo
     """A grid change no other record of its table names an author for is listed as it is:
     author null (a document arriving that way is reported as-is)."""
     session, table = _opened(box, tracked=False)
-    document = Document.open(_document(session).to_bytes())
-    part = document.package.document_part()
-    grid = next(document.package.tree(part).iter(_W + "tblGrid"))
+    root = word_docs.tree(_data(session))
+    grid = next(root.iter(_W + "tblGrid"))
     change = etree.SubElement(grid, _W + "tblGridChange", {_W + "id": "901"})
     old = etree.SubElement(change, _W + "tblGrid")
     for _ in range(4):
         etree.SubElement(old, _W + "gridCol", {_W + "w": "2000"})
-    document.package.mark_dirty(part)
+    data = word_docs.replaced(_data(session), {"word/document.xml": etree.tostring(
+        root, xml_declaration=True, encoding="UTF-8", standalone=True)})
     session = box.session(clock=CLOCK)
-    session.open(document.to_bytes(), "arrived.docx")
+    session.open(data, "arrived.docx")
     changes = ok(box, session, "word_changes", doc="d1", action="list").data
     assert [(c["kind"], c["author"]) for c in changes] == [("table", None)]
 
@@ -246,26 +241,24 @@ def test_a_tracked_merge_writes_each_comment_reference_once(box):
     ok(box, session, "word_set_tracking", doc="d1", on=True, author=ME)
     ok(box, session, "word_edit_table", doc="d1", table=table, action="merge",
        first={"row": 1, "col": 0}, last={"row": 1, "col": 1})
-    root = _document(session).package.tree(_document(session).package.document_part())
+    root = word_docs.tree(_data(session))
     for tag in ("commentReference", "commentRangeStart", "commentRangeEnd"):
         ids = [node.get(_W + "id") for node in root.iter(_W + tag)]
         assert len(ids) == len(set(ids)), (tag, ids)
     # Accepting keeps the comment, in the merged cell.
-    accepted = Document.open(_document(session).to_bytes())
-    accepted.accept_all()
-    assert "Check the lead." in accepted.to_markdown(view="markup")
+    assert "Check the lead." in _read(box, _accepted(box, _data(session)), view="markup")
 
 
 def test_a_deleted_cell_whose_content_is_kept_widens_the_cell_before_in_the_final_view(box):
     """Word's Accept All gives such a cell's columns to the cell before it, its content
     going (measured, round 54); the final view reads it so, as docx2svg draws it."""
     session, table = _opened(box, tracked=False)
-    document = Document.open(_document(session).to_bytes())
-    root = document.package.tree(document.package.document_part())
+    root = word_docs.tree(_data(session))
     row = list(root.iter(_W + "tr"))[1]
     cell = list(row.iter(_W + "tc"))[1]
     etree.SubElement(cell.find(_W + "tcPr"), _W + "cellDel",
                      {_W + "id": "903", _W + "author": ME, _W + "date": "2026-11-12T09:00:00Z"})
-    document.package.mark_dirty(document.package.document_part())
-    final = Document.open(document.to_bytes()).to_markdown(view="final", ids=False)
+    data = word_docs.replaced(_data(session), {"word/document.xml": etree.tostring(
+        root, xml_declaration=True, encoding="UTF-8", standalone=True)})
+    final = _read(box, data)
     assert '<td colspan="2"><p>Harbour</p></td>' in final and "Ines" not in final

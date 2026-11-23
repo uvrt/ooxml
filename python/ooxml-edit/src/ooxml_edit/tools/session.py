@@ -1418,13 +1418,22 @@ class Session:
                                 "beside its bytes: open it without state")
         check_package(data, self.limits, name)
         self._room_for_document(len(data))
-        if state is None or open_with_state is None:
-            document = fmt.open(data)
-        else:
-            try:
+        open_data = getattr(fmt.owner, "open_data", None)
+        try:
+            # Lane H7c: an owner that opens bytes itself holds the document from them, and
+            # no Python document is made.
+            handle = open_data(data, state, name) if open_data is not None else None
+            if handle is not None:
+                return self._enter(None, handle, fmt, name, source=source, size=len(data),
+                                   doc_id=doc_id)
+            if state is None or open_with_state is None:
+                document = fmt.open(data)
+            else:
                 document = open_with_state(data, state)
-            except ArgumentError as exc:
-                raise StateRefused(str(exc)) from exc
+        except ArgumentError as exc:
+            if state is None:
+                raise
+            raise StateRefused(str(exc)) from exc
         return self.adopt(document, fmt.kind, name, source=source, size=len(data),
                           doc_id=doc_id)
 
@@ -1439,7 +1448,17 @@ class Session:
         fmt = self.formats[kind]
         if fmt.configure is not None:
             fmt.configure(document, self)
-        baseline = list(fmt.problems(document)) if fmt.problems else []
+        # Lane P2c4: the format's owner holds it from now on, where it takes it.
+        handle = fmt.owner.open(document) if fmt.owner is not None else None
+        return self._enter(document, handle, fmt, name, source=source, size=size, doc_id=doc_id)
+
+    def _enter(self, document: Any, handle: Any, fmt: "DocumentFormat", name: str, *,
+               source: str, size: int, doc_id: str | None) -> str:
+        """The entry of a document: ``document`` held (``None``: the owner holds it alone,
+        as ``handle``, lane H7c), its id, the problems it opened with as its baseline."""
+        subject = document if handle is None else OwnedDocument(fmt.owner, handle, None)
+        baseline = list(fmt.problems(subject)) if fmt.problems else []
+        kind = fmt.kind
         with self._lock:
             self._room_for_document(size)
             if doc_id is None:
@@ -1447,8 +1466,6 @@ class Session:
             else:
                 self._free_id(doc_id)
                 self._given_ids.add(doc_id)
-            # Lane P2c4: the format's owner holds it from now on, where it takes it.
-            handle = fmt.owner.open(document) if fmt.owner is not None else None
             made = DocumentEntry if handle is None else OwnedEntry
             self.documents[doc_id] = made(
                 doc_id=doc_id, kind=kind, name=name, source=source, held=document,
@@ -2193,4 +2210,4 @@ def _require_bytes(data: Any, what: str) -> bytes:
     return data
 
 
-from .owned import OwnedEntry  # noqa: E402 -- owned.py builds on DocumentEntry
+from .owned import OwnedDocument, OwnedEntry  # noqa: E402 -- owned.py builds on DocumentEntry

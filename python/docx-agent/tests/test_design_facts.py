@@ -1,8 +1,8 @@
-"""Design facts (round 16, F9): ``Document.design_facts`` and ``word_design_facts`` on a
-made-up template -- headings 1-3, body, a list, captions, a table style of its own with a
-header row, row bands and a first column, two sections -- and on every reading fixture.
+"""Design facts (round 16, F9): ``word_design_facts`` on a made-up template -- headings 1-3,
+body, a list, captions, a table style of its own with a header row, row bands and a first
+column, two sections -- and on every reading fixture.
 
-The template is built here with the library; its table style is written by hand below
+The template is built here with the tools; its table style is written by hand below
 (nothing in it comes from Word or any other application)."""
 
 from __future__ import annotations
@@ -10,11 +10,14 @@ from __future__ import annotations
 import json
 
 import pytest
-from lxml import etree
+from ooxml_edit.tools import Limits, Toolbox
+from layout_reads import block_ids, table_ids
 
-from docx_agent import Document
-from docx_agent.edit.design import KINDS
-from docx_agent.tools._base import tool_names
+from docx_agent.tools import FORMAT, GROUPS, TOOLS
+import word_docs
+
+#: The kinds of facts, in the order they are reported.
+KINDS = ("styles", "table_styles", "table_frames", "sections", "theme", "patterns")
 
 #: A table style of this test's own: borders top, bottom and between rows; a dark header
 #: row with white bold text, a light first column in bold, light odd row bands; 10 pt text.
@@ -33,11 +36,26 @@ TABLE_STYLE = (
     '<w:tblStylePr w:type="band1Horz"><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="F2F6FA"/></w:tcPr>'
     '</w:tblStylePr></w:style>')
 
-STYLES_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles"
 
 
-def template() -> Document:
-    doc = Document.new(page="A4", title="Quarterly template")
+@pytest.fixture(scope="module")
+def box():
+    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS) as toolbox:
+        yield toolbox
+
+
+def _ok(box, session, tool: str, **arguments):
+    result = box.dispatch(session, tool, arguments)
+    assert result.ok, (tool, arguments, result.to_json())
+    return result
+
+
+def _template(box) -> bytes:
+    session = box.session()
+    blank = word_docs.replaced(word_docs.blank(title="Quarterly template"), {
+        "word/styles.xml": lambda xml: xml.replace("</w:styles>", TABLE_STYLE.replace(
+            ' xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"', "") + "</w:styles>")})
+    d = session.open(blank, "template.docx")
     blocks = ["# Overview", "An opening paragraph in the body style.", "A second body paragraph.",
               "## Scope", "Text under a level-two heading.", "- first point\n- second point"]
     for k, area in enumerate(["North", "South", "East"]):
@@ -45,32 +63,38 @@ def template() -> Document:
                    f"| Item | Owner | Due |\n| --- | --- | --- |\n| Plan {k} | Team | Q{k + 1} |\n"
                    "| Review | Lead | Q4 |"]
     blocks += ["# Appendix", "Closing text."]
-    doc.insert_markdown("\n\n".join(blocks))
-    part = doc.package.related_parts_of_type(doc.package.document_part(), STYLES_REL)[0]
-    doc.package.tree(part).append(etree.fromstring(TABLE_STYLE))
-    doc = Document.open(doc.to_bytes())
-    for table in doc.tables():
-        doc.set_table(table.id, style="Report Grid",
-                      look={"first_row": True, "first_column": True, "banded_rows": True})
-        doc.insert_caption(before=table.id, label="Table", text=": Area figures")
-    appendix = next(p for p in doc.paragraphs() if p.text == "Appendix")
-    doc.insert_section_break(before=appendix.id)
-    sections = doc.sections()
-    doc.set_section(sections[-1].id, orientation="landscape", columns=2)
-    doc.add_header(sections[0].id, "default", "Quarterly template")
-    doc.add_header(sections[0].id, "first", "Cover header")
-    doc.add_footer(sections[0].id, "default", "Footer text")
-    return doc
+    first = block_ids(box, session, d)[0]
+    _ok(box, session, "word_insert_markdown", doc=d, at=f"before:{first}", markdown="\n\n".join(blocks))
+    _ok(box, session, "word_delete", doc=d, target=first)
+    for k in range(3):
+        table = table_ids(box, session, d)[k]
+        table = _ok(box, session, "word_format_table", doc=d, table=table, scope="table", style="Report Grid",
+                    look=["header_row", "first_column", "banded_rows"]).renamed.get(table, table)
+        _ok(box, session, "word_fields", doc=d, action="insert_caption", before=table, label="Table",
+            text=": Area figures")
+    appendix = next(p for p, text in word_docs.paragraphs(session, d) if text == "Appendix")
+    _ok(box, session, "word_sections", doc=d, action="insert_break", before=appendix)
+    sections = _ok(box, session, "word_sections", doc=d, action="list").data
+    _ok(box, session, "word_sections", doc=d, action="set", section=sections[-1]["id"], orientation="landscape",
+        columns=2)
+    for which, kind, text in (("header", "default", "Quarterly template"), ("header", "first", "Cover header"),
+                              ("footer", "default", "Footer text")):
+        _ok(box, session, "word_headers_footers", doc=d, section=sections[0]["id"], which=which, type=kind,
+            action="set", text=text)
+    return word_docs.saved(session, d)
 
 
 @pytest.fixture(scope="module")
-def doc() -> Document:
-    return template()
+def made(box):
+    """The template opened: ``(session, doc)``."""
+    session = box.session()
+    return session, session.open(_template(box), "template.docx")
 
 
 @pytest.fixture(scope="module")
-def facts(doc) -> dict:
-    return doc.design_facts()
+def facts(box, made) -> dict:
+    session, d = made
+    return _ok(box, session, "word_design_facts", doc=d).data
 
 
 def _style(facts, role, name=None):
@@ -79,12 +103,17 @@ def _style(facts, role, name=None):
     return found[0]
 
 
+def _inspected(box, made, block: str) -> dict:
+    session, d = made
+    return _ok(box, session, "word_inspect", doc=d, target=block).data["blocks"][0]
+
+
 def test_every_kind_is_reported_in_order(facts):
     assert [k for k in facts if k in KINDS] == list(KINDS)
     assert "omitted" not in facts
 
 
-def test_styles_per_role_with_usage_and_effective_look(doc, facts):
+def test_styles_per_role_with_usage_and_effective_look(box, made, facts):
     roles = [(s["role"], s["style"], s["paragraphs"]) for s in facts["styles"]]
     assert roles == [("heading 1", "heading 1", 3), ("heading 2", "heading 2", 1), ("heading 3", "heading 3", 3),
                      ("body", "Normal", roles[3][2]), ("list", "List Bullet", 2), ("caption", "caption", 3),
@@ -92,12 +121,12 @@ def test_styles_per_role_with_usage_and_effective_look(doc, facts):
     # The section break's paragraph, empty, took the heading style of the paragraph it was put before.
     assert _style(facts, "heading 1")["empty"] == 1 and "empty" not in _style(facts, "heading 3")
     heading = _style(facts, "heading 1")["look"]
-    # The new document's Heading 1: the theme's major face, as docx2svg resolves it.
+    # The new document's Heading 1: the theme's major face.
     assert heading["font"] == facts["theme"]["fonts"]["major"]["latin"]
     assert heading["keep_with_next"] is True and heading["outline_level"] == 1
     body = _style(facts, "body")
     assert body["look"]["font"] == facts["theme"]["fonts"]["minor"]["latin"]
-    assert doc.paragraph(body["example"]).style_name == "Normal"
+    assert _inspected(box, made, body["example"])["style"] == "Normal"
     listed = _style(facts, "list")["look"]
     assert listed["numbering"]["format"] == "bullet" and listed["indent_first"] < 0
     # Text in a cell takes the table style's 10 pt and no space after.
@@ -107,19 +136,20 @@ def test_styles_per_role_with_usage_and_effective_look(doc, facts):
     assert _style(facts, "body")["look"]["size"] != 10
 
 
-def test_a_style_s_look_is_docx2svg_s_for_a_paragraph_without_direct_formatting(doc, facts):
-    example = doc.paragraph(_style(facts, "heading 3")["example"])
-    effective = example.effective
+def test_a_style_s_look_is_the_paragraphs_own_without_direct_formatting(box, made, facts):
+    example = _inspected(box, made, _style(facts, "heading 3")["example"])
+    effective = example["effective"]
     look = _style(facts, "heading 3")["look"]
-    assert look["space_before"] == effective.space_before and look["space_after"] == effective.space_after
-    run = example.runs[0].effective
-    assert look["font"] == run.font and look["size"] == run.size and look["color"] == run.color
+    assert look["space_before"] == effective["spacing"]["before"] and look["space_after"] == effective["spacing"]["after"]
+    assert look["font"] == effective["font"] and look["size"] == effective["sz"]
+    assert look["color"] == effective["color"]
 
 
-def test_a_table_style_by_place_after_conditional_formatting(doc, facts):
+def test_a_table_style_by_place_after_conditional_formatting(box, made, facts):
+    session, d = made
     [grid] = facts["table_styles"]
     assert grid["style"] == "Report Grid" and grid["tables"] == 3
-    assert grid["examples"] == [t.id for t in doc.tables()]
+    assert grid["examples"] == table_ids(box, session, d)
     assert grid["options"] == {"header_row": True, "total_row": False, "first_column": True, "last_column": False,
                                "banded_rows": True, "banded_columns": False}
     places = grid["places"]
@@ -159,34 +189,37 @@ def test_the_theme_palette_and_fonts(facts):
     assert theme["fonts"]["major"]["latin"] and theme["fonts"]["minor"]["latin"]
 
 
-def test_a_repeated_shape_under_every_level_three_heading(doc, facts):
+def test_a_repeated_shape_under_every_level_three_heading(box, made, facts):
+    session, d = made
     [pattern] = facts["patterns"]
     assert pattern["heading_level"] == 3 and pattern["count"] == 3 and pattern["of"] == 3
     assert pattern["shape"] == ["Normal", "caption", "table Report Grid, 3 columns"]
-    headings = [p.id for p in doc.paragraphs() if p.text.startswith("Area ")]
+    headings = [p for p, text in word_docs.paragraphs(session, d) if text.startswith("Area ")]
     assert [e["heading"] for e in pattern["examples"]] == headings
-    tables = [t.id for t in doc.tables()]
+    tables = table_ids(box, session, d)
     assert [e["blocks"] for e in pattern["examples"]] == [f"{h}..{t}" for h, t in zip(headings, tables)]
     # A span the reading tools take.
-    assert "Area North" in doc.to_markdown(pattern["examples"][0]["blocks"])
+    assert "Area North" in _ok(box, session, "word_read", doc=d, range=pattern["examples"][0]["blocks"]).data
 
 
-def test_a_shape_under_one_heading_only_or_of_one_body_paragraph_is_no_pattern():
-    doc = Document.new()
-    doc.insert_markdown("# One\n\nText.\n\n# Two\n\nText.\n\n## Three\n\nText.\n\n- a\n- b")
-    assert doc.design_facts(["patterns"]) == {"patterns": []}
+def test_a_shape_under_one_heading_only_or_of_one_body_paragraph_is_no_pattern(box):
+    session = box.session()
+    d = session.open(word_docs.blank(), "plain.docx")
+    _ok(box, session, "word_insert_markdown", doc=d, at="end",
+        markdown="# One\n\nText.\n\n# Two\n\nText.\n\n## Three\n\nText.\n\n- a\n- b")
+    assert _ok(box, session, "word_design_facts", doc=d, include=["patterns"]).data == {"patterns": []}
 
 
-def test_include_picks_kinds_and_caps_count_what_is_left_out(doc):
-    assert list(doc.design_facts(["theme", "sections"])) == ["sections", "theme", "even_and_odd_headers"]
-    capped = doc.design_facts(["styles"], caps={"styles": 3})
-    assert len(capped["styles"]) == 3 and capped["omitted"] == {"styles": 6}
-    with pytest.raises(ValueError, match="the kinds are styles"):
-        doc.design_facts(["palette"])
+def test_include_picks_kinds(box, made):
+    session, d = made
+    picked = _ok(box, session, "word_design_facts", doc=d, include=["theme", "sections"]).data
+    assert list(picked) == ["sections", "theme", "even_and_odd_headers"]
 
 
-def test_every_reading_fixture(reading_path):
-    facts = Document.open(reading_path.read_bytes()).design_facts()
+def test_every_reading_fixture(box, reading_path):
+    session = box.session()
+    d = session.open(reading_path.read_bytes(), reading_path.name)
+    facts = _ok(box, session, "word_design_facts", doc=d).data
     json.dumps(facts)
     for entry in facts["styles"]:
         assert entry["paragraphs"] > 0 and "font" in entry["look"]
@@ -197,40 +230,24 @@ def test_every_reading_fixture(reading_path):
 # -- the tool ----------------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="module")
-def box():
-    from ooxml_edit.tools import Toolbox
-
-    from docx_agent.tools import FORMAT, GROUPS, TOOLS
-
-    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS) as toolbox:
-        yield toolbox
-
-
-def test_word_design_facts(box, doc):
-    session = box.session()
-    d1 = session.open(doc.to_bytes(), "template.docx")
-    result = box.dispatch(session, "word_design_facts", {"doc": d1})
-    assert result.ok, result.error and result.error.to_json()
+def test_word_design_facts(box, made):
+    session, d1 = made
+    result = _ok(box, session, "word_design_facts", doc=d1)
     assert result.summary == "Design facts: 9 styles, 1 table styles, 3 table frames, 2 sections, 1 patterns"
-    # The Python API's paragraph keep_together is keep_lines to a model (round 25, W4).
-    assert result.data == tool_names(doc.design_facts(), "look")
+    # A paragraph's keep of its lines is keep_lines to a model (round 25, W4).
     assert '"keep_together"' not in json.dumps(result.data) and '"keep_lines"' in json.dumps(result.data)
-    only = box.dispatch(session, "word_design_facts", {"doc": d1, "include": ["table_styles"]})
+    only = _ok(box, session, "word_design_facts", doc=d1, include=["table_styles"])
     assert list(only.data) == ["table_styles"]
     refused = box.dispatch(session, "word_design_facts", {"doc": d1, "include": ["palette"]})
     assert refused.error.code == "invalid_arguments" and "theme" in refused.error.valid_options
     assert box.tools["word_design_facts"].group == "word_style" and not box.tools["word_design_facts"].mutates
 
 
-def test_word_design_facts_keeps_fewer_entries_under_a_small_result_limit(doc):
-    from ooxml_edit.tools import Limits, Toolbox
-
-    from docx_agent.tools import FORMAT, GROUPS, TOOLS
-
+def test_word_design_facts_keeps_fewer_entries_under_a_small_result_limit(box):
+    data = _template(box)
     with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, limits=Limits(max_result_chars=6000)) as toolbox:
         session = toolbox.session()
-        d1 = session.open(doc.to_bytes(), "template.docx")
+        d1 = session.open(data, "template.docx")
         result = toolbox.dispatch(session, "word_design_facts", {"doc": d1})
     assert result.ok and result.data["omitted"]["styles"] > 0
     assert len(json.dumps(result.data)) <= 6000 - 1500

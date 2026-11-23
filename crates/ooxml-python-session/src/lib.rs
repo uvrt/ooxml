@@ -43,17 +43,17 @@ use pyo3::prelude::*;
 pub use budget::{PyBudgetAccount, PyMemoryBudget};
 pub use context::{PyCallContext, PyCancelToken, PyLimits};
 pub use layout::{LayoutFallback, PyLaidPages, PyWordFonts, PyWordPages};
-pub use options::{PyCallDocuments, PyCallLayout, PyCallOptions, PyCallWriting, PyHostIds};
+pub use options::{PyCallDocuments, PyCallLayout, PyCallOptions, PyCallWriting};
 pub use pages::PyPageSetup;
 pub use raster::PyPageRaster;
 pub use session::PySession;
 pub use version::PyVersion;
 
-/// Add the session API to the module `m`: `Session`, `CancelToken`, `Limits`, `CallContext`, `CallOptions`, `CallDocuments`, `HostIds`,
+/// Add the session API to the module `m`: `Session`, `CancelToken`, `Limits`, `CallContext`, `CallOptions`, `CallDocuments`,
 /// `CallWriting`, `CallLayout`, `Version` and
 /// `tool_specs`, `tool_hosting`, `new_document`; and the Word layout's handles: `WordFonts`, `WordPages`, `LaidPages`,
 /// `LayoutFallback`, `LayoutSummary`, `MemoryBudget` and `BudgetAccount`; the live view's `UnknownToken` and
-/// `ViewRefused`.
+/// `ViewRefused`; and the refusals of an open, `StateRefused` and `NotWordPackage`.
 ///
 /// # Errors
 /// Python's, adding a name.
@@ -64,7 +64,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCallContext>()?;
     m.add_class::<PyCallOptions>()?;
     m.add_class::<PyCallDocuments>()?;
-    m.add_class::<PyHostIds>()?;
     m.add_class::<PyCallWriting>()?;
     m.add_class::<PyCallLayout>()?;
     m.add_class::<PyVersion>()?;
@@ -84,5 +83,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("LayoutFallback", m.py().get_type::<LayoutFallback>())?;
     m.add("UnknownToken", m.py().get_type::<view::UnknownToken>())?;
     m.add("ViewRefused", m.py().get_type::<view::ViewRefused>())?;
+    m.add("StateRefused", m.py().get_type::<session::StateRefused>())?;
+    m.add("NotWordPackage", m.py().get_type::<session::NotWordPackage>())?;
     Ok(())
 }

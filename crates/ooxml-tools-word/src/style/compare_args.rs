@@ -66,5 +66,6 @@ pub struct WordFollowSample {
     /// Report what would change, change nothing.
     pub preview: Option<bool>,
     /// actionable: leave out the copies' own (kind own), counted.
+    #[arg(empty_is_absent)]
     pub report: Option<FollowReport>,
 }

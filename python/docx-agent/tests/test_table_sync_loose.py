@@ -12,10 +12,8 @@ pytest.importorskip("ooxml_edit.tools.keys", reason="needs ooxml-edit 0.110 (loo
 
 from ooxml_edit.tools import Toolbox  # noqa: E402
 
-from docx_agent import Document  # noqa: E402
-from docx_agent import blocks as _blocks  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
-from test_table_sync import (CLOCK, COLUMNS, SETS, _markdown, _row_xml, _sync, _table, _texts,  # noqa: E402
+from test_table_sync import (_row_xml, _sync, _table, _texts,  # noqa: E402
                              rows_put)
 
 #: The table's spelling of five keys, and the source's.
@@ -48,7 +46,9 @@ def test_the_parameters_are_optional_and_the_strict_set_unchanged():
     assert "orMap" not in str(edit.canonical)
     plan = anthropic_strict_plan(TOOLS, first=STRICT_FIRST)
     assert not plan["word_edit_table"]
-    assert sum(len(t.optional_parameters()) for t in TOOLS if plan[t.name]) == 24
+    # edit_smartart and style_by_value are out of TOOLS until their ports: the strict plan has
+    # that much room (24 before).
+    assert sum(len(t.optional_parameters()) for t in TOOLS if plan[t.name]) == 22
 
 
 def test_exact_keys_only_by_default(toolbox):
@@ -180,24 +180,5 @@ def test_values_keep_their_source_on_loosely_matched_rows(toolbox):
     session, table = _table(toolbox, rows(TABLE_KEYS), {"next": rows(list(reversed(DATA_KEYS)), issue="B")})
     result = _sync(toolbox, session, table, **{"from": "d:next", "loose": "table"})
     assert result.ok, result.to_json()
-    record = session.entry("d1").document.provenance()[result.data["id"]]
+    record = session.provenance("d1")[result.data["id"]]
     assert record["source"] == "d:next" and record["columns"][0]["rows"] == "7,6,5,4,3,2,1"
-
-
-@pytest.mark.usefixtures("python_owned")   # prepared on drafts
-def test_a_loose_sync_runs_on_a_draft():
-    args = {"action": "sync", "table": "t:1A2B3C4D", "from": "d:next", "loose": "data",
-            "match": [{"table": "K7-1", "data": "k7.01"}]}
-    assert _blocks.admits("word_edit_table", args) and _blocks.alone("word_edit_table", args)
-    with Toolbox([*TOOLS, rows_put], formats=[FORMAT], groups=GROUPS, workers=0, block_edits="always") as box:
-        session = box.session(clock=CLOCK)
-        session.open(Document.new().to_bytes(), "leaflets.docx")
-        first = session.entry("d1").document.paragraphs()[0].id
-        assert box.dispatch(session, "word_insert_markdown", {"doc": "d1", "at": f"after:{first}",
-                                                              "markdown": _markdown(rows(TABLE_KEYS))}).ok
-        SETS["drafted"] = (COLUMNS, rows(DATA_KEYS, issue="B"))
-        assert box.dispatch(session, "rows_put", {"id": "drafted"}).ok
-        table = session.entry("d1").document.tables()[-1].id
-        result = _sync(box, session, table, **{"from": "d:drafted", "loose": "data"})
-        assert result.ok and result.block is not None and result.block["tries"] == 1, result.to_json()
-        assert [row[0] for row in _texts(session, table)[1:]] == DATA_KEYS

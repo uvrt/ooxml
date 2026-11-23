@@ -1,5 +1,5 @@
 //! Owns: [`Session`], documents by id with their stores, and the operations on them: open,
-//! save, close, the bridge's update, snapshots and counters. A tool call's dispatch is
+//! save, close, an update of parts given as bytes, snapshots and counters. A tool call's dispatch is
 //! [`crate::dispatch`]'s.
 //!
 //! Must not: hold a lock while a handler runs or a package is parsed or written (the table
@@ -7,7 +7,7 @@
 
 use crate::context::CallCancel;
 use crate::document::{At, Document};
-use crate::update::{HostIds, PartUpdate, Updated};
+use crate::update::{PartUpdate, Updated};
 use crate::{CallContext, DocId, DocKind, Registry, SessionError};
 use ooxml_base::Context;
 use ooxml_opc::Package;
@@ -15,6 +15,7 @@ use ooxml_store::{StoreConfig, StoreStats};
 use ooxml_tools_word::{Placer, Version};
 use ooxml_word_edit::EarlierIds;
 use ooxml_word_model::docx::Versions;
+use ooxml_word_model::ids::{HeldId, LoadedState};
 use std::collections::hash_map::RandomState;
 use std::collections::BTreeMap;
 use std::hash::{BuildHasher, Hash, Hasher};
@@ -134,8 +135,6 @@ pub(crate) struct Counts {
     pub(crate) failed: AtomicU64,
     pub(crate) cancelled: AtomicU64,
     pub(crate) updates: AtomicU64,
-    /// `bridge_calls{tool}` (section 13): unported tools' calls committed through the bridge.
-    bridged: std::sync::Mutex<BTreeMap<String, u64>>,
     /// `panics{tool}`.
     pub(crate) panics: std::sync::Mutex<BTreeMap<String, u64>>,
 }
@@ -215,6 +214,25 @@ impl Session {
         let id = DocId::nth(self.last_id.fetch_add(1, Ordering::Relaxed) + 1);
         self.write_table().insert(id.clone(), document);
         Ok(id)
+    }
+
+    /// A Word document opened from its bytes as `name`, with the id state saved beside them
+    /// (`docx-ids.1.`, docx-agent's `Document.id_state`): its ids are read against its parts
+    /// as they are parsed, so it never gives an id it had before it was saved again, and each
+    /// id the state retired is the session's record (who retired it, in the host's words).
+    /// Returns its id and the state's `(version, last)`: the version saved and the highest
+    /// its history gave, for the host's numbers to go on from.
+    ///
+    /// # Errors
+    /// As [`Session::open`]; [`SessionError::Word`] with
+    /// [`ooxml_word_edit::EditError::IdState`] when the state is not these bytes'.
+    pub fn open_state(&self, bytes: Arc<[u8]>, name: &str, state: &str) -> Result<(DocId, (i64, i64)), SessionError> {
+        let package = Package::open(bytes, &self.context.limits)?;
+        let (document, loaded) = Document::open_word_state(package, name, self.config.store, &self.context, state)?;
+        let id = DocId::nth(self.last_id.fetch_add(1, Ordering::Relaxed) + 1);
+        self.write_table().insert(id.clone(), Arc::new(document));
+        self.seed_retired(&id, retired_rows(&loaded))?;
+        Ok((id, (loaded.versions.version, loaded.versions.last)))
     }
 
     /// The document `id` at its head version. Never waits for a writer.
@@ -313,7 +331,7 @@ impl Session {
     }
 
     /// Commit `parts` (bytes to put, `None` to remove) to the document as one step, made
-    /// by `context.caller`: the bridge's way in for a version whose owner is elsewhere
+    /// by `context.caller`: parts made outside the tools (a test's or a bench's version)
     /// (section 13). XML parts are parsed here, on a snapshot, without any lock; the
     /// commit is the store's.
     ///
@@ -329,38 +347,6 @@ impl Session {
         self.commit(id, parts, context).map(|(updated, _)| updated)
     }
 
-    /// The bridge (section 13): commit the parts an unported tool `tool` changed, run by the
-    /// host on the head's bytes, as one step made by `context.caller`, and count it in
-    /// `bridge_calls{tool}`; `host`: what the host's ledger holds beside the parts (its
-    /// tool's draws of new ids and renames, [`HostIds`]). The version it leaves, held.
-    ///
-    /// # Errors
-    /// As [`Session::update`]; a conflict with a commit since the head the tool ran on is
-    /// prepared again on the newer head (the update reads the whole document).
-    pub fn bridge(
-        &self,
-        id: &DocId,
-        tool: &str,
-        parts: Vec<(String, Option<Arc<[u8]>>)>,
-        host: HostIds,
-        context: &CallContext,
-    ) -> Result<(Updated, Opened), SessionError> {
-        let done = self.commit_by(id, Some(tool), parts, host, context)?;
-        let mut counts = self.counts.bridged.lock().unwrap_or_else(PoisonError::into_inner);
-        *counts.entry(tool.to_owned()).or_default() += 1;
-        Ok(done)
-    }
-
-    /// `bridge_calls{tool}`: how many calls of each unported tool went through the bridge.
-    #[must_use]
-    pub fn bridge_calls(&self) -> BTreeMap<String, u64> {
-        self.counts
-            .bridged
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
-    }
-
     /// [`Session::update`], and the version it leaves (the one it ran on where it changed
     /// nothing), held: a call whose context names it reads that version, whatever was
     /// committed since (the host that owns the document hands each version over and reads
@@ -374,22 +360,10 @@ impl Session {
         parts: Vec<(String, Option<Arc<[u8]>>)>,
         context: &CallContext,
     ) -> Result<(Updated, Opened), SessionError> {
-        self.commit_by(id, None, parts, HostIds::default(), context)
-    }
-
-    /// [`Session::commit`] of the parts `tool` changed (`None`: no tool named).
-    fn commit_by(
-        &self,
-        id: &DocId,
-        tool: Option<&str>,
-        parts: Vec<(String, Option<Arc<[u8]>>)>,
-        host: HostIds,
-        context: &CallContext,
-    ) -> Result<(Updated, Opened), SessionError> {
         let document = self.document(id)?;
         let cancel = CallCancel::new(context, &*self.context.cancel, &*self.context.clock);
-        let update = PartUpdate::new(parts, self.context.limits, &cancel).with_host(host);
-        let (version, changed, attempts) = document.update(&context.caller, tool, &update).inspect_err(|e| {
+        let update = PartUpdate::new(parts, self.context.limits, &cancel);
+        let (version, changed, attempts) = document.update(&context.caller, None, &update).inspect_err(|e| {
             if matches!(e, SessionError::Base(ooxml_base::BaseError::Cancelled)) {
                 self.counts.cancelled.fetch_add(1, Ordering::Relaxed);
             }
@@ -397,7 +371,7 @@ impl Session {
         if changed {
             self.counts.updates.fetch_add(1, Ordering::Relaxed);
             if !document.grouped() {
-                document.stepped(version.number(), tool, context);
+                document.stepped(version.seq(), version.number(), None, context);
             }
         }
         let updated = Updated {
@@ -468,4 +442,20 @@ fn nonce(context: &Context) -> String {
     now.seconds.hash(&mut hasher);
     now.nanos.hash(&mut hasher);
     format!("{:016x}", hasher.finish())
+}
+
+/// What a loaded state retired, as the session's record takes it: each block id and drawing
+/// number with the version that retired it (the host's number) and who made that version.
+fn retired_rows(loaded: &LoadedState) -> Vec<(HeldId, u64, Option<String>)> {
+    let said = |step: i64| loaded.steps.get(&step).cloned().flatten();
+    let version = |step: i64| u64::try_from(step).unwrap_or_default();
+    let blocks = loaded
+        .gone
+        .iter()
+        .map(|(v, s)| (HeldId::Block(*v), version(*s), said(*s)));
+    let drawings = loaded
+        .drawings_gone
+        .iter()
+        .map(|(n, s)| (HeldId::Drawing(*n), version(*s), said(*s)));
+    blocks.chain(drawings).collect()
 }

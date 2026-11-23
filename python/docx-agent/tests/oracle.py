@@ -305,3 +305,31 @@ def find_in_pdf(pages: list[list[PdfChar]], text: str) -> list[PdfChar] | None:
         if at >= 0:
             return kept[at:at + len(wanted)]
     return None
+
+
+def word_script(lines: list[str]) -> str:
+    """An AppleScript for :func:`run_script`: Word opens the input, runs ``lines`` on it
+    (the document is ``d``), saves it to the output and quits (once ``tools/e3_probe.py``)."""
+    body = "\n      ".join(line.replace("\n", "\n      ") for line in lines)
+    return f'''
+on run argv
+  set inputPath to item 1 of argv
+  set outputPath to item 2 of argv
+  with timeout of 170 seconds
+    tell application "Microsoft Word"
+      activate
+      open (POSIX file inputPath)
+      set d to active document
+      {body}
+      save as d file name outputPath file format format document
+      close d saving no
+      quit saving no
+    end tell
+  end timeout
+end run
+'''
+
+
+def review_script(action: str) -> str:
+    """Word's Accept All (``action`` "accept") or Reject All ("reject")."""
+    return word_script([f"{action} all revisions d"])

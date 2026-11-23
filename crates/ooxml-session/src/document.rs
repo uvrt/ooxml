@@ -19,14 +19,15 @@ use crate::{DocKind, SessionError};
 use ooxml_base::Context;
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Committed, Snapshot, Store, StoreConfig, StoreStats};
-use ooxml_tools_word::{RowsWritten, Tracked};
+use ooxml_tools_word::{MadeBy, RowsWritten, Tracked};
 use ooxml_word_edit::validate::Delta;
 use ooxml_word_edit::{EarlierIds, Editor, RevisionPolicy, Tracking, WordDoc};
 use ooxml_word_model::docx::Versions;
+use ooxml_word_model::ids::LoadedState;
 use std::sync::{Arc, PoisonError, RwLock};
 
 /// The context's cache budget, as the edit core's caches reserve from it.
-struct Budget(Arc<dyn ooxml_base::CacheBudget>);
+pub(crate) struct Budget(pub(crate) Arc<dyn ooxml_base::CacheBudget>);
 
 impl ooxml_derive::CacheBudget for Budget {
     fn reserve(&self, bytes: usize) -> bool {
@@ -59,6 +60,12 @@ pub(crate) struct Word {
     /// The rows this session's `word_edit_table` calls added or wrote into (round 58,
     /// R126): `check`'s `row_text_format` reads them.
     pub(crate) rows_written: RowsWritten,
+    /// The calls of this session that left a table ragged or off its grid (rounds 57 and
+    /// 58): `check`'s `table_grid_mismatch` names them (`made_by`).
+    pub(crate) made_by: MadeBy,
+    /// The version the open step group started from (its number and package), for the
+    /// reflow a batch's checks measure once after its last op ([`crate::Session::group_reflow`]).
+    pub(crate) group_start: std::sync::Mutex<Option<(u64, Package)>>,
     /// Its page engine, where the session lays it out itself, and what its host set it to
     /// be laid out with (`crate::pages`).
     pub(crate) pages: crate::pages::DocPages,
@@ -179,38 +186,66 @@ impl Document {
             DocKind::Docx => {
                 let budget = Arc::new(Budget(Arc::clone(&context.budget)));
                 let editor = Editor::open_with(package, config, clock, budget, earlier)?;
-                let opened = editor.store().snapshot();
-                // the paragraph texts every find reads and the facts the document-wide
-                // lookups read (bookmarks, controls, revisions, frames), read once as the
-                // document opens: each later version reads only the blocks it changed, and
-                // no edit call pays for the first reading of a long part
-                for part in &opened.doc().docx()?.parts {
-                    part.texts();
-                    part.facts();
-                }
-                Held::Word(Box::new(Word {
-                    editor,
-                    opened,
-                    tracking: RwLock::new(None),
-                    retired: Retired::default(),
-                    last_check: Arc::default(),
-                    images: ooxml_tools_word::PageImages::new(Some(Arc::clone(&context.budget))),
-                    rows_written: RowsWritten::default(),
-                    pages: crate::pages::DocPages::default(),
-                    views: crate::live_view::LiveViews::new(Arc::clone(&context.budget)),
-                }))
+                Self::word_held(editor, context)?
             }
             DocKind::Pptx | DocKind::Xlsx => {
                 Held::Package(Box::new(Store::new(PackageDoc::new(package), config, clock)))
             }
         };
-        Ok(Document {
+        Ok(Self::of_held(kind, name, held))
+    }
+
+    /// `package` opened as a Word document with the id state saved beside its bytes
+    /// (`docx-ids.1.`), read against its parts as they are parsed: its ids those it had
+    /// before it was saved; and what the state recorded (its versions, the ids it retired).
+    pub(crate) fn open_word_state(
+        package: Package,
+        name: &str,
+        config: StoreConfig,
+        context: &Context,
+        state: &str,
+    ) -> Result<(Document, LoadedState), SessionError> {
+        let clock = Arc::new(StoreClock(Arc::clone(&context.clock)));
+        let budget = Arc::new(Budget(Arc::clone(&context.budget)));
+        let (editor, loaded) = Editor::open_with_state(package, config, clock, budget, state)?;
+        let held = Self::word_held(editor, context)?;
+        Ok((Self::of_held(DocKind::Docx, name, held), loaded))
+    }
+
+    fn of_held(kind: DocKind, name: &str, held: Held) -> Document {
+        Document {
             kind,
             name: name.to_owned(),
             held,
             versions: Arc::new(Versions::new()),
             owners: Owners::default(),
-        })
+        }
+    }
+
+    /// A Word document's state as the session holds it, from its editor.
+    fn word_held(editor: Editor, context: &Context) -> Result<Held, SessionError> {
+        let opened = editor.store().snapshot();
+        // the paragraph texts every find reads and the facts the document-wide
+        // lookups read (bookmarks, controls, revisions, frames), read once as the
+        // document opens: each later version reads only the blocks it changed, and
+        // no edit call pays for the first reading of a long part
+        for part in &opened.doc().docx()?.parts {
+            part.texts();
+            part.facts();
+        }
+        Ok(Held::Word(Box::new(Word {
+            editor,
+            opened,
+            tracking: RwLock::new(None),
+            retired: Retired::default(),
+            last_check: Arc::default(),
+            images: ooxml_tools_word::PageImages::new(Some(Arc::clone(&context.budget))),
+            rows_written: RowsWritten::default(),
+            made_by: MadeBy::default(),
+            group_start: std::sync::Mutex::default(),
+            pages: crate::pages::DocPages::default(),
+            views: crate::live_view::LiveViews::new(Arc::clone(&context.budget)),
+        })))
     }
 
     /// The head version.
@@ -248,9 +283,13 @@ impl Document {
         }
     }
 
-    /// A step numbered `number` was made, by `tool` (`None`: none, a change from outside
-    /// the tools) as `context`'s caller: kept as its owner.
-    pub(crate) fn stepped(&self, number: u64, tool: Option<&str>, context: &crate::CallContext) {
+    /// A step numbered `number`, ended by the version `seq`, was made by `tool` (`None`:
+    /// none, a change from outside the tools) as `context`'s caller: kept as its owner, and
+    /// its number as a refusal of an id it retired names it.
+    pub(crate) fn stepped(&self, seq: u64, number: u64, tool: Option<&str>, context: &crate::CallContext) {
+        if let Some(word) = self.word() {
+            word.retired.number(seq, number);
+        }
         let owner = tool.map(|tool| StepOwner::of(tool, context));
         self.owners.stepped(number, owner, || self.held_numbers());
     }

@@ -24,14 +24,14 @@ blocking change by id, with the call that settles it), 3 (a merge already made i
 from __future__ import annotations
 
 import datetime as dt
+import re
 
 import pytest
 from ooxml_edit.tools import Toolbox
 
-from docx_agent import Document
-from docx_agent.layout_facts import table_grid_mismatch
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
-from docx_agent.validate import grid_problems
+
+import word_docs
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _W = "{%s}" % W
@@ -61,24 +61,52 @@ def ok(box, session, name, /, **arguments):
 
 def _opened(box, tracked: bool = True):
     session = box.session(clock=CLOCK)
-    session.open(Document.new().to_bytes(), "report.docx")
-    first = session.entry("d1").document.paragraphs()[0].id
+    session.open(word_docs.blank(), "report.docx")
+    first = word_docs.paragraphs(session, "d1")[0][0]
     ok(box, session, "word_insert_markdown", doc="d1", at=f"after:{first}",
        markdown=f"Field report.\n\n{MARKDOWN}\n\nAfter the table.")
     if tracked:
         ok(box, session, "word_set_tracking", doc="d1", on=True, author=ME)
-    return session, session.entry("d1").document.tables()[-1].id
+    return session, _last_table(_document(session))
 
 
-def _document(session) -> Document:
-    return session.entry("d1").document
+def _document(session) -> bytes:
+    """The document's bytes as they are now."""
+    return word_docs.saved(session, "d1")
 
 
-def _shape(document: Document) -> list[list[tuple]]:
-    """Each row's cells: (grid column, span, vertical merge, text)."""
-    _part, entry = document.tables()[-1]._entry()
+def _tables(data: bytes) -> list:
+    return [b for b in word_docs.body_blocks(word_docs.tree(data)) if b.tag == _W + "tbl"]
+
+
+def _last_table(data: bytes) -> str:
+    return f"t:{word_docs.rows_of(_tables(data)[-1])[0].get(word_docs.W14_PARA)}"
+
+
+def _opened_data(box, data: bytes):
+    session = box.session(clock=CLOCK)
+    session.open(data, "report.docx")
+    return session
+
+
+def _check(box, data: bytes) -> dict:
+    return ok(box, _opened_data(box, data), "check", doc="d1", include=["validate", "layout"]).data
+
+
+def _no_grid_mismatch(box, data: bytes) -> None:
+    assert _check(box, data)["layout"].get("table_grid_mismatch", []) == []
+
+
+def _markdown(box, data: bytes, target: str | None = None) -> str:
+    session = _opened_data(box, data)
+    text = word_docs.read(box, session, "d1", **({"range": target} if target else {}))
+    return re.sub(r" ?<!-- [^>]*-->\n?| data-id=\"[^\"]*\"", "", text)
+
+
+def _shape(data: bytes) -> list[list[tuple]]:
+    """Each row's cells of the body's last table: (grid column, span, vertical merge, text)."""
     out = []
-    for row, _ in entry.rows:
+    for row in word_docs.rows_of(_tables(data)[-1]):
         column, line = 0, []
         for cell in row.iter(_W + "tc"):
             properties = cell.find(_W + "tcPr")
@@ -108,19 +136,19 @@ def S(row, col, rows=1, columns=2):
     return {"action": "split", "first": {"row": row, "col": col}, "rows": rows, "columns": columns}
 
 
-def _made(box, steps, tracked: bool = True) -> Document:
+def _made(box, steps, tracked: bool = True) -> bytes:
     session, _ = _opened(box, tracked)
     for step in steps:
-        table = _document(session).tables()[-1].id
-        ok(box, session, "word_edit_table", doc="d1", table=table, **step)
+        ok(box, session, "word_edit_table", doc="d1", table=_last_table(_document(session)), **step)
     return _document(session)
 
 
-def _settled(document: Document, action: str) -> list[list[tuple]]:
-    copy = Document.open(document.to_bytes())
-    copy.accept_all() if action == "accept" else copy.reject_all()
-    assert all(grid_problems(t._entry()[1].element) == [] for t in copy.tables())
-    return _shape(copy)
+def _settled(box, data: bytes, action: str) -> list[list[tuple]]:
+    session = _opened_data(box, data)
+    ok(box, session, "word_changes", doc="d1", action=action, all=True)
+    settled = _document(session)
+    assert _check(box, settled)["validate"]["problems"] == []
+    return _shape(settled)
 
 
 #: Each case written in both orders, and the table its acceptance must give (the same edits
@@ -160,30 +188,30 @@ def test_the_order_of_the_edits_does_not_matter(box, case):
     first, second = _made(box, one), _made(box, other)
     plain = _made(box, one, tracked=False)
     for document in (first, second):
-        assert table_grid_mismatch(document) == []
-        assert _settled(document, "accept") == _shape(plain)
-        assert _settled(document, "reject") == _shape(_made(box, [], tracked=False))
+        _no_grid_mismatch(box, document)
+        assert _settled(box, document, "accept") == _shape(plain)
+        assert _settled(box, document, "reject") == _shape(_made(box, [], tracked=False))
 
 
 @pytest.mark.parametrize("case", list(CASES))
 def test_a_reshape_over_pending_changes_accepts_as_made_untracked(box, case):
     document = _made(box, CASES[case])
-    assert table_grid_mismatch(document) == []
-    assert _settled(document, "accept") == _shape(_made(box, CASES[case], tracked=False))
-    assert _settled(document, "reject") == _shape(_made(box, [], tracked=False))
+    _no_grid_mismatch(box, document)
+    assert _settled(box, document, "accept") == _shape(_made(box, CASES[case], tracked=False))
+    assert _settled(box, document, "reject") == _shape(_made(box, [], tracked=False))
 
 
 def test_the_final_view_reads_the_merge_over_a_deleted_column_as_accepted(box):
     document = _made(box, [DC(1), M(0, 0, 0, 2)])
-    accepted = Document.open(document.to_bytes())
-    accepted.accept_all()
-    assert document.to_markdown(document.tables()[-1].id, ids=False) == \
-        accepted.to_markdown(accepted.tables()[-1].id, ids=False)
+    session = _opened_data(box, document)
+    ok(box, session, "word_changes", doc="d1", action="accept", all=True)
+    accepted = _document(session)
+    assert _markdown(box, document, _last_table(document)) == _markdown(box, accepted, _last_table(accepted))
 
 
 def test_the_deleted_columns_text_stays_out_of_the_merged_cell(box):
     document = _made(box, [DC(1), M(1, 0, 1, 1)])
-    merged = _settled(document, "accept")[1][0]
+    merged = _settled(box, document, "accept")[1][0]
     assert merged[3] == "Harbour / draft" and merged[1] == 2
 
 
@@ -206,10 +234,10 @@ def test_a_merge_is_listed_as_its_own_change(box):
 def test_a_repeated_merge_is_a_no_op(box):
     session, table = _opened(box)
     ok(box, session, "word_edit_table", doc="d1", table=table, **M(1, 0, 1, 1))
-    before = _document(session).to_bytes()
+    before = _document(session)
     again = ok(box, session, "word_edit_table", doc="d1", table=table, **M(1, 0, 1, 1))
     assert again.changed == [] and "nothing changed" in again.warnings[0]
-    assert _document(session).to_bytes() == before
+    assert _document(session) == before
     assert len(ok(box, session, "word_changes", doc="d1", action="list").data) == 1
 
 
@@ -219,7 +247,7 @@ def test_deleting_the_first_cell_of_a_pending_merge_is_refused_with_its_id(box, 
     ok(box, session, "word_edit_table", doc="d1", table=table, **DC(2))
     ok(box, session, "word_edit_table", doc="d1", table=table, **M(1, 0, 1, 1))
     merge = ok(box, session, "word_changes", doc="d1", action="list").data[-1]
-    before = _document(session).to_bytes()
+    before = _document(session)
     refused = call(box, session, "word_edit_table", doc="d1", table=table, **step)
     assert not refused.ok
     error = refused.to_json()["error"]
@@ -227,7 +255,7 @@ def test_deleting_the_first_cell_of_a_pending_merge_is_refused_with_its_id(box, 
     assert "does not track" not in error["message"]
     # The fix accepts the merge alone -- not the column deletion, not "within" the table.
     assert error["details"]["fix"] == {"tool": "word_changes", "calls": [{"action": "accept", "ids": [merge["id"]]}]}
-    assert _document(session).to_bytes() == before
+    assert _document(session) == before
     way = error["details"]["call"]
     ok(box, session, way["tool"], **way["arguments"])
     assert [c["kind"] for c in ok(box, session, "word_changes", doc="d1", action="list").data] == ["deletion"]
@@ -260,14 +288,11 @@ def SC(row, col, text):
 def test_a_cell_never_carries_two_deletion_records_and_the_file_validates(box, steps):
     """A merge, a cell's text and a column deletion in any order: one w:cellDel per cell at
     most (the schema allows one), and nothing for validation to find."""
-    from docx_agent.validate import check
-
     document = _made(box, steps)
-    _part, entry = document.tables()[-1]._entry()
-    for row, _ in entry.rows:
+    for row in word_docs.rows_of(_tables(document)[-1]):
         for cell in row.iter(_W + "tc"):
             assert len(cell.findall(f"{_W}tcPr/{_W}cellDel")) <= 1
-    assert check(Document.open(document.to_bytes()).package) == []
+    assert _check(box, document)["validate"]["problems"] == []
 
 
 def test_untracked_a_merge_over_a_pending_deletion_is_still_refused(box):
@@ -278,28 +303,31 @@ def test_untracked_a_merge_over_a_pending_deletion_is_still_refused(box):
     assert not refused.ok and refused.to_json()["error"]["code"] == "refused"
 
 
-def test_no_refusal_says_word_does_not_track_a_merge(box):
-    import inspect
-
-    from docx_agent.edit import tables
-    from docx_agent.tools import objects
-
-    for module in (tables, objects):
-        assert "does not track a merge" not in inspect.getsource(module)
-
-
 # -- R117 ----------------------------------------------------------------------------------------
 
 
-def _marked(document: Document, paragraph: str) -> str:
+def _marked(data: bytes, paragraph: str) -> str:
     """The paragraph as kept text, [-deleted-] and {+inserted+}."""
-    _part, entry = document._resolve(paragraph)
     out = []
-    for run in entry.element.iter(_W + "r"):
+    for run in word_docs.find(word_docs.tree(data), paragraph).iter(_W + "r"):
         text = "".join(t.text or "" for t in run.iter(_W + "t", _W + "delText"))
         above = {a.tag for a in run.iterancestors()}
         out.append(f"[-{text}-]" if _W + "del" in above else f"{{+{text}+}}" if _W + "ins" in above else text)
     return "".join(out)
+
+
+def _one_paragraph(box, text: str, run_properties: str = ""):
+    """A document of one paragraph (``p:1A000001``) of one run of ``text``."""
+    props = f"<w:rPr>{run_properties}</w:rPr>" if run_properties else ""
+    data = word_docs.with_body(f'<w:p w14:paraId="1A000001" w14:textId="77777777"><w:r>{props}'
+                               f'<w:t xml:space="preserve">{text}</w:t></w:r></w:p>')
+    return _opened_data(box, data), "p:1A000001"
+
+
+def _text_after(box, data: bytes, action: str) -> str:
+    session = _opened_data(box, data)
+    ok(box, session, "word_changes", doc="d1", action=action, all=True)
+    return word_docs.paragraphs(session, "d1")[0][1]
 
 
 WORDS = [
@@ -322,19 +350,14 @@ WORDS = [
 
 
 @pytest.mark.parametrize("old,new,marked", WORDS)
-def test_a_tracked_replacement_marks_whole_words(old, new, marked):
-    document = Document.new()
-    paragraph = document.paragraphs()[0].id
-    document.paragraph(paragraph).set_text(old)
-    with document.tracking(author=ME, date="2026-11-13T09:00:00Z"):
-        document.paragraph(paragraph).set_text(new)
-    assert _marked(document, paragraph) == marked
-    accepted = Document.open(document.to_bytes())
-    accepted.accept_all()
-    assert accepted.paragraphs()[0].text == new
-    rejected = Document.open(document.to_bytes())
-    rejected.reject_all()
-    assert rejected.paragraphs()[0].text == old
+def test_a_tracked_replacement_marks_whole_words(box, old, new, marked):
+    session, paragraph = _one_paragraph(box, old)
+    ok(box, session, "word_set_tracking", doc="d1", on=True, author=ME)
+    ok(box, session, "word_set_text", doc="d1", target=paragraph, text=new)
+    data = _document(session)
+    assert _marked(data, paragraph) == marked
+    assert _text_after(box, data, "accept") == new
+    assert _text_after(box, data, "reject") == old
 
 
 def test_set_cells_tracked_lists_the_whole_words(box):
@@ -346,42 +369,32 @@ def test_set_cells_tracked_lists_the_whole_words(box):
         [("", "the final"), ("draft", "Draft")]
 
 
-def test_an_untracked_replacement_keeps_the_characters_it_shares():
+def test_an_untracked_replacement_keeps_the_characters_it_shares(box):
     """Untracked, a character that survives keeps its run (its formatting): unchanged."""
-    document = Document.new()
-    paragraph = document.paragraphs()[0].id
-    document.paragraph(paragraph).set_text("Quarterly report")
-    _part, entry = document._resolve(paragraph)
-    run = entry.element.find(_W + "r")
-    properties = run.makeelement(_W + "rPr", {})
-    properties.append(run.makeelement(_W + "b", {}))
-    run.insert(0, properties)
-    document.paragraph(paragraph).set_text("Half-yearly report")
-    _part, entry = document._resolve(paragraph)
-    assert all(r.find(f"{_W}rPr/{_W}b") is not None for r in entry.element.iter(_W + "r"))
-    assert document.paragraphs()[0].text == "Half-yearly report"
+    session, paragraph = _one_paragraph(box, "Quarterly report", "<w:b/>")
+    ok(box, session, "word_set_text", doc="d1", target=paragraph, text="Half-yearly report")
+    found = word_docs.find(word_docs.tree(_document(session)), paragraph)
+    assert all(r.find(f"{_W}rPr/{_W}b") is not None for r in found.iter(_W + "r"))
+    assert word_docs.text_of(found) == "Half-yearly report"
 
 
-def test_a_tracked_replacement_accepts_with_the_untracked_edits_formatting():
+def test_a_tracked_replacement_accepts_with_the_untracked_edits_formatting(box):
     """A word partly kept ("bold" -> "...d") is replaced whole, its new text formatted per
     character as the untracked edit formats it: accepted, the same Markdown."""
-    def made(tracked: bool) -> Document:
-        document = Document.new()
-        document.insert_markdown("Plain **bold** and *italic* runs.")
-        paragraph = next(p for p in document.paragraphs() if p.text.startswith("Plain"))
-        new = paragraph.text[:5] + "EDITED" + paragraph.text[9:]
+    def made(tracked: bool) -> tuple[bytes, str]:
+        session = _opened_data(box, word_docs.blank())
+        ok(box, session, "word_insert_markdown", doc="d1", at="end", markdown="Plain **bold** and *italic* runs.")
+        paragraph, text = next((p, t) for p, t in word_docs.paragraphs(session, "d1") if t.startswith("Plain"))
         if tracked:
-            with document.tracking(author=ME, date="2026-11-13T09:00:00Z"):
-                document.paragraph(paragraph.id).set_text(new)
-        else:
-            document.paragraph(paragraph.id).set_text(new)
-        return document
+            ok(box, session, "word_set_tracking", doc="d1", on=True, author=ME)
+        ok(box, session, "word_set_text", doc="d1", target=paragraph, text=text[:5] + "EDITED" + text[9:])
+        return _document(session), paragraph
 
-    tracked = made(True)
-    paragraph = next(p for p in tracked.paragraphs() if "EDITED" in p.text)
-    assert _marked(tracked, paragraph.id).startswith("[-Plain -][-bold-]{+PlainEDITED+}{+d+}")
-    tracked.accept_all()
-    assert tracked.to_markdown(ids=False) == made(False).to_markdown(ids=False)
+    tracked, paragraph = made(True)
+    assert _marked(tracked, paragraph).startswith("[-Plain -][-bold-]{+PlainEDITED+}{+d+}")
+    session = _opened_data(box, tracked)
+    ok(box, session, "word_changes", doc="d1", action="accept", all=True)
+    assert _markdown(box, _document(session)) == _markdown(box, made(False)[0])
 
 
 # -- Word itself (opt-in: pytest -m oracle) --------------------------------------------------------
@@ -393,22 +406,19 @@ def test_a_tracked_replacement_accepts_with_the_untracked_edits_formatting():
 def test_words_accept_and_reject_equal_ours(box, case, action):
     """Word's own Accept All / Reject All of each form give the table docx-agent's own give:
     the same cells, spans, merges and text (widths Word re-saves its own way)."""
-    import sys
-    from pathlib import Path
 
     import oracle
 
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-    from e3_probe import review_script
+    from oracle import review_script
 
     steps = ORDERS[case][0] if case in ORDERS else CASES[case]
-    data = _made(box, steps).to_bytes()
+    data = _made(box, steps)
     try:
         with oracle.session() as word:
             outcome = word.run_script(review_script(action), data, name="r55c", tag=action, timeout=200)
             assert outcome, f"Word did not {action}: {outcome.outcome} {outcome.detail}"
-            theirs = Document.open(outcome.path.read_bytes())
+            theirs = outcome.path.read_bytes()
             outcome.path.unlink(missing_ok=True)
     except oracle.WordBusy as busy:
         pytest.skip(str(busy))
-    assert _shape(theirs) == _settled(Document.open(data), action)
+    assert _shape(theirs) == _settled(box, data, action)

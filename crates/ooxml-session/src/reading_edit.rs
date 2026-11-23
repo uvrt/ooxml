@@ -61,7 +61,8 @@ impl<T: ToolArgs + ReadsWhen> Tool for ReadingEditHandler<T> {
     }
 
     fn run(&self, arguments: Map<String, Value>, call: &Call<'_>) -> ToolResult<Value> {
-        let args = match T::from_arg(&Value::Object(arguments), "") {
+        let arguments = Value::Object(arguments);
+        let args = match T::from_arg(&arguments, "") {
             Ok(args) => args,
             Err(e) => {
                 return ToolResult::failed(ToolError::internal(
@@ -80,7 +81,7 @@ impl<T: ToolArgs + ReadsWhen> Tool for ReadingEditHandler<T> {
             let message = format!("{} edits Word documents the session owns", self.spec.name);
             return ToolResult::failed(ToolError::failure(Failure::Internal, message));
         };
-        call.edit(word, |editing| (self.edit)(&args, editing))
+        call.edit(word, arguments.as_object(), |editing| (self.edit)(&args, editing))
     }
 
     fn run_outside(&self, arguments: &Value, editing: &Editing<'_>, version: &Version<'_>) -> ToolResult<Value> {

@@ -30,7 +30,16 @@ impl Session {
         let document = self.document(id)?;
         let store = match &document.held {
             Held::Package(store) => store.open_group()?,
-            Held::Word(word) => word.editor.store().open_group()?,
+            Held::Word(word) => {
+                let mark = word.editor.store().open_group()?;
+                let head = word.editor.store().snapshot();
+                let start = (head.seq().0, head.doc().package().clone());
+                *word
+                    .group_start
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(start);
+                mark
+            }
         };
         Ok(GroupMark {
             store,
@@ -81,6 +90,7 @@ impl Session {
                         history: true,
                     };
                     word.retired.note(&made, &delta);
+                    word.retired.number(made.seq, version.number());
                 }
                 if let Some(tracking) = &mark.tracking {
                     word.restore_tracking(tracking.clone());
@@ -106,13 +116,67 @@ impl Session {
         let document = self.document(id)?;
         let made = match &document.held {
             Held::Package(store) => store.close_group(&context.caller)?,
-            Held::Word(word) => word.editor.store().close_group(&context.caller)?,
+            Held::Word(word) => {
+                let made = word.editor.store().close_group(&context.caller)?;
+                *word
+                    .group_start
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+                made
+            }
         };
-        if made.is_some() && !document.grouped() {
+        if let Some(seq) = made.filter(|_| !document.grouped()) {
             // (the host holds the document alone while its group is open: the head is the step)
-            document.stepped(document.head().number(), tool, context);
+            document.stepped(seq.0, document.head().number(), tool, context);
         }
         Ok(made.map(|seq| seq.0))
+    }
+}
+
+impl Session {
+    /// The reflow of what `id`'s open step group committed, measured once (a batch's
+    /// checks, after its last op): from the version the group started from to the head,
+    /// laid out by the call's layout, else the document's own engine -- only where that
+    /// engine laid out the version the group started from (`reflow_after_edit`); `None`
+    /// where nothing is measured (no group, no change, no layout of the start).
+    ///
+    /// # Errors
+    /// [`SessionError::NotOpen`].
+    pub fn group_reflow(&self, id: &DocId, context: &CallContext) -> Result<Option<serde_json::Value>, SessionError> {
+        let document = self.document(id)?;
+        let Some(word) = document.word() else {
+            return Ok(None);
+        };
+        let start = word
+            .group_start
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let Some((seq, package)) = start else {
+            return Ok(None);
+        };
+        let head = word.editor.store().snapshot();
+        if head.seq().0 == seq {
+            return Ok(None);
+        }
+        let Some(layout) = context.layout.clone().or_else(|| self.own_pages(id)) else {
+            return Ok(None);
+        };
+        let cancel = crate::context::CallCancel::new(context, &*self.context.cancel, &*self.context.clock);
+        let layout_cancel = cancel.layout();
+        let limit = layout_cancel.as_ref().map(crate::context::LayoutCancel::limit);
+        let from = ooxml_tools_word::EditedFrom {
+            version: seq,
+            package: &package,
+        };
+        Ok(ooxml_tools_word::reflow_after_edit(
+            &*layout,
+            &word.last_check,
+            from,
+            head.doc().package(),
+            head.doc().ids().aliases(),
+            (limit, &cancel),
+        ))
     }
 }
 

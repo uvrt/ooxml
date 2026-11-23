@@ -9,11 +9,11 @@ use crate::adapters::{context, SessionStop};
 use crate::context::{caller_context, PyCallContext};
 use crate::layout::PyWordPages;
 use crate::locale::locale_of;
-use crate::options::{context_of, PyCallLayout, PyCallOptions, PyHostIds};
+use crate::options::{context_of, PyCallLayout, PyCallOptions};
 use crate::pages::PyPageSetup;
 use crate::version::PyVersion;
 use ooxml_base::Locale;
-use ooxml_session::{BlockAt, DocId, DocKind, HeldId, RetiredBy, Session, SessionConfig, SessionError};
+use ooxml_session::{BlockAt, DocId, DocKind, HeldId, IdStateError, RetiredBy, Session, SessionConfig, SessionError};
 use ooxml_store::StoreConfig;
 use ooxml_tools::compact;
 use ooxml_word_edit::EarlierIds;
@@ -44,8 +44,29 @@ pub(crate) fn doc_id(doc: &str, session: &Session) -> PyResult<DocId> {
     })
 }
 
+pyo3::create_exception!(
+    ooxml_core,
+    StateRefused,
+    PyValueError,
+    "An id state refused as the state of other bytes, of a later form, damaged, or no state: \
+its message says what to pass instead (docx-agent's words)."
+);
+
+pyo3::create_exception!(
+    ooxml_core,
+    NotWordPackage,
+    PyValueError,
+    "A package opened as a Word document without a Word document's main part."
+);
+
 pub(crate) fn to_py(error: &SessionError) -> PyErr {
     let message = error.to_string();
+    if error.refuses_state() {
+        return StateRefused::new_err(message);
+    }
+    if error.not_word() {
+        return NotWordPackage::new_err(message);
+    }
     match error {
         SessionError::NotOpen { .. } => PyKeyError::new_err(message),
         SessionError::Kind(_) | SessionError::PartName(_) | SessionError::Package(_) => PyValueError::new_err(message),
@@ -56,6 +77,20 @@ pub(crate) fn to_py(error: &SessionError) -> PyErr {
         }
         SessionError::Store(_) | SessionError::WordStore(_) | SessionError::Base(_) => PyRuntimeError::new_err(message),
     }
+}
+
+/// A state's text as docx-agent's `load_state` reads it: a string, or bytes read as ASCII;
+/// any other value (bytes that are not ASCII too) refused, named by its type.
+fn state_text(state: &Bound<'_, PyAny>) -> PyResult<String> {
+    if let Ok(text) = state.extract::<String>() {
+        return Ok(text);
+    }
+    let type_name = match state.extract::<Vec<u8>>() {
+        Ok(bytes) if bytes.is_ascii() => return Ok(String::from_utf8(bytes).unwrap_or_default()),
+        Ok(_) => "NoneType".to_owned(),
+        Err(_) => state.get_type().name()?.to_string(),
+    };
+    Err(StateRefused::new_err(IdStateError::NotAState(type_name).to_string()))
 }
 
 /// The save gate's comparison as Python receives it: new problems, fixed ones, how many
@@ -107,19 +142,6 @@ fn retired_row((id, by): (HeldId, RetiredBy)) -> RetiredRow {
             None,
         ),
         RetiredBy::Earlier { version, said } => (kind, value, None, None, None, Some(version), said),
-    }
-}
-
-/// An id `Session.seed_retired` is given: `"block"` or `"drawing"` and its value.
-fn held_id(kind: &str, value: u64) -> PyResult<HeldId> {
-    match kind {
-        "block" => u32::try_from(value)
-            .map(HeldId::Block)
-            .map_err(|_| PyValueError::new_err(format!("a block id's value is at most 0xFFFFFFFF, not {value}"))),
-        "drawing" => Ok(HeldId::Drawing(value)),
-        _ => Err(PyValueError::new_err(format!(
-            "an id's kind is 'block' or 'drawing', not {kind:?}"
-        ))),
     }
 }
 
@@ -181,6 +203,7 @@ impl PySession {
                 cursors,
                 highest_drawing,
                 drawings,
+                ..EarlierIds::default()
             }
         });
         let session = &self.inner;
@@ -188,6 +211,32 @@ impl PySession {
             .detach(|| session.open_with(bytes, kind, name, &earlier))
             .map_err(|e| to_py(&e))?;
         Ok(id.to_string())
+    }
+
+    /// Open a Word document's bytes, named `name`, with the id state saved beside them
+    /// (`docx-ids.1.`: docx-agent's `Document.id_state`, a save's `state`): its ids are read
+    /// against its parts once, so no id it had before it was saved is given again, and the ids
+    /// the state retired are this session's record (`retired`). Returns its id and the
+    /// state's `(version, last)`: the version it was saved at and the highest its history
+    /// gave (`continue_numbers` goes on from them). A state that is not these bytes' raises
+    /// `StateRefused`, with what to pass instead; bytes without a Word document's main part,
+    /// `NotWordPackage`.
+    /// A state given as bytes is read as ASCII text; one of another type is refused.
+    #[pyo3(signature = (data, state, *, name = "document.docx"))]
+    fn open_state(
+        &self,
+        py: Python<'_>,
+        data: &[u8],
+        state: &Bound<'_, PyAny>,
+        name: &str,
+    ) -> PyResult<(String, i64, i64)> {
+        let text = state_text(state)?;
+        let bytes: Arc<[u8]> = Arc::from(data);
+        let session = &self.inner;
+        let (id, (version, last)) = py
+            .detach(|| session.open_state(bytes, name, &text))
+            .map_err(|e| to_py(&e))?;
+        Ok((id.to_string(), version, last))
     }
 
     /// Run the tool `name` with `arguments` (JSON text) on a snapshot, with `options` (a
@@ -272,77 +321,6 @@ impl PySession {
         Ok((text, app, made))
     }
 
-    /// Commit a version's touched parts (bytes, or `None` to remove the part) as one step:
-    /// returns `(version, changed, attempts)`.
-    #[pyo3(signature = (doc, parts, *, context = None))]
-    fn update(
-        &self,
-        py: Python<'_>,
-        doc: &str,
-        parts: &Bound<'_, PyDict>,
-        context: Option<PyRef<'_, PyCallContext>>,
-    ) -> PyResult<(u64, bool, u32)> {
-        let id = doc_id(doc, &self.inner)?;
-        let context = caller_context(context.as_deref());
-        let copied = copy_parts(parts)?;
-        let session = &self.inner;
-        let updated = py
-            .detach(|| session.update(&id, copied, &context))
-            .map_err(|e| to_py(&e))?;
-        Ok((updated.version, updated.changed, updated.attempts))
-    }
-
-    /// Commit a version's touched parts as [`update`](Self::update) does: returns the
-    /// version it leaves, held (`Version`; the version it ran on where nothing changed).
-    #[pyo3(signature = (doc, parts, *, context = None))]
-    fn commit(
-        &self,
-        py: Python<'_>,
-        doc: &str,
-        parts: &Bound<'_, PyDict>,
-        context: Option<PyRef<'_, PyCallContext>>,
-    ) -> PyResult<PyVersion> {
-        let id = doc_id(doc, &self.inner)?;
-        let context = caller_context(context.as_deref());
-        let copied = copy_parts(parts)?;
-        let session = &self.inner;
-        let (_, opened) = py
-            .detach(|| session.commit(&id, copied, &context))
-            .map_err(|e| to_py(&e))?;
-        Ok(PyVersion { inner: opened })
-    }
-
-    /// The bridge: commit the parts the unported tool `tool` changed (``None`` removes one)
-    /// and count the call in ``bridge_calls``; ``ids``: what the host's id ledger holds
-    /// beside the parts (a ``HostIds``: its tool's draws and renames). Returns the version
-    /// it leaves, held.
-    #[pyo3(signature = (doc, tool, parts, *, context = None, ids = None))]
-    fn bridge(
-        &self,
-        py: Python<'_>,
-        doc: &str,
-        tool: &str,
-        parts: &Bound<'_, PyDict>,
-        context: Option<PyRef<'_, PyCallContext>>,
-        ids: Option<PyRef<'_, PyHostIds>>,
-    ) -> PyResult<PyVersion> {
-        let id = doc_id(doc, &self.inner)?;
-        let context = caller_context(context.as_deref());
-        let copied = copy_parts(parts)?;
-        let host = ids.map(|i| i.inner.clone()).unwrap_or_default();
-        let session = &self.inner;
-        let (_, opened) = py
-            .detach(|| session.bridge(&id, tool, copied, host, &context))
-            .map_err(|e| to_py(&e))?;
-        Ok(PyVersion { inner: opened })
-    }
-
-    /// ``bridge_calls{tool}``: the calls of each unported tool committed through the bridge.
-    fn bridge_calls(&self, py: Python<'_>) -> Vec<(String, u64)> {
-        let session = &self.inner;
-        py.detach(|| session.bridge_calls().into_iter().collect())
-    }
-
     /// Open a step group on the document (`StepGroup`): what is committed until it closes is
     /// one undo step; the host closes or reverts it on every path.
     fn open_group(&self, py: Python<'_>, doc: &str) -> PyResult<crate::group::PyStepGroup> {
@@ -365,6 +343,55 @@ impl PySession {
         let id = doc_id(doc, &self.inner)?;
         let found = self.inner.pages(&id).map_err(|e| to_py(&e))?;
         Ok(found.as_deref().map(PyWordPages::of))
+    }
+
+    /// A new document's bytes (a .docx) from the bytes of `template` (a .dotx, .dotm, .docx
+    /// or .docm), as docx-agent's `new_document` with a `template_blob` makes one: its
+    /// content left out, macros dropped, compatibility mode 15, its properties started again
+    /// -- `title` (`None`: the template's), `author` (`None`: none), `created` (W3CDTF) --,
+    /// every section's page `page` (a size Word names: A4, Letter, Legal, A5, A3; `None`: the
+    /// template's). The bytes given are not changed; the host opens the new ones.
+    /// `ValueError` for a page not named or bytes that are not a Word document or template.
+    #[pyo3(signature = (template, *, created, page = None, title = None, author = None))]
+    fn new_from_template<'py>(
+        &self,
+        py: Python<'py>,
+        template: &[u8],
+        created: String,
+        page: Option<String>,
+        title: Option<String>,
+        author: Option<String>,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        let page = match page {
+            Some(name) => Some(
+                ooxml_tools_word::new_document::PAGE_SIZES
+                    .iter()
+                    .find(|(n, ..)| *n == name)
+                    .map(|(_, w, h)| (*w, *h))
+                    .ok_or_else(|| PyValueError::new_err(format!("no page size {name:?}")))?,
+            ),
+            None => None,
+        };
+        let made = ooxml_word_edit::NewFromTemplate {
+            page,
+            title,
+            author,
+            created,
+        };
+        let bytes: Arc<[u8]> = Arc::from(template);
+        let session = &self.inner;
+        let data = py
+            .detach(|| session.new_from_template(bytes, &made))
+            .map_err(|e| to_py(&e))?;
+        Ok(PyBytes::new(py, &data))
+    }
+
+    /// What the document `doc` keeps in the session's memory budget now, bytes (its page
+    /// engine's: what it holds of the version in use, and its pages' paint): describe's
+    /// `memory.document`.
+    fn document_memory(&self, doc: &str) -> PyResult<usize> {
+        let id = doc_id(doc, &self.inner)?;
+        self.inner.document_memory(&id).map_err(|e| to_py(&e))
     }
 
     /// Lay the Word document `doc` out with `pages` (a `PageSetup`) from now on -- a
@@ -582,53 +609,13 @@ impl PySession {
 
     /// The Word document's retired ids: each block id (a paraId's value) and drawing number a
     /// version removed and none brought back since, with who removed it, as rows
-    /// `(kind, value, seq, caller, tool, version, said)` (see `seed_retired` for the last two).
+    /// `(kind, value, seq, caller, tool, version, said)` (`version`, `said`: as an earlier
+    /// state of the document said them).
     fn retired(&self, py: Python<'_>, doc: &str) -> PyResult<Vec<RetiredRow>> {
         let id = doc_id(doc, &self.inner)?;
         let session = &self.inner;
         let rows = py.detach(|| session.retired(&id)).map_err(|e| to_py(&e))?;
         Ok(rows.into_iter().map(retired_row).collect())
-    }
-
-    /// Give the Word document the ids its saved state retired before it was opened again:
-    /// rows `(kind, value, version, said)`, the version that removed each as the host numbered
-    /// it and who made it in the host's words (`None`: not known).
-    fn seed_retired(&self, py: Python<'_>, doc: &str, rows: Vec<(String, u64, u64, Option<String>)>) -> PyResult<()> {
-        let id = doc_id(doc, &self.inner)?;
-        let given = rows
-            .into_iter()
-            .map(|(kind, value, version, said)| Ok((held_id(&kind, value)?, version, said)))
-            .collect::<PyResult<Vec<_>>>()?;
-        let session = &self.inner;
-        py.detach(|| session.seed_retired(&id, given)).map_err(|e| to_py(&e))
-    }
-
-    /// The host numbered the Word document's `version` (a `Version` of it) as its version
-    /// `number`: a refusal of an id a version up to it removed names the change by it.
-    fn number_version(&self, py: Python<'_>, doc: &str, version: PyRef<'_, PyVersion>, number: u64) -> PyResult<()> {
-        let id = doc_id(doc, &self.inner)?;
-        let seq = version.inner.version();
-        let session = &self.inner;
-        py.detach(|| session.number_version(&id, seq, number))
-            .map_err(|e| to_py(&e))
-    }
-
-    /// The rows of the Word document this session's `word_edit_table` calls added or wrote
-    /// into, by `w14:paraId`, sorted (round 58, R126: check's `row_text_format` reads them).
-    fn rows_written(&self, py: Python<'_>, doc: &str) -> PyResult<Vec<String>> {
-        let id = doc_id(doc, &self.inner)?;
-        let session = &self.inner;
-        let rows = py.detach(|| session.rows_written(&id)).map_err(|e| to_py(&e))?;
-        Ok(rows.into_iter().collect())
-    }
-
-    /// Keep `rows` (`w14:paraId`s) as written by a table call the host answered itself, in
-    /// the record the session's own calls keep theirs in.
-    fn note_rows_written(&self, py: Python<'_>, doc: &str, rows: Vec<String>) -> PyResult<()> {
-        let id = doc_id(doc, &self.inner)?;
-        let session = &self.inner;
-        py.detach(|| session.note_rows_written(&id, rows))
-            .map_err(|e| to_py(&e))
     }
 
     /// The live view of the Word document `doc` (an application's API, not a tool): its
@@ -743,18 +730,4 @@ impl PySession {
     fn shutdown(&self) {
         self.stop.stop();
     }
-}
-
-/// Parts by name: bytes to put, or `None` to remove.
-type Parts = Vec<(String, Option<Arc<[u8]>>)>;
-
-/// `parts` (name -> bytes, or `None` to remove) copied in, the interpreter lock held.
-fn copy_parts(parts: &Bound<'_, PyDict>) -> PyResult<Parts> {
-    let mut copied = Vec::with_capacity(parts.len());
-    for (name, data) in parts.iter() {
-        let name: String = name.extract()?;
-        let data: Option<Vec<u8>> = data.extract()?;
-        copied.push((name, data.map(Arc::<[u8]>::from)));
-    }
-    Ok(copied)
 }

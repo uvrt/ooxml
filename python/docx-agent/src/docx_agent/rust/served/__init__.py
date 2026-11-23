@@ -11,6 +11,7 @@ id goes in its place: :func:`own`).  A tool whose arguments need the host first 
 refs resolved, a fallback where the host's data is meant -- has an adapter in the module of
 its group here, registered with :func:`adapter`; the modules are imported below, a sorted
 list.  An adapter of a tool the session does not serve is refused when the export is read.
+A form an adapter cannot hand over is refused as not supported yet (:func:`not_supported`).
 """
 
 from __future__ import annotations
@@ -20,6 +21,8 @@ import threading
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from ooxml_edit.tools import ToolError
+
 from .. import reads
 
 Adapter = Callable[[Any, dict[str, Any]], dict[str, Any]]
@@ -28,8 +31,11 @@ Adapter = Callable[[Any, dict[str, Any]], dict[str, Any]]
 ADAPTERS: dict[str, Adapter] = {}
 
 
-class Fallback(Exception):
-    """The call is answered by the Python handler, for this reason."""
+def not_supported(form: str, way_out: str, *, field: str | None = None) -> ToolError:
+    """The refusal of a form the session is not handed yet: code ``refused``, the form in
+    ``details.not_supported``, ``way_out`` saying what to give instead."""
+    return ToolError("refused", f"{form} is not supported yet; {way_out}", field=field,
+                     details={"not_supported": form})
 
 
 class Adapted(dict):
@@ -135,8 +141,8 @@ def arguments_for(call: Any, tool: str, arguments: dict[str, Any]) -> dict[str, 
 def refs_in(call: Any, value: Any) -> Any:
     """A list of addresses (or one) with its ``$name`` refs resolved."""
     if isinstance(value, list):
-        return [reads._refs(call, item) for item in value]
-    return reads._refs(call, value)
+        return [reads.refs(call, item) for item in value]
+    return reads.refs(call, value)
 
 
 def sided(call: Any, value: Any) -> Any:
@@ -145,24 +151,29 @@ def sided(call: Any, value: Any) -> Any:
     if isinstance(value, str):
         for side in ("after:", "before:"):
             if value.startswith(side):
-                return side + reads._refs(call, value[len(side):])
-    return reads._refs(call, value)
+                return side + reads.refs(call, value[len(side):])
+    return reads.refs(call, value)
 
 
 def blocks_at(call: Any, at: Any) -> Any:
-    """A placing tool's ``at`` with its ``$name`` refs resolved as the tool resolves them
-    (``text._at``: a span's last block after it, its first before it); a ref naming a
-    heading's range is the Python view's to expand."""
+    """A placing tool's ``at`` with its ``$name`` refs resolved: a ref naming several blocks
+    (a span, as ``word_insert_markdown``'s ``ref`` names what it made) is after its last
+    block, before its first, or replaced whole.  A ref naming a heading's range is refused
+    as not supported yet."""
     if not isinstance(at, str) or "$" not in at:
         return at
     head, _, rest = at.partition(":")
     if head not in ("after", "before", "replace"):
-        rest = at
-    if any("h:" in call.resolve_ref(part) for part in rest.split("..") if part.startswith("$")):
-        raise Fallback("a heading's range by reference")
-    from ...tools.text import _at
-
-    return _at(call, at)
+        head, rest = "", at
+    parts = [call.resolve_ref(part) if part.startswith("$") else part for part in rest.split("..")]
+    if any(part.startswith("h:") for part in parts):
+        raise not_supported("placing at a heading's range by reference",
+                            "give the heading's first or last block's id", field="at")
+    joined = "..".join(parts)
+    if ".." in joined and "@" not in joined and head in ("after", "before"):
+        first, _, last = joined.partition("..")
+        joined = (first if head == "before" else last).strip() or joined
+    return (head + ":" if head else "") + joined
 
 
 @dataclass(frozen=True)

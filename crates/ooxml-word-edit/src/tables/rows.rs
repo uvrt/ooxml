@@ -30,7 +30,7 @@ use crate::review::xml::{find_path, make, set_attr};
 use crate::set_text::block_key;
 use crate::sink::EditSink;
 use crate::stamping::{stamp_document, w14_prefix};
-use crate::table_delete::{row_fate, track_delete_rows, Fate};
+use crate::table_delete::{relocates_past_table, row_fate, track_delete_rows, Fate};
 use crate::validate::Orders;
 use crate::work::{scope_above, Id, Work};
 use crate::{EditError, Result, WordDoc};
@@ -592,6 +592,23 @@ fn delete_row(
     // again, as had the row gone first (round 55, R115)
     let taken = super::pending::taken_in(work, table, Reshape::DeleteRow(index));
     let mut removed = vec![old_row];
+    if let RevisionPolicy::Tracked(tracking) = sink.policy().clone() {
+        // a last row whose other author's text goes past the table: written across the
+        // stretch around it (no merge down it starts, being the last; none pending in it)
+        if restarts.is_empty() && taken.is_empty() && relocates_past_table(work, row, &tracking.author) {
+            let gone = crate::table_delete_write::tracked_row_across(
+                sink,
+                (&held.found.part, &held.found.path),
+                index,
+                &tracking,
+            )?;
+            removed.extend(inside);
+            return Ok(TableChanged {
+                removed: if gone { removed } else { Vec::new() },
+                ..TableChanged::default()
+            });
+        }
+    }
     let mut released = Vec::new();
     let mut gone = true;
     let tracked = under_policy(sink, |stamp| {

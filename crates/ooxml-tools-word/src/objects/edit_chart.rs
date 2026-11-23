@@ -7,8 +7,9 @@
 //! [`EditGraphic`] command, the chart's record of where its values came from kept true by
 //! `chart_record`) through the editor -- and the style actions (`chart_style`).
 //!
-//! And `add` (`chart_add`). Not here yet: values given `from` a table (its provenance records), new title or label text in a document whose
-//! defaults name no language (the session's locale decides it), and a read
+//! And `add` (`chart_add`). New chart text is in the document's default language, else the
+//! call's locale's (the session's, en-US where the host sets none: [`chart_language`]).
+//! Not here yet: values given `from` a table (its provenance records), and a read
 //! or edit ooxml-edit words as its own exception (a chart part that is missing or
 //! unreadable, a workbook `ooxml-sheets` cannot read or write), so a host that owns the
 //! document answers those its own way meanwhile.
@@ -82,7 +83,7 @@ pub fn edit_chart(args: &EditChart, editing: &Editing<'_>) -> ToolResult<Value> 
             .snapshot()
             .doc()
             .docx()
-            .map(|docx| default_language(&docx));
+            .map(|docx| chart_language(&docx, editing));
         match lang {
             Ok(lang) => super::chart_add::add(args, editing, lang),
             Err(e) => Err(ToolError::internal(e.to_string(), "word:model")),
@@ -147,9 +148,9 @@ fn chart_action(args: &EditChart, editing: &Editing<'_>, summary: String) -> Res
     };
     let style = STYLE_ACTIONS.contains(&args.action);
     let action = if style {
-        chart_style::planned(args, &data.0, &data.1, &read, default_language(&docx)).map(Planned::Style)
+        chart_style::planned(args, &data.0, &data.1, &read, chart_language(&docx, editing)).map(Planned::Style)
     } else {
-        planned(args, &data.0, &read, &docx).map(Planned::Data)
+        planned(args, &data.0, &read, &chart_language(&docx, editing)).map(Planned::Data)
     };
     let action = match action {
         Ok(action) => action,
@@ -236,7 +237,7 @@ fn chart_of(args: &EditChart, docx: &Docx, what: &str) -> Result<Result<(String,
 
 /// The action with its series and category resolved (`apply_data_action`, in its order:
 /// the series, the category, then what the action needs).
-fn planned(args: &EditChart, data: &ChartData, read: &TryCall, docx: &Docx) -> Result<DataAction, Stop> {
+fn planned(args: &EditChart, data: &ChartData, read: &TryCall, lang: &str) -> Result<DataAction, Stop> {
     let action = args.action.as_str();
     let named = |names: Vec<String>, which: Option<&String>, what: &str, hint: &str| {
         position(&names, which, (what, action, hint), read)
@@ -285,7 +286,7 @@ fn planned(args: &EditChart, data: &ChartData, read: &TryCall, docx: &Docx) -> R
             want("text", args.text.is_some(), "the new label")?;
             DataAction::RenameCategory { category, text: text() }
         }
-        _ => shape_action(args, data, read, docx, &series, &category, &want)?,
+        _ => shape_action(args, data, read, lang, &series, &category, &want)?,
     })
 }
 
@@ -295,7 +296,7 @@ fn shape_action(
     args: &EditChart,
     data: &ChartData,
     read: &TryCall,
-    docx: &Docx,
+    lang: &str,
     series: &dyn Fn() -> Result<usize, Stop>,
     category: &dyn Fn() -> Result<usize, Stop>,
     want: &dyn Fn(&str, bool, &str) -> Result<(), Stop>,
@@ -324,31 +325,25 @@ fn shape_action(
         ChartAction::ShowDataLabels | ChartAction::HideDataLabels => {
             let show = args.action == ChartAction::ShowDataLabels;
             let series = args.series.as_ref().map(|_| series()).transpose()?;
-            let lang = default_language(docx);
-            if show && lang.is_none() {
-                return Err(Stop::NotSupported(
-                    "edit_chart show_data_labels: a document whose defaults name no language (the session's locale decides)",
-                ));
-            }
             DataAction::DataLabels {
                 show,
                 series,
                 number_format: args.number_format.clone(),
                 size: Some(WORD_LABEL_SIZE),
-                lang,
+                lang: lang.to_owned(),
             }
         }
         ChartAction::SetTitle => DataAction::Title {
             axis: None,
             text: args.text.clone(),
             sizes: WORD_TITLE_SIZES,
-            lang: default_language(docx),
+            lang: lang.to_owned(),
         },
         ChartAction::SetAxisTitle => DataAction::Title {
             axis: Some(axis_of(args, data, read, want)?),
             text: args.text.clone(),
             sizes: WORD_TITLE_SIZES,
-            lang: default_language(docx),
+            lang: lang.to_owned(),
         },
         _ => {
             want(
@@ -420,9 +415,19 @@ fn legend_position(given: Option<ChartPosition>, read: &TryCall) -> Result<Optio
     })
 }
 
-/// `default_language`'s first answer: the document's default run language
-/// (`w:docDefaults/w:rPrDefault/w:rPr/w:lang`); `None` where it names none, and the
-/// session's locale (which the host holds) decides.
+/// The language new chart text is written in (docx-agent's `default_language`): the
+/// document's default run language, else the language of the locale the call edits under
+/// (the call's, else the session's), else en-US -- as Word takes its editing language.
+pub(super) fn chart_language(docx: &Docx, editing: &Editing<'_>) -> String {
+    default_language(docx).unwrap_or_else(|| {
+        editing
+            .locale
+            .map_or_else(|| ooxml_numfmt::EN_US.language.to_string(), |l| l.language.to_string())
+    })
+}
+
+/// The document's default run language (`w:docDefaults/w:rPrDefault/w:rPr/w:lang`);
+/// `None` where it names none.
 fn default_language(docx: &Docx) -> Option<String> {
     const STYLES: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles";
     const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";

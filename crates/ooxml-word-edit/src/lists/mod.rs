@@ -44,11 +44,25 @@ pub enum ListAction {
     Level(i64),
     /// Restart the first one's list there, from a number.
     Restart(i64),
-    /// Continue an earlier list from the first one: the list of the paragraph named, or
-    /// the nearest earlier one over the same definition.
+    /// Continue an earlier list from each target's first paragraph, in order: the list of
+    /// the paragraph named, or the nearest earlier one over the same definition (a list
+    /// continued by an earlier target counts as that earlier list).
     Continue(Option<String>),
     /// Change a level of the first one's list.
     Format(LevelFormat),
+}
+
+impl ListAction {
+    /// Whether the action takes a step on the `k`th paragraph of the targets (`first`: the
+    /// first its target holds): every paragraph for the item actions, each target's first
+    /// for continue, the first of all for restart and format.
+    fn steps(&self, k: usize, first: bool) -> bool {
+        match self {
+            ListAction::Add { .. } | ListAction::Remove | ListAction::Level(_) => true,
+            ListAction::Continue(_) => first,
+            ListAction::Restart(_) | ListAction::Format(_) => k == 0,
+        }
+    }
 }
 
 /// docx-agent's list edits on the paragraphs `targets` hold.
@@ -88,12 +102,13 @@ pub struct ListsEdited {
     pub lists: Vec<(String, Option<Membership>)>,
 }
 
-/// The paragraphs `address` holds, in document order: an id followed when it was renamed.
+/// The paragraphs `address` holds, in document order: an id followed when it was renamed,
+/// and so a row's or cell's table, or a span's ends.
 ///
 /// # Errors
 /// [`EditError::Address`] when it names nothing, or nothing with paragraphs.
 pub fn paragraphs_of(doc: &WordDoc, docx: &Docx, address: &str) -> Result<Vec<(String, usize)>> {
-    let followed = doc.ids().follow(address);
+    let followed = doc.ids().follow_address(address);
     if let Some(found) = table_paragraphs(docx, &followed) {
         return Ok(found);
     }
@@ -176,20 +191,18 @@ impl Command<WordDoc> for ListEdit {
         sink.read_everything();
         let docx = sink.docx()?;
         let mut places = Vec::new();
+        // each paragraph, and whether it is the first its target holds
+        let mut firsts = Vec::new();
         for target in &self.targets {
-            for (part, index) in paragraphs_of(sink.doc(), &docx, target)? {
+            for (k, (part, index)) in paragraphs_of(sink.doc(), &docx, target)?.into_iter().enumerate() {
                 places.push(Place { part, index });
+                firsts.push(k == 0);
             }
         }
         let mut stamped = Stamped { renamed: None };
         let mut out = ListsEdited::default();
-        for (k, place) in places.iter().enumerate() {
-            if k > 0
-                && !matches!(
-                    self.action,
-                    ListAction::Add { .. } | ListAction::Remove | ListAction::Level(_)
-                )
-            {
+        for (k, (place, first)) in places.iter().zip(&firsts).enumerate() {
+            if !self.action.steps(k, *first) {
                 continue;
             }
             match steps::step(&mut sink, &mut stamped, place, &self.action)? {

@@ -157,6 +157,8 @@ impl Session {
                         history: true,
                     };
                     word.retired.note(&made, &delta);
+                    // the state it brings back keeps its own number
+                    word.retired.number(made.seq, done.version.number());
                     Ok(())
                 };
                 run(

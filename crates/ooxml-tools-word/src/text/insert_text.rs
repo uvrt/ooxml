@@ -242,14 +242,14 @@ fn reply(placed: Vec<Placed>, work: &[InsertItem], sides: &[Where]) -> ToolResul
     result
 }
 
-/// What of the call is not ported: values or addresses by reference.
+/// What of the call is not ported: addresses by reference.
 fn unported(args: &WordInsertText, work: &[InsertItem]) -> Option<Unported> {
     if args.within.as_deref().is_some_and(by_reference) {
         return Some(Unported::Reference);
     }
     let by_ref = |v: &Option<String>| v.as_deref().is_some_and(by_reference);
     work.iter()
-        .any(|item| item.text.contains("{{") || by_ref(&item.target) || by_ref(&item.at))
+        .any(|item| by_ref(&item.target) || by_ref(&item.at))
         .then_some(Unported::Reference)
 }
 

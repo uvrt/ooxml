@@ -5,6 +5,7 @@ control's tag and title (``w:tag``, ``w:alias``) in ``word_read``'s block commen
 from __future__ import annotations
 
 import io
+import re
 import zipfile
 from pathlib import Path
 
@@ -14,9 +15,9 @@ pytest.importorskip("ooxml_edit.tools.shared", reason="needs ooxml-edit 0.4 (the
 
 from ooxml_edit.tools import Toolbox  # noqa: E402
 
-from docx_agent import Document  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
 from conftest import FIXTURE_DIR  # noqa: E402
+import word_docs  # noqa: E402
 
 CONSTRUCTS = FIXTURE_DIR / "generated" / "markdown" / "constructs.docx"
 AGREEMENT = FIXTURE_DIR / "generated" / "pilot" / "agreement-summary.docx"
@@ -47,41 +48,51 @@ def _patched(tmp_path: Path) -> Path:
     return path
 
 
-def test_table_comments_carry_the_alt_text(tmp_path):
-    document = Document.open(_patched(tmp_path))
-    first, second, third = document.tables()[:3]
-    markdown = document.to_markdown()
-    assert (f"<!-- {first.id} table style: Table Grid alt: sample:record-table "
+@pytest.fixture(scope="module")
+def box():
+    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as toolbox:
+        yield toolbox
+
+
+def _read(box, path: Path) -> tuple[str, list[str]]:
+    """``word_read``'s Markdown of ``path``, and its tables' ids in order."""
+    session = box.session()
+    doc = session.open(path.read_bytes(), path.name)
+    markdown = word_docs.read(box, session, doc)
+    return markdown, re.findall(r"<!-- (t:[0-9A-Fa-f]+)", markdown)
+
+
+def test_table_comments_carry_the_alt_text(box, tmp_path):
+    markdown, tables = _read(box, _patched(tmp_path))
+    first, second, third = tables[:3]
+    assert (f"<!-- {first} table style: Table Grid alt: sample:record-table "
             "description: One row per item, a total at the foot. -->") in markdown
     # "--" cannot be in a comment: written as comment text is, as the style is.
-    assert f"<!-- {second.id} table style: Table Grid alt: Second - - table -->" in markdown
-    assert f"<!-- {third.id} table style: Table Grid -->" in markdown
-    assert first.alt_text == {"alt": "sample:record-table", "description": "One row per item, \na total at the foot."}
-    assert third.alt_text == {}
+    assert f"<!-- {second} table style: Table Grid alt: Second - - table -->" in markdown
+    assert f"<!-- {third} table style: Table Grid -->" in markdown
 
 
-def test_an_inline_content_control_carries_its_tag_and_title(tmp_path):
-    markdown = Document.open(_patched(tmp_path)).to_markdown()
+def test_an_inline_content_control_carries_its_tag_and_title(box, tmp_path):
+    markdown, _ = _read(box, _patched(tmp_path))
     assert "Name: <!-- cc:301 text tag: sample:name title: Name -->Grace Hopper<!-- /cc:301 -->" in markdown
     # A block content control as before.
     assert "<!-- cc:303 rich-text tag: clause title: Clause -->" in markdown
 
 
-def test_describe_lists_alt_text_and_tagged_content_control(tmp_path):
+def test_describe_lists_alt_text_and_tagged_content_control(box, tmp_path):
     path = _patched(tmp_path)
-    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS) as box:
-        session = box.session()
-        d = session.open(path.read_bytes(), path.name)
-        result = box.dispatch(session, "describe", {"doc": d})
-        assert result.ok
-        tables = result.data["tables"]
-        assert tables[0]["alt"] == "sample:record-table"
-        assert tables[0]["description"].startswith("One row per item")
-        assert tables[1]["alt"] == "Second -- table" and "description" not in tables[1]
-        assert "alt" not in tables[2]
-        assert result.data["tagged"] == [
-            {"id": "cc:301", "kind": "text", "tag": "sample:name", "title": "Name"},
-            {"id": "cc:303", "kind": "rich-text", "tag": "clause", "title": "Clause"}]
-        # Without any, the key is not there.
-        plain = session.open(AGREEMENT.read_bytes(), AGREEMENT.name)
-        assert "tagged" not in box.dispatch(session, "describe", {"doc": plain}).data
+    session = box.session()
+    d = session.open(path.read_bytes(), path.name)
+    result = box.dispatch(session, "describe", {"doc": d})
+    assert result.ok
+    tables = result.data["tables"]
+    assert tables[0]["alt"] == "sample:record-table"
+    assert tables[0]["description"].startswith("One row per item")
+    assert tables[1]["alt"] == "Second -- table" and "description" not in tables[1]
+    assert "alt" not in tables[2]
+    assert result.data["tagged"] == [
+        {"id": "cc:301", "kind": "text", "tag": "sample:name", "title": "Name"},
+        {"id": "cc:303", "kind": "rich-text", "tag": "clause", "title": "Clause"}]
+    # Without any, the key is not there.
+    plain = session.open(AGREEMENT.read_bytes(), AGREEMENT.name)
+    assert "tagged" not in box.dispatch(session, "describe", {"doc": plain}).data

@@ -3,7 +3,7 @@
 
 use crate::editing::{docx, session};
 use ooxml_opc::Package;
-use ooxml_session::{DocKind, IdStateOf};
+use ooxml_session::{DocKind, HeldId, IdStateOf, RetiredBy};
 use ooxml_word_model::ids::load_state;
 use ooxml_word_model::parts::parts;
 
@@ -67,4 +67,93 @@ fn a_block_id_says_what_kind_of_block_it_names() {
     assert_eq!(kind("p:0A0000FF"), None);
     assert_eq!(kind("cc:9"), None);
     assert!(!version.has_drawing("d:1").unwrap());
+}
+
+#[test]
+fn a_document_opened_with_its_state_keeps_the_ids_it_retired_and_its_numbers() {
+    let s = session();
+    let d = s.open(docx(BODY), DocKind::Docx, "a.docx").unwrap();
+    let host = IdStateOf {
+        version: 3,
+        last: 5,
+        gone: vec![(0x0A00_0009, 2)],
+        said: vec![(2, "word_delete (agent=a)".into())],
+        ..IdStateOf::default()
+    };
+    let state = s.snapshot(&d).unwrap().id_state(&host).unwrap().unwrap();
+    let (again, numbers) = s.open_state(docx(BODY), "a.docx", &state).unwrap();
+    assert_eq!(numbers, (3, 5));
+    let retired = s.retired(&again).unwrap();
+    assert!(
+        retired.iter().any(|(id, by)| *id == HeldId::Block(0x0A00_0009)
+            && *by
+                == RetiredBy::Earlier {
+                    version: 2,
+                    said: Some("word_delete (agent=a)".into())
+                }),
+        "{retired:?}"
+    );
+}
+
+#[test]
+fn a_state_of_other_bytes_is_refused_in_docx_agent_s_words() {
+    let s = session();
+    let d = s.open(docx(BODY), DocKind::Docx, "a.docx").unwrap();
+    let state = s
+        .snapshot(&d)
+        .unwrap()
+        .id_state(&IdStateOf::default())
+        .unwrap()
+        .unwrap();
+    let other = docx(r#"<w:p w14:paraId="0B000001"/>"#);
+    let refused = s.open_state(other, "b.docx", &state).unwrap_err();
+    assert!(refused.refuses_state(), "{refused}");
+    assert!(
+        refused.to_string().contains("this id state is of other bytes"),
+        "{refused}"
+    );
+    let refused = s.open_state(docx(BODY), "a.docx", "not a state").unwrap_err();
+    assert!(refused.refuses_state(), "{refused}");
+}
+
+#[test]
+fn an_id_s_top_level_block_and_a_span_s_blocks() {
+    use ooxml_session::BlockRefused;
+    let s = session();
+    let d = s.open(docx(BODY), DocKind::Docx, "a.docx").unwrap();
+    let version = s.snapshot(&d).unwrap();
+    let of = |id: &str| version.block_of(id).unwrap();
+    assert_eq!(of("p:0A000002"), Ok(Some("p:0A000002".to_owned())));
+    assert_eq!(
+        of("p:0A000004"),
+        Ok(Some("t:0A000003".to_owned())),
+        "a cell's paragraph: its table"
+    );
+    assert_eq!(of("t:0A000003"), Ok(Some("t:0A000003".to_owned())));
+    assert_eq!(of("body"), Ok(None), "a story's name");
+    assert!(matches!(of("p:0A0000FF"), Err(BlockRefused::NotFound(_))));
+    assert!(matches!(of("$intro"), Err(BlockRefused::Refused(_))));
+    assert!(matches!(of("p:0A000001..p:0A000002"), Err(BlockRefused::Refused(_))));
+    assert_eq!(
+        of("p:0A000002/r0"),
+        Ok(Some("p:0A000002".to_owned())),
+        "a run: its paragraph's block"
+    );
+    assert!(
+        matches!(of("t:0A000003/c9,9"), Err(BlockRefused::NotFound(_))),
+        "a cell off the table"
+    );
+    let between = version.blocks_between("p:0A000002", "p:0A000004").unwrap();
+    assert_eq!(between, Ok(vec!["p:0A000002".to_owned(), "t:0A000003".to_owned()]));
+}
+
+#[test]
+fn a_paragraph_in_a_block_level_control_gives_the_control() {
+    let s = session();
+    let d = s.open(docx(OWN), DocKind::Docx, "a.docx").unwrap();
+    let version = s.snapshot(&d).unwrap();
+    assert_eq!(version.block_of("p:0A000006").unwrap(), Ok(Some("cc:7".to_owned())));
+    assert_eq!(version.block_of("cc:7").unwrap(), Ok(Some("cc:7".to_owned())));
+    let between = version.blocks_between("p:0A000001", "p:0A000005").unwrap().unwrap();
+    assert_eq!(between, ["p:0A000001", "t:0A000003", "cc:7", "p:0A000005"]);
 }

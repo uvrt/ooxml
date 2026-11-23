@@ -20,6 +20,13 @@ its own.
   seq, caller)`` in state numbers; ``continue_numbers(handle, state, highest)``: before the
   document's first step, its head is the state ``state`` and the next step's number one more
   than ``highest`` (a document opened again goes on with its numbers);
+- ``opened(handle) -> (version, last)``: the state number the document was opened at and the
+  highest its history gave (``(0, 0)``: none; :meth:`OwnedEntry.own` goes on from them);
+- optionally, ``open_data(data, state, name) -> handle | None``: open a document's bytes
+  (``state``: what was saved beside them, or ``None``) as ``name``, the owner alone -- no
+  document of the tool layer's is made (lane H7c; :meth:`~.session.Session.open`); ``None``:
+  the format opens the bytes and the owner takes them through ``open``.  A refused state is
+  an :class:`~ooxml_edit.errors.ArgumentError`;
 - ``parts_between(handle, before, after) -> Iterable[str]``: the parts whose content differs
   between two heads, and ``touched(handle, before, after) -> list[dict]``: what changed
   between them in the format's own addresses (``DocumentFormat.touched``'s entries);
@@ -341,12 +348,9 @@ class OwnedEntry(DocumentEntry):
         as ``handle`` (what its ``open`` gave).  Its lock holds its :attr:`gate` alone
         (:mod:`.gate`): the calls the owner serves hold it side by side."""
         self.lock = GatedLock(self.gate)
-        document = self.held
         self.owner = owner
         self.handle = handle
-        history = getattr(document, "history", None)
-        version = getattr(history, "version", 0)
-        last = getattr(history, "last_version", version)
+        version, last = owner.opened(handle)
         if last:
             # (a document opened again: the owner goes on with the numbers it had)
             owner.continue_numbers(self.handle, version, last)

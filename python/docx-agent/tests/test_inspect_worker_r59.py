@@ -1,17 +1,9 @@
-"""Round 59 (R134): no whole layout comes to the calling process for ``word_inspect``'s
-placements, a table or a span kept together, a change's reflow, or a batch's reads; and
-``word_inspect`` gives each table cell's fill and the colour its text is drawn in.
-
-What each test holds:
-
-* through a toolbox with a worker, each of those paths reads what it needs in the worker
-  holding the document's layout -- nothing is laid out or converted in this process
-  (``docx_agent.layout.convert`` is never called here) -- and answers exactly what the same
-  call answers on a toolbox without workers, where the layout is read here as before;
-* each cell's ``fill`` and ``text_color`` are what docx2svg draws for every cell of the round
-  58 regions document (``tools/table_regions_probe.py``; docx2svg draws it as Word does,
-  ``tests/test_table_regions_r58.py``), and for theme fills with a tint or shade, direct
-  shading over a region's, automatic text on dark fills and runs of several colours.
+"""Round 59 (R134): ``word_inspect`` gives each table cell's fill and the colour its text is
+drawn in -- what docx2svg draws for every cell of the round 58 regions document
+(:mod:`table_regions_cases`; docx2svg draws it as Word does, ``tests/test_table_regions_r58.py``),
+and for theme fills with a tint or shade, direct shading over a region's, automatic text on
+dark fills and runs of several colours.  (That no whole layout came to the calling process for
+the layout's reads was the Python layout's: the Rust session lays out where it reads.)
 
 Tool design rules: 4 (the answer's size: two keys per cell, a third only where runs differ),
 8 (the colours are those Word draws, measured; docx2svg's drawing compared).  Made-up
@@ -20,23 +12,15 @@ documents only."""
 from __future__ import annotations
 
 import datetime as dt
-import json
-import sys
-from pathlib import Path
+import re
 
 import pytest
 from ooxml_edit.tools import Toolbox
 
-from docx_agent import Document
-from docx_agent import layout as layout_module
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 
-from test_liveview import report
-
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tools"))
-
-import table_regions_probe as probe  # noqa: E402
+import table_regions_cases as probe  # noqa: E402
+import word_docs  # noqa: E402
 
 pytestmark = pytest.mark.any_faces
 
@@ -44,23 +28,9 @@ CLOCK = lambda: dt.datetime(2026, 11, 17, 9, 0, tzinfo=dt.timezone.utc)  # noqa:
 
 
 @pytest.fixture(scope="module")
-def boxes():
-    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=1) as worker, \
-            Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as here:
-        yield worker, here
-
-
-@pytest.fixture
-def no_layout_here(monkeypatch):
-    """Fails a test that lays a document out, or converts one, in this process."""
-    calls: list = []
-
-    def refused(*args, **kwargs):
-        calls.append(args)
-        raise AssertionError("a whole layout was made in the calling process")
-
-    monkeypatch.setattr(layout_module, "convert", refused)
-    return calls
+def box():
+    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as toolbox:
+        yield toolbox
 
 
 def ok(box, session, tool: str, /, **arguments):
@@ -69,176 +39,29 @@ def ok(box, session, tool: str, /, **arguments):
     return result
 
 
-def long_table_doc() -> bytes:
-    """A made-up document: a paragraph, a table of 70 rows (taller than a page), a closing
-    paragraph, and a short table."""
-    document = Document.new()
-    rows = "\n".join(f"| Row {k} | Owner {k % 7} | {k * 3} |" for k in range(70))
-    document.insert_markdown("# Long table\n\nAn opening paragraph.\n\n| Item | Owner | Amount |\n|---|---|---|\n"
-                             + rows + "\n\nA closing paragraph.\n\n| A | B |\n|---|---|\n| 1 | 2 |")
-    return document.to_bytes()
+def _tables(box, session, doc: str = "d1") -> list[str]:
+    return [b for b, _ in word_docs.blocks(box, session, doc) if b.startswith("t")]
 
 
-# -- word_inspect's placements ---------------------------------------------------------------------
-
-
-def test_inspect_places_blocks_in_the_worker_as_here(boxes, no_layout_here):
-    data = report()
-    document = Document.open(data)
-    table = document.tables()[1].id
-    span = f"{document.paragraphs()[0].id}..{table}"
-
-    def steps(box, session, doc):
-        return [ok(box, session, "word_inspect", doc=doc, target=target, layout=True).data
-                for target in (table, span, f"{table}/c2,1")]
-
-    worker = steps(*_open(boxes[0], data))
-    assert no_layout_here == []
-    here = _here(boxes[1], data, steps)
-    assert json.dumps(worker) == json.dumps(here)
-    placed = [b for b in worker[1]["blocks"] if b.get("placements")]
-    assert len(placed) > 5 and all(p["page"] >= 1 for b in placed for p in b["placements"])
-
-
-def test_inspect_in_a_batch_holding_the_document_is_placed_in_the_worker(boxes, no_layout_here):
-    data = report()
-    document = Document.open(data)
-    table = document.tables()[0].id
-    first = document.paragraphs()[2].id
-
-    def steps(box, session, doc):
-        result = ok(box, session, "batch", ops=[
-            {"tool": "word_set_text", "arguments": {"doc": doc, "target": first, "text": "A shorter paragraph."}},
-            {"tool": "word_inspect", "arguments": {"doc": doc, "target": table, "layout": True}},
-            {"tool": "word_set_text", "arguments": {"doc": doc, "target": first, "text": "Shorter again."}}])
-        return _op(result, 1)
-
-    worker = steps(*_open(boxes[0], data))
-    assert no_layout_here == []
-    here = _here(boxes[1], data, steps)
-    assert json.dumps(worker, sort_keys=True) == json.dumps(here, sort_keys=True)
-
-
-def _op(result, k: int) -> dict:
-    """A batch's op ``k`` as it answered, less its timing."""
-    found = json.loads(json.dumps(result.data["ops"][k]))
-    found.pop("timing", None)
-    found.get("data", {}).pop("timing", None)
-    return found
-
-
-def _open(box, data: bytes):
+def _inspected_cells(box, data: bytes) -> list[dict]:
+    """Every body table's cells as word_inspect gives them, with their text (``_text``)."""
     session = box.session(clock=CLOCK)
-    return box, session, session.open(data, "made.docx")
-
-
-def _here(box, data: bytes, steps):
-    """``steps`` on the toolbox without workers, with ``convert`` as it is (the fixture's
-    refusal undone for it)."""
-    from _pytest.monkeypatch import MonkeyPatch
-
-    saved = layout_module.convert
-    with MonkeyPatch.context() as patch:
-        patch.setattr(layout_module, "convert", _ORIGINAL_CONVERT)
-        out = steps(*_open(box, data))
-    assert layout_module.convert is saved
+    session.open(data, "cells.docx")
+    out = []
+    for table in _tables(box, session):
+        for line in ok(box, session, "word_inspect", doc="d1", target=table).data["blocks"][0]["rows"]:
+            for cell in line:
+                out.append({**cell, "_text": "".join(b.get("t", "") for b in cell["blocks"]).strip()})
     return out
-
-
-_ORIGINAL_CONVERT = layout_module.convert
-
-
-# -- a table and a span kept together ----------------------------------------------------------------
-
-
-def test_a_table_kept_together_is_measured_in_the_worker_as_here(boxes, no_layout_here):
-    data = long_table_doc()
-    tables = [t.id for t in Document.open(data).tables()]
-
-    def steps(box, session, doc):
-        out = []
-        for table in tables:
-            result = ok(box, session, "word_format_table", doc=doc, table=table, scope="table", keep_together=True)
-            out.append(result.warnings)
-        return out
-
-    worker = steps(*_open(boxes[0], data))
-    assert no_layout_here == []
-    here = _here(boxes[1], data, steps)
-    assert worker == here
-    assert any("taller than a page" in w for w in worker[0]) and not any("taller" in w for w in worker[1])
-
-
-def test_a_span_kept_together_is_measured_in_the_worker_as_here(boxes, no_layout_here):
-    data = long_table_doc()
-    document = Document.open(data)
-    paragraphs = document.paragraphs()
-    span = f"{paragraphs[1].id}..{document.tables()[0].id}"
-
-    def steps(box, session, doc):
-        ok(box, session, "check", doc=doc, include=["reflow"])         # laid out: measured before
-        return ok(box, session, "word_format", doc=doc, targets=[span], keep_together=True).warnings
-
-    worker = steps(*_open(boxes[0], data))
-    assert no_layout_here == []
-    here = _here(boxes[1], data, steps)
-    assert worker == here and any("cannot be kept on one page" in w for w in worker)
-
-
-# -- a change's reflow, a batch's check ------------------------------------------------------------
-
-
-def test_a_changes_reflow_is_compared_from_the_workers_summary_as_here(boxes, no_layout_here):
-    data = report()
-    paragraph = [p for p in Document.open(data).paragraphs() if len(p.text) > 200][1].id
-
-    def steps(box, session, doc):
-        ok(box, session, "check", doc=doc, include=["reflow"])
-        return ok(box, session, "word_set_text", doc=doc,
-                  items=[{"target": paragraph, "text": "Short now."}]).checks["reflow"]
-
-    worker = steps(*_open(boxes[0], data))
-    assert no_layout_here == []
-    here = _here(boxes[1], data, steps)
-    assert worker == here and worker["changed"]
-
-
-def test_a_batchs_check_and_page_count_are_read_in_the_worker_as_here(boxes, no_layout_here):
-    data = report()
-    paragraph = [p for p in Document.open(data).paragraphs() if len(p.text) > 200][1].id
-
-    def steps(box, session, doc):
-        result = ok(box, session, "batch", ops=[
-            {"tool": "word_set_text", "arguments": {"doc": doc, "target": paragraph, "text": "Short now."}},
-            {"tool": "check", "arguments": {"doc": doc, "include": ["reflow"]}},
-            {"tool": "word_set_text", "arguments": {"doc": doc, "target": paragraph, "text": "Shorter."}}])
-        return _op(result, 1)
-
-    worker = steps(*_open(boxes[0], data))
-    assert no_layout_here == []
-    here = _here(boxes[1], data, steps)
-    assert json.dumps(worker, sort_keys=True) == json.dumps(here, sort_keys=True)
 
 
 # -- each cell's fill and drawn text colour (rules 4, 8) -------------------------------------------
 
 
-def _labelled_cells(state: dict) -> dict[str, dict]:
+def _labelled_cells(box, data: bytes) -> dict[str, dict]:
     """Each cell's ``fill``, ``text_color`` and ``text_colors`` by its text."""
-    out = {}
-
-    def walk(blocks):
-        for block in blocks:
-            if block["type"] != "table":
-                continue
-            for line in block["rows"]:
-                for cell in line:
-                    text = "".join(b.get("t", "") for b in cell["blocks"]).strip()
-                    out[text] = {k: cell[k] for k in ("fill", "text_color", "text_colors") if k in cell}
-                    walk(cell["blocks"])
-
-    walk(state["blocks"])
-    return out
+    return {cell["_text"]: {k: cell[k] for k in ("fill", "text_color", "text_colors") if k in cell}
+            for cell in _inspected_cells(box, data)}
 
 
 def _drawn_cells(data: bytes) -> dict[str, dict]:
@@ -247,58 +70,54 @@ def _drawn_cells(data: bytes) -> dict[str, dict]:
     return _drawn(data)[0]
 
 
-def test_every_regions_cell_has_the_fill_and_text_colour_docx2svg_draws():
+def test_every_regions_cell_has_the_fill_and_text_colour_docx2svg_draws(box):
     data = probe.document()
-    cells = _labelled_cells(Document.open(data).state())
+    cells = _labelled_cells(box, data)
     drawn = _drawn_cells(data)
     assert len(drawn) > 300
     for label, mine in drawn.items():
         assert cells[label] == {"fill": mine["fill"], "text_color": mine["color"]}, label
 
 
-def _themed_doc() -> bytes:
+def _themed_doc(box) -> bytes:
     """Made-up cells: a theme fill with a tint, one with a shade, a direct fill over a dark
     header region, a coloured run beside an automatic one, an empty dark cell, no fill."""
-    import io
-    import zipfile
+    session = box.session(clock=CLOCK)
+    session.open(word_docs.blank(), "themed.docx")
 
-    document = Document.new()
-    document.insert_markdown("| Ttint | Tshade | Hdirect |\n|---|---|---|\n| **Mixed** red | | Plain |")
-    table = document.tables()[0].id
-    document.styles.add("Dark header", "table", regions=[{"region": "header_row", "shading": "1F3864"}])
-    document.set_table(table, style="Dark header")
-    document.format_cell(table, 0, 0, shading="ABCDEF")
-    document.format_cell(table, 0, 1, shading="FEDCBA")
-    document.format_cell(table, 0, 2, shading="FFF2CC")
-    document.format_cell(table, 1, 1, shading="203864")
-    document.table(table).cell(1, 0).paragraphs[0].runs[0].format(color="C00000")
-    packed = io.BytesIO(document.to_bytes())
-    out = io.BytesIO()
-    with zipfile.ZipFile(packed) as source, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as target:
-        for info in source.infolist():
-            content = source.read(info.filename)
-            if info.filename == "word/document.xml":
-                text = content.decode("utf-8")
-                # Theme fills (accent 1 with a tint, accent 2 with a shade) in place of the two
-                # made-up fills: the hex left as Word writes it beside them.
-                for fill, theme in (("ABCDEF", 'w:themeFill="accent1" w:themeFillTint="66"'),
-                                    ("FEDCBA", 'w:themeFill="accent2" w:themeFillShade="BF"')):
-                    assert f'w:fill="{fill}"' in text
-                    text = text.replace(f'w:fill="{fill}"', f'w:fill="FFFFFF" {theme}')
-                content = text.encode("utf-8")
-            target.writestr(info, content)
-    return out.getvalue()
+    def call(tool, **arguments):
+        return ok(box, session, tool, doc="d1", **arguments)
+
+    made = call("word_insert_markdown", at="end", markdown="| Ttint | Tshade | Hdirect |\n|---|---|---|\n"
+                                                           "| **Mixed** red | | Plain |")
+    table = next(b for b in made.data["blocks"] if b.startswith("t:"))
+    call("word_styles", action="add", name="Dark header", kind="table",
+         regions=[{"region": "header_row", "shading": "1F3864"}])
+    call("word_format_table", table=table, scope="table", style="Dark header")
+    for row, column, fill in ((0, 0, "ABCDEF"), (0, 1, "FEDCBA"), (0, 2, "FFF2CC"), (1, 1, "203864")):
+        call("word_format_table", table=table, scope="cell", row=row, column=column, shading=fill)
+    cell = word_docs.cells_of(word_docs.rows_of(word_docs.element(session, "d1", table))[1])[0]
+    paragraph = f"p:{cell.find(f'{{{word_docs.W}}}p').get(word_docs.W14_PARA)}"
+    call("word_format", targets=[f"{paragraph}@0:5"], color="C00000")
+    # Theme fills (accent 1 with a tint, accent 2 with a shade) in place of the two made-up
+    # fills: the hex left as Word writes it beside them.
+
+    def themed(text: str) -> str:
+        for fill, theme in (("ABCDEF", 'w:themeFill="accent1" w:themeFillTint="66"'),
+                            ("FEDCBA", 'w:themeFill="accent2" w:themeFillShade="BF"')):
+            assert f'w:fill="{fill}"' in text
+            text = text.replace(f'w:fill="{fill}"', f'w:fill="FFFFFF" {theme}')
+        return text
+
+    return word_docs.replaced(word_docs.saved(session, "d1"), {"word/document.xml": themed})
 
 
-def test_theme_tints_direct_fills_mixed_runs_and_empty_cells_are_as_docx2svg_draws():
-    data = _themed_doc()
-    document = Document.open(data)
-    state = document.state()
-    [table] = [b for b in state["blocks"] if b["type"] == "table"]
-    cells = [cell for line in table["rows"] for cell in line]
+def test_theme_tints_direct_fills_mixed_runs_and_empty_cells_are_as_docx2svg_draws(box):
+    data = _themed_doc(box)
+    cells = _inspected_cells(box, data)
     drawn = _drawn_text_colours(data)
     for cell in cells:
-        text = "".join(b.get("t", "") for b in cell["blocks"]).strip()
+        text = cell["_text"]
         if text in drawn:
             assert cell["fill"] == drawn[text]["fill"], text
             colours = drawn[text]["colors"]
@@ -306,7 +125,7 @@ def test_theme_tints_direct_fills_mixed_runs_and_empty_cells_are_as_docx2svg_dra
                 assert cell["text_color"] == colours[0] and "text_colors" not in cell, text
             else:
                 assert cell["text_color"] == "mixed" and cell["text_colors"] == colours, text
-    by_text = {"".join(b.get("t", "") for b in c["blocks"]).strip(): c for c in cells}
+    by_text = {c["_text"]: c for c in cells}
     # A tint and a shade of theme colours: hex, neither white nor the theme colour itself.
     assert by_text["Ttint"]["fill"] not in (None, "FFFFFF") and by_text["Tshade"]["fill"] not in (None, "FFFFFF")
     # Direct shading over the dark header region: light, so automatic text is black.
@@ -320,8 +139,6 @@ def test_theme_tints_direct_fills_mixed_runs_and_empty_cells_are_as_docx2svg_dra
 
 def _drawn_text_colours(data: bytes) -> dict[str, dict]:
     """docx2svg's drawing: per cell text, the cell's fill and its spans' colours in order."""
-    import re
-
     import docx2svg
     from lxml import etree
 
@@ -353,11 +170,10 @@ def _drawn_text_colours(data: bytes) -> dict[str, dict]:
     return out
 
 
-def test_inspect_gives_each_cell_its_fill_and_text_colour(boxes):
-    box = boxes[1]
+def test_inspect_gives_each_cell_its_fill_and_text_colour(box):
     session = box.session(clock=CLOCK)
     doc = session.open(probe.document(), "regions.docx")
-    table = Document.open(probe.document()).tables()[[c[0] for c in probe.CASES].index("A")].id
+    table = _tables(box, session, doc)[[c[0] for c in probe.CASES].index("A")]
     data = ok(box, session, "word_inspect", doc=doc, target=table).data
     [first] = data["blocks"][0]["rows"][0][:1]
     assert first["fill"] == "000000" and first["text_color"] == "FFFFFF"

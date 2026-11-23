@@ -669,8 +669,13 @@ class ReadsRefusals(unittest.TestCase):
 
     def test_the_reads_refusals_are_allowed(self) -> None:
         forms = {"word_read final view of Accept All's cell ends": 13, "word_inspect of Accept All's cell ends": 14,
-                 "set_point_labels: a document whose defaults name no language (the session's locale decides)": 3}
+                 "a theme whose colours docx-agent cannot read": 3}
         self.assertEqual(gates.unlisted_forms(forms, gates.allowed_forms()), {})
+
+    def test_a_reads_refusal_not_on_the_list_is_a_difference(self) -> None:
+        forms = {"word_inspect of Accept All's cell ends": 14, "word_inspect of a form no entry names": 2}
+        self.assertEqual(gates.unlisted_forms(forms, gates.allowed_forms()),
+                         {"word_inspect of a form no entry names": 2})
 
 
 if __name__ == "__main__":

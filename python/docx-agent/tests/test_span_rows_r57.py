@@ -19,7 +19,7 @@ down over rows 1-2, the last row ``[Totals | one cell over columns 1-3]``.
   All then leaves rows of one width (Word's Accept All gave a row a column wider, measured),
   Reject All the table as it was (Word's too).
 * **check's table_grid_mismatch** lists a table ragged as Accept All leaves it (``drawn:
-  "ragged"``), with ``made_by`` -- the call of this session that left it so.
+  "ragged"``).
 
 Tool-design rules: 1 (a row for values gets a cell per value; a split's count read as the
 cell's grid), 2 (refusals name the cells, the values and the calls that work), 3 (one value
@@ -33,11 +33,9 @@ import datetime as dt
 import pytest
 from ooxml_edit.tools import Dataset, Result, Toolbox, string, tool
 
-from docx_agent import Document
-from docx_agent.edit.tables import _cells, own_table_rows
-from docx_agent.layout_facts import table_grid_mismatch
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
-from python_handler import python_session
+
+import word_docs
 
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 CLOCK = lambda: dt.datetime(2026, 11, 13, 9, 0, tzinfo=dt.timezone.utc)  # noqa: E731
@@ -69,19 +67,15 @@ def ok(box, session, name, /, **arguments):
     return result
 
 
-def _plan(box, *, tracked: bool = False, every_row_spanned: bool = False, python: bool = False):
-    """The quarter plan: its session and table id (tracking on when ``tracked``; ``python``:
-    its calls answered by docx-agent's Python handlers, no Rust session owning it)."""
-    if python:
-        session, _ = python_session(box, Document.new().to_bytes(), "plan.docx", clock=CLOCK)
-    else:
-        session = box.session(clock=CLOCK)
-        session.open(Document.new().to_bytes(), "plan.docx")
-    first = session.entry("d1").document.paragraphs()[0].id
+def _plan(box, *, tracked: bool = False, every_row_spanned: bool = False):
+    """The quarter plan: its session and table id (tracking on when ``tracked``)."""
+    session = box.session(clock=CLOCK)
+    session.open(word_docs.blank(), "plan.docx")
+    first = word_docs.paragraph_ids(box, session, "d1")[0]
     markdown = "\n".join(["| " + " | ".join(ROWS[0]) + " |", "|---|---|---|---|"]
                          + ["| " + " | ".join(r) + " |" for r in ROWS[1:]])
     ok(box, session, "word_insert_markdown", doc="d1", at=f"after:{first}", markdown=f"Plan.\n\n{markdown}\n\nEnd.")
-    table = session.entry("d1").document.tables()[0].id
+    table = _table(session)
     ok(box, session, "word_edit_table", doc="d1", table=table, action="merge", first={"row": 1, "col": 0},
        last={"row": 2, "col": 0})
     ok(box, session, "word_edit_table", doc="d1", table=table, action="merge", first={"row": 4, "col": 1},
@@ -95,20 +89,53 @@ def _plan(box, *, tracked: bool = False, every_row_spanned: bool = False, python
     return session, _table(session)
 
 
+def _element(session):
+    return word_docs.tables(session, "d1")[0]
+
+
 def _table(session) -> str:
-    return session.entry("d1").document.tables()[0].id
+    return f"t:{word_docs.rows_of(_element(session))[0].get(word_docs.W14_PARA)}"
+
+
+def _span(cell) -> int:
+    found = cell.find(f"{_W}tcPr/{_W}gridSpan")
+    return int(found.get(_W + "val")) if found is not None else 1
 
 
 def _shape(session) -> list[list[int]]:
     """Each row's cells as their grid spans."""
-    document = session.entry("d1").document
-    element = document._table_entry(_table(session))[1].element
-    return [[span for _, _, span in _cells(row)] for row in own_table_rows(element)]
+    return [[_span(cell) for cell in word_docs.cells_of(row)] for row in word_docs.rows_of(_element(session))]
+
+
+def _grid(session) -> list[list[tuple[int, int, str]]]:
+    """Each grid position's cell: its origin's (row, column) and text -- a cell merged down
+    (``w:vMerge`` continuing) is the one it continues."""
+    out: list[list[tuple[int, int, str]]] = []
+    for r, row in enumerate(word_docs.rows_of(_element(session))):
+        line: list[tuple[int, int, str]] = []
+        for cell in word_docs.cells_of(row):
+            merge = cell.find(f"{_W}tcPr/{_W}vMerge")
+            column = len(line)
+            if merge is not None and merge.get(_W + "val") in (None, "continue") and r:
+                found = out[r - 1][column]
+            else:
+                found = (r, column, word_docs.cell_text(cell))
+            line += [found] * _span(cell)
+        out.append(line)
+    return out
 
 
 def _texts(session, row: int) -> list[str]:
-    view = session.entry("d1").document.table(_table(session))
-    return [view.cell(row, c).text for c in range(len(view.grid()[row]))]
+    return [text for _, _, text in _grid(session)[row]]
+
+
+def _ragged(box, session) -> list[dict]:
+    facts = ok(box, session, "check", doc="d1", include=["layout"]).data["layout"].get("table_grid_mismatch", [])
+    return [e for e in facts if e.get("drawn") == "ragged"]
+
+
+def _review(box, session, action: str) -> None:
+    ok(box, session, "word_changes", doc="d1", action=action, all=True)
 
 
 # -- insert_row beside a spanned row --------------------------------------------------------------
@@ -151,8 +178,8 @@ def test_a_new_row_inside_a_vertical_merge_carries_it_on(box):
     ok(box, session, "word_edit_table", doc="d1", table=table, action="merge", first={"row": 3, "col": 1},
        last={"row": 3, "col": 2})      # row 3 now spanned too: the nearest plain row is 1 or 4
     ok(box, session, "word_edit_table", doc="d1", table=_table(session), action="insert_row", index=1)
-    grid = session.entry("d1").document.table(_table(session)).grid()
-    assert (grid[2][0].row, grid[2][0].column) == (1, 0)      # inside the merge, as Word does
+    grid = _grid(session)
+    assert grid[2][0][:2] == (1, 0)                           # inside the merge, as Word does
 
 
 # -- set_cells: several values for one merged cell -------------------------------------------------
@@ -161,7 +188,7 @@ def test_a_new_row_inside_a_vertical_merge_carries_it_on(box):
 @pytest.mark.parametrize("tracked", [False, True])
 def test_several_values_into_one_merged_cell_are_refused(box, tracked):
     session, table = _plan(box, tracked=tracked)
-    before = session.entry("d1").document.to_bytes()
+    before = word_docs.saved(session, "d1")
     result = call(box, session, "word_edit_table", doc="d1", table=table, action="set_cells",
                   cells=[{"row": 4, "col": c, "text": v} for c, v in enumerate(EXTRA[0])])
     assert not result.ok
@@ -172,7 +199,7 @@ def test_several_values_into_one_merged_cell_are_refused(box, tracked):
     clash = error["details"]["merged"][0]
     assert clash["values"] == ["Pim", "Q3", "new"] and clash["cells"] == [1, 2, 3]
     assert clash["split"]["arguments"]["columns"] == 3 and clash["split"]["arguments"]["rows"] == 1
-    assert session.entry("d1").document.to_bytes() == before       # nothing written
+    assert word_docs.saved(session, "d1") == before                # nothing written
     # the way out works: the split given, then the four values
     ok(box, session, "word_edit_table", doc="d1", **clash["split"]["arguments"])
     ok(box, session, "word_edit_table", doc="d1", table=_table(session), action="set_cells",
@@ -274,74 +301,56 @@ def _split_then_delete(box):
 
 def test_accept_all_after_a_column_deleted_through_a_split_leaves_rows_of_one_width(box):
     session = _split_then_delete(box)
-    document = session.entry("d1").document
-    assert not [e for e in table_grid_mismatch(document) if e["drawn"] == "ragged"]
-    document.accept()
+    assert not _ragged(box, session)
+    _review(box, session, "accept")
     assert _shape(session) == [[1, 1, 1]] * 5
 
 
 def test_reject_all_after_a_column_deleted_through_a_split_gives_the_table_back(box):
     session = _split_then_delete(box)
-    session.entry("d1").document.reject()
+    _review(box, session, "reject")
     assert _shape(session) == [[1, 1, 1, 1]] * 4 + [[1, 3]]
 
 
 # -- check: a table ragged after Accept All ----------------------------------------------------------
 
 
-def _ragged_by_a_column_deletion(box, monkeypatch):
-    """A table Accept All leaves ragged, by a call of this session: the column deletion through
-    a tracked split's cell as docx-agent 0.1.107 wrote it (the inserted mark left as it was) --
-    that old Python handler's way, so the session's calls are the Python handlers' (lane P2e6:
-    the Rust session's delete_column deletes the mark, as Word's does)."""
-    from docx_agent.revisions import track
-
-    real = track.mark
-
-    def old_mark(paragraph, kind, stamp, part, **kw):
-        if kind == "del" and track.mark_record(paragraph) is not None:
-            return None
-        return real(paragraph, kind, stamp, part, **kw)
-
-    session, table = _plan(box, tracked=True, python=True)
+def _split_then_delete_column(box):
+    """The quarter plan, tracked: the spanned cell of row 4 split, then column 3 deleted
+    through the split's new cell -- the session and the column deletion's result."""
+    session, table = _plan(box, tracked=True)
     ok(box, session, "word_edit_table", doc="d1", table=table, action="split", first={"row": 4, "col": 1})
-    monkeypatch.setattr(track, "mark", old_mark)
     result = ok(box, session, "word_edit_table", doc="d1", table=_table(session), action="delete_column", index=3)
-    monkeypatch.setattr(track, "mark", real)
     return session, result
 
 
-def test_check_names_a_ragged_table_and_the_call_that_made_it(box, monkeypatch):
-    session, result = _ragged_by_a_column_deletion(box, monkeypatch)
-    table = _table(session)
-    said = [w for w in result.warnings if "is ragged once its tracked changes are accepted" in w]
-    assert said and "this call made it so" in said[0], result.warnings
-    for accept in (False, True):
-        if accept:
-            ok(box, session, "word_changes", doc="d1", action="accept", all=True)
-        facts = ok(box, session, "check", doc="d1", include=["layout"]).data["layout"]["table_grid_mismatch"]
-        ragged = [e for e in facts if e.get("drawn") == "ragged"]
-        assert len(ragged) == 1, facts
-        entry = ragged[0]
-        assert entry["table"] == table and entry["after_accept"] is (not accept)
-        assert entry["rows"][0] == {"row": 0, "covers": [0, 2]} and entry["grid"] == 4
-        assert entry["made_by"] == {"tool": "word_edit_table", "arguments": {
-            "doc": "d1", "table": table, "action": "delete_column", "index": 3}}
+def _ragged_as_0_1_107_wrote_it(box) -> bytes:
+    """The column deletion through a tracked split's cell as docx-agent 0.1.107 wrote it: the
+    split's new cell in column 3 deleted (``w:cellDel``) but its paragraph mark left inserted
+    only -- the deletion's mark beside it taken out (the session's delete_column writes both,
+    as Word's does) -- so Accept All leaves row 4 a column wider than the rest."""
+    from lxml import etree
+
+    session, _ = _split_then_delete_column(box)
+    data = word_docs.saved(session, "d1")
+    root = word_docs.tree(data)
+    row = word_docs.rows_of(root.find(f".//{_W}tbl"))[4]
+    mark = word_docs.cells_of(row)[-1].find(f"{_W}p/{_W}pPr/{_W}rPr/{_W}del")
+    mark.getparent().remove(mark)
+    return word_docs.replaced(data, {"word/document.xml": etree.tostring(
+        root, xml_declaration=True, encoding="UTF-8", standalone=True)})
 
 
-def test_a_ragged_table_from_the_file_has_no_made_by(box, monkeypatch):
-    session, _ = _ragged_by_a_column_deletion(box, monkeypatch)
-    data = session.entry("d1").document.to_bytes()
+def test_a_ragged_table_from_the_file_is_named_with_no_made_by(box):
     other = box.session(clock=CLOCK)
-    other.open(data, "again.docx")
-    facts = ok(box, other, "check", doc="d1", include=["layout"]).data["layout"]["table_grid_mismatch"]
-    ragged = [e for e in facts if e.get("drawn") == "ragged"]
-    assert ragged and "made_by" not in ragged[0] and ragged[0]["after_accept"] is True
+    other.open(_ragged_as_0_1_107_wrote_it(box), "again.docx")
+    ragged = _ragged(box, other)
+    assert ragged and "made_by" not in ragged[0] and ragged[0]["after_accept"] is True, ragged
 
 
 def test_rows_of_one_width_are_not_listed(box):
     session, _table_id = _plan(box, tracked=True)
-    assert table_grid_mismatch(session.entry("d1").document) == []
+    assert _ragged(box, session) == []
 
 
 # -- a column this session inserted, deleted again (lane D's find) ------------------------------------
@@ -357,8 +366,7 @@ def test_an_own_inserted_column_deleted_goes_outright_and_rows_still_delete(box)
        cells=[{"row": r, "col": 4, "text": f"n{r}"} for r in range(4)])
     ok(box, session, "word_edit_table", doc="d1", table=_table(session), action="delete_column", index=4)
     assert _shape(session) == before
-    document = session.entry("d1").document
-    assert not any(True for _ in document._table_entry(_table(session))[1].element.iter(f"{_W}cellDel"))
+    assert not any(True for _ in _element(session).iter(f"{_W}cellDel"))
     ok(box, session, "word_edit_table", doc="d1", table=_table(session), action="insert_row", index=3)
     ok(box, session, "word_edit_table", doc="d1", table=_table(session), action="delete_row", index=4)
     assert _shape(session) == before
@@ -371,13 +379,12 @@ def test_a_new_row_beside_a_column_deleted_pending_is_deleted_there_too(box):
     session, table = _plan(box, tracked=True)
     ok(box, session, "word_edit_table", doc="d1", table=table, action="delete_column", index=3)
     ok(box, session, "word_edit_table", doc="d1", table=_table(session), action="insert_row", index=2)
-    element = session.entry("d1").document._table_entry(_table(session))[1].element
-    new = own_table_rows(element)[3]
-    last = _cells(new)[-1][0]
+    new = word_docs.rows_of(_element(session))[3]
+    last = word_docs.cells_of(new)[-1]
     assert last.find(f"{_W}tcPr/{_W}cellDel") is not None
     assert last.find(f"{_W}p/{_W}pPr/{_W}rPr/{_W}del") is not None
-    assert not [e for e in table_grid_mismatch(session.entry("d1").document) if e["drawn"] == "ragged"]
+    assert not _ragged(box, session)
     ok(box, session, "word_edit_table", doc="d1", table=_table(session), action="delete_row", index=3)
     ok(box, session, "word_edit_table", doc="d1", table=_table(session), action="insert_row", index=2)
-    session.entry("d1").document.accept()
+    _review(box, session, "accept")
     assert _shape(session) == [[1, 1, 1]] * 5 + [[1, 2]]

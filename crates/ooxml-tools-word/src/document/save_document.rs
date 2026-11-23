@@ -6,7 +6,11 @@
 //! docx-agent's refusals of a deck's format, a kind the extension contradicts and `clean`
 //! for Markdown. `app.xml`'s statistics are brought up to date only when the main part
 //! changed since the document was opened: words, characters and paragraphs counted from
-//! the body, pages and lines from the host's layout where it has one ([`Version::counts`]).
+//! the body, pages and lines from the version's layout -- the host's counts where it gives
+//! them ([`Version::counts`]), else the document's engine's -- and the reply's `coverage`
+//! the engine's of the version saved (docx-agent's `_coverage`: a check that passed on a
+//! complete layout told from one that could not see everything; `{"error"}` where it was
+//! not laid out).
 //!
 //! Must not: run the save gate or keep the output's id state (the host's: it hands the
 //! application the bytes), or change the document.
@@ -152,10 +156,19 @@ pub fn save_document(
             kind = named;
         }
     }
+    let laid = crate::laid_reads::laid(&owned, version.package, cancel);
+    let counts = version
+        .counts
+        .or_else(|| laid.as_ref().and_then(|l| l.as_ref().ok()).and_then(|l| l.counts()));
     let app = if main_changed(owned.opened, owned.doc)? {
-        Some(statistics(version)?)
+        Some(statistics(version, counts)?)
     } else {
         None
+    };
+    let coverage = match laid {
+        Some(Ok(laid)) => laid.coverage().unwrap_or_else(crate::laid_reads::error_json),
+        Some(Err(said)) => crate::laid_reads::error_json(said),
+        None => crate::laid_reads::error_json(NO_LAYOUT.to_owned()),
     };
     let data = match serialise(version.package, kind, app.as_ref()) {
         Ok(data) => data,
@@ -168,8 +181,11 @@ pub fn save_document(
         }
         Err(e) => return Err(internal(e)),
     };
-    file(args, data)
+    file(args, data, coverage)
 }
+
+/// The coverage of a save the session lays out no pages for.
+const NO_LAYOUT: &str = "layout_failed: the session lays this document out with no page engine";
 
 fn internal(e: ooxml_word_edit::EditError) -> ToolError {
     ToolError::internal(e.to_string(), "word:save")
@@ -220,22 +236,23 @@ fn markdown(args: &SaveDocument, version: &Version<'_>) -> Result<Done<Value>, T
     Ok(done)
 }
 
-/// `app.xml`'s statistics of the version: the body's text counted, the host's layout's
-/// pages and lines where it has one.
-fn statistics(version: &Version<'_>) -> Result<AppStatistics, ToolError> {
+/// `app.xml`'s statistics of the version: the body's text counted, the layout's pages and
+/// lines (`counts`) where it was laid out.
+fn statistics(version: &Version<'_>, counts: Option<crate::LayoutCounts>) -> Result<AppStatistics, ToolError> {
     let text = text_counts(&*version.docx()?);
     Ok(AppStatistics {
         words: text.words,
         characters: text.characters,
         characters_with_spaces: text.characters_with_spaces,
         paragraphs: text.paragraphs,
-        pages: version.counts.map(|c| c.pages),
-        lines: version.counts.map(|c| c.lines),
+        pages: counts.map(|c| c.pages),
+        lines: counts.map(|c| c.lines),
     })
 }
 
-/// The reply giving the application `data`, cleaned first when asked.
-fn file(args: &SaveDocument, mut data: Vec<u8>) -> Result<Done<Value>, ToolError> {
+/// The reply giving the application `data`, cleaned first when asked, with the layout's
+/// `coverage`.
+fn file(args: &SaveDocument, mut data: Vec<u8>, coverage: Value) -> Result<Done<Value>, ToolError> {
     let mut summary = format!("Saved {} for the application", args.name);
     let mut reply = Map::new();
     if args.clean.unwrap_or(false) {
@@ -248,6 +265,7 @@ fn file(args: &SaveDocument, mut data: Vec<u8>) -> Result<Done<Value>, ToolError
         ));
         reply.insert("cleaned".into(), report.to_json());
     }
+    reply.insert("coverage".into(), coverage);
     let mut done = Done::new(summary);
     done.data = Some(Value::Object(reply));
     done.files.push(File {

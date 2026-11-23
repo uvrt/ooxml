@@ -108,8 +108,8 @@ impl From<ListStep> for Outcome {
 }
 
 /// `word_lists` (docx-agent's `word_lists`): every paragraph the targets hold added to a
-/// list, taken out, moved to a level; the first one's list restarted, continued or a level
-/// of it formatted -- one command.
+/// list, taken out, moved to a level; each target's first one's list continued; the first
+/// one's list restarted or a level of it formatted -- one command.
 #[must_use]
 pub fn word_lists(args: &WordLists, editing: &Editing<'_>) -> ToolResult<Value> {
     if let Err(error) = crate::review::stopped(editing.cancel) {

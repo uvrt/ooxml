@@ -6,7 +6,7 @@ differentials hold them to it) and carry their way out besides (``valid_options`
 ``try_call``: tool rule 2).  A served call the session refuses is answered with that
 refusal, passed through whole (:func:`refusal`), never handed to the Python handler for its
 wording -- an id a change removed too: the session words it from its retired-id record, the
-change named by the number the host gave its version (``Session.number_version``).
+change named by its step's state number.
 
 Must not: word a refusal.
 """

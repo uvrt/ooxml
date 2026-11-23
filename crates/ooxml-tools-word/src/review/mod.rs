@@ -66,6 +66,12 @@ pub struct Editing<'a> {
     /// The host's record of the rows the session's `word_edit_table` calls wrote (round 58,
     /// R126), read and added to; `None`: the call's own rows only, none kept.
     pub rows_written: Option<&'a crate::RowsWritten>,
+    /// The host's record of the session's calls that left a table ragged or off its grid
+    /// (rounds 57 and 58), added to; `None`: none kept.
+    pub made_by: Option<&'a crate::MadeBy>,
+    /// The call's arguments as the host took them (what [`Editing::made_by`] keeps of the
+    /// call); `None`: none kept.
+    pub arguments: Option<&'a serde_json::Map<String, serde_json::Value>>,
     /// The locale the call reads its document under where the host names one (the host's
     /// document locale): a table of contents' style names and the separator between them;
     /// `None`: the document's own language.
@@ -111,6 +117,8 @@ impl<'a> Editing<'a> {
             blobs: None,
             written: &[],
             rows_written: None,
+            made_by: None,
+            arguments: None,
             locale: None,
             limits: ooxml_tools::Limits::DEFAULT,
             last_check: None,
@@ -198,6 +206,28 @@ impl<'a> Editing<'a> {
     pub fn with_rows_written(mut self, rows_written: Option<&'a crate::RowsWritten>) -> Self {
         self.rows_written = rows_written;
         self
+    }
+
+    /// The host's record of the calls that left a table ragged or off its grid.
+    #[must_use]
+    pub fn with_made_by(mut self, made_by: Option<&'a crate::MadeBy>) -> Self {
+        self.made_by = made_by;
+        self
+    }
+
+    /// The call's arguments as the host took them.
+    #[must_use]
+    pub fn with_arguments(mut self, arguments: Option<&'a serde_json::Map<String, serde_json::Value>>) -> Self {
+        self.arguments = arguments;
+        self
+    }
+
+    /// Keep that this call (`tool`) left `table` `shape`, where the host keeps a record and
+    /// gave the call's arguments.
+    pub fn note_made(&self, shape: crate::TableShape, table: &str, tool: &str) {
+        if let (Some(made_by), Some(arguments)) = (self.made_by, self.arguments) {
+            made_by.note(shape, table, tool, arguments);
+        }
     }
 
     /// The host's limits on the call's reply.

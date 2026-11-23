@@ -14,9 +14,10 @@ import pytest
 
 from ooxml_edit.tools import Toolbox
 
-from docx_agent import Document
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from docx_agent.tools import positions
+
+import word_docs
 
 CLOCK = lambda: dt.datetime(2026, 11, 7, 12, 0, tzinfo=dt.timezone.utc)  # noqa: E731
 
@@ -30,7 +31,7 @@ def toolbox():
 @pytest.fixture
 def made(toolbox):
     session = toolbox.session(clock=CLOCK)
-    session.open(Document.new().to_bytes(), "plan.docx")
+    session.open(word_docs.blank(), "plan.docx")
     result = toolbox.dispatch(session, "word_insert_markdown", {
         "doc": "d1", "at": "end", "markdown": "Opening line.\n\nMiddle line.\n\nClosing line."})
     assert result.ok, result.to_json()
@@ -47,8 +48,7 @@ def ok(result):
 
 
 def texts(session) -> list[str]:
-    document = session.entry("d1").document
-    return [p.text for p in document.paragraphs()]
+    return [text for _, text in word_docs.paragraphs(session, "d1")]
 
 
 def redo(toolbox, session, error):
@@ -84,7 +84,8 @@ def test_the_strict_set_has_room_for_insert_markdowns_ref_and_no_more():
         strict = [d for d in box.definitions("anthropic") if d.get("strict")]
     optional = sum(len(set(d["input_schema"]["properties"]) - set(d["input_schema"].get("required", ())))
                    for d in strict)
-    assert len(strict) == 6 and optional <= 24
+    # Five: edit_smartart, the sixth, is out of the Word tools until its port (P4e).
+    assert len(strict) == 5 and optional <= 24
     assert "word_insert_markdown" in {d["name"] for d in strict}
 
 
@@ -204,8 +205,12 @@ def test_marks_read_after_as_the_end_and_before_as_the_start(toolbox, made):
     assert error.details["call"]["arguments"]["at"] == f"{closing}@8"
     redo(toolbox, session, error)
     ok(run(toolbox, session, "word_fields", doc="d1", action="insert_date", after=opening))
-    document = session.entry("d1").document
-    assert len(document.notes()) == 1 and len(document.content_controls()) == 1 and len(document.fields()) == 1
+    body = word_docs.tree(word_docs.saved(session, "d1"))
+    notes = [n for n in body.iter(f"{{{word_docs.W}}}footnoteReference", f"{{{word_docs.W}}}endnoteReference")]
+    controls = list(body.iter(f"{{{word_docs.W}}}sdt"))
+    fields = [f for f in body.iter(f"{{{word_docs.W}}}fldChar")
+              if f.get(f"{{{word_docs.W}}}fldCharType") == "begin"] + list(body.iter(f"{{{word_docs.W}}}fldSimple"))
+    assert len(notes) == 1 and len(controls) == 1 and len(fields) == 1
 
 
 def test_a_toc_or_caption_takes_at_as_the_placing_tools_write_it(toolbox, made):

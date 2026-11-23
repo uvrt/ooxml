@@ -163,9 +163,12 @@ fn omitted_levels(instruction: &str) -> Option<(i64, i64)> {
     }
 }
 
-/// Whether the paragraph style `id` has tab stops of its own or through its `basedOn`
-/// chain (Word's entries then rely on them).
+/// Whether the paragraph style `id` has tab stops after its `basedOn` chain is applied,
+/// base first: each style's stops over its base's, a `clear` stop taking away the inherited
+/// one at its position (Word's entries then rely on them; a style that clears every
+/// inherited stop has none, and its entries get the right stop).
 fn style_has_tabs(docx: &Docx, id: &str) -> bool {
+    let mut chain = Vec::new();
     let mut current = Some(id.to_owned());
     let mut seen = Vec::new();
     while let Some(style_id) = current.take() {
@@ -173,20 +176,31 @@ fn style_has_tabs(docx: &Docx, id: &str) -> bool {
             break;
         }
         let Some(style) = docx.style(&style_id) else { break };
-        if let Some(tabs) = find_path(style, &["pPr", "tabs"]) {
-            let set = tabs
-                .child_elements()
-                .any(|t| t.name().is(Some(W), "tab") && t.attribute(Some(W), "val") != Some("clear"));
-            if set {
-                return true;
-            }
-        }
+        chain.push(style);
         current = find_path(style, &["basedOn"])
             .and_then(|b| b.attribute(Some(W), "val"))
             .map(str::to_owned);
         seen.push(style_id);
     }
-    false
+    let mut stops: Vec<i64> = Vec::new();
+    for style in chain.iter().rev() {
+        let Some(tabs) = find_path(style, &["pPr", "tabs"]) else {
+            continue;
+        };
+        for tab in tabs.child_elements().filter(|t| t.name().is(Some(W), "tab")) {
+            let Some(position) = tab
+                .attribute(Some(W), "pos")
+                .and_then(ooxml_word_model::xmlread::py_int)
+            else {
+                continue;
+            };
+            stops.retain(|p| *p != position);
+            if tab.attribute(Some(W), "val") != Some("clear") {
+                stops.push(position);
+            }
+        }
+    }
+    !stops.is_empty()
 }
 
 /// The width between the margins (and gutter) of the section the body block at `path` is

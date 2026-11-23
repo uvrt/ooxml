@@ -1,38 +1,22 @@
-"""The docx :class:`~ooxml_edit.tools.DocumentFormat`: how the tool layer opens, recognises
-and validates a Word document, which warnings it collects, how library errors map to error
-codes, and the Word system-prompt fragment (mechanics only: no house style)."""
+"""The docx :class:`~ooxml_edit.tools.DocumentFormat`: how the tool layer recognises a Word
+document, the Rust session that opens and owns it (:class:`docx_agent.rust.owner.RustOwner`:
+its versions, its steps, its ids, its saved bytes), the hooks that read it -- each the
+session's reading of the version asked (:mod:`docx_agent.rust.hooks`), never a Python view
+-- and the Word system-prompt fragment (mechanics only: no house style)."""
 
 from __future__ import annotations
 
 import io
-import weakref
 import zipfile
 from typing import Any
 
-from ooxml_edit.charts import ChartDataWarning
 from ooxml_edit.tools import DocumentFormat, ToolError
 
-from ..blocks import BLOCKS
-from ..edit.addresses import AddressError
-from ..edit.authoring import AuthoringWarning
-from ..edit.charts import DiagramDrawingDropped, UntrackedChartEdit
-from ..edit.document import Document, NoCell
-from ..edit.errors import EditError
-from ..edit.formatting import FormattingError
-from ..edit.ids import DeletedId
-from ..edit.inline import SpanError
-from ..edit.pictures import PictureError
-from ..edit.ranges import AmbiguousAnchor, AnchorNotFound
-from ..layout import read_copy, release_document
 from ..rust import hooks
-from ..rust.hooks import owned
+from ..rust.edits import serve_owned
+from ..rust.owner import OWNER, TemplateOpened, session_validation
 from ._base import checks, problem_key
-from .owner import read_version
-from .render import warm_up
 from .table_data import own_source, source_hint
-from .scales import scale_values
-from .textfacts import number_texts
-from .touched import touched
 
 KIND = "docx"
 EXTENSIONS = (".docx", ".docm", ".dotx", ".dotm")
@@ -80,79 +64,12 @@ STRICT_FIRST = ("replace_text", "word_changes", "word_set_tracking", "word_inser
                 "word_template")
 
 
-def open_docx(data: bytes) -> Document:
-    return Document.open(data)
-
-
-def open_docx_with_state(data: bytes, state: Any) -> Document:
-    """Bytes and the id state saved beside them (``Session.open(..., state=...)``, round 38):
-    the document's retired ids stay retired (:meth:`Document.open`'s ``ids``)."""
-    return Document.open(data, ids=state)
-
-
-def id_state(document: Any) -> str:
-    """The state kept beside a Word document's bytes (``Session.save``, ``Output.state``):
-    :meth:`Document.id_state`; for one the Rust session owns, the session's
-    (:func:`docx_agent.rust.hooks.id_state`, lane H7a)."""
-    if owned(document) is not None:
-        return hooks.id_state(document)
-    return document.id_state()
-
-
-def configure(document: Document, session: Any) -> None:
-    """A document joining a session lays out and renders with the session's font folders
-    (``Toolbox(font_dirs=...)``; ``None``: ``OOXML_FONT_DIRS``) and is drawn and edited in
-    its locale (``Toolbox(locale=...)``; en-US unless given)."""
-    document.font_dirs = session.font_dirs
-    document.locale = session.locale
-    # Round 37: an id that is gone names the call that removed it, and how to read again.
-    document.describe_step = _StepOwner(session, document)
-    document.read_hint = "word_read"
-
-
-class _StepOwner:
-    """``document.describe_step``: the tool, and its caller's context, whose change made a
-    version of the document -- the session's record (``DocumentEntry.owners``).  Holds both
-    weakly: a closed document or an ended session says nothing."""
-
-    def __init__(self, session: Any, document: Document) -> None:
-        self._session = weakref.ref(session)
-        self._document = weakref.ref(document)
-
-    def __call__(self, version: int) -> str | None:
-        session, document = self._session(), self._document()
-        if session is None or document is None:
-            return None
-        for entry in list(getattr(session, "documents", {}).values()):
-            if entry.document is document:
-                owner = entry.owners.get(version)
-                if owner is None:
-                    return None
-                context = ", ".join(f"{key}={value}" for key, value in owner.caller.items())
-                return f"{owner.tool} ({context})" if context else owner.tool
-        return None
-
-
-def store_provenance(document: Any, address: str, record: Any) -> None:
-    """Keep a placement's record in the document's own custom XML item
-    (:mod:`docx_agent.edit.provenance`), keyed by the table's ``t:`` or the chart's ``d:``
-    id; ``None`` drops it.  Inside the call's undo step.  The hook is given the document a
-    handler of docx-agent's edits (a table from data, a chart: their edits are docx-agent's
-    still); the Rust session's tools keep their records themselves, so the owner's handle is
-    refused as ``internal`` (lane H7d)."""
-    if owned(document) is not None:
-        raise ToolError("internal", f"a placement's record for {address} was handed the Rust "
-                        "session's document: the session's tools keep their own records")
-    document.store_provenance(address, record)
-
-
-def read_provenance(document: Any) -> dict[str, Any]:
-    """``{address: record}`` for the tables and charts the document has (tracked changes
-    accepted); an entry whose object is gone is left out.  For one the Rust session owns,
-    the session's records (lane H7d)."""
-    if owned(document) is not None:
-        return hooks.provenance(document)
-    return dict(document.provenance())
+def _opened_by_the_session(data: bytes, state: Any = None) -> Any:
+    """The format's ``open`` and ``open_with_state``: never reached -- the session opens a
+    Word document's bytes itself (the owner's ``open_data``), and the tool layer holds no
+    document of its own."""
+    raise ToolError("internal", "a Word document is opened by the Rust session (RustOwner.open_data), "
+                    "never by the tool layer")
 
 
 def detect(data: bytes, name: str) -> bool:
@@ -166,69 +83,6 @@ def detect(data: bytes, name: str) -> bool:
     except zipfile.BadZipFile:
         return False
 
-
-def problems(document: Any) -> list[Any]:
-    """The format's ``problems``: :meth:`Document.validate`'s, found where the document
-    changed (:mod:`docx_agent.revalidate`; ``DOCX_AGENT_FULL_VALIDATE=1``: compared with the
-    whole check at every call); for one the Rust session owns, the session's (lane H7a)."""
-    if owned(document) is not None:
-        return hooks.problems(document)
-    from ..revalidate import problems as found
-
-    return list(found(document))
-
-
-def summary(document: Any) -> dict[str, Any]:
-    """What ``open_document`` says of a Word document: cheap facts, no layout; for one the
-    Rust session owns, the session's reading (lane H7a)."""
-    if owned(document) is not None:
-        return hooks.summary(document)
-    from .read import heading_tree
-
-    title = document.properties.get("title")
-    return {"title": title, "paragraphs": len(document.paragraphs()), "tables": len(document.tables()),
-            "headings": len(heading_tree(document)), "comments": len(document.comments()),
-            "revisions": len(document.revisions()), "template": document.package.kind in ("dotx", "dotm")}
-
-
-def restored(document: Any) -> None:
-    """Parts were put back behind the document's back -- a ``batch`` op that failed, rolled
-    back inside the batch's open undo step: the trees were reparsed, so every index is
-    stale (what the document's own ``undo`` does after the history's).  A scoped undo or
-    redo too: what it removed or brought back is read, as an undo's is (round 37).  For a
-    document the Rust session owns, what it put back is its own version: only a view made
-    of it in this process forgets what it read (lane H7a)."""
-    if owned(document) is not None:
-        document = hooks.live_view(document)
-        if document is None:
-            return
-    document._invalidate()
-    document._note_ids()
-
-
-def _candidates(error: AmbiguousAnchor) -> list[str]:
-    out = []
-    for candidate in error.candidates[:50]:
-        try:
-            out.append(f"{candidate.id} {candidate.context()!r}")
-        except Exception:  # noqa: BLE001 -- a candidate that cannot say its context
-            out.append(str(getattr(candidate, "id", candidate)))
-    return out
-
-
-ERRORS = {
-    AddressError: ("invalid_arguments", lambda error: error.options),
-    # Round 37: an id that is gone says so, which call removed it, and what replaced it.
-    DeletedId: ("not_found", lambda error: [error.replaced_by] if error.replaced_by else []),
-    # Round 31, R5c: a cell the table lacks, with the cells it has.
-    NoCell: ("not_found", lambda error: error.options),
-    AmbiguousAnchor: ("ambiguous", _candidates),
-    AnchorNotFound: "not_found",
-    FormattingError: "unit",
-    SpanError: "refused",
-    PictureError: "refused",
-    EditError: "refused",
-}
 
 #: The references a deck resolves in its own text that a Word document refuses in words of
 #: its own (``DocumentFormat.own_facts``), with no deck format loaded too: pptx-agent's
@@ -274,49 +128,34 @@ TOOL_HINTS = {
     "word_upgrade": "word_template upgrade_to_modern",
 }
 
-def closed(document: Any) -> None:
-    """What docx-agent kept for a closed document, let go (:func:`docx_agent.layout.
-    release_document`); for one the Rust session owns, the session lets go of it as its owner
-    closes it, and what was kept for a view made of it in this process goes (lane H7a)."""
-    if owned(document) is not None:
-        document = hooks.live_view(document)
-        if document is None:
-            return
-    release_document(document)
+
+def summary(document: Any) -> dict[str, Any]:
+    """What ``open_document`` says of a Word document: cheap facts, no layout -- the
+    session's reading of the version (:func:`docx_agent.rust.hooks.summary`)."""
+    return hooks.summary(document)
 
 
-def _owner() -> Any:
-    """Lane P2c4: the Rust session as the owner of the format's documents (it takes none
-    where ``ooxml_core`` has no session: the tool layer then holds the document itself)."""
-    from ..rust.owner import OWNER
-
-    return OWNER
-
-
-def _validation(entry: Any) -> Any:
-    """Lane P5a: the session's comparison for a document it owns (the save gate's and
-    ``check``'s ``validation``), without the Python view."""
-    from ..rust.owner import session_validation
-
-    return session_validation(entry)
+def touched(document: Any, change: Any) -> list[dict[str, Any]]:
+    """The format's ``touched``: for a document the owner holds, what a change touched is the
+    owner's to say between the versions it went from and to (``RustOwner.touched``), which
+    the tool layer asks for every docx entry; this hook is never handed a document."""
+    raise ToolError("internal", "a Word document's changes are said by the Rust session (RustOwner.touched)")
 
 
-def _serve(call: Any, arguments: dict[str, Any]) -> Any:
-    """Lane P2c6: a change the Rust session makes beside the others it makes, without the
-    document's lock (:func:`docx_agent.rust.edits.serve_owned`)."""
-    from ..rust.edits import serve_owned
+def number_texts(call: Any, scope: Any) -> list[Any]:
+    """The texts a check of numbers reads, the session's (:func:`docx_agent.rust.hooks.number_texts`)."""
+    return hooks.number_texts(call, call.subject, scope)
 
-    return serve_owned(call, arguments)
+
+def scale_values(call: Any, scale: Any, scope: Any) -> list[Any]:
+    """The values a scale's targets name, the session's (:func:`docx_agent.rust.hooks.scale_values`)."""
+    return hooks.scale_values(call, call.subject, scale, scope)
 
 
 FORMAT = DocumentFormat(
-    kind=KIND, open=open_docx, detect=detect, problems=problems, problem_key=problem_key,
-    validation=_validation,
-    warnings=(AuthoringWarning, UntrackedChartEdit, DiagramDrawingDropped, ChartDataWarning),
-    prompt=PROMPT, errors=ERRORS, summary=summary, checks=checks, strict_first=STRICT_FIRST,
-    configure=configure, source_hint=source_hint, own_source=own_source, store_provenance=store_provenance,
-    read_provenance=read_provenance, restored=restored, own_facts=dict(OWN_REFUSED),
-    tool_hints=TOOL_HINTS, warm_up=warm_up, touched=touched, number_texts=number_texts,
-    scale_values=scale_values, state=id_state, open_with_state=open_docx_with_state,
-    read_copy=read_copy, blocks=BLOCKS, read_version=read_version, closed=closed, owner=_owner(),
-    serve=_serve)
+    kind=KIND, open=_opened_by_the_session, detect=detect, problems=hooks.problems, problem_key=problem_key,
+    validation=session_validation, warnings=(TemplateOpened,), prompt=PROMPT, summary=summary, checks=checks,
+    strict_first=STRICT_FIRST, source_hint=source_hint, own_source=own_source, read_provenance=hooks.provenance,
+    own_facts=dict(OWN_REFUSED), tool_hints=TOOL_HINTS, touched=touched, number_texts=number_texts,
+    scale_values=scale_values, state=hooks.id_state, open_with_state=_opened_by_the_session, owner=OWNER,
+    serve=serve_owned)

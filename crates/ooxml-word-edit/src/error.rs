@@ -7,6 +7,7 @@ use crate::doc::{Key, ModelError};
 use ooxml_opc::OpcError;
 use ooxml_store::StoreError;
 use ooxml_word_model::address::AddressError;
+use ooxml_word_model::ids::IdStateError;
 use ooxml_word_model::WordError;
 
 /// Why an edit refused or failed. Nothing changed when it is returned.
@@ -62,6 +63,9 @@ pub enum EditError {
     /// The package could not be read.
     #[error(transparent)]
     Package(#[from] OpcError),
+    /// The id state given beside a document's bytes was refused (docx-agent's words).
+    #[error(transparent)]
+    IdState(#[from] IdStateError),
     /// The store refused a change.
     #[error(transparent)]
     Store(#[from] StoreError<Key, ModelError>),

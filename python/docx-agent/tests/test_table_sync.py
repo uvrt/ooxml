@@ -18,9 +18,10 @@ pytest.importorskip("ooxml_edit.tools.sources", reason="needs ooxml-edit 0.22 (s
 from lxml import etree  # noqa: E402
 from ooxml_edit.tools import Dataset, Result, Toolbox, string, tool  # noqa: E402
 
-from docx_agent import Document  # noqa: E402
-from docx_agent import blocks as _blocks  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
+
+import word_docs  # noqa: E402
+from kept_records import text_facts  # noqa: E402
 
 CLOCK = lambda: dt.datetime(2026, 11, 10, 9, 0, tzinfo=dt.timezone.utc)  # noqa: E731
 COLUMNS = ("code", "title", "issue", "checked")
@@ -67,14 +68,24 @@ def _markdown(rows: list[tuple], head: tuple = COLUMNS) -> str:
 def _table(toolbox, rows: list[tuple], data: dict[str, list[tuple]], *, head: tuple = COLUMNS,
            columns: tuple = COLUMNS):
     session = toolbox.session(clock=CLOCK)
-    session.open(Document.new().to_bytes(), "leaflets.docx")
-    first = session.entry("d1").document.paragraphs()[0].id
+    session.open(word_docs.blank(), "leaflets.docx")
+    first = word_docs.paragraph_ids(toolbox, session, "d1")[0]
     assert toolbox.dispatch(session, "word_insert_markdown", {"doc": "d1", "at": f"after:{first}",
                                                               "markdown": _markdown(rows, head)}).ok
     for name, values in data.items():
         SETS[name] = (columns, values)
         assert toolbox.dispatch(session, "rows_put", {"id": name}).ok
-    return session, session.entry("d1").document.tables()[-1].id
+    return session, _last_table(session)
+
+
+def _last_table(session) -> str:
+    return f"t:{word_docs.rows_of(word_docs.tables(session, 'd1')[-1])[0].get(word_docs.W14_PARA)}"
+
+
+def _cell_paragraph(session, table, row, column) -> str:
+    """The id of a cell's first paragraph."""
+    cell = word_docs.cells_of(word_docs.rows_of(word_docs.element(session, "d1", table))[row])[column]
+    return f"p:{cell.find(f'{{{word_docs.W}}}p').get(word_docs.W14_PARA)}"
 
 
 def _sync(toolbox, session, table, **more):
@@ -82,14 +93,11 @@ def _sync(toolbox, session, table, **more):
 
 
 def _texts(session, table):
-    view = session.entry("d1").document.table(table)
-    return [tuple(view.cell(r, c).text for c in range(view.column_count)) for r in range(len(view.rows))]
+    return [tuple(row) for row in word_docs.table_texts(session, "d1", table)]
 
 
 def _row_xml(session, table) -> list[bytes]:
-    document = session.entry("d1").document
-    _part, entry = document._resolve(table)
-    return [etree.tostring(row) for row, _ in entry.rows]
+    return [etree.tostring(row) for row in word_docs.rows_of(word_docs.element(session, "d1", table))]
 
 
 # -- the schema ----------------------------------------------------------------------------------
@@ -105,7 +113,9 @@ def test_sync_is_an_action_and_the_strict_set_is_unchanged():
     assert {"key", "remove"} <= set(edit.optional_parameters())
     plan = anthropic_strict_plan(TOOLS, first=STRICT_FIRST)
     assert not plan["word_edit_table"]
-    assert sum(len(t.optional_parameters()) for t in TOOLS if plan[t.name]) == 24
+    # edit_smartart and style_by_value are out of TOOLS until their ports: the strict plan has
+    # that much room (24 before).
+    assert sum(len(t.optional_parameters()) for t in TOOLS if plan[t.name]) == 22
 
 
 # -- the rules -----------------------------------------------------------------------------------
@@ -199,11 +209,9 @@ def test_a_row_with_a_formula_field_is_a_total_row(toolbox):
     # a "Sum" row computing over the table (=SUM(ABOVE)), no look's total row: never matched,
     # added to or removed -- also with remove
     session, table = _table(toolbox, made(4) + [("Sum", "", "", "")], {})
-    document = Document.open(session.entry("d1").document.to_bytes())
-    cell = document.table(table).cell(5, 2).paragraphs[0].id
-    document.insert_field(f"{cell}@0", "=SUM(ABOVE)", result="0")
-    session = toolbox.session(clock=CLOCK)
-    session.open(document.to_bytes(), "leaflets.docx")
+    cell = _cell_paragraph(session, table, 5, 2)
+    assert toolbox.dispatch(session, "word_fields", {"doc": "d1", "action": "insert_field", "at": f"{cell}@0",
+                                                     "instruction": "=SUM(ABOVE)"}).ok
     SETS["next"] = (COLUMNS, made(6, drop=(1,), change=(2,)))
     assert toolbox.dispatch(session, "rows_put", {"id": "next"}).ok
     result = _sync(toolbox, session, table, **{"from": "d:next", "remove": True})
@@ -335,33 +343,30 @@ def test_values_keep_their_source(toolbox):
     # every data row a source row after: the table's record, its rows in the table's order
     session, table = _table(toolbox, made(5), {"next": made(6, drop=(2,), change=(3,))})
     assert _sync(toolbox, session, table, **{"from": "d:next", "remove": True}).ok
-    record = session.entry("d1").document.provenance()[table]
+    record = session.provenance("d1")[table]
     assert record["source"] == "d:next" and record["first_row"] == 1
     assert [c["col"] for c in record["columns"]] == [0, 1, 2, 3] and record["columns"][0]["rows"] == "1-5"
     # a key left in the table: each cell written keeps its value's source
     session, table = _table(toolbox, made(5), {"next": made(6, drop=(2,), change=(3,))})
     assert _sync(toolbox, session, table, **{"from": "d:next"}).ok
-    document = session.entry("d1").document
-    assert table not in document.provenance()
-    kept = document.text_facts()
-    view = document.table(table)
-    issue = kept[view.cell(3, 2).paragraphs[0].id]
+    assert table not in session.provenance("d1")
+    kept = text_facts(session, "d1")
+    issue = kept[_cell_paragraph(session, table, 3, 2)]
     assert issue[0]["source"] == "d:next/#2/issue" and issue[0]["text"] == "B"
-    assert view.cell(1, 2).paragraphs[0].id not in kept                  # not written: not kept
-    assert all(view.cell(6, c).paragraphs[0].id in kept for c in range(4))   # the row added
+    assert _cell_paragraph(session, table, 1, 2) not in kept                  # not written: not kept
+    assert all(_cell_paragraph(session, table, 6, c) in kept for c in range(4))   # the row added
 
 
 def test_a_record_the_sync_makes_untrue_is_dropped(toolbox):
     session, table = _table(toolbox, made(4), {"first": made(4), "next": made(5, change=(1,))})
     assert toolbox.dispatch(session, "word_edit_table", {"doc": "d1", "table": table, "action": "set_cells",
                                                          "from": "d:first"}).ok
-    assert table in session.entry("d1").document.provenance()
-    session.entry("d1").document.table(table)
+    assert table in session.provenance("d1")
     SETS["other"] = (COLUMNS, made(5, drop=(4,)))
     assert toolbox.dispatch(session, "rows_put", {"id": "other"}).ok
     result = _sync(toolbox, session, table, **{"from": "d:other"})         # Q7-004 left: partial
     assert result.ok and any("dropped" in w for w in result.warnings)
-    assert table not in session.entry("d1").document.provenance()
+    assert table not in session.provenance("d1")
 
 
 def test_lists_capped_with_counts(toolbox):
@@ -373,27 +378,11 @@ def test_lists_capped_with_counts(toolbox):
     assert _texts(session, table)[1:] == made(30)
 
 
-def test_one_pass_and_one_by_one_make_the_same_bytes(toolbox, monkeypatch):
-    out = []
-    for slow in (False, True):
-        with monkeypatch.context() as patch:
-            if slow:
-                patch.setattr(Document, "_stamping_due", lambda self: True)
-            session, table = _table(toolbox, made(9), {"next": made(12, drop=(1, 5), add=(20,), change=(4,))})
-            data = [("Q7-000", "zero", "A", "d")] + made(12, drop=(1, 5), change=(4,))
-            SETS["next"] = (COLUMNS, data)
-            assert toolbox.dispatch(session, "rows_put", {"id": "next"}).ok
-            result = _sync(toolbox, session, table, **{"from": "d:next", "remove": True})
-            assert result.ok, result.to_json()
-        out.append((digest(session.entry("d1").document.to_bytes()), _texts(session, table)))
-    assert out[0] == out[1]
-
-
 def test_a_headerless_table_renamed_by_a_row_above_its_first(toolbox):
     session, table = _table(toolbox, made(3), {"next": [("Q7-000", "zero", "A", "d")] + made(3)})
     deleted = toolbox.dispatch(session, "word_edit_table", {"doc": "d1", "table": table, "action": "delete_row",
                                                             "index": 0})      # no header row now
-    table = deleted.renamed.get(table) or session.entry("d1").document.tables()[-1].id
+    table = deleted.renamed.get(table) or _last_table(session)
     # the look's header row off too (else Word draws the first row as a header, and so it is one)
     assert toolbox.dispatch(session, "word_format_table", {"doc": "d1", "table": table, "scope": "table",
                                                            "look": ["banded_rows"]}).ok
@@ -425,57 +414,3 @@ def test_dates_in_a_pattern(toolbox):
 
 
 # -- drafts --------------------------------------------------------------------------------------
-
-
-def test_a_sync_from_a_dataset_runs_on_a_draft():
-    assert _blocks.admits("word_edit_table", {"action": "sync", "table": "t:1A2B3C4D", "from": "d:next"})
-    assert _blocks.alone("word_edit_table", {"action": "sync", "table": "t:1A2B3C4D", "from": "d:next"})
-    # Round 50 (R100): from another document's table too (test_block_sources.py).
-    assert _blocks.admits("word_edit_table", {"action": "sync", "table": "t:1A2B3C4D", "from": "d2/t:x"})
-    assert not _blocks.admits("word_edit_table", {"action": "delete_row", "table": "t:1A2B3C4D", "index": 1})
-
-
-@pytest.mark.usefixtures("python_owned")   # prepared on drafts
-def test_concurrent_syncs_equal_their_commit_order_run_alone():
-    import block_stress
-
-    found = block_stress.run(3, threads=4, calls=8, chapters=3, sync=True)
-    assert found["same"], found
-    assert found["drafted"] > 0
-
-
-@pytest.mark.usefixtures("python_owned")   # prepared on drafts
-def test_a_sync_on_a_draft_names_only_its_own_table(monkeypatch):
-    """Round 51: finding the synced table again after the sync reads the tables before it on
-    the way; on a draft those are not the call's -- a sync of an earlier table meanwhile is
-    no conflict, and the later sync applies at once (before, "a block near t:... changed",
-    prepared again, up to running under the lock)."""
-    import threading
-
-    from test_block_edits import held
-
-    with Toolbox([*TOOLS, rows_put], formats=[FORMAT], groups=GROUPS, workers=0, block_edits="always") as box:
-        session = box.session(clock=CLOCK)
-        session.open(Document.new().to_bytes(), "leaflets.docx")
-        first = session.entry("d1").document.paragraphs()[0].id
-        two = _markdown(made(2)) + "\n\nBetween the two tables.\n\nAnd more words.\n\n" + _markdown(made(2))
-        assert box.dispatch(session, "word_insert_markdown", {"doc": "d1", "at": f"after:{first}", "markdown": two}).ok
-        earlier, later = [t.id for t in session.entry("d1").document.tables()][-2:]
-        SETS["more"] = (COLUMNS, made(2, add=(3,)))
-        SETS["first"] = (COLUMNS, made(2, change=(1,)))
-        assert box.dispatch(session, "rows_put", {"id": "more"}).ok
-        assert box.dispatch(session, "rows_put", {"id": "first"}).ok
-        for table in (earlier, later):          # their records made first (the part both add)
-            assert _sync(box, session, table, **{"from": "d:first"}).ok
-        with held(monkeypatch) as hold:
-            out: dict = {}
-            thread = threading.Thread(target=lambda: out.setdefault("r", _sync(box, session, later, **{"from": "d:more"})))
-            thread.start()
-            assert hold.ready.wait(60)
-            assert _sync(box, session, earlier, **{"from": "d:more"}).ok
-            hold.release()
-            thread.join()
-        result = out["r"]
-        assert result.ok and result.block["tries"] == 1 and not result.block["conflicts"], result.block
-        assert [row[0] for row in _texts(session, later)][-1] == "Q7-003"
-        assert [row[0] for row in _texts(session, earlier)][-1] == "Q7-003"
