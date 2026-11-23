@@ -1,6 +1,6 @@
-"""The made-up package the Word probes of tables measured (``tools/e3_probe.py`` once): a mode 15
-document of the given body, Normal's styles and settings (``tools/make_fixtures.py``).  The
-tests that hold the tools to Word's observations build their documents with it.
+"""The made-up package the Word probes of tables measured (``probes/e3_probe.py``'s): a mode 15
+document of the given body, Normal's styles and settings (docx-agent's ``tools/make_fixtures.py``).
+The tests that hold the tools to Word's observations build their documents with it.
 
 Must not: import pytest or docx-agent's library (it only writes package bytes).
 """
@@ -12,7 +12,8 @@ import sys
 import zipfile
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+#: docx-agent's fixture makers (``python/docx-agent/tools``), four folders up and across.
+sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "python" / "docx-agent" / "tools"))
 
 from make_fixtures import DECL, NS, REL, WML, content_types, relationships, settings, styles  # noqa: E402
 
@@ -59,7 +60,7 @@ PICTURE = (
 
 def picture_document() -> bytes:
     """A paragraph holding :data:`PICTURE` between text, and a paragraph after (the drawings
-    probe's first case, once ``tools/e5_probe.py``)."""
+    probe's first case, once ``probes/e5_probe.py``)."""
     from make_fixtures import png
 
     filler = "Text that runs beside and around the drawing so that its wrapping shows on the page. "

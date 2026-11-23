@@ -1,5 +1,5 @@
 {
- "_about": "What Word 16.106 for Mac did with packages whose kind and extension agree or disagree (tools/trial_probe.py): the outcome of opening and exporting each (done, or rejected: a dialog blocked it), and the content type Word's own Save As macro-enabled document writes. Regenerate with python tools/trial_probe.py.",
+ "_about": "What Word 16.106 for Mac did with packages whose kind and extension agree or disagree (crates/ooxml-oracle/word/probes/trial_probe.py): the outcome of opening and exporting each (done, or rejected: a dialog blocked it), and the content type Word's own Save As macro-enabled document writes. Regenerate with python crates/ooxml-oracle/word/probes/trial_probe.py.",
  "template-as-docx": {
   "extension": ".docx",
   "main_content_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml",

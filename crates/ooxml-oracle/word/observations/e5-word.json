@@ -1,5 +1,5 @@
 {
- "_about": "What Word 16.106 for Mac wrote for tools/e5_probe.py: each probe's body blocks and its settings, people and comments parts, custom XML items, relationships, content types and style names. Authors and dates replaced by placeholders, rsids dropped. A step Word refused is listed under 'failed'. Regenerate with python tools/e5_probe.py.",
+ "_about": "What Word 16.106 for Mac wrote for crates/ooxml-oracle/word/probes/e5_probe.py: each probe's body blocks and its settings, people and comments parts, custom XML items, relationships, content types and style names. Authors and dates replaced by placeholders, rsids dropped. A step Word refused is listed under 'failed'. Regenerate with python crates/ooxml-oracle/word/probes/e5_probe.py.",
  "tables": {
   "blocks": [
    "<w:p w14:paraId=\"30000001\" w14:textId=\"77777777\"><w:r><w:t>Tables follow.</w:t></w:r></w:p>",

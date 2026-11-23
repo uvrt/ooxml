@@ -7,7 +7,7 @@
 | `brand-mode14.dotx` | `4c22c2081ba576c9486baeff014ccbde6cee005c2373ab426a3458ba78a5848a` |
 
 Written by `tools/make_template_fixtures.py` in this repository, deterministically, every
-part by hand with the helpers of `tools/e6_probe.py` (whose `template` Word made a document
+part by hand with the helpers of `crates/ooxml-oracle/word/probes/e6_probe.py` (whose `template` Word made a document
 from in the probe): nothing in them comes from Word, Word's templates or any other
 application. The VBA project in `brand-macros.dotm` is a stand-in of a few bytes, not a
 VBA project. Licence: this repository's, MIT.

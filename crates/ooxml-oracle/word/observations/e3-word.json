@@ -1,5 +1,5 @@
 {
- "_about": "What Word 16.106 for Mac wrote for tools/e3_probe.py: each probe's body blocks after tracked edits, after its own Accept All and Reject All, and the untracked joins; the comment, people and settings parts. Authors, dates, initials and user ids replaced by placeholders, rsids dropped. Regenerate with python tools/e3_probe.py.",
+ "_about": "What Word 16.106 for Mac wrote for crates/ooxml-oracle/word/probes/e3_probe.py: each probe's body blocks after tracked edits, after its own Accept All and Reject All, and the untracked joins; the comment, people and settings parts. Authors, dates, initials and user ids replaced by placeholders, rsids dropped. Regenerate with python crates/ooxml-oracle/word/probes/e3_probe.py.",
  "text": {
   "blocks": [
    "<w:p w14:paraId=\"20000000\" w14:textId=\"1CE40999\"><w:r><w:t xml:space=\"preserve\">Insert </w:t></w:r><w:ins w:id=\"0\" w:author=\"{author}\" w:date=\"{date}\" w16du:dateUtc=\"{date}\"><w:r><w:t xml:space=\"preserve\">INSERTED </w:t></w:r></w:ins><w:r><w:t>alpha beta.</w:t></w:r></w:p>",

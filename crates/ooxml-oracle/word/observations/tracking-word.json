@@ -1,5 +1,5 @@
 {
- "_about": "What Word 16.106 for Mac wrote for tools/tracking_probe.py: formatting what is a pending insertion, paragraphs typed at the end, deleted paragraph marks and Accept All of them, and the final view's line edges. Authors ({author} the Word user, {other} another) and dates replaced, rsids dropped. Regenerate with python tools/tracking_probe.py.",
+ "_about": "What Word 16.106 for Mac wrote for crates/ooxml-oracle/word/probes/tracking_probe.py: formatting what is a pending insertion, paragraphs typed at the end, deleted paragraph marks and Accept All of them, and the final view's line edges. Authors ({author} the Word user, {other} another) and dates replaced, rsids dropped. Regenerate with python crates/ooxml-oracle/word/probes/tracking_probe.py.",
  "end-style-first": [
   "<w:p w14:paraId=\"30000000\" w14:textId=\"77777777\"><w:r><w:t>Existing first.</w:t></w:r></w:p>",
   "<w:p w14:paraId=\"30000001\" w14:textId=\"77777777\"><w:pPr><w:rPr><w:ins w:id=\"0\" w:author=\"{author}\" w:date=\"{date}\" w16du:dateUtc=\"{date}\"/></w:rPr></w:pPr><w:r><w:t>Existing last.</w:t></w:r></w:p>",

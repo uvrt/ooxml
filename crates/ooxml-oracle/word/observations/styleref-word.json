@@ -1,5 +1,5 @@
 {
- "source": "Word for Mac 16 (English UI): every field of the body and of every header updated through AppleScript, saved as .docx; the labelled results as stored, per part. Made-up documents: tools/styleref_probe.py",
+ "source": "Word for Mac 16 (English UI): every field of the body and of every header updated through AppleScript, saved as .docx; the labelled results as stored, per part. Made-up documents: crates/ooxml-oracle/word/probes/styleref_probe.py",
  "documents": {
   "base": {
    "B0_0": "Alpha first",

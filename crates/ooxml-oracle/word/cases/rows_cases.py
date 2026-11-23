@@ -1,4 +1,4 @@
-"""The rows probe document (once ``tools/rows_probe.py``; Word's observations in
+"""The rows probe document (``probes/rows_probe.py``; Word's observations in
 ``observations/rows-word.json``): a table per case whose rows (or every row) were inserted
 by this writer, the other writer (:data:`OTHER`) or nobody, each followed by ``After <Key>.``.
 
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from probe_package import package as _package
 
-#: The other writer of the probe's tracked records (``tools/tracking_probe.py`` once).
+#: The other writer of the probe's tracked records (``probes/tracking_probe.py``).
 OTHER = "Other Writer"
 DATE = 'w:date="2026-11-01T10:00:00Z"'
 

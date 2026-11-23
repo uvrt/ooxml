@@ -502,9 +502,9 @@ fn toc_over_based_stop(toc_ppr: &str) -> String {
 
 #[test]
 fn a_toc_style_clearing_its_inherited_stop_gets_the_right_stop() {
-    // Word (tests/observations/toc-numbers-word.json, t-clear): a `toc 1` whose own clear
-    // takes away the stop its base gives it has no stop left, so the entry carries the
-    // right dot stop; where the base's stop stands (t-inherit) the entry relies on it.
+    // Word (crates/ooxml-oracle/word/observations/toc-numbers-word.json, t-clear): a `toc 1`
+    // whose own clear takes away the stop its base gives it has no stop left, so the entry
+    // carries the right dot stop; where the base's stop stands (t-inherit) the entry relies on it.
     let cleared = toc_over_based_stop(r#"<w:tabs><w:tab w:val="clear" w:pos="9070"/></w:tabs>"#);
     assert!(
         cleared.contains(r#"<w:tab w:val="right" w:leader="dot" w:pos=""#),

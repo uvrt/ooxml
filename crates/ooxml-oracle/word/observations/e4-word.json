@@ -1,5 +1,5 @@
 {
- "_about": "What Word 16.106 for Mac wrote for tools/e4_probe.py: each probe's body blocks and its header, footer, notes, settings and people parts, its relationships, content types and style names. Authors and dates replaced by placeholders, rsids dropped. A step Word refused is listed under 'failed'. Regenerate with python tools/e4_probe.py.",
+ "_about": "What Word 16.106 for Mac wrote for crates/ooxml-oracle/word/probes/e4_probe.py: each probe's body blocks and its header, footer, notes, settings and people parts, its relationships, content types and style names. Authors and dates replaced by placeholders, rsids dropped. A step Word refused is listed under 'failed'. Regenerate with python crates/ooxml-oracle/word/probes/e4_probe.py.",
  "breaks": {
   "blocks": [
    "<w:p w14:paraId=\"10000001\" w14:textId=\"77777777\"><w:r><w:t xml:space=\"preserve\">Paragraph 1. This paragraph is filler that takes room on the page, so that the headings fall on different pages and the table of contents has page numbers to show. </w:t></w:r></w:p>",

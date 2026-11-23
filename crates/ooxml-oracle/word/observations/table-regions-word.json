@@ -1,5 +1,5 @@
 {
- "_about": "What Word 16.106 for Mac drew for tools/table_regions_probe.py: per case (a table in a table style of its own) each cell's fill, text colour, size, bold, italic (P: the text's left edge), and D's border lines relative to its first cell's text. Regenerate with python tools/table_regions_probe.py.",
+ "_about": "What Word 16.106 for Mac drew for crates/ooxml-oracle/word/probes/table_regions_probe.py: per case (a table in a table style of its own) each cell's fill, text colour, size, bold, italic (P: the text's left edge), and D's border lines relative to its first cell's text. Regenerate with python crates/ooxml-oracle/word/probes/table_regions_probe.py.",
  "S": {
   "00": {
    "fill": "000000",

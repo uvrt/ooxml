@@ -1,4 +1,4 @@
-"""Round 58's table-regions probe document (once ``tools/table_regions_probe.py``; Word's
+"""Round 58's table-regions probe document (``probes/table_regions_probe.py``; Word's
 observations in ``observations/table-regions-word.json``): a table style per case, each
 region with its own fill, text colour and size, and the tables that use them.
 

@@ -1,4 +1,4 @@
-"""Round 59's merged-rows probe document (once ``tools/merged_rows_probe.py``; Word's
+"""Round 59's merged-rows probe document (``probes/merged_rows_probe.py``; Word's
 observations in ``observations/merged-rows-word.json``): a table per case, three columns by
 five rows, its first column merged down over rows 2-4 (``End``'s over rows 3-5), each
 followed by a paragraph ``After <Key>.``; cell text ``<Key> r<i>c<j>``.

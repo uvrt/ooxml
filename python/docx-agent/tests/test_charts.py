@@ -507,7 +507,7 @@ def test_a_title_in_a_comment_is_written_as_comment_text(box):
 def test_a_new_title_is_written_as_offices_chart_style_writes_one(box):
     """Word draws this form as its own titles look -- Aptos 14 pt, not bold, 595959 -- and
     saves it back unchanged; an empty ``a:defRPr`` Word draws bold at 18 pt
-    (``tools/charts_probe.py``, ``titles``)."""
+    (``crates/ooxml-oracle/word/probes/charts_probe.py``, ``titles``)."""
     session = opened(box, (CHARTS / "charts.docx").read_bytes())
     assert chart(box, session, target="d:2", action="set_title", text="Visitors and signups").ok
     assert chart(box, session, target="d:2", action="set_axis_title", axis="value", text="People").ok

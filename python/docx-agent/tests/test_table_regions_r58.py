@@ -5,8 +5,8 @@
   same place -- and ``describe`` reads them back, with the look options they show under and
   the tables whose look leaves them off (rules 1-4, 6, 7).
 * What Word draws where regions overlap, which rows are the header row, band sizes, region
-  borders and automatic text on a dark fill: measured (``tools/table_regions_probe.py``,
-  ``tests/observations/table-regions-word.json``), and docx2svg's drawing of the same
+  borders and automatic text on a dark fill: measured (``crates/ooxml-oracle/word/probes/table_regions_probe.py``,
+  ``crates/ooxml-oracle/word/observations/table-regions-word.json``), and docx2svg's drawing of the same
   document agrees cell by cell and line by line (rule 8).
 * ``word_insert_markdown`` ``like`` a table: a new table in its frame -- rows, cell and text
   formatting, no text -- for a look no style carries (a middle column of its own); tracked
@@ -35,11 +35,12 @@ import word_docs
 ROOT = Path(__file__).resolve().parent.parent
 
 import table_regions_cases as probe  # noqa: E402
+from conftest import OBSERVATIONS  # noqa: E402
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _W = "{%s}" % W
 SVG = "{http://www.w3.org/2000/svg}"
-OBSERVED = json.loads((ROOT / "tests" / "observations" / "table-regions-word.json").read_text(encoding="utf-8"))
+OBSERVED = json.loads((OBSERVATIONS / "table-regions-word.json").read_text(encoding="utf-8"))
 CLOCK = lambda: dt.datetime(2026, 11, 16, 9, 0, tzinfo=dt.timezone.utc)  # noqa: E731
 
 LEDGER = [{"region": "header_row", "shading": "1F3864", "color": "FFFFFF", "bold": True,

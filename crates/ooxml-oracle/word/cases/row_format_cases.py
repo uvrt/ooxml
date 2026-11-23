@@ -1,4 +1,4 @@
-"""Round 58's row-format probe document (once ``tools/row_format_probe.py``; Word's
+"""Round 58's row-format probe document (``probes/row_format_probe.py``; Word's
 observations in ``observations/row-format-word.json``): a two-row table per case of cell and
 run formatting, each followed by ``After <Key>.``.
 

@@ -1,5 +1,5 @@
 """An existing document's language (round 35, R24: ``word_styles`` ``set_language``; measured
-in ``tests/observations/language-word.json``).
+in ``crates/ooxml-oracle/word/observations/language-word.json``).
 
 Setting it writes what a new document in that language has -- ``w:docDefaults``' ``w:lang``
 and ``w:themeFontLang`` -- and the styles that stated the old default; text written after
@@ -21,9 +21,10 @@ from ooxml_edit.tools import Toolbox
 from docx_agent.tools import GROUPS, TOOLS, docx_format
 
 import word_docs
+from conftest import OBSERVATIONS  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-OBSERVED = json.loads((ROOT / "tests" / "observations" / "language-word.json").read_text(encoding="utf-8"))
+OBSERVED = json.loads((OBSERVATIONS / "language-word.json").read_text(encoding="utf-8"))
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _W = "{%s}" % W
 NBSP = "\u00a0"

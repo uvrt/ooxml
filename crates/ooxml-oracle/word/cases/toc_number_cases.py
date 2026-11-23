@@ -1,5 +1,5 @@
 """Made-up documents for the round-32 TOC probes (R12 numbered headings, R14 toc N tab stops):
-the inputs of tests/test_toc_numbers.py (and once of tools/toc_numbers_probe.py), and
+the inputs of docx-agent's tests/test_toc_numbers.py and of probes/toc_numbers_probe.py, and
 :func:`entries`, what a TOC update wrote, as the probe read Word's."""
 import io, re, zipfile
 
