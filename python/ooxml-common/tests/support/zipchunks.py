@@ -215,7 +215,8 @@ class _Unseekable(io.RawIOBase):
 
 def with_data_descriptors(data: bytes) -> bytes:
     """``data``'s entries written again (same names, order, times, methods and bytes) with a
-    data descriptor after each: a made-up package of the kind such writers make."""
+    data descriptor after each and the UTF-8 flag on every name, ASCII ones too: a made-up
+    package of the kind such writers make (flags 0x0808, as a fixture from one has)."""
     out = io.BytesIO()
     with zipfile.ZipFile(io.BytesIO(data)) as source, \
             zipfile.ZipFile(_Unseekable(out), "w") as archive:
@@ -224,7 +225,16 @@ def with_data_descriptors(data: bytes) -> bytes:
             entry.compress_type = info.compress_type
             with archive.open(entry, "w") as target:
                 target.write(source.read(info))
-    return out.getvalue()
+    written = bytearray(out.getvalue())
+    with zipfile.ZipFile(io.BytesIO(bytes(written))) as archive:
+        infos, at = archive.infolist(), archive.start_dir
+    for info in infos:
+        flags_at = info.header_offset + 6
+        written[flags_at:flags_at + 2] = (info.flag_bits | 0x800).to_bytes(2, "little")
+        name_len, extra_len, comment_len = struct.unpack_from("<3H", written, at + 28)
+        written[at + 8:at + 10] = (info.flag_bits | 0x800).to_bytes(2, "little")
+        at += 46 + name_len + extra_len + comment_len
+    return bytes(written)
 
 
 def entry_records(data: bytes) -> dict[str, bytes]:

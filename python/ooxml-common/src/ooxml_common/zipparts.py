@@ -63,7 +63,7 @@ class ZipPart:
     compression ``method`` (:data:`zipfile.ZIP_STORED` or :data:`zipfile.ZIP_DEFLATED`)."""
 
     __slots__ = ("name", "size", "crc", "method", "flags", "header", "descriptor", "copyable",
-                 "_data", "_seeks")
+                 "central", "_data", "_seeks")
 
     def __init__(self, name: str, data: "bytes | memoryview", method: int, size: int,
                  crc: int, flags: int = 0, record: "tuple | None" = None) -> None:
@@ -78,10 +78,12 @@ class ZipPart:
         #: bits), without those a writer sets for itself: a data descriptor follows
         #: (bit 3) and the name is UTF-8 (bit 11) -- :func:`entry_flags`.
         self.flags = flags
-        #: The entry's local header and data descriptor as the file has them, and whether the
-        #: header may stand for the content written again (:func:`local_record`); ``None``
-        #: and ``b""`` for a part made otherwise, whose header a writer makes.
-        self.header, self.descriptor, self.copyable = record or (None, b"", False)
+        #: The entry's local header and data descriptor as the file has them, whether the
+        #: header may stand for the content written again (:func:`local_record`), and its
+        #: central directory record (:func:`central_records`); ``None``, ``b""``, ``False``
+        #: and ``None`` for a part made otherwise, whose records a writer makes.
+        self.header, self.descriptor, self.copyable, self.central = \
+            record or (None, b"", False, None)
         #: The notes a reader from the start left (``(compressed offset, inflated offset,
         #: inflater, crc so far)``), once one reached the end and found the part whole.
         self._seeks: "tuple | None" = None
@@ -109,7 +111,8 @@ class ZipPart:
     def __reduce__(self):
         return (ZipPart, (self.name, bytes(self._data), self.method, self.size, self.crc,
                           self.flags, None if self.header is None
-                          else (bytes(self.header), bytes(self.descriptor), self.copyable)))
+                          else (bytes(self.header), bytes(self.descriptor), self.copyable,
+                                None if self.central is None else bytes(self.central))))
 
     def read(self) -> bytes:
         """The whole part, inflated and checked (:class:`PartError`)."""
@@ -351,6 +354,23 @@ def local_record(data: "bytes | memoryview", info: zipfile.ZipInfo
     return view[at:header_end], descriptor, copyable
 
 
+def central_records(data: "bytes | memoryview", archive: zipfile.ZipFile) -> "list[memoryview]":
+    """Each entry's central directory record as the file has it, in the order of
+    ``archive.infolist()``: what a writer copying the entry as it is copies, its offset
+    aside."""
+    view = memoryview(data)
+    records: list[memoryview] = []
+    at = archive.start_dir
+    for _ in archive.infolist():
+        if bytes(view[at:at + 4]) != b"PK\x01\x02":
+            raise zipfile.BadZipFile("a central directory record is not where the last ends")
+        name_len, extra_len, comment_len = struct.unpack_from("<3H", view, at + 28)
+        end = at + 46 + name_len + extra_len + comment_len
+        records.append(view[at:end])
+        at = end
+    return records
+
+
 class RawEntry:
     """A ZIP entry compressed by another method than stored or deflated (bzip2, LZMA),
     read whole at open as before; kept beside its bytes (``value``) so that a writer can
@@ -358,13 +378,14 @@ class RawEntry:
     (:meth:`PartStore.compressed`).  The same names as a :class:`ZipPart`'s."""
 
     __slots__ = ("name", "size", "crc", "method", "flags", "compressed", "value", "header",
-                 "descriptor", "copyable")
+                 "descriptor", "copyable", "central")
 
     def __init__(self, name: str, compressed: memoryview, method: int, size: int, crc: int,
                  flags: int, value: bytes, record: "tuple | None" = None) -> None:
         self.name, self.compressed, self.method = name, compressed, method
         self.size, self.crc, self.flags, self.value = size, crc, flags, value
-        self.header, self.descriptor, self.copyable = record or (None, b"", False)
+        self.header, self.descriptor, self.copyable, self.central = \
+            record or (None, b"", False, None)
 
     @property
     def compressed_size(self) -> int:
@@ -477,6 +498,7 @@ def read_parts(source: "str | os.PathLike[str] | bytes | BinaryIO", normalize=No
     view = memoryview(data)
     parts = PartStore()
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        central = dict(zip(map(id, archive.infolist()), central_records(view, archive)))
         entries = [info for info in archive.infolist() if not info.is_dir()]
         for info in entries:
             name = normalize(info.filename) if normalize is not None else info.filename
@@ -491,7 +513,7 @@ def read_parts(source: "str | os.PathLike[str] | bytes | BinaryIO", normalize=No
                     raise zipfile.BadZipFile(f"{info.filename}: its data is cut short")
                 parts[name] = ZipPart(info.filename, view[start:end], info.compress_type,
                                       info.file_size, info.CRC, entry_flags(info),
-                                      local_record(view, info))
+                                      local_record(view, info) + (central[id(info)],))
             else:
                 value = parts[name] = archive.read(info)
                 if not info.flag_bits & 0x1:
@@ -500,5 +522,37 @@ def read_parts(source: "str | os.PathLike[str] | bytes | BinaryIO", normalize=No
                     parts._raw[name] = RawEntry(
                         info.filename, view[start:start + info.compress_size],
                         info.compress_type, info.file_size, info.CRC, entry_flags(info), value,
-                        local_record(view, info))
+                        local_record(view, info) + (central[id(info)],))
     return entries, parts
+
+
+def with_central_records(data: bytes, kept: "list[bytes | memoryview | None]") -> bytes:
+    """``data`` -- an archive zipfile wrote -- with the central directory record of each
+    entry ``kept`` names (by its place in the directory) put back as read, its offset the
+    one ``data`` gives it: zipfile writes a record from the entry's fields, and Python
+    versions differ in the flags they keep (3.15 drops the UTF-8 flag of an ASCII name), so a
+    copied entry's record is copied rather than written.  An archive with ZIP64 end records,
+    or a record whose offset is in a ZIP64 field, is left as zipfile wrote it."""
+    end = data.rfind(b"PK\x05\x06")
+    if end < 0 or not any(record is not None for record in kept) \
+            or (end >= 20 and data[end - 20:end - 16] == b"PK\x06\x07"):
+        return data
+    size, start = struct.unpack_from("<LL", data, end + 12)
+    records: list[bytes] = []
+    at = start
+    for record in kept:
+        name_len, extra_len, comment_len = struct.unpack_from("<3H", data, at + 28)
+        written = data[at:at + 46 + name_len + extra_len + comment_len]
+        at += len(written)
+        offset = written[42:46]
+        if record is None or offset == b"\xff\xff\xff\xff":
+            records.append(written)
+        else:
+            record = bytes(record)
+            records.append(record[:42] + offset + record[46:])
+    if at != start + size:
+        return data
+    directory = b"".join(records)
+    tail = bytearray(data[end:])
+    struct.pack_into("<L", tail, 12, len(directory))
+    return data[:start] + directory + bytes(tail)

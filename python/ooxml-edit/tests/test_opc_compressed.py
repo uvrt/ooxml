@@ -388,3 +388,37 @@ def test_a_replacement_with_the_bytes_read_is_the_entry_read(data):
     package.replace_part(IMAGE, package.read(IMAGE))     # replaced, with the same bytes
     assert package.to_bytes() == office
     assert package.to_bytes({PAGE1: package.read(PAGE1) + b" "}) != office
+
+
+def test_a_copied_entry_keeps_its_central_record_whatever_zipfile_writes(data, monkeypatch):
+    """The central directory record of an entry copied as read is the one read, not what
+    this Python's zipfile writes from its fields: 3.15's drops the UTF-8 flag of an ASCII
+    name (a deck from Google Slides flags every name 0x0808)."""
+    import struct
+
+    flagged = bytearray(data)
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        infos, at = archive.infolist(), archive.start_dir
+    for info in infos:
+        flagged[info.header_offset + 6:info.header_offset + 8] = \
+            (info.flag_bits | 0x800).to_bytes(2, "little")
+        name_len, extra_len, comment_len = struct.unpack_from("<3H", flagged, at + 28)
+        flagged[at + 8:at + 10] = (info.flag_bits | 0x800).to_bytes(2, "little")
+        at += 46 + name_len + extra_len + comment_len
+    flagged = bytes(flagged)
+
+    def ascii_unflagged(self):          # as 3.15 writes a record's name and flags
+        try:
+            return self.filename.encode("ascii"), self.flag_bits & ~0x800
+        except UnicodeEncodeError:
+            return self.filename.encode("utf-8"), self.flag_bits | 0x800
+
+    monkeypatch.setattr(zipfile.ZipInfo, "_encodeFilenameFlags", ascii_unflagged)
+    assert OpcPackage.open(flagged).to_bytes() == flagged
+    package = OpcPackage.open(flagged)
+    package.tree(PAGE1).set("edited", "1")
+    package.mark_dirty(PAGE1)
+    saved = package.to_bytes()
+    with zipfile.ZipFile(io.BytesIO(saved)) as archive:
+        flags = {info.filename: info.flag_bits for info in archive.infolist()}
+    assert flags.pop(PAGE1) & 0x800 == 0 and all(flag & 0x800 for flag in flags.values())
