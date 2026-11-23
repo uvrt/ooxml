@@ -42,7 +42,7 @@ use ooxml_tools::{Refusal, ToolError, WayOut};
 use ooxml_tools_word::{laid_to_draw, EnginePages, LayoutLimit, WordLayout};
 use ooxml_word_pages::LaidVersion;
 use std::collections::HashMap;
-use std::sync::{Arc, PoisonError};
+use std::sync::Arc;
 
 /// What a refusal names as not drawing the document.
 const WHO: &str = "the live view";
@@ -347,7 +347,7 @@ fn outlines_refused() -> ToolError {
 }
 
 fn lock(layout: &dyn WordLayout) -> std::sync::MutexGuard<'_, ooxml_word_pages::PageEngine> {
-    layout.engine().lock().unwrap_or_else(PoisonError::into_inner)
+    ooxml_word_pages::lock_engine(layout.engine())
 }
 
 /// Each page of `laid`: its number, its top-level blocks' ids and its size in points.

@@ -34,7 +34,7 @@ pub use trial::Trial;
 use changed::notes_or_stories_changed;
 pub(crate) use painters::ContextMark;
 use painters::{Contexts, Painter};
-pub use seed::EngineSeed;
+pub use seed::{lock_engine, EngineSeed};
 
 use crate::causes::{context_cause, part_reason, whole_cause, RelaidCause};
 use crate::error::{Fallback, PagesError};

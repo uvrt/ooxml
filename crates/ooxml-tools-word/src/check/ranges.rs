@@ -23,7 +23,7 @@ use ooxml_word_pages::layout_facts::{Break, Facts, KeepEffect, Range, Side};
 use ooxml_word_pages::Laid;
 use ooxml_word_pages::PageEngine;
 use serde_json::{json, Map, Value};
-use std::sync::{Mutex, PoisonError};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 /// Trial layouts one check makes at most (`keep_trials.TRIALS`).
@@ -248,7 +248,7 @@ fn trial(
         return Ok(None);
     };
     let version = facts.version();
-    let mut engine = trials.engine.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut engine = ooxml_word_pages::lock_engine(trials.engine);
     let then = match engine.trial(&package, version, trials.cancel) {
         Ok(Some(then)) => then,
         Ok(None) => return Err("not laid out by this engine"),

@@ -35,7 +35,7 @@ use ooxml_word_pages::{
     EngineBudgets, EngineOptions, EngineSeed, Fallback, FontSetup, LaidVersion, PageEngine, PagesError,
 };
 use std::borrow::Borrow;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 
 /// The host's layout of a document's versions, as Word's tools are handed it: the edit
 /// core's port ([`FieldLayout`], what an edit reads of the pages), and the document's page
@@ -55,7 +55,7 @@ pub trait WordLayout: FieldLayout {
     /// Why it was not laid out: stopped, or a version the engine does not lay out yet (in
     /// its words).
     fn laid(&self, package: &Package, cancel: &dyn Cancel) -> Result<Arc<LaidVersion>, NotLaid> {
-        let mut engine = self.engine().lock().unwrap_or_else(PoisonError::into_inner);
+        let mut engine = ooxml_word_pages::lock_engine(self.engine());
         match engine.lay_out_until(package, cancel) {
             Err(PagesError::Stopped) => Err(NotLaid::Stopped),
             found => laid(found),
@@ -219,7 +219,7 @@ impl WordLayout for EnginePages {
 impl FieldLayout for EnginePages {
     fn lay_out(&self, package: &Package, cancel: &dyn Cancel) -> Result<Box<dyn LaidFields + '_>, LayOutError> {
         let found = {
-            let mut engine = self.engine.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut engine = ooxml_word_pages::lock_engine(&self.engine);
             engine.lay_out_until(package, cancel)
         };
         if matches!(found, Err(PagesError::Stopped)) {
@@ -231,7 +231,7 @@ impl FieldLayout for EnginePages {
 
     fn reflow(&self, before: &Package, after: &Package, cancel: &dyn Cancel) -> Result<PageReflow, LayOutError> {
         let (was, now) = {
-            let mut engine = self.engine.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut engine = ooxml_word_pages::lock_engine(&self.engine);
             (
                 summarised(&mut engine, before, cancel)?,
                 summarised(&mut engine, after, cancel)?,
@@ -288,7 +288,7 @@ impl<'e> Laid<'e> {
         if let Some(page) = self.numbers.drawn_on(&path) {
             return Ok(page);
         }
-        let mut engine = self.engine.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut engine = ooxml_word_pages::lock_engine(self.engine);
         engine
             .first_page_in_text_box(&self.version, id)
             .ok_or_else(|| Unknown(format!("{path} is not drawn")))
@@ -332,7 +332,7 @@ impl LaidFields for Laid<'_> {
             }
             FieldPlace::Page(page) => (page, Some(run.part)),
         };
-        let mut engine = self.engine.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut engine = ooxml_word_pages::lock_engine(self.engine);
         style_reference_known(&self.version.layout().document, engine.locale(), instruction).map_err(unknown)?;
         let painted = engine
             .paint(&self.version, page)

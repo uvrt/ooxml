@@ -16,7 +16,7 @@ use ooxml_tools::tiles::{check_size, fit, tiled_svg, tiling_of, Tile, TileAsk, T
 use ooxml_tools::{Done, File, ToolError};
 use ooxml_word_pages::LaidVersion;
 use serde_json::{json, Map, Value};
-use std::sync::{Arc, PoisonError};
+use std::sync::Arc;
 
 /// Appends `bytes` in base64 (the tiles' `data:` URIs).
 fn base64(bytes: &[u8], out: &mut String) {
@@ -29,7 +29,7 @@ fn base64(bytes: &[u8], out: &mut String) {
 /// narrower than docx-agent's.
 fn shapes(call: &Drawer<'_>, laid: &LaidVersion, pages: &[usize]) -> Vec<f64> {
     let sections = &laid.layout().sections;
-    let mut engine = call.layout.engine().lock().unwrap_or_else(PoisonError::into_inner);
+    let mut engine = ooxml_word_pages::lock_engine(call.layout.engine());
     pages
         .iter()
         .filter_map(|page| engine.paint(laid, page - 1))

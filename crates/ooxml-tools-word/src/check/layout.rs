@@ -23,7 +23,7 @@ use ooxml_word_pages::page_read::PageRead;
 use ooxml_word_pages::{LaidVersion, PageEngine};
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 
 /// The layout facts' keys in the order docx-agent writes them (each `<key>_left_out` right
 /// after its key).
@@ -61,7 +61,7 @@ pub(super) struct Painted<'e> {
 
 impl PageReads for Painted<'_> {
     fn page_read(&self, page: usize) -> Option<PageRead> {
-        let mut engine = self.engine.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut engine = ooxml_word_pages::lock_engine(self.engine);
         engine.page_read(&self.version, page)
     }
 }
