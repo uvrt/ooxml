@@ -4,19 +4,14 @@
 
 ```bash
 pip install "ooxml-common @ git+https://github.com/uvrt/ooxml-common@main"   # or: pip install -e ../ooxml-common
+pip install ../ooxml-core      # the Rust core (maturin)
 pip install -e .[dev]
 python -m pytest -q            # serial, as CI runs it
 python -m pytest -n auto       # every core (pytest-xdist)
 ```
 
-The **oracle tests are local-only**: they need Microsoft Word (driven by AppleScript on
-macOS), its faces, or Word's exports outside the tree, and they skip wherever those are
-absent -- including on every CI runner. Tests marked `faces` lay a document out in faces
-only an Office machine has (Georgia, Cambria, ...) and skip where one is not installed.
-`--run-slow` adds the raster fidelity scores. `RELAYOUT_FULL=1` runs the full set of
-relayout property tests (`tests/test_relayout.py`), which CI runs nightly rather than on
-every pull request.
-More in [docs/development.md](docs/development.md).
+The tests need the Rust core's module (`ooxml_core`: `pip install ../ooxml-core`, built by
+maturin). More in [docs/development.md](docs/development.md).
 
 ## What never goes into the repository
 
@@ -31,7 +26,7 @@ More in [docs/development.md](docs/development.md).
 
 ## Pull requests
 
-Open pull requests against `main`. CI runs the suite on Linux, macOS and Windows,
+Open pull requests against `main`. CI runs the suite on Linux and macOS,
 Python 3.10 to 3.15, and checks that the generated fixture is current
 (`python tools/make_layout_sweep.py` leaves `tests/fixtures/` unchanged).
 
@@ -47,17 +42,13 @@ version is CHANGELOG.md's top version section's, or newer with a fragment
 
 ## Dependencies
 
-Standard-library only at runtime, and `pyproject.toml`'s dependency list is the statement
-of that: its one entry, **ooxml-common**, is itself standard-library only. A renderer that
-is a dependency of something else should not bring a rasteriser, a font library and a C
-toolchain with it; capability arrives through the extras and degrades with a named
-warning when one is absent, never silently. ooxml-common is the format-neutral half shared
-with pptx2svg (OPC, units, DrawingML, the font modules and every measured text metric),
-extracted with its history (ROADMAP.md, "Phase 1"). It is not on PyPI yet, so it is
-installed first, from a sibling checkout or, as CI does, from its repository;
-`pyproject.toml` names a version, never a URL, since PyPI refuses a distribution whose
-dependencies name one.
+Two dependencies, both in this repository: **ooxml-core**, the Rust core that lays a
+document out and draws it (docx2svg is a thin layer over it since lane svg-thin), and
+**ooxml-common**, which reads the font folders and writes text as glyph outlines.
+`pyproject.toml` names versions, never URLs.
 
+- `ooxml-core>=0.10.0`: `WordPages`, `LaidPages` (its `svg`, `pngs`, `raster_files` and
+  `coverage_summary`), `PageRaster`, `drawing_plan` and `element_path` (lane svg-thin).
 - `ooxml-common>=0.38.0`: the shared glyph set (`outline_text(glyphs=)`, `glyph_sheet`,
   `embed_glyphs`) for `ConvertOptions(glyphs={})` (round 32, R10). 0.37.0 brought
   `outlines`, the text drawn as glyph outlines for `ConvertOptions(text="outlines")` (round

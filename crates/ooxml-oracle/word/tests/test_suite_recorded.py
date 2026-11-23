@@ -37,13 +37,12 @@ _PARAMS = [(case, check) for case, entry in sorted(OBSERVED.items()) if isinstan
 
 def _faces_installed() -> bool:
     try:
-        from docx2svg.fonts import InstalledFonts, default_font_dirs
+        import docx2svg
+        from docx2svg import rust
     except ImportError:
         return False
-    try:
-        fonts = InstalledFonts(dirs=tuple(default_font_dirs()), fallbacks=False)
-    except TypeError:
-        fonts = InstalledFonts(dirs=tuple(default_font_dirs()))
+    # The faces Word's folders hold (a substitute is not the face), the application's left out.
+    fonts = rust.word_fonts(docx2svg.ConvertOptions(font_dirs=[]))
     return all(fonts.face(family) is not None for family in _OFFICE_FACES)
 
 

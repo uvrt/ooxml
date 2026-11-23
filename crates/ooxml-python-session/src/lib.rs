@@ -23,11 +23,15 @@
 mod adapters;
 mod budget;
 mod context;
+mod drawn;
+mod fonts;
 mod group;
 mod layout;
+mod layout_rows;
 mod locale;
 mod options;
 mod pages;
+mod paths;
 mod raster;
 mod session;
 mod summary;
@@ -40,7 +44,8 @@ use pyo3::prelude::*;
 
 pub use budget::{PyBudgetAccount, PyMemoryBudget};
 pub use context::{PyCallContext, PyCancelToken, PyLimits};
-pub use layout::{PyLaidPages, PyWordFonts, PyWordPages};
+pub use fonts::PyWordFonts;
+pub use layout::{PyLaidPages, PyWordPages};
 pub use options::{PyCallDocuments, PyCallLayout, PyCallOptions, PyCallWriting};
 pub use pages::PyPageSetup;
 pub use raster::PyPageRaster;
@@ -50,7 +55,8 @@ pub use version::PyVersion;
 /// Add the session API to the module `m`: `Session`, `CancelToken`, `Limits`, `CallContext`, `CallOptions`, `CallDocuments`,
 /// `CallWriting`, `CallLayout`, `Version` and
 /// `tool_specs`, `tool_hosting`, `new_document`; and the Word layout's handles: `WordFonts`, `WordPages`, `LaidPages`,
-/// `LayoutSummary`, `MemoryBudget` and `BudgetAccount`; the live view's `UnknownToken` and
+/// `LayoutSummary`, `MemoryBudget` and `BudgetAccount`; `PageRaster`, `drawing_plan` and
+/// `element_path` (docx2svg's drawing and paths); the live view's `UnknownToken` and
 /// `ViewRefused`; and the refusals of an open, `StateRefused` and `NotWordPackage`.
 ///
 /// # Errors
@@ -78,6 +84,8 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyBudgetAccount>()?;
     m.add_class::<summary::PyLayoutSummary>()?;
     m.add_class::<PyPageRaster>()?;
+    m.add_function(wrap_pyfunction!(raster::drawing_plan, m)?)?;
+    m.add_function(wrap_pyfunction!(paths::element_path, m)?)?;
     m.add("UnknownToken", m.py().get_type::<view::UnknownToken>())?;
     m.add("ViewRefused", m.py().get_type::<view::ViewRefused>())?;
     m.add("StateRefused", m.py().get_type::<session::StateRefused>())?;

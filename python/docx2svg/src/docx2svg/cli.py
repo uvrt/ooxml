@@ -17,7 +17,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import ConvertOptions, __version__, _lay_out, _rasterise, _svgs, available_backends
+from . import ConvertOptions, LayoutError, __version__, _check_backend, _laid, _pngs, _selected, _svgs
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -39,8 +39,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-substitute-fonts", action="store_false", dest="substitute_fonts",
                         help="do not lay out an absent Office face with its open metric compatible substitute "
                              "(Carlito, Liberation) or a symbol face from its recorded metrics")
-    parser.add_argument("--backend", choices=("auto", "resvg", "cairosvg"), default="auto",
-                        help="PNG rasterizer backend (default: auto)")
+    parser.add_argument("--backend", choices=("auto", "resvg"), default="auto",
+                        help="PNG rasterizer: the Rust core's resvg (default: auto)")
     parser.add_argument("--text", choices=("text", "outlines"), default="text",
                         help="how the SVG writes text: as <text> (default), or as the outlines of the glyphs the "
                              "PNG is drawn with, so that it needs no font to be viewed")
@@ -80,30 +80,32 @@ def main(argv: list[str] | None = None) -> int:
                              selectable_text=args.selectable_text)
     wants_svg = args.format in ("svg", "both")
     wants_png = args.format in ("png", "both")
-    if wants_png and not available_backends():
-        print("docx2svg: PNG output needs a rasterizer; run `pip install docx2svg[png]`", file=sys.stderr)
-        return 1
     try:
-        layout, data, fonts = _lay_out(args.input, options)
-        documents = _svgs(layout, data, options, fonts=fonts)
-        pngs = _rasterise(layout, data, fonts, options, backend=args.backend) if wants_png else []
+        _check_backend(args.backend)
+        laid = _laid(args.input, options)
+        indexes = _selected(options, laid.page_count)
+        documents = _svgs(laid, options, indexes) if wants_svg else []
+        pngs = _pngs(laid, options, indexes) if wants_png else []
+    except LayoutError as error:
+        print(f"docx2svg: {error}", file=sys.stderr)
+        return 1
     except Exception as error:  # a malformed package, unreadable XML...
         print(f"docx2svg: {error}", file=sys.stderr)
         return 1
-    if not documents:
+    if not indexes:
         print("docx2svg: no pages matched the selection", file=sys.stderr)
         return 1
     args.output.mkdir(parents=True, exist_ok=True)
-    numbers = options.pages or range(1, len(documents) + 1)
     stem = args.input.stem
-    for index, (number, document) in enumerate(zip(numbers, documents)):
+    for at, index in enumerate(indexes):
+        number = index + 1
         if wants_svg:
             path = args.output / f"{stem}-{number}.svg"
-            path.write_bytes(document.encode("utf-8"))
+            path.write_bytes(documents[at].encode("utf-8"))
             print(path)
         if wants_png:
             path = args.output / f"{stem}-{number}.png"
-            path.write_bytes(pngs[index])
+            path.write_bytes(pngs[at])
             print(path)
     if not args.quiet and options.coverage is not None and (options.warnings or not options.coverage.complete):
         print(f"\ncoverage: {options.coverage.summary()}", file=sys.stderr)

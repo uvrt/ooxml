@@ -25,8 +25,6 @@ from __future__ import annotations
 import re
 
 import pytest
-from docx2svg.model import Paragraph, Table
-from docx2svg.parse.document import parse_package
 from ooxml_edit.tools import Toolbox
 from test_rows_joins_r54r import CLOCK, SHAPES, _document, _edge, _p, _tbl, call, ok
 
@@ -87,15 +85,13 @@ def _grid(table) -> list[str]:
     return [c.get(_W + "w") for c in table.findall(f"{_W}tblGrid/{_W}gridCol")]
 
 
-def _render(blocks):
-    """docx2svg's parse of a body (its final view): paragraphs' text and tables' cells."""
-    out = []
-    for b in blocks:
-        if isinstance(b, Paragraph):
-            out.append(("p", "".join(b.text.split())))
-        elif isinstance(b, Table):
-            out.append(("t", [[_render(c) for c in line] for line in b.rows]))
-    return out
+def _render(data: bytes) -> list[str]:
+    """What the layout draws of a document (its final view): each line's text, page by page."""
+    import docx2svg
+
+    laid = docx2svg.convert_docx(data).layout
+    return ["".join("".join(span[1] for span in line[10]).split())
+            for number in range(laid.page_count) for line in laid.page(number)["lines"]]
 
 
 def _loses_text(box, data: bytes) -> list:
@@ -108,8 +104,8 @@ def test_after_our_accept_the_final_view_is_the_one_before_it(box, shape):
     data = _document(SHAPES[shape])
     accepted = _accepted(box, data)
     assert _view(box, accepted) == _view(box, data)
-    # ... and render's (docx2svg's parse of the accepted file: its final view before).
-    assert _render(parse_package(accepted).body) == _render(parse_package(data).body)
+    # ... and render's (the layout's drawing of the accepted file: its final view before).
+    assert _render(accepted) == _render(data)
     assert _records(box, accepted) == []
 
 

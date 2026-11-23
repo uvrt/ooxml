@@ -21,8 +21,9 @@ name: Rust
 # - `loom`: ooxml-store's commit path model-checked (--cfg loom, its own target dir);
 # - `oracles`: tools/rust_oracles.py -- the XML writer and the package save against
 #   ooxml-edit's on every document of the repository;
-# - `word-model`: the Word model against docx2svg's layout input, on the repository's
-#   documents and on those docx2svg's tools/make_*.py make;
+# - `models`: the DrawingML model and colours and the charts against ooxml-common's, and the
+#   preset table (the Word model against docx2svg's Python model was retired in lane
+#   svg-thin: the reads goldens hold the Word model);
 # - `cargo-deny`: licences, duplicate versions, sources and advisories (deny.toml);
 # - `fuzz`: fuzz/'s nine targets, 4 minutes each.  Not part of `required (rust)`: a find
 #   shows as a failed job with the crashing input uploaded, without blocking a merge.  On a
@@ -60,7 +61,7 @@ jobs:
       fuzz: ${{ steps.plan.outputs.rust_fuzz }}
       loom: ${{ steps.plan.outputs.rust_loom }}
       oracles: ${{ steps.plan.outputs.rust_oracles }}
-      word_model: ${{ steps.plan.outputs.rust_word_model }}
+      models: ${{ steps.plan.outputs.rust_models }}
       deny: ${{ steps.plan.outputs.rust_deny }}
     steps:
       - uses: actions/checkout@v4
@@ -242,10 +243,10 @@ jobs:
           target/release/examples/save_contract "$RUNNER_TEMP/saves"
           python tools/rust_oracles.py compare-saves "$RUNNER_TEMP/saves"
 
-  word-model:
-    name: Word model (differential)
+  models:
+    name: DrawingML and charts (differential)
     needs: plan
-    if: needs.plan.outputs.word_model == 'true'
+    if: needs.plan.outputs.models == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -254,28 +255,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      # The measure extra: fontTools, with which make_script_offset_probe.py builds its fonts.
-      - name: Install
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install ./python/ooxml-common "./python/docx2svg[measure]" pytest
-          cargo build --locked --release -p ooxml-oracle --bin word-model --bin drawingml-model --bin chart-model
-      # Each generator in its own folder, run from there: they write there by default
-      # (tools/make_layout_sweep.py and make_style_document.py rewrite docx2svg's committed
-      # fixtures instead, which the --tree python below reads).
-      - name: Make docx2svg's generated documents
-        run: |
-          for script in "$GITHUB_WORKSPACE"/python/docx2svg/tools/make_*.py; do
-            dir="$RUNNER_TEMP/made/$(basename "$script" .py)"
-            mkdir -p "$dir"
-            (cd "$dir" && python "$script" > log.txt) || { cat "$dir/log.txt"; exit 1; }
-          done
-          find "$RUNNER_TEMP/made" -name '*.docx' | wc -l
-      # Field by field; exits 1 on any difference.
-      - name: Differential
-        run: >-
-          python crates/ooxml-oracle/python/word_model_diff.py --rust target/release/word-model
-          --tree python --tree "$RUNNER_TEMP/made"
+      - name: Build
+        run: cargo build --locked --release -p ooxml-oracle --bin drawingml-model --bin chart-model
       # DrawingML: the model and resolved colours against ooxml-common's (pptx2svg's sources
       # importable), all presets and 20,000 generated colour cases; exits 1 on any difference.
       - name: DrawingML differential
@@ -363,13 +344,13 @@ jobs:
 
   required-rust:
     name: required (rust)
-    needs: [plan, rust, differential, rust-check, wheels, loom, oracles, word-model, cargo-deny]
+    needs: [plan, rust, differential, rust-check, wheels, loom, oracles, models, cargo-deny]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Every Rust job passed or was left out
         env:
-          RESULTS: ${{ needs.plan.result }} ${{ needs.rust.result }} ${{ needs.differential.result }} ${{ needs.rust-check.result }} ${{ needs.wheels.result }} ${{ needs.loom.result }} ${{ needs.oracles.result }} ${{ needs.word-model.result }} ${{ needs.cargo-deny.result }}
+          RESULTS: ${{ needs.plan.result }} ${{ needs.rust.result }} ${{ needs.differential.result }} ${{ needs.rust-check.result }} ${{ needs.wheels.result }} ${{ needs.loom.result }} ${{ needs.oracles.result }} ${{ needs.models.result }} ${{ needs.cargo-deny.result }}
         run: |
-          echo "plan, rust, differential, rust-check, wheels, loom, oracles, word-model, cargo-deny: $RESULTS"
+          echo "plan, rust, differential, rust-check, wheels, loom, oracles, models, cargo-deny: $RESULTS"
           for r in $RESULTS; do case "$r" in success|skipped) ;; *) exit 1 ;; esac; done

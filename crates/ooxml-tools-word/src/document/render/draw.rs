@@ -12,7 +12,7 @@ use crate::{LayoutLimit, NotLaid, Owned, WordLayout};
 use ooxml_base::Cancel;
 use ooxml_opc::Package;
 use ooxml_tools::{Failure, Refusal, ToolError, TryCall, WayOut};
-use ooxml_word_pages::png::{sized::sized, Fit, PageRaster};
+use ooxml_word_pages::png::{sized::sized, PageRaster};
 use ooxml_word_pages::{DiskFonts, LaidVersion};
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
@@ -176,7 +176,7 @@ pub(super) fn draw(
         .filter(|(_, d)| !d.cached)
         .map(|((svg, _), _)| svg.as_str())
         .collect();
-    let mut drawn = rasterise(&raster, &wanted).into_iter();
+    let mut drawn = raster.png_all(&wanted).into_iter();
     for page in out.iter_mut().filter(|d| !d.cached) {
         let made = drawn
             .next()
@@ -188,35 +188,6 @@ pub(super) fn draw(
         page.png = png;
     }
     Ok(out)
-}
-
-/// Each SVG as PNG, drawn at once over scoped threads (at most as many as the machine has
-/// cores); in order.
-pub(super) fn rasterise(raster: &PageRaster, svgs: &[&str]) -> Vec<Result<Vec<u8>, String>> {
-    let workers = std::thread::available_parallelism()
-        .map_or(1, std::num::NonZeroUsize::get)
-        .min(svgs.len())
-        .max(1);
-    let chunk = svgs.len().div_ceil(workers).max(1);
-    std::thread::scope(|scope| {
-        let handles: Vec<_> = svgs
-            .chunks(chunk)
-            .map(|part| {
-                scope.spawn(move || {
-                    part.iter()
-                        .map(|svg| raster.png(svg, Fit::Original, None).map_err(|e| e.to_string()))
-                        .collect::<Vec<_>>()
-                })
-            })
-            .collect();
-        handles
-            .into_iter()
-            .flat_map(|h| {
-                h.join()
-                    .unwrap_or_else(|_| vec![Err("the rasteriser panicked".to_owned())])
-            })
-            .collect()
-    })
 }
 
 /// Why `version` was laid out whole although the version before was laid out, in the tool's

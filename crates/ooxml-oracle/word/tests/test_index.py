@@ -62,3 +62,15 @@ def test_a_tier_observations_cases_are_read_or_said_why_not(name):
     assert not read & unread, read & unread
     assert read | unread == cases, (cases - read - unread, (read | unread) - cases)
     assert all(reason.strip() for reason in entry["unread"].values())
+
+
+def test_docx2svg_s_former_measurements_are_registered():
+    """``observations/layout``: docx2svg's measurements, waiting for the Rust layout's port --
+    every file registered in ``LAYOUT``, each with its family, its probes and whether it is
+    Word's measurement."""
+    found = sorted(f"layout/{p.name}" for p in (OBSERVATIONS / "layout").glob("*.json"))
+    assert found == sorted(index.LAYOUT)
+    assert len(index.SOURCE) == 40 and index.PROBES
+    for name, entry in index.LAYOUT.items():
+        assert entry["family"] and entry["probes"] and isinstance(entry["measured"], bool), name
+        json.loads((OBSERVATIONS / name).read_text(encoding="utf-8"))

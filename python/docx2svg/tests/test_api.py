@@ -1,222 +1,160 @@
-"""The public API and the command line: shapes, warnings, identity and honesty.
+"""docx2svg is a thin layer over the Rust core: what it draws is the Rust engine's, the options
+it does not take are refused with a way out, and the names it withdrew say what to use instead.
 
-Offline: every render here measures with the faces' recorded numbers
-(``tools/render_record.RecordedFonts``), so it needs no font file.
+The documents are the committed fixtures (``tests/fixtures``): their pages are the Rust
+layout's, so these tests hold docx2svg to ``ooxml_core.LaidPages`` itself, not to numbers of
+its own.
 """
 
 from __future__ import annotations
 
-import json
-import sys
+import re
+import struct
+import xml.etree.ElementTree as ElementTree
+import zipfile
+from io import BytesIO
 from pathlib import Path
-from xml.etree import ElementTree
 
 import pytest
 
-REPO = Path(__file__).resolve().parent.parent
-FIXTURES = REPO / "tests" / "fixtures"
-sys.path.insert(0, str(REPO / "tools"))
+import docx2svg
+from docx2svg import ConvertOptions, LayoutError, rust
+from docx2svg.cli import main
 
-import render_record  # noqa: E402
-
-from docx2svg import ConvertOptions, convert_docx_to_layout, convert_docx_to_svg  # noqa: E402
-from docx2svg.cli import main, parse_page_selection  # noqa: E402
-
-SVG = "{http://www.w3.org/2000/svg}"
-FACES = json.loads((FIXTURES / "render-observations.json").read_text(encoding="utf-8"))["faces"]
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+SWEEP = FIXTURES / "layout-sweep.docx"
 
 
-def options(**kwargs) -> ConvertOptions:
-    return render_record.options(render_record.RecordedFonts(FACES), **kwargs)
+@pytest.fixture(scope="module")
+def data() -> bytes:
+    return SWEEP.read_bytes()
 
 
-def test_one_svg_per_page_in_device_pixels():
-    documents = convert_docx_to_svg(FIXTURES / "samplelib" / "sample-long.docx", options())
-    layout = convert_docx_to_layout(FIXTURES / "samplelib" / "sample-long.docx", options())
-    assert len(documents) == len(layout.pages) > 1
-    root = ElementTree.fromstring(documents[0])
-    assert root.get("viewBox") == "0 0 2550 3300"  # US Letter at 300 dpi: Word's export grid
-    assert root.get("width") == "612pt" and root.get("height") == "792pt"
+@pytest.fixture(scope="module")
+def laid(data):
+    return rust.word_pages(ConvertOptions()).lay_out(data)
 
 
-def test_every_element_drawn_from_the_document_names_where_it_came_from():
-    document = convert_docx_to_svg(FIXTURES / "samplelib" / "sample-simple.docx", options())[0]
-    root = ElementTree.fromstring(document)
-    texts = list(root.iter(f"{SVG}text"))
-    assert texts
-    for text in texts:
-        if text.get("font-family") != "sans-serif":
-            assert text.get("data-docx-path", "").startswith(("w:body/w:p[", "w:body/w:tbl["))
-    assert any(t.get("data-docx-path") == "w:body/w:p[1]/w:r[1]" for t in texts)
-    # One x per character: the rasteriser cannot move a glyph (the stop band's label is
-    # ours, not the document's, and is set as one string).
-    for text in texts:
-        if text.get("font-family") != "sans-serif":
-            assert len(text.get("x").split()) == len(text.text or "")
-
-
-def _floating_table(tmp_path) -> Path:
-    """``sample-simple`` with its table made floating (``w:tblpPr``) and aligned
-    ``inside``, which the layout does not model (``make_float_table_probe.py`` did not
-    measure it): a table it stops at."""
-    import zipfile
-
-    source = FIXTURES / "samplelib" / "sample-simple.docx"
-    target = tmp_path / "sample-simple-floating.docx"
-    with zipfile.ZipFile(source) as original, zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as out:
-        for item in original.infolist():
-            data = original.read(item.filename)
-            if item.filename == "word/document.xml":
-                data = data.replace(b"<w:tblPr>", b'<w:tblPr><w:tblpPr w:vertAnchor="text" w:tblpXSpec="inside" w:tblpY="1"/>', 1)
-            out.writestr(item, data)
-    return target
-
-
-def test_a_table_it_cannot_position_is_laid_out_in_the_flow_and_says_so(tmp_path):
-    """Round 16: the layout carries on -- the table is laid out where it stands, reported
-    as approximate, and the text after it goes on to the second page Word draws."""
-    opts = options()
-    documents = convert_docx_to_svg(_floating_table(tmp_path), opts)
-    codes = [w.code for w in opts.warnings]
-    assert not [code for code in codes if code.startswith("layout-stopped")]
-    approximate = [w for w in opts.warnings if w.code == "layout-approximate:table"]
-    assert approximate and approximate[0].page == 1 and "w:body/w:tbl[1]" in approximate[0].message
-    assert "aligned inside or outside" in approximate[0].message
-    assert len(documents) == 2
-
-
-def test_a_table_stops_the_layout_and_says_so(tmp_path, strict_layout):
-    opts = options()
-    documents = convert_docx_to_svg(_floating_table(tmp_path), opts)
-    codes = [w.code for w in opts.warnings]
-    assert "layout-stopped:table" in codes
-    stop = [w for w in opts.warnings if w.code == "layout-stopped:table"][0]
-    assert stop.page == 1 and "w:body/w:tbl[1]" in stop.message and "floating" in stop.message
-    root = ElementTree.fromstring(documents[-1])
-    band = [g for g in root.iter(f"{SVG}g") if g.get("data-docx-unsupported") == "table"]
-    assert band and band[0].get("data-docx-path") == "w:body/w:tbl[1]"
-    # Nothing past the table is drawn: Word's page holds text below it; ours does not.
-    assert len(documents) == 1
-
-
-def test_a_table_is_laid_out_and_the_text_after_it_goes_on():
-    opts = options()
-    documents = convert_docx_to_svg(FIXTURES / "samplelib" / "sample-simple.docx", opts)
-    assert not [w for w in opts.warnings if w.code.startswith("layout-stopped")]
-    paths = [t.get("data-docx-path", "") for d in documents for t in ElementTree.fromstring(d).iter(f"{SVG}text")]
-    assert any(p.startswith("w:body/w:tbl[1]/w:tr[1]/w:tc[1]/w:p[1]") for p in paths)
-    assert len(documents) == 2
-
-
-def test_a_document_that_draws_everything_warns_of_nothing():
-    opts = options()
-    convert_docx_to_svg(FIXTURES / "style-document.docx", opts)
-    assert opts.warnings == []
-
-
-def test_pages_can_be_selected():
-    assert parse_page_selection("1,3-4") == [1, 3, 4]
-    documents = convert_docx_to_svg(FIXTURES / "samplelib" / "sample-long.docx", options(pages=[2]))
-    assert len(documents) == 1 and 'data-docx-page="2"' in documents[0]
-
-
-def test_glyph_size_scales_outlines_and_not_positions():
-    device = convert_docx_to_svg(FIXTURES / "style-document.docx", options())[0]
-    exact = convert_docx_to_svg(FIXTURES / "style-document.docx", options(glyph_size="exact"))[0]
-    strip = lambda s: [line for line in s.splitlines() if "font-size" not in line]  # noqa: E731
-    assert strip(device) == strip(exact)
-    assert 'font-size="46"' in device and 'font-size="45.8333"' in exact
-
-
-def test_the_command_line_writes_one_file_per_page(tmp_path, monkeypatch, capsys):
-    import docx2svg
-
-    original = docx2svg._fonts
-    monkeypatch.setattr(docx2svg, "_fonts", lambda data, opts: render_record.RecordedFonts(FACES))
-    try:
-        status = main([str(_floating_table(tmp_path)), "-o", str(tmp_path / "out"), "--strict"])
-    finally:
-        monkeypatch.setattr(docx2svg, "_fonts", original)
-    assert status == 2  # --strict: the table is a warning
-    assert sorted(p.name for p in (tmp_path / "out").iterdir()) == ["sample-simple-floating-1.svg",
-                                                                     "sample-simple-floating-2.svg"]
-    assert "layout-approximate:table" in capsys.readouterr().err
-
-
-def test_png_needs_its_extra_and_draws_at_300_dpi():
-    pytest.importorskip("resvg_py")
-    from docx2svg import convert_docx_to_png
-
-    png = convert_docx_to_png(FIXTURES / "samplelib" / "sample-blank.docx", options())[0]
+def _png_size(png: bytes) -> tuple[int, int]:
     assert png[:8] == b"\x89PNG\r\n\x1a\n"
-    import struct
-
-    width, height = struct.unpack(">II", png[16:24])
-    assert (width, height) == (2550, 3300)
+    return struct.unpack(">II", png[16:24])
 
 
-def test_one_call_lays_out_once_and_returns_the_layout_and_the_svgs(monkeypatch):
-    """:func:`docx2svg.convert_docx`: the layout :func:`convert_docx_to_layout` returns and
-    the SVGs :func:`convert_docx_to_svg` writes, byte for byte, from one layout; with a
-    page selection, the selected pages' SVGs and every page's layout."""
-    import docx2svg
-    import docx2svg.layout
-
-    source = FIXTURES / "samplelib" / "sample-long.docx"
-    calls = []
-    lay_out = docx2svg.layout.lay_out
-    monkeypatch.setattr(docx2svg.layout, "lay_out", lambda *a, **k: calls.append(1) or lay_out(*a, **k))
-    both_options = options()
-    both = docx2svg.convert_docx(source, both_options)
-    assert len(calls) == 1
-    svg_options = options()
-    assert both.svgs == convert_docx_to_svg(source, svg_options)
-    assert [str(w) for w in both_options.warnings] == [str(w) for w in svg_options.warnings]
-    alone = convert_docx_to_layout(source, options())
-    assert [[(line.path, line.top, line.baseline) for line in page.lines] for page in both.layout.pages] == \
-        [[(line.path, line.top, line.baseline) for line in page.lines] for page in alone.pages]
-    assert both.page_numbers == list(range(1, len(alone.pages) + 1))
-
-    selected = docx2svg.convert_docx(source, options(pages=[2, 99]))
-    assert selected.page_numbers == [2]
-    assert selected.svgs == [both.svgs[1]]
-    assert len(selected.layout.pages) == len(alone.pages)
+def test_the_pages_are_the_rust_layout_s(data, laid):
+    svgs = docx2svg.convert_docx_to_svg(data)
+    assert laid.page_count > 1
+    assert svgs == [laid.svg(index)[0] for index in range(laid.page_count)]
 
 
-@pytest.mark.faces
-def test_every_page_carries_its_public_page_info():
-    """``Page.info`` is a :class:`docx2svg.PageInfo`: the number Word prints, the section,
-    whether it starts there, the story kind and whether the page is blank."""
-    import read_story_probe
-
-    from docx2svg import PageInfo
-
-    data = dict(read_story_probe.documents())["select-even"]
-    layout = convert_docx_to_layout(data)
-    infos = [page.info for page in layout.pages]
-    assert all(isinstance(info, PageInfo) for info in infos)
-    assert [info.blank for info in infos].count(True) >= 1
-    assert all(info.story in ("first", "even", "default") for info in infos)
-    assert infos[0].section == 0 and infos[0].section_first
-    assert len({info.section for info in infos}) > 1
+def test_one_layout_gives_the_layout_and_the_selected_pages(data, laid):
+    options = ConvertOptions(pages=[2, 99])
+    conversion = docx2svg.convert_docx(data, options)
+    assert conversion.page_numbers == [2]
+    assert conversion.svgs == [laid.svg(1)[0]]
+    assert conversion.layout.page_count == laid.page_count
+    assert options.coverage is not None and options.coverage.pages == laid.page_count
 
 
-def test_the_public_layout_and_pages_write_what_convert_docx_to_svg_writes(monkeypatch, tmp_path):
-    """:func:`docx2svg.lay_out_docx` then :func:`docx2svg.page_svgs` -- a render tool
-    laying a document out once and drawing pages from it, in another process too (the
-    three are picklable) -- write :func:`convert_docx_to_svg`'s pages byte for byte;
-    :func:`docx2svg.user_font_dirs` is the folders the rasteriser is handed; the agents'
-    old private names still work."""
-    import pickle
+def test_a_size_given_on_one_side_keeps_the_page_s_shape(data, laid):
+    svg = docx2svg.convert_docx_to_svg(data, ConvertOptions(pages=[1], width=400))[0]
+    width, height = (int(v) for v in re.search(r'<svg[^>]* width="(\d+)" height="(\d+)"', svg).groups())
+    (_, (width_px, height_px, *_)) = laid.pages()[0]
+    assert width == 400 and height == round(400 * height_px / width_px)
+    assert svg.replace(f' width="{width}" height="{height}"', "", 1) == \
+        re.sub(r' width="[^"]*pt" height="[^"]*pt"', "", laid.svg(0)[0], count=1)
 
-    import docx2svg
 
-    assert (docx2svg._lay_out, docx2svg._svgs) == (docx2svg.lay_out_docx, docx2svg.page_svgs)
-    source = FIXTURES / "samplelib" / "sample-long.docx"
-    laid = docx2svg.lay_out_docx(source, options())
-    layout, data, fonts = pickle.loads(pickle.dumps(laid))
-    assert docx2svg.page_svgs(layout, data, options(pages=[3, 1]), fonts=fonts) == \
-        convert_docx_to_svg(source, options(pages=[3, 1]))
-    monkeypatch.setenv("OOXML_FONT_DIRS", str(tmp_path))
-    assert docx2svg.user_font_dirs() == [str(tmp_path)]
-    assert docx2svg.user_font_dirs(ConvertOptions(font_dirs=[])) == []
+def test_png_is_drawn_at_300_dpi_unless_a_size_is_given(data, laid):
+    (_, (width_px, height_px, *_)) = laid.pages()[0]
+    png = docx2svg.convert_docx_to_png(data, ConvertOptions(pages=[1]))[0]
+    assert _png_size(png) == (width_px, height_px)
+    small = docx2svg.convert_docx_to_png(data, ConvertOptions(pages=[1], width=200))[0]
+    assert _png_size(small)[0] == 200
+
+
+def test_svg_to_png_draws_with_the_rust_core():
+    svg = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"><rect width="20" height="10"/></svg>'
+    assert _png_size(docx2svg.svg_to_png(svg)) == (20, 10)
+    assert _png_size(docx2svg.svg_to_png(svg, width=40)) == (40, 20)
+    assert docx2svg.available_backends() == ["resvg"]
+
+
+@pytest.mark.parametrize("field", ["advances", "metrics", "decorations", "names"])
+def test_measuring_options_are_refused_with_a_way_out(data, field):
+    with pytest.raises(ValueError, match="font_dirs"):
+        docx2svg.convert_docx_to_svg(data, ConvertOptions(**{field: object()}))
+
+
+def test_another_rasteriser_is_refused_with_a_way_out(data):
+    with pytest.raises(ValueError, match="backend='auto'"):
+        docx2svg.convert_docx_to_png(data, backend="cairosvg")
+    with pytest.raises(ValueError, match="backend='auto'"):
+        docx2svg.svg_to_png("<svg/>", backend="cairosvg")
+
+
+def test_an_unknown_text_mode_is_refused(data):
+    with pytest.raises(ValueError, match="text, outlines"):
+        docx2svg.convert_docx_to_svg(data, ConvertOptions(text="paths"))
+
+
+@pytest.mark.parametrize("name", sorted(docx2svg.WITHDRAWN))
+def test_a_withdrawn_name_says_what_to_use_instead(name):
+    with pytest.raises(AttributeError, match="instead"):
+        getattr(docx2svg, name)
+
+
+def test_a_document_the_layout_refuses_is_a_layout_error_with_a_way_out(monkeypatch, data):
+    class Refusing:
+        def lay_out(self, _data):
+            raise NotImplementedError("the Word layout does not lay this version out yet: a frame in a header")
+
+    monkeypatch.setattr(rust, "word_pages", lambda options: Refusing())
+    with pytest.raises(LayoutError) as found:
+        docx2svg.convert_docx_to_svg(data)
+    assert isinstance(found.value, NotImplementedError)
+    assert "a frame in a header" in str(found.value) and "word_read" in str(found.value)
+    assert isinstance(found.value.__cause__, NotImplementedError)
+
+
+def test_warnings_and_coverage_are_the_layout_s(data, laid):
+    options = ConvertOptions()
+    docx2svg.convert_docx_to_svg(data, options)
+    summary = laid.coverage_summary()
+    said = [(w.code, w.message, w.page) for w in options.warnings if w.code != docx2svg.NOT_AS_WORD]
+    assert said == [tuple(w) for w in summary["warnings"]]
+    coverage = options.coverage
+    assert (coverage.complete, coverage.blocks, coverage.blocks_laid_out) == \
+        (summary["complete"], summary["blocks"], summary["laid_out"])
+    assert coverage.status in ("complete", "approximate", "partial")
+
+
+def test_every_drawn_path_resolves_in_the_part(data):
+    svg = docx2svg.convert_docx_to_svg(data, ConvertOptions(pages=[1]))[0]
+    paths = list(dict.fromkeys(re.findall(r'data-docx-path="(w:body/[^"]+)"', svg)))
+    assert paths
+    with zipfile.ZipFile(BytesIO(data)) as archive:
+        root = ElementTree.fromstring(archive.read("word/document.xml"))
+    for path in paths[:20]:
+        found = docx2svg.resolve_path(root, path)
+        assert found is not None, path
+        last = path.split("/")[-1].split("[")[0].split(":")[-1]
+        assert last == "label" or found.tag.endswith("}" + last), (path, found.tag)
+    assert docx2svg.resolve_path(root, "w:body/w:p[99999]") is None
+
+
+def test_text_as_outlines_needs_no_font_to_be_viewed(data):
+    options = ConvertOptions(pages=[1], text="outlines")
+    svg = docx2svg.convert_docx_to_svg(data, options)[0]
+    kept = [w for w in options.warnings if w.code == "text-not-outlined"]
+    assert "<path" in svg
+    assert "<text" not in svg or kept
+
+
+def test_the_command_line_writes_one_file_per_page(tmp_path, data, laid):
+    source = tmp_path / "sweep.docx"
+    source.write_bytes(data)
+    assert main([str(source), "-o", str(tmp_path / "out"), "-p", "1-2", "-f", "both", "-q"]) == 0
+    written = sorted(p.name for p in (tmp_path / "out").iterdir())
+    assert written == ["sweep-1.png", "sweep-1.svg", "sweep-2.png", "sweep-2.svg"]
+    assert (tmp_path / "out" / "sweep-2.svg").read_text(encoding="utf-8") == laid.svg(1)[0]
+    assert main([str(source), "--backend", "resvg", "-o", str(tmp_path / "out"), "-p", "99", "-q"]) == 1

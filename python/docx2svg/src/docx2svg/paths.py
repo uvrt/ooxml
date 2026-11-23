@@ -43,7 +43,7 @@ from __future__ import annotations
 import re
 from typing import Iterator
 
-from ooxml_common.xmlutil import attr, local_name
+from ooxml_common.xmlutil import local_name
 from ooxml_common.xmlutil import element_child as child
 from ooxml_common.xmlutil import element_children as children
 
@@ -189,44 +189,30 @@ def resolve_path(root, path: str):
 
     ``root`` is the part's root element (``w:document``, ``w:hdr``, ``w:ftr``,
     ``w:footnotes``, ``w:endnotes``) as the standard library's ElementTree or lxml parses
-    it.  A path is resolved by the rules of :mod:`docx2svg.paths`; a path the part does
-    not hold (an edited tree, a synthetic step) resolves to ``None``."""
+    it.  The path is resolved by the Word model in Rust (``ooxml_core.element_path``, the
+    rules above), which gives the element's place among its parents' child elements; a path
+    the part does not hold (an edited tree, a synthetic step) resolves to ``None``."""
     if root is None or not path:
         return None
-    try:
-        steps = split_path(path)
-    except ValueError:
+    from . import rust
+
+    if hasattr(root, "getroottree"):
+        import importlib
+
+        data = importlib.import_module("lxml.etree").tostring(root)
+    else:
+        import xml.etree.ElementTree as ElementTree
+
+        data = ElementTree.tostring(root)
+    place = rust.core().element_path(data, path)
+    if place is None:
         return None
     node = root
-    for number, (prefix, name, index, note) in enumerate(steps):
-        if prefix is None:
-            # A pseudo-step: the list label is drawn for its paragraph; anything else
-            # (Word's default separator) is not in the document.
-            if name == "label" and local_name(node.tag) == "p":
-                continue
+    for index in place:
+        elements = [c for c in node if isinstance(c.tag, str)]
+        if index >= len(elements):
             return None
-        if number == 0 and name == "sectPr" and index is not None and local_name(root.tag) == "document":
-            sections = _sections(root)
-            node = sections[index - 1] if 0 < index <= len(sections) else None
-        elif note is not None:
-            node = next((c for c in children(node, name) if attr(c, "id") == note), None)
-        elif index is None:
-            if number == 0 and local_name(node.tag) == name:
-                continue
-            node = next((d for d in node.iter() if d is not node and isinstance(d.tag, str)
-                         and local_name(d.tag) == name), None)
-        else:
-            if name in ("tr", "tc"):
-                candidates = list(row_level(node, name))
-            elif name == "anchor" and local_name(node.tag) == "r":
-                candidates = _anchors(node)
-            elif name == "inline" and local_name(node.tag) == "r":
-                candidates = _inlines(node)
-            else:
-                candidates = list(children(_members(node), name))
-            node = candidates[index - 1] if 0 < index <= len(candidates) else None
-        if node is None:
-            return None
+        node = elements[index]
     return node
 
 
