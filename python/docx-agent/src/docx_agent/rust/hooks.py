@@ -198,8 +198,3 @@ def _values(call: Any, subject: Any, method: str, request: dict[str, Any], pages
         call.warn(warning)
     return found
 
-
-def live_view(subject: Any) -> Any:
-    """A Python view made of an owned document: none exists.  (Goes with its callers, the
-    format's ``restored`` and ``closed``, in lane CUT-A2.)"""
-    return None
