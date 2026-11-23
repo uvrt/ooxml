@@ -203,13 +203,17 @@ impl BlockFacts {
     /// The facts of `block` and what it holds, in one walk.
     fn read(block: &Arc<Element>) -> BlockFacts {
         let mut out = BlockFacts::default();
-        out.visit(block, &mut Vec::new(), false);
+        out.visit(block, &mut Vec::new(), Within::default());
         out
     }
 
-    fn visit(&mut self, element: &Arc<Element>, path: &mut Vec<u32>, fallback: bool) {
+    fn visit(&mut self, element: &Arc<Element>, path: &mut Vec<u32>, within: Within) {
         let name = element.name();
-        let fallback = fallback || name.is(Some(MC), "Fallback");
+        let within = Within {
+            fallback: within.fallback || name.is(Some(MC), "Fallback"),
+            row_gone: within.row_gone || (name.is(Some(W), "tr") && row_deleted(element)),
+        };
+        let fallback = within.fallback;
         if name.is(Some(W), "hyperlink") {
             if let Some(a) = element.attribute(Some(W), "anchor").filter(|a| !a.is_empty()) {
                 self.anchors.push(a.to_owned());
@@ -234,18 +238,33 @@ impl BlockFacts {
                 self.revisions.push(found());
             } else if name.is(Some(WP), "inline") || name.is(Some(WP), "anchor") {
                 self.frames.push(found());
-            } else if name.is(Some(W), "tc") && cell_end_taken(element) {
+            } else if name.is(Some(W), "tc") && !within.row_gone && cell_end_taken(element) {
                 self.cell_ends = true;
             }
         }
         for (k, node) in element.children().iter().enumerate() {
             if let Node::Element(child) = node {
                 path.push(index(k));
-                self.visit(child, path, fallback);
+                self.visit(child, path, within);
                 path.pop();
             }
         }
     }
+}
+
+/// Where the walk is: inside an `mc:Fallback`, inside a table row whose deletion is pending.
+#[derive(Clone, Copy, Default)]
+struct Within {
+    fallback: bool,
+    /// Accept All removes the row whole (Word 16.106, round 60 R137): its cells' ends, and
+    /// those of tables nested in it, take nothing in.
+    row_gone: bool,
+}
+
+/// Whether a `w:tr`'s deletion is pending (`w:trPr/w:del`).
+fn row_deleted(row: &Element) -> bool {
+    row.find(Some(W), "trPr")
+        .is_some_and(|p| p.find(Some(W), "del").is_some())
 }
 
 /// Whether Accept All takes away a cell's end: its last paragraph's mark deleted or moved
@@ -315,5 +334,28 @@ mod tests {
             .map(|(i, p)| (i, p.to_vec()))
             .collect();
         assert_eq!(ends, [("1".into(), vec![0, 1, 0]), ("2".into(), vec![0, 2, 0, 0, 0])]);
+    }
+
+    /// A body of one table: `rows`, each a `w:tr`'s inner XML.
+    fn cell_ends_of(rows: &[&str]) -> bool {
+        let rows: String = rows.iter().map(|r| format!("<w:tr>{r}</w:tr>")).collect();
+        let doc = format!(
+            r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:tbl>{rows}</w:tbl></w:body></w:document>"#
+        );
+        let tree = ooxml_xml::parse(doc.as_bytes(), &XmlLimits::default()).unwrap_or_else(|e| panic!("{e}"));
+        PartFacts::read(tree.root(), None).cell_ends()
+    }
+
+    #[test]
+    fn a_pending_row_deletion_takes_no_cell_in() {
+        // Word 16.106 (round 60, R137): Accept All removes a deleted row whole, its cells'
+        // marks with it -- a nested table's too; a deleted mark in a row kept still counts
+        let mark = r#"<w:tc><w:p><w:pPr><w:rPr><w:del w:id="2"/></w:rPr></w:pPr><w:del w:id="3"><w:r><w:delText>GV</w:delText></w:r></w:del></w:p></w:tc>"#;
+        let gone = r#"<w:trPr><w:del w:id="1"/></w:trPr>"#;
+        let kept = "<w:tc><w:p><w:r><w:t>ID</w:t></w:r></w:p></w:tc>";
+        assert!(!cell_ends_of(&[kept, &format!("{gone}{mark}{mark}"), kept]));
+        let nested = format!("<w:tc><w:tbl><w:tr>{mark}</w:tr></w:tbl><w:p/></w:tc>");
+        assert!(!cell_ends_of(&[&format!("{gone}{nested}")]));
+        assert!(cell_ends_of(&[kept, &format!("{mark}{kept}")]));
     }
 }

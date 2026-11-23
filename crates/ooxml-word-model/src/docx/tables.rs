@@ -18,8 +18,10 @@ use std::sync::Arc;
 
 mod accepted;
 mod labels;
+mod merge_heads;
 pub use accepted::{Accepted, Axis, Misplaced};
 pub use labels::{collapse_space, no_cell_text};
+pub use merge_heads::{cell_merge, merge_heads, VMerge};
 
 /// A cell element with its place in its part.
 type Placed = (Arc<Element>, Box<[u32]>);

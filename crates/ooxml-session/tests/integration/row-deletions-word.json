@@ -1,0 +1,819 @@
+{
+ "_about": "What Word 16.106 for Mac did (round 60, R137): per case a made-up document (a paragraph, a table, a paragraph) with a pending tracked row deletion -- made by Word itself (track revisions on, delete row; made_by word) or, where Word cannot delete a row (vertically merged cells), written as Word writes one (made_by written: trPr/del, the runs in w:del, the marks deleted) -- and the body after Word's Accept All (accepted: blocks, each table's rows and cells; accepted_body: the XML). Rsids, paraIds, ids, authors and dates dropped or replaced. Probe: agent-work round60/R137/probe.py; MergeAcross and TrackedMergeAcross (a deleted row inside a vertical merge whose cell there is not part of it, as a tracked merge across a pending deletion writes it): round60/R137b/probe_b.py.",
+ "Middle": {
+  "made_by": "word",
+  "deleted_rows": [
+   2
+  ],
+  "tracked_body": "<w:p><w:r><w:t>Before Middle.</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblInd w:w=\"10\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders><w:tblCellMar><w:left w:w=\"10\" w:type=\"dxa\"/><w:right w:w=\"10\" w:type=\"dxa\"/></w:tblCellMar><w:tblLook w:val=\"04A0\" w:firstRow=\"1\" w:lastRow=\"0\" w:firstColumn=\"1\" w:lastColumn=\"0\" w:noHBand=\"0\" w:noVBand=\"1\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/></w:tblGrid><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>GV</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>GV.OC</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>2</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:trPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:trPr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>GV</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>GV.RM</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>3</w:delText></w:r></w:del></w:p></w:tc></w:tr><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>ID</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>ID.AM</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>1</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After Middle.</w:t></w:r></w:p>",
+  "accepted": [
+   {
+    "p": "Before Middle."
+   },
+   {
+    "table": [
+     [
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "GV",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "GV.OC",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "2",
+       "paragraphs": 1
+      }
+     ],
+     [
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "ID",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "ID.AM",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "1",
+       "paragraphs": 1
+      }
+     ]
+    ]
+   },
+   {
+    "p": "After Middle."
+   }
+  ],
+  "accepted_body": "<w:p><w:r><w:t>Before Middle.</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblInd w:w=\"10\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders><w:tblCellMar><w:left w:w=\"10\" w:type=\"dxa\"/><w:right w:w=\"10\" w:type=\"dxa\"/></w:tblCellMar><w:tblLook w:val=\"04A0\" w:firstRow=\"1\" w:lastRow=\"0\" w:firstColumn=\"1\" w:lastColumn=\"0\" w:noHBand=\"0\" w:noVBand=\"1\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>GV</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>GV.OC</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>2</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>ID</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>ID.AM</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>1</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After Middle.</w:t></w:r></w:p>"
+ },
+ "Last": {
+  "made_by": "word",
+  "deleted_rows": [
+   3
+  ],
+  "tracked_body": "<w:p><w:r><w:t>Before Last.</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblInd w:w=\"10\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders><w:tblCellMar><w:left w:w=\"10\" w:type=\"dxa\"/><w:right w:w=\"10\" w:type=\"dxa\"/></w:tblCellMar><w:tblLook w:val=\"0000\" w:firstRow=\"0\" w:lastRow=\"0\" w:firstColumn=\"0\" w:lastColumn=\"0\" w:noHBand=\"0\" w:noVBand=\"0\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/></w:tblGrid><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>GV</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>GV.OC</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>2</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>GV</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>GV.RM</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>3</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:trPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:trPr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>ID</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>ID.AM</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>1</w:delText></w:r></w:del></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After Last.</w:t></w:r></w:p>",
+  "accepted": [
+   {
+    "p": "Before Last."
+   },
+   {
+    "table": [
+     [
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "GV",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "GV.OC",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "2",
+       "paragraphs": 1
+      }
+     ],
+     [
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "GV",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "GV.RM",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "3",
+       "paragraphs": 1
+      }
+     ]
+    ]
+   },
+   {
+    "p": "After Last."
+   }
+  ],
+  "accepted_body": "<w:p><w:r><w:t>Before Last.</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblInd w:w=\"10\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders><w:tblCellMar><w:left w:w=\"10\" w:type=\"dxa\"/><w:right w:w=\"10\" w:type=\"dxa\"/></w:tblCellMar><w:tblLook w:val=\"0000\" w:firstRow=\"0\" w:lastRow=\"0\" w:firstColumn=\"0\" w:lastColumn=\"0\" w:noHBand=\"0\" w:noVBand=\"0\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>GV</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>GV.OC</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>2</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>GV</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>GV.RM</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>3</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After Last.</w:t></w:r></w:p>"
+ },
+ "First": {
+  "made_by": "word",
+  "deleted_rows": [
+   1
+  ],
+  "tracked_body": "<w:p><w:r><w:t>Before First.</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblInd w:w=\"10\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders><w:tblCellMar><w:left w:w=\"10\" w:type=\"dxa\"/><w:right w:w=\"10\" w:type=\"dxa\"/></w:tblCellMar><w:tblLook w:val=\"04A0\" w:firstRow=\"1\" w:lastRow=\"0\" w:firstColumn=\"1\" w:lastColumn=\"0\" w:noHBand=\"0\" w:noVBand=\"1\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/></w:tblGrid><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:trPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:trPr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>GV</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>GV.OC</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>2</w:delText></w:r></w:del></w:p></w:tc></w:tr><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>GV</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>GV.RM</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>3</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>ID</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>ID.AM</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>1</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After First.</w:t></w:r></w:p>",
+  "accepted": [
+   {
+    "p": "Before First."
+   },
+   {
+    "table": [
+     [
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "GV",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "GV.RM",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "3",
+       "paragraphs": 1
+      }
+     ],
+     [
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "ID",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "ID.AM",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "1",
+       "paragraphs": 1
+      }
+     ]
+    ]
+   },
+   {
+    "p": "After First."
+   }
+  ],
+  "accepted_body": "<w:p><w:r><w:t>Before First.</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblInd w:w=\"10\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders><w:tblCellMar><w:left w:w=\"10\" w:type=\"dxa\"/><w:right w:w=\"10\" w:type=\"dxa\"/></w:tblCellMar><w:tblLook w:val=\"04A0\" w:firstRow=\"1\" w:lastRow=\"0\" w:firstColumn=\"1\" w:lastColumn=\"0\" w:noHBand=\"0\" w:noVBand=\"1\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>GV</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>GV.RM</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>3</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>ID</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>ID.AM</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>1</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After First.</w:t></w:r></w:p>"
+ },
+ "Every": {
+  "made_by": "word",
+  "deleted_rows": [
+   3,
+   2,
+   1
+  ],
+  "tracked_body": "<w:p><w:r><w:t>Before Every.</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblInd w:w=\"10\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders><w:tblCellMar><w:left w:w=\"10\" w:type=\"dxa\"/><w:right w:w=\"10\" w:type=\"dxa\"/></w:tblCellMar><w:tblLook w:val=\"0000\" w:firstRow=\"0\" w:lastRow=\"0\" w:firstColumn=\"0\" w:lastColumn=\"0\" w:noHBand=\"0\" w:noVBand=\"0\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/></w:tblGrid><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:trPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:trPr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>GV</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>GV.OC</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>2</w:delText></w:r></w:del></w:p></w:tc></w:tr><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:trPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:trPr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>GV</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>GV.RM</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>3</w:delText></w:r></w:del></w:p></w:tc></w:tr><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:trPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:trPr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>ID</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>ID.AM</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>1</w:delText></w:r></w:del></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After Every.</w:t></w:r></w:p>",
+  "accepted": [
+   {
+    "p": "Before Every."
+   },
+   {
+    "p": "After Every."
+   }
+  ],
+  "accepted_body": "<w:p><w:r><w:t>Before Every.</w:t></w:r></w:p><w:p><w:r><w:t>After Every.</w:t></w:r></w:p>"
+ },
+ "WrittenMiddle": {
+  "made_by": "written",
+  "deleted_rows": null,
+  "tracked_body": "<w:p><w:r><w:t>Before WrittenMiddle.</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>GV</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>GV.OC</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>2</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:trPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:trPr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>GV</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>GV.RM</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>3</w:delText></w:r></w:del></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>ID</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>ID.AM</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>1</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After WrittenMiddle.</w:t></w:r></w:p>",
+  "accepted": [
+   {
+    "p": "Before WrittenMiddle."
+   },
+   {
+    "table": [
+     [
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "GV",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "GV.OC",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "2",
+       "paragraphs": 1
+      }
+     ],
+     [
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "ID",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "ID.AM",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "1",
+       "paragraphs": 1
+      }
+     ]
+    ]
+   },
+   {
+    "p": "After WrittenMiddle."
+   }
+  ],
+  "accepted_body": "<w:p><w:r><w:t>Before WrittenMiddle.</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblInd w:w=\"10\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders><w:tblCellMar><w:left w:w=\"10\" w:type=\"dxa\"/><w:right w:w=\"10\" w:type=\"dxa\"/></w:tblCellMar><w:tblLook w:val=\"0000\" w:firstRow=\"0\" w:lastRow=\"0\" w:firstColumn=\"0\" w:lastColumn=\"0\" w:noHBand=\"0\" w:noVBand=\"0\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/></w:tblGrid><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>GV</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>GV.OC</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>2</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>ID</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>ID.AM</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>1</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After WrittenMiddle.</w:t></w:r></w:p>"
+ },
+ "WrittenEvery": {
+  "made_by": "written",
+  "deleted_rows": null,
+  "tracked_body": "<w:p><w:r><w:t>Before WrittenEvery.</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/></w:tblGrid><w:tr><w:trPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:trPr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>GV</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>GV.OC</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>2</w:delText></w:r></w:del></w:p></w:tc></w:tr><w:tr><w:trPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:trPr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>GV</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>GV.RM</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>3</w:delText></w:r></w:del></w:p></w:tc></w:tr><w:tr><w:trPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:trPr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>ID</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>ID.AM</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>1</w:delText></w:r></w:del></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After WrittenEvery.</w:t></w:r></w:p>",
+  "accepted": [
+   {
+    "p": "Before WrittenEvery."
+   },
+   {
+    "p": "After WrittenEvery."
+   }
+  ],
+  "accepted_body": "<w:p><w:r><w:t>Before WrittenEvery.</w:t></w:r></w:p><w:p><w:r><w:t>After WrittenEvery.</w:t></w:r></w:p>"
+ },
+ "MergeAbove": {
+  "made_by": "written",
+  "deleted_rows": null,
+  "tracked_body": "<w:p><w:r><w:t>Before MergeAbove.</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/></w:tblGrid><w:tr><w:trPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:trPr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>MergeAbove r1c1</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>MergeAbove r1c2</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>MergeAbove r1c3</w:delText></w:r></w:del></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/><w:vMerge w:val=\"restart\"/></w:tcPr><w:p><w:r><w:t>MergeAbove m</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeAbove r2c2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeAbove r2c3</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/><w:vMerge/></w:tcPr><w:p></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeAbove r3c2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeAbove r3c3</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/><w:vMerge/></w:tcPr><w:p></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeAbove r4c2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeAbove r4c3</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After MergeAbove.</w:t></w:r></w:p>",
+  "accepted": [
+   {
+    "p": "Before MergeAbove."
+   },
+   {
+    "table": [
+     [
+      {
+       "span": 1,
+       "vMerge": "restart",
+       "text": "MergeAbove m",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeAbove r2c2",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeAbove r2c3",
+       "paragraphs": 1
+      }
+     ],
+     [
+      {
+       "span": 1,
+       "vMerge": "continue",
+       "text": "",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeAbove r3c2",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeAbove r3c3",
+       "paragraphs": 1
+      }
+     ],
+     [
+      {
+       "span": 1,
+       "vMerge": "continue",
+       "text": "",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeAbove r4c2",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeAbove r4c3",
+       "paragraphs": 1
+      }
+     ]
+    ]
+   },
+   {
+    "p": "After MergeAbove."
+   }
+  ],
+  "accepted_body": "<w:p><w:r><w:t>Before MergeAbove.</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblInd w:w=\"10\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders><w:tblCellMar><w:left w:w=\"10\" w:type=\"dxa\"/><w:right w:w=\"10\" w:type=\"dxa\"/></w:tblCellMar><w:tblLook w:val=\"0000\" w:firstRow=\"0\" w:lastRow=\"0\" w:firstColumn=\"0\" w:lastColumn=\"0\" w:noHBand=\"0\" w:noVBand=\"0\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/></w:tblGrid><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/><w:vMerge w:val=\"restart\"/></w:tcPr><w:p><w:r><w:t>MergeAbove m</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeAbove r2c2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeAbove r2c3</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/><w:vMerge/></w:tcPr><w:p/></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeAbove r3c2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeAbove r3c3</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/><w:vMerge/></w:tcPr><w:p/></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeAbove r4c2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeAbove r4c3</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After MergeAbove.</w:t></w:r></w:p>"
+ },
+ "MergeStart": {
+  "made_by": "written",
+  "deleted_rows": null,
+  "tracked_body": "<w:p><w:r><w:t>Before MergeStart.</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeStart r1c1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeStart r1c2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeStart r1c3</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:trPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:trPr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/><w:vMerge w:val=\"restart\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>MergeStart m</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>MergeStart r2c2</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>MergeStart r2c3</w:delText></w:r></w:del></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/><w:vMerge/></w:tcPr><w:p></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeStart r3c2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeStart r3c3</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/><w:vMerge/></w:tcPr><w:p></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeStart r4c2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeStart r4c3</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After MergeStart.</w:t></w:r></w:p>",
+  "accepted": [
+   {
+    "p": "Before MergeStart."
+   },
+   {
+    "table": [
+     [
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeStart r1c1",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeStart r1c2",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeStart r1c3",
+       "paragraphs": 1
+      }
+     ],
+     [
+      {
+       "span": 1,
+       "vMerge": "restart",
+       "text": "",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeStart r3c2",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeStart r3c3",
+       "paragraphs": 1
+      }
+     ],
+     [
+      {
+       "span": 1,
+       "vMerge": "continue",
+       "text": "",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeStart r4c2",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeStart r4c3",
+       "paragraphs": 1
+      }
+     ]
+    ]
+   },
+   {
+    "p": "After MergeStart."
+   }
+  ],
+  "accepted_body": "<w:p><w:r><w:t>Before MergeStart.</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblInd w:w=\"10\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders><w:tblCellMar><w:left w:w=\"10\" w:type=\"dxa\"/><w:right w:w=\"10\" w:type=\"dxa\"/></w:tblCellMar><w:tblLook w:val=\"0000\" w:firstRow=\"0\" w:lastRow=\"0\" w:firstColumn=\"0\" w:lastColumn=\"0\" w:noHBand=\"0\" w:noVBand=\"0\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/></w:tblGrid><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeStart r1c1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeStart r1c2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeStart r1c3</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/><w:vMerge w:val=\"restart\"/></w:tcPr><w:p/></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeStart r3c2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeStart r3c3</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/><w:vMerge/></w:tcPr><w:p/></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeStart r4c2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeStart r4c3</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After MergeStart.</w:t></w:r></w:p>"
+ },
+ "MergeMiddle": {
+  "made_by": "written",
+  "deleted_rows": null,
+  "tracked_body": "<w:p><w:r><w:t>Before MergeMiddle.</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeMiddle r1c1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeMiddle r1c2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeMiddle r1c3</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/><w:vMerge w:val=\"restart\"/></w:tcPr><w:p><w:r><w:t>MergeMiddle m</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeMiddle r2c2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeMiddle r2c3</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:trPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:trPr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/><w:vMerge/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>MergeMiddle r3c2</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>MergeMiddle r3c3</w:delText></w:r></w:del></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/><w:vMerge/></w:tcPr><w:p></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeMiddle r4c2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeMiddle r4c3</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After MergeMiddle.</w:t></w:r></w:p>",
+  "accepted": [
+   {
+    "p": "Before MergeMiddle."
+   },
+   {
+    "table": [
+     [
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeMiddle r1c1",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeMiddle r1c2",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeMiddle r1c3",
+       "paragraphs": 1
+      }
+     ],
+     [
+      {
+       "span": 1,
+       "vMerge": "restart",
+       "text": "MergeMiddle m",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeMiddle r2c2",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeMiddle r2c3",
+       "paragraphs": 1
+      }
+     ],
+     [
+      {
+       "span": 1,
+       "vMerge": "continue",
+       "text": "",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeMiddle r4c2",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeMiddle r4c3",
+       "paragraphs": 1
+      }
+     ]
+    ]
+   },
+   {
+    "p": "After MergeMiddle."
+   }
+  ],
+  "accepted_body": "<w:p><w:r><w:t>Before MergeMiddle.</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblInd w:w=\"10\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders><w:tblCellMar><w:left w:w=\"10\" w:type=\"dxa\"/><w:right w:w=\"10\" w:type=\"dxa\"/></w:tblCellMar><w:tblLook w:val=\"04A0\" w:firstRow=\"1\" w:lastRow=\"0\" w:firstColumn=\"1\" w:lastColumn=\"0\" w:noHBand=\"0\" w:noVBand=\"1\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/></w:tblGrid><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeMiddle r1c1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeMiddle r1c2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeMiddle r1c3</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/><w:vMerge w:val=\"restart\"/></w:tcPr><w:p><w:r><w:t>MergeMiddle m</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeMiddle r2c2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeMiddle r2c3</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/><w:vMerge/></w:tcPr><w:p/></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeMiddle r4c2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeMiddle r4c3</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After MergeMiddle.</w:t></w:r></w:p>"
+ },
+ "MergeEnd": {
+  "made_by": "written",
+  "deleted_rows": null,
+  "tracked_body": "<w:p><w:r><w:t>Before MergeEnd.</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeEnd r1c1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeEnd r1c2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeEnd r1c3</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/><w:vMerge w:val=\"restart\"/></w:tcPr><w:p><w:r><w:t>MergeEnd m</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeEnd r2c2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeEnd r2c3</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/><w:vMerge/></w:tcPr><w:p></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeEnd r3c2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeEnd r3c3</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:trPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:trPr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/><w:vMerge/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>MergeEnd r4c2</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>MergeEnd r4c3</w:delText></w:r></w:del></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After MergeEnd.</w:t></w:r></w:p>",
+  "accepted": [
+   {
+    "p": "Before MergeEnd."
+   },
+   {
+    "table": [
+     [
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeEnd r1c1",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeEnd r1c2",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeEnd r1c3",
+       "paragraphs": 1
+      }
+     ],
+     [
+      {
+       "span": 1,
+       "vMerge": "restart",
+       "text": "MergeEnd m",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeEnd r2c2",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeEnd r2c3",
+       "paragraphs": 1
+      }
+     ],
+     [
+      {
+       "span": 1,
+       "vMerge": "continue",
+       "text": "",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeEnd r3c2",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeEnd r3c3",
+       "paragraphs": 1
+      }
+     ]
+    ]
+   },
+   {
+    "p": "After MergeEnd."
+   }
+  ],
+  "accepted_body": "<w:p><w:r><w:t>Before MergeEnd.</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblInd w:w=\"10\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders><w:tblCellMar><w:left w:w=\"10\" w:type=\"dxa\"/><w:right w:w=\"10\" w:type=\"dxa\"/></w:tblCellMar><w:tblLook w:val=\"04A0\" w:firstRow=\"1\" w:lastRow=\"0\" w:firstColumn=\"1\" w:lastColumn=\"0\" w:noHBand=\"0\" w:noVBand=\"1\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/></w:tblGrid><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeEnd r1c1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeEnd r1c2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeEnd r1c3</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/><w:vMerge w:val=\"restart\"/></w:tcPr><w:p><w:r><w:t>MergeEnd m</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeEnd r2c2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeEnd r2c3</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/><w:vMerge/></w:tcPr><w:p/></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeEnd r3c2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeEnd r3c3</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After MergeEnd.</w:t></w:r></w:p>"
+ },
+ "MergeStartTwo": {
+  "made_by": "written",
+  "deleted_rows": null,
+  "tracked_body": "<w:p><w:r><w:t>Before MergeStartTwo.</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeStartTwo r1c1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeStartTwo r1c2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeStartTwo r1c3</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:trPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:trPr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/><w:vMerge w:val=\"restart\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>MergeStartTwo m</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>MergeStartTwo r2c2</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>MergeStartTwo r2c3</w:delText></w:r></w:del></w:p></w:tc></w:tr><w:tr><w:trPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:trPr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/><w:vMerge/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>MergeStartTwo r3c2</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>MergeStartTwo r3c3</w:delText></w:r></w:del></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/><w:vMerge/></w:tcPr><w:p></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeStartTwo r4c2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeStartTwo r4c3</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After MergeStartTwo.</w:t></w:r></w:p>",
+  "accepted": [
+   {
+    "p": "Before MergeStartTwo."
+   },
+   {
+    "table": [
+     [
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeStartTwo r1c1",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeStartTwo r1c2",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeStartTwo r1c3",
+       "paragraphs": 1
+      }
+     ],
+     [
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeStartTwo r4c2",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeStartTwo r4c3",
+       "paragraphs": 1
+      }
+     ]
+    ]
+   },
+   {
+    "p": "After MergeStartTwo."
+   }
+  ],
+  "accepted_body": "<w:p><w:r><w:t>Before MergeStartTwo.</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblInd w:w=\"10\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders><w:tblCellMar><w:left w:w=\"10\" w:type=\"dxa\"/><w:right w:w=\"10\" w:type=\"dxa\"/></w:tblCellMar><w:tblLook w:val=\"0000\" w:firstRow=\"0\" w:lastRow=\"0\" w:firstColumn=\"0\" w:lastColumn=\"0\" w:noHBand=\"0\" w:noVBand=\"0\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/></w:tblGrid><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeStartTwo r1c1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeStartTwo r1c2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeStartTwo r1c3</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p/></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeStartTwo r4c2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeStartTwo r4c3</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After MergeStartTwo.</w:t></w:r></w:p>"
+ },
+ "MergeAll": {
+  "made_by": "written",
+  "deleted_rows": null,
+  "tracked_body": "<w:p><w:r><w:t>Before MergeAll.</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeAll r1c1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeAll r1c2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeAll r1c3</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:trPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:trPr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/><w:vMerge w:val=\"restart\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>MergeAll m</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>MergeAll r2c2</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>MergeAll r2c3</w:delText></w:r></w:del></w:p></w:tc></w:tr><w:tr><w:trPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:trPr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/><w:vMerge/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>MergeAll r3c2</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>MergeAll r3c3</w:delText></w:r></w:del></w:p></w:tc></w:tr><w:tr><w:trPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:trPr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/><w:vMerge/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>MergeAll r4c2</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>MergeAll r4c3</w:delText></w:r></w:del></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After MergeAll.</w:t></w:r></w:p>",
+  "accepted": [
+   {
+    "p": "Before MergeAll."
+   },
+   {
+    "table": [
+     [
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeAll r1c1",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeAll r1c2",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeAll r1c3",
+       "paragraphs": 1
+      }
+     ]
+    ]
+   },
+   {
+    "p": "After MergeAll."
+   }
+  ],
+  "accepted_body": "<w:p><w:r><w:t>Before MergeAll.</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblInd w:w=\"10\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders><w:tblCellMar><w:left w:w=\"10\" w:type=\"dxa\"/><w:right w:w=\"10\" w:type=\"dxa\"/></w:tblCellMar><w:tblLook w:val=\"0000\" w:firstRow=\"0\" w:lastRow=\"0\" w:firstColumn=\"0\" w:lastColumn=\"0\" w:noHBand=\"0\" w:noVBand=\"0\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/></w:tblGrid><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeAll r1c1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeAll r1c2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeAll r1c3</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After MergeAll.</w:t></w:r></w:p>"
+ },
+ "MergeAcross": {
+  "made_by": "written",
+  "deleted_rows": null,
+  "tracked_body": "<w:p><w:r><w:t>Before MergeAcross.</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeAcross r1c1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeAcross r1c2</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/><w:vMerge w:val=\"restart\"/></w:tcPr><w:p><w:r><w:t>MergeAcross m</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeAcross r2c2</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:trPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:trPr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>MergeAcross x</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText>MergeAcross r3c2</w:delText></w:r></w:del></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/><w:vMerge/></w:tcPr><w:p></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeAcross r4c2</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After MergeAcross.</w:t></w:r></w:p>",
+  "accepted": [
+   {
+    "p": "Before MergeAcross."
+   },
+   {
+    "table": [
+     [
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeAcross r1c1",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeAcross r1c2",
+       "paragraphs": 1
+      }
+     ],
+     [
+      {
+       "span": 1,
+       "vMerge": "restart",
+       "text": "MergeAcross m",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeAcross r2c2",
+       "paragraphs": 1
+      }
+     ],
+     [
+      {
+       "span": 1,
+       "vMerge": "continue",
+       "text": "",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "MergeAcross r4c2",
+       "paragraphs": 1
+      }
+     ]
+    ]
+   },
+   {
+    "p": "After MergeAcross."
+   }
+  ],
+  "accepted_body": "<w:p><w:r><w:t>Before MergeAcross.</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblInd w:w=\"10\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders><w:tblCellMar><w:left w:w=\"10\" w:type=\"dxa\"/><w:right w:w=\"10\" w:type=\"dxa\"/></w:tblCellMar><w:tblLook w:val=\"0000\" w:firstRow=\"0\" w:lastRow=\"0\" w:firstColumn=\"0\" w:lastColumn=\"0\" w:noHBand=\"0\" w:noVBand=\"0\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/></w:tblGrid><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeAcross r1c1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeAcross r1c2</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/><w:vMerge w:val=\"restart\"/></w:tcPr><w:p><w:r><w:t>MergeAcross m</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeAcross r2c2</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/><w:vMerge/></w:tcPr><w:p/></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>MergeAcross r4c2</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After MergeAcross.</w:t></w:r></w:p>"
+ },
+ "TrackedMergeAcross": {
+  "made_by": "written",
+  "deleted_rows": null,
+  "tracked_body": "<w:p><w:r><w:t>Before TrackedMergeAcross.</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblStyle w:val=\"TableGrid\"/><w:tblW w:w=\"0\" w:type=\"auto\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/></w:tblGrid>\n<w:tr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/><w:cellMerge w:author=\"{author}\" w:date=\"{date}\" w:vMerge=\"rest\"/></w:tcPr><w:p><w:pPr><w:rPr><w:ins w:author=\"{author}\" w:date=\"{date}\"/></w:rPr></w:pPr><w:r><w:t xml:space=\"preserve\">Region</w:t></w:r></w:p><w:p><w:ins w:author=\"{author}\" w:date=\"{date}\"><w:r><w:t xml:space=\"preserve\">South</w:t></w:r></w:ins></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t xml:space=\"preserve\">Sales</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t xml:space=\"preserve\">Cost</w:t></w:r></w:p></w:tc></w:tr>\n<w:tr><w:trPr><w:del w:author=\"{author}\" w:date=\"{date}\"/></w:trPr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t xml:space=\"preserve\">North</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t xml:space=\"preserve\">10</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t xml:space=\"preserve\">4</w:t></w:r></w:p></w:tc></w:tr>\n<w:tr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/><w:cellMerge w:author=\"{author}\" w:date=\"{date}\" w:vMerge=\"cont\"/></w:tcPr><w:p><w:del w:author=\"{author}\" w:date=\"{date}\"><w:r><w:delText xml:space=\"preserve\">South</w:delText></w:r></w:del></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t xml:space=\"preserve\">20</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t xml:space=\"preserve\">8</w:t></w:r></w:p></w:tc></w:tr>\n<w:tr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t xml:space=\"preserve\">East</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t xml:space=\"preserve\">30</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t xml:space=\"preserve\">9</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After TrackedMergeAcross.</w:t></w:r></w:p>",
+  "accepted": [
+   {
+    "p": "Before TrackedMergeAcross."
+   },
+   {
+    "table": [
+     [
+      {
+       "span": 1,
+       "vMerge": "restart",
+       "text": "RegionSouth",
+       "paragraphs": 2
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "Sales",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "Cost",
+       "paragraphs": 1
+      }
+     ],
+     [
+      {
+       "span": 1,
+       "vMerge": "continue",
+       "text": "",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "20",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "8",
+       "paragraphs": 1
+      }
+     ],
+     [
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "East",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "30",
+       "paragraphs": 1
+      },
+      {
+       "span": 1,
+       "vMerge": null,
+       "text": "9",
+       "paragraphs": 1
+      }
+     ]
+    ]
+   },
+   {
+    "p": "After TrackedMergeAcross."
+   }
+  ],
+  "accepted_body": "<w:p><w:r><w:t>Before TrackedMergeAcross.</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblInd w:w=\"10\" w:type=\"dxa\"/><w:tblCellMar><w:left w:w=\"10\" w:type=\"dxa\"/><w:right w:w=\"10\" w:type=\"dxa\"/></w:tblCellMar><w:tblLook w:val=\"04A0\" w:firstRow=\"1\" w:lastRow=\"0\" w:firstColumn=\"1\" w:lastColumn=\"0\" w:noHBand=\"0\" w:noVBand=\"1\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/><w:vMerge w:val=\"restart\"/></w:tcPr><w:p><w:r><w:t>Region</w:t></w:r></w:p><w:p><w:r><w:t>South</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>Sales</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>Cost</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/><w:vMerge/></w:tcPr><w:p/></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>20</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>8</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tblPrEx><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPrEx><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>East</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>30</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>9</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After TrackedMergeAcross.</w:t></w:r></w:p>"
+ }
+}
