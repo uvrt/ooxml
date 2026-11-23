@@ -88,6 +88,8 @@ pub const CHECK_NOT_OWNED: &str = "check: a document the session does not own";
 pub const CHECK_NO_LAYOUT: &str = "check: no layout";
 /// The form refused of a `reflow` of a version the host's engine does not lay out.
 pub const CHECK_NOT_LAID_OUT: &str = "check: the layout falls back";
+/// The form refused of a check of a version the engine does not lay out because of a note.
+pub const CHECK_UNLAID_NOTE: &str = "check: a footnote or endnote the layout cannot lay out";
 
 /// `check` of a Word document at one version.
 ///
@@ -235,6 +237,7 @@ fn with_layout(
     let started = Instant::now();
     let laid = match laid {
         Ok(laid) => laid,
+        Err(NotLaid::Other(why)) if crate::pages::unlaid_note(&why) => return Ok(Some(CHECK_UNLAID_NOTE)),
         Err(NotLaid::Other(_)) => return Ok(Some(CHECK_NOT_LAID_OUT)),
         Err(NotLaid::Stopped) => {
             // The call's own stop ends it; the layout's limit passed is said, and the

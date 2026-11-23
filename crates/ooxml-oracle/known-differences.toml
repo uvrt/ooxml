@@ -316,11 +316,11 @@ form = "edit_chart*"
 cause = "edit_chart's forms not ported (chart chain leftovers, values from tables; deferred, objects O)"
 
 [[not_supported]]
-form = "*a document whose defaults name no language (the session's locale decides)"
-cause = """the chart forms that make new text in a document whose defaults name no language: \
-set_point_labels, set_text_style, show_data_labels, a new title, add (docx-agent's session locale \
-decides the language; lane CUT-B ports them on the cut2 stack before the release and removes \
-this entry)"""
+form = "*a footnote or endnote the layout cannot lay out"
+cause = """check, render, the live view and word_inspect layout of a version the Word layout does not \
+lay out because of a note (a frame, a text box, a drawing text wraps beside or a STYLEREF field \
+in a footnote or endnote): docx-agent laid such a version out in Python (lane CL1; refused at \
+release, ported after)"""
 
 [[not_supported]]
 form = "copy_from *"

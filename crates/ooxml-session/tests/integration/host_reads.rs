@@ -134,6 +134,26 @@ fn an_id_s_top_level_block_and_a_span_s_blocks() {
     assert!(matches!(of("p:0A0000FF"), Err(BlockRefused::NotFound(_))));
     assert!(matches!(of("$intro"), Err(BlockRefused::Refused(_))));
     assert!(matches!(of("p:0A000001..p:0A000002"), Err(BlockRefused::Refused(_))));
+    assert_eq!(
+        of("p:0A000002/r0"),
+        Ok(Some("p:0A000002".to_owned())),
+        "a run: its paragraph's block"
+    );
+    assert!(
+        matches!(of("t:0A000003/c9,9"), Err(BlockRefused::NotFound(_))),
+        "a cell off the table"
+    );
     let between = version.blocks_between("p:0A000002", "p:0A000004").unwrap();
     assert_eq!(between, Ok(vec!["p:0A000002".to_owned(), "t:0A000003".to_owned()]));
+}
+
+#[test]
+fn a_paragraph_in_a_block_level_control_gives_the_control() {
+    let s = session();
+    let d = s.open(docx(OWN), DocKind::Docx, "a.docx").unwrap();
+    let version = s.snapshot(&d).unwrap();
+    assert_eq!(version.block_of("p:0A000006").unwrap(), Ok(Some("cc:7".to_owned())));
+    assert_eq!(version.block_of("cc:7").unwrap(), Ok(Some("cc:7".to_owned())));
+    let between = version.blocks_between("p:0A000001", "p:0A000005").unwrap().unwrap();
+    assert_eq!(between, ["p:0A000001", "t:0A000003", "cc:7", "p:0A000005"]);
 }
