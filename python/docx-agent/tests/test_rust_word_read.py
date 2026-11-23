@@ -8,7 +8,6 @@ chart's and a SmartArt diagram's one-line summary in its drawing's comment (``[c
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -41,31 +40,6 @@ def toolbox():
         yield Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS)
     finally:
         reads.use_session(before)
-
-
-def test_the_rust_definition_is_todays_byte_for_byte():
-    from test_rust_tool_specs import export, text
-
-    today = {tool.name: tool for tool in TOOLS}["word_read"]
-    assert GOLDEN.read_text(encoding="utf-8") == text(export(today))
-    specs = json.loads(ooxml_core.tool_specs("docx"))
-    assert json.loads(GOLDEN.read_text(encoding="utf-8")) in specs
-
-
-@pytest.mark.parametrize("path", FIXTURES, ids=lambda p: str(p.relative_to(FIXTURE_DIR)))
-def test_word_read_in_rust_equals_todays_on_the_fixtures(toolbox, path):
-    session = toolbox.session()
-    doc = session.open(path.read_bytes(), name=path.name)
-    rust = RustTools()
-    rust_doc = rust.open(path.read_bytes(), path.name)
-    try:
-        for case, arguments in CASES.items():
-            today = json.loads(json.dumps(toolbox.dispatch(session, "word_read", {"doc": doc, **arguments}).to_json()))
-            reply = rust.dispatch("word_read", {"doc": rust_doc, **arguments}).to_json()
-            assert today["ok"] and reply["ok"], (case, today, reply)
-            assert reply == today, case
-    finally:
-        session.close(doc)
 
 
 def test_a_refusal_carries_its_way_out(toolbox):

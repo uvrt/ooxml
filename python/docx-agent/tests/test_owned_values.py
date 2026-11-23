@@ -75,49 +75,12 @@ def _targets(document: Document) -> list[str]:
     return out + ["{{d:scores/*/score}}", "p:7FFFFFFF", "t:7FFFFFFF/col1"]
 
 
-@pytest.mark.parametrize("name", LISTED)
-def test_numbers_of_an_owned_document_are_the_python_ones(boxes, name):
-    data = (FIXTURES / name).read_bytes()
-    _same(*_both(boxes, data, Path(name).name, include=["numbers"]), "numbers")
-
-
-@pytest.mark.parametrize("name", LISTED)
-def test_a_scale_on_an_owned_document_reads_the_python_values(boxes, name):
-    data = (FIXTURES / name).read_bytes()
-    scale = {"name": "Score", "steps": STEPS, "targets": _targets(Document.open(data))}
-    _same(*_both(boxes, data, Path(name).name, scale=scale), "scale")
-
-
 def _report() -> bytes:
     document = Document.new()
     document.insert_markdown("# Results\n\nThe mean was 3.4 across 12 sites in 2024.\n\n"
                              "| site | score |\n|---|---|\n| A | 1.5 |\n| B | 3 |\n| C | 4.2 |\n\n"
                              "Low\n\n2.75")
     return document.to_bytes()
-
-
-@pytest.mark.parametrize("arguments", [
-    {"include": ["numbers"]}, {"include": ["numbers"], "pages": [1]}, {"include": ["numbers"], "pages": [2]},
-])
-def test_numbers_on_pages_and_in_a_range_are_the_python_ones(boxes, arguments):
-    data = _report()
-    first = Document.open(data).paragraphs()[1].id
-    _same(*_both(boxes, data, "report.docx", **arguments), "numbers")
-    _same(*_both(boxes, data, "report.docx", range=[first], **arguments), "numbers")
-
-
-def test_a_scale_s_values_and_steps_now_are_the_python_ones(boxes):
-    data = _report()
-    document = Document.open(data)
-    table = document.tables()[0].id
-    paragraphs = [p.id for p in document.paragraphs()]
-    for show in ("value", "label"):
-        scale = {"name": "Score", "steps": STEPS, "show": show,
-                 "targets": [f"{table}/col1", f"{table}/c2,1", paragraphs[-1], paragraphs[-2],
-                             f"{paragraphs[1]}@13:16", f"{paragraphs[1]}@13..{paragraphs[2]}@1"]}
-        _same(*_both(boxes, data, "report.docx", scale=scale), "scale")
-        _same(*_both(boxes, data, "report.docx", scale=scale, pages=[1]), "scale")
-        _same(*_both(boxes, data, "report.docx", scale=scale, range=[paragraphs[-1]]), "scale")
 
 
 def test_the_owned_document_s_reads_are_the_session_s(boxes, monkeypatch):

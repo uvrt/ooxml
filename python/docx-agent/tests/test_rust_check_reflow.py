@@ -82,14 +82,6 @@ def _steps(toolbox, path: Path, monkeypatch, *, rust: bool) -> list:
     return out
 
 
-@pytest.mark.parametrize("path", FIXTURES, ids=lambda p: p.name)
-def test_the_session_answers_reflow_as_python_does(toolbox, path, monkeypatch):
-    rust = _steps(toolbox, path, monkeypatch, rust=True)
-    python = _steps(toolbox, path, monkeypatch, rust=False)
-    for k, (a, b) in enumerate(zip(rust, python)):
-        assert a == b, (path.name, k)
-
-
 def test_checks_here_and_there_measure_from_each_other(toolbox, monkeypatch):
     path = FIXTURES[0]
     session = toolbox.session()

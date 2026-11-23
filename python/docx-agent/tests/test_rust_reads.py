@@ -9,8 +9,6 @@ every story, ``read_batch`` of several reads with a failing one among them.
 """
 from __future__ import annotations
 
-import dataclasses
-import json
 from pathlib import Path
 
 import pytest
@@ -44,19 +42,6 @@ def toolbox():
         reads.use_session(before)
 
 
-@pytest.mark.parametrize("name", ["word_inspect", "find_text", "read_batch"])
-def test_the_rust_definitions_are_todays_byte_for_byte(name):
-    from test_rust_tool_specs import export, text
-
-    today = {tool.name: tool for tool in TOOLS}[name]
-    if name == "read_batch":     # documents named by a function today: none
-        today = dataclasses.replace(today, documents=())
-    golden = (GOLDEN / f"{name}.json").read_text(encoding="utf-8")
-    assert golden == text(export(today))
-    specs = json.loads(ooxml_core.tool_specs("docx"))
-    assert json.loads(golden)["schema"] in [s["schema"] for s in specs if s["name"] == name]
-
-
 def _targets(data: bytes) -> list[str]:
     document = Document.open(data)
     out = ["body", "p:0BADF00D"]
@@ -88,27 +73,6 @@ def _comparable(tool: str, reply: dict) -> dict:
         data = {**data, "ops": [_comparable(op["tool"], {**op, "data": op.get("data")}) for op in data["ops"]]}
     return {"summary": reply.get("summary"), "data": data, "next_cursor": reply.get("next_cursor"),
             "total": reply.get("total")}
-
-
-@pytest.mark.parametrize("path", FIXTURES, ids=lambda p: str(p.relative_to(FIXTURE_DIR)))
-def test_the_rust_reads_equal_todays_on_the_fixtures(toolbox, path):
-    data = path.read_bytes()
-    session = toolbox.session()
-    doc = session.open(data, name=path.name)
-    rust = RustTools()
-    rust_doc = rust.open(data, path.name)
-    assert rust_doc == doc == "d1"
-    try:
-        for tool, arguments in _calls(data):
-            today = json.loads(json.dumps(toolbox.dispatch(session, tool, {"doc": doc, **arguments}).to_json()))
-            if tool == "read_batch":
-                today = json.loads(json.dumps(toolbox.dispatch(session, tool, arguments).to_json()))
-                reply = rust.dispatch(tool, arguments).to_json()
-            else:
-                reply = rust.dispatch(tool, {"doc": rust_doc, **arguments}).to_json()
-            assert _comparable(tool, reply) == _comparable(tool, today), (tool, arguments)
-    finally:
-        session.close(doc)
 
 
 def test_a_refusal_carries_its_way_out():

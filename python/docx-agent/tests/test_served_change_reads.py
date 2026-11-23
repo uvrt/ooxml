@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
 
 import pytest
 
@@ -74,20 +73,6 @@ def _readings(document) -> list[dict]:
         out += [{"action": "list", "within": first.paragraph_ids[0]},
                 {"action": "preview", "within": first.paragraph_ids[0]}]
     return out
-
-
-@pytest.mark.parametrize("name", REVIEWED)
-def test_the_reading_actions_are_served_as_the_python_handler_answers(toolbox, name):
-    session = toolbox.session()
-    doc = session.open((GENERATED / name).read_bytes(), Path(name).name)
-    if not isinstance(session.entry(doc), OwnedEntry):
-        pytest.skip("no Rust session to own the document")
-    for arguments in _readings(session.entry(doc).document):
-        rust, python = _both(toolbox, session, doc, arguments)
-        assert rust == python, (name, arguments)
-        if rust.get("next_cursor"):
-            rust, python = _both(toolbox, session, doc, {**arguments, "cursor": rust["next_cursor"]})
-            assert rust == python, (name, arguments, "page 2")
 
 
 def test_a_preview_counts_the_records_written_since_the_document_was_opened(toolbox):

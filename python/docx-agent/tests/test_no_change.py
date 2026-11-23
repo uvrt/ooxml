@@ -6,8 +6,6 @@ half: ``test_e5_units.py``.)  Made-up documents, Document.new()'s package."""
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 
 import pytest
 from ooxml_edit.tools import Toolbox
@@ -16,9 +14,8 @@ from test_tools_layout_facts import docx, ok, p
 from docx_agent import Document
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 
-import e5_probe  # noqa: E402
+from probe_package import picture_document  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -84,7 +81,7 @@ def test_unlink_a_header_of_its_own_already(box, session):
 
 
 def test_word_drawings_inline_and_float_what_is_so_already(box, session):
-    d = session.open(e5_probe.drawings_document(), "drawings.docx")
+    d = session.open(picture_document(), "drawings.docx")
     document = session.entry(d).document
     picture = document.pictures()[0].id
     result = ok(box, session, "word_drawings", doc=d, action="inline", target=picture)

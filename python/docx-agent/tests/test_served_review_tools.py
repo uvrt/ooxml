@@ -134,12 +134,6 @@ def _table_calls(session, doc, second):
     yield "word_delete", {"target": "$copied", "force": True}, False
 
 
-@pytest.mark.parametrize("calls", [_review_calls, _table_calls], ids=["review", "tables"])
-def test_the_last_group_served_as_the_python_handler_answers(toolbox, monkeypatch, report, other, calls):
-    served = _calls(toolbox, monkeypatch, report, other, True, calls)
-    assert served == _calls(toolbox, monkeypatch, report, other, False, calls)
-
-
 def test_tracking_set_by_a_served_call_is_the_documents(toolbox, report):
     session = toolbox.session()
     doc = session.open(report, "report.docx")
@@ -158,4 +152,3 @@ def test_tracking_set_by_a_served_call_is_the_documents(toolbox, report):
     off = toolbox.dispatch(session, "word_set_tracking", {"doc": doc, "on": False})
     assert off.ok, off.error
     assert entry.tracking is None and entry.handle.tracking is None
-

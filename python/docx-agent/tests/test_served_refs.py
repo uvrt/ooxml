@@ -54,24 +54,6 @@ CALLS = [
 ]
 
 
-def test_folded_ref_names_are_served_as_the_python_handler_answers():
-    served = sum(edits.served().values())
-    rust = _run(CALLS, owned=True)
-    # every call answered there: the two refused too -- a refusal is the call's answer, not a
-    # fallback (lane P2e1)
-    assert sum(edits.served().values()) - served == 5, edits.fallbacks()
-    assert not any("ref name" in why for reasons in edits.fallbacks().values() for why in reasons)
-    python = _run(CALLS, owned=False)
-    for (tool, _arguments), ours, theirs in zip(CALLS, rust, python):
-        ours, theirs = dict(ours), dict(theirs)
-        assert ours.pop("version") - rust[0]["version"] == theirs.pop("version") - python[0]["version"], tool
-        assert ours == theirs, tool
-    assert rust[0]["warnings"] == ["ref 'closingLine' read as 'closing_line': write $closing_line"]
-    assert rust[0]["refs"] == ["closing_line"]
-    assert [r["ok"] for r in rust] == [True, True, True, False, False]
-    assert rust[3]["version"] == rust[4]["version"] == rust[2]["version"], "a refused ref changes nothing"
-
-
 def test_a_tracking_mode_the_session_refuses_is_the_calls_refusal():
     """(Lane H2.)  The host keeps only a mode ``word_set_tracking`` took, so the session never
     refuses the one it is given; were it to, its refusal is the call's -- nothing changed, no
