@@ -42,8 +42,10 @@ use ooxml_word_layout::facts::LineFact;
 use ooxml_word_layout::px::Px;
 use ooxml_word_model::docx::formatting::{EffectiveParagraph, Formatting};
 use ooxml_word_model::docx::Docx;
+use ooxml_word_model::model::Table;
+use ooxml_word_model::resolve::{resolve_table, ResolvedTable};
 use ooxml_xml::Element;
-use std::cell::OnceCell;
+use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 pub(crate) use tree::block_keys_top;
@@ -59,6 +61,11 @@ pub trait PageReads {
     /// The 0-based page `page`'s entry: its lines' text and boxes, and its facts'
     /// contributions (`None`: the page is not painted).
     fn page_read(&self, page: usize) -> Option<Arc<PageEntry>>;
+
+    /// A table of the version's layout model resolved as the layout resolved it, from the
+    /// engine's block tier (`PageEngine::resolved_table`); `None` where the engine no
+    /// longer has it (the facts resolve it themselves, the same way).
+    fn resolved_table(&self, table: &Table) -> Option<Arc<ResolvedTable>>;
 }
 
 /// One body line where it is drawn: its 1-based page and the line.
@@ -88,6 +95,8 @@ pub struct Facts<'a> {
     positions: HashMap<String, usize>,
     reads: &'a dyn PageReads,
     painted: Vec<OnceCell<Option<Arc<PageEntry>>>>,
+    /// Each table of the layout model resolved, by its address, when first asked.
+    resolved: RefCell<HashMap<usize, Arc<ResolvedTable>>>,
     /// The layout model's tables (nested ones too) by path, made when first asked.
     model_tables: OnceCell<HashMap<&'a str, &'a Arc<ooxml_word_model::model::Table>>>,
     /// What `range` scopes the facts to (`None`: the whole document).
@@ -156,6 +165,7 @@ impl<'a> Facts<'a> {
             positions,
             reads,
             painted: (0..facts.pages.len()).map(|_| OnceCell::new()).collect(),
+            resolved: RefCell::new(HashMap::new()),
             model_tables: OnceCell::new(),
             scope: None,
         }
@@ -191,6 +201,21 @@ impl<'a> Facts<'a> {
             out
         });
         index.get(path).copied()
+    }
+
+    /// `table` (of the version's layout model) resolved as the layout resolved it: from the
+    /// engine's block tier, once per check.
+    pub(crate) fn resolved_table(&self, table: &Arc<Table>) -> Arc<ResolvedTable> {
+        let key = Arc::as_ptr(table) as usize;
+        if let Some(found) = self.resolved.borrow().get(&key) {
+            return Arc::clone(found);
+        }
+        let made = self
+            .reads
+            .resolved_table(table)
+            .unwrap_or_else(|| Arc::new(resolve_table(&tables::sources(self), table)));
+        self.resolved.borrow_mut().insert(key, Arc::clone(&made));
+        made
     }
 
     /// The version.

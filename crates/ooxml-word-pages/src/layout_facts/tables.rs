@@ -12,7 +12,7 @@ use ooxml_word_model::docx::cells::PartCells;
 use ooxml_word_model::docx::text::{shown_runs, View};
 use ooxml_word_model::docx::{at_path, StoryPart};
 use ooxml_word_model::model::{Block, Table};
-use ooxml_word_model::resolve::{resolve_table, Sources};
+use ooxml_word_model::resolve::Sources;
 use ooxml_word_model::value::Value;
 use ooxml_xml::Element;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -295,7 +295,7 @@ pub fn header_look(
         reasons.push("bold");
     }
     if let Some(table) = table.filter(|t| t.rows.len() > 1) {
-        let resolved = resolve_table(&src, table);
+        let resolved = facts.resolved_table(table);
         let fills: Vec<Vec<Option<String>>> = resolved
             .rows
             .iter()

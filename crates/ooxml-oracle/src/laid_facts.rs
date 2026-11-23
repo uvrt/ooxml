@@ -35,6 +35,16 @@ impl PageReads for Painted<'_> {
         let mut engine = self.engine.lock().unwrap_or_else(PoisonError::into_inner);
         engine.page_read(&self.version, page)
     }
+
+    fn resolved_table(
+        &self,
+        table: &ooxml_word_model::model::Table,
+    ) -> Option<Arc<ooxml_word_model::resolve::ResolvedTable>> {
+        self.engine
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .resolved_table(&self.version, table)
+    }
 }
 
 /// The layout facts of `package` laid out with `fonts`, `min_size` the minimum text size,
