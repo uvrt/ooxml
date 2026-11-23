@@ -1,8 +1,7 @@
-"""Lane P2e1: a refusal is not a fallback.  A served tool the Rust session refuses answers
-with that refusal -- docx-agent's code, message and field, with Rust's way out
-(``valid_options``, ``try_call``) -- never handed to the Python handler for its wording; an
-id a change removed is refused as docx-agent's view refuses it (which change removed it, and
-the way on), worded by the session from its retired-id record.  Made-up documents only."""
+"""Lane P2e1: a served tool the Rust session refuses answers with that refusal -- its code,
+message and field, with its way out (``valid_options``, ``try_call``); an id a change removed
+is refused naming which change removed it, and the way on, worded by the session from its
+retired-id record.  Made-up documents only."""
 
 from __future__ import annotations
 
@@ -11,12 +10,11 @@ import pickle
 
 import pytest
 
-from docx_agent import Document
 from docx_agent.rust import edits, reads
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from ooxml_edit.tools import Toolbox, ToolError
-from ooxml_edit.tools.owned import OwnedEntry
-from python_handler import python_session
+
+import word_docs
 
 CLOCK = lambda: dt.datetime(2026, 11, 20, 9, 0, tzinfo=dt.timezone.utc)  # noqa: E731
 GONE = "p:0BADF00D"
@@ -28,27 +26,31 @@ def toolbox():
         yield box
 
 
+def _markdown_document(markdown: str) -> bytes:
+    """A blank document with ``markdown`` inserted by the toolbox, as bytes."""
+    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as box:
+        session = box.session()
+        doc = session.open(word_docs.blank(), "made.docx")
+        word_docs.call(box, session, "word_insert_markdown", doc=doc, at="end", markdown=markdown)
+        return word_docs.saved(session, doc)
+
+
 @pytest.fixture(scope="module")
 def report() -> bytes:
-    doc = Document.new()
-    doc.insert_markdown("# A made-up report\n\nLantern meadow by the harbour.\n\nRiver stone, river stone.\n\n"
-                        "| Crop | Yield |\n| --- | --- |\n| Oats | 4 |\n\nThe last line.")
-    return doc.to_bytes()
+    return _markdown_document("# A made-up report\n\nLantern meadow by the harbour.\n\nRiver stone, river stone.\n\n"
+                              "| Crop | Yield |\n| --- | --- |\n| Oats | 4 |\n\nThe last line.")
 
 
-def _open(toolbox, data: bytes, served: bool):
-    """A session that serves, or one the Python handler answers (the Rust session off)."""
-    if not served:
-        return python_session(toolbox, data, "report.docx", clock=CLOCK)
+def _open(toolbox, data: bytes):
     session = toolbox.session(clock=CLOCK)
-    doc = session.open(data, "report.docx")
-    if served and not isinstance(session.entry(doc), OwnedEntry):
-        pytest.skip("no Rust session to own the document")
-    return session, doc
+    return session, session.open(data, "report.docx")
 
 
-def _ids(session, doc) -> dict[str, str]:
-    return {p.text: p.id for p in session.entry(doc).document.paragraphs()}
+def _ids(toolbox, session, doc) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for block, text in word_docs.paragraphs(session, doc):
+        out.setdefault(text, block)
+    return out
 
 
 def _refusing(ids: dict[str, str]) -> list[tuple[str, dict]]:
@@ -78,61 +80,43 @@ def _reply(result) -> dict:
 
 
 def test_refusals_are_the_sessions_answer(toolbox, report):
-    """Each refusal served by the session (counted served, no fallback) says what the Python
-    handler says: code, message and field."""
-    session, doc = _open(toolbox, report, served=False)
-    python = {}
-    for tool, arguments in _refusing(_ids(session, doc)):
-        result = toolbox.dispatch(session, tool, {"doc": doc, **arguments})
-        if result.ok:
-            continue
-        python[(tool, repr(arguments))] = _reply(result)
-    assert len(python) == len(_refusing(_ids(session, doc))), python
-    session, doc = _open(toolbox, report, served=True)
-    differ = {}
-    for tool, arguments in _refusing(_ids(session, doc)):
-        if (tool, repr(arguments)) not in python:
-            continue
-        before, fell = dict(edits.served()), edits.fallbacks()
+    """Each refusal answered by the session itself (its handler runs and refuses), with its
+    code and message."""
+    session, doc = _open(toolbox, report)
+    for tool, arguments in _refusing(_ids(toolbox, session, doc)):
+        before = edits.served().get(tool, 0)
         result = toolbox.dispatch(session, tool, {"doc": doc, **arguments})
         assert not result.ok, (tool, arguments)
-        assert edits.served().get(tool, 0) == before.get(tool, 0) + 1, (tool, edits.fallbacks(), fell)
-        if _reply(result) != python[(tool, repr(arguments))]:
-            differ[tool, repr(arguments)] = (_reply(result), python[(tool, repr(arguments))])
-    assert not differ, differ
+        assert result.error.code and result.error.message, (tool, arguments, result.to_json())
+        assert edits.served().get(tool, 0) == before + 1, (tool, arguments)
 
 
 def test_a_refusal_carries_its_way_out(toolbox, report):
     """The session's way out reaches the reply: the call that would work (tool rule 2)."""
-    session, doc = _open(toolbox, report, served=True)
+    session, doc = _open(toolbox, report)
     result = toolbox.dispatch(session, "word_set_text", {"doc": doc, "target": GONE, "text": "x"})
     error = result.to_json()["error"]
     assert error["code"] == "not_found" and error["try_call"]["tool"], error
 
 
 def test_a_deleted_id_names_the_change(toolbox, report):
-    """An id a served call deleted is refused as docx-agent's view refuses it: which change
-    removed it, and the way on -- served, from the session's record."""
-    replies = []
-    for served in (True, False):
-        session, doc = _open(toolbox, report, served=served)
-        target = _ids(session, doc)["Lantern meadow by the harbour."]
-        assert toolbox.dispatch(session, "word_delete", {"doc": doc, "target": target}).ok
-        before = dict(edits.served())
-        result = toolbox.dispatch(session, "word_set_text", {"doc": doc, "target": target, "text": "x"})
-        assert edits.served().get("word_set_text", 0) == before.get("word_set_text", 0) + served
-        replies.append(_reply(result))
-        assert f"{target} was deleted by word_delete" in result.error.message, result.error.message
-    assert replies[0] == replies[1]
+    """An id a served call deleted is refused as docx-agent's view refused it: which change
+    removed it, and the way on -- from the session's record."""
+    session, doc = _open(toolbox, report)
+    target = _ids(toolbox, session, doc)["Lantern meadow by the harbour."]
+    assert toolbox.dispatch(session, "word_delete", {"doc": doc, "target": target}).ok
+    result = toolbox.dispatch(session, "word_set_text", {"doc": doc, "target": target, "text": "x"})
+    assert not result.ok and result.error.code == "not_found", result.to_json()
+    assert f"{target} was deleted by word_delete" in result.error.message, result.error.message
 
 
 def test_a_read_refusal_is_the_sessions_answer(toolbox, report):
-    """A read the session serves answers its refusal too (no Python fallback)."""
-    session, doc = _open(toolbox, report, served=True)
-    before = reads.fallbacks()
+    """A read the session serves answers its refusal too."""
+    session, doc = _open(toolbox, report)
+    before = reads.served().get("find_text", 0)
     result = toolbox.dispatch(session, "find_text", {"doc": doc, "text": "meadow", "range": GONE})
     assert not result.ok and result.error.code == "not_found", result.to_json()
-    assert reads.fallbacks() == before
+    assert reads.served().get("find_text", 0) == before + 1
 
 
 def test_try_call_pickles_and_serialises():
