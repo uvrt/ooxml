@@ -14,10 +14,6 @@ GOLDEN_CORE = "test_tools_goldens.py::test_a_golden_transcript_replays_to_the_sa
 
 #: The reason each test fails yet, by ``file::name[params]``.
 GAPS: dict[str, str] = {
-    "test_tools_word.py::test_checks_report_the_reflow_once_the_document_was_laid_out":
-        f"rust gap: an edit's checks after describe report no reflow (describe makes no page engine) ({CUT6})",
-    "test_tools_word.py::test_a_long_document_reports_stale_reflow_beyond_twenty_pages":
-        f"rust gap: an edit's checks after describe report no reflow (describe makes no page engine) ({CUT6})",
     "test_tools_word.py::test_a_check_lays_out_with_the_lock_let_go":
         f"rust gap: an edit made while a check lays out waits for the check ({CUT6})",
     "test_tools_word.py::test_new_document_from_a_template_blob_and_save_formats": TEMPLATE,
