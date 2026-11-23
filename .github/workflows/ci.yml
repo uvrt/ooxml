@@ -11,7 +11,9 @@ name: CI
 #   pull request, push to main:  Linux 3.15; Windows 3.15 only for the packages with code
 #                                of their own there (tools/ci.py, windows_smoke); no macOS;
 #   nightly, manual run:         Linux every Python from the package's minimum,
-#                                Windows 3.15, macOS 3.15, every package.
+#                                Windows 3.15 (not docx-agent: production is Linux only),
+#                                macOS 3.15, every package.
+# A failed nightly run opens an issue, or comments on the one still open (nightly-issue).
 # A package with `shards` (tools/ci.py: docx-agent) runs its suite on Linux as that many
 # jobs, split by test file on the recorded durations (tools/ci_durations.json).
 #
@@ -144,3 +146,30 @@ jobs:
         run: |
           echo "plan, test (windows): $RESULTS"
           for r in $RESULTS; do case "$r" in success|skipped) ;; *) exit 1 ;; esac; done
+
+  # A nightly run that fails opens an issue (or comments on the one still open), so the
+  # failure has an owner the next morning (R4 #8). GITHUB_TOKEN only, no other secret.
+  nightly-issue:
+    name: nightly failure issue
+    needs: [plan, test-ubuntu, test-windows, test-macos, build]
+    if: always() && github.event_name == 'schedule' && contains(needs.*.result, 'failure')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the nightly failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RESULTS: "plan ${{ needs.plan.result }}, test (ubuntu) ${{ needs.test-ubuntu.result }}, test (windows) ${{ needs.test-windows.result }}, test (macos) ${{ needs.test-macos.result }}, build ${{ needs.build.result }}"
+        run: |
+          title="Nightly CI failed"
+          body="The nightly run of ${GITHUB_SHA::8} failed: $RUN"$'\n\n'"$RESULTS"$'\n\n'"Triage within a day: fix it, or name the owner here."
+          open=$(gh issue list --state open --search "in:title \"$title\"" --json number,title \
+                 --jq "map(select(.title == \"$title\"))[0].number // empty")
+          if [ -n "$open" ]; then
+            gh issue comment "$open" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi
