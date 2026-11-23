@@ -84,7 +84,7 @@ pub fn empty_paragraphs(doc: &WordDoc) -> Result<Vec<EmptyRun>> {
     let mut reading = Reading {
         part: body,
         formatting: &formatting,
-        cells: PartCells::new(&formatting, body.root()),
+        cells: PartCells::of(&formatting, body),
     };
     let mut found = Vec::new();
     let root = body.root();

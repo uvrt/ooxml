@@ -127,6 +127,9 @@ type ParagraphKey = (Option<String>, Option<Cell>, Digest);
 /// What formatting resolves against, read once for a version, with its memos.
 pub struct Formatting {
     context: Context,
+    /// The theme's, settings', styles' and numbering's root elements it was read from
+    /// (what a reading of a table with it is kept by).
+    roots: [Option<Arc<Element>>; 4],
     runs: Mutex<HashMap<RunKey, Arc<Props>>>,
     paragraphs: Mutex<HashMap<ParagraphKey, Arc<Props>>>,
 }
@@ -155,11 +158,18 @@ impl Formatting {
         let settings = related_tree(docx, "settings");
         let styles = related_tree(docx, "styles");
         let numbering = related_tree(docx, "numbering");
+        let roots = [&theme, &settings, &styles, &numbering].map(|t| t.as_ref().map(|t| Arc::clone(t.root())));
         Formatting {
             context: crate::read_context(theme.as_ref(), settings.as_ref(), styles.as_ref(), numbering.as_ref()),
+            roots,
             runs: Mutex::new(HashMap::new()),
             paragraphs: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The theme's, settings', styles' and numbering's root elements it was read from.
+    pub(crate) fn roots(&self) -> &[Option<Arc<Element>>; 4] {
+        &self.roots
     }
 
     /// What blocks resolve against (styles, numbering, settings, theme).

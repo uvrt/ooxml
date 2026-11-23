@@ -7,7 +7,7 @@
 //!
 //! Must not: word an entry (the tool layer does) or cap a list.
 
-use super::tables::{model_table, sources};
+use super::tables::sources;
 use super::tree::{self, cell_line, is_w, W};
 use super::{points, round, Facts};
 use ooxml_word_model::resolve::resolve_table;
@@ -309,7 +309,7 @@ fn int(value: Option<&str>) -> Option<i64> {
 /// Each cell's left and right margins, pt, as the layout model resolves the table at
 /// `path` (`_cell_margins`), by `(row, cell)`.
 fn cell_margins(facts: &Facts<'_>, path: &str) -> HashMap<(usize, usize), (f64, f64)> {
-    let Some(table) = model_table(&facts.version().layout().document.body, path) else {
+    let Some(table) = facts.model_table(path) else {
         return HashMap::new();
     };
     let resolved = resolve_table(&sources(facts), table);

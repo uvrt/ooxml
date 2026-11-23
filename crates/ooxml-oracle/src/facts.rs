@@ -62,12 +62,7 @@ fn open(file: &str) -> Result<WordDoc, String> {
 
 fn entries(doc: &WordDoc, opened: &WordDoc, fact: &str) -> Result<Option<Value>, EditError> {
     let language = |whole: bool, ranges: bool| -> Result<Value, EditError> {
-        let scope = LanguageScope {
-            keep: None,
-            whole,
-            ranges,
-            locale: None,
-        };
+        let scope = LanguageScope::new(whole, ranges);
         Ok(facts::text_language(doc, scope)?.map_or(Value::Null, |found| text_language_json(&found, CAP)))
     };
     Ok(Some(match fact {

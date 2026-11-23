@@ -32,7 +32,7 @@ pub use direct::{direct_formatting, DirectFormatting, FormatValue};
 pub use empty::{empty_paragraphs, EmptyRun};
 pub use grid::{ragged_rows, table_grid_mismatch, GridFix, GridMismatch, OffGridRow, Ragged, RaggedRow};
 pub use language::{
-    detect, text_language, words_of, Detected, DocumentLanguage, Dominant, LanguageScope, Mistagged, Retag,
+    detect, text_language, words_of, Detected, Detections, DocumentLanguage, Dominant, LanguageScope, Mistagged, Retag,
     TextLanguage, LANGUAGES, MIN_CONFIDENCE, MIN_WORDS,
 };
 pub use numbering::{numbering_skips_level, SkippedLevel};

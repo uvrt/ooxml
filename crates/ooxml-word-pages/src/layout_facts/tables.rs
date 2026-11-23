@@ -219,22 +219,18 @@ pub(crate) fn columns(table: &Element) -> usize {
         .unwrap_or(0)
 }
 
-/// The layout model's table at `path` among `blocks`, nested blocks searched too.
-pub(crate) fn model_table<'b>(blocks: &'b [Block], path: &str) -> Option<&'b Arc<Table>> {
+/// Each layout model table among `blocks` (nested ones too) by its path, the first of a
+/// path kept, in document order.
+pub(crate) fn index_tables<'b>(blocks: &'b [Block], out: &mut HashMap<&'b str, &'b Arc<Table>>) {
     for block in blocks {
         let Block::Table(table) = block else { continue };
-        if &*table.path == path {
-            return Some(table);
-        }
+        out.entry(&*table.path).or_insert(table);
         for cells in table.rows.iter() {
             for story in cells.iter() {
-                if let Some(found) = model_table(story, path) {
-                    return Some(found);
-                }
+                index_tables(story, out);
             }
         }
     }
-    None
 }
 
 /// What the layout model's tables resolve against.
@@ -270,7 +266,7 @@ pub fn header_look(
         return Vec::new();
     }
     let mut reasons = Vec::new();
-    let table = model_table(&facts.version().layout().document.body, path);
+    let table = facts.model_table(path);
     let src = sources(facts);
     if let Some(table) = table {
         let first_row = table
@@ -288,7 +284,7 @@ pub fn header_look(
             }
         }
     }
-    let mut cells = PartCells::new(facts.formatting(), story.root());
+    let mut cells = PartCells::of(facts.formatting(), story);
     let mut bold = own.iter().take(2).map(|(k, row)| {
         let mut at = place.to_vec();
         at.push(u32::try_from(*k).unwrap_or(u32::MAX));
