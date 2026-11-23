@@ -173,14 +173,9 @@ impl Styler<'_> {
     /// its defaults styled.
     fn txpr(&self, owner: &mut Owned, order: Order, size: Option<u32>) -> Result<(), DataError> {
         let make = &self.make;
-        let at = match owner.place("txPr") {
-            Some(at) => at,
-            None => owner.insert_ordered(
-                Some(order),
-                make.top(text_properties(make, size, 65000, self.host.lang)),
-            ),
-        };
-        let text = owner.at(at).unwrap_or_else(|| unreachable!("a c:txPr"));
+        let text = owner.child_or_insert("txPr", Some(order), || {
+            make.top(text_properties(make, size, 65000, self.host.lang))
+        });
         self.style(defaults_of(text, make))
     }
 
@@ -237,27 +232,22 @@ impl Styler<'_> {
     /// The chart's default text (`c:chartSpace/c:txPr`, made before what follows it).
     fn space(&self, root: &mut Owned) -> Result<(), DataError> {
         let make = &self.make;
-        let at = match root.place("txPr") {
-            Some(at) => at,
-            None => {
-                let text = make
-                    .c("txPr")
+        let new = || {
+            make.top(
+                make.c("txPr")
                     .with(make.a("bodyPr"))
                     .with(make.a("lstStyle"))
-                    .with(make.a("p"));
-                match SPACE_AFTER.iter().find_map(|name| root.place(name)) {
-                    Some(at) => {
-                        root.insert(at, make.top(text));
-                        at
-                    }
-                    None => {
-                        root.push(make.top(text));
-                        root.elements().last().map_or(0, |(at, _)| *at)
-                    }
-                }
-            }
+                    .with(make.a("p")),
+            )
         };
-        let text = root.at(at).unwrap_or_else(|| unreachable!("a c:txPr"));
+        // before what follows it, else last
+        let place = |root: &Owned| {
+            SPACE_AFTER
+                .iter()
+                .find_map(|name| root.place(name))
+                .unwrap_or(usize::MAX)
+        };
+        let text = root.child_or_put("txPr", new, place);
         self.style(defaults_of(text, make))
     }
 }
