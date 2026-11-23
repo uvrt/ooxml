@@ -18,6 +18,7 @@ from typing import Any
 CREATED = datetime(2026, 10, 4, tzinfo=timezone.utc)
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+_W = "{%s}" % W
 _BLOCK = re.compile(r"^<!-- ((?:p|t):[0-9A-Fa-f]+)(?: ([^>]*?))? -->\n(.*?)(?=^<!-- (?:p|t):|\Z)", re.M | re.S)
 
 
@@ -110,11 +111,146 @@ def validation(box: Any, session: Any, doc: str) -> dict[str, Any]:
 
 
 def saved(session: Any, doc: str) -> bytes:
-    """The document's bytes as the session saves them."""
-    return session.save(doc).data
+    """The document's bytes as they are now (the session's save of its version, which changes
+    nothing)."""
+    return session.entry(doc).snapshot()
+
+
+def tree(data: bytes, name: str = "word/document.xml") -> Any:
+    """A part of a package, parsed."""
+    from lxml import etree
+
+    return etree.fromstring(part(data, name).encode("utf-8"))
+
+
+def body_blocks(root: Any) -> list[Any]:
+    """The body's paragraphs and tables in order, as ``word_read`` lists them (a block-level
+    content control's are its content's)."""
+    out: list[Any] = []
+
+    def walk(parent: Any) -> None:
+        for child in parent:
+            if child.tag in (_W + "p", _W + "tbl"):
+                out.append(child)
+            elif child.tag in (_W + "sdt", _W + "sdtContent", _W + "customXml"):
+                walk(child)
+
+    walk(root.find(_W + "body"))
+    return out
+
+
+def elements(box: Any, session: Any, doc: str) -> dict[str, Any]:
+    """The body's blocks' elements by their ids (``word_read``'s order and the body's)."""
+    listed = [block for block, _ in blocks(box, session, doc)]
+    found = body_blocks(tree(saved(session, doc)))
+    assert len(listed) == len(found), (listed, len(found))
+    return dict(zip(listed, found))
+
+
+def text_of(element: Any) -> str:
+    """A paragraph's text in the final view (insertions in, deletions out): a tab ``\\t``,
+    a line break ``\\v``."""
+    out = []
+    for node in element.iter(_W + "t", _W + "tab", _W + "br", _W + "cr", _W + "noBreakHyphen"):
+        if any(a.tag in (_W + "del", _W + "moveFrom") for a in node.iterancestors()):
+            continue
+        if node.tag == _W + "t":
+            out.append(node.text or "")
+        elif node.tag == _W + "tab":
+            if node.getparent().tag == _W + "r":
+                out.append("\t")
+        elif node.tag == _W + "noBreakHyphen":
+            out.append("\u2011")
+        else:
+            out.append("\v")
+    return "".join(out)
+
+
+def rows_of(table: Any) -> list[Any]:
+    """A table's own rows (a row Word lists as deleted included)."""
+    return [row for row in table if row.tag == _W + "tr"] + [row for sdt in table.iter(_W + "sdtContent")
+                                                              if sdt.getparent().getparent() is table
+                                                              for row in sdt if row.tag == _W + "tr"]
+
+
+def cells_of(row: Any) -> list[Any]:
+    """A row's cells, its own (not a nested table's)."""
+    return [tc for tc in row if tc.tag == _W + "tc"] + [tc for sdt in row.iter(_W + "sdtContent")
+                                                       for tc in sdt if tc.tag == _W + "tc"]
+
+
+def cell_text(cell: Any) -> str:
+    """A cell's paragraphs' texts, a line each (``\\n`` between)."""
+    return "\n".join(text_of(p) for p in cell if p.tag == _W + "p")
+
+
+W14_PARA = "{http://schemas.microsoft.com/office/word/2010/wordml}paraId"
+
+
+def find(root: Any, block: str) -> Any:
+    """The paragraph (``p:<paraId>``) or table (``t:<its first row's paraId>``) an id names,
+    anywhere in a part: ``None`` where there is none."""
+    kind, _, hex_id = block.partition(":")
+    tag = _W + ("p" if kind == "p" else "tr")
+    for node in root.iter(tag):
+        if node.get(W14_PARA, "").upper() == hex_id.upper():
+            if kind == "p":
+                return node
+            table = node.getparent()
+            while table is not None and table.tag != _W + "tbl":
+                table = table.getparent()
+            if table is not None and rows_of(table) and rows_of(table)[0] is node:
+                return table
+    return None
+
+
+def element(session: Any, doc: str, block: str, name: str = "word/document.xml") -> Any:
+    """The element a block id names in the document as it is now (must be there)."""
+    found = find(tree(saved(session, doc), name), block)
+    assert found is not None, f"no {block} in {doc}"
+    return found
+
+
+def table_texts(session: Any, doc: str, table: str) -> list[list[str]]:
+    """A table's cells' texts, row by row."""
+    return [[cell_text(cell) for cell in cells_of(row)] for row in rows_of(element(session, doc, table))]
+
+
+def tables(session: Any, doc: str) -> list[Any]:
+    """The body's tables (nested ones left out)."""
+    return [block for block in body_blocks(tree(saved(session, doc))) if block.tag == _W + "tbl"]
+
+
+def paragraphs(session: Any, doc: str) -> list[tuple[str, str]]:
+    """The body's paragraphs (in tables too, in order) as (id, final text)."""
+    root = tree(saved(session, doc))
+    return [(f"p:{p.get(W14_PARA)}", text_of(p)) for p in root.find(_W + "body").iter(_W + "p")]
+
+
+def revisions(session: Any, doc: str) -> list[Any]:
+    """The tracked-change records of the document part."""
+    marks = ("ins", "del", "moveFrom", "moveTo", "rPrChange", "pPrChange", "tblPrChange", "trPrChange",
+             "tcPrChange", "sectPrChange", "numberingChange", "cellIns", "cellDel", "cellMerge")
+    return list(tree(saved(session, doc)).iter(*(_W + m for m in marks)))
 
 
 def part(data: bytes, name: str = "word/document.xml") -> str:
     """A part of a package, as text."""
     with zipfile.ZipFile(io.BytesIO(data)) as package:
         return package.read(name).decode("utf-8")
+
+
+def chart_part(data: bytes, drawing: str, story: str = "word/document.xml") -> str:
+    """The chart part of the drawing ``d:<docPr id>`` in ``story``."""
+    import posixpath
+
+    root = tree(data, story)
+    number = drawing.partition(":")[2]
+    frame = next(d for d in root.iter("{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}docPr")
+                 if d.get("id") == number).getparent()
+    chart = next(frame.iter("{http://schemas.openxmlformats.org/drawingml/2006/chart}chart"))
+    rel = chart.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id")
+    folder, name = posixpath.split(story)
+    rels = tree(data, f"{folder}/_rels/{name}.rels")
+    target = next(r.get("Target") for r in rels if r.get("Id") == rel)
+    return posixpath.normpath(posixpath.join(folder, target))
