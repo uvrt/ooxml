@@ -7,6 +7,7 @@ Keyed by the test's file and name as pytest names them.
 Must not: import pytest (a plain table).
 """
 
+CUT_F = "lane CUT-F"
 CUT6 = "lane CUT6"
 CUT_B = "lane CUT-B"
 TEMPLATE = "waits for lane CUT-B: template_blob"
