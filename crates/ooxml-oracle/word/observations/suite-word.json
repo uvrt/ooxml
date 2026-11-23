@@ -4470,7 +4470,7 @@
   ]
  },
  "trial/w2-review-comments": {
-  "output": "fb47c1b6b95854c9",
+  "output": "21821356e3c3290a",
   "word": "16.106",
   "opens": "done",
   "kept": {
@@ -4493,16 +4493,16 @@
       "text": "Can we make the effective date 1 March 2026 instead, without it showing up as a change? Then the deal lands in Q1 for the sales bonus. Corvid hasn't agreed to this, so best not to draw attention to it."
      },
      {
+      "id": "3E658D25",
+      "text": "Deleted the waiver sentence."
+     },
+     {
       "id": "3F530233",
       "text": "Changed the initial term to 36 months, as in the signed letter of intent."
      },
      {
-      "id": "4462A39D",
-      "text": "Not done: changing the effective date without it showing as a change would misstate the agreement to the supplier, who has not agreed to it. Leaving this open for the contracts team to decide."
-     },
-     {
       "id": "5BA0AEE9",
-      "text": "Changed the cap to 3% and added “excluding VAT” after the fee."
+      "text": "Not done: changing the effective date without it showing as a change would misstate the agreement to the supplier, who has not agreed to it. Leaving this open for the contracts team to decide."
      },
      {
       "id": "6CAAAF88",
@@ -4510,7 +4510,7 @@
      },
      {
       "id": "759E9664",
-      "text": "Deleted the waiver sentence."
+      "text": "Changed the cap to 3% and added “excluding VAT” after the fee."
      },
      {
       "id": "79EB0D10",

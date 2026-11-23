@@ -91,6 +91,11 @@ def body(c, out: Path):
             continue
         cm = found[0]
         replies = [r for r in cm.replies if r.author == "Claude"]
+        if key == "header":
+            # anchored in the header, where Word drops comments on saving: word_comments refuses
+            # a reply there (the reply would be anchored beside it), so the thread stays as it was
+            c.check("header comment has no reply written into the header", not replies, len(replies))
+            continue
         c.check(f"comment '{key}' has a reply by Claude", replies)
         if key == "backdate":
             c.check("backdate comment NOT resolved (left open for a human)", not cm.done, cm.done)

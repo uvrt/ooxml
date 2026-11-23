@@ -1,8 +1,10 @@
 //! Owns: `word_comments`' `add` and `reply` (docx-agent's `word_comments`): each item's
 //! arguments checked as docx-agent checks them, the text found once where `find` is given,
-//! and every item written in one [`AddComments`] command (one history step, all or none);
-//! the reply as docx-agent's `outcome` writes it, with the new comments (`data.comments`)
-//! and the refs naming them; `find` looks in the paragraphs `within` holds when given
+//! and every item written in one [`AddComments`] command (one history step); an item the
+//! document refuses (a place in a header or footer, say) is not written, the others are
+//! (tool rule 5). The reply as docx-agent's `outcome` writes it, with the new comments
+//! (`data.comments`, `null` for an item not written, its refusal in `data.refused`) and the
+//! refs naming them; `find` looks in the paragraphs `within` holds when given
 //! (docx-agent's `find_range`).
 //!
 //! Must not: change a comment but through a command.
@@ -11,7 +13,7 @@ use super::comments::{try_call, CommentAction, CommentItem, WordComments};
 use super::{edit_refusal, Editing};
 use crate::structure::common::{find_once_within, one_of, outcome, Outcome};
 use ooxml_tools::{ToolError, ToolResult};
-use ooxml_word_edit::{AddComments, CommentMade, CommentWrite, Who};
+use ooxml_word_edit::{AddComments, CommentWrite, ItemMade, Who};
 use serde_json::{json, Value};
 
 /// `add` or `reply` of `items`.
@@ -38,7 +40,7 @@ pub(crate) fn write(
         .editor
         .run(editing.caller, &command)
         .map_err(|e| edit_refusal(e, "", try_call(&list)))?;
-    Ok(reply(args, items, done.out))
+    Ok(reply(args, items, done.out, &list))
 }
 
 /// Each item's write, its arguments checked as docx-agent checks them.
@@ -88,13 +90,33 @@ fn planned(
     Ok(writes)
 }
 
-/// The reply, as docx-agent's `outcome` writes it of the comments made.
-fn reply(args: &WordComments, items: &[CommentItem], out: Vec<CommentMade>) -> ToolResult<Value> {
+/// The reply, as docx-agent's `outcome` writes it of the comments made; an item not
+/// written is the reply's `null` in `data.comments` and its refusal in `data.refused`
+/// (`item`, its index, with the error and way out), and a warning says so (tool rule 5).
+fn reply(args: &WordComments, items: &[CommentItem], out: Vec<ItemMade>, list: &WordComments) -> ToolResult<Value> {
     let mut edits = Vec::new();
     let mut made = Vec::new();
     let mut refs = Vec::new();
-    for (item, out) in items.iter().zip(out) {
-        made.push(out.id.clone());
+    let mut refused = Vec::new();
+    for (k, (item, out)) in items.iter().zip(out).enumerate() {
+        let out = match out {
+            Ok(out) => out,
+            Err(error) => {
+                let error = edit_refusal(error, &format!("items[{k}]"), try_call(list));
+                edits.push(Outcome {
+                    warnings: vec![format!("items[{k}] not written: {}", error.message())],
+                    ..Outcome::default()
+                });
+                let mut entry = error.to_json();
+                if let Value::Object(map) = &mut entry {
+                    map.insert("item".into(), json!(k));
+                }
+                refused.push(entry);
+                made.push(Value::Null);
+                continue;
+            }
+        };
+        made.push(json!(out.id));
         if let Some(name) = item.ref_name.as_ref().filter(|n| !n.is_empty()) {
             refs.push((name.clone(), out.id.clone()));
         }
@@ -113,12 +135,21 @@ fn reply(args: &WordComments, items: &[CommentItem], out: Vec<CommentMade>) -> T
             });
         }
     }
-    let data = (!made.is_empty()).then(|| json!({"comments": made}));
-    let mut result = outcome(
-        &edits,
-        format!("{}: {} comment(s)", args.action.name(), items.len()),
-        data,
-    );
+    let written = made.iter().filter(|m| !m.is_null()).count();
+    let data = match refused.is_empty() {
+        true => (!made.is_empty()).then(|| json!({"comments": made})),
+        false => Some(json!({"comments": made, "refused": refused})),
+    };
+    let summary = match refused.is_empty() {
+        true => format!("{}: {} comment(s)", args.action.name(), items.len()),
+        false => format!(
+            "{}: {written} of {} comment(s), {} refused",
+            args.action.name(),
+            items.len(),
+            refused.len()
+        ),
+    };
+    let mut result = outcome(&edits, summary, data);
     if let ooxml_tools::Outcome::Done(reply) = &mut result.outcome {
         reply.refs = refs;
     }

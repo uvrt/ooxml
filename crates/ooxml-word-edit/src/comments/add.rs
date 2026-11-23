@@ -3,7 +3,11 @@
 //! (its renames reported for an added comment), the comment numbered one above the largest
 //! annotation id in use, anchored ([`super::anchors`], [`super::reply`]) and written with
 //! its entries in the modern parts ([`super::write`]), its author listed in the people
-//! part; a reply that also resolves its thread marks it so (`resolve_comment`).
+//! part; a reply that also resolves its thread marks it so (`resolve_comment`). Neither is
+//! written into a header or footer, where Word drops comments on saving ([`super::margins`]).
+//! An item refused where it is planned (before anything is written) is reported as that
+//! item's refusal and the others are written (tool rule 5); with none written the call is
+//! refused as its first item was.
 //!
 //! Comments are not revisions: they are written the same with tracking on or off.
 //!
@@ -14,7 +18,7 @@
 //!
 //! Must not: write a comment part but through the edit's copies.
 
-use super::anchors::{anchor, mark};
+use super::anchors::{anchor, mark, Anchor};
 use super::edits::{find, last_para_as_written, set_done, thread_root, CommentEdited};
 use super::reply::{has_reference, mark_reply};
 use super::size::Sizes;
@@ -73,23 +77,38 @@ pub struct CommentMade {
 }
 
 impl Command<WordDoc> for AddComments {
-    type Out = Vec<CommentMade>;
+    type Out = Vec<ItemMade>;
     type Error = EditError;
 
     fn validate(&self, _doc: &WordDoc) -> Result<()> {
         Ok(())
     }
 
-    fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<Vec<CommentMade>> {
+    fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<Vec<ItemMade>> {
         let mut sink = EditSink::new(tx, RevisionPolicy::Untracked);
         self.reads(&mut sink)?;
         let mut out = Vec::with_capacity(self.items.len());
         for item in &self.items {
+            // an item refused where it is planned (nothing written yet) is that item's
+            // refusal; the others are written (tool rule 5)
             let made = match item {
-                CommentWrite::Add { place, text } => self.add(&mut sink, place, text)?,
-                CommentWrite::Reply { comment, text, resolve } => self.reply(&mut sink, comment, text, *resolve)?,
+                CommentWrite::Add { place, text } => match placed(&sink, place) {
+                    Ok(anchored) => Ok(self.add(&mut sink, &anchored, text)?),
+                    Err(refused) => Err(item_refusal(refused)?),
+                },
+                CommentWrite::Reply { comment, text, resolve } => match thread(&sink, comment) {
+                    Ok(root) => Ok(self.reply(&mut sink, (comment, &root), text, *resolve)?),
+                    Err(refused) => Err(item_refusal(refused)?),
+                },
             };
             out.push(made);
+        }
+        if !out.iter().any(Result::is_ok) {
+            // nothing to write: the call is refused, as the first item was
+            if let Some(Err(first)) = out.into_iter().next() {
+                return Err(first);
+            }
+            return Ok(Vec::new());
         }
         crate::after::after_edit(&mut sink)?;
         Ok(out)
@@ -115,17 +134,16 @@ impl AddComments {
         }
     }
 
-    /// A new thread on `place`.
-    fn add(&self, sink: &mut EditSink<'_, '_>, place: &str, text: &str) -> Result<CommentMade> {
+    /// A new thread on `anchored`.
+    fn add(&self, sink: &mut EditSink<'_, '_>, anchored: &Anchor, text: &str) -> Result<CommentMade> {
         let docx = sink.docx()?;
-        let anchored = anchor(sink.doc(), &docx, place)?;
         let renamed = stamp_document(sink, &docx)?;
         let (id, _) = sink.marker_id()?;
         let docx = sink.docx()?;
         let reference = crate::builtin::ensure(sink, "annotation reference", "character")?;
         let mut space = Space::default();
         let doc = sink.doc().clone();
-        mark(&mut space, &doc, &anchored, &Sizes::of(&docx), (id, &reference))?;
+        mark(&mut space, &doc, anchored, &Sizes::of(&docx), (id, &reference))?;
         let made = self.write(sink, space, (id, text), None)?;
         Ok(CommentMade {
             id: made,
@@ -134,17 +152,20 @@ impl AddComments {
         })
     }
 
-    /// A reply in `comment`'s thread, the thread then resolved when asked.
-    fn reply(&self, sink: &mut EditSink<'_, '_>, comment: &str, text: &str, resolve: bool) -> Result<CommentMade> {
+    /// A reply in `comment`'s thread (its first comment `root_id`), the thread then
+    /// resolved when asked.
+    fn reply(
+        &self,
+        sink: &mut EditSink<'_, '_>,
+        (comment, root_id): (&str, &str),
+        text: &str,
+        resolve: bool,
+    ) -> Result<CommentMade> {
         let docx = sink.docx()?;
-        let root_id = {
-            let listed = comments(&docx);
-            thread_root(&listed, find(&listed, comment)?).id.clone()
-        };
         stamp_document(sink, &docx)?;
         let docx = sink.docx()?;
         let listed = comments(&docx);
-        let root = find(&listed, &root_id)?;
+        let root = find(&listed, root_id)?;
         let (id, _) = sink.marker_id()?;
         let mut space = Space::default();
         if let Some(parent) = root.w_id.as_deref() {
@@ -198,5 +219,52 @@ impl AddComments {
         space.finish(sink)?;
         sink.ensure_w14(&parts.comments, false, &[])?;
         Ok(format!("c:{durable}"))
+    }
+}
+
+/// One item's outcome: the comment made, or why the item was not written.
+pub type ItemMade = std::result::Result<CommentMade, EditError>;
+
+/// Where a new comment on `place` is anchored; refused where it is not a place for one.
+///
+/// # Errors
+/// The place's refusal; a header or footer ([`super::margins`]).
+fn placed(sink: &EditSink<'_, '_>, place: &str) -> Result<Anchor> {
+    let docx = sink.docx()?;
+    let anchored = anchor(sink.doc(), &docx, place)?;
+    super::margins::refuse_add(&docx, anchored.part())?;
+    Ok(anchored)
+}
+
+/// The first comment of `comment`'s thread, which a reply goes beside; refused where a
+/// reply cannot go.
+///
+/// # Errors
+/// No such comment; a thread in a header or footer ([`super::margins`]).
+fn thread(sink: &EditSink<'_, '_>, comment: &str) -> Result<String> {
+    let docx = sink.docx()?;
+    let listed = comments(&docx);
+    let root = thread_root(&listed, find(&listed, comment)?);
+    if let Some(parent) = root.w_id.as_deref() {
+        super::margins::refuse_reply(&docx, comment, parent)?;
+    }
+    Ok(root.id.clone())
+}
+
+/// `error` as one item's refusal, where it is one (the call's arguments or the document
+/// refusing them); any other error fails the whole call.
+///
+/// # Errors
+/// `error` itself where it is not an item's refusal.
+fn item_refusal(error: EditError) -> Result<EditError> {
+    match error {
+        EditError::Refused(_)
+        | EditError::Address(_)
+        | EditError::Argument { .. }
+        | EditError::Text(_)
+        | EditError::Span(_)
+        | EditError::Position(_)
+        | EditError::Unsupported(_) => Ok(error),
+        other => Err(other),
     }
 }

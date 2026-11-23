@@ -289,12 +289,11 @@
    },
    "expect": {
     "ok": true,
-    "summary": "reply: 7 comment(s)",
+    "summary": "reply: 6 of 7 comment(s), 1 refused",
     "changed": [
      "c:76FCC91F",
      "c:4C9866FD",
      "c:22CB2567",
-     "c:5E432F44",
      "c:777AEE05",
      "c:327384A6"
     ],
@@ -304,14 +303,17 @@
      "c:0D2C5052",
      "c:7B6E22CC",
      "c:703BB3F2",
-     "c:42A28F17",
-     "c:53C20536"
+     "c:42A28F17"
     ],
-    "data_sha": "f504031b299c7c21",
+    "warnings": [
+     "items[3] not written: c:5E432F44 is anchored in header1, where a reply is anchored too: Word drops a comment anchored in a header or footer when it saves the document; add a comment on text in the body instead"
+    ],
+    "data_sha": "c6d86e2b62414eb6",
     "data_keys": [
-     "comments"
+     "comments",
+     "refused"
     ],
-    "data_sha_core": "f504031b299c7c21"
+    "data_sha_core": "c6d86e2b62414eb6"
    }
   },
   {
@@ -398,6 +400,6 @@
  ],
  "output": {
   "name": "hosting-agreement-summary-reviewed.docx",
-  "parts_sha256": "82e5b7fd3dd4e12844d3f57298492e6213263f6533c32064e7c57984722e9781"
+  "parts_sha256": "822f566d0c804727e1f2ffce5f5f7e93a3563be4aaed4ec4e213a96f495bfee1"
  }
 }
