@@ -78,3 +78,17 @@ def test_check_with_scale_and_pages_scopes_by_page(toolbox):
     assert {e["page"] for e in found["none"]} == {1}
     beyond = ok(call(toolbox, session, "check", doc="d1", pages=[2], scale=given)).data["scale"]
     assert beyond["checked"] == 0
+
+
+def test_a_target_of_another_kind_is_told_the_kinds_as_targets_are_written(toolbox):
+    """A section given as a target is skipped with the kinds a target takes, values by
+    reference written as a target writes them (``{{d:...}}``, as a target naming nothing is
+    told too)."""
+    import json
+
+    session = _session(toolbox)
+    _, three, _ = _ids(session)
+    found = ok(call(toolbox, session, "check", doc="d1", scale=scale("s:1", three))).data["scale"]
+    said = json.dumps(found)
+    assert ("s:1 is a section: a target is a paragraph, a range, a cell, a table's column or {{d:...}} values"
+            in said), said

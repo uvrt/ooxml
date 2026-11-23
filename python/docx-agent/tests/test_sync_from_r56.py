@@ -222,6 +222,9 @@ def test_a_table_not_in_the_document_offers_its_tables(toolbox, given):
     else:
         assert error.message.startswith(f"{given} is a table of d2 (xlsx), not of d1: word_edit_table changes a "
                                         f"table of d1 ({table})")
+        # the way out's call keeps the document's table in step with the workbook's rows (rule 2)
+        assert error.try_call["tool"] == "word_edit_table"
+        assert error.try_call["arguments"] == {"doc": "d1", "table": table, "action": "sync", "from": "t:stock"}
     for option in error.valid_options:
         assert _sync(toolbox, session, option, **{"from": "d:counts"}).ok
 

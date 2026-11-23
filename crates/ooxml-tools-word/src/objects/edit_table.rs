@@ -97,7 +97,8 @@ pub(super) fn not_supported(what: &str, retry: &TryCall) -> ToolResult<Value> {
 
 /// No table `table` in the document (docx-agent's `_no_table`): its body's tables are the
 /// options, and a table of another open document the host holds (a workbook's `t:stock`)
-/// is said to be one, with the call that keeps a table here in step with its rows.
+/// is said to be one, with the call that keeps a table here in step with its rows as the
+/// way out's call (rule 2: a call to make, not an example in the message).
 fn no_table(docx: &Docx, doc: &str, table: &str, others: crate::Others<'_>, retry: &TryCall) -> ToolError {
     // docx-agent's `Document.tables()`: the body's
     let ids: Vec<String> = docx
@@ -113,23 +114,35 @@ fn no_table(docx: &Docx, doc: &str, table: &str, others: crate::Others<'_>, retr
     } else {
         format!("{doc}'s tables: {}", shown.join(", "))
     };
-    let way_out = WayOut::names(ids.iter().take(12).cloned()).unwrap_or_else(|| WayOut::call(retry.clone()));
-    let message = match others.host_table(table) {
-        // docx-agent's example call, as Python writes a dict
-        Some(elsewhere) => format!(
-            "{table} is a table of {} ({}), not of {doc}: word_edit_table changes a table of {doc} ({}); to keep \
-             one in step with its rows, e.g. {{'table': {}, 'action': 'sync', 'from': {}}}",
-            elsewhere.doc,
-            elsewhere.kind,
-            if shown.is_empty() {
-                "it has none".to_owned()
-            } else {
-                shown.join(", ")
-            },
-            repr_str(ids.first().map_or("<id>", String::as_str)),
-            repr_str(&elsewhere.name),
-        ),
-        None => format!("no table {} in {doc}; {listed}", repr_str(table)),
+    let options = WayOut::names(ids.iter().take(12).cloned());
+    let Some(elsewhere) = others.host_table(table) else {
+        let message = format!("no table {} in {doc}; {listed}", repr_str(table));
+        let way_out = options.unwrap_or_else(|| WayOut::call(retry.clone()));
+        return ToolError::refusal(Refusal::NotFound, message, way_out).at("table");
+    };
+    let head = format!(
+        "{table} is a table of {} ({}), not of {doc}: word_edit_table changes a table of {doc}",
+        elsewhere.doc, elsewhere.kind
+    );
+    let (message, way_out) = match (ids.first(), options) {
+        (Some(first), Some(options)) => {
+            let sync = call(
+                "word_edit_table",
+                &[
+                    ("doc", json!(doc)),
+                    ("table", json!(first)),
+                    ("action", json!("sync")),
+                    ("from", json!(elsewhere.name)),
+                ],
+            );
+            let message = format!(
+                "{head} ({}); to keep one in step with its rows, sync it from {} (the call in try_call)",
+                shown.join(", "),
+                elsewhere.name
+            );
+            (message, options.and_call(sync))
+        }
+        _ => (format!("{head} (it has none)"), WayOut::call(retry.clone())),
     };
     ToolError::refusal(Refusal::NotFound, message, way_out).at("table")
 }

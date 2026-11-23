@@ -463,8 +463,15 @@ fn finish(
     let edits: Vec<Outcome> = done.out.edits.into_iter().map(Outcome::from).collect();
     let mut result = outcome(&edits, summary, None);
     if let ooxml_tools::Outcome::Done(found) = &mut result.outcome {
-        if !found.changed.contains(&args.table) {
-            found.changed.push(args.table.clone());
+        // one name per block: a positional address its stamping renamed is named by its new
+        // id, the renamed pair saying which (docx-agent also listed the address as asked)
+        let table = found
+            .renamed
+            .iter()
+            .find(|(old, _)| *old == args.table)
+            .map_or_else(|| args.table.clone(), |(_, new)| new.clone());
+        if !found.changed.contains(&table) {
+            found.changed.push(table);
         }
     }
     if let (true, Some(now)) = (regions, now) {
