@@ -23,10 +23,10 @@ import datetime as dt
 
 import pytest
 from ooxml_edit.tools import Toolbox
-from facts_documents import _document, _p
 
-from docx_agent import Document
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
+
+import word_docs
 
 CLOCK = lambda: dt.datetime(2026, 11, 13, 9, 0, tzinfo=dt.timezone.utc)  # noqa: E731
 LATER = lambda: dt.datetime(2026, 11, 13, 10, 30, tzinfo=dt.timezone.utc)  # noqa: E731
@@ -48,15 +48,34 @@ def ok(box, session, name, /, **arguments):
 
 def _open(box, data: bytes | None = None, clock=CLOCK):
     session = box.session(clock=clock)
-    session.open(data or Document.new().to_bytes(), "plan.docx")
+    session.open(data or word_docs.blank(), "plan.docx")
     return session
+
+
+def _p(text: str) -> str:
+    return word_docs.paragraph(text)
+
+
+def _document(body: str) -> bytes:
+    return word_docs.with_body(body)
+
+
+def _first(session) -> str:
+    return word_docs.paragraphs(session, "d1")[0][0]
+
+
+def _records(box, session) -> list[dict]:
+    return ok(box, session, "word_changes", action="list", detail="records").data
+
+
+def _tables(session) -> list[str]:
+    return [f"t:{word_docs.rows_of(t)[0].get(word_docs.W14_PARA)}" for t in word_docs.tables(session, "d1")]
 
 
 def _with_new_table(box):
     """A kept table, then -- tracked -- a paragraph, a new table and a paragraph after it."""
     session = _open(box)
-    first = session.entry("d1").document.paragraphs()[0].id
-    ok(box, session, "word_insert_markdown", at=f"after:{first}",
+    ok(box, session, "word_insert_markdown", at=f"after:{_first(session)}",
        markdown=f"Opening line.\n\n{TABLE}\n\nKept closing.")
     ok(box, session, "word_set_tracking", on=True, author=ME)
     made = ok(box, session, "word_insert_markdown", at="end", markdown=f"New intro.\n\n{TABLE}\n\nNew closing.")
@@ -65,13 +84,10 @@ def _with_new_table(box):
 
 
 def _rows_and_paragraphs(session, table: str) -> tuple[list[str], list[str]]:
-    from docx_agent.edit.ids import W_P
-
-    document = session.entry("d1").document
-    part, entry = document._table_entry(table)
-    inside = set(map(id, entry.element.iter(W_P)))
-    paragraphs = [p.id for p in document._index(part).paragraphs if id(p.element) in inside]
-    return [row_id for _, row_id in entry.rows], paragraphs
+    element = word_docs.element(session, "d1", table)
+    rows = [f"tr:{row.get(word_docs.W14_PARA)}" for row in word_docs.rows_of(element)]
+    paragraphs = [f"p:{p.get(word_docs.W14_PARA)}" for p in element.iter("{%s}p" % word_docs.W)]
+    return rows, paragraphs
 
 
 @pytest.mark.parametrize("how", [{"all": True}, {"author": ME}, {"kind": "insertion"}, "within", "ids"])
@@ -89,7 +105,7 @@ def test_a_reject_names_the_table_it_removed(box, how):
     # The envelope: every id, the table's rows and paragraphs too.
     assert {table, *rows, *paragraphs} <= set(result.removed)
     assert result.removed[0] == table
-    assert table not in [t.id for t in session.entry("d1").document.tables()]
+    assert table not in _tables(session)
 
 
 def test_a_broad_call_says_how_many_records_this_session_wrote(box):
@@ -109,12 +125,12 @@ def test_records_an_earlier_session_wrote_are_not_this_ones(box):
     """The tracking author is the same in both sessions: only the records' dates against
     the file as opened tell the earlier ones apart."""
     earlier, _ = _with_new_table(box)
-    data = earlier.entry("d1").document.to_bytes()
-    before = len(Document.open(data).revisions())
+    data = word_docs.saved(earlier, "d1")
     session = _open(box, data, clock=LATER)
+    before = len(_records(box, session))
     ok(box, session, "word_set_tracking", on=True, author=ME)
     ok(box, session, "word_insert_markdown", at="end", markdown="Second session line.")
-    added = len(session.entry("d1").document.revisions()) - before
+    added = len(_records(box, session)) - before
     result = ok(box, session, "word_changes", action="reject", author=ME)
     assert result.data["records"] == before + added
     assert result.data["this_session"] == added > 0
@@ -126,11 +142,11 @@ def test_an_edit_inside_an_earlier_insertion_keeps_it_the_earlier_ones(box):
     body = _p("Before.") + ('<w:p><w:ins w:id="5" w:author="Editor B" w:date="2026-01-02T00:00:00Z">'
                             '<w:r><w:t>Old inserted words here.</w:t></w:r></w:ins></w:p>')
     session = _open(box, _document(body))
-    target = session.entry("d1").document.paragraphs()[1].id
+    target = [block for block, _ in word_docs.blocks(box, session, "d1")][1]
     ok(box, session, "word_set_tracking", on=True, author=ME)
     ok(box, session, "replace_text", find="inserted", replace="added", range=target)
-    revisions = session.entry("d1").document.revisions()
-    earlier = [r for r in revisions if r.author == "Editor B"]
+    revisions = _records(box, session)
+    earlier = [r for r in revisions if r["author"] == "Editor B"]
     assert len(earlier) >= 1 and len(revisions) > len(earlier)
     result = ok(box, session, "word_changes", action="accept", all=True)
     assert result.data["records"] == len(revisions)
@@ -139,7 +155,7 @@ def test_an_edit_inside_an_earlier_insertion_keeps_it_the_earlier_ones(box):
 
 def test_accepting_a_tracked_table_deletion_names_the_table(box):
     session, _ = _with_new_table(box)
-    kept = session.entry("d1").document.tables()[0].id
+    kept = _tables(session)[0]
     rows, paragraphs = _rows_and_paragraphs(session, kept)
     ok(box, session, "word_delete", target=kept)
     result = ok(box, session, "word_changes", action="accept", within=kept)
@@ -149,15 +165,14 @@ def test_accepting_a_tracked_table_deletion_names_the_table(box):
 
 def test_rows_removed_from_a_table_that_stays_are_named_with_it(box):
     session = _open(box)
-    first = session.entry("d1").document.paragraphs()[0].id
-    ok(box, session, "word_insert_markdown", at=f"after:{first}", markdown=f"Opening.\n\n{TABLE}")
+    ok(box, session, "word_insert_markdown", at=f"after:{_first(session)}", markdown=f"Opening.\n\n{TABLE}")
     ok(box, session, "word_set_tracking", on=True, author=ME)
-    table = session.entry("d1").document.tables()[0].id
+    table = _tables(session)[0]
     ok(box, session, "word_edit_table", table=table, action="insert_row", index=1)
     top = ok(box, session, "word_edit_table", table=table, action="insert_row", index=0, side="before")
     renamed = top.data["id"]
     assert renamed != table              # a table is named by its first row
-    added = [r for _, r in session.entry("d1").document._table_entry(renamed)[1].rows][:1]
+    added = _rows_and_paragraphs(session, renamed)[0][:1]
     result = ok(box, session, "word_changes", action="reject", all=True)
     rows = result.data["removed"]["rows"]
     assert len(rows) == 2 and all(r["table"] == table and r["paragraphs"] == 2 for r in rows)
@@ -166,18 +181,17 @@ def test_rows_removed_from_a_table_that_stays_are_named_with_it(box):
     assert f"of {table}" in result.summary
     # Its first row gone, the table has its old name again: said, and both names find it.
     assert result.renamed == {renamed: table}
-    document = session.entry("d1").document
-    assert document.get(renamed).id == document.get(table).id == table
+    for name in (renamed, table):
+        assert ok(box, session, "word_inspect", target=name).data["blocks"][0]["id"] == table
 
 
 def test_a_paragraph_whose_mark_went_names_the_one_it_merged_into(box):
     session, table = _with_new_table(box)
-    document = session.entry("d1").document
-    kept_closing = next(p.id for p in document.paragraphs() if p.text == "Kept closing.")
+    kept_closing = next(block for block, text in word_docs.paragraphs(session, "d1") if text == "Kept closing.")
     result = ok(box, session, "word_changes", action="reject", all=True)
     merged = result.data["removed"]["merged"]
     survivor = merged[kept_closing]
-    assert session.entry("d1").document.get(survivor).text == "Kept closing."
+    assert "Kept closing." in ok(box, session, "word_read", range=survivor).data
     assert f"paragraph {kept_closing} (merged into {survivor})" in result.summary
 
 
@@ -195,9 +209,9 @@ def test_the_summary_names_a_few_blocks_and_says_where_the_rest_are(box):
 def test_a_preview_changes_nothing_and_says_what_each_would_do(box):
     session, table = _with_new_table(box)
     entry = session.entry("d1")
-    version, data = entry.version, entry.document.to_bytes()
+    version, data = entry.version, word_docs.saved(session, "d1")
     preview = ok(box, session, "word_changes", action="preview", all=True)
-    assert entry.version == version and entry.document.to_bytes() == data
+    assert entry.version == version and word_docs.saved(session, "d1") == data
     assert preview.summary.startswith("Preview, nothing changed:")
     assert preview.data["accept"].get("removed") is None
     assert preview.data["reject"]["removed"]["tables"][0]["id"] == table
@@ -227,22 +241,23 @@ def test_settling_nothing_changes_nothing(box):
     assert result.data["records"] == 0 and "removed" not in result.data and result.removed == []
 
 
-def test_the_library_says_what_an_accept_or_reject_removed():
-    """Document.reject_all's EditResult: removed_blocks, a content control in a removed
-    paragraph among them, and ids as the caller had them before stamping."""
+def test_a_reject_all_says_what_it_removed_a_control_among_them(box):
+    """A rejected paragraph and a rejected row whose cell holds a content control: the table
+    removed, the paragraph merged or removed, the control among the ids."""
     para = ('<w:p><w:pPr><w:rPr><w:ins w:id="1" w:author="Editor B" w:date="2026-01-02T00:00:00Z"/></w:rPr></w:pPr>'
             '<w:ins w:id="2" w:author="Editor B" w:date="2026-01-02T00:00:00Z"><w:r><w:t>Name: </w:t></w:r></w:ins></w:p>')
     table = ('<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:trPr>'
              '<w:ins w:id="3" w:author="Editor B" w:date="2026-01-02T00:00:00Z"/></w:trPr><w:tc><w:tcPr/>'
              '<w:sdt><w:sdtPr><w:id w:val="78"/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>Cell</w:t></w:r></w:p>'
              '</w:sdtContent></w:sdt></w:tc></w:tr></w:tbl>')
-    document = Document.open(_document(_p("Before.") + para + table + _p("After.")))
-    before = [p.id for p in document.paragraphs()]
-    tables = [t.id for t in document.tables()]
-    result = document.reject_all()
-    assert result.removed_blocks["tables"] == [{"id": tables[0], "rows": 1, "paragraphs": 1}]
-    assert before[1] in result.removed_blocks.get("merged", {}) or before[1] in result.removed_blocks.get(
-        "paragraphs", [])
+    session = _open(box, _document(_p("Before.") + para + table + _p("After.")))
+    listed = word_docs.blocks(box, session, "d1")
+    before = [block for block, _ in listed if block.startswith("p")]
+    tables = [block for block, _ in listed if block.startswith("t")]
+    result = ok(box, session, "word_changes", action="reject", all=True)
+    removed = result.data["removed"]
+    assert removed["tables"] == [{"id": tables[0], "rows": 1, "paragraphs": 1}]
+    assert before[1] in removed.get("merged", {}) or before[1] in removed.get("paragraphs", [])
     assert result.removed[0] == tables[0] and "cc:78" in result.removed
     assert len(result.removed) == len(set(result.removed))
-    assert document.tables() == []
+    assert word_docs.tables(session, "d1") == []

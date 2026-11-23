@@ -1,8 +1,7 @@
 """The reflow a changing call's checks report, measured by the Rust session after the call's
 edits (lane P5m): from the version its first edit was applied to -- here the one the
 session's check saw -- to the version it made, ids followed through the aliases.  It is what
-the next check's ``since_last_check`` says of the same two versions.  (Where docx-agent's own
-layout before compares, Python measures it under the lock still: here it has none.)"""
+the next check's ``since_last_check`` says of the same two versions."""
 from __future__ import annotations
 
 
@@ -14,9 +13,9 @@ if not hasattr(ooxml_core, "Version"):
 
 from ooxml_edit.tools import Toolbox
 
-from docx_agent.rust import edits, reads
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from conftest import FIXTURE_DIR  # noqa: E402
+import word_docs  # noqa: E402
 
 FIXTURE = FIXTURE_DIR / "generated" / "trial" / "safety-bulletin.docx"
 
@@ -26,15 +25,12 @@ def toolbox():
     return Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS)
 
 
-def test_an_edit_after_a_check_reports_the_reflow_the_session_measured(toolbox, monkeypatch):
+def test_an_edit_after_a_check_reports_the_reflow_the_session_measured(toolbox):
     session = toolbox.session()
     doc = session.open(FIXTURE.read_bytes(), name=FIXTURE.name)
-    if reads._owned(session.entry(doc)) is None:
-        pytest.skip("the session does not own this document")
     seen = toolbox.dispatch(session, "check", {"doc": doc, "include": ["reflow"]}).data["reflow"]
     assert seen["pages"] <= 20
-    target = session.entry(doc).document.paragraphs()[0].id
-    monkeypatch.setattr(edits, "_layout_before", lambda call, entry: None)
+    target = word_docs.paragraph_ids(toolbox, session, doc)[0]
     done = toolbox.dispatch(session, "word_insert_text", {"doc": doc, "target": target,
                                                          "text": " checked " * 40}).to_json()
     reflow = done["checks"]["reflow"]

@@ -51,25 +51,23 @@ def caller_key(caller: Mapping[str, Any] | None) -> str | None:
 
 def context_of(caller: Mapping[str, Any] | None, limits: Any = None,
                layout_timeout: float | None = None, *, date: str | None = None,
-               typography: bool = True, layout_counts: tuple[int, int] | None = None,
-               locale: Any = None) -> Any:
+               typography: bool = True, locale: Any = None) -> Any:
     """An ``ooxml_core.CallContext`` for ``caller``: its key, and its context in the order
     given (as the session's replies name the caller: ``agent=b``); with the host's ``limits``
     on its reply (an :class:`ooxml_edit.tools.Limits`, as an ``ooxml_core.Limits``), how long
     laying the document out may take in it (``layout_timeout``, seconds; the session's own
     where ``None``), its writes dated ``date`` (UTC to the second, the session clock's) and
-    spaced by their language unless ``typography`` is off, with ``layout_counts`` (``(pages,
-    lines)``: a save's ``app.xml`` statistics) and read under ``locale`` -- the last four as
-    an ``ooxml_core.CallWriting``."""
+    spaced by their language unless ``typography`` is off, and read under ``locale`` -- the
+    last three as an ``ooxml_core.CallWriting`` (a save's ``app.xml`` pages and lines are
+    the document's page engine's)."""
     import ooxml_core
 
     given: dict[str, Any] = {"layout_timeout": layout_timeout}
     if caller:
         given["caller"] = caller_key(caller)
         given["context"] = json.dumps(dict(caller), default=str)
-    if date is not None or not typography or layout_counts is not None or locale is not None:
-        given["writing"] = ooxml_core.CallWriting(date=date, typography=typography,
-                                                  layout_counts=layout_counts, locale=locale)
+    if date is not None or not typography or locale is not None:
+        given["writing"] = ooxml_core.CallWriting(date=date, typography=typography, locale=locale)
     if limits is not None:
         given["limits"] = ooxml_core.Limits(result_chars=limits.max_result_chars,
                                             list_items=limits.max_list_items,

@@ -16,11 +16,11 @@ import re
 from pathlib import Path
 
 import pytest
-from lxml import etree
 from ooxml_edit.tools import Toolbox
 
-from docx_agent import Document
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
+
+import word_docs
 
 ROOT = Path(__file__).resolve().parent.parent
 OBSERVED = json.loads((ROOT / "tests" / "observations" / "tracking-word.json").read_text(encoding="utf-8"))
@@ -35,16 +35,17 @@ def box():
 
 
 def _base(*texts: str) -> bytes:
-    document = Document.new()
-    document.insert_markdown("\n\n".join(texts), at="end")
-    return document.to_bytes()
+    """A document of these paragraphs, nothing else."""
+    return word_docs.with_body("".join(
+        f'<w:p w14:paraId="{0x1A000001 + k:08X}" w14:textId="77777777"><w:r><w:t xml:space="preserve">{text}'
+        "</w:t></w:r></w:p>" for k, text in enumerate(texts)))
 
 
-def _opened(box, data: bytes):
+def _opened(box, data: bytes, author: str = AUTHOR):
     session = box.session()
     doc = session.open(data, "plan.docx")
-    ok(box, session, "word_set_tracking", doc=doc, on=True, author=AUTHOR)
-    return session, doc, session.entry(doc).document
+    ok(box, session, "word_set_tracking", doc=doc, on=True, author=author)
+    return session, doc
 
 
 def ok(box, session, tool: str, /, **arguments):
@@ -53,13 +54,35 @@ def ok(box, session, tool: str, /, **arguments):
     return result
 
 
-def _changes(document: Document) -> list[str]:
+def _body(data: bytes) -> list:
+    return list(word_docs.tree(data).find(W + "body").iter(W + "p"))
+
+
+def _changes(session, doc) -> list[str]:
     """The text of each body paragraph holding a ``w:pPrChange``."""
-    return [p.text for p in document.paragraphs() if p._element.find(f"{W}pPr/{W}pPrChange") is not None]
+    return [word_docs.text_of(p) for p in _body(word_docs.saved(session, doc))
+            if p.find(f"{W}pPr/{W}pPrChange") is not None]
 
 
-def _xml(document: Document) -> str:
-    return etree.tostring(document.package.tree(document.package.document_part())).decode()
+def _xml(session, doc) -> str:
+    return word_docs.part(word_docs.saved(session, doc))
+
+
+def _reviewed(box, data: bytes, action: str) -> bytes:
+    """``data`` with every change accepted or rejected."""
+    session = box.session()
+    doc = session.open(data, "reviewed.docx")
+    ok(box, session, "word_changes", doc=doc, action=action, all=True)
+    return word_docs.saved(session, doc)
+
+
+def _style_name(data: bytes, paragraph) -> str | None:
+    style = paragraph.find(f"{W}pPr/{W}pStyle")
+    if style is None:
+        return None
+    sheet = word_docs.tree(data, "word/styles.xml")
+    found = next(s for s in sheet.iter(W + "style") if s.get(W + "styleId") == style.get(W + "val"))
+    return found.find(W + "name").get(W + "val")
 
 
 def test_word_keeps_a_property_change_only_on_the_last_paragraph_typed_at_the_end():
@@ -74,71 +97,69 @@ def test_word_keeps_a_property_change_only_on_the_last_paragraph_typed_at_the_en
 
 
 def test_sections_appended_at_the_end_record_one_property_change_as_word_does(box):
-    session, doc, document = _opened(box, _base("Existing text."))
+    session, doc = _opened(box, _base("Existing text."))
     for k in range(6):
         ok(box, session, "word_insert_markdown", doc=doc, at="end", markdown=f"## Part {k}\n\n- item {k}")
-    document = session.entry(doc).document      # (read after the calls: a held Document is not live)
     # Before round 50: one w:pPrChange per call, each on a paragraph the call inserted.
-    assert _changes(document) == ["item 5"]
-    paragraphs = document.paragraphs()
+    assert _changes(session, doc) == ["item 5"]
+    paragraphs = _body(word_docs.saved(session, doc))
     for paragraph in paragraphs[:-1]:
         # Every mark but the last is an insertion of the author's (the first: Word's typing
         # form, the mark of the paragraph the insertion follows).
-        mark = paragraph._element.find(f"{W}pPr/{W}rPr/{W}ins")
+        mark = paragraph.find(f"{W}pPr/{W}rPr/{W}ins")
         assert mark is not None and mark.get(W + "author") == AUTHOR
     # The last records its properties as a change from the old mark's -- the existing
     # paragraph's, as it was.
-    old = paragraphs[-1]._element.find(f"{W}pPr/{W}pPrChange/{W}pPr")
+    old = paragraphs[-1].find(f"{W}pPr/{W}pPrChange/{W}pPr")
     assert old is not None and not len(old)
-    kinds = {r.kind for r in document.revisions()}
-    assert kinds == {"insertion", "paragraph-mark-insertion", "paragraph-properties"}
+    records = ok(box, session, "word_changes", doc=doc, action="list", detail="records").data
+    assert {r["kind"] for r in records} == {"insertion", "paragraph-mark-insertion", "paragraph-properties"}
 
 
 def test_appended_sections_reject_to_the_original_and_accept_to_the_text(box):
-    session, doc, document = _opened(box, _base("Existing text."))
+    session, doc = _opened(box, _base("Existing text."))
     for k in range(3):
         ok(box, session, "word_insert_markdown", doc=doc, at="end", markdown=f"## Part {k}\n\n1. step {k}")
-    document = session.entry(doc).document      # (read after the calls: a held Document is not live)
-    accepted = Document.open(document.to_bytes())
-    accepted.accept_all()
-    assert [p.text for p in accepted.paragraphs()] == ["Existing text.", "Part 0", "step 0", "Part 1", "step 1",
-                                                       "Part 2", "step 2"]
-    assert accepted.paragraphs()[1].style_name.lower() == "heading 2" and not accepted.revisions()
-    rejected = Document.open(document.to_bytes())
-    rejected.reject_all()
-    assert [p.text for p in rejected.paragraphs()] == ["Existing text."]
-    assert rejected.paragraphs()[0]._element.find(f"{W}pPr/{W}pStyle") is None
+    data = word_docs.saved(session, doc)
+    accepted = _reviewed(box, data, "accept")
+    paragraphs = _body(accepted)
+    assert [word_docs.text_of(p) for p in paragraphs] == ["Existing text.", "Part 0", "step 0", "Part 1",
+                                                          "step 1", "Part 2", "step 2"]
+    assert _style_name(accepted, paragraphs[1]).lower() == "heading 2"
+    assert "<w:ins " not in word_docs.part(accepted) and "pPrChange" not in word_docs.part(accepted)
+    rejected = _reviewed(box, data, "reject")
+    paragraphs = _body(rejected)
+    assert [word_docs.text_of(p) for p in paragraphs] == ["Existing text."]
+    assert paragraphs[0].find(f"{W}pPr/{W}pStyle") is None
 
 
-def test_a_change_the_last_paragraph_had_passes_on_with_its_mark():
+def test_a_change_the_last_paragraph_had_passes_on_with_its_mark(box):
     # A paragraph whose formatting another author changed (tracked) is the body's last; text
     # appended after it, tracked: the record moves to the new last paragraph, which holds the
     # old mark, and still says what the properties were before either edit.
-    document = Document.new()
-    document.insert_markdown("Lead.\n\nLast one.", at="end")
-    last = document.paragraphs()[-1]
-    with document.tracking(author="Other", date="2026-11-01T10:00:00Z"):
-        document.paragraph(last.id).format(alignment="center")
-    assert _changes(document) == ["Last one."]
-    with document.tracking(author=AUTHOR, date="2026-11-02T10:00:00Z"):
-        document.paragraph(last.id).insert_after("Appended.", style="Heading 1")
-    assert _changes(document) == ["Appended."]
-    old = document.paragraphs()[-1]._element.find(f"{W}pPr/{W}pPrChange/{W}pPr")
+    session, doc = _opened(box, _base("Lead.", "Last one."), author="Other")
+    last = word_docs.paragraphs(session, doc)[-1][0]
+    ok(box, session, "word_format", doc=doc, targets=[last], alignment="center")
+    assert _changes(session, doc) == ["Last one."]
+    ok(box, session, "word_set_tracking", doc=doc, on=True, author=AUTHOR)
+    ok(box, session, "word_insert_markdown", doc=doc, at=f"after:{last}", markdown="# Appended.")
+    assert _changes(session, doc) == ["Appended."]
+    data = word_docs.saved(session, doc)
+    old = _body(data)[-1].find(f"{W}pPr/{W}pPrChange/{W}pPr")
     assert old is not None and old.find(f"{W}jc") is None and old.find(f"{W}pStyle") is None
-    rejected = Document.open(document.to_bytes())
-    rejected.reject_all()
-    assert [p.text for p in rejected.paragraphs()] == ["Lead.", "Last one."]
-    assert rejected.paragraphs()[-1]._element.find(f"{W}pPr/{W}jc") is None
+    rejected = _body(_reviewed(box, data, "reject"))
+    assert [word_docs.text_of(p) for p in rejected] == ["Lead.", "Last one."]
+    assert rejected[-1].find(f"{W}pPr/{W}jc") is None
 
 
 def test_formatting_given_with_the_insertion_records_none(box):
-    session, doc, document = _opened(box, _base("Existing text.", "Closing text."))
-    first = document.paragraphs()[0].id
+    session, doc = _opened(box, _base("Existing text.", "Closing text."))
+    first = word_docs.paragraphs(session, doc)[0][0]
     ok(box, session, "word_insert_markdown", doc=doc, at=f"after:{first}", markdown="Styled.\n\n- a\n- b",
        style_map=[{"element": "paragraph", "style": "Quote"}])
     ok(box, session, "word_set_text", doc=doc, target=first, text="Existing text.\nSplit off.",
        paragraph_style="Normal")
-    assert "pPrChange" not in _xml(document) and "rPrChange" not in _xml(document)
+    assert "pPrChange" not in _xml(session, doc) and "rPrChange" not in _xml(session, doc)
 
 
 def test_a_later_call_formatting_ones_own_insertion_is_recorded_as_word_records_it(box):
@@ -146,19 +167,17 @@ def test_a_later_call_formatting_ones_own_insertion_is_recorded_as_word_records_
     # typed (``format``: Stwonew, its mark and text the user's own insertions).
     typed = next(b for b in OBSERVED["format"] if "Stwonew" in b)
     assert '<w:ins w:id="' in typed and "<w:pPrChange" in typed and "<w:rPrChange" in typed
-    session, doc, document = _opened(box, _base("Existing text.", "Closing text."))
-    first = document.paragraphs()[0].id
+    session, doc = _opened(box, _base("Existing text.", "Closing text."))
+    first = word_docs.paragraphs(session, doc)[0][0]
     created = ok(box, session, "word_insert_markdown", doc=doc, at=f"after:{first}", markdown="New paragraph.")
-    new = created.created[0] if created.created else document.paragraphs()[1].id
+    new = created.created[0] if created.created else word_docs.paragraphs(session, doc)[1][0]
     ok(box, session, "word_format", doc=doc, targets=[new], alignment="center")
-    document = session.entry(doc).document  # (the view as the served call left it)
-    assert _changes(document) == ["New paragraph."]
+    assert _changes(session, doc) == ["New paragraph."]
 
 
 def test_formatting_existing_text_is_recorded_as_before(box):
-    session, doc, document = _opened(box, _base("Existing text.", "Closing text."))
+    session, doc = _opened(box, _base("Existing text.", "Closing text."))
     ok(box, session, "word_insert_markdown", doc=doc, at="end", markdown="Appended.")
-    ok(box, session, "word_format", doc=doc, targets=[document.paragraphs()[0].id], alignment="right")
-    document = session.entry(doc).document  # (the view as the served call left it)
-    assert _changes(document) == ["Existing text."]
-    assert re.search(r"<w:jc w:val=\"right\"/>", _xml(document))
+    ok(box, session, "word_format", doc=doc, targets=[word_docs.paragraphs(session, doc)[0][0]], alignment="right")
+    assert _changes(session, doc) == ["Existing text."]
+    assert re.search(r"<w:jc w:val=\"right\"/>", _xml(session, doc))

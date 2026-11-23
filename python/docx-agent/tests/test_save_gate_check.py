@@ -4,8 +4,8 @@ The save gate compares the document's validation problems with those it had when
 (ooxml-edit's :mod:`~ooxml_edit.tools.savegate`); every ``check`` result carries the same
 comparison as ``validation`` -- whatever its ``include`` or ``range`` -- and ``validate``'s
 own delta is read through it, so the three never disagree.  A made-up "Shelf" document is
-edited into three new problems by a test tool (paragraph styles the document lacks: what a
-copy without its styles or a hand-made patch leaves), then fixed with ``word_format``.
+edited into three new problems: its outcome lines copied in from a patch whose paragraph styles
+neither document has (what a copy without its styles leaves), then fixed with ``word_format``.
 """
 
 from __future__ import annotations
@@ -16,45 +16,25 @@ import pytest
 
 pytest.importorskip("ooxml_edit.tools.savegate", reason="needs ooxml-edit 0.111.0")
 
-from lxml import etree  # noqa: E402
-from ooxml_edit.tools import Result, Toolbox, string, tool  # noqa: E402
+from ooxml_edit.tools import Toolbox  # noqa: E402
 
-from docx_agent import Document  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
+import word_docs  # noqa: E402
 
 pytestmark = pytest.mark.any_faces
 
-W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 CLOCK = lambda: dt.datetime(2026, 11, 12, tzinfo=dt.timezone.utc)  # noqa: E731
 STYLES = ["ShelfTop", "ShelfMiddle", "ShelfLow"]
 NEW = sorted(f"[style-missing] word/document.xml: pStyle {name}" for name in STYLES)
-
-
-@tool("name_styles", "Test only: give paragraphs a paragraph style the document lacks.",
-      {"doc": string("Document id."), "paragraphs": string("Comma-separated p: ids.")},
-      kind="docx", mutates=True)
-def name_styles(call, doc, paragraphs):
-    document = call.document
-    for ref, style in zip(paragraphs.split(","), STYLES):
-        paragraph = document._resolve(ref)[1].element
-        properties = paragraph.find(W + "pPr")
-        if properties is None:
-            properties = etree.Element(W + "pPr")
-            paragraph.insert(0, properties)
-        node = properties.find(W + "pStyle")
-        if node is None:
-            node = etree.Element(W + "pStyle")
-            properties.insert(0, node)
-        node.set(W + "val", style)
-    # (a hand-made patch marks the part it changed: the tool layer commits the parts marked)
-    document.package.mark_dirty(document.package.document_part())
-    document._invalidate()
-    return Result(summary="styled", changed=True)
+#: The patch: an outcome line per place, each in a paragraph style no document here has.
+PATCH = "".join(f'<w:p w14:paraId="0000020{k}" w14:textId="77777777"><w:pPr><w:pStyle w:val="{style}"/></w:pPr>'
+                f"<w:r><w:t>Outcome: {place} shelf done.</w:t></w:r></w:p>"
+                for k, (style, place) in enumerate(zip(STYLES, ("top", "middle", "low"))))
 
 
 @pytest.fixture
 def box():
-    with Toolbox([*TOOLS, name_styles], formats=[FORMAT], groups=GROUPS, workers=0) as toolbox:
+    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as toolbox:
         yield toolbox
 
 
@@ -67,17 +47,22 @@ def _ok(box, session, name, /, **arguments):
 def _shelf(box):
     """The made-up document: three places, each a heading, a table and an outcome line."""
     session = box.session(clock=CLOCK)
-    session.open(Document.new().to_bytes(), "shelf.docx")
-    first = session.entry("d1").document.paragraphs()[0].id
+    session.open(word_docs.blank(), "shelf.docx")
+    first = word_docs.paragraph_ids(box, session, "d1")[0]
     md = "# Shelf\n\nWhat the shelf holds, by place.\n\n"
     for place in ("Top", "Middle", "Low"):
         md += (f"## {place}\n\n| item | count | notes |\n|---|---|---|\n| jar | 3 | glass |\n"
                f"| tin | 5 | partly done |\n\nOutcome: {place.lower()} shelf partly done.\n\n")
     _ok(box, session, "word_insert_markdown", doc="d1", at=f"after:{first}", markdown=md)
-    document = session.entry("d1").document
-    outcomes = [p.id for p in document.paragraphs() if p.text.startswith("Outcome")]
-    intro = next(p.id for p in document.paragraphs() if p.text.startswith("What the shelf"))
-    return session, outcomes, intro
+    intro = next(p for p, text in word_docs.paragraphs(session, "d1") if text.startswith("What the shelf"))
+    session.open(word_docs.with_body(PATCH), "patch.docx")                      # d2
+    return session, intro
+
+
+def _name_styles(box, session) -> list[str]:
+    """The patch's outcome lines copied in at the end: three new problems.  Their ids."""
+    return _ok(box, session, "word_copy_from", doc="d1", source_doc="d2", range="p:00000200..p:00000202",
+               at="end").data["blocks"]
 
 
 def _save(box, session):
@@ -88,8 +73,8 @@ def _save(box, session):
 @pytest.mark.parametrize("asked", [{"include": ["layout"]}, {"range": "intro"},
                                    {"include": ["fields"]}, {}])
 def test_check_lists_the_problems_the_save_refuses_whatever_it_was_asked(box, asked):
-    session, outcomes, intro = _shelf(box)
-    _ok(box, session, "name_styles", doc="d1", paragraphs=",".join(outcomes))
+    session, intro = _shelf(box)
+    _name_styles(box, session)
     arguments = {"doc": "d1", **({"range": intro} if "range" in asked else asked)}
     checked = _ok(box, session, "check", **arguments)
     refused = _save(box, session)
@@ -101,8 +86,8 @@ def test_check_lists_the_problems_the_save_refuses_whatever_it_was_asked(box, as
 
 
 def test_the_fix_with_the_tools_clears_it_and_the_save_passes(box):
-    session, outcomes, _ = _shelf(box)
-    _ok(box, session, "name_styles", doc="d1", paragraphs=",".join(outcomes))
+    session, _ = _shelf(box)
+    outcomes = _name_styles(box, session)
     fixed = _ok(box, session, "word_format", doc="d1", targets=outcomes, paragraph_style="Normal")
     assert fixed.checks["validate"]["new"] == []
     checked = _ok(box, session, "check", doc="d1", include=["layout"])
@@ -113,8 +98,9 @@ def test_the_fix_with_the_tools_clears_it_and_the_save_passes(box):
 
 
 def test_validate_the_calls_checks_and_validation_agree(box):
-    session, outcomes, intro = _shelf(box)
-    edited = _ok(box, session, "name_styles", doc="d1", paragraphs=",".join(outcomes))
+    session, intro = _shelf(box)
+    edited = _ok(box, session, "word_copy_from", doc="d1", source_doc="d2", range="p:00000200..p:00000202",
+                 at="end")
     checked = _ok(box, session, "check", doc="d1")
     assert edited.checks["validate"]["new"] == checked.data["validate"]["new"] \
         == checked.data["validation"]["new"]
@@ -124,46 +110,9 @@ def test_validate_the_calls_checks_and_validation_agree(box):
     assert scoped.data["validation"]["new"] == checked.data["validation"]["new"]
 
 
-def test_the_problems_are_found_once_per_version(box, monkeypatch):
-    session, outcomes, _ = _shelf(box)
-    from docx_agent import revalidate
-    from docx_agent.rust import owner as rust_owner
-    from docx_agent.rust import reads
-
-    found, asked = [], []
-    real, real_session = revalidate._find, rust_owner.session_validation
-
-    def counted(*args, **kwargs):
-        found.append(1)
-        return real(*args, **kwargs)
-
-    def counted_session(entry):
-        answer = real_session(entry)
-        if answer is not None:
-            asked.append(1)
-        return answer
-
-    # Lane G: the problems are found per change (docx_agent.revalidate._find), once a version.
-    monkeypatch.setattr(revalidate, "_find", counted)
-    # Lane P5a: or compared by the Rust session that owns the document, the Python view left as it is.
-    monkeypatch.setattr(rust_owner, "session_validation", counted_session)
-    owned = reads._owned(session.entry("d1")) is not None
-    _ok(box, session, "name_styles", doc="d1", paragraphs=",".join(outcomes))
-    assert (len(found), bool(asked)) == ((0, True) if owned else (1, False))   # the call's checks
-    for asked_for in ([], ["validate"], ["layout"]):
-        _ok(box, session, "check", doc="d1", **({"include": asked_for} if asked_for else {}))
-    # kept for the version; lane P5b: the default check (reflow) is the session's too, so
-    # of an owned document Python finds none (the layout check validates nothing)
-    assert len(found) == (0 if owned else 1)
-    gate = len(asked)
-    assert _save(box, session).error.code == "refused"
-    # the gate finds them afresh: here, or in the session
-    assert (len(found), len(asked)) == ((0, gate + 1) if owned else (2, gate))
-
-
 def test_a_check_inside_a_batch_sees_the_batchs_own_edit(box):
-    session, outcomes, _ = _shelf(box)
-    _ok(box, session, "name_styles", doc="d1", paragraphs=",".join(outcomes))
+    session, _ = _shelf(box)
+    outcomes = _name_styles(box, session)
     _ok(box, session, "check", doc="d1")                    # kept for this version
     result = _ok(box, session, "batch", ops=[
         {"tool": "word_format", "arguments": {"doc": "d1", "targets": outcomes,

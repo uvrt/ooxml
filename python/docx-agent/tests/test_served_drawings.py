@@ -1,7 +1,6 @@
 """Lane P2c14: ``word_drawings`` served by the Rust session, an inserted picture's bytes
-asked of the host's blobs (``CallOptions(blobs=...)``); its replies as docx-agent's own
-handler gives them (a session with the Rust session off is answered by the Python handler).
-Made-up documents and pictures only."""
+asked of the host's blobs (``CallOptions(blobs=...)``): inserted, listed, resized and
+described; a blob that is not there refused.  Made-up documents and pictures only."""
 
 from __future__ import annotations
 
@@ -11,12 +10,11 @@ import zlib
 
 import pytest
 
-from docx_agent import Document
 from docx_agent.rust import edits
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from ooxml_edit.tools import Toolbox
-from ooxml_edit.tools.owned import OwnedEntry
-from python_handler import python_session
+
+import word_docs
 
 CLOCK = lambda: dt.datetime(2026, 11, 20, 9, 0, tzinfo=dt.timezone.utc)  # noqa: E731
 
@@ -40,49 +38,56 @@ def toolbox():
         yield box
 
 
-@pytest.fixture(scope="module")
-def report() -> bytes:
-    doc = Document.new()
-    doc.insert_markdown("# A made-up report\n\nLantern meadow by the harbour.\n\nRiver stone number one.\n")
-    return doc.to_bytes()
+def _made(markdown: str) -> bytes:
+    """A blank document with ``markdown`` inserted by the toolbox, as bytes (every paragraph
+    with its paraId)."""
+    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as box:
+        session = box.session()
+        doc = session.open(word_docs.blank(), "made.docx")
+        word_docs.call(box, session, "word_insert_markdown", doc=doc, at="end", markdown=markdown)
+        return word_docs.saved(session, doc)
 
 
-def _calls(toolbox, data: bytes, served: bool) -> list:
-    if served:
-        session = toolbox.session(clock=CLOCK)
-        doc = session.open(data, "report.docx")
-    else:
-        session, doc = python_session(toolbox, data, "report.docx", clock=CLOCK)
-    if served and not isinstance(session.entry(doc), OwnedEntry):
-        pytest.skip("no Rust session to own the document")
+def _ids(session, doc) -> dict[str, str]:
+    """Each paragraph's id by its text (the first of a text), from the package."""
+    out: dict[str, str] = {}
+    for block, text in word_docs.paragraphs(session, doc):
+        out.setdefault(text, block)
+    return out
+
+
+def _report() -> bytes:
+    return _made("# A made-up report\n\nLantern meadow by the harbour.\n\nRiver stone number one.\n")
+
+
+def test_pictures_served_from_the_hosts_blobs(toolbox):
+    session = toolbox.session(clock=CLOCK)
+    doc = session.open(_report(), "report.docx")
     image = session.add_blob(png(), "logo.png")
-    ids = {p.text: p.id for p in session.entry(doc).document.paragraphs()}
-    out = []
+    ids = _ids(session, doc)
 
     def run(arguments: dict) -> object:
-        before = dict(edits.served())
+        before = edits.served().get("word_drawings", 0)
         result = toolbox.dispatch(session, "word_drawings", {"doc": doc, **arguments})
-        if served:
-            assert edits.served().get("word_drawings", 0) == before.get("word_drawings", 0) + 1, edits.fallbacks()
-        out.append((result.ok, result.summary, result.data, sorted(result.changed), result.warnings))
+        assert edits.served().get("word_drawings", 0) == before + 1
         return result
 
     first = run({"action": "insert_picture", "image": image, "find": "meadow", "width": 30,
                  "alt_text": "A made-up logo"})
     assert first.ok, first.error
-    run({"action": "insert_picture", "image": image, "at": f"after:{ids['River stone number one.']}",
-         "align": "center", "alt_text": "The logo again"})
-    run({"action": "list"})
-    drawing = first.data["id"] if isinstance(first.data, dict) else None
-    if drawing is not None:
-        run({"action": "resize", "target": drawing, "width": 60})
-        run({"action": "set", "target": drawing, "alt_text": "A made-up logo, larger"})
+    drawing = first.data["id"]
+    second = run({"action": "insert_picture", "image": image, "at": f"after:{ids['River stone number one.']}",
+                  "align": "center", "alt_text": "The logo again"})
+    assert second.ok, second.error
+    listed = run({"action": "list"})
+    assert listed.ok and len(listed.data) == 2, listed.data
+    assert run({"action": "resize", "target": drawing, "width": 60}).ok
+    assert run({"action": "set", "target": drawing, "alt_text": "A made-up logo, larger"}).ok
+    xml = word_docs.part(word_docs.saved(session, doc))
+    assert 'descr="A made-up logo, larger"' in xml and 'descr="The logo again"' in xml
+    assert any(name.startswith("word/media/") for name in
+               __import__("zipfile").ZipFile(__import__("io").BytesIO(word_docs.saved(session, doc))).namelist())
     # a blob that is not there: refused by the session, in docx-agent's words (lane P2e1)
     missing = run({"action": "insert_picture", "image": "b9", "at": ids["Lantern meadow by the harbour."],
                    "alt_text": "None"})
     assert not missing.ok and missing.error.code == "not_found"
-    return out
-
-
-def test_pictures_served_from_the_hosts_blobs(toolbox, report):
-    assert _calls(toolbox, report, True) == _calls(toolbox, report, False)

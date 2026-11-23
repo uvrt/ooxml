@@ -150,10 +150,12 @@ def test_a_writer_without_resolve_keeps_the_default_tools_and_strict_set(box):
     assert set(writer) == set(default)
     # Its word_changes offers list alone and so has no ids or all (round 17,
     # Tool.action_fields): the strict optional parameters it frees kept word_set_text strict
-    # (round 42: five optional parameters, which the default set has no room for; edit_smartart
-    # takes its place there) until word_insert_markdown's like (R47) took one of them: a
-    # writer's strict set is now the default's.
-    assert {n for n, d in writer.items() if d["strict"]} == {n for n, d in default.items() if d["strict"]}
+    # (round 42: five optional parameters, which the default set has no room for) until
+    # word_insert_markdown's like (R47) took one of them.  With edit_smartart out of the tools
+    # (P4e, until its port), the room it took in the default set is set_properties' in a
+    # writer's: the writer's strict set is the default's and set_properties.
+    strict = {n for n, d in writer.items() if d["strict"]}
+    assert strict == {n for n, d in default.items() if d["strict"]} | {"set_properties"}
     assert "ids" not in writer["word_changes"]["input_schema"]["properties"]
     assert "ids" in default["word_changes"]["input_schema"]["properties"]
     assert _enum(writer["word_comments"]) == ["list", "add", "reply", "edit"]

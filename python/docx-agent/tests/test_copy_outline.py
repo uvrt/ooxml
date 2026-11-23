@@ -15,12 +15,15 @@ pytest.importorskip("ooxml_edit.tools.shared", reason="needs ooxml-edit (the sha
 
 from ooxml_edit.tools import Toolbox  # noqa: E402
 
-from docx_agent.edit import copy_settings  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).parent))
 
 import toc_number_cases as cases  # noqa: E402
+import word_docs  # noqa: E402
+from layout_reads import block_ids  # noqa: E402
+
+W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 pytestmark = pytest.mark.any_faces
 
@@ -46,8 +49,8 @@ def _ok(box, session, tool: str, /, **arguments):
     return result.data
 
 
-def _blocks(session, doc: str) -> list[str]:
-    return [b["id"] for b in session.entry(doc).document.blocks()]
+def _blocks(box, session, doc: str) -> list[str]:
+    return block_ids(box, session, doc)
 
 
 def _made(box, session, sample_markdown: str, count: int, *, sections: int = 1, lead: str = "", prepare=None):
@@ -57,11 +60,11 @@ def _made(box, session, sample_markdown: str, count: int, *, sections: int = 1, 
     sample = session.open(_template(), "sample.docx")
     if lead:
         _ok(box, session, "word_insert_markdown", doc=sample, markdown=lead, at="end")
-    before = len(_blocks(session, sample))
+    before = len(_blocks(box, session, sample))
     _ok(box, session, "word_insert_markdown", doc=sample, markdown=sample_markdown, at="end")
-    part = _blocks(session, sample)[before:]
+    part = _blocks(box, session, sample)[before:]
     if prepare is not None:
-        prepare(sample, _blocks(session, sample))
+        prepare(sample, _blocks(box, session, sample))
     span = f"{part[0]}..{part[-1]}"
     report = session.open(_template(), "report.docx")
     made = []
@@ -78,11 +81,26 @@ def _check(box, session, report, sample, span, made) -> dict:
     return _ok(box, session, "check", doc=report, include=[], copies=pairs)["copies"]
 
 
-def _numbers(session, doc: str, blocks: list[str]) -> list:
-    """The numbers the blocks' list items show (the module's count)."""
-    document = session.entry(doc).document
-    items = copy_settings.list_items(document)
-    return [items.get(id(document._resolve(b)[1].element), (None,) * 5)[4] for b in blocks]
+def _list(box, session, doc: str, block: str) -> dict | None:
+    """A block's list item, as ``word_inspect`` gives it (``None``: not one)."""
+    result = box.dispatch(session, "word_inspect", {"doc": doc, "target": block})
+    assert result.ok, result.to_json()
+    return result.data["blocks"][0].get("list")
+
+
+def _numbers(box, session, doc: str, blocks: list[str]) -> list:
+    """The numbers the blocks' list items show."""
+    return [(_list(box, session, doc, b) or {}).get("number") for b in blocks]
+
+
+def _level_text(session, doc: str, num_id: int, level: int) -> str:
+    """A list level's label pattern (``w:lvlText``), as the numbering part defines it."""
+    root = word_docs.tree(word_docs.saved(session, doc), "word/numbering.xml")
+    instance = next(n for n in root.iter(W + "num") if n.get(W + "numId") == str(num_id))
+    abstract = instance.find(W + "abstractNumId").get(W + "val")
+    definition = next(a for a in root.iter(W + "abstractNum") if a.get(W + "abstractNumId") == abstract)
+    found = next(lvl for lvl in definition.iter(W + "lvl") if lvl.get(W + "ilvl") == str(level))
+    return found.find(W + "lvlText").get(W + "val")
 
 
 def _differences(found: dict) -> list[list[dict]]:
@@ -95,7 +113,7 @@ def test_a_part_titled_by_a_numbered_heading_copied_twice_follows(box):
     difference, and no restart offered."""
     session = box.session()
     report, sample, span, made = _made(box, session, PART, 2)
-    assert _numbers(session, report, [m[0] for m in made]) == [1, 2]
+    assert _numbers(box, session, report, [m[0] for m in made]) == [1, 2]
     found = _check(box, session, report, sample, span, made)
     assert found["follow"] == 2, _differences(found)
     assert "list_fix" not in found and "fix" not in found
@@ -108,13 +126,12 @@ def test_numbered_headings_compare_by_level_and_label_not_their_number(box):
     session = box.session()
     markdown = PART + "\n\n### A second titled part\n\nAnother body line."
     report, sample, span, made = _made(box, session, markdown, 3, sections=2)
-    assert _numbers(session, report, [m[0] for m in made]) == [1, 3, 5, 1, 3, 5]
+    assert _numbers(box, session, report, [m[0] for m in made]) == [1, 3, 5, 1, 3, 5]
     found = _check(box, session, report, sample, span, made)
     assert found["follow"] == 6, _differences(found)
-    document = session.entry(report).document
-    title = copy_settings.region_settings(document, [document._resolve(made[4][0])[1].element])
-    values = next(iter(title.values()))
-    assert (values["list_level"], values["list_format"]) == (2, "decimal %1.%2.%3")
+    title = _list(box, session, report, made[4][0])
+    assert (title["level"], title["format"]) == (2, "decimal")
+    assert _level_text(session, report, title["num_id"], 2) == "%1.%2.%3"
 
 
 def test_a_title_at_another_outline_level_differs_without_a_restart(box):
@@ -170,9 +187,9 @@ def test_a_list_that_runs_on_from_before_the_sample_runs_on_in_the_copies(box):
         _ok(box, session, "word_format", doc=sample, targets=blocks[4:6], like=blocks[0])
 
     report, sample, span, made = _made(box, session, PART + STEPS, 3, lead=lead, prepare=join)
-    assert _numbers(session, sample, _blocks(session, sample)[4:6]) == [2, 3]
+    assert _numbers(box, session, sample, _blocks(box, session, sample)[4:6]) == [2, 3]
     # The copies' lists: the first begins the report's count, the others run on.
-    assert _numbers(session, report, [m[3] for m in made]) == [1, 3, 5]
+    assert _numbers(box, session, report, [m[3] for m in made]) == [1, 3, 5]
     _ok(box, session, "word_lists", doc=report, targets=[made[1][3]], action="restart", start=1)
     found = _check(box, session, report, sample, span, made)
     assert found["follow"] == 3, _differences(found)
@@ -182,16 +199,3 @@ def test_a_list_that_runs_on_from_before_the_sample_runs_on_in_the_copies(box):
     found = _check(box, session, report, sample, span, made)
     numbering = [d for d in found["items"][2]["differences"] if d["property"] == "list_numbering"]
     assert [(d["value"], d["reference"]) for d in numbering] == [("starts at 1", "continues")]
-
-
-def test_an_outline_item_is_never_offered_a_restart():
-    """The rule itself: compared only where the sample's count is its own, and the copy's
-    item not numbered by the outline."""
-    counted = copy_settings._counted
-    key = copy_settings.COUNT
-    assert counted({key: "runs_on"}, {key: "own"})
-    assert counted({key: "own"}, {key: "own"})
-    assert not counted({key: "outline"}, {key: "own"})
-    assert not counted({key: "own"}, {key: "outline"})
-    assert not counted({key: "own"}, {key: "runs_on"})
-    assert not counted({key: None}, {key: None})
