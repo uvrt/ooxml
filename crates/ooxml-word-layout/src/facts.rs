@@ -404,7 +404,9 @@ impl LayoutFacts {
 /// facts of the version before, as many pages): every page but those `remade` is as it was,
 /// so only a path drawn on a remade page, before or now, can have another first page. Such a
 /// path's first page is searched for from the earlier of its old first page and the first
-/// page remade: a page before both is kept, and did not draw it then.
+/// page remade: a page before both is kept, and did not draw it then. The pages from the
+/// first remade one are read once for all such paths (each path's first page among them),
+/// not once per path: an edit that moves every page asks after every path.
 fn first_pages_after(
     old: &Arc<std::collections::HashMap<Text, usize>>,
     was: &[PageFacts],
@@ -428,11 +430,27 @@ fn first_pages_after(
             }
         }
     }
+    // Each path's first page from the first remade one on, in one pass.
+    let mut from_earliest: std::collections::HashMap<&Text, usize> = std::collections::HashMap::new();
+    for page in pages_from(pages, earliest) {
+        for line in &page.lines {
+            from_earliest.entry(&line.path).or_insert(page.page);
+        }
+    }
     let mut first = (**old).clone();
     for path in asked {
         let start = old.get(&path).copied().unwrap_or(usize::MAX).min(earliest);
-        match pages_from(pages, start).iter().find(|p| draws(p, &path)) {
-            Some(page) => first.insert(path, page.page),
+        let found = if start < earliest {
+            // Its old first page is kept (before every remade page): the search ends there.
+            pages_from(pages, start)
+                .iter()
+                .find(|p| draws(p, &path))
+                .map(|p| p.page)
+        } else {
+            from_earliest.get(&path).copied()
+        };
+        match found {
+            Some(page) => first.insert(path, page),
             None => first.remove(&path),
         };
     }
