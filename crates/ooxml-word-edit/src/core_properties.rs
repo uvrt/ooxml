@@ -27,6 +27,8 @@ const DC: &str = "http://purl.org/dc/elements/1.1/";
 const DCTERMS: &str = "http://purl.org/dc/terms/";
 const DCMITYPE: &str = "http://purl.org/dc/dcmitype/";
 const XSI: &str = "http://www.w3.org/2001/XMLSchema-instance";
+/// A date's `xsi:type`.
+const W3CDTF: &str = "dcterms:W3CDTF";
 /// The core part's content type.
 const CORE_TYPE: &str = "application/vnd.openxmlformats-package.core-properties+xml";
 /// Where a new core part goes.
@@ -212,62 +214,102 @@ impl Command<WordDoc> for SetCoreProperties {
         if self.already(sink.doc())? {
             return Ok(CoreSet { changed: false });
         }
-        let part = match found {
-            Some(part) => part,
-            None => {
-                // docx-agent names it `unused_part_name("docProps/core.xml")` when that name
-                // is taken, which never ends; numbered here instead
-                let package = sink.doc().package().clone();
-                let part = crate::new_part::unused_name(&package, CORE_PART, "docProps/core{n}.xml");
-                let made = add_part(&package, "", &part, empty_core(), CORE_TYPE, REL_CORE)?;
-                for name in [part.as_str(), CONTENT_TYPES_PART, rels_for("").as_str()] {
-                    if let Some(tree) = made.tree(name).map_err(crate::doc::ModelError::from)? {
-                        sink.put(name, tree)?;
-                    }
-                }
-                part
-            }
-        };
-        let held = sink.doc().clone();
-        let mut space = Space::default();
-        let work = space
-            .work(&held, &part)?
-            .ok_or_else(|| EditError::NoPart(part.clone()))?;
-        let root = work.root();
-        let mut changed = false;
-        for (property, value) in &self.values {
-            let (ns, _, local) = property.element();
-            let node = match work.find(root, ns, local) {
-                Some(node) => node,
-                None => {
-                    let declared = work.has_prefix_for(root, ns);
-                    // lxml names a namespace nothing declares `ns0`, declared on the element
-                    let node = work.new_element(work.element_name(root, ns, local, "ns0"));
-                    if !declared {
-                        work.declare(node, "ns0", ns);
-                    }
-                    let after = work.children(root).iter().copied().rfind(|c| {
-                        work.name(*c)
-                            .and_then(|n| CoreProperty::named(n))
-                            .is_some_and(|q| q < *property)
-                    });
-                    match after {
-                        Some(after) => work.add_next(after, node),
-                        None => work.insert(root, 0, node),
-                    }
-                    changed = true;
-                    node
-                }
-            };
-            if work.text(node) != value.as_str() {
-                work.set_text(node, value);
-                changed = true;
-            }
-        }
-        if changed {
-            space.mark_dirty(&part);
-        }
-        space.finish(&mut sink)?;
+        let changed = write_core(
+            &mut sink,
+            &self
+                .values
+                .iter()
+                .map(|(p, v)| (*p, Some(v.as_str())))
+                .collect::<Vec<_>>(),
+        )?;
         Ok(CoreSet { changed })
     }
+}
+
+/// Set each property to its value (`None`: removed), in the order given -- a new element
+/// where Word writes it (after the last one before it in [`CoreProperty`]'s order, else
+/// first), a date marked `xsi:type="dcterms:W3CDTF"` -- the core part made when there is
+/// none (docx-agent's `write_core`). Whether anything changed.
+///
+/// # Errors
+/// When the core part, the content types or the package's relationships are not XML.
+pub(crate) fn write_core(sink: &mut EditSink<'_, '_>, values: &[(CoreProperty, Option<&str>)]) -> Result<bool> {
+    for part in [CORE_PART, CONTENT_TYPES_PART, rels_for("").as_str()] {
+        sink.read(Key::Part(Arc::from(part)));
+    }
+    let found = core_part(sink.doc().package())?;
+    if let Some(part) = &found {
+        sink.read(Key::Part(Arc::from(part.as_str())));
+    }
+    let part = match found {
+        Some(part) => part,
+        None => {
+            // docx-agent names it `unused_part_name("docProps/core.xml")` when that name
+            // is taken, which never ends; numbered here instead
+            let package = sink.doc().package().clone();
+            let part = crate::new_part::unused_name(&package, CORE_PART, "docProps/core{n}.xml");
+            let made = add_part(&package, "", &part, empty_core(), CORE_TYPE, REL_CORE)?;
+            for name in [part.as_str(), CONTENT_TYPES_PART, rels_for("").as_str()] {
+                if let Some(tree) = made.tree(name).map_err(crate::doc::ModelError::from)? {
+                    sink.put(name, tree)?;
+                }
+            }
+            part
+        }
+    };
+    let held = sink.doc().clone();
+    let mut space = Space::default();
+    let work = space
+        .work(&held, &part)?
+        .ok_or_else(|| EditError::NoPart(part.clone()))?;
+    let root = work.root();
+    let mut changed = false;
+    for (property, value) in values {
+        let (ns, _, local) = property.element();
+        let found = work.find(root, ns, local);
+        let Some(value) = value else {
+            if let Some(node) = found {
+                work.remove(node);
+                changed = true;
+            }
+            continue;
+        };
+        let node = match found {
+            Some(node) => node,
+            None => {
+                let declared = work.has_prefix_for(root, ns);
+                // lxml names a namespace nothing declares `ns0`, declared on the element
+                let node = work.new_element(work.element_name(root, ns, local, "ns0"));
+                if !declared {
+                    work.declare(node, "ns0", ns);
+                }
+                let after = work.children(root).iter().copied().rfind(|c| {
+                    work.name(*c)
+                        .and_then(|n| CoreProperty::named(n))
+                        .is_some_and(|q| q < *property)
+                });
+                match after {
+                    Some(after) => work.add_next(after, node),
+                    None => work.insert(root, 0, node),
+                }
+                changed = true;
+                node
+            }
+        };
+        if matches!(property, CoreProperty::Created | CoreProperty::Modified)
+            && work.get(node, Some(XSI), "type") != Some(W3CDTF)
+        {
+            work.set(node, work.qname(XSI, "type", "xsi"), W3CDTF);
+            changed = true;
+        }
+        if work.text(node) != *value {
+            work.set_text(node, value);
+            changed = true;
+        }
+    }
+    if changed {
+        space.mark_dirty(&part);
+    }
+    space.finish(sink)?;
+    Ok(changed)
 }

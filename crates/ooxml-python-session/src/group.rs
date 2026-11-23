@@ -67,6 +67,20 @@ impl PyStepGroup {
         self.head(py, made)
     }
 
+    /// The reflow of what the group committed, measured once (a batch's checks, after its
+    /// last op; JSON text): from the version it started from to the head, laid out by
+    /// `context`'s layout, else the document's own engine, where that engine laid the start
+    /// out; `None` where nothing is measured. Each op's own reflow is not measured inside a
+    /// group.
+    #[pyo3(signature = (*, context = None))]
+    fn reflow(&self, py: Python<'_>, context: Option<PyRef<'_, PyCallContext>>) -> PyResult<Option<String>> {
+        let context = caller_context(context.as_deref());
+        let found = py
+            .detach(|| self.session.group_reflow(&self.doc, &context))
+            .map_err(|e| to_py(&e))?;
+        Ok(found.map(|r| r.to_string()))
+    }
+
     /// Close the group: what it committed one step of the context's caller, made by `tool`
     /// (the batch's); the head (`Version`) it ends at, or `None` when it committed nothing.
     #[pyo3(signature = (*, context = None, tool = None))]
