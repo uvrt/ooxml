@@ -33,7 +33,7 @@ use ooxml_word_edit::RevisionPolicy;
 pub enum Unported {
     /// Text with `**strong**`, `*emphasis*`, `[text]{Style}` or escapes.
     Styled,
-    /// A value written by reference (`{{d:...}}`) or a `$ref` address.
+    /// A `$ref` address (a value by reference reaches the tool written as its value).
     Reference,
     /// Content from data the host holds: rows or a field (`from`), a blob.
     HostData,
@@ -71,10 +71,9 @@ pub(crate) fn not_supported(form: &str, mut call: TryCall, fill: &[&str]) -> Too
 }
 
 /// What of `text`, written as a tool writes it, is not supported yet.
+/// Braces are literal text here: the host writes every reference (`{{d:...}}`) as its value
+/// before the call reaches the session, and refuses one for a tool that does not keep it.
 pub(crate) fn text_unported(text: &str) -> Option<Unported> {
-    if text.contains("{{") {
-        return Some(Unported::Reference);
-    }
     if text.contains('*') || text.contains('\\') || text.contains("]{") {
         return Some(Unported::Styled);
     }
