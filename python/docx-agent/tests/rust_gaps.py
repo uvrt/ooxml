@@ -25,11 +25,8 @@ GAPS: dict[str, str] = {
     "test_charts.py::test_chart_edit_renders[charts-d:5-category]": f"rust gap: a number given as a numeric chart's category (0.25) is refused as not a number ({CUT_B})",
     "test_charts.py::test_chart_edit[charts-d:5-category]": f"rust gap: a number given as a numeric chart's category (0.25) is refused as not a number ({CUT_B})",
     "test_charts.py::test_chart_edit[charts-d:5-add_category]": f"rust gap: a number given as a numeric chart's category (0.25) is refused as not a number ({CUT_B})",
-    "test_style_lists.py::test_continue_drops_direct_numbering_where_the_style_numbers_the_items": f"rust gap: word_lists continue keeps the direct numbering of an item its style numbers ({CUT_F})",
     "test_follow_sample.py::test_report_actionable_leaves_the_copies_own_out_counted":
         f"rust gap: word_follow_sample's report \"\" is refused, not read as the default ({CUT_F})",
-    "test_copy_settings.py::test_copies_that_look_the_same_do_not_differ":
-        f"rust gap: word_lists add bullet level 1 on an item its style numbers stays at level 0 ({CUT_F})",
     "test_block_of.py::test_a_revision_and_an_endnote_give_their_block": f"rust gap: block_of/blocks_between of nested, story and annotation ids ({CUT_B})",
     "test_block_of.py::test_a_top_level_block_is_its_own": f"rust gap: block_of/blocks_between of nested, story and annotation ids ({CUT_B})",
     "test_block_of.py::test_an_unknown_id_is_not_found_and_a_span_is_refused": f"rust gap: block_of/blocks_between of nested, story and annotation ids ({CUT_B})",
