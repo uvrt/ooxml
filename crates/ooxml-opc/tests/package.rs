@@ -243,3 +243,34 @@ fn the_parts_changed_are_found_by_identity_else_by_bytes() {
     let again = first.with_bytes("word/media/a.png", Arc::from(&b"\x89PNG\r\n"[..]));
     assert!(again.changed_parts(&first).is_empty());
 }
+
+#[test]
+fn two_trees_are_the_same_part_by_structure_as_by_the_bytes_they_write() {
+    let first = open(&made_up());
+    let parse = |xml: &str| ooxml_xml::parse(xml.as_bytes(), &Limits::default().xml).unwrap();
+    let name = "word/document.xml";
+    let a = first.with_tree(name, parse(DOC)).unwrap();
+    // parsed apart: another allocation of the same structure
+    let b = first.with_tree(name, parse(DOC)).unwrap();
+    assert!(!a.part(name).unwrap().same(b.part(name).unwrap()));
+    assert!(b.changed_parts(&a).is_empty());
+    assert_eq!(a.read(name).unwrap(), b.read(name).unwrap());
+    // one letter of the text changed, the rest shared
+    let edited = parse(&DOC.replace("One", "Ono"));
+    let c = a.with_tree(name, edited).unwrap();
+    assert_eq!(c.changed_parts(&a), [name]);
+    assert_ne!(a.read(name).unwrap(), c.read(name).unwrap());
+    // an attribute added where the text is the same
+    let d = a
+        .with_tree(name, parse(&DOC.replace("<w:p>", r#"<w:p w:rsidR="00A1">"#)))
+        .unwrap();
+    assert_eq!(d.changed_parts(&a), [name]);
+    // a stored part, read, against a tree: by the tree it reads as
+    let stored = first.tree(name).unwrap().unwrap();
+    let same = first.with_tree(name, parse(DOC)).unwrap();
+    assert!(same.changed_parts(&first).is_empty() && first.changed_parts(&same).is_empty());
+    let edited = first
+        .with_tree(name, stored.with_root(c.tree(name).unwrap().unwrap().root().clone()))
+        .unwrap();
+    assert_eq!(edited.changed_parts(&first), [name]);
+}
