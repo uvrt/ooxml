@@ -113,10 +113,20 @@ impl<'a> Facts<'a> {
         let mut by_block: HashMap<&str, Vec<Drawn<'_>>> = HashMap::new();
         let mut by_table: HashMap<&str, BTreeSet<usize>> = HashMap::new();
         let facts = version.facts();
+        // A paragraph's lines stand together: whether the version names it is asked once.
+        let mut named: Option<(&str, bool)> = None;
         for (index, page) in facts.pages.iter().enumerate() {
             for line in &page.lines {
                 let path: &str = &line.path;
-                if story_kind(path) != "body" || version.id_of(path).is_none() {
+                let is_named = match named {
+                    Some((last, known)) if last == path => known,
+                    _ => {
+                        let known = story_kind(path) == "body" && version.id_of(path).is_some();
+                        named = Some((path, known));
+                        known
+                    }
+                };
+                if !is_named {
                     continue;
                 }
                 let drawn = Drawn { page: index + 1, line };

@@ -212,9 +212,22 @@ impl PageEngine {
             pages.push(key.as_ref().map(crate::digest_cache::PageRef::of));
             paths.push(found);
         }
+        // A paragraph's lines stand together: its id is asked once for them.
+        let mut last: Option<(&str, Option<ooxml_word_model::value::Text>)> = None;
         let ids = paths
             .iter()
-            .map(|page| page.iter().map(|path| version.ids.all().get(path).cloned()).collect())
+            .map(|page| {
+                page.iter()
+                    .map(|path| match &last {
+                        Some((was, id)) if *was == &**path => id.clone(),
+                        _ => {
+                            let id = version.ids.id_of(path).map(ooxml_word_model::value::Text::from);
+                            last = Some((path, id.clone()));
+                            id
+                        }
+                    })
+                    .collect()
+            })
             .collect();
         let made = Arc::new(VersionPages {
             contexts,
