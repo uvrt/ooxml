@@ -410,9 +410,9 @@ def _drawn(data: bytes) -> tuple[set, str]:
     """docx2svg's warnings and the text it draws, of a saved document."""
     import docx2svg
 
-    layout = docx2svg.lay_out_docx(data)[0]
-    warned = {getattr(w, "code", w) for w in layout.warnings}
-    return warned, _svg_text(docx2svg.convert_docx_to_svg(data))
+    options = docx2svg.ConvertOptions()
+    svgs = docx2svg.convert_docx_to_svg(data, options)
+    return {w.code for w in options.warnings}, _svg_text(svgs)
 
 
 @pytest.mark.parametrize("edit", [_edit_value, _edit_category, _edit_add_series, _edit_title],

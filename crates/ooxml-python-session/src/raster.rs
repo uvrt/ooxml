@@ -1,12 +1,14 @@
 //! Owns: a page's PNG for Python (`ooxml_core.PageRaster`): the faces handed over read once
 //! (`ooxml_word_pages::png::PageRaster`), each page's SVG drawn with the interpreter lock
-//! let go -- what docx2svg's `svg_to_png` draws with resvg-py, in process.
+//! let go -- what docx2svg's `svg_to_png` draws, in process; and the passes a text is drawn
+//! in where two faces answer to one name (`ooxml_core.drawing_plan`, docx2svg's text as
+//! outlines).
 //!
 //! Must not: lay out, read the machine's font folders beyond what it is handed (the system's
 //! fonts when asked), or hold a Python object.
 
 use ooxml_raster::{Fit, FontLoader, FontSet, Rgba};
-use ooxml_word_pages::png::PageRaster;
+use ooxml_word_pages::png::{drawing_plan as plan_of, PageRaster};
 use ooxml_word_pages::DiskFonts;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -111,4 +113,33 @@ impl PyPageRaster {
         let bytes = drawn.map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(PyBytes::new(py, &bytes))
     }
+}
+
+/// A drawing plan for Python: each `font-family` value drawn after the first pass with its
+/// pass, and per pass the files it leaves out.
+type PlanRow = (Vec<(String, usize)>, Vec<Vec<String>>);
+
+/// The passes `svg` is drawn in with `font_files` and the files under `font_dirs` handed to
+/// the rasteriser (docx2svg's `drawing_plan`), or `None`: one pass draws every text in its
+/// own face. `(stacks, withheld)`: each `font-family` value drawn after the first pass with
+/// its pass, and per pass the files it leaves out.
+#[pyfunction]
+#[pyo3(signature = (svg, font_files = Vec::new(), font_dirs = Vec::new()))]
+pub(crate) fn drawing_plan(
+    py: Python<'_>,
+    svg: &str,
+    font_files: Vec<String>,
+    font_dirs: Vec<String>,
+) -> Option<PlanRow> {
+    let svg = svg.to_owned();
+    let plan = py.detach(|| plan_of(&DiskFonts, &svg, (&font_files, &font_dirs)))?;
+    let stacks = plan
+        .passes
+        .iter()
+        .enumerate()
+        .skip(1)
+        .flat_map(|(pass, (values, _))| values.iter().map(move |v| (v.clone(), pass)))
+        .collect();
+    let withheld = plan.passes.into_iter().map(|(_, w)| w.into_iter().collect()).collect();
+    Some((stacks, withheld))
 }

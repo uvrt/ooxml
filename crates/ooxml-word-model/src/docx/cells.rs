@@ -190,6 +190,8 @@ pub struct PartCells<'a> {
     /// The document's tables' readings kept across its versions, where the part is a
     /// story part of one.
     kept: Option<&'a TableMemo>,
+    /// The rows or cells of each table or row asked about, found once.
+    levels: Levels,
 }
 
 impl<'a> PartCells<'a> {
@@ -201,6 +203,7 @@ impl<'a> PartCells<'a> {
             root,
             tables: HashMap::new(),
             kept: None,
+            levels: Levels::default(),
         }
     }
 
@@ -230,7 +233,28 @@ impl<'a> PartCells<'a> {
             Some(kept) => kept.read(formatting, table),
             None => Arc::new(TableFacts::read(formatting, table)),
         });
-        facts.cell(&model_path(table, below)?).cloned()
+        let path = path_from(table, String::from(ROOT), below, &mut self.levels)?;
+        facts.cell(&path).cloned()
+    }
+}
+
+/// The places of each parent's rows or cells (wrappers looked into), by the parent's
+/// address and the level: a table's or row's found once for all the paragraphs in it.
+#[derive(Default)]
+struct Levels(HashMap<(usize, &'static str), HashMap<Vec<u32>, usize>>);
+
+impl Levels {
+    /// The place among `parent`'s rows or cells (`level`) of the one at `path` below it.
+    fn index(&mut self, parent: &Element, level: &'static str, path: &[u32]) -> Option<usize> {
+        let found = self
+            .0
+            .entry((std::ptr::from_ref(parent) as usize, level))
+            .or_insert_with(|| {
+                let mut found = Vec::new();
+                level_paths(parent, level, &mut Vec::new(), &mut found);
+                found.into_iter().enumerate().map(|(k, p)| (p, k)).collect()
+            });
+        found.get(path).copied()
     }
 }
 
@@ -239,7 +263,7 @@ impl<'a> PartCells<'a> {
 /// cells among a row's cells wherever wrappers (content controls, custom XML) hold them.
 #[must_use]
 pub fn model_path(table: &Arc<Element>, below: &[u32]) -> Option<String> {
-    path_from(table, String::from(ROOT), below)
+    path_from(table, String::from(ROOT), below, &mut Levels::default())
 }
 
 /// The layout model's path of the element at child indexes `place` in the story part whose
@@ -250,13 +274,20 @@ pub fn model_path(table: &Arc<Element>, below: &[u32]) -> Option<String> {
 pub fn story_model_path(root: &Arc<Element>, place: &[u32]) -> Option<String> {
     let (first, rest) = place.split_first()?;
     match root.children().get(*first as usize)?.as_element() {
-        Some(body) if body.name().is(Some(W), "body") => path_from(body, String::from("w:body"), rest),
-        _ => path_from(root, format!("w:{}", root.name().local()), place),
+        Some(body) if body.name().is(Some(W), "body") => {
+            path_from(body, String::from("w:body"), rest, &mut Levels::default())
+        }
+        _ => path_from(
+            root,
+            format!("w:{}", root.name().local()),
+            place,
+            &mut Levels::default(),
+        ),
     }
 }
 
 /// The steps from `start` to the element at `below`, after `prefix`.
-fn path_from(start: &Arc<Element>, prefix: String, below: &[u32]) -> Option<String> {
+fn path_from(start: &Arc<Element>, prefix: String, below: &[u32], levels: &mut Levels) -> Option<String> {
     let mut out = prefix;
     let mut node = Arc::clone(start);
     let mut steps = below.iter().peekable();
@@ -278,13 +309,13 @@ fn path_from(start: &Arc<Element>, prefix: String, below: &[u32]) -> Option<Stri
                 path.push(step);
                 inner = inner.children().get(step as usize)?.as_element()?.clone();
             }
-            let index = level_index(&node, level, &path)?;
+            let index = levels.index(&node, level, &path)?;
             out.push_str(&format!("/w:{level}[{}]", index + 1));
             node = inner;
             continue;
         }
         if let Some(level) = level {
-            let index = level_index(&node, level, &[*k])?;
+            let index = levels.index(&node, level, &[*k])?;
             out.push_str(&format!("/w:{level}[{}]", index + 1));
         } else {
             let count = node
@@ -298,14 +329,6 @@ fn path_from(start: &Arc<Element>, prefix: String, below: &[u32]) -> Option<Stri
         node = child;
     }
     Some(out)
-}
-
-/// The place among `parent`'s rows or cells (`level`), wrappers looked into, of the one at
-/// `path` below it.
-fn level_index(parent: &Element, level: &str, path: &[u32]) -> Option<usize> {
-    let mut found = Vec::new();
-    level_paths(parent, level, &mut Vec::new(), &mut found);
-    found.iter().position(|p| p.as_slice() == path)
 }
 
 fn level_paths(parent: &Element, level: &str, path: &mut Vec<u32>, out: &mut Vec<Vec<u32>>) {

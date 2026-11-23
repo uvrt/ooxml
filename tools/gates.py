@@ -368,7 +368,10 @@ def run_diff(args) -> int:
     meta = {"gate": args.gate, "mode": args.mode, "per_tool": args.per_tool, "every": args.every}
     if golden:      # the Rust oracle alone, on the frozen cases (golden_gate.py)
         binary = Path(args.bin) / READ_MODES.get(args.mode, "word-edits")
-        command, extra = gates_goldens.golden_command(meta, binary, tree, results, out if args.record else None,
+        # the frozen cases are the freeze's sampling already (the corpus's 10 per case maker):
+        # only a smaller sample samples them again
+        sampled = {**meta, "per_tool": 0 if args.per_tool == default_per_tool(args.gate) else args.per_tool}
+        command, extra = gates_goldens.golden_command(sampled, binary, tree, results, out if args.record else None,
                                                       [str(f.relative_to(tree)) for f in files], made=k == 1), {}
     else:
         command, extra = harness_command(args, out, results, files)

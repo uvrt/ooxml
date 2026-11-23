@@ -8,7 +8,6 @@
 //!
 //! Must not: word an entry (the tool layer does) or cap a list.
 
-use super::tables::sources;
 use super::tree::{self, is_w, row_of, W};
 use super::{points, Facts};
 use ooxml_base::Q;
@@ -18,7 +17,6 @@ use ooxml_word_model::docx::drawings::pictures;
 use ooxml_word_model::docx::keeps::Keeps;
 use ooxml_word_model::docx::{at_path, StoryPart};
 use ooxml_word_model::model::Block;
-use ooxml_word_model::resolve::resolve_table;
 use ooxml_xml::{Element, QName};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -281,7 +279,6 @@ fn elements(element: &Arc<Element>) -> impl Iterator<Item = (u32, &Arc<Element>)
 /// path (`_table_allowance`): its first row's first cell's left margin and left outer
 /// border's outer half, its last cell's right margin and right one's.
 fn allowances(facts: &Facts<'_>) -> HashMap<String, (Px, Px)> {
-    let src = sources(facts);
     let px = |twips: i64| Px::points(Q::new(twips.into(), 20.into()));
     let mut out = HashMap::new();
     for block in facts.version().layout().document.body.iter() {
@@ -289,7 +286,7 @@ fn allowances(facts: &Facts<'_>) -> HashMap<String, (Px, Px)> {
         if table.path.is_empty() {
             continue;
         }
-        let resolved = resolve_table(&src, table);
+        let resolved = facts.resolved_table(table);
         let Some((first, last)) = resolved
             .rows
             .first()

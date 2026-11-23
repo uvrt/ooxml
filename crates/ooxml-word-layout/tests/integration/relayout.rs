@@ -592,7 +592,7 @@ fn outputs_equal(
 /// `relaid` (laid out by `kept` from `previous`) equals the version `body` laid out whole
 /// in a fresh engine and model: each pass's flow and pages, the fields, the facts taken
 /// from the version before, and every page's SVG.
-fn verify(
+pub(crate) fn verify(
     at: &str,
     (kept, kept_model): (&mut WordLayout, &mut Model),
     (relaid, previous): (&DocumentLayout, &DocumentLayout),
@@ -620,6 +620,11 @@ fn verify(
     let made = LayoutFacts::of(&whole);
     assert!(carried == made, "{at}: the facts taken from the version before differ");
     let first = made.first_pages();
+    assert_eq!(
+        **relaid.first_pages_after(previous),
+        first,
+        "{at}: the kept first pages differ"
+    );
     assert_eq!(**relaid.first_pages(), first, "{at}: the relaid first pages differ");
     assert_eq!(
         **whole.first_pages(),

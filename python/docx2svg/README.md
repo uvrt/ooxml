@@ -3,18 +3,17 @@
 [![CI](https://github.com/uvrt/docx2svg/actions/workflows/ci.yml/badge.svg)](https://github.com/uvrt/docx2svg/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-Render Word (`.docx`) documents to **SVG**, page by page, in pure Python -- laid out as
-Word lays them out, measured glyph by glyph against Word's own PDF export.
+Render Word (`.docx`) documents to **SVG** and **PNG**, page by page. A thin Python layer
+over the Rust core ([`ooxml-core`](../ooxml-core)): the document is laid out and drawn by
+the same engine docx-agent's `render` tool draws with, laid out as Word lays it out.
 
 ## Install
 
-Not on PyPI yet. Python 3.10+; standard library only at runtime, plus
-[`ooxml-common`](https://github.com/uvrt/ooxml-common), which is too.
+Python 3.10+, with [`ooxml-common`](../ooxml-common) and `ooxml-core` (the Rust core: Linux
+wheels from the release; elsewhere built from source with a Rust toolchain).
 
 ```bash
-pip install "ooxml-common @ git+https://github.com/uvrt/ooxml-common@main"
-pip install "docx2svg @ git+https://github.com/uvrt/docx2svg@main"
-pip install "docx2svg[png] @ git+https://github.com/uvrt/docx2svg@main"   # PNG output (resvg-py)
+pip install ooxml-common ooxml-core docx2svg      # from the release's files
 ```
 
 ## Example
@@ -24,7 +23,7 @@ from docx2svg import convert_docx_to_svg, convert_docx_to_png, ConvertOptions
 
 options = ConvertOptions()
 svgs = convert_docx_to_svg("report.docx", options)   # one SVG string per page
-pngs = convert_docx_to_png("report.docx")            # needs `pip install docx2svg[png]`
+pngs = convert_docx_to_png("report.docx")            # 300 dpi unless a size is given
 for warning in options.warnings:                     # everything not drawn faithfully
     print(warning)
 ```
@@ -33,9 +32,11 @@ for warning in options.warnings:                     # everything not drawn fait
 docx2svg report.docx -o out/ -f both --strict
 ```
 
-Every drawn element carries `data-docx-path` back to the XML it came from, and
-`convert_docx_to_layout` returns the pages, lines and spans themselves:
-[docs/api.md](docs/api.md).
+Every drawn element carries `data-docx-path` back to the XML it came from
+(`docx2svg.resolve_path` finds it), and `convert_docx(...).layout` is the laid-out
+document itself (`ooxml_core.LaidPages`): [docs/api.md](docs/api.md). A document the
+layout does not lay out yet raises `LayoutError` (a `NotImplementedError`), saying what
+and what to do instead.
 
 What Word takes from its machine rather than the file -- the character a decimal tab stop
 aligns on, a chart's decimal and thousands separators -- comes from
@@ -44,26 +45,9 @@ never read from the server ([docs/api.md](docs/api.md#locale)).
 
 ## What it draws
 
-- **Drawn:** text in its resolved face, size, weight, slant and colour at Word's pen
-  position; underline, strikethrough, highlight, shading, tab leaders, list labels, line
-  numbers, paragraph borders; inline pictures; tables; text columns; footnotes and
-  endnotes; headers and footers with `PAGE`, `NUMPAGES`, `SECTIONPAGES`, `PAGEREF`, `REF`
-  and `SEQ` computed; floating drawings, shapes and text boxes; charts and SmartArt;
-  content controls; tracked changes as Word's Accept All leaves the document -- a table's
-  pending structure changes (a tracked column deletion, a tracked merge's cells) and deleted
-  paragraph marks at a table's edge too, where Word's *No Markup* screen draws otherwise.
-- **Not drawn yet:** a chart's 3-D scene (drawn flat), SmartArt with no cached drawing,
-  a picture fill, a header's drawing the body wraps around, and some floating and note
-  cases in multi-column sections. Each is reported with a stable warning code, never
-  dropped in silence.
-- **The layout never stops at one of them.** What it cannot lay out by a measured rule it
-  lays out by an approximate one (`layout-approximate:<reason>`) or draws as a marked
-  placeholder of its height -- a dashed grey box -- and carries on
-  (`layout-placeholder:<reason>`, with page and element path), so every page is drawn.
-- **Fonts** are named in the SVG, not embedded. The layout reads the faces Word uses
-  where they are installed (Office's cloud-font cache too); see [Fonts](#fonts).
-
-Full list and per-area status: [docs/supported.md](docs/supported.md).
+What docx-agent's `render` draws: see docx-agent's
+[SUPPORTED.md](../docx-agent/src/docx_agent/tools/SUPPORTED.md) and
+[docs/supported.md](docs/supported.md).
 
 ## Fonts
 
@@ -82,7 +66,7 @@ face is installed:
 | Arial | Liberation Sans | every Latin, Greek and Cyrillic advance the same, the same line metrics and kerning |
 | Times New Roman | Liberation Serif | the same, likewise |
 | Courier New | Liberation Mono | the same, likewise |
-| Symbol, Wingdings | recorded metrics (`docx2svg.recorded`) | the integers of Word's own copies, recorded as facts; bullets are drawn as their Unicode equivalents (•, ▪, ➢, ❖, ✓...) |
+| Symbol, Wingdings | recorded metrics | the integers of Word's own copies, recorded as facts; bullets are drawn as their Unicode equivalents (•, ▪, ➢, ❖, ✓...) |
 
 Every substitution is reported: a `font-substituted` warning, and an entry in the layout's
 `coverage.substituted_fonts`. docx2svg never substitutes a face that is installed, because
@@ -127,53 +111,25 @@ empty list means none. Either is added to the folders Word uses (searched after 
 never in their place, for layout and drawing alike, and the folders under it are read
 too.
 
-**Fidelity to expect.** With Word's faces, positions are held to Word's PDF glyph by glyph
-([docs/supported.md](docs/supported.md)). With the metric compatible substitutes, line
-breaks, page breaks and pen positions are the same. CI checks this: `layout-sweep.docx` in
-Carlito, glyph for glyph against the layout from Word's own Calibri numbers. Two things
-differ:
-
-- Glyph outlines are the substitute's, and so are the underline and strikeout lines.
-- Carlito has no legacy `kern` table, so a run Word kerns (`w:kern`) in Calibri is laid
-  out unkerned.
-
-With an approximate substitute the layout is complete but is not Word's.
-
-**Coverage.** Every conversion sets `ConvertOptions.coverage` (also `layout.coverage`), a
-summary of how much was laid out:
-
-- the pages laid out, and Word's saved page count as an estimate when the layout stopped
-- the blocks laid out and skipped
-- the first stop, with its reason and element path (none while the layout carries on)
-- any header, footer or text-box stops
-- any placeholders: what was drawn as a marked box of its height instead of laid out, with
-  the reason, page and element path
-- the faces substituted or missing
-- any approximations: places laid out by a rule not yet measured against Word (for
-  example a floating drawing in a table cell at a position no probe covered), with the
-  reason, page and element path, where the layout used to stop
-
-`coverage.complete` is true only when nothing was skipped or drawn as a placeholder.
-`coverage.status` is `complete`,
-`approximate` (nothing skipped, something approximated) or `partial`. The CLI prints
-`coverage.summary()` with the warnings.
+**Coverage.** Every conversion sets `ConvertOptions.coverage`, a summary of how much was
+laid out: the pages and blocks laid out, any placeholders (what was drawn as a marked box
+of its height instead of laid out, with the reason, page and element path), the faces
+substituted or missing, and any approximations (places laid out by a rule not yet measured
+against Word). `coverage.complete` is true only when nothing was drawn as a placeholder and
+no face was missing; `coverage.status` is `complete`, `approximate` or `partial`. The CLI
+prints `coverage.summary()` with the warnings.
 
 ## Status
 
-Pre-alpha (0.2.0). Line breaking, pagination, columns, revisions and output are
-measured against Word; see the status table in [docs/supported.md](docs/supported.md)
-and the full record in [`ROADMAP.md`](ROADMAP.md), which says what has been measured,
-what has been refuted and where the difficulty is.
+Pre-alpha. The layout and drawing are the Rust core's (docx2svg's own Python layout was
+withdrawn in lane svg-thin; its measurements against Word are kept under
+`crates/ooxml-oracle/word/observations`).
 
 ## Documentation
 
-- [docs/supported.md](docs/supported.md) -- what is drawn, what is not, status by area
-- [docs/api.md](docs/api.md) -- `convert_docx`, element paths, page info, list counters
-- [docs/measurement.md](docs/measurement.md) -- the Word oracle, the measured loop, and why
-  this is a sibling of pptx2svg
-- [docs/development.md](docs/development.md) -- running the tests, the fidelity harness,
-  constraints (standard library only; no Microsoft font file in the repository)
-- [ROADMAP.md](ROADMAP.md) -- the measurements, phase by phase
+- [docs/api.md](docs/api.md) -- the functions, options, element paths and the layout handle
+- [docs/supported.md](docs/supported.md) -- what is drawn
+- [docs/development.md](docs/development.md) -- running the tests
 - [CHANGELOG.md](CHANGELOG.md), [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Family

@@ -60,6 +60,23 @@ struct Kept {
 }
 
 impl LastCheck {
+    /// A document's last checks, keeping the texts' languages and the paragraphs' language
+    /// judgements in `languages` (counted on the document's account).
+    #[must_use]
+    pub fn with_languages(languages: ooxml_word_edit::facts::Detections) -> LastCheck {
+        LastCheck {
+            languages,
+            ..LastCheck::default()
+        }
+    }
+
+    /// What the paragraphs' language judgements its checks keep hold: entries and bytes.
+    #[must_use]
+    pub fn language_judgements(&self) -> (usize, usize) {
+        let stats = self.languages.judgements();
+        (stats.entries, stats.bytes)
+    }
+
     /// The texts' languages the document's checks keep.
     pub(crate) fn languages(&self) -> &ooxml_word_edit::facts::Detections {
         &self.languages

@@ -13,12 +13,6 @@ DEVIATIONS: dict[str, dict[str, str]] = {
                 "none, and Word drops every paraId of a document with a row without one "
                 "(paraid-durability.json, factors 'row'); the tools are to stamp every row they write",
     },
-    "trial/w2-review-comments": {
-        "kept": "known, fix to come: the input has a comment anchored in its header (Legal's) and the "
-                "trial's reply to it is anchored there too; Word drops a header's comments on saving (both "
-                "gone after its re-save, every other comment kept); decided: word_comments refuses add and "
-                "reply anchored in a header or footer, with the body as the way out",
-    },
 }
 
 

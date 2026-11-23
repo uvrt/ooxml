@@ -7,10 +7,8 @@
 //!
 //! Must not: word an entry (the tool layer does) or cap a list.
 
-use super::tables::sources;
 use super::tree::{self, cell_line, is_w, W};
 use super::{points, round, Facts};
-use ooxml_word_model::resolve::resolve_table;
 use ooxml_xml::Element;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
@@ -312,7 +310,7 @@ fn cell_margins(facts: &Facts<'_>, path: &str) -> HashMap<(usize, usize), (f64, 
     let Some(table) = facts.model_table(path) else {
         return HashMap::new();
     };
-    let resolved = resolve_table(&sources(facts), table);
+    let resolved = facts.resolved_table(table);
     #[allow(clippy::cast_precision_loss)]
     resolved
         .rows

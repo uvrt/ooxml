@@ -4,8 +4,8 @@
   {
    "file": "input/harbor-lane-q2-results.pptx",
    "as": "document",
-   "sha256": "94984a3fdff47f4cace5cd12e24054e72a5b934c741ac3d77a14b903317cc93e",
-   "content_sha256": "e64565085ed28621dda2568a174bf82949536b0f5190b76c49881e71e74fcd70"
+   "sha256": "f4a06cf8c9fbaf7c37ed39ab2e77d9cb59135093fdfb22c8ce86e2b58c74cd34",
+   "content_sha256": "b126002378e5d00ce04d138d53213e6b5e721c62e308b8bf37b6c729da5fbf7c"
   }
  ],
  "calls": [
@@ -351,9 +351,9 @@
  ],
  "output": {
   "name": "harbor-lane-q2-results-restated.pptx",
-  "sha256": "eef0088268283d661ccfd388dd6a100c0deb559f0216b0062d8dd7c472da7685",
+  "sha256": "751d4f6fc3147d7bf5a3b98c95d9de1b1d60f478931b3fb9ee32befc765da08b",
   "calls": 9,
-  "content_sha256": "1f34833c38335a8775b2c997dd30743532e73df9add22ef70314d573395fd6fe"
+  "content_sha256": "0b6bc5234036922b1150054fdd470f56811166ac92f46397535a1fd3986848ee"
  },
  "check": {
   "total": 39,

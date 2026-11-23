@@ -7,4 +7,5 @@ mod support;
 mod facts_after;
 mod paginate;
 mod relayout;
+mod relayout_windows;
 mod tables;

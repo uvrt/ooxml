@@ -118,13 +118,12 @@ impl Editor {
         Ok((Editor::of_doc(doc, config, clock)?, loaded))
     }
 
+    /// The editor of `doc` as Word opens it ([`crate::controls::opened_store`]: a bound
+    /// control shows its node).
     fn of_doc(doc: WordDoc, config: StoreConfig, clock: Arc<dyn Clock>) -> Result<Editor> {
-        let baseline = problems(&doc)?;
-        Ok(Editor {
-            store: Store::new(doc, config, Arc::clone(&clock)),
-            baseline,
-            clock,
-        })
+        let store = crate::controls::opened_store(doc, config, Arc::clone(&clock))?;
+        let baseline = problems(store.snapshot().doc())?;
+        Ok(Editor { store, baseline, clock })
     }
 
     /// The store.

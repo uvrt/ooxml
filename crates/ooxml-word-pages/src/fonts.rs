@@ -50,6 +50,15 @@ impl FontSetup {
         }
     }
 
+    /// The file of the installed face Word lays `family` out with in a style (the style
+    /// asked for, else bold, else regular), or `None` where no folder holds one: neither a
+    /// substitute nor a document's embedded face counts.
+    #[must_use]
+    pub fn installed(&self, family: &str, bold: bool, italic: bool) -> Option<&str> {
+        let at = self.catalogue.lookup(family, bold, italic)?;
+        self.catalogue.file(at.file)
+    }
+
     /// The fonts of the document in `package`: these faces, with its font table and its
     /// embedded faces.
     pub fn document(&self, package: &Package) -> DocumentFonts {

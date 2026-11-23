@@ -107,8 +107,7 @@ class PlanTest(unittest.TestCase):
 
     def test_docs_and_other_tools_run_nothing(self) -> None:
         for changed in (["docs/architecture/README.md"], ["README.md"], [".github/workflows/gates.yml"],
-                        ["tools/gates.py", "tools/test_gates.py"], [".github/workflows/release.yml"],
-                        [".github/workflows/relayout-full.yml"]):
+                        ["tools/gates.py", "tools/test_gates.py"], [".github/workflows/release.yml"]):
             out = _plan("pull_request", changed)
             self.assertIs(out["any"], False, changed)
             self.assertIs(out["any_build"], False, changed)
@@ -199,7 +198,7 @@ class ShardTest(unittest.TestCase):
         out = _plan("push")
         for key in ("linux", "windows", "ft"):
             for leg in out[key]["include"]:
-                self.assertEqual(leg.get("core", False), leg["package"] in ("docx-agent", "xlsx-agent"), leg)
+                self.assertEqual(leg.get("core", False), leg["package"] in ("docx2svg", "docx-agent", "xlsx-agent"), leg)
 
     def test_every_file_in_exactly_one_shard(self) -> None:
         for name, spec in ci.PACKAGES.items():
@@ -335,15 +334,15 @@ class RustPlanTest(unittest.TestCase):
             "crates/word/src/lib.rs": set(),
             "fuzz/fuzz_targets/opc_open.rs": set(),
             "fuzz/Cargo.toml": {"deny"},
-            "crates/ooxml-store/src/lib.rs": {"loom", "word_model"},
-            "crates/ooxml-store/Cargo.toml": {"loom", "deny", "word_model"},
-            "crates/ooxml-opc/src/lib.rs": {"oracles", "word_model"},
-            "crates/ooxml-text/src/lib.rs": {"word_model"},
-            "crates/ooxml-oracle/python/word_model_diff.py": {"word_model"},
-            "xtask/src/codegen.rs": {"word_model"},
-            "python/docx2svg/src/docx2svg/model.py": {"word_model"},
+            "crates/ooxml-store/src/lib.rs": {"loom", "models"},
+            "crates/ooxml-store/Cargo.toml": {"loom", "deny", "models"},
+            "crates/ooxml-opc/src/lib.rs": {"oracles", "models"},
+            "crates/ooxml-text/src/lib.rs": {"models"},
+            "crates/ooxml-oracle/python/drawingml_diff.py": {"models"},
+            "xtask/src/codegen.rs": {"models"},
+            "python/docx2svg/src/docx2svg/rust.py": set(),
             "python/ooxml-edit/src/ooxml_edit/opc.py": {"oracles"},
-            "python/ooxml-common/src/ooxml_common/x.py": {"oracles", "word_model"},
+            "python/ooxml-common/src/ooxml_common/x.py": {"oracles", "models"},
             "DEPENDENCIES.md": {"deny"},
             "Cargo.lock": set(ci.RUST_JOBS) - {"fuzz"},
             "tools/rust_oracles.py": {"oracles"},
@@ -382,7 +381,7 @@ class RustPlanTest(unittest.TestCase):
     @unittest.skipIf(sys.version_info < (3, 11), "tomllib")
     def test_crate_lists_cover_their_dependencies(self) -> None:
         for job_crate, listed in (("ooxml-opc", ci.FUZZ_CRATES), ("ooxml-store", ci.LOOM_CRATES),
-                                  ("ooxml-oracle", ci.WORD_MODEL_CRATES)):
+                                  ("ooxml-oracle", ci.MODEL_CRATES)):
             self.assertEqual(_workspace_deps(job_crate), set(listed), job_crate)
 
 
@@ -394,7 +393,7 @@ class MainPushTest(unittest.TestCase):
         crate = ["crates/ooxml-word-edit/src/set_text.rs"]
         out = _plan("push", crate)
         self.assertFalse(out["rust_wheels"])
-        self.assertTrue(out["rust"] and out["rust_module"] and out["rust_word_model"])
+        self.assertTrue(out["rust"] and out["rust_module"] and out["rust_models"])
         self.assertEqual(out["packages"], list(ci.PACKAGES))
         for changed in (["crates/python/src/lib.rs"], ["Cargo.lock"], ["crates/ooxml-word-edit/Cargo.toml"],
                         [".github/workflows/rust-wheels.yml"]):

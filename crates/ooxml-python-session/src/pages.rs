@@ -6,7 +6,7 @@
 //! Must not: lay out, or hold a Python object (the fonts and the budget are Rust handles).
 
 use crate::budget::{PyMemoryBudget, OWN_BUDGET};
-use crate::layout::PyWordFonts;
+use crate::fonts::PyWordFonts;
 use ooxml_base::Locale;
 use ooxml_session::{MemoryBudget, SessionPages};
 use ooxml_tools_word::PageSetup;

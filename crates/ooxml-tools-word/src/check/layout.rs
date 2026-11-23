@@ -19,7 +19,7 @@ use ooxml_word_edit::facts::{self, LanguageScope};
 use ooxml_word_edit::{EditError, WordDoc};
 use ooxml_word_pages::layout_facts::sizes::Minimum;
 use ooxml_word_pages::layout_facts::{Facts, PageReads, Scope};
-use ooxml_word_pages::page_read::PageRead;
+use ooxml_word_pages::page_entry::PageEntry;
 use ooxml_word_pages::{LaidVersion, PageEngine};
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
@@ -60,9 +60,16 @@ pub(super) struct Painted<'e> {
 }
 
 impl PageReads for Painted<'_> {
-    fn page_read(&self, page: usize) -> Option<PageRead> {
+    fn page_read(&self, page: usize) -> Option<Arc<PageEntry>> {
         let mut engine = ooxml_word_pages::lock_engine(self.engine);
         engine.page_read(&self.version, page)
+    }
+
+    fn resolved_table(
+        &self,
+        table: &ooxml_word_model::model::Table,
+    ) -> Option<Arc<ooxml_word_model::resolve::ResolvedTable>> {
+        ooxml_word_pages::lock_engine(self.engine).resolved_table(&self.version, table)
     }
 }
 

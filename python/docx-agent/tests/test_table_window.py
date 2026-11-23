@@ -187,28 +187,31 @@ def test_a_nested_table_fits_its_cell():
     assert tables(data)[4] == WORD_NESTED
 
 
-def test_docx2svg_lays_the_fitted_table_out_at_the_text_width():
+def test_the_layout_draws_the_fitted_table_at_the_text_width():
     """The case of a 517.4 pt text width: a 488.6 pt table at an indent of 28.8 pt is drawn,
-    once fitted, from the margin across all 517.4 pt (outer border edges)."""
-    from docx2svg import parse_package
-    from docx2svg.model import Table
-    from docx2svg.table import grid_lines, outer_part, resolve_table
+    once fitted, from the margin across all 517.4 pt (outer border edges, from the margin,
+    to the device pixel the page is drawn on: 0.24 pt)."""
+    from docx2svg import ConvertOptions, rust
 
-    def edges(data: bytes, k: int, room: int) -> tuple[float, float]:
-        model = parse_package(data)
-        table = [b for b in model.body if isinstance(b, Table)][k]
-        resolved = resolve_table(model, table)
-        lines = grid_lines(model, resolved, room)
-        first, last = resolved.rows[0].cells[0], resolved.rows[0].cells[-1]
-        return (float(lines[0] - outer_part(first.left_edge[0])) / 20,
-                float(lines[-1] + outer_part(last.right_edge[0])) / 20)
+    def edges(data: bytes) -> list[tuple[float, float]]:
+        laid = rust.word_pages(ConvertOptions()).lay_out(data)
+        left = laid.pages()[0][1][4][0]
+        margin = left[0] / left[1]
+        found: dict[int, list[float]] = {}
+        for kind, path, x, _, width, *_ in laid.page(0)["rules"]:
+            if kind == "table-border" and path.startswith("w:body/w:tbl["):
+                k = int(path.split("/")[1][6:-1]) - 1
+                start = x[0] / x[1]
+                found.setdefault(k, []).extend([start, start + width[0] / width[1]])
+        pt = 72 / 300
+        return [(round((min(v) - margin) * pt, 1), round((max(v) - margin) * pt, 1))
+                for _, v in sorted(found.items())]
 
     before = document_bytes()
     after, _ = fitted(before, [0, 1, 2, 3, 4])
-    assert edges(before, 2, 10348) == (28.8, 517.9)
-    for k in range(4):
-        assert edges(after, k, 10348) == (0.0, 517.4)
-    assert edges(after, 4, 4820) == (0.0, 241.0)     # one of two columns: (10,348 - 708) / 2 twips
+    assert edges(before)[2] == (28.8, 517.9)
+    assert edges(after)[:4] == [(0.0, 517.4)] * 4
+    assert edges(after)[4] == (0.0, 241.0)     # one of two columns: (10,348 - 708) / 2 twips
 
 
 def test_a_share_of_the_window():

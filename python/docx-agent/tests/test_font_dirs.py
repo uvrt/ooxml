@@ -26,7 +26,7 @@ from ooxml_common.fonts.office import FONT_DIRS_ENV
 from ooxml_common.fonts.sfnt import relabel
 from ooxml_edit.tools import Toolbox
 
-from docx2svg import fonts
+from docx2svg import ConvertOptions, rust
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from pixels import pixels
 
@@ -41,8 +41,8 @@ def _open_face() -> Path | None:
     bundle = bundle_dir()
     if bundle is not None and (bundle / "Cousine-Regular.ttf").is_file():
         return bundle / "Cousine-Regular.ttf"
-    found = fonts.installed_index(tuple(fonts.default_font_dirs())).get(("liberation mono", False, False))
-    return Path(found[0]) if found and found[0].endswith(".ttf") and found[1] == 0 else None
+    found = rust.word_fonts(ConvertOptions(font_dirs=[])).face("Liberation Mono")
+    return Path(found) if found and found.endswith(".ttf") else None
 
 
 @pytest.fixture(autouse=True)

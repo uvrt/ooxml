@@ -199,12 +199,11 @@ _FACE_ABSENT = ("layout-stopped:unmeasurable", "layout-stopped:no face metrics",
 
 
 def _office_faces_absent() -> bool:
-    from docx2svg.fonts import InstalledFonts, default_font_dirs
+    import docx2svg
+    from docx2svg import rust
 
-    try:  # docx2svg's approximate stand-in for an absent face (round 16) is not the face
-        fonts = InstalledFonts(dirs=tuple(default_font_dirs()), fallbacks=False)
-    except TypeError:
-        fonts = InstalledFonts(dirs=tuple(default_font_dirs()))
+    # The faces Word's folders hold (a substitute is not the face), the application's left out.
+    fonts = rust.word_fonts(docx2svg.ConvertOptions(font_dirs=[]))
     return any(fonts.face(family) is None for family in _OFFICE_FACES)
 
 

@@ -14,7 +14,7 @@ use ooxml_base::Limits;
 use ooxml_opc::Package;
 use ooxml_session::{CallContext, DocKind, MemoryBudget, Session, SessionConfig, SessionPages};
 use ooxml_store::StoreConfig;
-use ooxml_tools_word::PageSetup;
+use ooxml_tools_word::{PageSetup, WordLayout};
 use ooxml_word_edit::Editor;
 use ooxml_word_pages::EngineOptions;
 use serde_json::{json, Value};
@@ -101,6 +101,18 @@ fn checks_after_edits_on_a_long_document() {
         json!({"doc": d.to_string(), "target": id, "text": longer}),
     );
     let (_, moved) = timed(&s, "check", check);
+    let tier = s.pages(&d).unwrap().unwrap().engine().lock().unwrap().page_tier();
+    println!(
+        "page tier: {} pages, {} KB ({} B a page) on the paint account",
+        tier.entries,
+        tier.bytes >> 10,
+        tier.bytes / tier.entries.max(1)
+    );
+    let (judged, bytes) = s.last_check(&d).unwrap().unwrap().language_judgements();
+    println!(
+        "language judgements: {judged} paragraphs, {} KB on the document's account",
+        bytes >> 10
+    );
     let ms = |d: Duration| format!("{:.1} ms", d.as_secs_f64() * 1000.0);
     println!(
         "open {}; first check {}; set one letter {}; check {}; set a longer text {}; check {}",

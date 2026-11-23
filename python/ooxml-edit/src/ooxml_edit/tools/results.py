@@ -127,6 +127,13 @@ class Result:
     #: A batch's :attr:`touched` per op, by the op's index; an op that changed nothing
     #: (or failed and was rolled back) has no key.
     touched_by_op: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
+    #: Set by the dispatcher, for the application -- never in :meth:`to_json`: the zip parts
+    #: the call changed, ``{"doc": "d1", "part": "doc/pages/page1.xml"}`` each (archive
+    #: names, without a leading slash), by document and then name; empty when nothing
+    #: changed.  What a co-authoring client uploads after the call and checks an incoming
+    #: change against.  A part a save brings up to date (``docProps/app.xml``'s counts)
+    #: is a save's, not a call's.  A batch's is the union over its ops.
+    changed_parts: list[dict[str, str]] = field(default_factory=list)
     #: Set by the dispatcher: the tool's name and how long the call took.
     tool: str = ""
     duration: float = 0.0

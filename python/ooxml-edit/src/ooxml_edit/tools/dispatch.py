@@ -119,8 +119,8 @@ from .results import (Image, Result, ToolError, anthropic_image_tokens,
                       openai_image_tokens)
 from .schema import CallError, validate_call
 from .session import (NO_CONTEXT, REF, REF_USE, Clock, Committed, DocumentEntry, DocumentFormat, Output,
-                      Session, SessionView, StepOwner, doc_order, fold_ref, folded_warning, font_dirs_of,
-                      locale_of, narrowed, part_entries)
+                      Session, SessionView, StepOwner, changed_parts, doc_order, fold_ref, folded_warning,
+                      font_dirs_of, locale_of, narrowed, part_entries)
 from .session import _folded_use, _misspelt_ref
 from .sources import Rows, qualify, refusal, resolve as resolve_rows
 from .rendercache import ContentStore
@@ -2235,6 +2235,7 @@ class Toolbox:
         # What it changed, read from the document (not from the draft: the document keeps
         # what it read of its earlier states, so only the blocks changed are read again).
         result.touched = self._touched(session, entry, change)
+        result.changed_parts = changed_parts(entry, change)
         if op_changes is None and not renames:
             # Not replayed (the body as the draft's, nothing renamed): each op's change on
             # the draft is the document's.
@@ -2465,6 +2466,7 @@ class Toolbox:
                 # changes nothing, and another call's change meanwhile is not its.  One on
                 # a draft: read from the document once its change is applied.)
                 result.touched = self._touched(session, primary, change)
+                result.changed_parts = changed_parts(primary, change)
             _report_facts(call, result)
             if served and call.version_used is None and primary is not None:
                 # 0.116.0: a read of the version its format's work was of (read_version) is a
@@ -3520,6 +3522,7 @@ class Toolbox:
         """A batch's ``touched`` (each document's whole change) and ``touched_by_op``."""
         for doc in sorted(entries, key=doc_order):
             combined.touched += self._touched(session, entries[doc], changes.get(doc))
+            combined.changed_parts += changed_parts(entries[doc], changes.get(doc))
         for op, doc, change in sorted(context.op_changes, key=lambda item: item[0]):
             found = self._touched(session, entries[doc], change)
             if found:

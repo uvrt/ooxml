@@ -120,6 +120,23 @@ class Coverage:
         return text
 
 
+def coverage_from(summary: dict) -> Coverage:
+    """The :class:`Coverage` of a version the Rust layout laid out, from its
+    ``LaidPages.coverage_summary()``: the layout always reaches the end (it draws a
+    placeholder where it cannot lay something out), so there is no stop and the page count is
+    its own."""
+    def listed(rows) -> list[StopInfo]:
+        return [StopInfo(code, reason, message or None, page, path) for code, reason, message, page, path in rows]
+
+    blocks, laid_out = summary["blocks"], summary["laid_out"]
+    substituted = [{"family": family, "substitute": substitute, "metric_compatible": compatible, "kind": kind,
+                    "class": face_class}
+                   for family, substitute, compatible, kind, face_class in summary["substituted"]]
+    return Coverage(summary["complete"], summary["pages"], summary["pages"], "layout", blocks, laid_out,
+                    blocks - laid_out, None, [], substituted, list(summary["missing"]),
+                    listed(summary["approximations"]), listed(summary["placeholders"]))
+
+
 def saved_pages(package: bytes | None) -> int | None:
     """``<Pages>`` of ``docProps/app.xml``: Word's page count when the file was last saved
     (any other writer's, or none)."""

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "docx2svg"
 version = "0.14.0"
-description = "Render Word (.docx) documents to SVG in pure Python"
+description = "Render Word (.docx) documents to SVG and PNG, laid out and drawn by the Rust core (ooxml-core)"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -28,14 +28,15 @@ classifiers = [
   "Topic :: Office/Business :: Office Suites",
   "Typing :: Typed",
 ]
-# Standard-library only at runtime; why ooxml-common is a dependency, and why at this
-# version: CONTRIBUTING.md, "Dependencies".
-dependencies = ["ooxml-common>=0.38.0"]
+# The Rust core lays documents out and draws them (ooxml-core); ooxml-common reads the font
+# folders and writes text as outlines.  Why each, and at its version: CONTRIBUTING.md,
+# "Dependencies".
+dependencies = ["ooxml-common>=0.38.0", "ooxml-core>=0.10.0"]
 
 [project.optional-dependencies]
-# SVG -> PNG.  resvg-py ships prebuilt wheels, so this needs no compiler and no system
-# library; docx2svg.png falls back to cairosvg where that is what the host has.
-png = ["resvg-py>=0.5"]
+# PNG is drawn by ooxml-core now: the extra needs nothing.  Kept for one release, so that
+# `pip install docx2svg[png]` still installs; then removed.
+png = []
 # Reading the ground-truth PDF that Microsoft Word exports.  Development only:
 # nothing under src/ imports it, and the harness additionally needs Word itself,
 # which pip cannot supply.
@@ -49,11 +50,6 @@ dev = [
   # `pytest -n auto` (docs/development.md).  Opt-in: a bare `pytest` stays serial,
   # and so does CI.
   "pytest-xdist>=3",
-  # The scores held against recorded observations (tools/read_render.py and its kin).
-  "numpy",
-  "pypdfium2>=4",
-  "fonttools>=4.40",
-  "resvg-py>=0.5",
   # The linter (CI's build job runs it, at the same pin; [tool.ruff] below).
   "ruff==0.17.2",
   # The type checker (CI's build job runs it, at the same pin; [tool.mypy] below).

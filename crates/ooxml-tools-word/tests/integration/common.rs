@@ -55,6 +55,11 @@ impl Clock for Monotonic {
 }
 
 pub fn engine() -> PageEngine {
+    engine_with(Arc::new(Unlimited))
+}
+
+/// The page engine on the repository's fonts, what it paints and reads counted on `paint`.
+pub fn engine_with(paint: Arc<dyn CacheBudget>) -> PageEngine {
     let folder = Folder {
         location: Location::Folder,
         path: concat!(
@@ -71,7 +76,7 @@ pub fn engine() -> PageEngine {
     let setup = Arc::new(FontSetup::new(Arc::new(DiskFonts), &[folder], options));
     let budgets = EngineBudgets {
         held: Arc::new(Unlimited),
-        paint: Arc::new(Unlimited),
+        paint,
     };
     PageEngine::new(setup, EngineOptions::default(), budgets)
 }

@@ -84,14 +84,15 @@ def _read(box, data: bytes, view: str = "final") -> str:
 
 
 def _glyph_lines(data: bytes) -> list[tuple]:
-    """Every line docx2svg lays out: its text and where each glyph starts (the drawing
+    """Every line the layout lays out: its text and where each glyph starts (the drawing
     without the structural paths, which name the document's cells)."""
-    layout = docx2svg.convert_docx_to_layout(data)
+    laid = docx2svg.convert_docx(data).layout
     out = []
-    for page in layout._lines:
-        for _, line in page:
-            out.append(tuple((span.kind, tuple(span.chars), round(float(span.x), 3)) for span in line.spans
-                             if span.kind == "text"))
+    for number in range(laid.page_count):
+        for line in laid.page(number)["lines"]:
+            # A span: (path, chars, pens, y, end, face, ..., kind at 15, ...).
+            out.append(tuple((span[15], span[1], tuple(round(n / d, 3) for n, d in span[2][:1]))
+                             for span in line[10] if span[15] == "text"))
     return out
 
 
