@@ -153,8 +153,8 @@ impl<'r, 'a> Walk<'r, 'a> {
     fn hyperlink(&mut self, node: &Placed) {
         let mut target = None;
         if let Some(rid) = node.element.attribute(Some(R), "id").filter(|r| !r.is_empty()) {
-            let rels = crate::parts::relationships(&self.reader.docx.package, &self.record.part).unwrap_or_default();
-            target = rels.into_iter().find(|r| r.id == rid).map(|r| r.target);
+            let rels = self.reader.docx.relationships(&self.record.part).ok();
+            target = rels.and_then(|r| r.get(rid).map(|r| r.target.clone()));
         }
         if let Some(anchor) = node.element.attribute(Some(W), "anchor").filter(|a| !a.is_empty()) {
             target = Some(format!("{}#{anchor}", target.unwrap_or_default()));

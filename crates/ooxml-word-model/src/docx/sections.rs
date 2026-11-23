@@ -7,7 +7,6 @@
 
 use crate::docx::{find_path, Docx};
 use crate::ids::W;
-use crate::parts::relationships;
 use crate::xmlread::py_int;
 use ooxml_xml::{Element, Node};
 use std::sync::Arc;
@@ -311,8 +310,8 @@ pub fn section_story(docx: &Docx, sections: &[Section], index: usize, which: &st
         .rev()
         .find_map(|k| sections.get(k).and_then(|s| s.own_reference(which, kind)))?;
     let rid = node.attribute(Some(R), "id")?;
-    let rels = relationships(&docx.package, &docx.main).ok()?;
-    let part = rels.into_iter().find(|r| r.id == rid)?.target_part?;
+    let rels = docx.relationships(&docx.main).ok()?;
+    let part = rels.get(rid)?.target_part.clone()?;
     docx.part(&part).map(|p| p.story.clone())
 }
 

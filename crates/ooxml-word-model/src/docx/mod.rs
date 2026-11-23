@@ -157,6 +157,15 @@ impl Docx {
         self.derived.sections(self)
     }
 
+    /// The relationships of its package's part `source` (`""` for the package's own),
+    /// read once per version.
+    ///
+    /// # Errors
+    /// Its relationships part is not XML.
+    pub fn relationships(&self, source: &str) -> Result<Arc<crate::parts::PartRelationships>, ooxml_opc::OpcError> {
+        self.derived.relationships(self, source)
+    }
+
     /// Read `package`.
     ///
     /// # Errors
