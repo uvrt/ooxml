@@ -192,7 +192,10 @@ fn drawn(engine: &mut PageEngine, version: &LaidVersion) -> Drawn {
     Drawn {
         svgs: pages.clone().map(|k| engine.page_svg(version, k).unwrap().0).collect(),
         texts: pages.clone().map(|k| engine.line_texts(version, k).unwrap()).collect(),
-        reads: pages.clone().map(|k| engine.page_read(version, k).unwrap()).collect(),
+        reads: pages
+            .clone()
+            .map(|k| engine.page_read(version, k).unwrap().read().clone())
+            .collect(),
         digests: pages
             .clone()
             .map(|k| engine.page_digests(version, k).unwrap())

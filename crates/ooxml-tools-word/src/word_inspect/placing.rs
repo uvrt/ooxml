@@ -134,6 +134,7 @@ impl<'v> Laid<'v> {
                 let Some(read) = read else {
                     continue;
                 };
+                let read = read.read();
                 for (place, line) in read.texts.iter().chain(&read.box_texts).enumerate() {
                     let Some(part) = self.part_of(line) else {
                         continue;

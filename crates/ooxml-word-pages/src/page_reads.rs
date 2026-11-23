@@ -1,5 +1,7 @@
-//! Owns: what a check read of each page ([`ReadMemo`]), kept across a generation's
-//! versions by what the read depends on: the page as laid out (its `LaidPage` and the flow
+//! Owns: the page tier of the caching policy ([`ReadMemo`]; ADR-008): each page's entry
+//! ([`crate::page_entry::PageEntry`]: what a check read of it, and its facts'
+//! contributions made from that read), kept across a generation's versions by what the
+//! read depends on: the page as laid out (its `LaidPage` and the flow
 //! items it draws, by identity), its context ([`crate::page_context`]: its number,
 //! counts, section, header and footer texts, line numbers), the stories' epoch and the
 //! model's context it was painted in, and the paths of the blocks it draws (a read names
@@ -21,6 +23,7 @@
 
 use crate::digest_cache::{PageKey, PageRef};
 use crate::page_context::PageContext;
+use crate::page_entry::PageEntry;
 use crate::page_read::PageRead;
 use ooxml_base::Digest;
 use ooxml_derive::{CacheBudget, Memo, Weigh};
@@ -105,15 +108,15 @@ struct Kept {
     /// Its stories' context.
     stories: Digest,
     split: Option<Split>,
-    read: Arc<PageRead>,
+    read: Arc<PageEntry>,
 }
 
 /// A page's read as kept.
 pub(crate) enum Found {
-    /// The read.
-    Whole(Arc<PageRead>),
-    /// A read whose body part is the page's: its stories are to be painted again.
-    Body(Arc<PageRead>, Split),
+    /// The page's entry: its read and its facts' contributions.
+    Whole(Arc<PageEntry>),
+    /// An entry whose read's body part is the page's: its stories are to be painted again.
+    Body(Arc<PageEntry>, Split),
 }
 
 impl Weigh for Kept {
@@ -124,20 +127,16 @@ impl Weigh for Kept {
                 + l.story.as_ref().map_or(0, |(_, part)| part.len())
                 + l.sizes.len() * std::mem::size_of::<(i64, usize)>()
         };
-        let boxes = &self.read.boxes;
+        let read = self.read.read();
+        let boxes = &read.boxes;
         let boxed = boxes.pictures.iter().chain(&boxes.floats).map(|b| 64 + b.path.len());
         let rules = boxes.rules.iter().map(|r| 48 + r.path.len());
         std::mem::size_of::<Kept>()
-            + self
-                .read
-                .texts
-                .iter()
-                .chain(&self.read.box_texts)
-                .map(text)
-                .sum::<usize>()
+            + read.texts.iter().chain(&read.box_texts).map(text).sum::<usize>()
             + boxed.chain(rules).sum::<usize>()
             + self.places.iter().map(|p| 16 + p.len()).sum::<usize>()
             + self.page.weight()
+            + self.read.parts_weight()
     }
 }
 
@@ -175,7 +174,7 @@ impl ReadMemo {
 
     /// Keep `read` as the page `of` names, split into its body's and its stories' parts
     /// where `split` says so.
-    pub(crate) fn insert(&mut self, of: &ReadOf<'_>, read: Arc<PageRead>, split: Option<Split>) {
+    pub(crate) fn insert(&mut self, of: &ReadOf<'_>, read: Arc<PageEntry>, split: Option<Split>) {
         let kept = Kept {
             page: PageRef::of(of.page),
             places: Arc::clone(&of.places),
@@ -184,6 +183,11 @@ impl ReadMemo {
             read,
         };
         self.memo.insert(of.key(), kept);
+    }
+
+    /// What it holds: its entries and the bytes reserved for them.
+    pub(crate) fn stats(&self) -> ooxml_derive::MemoStats {
+        self.memo.stats()
     }
 
     /// Drop the reads of pages no version holds that nothing asked for since the last
