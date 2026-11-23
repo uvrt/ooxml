@@ -92,6 +92,19 @@ class PlanTest(unittest.TestCase):
         self.assertEqual(ci.affected(["python/docx-agent/README.md"]), ["docx-agent"])
         self.assertEqual(ci.affected(["python/docx-agent/docs/common-tasks.md"]), ["docx-agent"])
 
+    def test_the_oracles_tests_select_docx_agents_legs(self) -> None:
+        """The oracle's Python tests (the harness's, the recorded-Word tier) run in docx-agent's
+        legs, so a change to them, or to what they read, selects those legs alone."""
+        for path in ("crates/ooxml-oracle/word/observations/e4-word.json",
+                     "crates/ooxml-oracle/word/probes/e4_probe.py", "crates/ooxml-oracle/word/tests/recorded.py",
+                     "crates/ooxml-oracle/python/tests/test_reference_guard.py",
+                     "crates/ooxml-oracle/python/word_edits_diff.py", "crates/ooxml-oracle/reference.toml",
+                     "crates/ooxml-oracle/pytest.ini"):
+            self.assertEqual(ci.affected([path]), ["docx-agent"], path)
+        self.assertEqual(ci.affected(["crates/ooxml-oracle/known-differences.toml"]), [])
+        self.assertEqual(ci.PACKAGES["docx-agent"]["also_tests"], "crates/ooxml-oracle")
+        self.assertTrue((ci.ROOT / "crates" / "ooxml-oracle" / "pytest.ini").is_file())
+
     def test_docs_and_other_tools_run_nothing(self) -> None:
         for changed in (["docs/architecture/README.md"], ["README.md"], [".github/workflows/gates.yml"],
                         ["tools/gates.py", "tools/test_gates.py"], [".github/workflows/release.yml"],
