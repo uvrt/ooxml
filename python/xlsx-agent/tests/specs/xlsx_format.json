@@ -1,0 +1,123 @@
+{
+ "description": "Format cells, their columns, rows and sheet in one step. Only what you give changes.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "bold": {
+    "description": "Bold.",
+    "type": "boolean"
+   },
+   "border": {
+    "description": "Thin border; none removes.",
+    "enum": [
+     "all",
+     "outline",
+     "top",
+     "bottom",
+     "left",
+     "right",
+     "none"
+    ],
+    "type": "string"
+   },
+   "color": {
+    "description": "Font #RRGGBB.",
+    "type": "string"
+   },
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "fill": {
+    "description": "#RRGGBB or none.",
+    "type": "string"
+   },
+   "fit": {
+    "description": "AutoFit the columns.",
+    "type": "boolean"
+   },
+   "font": {
+    "description": "Font name.",
+    "type": "string"
+   },
+   "freeze": {
+    "description": "First unfrozen cell (B2), or none.",
+    "type": "string"
+   },
+   "gridlines": {
+    "description": "Show gridlines.",
+    "type": "boolean"
+   },
+   "height": {
+    "description": "Row height, points.",
+    "type": "number"
+   },
+   "horizontal": {
+    "description": "Alignment.",
+    "enum": [
+     "general",
+     "left",
+     "center",
+     "right"
+    ],
+    "type": "string"
+   },
+   "italic": {
+    "description": "Italic.",
+    "type": "boolean"
+   },
+   "like": {
+    "description": "Copy this cell's format (Stock!D2).",
+    "type": "string"
+   },
+   "locked": {
+    "description": "false: editable when protected.",
+    "type": "boolean"
+   },
+   "number_format": {
+    "description": "Code: 0.0, #,##0.00, 0%, yyyy-mm-dd.",
+    "type": "string"
+   },
+   "size": {
+    "description": "Font points.",
+    "type": "number"
+   },
+   "style": {
+    "description": "A named cell style.",
+    "type": "string"
+   },
+   "target": {
+    "description": "Stock!A1:H1, Stock!D:D or Stock!1:1.",
+    "items": {
+     "type": "string"
+    },
+    "minItems": 1,
+    "type": "array"
+   },
+   "vertical": {
+    "description": "Alignment.",
+    "enum": [
+     "top",
+     "center",
+     "bottom"
+    ],
+    "type": "string"
+   },
+   "width": {
+    "description": "Column width, characters.",
+    "type": "number"
+   },
+   "wrap": {
+    "description": "Wrap text.",
+    "type": "boolean"
+   }
+  },
+  "required": [
+   "doc",
+   "target"
+  ],
+  "type": "object"
+ },
+ "name": "xlsx_format",
+ "strict": false
+}

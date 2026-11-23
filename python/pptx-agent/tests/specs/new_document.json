@@ -1,0 +1,43 @@
+{
+ "description": "Make a new deck or document, optionally from a template blob (its layouts, styles and theme, not its content). Returns its doc id.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "author": {
+    "description": "Author property.",
+    "type": "string"
+   },
+   "kind": {
+    "description": "pptx: a deck; docx: a document; xlsx: a workbook.",
+    "enum": [
+     "pptx",
+     "docx",
+     "xlsx"
+    ],
+    "type": "string"
+   },
+   "name": {
+    "description": "Name, e.g. plan.pptx. Default new.<kind>.",
+    "type": "string"
+   },
+   "size": {
+    "description": "Decks 16:9 (default) or 4:3; documents A4, Letter...",
+    "type": "string"
+   },
+   "template_blob": {
+    "description": "Template blob handle (.potx, .dotx...).",
+    "type": "string"
+   },
+   "title": {
+    "description": "Title property.",
+    "type": "string"
+   }
+  },
+  "required": [
+   "kind"
+  ],
+  "type": "object"
+ },
+ "name": "new_document",
+ "strict": false
+}

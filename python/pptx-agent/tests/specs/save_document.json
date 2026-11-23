@@ -1,0 +1,39 @@
+{
+ "description": "Give the document to the application as a file. Refuses new validation problems. Returns the name, format, size and validation report, never the content.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "format": {
+    "description": "potx/dotx/xltx: a template; outline (decks) or markdown (documents): a text copy.",
+    "enum": [
+     "pptx",
+     "potx",
+     "docx",
+     "dotx",
+     "xlsx",
+     "xlsm",
+     "xltx",
+     "markdown",
+     "outline"
+    ],
+    "type": "string"
+   },
+   "name": {
+    "description": "File name, e.g. q3-review.pptx.",
+    "type": "string"
+   }
+  },
+  "required": [
+   "doc",
+   "name",
+   "format"
+  ],
+  "type": "object"
+ },
+ "name": "save_document",
+ "strict": false
+}

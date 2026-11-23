@@ -1,0 +1,371 @@
+{
+ "description": "Add, read or change a chart. add: a new chart, styled as Office inserts one. read: type, data, formats, scales, and what Edit Data holds. Others change data, titles, legend, labels, axes, colours, series type, text or gridlines; values and workbook change together. Batch several changes.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "action": {
+    "description": "What to do; read changes nothing.",
+    "enum": [
+     "read",
+     "add",
+     "set_values",
+     "set_value",
+     "add_category",
+     "remove_category",
+     "rename_category",
+     "add_series",
+     "remove_series",
+     "rename_series",
+     "set_title",
+     "set_axis_title",
+     "set_legend",
+     "show_data_labels",
+     "hide_data_labels",
+     "set_gap_width",
+     "set_axis_scale",
+     "set_gridlines",
+     "format_series",
+     "format_point",
+     "set_series_type",
+     "set_text_style",
+     "set_point_labels"
+    ],
+    "type": "string"
+   },
+   "axis": {
+    "description": "set_axis_title, set_axis_scale, set_gridlines; add with scale.",
+    "enum": [
+     "category",
+     "value",
+     "x",
+     "y"
+    ],
+    "type": "string"
+   },
+   "blanks": {
+    "description": "How null values draw; span joins lines across. New charts: gap.",
+    "enum": [
+     "gap",
+     "zero",
+     "span"
+    ],
+    "type": "string"
+   },
+   "box": {
+    "additionalProperties": false,
+    "description": "add, decks: the frame, pt.",
+    "properties": {
+     "h": {
+      "type": "number"
+     },
+     "w": {
+      "type": "number"
+     },
+     "x": {
+      "type": "number"
+     },
+     "y": {
+      "type": "number"
+     }
+    },
+    "required": [
+     "x",
+     "y",
+     "w",
+     "h"
+    ],
+    "type": "object"
+   },
+   "categories": {
+    "description": "add: category labels, in order.",
+    "items": {
+     "type": "string"
+    },
+    "type": "array"
+   },
+   "category": {
+    "description": "Category label, or number from 0.",
+    "type": "string"
+   },
+   "cells": {
+    "description": "set_point_labels: also in the workbook (Value From Cells).",
+    "type": "boolean"
+   },
+   "chart_type": {
+    "description": "add: the kind of chart; set_series_type: line or column.",
+    "enum": [
+     "column",
+     "stacked_column",
+     "bar",
+     "stacked_bar",
+     "line",
+     "pie",
+     "scatter",
+     "radar",
+     "radar_filled",
+     "bubble",
+     "dot"
+    ],
+    "type": "string"
+   },
+   "colors": {
+    "description": "add: series colours in order (pie: slices').",
+    "items": {
+     "type": "string"
+    },
+    "type": "array"
+   },
+   "columns": {
+    "description": "from's category column, then series columns; default all.",
+    "items": {
+     "type": "string"
+    },
+    "type": "array"
+   },
+   "data": {
+    "description": "add: each series' name and one value per category, null for a blank.",
+    "items": {
+     "additionalProperties": false,
+     "properties": {
+      "name": {
+       "type": "string"
+      },
+      "size": {
+       "description": "Bubble sizes.",
+       "items": {
+        "type": "number"
+       },
+       "type": "array"
+      },
+      "type": {
+       "description": "line: drawn as a line (column charts).",
+       "enum": [
+        "column",
+        "line"
+       ],
+       "type": "string"
+      },
+      "values": {
+       "items": {
+        "type": "number"
+       },
+       "type": "array"
+      }
+     },
+     "required": [
+      "name",
+      "values"
+     ],
+     "type": "object"
+    },
+    "type": "array"
+   },
+   "data_labels": {
+    "description": "add: values as labels.",
+    "type": "boolean"
+   },
+   "date_format": {
+    "description": "add from: category dates' pattern, e.g. d mmmm yyyy.",
+    "type": "string"
+   },
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "from": {
+    "description": "add, set_values, add_series: rows of d:<id> or table t:<name>.",
+    "type": "string"
+   },
+   "gridlines": {
+    "description": "set_gridlines, add: which gridlines.",
+    "enum": [
+     "none",
+     "major",
+     "minor",
+     "both"
+    ],
+    "type": "string"
+   },
+   "labels": {
+    "description": "set_point_labels: one per point.",
+    "items": {
+     "type": "string"
+    },
+    "type": "array"
+   },
+   "number_format": {
+    "description": "add: the values'; show_data_labels: the labels'. Excel code, e.g. #,##0.0.",
+    "type": "string"
+   },
+   "part": {
+    "description": "set_text_style, add: only this text. Default all.",
+    "enum": [
+     "title",
+     "axis_titles",
+     "axis_labels",
+     "data_labels",
+     "legend"
+    ],
+    "type": "string"
+   },
+   "position": {
+    "description": "set_legend, add: legend position, none hides it; set_point_labels: label position.",
+    "enum": [
+     "right",
+     "left",
+     "top",
+     "bottom",
+     "none",
+     "center",
+     "inside_end",
+     "inside_base",
+     "outside_end",
+     "best_fit"
+    ],
+    "type": "string"
+   },
+   "ref": {
+    "description": "add: ref name for the new chart.",
+    "type": "string"
+   },
+   "scale": {
+    "additionalProperties": false,
+    "description": "set_axis_scale, add: the axis' scale; keys left out stay.",
+    "properties": {
+     "auto": {
+      "description": "Back to automatic.",
+      "items": {
+       "enum": [
+        "min",
+        "max",
+        "major_unit",
+        "minor_unit",
+        "number_format"
+       ],
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "major_unit": {
+      "type": "number"
+     },
+     "max": {
+      "type": "number"
+     },
+     "min": {
+      "type": "number"
+     },
+     "minor_unit": {
+      "type": "number"
+     },
+     "number_format": {
+      "type": "string"
+     },
+     "reverse": {
+      "description": "Categories top-down.",
+      "type": "boolean"
+     }
+    },
+    "type": "object"
+   },
+   "secondary": {
+    "description": "set_series_type: on a second value axis.",
+    "type": "boolean"
+   },
+   "series": {
+    "description": "Series name, or number from 0.",
+    "type": "string"
+   },
+   "style": {
+    "additionalProperties": false,
+    "description": "format_series, format_point: fill to marker_fill; set_text_style, add: font to color. Colours as shapes take them, or none.",
+    "properties": {
+     "bold": {
+      "type": "boolean"
+     },
+     "color": {
+      "type": "string"
+     },
+     "dash": {
+      "enum": [
+       "solid",
+       "dash",
+       "dot",
+       "dash_dot",
+       "long_dash"
+      ],
+      "type": "string"
+     },
+     "fill": {
+      "type": "string"
+     },
+     "font": {
+      "type": "string"
+     },
+     "line": {
+      "type": "string"
+     },
+     "line_width": {
+      "type": "number"
+     },
+     "marker": {
+      "enum": [
+       "none",
+       "circle",
+       "diamond",
+       "square",
+       "triangle",
+       "dash",
+       "dot",
+       "x",
+       "plus",
+       "star"
+      ],
+      "type": "string"
+     },
+     "marker_fill": {
+      "type": "string"
+     },
+     "marker_size": {
+      "type": "integer"
+     },
+     "size": {
+      "type": "number"
+     }
+    },
+    "type": "object"
+   },
+   "target": {
+    "description": "The chart; add: decks the slide, documents the paragraph to follow. Or $ref.",
+    "type": "string"
+   },
+   "text": {
+    "description": "New name, label or title; add: the chart title.",
+    "type": "string"
+   },
+   "value": {
+    "description": "set_value: the value; set_gap_width: % of a bar's width.",
+    "type": "number"
+   },
+   "values": {
+    "description": "One per category (set_values, add_series) or series (add_category), null for a blank; add: scatter, bubble x values.",
+    "items": {
+     "type": "number"
+    },
+    "type": "array"
+   },
+   "width": {
+    "description": "add, documents: width in pt. Default 432.",
+    "type": "number"
+   }
+  },
+  "required": [
+   "doc",
+   "target",
+   "action"
+  ],
+  "type": "object"
+ },
+ "name": "edit_chart",
+ "strict": false
+}

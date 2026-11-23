@@ -1,0 +1,97 @@
+{
+ "description": "Style values by a scale given once: each target's value picks its step, whose fill and text colour it gets (documents: a character style per step, cell shading; decks: direct). check with scale finds values styled wrong.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "preview": {
+    "description": "Report each value's step, change nothing.",
+    "type": "boolean"
+   },
+   "scale": {
+    "additionalProperties": false,
+    "description": "Steps given once, and the values they style.",
+    "properties": {
+     "name": {
+      "description": "Names the styles: Score -> Score 1 Low. Default Step.",
+      "type": "string"
+     },
+     "show": {
+      "description": "label: the text becomes its step's label, the value kept; check flags labels not their value's.",
+      "enum": [
+       "value",
+       "label"
+      ],
+      "type": "string"
+     },
+     "steps": {
+      "description": "Lowest first: each a min, or each a value.",
+      "items": {
+       "additionalProperties": false,
+       "properties": {
+        "fill": {
+         "description": "RRGGBB.",
+         "type": "string"
+        },
+        "label": {
+         "description": "Named in its style.",
+         "type": "string"
+        },
+        "max": {
+         "description": "Highest value; above it, to the next min, no step.",
+         "type": "number"
+        },
+        "min": {
+         "description": "Lowest value; the step runs to the next min.",
+         "type": "number"
+        },
+        "text": {
+         "description": "Text colour; auto: white or black, more contrast.",
+         "enum": [
+          "auto",
+          "white",
+          "black"
+         ],
+         "type": "string"
+        },
+        "value": {
+         "description": "Or the one value or text it takes.",
+         "type": "string"
+        }
+       },
+       "required": [
+        "fill"
+       ],
+       "type": "object"
+      },
+      "minItems": 1,
+      "type": "array"
+     },
+     "targets": {
+      "description": "Paragraphs, ranges, shapes, cells; a table's column (/col1); {{d:x/*/y}} written values.",
+      "items": {
+       "type": "string"
+      },
+      "minItems": 1,
+      "type": "array"
+     }
+    },
+    "required": [
+     "steps",
+     "targets"
+    ],
+    "type": "object"
+   }
+  },
+  "required": [
+   "doc",
+   "scale"
+  ],
+  "type": "object"
+ },
+ "name": "style_by_value",
+ "strict": false
+}

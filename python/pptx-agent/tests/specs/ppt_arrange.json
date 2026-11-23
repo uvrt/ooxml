@@ -1,0 +1,136 @@
+{
+ "description": "Change shapes' z-order; group, ungroup, duplicate, delete, align or distribute them (equal gaps); grid them in order, row by row, sized to equal cells (pictures keep aspect), or flow them at their size. Returns new addresses and moved boxes.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "action": {
+    "description": "What to do.",
+    "enum": [
+     "front",
+     "back",
+     "forward",
+     "backward",
+     "group",
+     "ungroup",
+     "duplicate",
+     "delete",
+     "align",
+     "distribute",
+     "grid",
+     "flow"
+    ],
+    "type": "string"
+   },
+   "axis": {
+    "description": "distribute.",
+    "enum": [
+     "horizontal",
+     "vertical"
+    ],
+    "type": "string"
+   },
+   "box": {
+    "additionalProperties": false,
+    "description": "grid, flow. Default the content area.",
+    "properties": {
+     "h": {
+      "type": "number"
+     },
+     "w": {
+      "type": "number"
+     },
+     "x": {
+      "type": "number"
+     },
+     "y": {
+      "type": "number"
+     }
+    },
+    "required": [
+     "x",
+     "y",
+     "w",
+     "h"
+    ],
+    "type": "object"
+   },
+   "columns": {
+    "description": "grid; flow: at most.",
+    "type": "integer"
+   },
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "dx": {
+    "description": "duplicate: offset. Default 0.",
+    "type": "number"
+   },
+   "dy": {
+    "description": "duplicate: offset. Default 0.",
+    "type": "number"
+   },
+   "edge": {
+    "description": "align.",
+    "enum": [
+     "left",
+     "center",
+     "right",
+     "top",
+     "middle",
+     "bottom"
+    ],
+    "type": "string"
+   },
+   "gap": {
+    "description": "distribute: a fixed gap instead; grid, flow: between cells.",
+    "type": "number"
+   },
+   "gap_y": {
+    "description": "Between rows, if not gap.",
+    "type": "number"
+   },
+   "ref": {
+    "description": "group, or duplicate of one shape: ref name for the new shape.",
+    "type": "string"
+   },
+   "rows": {
+    "description": "grid.",
+    "type": "integer"
+   },
+   "targets": {
+    "description": "Shapes, or $refs.",
+    "items": {
+     "type": "string"
+    },
+    "minItems": 1,
+    "type": "array"
+   },
+   "to": {
+    "description": "align: to the targets' bounds (default), slide or content area.",
+    "enum": [
+     "shapes",
+     "slide",
+     "content_area"
+    ],
+    "type": "string"
+   },
+   "within": {
+    "description": "distribute: between the outermost targets (default) or across the content area.",
+    "enum": [
+     "shapes",
+     "content_area"
+    ],
+    "type": "string"
+   }
+  },
+  "required": [
+   "doc",
+   "targets",
+   "action"
+  ],
+  "type": "object"
+ },
+ "name": "ppt_arrange",
+ "strict": false
+}

@@ -1,0 +1,128 @@
+{
+ "description": "Add a table with its data, styled as PowerPoint inserts one: a header row, banded rows, the default style or one named.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "box": {
+    "additionalProperties": false,
+    "description": "Position and size.",
+    "properties": {
+     "h": {
+      "type": "number"
+     },
+     "w": {
+      "type": "number"
+     },
+     "x": {
+      "type": "number"
+     },
+     "y": {
+      "type": "number"
+     }
+    },
+    "required": [
+     "x",
+     "y",
+     "w",
+     "h"
+    ],
+    "type": "object"
+   },
+   "columns": {
+    "description": "1-50. Default fits from.",
+    "type": "integer"
+   },
+   "continue": {
+    "description": "Rows past the page go on new slides after it, same box.",
+    "type": "boolean"
+   },
+   "data": {
+    "description": "Cell texts, row by row; may be shorter than the table.",
+    "items": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "type": "array"
+   },
+   "date_format": {
+    "description": "Dates of from as e.g. d mmmm yyyy or dd/mm/yyyy.",
+    "type": "string"
+   },
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "fill_box": {
+    "description": "Body rows share box h; else rows hug their text.",
+    "type": "boolean"
+   },
+   "from": {
+    "description": "Or rows of d:<id> or t:<table>.",
+    "type": "string"
+   },
+   "from_columns": {
+    "description": "from's columns, in order. Default all.",
+    "items": {
+     "type": "string"
+    },
+    "type": "array"
+   },
+   "header": {
+    "description": "from's header texts; [] none. Default column names.",
+    "items": {
+     "type": "string"
+    },
+    "type": "array"
+   },
+   "key": {
+    "description": "Retry key: a repeat with the same key makes nothing new.",
+    "type": "string"
+   },
+   "measure": {
+    "description": "Add nothing: row heights, pages of h (0: content area), header repeated.",
+    "type": "boolean"
+   },
+   "name": {
+    "description": "Shape name.",
+    "type": "string"
+   },
+   "ref": {
+    "description": "Ref name for the table.",
+    "type": "string"
+   },
+   "rows": {
+    "description": "1-200. Default fits from.",
+    "type": "integer"
+   },
+   "size": {
+    "description": "Text size, points.",
+    "type": "number"
+   },
+   "slide": {
+    "description": "Slide, s:256 or $ref.",
+    "type": "string"
+   },
+   "style": {
+    "description": "Table style name or id; describe lists the deck's own.",
+    "type": "string"
+   },
+   "widths": {
+    "description": "Column widths, points.",
+    "items": {
+     "type": "number"
+    },
+    "type": "array"
+   }
+  },
+  "required": [
+   "doc",
+   "slide",
+   "box"
+  ],
+  "type": "object"
+ },
+ "name": "ppt_add_table",
+ "strict": false
+}

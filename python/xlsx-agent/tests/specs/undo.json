@@ -1,0 +1,30 @@
+{
+ "description": "Undo the last changing calls, one call per step; redo=true steps forward again. Returns the version.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "redo": {
+    "description": "Redo instead. Default false.",
+    "type": "boolean"
+   },
+   "scope": {
+    "description": "A sheet's (Sales) changes only. Default: the latest, anywhere.",
+    "type": "string"
+   },
+   "steps": {
+    "description": "Steps, 1-50. Default 1.",
+    "type": "integer"
+   }
+  },
+  "required": [
+   "doc"
+  ],
+  "type": "object"
+ },
+ "name": "undo",
+ "strict": false
+}

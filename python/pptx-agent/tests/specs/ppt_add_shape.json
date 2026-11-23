@@ -1,0 +1,336 @@
+{
+ "description": "Add autoshapes or text boxes, each with text: plain text, or paragraphs of formatted runs (the text spec) and a frame; give text or paragraphs, not both. Position by box, in points. measure: true measures text before building and adds nothing: lines, text height and the box_height to use, insets included.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "items": {
+    "description": "The shapes, back to front.",
+    "items": {
+     "additionalProperties": false,
+     "properties": {
+      "adjustments": {
+       "description": "Preset adjustments.",
+       "items": {
+        "additionalProperties": false,
+        "properties": {
+         "name": {
+          "description": "adj, adj1...",
+          "type": "string"
+         },
+         "value": {
+          "description": "1/100000 of the shorter side.",
+          "type": "number"
+         }
+        },
+        "required": [
+         "name",
+         "value"
+        ],
+        "type": "object"
+       },
+       "type": "array"
+      },
+      "box": {
+       "additionalProperties": false,
+       "description": "Points. Measuring: w is the width; h, if over 0, is checked.",
+       "properties": {
+        "h": {
+         "type": "number"
+        },
+        "w": {
+         "type": "number"
+        },
+        "x": {
+         "type": "number"
+        },
+        "y": {
+         "type": "number"
+        }
+       },
+       "required": [
+        "x",
+        "y",
+        "w",
+        "h"
+       ],
+       "type": "object"
+      },
+      "fill": {
+       "description": "Colour or none. Default the theme's.",
+       "type": "string"
+      },
+      "fit_height": {
+       "description": "Set h to what the text needs. Default false.",
+       "type": "boolean"
+      },
+      "frame": {
+       "additionalProperties": false,
+       "description": "Text frame.",
+       "properties": {
+        "anchor": {
+         "enum": [
+          "top",
+          "middle",
+          "bottom"
+         ],
+         "type": "string"
+        },
+        "autofit": {
+         "description": "Default none.",
+         "enum": [
+          "none",
+          "normal",
+          "shape"
+         ],
+         "type": "string"
+        },
+        "insets": {
+         "additionalProperties": false,
+         "description": "Default 7.2, 3.6, 7.2, 3.6.",
+         "properties": {
+          "bottom": {
+           "type": "number"
+          },
+          "left": {
+           "type": "number"
+          },
+          "right": {
+           "type": "number"
+          },
+          "top": {
+           "type": "number"
+          }
+         },
+         "required": [
+          "left",
+          "top",
+          "right",
+          "bottom"
+         ],
+         "type": "object"
+        },
+        "wrap": {
+         "description": "Default true.",
+         "type": "boolean"
+        }
+       },
+       "type": "object"
+      },
+      "like": {
+       "description": "Measuring: measure as this shape (font, insets, placeholder) instead of preset.",
+       "type": "string"
+      },
+      "line": {
+       "additionalProperties": false,
+       "properties": {
+        "color": {
+         "description": "none hides it.",
+         "type": "string"
+        },
+        "dash": {
+         "enum": [
+          "solid",
+          "dash",
+          "dot",
+          "dashDot",
+          "lgDash",
+          "sysDash",
+          "sysDot"
+         ],
+         "type": "string"
+        },
+        "end": {
+         "description": "Arrowhead.",
+         "enum": [
+          "arrow",
+          "diamond",
+          "none",
+          "oval",
+          "stealth",
+          "triangle"
+         ],
+         "type": "string"
+        },
+        "start": {
+         "description": "Arrowhead.",
+         "enum": [
+          "arrow",
+          "diamond",
+          "none",
+          "oval",
+          "stealth",
+          "triangle"
+         ],
+         "type": "string"
+        },
+        "width": {
+         "type": "number"
+        }
+       },
+       "type": "object"
+      },
+      "name": {
+       "type": "string"
+      },
+      "paragraphs": {
+       "description": "Text spec, instead of text.",
+       "items": {
+        "additionalProperties": false,
+        "properties": {
+         "align": {
+          "enum": [
+           "left",
+           "center",
+           "right",
+           "justify"
+          ],
+          "type": "string"
+         },
+         "bullet": {
+          "enum": [
+           "none",
+           "bullet",
+           "number"
+          ],
+          "type": "string"
+         },
+         "level": {
+          "description": "0-8.",
+          "type": "integer"
+         },
+         "line_spacing": {
+          "description": "Times single.",
+          "type": "number"
+         },
+         "runs": {
+          "items": {
+           "additionalProperties": false,
+           "properties": {
+            "bold": {
+             "type": "boolean"
+            },
+            "color": {
+             "type": "string"
+            },
+            "font": {
+             "type": "string"
+            },
+            "hyperlink": {
+             "description": "URL.",
+             "type": "string"
+            },
+            "italic": {
+             "type": "boolean"
+            },
+            "size": {
+             "type": "number"
+            },
+            "text": {
+             "description": "\\v breaks the line.",
+             "type": "string"
+            },
+            "underline": {
+             "type": "boolean"
+            }
+           },
+           "required": [
+            "text"
+           ],
+           "type": "object"
+          },
+          "type": "array"
+         },
+         "space_after": {
+          "type": "number"
+         },
+         "space_before": {
+          "type": "number"
+         }
+        },
+        "required": [
+         "runs"
+        ],
+        "type": "object"
+       },
+       "type": "array"
+      },
+      "preset": {
+       "description": "textbox: a plain text box; other: see preset_name.",
+       "enum": [
+        "textbox",
+        "rect",
+        "roundRect",
+        "ellipse",
+        "triangle",
+        "diamond",
+        "parallelogram",
+        "pentagon",
+        "hexagon",
+        "chevron",
+        "homePlate",
+        "rightArrow",
+        "leftArrow",
+        "upArrow",
+        "downArrow",
+        "flowChartProcess",
+        "flowChartDecision",
+        "flowChartTerminator",
+        "flowChartAlternateProcess",
+        "wedgeRoundRectCallout",
+        "snip1Rect",
+        "round2SameRect",
+        "can",
+        "star5",
+        "line",
+        "other"
+       ],
+       "type": "string"
+      },
+      "preset_name": {
+       "description": "Any preset, when preset is other.",
+       "type": "string"
+      },
+      "ref": {
+       "description": "Ref name (a-z, 0-9, _): later arguments write $name.",
+       "type": "string"
+      },
+      "text": {
+       "description": "Plain text; \\n paragraphs, \\v line breaks.",
+       "type": "string"
+      }
+     },
+     "required": [
+      "preset",
+      "box"
+     ],
+     "type": "object"
+    },
+    "type": "array"
+   },
+   "key": {
+    "description": "Retry key: a repeat with the same key makes nothing new.",
+    "type": "string"
+   },
+   "measure": {
+    "description": "Measure the items' text only; add nothing. Default false.",
+    "type": "boolean"
+   },
+   "slide": {
+    "description": "Slide, s:256 or $ref.",
+    "type": "string"
+   }
+  },
+  "required": [
+   "doc",
+   "slide",
+   "items"
+  ],
+  "type": "object"
+ },
+ "name": "ppt_add_shape",
+ "strict": false
+}

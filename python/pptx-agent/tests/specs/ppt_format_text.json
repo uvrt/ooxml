@@ -1,0 +1,140 @@
+{
+ "description": "Format existing text: runs (bold, size, colour...), paragraphs (alignment, bullets, spacing) and the frame (insets, anchor, autofit). A shape formats all its text; 256.5/p1 one paragraph, 256.5/p1/r0 one run.",
+ "input_schema": {
+  "additionalProperties": false,
+  "properties": {
+   "doc": {
+    "description": "Document id.",
+    "type": "string"
+   },
+   "items": {
+    "description": "Targets and their formatting.",
+    "items": {
+     "additionalProperties": false,
+     "properties": {
+      "align": {
+       "enum": [
+        "left",
+        "center",
+        "right",
+        "justify"
+       ],
+       "type": "string"
+      },
+      "anchor": {
+       "enum": [
+        "top",
+        "middle",
+        "bottom"
+       ],
+       "type": "string"
+      },
+      "autofit": {
+       "enum": [
+        "none",
+        "normal",
+        "shape"
+       ],
+       "type": "string"
+      },
+      "bold": {
+       "type": "boolean"
+      },
+      "bullet": {
+       "enum": [
+        "none",
+        "bullet",
+        "number"
+       ],
+       "type": "string"
+      },
+      "color": {
+       "type": "string"
+      },
+      "font": {
+       "type": "string"
+      },
+      "font_scale": {
+       "description": "Stored shrink, 0.25-1, as PowerPoint draws it.",
+       "type": "number"
+      },
+      "hyperlink": {
+       "description": "URL; empty removes it.",
+       "type": "string"
+      },
+      "insets": {
+       "additionalProperties": false,
+       "properties": {
+        "bottom": {
+         "type": "number"
+        },
+        "left": {
+         "type": "number"
+        },
+        "right": {
+         "type": "number"
+        },
+        "top": {
+         "type": "number"
+        }
+       },
+       "required": [
+        "left",
+        "top",
+        "right",
+        "bottom"
+       ],
+       "type": "object"
+      },
+      "italic": {
+       "type": "boolean"
+      },
+      "level": {
+       "description": "0-8.",
+       "type": "integer"
+      },
+      "line_spacing": {
+       "description": "Times single.",
+       "type": "number"
+      },
+      "size": {
+       "description": "0 removes it: the layout's applies.",
+       "type": "number"
+      },
+      "space_after": {
+       "type": "number"
+      },
+      "space_before": {
+       "type": "number"
+      },
+      "strike": {
+       "type": "boolean"
+      },
+      "target": {
+       "description": "Shape, table (all cells; /row0, /col1), cell, notes, paragraph (/p1), run (/p1/r0) or $ref.",
+       "type": "string"
+      },
+      "underline": {
+       "type": "boolean"
+      },
+      "wrap": {
+       "type": "boolean"
+      }
+     },
+     "required": [
+      "target"
+     ],
+     "type": "object"
+    },
+    "type": "array"
+   }
+  },
+  "required": [
+   "doc",
+   "items"
+  ],
+  "type": "object"
+ },
+ "name": "ppt_format_text",
+ "strict": false
+}
