@@ -64,6 +64,13 @@ impl PageReads for Painted<'_> {
         let mut engine = ooxml_word_pages::lock_engine(self.engine);
         engine.page_read(&self.version, page)
     }
+
+    fn resolved_table(
+        &self,
+        table: &ooxml_word_model::model::Table,
+    ) -> Option<Arc<ooxml_word_model::resolve::ResolvedTable>> {
+        ooxml_word_pages::lock_engine(self.engine).resolved_table(&self.version, table)
+    }
 }
 
 /// What a check asks of the layout's facts.

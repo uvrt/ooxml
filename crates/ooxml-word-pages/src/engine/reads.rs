@@ -16,6 +16,8 @@ use crate::page_reads::{places, Found, ReadOf, Split};
 use crate::text_boxes::{text_boxes, TextBoxJob};
 use crate::version::LaidVersion;
 use ooxml_word_layout::paint::{paint_stories, PaintContext};
+use ooxml_word_model::model::Table;
+use ooxml_word_model::resolve::ResolvedTable;
 use std::sync::Arc;
 
 impl PageEngine {
@@ -96,6 +98,19 @@ impl PageEngine {
             paint.text_boxes = text_boxes(job, drawings, &paint, page);
         }
         Some(PageRead::of(&paint))
+    }
+
+    /// A table of `version`'s layout model (nested ones too) resolved as the layout
+    /// resolved it: from the model's table memo (the block tier: by the table's content,
+    /// in the version's own context), shared by the versions that keep the table and by
+    /// the layout, which resolved it already. `None` where this engine no longer lays the
+    /// version's context out.
+    pub fn resolved_table(&mut self, version: &LaidVersion, table: &Table) -> Option<Arc<ResolvedTable>> {
+        let painter = self
+            .generation
+            .as_mut()?
+            .painter(version, &self.locale, &self.budgets.held)?;
+        Some(painter.model.resolve_table(&version.layout.document, table))
     }
 
     /// What the page tier holds now (its entries: each page's read and its facts'
