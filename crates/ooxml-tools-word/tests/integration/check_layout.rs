@@ -1,13 +1,14 @@
 //! `check`'s `layout` and `range` (lane P5k): the layout's facts read from the pages and
 //! from the document alone, in docx-agent's order, kept to a range's blocks and pages with
 //! each range's report; past the call's limit on laying out, the facts read from the
-//! document alone. Their equality with docx-agent's is
+//! document alone; a check after a local edit reading again only the pages it changed, and
+//! reporting as a check made cold. Their equality with docx-agent's is
 //! `crates/ooxml-oracle/python/word_reads_diff.py check`'s.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
 use crate::check::{checked, limited, versions, Past};
 use crate::common::engine;
-use ooxml_tools_word::{EnginePages, LastCheck, LayoutLimit, CHECK_NO_LAYOUT};
+use ooxml_tools_word::{EnginePages, LastCheck, LayoutLimit, WordLayout, CHECK_NO_LAYOUT};
 use serde_json::json;
 use std::time::Duration;
 
@@ -144,7 +145,8 @@ fn a_notes_paragraph_is_on_the_pages_that_draw_it() {
 /// The fixture with a first paragraph holding a VML shape that states no size, which the
 /// layout cannot lay out (docx-agent's `_vml_first`).
 fn with_a_shape() -> ooxml_opc::Package {
-    let (first, _) = versions();
+    // The fixture with its first text made long: several pages.
+    let (_, first) = versions();
     let xml = String::from_utf8(first.read("word/document.xml").unwrap().unwrap().to_vec()).unwrap();
     let body = xml.find("<w:body>").unwrap() + "<w:body>".len();
     let shape = r##"<w:p><w:r><w:pict><v:rect xmlns:v="urn:schemas-microsoft-com:vml" style="position:absolute" fillcolor="#4472c4"/></w:pict></w:r><w:r><w:t>A shape.</w:t></w:r></w:p>"##;
@@ -241,4 +243,31 @@ fn pages_outside_the_ranges_read_no_facts_and_say_so() {
     let facts = &reply["data"]["layout"];
     assert_eq!(facts["direct_formatting"], json!([]), "{facts}");
     assert_eq!(reply["data"]["range"][0]["pages"], pages);
+}
+
+#[test]
+fn a_check_after_a_local_edit_reads_only_what_changed_and_reports_as_a_cold_check() {
+    // The fixture with its first text made long: several pages.
+    let (_, first) = versions();
+    let xml = String::from_utf8(first.read("word/document.xml").unwrap().unwrap().to_vec()).unwrap();
+    // The last text of the body made longer: an edit on the last page.
+    let at = xml.rfind("</w:t>").unwrap();
+    let edited = format!("{} and a few more words{}", &xml[..at], &xml[at..]);
+    let second = first.with_bytes("word/document.xml", std::sync::Arc::from(edited.into_bytes()));
+    let asked = json!({"doc": "d1", "include": ["layout"]});
+    let warm = EnginePages::of(engine());
+    let _ = checked(&first, 1, asked.clone(), &LastCheck::default(), Some(&warm));
+    let before = warm.engine().lock().unwrap().stats().pages_read;
+    let ours = checked(&second, 2, asked.clone(), &LastCheck::default(), Some(&warm));
+    let after = warm.engine().lock().unwrap().stats().pages_read;
+    let cold = EnginePages::of(engine());
+    let theirs = checked(&second, 2, asked, &LastCheck::default(), Some(&cold));
+    assert_eq!(ours["data"]["layout"], theirs["data"]["layout"]);
+    let pages = cold.engine().lock().unwrap().stats().pages_read.0;
+    assert!(pages > 1, "the fixture has pages enough: {pages}");
+    let (painted, taken) = (after.0 - before.0, after.1 - before.1);
+    assert!(
+        taken > 0 && painted < pages,
+        "painted {painted}, taken {taken} of {pages}"
+    );
 }

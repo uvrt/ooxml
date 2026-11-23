@@ -47,15 +47,24 @@ pub struct LaidVersion {
     pub(crate) context: u64,
     /// Its context's mark: while a version of a context is held, its painter is kept.
     pub(crate) painted_in: Arc<crate::engine::ContextMark>,
-    /// What a comparison reads of each page without painting it, made when first asked.
+    /// What is read of its pages without painting them, made when first asked.
+    pub(crate) unpainted: Unpainted,
+}
+
+/// What is read of a version's pages without painting them, each made when first asked.
+#[derive(Debug, Default)]
+pub(crate) struct Unpainted {
+    /// What a comparison reads of each page.
     pub(crate) pages: OnceLock<Arc<VersionPages>>,
+    /// Each page's context ([`crate::page_context`]).
+    pub(crate) contexts: OnceLock<Arc<[ooxml_base::Digest]>>,
 }
 
 /// What a comparison reads of a version's pages without painting them.
 #[derive(Debug)]
 pub(crate) struct VersionPages {
     /// Each page's context ([`crate::page_context`]).
-    pub(crate) contexts: Vec<ooxml_base::Digest>,
+    pub(crate) contexts: Arc<[ooxml_base::Digest]>,
     /// Each page as laid out (`None`: a page with no laid page of its own).
     pub(crate) pages: Vec<Option<crate::digest_cache::PageRef>>,
     /// Each page's body lines' paragraph paths, in drawing order.

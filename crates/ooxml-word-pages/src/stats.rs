@@ -42,6 +42,9 @@ pub struct EngineStats {
     pub pages_digested: (u64, u64),
     /// Trial layouts made (a version with a change a check asks about, kept nowhere).
     pub trials: u64,
+    /// Pages painted for a check's read of them, and pages read as a version before read
+    /// the same page.
+    pub pages_read: (u64, u64),
 }
 
 impl EngineStats {
