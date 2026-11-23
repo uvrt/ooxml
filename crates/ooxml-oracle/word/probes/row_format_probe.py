@@ -7,7 +7,7 @@ case, each followed by a paragraph ``After <Key>.``.  Every table is three colum
 rows: shaded cells centred vertically, paragraphs with no space after, the third column's
 centred; the runs Arial 8 pt, coloured, the third column's bold -- their paragraph marks
 with no run properties of their own unless the case says so.  Word -- through
-``python/docx-agent/tests/oracle.py``'s machine-wide lock -- opens it, makes each case's edits by
+``crates/ooxml-oracle/word/oracle.py``'s machine-wide lock -- opens it, makes each case's edits by
 AppleScript (from the last table up) and saves.
 
 * ``Below`` / ``Above``: Insert Rows Below row 2 / Above row 1, then a word typed into each

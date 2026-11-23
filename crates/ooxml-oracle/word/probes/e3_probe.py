@@ -3,7 +3,7 @@
 make of them -- the facts docx-agent's tracking mode (E3) mirrors.
 
 Probe documents are written here (mode 15, every paragraph and row with its paraId, so
-Word keeps them and a case can be found again), and Word -- through ``python/docx-agent/tests/oracle.py``'s
+Word keeps them and a case can be found again), and Word -- through ``crates/ooxml-oracle/word/oracle.py``'s
 machine-wide lock -- opens each, turns tracking on (``track revisions``), makes the case's
 edits by AppleScript, and saves.  Each tracked result is then opened again and Word's own
 ``accept all revisions`` and ``reject all revisions`` are saved too.  A second document

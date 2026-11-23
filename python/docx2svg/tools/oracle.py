@@ -54,7 +54,7 @@ GROUP_CONTAINER = Path.home() / "Library" / "Group Containers" / "UBF8T346G9.Off
 #: The one place the oracle's location is written.  The path contains a space; every
 #: caller passes it as a single argv element, never through a shell.
 ORACLE_DIR = GROUP_CONTAINER / "docx2svg-oracle"
-#: The machine-wide Word lock, shared with docx-agent's oracle (its ``tests/oracle.py``):
+#: The machine-wide Word lock, shared with docx-agent's oracle (``crates/ooxml-oracle/word/oracle.py``):
 #: an advisory ``flock`` on this file is held around every launch, export, re-save and
 #: recovery, so neither project's recovery can quit Word under the other's export.
 WORD_LOCK = GROUP_CONTAINER / "word-oracle.lock"

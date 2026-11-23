@@ -3,7 +3,7 @@
 not measure: a table in Word's own Table Grid style, and a document's first footnote.
 
 A probe document is written here (mode 15, the handful of styles ``e1_probe.py`` writes,
-no notes parts), and Word -- through ``python/docx-agent/tests/oracle.py``'s machine-wide lock -- opens it
+no notes parts), and Word -- through ``crates/ooxml-oracle/word/oracle.py``'s machine-wide lock -- opens it
 and, by AppleScript:
 
 * makes a table of two rows and three columns before the second paragraph and gives it the

@@ -16,7 +16,10 @@ one of its.  So (ROADMAP.md, "Word is one instance per machine"):
 * **Recovery only under the lock**, and only of what this helper started: quitting the Word
   it launched, deleting ``~$`` files in its own staging directory.
 * **Cached by content.**  Exports and re-saves are cached by the SHA-256 of the input, in
-  :data:`ORACLE_DIR` (outside the repository: a Word PDF carries font subsets).
+  :data:`ORACLE_DIR` (outside the repository: a Word PDF carries font subsets).  The cache is
+  bounded (:func:`evict`, at the start of every session, under the lock): the answers least
+  recently used go first once it holds more than :data:`CACHE_FILES` files or
+  :data:`CACHE_BYTES` bytes; a hit counts as a use.
 * **Paths under the sandbox.**  Word may read and write the Office group container without
   a grant; documents are staged there.
 
@@ -46,7 +49,7 @@ except ImportError:  # Windows: there is no Word oracle there (it drives Word on
 WORD_APP = Path("/Applications/Microsoft Word.app")
 EXPORT_SCRIPT = Path(
     os.environ.get("DOCX2SVG_ORACLE_SCRIPT")
-    or Path(__file__).resolve().parents[2] / "docx2svg" / "tools" / "word_export_pdf.applescript"
+    or Path(__file__).resolve().parents[3] / "python" / "docx2svg" / "tools" / "word_export_pdf.applescript"
 )
 SAVE_SCRIPT = EXPORT_SCRIPT.with_name("word_save_docx.applescript")
 
@@ -55,9 +58,45 @@ GROUP_CONTAINER = Path.home() / "Library" / "Group Containers" / "UBF8T346G9.Off
 LOCK = GROUP_CONTAINER / "word-oracle.lock"
 #: Where documents are staged for Word and its answers cached.
 ORACLE_DIR = GROUP_CONTAINER / "docx-agent-oracle"
+#: The cache's bounds (:func:`evict`): a full run of the Word suite and the probes' answers fit.
+CACHE_FILES = 1000
+CACHE_BYTES = 512 * 2 ** 20
 
 _MARKUP = (b"<w:ins ", b"<w:del ", b"<w:moveFrom ", b"<w:moveTo ", b"<w:commentReference",
            b"Change>", b"<w:commentRangeStart")
+
+
+def evict(folder: Path | None = None, *, files: int = CACHE_FILES, size: int = CACHE_BYTES) -> list[Path]:
+    """Keep the cache within ``files`` files and ``size`` bytes: delete the answers least
+    recently used (by modification time; a hit touches its file) until it is.  Only the
+    folder's own files are cached answers: a folder in it (the probes' ``measured`` tables) is
+    kept.  Runs under the lock (:func:`session`), so no export of another job is in flight.
+    Returns what was deleted."""
+    folder = ORACLE_DIR if folder is None else folder
+    entries = []
+    for path in folder.iterdir():
+        try:
+            stat = path.lstat()
+        except FileNotFoundError:
+            continue
+        if path.is_file() and not path.is_symlink():
+            entries.append((stat.st_mtime, stat.st_size, path))
+    entries.sort(key=lambda entry: (entry[0], entry[2].name))
+    total = sum(entry[1] for entry in entries)
+    deleted = []
+    for count, (_, bytes_, path) in zip(range(len(entries), 0, -1), entries):
+        if count <= files and total <= size:
+            break
+        path.unlink(missing_ok=True)
+        total -= bytes_
+        deleted.append(path)
+    return deleted
+
+
+def _used(path: Path) -> Path:
+    """A cached answer, marked as just used (:func:`evict` keeps it longest)."""
+    os.utime(path)
+    return path
 
 
 class WordBusy(RuntimeError):
@@ -88,6 +127,7 @@ def session() -> Iterator["Session"]:
         if word_running():
             raise WordBusy("Word is in use")
         ORACLE_DIR.mkdir(exist_ok=True)
+        evict()
         current = Session()
         try:
             yield current
@@ -124,7 +164,7 @@ class Session:
             else hashlib.sha256(data).hexdigest()[:16]
         pdf = ORACLE_DIR / f"{name}-{digest}{'-final' if final else ''}.pdf"
         if pdf.exists():
-            return Outcome(True, "done", pdf)
+            return Outcome(True, "done", _used(pdf))
         return self._run([str(EXPORT_SCRIPT)], data, pdf, name, digest, timeout,
                          extra=["final"] if final else [], suffix=suffix)
 
@@ -133,7 +173,7 @@ class Session:
         digest = hashlib.sha256(data).hexdigest()[:16]
         saved = ORACLE_DIR / f"{name}-{digest}-saved.docx"
         if saved.exists():
-            return Outcome(True, "done", saved)
+            return Outcome(True, "done", _used(saved))
         return self._run([str(SAVE_SCRIPT)], data, saved, name, digest, timeout)
 
     def run_script(self, script: str, data: bytes | None, *, name: str, tag: str,
@@ -143,7 +183,7 @@ class Session:
         digest = hashlib.sha256((data or b"") + script.encode() + "\0".join(args).encode()).hexdigest()[:16]
         out = ORACLE_DIR / f"{name}-{digest}-{tag}.docx"
         if out.exists():
-            return Outcome(True, "done", out)
+            return Outcome(True, "done", _used(out))
         return self._run(["-e", script], data, out, name, digest, timeout, extra=list(args))
 
     def _run(self, command: list[str], data: bytes | None, out: Path, name: str, digest: str,
