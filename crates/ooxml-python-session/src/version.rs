@@ -9,7 +9,7 @@ use ooxml_session::{BlockRefused, IdStateOf, Opened};
 use ooxml_tools_word::WordLayout;
 use pyo3::exceptions::{PyKeyError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict};
+use pyo3::types::PyBytes;
 use serde_json::Value;
 
 /// A document at one version (`ooxml_core.Version`), held while Python holds it: a call
@@ -45,24 +45,8 @@ impl PyVersion {
         format!("<ooxml_core.Version {} {}>", self.inner.id(), self.inner.version())
     }
 
-    /// The parts whose content differs from `before` (a version of the same document):
-    /// ``{part: bytes here, or None where this version lacks it}`` -- what a copy of the
-    /// document kept beside the session takes to follow an edit made in it.
-    fn changed_since<'py>(&self, py: Python<'py>, before: PyRef<'_, PyVersion>) -> PyResult<Bound<'py, PyDict>> {
-        let (now, then) = (&self.inner, &before.inner);
-        let changed = py.detach(|| now.changed_since(then)).map_err(|e| to_py(&e))?;
-        let out = PyDict::new(py);
-        for (name, bytes) in changed {
-            match bytes {
-                Some(bytes) => out.set_item(name, PyBytes::new(py, &bytes))?,
-                None => out.set_item(name, py.None())?,
-            }
-        }
-        Ok(out)
-    }
-
-    /// The names of the parts whose content differs from `before`: what
-    /// [`changed_since`](Self::changed_since) gives, without their bytes.
+    /// The names of the parts whose content differs from `before` (a version of the same
+    /// document), none written.
     fn parts_changed_since(&self, py: Python<'_>, before: PyRef<'_, PyVersion>) -> PyResult<Vec<String>> {
         let (now, then) = (&self.inner, &before.inner);
         py.detach(|| now.parts_changed_since(then)).map_err(|e| to_py(&e))
@@ -220,15 +204,6 @@ impl PyVersion {
         let found = py.detach(|| now.touched_since(then)).map_err(|e| to_py(&e))?;
         Ok(Value::Array(found).to_string())
     }
-
-    /// The ids this version gave that `before` had not, and its renames that `before`
-    /// lacks: ``(values, {old id: id now})`` -- what a view of the document kept beside the
-    /// session takes to give no id twice and follow renamed ids, without reading a part.
-    fn ids_since(&self, py: Python<'_>, before: PyRef<'_, PyVersion>) -> PyResult<IdsSince> {
-        let (now, then) = (&self.inner, &before.inner);
-        let found = py.detach(|| now.ids_since(then)).map_err(|e| to_py(&e))?;
-        Ok((found.given, found.renamed))
-    }
 }
 
 /// A block refused as Python says it: an id the version lacks a `KeyError`, else a
@@ -239,6 +214,3 @@ fn refused(why: BlockRefused) -> PyErr {
         BlockRefused::Refused(message) => PyValueError::new_err(message),
     }
 }
-
-/// What `Version.ids_since` answers: the id values given, and the renames (old id, id now).
-type IdsSince = (Vec<u32>, Vec<(String, String)>);

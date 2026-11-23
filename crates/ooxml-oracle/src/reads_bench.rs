@@ -2,13 +2,11 @@
 //! a session sees them (design section 7's targets): the first `describe` of a version
 //! (it reads the version), `describe` again, `word_read` of the first page of the body,
 //! `word_read` of a span of 20 blocks in the middle, `find_text`; then a one-block edit
-//! made two ways -- a path copy (the paragraph replaced, every other block shared) and the
-//! bridge's (the main part written and parsed again, nothing shared) -- and `describe` and
-//! the span's `word_read` on each new version; and the path docx-agent takes (lane P1c):
-//! through a session, the edited main part's bytes committed (parsed, then sharing what did
-//! not change with the version before), then `describe` and the span reads on the version
-//! committed. Best of `rounds` (default 3), wall in ms, as one JSON object (the process's
-//! CPU from `/usr/bin/time`).
+//! made as a path copy (the paragraph replaced, every other block shared) and `describe`
+//! and the span's `word_read` on the new version; and the path docx-agent takes: through a
+//! session, the span's first paragraph edited by `word_insert_text`, then `describe` and the
+//! span reads on the version it made. Best of `rounds` (default 3), wall in ms, as one JSON
+//! object (the process's CPU from `/usr/bin/time`).
 //!
 //! Must not: be used by any library; it is a measuring instrument.
 
@@ -18,7 +16,7 @@ use ooxml_tools::{ArgType, ToolError};
 use ooxml_tools_word::{describe, find_text, word_read, Describe, FindText, Version, WordRead};
 use ooxml_word_model::docx::{Docx, Versions};
 use ooxml_word_model::ids::W;
-use ooxml_xml::{Children, Node, Tree};
+use ooxml_xml::{Children, Node};
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
 use std::time::Instant;
@@ -49,8 +47,8 @@ fn arg<T: ArgType>(value: Value) -> Result<T, String> {
 }
 
 /// The package with its main part's middle body paragraph given one more run (a copy of
-/// its first): by path copy, and by the bridge's write and parse.
-fn edited(package: &Package, main: &str) -> Result<(Package, Package), String> {
+/// its first), by path copy.
+fn edited(package: &Package, main: &str) -> Result<Package, String> {
     let tree = package.tree(main).map_err(|e| e.to_string())?.ok_or("no main part")?;
     let root = tree.root();
     let (b, body) = root
@@ -90,11 +88,7 @@ fn edited(package: &Package, main: &str) -> Result<(Package, Package), String> {
         *slot = Node::Element(new_body);
     }
     let copied = tree.with_root(Arc::new(root.with_children(Children::from_vec(top))));
-    let bridged: Tree = ooxml_xml::parse(&copied.write(), &Limits::default().xml).map_err(|e| e.to_string())?;
-    Ok((
-        package.with_new_tree(main, copied),
-        package.with_new_tree(main, bridged),
-    ))
+    Ok(package.with_new_tree(main, copied))
 }
 
 /// The ids of 20 top-level blocks from the middle of the body.
@@ -164,16 +158,14 @@ pub fn run(args: &[String]) -> Result<(), String> {
     timed(&mut out, "find_text_ms", rounds, || {
         find_text(&find, &v1, &Never).map(drop)
     });
-    let (copied, bridged) = edited(&package, &main)?;
-    for (name, edited) in [("path_copy", &copied), ("bridge", &bridged)] {
-        let reads = Reads {
-            d: &d,
-            span: &span,
-            other: &other,
-        };
-        after_edit(&mut out, name, &package, edited, &reads, rounds)?;
-    }
-    through_session(&mut out, &bytes, &main, &bridged, &reads_of(&span, &other), rounds)?;
+    let copied = edited(&package, &main)?;
+    let reads = Reads {
+        d: &d,
+        span: &span,
+        other: &other,
+    };
+    after_edit(&mut out, "path_copy", &package, &copied, &reads, rounds)?;
+    through_session(&mut out, &bytes, &reads_of(&span, &other), rounds)?;
     println!("{}", Value::Object(out));
     Ok(())
 }
@@ -184,61 +176,43 @@ fn reads_of(span: &WordRead, other: &WordRead) -> (Value, Value) {
 }
 
 /// The session path docx-agent takes: the document opened from its bytes and read, then the
-/// edited main part's bytes committed and the new version read, each call on the version
-/// committed (`CallContext::at`). Best of `rounds`.
+/// span's first paragraph edited by `word_insert_text` and the version it made read. Best of
+/// `rounds`.
 fn through_session(
     out: &mut Map<String, Value>,
     bytes: &[u8],
-    main: &str,
-    edited: &Package,
     spans: &(Value, Value),
     rounds: usize,
 ) -> Result<(), String> {
     use ooxml_session::{CallContext, DocKind, Session, SessionConfig};
-    let written: Arc<[u8]> = Arc::from(
-        edited
-            .tree(main)
-            .map_err(|e| e.to_string())?
-            .ok_or("no main part")?
-            .write(),
-    );
+    let first = spans.1.get("range").cloned().unwrap_or(Value::Null);
+    let insert = json!({"doc": "d1", "target": first, "text": " more"});
     let mut best = [f64::MAX; 4];
     for _ in 0..rounds {
         let session = Session::new(SessionConfig::default(), crate::reads::session_context());
-        let doc = session
+        session
             .open(Arc::from(bytes), DocKind::Docx, "a.docx")
             .map_err(|e| e.to_string())?;
-        let call = |name: &str, arguments: Value, context: &CallContext| -> Result<f64, String> {
+        let context = CallContext::default();
+        let call = |name: &str, arguments: Value| -> Result<f64, String> {
             let start = Instant::now();
-            let result = session.call(name, arguments, context);
+            let result = session.call(name, arguments, &context);
             if result.is_error() {
                 return Err(format!("{name}: {:?}", result.to_json().get("error")));
             }
             Ok(start.elapsed().as_secs_f64() * 1000.0)
         };
-        call("describe", json!({"doc": "d1"}), &CallContext::default())?;
-        call("word_read", spans.0.clone(), &CallContext::default())?;
-        let start = Instant::now();
-        let (_, version) = session
-            .commit(
-                &doc,
-                vec![(main.to_owned(), Some(Arc::clone(&written)))],
-                &CallContext::default(),
-            )
-            .map_err(|e| e.to_string())?;
-        let commit = start.elapsed().as_secs_f64() * 1000.0;
-        let at = CallContext {
-            at: vec![version],
-            ..CallContext::default()
-        };
-        let span = call("word_read", spans.0.clone(), &at)?;
-        let describe = call("describe", json!({"doc": "d1"}), &at)?;
-        let other = call("word_read", spans.1.clone(), &at)?;
-        for (slot, value) in best.iter_mut().zip([commit, span, describe, other]) {
+        call("describe", json!({"doc": "d1"}))?;
+        call("word_read", spans.0.clone())?;
+        let edit = call("word_insert_text", insert.clone())?;
+        let span = call("word_read", spans.0.clone())?;
+        let describe = call("describe", json!({"doc": "d1"}))?;
+        let other = call("word_read", spans.1.clone())?;
+        for (slot, value) in best.iter_mut().zip([edit, span, describe, other]) {
             *slot = slot.min(value);
         }
     }
-    for (key, value) in ["commit", "word_read_span_first", "describe", "word_read_other_span"]
+    for (key, value) in ["edit", "word_read_span_first", "describe", "word_read_other_span"]
         .iter()
         .zip(best)
     {

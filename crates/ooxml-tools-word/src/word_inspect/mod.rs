@@ -194,7 +194,7 @@ fn not_laid(args: &WordInspect, why: NotLaid, limit: Option<crate::LayoutLimit<'
     if let Err(stopped) = cancel.check() {
         return cancelled(stopped);
     }
-    if matches!(&why, NotLaid::Other(reason) if crate::pages::unlaid_note(reason)) {
+    if why.in_note() {
         let mut call = args.clone();
         call.layout = None;
         let form = format!("word_inspect layout: {}", crate::pages::UNLAID_NOTE);
@@ -206,7 +206,7 @@ fn not_laid(args: &WordInspect, why: NotLaid, limit: Option<crate::LayoutLimit<'
             limit.timeout.as_secs_f64()
         ),
         (NotLaid::Stopped, None) => "laying the document out was stopped".to_owned(),
-        (NotLaid::Other(reason), _) => format!("the Word layout does not lay this version out yet ({reason})"),
+        (reason, _) => format!("the Word layout does not lay this version out yet ({reason})"),
     };
     let mut call = args.clone();
     call.layout = None;

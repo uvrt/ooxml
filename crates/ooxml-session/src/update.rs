@@ -1,6 +1,6 @@
-//! Owns: a commit of parts given as bytes ([`crate::Session::update`]): a version's touched
-//! parts, parsed here and committed as one transaction and one history
-//! step ([`PartUpdate`], a store [`Command`]). A part parsed again shares with the version
+//! Owns: a commit of parts given as bytes ([`crate::Session::update`], a version a test makes
+//! outside the tools): the parts, parsed here and committed as one transaction and one
+//! history step ([`PartUpdate`], a store [`Command`]). A part parsed again shares with the version
 //! before every subtree that did not change (step 4: the two trees diffed structurally and
 //! the differences applied to the old one by path copying), so what is kept per subtree --
 //! block ids, a reading's facts, a layout's measures -- is found again by pointer, as after
@@ -24,7 +24,7 @@ use ooxml_xml::Tree;
 use std::sync::Arc;
 
 /// A document model parts given as bytes are committed into.
-pub(crate) trait Bridged: DocModel {
+pub(crate) trait PartsModel: DocModel {
     /// The version's package.
     fn package(&self) -> &Package;
     /// The change that puts `tree` as `part`.
@@ -37,7 +37,7 @@ pub(crate) trait Bridged: DocModel {
     fn ledger(&self, trees: &[&Tree]) -> Option<Self::Change>;
 }
 
-impl Bridged for PackageDoc {
+impl PartsModel for PackageDoc {
     fn package(&self) -> &Package {
         PackageDoc::package(self)
     }
@@ -65,7 +65,7 @@ impl Bridged for PackageDoc {
     }
 }
 
-impl Bridged for WordDoc {
+impl PartsModel for WordDoc {
     fn package(&self) -> &Package {
         WordDoc::package(self)
     }
@@ -166,7 +166,7 @@ fn is_xml(part: &str) -> bool {
     [".xml", ".rels", ".vml"].iter().any(|e| lower.ends_with(e))
 }
 
-impl<D: Bridged> Command<D> for PartUpdate<'_>
+impl<D: PartsModel> Command<D> for PartUpdate<'_>
 where
     SessionError: From<Error<D>>,
 {

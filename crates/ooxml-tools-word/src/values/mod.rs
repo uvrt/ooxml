@@ -70,7 +70,7 @@ impl Pages {
 pub(crate) fn not_laid(why: NotLaid) -> (&'static str, String) {
     match why {
         NotLaid::Stopped => ("timeout", "laying the document out was stopped".to_owned()),
-        NotLaid::Other(reason) => (
+        reason => (
             "layout_failed",
             format!("the Word layout does not lay this version out yet ({reason})"),
         ),

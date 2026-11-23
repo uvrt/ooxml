@@ -1,16 +1,16 @@
-"""The host's side of the editing tools the Rust session serves (:mod:`docx_agent.rust.edits`):
-which tools those are, and each call's arguments as the session takes them.
+"""The host's side of the tools the Rust session serves (:mod:`docx_agent.rust.edits`): what
+their calls read from the host, and each call's arguments as the session takes them.
 
-Which tools the session serves, and what their edits read from the host (its blobs, its page
-engine, the values it wrote for references), is declared by each Rust tool where it is
-defined (``ooxml_tools_word::Hosting``) and exported with the registry
-(``ooxml_core.tool_hosting``): :func:`hosting`.  Nothing here lists the tools.
+What a tool's edits read from the host (its blobs, its page engine, the values it wrote for
+references) is declared by each Rust tool where it is defined (``ooxml_tools_word::Hosting``)
+and exported with the registry (``ooxml_core.tool_hosting``): :func:`hosting`.  Nothing here
+lists the tools: every Word tool is the session's.
 
 A served call's arguments go to the session as given, its document left out (the session's
 id goes in its place: :func:`own`).  A tool whose arguments need the host first -- ``$name``
 refs resolved, a fallback where the host's data is meant -- has an adapter in the module of
 its group here, registered with :func:`adapter`; the modules are imported below, a sorted
-list.  An adapter of a tool the session does not serve is refused when the export is read.
+list.  An adapter of a tool the registry does not export is refused when the export is read.
 A form an adapter cannot hand over is refused as not supported yet (:func:`not_supported`).
 """
 
@@ -178,34 +178,33 @@ def blocks_at(call: Any, at: Any) -> Any:
 
 @dataclass(frozen=True)
 class Hosting:
-    """The tools the session serves -- the editing tools, and the reading tools the host
-    hands over (``render``, :func:`docx_agent.rust.reads.serve_render`) -- and what their
-    calls read from the host."""
+    """What the tools' calls read from the host, by tool."""
 
-    #: The tools the session serves.
-    served: frozenset[str]
+    #: Every tool the registry exports.
+    tools: frozenset[str]
     #: Those that read the session's blobs (an inserted picture's bytes).
     blobs: frozenset[str]
-    #: Those whose calls read the document's pages (a field's result, a header's page number,
-    #: the upgrade's reflow, a page drawn): the session lays the versions out with the
-    #: document's page engine (lane P2c13).
+    #: Those whose edits read the document's pages (a field's result, a header's page number,
+    #: the upgrade's reflow): the session lays the versions out with the document's page
+    #: engine (lane P2c13).
     laid: frozenset[str]
     #: Those that keep the values written by reference on the paragraphs they went into
-    #: (lane P2d2); another served tool given one is answered by the Python handler.
+    #: (lane P2d2); another tool given one is refused as not supported yet.
     keeps_written: frozenset[str]
 
     @classmethod
     def of(cls, exported: dict[str, dict[str, bool]]) -> "Hosting":
-        """From ``ooxml_core.tool_hosting``'s export; refuses an adapter of a tool not served."""
-        served = frozenset(name for name, facts in exported.items() if facts["served"])
-        stray = sorted(set(ADAPTERS) - served)
+        """From ``ooxml_core.tool_hosting``'s export; refuses an adapter of a tool it does not
+        export."""
+        tools = frozenset(exported)
+        stray = sorted(set(ADAPTERS) - tools)
         if stray:
-            raise ValueError(f"adapters of tools the Rust session does not serve: {', '.join(stray)}")
+            raise ValueError(f"adapters of tools the Rust session does not export: {', '.join(stray)}")
 
         def having(fact: str) -> frozenset[str]:
-            return frozenset(name for name in served if exported[name][fact])
+            return frozenset(name for name in tools if exported[name][fact])
 
-        return cls(served, having("blobs"), having("layout"), having("keeps_written"))
+        return cls(tools, having("blobs"), having("layout"), having("keeps_written"))
 
 
 NONE = Hosting(frozenset(), frozenset(), frozenset(), frozenset())
@@ -214,8 +213,8 @@ _HOSTING_LOCK = threading.Lock()
 
 
 def hosting() -> Hosting:
-    """The tools the session serves, from the registry's export (read once); none where
-    ``ooxml_core`` is not installed."""
+    """What the tools' calls read from the host, from the registry's export (read once);
+    nothing where ``ooxml_core`` is not installed."""
     with _HOSTING_LOCK:
         if not _HOSTING:
             try:
@@ -229,4 +228,4 @@ def hosting() -> Hosting:
 
 from . import objects, review, structure, style, text  # noqa: E402,F401 -- the adapters register on import
 
-hosting()  # an adapter of a tool the session does not serve is refused here, at import
+hosting()  # an adapter of a tool the registry does not export is refused here, at import

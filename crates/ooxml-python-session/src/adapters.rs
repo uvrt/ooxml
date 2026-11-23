@@ -34,7 +34,8 @@ impl Clock for SystemClock {
     }
 }
 
-/// No faces: a session from Python lays nothing out yet.
+/// No faces through the session's port: a session from Python lays its documents out with
+/// the faces of the page engines its host hands it (`WordFonts`), not through this port.
 struct NoFonts;
 
 impl FontSource for NoFonts {

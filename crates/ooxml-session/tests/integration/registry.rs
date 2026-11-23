@@ -60,16 +60,14 @@ fn every_tool_has_its_hosting_exported() {
     names.retain(|n| n != "read_batch" && n != "undo");
     assert_eq!(hosting.keys().cloned().collect::<Vec<_>>(), names);
     for facts in hosting.values() {
-        let keys: Vec<&str> = facts.as_object().unwrap().keys().map(String::as_str).collect();
-        assert_eq!(keys.len(), 4, "{facts}");
-        // what the host hands over is only asked of a tool it hands its calls to
-        let served = facts["served"].as_bool().unwrap();
-        assert!(served || keys.iter().all(|k| !facts[*k].as_bool().unwrap()), "{facts}");
+        let mut keys: Vec<&str> = facts.as_object().unwrap().keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(keys, ["blobs", "keeps_written", "layout"], "{facts}");
     }
-    // a reading tool is the host's to answer, unless it declares otherwise: render is handed
-    // over with the host's page engine
-    assert_eq!(hosting["describe"]["served"], false);
-    assert_eq!(hosting["render"]["served"], true);
-    assert_eq!(hosting["render"]["layout"], true);
+    // a reading tool reads nothing of the host's beside its arguments
+    let plain = serde_json::json!({"blobs": false, "keeps_written": false, "layout": false});
+    assert_eq!(hosting["describe"], plain);
+    assert_eq!(hosting["render"], plain);
+    assert_eq!(hosting["word_fields"]["layout"], true);
     assert!(registry.hosting(DocKind::Pptx).is_empty());
 }

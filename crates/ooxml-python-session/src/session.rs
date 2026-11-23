@@ -443,10 +443,9 @@ impl PySession {
 
     /// What the document's last check with `reflow` saw, which the session's next check
     /// measures `since_last_check` from: `(version, summary)` -- the number of the version
-    /// it saw (`None`: the host's check kept it without one) and its `LayoutSummary` (of a
-    /// check the session served, the version laid out: summarised when read or compared) --
-    /// or `None`.
-    fn last_check(&self, doc: &str) -> PyResult<Option<(Option<u64>, crate::summary::PyLayoutSummary)>> {
+    /// it saw and its `LayoutSummary` (the version laid out: summarised when read or
+    /// compared) -- or `None`.
+    fn last_check(&self, doc: &str) -> PyResult<Option<(u64, crate::summary::PyLayoutSummary)>> {
         let id = doc_id(doc, &self.inner)?;
         let kept = self.inner.last_check(&id).map_err(|e| to_py(&e))?;
         Ok(kept
@@ -457,7 +456,7 @@ impl PySession {
     /// What the document's last check that laid it out saw, with `reflow` or not (a check
     /// of the layout alone, of ranges): `(version, summary)` as [`Self::last_check`] gives
     /// it, or `None` -- what a changing call is measured against before its change.
-    fn last_laid(&self, doc: &str) -> PyResult<Option<(Option<u64>, crate::summary::PyLayoutSummary)>> {
+    fn last_laid(&self, doc: &str) -> PyResult<Option<(u64, crate::summary::PyLayoutSummary)>> {
         let id = doc_id(doc, &self.inner)?;
         let kept = self.inner.last_check(&id).map_err(|e| to_py(&e))?;
         Ok(kept
@@ -504,27 +503,6 @@ impl PySession {
             ),
             Err(why) => (None, Some(why)),
         })
-    }
-
-    /// Keep `summary` (a `LayoutSummary` of the document's engine) as what the document's
-    /// last check saw -- a check the host made itself -- of the version `at` where given;
-    /// `None`: forget what the last check saw.
-    #[pyo3(signature = (doc, summary = None, *, at = None))]
-    fn set_last_check(
-        &self,
-        doc: &str,
-        summary: Option<PyRef<'_, crate::summary::PyLayoutSummary>>,
-        at: Option<PyRef<'_, PyVersion>>,
-    ) -> PyResult<()> {
-        let id = doc_id(doc, &self.inner)?;
-        let seen = summary.map(|summary| ooxml_tools_word::Seen {
-            version: at.map(|v| v.inner.version()),
-            pages: summary.inner.clone(),
-        });
-        if let Some(kept) = self.inner.last_check(&id).map_err(|e| to_py(&e))? {
-            kept.set(seen);
-        }
-        Ok(())
     }
 
     /// Undo up to `steps` calls (with a caller in `context`, only its own, while its latest
@@ -694,7 +672,7 @@ impl PySession {
         Ok(py.detach(|| compact(&Value::Array(session.registry().export(kind)))))
     }
 
-    /// The session's counters: calls, failed, cancelled, updates, open, panics (the calls
+    /// The session's counters: calls, failed, cancelled, open, panics (the calls
     /// that panicked, of every tool: [`panics`](Self::panics)).
     fn stats(&self, py: Python<'_>) -> Vec<(&'static str, u64)> {
         let s = py.detach(|| self.inner.stats());
@@ -702,7 +680,6 @@ impl PySession {
             ("calls", s.calls),
             ("failed", s.failed),
             ("cancelled", s.cancelled),
-            ("updates", s.updates),
             ("open", s.open),
             ("panics", s.panics.values().sum()),
         ]

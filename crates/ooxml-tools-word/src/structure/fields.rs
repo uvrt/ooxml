@@ -356,5 +356,5 @@ fn mark_place(side: &str, anchor: &str) -> Option<String> {
 
 /// Registers `word_fields` (the crate's [`crate::register`]).
 pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.edit::<WordFields>(word_fields, crate::Hosting::SERVED.layout());
+    r.edit::<WordFields>(word_fields, crate::Hosting::PLAIN.layout());
 }

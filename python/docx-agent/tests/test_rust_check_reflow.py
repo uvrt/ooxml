@@ -1,6 +1,6 @@
 """``check``'s ``reflow`` answered by the Rust session (lane P5b): laid out by the document's
 page engine, handed to the session's ``check``, and ``since_last_check`` against what the
-document's last check saw, which the session keeps (:func:`docx_agent.rust.reads.last_check`).
+document's last check saw, which the session keeps (``Session.last_check``).
 """
 from __future__ import annotations
 

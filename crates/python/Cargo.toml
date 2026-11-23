@@ -26,3 +26,6 @@ pyo3 = { workspace = true, features = ["extension-module"] }
 # The stable ABI from 3.10: one wheel for every GIL build of CPython 3.10 and later.  Left
 # off for the free-threaded build, which gets a wheel of its own.
 abi3 = ["pyo3/abi3-py310"]
+
+[lints]
+workspace = true

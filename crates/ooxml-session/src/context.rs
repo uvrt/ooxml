@@ -56,8 +56,8 @@ pub struct CallContext {
     /// `Limits.layout_timeout`); past it, a tool reading the layout says so (`check`'s
     /// `reflow.error`) and goes on. `None`: as long as the call.
     pub layout_timeout: Option<Duration>,
-    /// The versions the call reads (each a document's, as [`crate::Session::commit`] or
-    /// [`crate::Session::snapshot`] gave it): a document named here is read at this
+    /// The versions the call reads (each a document's, as [`crate::Session::snapshot`] gave
+    /// it): a document named here is read at this
     /// version, any other at its head. The host that owns the documents names the version
     /// its caller reads, so a reader never reads a version newer than its own.
     pub at: Vec<Opened>,
@@ -65,19 +65,20 @@ pub struct CallContext {
     /// it reads (`word_inspect`'s `layout`).
     pub placer: Option<Arc<dyn Placer>>,
     /// The host's layout of the documents' versions, which an edit whose results come from
-    /// the pages reads (`word_fields`), and `check` reads the pages of; `None`: such a
-    /// result is left to the host.
+    /// the pages reads (`word_fields`), and `check` reads the pages of; `None`: the
+    /// session's own page engine for the document, where it has one; else a call that needs
+    /// the pages is refused as not supported, with the way out.
     pub layout: Option<Arc<dyn ooxml_tools_word::WordLayout>>,
     /// The faces the host draws pages with (the system's fonts and its font folders),
-    /// which `render` draws a document's pages from; `None`: such a call is left to the
-    /// host.
+    /// which `render` draws a document's pages from; `None`: `render` is refused as not
+    /// supported (`render: no layout`), with the way out.
     pub raster: Option<Arc<ooxml_tools_word::PageRaster>>,
     /// The host's budgets of images kept across calls (the session's, the round's) as they
     /// stand when the call starts, which `render` refuses past; empty: none. The call's own
     /// limit is in [`Self::limits`].
     pub image_budgets: Vec<ooxml_tools::ImageBudget>,
     /// The session's blobs as the host keeps them (an inserted picture's bytes); `None`: a
-    /// call that reads one is left to the host.
+    /// call that reads one is refused as not supported, with the way out.
     pub blobs: Option<Arc<dyn ooxml_tools_word::Blobs>>,
     /// The host's names for the documents the call names (`d1` in the host's own session),
     /// each the session's id of one: the call names its documents by these, and its reply
