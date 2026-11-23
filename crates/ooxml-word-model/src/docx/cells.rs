@@ -19,6 +19,7 @@ use crate::model::{Block, Story, Table};
 use crate::read::{Fields, Reader};
 use crate::resolve::resolve_table;
 use crate::value::{text, Props, Text};
+use ooxml_derive::{CacheBudget, Limit, Memo, MemoStats, Weigh};
 use ooxml_xml::{Element, Node};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
@@ -110,7 +111,7 @@ impl TableFacts {
 }
 
 /// One table's reading, and the elements it was read from, held weakly.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct KeptTable {
     table: Weak<Element>,
     roots: [Option<Weak<Element>>; 4],
@@ -134,29 +135,58 @@ impl KeptTable {
     }
 }
 
-/// Each table's reading kept across a document's versions, by the table element's address
-/// (a weak reference keeps the address its own while it is kept).
-#[derive(Debug, Default)]
-pub(crate) struct TableMemo {
-    tables: Mutex<TableMap>,
+impl Weigh for KeptTable {
+    fn weight(&self) -> usize {
+        let facts = &self.facts;
+        let paragraphs: usize = facts.paragraphs.keys().map(|k| k.len() + 96).sum();
+        let cells: usize = facts.cells.iter().map(|(k, p)| k.len() + 48 + 64 * p.len()).sum();
+        std::mem::size_of::<KeptTable>() + paragraphs + cells + 256 * facts.tables.len()
+    }
 }
 
-/// The readings, and how many were alive when last swept.
-#[derive(Debug, Default)]
-struct TableMap {
-    kept: HashMap<usize, KeptTable>,
-    alive: usize,
+/// What the tables' readings hold at most where no budget is given, bytes.
+pub const TABLE_MEMO_BYTES: usize = 32 << 20;
+
+/// Each table's reading kept across a document's versions, by the table element's address
+/// (a weak reference keeps the address its own while it is kept), within a budget: the
+/// least recently used let go first, and those of tables no version holds swept.
+pub(crate) struct TableMemo {
+    /// The readings, and how many were held after the last sweep.
+    memo: Mutex<(Memo<usize, KeptTable>, usize)>,
+}
+
+impl std::fmt::Debug for TableMemo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let memo = self.memo.lock().unwrap_or_else(PoisonError::into_inner);
+        f.debug_struct("TableMemo").field("stats", &memo.0.stats()).finish()
+    }
+}
+
+impl Default for TableMemo {
+    fn default() -> TableMemo {
+        TableMemo::new(Arc::new(Limit::new(TABLE_MEMO_BYTES)))
+    }
 }
 
 impl TableMemo {
-    /// The reading of `table` with `formatting`: as kept, else read and kept. Readings of
-    /// tables no version holds are swept once the memo has doubled since its last sweep.
+    /// An empty memo counted on `budget`.
+    pub(crate) fn new(budget: Arc<dyn CacheBudget>) -> TableMemo {
+        TableMemo {
+            memo: Mutex::new((Memo::new(budget), 0)),
+        }
+    }
+
+    /// What it holds.
+    pub(crate) fn stats(&self) -> MemoStats {
+        self.memo.lock().unwrap_or_else(PoisonError::into_inner).0.stats()
+    }
+
+    /// The reading of `table` with `formatting`: as kept, else read and kept.
     fn read(&self, formatting: &Formatting, table: &Arc<Element>) -> Arc<TableFacts> {
         let key = Arc::as_ptr(table) as usize;
         let found = {
-            let tables = self.tables.lock().unwrap_or_else(PoisonError::into_inner);
-            tables
-                .kept
+            let mut memo = self.memo.lock().unwrap_or_else(PoisonError::into_inner);
+            memo.0
                 .get(&key)
                 .filter(|k| k.of(table, formatting))
                 .map(|k| Arc::clone(&k.facts))
@@ -171,11 +201,13 @@ impl TableMemo {
             roots: formatting.roots().clone().map(|r| r.as_ref().map(Arc::downgrade)),
             facts: Arc::clone(&facts),
         };
-        let mut tables = self.tables.lock().unwrap_or_else(PoisonError::into_inner);
-        tables.kept.insert(key, kept);
-        if tables.kept.len() > 2 * tables.alive + 64 {
-            tables.kept.retain(|_, k| k.alive());
-            tables.alive = tables.kept.len();
+        let mut memo = self.memo.lock().unwrap_or_else(PoisonError::into_inner);
+        let (kept_now, held) = &mut *memo;
+        kept_now.insert(key, kept);
+        // Readings of tables no version holds: swept once the memo has doubled since.
+        if kept_now.stats().entries > 2 * *held + 64 {
+            kept_now.sweep(KeptTable::alive);
+            *held = kept_now.stats().entries;
         }
         facts
     }
