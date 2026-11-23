@@ -370,14 +370,3 @@ def serve_render(call: Any, arguments: dict[str, Any]) -> Result:
         width, height = png_size(data)
         call.image(data, width, height, label=name)
     return answer
-
-
-# -- what the last check saw --------------------------------------------------------------------
-
-
-def last_check(call: Any) -> tuple[Any, int | None]:
-    """What the last check of the document ``call`` reads saw, kept by the session:
-    ``(seen, number)`` -- ``seen`` ``(version, summary)`` or ``None`` where no check saw one
-    yet; ``number`` the session's number of the version ``call`` reads."""
-    mirror, version = version_read(call.entry)
-    return mirror.session.last_check(mirror.doc), version.number

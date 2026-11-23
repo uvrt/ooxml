@@ -205,7 +205,7 @@ class DocumentFormat:
     Lane H7a: for a document the format's :attr:`owner` holds, the hooks that take a
     document -- ``summary``, ``problems``, ``state``, ``closed`` and ``restored`` -- are given
     an :class:`~.owned.OwnedDocument` (the owner, its handle, the version read), never the
-    entry or a Python view of it (:attr:`DocumentEntry.subject`; a hook taking the call reads
+    entry (:attr:`DocumentEntry.subject`; a hook taking the call reads
     :attr:`~.dispatch.Call.subject`).
     """
 
@@ -419,8 +419,10 @@ class DocumentFormat:
     read_version: Callable[..., Any] | None = None
     #: Lane P2c4: the store that owns the format's documents -- their versions, their steps,
     #: their ids and their saved bytes (a library's native session, say); the tool layer keeps
-    #: no copy of its own, only a view made current when Python reads it (:mod:`.owned`, which
-    #: says what the object does).  ``None``: the document the tool layer holds is the document.
+    #: no copy of its own (:mod:`.owned`, which says what the object does): the owner opens a
+    #: document from its bytes (``open_data``), and a document made in memory is not handed to
+    #: it (:meth:`Session.adopt` refuses).  ``None``: the document the tool layer holds is the
+    #: document.
     owner: Any = None
     #: Lane P2c6: the changing calls the owner edits with itself, run side by side without the
     #: document's lock (:mod:`.served`): ``serve(call, arguments) -> Served | None``, called
@@ -555,8 +557,8 @@ class DocumentEntry:
     kind: str
     name: str
     source: str
-    #: The document as the session holds it; calls read it as :attr:`document` (an owned
-    #: entry's is its view, made current when read: :class:`~.owned.OwnedEntry`).
+    #: The document as the session holds it; calls read it as :attr:`document` (``None`` for
+    #: an owned entry: its owner alone holds it, :class:`~.owned.OwnedEntry`).
     held: Any
     size: int = 0
     #: The session's :attr:`~Session.font_dirs` (``None``: the renderers' own default),
@@ -682,7 +684,7 @@ class DocumentEntry:
         return self._own_version
 
     #: Lane P2c4: whether the format's owner holds the document (:mod:`.owned`): no call runs
-    #: on a draft of it (round 45), and its view is not read where nothing needs it.
+    #: on a draft of it (round 45).
     owned = False
     @property
     def owns_history(self) -> bool:
@@ -1418,12 +1420,11 @@ class Session:
                                 "beside its bytes: open it without state")
         check_package(data, self.limits, name)
         self._room_for_document(len(data))
-        open_data = getattr(fmt.owner, "open_data", None)
         try:
-            # Lane H7c: an owner that opens bytes itself holds the document from them, and
-            # no Python document is made.
-            handle = open_data(data, state, name) if open_data is not None else None
-            if handle is not None:
+            if fmt.owner is not None:
+                # Lane H7c: the owner holds the document from its bytes, and no Python
+                # document is made.
+                handle = fmt.owner.open_data(data, state, name)
                 return self._enter(None, handle, fmt, name, source=source, size=len(data),
                                    doc_id=doc_id)
             if state is None or open_with_state is None:
@@ -1448,9 +1449,11 @@ class Session:
         fmt = self.formats[kind]
         if fmt.configure is not None:
             fmt.configure(document, self)
-        # Lane P2c4: the format's owner holds it from now on, where it takes it.
-        handle = fmt.owner.open(document) if fmt.owner is not None else None
-        return self._enter(document, handle, fmt, name, source=source, size=size, doc_id=doc_id)
+        if fmt.owner is not None:
+            # (the owner opens its documents from their bytes alone: Session.open)
+            raise ArgumentError(f"{kind} documents are held by their format's owner: open one "
+                                "from its bytes (Session.open), not from a document made in memory")
+        return self._enter(document, None, fmt, name, source=source, size=size, doc_id=doc_id)
 
     def _enter(self, document: Any, handle: Any, fmt: "DocumentFormat", name: str, *,
                source: str, size: int, doc_id: str | None) -> str:

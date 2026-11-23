@@ -60,7 +60,7 @@ fn a_check_of_the_layout_reports_its_facts_in_docx_agents_order() {
     assert!(last.get().is_none());
     // but its pages are kept as the version's, for a changing call to measure from
     let laid = last.laid().expect("the version laid out is kept");
-    assert_eq!(laid.version, Some(1));
+    assert_eq!(laid.version, 1);
 }
 
 #[test]

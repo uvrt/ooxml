@@ -1,6 +1,6 @@
 //! Owns: `ooxml_core.tool_specs` and `ooxml_core.tool_hosting`, the registry's exports for a
-//! document kind as a session made now would serve them: the tools' definitions, and how a
-//! host hands each tool's calls to the session (each Rust tool's `Hosting`); and
+//! document kind as a session made now would serve them: the tools' definitions, and what
+//! each tool's calls read from the host (each Rust tool's `Hosting`); and
 //! `ooxml_core.new_document`, a new blank document's bytes, which the host opens.
 //!
 //! Must not: dispatch a call.
@@ -22,8 +22,8 @@ pub fn tool_specs(py: Python<'_>, kind: &str) -> PyResult<String> {
     Ok(py.detach(|| compact(&Value::Array(Registry::standard().export(kind)))))
 }
 
-/// How a host hands each tool for `kind` its calls, as JSON text: `{name: {"served",
-/// "blobs", "layout", "keeps_written"}}`, each a boolean (`ooxml_tools_word::Hosting`).
+/// What each tool for `kind` reads from the host, as JSON text: `{name: {"blobs",
+/// "layout", "keeps_written"}}`, each a boolean (`ooxml_tools_word::Hosting`).
 #[pyfunction]
 pub fn tool_hosting(py: Python<'_>, kind: &str) -> PyResult<String> {
     let kind = kind_of(kind)?;

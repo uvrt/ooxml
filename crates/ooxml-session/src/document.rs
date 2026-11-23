@@ -302,7 +302,7 @@ impl Document {
         }
     }
 
-    /// Commit the bridge's update as `caller`, made by `tool`: the version it leaves,
+    /// Commit a test's update of parts as `caller`, made by `tool`: the version it leaves,
     /// whether it changed anything, and how many times it was prepared. A Word document's
     /// retired ids note what it removed.
     pub(crate) fn update(

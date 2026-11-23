@@ -1,6 +1,6 @@
-"""The tools the Rust session serves come from the registry's export (``ooxml_core.tool_hosting``,
+"""What the tools read from the host comes from the registry's export (``ooxml_core.tool_hosting``,
 each Rust tool's ``Hosting``), not a list in docx-agent (lane G8): the sets are the ones
-docx-agent listed by hand before, and an adapter of a tool not served is refused."""
+docx-agent listed by hand before, and an adapter of a tool not exported is refused."""
 
 from __future__ import annotations
 
@@ -26,7 +26,8 @@ SERVED = {"word_set_text", "replace_text", "word_insert_text", "word_delete", "w
           # p4-chart-e to j: edit_chart's data, title and style actions
           "edit_chart"}
 BLOBS = {"word_drawings"}
-LAID = {"word_fields", "word_headers_footers", "word_template", "word_format_table", "render"}
+# (render's page engine is handed to it by reads.serve_render, not read from the export)
+LAID = {"word_fields", "word_headers_footers", "word_template", "word_format_table"}
 KEEPS_WRITTEN = {"word_set_text", "word_insert_text", "replace_text", "word_insert_markdown",
                  # lane E1d: set_cells' values by reference
                  "word_edit_table"}
@@ -34,7 +35,7 @@ KEEPS_WRITTEN = {"word_set_text", "word_insert_text", "replace_text", "word_inse
 
 def test_the_exported_sets_are_the_lists_they_replace():
     hosting = served.hosting()
-    assert hosting.served == SERVED
+    assert SERVED <= hosting.tools
     assert hosting.blobs == BLOBS
     assert hosting.laid == LAID
     assert hosting.keeps_written == KEEPS_WRITTEN
@@ -44,7 +45,7 @@ def test_every_tool_is_exported_with_its_hosting():
     exported = json.loads(ooxml_core.tool_hosting("docx"))
     names = {s["name"] for s in json.loads(ooxml_core.tool_specs("docx"))} - {"read_batch", "undo"}
     assert set(exported) == names
-    assert all(set(facts) == {"served", "blobs", "layout", "keeps_written"} for facts in exported.values())
+    assert all(set(facts) == {"blobs", "layout", "keeps_written"} for facts in exported.values())
     assert json.loads(ooxml_core.tool_hosting("pptx")) == {}
 
 
@@ -53,7 +54,7 @@ def test_only_served_tools_have_adapters():
     # word_styles and word_template take their arguments as given: no adapter.
     assert {"word_styles", "word_template"}.isdisjoint(served.ADAPTERS)
     exported = json.loads(ooxml_core.tool_hosting("docx"))
-    exported["word_set_text"]["served"] = False
+    del exported["word_set_text"]
     with pytest.raises(ValueError, match="word_set_text"):
         served.Hosting.of(exported)
 

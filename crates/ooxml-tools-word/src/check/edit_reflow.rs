@@ -57,7 +57,7 @@ pub fn reflow_after_edit(
     aliases: &BTreeMap<String, String>,
     (limit, cancel): (Option<LayoutLimit<'_>>, &dyn Cancel),
 ) -> Option<Value> {
-    let seen = last.laid().filter(|seen| seen.version == Some(before.version));
+    let seen = last.laid().filter(|seen| seen.version == before.version);
     let stop = Stop { limit, cancel };
     let aliases: HashMap<String, String> = aliases.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
     let mut engine = match layout.engine().try_lock() {

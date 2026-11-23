@@ -25,29 +25,36 @@ const WARNINGS: usize = 10;
 /// The moved blocks a `since_last_check` lists at most.
 const MOVED: usize = 20;
 
-/// What a document's last check with `reflow` saw: the version and its pages (the
-/// version laid out, or a summary the host's check made).
+/// What a document's last check saw: the version and its pages laid out.
 #[derive(Debug, Clone)]
 pub struct Seen {
-    /// The version's number, where the session's check saw it (`None`: the host's check saw
-    /// a version it names otherwise).
-    pub version: Option<u64>,
+    /// The version's number.
+    pub version: u64,
     /// Its pages, summarised when compared.
     pub pages: Summarised,
 }
 
 /// What a document's last check with `reflow` saw, which the next measures
-/// `since_last_check` from; the session keeps one per document, and a host whose own
-/// checks still run reads and sets it.  Beside it, what the last check that laid the
-/// document out saw, with `reflow` or not (`layout`, `range`, `min_size`, `styles`): the
-/// version a changing call is measured against before its change.  A check of the layout
-/// alone reports no reflow, so it is not what `since_last_check` measures from (docx-agent's
-/// rule), but its pages are the document's as they were.
+/// `since_last_check` from; the session keeps one per document.  Beside it, what the last
+/// check that laid the document out saw, with `reflow` or not (`layout`, `range`,
+/// `min_size`, `styles`): the version a changing call is measured against before its
+/// change.  A check of the layout alone reports no reflow, so it is not what
+/// `since_last_check` measures from (docx-agent's rule), but its pages are the document's as
+/// they were.  The two are kept under one lock, so concurrent checks never leave them
+/// disagreeing.
 #[derive(Debug, Default)]
 pub struct LastCheck {
-    reflow: Mutex<Option<Seen>>,
-    laid: Mutex<Option<Seen>>,
+    kept: Mutex<Kept>,
     copies: super::copies::CopyCache,
+}
+
+/// The two slots of a [`LastCheck`], changed together.
+#[derive(Debug, Default)]
+struct Kept {
+    /// What the last check with `reflow` saw.
+    reflow: Option<Seen>,
+    /// What the last check that laid the document out saw.
+    laid: Option<Seen>,
 }
 
 impl LastCheck {
@@ -56,28 +63,35 @@ impl LastCheck {
         &self.copies
     }
 
+    /// The two slots, locked. A panic while they were held leaves each slot whole (each is
+    /// written by one assignment), so a poisoned lock is taken as it is.
+    fn kept(&self) -> std::sync::MutexGuard<'_, Kept> {
+        self.kept.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// What the last check with `reflow` saw, if any.
     #[must_use]
     pub fn get(&self) -> Option<Seen> {
-        self.reflow.lock().unwrap_or_else(PoisonError::into_inner).clone()
+        self.kept().reflow.clone()
     }
 
-    /// Keep `seen` as what the last check with `reflow` saw (`None`: forget it); it is the
-    /// last check that laid the document out too.
-    pub fn set(&self, seen: Option<Seen>) {
-        self.set_laid(seen.clone());
-        *self.reflow.lock().unwrap_or_else(PoisonError::into_inner) = seen;
+    /// Keep `seen` as what the last check with `reflow` saw -- the last check that laid the
+    /// document out too -- and what was kept before it, in one step.
+    pub fn replace(&self, seen: Seen) -> Option<Seen> {
+        let mut kept = self.kept();
+        kept.laid = Some(seen.clone());
+        kept.reflow.replace(seen)
     }
 
     /// What the last check that laid the document out saw, with `reflow` or not, if any.
     #[must_use]
     pub fn laid(&self) -> Option<Seen> {
-        self.laid.lock().unwrap_or_else(PoisonError::into_inner).clone()
+        self.kept().laid.clone()
     }
 
-    /// Keep `seen` as what the last check that laid the document out saw (`None`: forget it).
-    pub fn set_laid(&self, seen: Option<Seen>) {
-        *self.laid.lock().unwrap_or_else(PoisonError::into_inner) = seen;
+    /// Keep `seen` as what the last check that laid the document out saw.
+    pub fn set_laid(&self, seen: Seen) {
+        self.kept().laid = Some(seen);
     }
 }
 
@@ -104,7 +118,7 @@ pub(super) struct Laid {
 /// Where the version is not the engine's (a version laid out by another generation).
 pub(super) fn laid_facts(layout: &dyn WordLayout, version: &LaidVersion) -> Result<Laid, NotLaid> {
     let mut engine = layout.engine().lock().unwrap_or_else(PoisonError::into_inner);
-    let not_ours = || NotLaid::Other("the version laid out is not the engine's".to_owned());
+    let not_ours = || NotLaid::NotTheEngines;
     let coverage = engine.coverage(version).ok_or_else(not_ours)?;
     drop(engine);
     let mut facts = Map::new();
@@ -142,7 +156,7 @@ pub(super) fn since(
     let Some(before) = last else {
         return Ok(None);
     };
-    if before.version == Some(version) || before.pages.is(now) {
+    if before.version == version || before.pages.is(now) {
         return Ok(None);
     }
     let aliases: HashMap<String, String> = aliases.iter().map(|(k, v)| (k.clone(), v.clone())).collect();

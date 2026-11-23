@@ -265,5 +265,5 @@ fn try_call(args: &WordDelete) -> TryCall {
 
 /// Registers `word_delete` (the crate's [`crate::register`]).
 pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.edit::<WordDelete>(word_delete, crate::Hosting::SERVED);
+    r.edit::<WordDelete>(word_delete, crate::Hosting::PLAIN);
 }

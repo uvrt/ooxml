@@ -120,8 +120,6 @@ pub struct SessionStats {
     pub failed: u64,
     /// Calls and updates stopped by cancellation or a deadline.
     pub cancelled: u64,
-    /// Bridge updates committed with a change.
-    pub updates: u64,
     /// Documents open now.
     pub open: u64,
     /// `panics{tool}`: the calls of each tool that panicked, each answered as an `internal`
@@ -134,7 +132,6 @@ pub(crate) struct Counts {
     pub(crate) calls: AtomicU64,
     pub(crate) failed: AtomicU64,
     pub(crate) cancelled: AtomicU64,
-    pub(crate) updates: AtomicU64,
     /// `panics{tool}`.
     pub(crate) panics: std::sync::Mutex<BTreeMap<String, u64>>,
 }
@@ -331,9 +328,10 @@ impl Session {
     }
 
     /// Commit `parts` (bytes to put, `None` to remove) to the document as one step, made
-    /// by `context.caller`: parts made outside the tools (a test's or a bench's version)
-    /// (section 13). XML parts are parsed here, on a snapshot, without any lock; the
-    /// commit is the store's.
+    /// by `context.caller`: a version made outside the tools, for a test that needs a
+    /// document's parts as it writes them (section 13). No host commits through it: every
+    /// change a host makes is a tool's edit. XML parts are parsed here, on a snapshot,
+    /// without any lock; the commit is the store's.
     ///
     /// # Errors
     /// [`SessionError::NotOpen`]; a part that does not parse or a removal of a part that
@@ -344,22 +342,6 @@ impl Session {
         parts: Vec<(String, Option<Arc<[u8]>>)>,
         context: &CallContext,
     ) -> Result<Updated, SessionError> {
-        self.commit(id, parts, context).map(|(updated, _)| updated)
-    }
-
-    /// [`Session::update`], and the version it leaves (the one it ran on where it changed
-    /// nothing), held: a call whose context names it reads that version, whatever was
-    /// committed since (the host that owns the document hands each version over and reads
-    /// it so).
-    ///
-    /// # Errors
-    /// As [`Session::update`].
-    pub fn commit(
-        &self,
-        id: &DocId,
-        parts: Vec<(String, Option<Arc<[u8]>>)>,
-        context: &CallContext,
-    ) -> Result<(Updated, Opened), SessionError> {
         let document = self.document(id)?;
         let cancel = CallCancel::new(context, &*self.context.cancel, &*self.context.clock);
         let update = PartUpdate::new(parts, self.context.limits, &cancel);
@@ -368,18 +350,14 @@ impl Session {
                 self.counts.cancelled.fetch_add(1, Ordering::Relaxed);
             }
         })?;
-        if changed {
-            self.counts.updates.fetch_add(1, Ordering::Relaxed);
-            if !document.grouped() {
-                document.stepped(version.seq(), version.number(), None, context);
-            }
+        if changed && !document.grouped() {
+            document.stepped(version.seq(), version.number(), None, context);
         }
-        let updated = Updated {
+        Ok(Updated {
             version: version.seq(),
             changed,
             attempts,
-        };
-        Ok((updated, Self::opened(id, &document, version)))
+        })
     }
 
     /// The store's counters for the document (commits, conflicts, exclusive runs).
@@ -397,7 +375,6 @@ impl Session {
             calls: self.counts.calls.load(Ordering::Relaxed),
             failed: self.counts.failed.load(Ordering::Relaxed),
             cancelled: self.counts.cancelled.load(Ordering::Relaxed),
-            updates: self.counts.updates.load(Ordering::Relaxed),
             open: self.read_table().len() as u64,
             panics: self
                 .counts

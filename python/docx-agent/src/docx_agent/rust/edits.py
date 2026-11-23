@@ -1,8 +1,8 @@
 """docx-agent's editing tools answered by the Rust session that owns the document.
 
-Every editing tool the session serves (declared by the Rust tool and exported with the
-registry: :func:`docx_agent.rust.served.hosting`; its arguments as the session takes them:
-:func:`docx_agent.rust.served.arguments_for`) runs there: the call's arguments, its ``$name``
+Every editing tool (what its edits read from the host declared by the Rust tool and
+exported with the registry: :func:`docx_agent.rust.served.hosting`; its arguments as the
+session takes them: :func:`docx_agent.rust.served.arguments_for`) runs there: the call's arguments, its ``$name``
 refs resolved, go to ``Session.edit`` with the call's caller, its date (the session clock's,
 to the second) and the document's tracking mode; the versions the call's edits made are the
 call's step (:meth:`~ooxml_edit.tools.owned.OwnedEntry.served`, numbered in the order the
@@ -190,12 +190,8 @@ def _host_tables(session: Any) -> Callable[[], list[tuple[str, str, str]]]:
 
 
 def owned_entry(call: Any) -> Any:
-    """The call's document's entry, the session's (refused as ``internal`` otherwise), for a
-    tool the session serves."""
-    entry = reads.owned(call.entry)
-    if call.tool.name not in _served.hosting().served:
-        raise ToolError("internal", f"{call.tool.name} is not served by the Rust session")
-    return entry
+    """The call's document's entry, the session's (refused as ``internal`` otherwise)."""
+    return reads.owned(call.entry)
 
 
 def _by_reference(call: Any) -> None:

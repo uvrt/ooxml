@@ -419,8 +419,8 @@ fn render_pages(
     Ok(done)
 }
 
-/// Registers `render` (the group's [`super::register`]): the host hands its calls to the
-/// session with its page engine.
+/// Registers `render` (the group's [`super::register`]); a call is drawn from the page
+/// engine its layout names.
 pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.hosted_read::<Render>(render, crate::Hosting::SERVED.layout());
+    r.read::<Render>(render);
 }

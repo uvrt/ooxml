@@ -56,13 +56,13 @@ pub(super) struct Drawn {
 
 /// `save_document` and `word_read`'s way out of a version the page engine does not lay out,
 /// `who` (`render`, the live view) named as what does not draw it.
-fn not_supported(who: &str, doc: &str, why: &str) -> ToolError {
+fn not_supported(who: &str, doc: &str, why: &NotLaid) -> ToolError {
     let call = TryCall {
         tool: "word_read".to_owned(),
         arguments: json!({"doc": doc}).as_object().cloned().unwrap_or_default(),
         fill: Vec::new(),
     };
-    if crate::pages::unlaid_note(why) {
+    if why.in_note() {
         return ToolError::not_supported(&format!("{who}: {}", crate::pages::UNLAID_NOTE), WayOut::call(call));
     }
     ToolError::refusal(
@@ -106,7 +106,6 @@ pub fn laid_to_draw(
     let stop = limit.map_or(cancel, |limit| limit.cancel);
     match layout.laid(package, stop) {
         Ok(laid) => Ok(laid),
-        Err(NotLaid::Other(why)) => Err(not_supported(who, doc, &why)),
         Err(NotLaid::Stopped) => {
             cancel
                 .check()
@@ -117,6 +116,7 @@ pub fn laid_to_draw(
                 format!("laying the document out took longer than its {seconds:.0} s limit"),
             ))
         }
+        Err(why) => Err(not_supported(who, doc, &why)),
     }
 }
 

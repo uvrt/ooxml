@@ -199,5 +199,5 @@ fn value_of(docx: &Docx, found: &Control) -> Result<Value, ToolError> {
 
 /// Registers `word_controls` (the crate's [`crate::register`]).
 pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.edit::<WordControls>(word_controls, crate::Hosting::SERVED);
+    r.edit::<WordControls>(word_controls, crate::Hosting::PLAIN);
 }

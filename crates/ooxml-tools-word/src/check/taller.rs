@@ -27,7 +27,7 @@ pub(crate) fn taller_than_page(
     let mut out = BTreeMap::new();
     let Some(Summarised::Laid { version: laid, engine }) = last
         .laid()
-        .filter(|seen| seen.version == Some(version))
+        .filter(|seen| seen.version == version)
         .map(|seen| seen.pages)
     else {
         return out;

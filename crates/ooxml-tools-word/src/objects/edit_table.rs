@@ -648,5 +648,5 @@ pub(super) fn deleted_rows(table: &TableId) -> Vec<usize> {
 /// Registers `word_edit_table` (the crate's [`crate::register`]).
 pub(crate) fn register(r: &mut impl crate::Registrar) {
     // a cell's value by reference is kept where it went (set_cells, `super::cell_values`)
-    r.edit::<WordEditTable>(word_edit_table, crate::Hosting::SERVED.keeps_written());
+    r.edit::<WordEditTable>(word_edit_table, crate::Hosting::PLAIN.keeps_written());
 }

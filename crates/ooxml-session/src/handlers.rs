@@ -22,10 +22,10 @@ pub trait Tool: Send + Sync {
     /// The document kinds it serves.
     fn kinds(&self) -> &[DocKind];
 
-    /// How a host hands its calls to the session ([`Hosting`]; a reading tool: the host's,
-    /// unless it declares otherwise).
+    /// What its calls read from the host beside their arguments ([`Hosting`]; a reading
+    /// tool: nothing).
     fn hosting(&self) -> Hosting {
-        Hosting::HOST
+        Hosting::PLAIN
     }
 
     /// Run it with `arguments` already taken as meant and validated against
@@ -66,7 +66,6 @@ pub struct ReadHandler<T> {
     spec: ToolSpec,
     kinds: Vec<DocKind>,
     run: ReadFn<T>,
-    hosting: Hosting,
     args: PhantomData<fn() -> T>,
 }
 
@@ -78,15 +77,8 @@ impl<T: ToolArgs> ReadHandler<T> {
             spec: T::spec(),
             kinds: kinds.to_vec(),
             run,
-            hosting: Hosting::HOST,
             args: PhantomData,
         }
-    }
-
-    /// The tool hosted as `hosting` says (default: the host answers its calls).
-    #[must_use]
-    pub fn hosted(self, hosting: Hosting) -> Self {
-        Self { hosting, ..self }
     }
 }
 
@@ -97,10 +89,6 @@ impl<T: ToolArgs> Tool for ReadHandler<T> {
 
     fn kinds(&self) -> &[DocKind] {
         &self.kinds
-    }
-
-    fn hosting(&self) -> Hosting {
-        self.hosting
     }
 
     fn run(&self, arguments: Map<String, Value>, call: &Call<'_>) -> ToolResult<Value> {
@@ -155,12 +143,12 @@ impl<T: ToolArgs> EditHandler<T> {
             spec: T::spec(),
             kinds: kinds.to_vec(),
             run,
-            hosting: Hosting::HOST,
+            hosting: Hosting::PLAIN,
             args: PhantomData,
         }
     }
 
-    /// The tool hosted as `hosting` says (default: the host answers its calls).
+    /// The tool reading from the host what `hosting` says (default: nothing).
     #[must_use]
     pub fn hosted(self, hosting: Hosting) -> Self {
         Self { hosting, ..self }

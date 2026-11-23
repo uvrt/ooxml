@@ -17,10 +17,8 @@
 //! handle is immutable or synchronised in Rust), or hold process-level state other than
 //! what Python's module object holds.
 //!
-//! The module object is `crates/python`'s, so one native module ships: [`register`] adds
-//! these names to it beside the prototype's. The design calls this crate `ooxml-python`;
-//! the prototype's package holds that name until it is retired (section 13), when this
-//! crate takes it and becomes the module itself.
+//! The module object is `crates/python`'s (the `ooxml-python` crate, the extension module
+//! itself): [`register`] adds these names to it.
 
 mod adapters;
 mod budget;

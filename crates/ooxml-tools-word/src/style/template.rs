@@ -121,5 +121,5 @@ fn converted(editing: &Editing<'_>, again: &ooxml_tools::TryCall, layout: Option
 
 /// Registers `word_template` (the crate's [`crate::register`]).
 pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.edit::<WordTemplate>(word_template, crate::Hosting::SERVED.layout());
+    r.edit::<WordTemplate>(word_template, crate::Hosting::PLAIN.layout());
 }

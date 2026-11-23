@@ -2,7 +2,7 @@
 //!
 //! Owns: a [`Session`] holding documents by [`DocId`], each one's versions in an
 //! `ooxml-store` [`ooxml_store::Store`] over its package ([`PackageDoc`]); opening, saving
-//! and closing; a commit of parts given as bytes ([`Session::update`],
+//! and closing; a commit of parts given as bytes for tests ([`Session::update`],
 //! section 13); the tool [`Registry`], each tool's spec made once and the kinds it serves;
 //! dispatch of a call ([`Session::call`]): arguments taken as meant, the document found,
 //! the handler run on a snapshot, the reply as a [`ooxml_tools::ToolResult`]; and a call's
@@ -62,7 +62,6 @@ pub use batch::{ReadBatch, ReadOp, BATCH_TIMEOUT, MAX_READ_BATCH_CHARS, READ_BAT
 pub use block_pages::{BlockAt, BlockPages};
 pub use blocks_of::{BlockFound, BlockRefused};
 pub use call::Call;
-pub use changes::{ChangedPart, IdsSince};
 pub use context::{CallContext, CancelToken};
 pub use dispatch::CallMade;
 pub use error::SessionError;
