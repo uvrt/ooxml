@@ -125,14 +125,27 @@ def test_the_trial_tasks_are_done_by_tools_alone():
 
 
 def test_one_batch_writes_30_tracked_edits_and_10_comments_as_one_step():
-    from docx_agent import Document
+    from ooxml_edit.tools import Toolbox
+
+    from docx_agent.tools import FORMAT, GROUPS, TOOLS
+    import word_docs
 
     path = GOLDENS / "transcripts" / "batch-30-edits.json"
     transcript = json.loads(path.read_text(encoding="utf-8"))
     _, outputs = goldens_replay.run(transcript, inputs_of(transcript))
-    document = Document.open(outputs[-1].data)
-    insertions = [r for r in document.revisions() if r.author == "Claude"]
-    assert len(document.changes(author="Claude")) == 30 and all(r.kind == "insertion" for r in insertions)
-    assert len(document.comments()) == 10 and document.validate() == []
+    data = outputs[-1].data
+    root = word_docs.tree(data)
+    mine = [r for r in root.iter() if r.get(f"{{{word_docs.W}}}author") == "Claude"
+            and r.tag in (f"{{{word_docs.W}}}ins", f"{{{word_docs.W}}}del", f"{{{word_docs.W}}}rPrChange",
+                          f"{{{word_docs.W}}}pPrChange")]
+    assert mine and all(r.tag == f"{{{word_docs.W}}}ins" for r in mine)
+    comments = word_docs.tree(data, "word/comments.xml").findall(f"{{{word_docs.W}}}comment")
+    assert len(comments) == 10
+    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as box:
+        session = box.session()
+        doc = session.open(data, "batch.docx")
+        listed = word_docs.call(box, session, "word_changes", doc=doc, action="list", author="Claude")
+        assert (listed.total if listed.total is not None else len(listed.data)) == 30, listed.to_json()
+        assert word_docs.validation(box, session, doc)["problems"] == []
     batch = next(call for call in transcript["calls"] if call["tool"] == "batch")
     assert len(batch["expect"]["created"]) == 10 and len(batch["expect"]["refs"]) == 30

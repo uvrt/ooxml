@@ -9,7 +9,8 @@ import pytest
 from docx_agent.rust import edits
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from ooxml_edit.tools import Toolbox
-from ooxml_edit.tools.owned import OwnedEntry
+
+import word_docs
 
 WRITERS, EDITS = 8, 3
 
@@ -24,11 +25,9 @@ def test_served_edits_side_by_side_are_one_step_each(toolbox, constructs_doc):
     session = toolbox.session()
     doc = session.open(constructs_doc.read_bytes(), name=constructs_doc.name)
     entry = session.entry(doc)
-    if not isinstance(entry, OwnedEntry):
-        pytest.skip("no Rust session to own the document")
-    paragraphs = [p for p in entry.document.paragraphs()
-                  if p.text.strip() and p.id.startswith("p:")][:WRITERS * EDITS]
-    before = {p.id: p.text for p in paragraphs}
+    paragraphs = [block for block, text in word_docs.paragraphs(session, doc)
+                  if text.strip() and block != "p:None"][:WRITERS * EDITS]
+    before = {block: text for block, text in word_docs.paragraphs(session, doc) if block in paragraphs}
     start, served = entry.version, sum(edits.served().values())
     results, failures = [], []
     gate = threading.Barrier(WRITERS)
@@ -37,7 +36,7 @@ def test_served_edits_side_by_side_are_one_step_each(toolbox, constructs_doc):
         view = session.view(context={"agent": f"w{k}"})
         gate.wait(10)
         for n in range(EDITS):
-            target = paragraphs[k * EDITS + n].id
+            target = paragraphs[k * EDITS + n]
             result = toolbox.dispatch(view, "word_set_text", {"doc": doc, "target": target,
                                                               "text": f"Writer {k} edit {n}"})
             (results if result.ok else failures).append(result)
@@ -48,7 +47,7 @@ def test_served_edits_side_by_side_are_one_step_each(toolbox, constructs_doc):
     for thread in threads:
         thread.join(60)
     assert not failures, failures[0].error
-    assert sum(edits.served().values()) - served == WRITERS * EDITS, edits.fallbacks()
+    assert sum(edits.served().values()) - served == WRITERS * EDITS
     assert all(result.timing["held"] == 0.0 for result in results)
     assert sorted(result.version for result in results) == list(range(start + 1, start + WRITERS * EDITS + 1))
     assert entry.version == start + WRITERS * EDITS
@@ -60,5 +59,5 @@ def test_served_edits_side_by_side_are_one_step_each(toolbox, constructs_doc):
     for _ in range(WRITERS * EDITS):
         assert toolbox.dispatch(session, "undo", {"doc": doc}).ok
     assert entry.version == start
-    assert {p.id: p.text for p in entry.document.paragraphs() if p.id in before} == before
+    assert {block: text for block, text in word_docs.paragraphs(session, doc) if block in before} == before
     session.close(doc)

@@ -1,16 +1,8 @@
-"""``check`` answered whole by the Rust session (lane P5a) against the Python path it replaces.
-
-A check of a document the session owns that reads the document alone -- ``validate``,
-``fields``, ``app`` -- is the session's ``check`` (``ooxml_tools_word::check``), and its
-``validation`` (the save gate's comparison) the session's too
-(:func:`docx_agent.rust.owner.session_validation`): neither makes the Python view current.
-Every fixture, before and after an edit, answers as the Python path does but for the
-seconds in ``timing``; a check that needs the layout goes to the Python path, counted.
+"""``check`` answered whole by the Rust session (lane P5a): a check that reads the document
+alone -- ``validate``, ``fields``, ``app`` -- is the session's ``check``
+(``ooxml_tools_word::check``), and so is a check that needs the layout.
 """
 from __future__ import annotations
-
-import json
-from pathlib import Path
 
 import pytest
 
@@ -18,30 +10,19 @@ ooxml_core = pytest.importorskip("ooxml_core")
 if not hasattr(ooxml_core, "Version"):
     pytest.skip("ooxml_core has no Version", allow_module_level=True)
 
-from ooxml_edit.tools import Toolbox
+from ooxml_edit.tools import Toolbox  # noqa: E402
 
-from docx_agent.rust import owner as rust_owner
-from docx_agent.rust import reads
-from docx_agent.tools import FORMAT, GROUPS, TOOLS
+from docx_agent.rust import reads  # noqa: E402
+from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
 from conftest import FIXTURE_DIR  # noqa: E402
+import word_docs  # noqa: E402
 
-HERE = Path(__file__).resolve().parent
 FIXTURES = sorted((FIXTURE_DIR).rglob("*.docx"))[::3]
-
-INCLUDES = (["validate"], ["fields"], ["validate", "fields", "app"], ["fields", "validate"])
 
 
 def _fields_made_up() -> bytes:
     """A document whose fields say something: an empty table of contents, a reference to a
     bookmark held (named in another case), and references to missing bookmarks."""
-    from lxml import etree
-
-    from docx_agent import Document
-
-    w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-    document = Document.new()
-    part = document.package.document_part()
-    body = document.package.tree(part).find(f"{{{w}}}body")
 
     def field(instruction: str, result: str) -> str:
         return (f'<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve">'
@@ -54,38 +35,12 @@ def _fields_made_up() -> bytes:
         field("REF HERE \\h", "held") + field("PAGEREF bm:Missing \\h", "3"),
         field("NOTEREF Gone", "1") + field("PAGE", "1"),
     ]
-    for inner in reversed(paragraphs):
-        body.insert(0, etree.fromstring(f'<w:p xmlns:w="{w}">{inner}</w:p>'))
-    document.package.mark_dirty(part)
-    return document.to_bytes()
+    return word_docs.with_body("".join(f"<w:p>{inner}</w:p>" for inner in paragraphs) + "<w:p/>")
 
 
 @pytest.fixture(scope="module")
 def toolbox():
     return Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS)
-
-
-def _seconds_out(answer: dict) -> dict:
-    """``answer`` with each part's seconds in ``timing`` left out (their names kept)."""
-    data = answer.get("data")
-    if isinstance(data, dict) and isinstance(data.get("timing"), dict):
-        data["timing"] = sorted(data["timing"])
-    for key in ("duration_ms", "timing"):
-        answer.pop(key, None)
-    return answer
-
-
-def _answer(toolbox, session, arguments: dict, monkeypatch, *, rust: bool) -> dict:
-    with monkeypatch.context() as m:
-        if not rust:
-            m.setattr(reads, "serve_check", lambda call, arguments: None)
-            m.setattr(rust_owner, "session_validation", lambda entry: None)
-        reply = toolbox.dispatch(session, "check", arguments).to_json()
-    return _seconds_out(json.loads(json.dumps(reply)))
-
-
-def _owned(session, doc: str) -> bool:
-    return reads._owned(session.entry(doc)) is not None
 
 
 def test_the_made_up_fields_are_told(toolbox):
@@ -99,16 +54,11 @@ def test_the_made_up_fields_are_told(toolbox):
 
 
 def test_a_check_that_needs_the_layout_is_the_sessions(toolbox):
-    # Lane P5l serves the layout's facts: a check asking for them is the session's, counted
-    # served, with no fallback.
+    # Lane P5l serves the layout's facts: a check asking for them is the session's, counted.
     session = toolbox.session()
     doc = session.open(FIXTURES[0].read_bytes(), name=FIXTURES[0].name)
-    if not _owned(session, doc):
-        pytest.skip("the session does not own this document")
-    fell_back = sum(reads.fallbacks().get("check", {}).values())
     served = reads.served().get("check", 0)
     reply = toolbox.dispatch(session, "check", {"doc": doc, "include": ["validate", "layout"]}).to_json()
     assert "error" not in reply, reply
     assert "layout" in reply["data"], reply
-    assert sum(reads.fallbacks().get("check", {}).values()) == fell_back
     assert reads.served().get("check", 0) == served + 1

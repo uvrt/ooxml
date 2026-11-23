@@ -1,15 +1,7 @@
-"""``word_inspect``, ``find_text`` and ``read_batch`` served by the Rust session (lane P1b)
-against today's.
-
-The Rust definitions (``crates/ooxml-tools-word/tests/golden``) equal today's byte for byte,
-and the replies of ``ooxml_core.Session.call`` equal today's on every fixture: ``word_inspect``
-of the body and of a cell, a table, a span and a missing id (a drawing's chart and SmartArt
-JSON included), ``find_text`` of a letter in the body and in
-every story, ``read_batch`` of several reads with a failing one among them.
+"""``word_inspect`` served by the Rust session (lane P1b): a refusal carries its way out
+(the call that works), and ``layout`` without the host's page engine is refused with one.
 """
 from __future__ import annotations
-
-from pathlib import Path
 
 import pytest
 
@@ -17,62 +9,10 @@ ooxml_core = pytest.importorskip("ooxml_core")
 if not hasattr(ooxml_core, "Session"):          # an ooxml-core before 0.9.0
     pytest.skip("ooxml_core has no Session", allow_module_level=True)
 
-from ooxml_edit.tools import Toolbox
-
-from docx_agent import Document
-from docx_agent.rust.session import RustTools
-from docx_agent.tools import FORMAT, GROUPS, TOOLS
+from docx_agent.rust.session import RustTools  # noqa: E402
 from conftest import FIXTURE_DIR  # noqa: E402
 
-HERE = Path(__file__).resolve().parent
-GOLDEN = HERE.parents[2] / "crates" / "ooxml-tools-word" / "tests" / "golden"
 FIXTURES = sorted((FIXTURE_DIR).rglob("*.docx"))
-
-
-@pytest.fixture(scope="module")
-def toolbox():
-    """Today's tools, every read answered by the Python path (lane P1c: the toolbox's reads
-    are the Rust session's by default; this compares the two)."""
-    from docx_agent.rust import reads
-
-    before = reads.use_session(None)
-    try:
-        yield Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS)
-    finally:
-        reads.use_session(before)
-
-
-def _targets(data: bytes) -> list[str]:
-    document = Document.open(data)
-    out = ["body", "p:0BADF00D"]
-    paragraphs = document.paragraphs()
-    if paragraphs:
-        out.append(paragraphs[len(paragraphs) // 2].id)
-    if len(paragraphs) >= 3:
-        out.append(f"{paragraphs[0].id}..{paragraphs[2].id}")
-    tables = document.tables()
-    if tables:
-        out += [tables[0].id, f"{tables[0].id}/c0,0"]
-    return out
-
-
-def _calls(data: bytes) -> list[tuple[str, dict]]:
-    calls = [("word_inspect", {"target": t}) for t in _targets(data)]
-    calls += [("find_text", {"text": "e"}), ("find_text", {"text": "e", "stories": "all"})]
-    calls.append(("read_batch", {"ops": [{"tool": "find_text", "arguments": {"doc": "d1", "text": "a"}},
-                                         {"tool": "word_read", "arguments": {"doc": "d1", "range": "p:0BADF00D"}},
-                                         {"tool": "word_inspect", "arguments": {"doc": "d1", "target": "body"}}]}))
-    return calls
-
-
-def _comparable(tool: str, reply: dict) -> dict:
-    if reply.get("error") is not None:
-        return {"code": reply["error"]["code"], "message": reply["error"]["message"]}
-    data = reply.get("data")
-    if tool == "read_batch":
-        data = {**data, "ops": [_comparable(op["tool"], {**op, "data": op.get("data")}) for op in data["ops"]]}
-    return {"summary": reply.get("summary"), "data": data, "next_cursor": reply.get("next_cursor"),
-            "total": reply.get("total")}
 
 
 def test_a_refusal_carries_its_way_out():
