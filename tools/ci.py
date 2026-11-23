@@ -148,7 +148,7 @@ PACKAGES: dict[str, dict] = {
         # The suite takes about 18 minutes on one Linux runner: split into this many jobs
         # on Linux (SHARDS below).
         "shards": 4,
-        "compile": ["src", "tests", "tools", "examples"],
+        "compile": ["src", "tests", "tools"],
         "mypy": False,
         "fonts": True,
         "lxml7": True,

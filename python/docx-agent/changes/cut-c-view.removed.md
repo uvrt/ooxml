@@ -20,14 +20,25 @@ Markdown reader and writer, `StyleMap`), `docx_agent.revisions` (tracked changes
 stamping), `docx_agent.oxml`, `docx_agent.samples` (with `accept_loses_text.docx`),
 `docx_agent.layout`, `docx_agent.layout_facts`, `docx_agent.blocks`,
 `docx_agent.revalidate`, `docx_agent.validate`, `docx_agent.state`, `docx_agent.scope`,
-`docx_agent.pages`, `docx_agent.incremental`, `docx_agent.finalizers` and
-`docx_agent.bodyscan`. In the library that means `Document.open/new/to_markdown/layout/
+`docx_agent.pages`, `docx_agent.incremental` and `docx_agent.bodyscan`. In the library that means `Document.open/new/to_markdown/layout/
 validate/provenance/...`, `doc.layout().coverage_facts()` and
 `docx_agent.layout_facts.layout_facts` are gone: the tools' `describe`, `word_read`,
 `check` and `save_document` answer the same questions through the Rust session.
 
-The dependencies on `docx2svg`'s Python layout, `markdown-it-py` and `mdit-py-plugins`
-go with them (pyproject.toml).
+The tool layer (lane CUT-A2): `edit_smartart`, `style_by_value` and `word_find_asset` are out
+of `TOOLS` until the Rust session has them; `docx_format(assets=...)` raises `ValueError`
+(give `word_drawings` a picture as an image blob); `FORMAT.errors` is empty (no Python
+exception is mapped to a refusal any more); `docx_agent.tools.shared.render_pages`,
+`serialise` and `check_plan`, `docx_agent.tools.read.heading_tree` and the module
+`docx_agent.tools.text` are gone, and `docx_agent.tools.objects`, `structure` and `style`
+lose their Python handlers and constants (`ROWS_WRITTEN`, `STYLE_KEYS`, ...).
+
+`word_insert_markdown`'s note on small text written (the application's `min_text_size`
+setting) is gone: `min_text_size` is refused at release (user decision, 2026-11-22).
+`check`'s `small_text`, with `min_size`, still reports text below a size.
+
+The dependencies on `lxml` (ooxml-edit still brings it), `markdown-it-py` and `mdit-py-plugins` go with them (pyproject.toml);
+`docx2svg` stays, for the page engine's font folders and the live view.
 
 Removed from the repository: `docs/api-tour.md` and `docs/common-tasks.md` (the library's
 tour and recipes), `examples/review_comments.py`, and the probes under `tools/`
