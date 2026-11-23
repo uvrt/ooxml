@@ -339,6 +339,8 @@ def changes(tag: str, since: str | None) -> str:
                "`details.not_supported`); each refusal names a call that works instead (`try_call`) or "
                "lists what is supported (`valid_options`)."), ""]
     parts += [f"- {text}." for text in refused(ROOT / KNOWN)] or ["- none"]
+    parts += ["", ("Other, rarer forms may be refused too; each such refusal names the form and its way out. "
+                   "Each tool's SUPPORTED.md, linked below, is the full list.")]
     links = [f"[{Path(p).parts[1]}](https://github.com/{REPO}/blob/{tag if tagged else 'main'}/{p})"
              for p in SUPPORTED if (ROOT / p).exists()]
     parts += ["", "What each tool supports: " + ", ".join(links) + ".", ""]

@@ -34,6 +34,7 @@ CELL_ENDS = ("<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w='2000'/><w:gridCol w:w=
 #: A VML shape stating no size, which the page layout cannot lay out.
 SHAPE = ('<w:pict><v:rect xmlns:v="urn:schemas-microsoft-com:vml" style="position:absolute" '
          'fillcolor="#4472c4"/></w:pict>')
+SVG = b'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>'
 MARKDOWN = "| check | rating |\n|---|---|\n| Alpha | 2 |\n| Beta | 4 |\n\n# Head\n\nText one.\n\nText two.\n"
 
 
@@ -84,7 +85,7 @@ def _no_settings() -> bytes:
 
 
 #: Calls refused in each listed form: (the document's body or bytes, or None for MARKDOWN's;
-#: "shape" for MARKDOWN's with a shape, or a function making the bytes; the tool; its arguments,
+#: "shape" for MARKDOWN's with a shape, "svg" for MARKDOWN's with an SVG blob (``{blob}``), or a function making the bytes; the tool; its arguments,
 #: ``{t}``, ``{p}`` and ``{h}`` the document's table, a paragraph and the heading's paraId).
 CASES = {
     "word_edit_table *": [
@@ -112,8 +113,11 @@ CASES = {
     "a picture in Markdown": [(None, "word_insert_markdown", {"at": "end", "markdown": "![a](b.png)"})],
     "a footnote in Markdown": [(None, "word_insert_markdown", {"at": "end", "markdown": "a[^1]\n\n[^1]: n\n"})],
     "* at replace:": [(None, "word_insert_markdown", {"at": "replace:{p}", "markdown": "x"})],
-    "word_drawings *": [(None, "word_drawings", {"action": "insert_text_box", "at": "{p}@0", "text": "t",
-                                                 "ref": "box"})],
+    "word_drawings *": [
+        (None, "word_drawings", {"action": "insert_text_box", "at": "{p}@0", "text": "t", "ref": "box"}),
+        ("svg", "word_drawings", {"action": "insert_picture", "at": "{p}@0", "image": "{blob}",
+                                  "alt_text": "a square"}),
+    ],
     # (refused before the target is looked for: the document needs no chart)
     "edit_chart*": [(None, "edit_chart", {"target": "d:1", "action": "set_values", "from": "d:scores"})],
     "a document without a settings part": [
@@ -127,6 +131,10 @@ CASES = {
 def _document(box, given) -> Doc:
     if given is None:
         return Doc(box)
+    if given == "svg":
+        doc = Doc(box)
+        doc.blob = doc.session.add_blob(SVG, "picture.svg")
+        return doc
     if given == "shape":
         doc = Doc(box)
         doc.ok("word_drawings", action="insert_shape", at=f"{doc.paragraphs[1]}@0", preset="rect", width=40,
@@ -140,8 +148,8 @@ def _document(box, given) -> Doc:
 def _filled(value, doc: Doc):
     if isinstance(value, str):
         names = {"t": (doc.tables or [""])[0], "p": (doc.paragraphs or [""])[min(1, len(doc.paragraphs) - 1)],
-                 "h": (doc.paragraphs or [""])[0][2:]}
-        return re.sub(r"\{(t|p|h)\}", lambda m: names[m.group(1)], value)
+                 "h": (doc.paragraphs or [""])[0][2:], "blob": getattr(doc, "blob", "")}
+        return re.sub(r"\{(t|p|h|blob)\}", lambda m: names[m.group(1)], value)
     if isinstance(value, list):
         return [_filled(item, doc) for item in value]
     if isinstance(value, dict):

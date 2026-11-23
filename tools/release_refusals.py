@@ -55,7 +55,8 @@ READER: dict[str, str | None] = {
     "a block of * without an id": None,
     "ranges sharing a paragraph with a range across paragraphs": None,
     "word_drawings *":
-        "`word_drawings` with `ref` (naming the drawing for later calls)",
+        "`word_drawings` `insert_picture` of an SVG, and `word_drawings` with `ref` (naming the drawing for "
+        "later calls)",
     "edit_chart*":
         "`edit_chart` with values from a dataset or table (`from`)",
     "*a footnote or endnote the layout cannot lay out": None,
