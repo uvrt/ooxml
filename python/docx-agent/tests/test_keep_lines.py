@@ -85,10 +85,13 @@ def test_check_reports_a_direct_keep_lines_and_its_fix_clears_it(box, session):
 
 def test_a_paragraph_kept_whole_moves_to_the_next_page(box, session):
     """Filler to near a page's foot, then a long paragraph: split across the pages, and
-    on the next page whole once its lines are kept together."""
+    on the next page whole once its lines are kept together.  Set in a face every test
+    machine lays out alike (:data:`word_docs.EVERYWHERE_FACE`): where the page breaks is
+    the point."""
     long = " ".join([FILLER] * 5)
-    d = session.open(docx("".join(p(f"{FILLER} {k}") for k in range(19)) + p(long) + p("End")), "move.docx")
-    target = ids_of(session, d)[19]
+    body = "".join(p(f"{FILLER} {k}") for k in range(16)) + p(long) + p("End")
+    d = session.open(word_docs.in_face(docx(body)), "move.docx")
+    target = ids_of(session, d)[16]
     split = where(box, session, d, target)
     assert len({box_["page"] for box_ in split}) == 2, "the made-up page must split the paragraph"
     ok(box, session, "word_format", doc=d, targets=[target], keep_lines=True)

@@ -114,7 +114,7 @@ jobs:
         run: python -m pytest -q -ra tests
 
   rust-check:
-    name: docx-agent check (Rust path on and off)
+    name: docx-agent check (Rust path)
     needs: plan
     if: needs.plan.outputs.module == 'true'
     runs-on: ubuntu-latest
@@ -171,10 +171,16 @@ jobs:
             fc-list "$family" family | grep -q . || { echo "missing font: $family"; exit 1; }
           done
 
-      # The tests a check of ranges goes through.
-      - name: Check tests, Rust path on
+      # The tests a check of ranges goes through, on the Rust path (the only one since the
+      # Python layout was cut).
+      - name: Check tests
         working-directory: python/docx-agent
-        run: python -m pytest -q -ra -n 2 tests/test_check_owner.py tests/test_check_timing.py tests/test_range_extent.py tests/test_keep_spans.py tests/test_keep_trials.py tests/test_numbers.py tests/test_ranges.py tests/test_check_speed_r57.py
+        run: >-
+          python -m pytest -q -ra -n 2 tests/test_check_timing.py tests/test_range_extent.py
+          tests/test_keep_spans.py tests/test_keep_trials.py tests/test_keep_lines.py tests/test_numbers.py
+          tests/test_check_speed_r57.py tests/test_scoped_check.py tests/test_session_checks.py
+          tests/test_rust_check_reflow.py tests/test_rust_check_whole.py tests/test_rust_edit_reflow.py
+          tests/test_table_keeps.py
 
   wheels:
     name: wheels

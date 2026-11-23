@@ -1179,7 +1179,11 @@ def test_checks_report_the_reflow_once_the_document_was_laid_out(box, session):
 
 
 def test_a_long_document_reports_stale_reflow_beyond_twenty_pages(box, session):
-    d = session.open((FIXTURES / "samplelib" / "sample-long.docx").read_bytes(), "long.docx")
+    # Set in a face every test machine lays out alike (word_docs.EVERYWHERE_FACE): 36 pages.
+    # In its own Cambria, a machine without Office lays it out in 19 (Caladea is narrower:
+    # its pictures then fit beside the text).
+    long = word_docs.in_face((FIXTURES / "samplelib" / "sample-long.docx").read_bytes())
+    d = session.open(long, "long.docx")
     ok(box, session, "describe", doc=d)
     edited = ok(box, session, "word_insert_text", doc=d, target="p@body/3", text=" More.")
     assert edited.checks["reflow"] == "stale: call check"

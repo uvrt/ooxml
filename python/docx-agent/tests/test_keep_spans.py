@@ -134,12 +134,14 @@ def test_a_line_after_a_table_over_two_pages_takes_its_last_row(box, session):
 def test_a_last_row_kept_alone_moves_with_the_line_after(box, session):
     """The fix for a table over several pages: its last row's deciding paragraph keeps with
     the next, and only that row goes to the line's page (measured in Word)."""
-    d = session.open(docx(p("Intro") + _fill(15) + grid(8) + p("Line after the rows") + p("After")), "last.docx")
+    # (in a face every test machine lays out alike: the table's last row ends page 1)
+    body = p("Intro") + _fill(12) + grid(8) + p("Line after the rows") + p("After")
+    d = session.open(word_docs.in_face(docx(body)), "last.docx")
     row = table_element(box, session, d, table_ids(box, session, d)[0]).findall(_W + "tr")[7]
     lead = f"p:{row.find(_W + 'tc').find(_W + 'p').get(word_docs.W14_PARA)}"
     ok(box, session, "word_format", doc=d, targets=[lead], keep_with_next=True)
     assert pages_of(box, session, d, table_ids(box, session, d)[0]) == [1, 2]
-    line = _ids(box, session, d)[17]
+    line = _ids(box, session, d)[14]
     assert pages_of(box, session, d, line) == [2]
 
 

@@ -403,14 +403,24 @@ fn styled_text_is_written_and_values_by_reference_left_to_the_host() {
         .open(docx(&paragraph("22222222", "two word there")), DocKind::Docx, "a.docx")
         .unwrap();
     let context = as_caller("w1");
-    // what is not ported yet changes nothing and says so to the host
+    // a target by reference ("$name") is the host's to resolve: nothing changes, and the
+    // host is told so
     let by_reference = s.call(
+        "word_set_text",
+        json!({"doc": "d1", "target": "$picked", "text": "a picked word"}),
+        &context,
+    );
+    assert!(by_reference.not_supported_form().is_some());
+    assert!(!body_of(&s, &d).contains("picked"));
+    // braces reaching the tool are literal text (the host resolves real references first)
+    let braces = call(
+        &s,
         "word_set_text",
         json!({"doc": "d1", "target": "p:22222222", "text": "a {{d:1/#1/name}} word"}),
         &context,
     );
-    assert!(by_reference.not_supported_form().is_some());
-    assert!(!body_of(&s, &d).contains("name"));
+    assert_eq!(braces["ok"], json!(true), "{braces}");
+    assert!(body_of(&s, &d).contains("a {{d:1/#1/name}} word"));
     // styled text is written, its runs listed
     let styled = call(
         &s,

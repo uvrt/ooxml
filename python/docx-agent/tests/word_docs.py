@@ -67,6 +67,24 @@ def with_body(body: str, data: bytes | None = None) -> bytes:
     return replaced(data if data is not None else blank(), {"word/document.xml": put})
 
 
+#: A face every test machine lays out with Word's own metrics: Arial where Office or macOS
+#: has it, Liberation Sans -- its measured clone, every advance and kern pair equal --
+#: where it does not (CI's Linux runners install it).  A blank document's Aptos has no
+#: clone: without Office it is laid out with an approximate stand-in, and where a page
+#: breaks then differs from machine to machine.
+EVERYWHERE_FACE = "Arial"
+
+
+def in_face(data: bytes, face: str = EVERYWHERE_FACE) -> bytes:
+    """``data`` with its theme's body and heading faces ``face`` (what a blank document's
+    text is set in: :data:`EVERYWHERE_FACE` by default)."""
+
+    def put(xml: str) -> str:
+        return re.sub(r'(<a:(?:major|minor)Font>\s*<a:latin typeface=")[^"]*', rf"\g<1>{face}", xml)
+
+    return replaced(data, {"word/theme/theme1.xml": put})
+
+
 def paragraph(text: str = "", props: str = "") -> str:
     """A paragraph of one run of ``text`` (and ``props``, its ``w:pPr`` content)."""
     run = f'<w:r><w:t xml:space="preserve">{text}</w:t></w:r>' if text else ""

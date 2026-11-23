@@ -367,6 +367,12 @@ def _record(fill: int, separator: str = KEEP) -> str:
             + p("Between", ppr=separator) + grid(3, label="Box") + p("After"))
 
 
+#: The filler that puts :func:`_record`'s box at the page's foot in
+#: :data:`word_docs.EVERYWHERE_FACE`, a face every test machine lays out alike (16 is the
+#: blank document's Aptos, which only a machine with Office has).
+EVERYWHERE_FILL = 13
+
+
 def _pages(box, session, d: str) -> list[list[int]]:
     """Per table, the pages its rows' first cells' first paragraphs are drawn on."""
     out = []
@@ -382,7 +388,7 @@ def test_keep_with_next_takes_the_box_along_and_check_reports_the_table(box, ses
     Word places them.  Every row keeps, directly where no style does; check reports it as
     the table's keep_together with ``with_next`` (in ``settings``), no direct formatting;
     describe and table_properties say it; off removes every keep it wrote."""
-    d = session.open(docx(_record(16)), "record.docx")
+    d = session.open(word_docs.in_face(docx(_record(EVERYWHERE_FILL))), "record.docx")
     record, after = _tables(box, session, d)
     for table in (record, after):
         ok(box, session, "word_format_table", doc=d, table=table, scope="table", keep_together=True)
@@ -458,7 +464,7 @@ def test_keep_with_next_warns_of_a_paragraph_between_that_does_not_keep(box, ses
     """The table keeps with the paragraph after it; a paragraph that does not keep lets the
     box after it start the next page alone (Word does so: measured), so the tool says which
     paragraph to keep."""
-    d = session.open(docx(_record(16, separator="")), "between.docx")
+    d = session.open(word_docs.in_face(docx(_record(EVERYWHERE_FILL, separator=""))), "between.docx")
     record, after = _tables(box, session, d)
     ok(box, session, "word_format_table", doc=d, table=after, scope="table", keep_together=True)
     made = ok(box, session, "word_format_table", doc=d, table=record, scope="table", keep_together=True,

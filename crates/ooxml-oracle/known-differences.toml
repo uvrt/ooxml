@@ -428,3 +428,23 @@ record, as the values put back may not be the source's), so customXml/item1.xml 
 t:5B0000AA's entry; docx-agent's document-level review, this mode's reference, has no records \
 to follow. word_changes on this document is compared in the structure mode, without \
 differences."""
+
+# Lane CUT8 (PR #293's gate 45105514614): edit_chart format_series with an invalid colour on the
+# chart fixtures. Code and field the same; the message differs by its opening quote only.
+[[difference]]
+gate = "fixtures"
+mode = "objects"
+file = "generated/charts/*.docx"
+input = { tool = "edit_chart", arguments = { action = "format_series", style = { fill = "not a colour" } } }
+cause = """the reference's message drops the opening quote (python-quirks.md): docx-agent says \
+"not' is neither a hex colour nor a theme colour (...)"; the Rust core quotes the value whole \
+("'not' is ..."), as its other refusals do."""
+
+[[difference]]
+gate = "fixtures"
+mode = "objects"
+file = "generated/charts/*.docx"
+input = { tool = "edit_chart", arguments = { action = "format_series", style = { line = "#12ab9z" } } }
+cause = """the reference's message drops the opening quote (python-quirks.md): docx-agent says \
+"#12ab9z' is neither a hex colour nor a theme colour (...)"; the Rust core quotes the value \
+whole ("'#12ab9z' is ..."), as its other refusals do."""

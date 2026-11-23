@@ -32,8 +32,9 @@ dependencies = ["ooxml-edit>=0.128.1", "ooxml-common>=0.34.0", "docx2svg>=0.14.0
 # PNG output goes through docx2svg's rasteriser extra.
 png = ["docx2svg[png]>=0.11.12"]
 # ruff: the linter, which CI's build job runs at the same pin ([tool.ruff] below).  lxml:
-# the tests read the packages' XML themselves (the library does not use it).
-dev = ["pytest>=7", "pytest-xdist>=3", "lxml>=4.9", "ruff==0.17.2"]
+# the tests read the packages' XML themselves (the library does not use it).  markdown-it-py:
+# tests/test_markdown_tables.py compares the Rust core's Markdown tables with its own.
+dev = ["pytest>=7", "pytest-xdist>=3", "lxml>=4.9", "markdown-it-py>=3.0", "ruff==0.17.2"]
 
 [project.urls]
 Repository = "https://github.com/uvrt/docx-agent"
