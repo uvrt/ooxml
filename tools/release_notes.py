@@ -8,10 +8,10 @@ Prints Markdown, for the team that calls the tools:
   CHANGELOG.md section for TAG (``## <version> -- TAG``), and the ``*.removed.md`` fragments
   still waiting (a preview); ``tools/changelog.py check`` holds every such fragment to an
   ``Instead:`` line.
-- **Tool definitions that changed**: the tools and top-level arguments the Word tools'
-  exported definitions (SPECS, one JSON per tool, held to the registry by ooxml-session's
-  tests) lost or gained since REF (default: the release tag before TAG, or before HEAD when
-  TAG is not tagged yet).
+- **Tool definitions that changed**: per package, the tools and top-level arguments its
+  committed definitions (SPECS, one JSON per tool, each folder held to what the package
+  sends by a test) lost or gained since REF (default: the release tag before TAG, or before
+  HEAD when TAG is not tagged yet).
 - **Refused at this release, returning later**: the forms ``[[not_supported]]`` in KNOWN
   names, each with its cause; the refusal itself names the call that works.
 - links to the support matrices (SUPPORTED);
@@ -46,8 +46,12 @@ REPO = "uvrt/ooxml"
 INDEX = "https://uvrt.github.io/ooxml/simple/"  # GitHub Pages, tools/simple_index.py
 #: release.yml's tags: `v<YYYY>.<MM>.<DD>`, `.<N>` for a second release the same day.
 TAG_PATTERN = re.compile(r"v\d{4}\.\d\d\.\d\d(\.\d+)?")
-#: The Word tools' exported definitions, one ``<tool>.json`` each.
-SPECS = "crates/ooxml-tools-word/tests/golden"
+#: Each package's committed tool definitions, one ``<tool>.json`` each: the Word tools' Rust
+#: exports (ooxml-session's tests/integration/registry.rs), the others' Claude definitions
+#: (their tests/test_tool_specs.py).
+SPECS = {"docx-agent": "crates/ooxml-tools-word/tests/golden",
+         "pptx-agent": "python/pptx-agent/tests/specs",
+         "xlsx-agent": "python/xlsx-agent/tests/specs"}
 #: The forms the tools refuse as not supported yet (``[[not_supported]]``).
 KNOWN = "crates/ooxml-oracle/known-differences.toml"
 #: The support matrices the notes link to.
@@ -128,14 +132,15 @@ def removed_entries(tag: str, folders: list[Path]) -> list[tuple[str, str]]:
     return out
 
 
-def specs_at(ref: str) -> dict[str, set[str]]:
-    """Each Word tool's top-level arguments in its exported definition at ``ref`` (read with
-    one ``git cat-file --batch``)."""
-    listing = _git("ls-tree", "--name-only", f"{ref}:{SPECS}")
+def specs_at(ref: str, folder: str) -> dict[str, set[str]]:
+    """Each tool's top-level arguments in its definition in ``folder`` at ``ref`` (read with
+    one ``git cat-file --batch``): its ``schema`` (a Rust export) or ``input_schema`` (a
+    Claude definition)."""
+    listing = _git("ls-tree", "--name-only", f"{ref}:{folder}")
     names = [name for name in (listing or "").split() if name.endswith(".json")]
     if not names:
         return {}
-    request = "".join(f"{ref}:{SPECS}/{name}\n" for name in names).encode()
+    request = "".join(f"{ref}:{folder}/{name}\n" for name in names).encode()
     run = subprocess.run(["git", "cat-file", "--batch"], check=False, cwd=ROOT, input=request, capture_output=True)
     data, at, out = run.stdout, 0, {}
     for name in names:
@@ -150,8 +155,9 @@ def specs_at(ref: str) -> dict[str, set[str]]:
             spec = json.loads(text)
         except (json.JSONDecodeError, UnicodeDecodeError):
             continue
-        if isinstance(spec, dict) and spec.get("name") == name[:-5] and isinstance(spec.get("schema"), dict):
-            out[name[:-5]] = set(spec["schema"].get("properties", {}))
+        schema = spec.get("schema", spec.get("input_schema")) if isinstance(spec, dict) else None
+        if spec.get("name") == name[:-5] and isinstance(schema, dict):
+            out[name[:-5]] = set(schema.get("properties", {}))
     return out
 
 
@@ -187,8 +193,10 @@ def changes(tag: str, since: str | None) -> str:
     if since is None:
         parts += ["(no earlier release tag to compare with)", ""]
     else:
-        diff = spec_changes(specs_at(since), specs_at(head))
-        parts += [f"The Word tools' definitions against {since}:", "", *(diff or ["- none"]), ""]
+        parts += [f"Against {since}:", ""]
+        for package, folder in SPECS.items():
+            diff = spec_changes(specs_at(since, folder), specs_at(head, folder))
+            parts += [f"**{package}**", "", *(diff or ["- none"]), ""]
     parts += ["## Refused at this release, returning later", "",
               "Each is refused `not_supported`; the refusal names the call that works instead.", ""]
     parts += [f"- `{form}`: {cause}" for form, cause in refused(ROOT / KNOWN)] or ["- none"]
