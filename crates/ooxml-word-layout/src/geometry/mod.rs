@@ -18,6 +18,7 @@ pub mod stories;
 pub mod text_box;
 pub mod walk;
 
+pub(crate) use lines::{body_lines_of, LineOf};
 pub use lines::{DrawnLine, LineSource};
 
 use crate::engine::DocumentLayout;

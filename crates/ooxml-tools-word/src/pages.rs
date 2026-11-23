@@ -27,14 +27,12 @@ use ooxml_opc::Package;
 use ooxml_word_edit::{
     CharAdvance, FieldLayout, FieldPlace, FieldRun, LaidFields, LayOutError, PageReflow, PageShows, Unknown,
 };
-use ooxml_word_layout::facts::LayoutFacts;
 use ooxml_word_layout::fields::update::{drawn_text, style_reference_known, PageNumbers};
 use ooxml_word_model::value::Text;
 use ooxml_word_pages::summary::Summary;
 use ooxml_word_pages::{
     EngineBudgets, EngineOptions, EngineSeed, Fallback, FontSetup, LaidVersion, PageEngine, PagesError,
 };
-use std::borrow::Borrow;
 use std::sync::{Arc, Mutex, PoisonError};
 
 /// The host's layout of a document's versions, as Word's tools are handed it: the edit
@@ -218,26 +216,17 @@ impl FieldLayout for EnginePages {
     }
 }
 
-/// A laid version's facts, held for its page numbers.
-struct Facts(Arc<LaidVersion>);
-
-impl Borrow<LayoutFacts> for Facts {
-    fn borrow(&self) -> &LayoutFacts {
-        self.0.facts()
-    }
-}
-
 /// One version laid out: its page numbers, its blocks' paths found by id, and the engine
 /// that paints its pages.
 struct Laid<'e> {
     version: Arc<LaidVersion>,
-    numbers: PageNumbers<Facts>,
+    numbers: PageNumbers,
     engine: &'e Mutex<PageEngine>,
 }
 
 impl<'e> Laid<'e> {
     fn new(version: Arc<LaidVersion>, engine: &'e Mutex<PageEngine>) -> Laid<'e> {
-        let numbers = PageNumbers::new(version.layout(), Facts(Arc::clone(&version)));
+        let numbers = PageNumbers::new(version.layout());
         Laid {
             version,
             numbers,

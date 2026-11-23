@@ -51,7 +51,7 @@ use ooxml_word_layout::paint::{paint_page, GlyphSize, PagePaint, PaintContext};
 use ooxml_word_layout::{DocumentLayout, WordLayout};
 use ooxml_word_model::Model;
 use ooxml_zip::Archive;
-use parts::{carried_facts, new_layout, pictures_of, say, version_ids, SayWith};
+use parts::{facts_source, new_layout, pictures_of, say, version_ids, SayWith};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -534,8 +534,7 @@ impl PageEngine {
             others_changed,
             drawn_changed: notes_or_stories_changed(opened.as_ref(), package),
         };
-        let facts = carried_facts(previous.as_deref(), &laid);
-        let said = say(generation, &laid, drawings.as_ref(), &with, &facts);
+        let said = say(generation, &laid, drawings.as_ref(), &with);
         self.stats.pages_said = generation.said.stats();
         let ids = version_ids(generation, package, &document.main_part);
         self.serial += 1;
@@ -544,7 +543,8 @@ impl PageEngine {
             said,
             relaid_cause: cause,
             layout: laid,
-            facts,
+            facts: std::sync::OnceLock::new(),
+            facts_from: std::sync::Mutex::new(facts_source(previous.as_ref())),
             pictures,
             glyphs: Arc::clone(&generation.fonts.glyphs),
             names: Arc::clone(&generation.fonts.names),
@@ -560,7 +560,8 @@ impl PageEngine {
             unpainted: crate::version::Unpainted::default(),
         });
         // The version before is no longer the one laid out from: what only it and the
-        // memos held goes now, not with every version kept.
+        // memos held goes now (unless the new version's facts are to be made from it),
+        // not with every version kept.
         drop(previous);
         generation.last = Some(Arc::clone(&version));
         generation.laid_from = Some(package.clone());

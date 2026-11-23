@@ -1,11 +1,10 @@
 //! Owns: the field update's part of the Word layout's differential -- what docx-agent's
 //! `word_fields` update writes, read from docx2svg's layout as it reads it (the records'
 //! `updates` and `references`, `python/docx2svg/tools/layout_differential.py`), against
-//! the Rust layout's facts read by `ooxml_word_layout::fields::update::PageNumbers`.
+//! the Rust layout's page numbers (`ooxml_word_layout::fields::update::PageNumbers`).
 //!
 //! Must not: change what is compared to make it pass.
 
-use ooxml_word_layout::facts::LayoutFacts;
 use ooxml_word_layout::fields::argument;
 use ooxml_word_layout::fields::update::PageNumbers;
 use ooxml_word_layout::DocumentLayout;
@@ -37,9 +36,9 @@ fn bookmark_paths(paragraphs: &[Arc<Paragraph>]) -> HashMap<String, String> {
 }
 
 /// Compare the update records of `theirs` (a document's layout record) with `layout`.
-pub fn compare_updates(layout: &DocumentLayout, facts: &LayoutFacts, theirs: &Value) -> Updates {
+pub fn compare_updates(layout: &DocumentLayout, theirs: &Value) -> Updates {
     let mut out = Updates::default();
-    let numbers = PageNumbers::new(layout, facts);
+    let numbers = PageNumbers::new(layout);
     let (paragraphs, _) = ooxml_word_layout::flow::body_paragraphs(&layout.document.body);
     let by_path: HashMap<&str, &Arc<Paragraph>> = paragraphs.iter().map(|p| (&*p.path, p)).collect();
     let marks = bookmark_paths(&paragraphs);

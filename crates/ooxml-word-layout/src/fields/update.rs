@@ -14,14 +14,14 @@
 
 use super::styleref::target_in;
 use crate::engine::DocumentLayout;
-use crate::facts::LayoutFacts;
 use crate::paginate::PageInfo;
 use crate::paint::PagePaint;
 use ooxml_base::Locale;
 use ooxml_word_model::fieldtext::{field_text, Uncomputable};
 use ooxml_word_model::value::Text;
 use ooxml_word_model::WordDocument;
-use std::borrow::Borrow;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Why an update cannot say a field's result: the paragraph is not drawn, the layout
 /// stopped before it, or the field's switches are not computed.
@@ -29,13 +29,12 @@ use std::borrow::Borrow;
 #[error("the layout cannot say: {0}")]
 pub struct Unknown(pub String);
 
-/// The page numbers of one layout, as a field update reads them, over its facts `F` (a
-/// reference, or whatever holds them for as long as it is asked). What each page is comes
-/// from the pagination; the facts (the pages' lines) are read only where a paragraph's page
-/// is asked for.
-#[derive(Debug)]
-pub struct PageNumbers<F> {
-    facts: F,
+/// The page numbers of one layout, as a field update reads them: what each page is comes
+/// from the pagination, the page a paragraph is first drawn on from the layout's first
+/// pages ([`DocumentLayout::first_pages`], found without placing a line).
+#[derive(Debug, Clone)]
+pub struct PageNumbers {
+    first: Arc<HashMap<Text, usize>>,
     /// Each section's page number format, `None` for decimal or none stated.
     formats: Vec<Option<String>>,
     /// Each page the facts hold (those of a known section), in order.
@@ -44,9 +43,9 @@ pub struct PageNumbers<F> {
     stopped: bool,
 }
 
-impl<F: Borrow<LayoutFacts>> PageNumbers<F> {
-    /// The page numbers of `layout`, whose facts are `facts`.
-    pub fn new(layout: &DocumentLayout, facts: F) -> PageNumbers<F> {
+impl PageNumbers {
+    /// The page numbers of `layout`.
+    pub fn new(layout: &DocumentLayout) -> PageNumbers {
         let formats = layout
             .sections
             .list
@@ -74,17 +73,16 @@ impl<F: Borrow<LayoutFacts>> PageNumbers<F> {
             .and_then(|s| layout.flow.items.get(s.item))
             .is_some();
         PageNumbers {
-            facts,
+            first: Arc::clone(layout.first_pages()),
             formats,
             pages,
             stopped,
         }
     }
 
-    /// Each paragraph path's first page, the facts' (made once per version, whoever reads
-    /// it first: a field update and a check ask it for every field and reference).
-    fn first(&self) -> &std::collections::HashMap<Text, usize> {
-        self.facts.borrow().first_pages()
+    /// Each paragraph path's first page.
+    fn first(&self) -> &HashMap<Text, usize> {
+        &self.first
     }
 
     /// Whether the paragraph at `path` is drawn: the page its first line is on.

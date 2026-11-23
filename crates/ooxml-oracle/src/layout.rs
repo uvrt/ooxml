@@ -735,7 +735,7 @@ pub fn run_document(records: &LayoutRecords, outcome: &mut Outcome) -> Result<()
     compare_pages(&laid.document, &laid, &facts, theirs, cut, &mut diffs, outcome);
     if why.is_none() {
         compare_note_lines(&mut engine, &mut model, &laid, theirs, &mut diffs, outcome);
-        let updates = crate::layout_updates::compare_updates(&laid, &facts, theirs);
+        let updates = crate::layout_updates::compare_updates(&laid, theirs);
         outcome.updates += updates.compared;
         for (place, detail) in updates.differences {
             diffs.push(place, "field update", detail);

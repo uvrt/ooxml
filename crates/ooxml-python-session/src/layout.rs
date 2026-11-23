@@ -470,7 +470,7 @@ impl PyLaidPages {
     fn page_field(&self, py: Python<'_>, instruction: &str, keyword: &str, path: &str) -> Option<String> {
         let version = &self.version;
         py.detach(|| {
-            let numbers = PageNumbers::new(version.layout(), version.facts());
+            let numbers = PageNumbers::new(version.layout());
             if keyword.eq_ignore_ascii_case("PAGEREF") {
                 numbers.page_reference(instruction, path).ok()
             } else {

@@ -63,14 +63,13 @@ pub(super) struct SayWith<'a> {
     pub(super) drawn_changed: bool,
 }
 
-/// What `laid` says (its warnings and approximations), its facts made into `facts` where
-/// saying them needs them; the pages the version before kept said again as they were.
+/// What `laid` says (its warnings and approximations); the pages the version before kept
+/// said again as they were.
 pub(super) fn say(
     generation: &mut Generation,
     laid: &ooxml_word_layout::DocumentLayout,
     drawings: Option<&WordDrawings>,
     with: &SayWith<'_>,
-    facts: &std::sync::OnceLock<ooxml_word_layout::facts::LayoutFacts>,
 ) -> crate::warnings::Said {
     if with.others_changed {
         // A part beside the main one changed (a chart's, a picture's, a story's): what a
@@ -94,22 +93,19 @@ pub(super) fn say(
         laid,
         &mut painter,
         with.locale,
-        facts,
         &mut generation.said,
     )
 }
 
-/// The facts of `laid`, made from the version it was laid out from where that one's were
-/// made (the pages it kept take theirs), else left to be made when first asked.
-pub(super) fn carried_facts(
-    previous: Option<&LaidVersion>,
-    laid: &ooxml_word_layout::DocumentLayout,
-) -> std::sync::OnceLock<ooxml_word_layout::facts::LayoutFacts> {
-    match previous.and_then(|p| Some((&p.layout, p.facts.get()?))) {
-        Some((before, known)) => {
-            std::sync::OnceLock::from(ooxml_word_layout::facts::LayoutFacts::after(laid, before, known))
-        }
-        None => std::sync::OnceLock::new(),
+/// What the facts of a version laid out from `previous` are made from, when first asked:
+/// `previous`, where its facts were made (the pages it kept take theirs), else what
+/// `previous`'s were to be made from -- at most one version, whose facts are made, held.
+pub(super) fn facts_source(previous: Option<&Arc<LaidVersion>>) -> Option<Arc<LaidVersion>> {
+    let previous = previous?;
+    if previous.has_facts() {
+        Some(Arc::clone(previous))
+    } else {
+        previous.facts_source()
     }
 }
 
