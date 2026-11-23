@@ -11,11 +11,21 @@
 # (per_tool, every) and with every case maker added, so an entry names the case by its input.
 # `cause` says why the difference is intended; an entry without one is refused.  Add an entry
 # only for a difference that is understood and meant, citing the pull request that found it.
+# `word` is the entry's verdict against Word, the oracle (architecture review decision 2):
+#   "rust"        Word was measured and does what the Rust core does; `observation` names the
+#                 recorded Word answer (a repository path, `#` and the case within it);
+#   "n/a"         Word has no behaviour to measure here (a reply's wording or contents, a
+#                 refusal where docx-agent crashed, a no-op, our own record contract, XML Word
+#                 reads the same either way): the tool rules decide, and the cause says which;
+#   "unmeasured"  a Word question nobody has measured yet: measure it before its golden is
+#                 blessed as Word's.
+# An entry without a verdict, or a "rust" verdict without an observation, is refused.
 
 # #89: Markdown that is only a comment, untracked and tracked (28 cases on the fixtures).
 [[difference]]
 mode = "markdown"
 input = { op = "insert_markdown", markdown = "<!-- only a comment -->\n" }
+word = "n/a"
 cause = """#89: docx-agent rolls the tree back, but its id pool and aliases keep what the stamping \
 drew; the Rust core changes nothing (tool rule 3: a no-op changes nothing). A docx-agent \
 leftover, not copied."""
@@ -25,6 +35,7 @@ leftover, not copied."""
 [[difference]]
 mode = "text"
 input = { tool = "word_insert_markdown", arguments = { markdown = "" } }
+word = "n/a"
 cause = """#89 through word_insert_markdown: docx-agent rolls the tree back, but its id pool and \
 aliases keep what the stamping drew; the Rust core changes nothing (tool rule 3: a no-op changes \
 nothing). A docx-agent leftover, not copied."""
@@ -32,6 +43,7 @@ nothing). A docx-agent leftover, not copied."""
 [[difference]]
 mode = "text"
 input = { tool = "word_insert_markdown", arguments = { markdown = "<!-- only a comment -->\n" } }
+word = "n/a"
 cause = """#89 through word_insert_markdown: docx-agent rolls the tree back, but its id pool and \
 aliases keep what the stamping drew; the Rust core changes nothing (tool rule 3: a no-op changes \
 nothing). A docx-agent leftover, not copied."""
@@ -43,6 +55,7 @@ gate = "fixtures"
 mode = "structure"
 file = "generated/charts/chart-places.docx"
 input = { tool = "word_fields", arguments = { action = "insert_field", at = "p@body/2@0", instruction = "SEQ Figure \\* ARABIC" } }
+word = "unmeasured"
 cause = """#84: docx-agent's _write_result takes as the old result only runs with no w:r ancestor; \
 in a text box every run has one, so it writes the value as a new run beside the empty result run. \
 Rust writes the value into the result run, as docx-agent does everywhere outside a text box."""
@@ -55,6 +68,7 @@ gate = "fixtures"
 mode = "structure"
 file = "generated/charts/chart-places.docx"
 input = { tool = "word_fields", arguments = { action = "insert_field", at = "p@body/2@2", instruction = "PAGE" } }
+word = "unmeasured"
 cause = """#240 as #84: in a text box docx-agent's _write_result finds no old result run (every run \
 has a w:r ancestor) and writes the value as a new run beside the empty result run; Rust writes \
 the value into the result run, as docx-agent does outside a text box. Same value: the number of \
@@ -65,6 +79,7 @@ gate = "fixtures"
 mode = "structure"
 file = "generated/charts/chart-places.docx"
 input = { tool = "word_fields", arguments = { action = "insert_field", at = "p@body/2", instruction = "NUMPAGES" } }
+word = "unmeasured"
 cause = """#240 as #84: in a text box docx-agent's _write_result finds no old result run (every run \
 has a w:r ancestor) and writes the value as a new run beside the empty result run; Rust writes \
 the value into the result run, as docx-agent does outside a text box. Same value: the document's \
@@ -76,6 +91,7 @@ gate = "fixtures"
 mode = "structure"
 file = "generated/charts/chart-places.docx"
 input = { tool = "word_fields", arguments = { action = "insert_field", after = "p@body/2", instruction = "PAGE" } }
+word = "unmeasured"
 cause = """#240 as #84: in a text box docx-agent's _write_result finds no old result run (every run \
 has a w:r ancestor) and writes the value as a new run beside the empty result run; Rust writes \
 the value into the result run, as docx-agent does outside a text box. Same value: the number of \
@@ -86,6 +102,7 @@ gate = "fixtures"
 mode = "structure"
 file = "generated/charts/chart-places.docx"
 input = { tool = "word_fields", arguments = { action = "insert_field", before = "p@body/2", instruction = "PAGE" } }
+word = "unmeasured"
 cause = """#240 as #84: in a text box docx-agent's _write_result finds no old result run (every run \
 has a w:r ancestor) and writes the value as a new run beside the empty result run; Rust writes \
 the value into the result run, as docx-agent does outside a text box. Same value: the number of \
@@ -97,6 +114,8 @@ gate = "fixtures"
 mode = "structure"
 file = "generated/charts/chart-places.docx"
 input = { tool = "word_headers_footers", arguments = { action = "set", which = "header", text = "", page_number = "after_text" } }
+word = "rust"
+observation = "python/docx2svg/tests/fixtures/story-observations.json#documents/fields-computed"
 cause = """#240: the Rust layout lays out chart-places' body text box (lane P5n) and writes the \
 header's PAGE result for the first page that shows it: 1. docx-agent in the gate leaves the \
 result empty and warns, its layout falling back on the text box (its own Python layout writes 1 \
@@ -111,6 +130,7 @@ gate = "fixtures"
 mode = "structure"
 file = "generated/trial/template-saved-as-docx.docx"
 input = { tool = "word_fields", arguments = { action = "update" } }
+word = "n/a"
 cause = """#84: docx-agent's session adds its TemplateOpened warning (the host's, not the tool's) \
 to an update that changes nothing."""
 
@@ -123,6 +143,7 @@ gate = "fixtures"
 mode = "structure"
 file = "generated/controls.docx"
 input = { tool = "word_comments", arguments = { action = "add", items = [{ target = "t:7B000001/r1", text = "On a row" }] } }
+word = "n/a"
 cause = """P4b8, ph1-quirks: a row past the table's last: docx-agent's _add_block_comment indexes the \
 rows unchecked and fails with Python's IndexError ("list index out of range", not_found); the \
 Rust core refuses the address ("t:7B000001/r1 names no row of its table", not_found). A \
@@ -133,6 +154,7 @@ docx-agent crash, not copied."""
 [[difference]]
 mode = "objects"
 input = { tool = "word_controls", arguments = { action = "insert", tag = "past the text" } }
+word = "n/a"
 cause = """docx-agent's insert_control takes the position unchecked and fails inside new_run with \
 Python's IndexError ('list index out of range', not_found); the Rust core refuses the position, \
 saying how many characters the paragraph has (as word_notes refuses one). A docx-agent crash, \
@@ -147,6 +169,7 @@ not copied."""
 mode = "objects"
 document = { lacks_namespace = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" }
 input = { tool = "word_drawings", arguments = { action = "float" } }
+word = "n/a"
 cause = """P4c10: docx-agent makes the new wp:anchor or wp:inline detached, so lxml names its \
 namespace ns0 (and wp14 ns1) and the frame's children ns0:...; the Rust core keeps the \
 frame's own declarations of wp and wp14 on the new frame, so it and its children keep wp:. \
@@ -156,12 +179,14 @@ Both are the same XML; Word reads either."""
 mode = "objects"
 document = { lacks_namespace = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" }
 input = { tool = "word_drawings", arguments = { action = "inline" } }
+word = "n/a"
 cause = """P4c10: as the float entry above: docx-agent's ns0/ns1 prefixes on the new wp:inline."""
 
 [[difference]]
 mode = "objects"
 document = { lacks_namespace = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" }
 input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
+word = "n/a"
 cause = """P4c11: as the float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
 
 # P4c10: a set that leaves the frame as it was (square wrapping on a frame wrapped square,
@@ -170,6 +195,7 @@ cause = """P4c11: as the float entry above: docx-agent's float_drawing gives the
 mode = "objects"
 file = "generated/markdown/constructs.docx"
 input = { tool = "word_drawings", arguments = { action = "set", wrap = "square" } }
+word = "n/a"
 cause = """P4c10: the frame is as it was; docx-agent writes the part again as lxml writes it \
 (constructs.docx was not written by lxml), and touched names the heading sections whose \
 frames lxml writes again; the Rust core's touched names the part only (no block changed)."""
@@ -178,12 +204,14 @@ frames lxml writes again; the Rust core's touched names the part only (no block 
 mode = "objects"
 file = "generated/markdown/constructs.docx"
 input = { tool = "word_drawings", arguments = { action = "set", z_order = "backward" } }
+word = "n/a"
 cause = """P4c10: as the set wrap square entry above: no drawing below, the frame keeps its order."""
 
 [[difference]]
 mode = "objects"
 file = "generated/markdown/constructs.docx"
 input = { tool = "word_drawings", arguments = { action = "set", z_order = "forward" } }
+word = "n/a"
 cause = """P4c10: as the set wrap square entry above: no drawing above, the frame keeps its order."""
 
 # Lane P4f7: an untracked copy at replace: of blocks the document never stamped (positional
@@ -191,6 +219,7 @@ cause = """P4c10: as the set wrap square entry above: no drawing above, the fram
 [[difference]]
 mode = "structure"
 input = { tool = "word_copy_from", replaces_unstamped = true }
+word = "n/a"
 cause = """Lane P4f7: docx-agent's copy_blocks reads the ids the document had (_known_ids) before \
 _prepare stamps it, so a paraId or drawing id its stamping gave a replaced block, deleted before \
 the copy is stamped, is given again to the copy (the id is both removed and created). The Rust \
@@ -202,6 +231,7 @@ leftover, not copied."""
 [[difference]]
 mode = "style"
 input = { tool = "word_design_facts", arguments = { include = ["declared_styles"] } }
+word = "n/a"
 cause = """#146: the Rust tool names the theme colour of a band cell's edge drawn by a \
 neighbouring place's border (the header row's bottom, w:themeColor="background1": \
 "single 2.25pt FFFFFF (background1)"); docx-agent labels only the colours of the place's own \
@@ -211,6 +241,7 @@ accurate one; docx-agent's code is deleted at P4e (test_declared_styles asserts 
 [[difference]]
 mode = "style"
 input = { tool = "word_design_facts", arguments = { include = ["theme", "declared_styles"] } }
+word = "n/a"
 cause = """#146: as above -- the Rust tool names the theme colour (background1) of a band \
 cell's edge drawn by a neighbouring place's border; docx-agent leaves the label out. Rust's \
 answer is the accurate one; docx-agent's code is deleted at P4e."""
@@ -220,6 +251,7 @@ answer is the accurate one; docx-agent's code is deleted at P4e."""
 mode = "objects"
 file = "generated/tables-accepted.docx"
 input = { tool = "word_edit_table", tracked = { author = "Writer A" }, arguments = { action = "delete_row", index = 99 } }
+word = "n/a"
 cause = """Lane E3: docx-agent's _no_reshape_over_merge_lead reads rows[index] unchecked while looking \
 for a pending tracked merge's first cell and fails with Python's IndexError ('list index out of \
 range', not_found); the Rust core refuses the row as docx-agent's delete_row does untracked \
@@ -234,6 +266,7 @@ range', not_found); the Rust core refuses the row as docx-agent's delete_row doe
 [[difference]]
 mode = "objects"
 input = { tool = "word_format_table", arguments = { table = "t@body/0" } }
+word = "n/a"
 cause = """ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it \
 (t:...), with the rename from the address asked in renamed (tool rules: one name per block); \
 docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host \
@@ -242,6 +275,7 @@ sees the stamped id either way)."""
 [[difference]]
 mode = "objects"
 input = { tool = "word_format_table", arguments = { table = "t@body/1" } }
+word = "n/a"
 cause = """ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it \
 (t:...), with the rename from the address asked in renamed (tool rules: one name per block); \
 docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host \
@@ -250,6 +284,7 @@ sees the stamped id either way)."""
 [[difference]]
 mode = "objects"
 input = { tool = "word_format_table", arguments = { table = "t@body/2" } }
+word = "n/a"
 cause = """ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it \
 (t:...), with the rename from the address asked in renamed (tool rules: one name per block); \
 docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host \
@@ -258,6 +293,7 @@ sees the stamped id either way)."""
 [[difference]]
 mode = "objects"
 input = { tool = "word_format_table", arguments = { table = "t@body/3" } }
+word = "n/a"
 cause = """ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it \
 (t:...), with the rename from the address asked in renamed (tool rules: one name per block); \
 docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host \
@@ -266,6 +302,7 @@ sees the stamped id either way)."""
 [[difference]]
 mode = "objects"
 input = { tool = "word_format_table", arguments = { table = "t@body/4" } }
+word = "n/a"
 cause = """ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it \
 (t:...), with the rename from the address asked in renamed (tool rules: one name per block); \
 docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host \
@@ -274,6 +311,7 @@ sees the stamped id either way)."""
 [[difference]]
 mode = "objects"
 input = { tool = "word_format_table", arguments = { table = "t@body/5" } }
+word = "n/a"
 cause = """ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it \
 (t:...), with the rename from the address asked in renamed (tool rules: one name per block); \
 docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host \
@@ -282,6 +320,7 @@ sees the stamped id either way)."""
 [[difference]]
 mode = "objects"
 input = { tool = "word_format_table", arguments = { table = "t@body/6" } }
+word = "n/a"
 cause = """ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it \
 (t:...), with the rename from the address asked in renamed (tool rules: one name per block); \
 docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host \
@@ -290,6 +329,7 @@ sees the stamped id either way)."""
 [[difference]]
 mode = "objects"
 input = { tool = "word_format_table", arguments = { table = "t@body/7" } }
+word = "n/a"
 cause = """ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it \
 (t:...), with the rename from the address asked in renamed (tool rules: one name per block); \
 docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host \
@@ -298,6 +338,7 @@ sees the stamped id either way)."""
 [[difference]]
 mode = "objects"
 input = { tool = "word_format_table", arguments = { table = "t@body/8" } }
+word = "n/a"
 cause = """ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it \
 (t:...), with the rename from the address asked in renamed (tool rules: one name per block); \
 docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host \
@@ -306,6 +347,7 @@ sees the stamped id either way)."""
 [[difference]]
 mode = "objects"
 input = { tool = "word_format_table", arguments = { table = "t@body/9" } }
+word = "n/a"
 cause = """ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it \
 (t:...), with the rename from the address asked in renamed (tool rules: one name per block); \
 docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host \
@@ -314,6 +356,7 @@ sees the stamped id either way)."""
 [[difference]]
 mode = "objects"
 input = { tool = "word_format_table", arguments = { table = "t@body/10" } }
+word = "n/a"
 cause = """ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it \
 (t:...), with the rename from the address asked in renamed (tool rules: one name per block); \
 docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host \
@@ -322,6 +365,7 @@ sees the stamped id either way)."""
 [[difference]]
 mode = "objects"
 input = { tool = "word_format_table", arguments = { table = "t@body/11" } }
+word = "n/a"
 cause = """ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it \
 (t:...), with the rename from the address asked in renamed (tool rules: one name per block); \
 docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host \
@@ -330,6 +374,7 @@ sees the stamped id either way)."""
 [[difference]]
 mode = "objects"
 input = { tool = "word_format_table", arguments = { table = "t@body/12" } }
+word = "n/a"
 cause = """ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it \
 (t:...), with the rename from the address asked in renamed (tool rules: one name per block); \
 docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host \
@@ -338,6 +383,7 @@ sees the stamped id either way)."""
 [[difference]]
 mode = "objects"
 input = { tool = "word_format_table", arguments = { table = "t@body/13" } }
+word = "n/a"
 cause = """ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it \
 (t:...), with the rename from the address asked in renamed (tool rules: one name per block); \
 docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host \
@@ -346,6 +392,7 @@ sees the stamped id either way)."""
 [[difference]]
 mode = "objects"
 input = { tool = "word_format_table", arguments = { table = "t@body/14" } }
+word = "n/a"
 cause = """ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it \
 (t:...), with the rename from the address asked in renamed (tool rules: one name per block); \
 docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host \
@@ -354,6 +401,7 @@ sees the stamped id either way)."""
 [[difference]]
 mode = "objects"
 input = { tool = "word_format_table", arguments = { table = "t@body/15" } }
+word = "n/a"
 cause = """ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it \
 (t:...), with the rename from the address asked in renamed (tool rules: one name per block); \
 docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host \
@@ -514,6 +562,7 @@ gate = "fixtures"
 mode = "delete"
 file = "generated/tables-placed.docx"
 input = { op = "delete", target = "t:5B0000AA", tracked = { author = "Writer A" } }
+word = "n/a"
 cause = """#282: /result/removed. The Rust core reports the row removed outright and its two \
 paragraphs (tr:5B0000B0, p:5B0000AE, p:5B0000AF), none of which the document has after the edit; \
 docx-agent's delete_block names a gone row's paragraphs by id() of their lxml proxies taken \
@@ -529,6 +578,7 @@ gate = "fixtures"
 mode = "cells"
 file = "generated/tables-placed.docx"
 input = { op = "set_cells" }
+word = "n/a"
 cause = """#282, ph1-quirks: the oracle writes the cells through KeepingRecord, as word_edit_table's \
 set_cells does (docx-agent's _Kept): a cell written inside the placed block takes its column out \
 of the table's record (customXml/item1.xml); docx-agent's document-level set_cells, this mode's \
@@ -541,6 +591,7 @@ gate = "fixtures"
 mode = "spacing"
 file = "generated/tables-placed.docx"
 input = { op = "set_cells" }
+word = "n/a"
 cause = """#282, ph1-quirks: as the cells mode's entry for this document -- the record kept true \
 through KeepingRecord, docx-agent's document-level set_cells leaves it stale."""
 
@@ -551,6 +602,7 @@ gate = "fixtures"
 mode = "review"
 file = "generated/tables-placed.docx"
 input = { op = "reject" }
+word = "n/a"
 cause = """#282: the Rust core's Review follows the tables' records as word_changes does \
 (docx-agent's _follow_review, tools/review.py: rejecting anything in a recorded table drops its \
 record, as the values put back may not be the source's), so customXml/item1.xml loses \
@@ -565,6 +617,7 @@ gate = "fixtures"
 mode = "objects"
 file = "generated/charts/*.docx"
 input = { tool = "edit_chart", arguments = { action = "format_series", style = { fill = "not a colour" } } }
+word = "n/a"
 cause = """the reference's message drops the opening quote (python-quirks.md): docx-agent says \
 "not' is neither a hex colour nor a theme colour (...)"; the Rust core quotes the value whole \
 ("'not' is ..."), as its other refusals do."""
@@ -574,6 +627,7 @@ gate = "fixtures"
 mode = "objects"
 file = "generated/charts/*.docx"
 input = { tool = "edit_chart", arguments = { action = "format_series", style = { line = "#12ab9z" } } }
+word = "n/a"
 cause = """the reference's message drops the opening quote (python-quirks.md): docx-agent says \
 "#12ab9z' is neither a hex colour nor a theme colour (...)"; the Rust core quotes the value \
 whole ("'#12ab9z' is ..."), as its other refusals do."""

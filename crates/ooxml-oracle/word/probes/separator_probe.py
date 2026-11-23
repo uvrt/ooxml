@@ -4,7 +4,7 @@ with it -- between two tables, in a story's last paragraph, at the end of a para
 -- and then deleted again (round 51).
 
 The probe document is ``Start.``, table 1, an empty paragraph, table 2, ``Middle.``,
-``Last paragraph.``, table 3 and an empty last paragraph.  Word -- through ``python/docx-agent/tests/oracle.py``'s
+``Last paragraph.``, table 3 and an empty last paragraph.  Word -- through ``crates/ooxml-oracle/word/oracle.py``'s
 machine-wide lock -- opens it, turns tracking on and, from the bottom up, inserts a 2x2 table
 (and types into its first cell) in the last paragraph (``end``), at the end of ``Last paragraph.``
 (``text``) and in the paragraph between tables 1 and 2 (``between``).  ``made`` is the

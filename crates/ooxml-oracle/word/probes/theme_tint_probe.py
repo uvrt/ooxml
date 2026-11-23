@@ -5,7 +5,7 @@
 
 A made-up document: one paragraph style per swatch for text and one for shading, their
 ``w:val`` / ``w:fill`` a decoy (``FF00FF`` / ``00FF00``) so the colour drawn shows whether
-Word follows the theme attributes.  Word -- through ``python/docx-agent/tests/oracle.py``'s machine-wide lock
+Word follows the theme attributes.  Word -- through ``crates/ooxml-oracle/word/oracle.py``'s machine-wide lock
 -- exports it to PDF (in batches: one document of all 27 swatches did not open in time);
 text colours are read from the PDF's characters, fills from a 200 dpi raster beside the
 text, into ``crates/ooxml-oracle/word/observations/theme-tints-word.json``.

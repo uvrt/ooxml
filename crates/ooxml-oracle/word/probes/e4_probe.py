@@ -3,7 +3,7 @@
 fields.
 
 Probe documents are written here (mode 15, the handful of styles ``e1_probe.py`` writes,
-no notes parts), and Word -- through ``python/docx-agent/tests/oracle.py``'s machine-wide lock -- opens each
+no notes parts), and Word -- through ``crates/ooxml-oracle/word/oracle.py``'s machine-wide lock -- opens each
 and, by AppleScript, makes one family of edits and saves:
 
 * ``breaks``: a section break of each kind -- next page at a paragraph's text's end, a

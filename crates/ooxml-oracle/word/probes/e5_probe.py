@@ -2,7 +2,7 @@
 """Measure what Word writes for E5's tables, drawings and content controls.
 
 Probe documents are written here (mode 15, ``e1_probe``'s handful of styles and Word's
-Table Grid), and Word -- through ``python/docx-agent/tests/oracle.py``'s machine-wide lock -- opens each and,
+Table Grid), and Word -- through ``crates/ooxml-oracle/word/oracle.py``'s machine-wide lock -- opens each and,
 by AppleScript (no clipboard), makes one family of edits and saves:
 
 * ``tables`` (and ``tables-tracked``, the same with tracking on): on tables made as Word

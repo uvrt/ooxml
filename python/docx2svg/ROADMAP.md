@@ -5916,8 +5916,8 @@ A header "`STYLEREF Title` | `STYLEREF "Chapter title"`" was drawn with its cach
 every page; Word shows each page's. Measured with Word for Mac 16 in English (and Dutch),
 eleven made-up documents of nine pages split by page breaks, every probe field cached as
 `?`, Word's PDF read after it updated every field (`tests/fixtures/styleref-observations.json`;
-docx-agent's `tools/styleref_probe.py` ran Word). **The rules** (`fields.style_reference`,
-`fields.find_style`, `fields.style_occurrences`, `layout._Placer._story_reference`,
+`crates/ooxml-oracle/word/probes/styleref_probe.py` ran Word). **The rules**
+(`fields.style_reference`, `fields.find_style`, `fields.style_occurrences`, `layout._Placer._story_reference`,
 `_style_references`):
 
 * **In a header or footer** (first-page, even and odd ones alike; a footer as a header):

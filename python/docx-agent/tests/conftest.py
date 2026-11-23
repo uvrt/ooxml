@@ -19,6 +19,8 @@ FIXTURE_DIR = ORACLE / "fixtures"
 #: importable as modules (rows_cases, ...).
 OBSERVATIONS = ORACLE / "word" / "observations"
 sys.path.insert(0, str(ORACLE / "word" / "cases"))
+#: The Word oracle's driver (crates/ooxml-oracle/word/oracle.py), for the opt-in oracle tests.
+sys.path.append(str(ORACLE / "word"))
 #: A new blank document, written where the corpus is read from (``new/document``): every gate
 #: and every phase's edit set holds for a document docx-agent made, as for one it opened.
 NEW_DOCUMENT = Path(tempfile.gettempdir()) / "docx-agent-tests" / "new" / "document.docx"
@@ -72,7 +74,7 @@ def long_doc() -> Path:
 
 
 MARKDOWN_DIR = FIXTURE_DIR / "generated" / "markdown"
-#: The chart and SmartArt documents Word saved (``tools/make_chart_fixtures.py``).
+#: The chart and SmartArt documents Word saved (their ``PROVENANCE.md``).
 CHARTS_DIR = FIXTURE_DIR / "generated" / "charts"
 
 

@@ -37,7 +37,9 @@ def test_a_reflow_check_on_a_36_page_document_stays_within_its_deadline():
 
 
 def test_a_layout_past_its_deadline_is_a_timeout_and_changes_nothing():
-    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, limits=Limits(layout_timeout=0.05)) as box:
+    # A limit of 0 has passed when the layout first asks, however fast it runs: no race with
+    # the clock (a limit of 0.05 s let a quick layout finish within it now and then).
+    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, limits=Limits(layout_timeout=0)) as box:
         session = box.session(clock=CLOCK)
         d = session.open(LONG.read_bytes(), LONG.name)
         before = word_docs.saved(session, d)

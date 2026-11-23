@@ -2,7 +2,7 @@
 """Measure what Word does for E6's authoring: a new document, a document from a template,
 content copied between documents whose styles conflict, and Convert.
 
-Through ``python/docx-agent/tests/oracle.py``'s machine-wide lock, Word, by AppleScript:
+Through ``crates/ooxml-oracle/word/oracle.py``'s machine-wide lock, Word, by AppleScript:
 
 * ``new``, ``new-typed``: makes a new blank document (``make new document``: File > New,
   on this Word's Normal template) and saves it as it is, and again with a line typed;

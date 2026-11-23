@@ -97,19 +97,32 @@ MERGE_EDITS = {
 }
 
 
-#: Where the tools' form differs from Word's (each a finding against Word, not yet fixed).
-MERGE_DIFFERENCES = {
-    "RowInSpan": "Word's row inserted below a row whose first cell spans two columns keeps the span "
-                 "(two cells); word_edit_table insert_row writes one cell per grid column",
-}
+#: Where the tools part from Word on purpose (each a rule, with the reason and Word's form).
+#: ``RowInSpan``: Word's Insert Rows Below a row whose first cell spans two grid columns
+#: copies the span (the new row has two cells, the first over two columns). The tools give
+#: the new row the cells of the nearest row without a span, one per column, and say so in a
+#: warning: round 57, R125 -- the team's rows that copied a span left ragged tables when
+#: values were written into them; a new row is a row for values.
+DELIBERATE = {"RowInSpan"}
 
 
-@pytest.mark.parametrize("key", [pytest.param(k, marks=pytest.mark.xfail(reason=MERGE_DIFFERENCES[k], strict=True))
-                                 if k in MERGE_DIFFERENCES else k for k in MERGE_EDITS])
+def _row_for_values(word_table: str) -> str:
+    """Word's RowInSpan table with its inserted row (the second) as the tools write it: the
+    third row's cells (the nearest without a span), each with an empty paragraph."""
+    rows = re.findall(r"<w:tr>.*?</w:tr>", word_table)
+    cells = re.findall(r"<w:tc><w:tcPr>.*?</w:tcPr>", rows[2])
+    return word_table.replace(rows[1], "<w:tr>" + "".join(c + "<w:p/></w:tc>" for c in cells) + "</w:tr>", 1)
+
+
+@pytest.mark.parametrize("key", list(MERGE_EDITS))
 def test_merges_and_splits_are_written_as_word_writes_them(box, key):
     document = Opened(box, e5_probe.merges_document())
-    document.call("word_edit_table", table=table_ids(document)[key], **MERGE_EDITS[key])
+    result = document.call("word_edit_table", table=table_ids(document)[key], **MERGE_EDITS[key])
     ours = [plain(b) for b in document.body()]
+    if key in DELIBERATE:
+        assert any("the new row has row 1's cells, one per column" in w for w in result.warnings), result.warnings
+        assert tables_by_key(ours)[key] == _row_for_values(tables_by_key(word_blocks("merges"))[key])
+        return
     if key == "RowDelFirst":  # the first row's text went with it: the table by its second
         assert next(b for b in ours if "RowDelFirst r2c2" in b) == \
             next(b for b in word_blocks("merges") if "RowDelFirst r2c2" in b)

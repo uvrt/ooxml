@@ -1116,8 +1116,9 @@ def _table_look(element: Element | None) -> dict[str, bool]:
 def cell_conditions(look: dict[str, bool], row: int, column: int, rows: int, columns: int,
                     header_rows: int = 0) -> tuple[str, ...]:
     """Where cell (row, column) is in its table, for the table style's conditional formats,
-    in the order Word lets them override one another (measured, round 58: docx-agent's
-    ``tools/table_regions_probe.py``, ``tests/observations/table-regions-word.json``).
+    in the order Word lets them override one another (measured, round 58:
+    ``crates/ooxml-oracle/word/probes/table_regions_probe.py``,
+    ``crates/ooxml-oracle/word/observations/table-regions-word.json``).
 
     Lowest first: the row band, the column band, the first and last column, the first and
     last row, the corner cell -- each later one over the earlier, property by property (a
