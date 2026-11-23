@@ -274,3 +274,41 @@ fn two_trees_are_the_same_part_by_structure_as_by_the_bytes_they_write() {
         .unwrap();
     assert_eq!(edited.changed_parts(&first), [name]);
 }
+
+#[test]
+fn a_touched_part_with_the_bytes_read_is_its_entry_as_read() {
+    // co-authoring request 1: written again unchanged, a part keeps its entry -- local
+    // header and central record as read, so its MS-FSSHTTPD chunk is the one a host holds
+    let mut bytes = made_up();
+    // mark every record as another writer does: "version made by" 4.5 on FAT, "version
+    // needed" 1.0 (central records at 4 and 6, local headers at 4)
+    let directory = bytes.windows(4).position(|w| w == b"PK\x01\x02").unwrap();
+    let mut at = 0;
+    while at + 4 <= bytes.len() {
+        match &bytes[at..at + 4] {
+            b"PK\x03\x04" => bytes[at + 4..at + 6].copy_from_slice(&10u16.to_le_bytes()),
+            b"PK\x01\x02" if at >= directory => {
+                bytes[at + 4..at + 6].copy_from_slice(&45u16.to_le_bytes());
+                bytes[at + 6..at + 8].copy_from_slice(&10u16.to_le_bytes());
+            }
+            _ => {}
+        }
+        at += 1;
+    }
+    let p = open(&bytes);
+    let png = p.read("word/media/a.png").unwrap().unwrap();
+    let same = p.with_bytes("word/media/a.png", png).save().unwrap();
+    assert_eq!(same, bytes, "the same bytes: the entry as read");
+    let other = p
+        .with_bytes("word/media/a.png", Arc::from(&b"\x89PNG\r\nx"[..]))
+        .save()
+        .unwrap();
+    let again = Archive::read(Arc::from(other), &Default::default()).unwrap();
+    let png = again
+        .entries()
+        .iter()
+        .find(|e| e.meta().name == "word/media/a.png")
+        .unwrap();
+    assert_eq!((png.meta().version_needed, png.meta().version_made_by & 0xff), (20, 20));
+    assert!(again.header_copyable(png));
+}

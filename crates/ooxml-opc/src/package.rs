@@ -357,9 +357,10 @@ impl Package {
 
     /// The package's bytes. Untouched entries are copied raw (an unchanged package saves
     /// byte for byte as it was read when its entries lie end to end from the start, as
-    /// writers lay them out: bytes between or before entries are not kept); touched parts are written as Python's `to_bytes()`
-    /// writes them: the entry's name, time, attributes and method kept, a new part's as
-    /// `ooxml_edit` makes one.
+    /// writers lay them out: bytes between or before entries are not kept), and so is a
+    /// touched part whose bytes are the ones read ([`Package::write_part`]); other touched
+    /// parts are written as Python's `to_bytes()` writes them: the entry's name, time,
+    /// attributes and method kept, a new part's as `ooxml_edit` makes one.
     pub fn save(&self) -> Result<Vec<u8>, OpcError> {
         let mut slots: Vec<(&str, &Slot)> = self.slots.iter().collect();
         slots.sort_unstable_by_key(|(_, s)| s.order);
@@ -367,11 +368,28 @@ impl Package {
         for (name, slot) in slots {
             match (&slot.content, slot.entry) {
                 (PartVersion::Raw(raw), _) => w.copy(&self.archive, self.entry(raw.index)?)?,
-                (PartVersion::Tree(tree), entry) => w.add(&self.new_entry(name, entry)?, &tree.write())?,
-                (PartVersion::Bytes(bytes), entry) => w.add(&self.new_entry(name, entry)?, bytes)?,
+                (PartVersion::Tree(tree), entry) => self.write_part(&mut w, name, entry, &tree.write())?,
+                (PartVersion::Bytes(bytes), entry) => self.write_part(&mut w, name, entry, bytes)?,
             }
         }
         Ok(w.finish(self.archive.comment())?)
+    }
+
+    /// A touched part's entry: the one it was read with, copied as it is, where `data` is
+    /// the bytes read and that entry's header may be copied (co-authoring request 1: an
+    /// entry keeps its MS-FSSHTTPD chunk unless its content changed; ooxml-edit's
+    /// `OpcPackage.write`, the same rule); else written anew.
+    fn write_part(&self, w: &mut Writer, name: &str, entry: Option<usize>, data: &[u8]) -> Result<(), OpcError> {
+        if let Some(index) = entry {
+            let read = self.entry(index)?;
+            let same_size = usize::try_from(read.meta().size).is_ok_and(|size| size == data.len());
+            if same_size && self.archive.header_copyable(read) && self.inflate(index)? == data {
+                w.copy(&self.archive, read)?;
+                return Ok(());
+            }
+        }
+        w.add(&self.new_entry(name, entry)?, data)?;
+        Ok(())
     }
 
     /// The header a touched part is written with: its source entry's, or a new part's.

@@ -16,6 +16,8 @@ const END_SIG: u32 = 0x0605_4b50;
 const END64_SIG: u32 = 0x0606_4b50;
 const END64_LOCATOR_SIG: u32 = 0x0706_4b50;
 const DESCRIPTOR_SIG: u32 = 0x0807_4b50;
+/// The ZIP64 extended information extra field's tag.
+const ZIP64_EXTRA: u16 = 0x0001;
 
 /// How an entry's data is stored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -229,6 +231,46 @@ impl Archive {
     pub fn stored_data(&self, entry: &Entry) -> &[u8] {
         self.bytes.get(entry.data.clone()).unwrap_or_default()
     }
+
+    /// Whether `entry`'s records may be copied as they are where its content is written
+    /// again unchanged: its local header holds its sizes and CRC-32 (no data descriptor,
+    /// flag bit 3, here or in the central record), the central record's, and no ZIP64 extra
+    /// field where no size needs one -- what MS-FSSHTTPD's ZIP chunking reads from the
+    /// header (ooxml-common's `zipparts.copyable_header`, the same rule).
+    pub fn header_copyable(&self, entry: &Entry) -> bool {
+        let meta = &entry.meta;
+        let mut f = Fields::new(&self.bytes, entry.local.start + 6);
+        let read = (|| -> Result<_, ZipError> {
+            let flags = f.u16()?;
+            let _method_time_date = (f.u16()?, f.u16()?, f.u16()?);
+            let (crc, compressed, size) = (f.u32()?, f.u32()?, f.u32()?);
+            let (name_len, extra_len) = (usize::from(f.u16()?), usize::from(f.u16()?));
+            let _name = f.bytes(name_len)?;
+            let extra = f.bytes(extra_len)?;
+            Ok((flags, crc, compressed, size, extra))
+        })();
+        let Ok((flags, crc, compressed, size, extra)) = read else {
+            return false;
+        };
+        if (flags | meta.flags) & 0x8 != 0 {
+            return false;
+        }
+        if (crc, u64::from(compressed), u64::from(size)) != (meta.crc32, meta.compressed_size, meta.size) {
+            return false;
+        }
+        !extra_ids(extra).any(|tag| tag == ZIP64_EXTRA)
+    }
+}
+
+/// The tags of an extra field's blocks.
+fn extra_ids(extra: &[u8]) -> impl Iterator<Item = u16> + '_ {
+    let mut at = 0;
+    std::iter::from_fn(move || {
+        let tag = u16::from_le_bytes(extra.get(at..at + 2)?.try_into().ok()?);
+        let len = usize::from(u16::from_le_bytes(extra.get(at + 2..at + 4)?.try_into().ok()?));
+        at += 4 + len;
+        Some(tag)
+    })
 }
 
 fn check_limits(meta: &EntryMeta, limits: &ZipLimits, total: &mut u64) -> Result<(), ZipError> {
