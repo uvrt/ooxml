@@ -182,7 +182,8 @@ impl TableGrid<'_> {
             let shown: Vec<&(Arc<Element>, usize, usize)> = cells.iter().filter(|c| !cell_deleted(&c.0)).collect();
             let elements: Vec<&Element> = shown.iter().map(|c| &*c.0).collect();
             let (groups, gone) = crate::read::cell_ends(&elements);
-            out.cell_ends |= !gone.is_empty() || groups.iter().any(|g| g.len() > 1);
+            // a row whose deletion is pending goes whole: its cells' ends take nothing in
+            out.cell_ends |= !deleted_row && (!gone.is_empty() || groups.iter().any(|g| g.len() > 1));
             // each cell taken into the one before it, to that cell's first grid column
             let mut taken: Vec<(*const Element, usize)> = Vec::new();
             for group in &groups {

@@ -133,39 +133,15 @@ DEFERRED: dict[str, str] = {
         "word_edit_table delete_row of a row holding a note or comment reference",
     "test_accept_edges_r54a.py::test_check_and_the_table_warning_say_what_our_accept_does":
         "word_edit_table on a table with Accept All's cell ends",
-    "test_rows_joins_r54r.py::test_a_from_block_fills_the_rows_as_accepted":
-        "word_edit_table on a table with Accept All's cell ends",
-    "test_rows_joins_r54r.py::test_a_merge_over_a_pending_deleted_row_is_refused_with_the_accept":
-        "word_edit_table on a table with Accept All's cell ends",
-    "test_rows_joins_r54r.py::test_a_row_past_the_end_is_refused_with_the_accepted_shape":
-        "word_edit_table on a table with Accept All's cell ends",
     "test_rows_joins_r54r.py::test_an_edit_of_the_table_says_what_accept_all_loses":
         "word_edit_table on a table with Accept All's cell ends",
-    "test_rows_joins_r54r.py::test_an_insert_beside_a_pending_deleted_row_goes_beside_the_row_named[after the row before]":
-        "word_edit_table on a table with Accept All's cell ends",
-    "test_rows_joins_r54r.py::test_an_insert_beside_a_pending_deleted_row_goes_beside_the_row_named[before the row after]":
-        "word_edit_table on a table with Accept All's cell ends",
-    "test_rows_joins_r54r.py::test_an_insert_beside_a_pending_deleted_row_goes_beside_the_row_named[default last]":
-        "word_edit_table on a table with Accept All's cell ends",
-    "test_rows_joins_r54r.py::test_delete_row_and_format_row_count_the_rows_as_accepted":
-        "word_edit_table on a table with Accept All's cell ends",
     "test_rows_joins_r54r.py::test_positions_follow_the_cells_accept_all_takes_in_and_removes":
-        "word_edit_table on a table with Accept All's cell ends",
-    "test_rows_joins_r54r.py::test_row_label_and_a_column_fill_count_the_rows_as_accepted":
-        "word_edit_table on a table with Accept All's cell ends",
-    "test_rows_joins_r54r.py::test_row_positions_skip_a_row_whose_deletion_is_pending":
-        "word_edit_table on a table with Accept All's cell ends",
-    "test_rows_joins_r54r.py::test_sync_and_describe_count_the_rows_as_accepted":
         "word_edit_table on a table with Accept All's cell ends",
     "test_span_rows_r57.py::test_a_new_row_beside_a_column_deleted_pending_is_deleted_there_too":
         "word_edit_table on a table with Accept All's cell ends",
     "test_table_fill_speed.py::test_cells_by_position_write_what_they_wrote_one_by_one[True]":
         "word_edit_table on a table with Accept All's cell ends",
     "test_table_sync.py::test_tracked_when_tracking_is_on":
-        "word_edit_table on a table with Accept All's cell ends",
-    "test_tracked_reshape_r55.py::test_a_reshape_over_pending_changes_accepts_as_made_untracked[split beside a deleted row]":
-        "word_edit_table on a table with Accept All's cell ends",
-    "test_tracked_reshape_r55.py::test_the_order_of_the_edits_does_not_matter[merged down over a deleted row]":
         "word_edit_table on a table with Accept All's cell ends",
     "test_dataset_markdown.py::test_a_table_cell_takes_the_value_itself":
         "word_insert_markdown from data (from, blob)",

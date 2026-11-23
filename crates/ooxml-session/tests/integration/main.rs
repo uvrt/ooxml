@@ -13,6 +13,7 @@ mod locale;
 mod pages;
 mod panics;
 mod registry;
+mod row_deletions;
 mod rows_written;
 mod session;
 mod values;

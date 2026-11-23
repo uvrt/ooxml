@@ -11,13 +11,14 @@ use super::fields::Fields;
 use super::join::{join, joined};
 use super::paragraph::mark_removed;
 use super::Reader;
+use crate::docx::tables::{cell_merge, merge_heads, VMerge};
 use crate::model::{Block, Look, Paragraph, Table};
 use crate::props::table_properties;
 use crate::value::{text, Key, Props, Text, Value};
 use crate::w;
 use crate::xmlread::{attr, attr_on, child, elements, local, text as element_text};
 use ooxml_xml::Element;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// `parent`'s `w:tr` or `w:tc` children, also those inside row- and cell-level content
@@ -120,6 +121,20 @@ fn accepted_cell_properties(reader: &Reader<'_>, cell: &Element) -> Props {
         _ => {}
     }
     out
+}
+
+/// A cell's properties with the merge Accept All gives it where the rows above it in its
+/// merge go ([`merge_heads`]).
+fn headed(props: &mut Props, head: Option<&VMerge>) {
+    match head {
+        Some(VMerge::Restart) => {
+            props.insert(Key::Borrowed("vMerge"), Value::Str(text("restart")));
+        }
+        Some(_) => {
+            props.remove("vMerge");
+        }
+        None => {}
+    }
 }
 
 /// Whether the last block of a cell (or a control's content) is a paragraph whose mark is
@@ -340,6 +355,8 @@ struct Shape<'t> {
     look: Look,
     rows: usize,
     headers: usize,
+    /// The cells continuing a merge that Accept All starts again or leaves alone.
+    heads: &'t HashMap<(usize, usize), VMerge>,
 }
 
 /// One row's plan: its cells shown, and their groups.
@@ -377,7 +394,9 @@ impl Reader<'_> {
         for (j, cell) in all.iter().enumerate() {
             if kept.contains(&std::ptr::from_ref(*cell)) {
                 cells.push((j, cell));
-                props_of.push(accepted_cell_properties(self, cell));
+                let mut props = accepted_cell_properties(self, cell);
+                headed(&mut props, shape.heads.get(&(plan.index, j)));
+                props_of.push(props);
             } else if let Some(last) = props_of.last_mut().filter(|_| cell_deleted(cell) && content_kept(cell)) {
                 absorb(last, &table_properties(child(cell, "tcPr"), self.colours()));
             }
@@ -443,10 +462,15 @@ impl Reader<'_> {
         let tbl_pr = props_element.map(w::TblPr::new);
         let style = text(tbl_pr.and_then(w::TblPr::style).and_then(w::Val::val).unwrap_or(""));
         let look = table_look(tbl_pr.and_then(w::TblPr::look).map(w::TblLook::element));
-        let row_elements: Vec<(usize, &Element)> = level_of(element, "tr")
-            .into_iter()
+        let kept =
+            |row: &Element| child(row, "trPr").and_then(|p| child(p, "del")).is_none() && !all_cells_deleted(row);
+        let all_rows = level_of(element, "tr");
+        let heads = merge_heads(&all_rows, &kept, &|cell| cell_merge(cell, true));
+        let row_elements: Vec<(usize, &Element)> = all_rows
+            .iter()
+            .copied()
             .enumerate()
-            .filter(|(_, row)| child(row, "trPr").and_then(|p| child(p, "del")).is_none() && !all_cells_deleted(row))
+            .filter(|(_, row)| kept(row))
             .collect();
         let grid_nodes: Vec<i64> = child(element, "tblGrid")
             .map(|g| w::TblGrid::new(g).columns().map(|c| c.w().unwrap_or(0)).collect())
@@ -478,6 +502,7 @@ impl Reader<'_> {
             look,
             rows: row_elements.len(),
             headers,
+            heads: &heads,
         };
         for (k, plan) in plans.iter().enumerate() {
             self.row(k, plan, &shape, fields, &mut built);
