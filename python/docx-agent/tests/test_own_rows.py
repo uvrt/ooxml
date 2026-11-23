@@ -20,7 +20,6 @@ from __future__ import annotations
 import datetime as dt
 import json
 import re
-import sys
 from pathlib import Path
 
 import pytest
@@ -31,8 +30,7 @@ from docx_agent import Document
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tools"))
-import rows_probe  # noqa: E402
+import rows_cases as rows_probe  # noqa: E402
 
 OBSERVED = json.loads((ROOT / "tests" / "observations" / "rows-word.json").read_text(encoding="utf-8"))
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -319,52 +317,6 @@ def test_a_table_with_another_authors_row_keeps_that_row_marked(box):
     _part, entry = session.entry("d1").document._resolve(new)
     assert _records(entry.rows[0][0].find(_W + "trPr")) == ("ins:other", "del:me")
     assert len([i for i in deleted.removed if i.startswith("tr:")]) == 3
-
-
-@pytest.mark.usefixtures("python_owned")   # prepared on drafts
-def test_the_first_tracked_call_after_untracked_drafts_drafts_at_once():
-    """Switching tracking makes no new version: the version drafts are made from carries
-    it, so the next call does not find "tracking was switched" (ooxml-edit 0.109.0)."""
-    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0, block_edits="always") as toolbox:
-        session = toolbox.session(clock=CLOCK)
-        session.open(Document.new().to_bytes(), "plan.docx")
-        first = session.entry("d1").document.paragraphs()[0].id
-        made = ok(toolbox, session, "word_insert_markdown", doc="d1", at=f"after:{first}", markdown="Some text.")
-        assert made.block
-        for on in (True, False, True):
-            ok(toolbox, session, "word_set_tracking", doc="d1", on=on, **({"author": ME} if on else {}))
-            target = session.entry("d1").document.paragraphs()[-1].id
-            result = ok(toolbox, session, "word_set_text", doc="d1", target=target, text=f"Changed {on}.")
-            assert result.block and result.block["tries"] == 1 and result.block["conflicts"] == [], result.block
-
-
-@pytest.mark.usefixtures("python_owned")   # prepared on drafts
-def test_tracked_syncs_and_a_table_deletion_still_run_on_a_draft():
-    """Drafted as before (round 50, R97): a sync confined to its table, adding rows and then
-    removing them, and a deletion of a known table prepare on a draft; one's own rows go."""
-    with Toolbox([*TOOLS, rows_keep], formats=[FORMAT], groups=GROUPS, workers=0,
-                 block_edits="always") as toolbox:
-        base = [("A1", "one"), ("A2", "two")]
-        session, table = _opened(toolbox, base)
-        ok(toolbox, session, "word_set_tracking", doc="d1", on=True, author=ME)
-        SETS["more"] = base + [("A3", "three"), ("A4", "four")]
-        ok(toolbox, session, "rows_keep", id="more")
-        added = ok(toolbox, session, "word_edit_table", doc="d1", table=table, action="sync",
-                   **{"from": "d:more", "remove": True})
-        SETS["back"] = base
-        ok(toolbox, session, "rows_keep", id="back")
-        removed = ok(toolbox, session, "word_edit_table", doc="d1", table=table, action="sync",
-                     **{"from": "d:back", "remove": True})
-        last = session.entry("d1").document.paragraphs()[-1].id
-        made = ok(toolbox, session, "word_insert_markdown", doc="d1", at=f"before:{last}",
-                  markdown="| new | table |\n|---|---|\n| B1 | b |")
-        deleted = ok(toolbox, session, "word_delete", doc="d1",
-                     target=next(i for i in made.created if i.startswith("t:")))
-        # Round 51: the first tracked call after drafts made untracked drafts on its first try
-        # too (before: "tracking was switched" three times, then the lock).
-        for result in (added, removed, made, deleted):
-            assert result.block and result.block["tries"] == 1 and result.block["conflicts"] == [], result.block
-        assert _rows(session, table) == (3, 3) and session.entry("d1").document.revisions() == []
 
 
 def test_a_control_deleted_with_its_table_deletes_the_table_tracked():

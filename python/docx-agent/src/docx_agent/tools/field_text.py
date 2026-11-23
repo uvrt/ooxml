@@ -1,53 +1,27 @@
-"""A dataset's text written by reference (round 45, R65, R66): where each field went.
+"""A dataset's text written by reference (round 45, R65, R66): the host's side.
 
-**One field as Markdown.**  ``word_insert_markdown``'s ``from`` names a table of rows
-(``d:notes``, ``d:notes/#3:#9``) -- or one field of one row (``d:notes/#12/body``,
-``d:notes/Doors/body``, ``t:checks/Alpha/note``): that value's text, written as the
-``markdown`` argument is (its paragraphs, its lists as lists in the template's styles,
-nested items at their level, its emphasis), verbatim -- nothing retyped.  ``from`` is its
-one name (round 47: no alias).  A value that is not text -- a number, a date, a logical
-value -- is refused with the way out (a figure goes into text as ``{{d:...}}``) and the
-text fields of its row; an unknown dataset, row or field is refused as a reference to it
-is, naming what there is.
-
-**Several fields** go in one call as references in ``markdown``, each standing alone
-between blank lines, with whatever is wanted around them (``## Doors\\n\\n{{d:notes/#12/body}}
-\\n\\n## Roof\\n\\n{{d:notes/#13/body}}``): the dispatcher writes each value in its place
-before the Markdown is read (:mod:`ooxml_edit.tools.textfacts`), so it is the same Markdown.
-
-**Where each went.**  The result's ``data.facts`` names, for a value that made whole blocks
-(``from``, or a reference standing alone), the blocks it made -- ``{"from":
-"d:notes/#12/body", "blocks": ["p:...", ...], "chars": 1840, "sources": [...]}`` -- and no
-longer echoes a long or several-line text (rule 4: the text is the caller's own; ``chars``
-says how much was written).  The blocks are found by reading each value's Markdown alone for the blocks it
-writes (:func:`shape`) and lining that up with the blocks the call made; when they do not
-line up (a table written beside another table gets a separator paragraph), the facts say
-so with a note rather than guess.  A short value written inside a sentence is listed as
-before, with its text.  Each paragraph a field made keeps the field as its source in the
-file (:meth:`docx_agent.Document.keep_text_facts`, as a figure written by reference keeps
-its own), so a check of numbers reads the numbers in it as the data's.
-
-**word_set_text** writes a field as a paragraph's text the same way (``text:
-"{{d:notes/#2/summary}}"``); its facts name the paragraphs each value went into
-(``blocks``).  **word_edit_table**'s ``set_cells`` takes one value per cell -- ``from:
-"d:scores/#12/rating:0.0"`` (R66), with a number format or a date pattern as a reference
-takes -- and references in a cell's ``text``; each fact names its cell (``cell``).
+``word_insert_markdown``'s ``from`` names a table of rows (``d:notes``, ``d:notes/#3:#9``)
+-- or one field of one row (``d:notes/#12/body``, ``d:notes/Doors/body``,
+``t:checks/Alpha/note``): that value's text, written as the ``markdown`` argument is,
+verbatim.  The datasets are the application's, held by the tool layer, so the host resolves
+such a value (:func:`field_from`, :func:`text_field`) and hands the Rust session its text and
+its record (:func:`as_fact`); the session writes it and keeps the record on what it made.  A
+value that is not text is refused with the way out (a figure goes into text as
+``{{d:...}}``) and the text fields of its row; an unknown dataset, row or field is refused as
+a reference to it is, naming what there is (:func:`with_rows`).  A workbook cell's own
+Markdown (its emphasis and list lines) is read again from its source
+(:func:`reference_markdown`).
 """
 
 from __future__ import annotations
 
 import re
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Mapping
 
 from ooxml_edit.tools import ToolError
 from ooxml_edit.tools import textfacts
 from ooxml_edit.tools.datasets import DATASET_PREFIX, row_range
 
-from ..markdown import model as m
-
-#: A value written by reference longer than this (or over several lines) is not echoed in
-#: the result: ``chars`` says how long it was, ``blocks`` where it went.
-ECHO_CHARS = 200
 #: Column types whose values are not text.
 _NOT_TEXT = {"number", "percent", "date", "datetime", "time", "bool"}
 #: A source address after its document handle: ``d2/t:x`` -> ``t:x``.
@@ -153,41 +127,6 @@ def reference_markdown(call: Any, fact: Any) -> str | None:
     return value_markdown(rows, row, column)
 
 
-def with_markdown(call: Any, markdown: str, facts: Sequence[Any]) -> tuple[str, list[Any]]:
-    """Round 48: ``markdown`` (the text as the handler got it, every reference written as its
-    value's text) with each value that has Markdown (:func:`reference_markdown`) written as
-    it: a reference standing alone between blank lines as its Markdown -- its lists and
-    emphasis, as ``from`` writes one field -- and one inside a sentence as its text on one
-    line, escaped, so that its lines and characters stay text there.  The facts, their
-    places and texts in the new Markdown.  A value without Markdown is left as it is."""
-    from ooxml_edit.markdown import Run, inline_markdown
-
-    out: list[str] = []
-    placed: list[Any] = []
-    at = shift = 0
-    for fact in sorted(facts, key=lambda f: f.start):
-        found = reference_markdown(call, fact)
-        if found is None:
-            placed.append(textfacts.Fact(fact.field, fact.start + shift, fact.end + shift, fact.text,
-                                         fact.address, fact.record))
-            continue
-        if not _alone(markdown, fact.start, fact.end):
-            line_start = not markdown[:fact.start].rpartition("\n")[2].strip()
-            one_line = " ".join(line.strip() for line in fact.text.splitlines() if line.strip())
-            found = inline_markdown([Run(one_line)], line_start=line_start).replace("|", "\\|")
-        out.append(markdown[at:fact.start])
-        out.append(found)
-        at = fact.end
-        start = fact.start + shift
-        placed.append(textfacts.Fact(fact.field, start, start + len(found), found, fact.address,
-                                     fact.record))
-        shift += len(found) - (fact.end - fact.start)
-    if not out:
-        return markdown, list(facts)
-    out.append(markdown[at:])
-    return "".join(out), placed
-
-
 def _kind(value: Any) -> str:
     if isinstance(value, bool):
         return "logical"
@@ -218,134 +157,7 @@ def with_rows(call: Any, address: str, field: str, error: ToolError) -> None:
         error.valid_options = [f"{source}/{row}/{textfacts.quote(c)}" for c in error.valid_options]
 
 
-# -- the blocks Markdown writes --------------------------------------------------------------
-
-
-def shape(blocks: Sequence[Any]) -> list[str]:
-    """The top-level blocks the Markdown writer (:class:`docx_agent.markdown.write.Writer`)
-    makes of model ``blocks``, as ``p`` (a paragraph) or ``t`` (a table), in order -- a
-    separator paragraph between two tables included."""
-    out: list[str] = []
-    for block in blocks:
-        made = _block(block)
-        if made and out and made[0] == "t" and out[-1] == "t":
-            out.append("p")
-        out += made
-    return out
-
-
-def _block(block: Any) -> list[str]:
-    if isinstance(block, (m.Paragraph,)):
-        return ["p"] if block.inline else []
-    if isinstance(block, (m.Heading, m.Rule)):
-        return ["p"]
-    if isinstance(block, m.CodeBlock):
-        body = block.text[:-1] if block.text.endswith("\n") else block.text
-        return ["p"] * len(body.split("\n"))
-    if isinstance(block, m.Quote):
-        return shape(block.blocks)
-    if isinstance(block, m.ListBlock):
-        out: list[str] = []
-        for item in block.items:
-            first = item[0] if item else None
-            rest = item[1:] if isinstance(first, m.Paragraph) else item
-            out.append("p")
-            for inner in rest:
-                out += _block(inner)
-        return out
-    if isinstance(block, m.Table):
-        return ["t"]
-    if isinstance(block, m.HtmlBlock):
-        return ["p"] * len(block.text.rstrip("\n").split("\n"))
-    return []
-
-
-def markdown_shape(text: str) -> list[str]:
-    """:func:`shape` of Markdown text, as ``insert_markdown`` parses it."""
-    from ..markdown.parse import parse_model
-
-    return shape([b for b in parse_model(text) if not isinstance(b, (m.FootnoteDef, m.Comment))])
-
-
-def _alone(text: str, start: int, end: int) -> bool:
-    """Whether ``text[start:end]`` stands alone: blank lines (or the text's ends) on both
-    sides, spaces aside."""
-    before = text[:start].rstrip(" \t")
-    after = text[end:].lstrip(" \t")
-    return (not before.strip() or before.endswith("\n\n") or re.search(r"\n[ \t]*\n$", before) is not None) \
-        and (not after.strip() or after.startswith("\n\n") or re.match(r"^\n[ \t]*\n", after) is not None)
-
-
-def placed_blocks(markdown: str, facts: Sequence[Any], blocks: Sequence[str]) -> tuple[dict[int, list[str]], bool]:
-    """``{index in facts: the blocks it made}`` for the facts that stand alone in
-    ``markdown`` (the text as the handler got it), and whether the blocks lined up.  The
-    Markdown between them is read alone too; a value's blocks are its share of ``blocks``
-    (a leading separator, after a table already there, and a trailing paragraph, after a
-    table at a container's end, aside)."""
-    alone = [(k, fact) for k, fact in enumerate(facts) if _alone(markdown, fact.start, fact.end)]
-    if not alone:
-        return {}, True
-    pieces: list[tuple[int | None, str]] = []
-    at = 0
-    for k, fact in sorted(alone, key=lambda item: item[1].start):
-        pieces.append((None, markdown[at:fact.start]))
-        pieces.append((k, markdown[fact.start:fact.end]))
-        at = fact.end
-    pieces.append((None, markdown[at:]))
-    expected: list[str] = []
-    owners: list[int | None] = []
-    for owner, piece in pieces:
-        made = markdown_shape(piece) if piece.strip() else []
-        if made and expected and made[0] == "t" and expected[-1] == "t":
-            expected.append("p")
-            owners.append(None)
-        expected += made
-        owners += [owner] * len(made)
-    kinds = [b.rpartition("/")[2][:1] for b in blocks]
-    for offset in (0, 1):
-        window = kinds[offset:offset + len(expected)]
-        extra = len(kinds) - offset - len(expected)
-        if window == expected and 0 <= extra <= 1:
-            out: dict[int, list[str]] = {}
-            for owner, block in zip(owners, blocks[offset:]):
-                if owner is not None:
-                    out.setdefault(owner, []).append(block)
-            return out, True
-    return {}, False
-
-
-# -- the result -------------------------------------------------------------------------------
-
-
-def brief(fact: Any, blocks: Sequence[str] | None = None, *, cell: str | None = None) -> dict[str, Any]:
-    """What a result says of one value written by reference: the reference, its text (a
-    long or several-line one only counted, ``chars``), where it went, its sources."""
-    out = fact.brief()
-    text = out.get("text") or ""
-    if len(text) > ECHO_CHARS or "\n" in text:
-        out.pop("text", None)
-        out["chars"] = len(text)
-    if blocks is not None:
-        out["blocks"] = list(blocks)
-    if cell is not None:
-        out["cell"] = cell
-    return {k: out[k] for k in ("from", "text", "chars", "blocks", "cell", "sources", "stale") if k in out}
-
-
-def keep_in_paragraphs(document: Any, record: Mapping[str, Any], blocks: Iterable[str]) -> int:
-    """Keep ``record`` (a value's, ``Call.fact``'s) as the source of each paragraph of
-    ``blocks`` with text, its whole text the part written; how many were kept."""
-    kept = 0
-    for block in blocks:
-        if not block.startswith("p:"):
-            continue
-        try:
-            text = document.paragraph(block).text
-        except (KeyError, ValueError):
-            continue
-        if text and document.keep_text_facts(block, [{**record, "text": text, "p": 0, "at": 0}]):
-            kept += 1
-    return kept
+# -- a value resolved by its handler -----------------------------------------------------
 
 
 def as_fact(address: str, field: str, text: str, record: Mapping[str, Any]) -> Any:
@@ -353,3 +165,31 @@ def as_fact(address: str, field: str, text: str, record: Mapping[str, Any]) -> A
     (``from``), as the dispatcher makes one for a reference."""
     shown = _HANDLE.sub("", textfacts.strip_format(address))
     return textfacts.Fact(field, 0, len(text), text, shown, dict(record))
+
+
+def field_from(call: Any, source: str, from_columns: list[str] | None, header: list[str] | None,
+               date_format: str | None) -> Any:
+    """Round 45, R65: ``from`` naming one field of one row -- its text's fact
+    (:class:`~ooxml_edit.tools.textfacts.Fact`, its text the Markdown), else ``None`` (rows:
+    a table).  A source that is no dataset is read as rows first, and as one value only when
+    rows refuse it."""
+    from .table_data import placed
+
+    if not names_one_value(source):
+        if not might_name_one_value(source):
+            return None
+        try:
+            placed(call, source, from_columns, header, date_format)
+            return None
+        except ToolError as error:
+            try:
+                text, record = text_field(call, source, "from")
+            except ToolError:
+                raise error from None
+    else:
+        text, record = text_field(call, source, "from")
+    for name, value in (("from_columns", from_columns), ("header", header), ("date_format", date_format)):
+        if value is not None:
+            raise ToolError("invalid_arguments", f"{name} is for a table of rows; from {source} is one text "
+                            "field, written as Markdown: leave it out", field=name)
+    return as_fact(source, "from", text, record)

@@ -17,6 +17,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import MappingProxyType
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -632,6 +633,44 @@ class Panics(unittest.TestCase):
         self.assertIn("| text | 2 | 2 | 8 | 0 | 0 | 6 | 1 | 1 |", table)
         self.assertIn("- text: 3 like", table)
         self.assertIn("- text: 1 picture", table)
+
+
+class ReadsRefusals(unittest.TestCase):
+    """The reads gate judges a case Rust refused as not supported yet by the allow-list, as
+    the edit gates do: the harness's compared reply keeps the form (``details.not_supported``,
+    where word_reads_diff.py's report looks for it), so the case is no difference."""
+
+    REFUSED = MappingProxyType({
+        "code": "refused", "message": "word_inspect of Accept All's cell ends is not supported yet",
+        "details": {"not_supported": "word_inspect of Accept All's cell ends", "try": "x"}})
+
+    @staticmethod
+    def tools():
+        # the harness's reply comparison: the standard library alone at import
+        sys.path.insert(0, str(gates.HARNESS))
+        import word_reads_tools
+
+        return word_reads_tools
+
+    def test_a_refusal_keeps_its_form(self) -> None:
+        got = self.tools().comparable("word_inspect", {"error": dict(self.REFUSED)})
+        self.assertEqual(got["error"]["details"], {"not_supported": "word_inspect of Accept All's cell ends"})
+
+    def test_a_refusal_in_a_batch_keeps_its_form(self) -> None:
+        reply = {"data": {"ops": [{"tool": "word_read", "doc": "d1", "error": dict(self.REFUSED)}]}}
+        got = self.tools().comparable("read_batch", reply)
+        self.assertEqual(got["data"]["ops"][0]["error"]["details"]["not_supported"],
+                         "word_inspect of Accept All's cell ends")
+
+    def test_another_error_is_its_code_and_message(self) -> None:
+        error = {"code": "not_found", "message": "no paragraph or table 'p:1'", "details": {"field": "target"}}
+        got = self.tools().comparable("word_inspect", {"error": error})
+        self.assertEqual(got, {"error": {"code": "not_found", "message": "no paragraph or table 'p:1'"}})
+
+    def test_the_reads_refusals_are_allowed(self) -> None:
+        forms = {"word_read final view of Accept All's cell ends": 13, "word_inspect of Accept All's cell ends": 14,
+                 "set_point_labels: a document whose defaults name no language (the session's locale decides)": 3}
+        self.assertEqual(gates.unlisted_forms(forms, gates.allowed_forms()), {})
 
 
 if __name__ == "__main__":

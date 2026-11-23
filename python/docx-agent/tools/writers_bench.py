@@ -1,25 +1,39 @@
-"""Writers on one long document through docx-agent's toolbox, the Rust session serving the
-calls it can: per-edit wall (p50, p99, max), the time each call held the document and waited
-for its lock, which calls the Rust session served and which fell back, the bridge's calls
-and the memory.  The 3k-page bench of the heavy gates (.github/workflows/gates.yml), as lanes
+"""Writers on one long document through docx-agent's toolbox, on the Rust session: per-edit
+wall (p50, p99, max), the time each call held the document and waited for its lock, the calls
+the session served and the memory.  The 3k-page bench of the heavy gates (.github/workflows/gates.yml), as lanes
 P2c6 and P2c7 ran it.
 
     python tools/writers_bench.py long.docx [writers=24] [edits=5] [mix=rust|mixed]
 
 Each writer, in its own thread, edits paragraphs of its own: ``word_set_text``, then
 ``replace_text`` of the text it set; ``mix=mixed`` makes every fourth edit a
-``word_insert_text`` (a call the session hands back to Python).  One JSON line on stdout.
+``word_insert_text``.  One JSON line on stdout.
 """
 
 from __future__ import annotations
 
+import io
 import json
 import resource
 import sys
 import threading
 import time
+import zipfile
+
+from lxml import etree
 
 TOOLS = ("word_set_text", "replace_text", "word_insert_text")
+W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+W14_PARA_ID = "{http://schemas.microsoft.com/office/word/2010/wordml}paraId"
+
+
+def paragraph_ids(data: bytes) -> list[str]:
+    """The block ids (``p:`` and the ``w14:paraId``) of the body's top-level paragraphs that
+    have text, in a package's bytes."""
+    with zipfile.ZipFile(io.BytesIO(data)) as package:
+        body = etree.fromstring(package.read("word/document.xml")).find(f"{W}body")
+    return [f"p:{p.get(W14_PARA_ID)}" for p in body.iterfind(f"{W}p")
+            if p.get(W14_PARA_ID) and "".join(t.text or "" for t in p.iter(f"{W}t")).strip()]
 
 
 def rss_mb() -> float:
@@ -48,10 +62,11 @@ def main() -> None:
     before = rss_mb()
     started = time.perf_counter()
     with open(path, "rb") as handle:
-        doc = session.open(handle.read(), name="long.docx")
+        data = handle.read()
+    doc = session.open(data, name="long.docx")
     opened = time.perf_counter() - started
     after_open = rss_mb()
-    ids = [p.id for p in session.entry(doc).document.paragraphs() if p.text.strip() and p.id.startswith("p:")]
+    ids = paragraph_ids(data)
     print("paragraphs with ids", len(ids), "open s", round(opened, 2), file=sys.stderr)
     calls: list[tuple[str, float, float, float]] = []      # tool, wall, held, lock wait
     errors: list = []
@@ -93,7 +108,7 @@ def main() -> None:
         return {tool: (round(reduce([c[index] for c in calls if c[0] == tool]) * 1000, 1)
                        if any(c[0] == tool for c in calls) else None) for tool in TOOLS}
 
-    rust = reads._session()
+    rust = reads.session()
     print(json.dumps({
         "writers": writers, "edits": len(calls), "mix": mix, "wall_s": round(wall, 2), "cpu_s": round(cpu, 2),
         "p50_ms": round(percentile(walls, 0.5) * 1000, 1), "p99_ms": round(percentile(walls, 0.99) * 1000, 1),
@@ -101,7 +116,7 @@ def main() -> None:
         "by_tool_p99_ms": by_tool(1, lambda v: percentile(v, 0.99)),
         "held_max_ms": by_tool(2, max), "lock_wait_max_ms": by_tool(3, max),
         "errors": len(errors), "first_error": errors[:1],
-        "served": edits.served(), "fallbacks": edits.fallbacks(), "bridge_calls": dict(rust.bridge_calls()),
+        "served": edits.served(),
         "store": dict(rust.store_stats(session.entry(doc).handle.doc)),
         "open_s": round(opened, 2), "rss_open_mb": round(after_open - before, 1), "rss_max_mb": round(rss_mb(), 1),
     }))

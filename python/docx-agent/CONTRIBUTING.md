@@ -89,9 +89,6 @@ and every saved document's parts are byte for byte the ones recorded. A change t
 or a saved document is not a refresh: record that transcript again
 (`goldens_replay.run(..., record=True)`) and review the diff as part of the change.
 
-The recipes in [docs/common-tasks.md](docs/common-tasks.md) are run as written by
-`tests/test_readme.py`; keep them working.
-
 ## What never goes into the repository
 
 - **No Microsoft font file**, in any form, and no font data in any fixture.
@@ -136,17 +133,10 @@ this package uses; what each earlier version added is in that package's CHANGELO
   what docx-agent imports from it directly (the package kinds, the font folders, the
   locale). 0.28.0 has the public `imagemeta.pixels_and_density` (review, N2); 0.31.0
   `drawingml.theme`, the Office theme a new document is written with (review, S3).
-- `docx2svg>=0.2.0`: renders and lays out, a hard dependency by decision (ROADMAP.md,
-  "Decisions", 9): it is standard-library only, so it costs little, and reflow feedback is
-  part of every edit's answer. 0.2.0 is docx2svg's first tagged version and always gives
-  a layout its coverage, which every layout fact is read from.
-- `ooxml-core>=0.7.0`: the Rust core (built from this repository's `crates/`, prebuilt
-  wheels on GitHub Releases), which lays a document out and answers a check of some ranges
-  (`docx_agent.rust`, 0.1.114). 0.2.0 has `ooxml_core.check`; 0.7.0 `tree_digests` and
-  `index_walk`, which the main part's writing from its last bytes and the body's index read
-  (0.1.120). Where it cannot be imported, docx-agent checks and writes its own way, said
-  once in its log.
-- `lxml>=4.9`: the XML tree every edit is made in.
-- `markdown-it-py>=3.0`, `mdit-py-plugins>=0.4` (footnotes): the Markdown parser, by
-  decision (ROADMAP.md, "Decisions", 2): it reads `to_markdown`'s output back for the
-  reverse-parse check and checks a block's inline Markdown before it is written.
+- `docx2svg>=0.14.0`: the page engine's font folders and options (`docx2svg.rust`), which the
+  Rust session lays a document out with, and the live view's pictures.
+- `ooxml-core>=0.10.0`: the Rust core (built from this repository's `crates/`, prebuilt
+  wheels on GitHub Releases), which holds every Word document since 0.2.0: it opens, edits,
+  lays out, checks, renders and saves it. There is no Python path without it.
+- lxml and the Markdown parser (`markdown-it-py`, `mdit-py-plugins`) are no longer
+  dependencies (0.2.0): the Python view that used them is gone.

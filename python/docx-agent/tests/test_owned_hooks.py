@@ -21,7 +21,6 @@ ooxml_core = pytest.importorskip("ooxml_core")
 
 from docx_agent import Document  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
-from docx_agent.tools import format as docx_format  # noqa: E402
 from ooxml_edit.tools import OwnedDocument, Toolbox  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -58,18 +57,6 @@ def _report() -> bytes:
     document.insert_markdown("# Part one\n\n" + "\n\n".join(f"Text {k}." for k in range(6))
                              + "\n\n| a | b |\n|---|---|\n| 1 | 2 |")
     return document.to_bytes()
-
-
-@pytest.mark.parametrize("name", LISTED)
-def test_summary_and_problems_of_an_owned_document_are_the_python_ones(box, name):
-    data = (FIXTURES / name).read_bytes()
-    session = box.session()
-    doc = session.open(data, Path(name).name)
-    _entry, subject = _owned(session, doc)
-    python = Document.open(data)
-    assert FORMAT.summary(subject) == docx_format.summary(python)
-    key = FORMAT.problem_key
-    assert sorted(map(key, FORMAT.problems(subject))) == sorted(map(key, docx_format.problems(python)))
 
 
 def _ledger(data: bytes, state: str) -> dict:

@@ -30,7 +30,7 @@ ooxml-edit's Responses round-trip test). Chat Completions has not been run live.
 | Group | Tools |
 | --- | --- |
 | `core` (always loaded) | `open_document`, `new_document`, `save_document`, `undo`, `find_text`, `replace_text`, `render`, `check`, `describe`, `word_read`, `word_set_text`, `batch`, `read_batch` |
-| `shared_misc` | `close_document`, `read_blob`, `set_properties`, `edit_chart`, `edit_smartart`, `style_by_value` |
+| `shared_misc` | `close_document`, `read_blob`, `set_properties`, `edit_chart` |
 | `word_text` | `word_inspect`, `word_insert_text`, `word_delete`, `word_insert_markdown` |
 | `word_review` | `word_set_tracking`, `word_changes`, `word_comments` |
 | `word_structure` | `word_move`, `word_copy_from`, `word_sections`, `word_headers_footers`, `word_fields`, `word_notes`, `word_links` |
@@ -65,8 +65,7 @@ the PNGs -- then finds those faces, in the worker process too (the folders are r
 where the toolbox runs and handed over). They are added to the folders Word uses and
 searched after them. Without `font_dirs` the environment variable `OOXML_FONT_DIRS`
 (folders separated by `os.pathsep`) is read; `font_dirs=[]` reads neither. No tool
-definition or prompt changes. A document opened outside the tools takes the same setting
-as `Document.font_dirs`.
+definition or prompt changes.
 
 **The user's locale.** The regional settings a document is drawn and edited in -- an
 `ooxml_common.locales.Locale` -- are configuration too, per toolbox or per session:
@@ -81,12 +80,11 @@ other = toolbox.session(locale=None)                 # en-US
 ```
 
 Every layout and render (in the worker process too, where the locale is handed over and
-keys the render cache) passes it to docx2svg -- the separator a decimal tab stop aligns
+keys the render cache) passes it to the layout -- the separator a decimal tab stop aligns
 on, a chart's decimal and thousands separators -- and the document edits in it: a new
 chart's language where the document states none, and `new_document`'s language and number
 separators (`w:decimalSymbol`, `w:listSeparator`). Without one it is en-US, never the
-server's own. No tool definition or prompt changes. A document outside the tools takes it
-as `Document.locale` (or `Document.new(locale=...)`).
+server's own. No tool definition or prompt changes.
 
 **Roles: a reviewer's tools.** A toolbox or session loads roles, additive toolsets
 (ooxml-edit 0.45.0, [TOOLS.md, "Roles"](https://github.com/uvrt/ooxml-edit/blob/main/docs/TOOLS.md)):
@@ -127,30 +125,26 @@ sent = toolbox.definitions("anthropic", roles=["review", "accept"])
 system = toolbox.system_prompt(roles=["review", "accept"], tools=sent)  # follows `sent`
 ```
 
-### The application's settings: an asset catalogue, minimum text sizes
+### The application's settings: minimum text sizes, typography
 
 `docx_format(...)` is `FORMAT` with settings of the application's own -- never tool
-arguments, so the definitions stay the same unless a setting adds a tool (pptx-agent's
-`deck_format` takes the same two):
+arguments, so the definitions stay the same:
 
 ```python
-from ooxml_edit.tools import FolderCatalogue
 from docx_agent.tools import docx_format
 
-icons = FolderCatalogue("brand-icons")             # brand-icons/index.json: id, file, name, keywords
-fmt = docx_format(assets=icons, min_text_size={"body": 10, "table": 9, "footnote": 8, "caption": 9})
+fmt = docx_format(min_text_size={"body": 10, "table": 9, "footnote": 8, "caption": 9})
 toolbox = Toolbox(TOOLS, formats=[fmt], groups=GROUPS)
 ```
 
-- `assets` (ooxml-edit's catalogue protocol, `search` and `get`): `word_find_asset` finds
-  ids by words, and `word_drawings` `insert_picture` takes `asset` in place of `image` --
-  inline, or floating with `wrap`; `at` a position or a cell (`t:1A/c0,0`); `size_pt` or
-  `width`; `color` a theme colour (`accent2`) or `RRGGBB` to tint an SVG, as Word draws a
-  recoloured SVG (its theme class kept, so the icon follows the document's theme).
+- `assets`: an asset catalogue is not supported yet (0.2.0): `docx_format(assets=...)` raises
+  `ValueError`; give `word_drawings` `insert_picture` the picture as an image blob.
 - `min_text_size`: one number, or points per kind (`body`, `table`, `footnote`,
   `endnote`, `header`, `footer`, `caption`; a kind left out is not checked). `check`
-  reports `small_text` against it, and `word_insert_markdown` and `word_edit_table`
-  `set_cells` report the text they wrote that its styles make smaller.
+  reports `small_text` against it (as `check`'s `min_size` does). The tools that write
+  content no longer note the small text they wrote (0.2.0).
+- `typography` (default on): the spacing Word's proofing of a language expects around
+  `: ; ! ?` and guillemets in the text a call writes; `False` writes the text as given.
 
 ### Tables from data
 
@@ -204,7 +198,7 @@ text, read once): `{col: 2, rows: "*", text: "Yes"}`. `rows` is `*` (every row b
 header rows), or rows from 0 as `row` counts them, both ends written: `1..40`, `5..` (to the
 last), `..9` (from the first below the header), `7`; `a-b` and `a:b` read as `a..b`. The
 header rows are those marked to repeat, else the first row where the table's look has its
-header row on (as `style_by_value` reads a column); a range that names one writes it, with a
+header row on; a range that names one writes it, with a
 note. The column is `col` or `col_label`. A merged cell is written once; a row with no cell
 at that column is left and said. The cells are written exactly as that many one-cell entries
 write them, and a value by reference is kept on every cell it went into. The result gives,
@@ -299,7 +293,7 @@ compact JSON record:
 Other custom XML items (a bibliography, cover-page properties, a content control's data)
 are left as they are. `word_insert_markdown`'s and `set_cells`' `from`, and `edit_chart`'s,
 write the record in the call's undo step; the last one dropped takes the item, its
-properties and the relationship away. `session.provenance(doc)` (or `Document.provenance()`)
+properties and the relationship away. `session.provenance(doc)`
 reads `{address: record}`, for the tables and charts the document has with its tracked
 changes accepted. No tool or parameter is added.
 
@@ -323,7 +317,7 @@ rules (ooxml-edit's docs/TOOLS.md). Text changed in a recorded table by the text
 (`word_set_text`, `replace_text`...) is not followed: the record says where the values were
 placed from. A table deleted as a tracked change keeps its entry, left out on reading; a
 save prunes nothing; an entry whose object is gone (another program deleted it) is left
-out on reading (`Document.provenance().ignored` counts them) and pruned by the next edit.
+out on reading and pruned by the next edit.
 
 The provider SDKs read their keys from the environment (`ANTHROPIC_API_KEY`,
 `OPENAI_API_KEY`). When the loop ends, `session.take_outputs()` holds what `save_document`

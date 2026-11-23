@@ -106,27 +106,6 @@ def test_numbers_on_pages_keep_only_the_texts_drawn_there(made):
         assert past.ok and past.data["numbers"]["texts"] == []
 
 
-# Lane H7e: the layout part is docx-agent's own documents' (an owned document's numbers are
-# placed by the session's engine, whose reply carries no timing).
-@pytest.mark.usefixtures("python_owned")
-def test_timing_says_numbers_and_validation(made):
-    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as box:
-        session, doc, document = _session(box, made)
-        ids = [b["id"] for b in document.blocks()]
-        result = box.dispatch(session, "check", {"doc": doc, "range": [f"{ids[1]}..{ids[4]}"],
-                                                 "include": ["validate", "layout", "numbers", "reflow",
-                                                             "fields"]})
-        assert result.ok, result.to_json()
-        timing = result.data["timing"]
-        assert {"validate", "layout", "facts", "fields", "numbers", "validation"} <= set(timing), timing
-        assert all(isinstance(v, float) and v >= 0 for v in timing.values())
-        assert sum(timing.values()) <= result.duration + 0.01
-        assert list(result.data)[-1] == "timing"
-        # numbers alone: its result as before (no timing added to a result that had none).
-        alone = box.dispatch(session, "check", {"doc": doc, "include": ["numbers"]})
-        assert alone.ok and "timing" not in alone.data
-
-
 def test_numbering_skips_level_reads_each_style_once(made, monkeypatch):
     document = Document.open(made)
     calls: list = []

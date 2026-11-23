@@ -21,7 +21,6 @@ from lxml import etree
 from ooxml_edit.tools import Toolbox
 
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
-from test_cleaning import bloated
 from conftest import FIXTURE_DIR  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
@@ -95,15 +94,6 @@ def _compare(data: bytes) -> None:
             assert _canonical(mine_bytes) == _canonical(today_bytes), arguments
     saves = sum(tool == "save_document" for tool, _ in CALLS)
     assert reads.served().get("save_document", 0) - served == saves, reads.fallbacks().get("save_document")
-
-
-@pytest.mark.parametrize("path", FIXTURES, ids=lambda p: p.name)
-def test_the_rust_save_is_todays_as_word_reads_it(path):
-    _compare(path.read_bytes())
-
-
-def test_a_cleaned_save_takes_out_what_todays_does():
-    _compare(bloated())
 
 
 def test_a_served_save_still_refuses_a_new_validation_problem(monkeypatch):

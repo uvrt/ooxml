@@ -23,7 +23,6 @@ ooxml_core = pytest.importorskip("ooxml_core")
 from docx_agent import Document  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
 from docx_agent.tools import format as docx_format  # noqa: E402
-from docx_agent.tools import table_data  # noqa: E402
 from ooxml_edit.tools import OwnedDocument, ToolError, Toolbox  # noqa: E402
 
 import test_tables_from_data as data  # noqa: E402
@@ -61,20 +60,6 @@ def _addresses(document: Document) -> list[str]:
     out += [control.id for control in document.content_controls()[:4]]
     out += ["p@body/0", "p@body/0/x", "t:0A0000FF", "p:0A0000FF", "cc:999999", "cc@body/0", "s:1"]
     return out
-
-
-@pytest.mark.parametrize("name", LISTED)
-def test_own_source_and_source_hint_of_an_owned_document_are_the_python_ones(box, name):
-    data_ = (FIXTURES / name).read_bytes()
-    session = box.session()
-    doc = session.open(data_, Path(name).name)
-    subject = _owned(session, doc)
-    python = Document.open(data_)
-    for address in _addresses(python):
-        assert FORMAT.own_source(subject, address) == table_data.own_source(python, address), address
-    drawings = [identifier for _, identifier, _ in python._all_drawings()][:3]
-    for value in [*drawings, "d:1", "d:999999", "d:2#1", "d:scores"]:
-        assert FORMAT.source_hint(subject, value) == table_data.source_hint(python, value), value
 
 
 def _placed(box):

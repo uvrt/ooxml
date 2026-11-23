@@ -393,13 +393,10 @@ def test_a_tracked_replacement_accepts_with_the_untracked_edits_formatting():
 def test_words_accept_and_reject_equal_ours(box, case, action):
     """Word's own Accept All / Reject All of each form give the table docx-agent's own give:
     the same cells, spans, merges and text (widths Word re-saves its own way)."""
-    import sys
-    from pathlib import Path
 
     import oracle
 
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-    from e3_probe import review_script
+    from oracle import review_script
 
     steps = ORDERS[case][0] if case in ORDERS else CASES[case]
     data = _made(box, steps).to_bytes()

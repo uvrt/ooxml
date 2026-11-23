@@ -148,23 +148,6 @@ CASES = {
 }
 
 
-@pytest.mark.parametrize("case", list(CASES))
-def test_served_edits_follow_the_records_as_docx_agent_does(toolbox, request, case, monkeypatch):
-    calls = CASES[case]
-    data = request.getfixturevalue(ON.get(case, "recorded"))
-    rust = _run(toolbox, data, calls, served=True)
-    _serve_none(monkeypatch)
-    python = _run(toolbox, data, calls, served=False)
-    assert rust[0]["item"] != _kept(data)["item"] or case == "formatted"
-    for k, (ours, theirs) in enumerate(zip(rust, python)):
-        for key in theirs:
-            assert ours[key] == theirs[key], (case, k, key, ours[key], theirs[key])
-    if case == "fact moved":
-        assert b'"text":"second","at":6,"p":0' in rust[0]["item"]
-    if case == "every record gone":
-        assert rust[-1]["item"] is None and b"customXml" not in rust[-1]["names"]
-
-
 # -- word_changes (docx-agent's _follow_review) --------------------------------------------------
 
 
@@ -212,52 +195,12 @@ REVIEWS = {
 }
 
 
-@pytest.mark.parametrize("case", list(REVIEWS))
-def test_served_reviews_follow_the_records_as_docx_agent_does(toolbox, request, case, monkeypatch):
-    fixture, calls, served = REVIEWS[case]
-    data = request.getfixturevalue(fixture)
-    _serve_also(monkeypatch, "word_changes", _review)
-    rust = _run(toolbox, data, calls, served=served)
-    _serve_none(monkeypatch)
-    python = _run(toolbox, data, calls, served=False)
-    for k, (ours, theirs) in enumerate(zip(rust, python)):
-        for key in theirs:
-            assert ours[key] == theirs[key], (case, k, key, ours[key], theirs[key])
-    assert rust[0]["item"] != _kept(data)["item"]
-
-
 # -- reading them (lane P2d1, PR c): the session's reading of the view's version -------------------
 
 
 def _reads(document) -> tuple:
     found = document.provenance()
     return dict(found), found.ignored, document.text_facts(), document.text_labels()
-
-
-@pytest.mark.parametrize("fixture", ["recorded", "stale", "charted", "reviewed", "reviewed_alone"])
-def test_the_session_reads_the_records_as_docx_agent_does(toolbox, request, fixture):
-    data = request.getfixturevalue(fixture)
-    session = toolbox.session()
-    doc = session.open(data, name="recorded.docx")
-    entry = session.entry(doc)
-    if not isinstance(entry, OwnedEntry):
-        pytest.skip("no Rust session to own the document")
-    steps = [None, *CASES["chart's paragraph deleted"]] if fixture == "charted" else \
-        [None, *CASES["fact moved"], *CASES["label stretched"], *REVIEWS["accept all"][1]]
-    for step in steps:
-        if step is not None:
-            assert toolbox.dispatch(session, step[0], {"doc": doc, **step[1]}).ok
-        document = entry.document
-        hook = document.owned_records
-        assert hook is not None and hook() is not None
-        ours = _reads(document)
-        document.owned_records = None
-        try:
-            theirs = _reads(document)
-        finally:
-            document.owned_records = hook
-        assert ours == theirs, (fixture, step)
-    session.close(doc)
 
 
 # -- the one command without the after-edit steps that could need them (lane P2d1 audit) ---------

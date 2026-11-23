@@ -19,7 +19,7 @@ from test_tools_layout_facts import FILLER, call, docx, ok, p  # noqa: E402
 
 from docx_agent import Document  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
-from docx_agent.tools import keep_trials, shared  # noqa: E402
+from docx_agent.tools import keep_trials  # noqa: E402
 
 pytestmark = pytest.mark.any_faces
 
@@ -199,31 +199,6 @@ def test_each_range_is_tried_alone_and_past_the_cap_the_rest_say_how_to_ask(box,
     assert "if_kept" in last
 
 
-# docx-agent's own trials (keep_trials' budget, where its facts are made, a trial failing, its
-# count of layouts): documents the tool layer holds itself (conftest.python_owned), whose checks
-# it answers.  The Rust session's check keeps its own budget (ooxml-tools-word check/ranges.rs).
-@pytest.mark.usefixtures("python_owned")
-def test_past_the_time_budget_no_further_trial_starts(box, session, monkeypatch):
-    monkeypatch.setattr(keep_trials, "TRIAL_SECONDS", 0.0)
-    data, starts = _many(2)
-    d = session.open(data, "budget.docx")
-    ids = _ids(session, d)
-    first, second = _range(box, session, d, *[f"{ids[k]}..{ids[k + 3]}" for k in starts])
-    assert "if_kept" in first and "effect_left_out" in second
-
-
-@pytest.mark.usefixtures("python_owned")
-def test_a_check_laid_out_here_says_where_the_trial_is_made(box, session, monkeypatch):
-    """Where the layout is read in the caller's process (a converter that cannot make a
-    check's facts where the layout is held), no trial: the range says how to ask (rule 4)."""
-    monkeypatch.setattr(shared, "check_facts", lambda *args, **kwargs: None)
-    d = session.open(_span_doc(), "here.docx")
-    ids = _ids(session, d)
-    [entry] = _range(box, session, d, f"{ids[17]}..{ids[20]}")
-    assert "fix" in entry and "if_kept" not in entry
-    assert entry["effect_left_out"] == shared.KEEPS_NOT_HERE
-
-
 def test_the_trials_leave_the_layout_checked_as_it_was(box, session):
     """The trial is laid out from the layout held for the document: the facts of the same
     version after it, and the next version's incremental layout, are a layout's of those
@@ -269,39 +244,3 @@ def test_checks_with_trials_and_edits_at_once_all_finish(box):
         thread.join(120)
     assert not any(thread.is_alive() for thread in threads)
     assert len(results) == 8 and all(r.ok for r in results), [r.error for r in results if not r.ok]
-
-
-@pytest.mark.usefixtures("python_owned")
-def test_a_trial_that_fails_never_fails_the_check(monkeypatch):
-    def failing(*args, **kwargs):
-        raise RuntimeError("made-up failure")
-
-    monkeypatch.setattr(keep_trials, "_changed", failing)
-    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as box:
-        session = box.session()
-        d = session.open(_span_doc(), "fails.docx")
-        ids = _ids(session, d)
-        [entry] = _range(box, session, d, f"{ids[17]}..{ids[20]}")
-    assert "fix" in entry and "if_kept" not in entry
-    assert entry["effect_left_out"].startswith("not laid out: the trial layout failed (RuntimeError)")
-
-
-@pytest.mark.usefixtures("python_owned")
-def test_a_second_check_of_the_unchanged_document_lays_no_trial_out_again():
-    """The trial's result is kept in the process that made it, by the bytes checked: the
-    same range checked again -- other pages, so not the caller's kept facts -- reuses it;
-    an edit is other bytes and is tried afresh."""
-    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as box:
-        session = box.session()
-        d = session.open(_span_doc(), "again.docx")
-        ids = _ids(session, d)
-        span = f"{ids[17]}..{ids[20]}"
-        before = keep_trials.laid_out
-        [first] = _range(box, session, d, span, pages=[1])
-        assert keep_trials.laid_out == before + 1
-        [second] = _range(box, session, d, span, pages=[1, 2])
-        assert keep_trials.laid_out == before + 1
-        assert second["if_kept"] == first["if_kept"]
-        ok(box, session, "word_format", doc=d, targets=[ids[0]], bold=True)
-        [third] = _range(box, session, d, span, pages=[1])
-        assert keep_trials.laid_out == before + 2 and "if_kept" in third

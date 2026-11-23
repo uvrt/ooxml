@@ -24,7 +24,6 @@ import datetime as dt
 import io
 import zipfile
 
-import docx2svg
 import pytest
 from lxml import etree
 from ooxml_edit.tools import Toolbox
@@ -200,30 +199,6 @@ def _failing(monkeypatch, error: BaseException) -> list:
 
     monkeypatch.setattr(layout_module.docx2svg, "lay_out_docx", lay_out_docx)
     return calls
-
-
-@pytest.mark.usefixtures("python_layout")  # lane L4: docx2svg's Python layout's failures and relaid causes
-def test_a_failed_layout_is_layout_failed_naming_the_table_never_not_found(toolbox, monkeypatch):
-    session, document = _open(toolbox, _with_extra_cells(_shelf()))
-    table = document.tables()[0].id
-    _failing(monkeypatch, docx2svg.LayoutError("w:body/w:tbl[1]", "IndexError: list index out of range"))
-    rendered = toolbox.dispatch(session, "render", {"doc": "d1", "pages": [1]})
-    assert not rendered.ok and rendered.error.code == "layout_failed"
-    assert rendered.error.valid_options == [table] and table in rendered.error.message
-    # check still says what it can: the validation, and the layout facts read from the document.
-    checked = toolbox.dispatch(session, "check", {"doc": "d1", "include": ["validate", "reflow", "layout"]})
-    assert checked.ok, checked.to_json()
-    assert checked.data["reflow"]["error"].startswith("layout_failed: ") and table in checked.data["reflow"]["error"]
-    assert checked.data["layout"]["table_grid_mismatch"][0]["table"] == table
-
-
-@pytest.mark.usefixtures("python_layout")  # lane L4: docx2svg's Python layout's failures and relaid causes
-def test_any_failure_in_the_layout_is_layout_failed(toolbox, monkeypatch):
-    session, _ = _open(toolbox, _shelf().to_bytes())
-    _failing(monkeypatch, IndexError("list index out of range"))
-    rendered = toolbox.dispatch(session, "render", {"doc": "d1", "pages": [1]})
-    assert not rendered.ok and rendered.error.code == "layout_failed"
-    assert "IndexError" in rendered.error.message and rendered.error.valid_options == []
 
 
 def test_layout_failed_survives_a_worker():
