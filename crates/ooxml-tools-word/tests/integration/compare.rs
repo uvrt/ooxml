@@ -9,7 +9,7 @@ use crate::common::{Never, R, W};
 use ooxml_base::Limits;
 use ooxml_opc::Package;
 use ooxml_tools::ToolArgs;
-use ooxml_tools_word::{word_compare_blocks, Others, Version, WordCompareBlocks};
+use ooxml_tools_word::{word_compare_blocks, FollowReport, Others, Version, WordCompareBlocks, WordFollowSample};
 use ooxml_word_model::docx::Versions;
 use ooxml_zip::{Method, NewEntry, Writer};
 use serde_json::{json, Value};
@@ -67,6 +67,23 @@ fn tables_and_paragraphs_compare_as_docx_agent_compares_them() {
     for (call, want) in calls.into_iter().zip(golden) {
         assert_eq!(reply(call), want);
     }
+}
+
+#[test]
+fn word_follow_sample_reads_an_empty_report_as_the_default() {
+    // Tool rule 1: "" is a strict decoder's placeholder for a report not given (docx-agent:
+    // `report or "all"`); a report it does not know is still refused.
+    let call = |report: Value| {
+        WordFollowSample::accept(
+            json!({"doc": "d1", "sample": {"block": "p:1"}, "copies": ["p:2"], "report": report}),
+            Some("docx"),
+        )
+    };
+    let (args, _) = call(json!("")).unwrap();
+    assert_eq!(args.report, None);
+    let (args, _) = call(json!("actionable")).unwrap();
+    assert_eq!(args.report, Some(FollowReport::Actionable));
+    assert!(call(json!("some")).is_err());
 }
 
 #[test]
