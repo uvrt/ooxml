@@ -119,4 +119,4 @@ and w10-w13 (a board pack from five reports, a contract form, a picture with alt
 legacy document tidied);
 `tests/test_tools_goldens.py` replays them to byte-identical outputs that pass the trial's
 own checks (where Office's faces are installed; elsewhere it compares every result less what
-the layout measures, CONTRIBUTING.md "Golden transcripts"), and `tests/test_oracle_tools.py` has Word open each.
+the layout measures, CONTRIBUTING.md "Golden transcripts"), and the Word-oracle suite (`crates/ooxml-oracle/word/suite`, `pytest -m word`) has Word open each.

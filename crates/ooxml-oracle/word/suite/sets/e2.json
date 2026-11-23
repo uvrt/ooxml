@@ -1,0 +1,14 @@
+{"set": "e2",
+ "about": "E2's Markdown: every construct inserted, into a new document and into one with lists, plain and tracked.",
+ "cases": [
+  {"name": "constructs", "document": "new", "calls": [
+    {"tool": "word_insert_markdown", "arguments": {"at": "end", "markdown": "# A heading\n\nA paragraph with **bold**, *italic*, ***both***, `code` and a [link](https://example.com).\n\n## A second level\n\n1. One\n2. Two\n   - Nested bullet\n   - Another\n3. Three\n\n- Bullet\n- Bullet two\n\n> A quotation that runs over a line or two of the page, to be wrapped by Word as by the tools.\n\n| Name | Value |\n|---|---:|\n| Alpha | 1 |\n| Beta | 22 |\n\n### A third level\n\nThe end.\n"}}]},
+  {"name": "into-lists", "document": "generated/lists-and-styles.docx", "calls": [
+    {"tool": "word_insert_markdown", "arguments": {"at": "after:$p4", "markdown": "3. Third item, inserted\n4. Fourth item, inserted\n"}},
+    {"tool": "word_insert_markdown", "arguments": {"at": "after:$p1", "markdown": "## Inserted heading\n\nInserted text under it.\n"}}]},
+  {"name": "constructs-tracked", "document": "generated/review-follow.docx", "tracked": "Writer A", "calls": [
+    {"tool": "word_insert_markdown", "arguments": {"at": "after:$p3", "markdown": "## Tracked heading\n\nA tracked paragraph with **bold**.\n\n- A tracked bullet\n- Another\n\n| A | B |\n|---|---|\n| 1 | 2 |\n"}}]},
+  {"name": "around-a-table", "document": "generated/review-follow.docx", "calls": [
+    {"tool": "word_insert_markdown", "arguments": {"at": "before:$t1", "markdown": "Before the table, inserted.\n\n1. A numbered item\n2. Another\n"}},
+    {"tool": "word_insert_markdown", "arguments": {"at": "after:$t1", "markdown": "After the table, *inserted*.\n"}}]}
+ ]}
