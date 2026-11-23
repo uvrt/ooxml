@@ -8,7 +8,4 @@ Must not: import pytest (a plain table).
 """
 
 #: The gap each test meets, by ``file::name[params]``.
-GAPS: dict[str, str] = {
-    "test_toc_numbers.py::test_the_entries_are_words[t-clear]":
-        "a TOC entry lacks the right dot tab stop Word writes where the toc style clears its own",
-}
+GAPS: dict[str, str] = {}
