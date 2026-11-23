@@ -200,6 +200,7 @@ impl Session {
             mut warnings,
             made,
             named,
+            layout,
             layout_limit,
             ..
         } = state;
@@ -216,10 +217,9 @@ impl Session {
             }
             call_made = made.zip(document.as_ref()).map(|(made, document)| {
                 let one = made.first.seq() == made.last.seq();
-                // (the host's layout only: a call it gives none is not measured after its
-                // edits, as before the session kept engines of its own)
-                let reflow = context
-                    .layout
+                // the host's layout, else the session's own engine of the document: measured
+                // only where it laid out the version before (`reflow_after_edit`)
+                let reflow = layout
                     .as_deref()
                     .and_then(|layout| crate::reflowed::after_edit(layout, document, &made, (layout_limit, &cancel)));
                 CallMade {

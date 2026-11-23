@@ -145,7 +145,7 @@ fn describes_what_the_parts_say() {
     let listed: Vec<&str> = DESCRIBED
         .iter()
         .copied()
-        .filter(|k| !["tagged", "headings_note"].contains(k))
+        .filter(|k| !["pages", "tagged", "headings_note"].contains(k))
         .collect();
     assert_eq!(keys, listed);
 }
