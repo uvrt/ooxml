@@ -6,16 +6,18 @@ from __future__ import annotations
 from typing import Any
 
 from .. import reads
-from . import Adapted, Fallback, adapter, blocks_at, own, written_json
+from ooxml_edit.tools import ToolError
+
+from . import Adapted, adapter, blocks_at, own, written_json
 
 
 @adapter("word_set_text")
 def _set_text(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
     items = arguments.get("items")
-    return {"target": reads._refs(call, arguments.get("target")), "text": arguments.get("text"),
+    return {"target": reads.refs(call, arguments.get("target")), "text": arguments.get("text"),
             "paragraph_style": arguments.get("paragraph_style"),
             "items": None if items is None else [
-                {**item, "target": reads._refs(call, item.get("target"))} if isinstance(item, dict) else item
+                {**item, "target": reads.refs(call, item.get("target"))} if isinstance(item, dict) else item
                 for item in items]}
 
 
@@ -23,7 +25,7 @@ def _set_text(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
 def _replace_text(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
     return {"find": arguments.get("find"), "replace": arguments.get("replace"),
             "expect": arguments.get("expect"), "regex": arguments.get("regex") or None,
-            "slides": arguments.get("slides"), "range": reads._refs(call, arguments.get("range")),
+            "slides": arguments.get("slides"), "range": reads.refs(call, arguments.get("range")),
             "stories": arguments.get("stories", "body")}
 
 
@@ -31,26 +33,22 @@ def _replace_text(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
 def _insert_text(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
     items = arguments.get("items")
     return {**{k: arguments.get(k) for k in ("find", "where", "at", "text", "ref")},
-            "target": reads._refs(call, arguments.get("target")),
-            "within": reads._refs(call, arguments.get("within")),
+            "target": reads.refs(call, arguments.get("target")),
+            "within": reads.refs(call, arguments.get("within")),
             "items": None if items is None else [
-                {**item, "target": reads._refs(call, item.get("target"))} if isinstance(item, dict) else item
+                {**item, "target": reads.refs(call, item.get("target"))} if isinstance(item, dict) else item
                 for item in items]}
 
 
 @adapter("word_delete")
 def _delete(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-    return {"find": arguments.get("find"), "within": reads._refs(call, arguments.get("within")),
-            "target": reads._refs(call, arguments.get("target")),
+    return {"find": arguments.get("find"), "within": reads.refs(call, arguments.get("within")),
+            "target": reads.refs(call, arguments.get("target")),
             "collapse_space": arguments.get("collapse_space"), "force": arguments.get("force")}
 
 
 @adapter("word_insert_markdown")
 def _insert_markdown(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-    if getattr(call.entry.held, "min_text_size", None) is not None:
-        # The text a call writes below the application's minimums is measured in Python
-        # (``note_small_text``); the session has no minimums.
-        raise Fallback("a minimum text size")
     given = own(arguments)
     blob = given.get("blob")
     if isinstance(blob, str) and given.get("markdown") is None and given.get("from") is None:
@@ -58,15 +56,16 @@ def _insert_markdown(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
         try:
             given["markdown"] = call.blob(blob).data.decode("utf-8")
         except UnicodeDecodeError:
-            raise Fallback("a blob that is not UTF-8") from None
+            raise ToolError("invalid_arguments", f"{blob} is not UTF-8 text: Markdown is given as text",
+                            field="blob") from None
         del given["blob"]
     given["at"] = blocks_at(call, given.get("at"))
     source = given.get("from")
     if isinstance(source, str):
         return _field_given(call, given, source)
     facts = call.facts_at("markdown") if getattr(call, "facts", None) else []
-    own_markdown = {id(fact): markdown for fact, markdown in zip(facts, _values_markdown(call, facts))
-                    if markdown is not None}
+    values = zip(facts, _values_markdown(call, facts))
+    own_markdown: dict[int, str | None] = {id(fact): markdown for fact, markdown in values if markdown is not None}
     return Adapted(given, written_json(call.facts, own_markdown)) if own_markdown else given
 
 
@@ -79,18 +78,13 @@ def _values_markdown(call: Any, facts: list[Any]) -> list[str | None]:
 
 
 def _field_given(call: Any, given: dict[str, Any], source: str) -> dict[str, Any]:
-    """``word_insert_markdown`` from one field of one row (``text._field_from``, the host's
+    """``word_insert_markdown`` from one field of one row (``field_text.field_from``, the host's
     data): the field's Markdown as the call's, the value handed over as written into
     ``from`` (the session keeps it on every paragraph made).  Rows as a table stay ``from``
     (the session leaves them to the host)."""
-    from ooxml_edit.tools import ToolError
+    from ...tools.field_text import field_from
 
-    from ...tools.text import _field_from
-
-    try:
-        field = _field_from(call, source, given.get("from_columns"), given.get("header"), given.get("date_format"))
-    except ToolError as error:
-        raise Fallback(f"refusal: {error.code}") from None
+    field = field_from(call, source, given.get("from_columns"), given.get("header"), given.get("date_format"))
     if field is None:
         return given
     given["markdown"] = field.text

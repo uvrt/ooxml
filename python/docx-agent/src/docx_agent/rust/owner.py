@@ -1,5 +1,4 @@
-"""docx-agent's documents owned by the Rust session (phase P2; lane P2c4: the session is the
-only owner).
+"""docx-agent's documents, owned by the Rust session.
 
 A Word document open in a toolbox session is held by the process's Rust session
 (``ooxml_core.Session``, the one :mod:`.reads` reads): its versions, its steps, its ids and
@@ -7,29 +6,39 @@ its saved bytes are the session's.  :class:`RustOwner` is the format's
 :attr:`~ooxml_edit.tools.session.DocumentFormat.owner` (the protocol is
 :mod:`ooxml_edit.tools.owned`'s):
 
-- a tool with a Rust editing handler runs in the session (:mod:`.edits`), and the Python
-  ``Document`` is not read;
-- every other tool runs on the Python view, made current from the session's head when it is
-  read (:func:`.view.follow`: the changed parts, the ids and renames the session gave), and
-  the parts it changed are committed through ``Session.bridge`` as the step of that tool and
-  caller (``bridge_calls{tool}``);
-- undo and redo are the session's own ``undo`` tool (lane U4: who made each step is the
-  session's record too); the save is the session's bytes;
-- a changing call's checks read the session's validation (:func:`owned_validation`) unless
-  the view is current anyway or a layout is compared.
+- a document is opened from its bytes (and the id state saved beside them) in the session
+  alone (:meth:`RustOwner.open_data`); no Python document is made;
+- every tool runs in the session (:mod:`.edits`, :mod:`.reads`);
+- undo and redo are the session's own ``undo`` tool; the save is the session's bytes;
+- a changing call's checks read the session's validation (:func:`owned_validation`).
+
+There is no Python view: the protocol's view methods (``follow``, ``bridge``, ``reader``'s
+document) refuse as ``internal``, so a path that still reads one is found at once.
 """
 
 from __future__ import annotations
 
-import functools
 import json
+import warnings
 import weakref
 from collections.abc import Mapping
 from typing import Any
 
+from ooxml_edit.errors import ArgumentError
+from ooxml_edit.tools import ToolError
+
 from .. import finalizers
 from . import reads
-from .view import follow
+
+
+class TemplateOpened(UserWarning):
+    """A template (``.dotx``, ``.dotm``) was opened to edit: edits change the template
+    itself; ``new_document`` with the template's blob makes a document from it."""
+
+
+class IdStateError(ArgumentError):
+    """The id state given beside a document's bytes was refused: not one docx-agent wrote,
+    or not the state of these bytes (the session's words say what to pass instead)."""
 
 
 def caller_key(caller: Mapping[str, Any] | None) -> str | None:
@@ -46,18 +55,12 @@ def context_of(caller: Mapping[str, Any] | None, limits: Any = None,
                locale: Any = None) -> Any:
     """An ``ooxml_core.CallContext`` for ``caller``: its key, and its context in the order
     given (as the session's replies name the caller: ``agent=b``); with the host's ``limits``
-    on its reply (an :class:`ooxml_edit.tools.Limits`: ``max_result_chars``,
-    ``max_list_items``, ``max_images_per_call``, ``max_image_edge``, as an
-    ``ooxml_core.Limits``; the defaults where ``None``), how long
+    on its reply (an :class:`ooxml_edit.tools.Limits`, as an ``ooxml_core.Limits``), how long
     laying the document out may take in it (``layout_timeout``, seconds; the session's own
-    where ``None``), its writes dated ``date`` (UTC to the second, the session clock's;
-    ``None``: the Rust session's own clock) and spaced by their language unless
-    ``typography`` is off (``docx_format(typography=False)``: as given), with the host's
-    ``layout_counts`` (``(pages, lines)``: a save's ``app.xml`` statistics) where it has laid
-    the version out, and read under ``locale`` (the document's
-    :attr:`~docx_agent.Document.locale`: a table of contents' style names and the separator
-    between them; ``None``: the document's own language, as ``Document._field_language``
-    reads it) -- the last four as an ``ooxml_core.CallWriting``."""
+    where ``None``), its writes dated ``date`` (UTC to the second, the session clock's) and
+    spaced by their language unless ``typography`` is off, with ``layout_counts`` (``(pages,
+    lines)``: a save's ``app.xml`` statistics) and read under ``locale`` -- the last four as
+    an ``ooxml_core.CallWriting``."""
     import ooxml_core
 
     given: dict[str, Any] = {"layout_timeout": layout_timeout}
@@ -75,23 +78,10 @@ def context_of(caller: Mapping[str, Any] | None, limits: Any = None,
     return ooxml_core.CallContext(**given)
 
 
-def host_ids(view: Any) -> Any:
-    """An ``ooxml_core.HostIds`` of what ``view``'s id ledger holds beside the parts a Python
-    tool changed in it: where its draws of new ids got to (an id it drew and did not write is
-    given) and its renames (a block it stamped keeps its old id); ``None`` without a view."""
-    import ooxml_core
-
-    if view is None:
-        return None
-    pool = getattr(getattr(view, "_ledger", None), "pool", None)
-    drawn = {seed: k for seed, k in pool.cursors.items() if k > 0} if pool is not None else {}
-    return ooxml_core.HostIds(drawn=drawn, aliases=dict(getattr(view, "_aliases", None) or {}))
-
-
 def options(**given: Any) -> Any:
     """An ``ooxml_core.CallOptions``: what one ``Session.call`` or ``Session.edit`` runs with
-    beside its name and arguments (``context``, ``documents``, ``layout`` -- an
-    ``ooxml_core.CallLayout`` --, ``blobs``, ``written``, ``limit``)."""
+    beside its name and arguments (``context``, ``documents``, ``layout``, ``blobs``,
+    ``written``, ``limit``)."""
     import ooxml_core
 
     return ooxml_core.CallOptions(**given)
@@ -99,52 +89,57 @@ def options(**given: Any) -> Any:
 
 def documents(**given: Any) -> Any:
     """An ``ooxml_core.CallDocuments``: what a call needs about the open documents it names
-    (``at``: the versions it reads; ``names``: the host's names for them; ``tables``: the tables
-    of the documents the host holds itself, asked only where a refusal names one)."""
+    (``at``, ``names``, ``tables``, ``sources``)."""
     import ooxml_core
 
     return ooxml_core.CallDocuments(**given)
 
 
+def _no_view(what: str) -> ToolError:
+    return ToolError("internal", f"{what}: a Word document has no Python view; the Rust session holds it")
+
+
 class RustOwner:
     """The Rust session as the owner of docx-agent's documents in a toolbox session; its
-    handle per document is the :class:`~.reads.Mirror` the reads use."""
+    handle per document is the :class:`~.reads.Mirror` the reads use.  ``settings``: the
+    application's settings of the format (``docx_format``: ``min_text_size``,
+    ``typography``), which every document's calls read."""
 
-    def open_data(self, data: bytes, state: Any, name: str) -> "reads.Mirror | None":
+    def __init__(self, **settings: Any) -> None:
+        self.settings = {key: value for key, value in settings.items() if value is not None}
+
+    def open_data(self, data: bytes, state: Any, name: str) -> "reads.Mirror":
         """Open ``data`` (a Word package's bytes; ``state`` the id state saved beside them,
         or ``None``) in the Rust session alone, as ``name``: the session reads its parts once,
-        its ids against the state, and keeps the ids the state retired (lane H7c); no Python
-        ``Document`` is made.  ``None`` where there is no session (the tool layer opens the
-        Python document then).  A state that is not these bytes' is refused as
-        :meth:`Document.open` refuses it (an :class:`~docx_agent.edit.ids.IdStateError`, in
-        the session's words, which are docx-agent's); a package without a Word document's
-        main part too; a template warns (:class:`~docx_agent.edit.authoring.TemplateOpened`)."""
+        its ids against the state, and keeps the ids the state retired.  A state that is not
+        these bytes' is refused (:class:`IdStateError`, in the session's words); a package
+        without a Word document's main part too; a template warns (:class:`TemplateOpened`)."""
         import ooxml_core
 
-        session = reads._session()
-        if session is None:
-            return None
+        finalizers.drain()
+        held = reads.session()
         try:
             if state is None:
-                doc, numbers = session.open(data, kind="docx", name=name), (0, 0)
+                doc, numbers = held.open(data, kind="docx", name=name), (0, 0)
             else:
-                doc, version, last = session.open_state(data, state, name=name)
+                doc, version, last = held.open_state(data, state, name=name)
                 numbers = (version, last)
         except ooxml_core.StateRefused as exc:
-            from ..edit.ids import IdStateError
-
             raise IdStateError(str(exc)) from None
         except ooxml_core.NotWordPackage:
-            raise ValueError("not a Word package: no main document part") from None
-        mirror = reads.Mirror(session, doc, {})
-        weakref.finalize(mirror, finalizers.later, reads._close, session, doc)
+            raise ArgumentError("not a Word package: no main document part") from None
+        mirror = reads.Mirror(held, doc, self.settings)
+        # the finalizer only hands the close over (docx_agent.finalizers): never inside the collector
+        weakref.finalize(mirror, finalizers.later, reads.close, held, doc)
         with mirror.lock:
-            mirror.owned = True
-            mirror.view_head = mirror.opened = session.head(doc)
+            mirror.opened = held.head(doc)
             mirror.numbers_opened = numbers
-        kind = mirror.view_head.file_kind()
+        kind = mirror.opened.file_kind()
         if kind in ("dotx", "dotm"):
-            _template_opened(kind)
+            warnings.warn(TemplateOpened(
+                f"this file is a template (.{kind}): editing it edits the template. To make a document "
+                "from it use new_document with its blob; saving as docx writes a document either way"),
+                stacklevel=4)
         return mirror
 
     def opened(self, mirror: "reads.Mirror") -> tuple[int, int]:
@@ -152,28 +147,9 @@ class RustOwner:
         state's, ``(0, 0)`` for bytes opened alone): the tool layer's numbers go on from them."""
         return mirror.numbers_opened
 
-    def open(self, document: Any) -> "reads.Mirror | None":
-        mirror = reads.mirror_of(document)
-        if mirror is None:
-            return None             # no session (ooxml_core without one, or reads set to none)
-        history = document.history
-        with mirror.lock:
-            mirror.owned = True
-            mirror.view_head = mirror.opened = mirror.session.head(mirror.doc)
-            mirror.live = weakref.ref(document)
-            mirror.numbers_opened = (history.version, getattr(history, "last_version", history.version))
-        # One set of bytes per version: the view's are the session's (owned_bytes).
-        document.held_by(owned_bytes)
-        # The ids retired are the session's record (lane P2c10), from the state opened with on.
-        _seed_retired(mirror, document._ledger)
-        document.retired_ids = functools.partial(retired_ids, mirror)
-        # The records of placed values are read by the session too (lane P2d1).
-        document.owned_records = functools.partial(owned_records, mirror, weakref.ref(document))
-        # The rows the table calls wrote are the session's record too (lane P2c19, R126).
-        from ..tools.objects import ROWS_WRITTEN
-
-        document.__dict__[ROWS_WRITTEN] = SessionRows(mirror)
-        return mirror
+    def open(self, document: Any) -> Any:
+        """(A Python document is never held: documents are opened from their bytes.)"""
+        raise _no_view("a Python document handed to the owner")
 
     def head(self, mirror: "reads.Mirror") -> Any:
         return mirror.session.head(mirror.doc)
@@ -185,33 +161,11 @@ class RustOwner:
         return json.loads(after.touched_since(before))
 
     def follow(self, mirror: "reads.Mirror", document: Any, head: Any, number: int, last: int) -> None:
-        with mirror.lock:
-            then = mirror.view_head
-            parts = dict(head.changed_since(then))
-            given, renamed = head.ids_since(then)
-            follow(document, parts, given, renamed, number, last)
-            mirror.view_head = head
+        raise _no_view("the view followed")
 
     def bridge(self, mirror: "reads.Mirror", tool: str, caller: Mapping[str, Any] | None,
                parts: dict[str, bytes | None]) -> Any:
-        from ..layout import laid_mark, same_state
-
-        live = mirror.live()
-        # What the step laid out of its last state is keyed by the view's own bytes then:
-        # found under the session's bytes of the version too (only where it laid out).
-        laid = live is not None and laid_mark(live) != mirror.laid
-        own = live.package.to_bytes() if laid else None
-        # the view's ledger beside the parts: where its draws of new ids got to (an id it drew
-        # and did not write is given) and its renames (a block it stamped keeps its old id)
-        ids = host_ids(live)
-        with mirror.lock:
-            made = mirror.session.bridge(mirror.doc, tool, parts, context=context_of(caller), ids=ids)
-            mirror.view_head = made
-        if own is not None:
-            same_state(live, own, bytes(made.save()))
-        if live is not None:
-            mirror.laid = laid_mark(live)
-        return made
+        raise _no_view(f"{tool} changed the view")
 
     def history(self, mirror: "reads.Mirror", name: str, steps: int, redo: bool,
                 caller: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -222,44 +176,24 @@ class RustOwner:
         return json.loads(reply)
 
     def reader(self, mirror: "reads.Mirror", head: Any, number: int) -> Any:
-        """What makes the Python reader of ``head`` (the document's version ``number``) from
-        its bytes: a ``Document`` of them numbered ``number``, with the ids the session gave
-        and the renames it made since the document was opened, read through the session's
-        copy of the document (its reads find ``head`` by ``number``).  (No ``draft``: an owned
-        document's calls are not prepared on drafts, ooxml-edit's ``OwnedEntry``.)"""
-        from ..edit.ids import copy_ledger
-        from ..layout import reader_copy
-
-        opened = mirror.opened
-
-        def ids_of(live: Any) -> Any:
-            def ids(copy: Any) -> None:
-                given, renamed = head.ids_since(opened)
-                follow(copy, {}, given, renamed, number, number)
-                if live.history.version == number:
-                    # The view is this version: what its ids were (deleted ones too) is the copy's.
-                    copy._ledger = copy_ledger(live._ledger)
-                    copy._aliases.update(live._aliases)
-
-            return ids
+        """What would make a Python reader of ``head``: none is made (the reads are the
+        session's); one asked for refuses."""
 
         def make(data: bytes) -> Any:
-            live = mirror.live()
-            return reader_copy(live, data, ids_of(live))
+            raise _no_view(f"a reader of version {number}")
 
         return make
 
     def keep(self, mirror: "reads.Mirror", head: Any, first: int | None = None) -> None:
-        # (the session words a refusal of an id this version removed by its own state numbers)
         with mirror.lock:
             mirror.keep(head, first)
 
-    # -- the history's numbers: the session's (lane U3) ---------------------------------------
+    # -- the history's numbers: the session's -------------------------------------------------
 
     def continue_numbers(self, mirror: "reads.Mirror", state: int, highest: int) -> None:
         with mirror.lock:
             mirror.session.continue_numbers(mirror.doc, state, highest)
-            mirror.view_head = mirror.opened = mirror.session.head(mirror.doc)
+            mirror.opened = mirror.session.head(mirror.doc)
 
     def numbered(self, mirror: "reads.Mirror", number: int) -> Any:
         return mirror.session.numbered(mirror.doc, number)
@@ -270,7 +204,7 @@ class RustOwner:
     def numbers(self, mirror: "reads.Mirror") -> Any:
         return mirror.session.numbers(mirror.doc)
 
-    # -- step groups: a batch's ops as one step of the session's (lane H1) -------------------
+    # -- step groups: a batch's ops as one step of the session's --------------------------------
 
     def open_group(self, mirror: "reads.Mirror") -> "_Group":
         with mirror.lock:
@@ -298,22 +232,7 @@ class RustOwner:
         return bytes(mirror.session.save(mirror.doc))
 
     def close(self, mirror: "reads.Mirror") -> None:
-        live = mirror.live() if mirror.live is not None else None
-        if live is not None:
-            live.held_by(None)
-        reads._close(mirror.session, mirror.doc)
-
-
-def _template_opened(kind: str) -> None:
-    """Warn that a template was opened to edit itself, as :meth:`Document.open` warns."""
-    import warnings
-
-    from ..edit.authoring import TemplateOpened
-
-    warnings.warn(TemplateOpened(
-        f"this file is a template (.{kind}): editing it edits the template. To make a document "
-        f"from it use Document.new(template=...); save('x.docx') writes a document either way"),
-        stacklevel=4)
+        reads.close(mirror.session, mirror.doc)
 
 
 class _Group:
@@ -327,125 +246,31 @@ class _Group:
         self.tracking = tracking
 
 
-def _seed_retired(mirror: "reads.Mirror", ledger: Any) -> None:
-    """Give the session the ids the state the document was opened with retired (round 38):
-    each with the version that removed it and who made it, as the state says them."""
-    rows = [("block", value, version, ledger.earlier.get(version)) for value, version in ledger.gone.items()]
-    rows += [("drawing", value, version, ledger.earlier.get(version))
-             for value, version in ledger.drawings_gone.items()]
-    if rows:
-        mirror.session.seed_retired(mirror.doc, rows)
-
-
-def retired_ids(mirror: "reads.Mirror") -> Any:
-    """The document's retired ids as the session records them (``Document.retired_ids``),
-    each session version numbered as the tool layer numbered it (:attr:`.reads.Mirror.numbers`;
-    one not numbered yet -- its call still ending -- is left out until it is)."""
-    from ..edit.ids import RetiredIds
-
-    out = RetiredIds({}, {}, {}, {})
-    numbers = mirror.numbers
-    for kind, value, seq, caller, tool, version, said in mirror.session.retired(mirror.doc):
-        if seq is not None:
-            version = numbers.get(seq)
-            if version is None:
-                continue
-            if tool:
-                context = ", ".join(f"{key}={value_}" for key, value_ in json.loads(caller).items()) if caller else ""
-                out.said[version] = f"{tool} ({context})" if context else tool
-        else:
-            out.earlier[version] = said
-        (out.gone if kind == "block" else out.drawings_gone)[value] = version
-    return out
-
-
-class SessionRows:
-    """The rows written as the Rust session records them, for a document it owns (round 58,
-    R126; ``tools.objects.ROWS_WRITTEN``): the rows a table call adds or writes into, by
-    ``w14:paraId`` -- the session's own calls' and the Python handler's in one record, which
-    ``check``'s ``row_text_format`` reads.  Set-like: ``update`` keeps rows, ``in``, ``len``
-    and iteration read the record as it is now."""
-
-    def __init__(self, mirror: "reads.Mirror") -> None:
-        self._mirror = mirror
-
-    def _ids(self) -> list[str]:
-        return self._mirror.session.rows_written(self._mirror.doc)
-
-    def update(self, ids: Any) -> None:
-        given = [i for i in ids if i]
-        if given:
-            self._mirror.session.note_rows_written(self._mirror.doc, given)
-
-    def __contains__(self, value: object) -> bool:
-        return value in self._ids()
-
-    def __iter__(self) -> Any:
-        return iter(self._ids())
-
-    def __len__(self) -> int:
-        return len(self._ids())
-
-
-def owned_records(mirror: "reads.Mirror", document: Any) -> dict[str, Any] | None:
-    """The records of placed values of the version the view of a document the session owns
-    is, as the session reads them (``Version.records``: the tables' and charts' records, the
-    entries left out, the text facts and labels); ``None`` where the view is ahead of the
-    session (a Python step changed it) or not the session's."""
-    live = document()
-    head = mirror.view_head
-    if live is None or not mirror.owned or head is None or live.history.batch_changed:
-        return None
-    found = head.records()
-    return json.loads(found) if found is not None else None
-
-
-def owned_bytes(document: Any) -> bytes | None:
-    """The bytes of the version a view of a document the session owns is, as the session
-    writes them -- the view's ``to_bytes`` (``Document.held_by``), so every layout and copy of
-    a version is keyed by them; ``None`` for any other document, and once a Python step
-    changed the view (its own ``to_bytes``)."""
-    mirror = document.__dict__.get("_rust_reads")
-    if not isinstance(mirror, reads.Mirror) or not mirror.owned or mirror.view_head is None \
-            or document.history.batch_changed:
-        return None             # (a Python step that changed the view: ahead of the session)
-    return bytes(mirror.view_head.save())
-
-
-def owned_validation(entry: Any) -> dict[str, Any] | None:
-    """The validation delta of a document the session owns whose view is not current (after
-    a call the session served under the lock): the session's, against the problems it opened
-    with; ``None`` where the Python checks answer (the view is current, so reading it costs
-    nothing).  A call served without the lock carries its version's own (``edits.Made``)."""
-    mirror = getattr(entry, "handle", None)
-    if not isinstance(mirror, reads.Mirror) or entry.view_current:
-        return None
-    found = mirror.session.validation(mirror.doc)
+def _validation(found: Any) -> dict[str, Any] | None:
     if found is None:
         return None
     new, fixed, baseline = found
     return {"new": list(new), "fixed": list(fixed), "baseline": baseline}
 
 
+def owned_validation(entry: Any) -> dict[str, Any] | None:
+    """The validation delta of the document's head, the session's, against the problems it
+    opened with."""
+    mirror = reads.owned(entry).handle
+    return _validation(mirror.session.validation(mirror.doc))
+
+
 def session_validation(entry: Any) -> dict[str, Any] | None:
-    """The save gate's comparison of a document the session owns (or of a read copy of one of
-    its committed versions), at the entry's version: the session's, against the problems it
-    opened with -- the format's :attr:`~ooxml_edit.tools.DocumentFormat.validation`, so
-    neither ``check``'s ``validation`` nor saving makes the Python view current to validate
-    it.  ``None`` for a document the session does not own, or a version it let go."""
-    owned = reads._owned(entry)
-    mirror = getattr(owned, "handle", None)
-    if not isinstance(mirror, reads.Mirror):
-        return None
+    """The save gate's comparison of a document (or of a reader of one of its committed
+    versions), at the entry's version: the session's, against the problems it opened with --
+    the format's :attr:`~ooxml_edit.tools.DocumentFormat.validation`.  ``None`` for a version
+    it let go."""
+    mirror = reads.owned(entry).handle
     with mirror.lock:
         version = mirror.versions.get(entry.version)
     if version is None:
         return None
-    found = mirror.session.validation(mirror.doc, at=version)
-    if found is None:
-        return None
-    new, fixed, baseline = found
-    return {"new": list(new), "fixed": list(fixed), "baseline": baseline}
+    return _validation(mirror.session.validation(mirror.doc, at=version))
 
 
 OWNER = RustOwner()

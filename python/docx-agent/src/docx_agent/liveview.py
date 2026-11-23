@@ -123,14 +123,14 @@ def _target(where: Any, args: tuple, name: str, rest: int) -> tuple[Any, str, di
     import ooxml_core
 
     from .rust.owner import context_of
-    from .rust.reads import _owned
+    from .rust.reads import Mirror
 
     tail = ", page, token" if rest else ""
     if not callable(getattr(where, "entry", None)) or len(args) != rest + 1:
         raise TypeError(f"{name} takes (session, doc{tail}): a document's live view is its session's -- "
                         f"open it in one (doc = session.open(data, name)) and call {name}(session, doc{tail})")
     entry = where.entry(args[0])            # not_found names the open documents
-    owned = _owned(entry)
+    owned = entry if isinstance(getattr(entry, "handle", None), Mirror) else None
     if owned is None:
         raise TypeError(f"{args[0]} is not a Word document the session's Rust core holds; {name} draws "
                         "the pages of one")
@@ -142,20 +142,11 @@ def _target(where: Any, args: tuple, name: str, rest: int) -> tuple[Any, str, di
 
 def _engine(owned: Any) -> Any:
     """The page engine (an ``ooxml_core.WordPages``) the document ``owned`` (its session
-    entry) is laid out with -- the one seam where this module reaches the engine.
+    entry) is laid out with: the session's own (:func:`docx_agent.rust.engines.session_pages`)
+    -- the one seam where this module reaches the engine."""
+    from .rust.engines import session_pages
 
-    TODO(lane H7b, PR C: the session owns its page engine, font folders in SessionConfig):
-    take the session's engine there, and pass no ``layout=`` to ``Session.view`` /
-    ``page_svg`` (optional then, as LV1's design says); until then the engine the document's
-    edits use (:func:`docx_agent.pages.word_pages`)."""
-    from .pages import word_pages
-    from .rust.refusals import refusal
-
-    engine, why = word_pages(owned.held)
-    if engine is None:
-        raise refusal({"code": "not_supported", "message": f"the live view does not lay this document out "
-                       f"yet ({why}); read it with check, or save it"})
-    return engine
+    return session_pages(owned)
 
 
 @contextmanager
