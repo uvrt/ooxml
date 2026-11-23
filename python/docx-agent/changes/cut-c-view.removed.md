@@ -37,7 +37,7 @@ lose their Python handlers and constants (`ROWS_WRITTEN`, `STYLE_KEYS`, ...).
 setting) is gone: `min_text_size` is refused at release (user decision, 2026-11-22).
 `check`'s `small_text`, with `min_size`, still reports text below a size.
 
-The dependencies on `markdown-it-py` and `mdit-py-plugins` go with them (pyproject.toml);
+The dependencies on `lxml` (ooxml-edit still brings it), `markdown-it-py` and `mdit-py-plugins` go with them (pyproject.toml);
 `docx2svg` stays, for the page engine's font folders and the live view.
 
 Removed from the repository: `docs/api-tour.md` and `docs/common-tasks.md` (the library's
