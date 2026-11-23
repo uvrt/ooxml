@@ -20,11 +20,14 @@ Markdown reader and writer, `StyleMap`), `docx_agent.revisions` (tracked changes
 stamping), `docx_agent.oxml`, `docx_agent.samples` (with `accept_loses_text.docx`),
 `docx_agent.layout`, `docx_agent.layout_facts`, `docx_agent.blocks`,
 `docx_agent.revalidate`, `docx_agent.validate`, `docx_agent.state`, `docx_agent.scope`,
-`docx_agent.pages`, `docx_agent.incremental`, `docx_agent.finalizers` and
-`docx_agent.bodyscan`. In the library that means `Document.open/new/to_markdown/layout/
+`docx_agent.pages`, `docx_agent.incremental` and `docx_agent.bodyscan`. In the library that means `Document.open/new/to_markdown/layout/
 validate/provenance/...`, `doc.layout().coverage_facts()` and
 `docx_agent.layout_facts.layout_facts` are gone: the tools' `describe`, `word_read`,
 `check` and `save_document` answer the same questions through the Rust session.
+
+`word_insert_markdown`'s note on small text written (the application's `min_text_size`
+setting) is gone: `min_text_size` is refused at release (user decision, 2026-11-22).
+`check`'s `small_text`, with `min_size`, still reports text below a size.
 
 The dependencies on `docx2svg`'s Python layout, `markdown-it-py` and `mdit-py-plugins`
 go with them (pyproject.toml).
