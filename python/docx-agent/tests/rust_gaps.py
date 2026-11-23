@@ -16,8 +16,6 @@ GOLDEN_CORE = "test_tools_goldens.py::test_a_golden_transcript_replays_to_the_sa
 
 #: The reason each test fails yet, by ``file::name[params]``.
 GAPS: dict[str, str] = {
-    "test_source_refs.py::test_a_documents_own_braces_and_escaped_ones_stay_text":
-        f"rust gap: word_set_text of braces naming no source is refused as by reference ({CUT_F})",
     "test_charts.py::test_chart_edit_renders[charts-d:5-category]": f"rust gap: a number given as a numeric chart's category (0.25) is refused as not a number ({CUT_B})",
     "test_charts.py::test_chart_edit[charts-d:5-category]": f"rust gap: a number given as a numeric chart's category (0.25) is refused as not a number ({CUT_B})",
     "test_charts.py::test_chart_edit[charts-d:5-add_category]": f"rust gap: a number given as a numeric chart's category (0.25) is refused as not a number ({CUT_B})",
@@ -29,10 +27,6 @@ GAPS: dict[str, str] = {
     "test_block_of.py::test_nested_ids_give_the_top_level_block": f"rust gap: block_of/blocks_between of nested, story and annotation ids ({CUT_B})",
     "test_batch_cost.py::test_a_mixed_batch_gives_the_results_each_op_gives_and_lays_out_once":
         f"rust gap: a mixed batch lays the document out for several of its ops, not once ({CUT6})",
-    "test_retired_ids.py::test_a_positional_table_id_in_a_cell_address_resolves_after_the_ids_are_stamped":
-        f"rust gap: a positional table id inside a cell address is refused once the ids are stamped ({CUT_F})",
-    "test_many_writers.py::test_continue_with_several_targets_continues_each":
-        f"rust gap: word_lists continue with several targets continues only the first ({CUT_F})",
     "test_own_rows.py::test_the_probes_edits_made_here_give_words_result":
         f"rust gap: deleting one's own pending row holding another's insertion keeps the row ({CUT_F})",
     "test_own_rows.py::test_a_table_one_inserted_beside_a_table_goes_with_the_paragraph_it_came_with":
