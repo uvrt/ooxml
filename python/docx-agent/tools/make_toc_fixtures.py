@@ -17,6 +17,11 @@ and a left stop after it; or the number, a space and the text), written here by 
 Deterministic: running it again writes the same bytes.
 
     python tools/make_toc_fixtures.py
+
+Since docx-agent 0.2.0 (P4e) the checkout has no Python ``Document``: this is the record of
+how the fixtures were made. Run it against the frozen reference, docx-agent's Python at the
+commit crates/ooxml-oracle/reference.toml names (installed as the gates install it:
+.github/actions/gates-reference, local-gates.sh), from a ``git archive`` of that commit.
 """
 
 from __future__ import annotations
