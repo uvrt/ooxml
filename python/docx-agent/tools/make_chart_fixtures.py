@@ -26,6 +26,11 @@ chart tests (``tests/test_charts.py``) hold them to every gate.
 
     python tools/make_chart_fixtures.py            # inputs to scratch, then Word saves them
     python tools/make_chart_fixtures.py --inputs   # the inputs only, to the given directory
+
+Since docx-agent 0.2.0 (P4e) the checkout has no Python ``Document``: this is the record of
+how the fixtures were made. Run it against the frozen reference, docx-agent's Python at the
+commit crates/ooxml-oracle/reference.toml names (installed as the gates install it:
+.github/actions/gates-reference, local-gates.sh), from a ``git archive`` of that commit.
 """
 
 from __future__ import annotations

@@ -1,6 +1,7 @@
 # Tools for an agent
 
-`docx_agent.tools` puts this API behind tool definitions a model calls, for the tool layer
+`docx_agent.tools` gives a model a Word document as tool calls on the Rust session
+(`ooxml_core`, which holds the document: docx-agent 0.2.0 has no Python view), for the tool layer
 in [`ooxml-edit`](https://github.com/uvrt/ooxml-edit) (`ooxml_edit.tools`, 0.4 or later): the
 model never runs Python and never sees a path. The application opens documents from bytes,
 registers other inputs (a template, Markdown, an image) as blobs, sends the definitions to
@@ -36,11 +37,11 @@ with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS) as toolbox:
   [GUIDANCE.md](../src/docx_agent/tools/GUIDANCE.md).
 - **Every changing call** is one undo step (all of a `batch` is one: a failing op is skipped
   with its error and the rest apply; `atomic: true` for all or none), written as tracked
-  changes while `word_set_tracking` is on, and returns `checks`: the `validate()` delta
+  changes while `word_set_tracking` is on, and returns `checks`: the validation delta
   against the document as opened and, once the document was laid out, the pages the change
   reflowed (for 20 pages or fewer; beyond, `check` reports them).
 - **`check` (with `reflow`), `render` and `save_document` return `coverage`**: how much
-  docx2svg could lay out. `complete` is false when a block, a header or footer, or a face
+  the layout covers. `complete` is false when a block, a header or footer, or a face
   could not be laid out. Coverage also gives the stop and the faces substituted with open
   ones. A check on a partial layout is not a passed check.
 - **`check` and `render` take `range`** (round 35): one or several blocks, spans
@@ -91,33 +92,8 @@ with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS) as toolbox:
   changed. `check`'s `punctuation_spacing` lists what is left, and the spaces English,
   German, Dutch, Spanish, Italian and Portuguese proofing flags, with `replace_text` fixes.
   `docx_format(typography=False)` turns the writing off.
-- **Layout runs in the toolbox's worker pool** through `Document.converter`, under a 30 s
-  deadline: past it the worker is killed, the call reports `timeout` and changes nothing.
-  The workers start with `spawn`, which imports the program's main module again in each,
-  so a script keeps its work under `if __name__ == "__main__":`. Without the guard the
-  workers stop as they start and the toolbox lays out in subprocess workers instead, with
-  a warning that says why (ooxml-edit 0.58.0); `Toolbox(workers=0)` lays out in the
-  script's own process.
-  Each worker keeps the layouts it made, with what it measured, for the documents' next
-  versions, within a memory budget: `DOCX_AGENT_LAYOUT_MEMORY` (MB, in the environment the
-  workers start with; 256 by default) for the layouts held -- about a megabyte a page -- and
-  up to 1.75 times it with the measurements and pickled layouts kept beside them, the least
-  recently used dropped first (`docx_agent.layout.LAYOUT_MEMORY`, round 39).
-- **An edit costs what it changed** (0.1.115, ooxml-edit 0.117.0): its validation is found
-  from facts kept per block, again only where the bytes changed (`docx_agent.revalidate`,
-  the same problems as `Document.validate()`); each version is written out once and its
-  read copy opens from its parts, shared with the document's; a check never waits for the
-  lock an edit holds (it reads the version that edit commits). A body over 4 MB is edited
-  under its lock rather than on a draft. `DOCX_AGENT_INCREMENTAL=0` turns docx-agent's part
-  of it off (validation per change, read copies from parts, the kept parse, the draft limit);
-  `DOCX_AGENT_FULL_VALIDATE=1` runs the whole check beside it at every call and raises when
-  they differ.
-- **The rest of an edit's whole-document passes too** (0.1.116, ooxml-edit 0.118.0,
-  ooxml-core 0.3.0): the ids ledger's reading of each version, the ids in use, the body's
-  index, `touched`'s sections, the Rust owner's list labels and table records read only the
-  blocks that changed, and undo and redo put back only those (`docx_agent.incremental` says
-  which pass is what). `DOCX_AGENT_INCREMENTAL=0` makes each whole again;
-  `DOCX_AGENT_FULL_VALIDATE=1` compares each with its whole pass.
+- **Layout, validation and each version's passes are the Rust session's** (0.2.0). The Python switches of 0.1 (`DOCX_AGENT_LAYOUT_MEMORY`, `DOCX_AGENT_INCREMENTAL`, `DOCX_AGENT_FULL_VALIDATE`,
+  `DOCX_AGENT_DRAFTS`, `DOCX_AGENT_VALIDATE_STATS`) are gone with the code they switched.
 - **Saving refuses new validation problems**; only the application may allow them
   (`Toolbox(allow_new_problems=True)`). Check before save: every `check` carries
   `validation` (ooxml-edit 0.111.0, round 53) -- the problems the save would refuse as new,
@@ -128,7 +104,7 @@ with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS) as toolbox:
   part nothing reaches), every `w:rsid*` attribute and settings' rsid list, webSettings'
   pasted web divisions (unless one sets a margin or a border), an external
   `attachedTemplate` -- and reports each kind's count and bytes and the file's sizes as
-  `cleaned`; the document in the session is unchanged (`docx_agent.edit.cleaning`).
+  `cleaned`; the document in the session is unchanged.
 - **Every result's `touched`** (the application's, never in what the model reads) names
   what the call changed: a body change by its **heading section** --
   `{"doc", "part": "word/document.xml", "heading": "p:301", "level": 2, "blocks":

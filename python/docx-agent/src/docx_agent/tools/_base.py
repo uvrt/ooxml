@@ -32,9 +32,8 @@ from ooxml_edit.tools.worker import takes_affinity, takes_lane
 from ..rust import edits
 from ..rust.edits import Made
 from ..rust.owner import owned_validation
-from .laid import seen_before, state_bytes
-from ..layout import (adopt, affinity, canon_of, layout_key, summary_for, convert_bytes, held_state, lay_out_bytes,
-                      lay_out_unlocked, layout_options, remember_runner, twin, twin_of)
+from ..layout import (adopt, affinity, convert_bytes, held_state, lay_out_bytes,
+                      lay_out_unlocked, remember_runner, twin, twin_of)
 
 #: A Word document of this many pages or fewer gets its reflow in every edit's checks.
 REFLOW_PAGES = 20
@@ -421,116 +420,17 @@ class Before:
 
 
 def checks(entry: Any, touched: Sequence[Any]) -> dict[str, Any]:
-    """The docx format's ``checks``: the ``validate()`` delta against the document's problems
-    when opened, and the reflow -- the pages the change touched, from the layout before (when
-    it was laid out) and after, for a document of :data:`REFLOW_PAGES` pages or fewer
-    (``"stale: call check"`` beyond).  Lane P2c4: after an edit the Rust session made, the
-    session's validation (:func:`docx_agent.rust.owner.owned_validation`) where no layout is
-    compared.  Lane P5m: the reflow the session measured after the call's edits, where it
-    did (:attr:`docx_agent.rust.edits.Made.reflow`), is the call's."""
-    before = next((t.layout for t in touched if isinstance(t, Before)), None)
-    made = next((t for t in touched if isinstance(t, Made)), None)
-    if made is not None and made.reflow is not None:
-        return _made_checks(entry, made, touched)
-    if before is None or before.count > REFLOW_PAGES:
-        # No layout to compare in Python: after an edit the Rust session made, its checks
-        # (one served without the lock carries its version's own: lane P2c6).
-        timed = next((t for t in touched if isinstance(t, Timing)), None) or Timing()
-        with timed.part("validate"):
-            validated = made.validation if made is not None else owned_validation(entry)
-        if validated is not None:
-            if made is not None:
-                # Lane P2c13: served without the lock, the view not the call's -- the
-                # relayout with the call's own engine, nothing on the view to let go.
-                from .owner import commit_relayout
-
-                commit_relayout(entry, made.engine)
-            else:
-                _relayout_owned(entry)
-            return {"validate": validated, "reflow": None if before is None else STALE}
-    document = entry.document
-    handed = getattr(document, "_handed_engine", None)
-    if handed is not None and not isinstance(document.converter, Engine):
-        # Round 45: on the read copy of the version the change made, the lock let go: the
-        # change's own engine (docx_agent.layout.read_copy).
-        document.converter = handed
-    timing = next((t for t in touched if isinstance(t, Timing)), None) or Timing()
-    if before is None or before.count > REFLOW_PAGES:
-        # Lane O: while the document's checks ask, its new version is laid out at once.
-        from .owner import commit_relayout
-
-        commit_relayout(entry, document.converter if isinstance(document.converter, Engine) else None)
-    with timing.part("validate"):
-        out: dict[str, Any] = {"validate": validate_delta(entry), "reflow": None}
-    try:
-        with timing.part("reflow") if before is not None and before.count <= REFLOW_PAGES else _no_part():
-            _reflow(document, before, out)
-    finally:
-        release([entry])
-        document.__dict__.pop("_checks_engine", None)
-    return out
-
-
-def _made_checks(entry: Any, made: Any, touched: Sequence[Any]) -> dict[str, Any]:
-    """:func:`checks` of a call the session served without the lock whose reflow it measured:
-    its validation and that reflow; the relayout on commit with the call's own engine (lane
-    P2c13)."""
-    from .owner import commit_relayout
-
+    """The docx format's ``checks``: after a changing call -- or once, at the end of a
+    ``batch`` -- the validation delta against the document as opened, and the reflow the
+    session measured after the call's edits (``None`` where it measured none: no engine laid
+    the document out before), both the session's (:class:`~docx_agent.rust.edits.Made`; the
+    head's validation where the call made no version)."""
+    made = [t for t in touched if isinstance(t, Made)]
     timed = next((t for t in touched if isinstance(t, Timing)), None) or Timing()
     with timed.part("validate"):
-        validated = made.validation
-    commit_relayout(entry, made.engine)
-    return {"validate": validated, "reflow": made.reflow}
-
-
-def _relayout_owned(entry: Any) -> None:
-    """:func:`checks` of a version the Rust session holds, its view not made current: the
-    relayout on commit (lane O) with the engine a Python step -- or a call the session served
-    under the lock (lane P2c13) -- engaged on the view, which is let go."""
-    from .owner import commit_relayout
-
-    held = entry.held
-    engine = held.converter if isinstance(held.converter, Engine) else None
-    try:
-        commit_relayout(entry, engine)
-    finally:
-        held.converter = None
-        held.__dict__.pop("_checks_engine", None)
-
-
-@contextmanager
-def _no_part() -> Iterator[None]:
-    yield
-
-
-def _reflow(document: Any, before: Any, out: dict[str, Any]) -> None:
-    """:func:`checks`' reflow, into ``out``."""
-    if before is None:
-        return
-    if before.count > REFLOW_PAGES:
-        out["reflow"] = STALE
-        return
-    engine = document.converter
-    if isinstance(engine, Engine):
-        engine.arm()
-    try:
-        # By summaries (round 38), ids followed through the document's aliases now.  Round 59
-        # (R134): the summary of the layout made in the worker holding the document's layouts,
-        # where it has one (check_facts' bare request, the lock held: no wait for another's
-        # layout in progress) -- the layout itself never comes here for it.
-        from ..layout import BARE_REQUEST, check_facts, holding, runner_of
-
-        made = check_facts(document, holding, dict(BARE_REQUEST)) if runner_of(document) is not None else None
-        if made is not None:
-            now = made[1]
-        else:
-            after = document.layout()
-            now = summary_for(document, after.key if after.key is not None else layout_key(
-                document.to_bytes(), layout_options(document, {})), after)
-        out["reflow"] = reflow_json(now.compare(before, canon_of(document)))
-    except ToolError as error:
-        out["reflow"] = f"{error.code}: {error.message}"
+        validated = made[-1].validation if made else owned_validation(entry)
+    reflow = next((m.reflow for m in reversed(made) if m.reflow is not None), None)
+    return {"validate": validated, "reflow": reflow}
 
 
 def validate_delta(entry: Any, problems: Sequence[Any] | None = None) -> dict[str, Any]:
@@ -685,78 +585,24 @@ def word_tool(name: str, description: str, params: Mapping[str, Any], *, group: 
 
 
 def _engaged(work: Callable[..., Any]) -> Callable[..., Any]:
-    """``work`` with the layout engine, as a handler has it (:func:`wrap`); not done where
-    the Rust session is asked first (lane P2c13: it lays out in Rust, as it edits)."""
+    """A tool's work ahead of its change: none -- the Rust session lays the document out
+    itself, as it edits."""
     @functools.wraps(work)
     def run(call: Any, **arguments: Any) -> Any:
-        if call.changing and edits.will_serve(call, arguments):
-            return None
-        engage(call)
-        try:
-            return work(call, **arguments)
-        finally:
-            release(call.entries.values())
+        return None
 
     return run
 
 
-#: What a call's result says when the text it wrote got its language's spacing (round 35, R21).
-SPACED = ("{} space(s) before : ; ! ? or inside « » written as no-break spaces (U+00A0), as Word's "
-          "proofing of the text's language expects")
-
-
-def _space_written(call: Any) -> int:
-    """The spacing of the text the call wrote, now, inside its undo step: how many spaces."""
-    space = getattr(call.document, "space_written", None)
-    return space() if space is not None else 0
-
-
 def wrap(handler: Callable[..., Any], *, mutates: bool, track: bool = True) -> Callable[..., Any]:
+    """A Word tool's handler: a changing call is the Rust session's edit
+    (:func:`docx_agent.rust.edits.serve`), a reading call its handler (which reads the
+    session)."""
     @functools.wraps(handler)
     def run(call: Any, **arguments: Any) -> Any:
-        if mutates and call.changing and edits.owned_entry(call) is not None:
-            # Lane P2c4: a tool the Rust session edits with runs there first; the Python
-            # handler (on the document's view) only where the session does not answer.
-            return edits.serve(call, arguments, lambda: in_python(call, **arguments))
-        return in_python(call, **arguments)
-
-    def in_python(call: Any, **arguments: Any) -> Any:
-        engage(call)
-        keep = False
-        try:
-            if mutates and call.entry is not None and call.changing:
-                if not any(isinstance(t, Before) for t in call.context.touched.get(call.entry.doc_id, [])):
-                    from ..rust.reads import checked_before
-
-                    call.touch(Before(seen_before(call.document, state_bytes(call)) or checked_before(call)))
-                if track:
-                    with tracked(call, call.entry):
-                        returned = handler(call, **arguments)
-                        started = time.perf_counter()
-                        spaced = _space_written(call)
-                else:
-                    returned = handler(call, **arguments)
-                    started = time.perf_counter()
-                    spaced = _space_written(call)
-                if getattr(call, "facts", None):
-                    # Round 36: what was written by reference is kept on its paragraph.
-                    from .textfacts import keep_written
-
-                    keep_written(call, returned, arguments)
-                timing = _timing_of(returned)
-                if timing is not None:
-                    # Round 45: the spacing of the text written, after the handler.
-                    timing["spacing"] = round(time.perf_counter() - started, 3)
-                if spaced and isinstance(returned, Result):
-                    returned.warnings.append(SPACED.format(spaced))
-                keep = True  # the checks hook lays out after the call, then releases
-                hand_to_checks(call.document)
-            else:
-                returned = handler(call, **arguments)
-            return returned
-        finally:
-            if not keep:
-                release(call.entries.values())
+        if mutates and call.changing:
+            return edits.serve(call, arguments)
+        return handler(call, **arguments)
 
     return run
 

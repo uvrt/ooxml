@@ -64,26 +64,27 @@ def repackaged(data: bytes, count: int) -> bytes:
 
 def saved(data: bytes, update: bool) -> bytes:
     """``data`` opened and saved through docx-agent's tools, its fields updated if ``update``."""
+    from docx_agent.tools import FORMAT, GROUPS, TOOLS
+    from make_report import body_paragraphs
+    from make_report import saved as saved_by
     from ooxml_edit.tools import Toolbox
     from ooxml_edit.tools.limits import Limits
-
-    from docx_agent.tools import FORMAT, GROUPS, TOOLS
 
     with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0,
                  limits=Limits(render_timeout=3600, layout_timeout=3600, batch_timeout=3600)) as box:
         session = box.session(clock=CLOCK)
         doc = session.open(data, "report.docx")
         # One edit (the title) stamps every paragraph's id, as a long report's own edits did.
-        title = session.entry(doc).document.paragraphs()[0]
-        out = box.dispatch(session, "word_set_text", {"doc": doc, "target": title.id,
-                                                      "text": f"{title.text} (long edition)"}).to_json()
+        title, text = body_paragraphs(data)[0]
+        out = box.dispatch(session, "word_set_text", {"doc": doc, "target": title,
+                                                      "text": f"{text} (long edition)"}).to_json()
         if not out.get("ok", True):
             raise SystemExit(json.dumps(out, indent=1)[:3000])
         if update:
             out = box.dispatch(session, "word_fields", {"doc": doc, "action": "update"}).to_json()
             if not out.get("ok", True):
                 raise SystemExit(json.dumps(out, indent=1)[:3000])
-        return session.entry(doc).document.to_bytes()
+        return saved_by(box, session, doc)
 
 
 def main() -> None:

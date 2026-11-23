@@ -12,12 +12,12 @@ from . import adapter, own, refs_in
 @adapter("word_changes")
 def _changes(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
     return {**own(arguments), "ids": refs_in(call, arguments.get("ids")),
-            "within": reads._refs(call, arguments.get("within"))}
+            "within": reads.refs(call, arguments.get("within"))}
 
 
 @adapter("word_comments")
 def _comments(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
     items = arguments.get("items")
     return {**own(arguments), "items": None if items is None else [
-        {**item, **{k: reads._refs(call, item.get(k)) for k in ("target", "within", "comment") if k in item}}
+        {**item, **{k: reads.refs(call, item.get(k)) for k in ("target", "within", "comment") if k in item}}
         if isinstance(item, dict) else item for item in items]}

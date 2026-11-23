@@ -371,19 +371,22 @@ def test_not_recorded_and_counts_are_capped_and_counted(box):
 
 
 def test_a_recorded_value_goes_into_a_word_document_by_reference():
-    docx_agent = pytest.importorskip("docx_agent")
+    ooxml_core = pytest.importorskip("ooxml_core")
     docx_tools = pytest.importorskip("docx_agent.tools")
+    blank = bytes(ooxml_core.new_document(page=("A4", False), language="en-US", separators=(".", ","),
+                                          properties=(None, None, "2026-11-23T09:00:00Z")))
     with Toolbox([*docx_tools.TOOLS, *TOOLS], formats=[docx_tools.FORMAT, FORMAT],
                  groups=[*docx_tools.GROUPS, *GROUPS], workers=0) as both:
         session = both.session()
         session.open(shelf_book().to_bytes(), "shelf.xlsx")                       # d1
-        session.open(docx_agent.Document.new().to_bytes(), "report.docx")         # d2
+        session.open(blank, "report.docx")                                         # d2
         ok(record(both, session, JUDGED))
         made = ok(both.dispatch(session, "word_insert_markdown", {
             "doc": "d2", "at": "end",
             "markdown": "Dividers: {{d:outcome/S-04/outcome}} ({{d:outcome/S-04/note}})."}))
-        document = session.entry("d2").document
-        texts = [document.paragraph(b).text for b in made.data["blocks"]]
+        blocks = made.data["blocks"]
+        read = ok(both.dispatch(session, "word_inspect", {"doc": "d2", "target": f"{blocks[0]}..{blocks[-1]}"}))
+        texts = [block["t"] for block in read.data["blocks"] if block["id"] in blocks]
         assert texts == ["Dividers: done (French: terminé)."]
         assert json.dumps(made.data["facts"], ensure_ascii=False).count("Shelf!C5") >= 1
 
