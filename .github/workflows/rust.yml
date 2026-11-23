@@ -28,8 +28,6 @@ name: Rust
 # - `fuzz`: fuzz/'s nine targets, 4 minutes each.  Not part of `required (rust)`: a find
 #   shows as a failed job with the crashing input uploaded, without blocking a merge.  On a
 #   pull request that changes the targets or their crates, `rust` only builds them.
-# Not in CI: ooxml-oracle's `text-diff` (the text engine against docx2svg's records) needs
-# Word's own fonts, so it stays a local gate (README, Development).
 # `required (rust)` is the gate to require: it passes when every job it covers passed or
 # was left out.
 

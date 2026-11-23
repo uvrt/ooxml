@@ -5,7 +5,8 @@ Copyright (c) 2026 ooxml contributors
 The licence below covers this repository's own source, tests and tooling. Each package
 under python/ carries its own LICENSE file, which names the third-party material in that
 package (test corpora, sample documents, bundled fonts) and the terms it comes under; those
-files are not covered by this licence.
+files are not covered by this licence. Likewise the hyphenation patterns and word lists
+under crates/ooxml-text/patterns/, whose sources and licences patterns/SOURCES.txt reproduces.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

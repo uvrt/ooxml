@@ -1,5 +1,5 @@
-Hyphenation patterns and word lists used by docx2svg.hyphenate
-==============================================================
+Hyphenation patterns and word lists used by ooxml-text (src/hyphenate.rs)
+=========================================================================
 
 Every file here but hyph-en-us-knuth.*, en-moby.txt.gz and en-observed-exceptions.txt is
 an unmodified copy of a file of the hyph-utf8
@@ -19,11 +19,15 @@ hyph-en-us-knuth.* are converted, in the same format, from two files on CTAN (be
 en-moby.txt.gz is converted from the Moby Hyphenator list (below).
 
 None of this data comes from Microsoft Word or its proofing tools.  Word's own break
-points are observed by tools/make_hyphen_probe.py and kept in the probe's recording
-(tests/fixtures/hyphen-observations.json), where they score these patterns; the one file
+points were observed by docx2svg's tools/make_hyphen_probe.py and are kept in the probe's
+recording (crates/ooxml-oracle/word/observations/layout/hyphen-observations.json), where
+they score these patterns; the one file
 made from them is en-observed-exceptions.txt (below).
 
 Languages whose patterns are not here are not hyphenated by the library.
+
+The tools/ scripts named below are docx2svg's (python/docx2svg/tools), at commit
+6e850e181891c62393daf28dbe804d6673005304, before its Python layout was withdrawn.
 
 
 en-observed-exceptions.txt -- English, the probe's own words (consulted before en-moby)
@@ -33,7 +37,7 @@ en-observed-exceptions.txt -- English, the probe's own words (consulted before e
   proofing tools was read.  The words are those of the repository's own probe documents
   (tools/make_hyphen_probe.py, the points and words sweeps, made to score the patterns);
   each is spelt with the points at which Word 16.106 was seen breaking it, read off
-  Word's PDF of the sweep, as recorded in tests/fixtures/hyphen-observations.json
+  Word's PDF of the sweep, as recorded in crates/ooxml-oracle/word/observations/layout/hyphen-observations.json
   (recorded 2026-10-01 and 2026-10-02; this file made 2026-10-03 by tools/read_hyphen_probe.py
   --exceptions, from the recording alone, with no Word run).
 

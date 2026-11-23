@@ -23,10 +23,3 @@ class LayoutError(NotImplementedError):
     def __str__(self) -> str:
         return f"{self.reason}: {self.way_out}"
 
-
-def failure(path: str, error: BaseException) -> LayoutError:
-    """``error`` met laying out the element at ``path`` (docx2svg's former Python layout,
-    which goes in the next release)."""
-    found = LayoutError(f"laying out {path} failed: {type(error).__name__}: {error}")
-    found.path = path
-    return found
