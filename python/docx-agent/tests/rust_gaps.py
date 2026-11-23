@@ -43,8 +43,6 @@ GAPS: dict[str, str] = {
         f"rust gap: deleting one's own pending row holding another's insertion keeps the row ({CUT_F})",
     "test_own_rows.py::test_a_table_one_inserted_beside_a_table_goes_with_the_paragraph_it_came_with":
         f"rust gap: deleting a table one inserted leaves its tracked separator paragraph ({CUT_F})",
-    "test_span_rows_r57.py::test_a_ragged_table_from_the_file_is_named_with_no_made_by":
-        f"rust gap: check names no ragged table where a row's last cell is a tracked cell deletion ({CUT_F})",
     "test_tools_word.py::test_new_document_from_a_template_blob_and_save_formats": TEMPLATE,
     "test_locale.py::test_from_a_template_the_locale_is_kept_and_the_settings_are_the_templates": TEMPLATE,
     f"{GOLDEN}[w1-template-report]": TEMPLATE,

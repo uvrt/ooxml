@@ -315,26 +315,37 @@ def test_reject_all_after_a_column_deleted_through_a_split_gives_the_table_back(
 # -- check: a table ragged after Accept All ----------------------------------------------------------
 
 
-#: A 4-column table whose first row's last cell is deleted as a tracked change, so Accept All
-#: leaves that row a column short of the grid: ragged in the file, made by no call here.
-RAGGED = ('<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid>'
-          + '<w:gridCol w:w="2000"/>' * 4 + "</w:tblGrid>"
-          + "".join(f'<w:tr w14:paraId="1C0000{r}0" w14:textId="77777777">'
-                    + "".join('<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/>'
-                              + ('<w:cellDel w:id="9" w:author="Editor A" w:date="2026-11-13T09:00:00Z"/>'
-                                 if (r, c) == (0, 3) else "")
-                              + f'</w:tcPr><w:p w14:paraId="1C00{r}{c}01" w14:textId="77777777"><w:r><w:t>r{r}c{c}'
-                              "</w:t></w:r></w:p></w:tc>" for c in range(4))
-                    + "</w:tr>" for r in range(3))
-          + "</w:tbl>")
+def _split_then_delete_column(box):
+    """The quarter plan, tracked: the spanned cell of row 4 split, then column 3 deleted
+    through the split's new cell -- the session and the column deletion's result."""
+    session, table = _plan(box, tracked=True)
+    ok(box, session, "word_edit_table", doc="d1", table=table, action="split", first={"row": 4, "col": 1})
+    result = ok(box, session, "word_edit_table", doc="d1", table=_table(session), action="delete_column", index=3)
+    return session, result
+
+
+def _ragged_as_0_1_107_wrote_it(box) -> bytes:
+    """The column deletion through a tracked split's cell as docx-agent 0.1.107 wrote it: the
+    split's new cell in column 3 deleted (``w:cellDel``) but its paragraph mark left inserted
+    only -- the deletion's mark beside it taken out (the session's delete_column writes both,
+    as Word's does) -- so Accept All leaves row 4 a column wider than the rest."""
+    from lxml import etree
+
+    session, _ = _split_then_delete_column(box)
+    data = word_docs.saved(session, "d1")
+    root = word_docs.tree(data)
+    row = word_docs.rows_of(root.find(f".//{_W}tbl"))[4]
+    mark = word_docs.cells_of(row)[-1].find(f"{_W}p/{_W}pPr/{_W}rPr/{_W}del")
+    mark.getparent().remove(mark)
+    return word_docs.replaced(data, {"word/document.xml": etree.tostring(
+        root, xml_declaration=True, encoding="UTF-8", standalone=True)})
 
 
 def test_a_ragged_table_from_the_file_is_named_with_no_made_by(box):
     other = box.session(clock=CLOCK)
-    other.open(word_docs.with_body(word_docs.paragraph("Plan.") + RAGGED + word_docs.paragraph("End.")), "again.docx")
+    other.open(_ragged_as_0_1_107_wrote_it(box), "again.docx")
     ragged = _ragged(box, other)
     assert ragged and "made_by" not in ragged[0] and ragged[0]["after_accept"] is True, ragged
-    assert ragged[0]["grid"] == 4 and ragged[0]["rows"][0]["row"] == 0
 
 
 def test_rows_of_one_width_are_not_listed(box):

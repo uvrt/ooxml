@@ -191,6 +191,33 @@ def test_tabs_are_written_as_word_writes_them(box):
                                                        {f"{_W}val": "right", f"{_W}leader": "dot", f"{_W}pos": "8000"}]
 
 
+def _ends_of_twelve(data: bytes) -> list[float]:
+    """Where each body paragraph's "12" ends, in points, as docx2svg draws the first page: its
+    last digit's place plus a digit's advance (the face's digits are of one width)."""
+    import re
+
+    import docx2svg
+
+    svg = docx2svg.convert_docx_to_svg(data)[0]
+    out = []
+    for found in re.finditer(r'<text data-docx-path="w:body/w:p\[\d+\][^"]*" x="([^"]+)"[^>]*>12</text>', svg):
+        first, last = (float(x) for x in found.group(1).split())
+        out.append((last + (last - first)) * 72 / 300)
+    return out
+
+
+def test_a_clear_word_honours_and_docx2svg_draws_as_word(box):
+    session, doc = contents_styles(box)
+    assert modify(box, session, doc, "Contents wide", [{"position": 346.95, "alignment": "clear"}]).ok
+    level, wide = _ends_of_twelve(word_docs.saved(session, doc))[-2:]
+    # The page's left margin plus the stop (Word's PDF: 417.26 with a 70.9 pt margin); cleared,
+    # the 12 follows the next default stop (Word's: 117.43).
+    section = list(word_docs.tree(word_docs.saved(session, doc)).iter(_W + "sectPr"))[-1]
+    left = int(section.find(_W + "pgMar").get(_W + "left")) / 20
+    assert level == pytest.approx(left + 346.95, abs=1)
+    assert wide < left + 60
+
+
 def test_a_stop_at_the_text_columns_end_and_what_tabs_refuse(box):
     session, doc = contents_styles(box)
     width = text_width(session, doc)
