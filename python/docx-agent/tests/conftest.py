@@ -159,7 +159,7 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.xfail(reason=f"{form}: deferred (user)", strict=True))
         gap = GAPS.get(key)
         if gap is not None:
-            item.add_marker(pytest.mark.xfail(reason=f"rust gap: {gap} (lane CUT-F)", strict=True))
+            item.add_marker(pytest.mark.xfail(reason=gap, strict=True))
     if not config.getoption("--run-slow"):
         later = pytest.mark.skip(reason="an exhaustive sweep: run with --run-slow")
         for item in items:
