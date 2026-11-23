@@ -19,9 +19,10 @@ pytest.importorskip("ooxml_edit.tools.sources", reason="needs ooxml-edit 0.114 (
 
 from ooxml_edit.tools import Dataset, DocumentFormat, Result, Toolbox, ToolError, string, tool  # noqa: E402
 
-from docx_agent import Document  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
 from docx_agent.tools.table_data import own_source  # noqa: E402
+
+import word_docs  # noqa: E402
 
 if "own_source" not in DocumentFormat.__dataclass_fields__:
     pytest.skip("needs ooxml-edit 0.114 (own_source)", allow_module_level=True)
@@ -66,16 +67,16 @@ def toolbox():
 def _report(toolbox, *, grids: int = 1, datasets: tuple = ()):
     """A made-up report d1 with one table (the grid's rows, by hand), grids d2..., datasets."""
     session = toolbox.session()
-    session.open(Document.new().to_bytes(), "report.docx")
-    first = session.entry("d1").document.paragraphs()[0].id
+    session.open(word_docs.blank(), "report.docx")
+    first = word_docs.paragraphs(session, "d1")[0][0]
     markdown = "| code | item | count |\n|---|---|---|\n| K-01 | Bolts | 12 |"
-    assert toolbox.dispatch(session, "word_insert_markdown",
-                            {"doc": "d1", "at": f"after:{first}", "markdown": markdown}).ok
+    made = toolbox.dispatch(session, "word_insert_markdown", {"doc": "d1", "at": f"after:{first}", "markdown": markdown})
+    assert made.ok, made.to_json()
     for n in range(grids):
         session.adopt(Grid(), "xlsx", f"stock{n}.xlsx")
     for name in datasets:
         assert toolbox.dispatch(session, "rows_put", {"id": name}).ok
-    return session, session.entry("d1").document.tables()[-1].id
+    return session, [block for block in made.data["blocks"] if block.startswith("t:")][-1]
 
 
 def _sync(toolbox, session, table, **more):
@@ -114,8 +115,7 @@ def test_one_source_alone_gives_the_call_that_works(toolbox, prefix):
                      "arguments": {"doc": "d1", "table": table, "action": "sync", "from": "t:stock"}}
     done = toolbox.dispatch(session, meant["tool"], meant["arguments"])
     assert done.ok, done.to_json()
-    view = session.entry("d1").document.table(table)
-    assert [view.cell(r, 0).text for r in range(len(view.rows))] == ["code", "K-01", "K-02", "K-03"]
+    assert [row[0] for row in word_docs.table_texts(session, "d1", table)] == ["code", "K-01", "K-02", "K-03"]
 
 
 def test_with_two_workbooks_each_table_is_named_with_its_document(toolbox):
@@ -149,7 +149,7 @@ def test_other_froms_of_the_document_say_the_same(toolbox, tool, arguments):
 
 def test_a_paragraph_is_named_as_one(toolbox):
     session, table = _report(toolbox)
-    paragraph = session.entry("d1").document.paragraphs()[0].id
+    paragraph = word_docs.paragraphs(session, "d1")[0][0]
     error = _sync(toolbox, session, table, **{"from": paragraph}).error
     assert error.message.startswith(f"{paragraph} is a paragraph of d1, the document this call edits")
 
@@ -165,11 +165,13 @@ def test_a_reference_to_the_own_table_is_told_what_a_reference_names(toolbox):
     assert "{{<source>/#<row>/<column>}}" in error.message and "call" not in error.details
 
 
-def test_own_source_names_the_blocks():
-    document = Document.new()
-    first = document.paragraphs()[0].id
-    assert own_source(document, first) == "a paragraph"
-    assert own_source(document, "t:00000000") is None and own_source(document, "d:counts") is None
+def test_own_source_names_the_blocks(toolbox):
+    session, table = _report(toolbox)
+    subject = session.entry("d1").subject
+    first = word_docs.paragraphs(session, "d1")[0][0]
+    assert own_source(subject, first) == "a paragraph"
+    assert own_source(subject, table) == "a table" and own_source(subject, f"{table}/#2") == "part of a table"
+    assert own_source(subject, "t:00000000") is None and own_source(subject, "d:counts") is None
 
 
 # -- every suggestion resolves (tool design rule 2) ---------------------------------------------
@@ -185,7 +187,7 @@ def _source_refusal(result, field="from"):
                                    "d9/t:stock", "x:1", "PARAGRAPH"])
 def test_every_from_suggestion_resolves(toolbox, grids, value):
     session, table = _report(toolbox, grids=grids, datasets=("counts",))
-    paragraph = session.entry("d1").document.paragraphs()[0].id
+    paragraph = word_docs.paragraphs(session, "d1")[0][0]
     given = value.replace("OWN", table).replace("PARAGRAPH", paragraph)
     result = _sync(toolbox, session, table, **{"from": given})
     assert _source_refusal(result), result.to_json()
@@ -235,5 +237,7 @@ def test_no_parameter_was_added_and_the_strict_set_is_full():
     edit = next(t for t in TOOLS if t.name == "word_edit_table")
     assert "own_source" in FORMAT.__dataclass_fields__ and FORMAT.own_source is own_source
     plan = anthropic_strict_plan(TOOLS, first=STRICT_FIRST)
-    assert sum(len(t.optional_parameters()) for t in TOOLS if plan[t.name]) == 24
+    # edit_smartart and style_by_value are out of TOOLS until their ports: the strict plan has
+    # that much room (24 before).
+    assert sum(len(t.optional_parameters()) for t in TOOLS if plan[t.name]) == 22
     assert "from" in edit.canonical["properties"]

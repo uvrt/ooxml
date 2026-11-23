@@ -1,9 +1,10 @@
 """Round 40: what a range's keep does to the pages, laid out (``check(range=...)``'s
-``if_kept`` and ``if_released``, :mod:`docx_agent.tools.keep_trials`).
+``if_kept`` and ``if_released``, the Rust session's check).
 
 Each fact is compared with the document after the call it is about: the ``fix`` made, the
 document laid out again -- incrementally, as the tools do, and whole, from its bytes alone
--- and the same pages, blank and page counts read there.  Made-up documents only."""
+-- and the same pages and page counts read there (``word_inspect`` and ``check``).  Made-up
+documents only."""
 
 from __future__ import annotations
 
@@ -16,10 +17,13 @@ pytest.importorskip("ooxml_edit.tools.shared", reason="needs ooxml-edit 0.4 (the
 from ooxml_edit.tools import Toolbox  # noqa: E402
 from test_table_keeps import grid  # noqa: E402
 from test_tools_layout_facts import FILLER, call, docx, ok, p  # noqa: E402
+from layout_reads import block_ids, pages_of  # noqa: E402
 
-from docx_agent import Document  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
-from docx_agent.tools import keep_trials  # noqa: E402
+import word_docs  # noqa: E402
+
+#: The keeps a check tries at most (the Rust session's check's ``TRIALS``).
+TRIALS = 4
 
 pytestmark = pytest.mark.any_faces
 
@@ -47,37 +51,40 @@ def _span_doc(fill: int = 17) -> bytes:
     return docx(_fill(fill) + p("Head") + p(WORDS) + grid(5) + p("Closing line") + p("After") + _fill(3))
 
 
-def _ids(session, d: str) -> list[str]:
-    return [b["id"] for b in session.entry(d).document.blocks()]
+def _ids(box, session, d: str) -> list[str]:
+    return block_ids(box, session, d)
 
 
 def _range(box, session, d: str, *ranges: str, **arguments) -> list[dict]:
     return ok(box, session, "check", doc=d, range=list(ranges), include=["reflow"], **arguments).data["range"]
 
 
-def _seen(layout, blocks: list[str], after: str | None, blank_page: int | None) -> dict:
-    """The facts an effect states, read from a layout of the document as it then is."""
-    pages = sorted({n for b in blocks for n in layout.pages_of(b)})
-    out = {"starts": pages[0], "ends": pages[-1], "document_pages": layout.page_count}
+def _seen(box, session, d: str, blocks: list[str], after: str | None) -> dict:
+    """The facts an effect states, read from the layout of the document as it then is."""
+    pages = sorted({n for b in blocks for n in pages_of(box, session, d, b)})
+    count = ok(box, session, "check", doc=d, include=["reflow"]).data["reflow"]["pages"]
+    out = {"starts": pages[0], "ends": pages[-1], "document_pages": count}
     if after is not None:
-        out["after"] = layout.pages_of(after)[0]
-    if blank_page is not None:
-        out["blank"] = keep_trials._room(layout.pages[blank_page - 1])
+        out["after"] = pages_of(box, session, d, after)[0]
     return out
+
+
+def _seen_both(box, session, d: str, blocks: list[str], after: str | None) -> list[dict]:
+    """:func:`_seen` of the document as the session holds it, and of its bytes opened anew."""
+    fresh = session.open(word_docs.saved(session, d), "fresh.docx")
+    return [_seen(box, session, d, blocks, after), _seen(box, session, fresh, blocks, after)]
 
 
 def _stated(effect: dict) -> dict:
     out = {"starts": effect["starts"], "ends": effect["ends"], "document_pages": effect["document_pages"][1]}
     if "after" in effect:
         out["after"] = effect["after"][1]
-    if "blank" in effect:
-        out["blank"] = (effect["blank"]["pt"], effect["blank"]["share"])
     return out
 
 
 def test_if_kept_is_what_the_fix_then_does_to_the_pages(box, session):
     d = session.open(_span_doc(), "kept.docx")
-    ids = _ids(session, d)
+    ids = _ids(box, session, d)
     span = f"{ids[17]}..{ids[20]}"
     [entry] = _range(box, session, d, span)
     assert entry["one_page"] is False and entry["fix"]["calls"] == [{"targets": [span], "keep_together": True}]
@@ -91,20 +98,18 @@ def test_if_kept_is_what_the_fix_then_does_to_the_pages(box, session):
     assert "the document stays at 2 pages" in effect["said"]
 
     call(box, session, d, entry["fix"])
-    document = session.entry(d).document
-    ids = _ids(session, d)
+    ids = _ids(box, session, d)
     blocks, after = ids[17:21], ids[21]
     # Laid out incrementally, as the tools do it, and whole from the bytes alone: the same.
-    for layout in (document.layout(), Document.open(document.to_bytes()).layout()):
-        assert _seen(layout, blocks, after, 1) == _stated(effect)
+    assert _seen_both(box, session, d, blocks, after) == [_stated(effect)] * 2
 
 
 def test_if_released_is_what_releasing_a_kept_range_does(box, session):
     d = session.open(_span_doc(), "released.docx")
-    ids = _ids(session, d)
+    ids = _ids(box, session, d)
     span = f"{ids[17]}..{ids[20]}"
     ok(box, session, "word_format", doc=d, targets=[span], keep_together=True)
-    ids = _ids(session, d)
+    ids = _ids(box, session, d)
     span = f"{ids[17]}..{ids[20]}"
     [entry] = _range(box, session, d, span)
     assert entry["one_page"] is True and entry["kept"] is True and "fix" not in entry and "if_kept" not in entry
@@ -117,10 +122,8 @@ def test_if_released_is_what_releasing_a_kept_range_does(box, session):
                                      f"page 1 then {round(blank['share'] * 100)}% blank")
 
     call(box, session, d, effect["fix"])
-    document = session.entry(d).document
-    ids = _ids(session, d)
-    for layout in (document.layout(), Document.open(document.to_bytes()).layout()):
-        assert _seen(layout, ids[17:21], ids[21], 1) == _stated(effect)
+    ids = _ids(box, session, d)
+    assert _seen_both(box, session, d, ids[17:21], ids[21]) == [_stated(effect)] * 2
     # Released: the next check offers the keep again, with what it costs -- both sides said.
     [again] = _range(box, session, d, f"{ids[17]}..{ids[20]}")
     assert again["if_kept"]["blank"]["pt"] == blank["now_pt"]
@@ -131,25 +134,24 @@ def test_a_keep_that_adds_a_page_says_so_and_what_follows_moves(box, session):
     2 whole and pushes what follows onto a third page."""
     d = session.open(docx(_fill(17) + p("Head") + p(WORDS) + grid(5) + p("Closing line") + _fill(14)
                           + p("Last")), "grow.docx")
-    ids = _ids(session, d)
-    assert session.entry(d).document.layout().page_count == 2
+    ids = _ids(box, session, d)
+    assert ok(box, session, "check", doc=d, include=["reflow"]).data["reflow"]["pages"] == 2
     span = f"{ids[17]}..{ids[20]}"
     [entry] = _range(box, session, d, span)
     effect = entry["if_kept"]
     assert effect["document_pages"] == [2, 3] and effect["starts"] == 2
     assert "the document goes from 2 to 3 pages" in effect["said"]
     call(box, session, d, entry["fix"])
-    document = session.entry(d).document
-    ids = _ids(session, d)
-    assert _seen(document.layout(), ids[17:21], ids[21], effect["blank"]["page"]) == _stated(effect)
+    ids = _ids(box, session, d)
+    assert _seen(box, session, d, ids[17:21], ids[21]) == _stated(effect)
 
 
 def test_a_range_starting_its_page_after_a_page_break_is_not_offered_a_release(box, session):
     d = session.open(docx(_fill(3) + p("Head", ppr="<w:pageBreakBefore/>") + p("Kept line") + p("End")), "pb.docx")
-    ids = _ids(session, d)
+    ids = _ids(box, session, d)
     span = f"{ids[3]}..{ids[4]}"
     ok(box, session, "word_format", doc=d, targets=[span], keep_together=True)
-    ids = _ids(session, d)
+    ids = _ids(box, session, d)
     [entry] = _range(box, session, d, f"{ids[3]}..{ids[4]}")
     assert entry["kept"] is True and entry["one_page"] is True
     assert "if_released" not in entry and "effect_left_out" not in entry
@@ -157,7 +159,7 @@ def test_a_range_starting_its_page_after_a_page_break_is_not_offered_a_release(b
 
 def test_a_range_on_one_page_or_taller_than_a_page_is_not_tried(box, session):
     d = session.open(docx(p("Intro") + p("Line") + _fill(3) + p("Head") + grid(70) + p("End")), "none.docx")
-    ids = _ids(session, d)
+    ids = _ids(box, session, d)
     one, tall = _range(box, session, d, f"{ids[0]}..{ids[1]}", f"{ids[5]}..{ids[7]}")
     assert one["one_page"] is True and tall["taller_than_page"] is True
     for entry in (one, tall):
@@ -179,12 +181,10 @@ def _many(count: int) -> tuple[bytes, list[int]]:
 
 
 def test_each_range_is_tried_alone_and_past_the_cap_the_rest_say_how_to_ask(box, session):
-    # The cap as it is (docx-agent's keep_trials.TRIALS, the Rust session's check's TRIALS:
-    # 4 each), so the session's check and docx-agent's are held to it alike.
-    cap = keep_trials.TRIALS
+    cap = TRIALS
     data, starts = _many(cap + 1)
     d = session.open(data, "many.docx")
-    ids = _ids(session, d)
+    ids = _ids(box, session, d)
     spans = [f"{ids[k]}..{ids[k + 3]}" for k in starts]
     entries = _range(box, session, d, *spans)
     assert all("fix" in e for e in entries)
@@ -204,18 +204,16 @@ def test_the_trials_leave_the_layout_checked_as_it_was(box, session):
     version after it, and the next version's incremental layout, are a layout's of those
     bytes alone."""
     d = session.open(_span_doc(), "held.docx")
-    ids = _ids(session, d)
+    ids = _ids(box, session, d)
     span = f"{ids[17]}..{ids[20]}"
     before = ok(box, session, "check", doc=d, include=["layout"], pages=[1, 2]).data["layout"]
     _range(box, session, d, span)
     after = ok(box, session, "check", doc=d, include=["layout"], pages=[1, 2]).data["layout"]
     assert after == before
     ok(box, session, "word_format", doc=d, targets=[ids[0]], bold=True)
-    document = session.entry(d).document
-    fresh = Document.open(document.to_bytes()).layout()
-    laid = document.layout()
-    assert [laid.blocks_on(n) for n in range(1, laid.page_count + 1)] == \
-        [fresh.blocks_on(n) for n in range(1, fresh.page_count + 1)]
+    fresh = session.open(word_docs.saved(session, d), "fresh.docx")
+    laid = [pages_of(box, session, d, block) for block in _ids(box, session, d)]
+    assert laid == [pages_of(box, session, fresh, block) for block in _ids(box, session, fresh)]
 
 
 def test_checks_with_trials_and_edits_at_once_all_finish(box):
@@ -223,7 +221,7 @@ def test_checks_with_trials_and_edits_at_once_all_finish(box):
     elsewhere; every call ends, none fails (round 34's rule: no wait under the lock)."""
     session = box.session()
     d = session.open(_span_doc(), "threads.docx")
-    ids = _ids(session, d)
+    ids = _ids(box, session, d)
     span = f"{ids[17]}..{ids[20]}"
     results: list = []
 

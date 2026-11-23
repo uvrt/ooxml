@@ -20,12 +20,12 @@ pytest.importorskip("ooxml_edit.tools.shared", reason="needs ooxml-edit (the sha
 
 from ooxml_edit.tools import Toolbox  # noqa: E402
 
-from docx_agent.edit import copy_settings  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from test_copy_outline import PART, STEPS, _blocks, _differences, _made, _numbers, _ok, _template  # noqa: E402
+from test_copy_outline import (PART, STEPS, _blocks, _differences, _list, _made, _numbers, _ok,  # noqa: E402
+                               _template)
 
 pytestmark = pytest.mark.any_faces
 
@@ -53,7 +53,7 @@ def test_copies_whose_list_runs_on_follow_where_it_is_stated(box):
     follows; the later copies say which copy they go on from."""
     session = box.session()
     report, sample, span, made = _made(box, session, PART + STEPS, 3)
-    assert _numbers(session, report, [m[3] for m in made]) == [1, 3, 5]
+    assert _numbers(box, session, report, [m[3] for m in made]) == [1, 3, 5]
     found = _check(box, session, report, sample, span, made, "run_on")
     assert found["follow"] == 3, _differences(found)
     assert "list_fix" not in found and "fix" not in found and "note" not in found
@@ -85,7 +85,7 @@ def test_a_copy_that_restarts_breaks_the_run_and_its_fix_joins_it(box):
     session = box.session()
     report, sample, span, made = _made(box, session, PART + STEPS, 3)
     _ok(box, session, "word_lists", doc=report, targets=[made[1][3]], action="restart", start=1)
-    assert _numbers(session, report, [m[3] for m in made]) == [1, 1, 3]
+    assert _numbers(box, session, report, [m[3] for m in made]) == [1, 1, 3]
     found = _check(box, session, report, sample, span, made, "run_on")
     assert [item["follows"] for item in found["items"]] == [True, False, True]
     join = {"targets": [made[1][3]], "action": "continue", "join": made[0][4]}
@@ -94,7 +94,7 @@ def test_a_copy_that_restarts_breaks_the_run_and_its_fix_joins_it(box):
     assert found["list_fix"] == {"tool": "word_lists", "calls": [join]}
     for call in found["list_fix"]["calls"]:
         _ok(box, session, "word_lists", doc=report, **call)
-    assert _numbers(session, report, [m[3] for m in made]) == [1, 3, 5]
+    assert _numbers(box, session, report, [m[3] for m in made]) == [1, 3, 5]
     assert _check(box, session, report, sample, span, made, "run_on")["follow"] == 3
 
 
@@ -106,15 +106,14 @@ def test_a_copy_with_a_separate_list_is_joined_to_the_running_one(box):
     steps = made[1][3:5]
     _ok(box, session, "word_lists", doc=report, targets=steps, action="remove", force=True)
     _ok(box, session, "word_lists", doc=report, targets=steps, action="add", kind="number")
-    document = session.entry(report).document
-    assert document.list_of(made[1][3]).num_id != document.list_of(made[0][3]).num_id
+    assert _list(box, session, report, made[1][3])["num_id"] != _list(box, session, report, made[0][3])["num_id"]
     found = _check(box, session, report, sample, span, made, "run_on")
     numbering = _numbering(found, 1)
     assert [(value, reference) for value, reference, _, _ in numbering] == [("starts at 1", "runs on")]
     assert numbering[0][3]["calls"] == [{"targets": [made[1][3]], "action": "continue", "join": made[0][4]}]
     for call in found["list_fix"]["calls"]:
         _ok(box, session, "word_lists", doc=report, **call)
-    assert _numbers(session, report, [m[3] for m in made])[:2] == [1, 3]
+    assert _numbers(box, session, report, [m[3] for m in made])[:2] == [1, 3]
     assert not _numbering(_check(box, session, report, sample, span, made, "run_on"), 1)
 
 
@@ -125,15 +124,15 @@ def test_the_run_s_first_copy_numbers_as_its_sample(box):
     report, sample, span, made = _made(box, session, PART + STEPS, 3)
     _ok(box, session, "word_insert_markdown", doc=report, markdown="1. A list item before the copies",
         at=f"before:{made[0][0]}")
-    _ok(box, session, "word_format", doc=report, targets=made[0][3:5], like=_list_item_before(session, report, made))
+    _ok(box, session, "word_format", doc=report, targets=made[0][3:5], like=_list_item_before(box, session, report, made))
     found = _check(box, session, report, sample, span, made, "run_on")
     numbering = _numbering(found, 0)
     assert [(value, reference) for value, reference, _, _ in numbering] == [("starts at 2", "starts at 1")]
     assert numbering[0][3]["calls"] == [{"targets": [made[0][3]], "action": "restart", "start": 1}]
 
 
-def _list_item_before(session, report, made) -> str:
-    blocks = _blocks(session, report)
+def _list_item_before(box, session, report, made) -> str:
+    blocks = _blocks(box, session, report)
     return blocks[blocks.index(made[0][0]) - 1]
 
 
@@ -178,19 +177,6 @@ def test_a_wrong_value_is_refused_with_the_valid_ones_and_a_near_one_read(box):
     assert any("read as 'run_on'" in warning for warning in read.warnings)
 
 
-def test_the_handler_reads_a_placeholder_as_the_default_and_refuses_another_value():
-    """Rule 1 and 2 where the handler reads the item itself."""
-    from ooxml_edit.tools import ToolError
-
-    from docx_agent.tools.scoped import _lists
-
-    assert _lists({"lists": ""}, 0) == _lists({}, 0) == "sample"
-    assert _lists({"lists": "run_on"}, 1) == "run_on"
-    with pytest.raises(ToolError) as refused:
-        _lists({"lists": "loop"}, 3)
-    assert refused.value.field == "copies[3].lists" and refused.value.valid_options == ["sample", "run_on"]
-
-
 def test_word_lists_continue_joins_the_list_named(box):
     """``join``: the list to go on from, where it is not the nearest one like it (rule 1: a
     placeholder is the default; given to another action, it is left out with a warning)."""
@@ -198,16 +184,14 @@ def test_word_lists_continue_joins_the_list_named(box):
     doc = _new(box, session)
     _ok(box, session, "word_insert_markdown", doc=doc, markdown="1. one\n2. two\n\nA line.\n\n1. alpha\n2. beta"
         "\n\nAnother line.\n\n1. last", at="end")
-    blocks = _blocks(session, doc)
+    blocks = _blocks(box, session, doc)
     first, second, last = blocks[0], blocks[3], blocks[-1]
-    document = session.entry(doc).document
-    lists = [document.list_of(b).num_id for b in (first, second, last)]
+    lists = [_list(box, session, doc, b)["num_id"] for b in (first, second, last)]
     assert len(set(lists)) == 3
     result = box.dispatch(session, "word_lists", {"doc": doc, "targets": [last], "action": "continue",
                                                   "join": first})
-    document = session.entry(doc).document  # (the view as the served call left it)
-    assert result.ok and document.list_of(last).num_id == lists[0]
-    assert _numbers(session, doc, [last]) == [3]
+    assert result.ok and _list(box, session, doc, last)["num_id"] == lists[0]
+    assert _numbers(box, session, doc, [last]) == [3]
     warned = box.dispatch(session, "word_lists", {"doc": doc, "targets": [last], "action": "level", "level": 0,
                                                   "join": first})
     assert any("join is continue's" in warning for warning in warned.warnings)
@@ -215,22 +199,3 @@ def test_word_lists_continue_joins_the_list_named(box):
 
 def _new(box, session) -> str:
     return session.open(_template(), "lists.docx")
-
-
-def test_run_is_never_a_restart_inside_a_running_list():
-    """The rule itself: a later copy's leading item goes on from the copy before it (same
-    list, its count carried); a restart is held back only inside a running list."""
-    lead = {copy_settings.LEAD: True, copy_settings.COUNT: "own", "list_numbering": "starts at 1"}
-    run = copy_settings.Run([(0, "L", "decimal %1.", "p:A")])
-    joins: dict = {}
-    mine = {"list_level": 0, "list_format": "decimal %1.", copy_settings.LIST_KEY: "L",
-            copy_settings.COUNT: "runs_on", "list_numbering": "starts at 3"}
-    assert run.compared(mine, lead, "p:B", joins) == ("runs on", "runs on") and joins == {"p:B": "p:A"}
-    restarted = {**mine, copy_settings.COUNT: "own", "list_numbering": "starts at 1"}
-    assert run.compared(restarted, lead, "p:B", joins) == ("starts at 1", "runs on")
-    other = {**mine, copy_settings.LIST_KEY: "M"}
-    assert run.compared(other, lead, "p:B", joins) == ("starts at 3", "runs on")
-    first = copy_settings.Run(None)
-    assert first.compared(restarted, lead, "p:B", {}) == ("starts at 1", "starts at 1")
-    assert copy_settings.settings_fix(None, "list_numbering", "starts at 3", "starts at 1", ["p:B"], "p:S",
-                                      {}, {}, restart=False) is None

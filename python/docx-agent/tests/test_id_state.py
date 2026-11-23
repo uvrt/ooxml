@@ -1,238 +1,271 @@
 """A document saved and opened again with its id state (round 38): what the file cannot say --
 ids deleted after the last surviving one of their sequence, who deleted them -- comes back
-from a short string kept beside the bytes, and Word's bytes are not touched."""
+from a short string kept beside the bytes (``Session.save``'s ``state``, ``Session.open``'s
+``state``), and Word's bytes are not touched."""
 
 from __future__ import annotations
 
+import re
 import threading
 
 import pytest
 
-from docx_agent import Document
-from docx_agent.edit import ids as _ids
-from docx_agent.edit.ids import DeletedId, IdStateError
+from ooxml_edit.tools import StateRefused, Toolbox
+
+from docx_agent.tools import FORMAT, GROUPS, TOOLS
+
+import word_docs
+from test_retired_ids import png
 
 
-def every_id(document: Document) -> set[str]:
-    out: set[str] = set()
-    for story in document.stories:
-        for paragraph in story.paragraphs:
-            out.add(paragraph.id)
-        for table in story.tables:
-            out.add(table.id)
-            out.update(row.id for row in table.rows)
-    return out
+@pytest.fixture
+def box():
+    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS) as toolbox:
+        yield toolbox
 
 
-def _deleted_at_the_end() -> tuple[Document, list[str]]:
+def ok(box, session, tool: str, /, **arguments):
+    result = box.dispatch(session, tool, arguments)
+    assert result.ok, (tool, result.to_json())
+    return result
+
+
+def _opened(box, data: bytes, **options):
+    session = box.session()
+    return session, session.open(data, "report.docx", **options)
+
+
+def _lines(box, session, doc, prefix: str = "Line") -> list[str]:
+    return [block for block, text in word_docs.paragraphs(session, doc) if text.startswith(prefix)]
+
+
+def _deleted_at_the_end(box):
     """Blocks added, the latest ones deleted: no surviving id of the sequence comes after
     them, so the file alone cannot tell they were ever there."""
-    document = Document.new()
-    document.insert_markdown("\n\n".join(f"Line {k}." for k in range(8)))
-    gone = [p.id for p in document.paragraphs()[-4:]]
+    session, doc = _opened(box, word_docs.blank())
+    ok(box, session, "word_insert_markdown", doc=doc, at="end",
+       markdown="\n\n".join(f"Line {k}." for k in range(8)))
+    gone = _lines(box, session, doc)[-4:]
     for identifier in gone:
-        document.delete_block(identifier)
-    return document, gone
+        ok(box, session, "word_delete", doc=doc, target=identifier)
+    return session, doc, gone
+
+
+def _append(box, session, doc, texts: list[str]) -> list[str]:
+    made = ok(box, session, "word_insert_markdown", doc=doc, at="end", markdown="\n\n".join(texts))
+    return [block for block in made.data["blocks"] if block.startswith("p:")]
+
+
+def _all_ids(data: bytes) -> set[str]:
+    """Every paraId and textId the document part holds."""
+    return set(re.findall(r'w14:(?:paraId|textId)="([0-9A-F]{8})"', word_docs.part(data))) - {"77777777"}
 
 
 # -- the limit the file alone leaves ------------------------------------------------------------
 
 
-def test_without_the_state_the_latest_deleted_ids_come_back_as_before():
-    document, gone = _deleted_at_the_end()
-    reopened = Document.open(document.to_bytes())
-    assert reopened.history.version == 0
-    made = [reopened.append_paragraph(f"New {k}.").id for k in range(6)]
+def test_without_the_state_the_latest_deleted_ids_come_back_as_before(box):
+    session, doc, gone = _deleted_at_the_end(box)
+    later, again = _opened(box, session.save(doc).data)
+    assert later.entry(again).version == 0
+    made = _append(box, later, again, [f"New {k}." for k in range(6)])
     assert set(made) & set(gone)            # the stated limit, unchanged without a state
 
 
-def test_with_the_state_no_deleted_id_is_given_again_and_naming_one_says_deleted():
-    document, gone = _deleted_at_the_end()
-    data, state = document.to_bytes(), document.id_state()
-    version = document.history.version
-    reopened = Document.open(data, ids=state)
-    made = [reopened.append_paragraph(f"New {k}.").id for k in range(30)]
+def test_with_the_state_no_deleted_id_is_given_again_and_naming_one_says_deleted(box):
+    session, doc, gone = _deleted_at_the_end(box)
+    saved = session.save(doc)
+    version = session.entry(doc).version
+    later, again = _opened(box, saved.data, state=saved.state)
+    made = _append(box, later, again, [f"New {k}." for k in range(30)])
     assert not set(made) & set(gone)
     assert len(set(made)) == len(made)
     for identifier in gone:
-        with pytest.raises(DeletedId) as caught:
-            reopened.paragraph(identifier)
-        assert caught.value.earlier and caught.value.version is not None
-        message = str(caught.value)
-        assert f"{identifier} was deleted in the change that made version {caught.value.version}" in message
-        assert "before the document was saved and opened again" in message
-        assert caught.value.version <= version
+        refused = box.dispatch(later, "word_set_text", {"doc": again, "target": identifier, "text": "x"})
+        assert not refused.ok and refused.error.code == "not_found"
+        found = re.search(rf"{identifier} was deleted .*the change that made version (\d+)", refused.error.message)
+        assert found and int(found.group(1)) <= version, refused.error.message
+        assert "before the document was saved and opened again" in refused.error.message
 
 
-def test_the_bytes_are_the_same_with_or_without_the_state():
-    document, _ = _deleted_at_the_end()
-    data = document.to_bytes()
-    document.id_state()
-    assert document.to_bytes() == data
-    assert Document.open(data, ids=document.id_state()).to_bytes() == Document.open(data).to_bytes()
+def test_the_bytes_are_the_same_with_or_without_the_state(box):
+    session, doc, _ = _deleted_at_the_end(box)
+    saved = session.save(doc)
+    assert session.save(doc).data == saved.data
+    with_state, d1 = _opened(box, saved.data, state=saved.state)
+    without, d2 = _opened(box, saved.data)
+    assert with_state.save(d1).data == without.save(d2).data
 
 
-def test_no_value_the_document_ever_had_is_generated_after_the_reopen():
-    document = Document.new()
-    document.insert_markdown("\n\n".join(f"Line {k}." for k in range(10)))
-    for paragraph in document.paragraphs()[:5]:
-        document.paragraph(paragraph.id).set_text(paragraph.text + " again")   # textIds renewed
-    for paragraph in document.paragraphs()[-3:]:
-        document.delete_block(paragraph.id)
-    pool = set(document._id_pool())
-    reopened = Document.open(document.to_bytes(), ids=document.id_state())
-    before = set(reopened._id_pool())
-    assert pool <= before
-    reopened.insert_markdown("\n\n".join(f"More {k}." for k in range(40)))
-    new = set(reopened._id_pool()) - before
+def test_no_value_the_document_ever_had_is_generated_after_the_reopen(box):
+    session, doc = _opened(box, word_docs.blank())
+    ok(box, session, "word_insert_markdown", doc=doc, at="end",
+       markdown="\n\n".join(f"Line {k}." for k in range(10)))
+    pool = _all_ids(session.save(doc).data)
+    for identifier, text in word_docs.paragraphs(session, doc)[:5]:
+        ok(box, session, "word_set_text", doc=doc, target=identifier, text=text + " again")   # textIds renewed
+        pool |= _all_ids(session.save(doc).data)
+    for identifier in _lines(box, session, doc)[-3:]:
+        ok(box, session, "word_delete", doc=doc, target=identifier)
+    saved = session.save(doc)
+    later, again = _opened(box, saved.data, state=saved.state)
+    before = _all_ids(saved.data)
+    _append(box, later, again, [f"More {k}." for k in range(40)])
+    new = _all_ids(later.save(again).data) - before
     assert new and not new & pool
 
 
-def test_versions_go_on_from_the_saved_one():
-    document, _ = _deleted_at_the_end()
-    document.undo()
-    document.redo()
-    saved, last = document.history.version, document.history.last_version
-    reopened = Document.open(document.to_bytes(), ids=document.id_state())
-    assert reopened.history.version == saved
-    reopened.append_paragraph("Next.")
-    assert reopened.history.version == last + 1
-    assert not reopened.undo() or reopened.history.version == saved
+def test_versions_go_on_from_the_saved_one(box):
+    session, doc, _ = _deleted_at_the_end(box)
+    ok(box, session, "undo", doc=doc)
+    ok(box, session, "undo", doc=doc, redo=True)
+    entry = session.entry(doc)
+    saved_version, last = entry.history.version, entry.history.last_version
+    saved = session.save(doc)
+    later, again = _opened(box, saved.data, state=saved.state)
+    assert later.entry(again).history.version == saved_version
+    _append(box, later, again, ["Next."])
+    assert later.entry(again).history.version == last + 1
+    undone = box.dispatch(later, "undo", {"doc": again})
+    assert not undone.ok or later.entry(again).history.version == saved_version
 
 
-def test_a_state_survives_several_reopens_and_this_session_s_deletions_join_it():
-    document, gone = _deleted_at_the_end()
-    second = Document.open(document.to_bytes(), ids=document.id_state())
-    survivor = second.paragraphs()[-1].id
-    second.delete_block(survivor)
-    third = Document.open(second.to_bytes(), ids=second.id_state())
-    made = [third.append_paragraph(f"New {k}.").id for k in range(20)]
+def test_a_state_survives_several_reopens_and_this_session_s_deletions_join_it(box):
+    session, doc, gone = _deleted_at_the_end(box)
+    saved = session.save(doc)
+    second, d2 = _opened(box, saved.data, state=saved.state)
+    survivor = _lines(box, second, d2)[-1]
+    ok(box, second, "word_delete", doc=d2, target=survivor)
+    saved = second.save(d2)
+    third, d3 = _opened(box, saved.data, state=saved.state)
+    made = _append(box, third, d3, [f"New {k}." for k in range(20)])
     assert not set(made) & {*gone, survivor}
     for identifier in (*gone, survivor):
-        with pytest.raises(DeletedId, match="before the document was saved and opened again"):
-            third.paragraph(identifier)
+        refused = box.dispatch(third, "word_set_text", {"doc": d3, "target": identifier, "text": "x"})
+        assert "before the document was saved and opened again" in refused.error.message
     # Opened without a change, the state it gives is the one it took.
-    assert Document.open(third.to_bytes(), ids=third.id_state()).id_state() == third.id_state()
+    last = third.save(d3)
+    fourth, d4 = _opened(box, last.data, state=last.state)
+    assert fourth.save(d4).state == last.state
 
 
-def test_a_replaced_block_still_names_its_replacement():
-    document = Document.new()
-    document.insert_markdown("One.\n\nTwo.")
-    old = document.paragraphs()[-1].id
-    new = document.insert_markdown("Two, again.", at=f"replace:{old}").blocks[0]
-    reopened = Document.open(document.to_bytes(), ids=document.id_state())
-    with pytest.raises(DeletedId) as caught:
-        reopened.paragraph(old)
-    assert caught.value.replaced_by == new and f"{old} was replaced with {new}" in str(caught.value)
+def test_a_replaced_block_still_names_its_replacement(box):
+    session, doc = _opened(box, word_docs.blank())
+    ok(box, session, "word_insert_markdown", doc=doc, at="end", markdown="One.\n\nTwo.")
+    old = _lines(box, session, doc, "Two")[-1]
+    new = ok(box, session, "word_insert_markdown", doc=doc, at=f"replace:{old}", markdown="Two, again.").data["blocks"][0]
+    saved = session.save(doc)
+    later, again = _opened(box, saved.data, state=saved.state)
+    refused = box.dispatch(later, "word_set_text", {"doc": again, "target": old, "text": "x"})
+    assert f"{old} was replaced with {new}" in refused.error.message, refused.error.message
 
 
-def test_a_deleted_drawing_number_is_not_given_again_after_the_reopen():
-    from tests.test_retired_ids import png
-
-    document = Document.new()
-    anchor = document.append_paragraph("Picture here.").id
-    first = document.insert_picture(f"{anchor}@0", png(), alt_text="One").id
-    document.picture(first).delete()
-    reopened = Document.open(document.to_bytes(), ids=document.id_state())
-    second = reopened.insert_picture(f"{anchor}@0", png(), alt_text="Two").id
+def test_a_deleted_drawing_number_is_not_given_again_after_the_reopen(box):
+    session, doc = _opened(box, word_docs.blank())
+    anchor = _append(box, session, doc, ["Picture here."])[0]
+    image = session.add_blob(png(), "picture.png", "image/png")
+    first = ok(box, session, "word_drawings", doc=doc, action="insert_picture", at=f"{anchor}@0", image=image,
+               alt_text="One").created[0]
+    ok(box, session, "word_delete", doc=doc, target=first)
+    saved = session.save(doc)
+    later, again = _opened(box, saved.data, state=saved.state)
+    image = later.add_blob(png(), "picture.png", "image/png")
+    second = ok(box, later, "word_drawings", doc=again, action="insert_picture", at=f"{anchor}@0", image=image,
+                alt_text="Two").created[0]
     assert second != first
-    with pytest.raises(DeletedId, match=f"{first} was deleted"):
-        reopened.drawing(first)
+    refused = box.dispatch(later, "word_drawings", {"doc": again, "action": "set", "target": first, "wrap": "square"})
+    assert not refused.ok and f"{first} was deleted" in refused.error.message, refused.to_json()
 
 
-def test_a_positional_id_held_from_before_the_first_edit_still_resolves():
-    plain = Document.new()
-    plain.insert_markdown("One.\n\nTwo.\n\nThree.")
+def test_a_positional_id_held_from_before_the_first_edit_still_resolves(box):
     # A file whose paragraphs have no paraId: the first edit stamps them, keeping aliases.
-    data = plain.to_bytes()
-    stripped = Document.open(data)
-    for root in stripped._roots():
-        for node in root.iter(_ids.W_P):
-            node.attrib.pop(_ids.PARA_ID, None)
-            node.attrib.pop(_ids.TEXT_ID, None)
-    for part in stripped._parts():
-        stripped.package.mark_dirty(part)
-    document = Document.open(stripped.to_bytes())
-    held = document.paragraphs()[2].id
+    data = word_docs.with_body(word_docs.paragraph("One.") + word_docs.paragraph("Two.")
+                               + word_docs.paragraph("Three."))
+    session, doc = _opened(box, data)
+    listed = [block for block, _ in word_docs.blocks(box, session, doc)]
+    held = listed[2]
     assert held.startswith("p@")
-    document.paragraph(document.paragraphs()[0].id).set_text("First.")
-    document.delete_block(document.paragraphs()[0].id)
-    reopened = Document.open(document.to_bytes(), ids=document.id_state())
-    assert reopened.paragraph(held).text == "Three."
+    ok(box, session, "word_set_text", doc=doc, target=listed[0], text="First.")
+    first = [block for block, _ in word_docs.blocks(box, session, doc)][0]
+    ok(box, session, "word_delete", doc=doc, target=first)
+    saved = session.save(doc)
+    later, again = _opened(box, saved.data, state=saved.state)
+    assert "Three." in ok(box, later, "word_read", doc=again, range=held).data
 
 
 # -- refusals ------------------------------------------------------------------------------------
 
 
-def test_a_state_of_other_bytes_is_refused_with_the_way_out():
-    document, _ = _deleted_at_the_end()
-    state = document.id_state()
-    document.append_paragraph("Later.")
-    with pytest.raises(IdStateError) as caught:
-        Document.open(document.to_bytes(), ids=state)
+def test_a_state_of_other_bytes_is_refused_with_the_way_out(box):
+    session, doc, _ = _deleted_at_the_end(box)
+    state = session.save(doc).state
+    _append(box, session, doc, ["Later."])
+    with pytest.raises(StateRefused) as caught:
+        _opened(box, session.save(doc).data, state=state)
     message = str(caught.value)
     assert "of other bytes" in message and "without ids=" in message and "Session.save" in message
-    assert isinstance(caught.value, ValueError)
 
 
 @pytest.mark.parametrize("state", ["nonsense", "docx-ids.1.AAAA", "docx-ids.9.xyz", 42])
-def test_a_state_that_is_none_is_refused_with_the_way_out(state):
-    document, _ = _deleted_at_the_end()
-    with pytest.raises(IdStateError, match="without ids="):
-        Document.open(document.to_bytes(), ids=state)
+def test_a_state_that_is_none_is_refused_with_the_way_out(box, state):
+    session, doc, _ = _deleted_at_the_end(box)
+    with pytest.raises(StateRefused, match="without ids="):
+        _opened(box, session.save(doc).data, state=state)
 
 
-def test_an_empty_state_is_no_state():
-    document, gone = _deleted_at_the_end()
-    reopened = Document.open(document.to_bytes(), ids="")
-    assert reopened.history.version == 0
+def test_an_empty_state_is_no_state(box):
+    session, doc, _ = _deleted_at_the_end(box)
+    later, again = _opened(box, session.save(doc).data, state="")
+    assert later.entry(again).history.version == 0
 
 
 # -- size ---------------------------------------------------------------------------------------
 
 
-def test_the_state_of_a_long_day_s_edits_stays_small():
+def _batch(box, session, doc, ops):
+    for start in range(0, len(ops), 150):           # a batch takes at most 200 ops
+        result = box.dispatch(session, "batch", {"ops": [{"tool": tool, "arguments": {"doc": doc, **arguments}}
+                                                         for tool, arguments in ops[start:start + 150]]})
+        assert result.ok, result.to_json()
+
+
+def test_the_state_of_a_long_day_s_edits_stays_small(box):
     """A 300-paragraph report rewritten all day: 1,500 text edits, 600 blocks deleted, 600
     added.  The state stays a few kilobytes."""
-    document = Document.new()
-    document.insert_markdown("\n\n".join(f"Paragraph {k} of the report." for k in range(300)))
+    session, doc = _opened(box, word_docs.blank())
+    _append(box, session, doc, [f"Paragraph {k} of the report." for k in range(300)])
     for round_ in range(5):
-        for paragraph in document.paragraphs()[:300]:
-            document.paragraph(paragraph.id).set_text(f"Paragraph, pass {round_}.")
+        _batch(box, session, doc, [("word_set_text", {"target": block, "text": f"Paragraph, pass {round_}."})
+                                   for block, _ in word_docs.paragraphs(session, doc)[:300]])
     for round_ in range(6):
-        for paragraph in document.paragraphs()[-100:]:
-            document.delete_block(paragraph.id)
-        document.insert_markdown("\n\n".join(f"Added {round_}.{k}." for k in range(100)))
-    state = document.id_state()
-    assert len(state) < 8000, len(state)
-    reopened = Document.open(document.to_bytes(), ids=state)
-    assert set(reopened._id_pool()) >= set(document._id_pool())
+        _batch(box, session, doc, [("word_delete", {"target": block})
+                                   for block, _ in word_docs.paragraphs(session, doc)[-100:]])
+        _append(box, session, doc, [f"Added {round_}.{k}." for k in range(100)])
+    saved = session.save(doc)
+    assert len(saved.state) < 8000, len(saved.state)
+    later, again = _opened(box, saved.data, state=saved.state)
+    assert later.save(again).state
 
 
 # -- the tools ----------------------------------------------------------------------------------
 
 
-@pytest.fixture
-def box():
-    from ooxml_edit.tools import Toolbox
-
-    from docx_agent.tools import FORMAT, GROUPS, TOOLS
-
-    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS) as toolbox:
-        yield toolbox
+def _report(box) -> bytes:
+    session, doc = _opened(box, word_docs.blank())
+    ok(box, session, "word_insert_markdown", doc=doc, at="end",
+       markdown="# Part one\n\n" + "\n\n".join(f"Text {k}." for k in range(6)))
+    return session.save(doc).data
 
 
-def _report() -> bytes:
-    document = Document.new()
-    document.insert_markdown("# Part one\n\n" + "\n\n".join(f"Text {k}." for k in range(6)))
-    return document.to_bytes()
+def _last_text(session, doc) -> str:
+    return [block for block, text in word_docs.paragraphs(session, doc) if text][-1]
 
 
 def test_tools_save_and_open_under_the_same_doc_id_keep_who_deleted(box):
     session = box.session()
-    doc = session.open(_report(), "report.docx")
+    doc = session.open(_report(box), "report.docx")
     writer = session.view(context={"agent": "writer-2"})
-    target = session.entry(doc).document.paragraphs()[-1].id
+    target = _last_text(session, doc)
     deleted = box.dispatch(writer, "word_delete", {"doc": doc, "target": target})
     assert deleted.ok, deleted.to_json()
     saved = session.save(doc)
@@ -255,8 +288,8 @@ def test_tools_save_and_open_under_the_same_doc_id_keep_who_deleted(box):
 
 def test_the_save_tool_s_output_carries_the_state(box):
     session = box.session()
-    doc = session.open(_report(), "report.docx")
-    target = session.entry(doc).document.paragraphs()[-1].id
+    doc = session.open(_report(box), "report.docx")
+    target = _last_text(session, doc)
     assert box.dispatch(session, "word_delete", {"doc": doc, "target": target}).ok
     saved = box.dispatch(session, "save_document", {"doc": doc, "name": "out.docx", "format": "docx"})
     assert saved.ok, saved.to_json()
@@ -272,10 +305,8 @@ def test_the_save_tool_s_output_carries_the_state(box):
 
 
 def test_tools_refuse_a_state_of_other_bytes_and_open_without_one_as_before(box):
-    from ooxml_edit.tools import StateRefused
-
     session = box.session()
-    doc = session.open(_report(), "report.docx")
+    doc = session.open(_report(box), "report.docx")
     saved = session.save(doc)
     assert box.dispatch(session, "word_insert_markdown", {"doc": doc, "markdown": "More.", "at": "end"}).ok
     newer = session.save(doc)
@@ -289,7 +320,7 @@ def test_tools_refuse_a_state_of_other_bytes_and_open_without_one_as_before(box)
 
 def test_writers_on_threads_after_a_reopen_never_take_a_retired_id(box):
     session = box.session()
-    doc = session.open(_report(), "report.docx")
+    doc = session.open(_report(box), "report.docx")
     handed: list[str] = []
     for k in range(6):
         made = box.dispatch(session, "word_insert_markdown", {"doc": doc, "markdown": f"Early {k}.", "at": "end"})

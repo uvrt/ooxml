@@ -1,6 +1,6 @@
 """check's layout facts for documents (round 16, F8): measured from the layout reflow uses.
 
-Every document here is made up: Document.new()'s package with a body written for the case,
+Every document here is made up: a new blank package with a body written for the case,
 its paragraphs given paraIds so that their ids stay put across the fixes the facts offer.
 The cases hold whatever faces the machine has: a row taller than a page splits, a
 keep-with-next paragraph before a page break stays at its page's foot, a picture wider
@@ -22,8 +22,9 @@ pytest.importorskip("ooxml_edit.tools.shared", reason="needs ooxml-edit 0.4 (the
 
 from ooxml_edit.tools import Toolbox  # noqa: E402
 
-from docx_agent import Document  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
+import word_docs  # noqa: E402
+from layout_reads import ids_of, table_ids, where  # noqa: E402
 
 _ids = itertools.count(0x100)
 
@@ -59,19 +60,8 @@ def table(rows: list[list[str]], *, width: int = 9000, header: bool = False, ind
 
 
 def docx(body: str) -> bytes:
-    """Document.new()'s package, its body ``body`` (the section kept)."""
-    source = zipfile.ZipFile(io.BytesIO(Document.new().to_bytes()))
-    out = io.BytesIO()
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as archive:
-        for name in source.namelist():
-            data = source.read(name)
-            if name == "word/document.xml":
-                text = data.decode()
-                start = text.index("<w:body>") + len("<w:body>")
-                text = text[:start] + body + text[text.index("<w:sectPr", start):]
-                data = text.encode()
-            archive.writestr(name, data)
-    return out.getvalue()
+    """A new blank document's package, its body ``body`` (the section kept)."""
+    return word_docs.with_body(body)
 
 
 def png(width: int = 40, height: int = 20) -> bytes:
@@ -122,7 +112,7 @@ def test_small_text_direct_formatting_and_styles_with_their_fixes(box, session):
         p(runs='<w:r><w:t xml:space="preserve">Some </w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>bold</w:t></w:r>')
     d = session.open(docx(titled + small + emphasis + table([["a", "b"]]) + p("End")), "made.docx")
     layout = facts(box, session, d, min_size=9, styles=["Normal", "Heading 1", "No such style"])
-    ids = [paragraph.id for paragraph in session.entry(d).document.paragraphs()]
+    ids = ids_of(session, d)
     title, small_id, emphasis_id = ids[:3]
 
     assert layout["smallest_text"]["body"] == 6.0 and "table" in layout["smallest_text"]
@@ -157,9 +147,9 @@ def test_small_text_direct_formatting_and_styles_with_their_fixes(box, session):
 def test_word_format_clear_takes_properties_back_to_the_style(box, session):
     target = p("Indented", '<w:sz w:val="40"/><w:b/>', '<w:ind w:left="720" w:hanging="360"/><w:spacing w:after="600"/>')
     d = session.open(docx(target + p("End")), "clear.docx")
-    paragraph = session.entry(d).document.paragraphs()[0].id
+    paragraph = ids_of(session, d)[0]
     ok(box, session, "word_format", doc=d, targets=[paragraph], clear=["indent_first", "size", "space_after"])
-    xml = session.entry(d).document.package.tree(session.entry(d).document.package.document_part())
+    xml = word_docs.tree(word_docs.saved(session, d))
     w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
     element = xml.find(f"{w}body/{w}p")
     assert element.find(f"{w}pPr/{w}ind").get(w + "left") == "720"
@@ -177,10 +167,9 @@ def test_empty_paragraphs_used_as_space_and_the_space_kept_without_them(box, ses
     body = (p(FILLER) + p() + p() + p() + p("After the gap") + table([["a"]]) + p() + table([["b"]])
             + p(FILLER) + p())
     d = session.open(docx(body), "gaps.docx")
-    document = session.entry(d).document
-    ids = [paragraph.id for paragraph in document.paragraphs()]
+    ids = ids_of(session, d)
     after_gap = ids[4]
-    before = document.layout().where(after_gap)[0].top
+    before = where(box, session, d, after_gap)[0]["top"]
     layout = facts(box, session, d)
     [gap] = layout["spacers"]          # not the one between the tables, nor the last paragraph
     assert gap["paras"] == ids[1:4] and gap["page"] == 1 and gap["next"] == after_gap
@@ -189,7 +178,7 @@ def test_empty_paragraphs_used_as_space_and_the_space_kept_without_them(box, ses
     call(box, session, d, gap["fix"])
     call(box, session, d, gap["keep_space"])
     assert facts(box, session, d)["spacers"] == []
-    moved = session.entry(d).document.layout().where(after_gap)[0].top
+    moved = where(box, session, d, after_gap)[0]["top"]
     assert abs(moved - before) < 1.0, (before, moved)
 
 
@@ -232,9 +221,8 @@ def test_a_keep_with_next_paragraph_before_a_new_page_is_no_fact(box, session, c
                     '<w:pgMar w:top="1417" w:right="1417" w:bottom="1417" w:left="1417" w:header="708" '
                     'w:footer="708" w:gutter="0"/></w:sectPr>')
     d = session.open(with_style(docx(p(FILLER) + heading + following + p(FILLER)), NEW_PAGE_STYLE), "kept.docx")
-    layout = session.entry(d).document.layout()
-    ids = [paragraph.id for paragraph in session.entry(d).document.paragraphs()]
-    assert layout.where(ids[2])[0].page > layout.where(ids[1])[-1].page    # a new page indeed
+    ids = ids_of(session, d)
+    assert where(box, session, d, ids[2])[0]["page"] > where(box, session, d, ids[1])[-1]["page"]   # a new page
     assert facts(box, session, d)["keep_with_next_at_foot"] == []
 
 
@@ -256,7 +244,7 @@ def test_a_table_split_after_rows_kept_with_the_next(box, session):
     plain = table([[f"Item {r}", "value", "more"] for r in range(70)])
     d = session.open(docx(p("Tables") + kept + p("Between", ppr="<w:pageBreakBefore/>") + plain + p("End")),
                      "kept-rows.docx")
-    first, second = [t.id for t in session.entry(d).document.tables()]
+    first, second = table_ids(box, session, d)
     entries = [e for e in facts(box, session, d)["keep_with_next_at_foot"] if "table" in e]
     assert entries and {e["table"] for e in entries} == {first}       # the plain table is no fact
     for entry in entries:
@@ -268,8 +256,7 @@ def test_a_split_row_and_header_rows_that_do_not_repeat(box, session):
                  header=True)
     plain = table([[f"Item {r}", "plain", "more"] for r in range(80)], first_rpr="<w:b/>")
     d = session.open(docx(p("Tables") + tall + p("Between") + plain + p("End")), "rows.docx")
-    document = session.entry(d).document
-    first, second = [t.id for t in document.tables()]
+    first, second = table_ids(box, session, d)
     layout = facts(box, session, d)
     [split] = [e for e in layout["split_rows"] if e["table"] == first]
     assert split["row"] == 4 and len(split["pages"]) >= 2          # the header row comes first
@@ -322,15 +309,14 @@ def test_a_header_row_is_suggested_only_where_the_first_row_looks_like_one(box, 
 
 def test_a_picture_and_a_table_past_the_margins(box, session):
     d = session.open(docx(p("Before") + table([["wide", "table"]], width=12000) + p("Anchor") + p("End")), "wide.docx")
-    document = session.entry(d).document
-    anchor = document.paragraphs()[3].id
+    anchor = ids_of(session, d)[3]
     image = session.add_blob(png(), "wide.png")
     made = ok(box, session, "word_drawings", doc=d, action="insert_picture", image=image, at=f"after:{anchor}",
               width=600, alt_text="A wide made-up picture")
     picture = made.data["id"]
     layout = facts(box, session, d)
     past = {e.get("drawing") or e.get("table"): e for e in layout["past_margins"]}
-    table_id = document.tables()[0].id
+    table_id = table_ids(box, session, d)[0]
     assert past[table_id]["past"]["right"] > 100 and "fix" not in past[table_id]
     assert past[picture]["past"]["right"] > 100
     call(box, session, d, past[picture]["fix"])
@@ -393,10 +379,17 @@ def test_a_table_outdented_as_word_places_it_is_not_past_the_margin(box, session
     aligned = table([["Text on the margin", "b"]], indent=-113)
     pushed = table([["Pushed out", "b"]], indent=-720)
     d = session.open(docx(p("Before") + aligned + p("Between") + pushed + p("End")), "outdent.docx")
-    first, second = [t.id for t in session.entry(d).document.tables()]
+    first, second = table_ids(box, session, d)
     past = {e.get("table"): e for e in facts(box, session, d)["past_margins"]}
     assert first not in past
     assert 29 < past[second]["past"]["left"] < 32          # 36 pt, less the 5.65 Word allows
+
+
+#: Two paragraph styles on Normal: centred and right-aligned.
+CELL_STYLES = ''.join(
+    f'<w:style w:type="paragraph" w:customStyle="1" w:styleId="{sid}"><w:name w:val="{name}"/>'
+    f'<w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:jc w:val="{jc}"/></w:pPr></w:style>'
+    for sid, name, jc in (("CellCentred", "Cell Centred", "center"), ("CellRight", "Cell Right", "right")))
 
 
 def test_markdown_column_alignment_through_styles_leaves_check_clean(box, session):
@@ -404,17 +397,15 @@ def test_markdown_column_alignment_through_styles_leaves_check_clean(box, sessio
     ``style_map`` names for ``table_cell_center`` and ``table_cell_right``, so check finds no
     direct formatting in them; with no style named, the cells keep their direct alignment,
     which check reports, and the result names the role that would avoid it."""
-    made = Document.new()
-    made.styles.add("Cell Centred", "paragraph", based_on="Normal", alignment="center")
-    made.styles.add("Cell Right", "paragraph", based_on="Normal", alignment="right")
+    made = with_style(docx(p()), CELL_STYLES)
     markdown = "| Item | Count | Share |\n| :-- | :-: | --: |\n| One | 2 | 40% |\n| Two | 3 | 60% |\n"
-    d = session.open(made.to_bytes(), "styled.docx")
+    d = session.open(made, "styled.docx")
     styled = ok(box, session, "word_insert_markdown", doc=d, at="end", markdown=markdown,
                 style_map=[{"element": "table_cell_center", "style": "Cell Centred"},
                            {"element": "table_cell_right", "style": "Cell Right"}])
     assert not any("table_cell_" in w for w in styled.warnings)
     assert facts(box, session, d)["direct_formatting"] == []
-    plain = session.open(made.to_bytes(), "plain.docx")
+    plain = session.open(made, "plain.docx")
     direct = ok(box, session, "word_insert_markdown", doc=plain, at="end", markdown=markdown)
     assert sum("table_cell_center" in w or "table_cell_right" in w for w in direct.warnings) == 2
     found = facts(box, session, plain)["direct_formatting"]
