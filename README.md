@@ -134,9 +134,12 @@ example `pip install ./python/ooxml-common ./python/ooxml-edit ./python/docx2svg
   request, then tag the merge commit. The release workflow refuses a tag while fragments
   are waiting (`tools/release_notes.py`). Its notes say what was removed and what to use
   instead (every `removed` fragment needs an `Instead:` line; `changelog.py check` refuses
-  one without), which tools' definitions changed since the release before, and which forms
-  are refused until a later release. The day before the tag, send the team the preview:
-  `python tools/release_notes.py <tag> --preview`.
+  one without), one line for each other change (a fragment's bold lead or first sentence:
+  write it for the team), which tools' definitions changed since the release before, and
+  which forms are refused until a later release (in the team's words,
+  `tools/release_refusals.py`: a lane that adds or serves a `[[not_supported]]` form adds or
+  removes its entry there too). The day before the tag, send the team the preview:
+  `python tools/release_notes.py <tag> --preview`, with the versions the release will set.
 
 ## History
 
