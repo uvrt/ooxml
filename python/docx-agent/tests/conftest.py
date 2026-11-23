@@ -72,7 +72,7 @@ def long_doc() -> Path:
 
 
 MARKDOWN_DIR = FIXTURE_DIR / "generated" / "markdown"
-#: The chart and SmartArt documents Word saved (``tools/make_chart_fixtures.py``).
+#: The chart and SmartArt documents Word saved (their ``PROVENANCE.md``).
 CHARTS_DIR = FIXTURE_DIR / "generated" / "charts"
 
 

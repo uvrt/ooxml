@@ -3,7 +3,7 @@ kept in step, wherever Word holds a chart -- the body, a header, a footnote, a t
 group, floating -- through ``edit_chart``.
 
 Every edit runs on every chart of the Word-saved fixtures (``crates/ooxml-oracle/fixtures/
-generated/charts``, ``tools/make_chart_fixtures.py``) and goes through every gate:
+generated/charts``, made as its ``PROVENANCE.md`` says) and goes through every gate:
 
 * **round trip** -- edit, save, reopen, read back;
 * **the workbook agrees** -- the saved document's embedded workbook opened independently
