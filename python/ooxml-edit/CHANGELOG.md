@@ -4,6 +4,79 @@ Versions are those in `pyproject.toml`; none is published to PyPI yet. Each vers
 reaches `main` is tagged `v<version>` on the commit that brought it, from 0.62.0; the
 earlier ones were never tagged.
 
+## 0.128.1 -- v2026.11.23
+
+### Added
+
+Lane H1: a batch on a document whose owner has step groups (`open_group`, `group_mark`,
+`revert_group`, `close_group`; see `tools.owned`) is one step group of the owner's. Each op
+is a sub-step (`DocumentEntry.op_step`, a no-op for other documents). A call the owner
+serves commits into the group. A Python tool's change to the view is committed as the op
+ends, so the next op reads it. A failed op is taken back alone, or the whole group where
+the batch is atomic, and undo and redo stay as they were. The batch ends as one step. The
+group is closed on every path, an exception's too, and while it is open the view and the
+batch's reads follow its head (`OwnedHistory.reading_head`). The owner's `keep` is given
+the step's first version (`first`), so every version of a step made of several is
+numbered as the step.
+
+Lane H2: `Call.ref_name(name, address=None)` -- the ref name `define_ref` keeps a name as
+(itself, or a camelCase or hyphenated name folded), refused where it folds to none or to a
+name that already names another address (`None`: any), with nothing changed: a call its
+document's owner serves asks it before the edit. `define_ref` returns the name it kept;
+`session.folded_warning` words the warning of a folded name.
+
+Lane H7a: the format hooks that take a document (`summary`, `problems`, `state`, `closed`,
+`restored`) are given `DocumentEntry.subject`. That is the document itself, or, for a document
+the format's owner holds, an `OwnedDocument`: the owner, its handle and the version the hook
+reads (`None`: the version the calls read now; a number: a read copy's committed version).
+They are never given the entry or a Python view of it. Within a batch's step group the view's
+changes are committed in the group first. A hook that takes the call reads `Call.subject`.
+`OwnedDocument` is exported from `ooxml_edit.tools`.
+
+Phase P2, lane P2e1: `ToolError(try_call=...)`, the call that would work (tool rule 2), written
+as the error's `try_call` after `valid_options`, as the Rust tools write it.
+
+- **`AliasWhen(name, argument, value)`**, a `Tool.aliases` entry read as `name` only while
+  `argument` has `value` (`edit_chart`'s `slide`, its `target` when adding). The definition
+  check holds `name` and `argument` to parameters, and the Rust session's tool export writes
+  the same entry as `{"name", "when": {argument: value}}` (`exported`, `of_export`), which
+  docx-agent reads back as one.
+
+**Internal failures logged at ERROR, in one place (lane Z1).** Every call whose reply is an
+`internal` failure -- a library's unexpected exception, or a panic inside the Rust session,
+which the session now answers itself as "the call failed inside the library" -- is logged to
+the `ooxml_edit.tools` logger at ERROR when the call is recorded (`logs.log_internal`): the
+tool, its documents, its version, the arguments' digest, the reply's message and its
+`details.trace` (a panic's names the tool and what it said). Never the arguments.
+
+### Changed
+
+Lane H7c: `Session.open` hands the bytes and their state to the format's owner when it has `open_data(data, state, name)`. The owner holds the document alone: no `fmt.open`, and the entry holds no document (`held` is `None`). The baseline is the format's `problems` of the owned document. `OwnedEntry.own` takes the numbers it goes on from from the owner's new `opened(handle)`, not from a view's history. A state the owner refuses is a `StateRefused`, as before.
+
+Lane H7d: `own_source` (through `sources.reading`), `source_hint` and `read_provenance`
+(`Session.provenance`) are given `DocumentEntry.subject`, so an owned document's hooks read its
+owner. `Call.store_provenance` still hands the hook the document the call's handler edits, never
+an owner's handle.
+
+Lane U3: an owned document's history is its owner's. `OwnedHistory` keeps no steps, numbers
+or heads of its own: its version is the owner's head's state number (`head.state`), a state
+is found by its number through the owner (`numbered`), and steps, `can_undo`, `can_redo` and
+`next_redo` are read from the owner's list (`numbers`). Calls the owner serves side by side are
+kept and counted as they end, in any order, so no call waits for an earlier one to be numbered
+first; what is counted per change (the changes kept for reads, the part stamps, the version the
+last change left) is ordered by the owner's count of its versions, so a step that ends after a
+later one is never taken for a change made outside the tools. The owner protocol gains
+`numbered`, `highest`, `numbers` and `continue_numbers` (a document opened again goes on with
+its numbers); `keep` takes the head alone; `Served.before` carries the state a served step went
+from.
+
+Lane U4: an owned document's undo and redo are its owner's own undo tool (owner protocol:
+`history(handle, name, steps, redo, caller)` replaces `undo`/`redo`; `close_group` takes the
+batch's `tool`). The tool layer keeps no owners or own undos for such a document; `undo`'s reply
+is the owner's, and `Session.undo`/`redo` count its steps (`Session.owned_history`).
+Lane U5: `ToolError(try_call=...)` keeps a call that would work, and the reply carries it as
+`try_call`; an owned document's undo refusal passes the owner's on (its steps and who made each).
+
 ## 0.124.1 -- unreleased
 
 Phase P2, lane P2c4: `DocumentFormat.owner` holds a format's documents outright
