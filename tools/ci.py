@@ -117,8 +117,12 @@ PACKAGES: dict[str, dict] = {
         "gil_imports": "import lxml.etree, lxml.html",
     },
     "docx2svg": {
-        "uses": ["ooxml-common", "docx2svg"],
-        "siblings": ["ooxml-common"],
+        # A thin layer over the Rust core's layout and drawing (ooxml-core, built here by maturin).
+        "uses": ["ooxml-common", "ooxml-core", "docx2svg"],
+        # On a pull request: the bindings, not the Rust core's other crates (its tests hold the
+        # layer to the core's own answers; a push to main runs them against every crate).
+        "pr_uses": ["ooxml-common", BINDINGS, "docx2svg"],
+        "siblings": ["ooxml-common", "ooxml-core"],
         "extras": "dev",
         "min_python": "3.10",
         "pytest": ["-n", "auto", "--durations=30"],
@@ -132,7 +136,9 @@ PACKAGES: dict[str, dict] = {
         "fonts": True,
         # The committed fixture is regenerable and current.
         "fixture_check": True,
-        "gil_imports": "import resvg_py, pypdfium2, fontTools.ttLib, numpy",
+        # No Windows leg: ooxml-core's wheels are Linux only, and production runs Linux.
+        "windows": False,
+        "gil_imports": "import ooxml_core",
     },
     "pptx2svg": {
         "uses": ["ooxml-common", "pptx2svg"],
@@ -149,7 +155,7 @@ PACKAGES: dict[str, dict] = {
         "uses": ["ooxml-common", "ooxml-edit", "docx2svg", "ooxml-core", "docx-agent", ORACLE_TESTS],
         # The oracle's tests (ORACLE_TESTS), run after the suite on its first shard, GIL legs only.
         "also_tests": "crates/ooxml-oracle",
-        "siblings": ["ooxml-common", "ooxml-edit", "docx2svg[png]", "ooxml-core"],
+        "siblings": ["ooxml-common", "ooxml-edit", "docx2svg", "ooxml-core"],
         "extras": "dev,png",
         "min_python": "3.10",
         # A test past 5 minutes dumps every thread's stack (a hang is named, not a timeout).
@@ -211,9 +217,8 @@ PACKAGES: dict[str, dict] = {
 IMPORT_NAMES = {name: name.replace("-", "_") for name in PACKAGES}
 
 #: A change to one of these runs every job of the test workflows: those workflows and this
-#: script.  The other files under .github/ and tools/ (gates, release, relayout-full, the
-#: release tools) run none of them: ci.yml's plan job runs tools/'s unit tests on every pull
-#: request, and relayout-full.yml filters its own paths.
+#: script.  The other files under .github/ and tools/ (gates, release, the release tools) run
+#: none of them: ci.yml's plan job runs tools/'s unit tests on every pull request.
 RUN_ALL_PREFIXES = tuple(f".github/workflows/{name}.yml" for name in
                          ("ci", "python-tests", "freethreading", "rust", "rust-wheels")) + (
                      ".github/actions/", "tools/ci.py", "tools/ci_durations.json")
@@ -309,7 +314,7 @@ def _crates(names: tuple[str, ...]) -> tuple[str, ...]:
 #: workspace crate that one depends on (tools/test_ci.py checks them against Cargo.toml).
 FUZZ_CRATES = ("ooxml-base", "ooxml-xml", "ooxml-zip", "ooxml-opc")
 LOOM_CRATES = ("ooxml-store",)
-WORD_MODEL_CRATES = ("ooxml-oracle", "ooxml-base", "ooxml-xml", "ooxml-zip", "ooxml-opc", "ooxml-derive",
+MODEL_CRATES = ("ooxml-oracle", "ooxml-base", "ooxml-xml", "ooxml-zip", "ooxml-opc", "ooxml-derive",
                      "ooxml-fonts", "ooxml-text", "ooxml-word-model", "ooxml-colour", "ooxml-schema",
                      "ooxml-drawingml", "ooxml-scene", "ooxml-metafile", "ooxml-word-layout", "ooxml-numfmt",
                      "ooxml-chart", "ooxml-render", "ooxml-tools", "ooxml-tools-derive", "ooxml-tools-word",
@@ -324,8 +329,8 @@ WORD_MODEL_CRATES = ("ooxml-oracle", "ooxml-base", "ooxml-xml", "ooxml-zip", "oo
 #:   that changes its paths the `rust` job checks that the targets still build (fuzz_check).
 #: - loom: ooxml-store's commit path, model-checked.
 #: - oracles: tools/rust_oracles.py -- the XML writer and the package save against ooxml-edit.
-#: - word_model: the Word model against docx2svg's layout input
-#:   (crates/ooxml-oracle/python/word_model_diff.py); xtask generates its typed views.
+#: - models: the DrawingML model and colours and the charts against ooxml-common's
+#:   (crates/ooxml-oracle/python/drawingml_diff.py, chart_diff.py), and the preset table.
 #: - deny: cargo-deny (deny.toml) when a Cargo file or the dependency policy changes.
 FULL_EVENTS = ("push", "schedule", "workflow_dispatch")
 PR_EVENTS = ("pull_request", *FULL_EVENTS)
@@ -335,8 +340,8 @@ RUST_JOBS: dict[str, dict] = {
     "oracles": {"paths": ("python/ooxml-edit/", "python/ooxml-common/", "tools/rust_oracles.py",
                           *_crates(FUZZ_CRATES)),
                 "events": PR_EVENTS},
-    "word_model": {"paths": ("xtask/", "python/docx2svg/", "python/ooxml-common/", "python/pptx2svg/", *_crates(WORD_MODEL_CRATES)),
-                   "events": PR_EVENTS},
+    "models": {"paths": ("xtask/", "python/ooxml-common/", "python/pptx2svg/", *_crates(MODEL_CRATES)),
+               "events": PR_EVENTS},
     "deny": {"paths": ("deny.toml", "DEPENDENCIES.md"), "suffixes": ("Cargo.toml", "Cargo.lock"),
              "events": PR_EVENTS},
 }

@@ -115,12 +115,12 @@ mode = "structure"
 file = "generated/charts/chart-places.docx"
 input = { tool = "word_headers_footers", arguments = { action = "set", which = "header", text = "", page_number = "after_text" } }
 word = "rust"
-observation = "python/docx2svg/tests/fixtures/story-observations.json#documents/fields-computed"
+observation = "crates/ooxml-oracle/word/observations/layout/story-observations.json#documents/fields-computed"
 cause = """#240: the Rust layout lays out chart-places' body text box (lane P5n) and writes the \
 header's PAGE result for the first page that shows it: 1. docx-agent in the gate leaves the \
 result empty and warns, its layout falling back on the text box (its own Python layout writes 1 \
 too). Word shows the number of the page a header is drawn on (docx2svg ROADMAP, "Headers, \
-footers and fields -- measured", tests/fixtures/story-observations.json fields-computed, Word \
+footers and fields -- measured", word/observations/layout/story-observations.json fields-computed, Word \
 16.106): 1 on page 1. Rust is Word's answer; listed in python-quirks.md."""
 
 # #84: a fields update that changes nothing, on a template saved as .docx (all fields, and the

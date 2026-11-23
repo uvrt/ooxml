@@ -1,33 +1,27 @@
-//! Owns: the Word layout's Python handles (lane L4) -- `ooxml_core.WordFonts` (a machine's
-//! fonts for one set of folders, scanned once), `ooxml_core.WordPages` (one document's page
-//! engine: its versions laid out, each from the one before) and `ooxml_core.LaidPages`
-//! (one version laid out: its pages, facts, page numbers, page views and SVG; a version the
-//! layout does not lay out yet raises `NotImplementedError`, naming why and where); and
-//! `ooxml_core.MemoryBudget` (lane L4b), the session's memory
-//! budget its engines count in and its host's kept layouts reserve from. Exact lengths
-//! cross as `(numerator, denominator)` pairs.
+//! Owns: the Word layout's Python handles (lane L4) -- `ooxml_core.WordPages` (one
+//! document's page engine: its versions laid out, each from the one before) and
+//! `ooxml_core.LaidPages` (one version laid out: its pages, facts, page numbers, page views,
+//! SVG and PNG, and coverage; a version the layout does not lay out yet raises
+//! `NotImplementedError`, naming why and where). Exact lengths cross as `(numerator,
+//! denominator)` pairs (`layout_rows`); the fonts are `fonts`' `WordFonts`.
 //!
 //! Must not: lay out or draw (ooxml-word-pages does), hold a Python object beyond a call
 //! (a painter is called while its call lasts), or touch one without the interpreter lock:
 //! every Rust call runs with it released.
 
 use crate::budget::{PyMemoryBudget, OWN_BUDGET};
+use crate::fonts::PyWordFonts;
+use crate::layout_rows::{exact, grade_row, page_row, view_dict, CoverageRows, Exact, PageRow};
 use crate::pages::engine_options;
-use ooxml_fonts::{Folder, Location, WordFontOptions};
+use crate::raster::PyPageRaster;
 use ooxml_session::MemoryBudget;
 use ooxml_word_layout::facts::BlockKeeps;
 use ooxml_word_layout::fields::update::PageNumbers;
-use ooxml_word_layout::paint::drawings::{DrawingSlot, Layer};
-use ooxml_word_layout::paint::{Drawn, PaintedLine, Rule, Span};
-use ooxml_word_layout::px::Px;
-use ooxml_word_pages::{DiskFonts, EngineBudgets, FontSetup, LaidVersion, PageEngine, PageView};
+use ooxml_word_pages::{EngineBudgets, LaidVersion, PageEngine};
 use pyo3::exceptions::{PyNotImplementedError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyTuple};
+use pyo3::types::{PyBytes, PyDict};
 use std::sync::{Arc, Mutex};
-
-/// An exact length as `(numerator, denominator)`.
-type Exact = (i128, i128);
 
 /// A line's digest row (see `LaidPages.digests`).
 type LineDigest<'py> = (String, Option<&'static str>, Option<String>, Bound<'py, PyBytes>);
@@ -46,59 +40,6 @@ type LineTextRow = (
 
 /// A body line as a check reads it: `(path, number, top, pitch, baseline, column)`.
 type BodyLine = (String, usize, Exact, Exact, i64, Option<usize>, Option<String>);
-
-fn exact(value: Px) -> Exact {
-    let q = value.value();
-    (*q.numer(), *q.denom())
-}
-
-/// A machine's fonts for one set of folders (Word's order) and options, scanned once and
-/// shared by every document laid out with them.
-#[pyclass(frozen, name = "WordFonts", module = "ooxml_core")]
-pub struct PyWordFonts {
-    inner: Arc<FontSetup>,
-}
-
-impl PyWordFonts {
-    /// The fonts, as a session's engines share them.
-    pub(crate) fn setup(&self) -> Arc<FontSetup> {
-        Arc::clone(&self.inner)
-    }
-}
-
-#[pymethods]
-impl PyWordFonts {
-    /// `folders`: `(location, path)` pairs, `location` `"bundle"` for Word's own bundle, else
-    /// `"folder"`; `substitutes`: face (lowercased) -> the face used in its place.
-    #[new]
-    #[pyo3(signature = (folders, *, substitutes = None, recorded_faces = true, fallbacks = true))]
-    fn new(
-        py: Python<'_>,
-        folders: Vec<(String, String)>,
-        substitutes: Option<Vec<(String, String)>>,
-        recorded_faces: bool,
-        fallbacks: bool,
-    ) -> Self {
-        let folders: Vec<Folder> = folders
-            .into_iter()
-            .map(|(location, path)| Folder {
-                location: if location == "bundle" {
-                    Location::WordBundle
-                } else {
-                    Location::Folder
-                },
-                path,
-            })
-            .collect();
-        let options = WordFontOptions {
-            substitutes: substitutes.unwrap_or_else(|| WordFontOptions::default().substitutes),
-            recorded_faces,
-            fallbacks,
-        };
-        let inner = py.detach(|| Arc::new(FontSetup::new(Arc::new(DiskFonts), &folders, options)));
-        Self { inner }
-    }
-}
 
 /// One document's page engine: its versions laid out, each from the one before.
 #[pyclass(frozen, name = "WordPages", module = "ooxml_core")]
@@ -168,7 +109,7 @@ impl PyWordPages {
             held: budget.holding(),
             paint: budget.account(),
         };
-        let engine = PageEngine::new(Arc::clone(&fonts.inner), options, budgets);
+        let engine = PageEngine::new(fonts.setup(), options, budgets);
         Ok(Self {
             seed: engine.seed(),
             engine: Arc::new(Mutex::new(engine)),
@@ -560,229 +501,64 @@ impl PyLaidPages {
 
     /// Page `page` (0-based) as SVG, byte for byte docx2svg's where the list beside it is
     /// empty, its drawings painted in Rust; else it names what is not drawn as docx2svg
-    /// draws it.
-    fn svg(&self, py: Python<'_>, page: usize) -> PyResult<(String, Vec<String>)> {
+    /// draws it. At `width` and `height` pixels where given (one alone: the other in the
+    /// page's shape), else at its natural size in points.
+    #[pyo3(signature = (page, width = None, height = None))]
+    fn svg(
+        &self,
+        py: Python<'_>,
+        page: usize,
+        width: Option<i64>,
+        height: Option<i64>,
+    ) -> PyResult<(String, Vec<String>)> {
         let (version, engine) = (&self.version, &self.engine);
-        py.detach(|| lock(engine).page_svg(version, page)).ok_or_else(|| {
-            PyRuntimeError::new_err(format!(
-                "page {page} not painted (0-based, of {})",
-                version.page_count()
-            ))
-        })
+        py.detach(|| crate::drawn::svg(engine, version, page, (width, height)))
+            .map_err(PyRuntimeError::new_err)
     }
-}
 
-/// What `LaidPages.coverage` answers.
-type CoverageRows = (Vec<GradeRow>, Vec<(String, char, String)>, Vec<String>);
-
-/// A face's grade row (see `LaidPages.coverage`).
-type GradeRow = (
-    String,
-    &'static str,
-    Option<String>,
-    bool,
-    Option<&'static str>,
-    Option<&'static str>,
-);
-
-fn grade_row(family: &str, grade: &ooxml_fonts::Grade) -> GradeRow {
-    use ooxml_fonts::{Grade, SubstitutionKind};
-    let plain = |name| (family.to_owned(), name, None, false, None, None);
-    match grade {
-        Grade::Installed => plain("installed"),
-        Grade::Embedded => plain("embedded"),
-        Grade::Recorded => plain("recorded"),
-        Grade::Missing => plain("missing"),
-        Grade::Substituted(s) => (
-            family.to_owned(),
-            "substituted",
-            Some(s.substitute.clone()),
-            s.same_metrics,
-            Some(match s.kind {
-                SubstitutionKind::Named => "named",
-                SubstitutionKind::Default => "default",
-                SubstitutionKind::Generic => "generic",
-            }),
-            s.class.map(ooxml_fonts::FaceClass::name),
-        ),
+    /// Pages `pages` (0-based) as PNG, as the `render` tool draws them: each at `width` and
+    /// `height` pixels where given (one alone: the other in the page's shape), else at 300
+    /// dpi; by a raster made from `raster` (its files and folders after the faces the pages
+    /// draw), the system's fonts handed over as `system` says (`None`: only where a face is
+    /// missing). Per page `(png, what is not drawn as Word draws it)`.
+    #[pyo3(signature = (pages, raster, *, width = None, height = None, system = None))]
+    fn pngs<'py>(
+        &self,
+        py: Python<'py>,
+        pages: Vec<usize>,
+        raster: PyRef<'_, PyPageRaster>,
+        width: Option<i64>,
+        height: Option<i64>,
+        system: Option<bool>,
+    ) -> PyResult<Vec<(Bound<'py, PyBytes>, Vec<String>)>> {
+        let (version, engine, base) = (&self.version, &self.engine, &raster.inner);
+        let drawn = py
+            .detach(|| crate::drawn::pngs(engine, version, (&pages, base), (width, height), system))
+            .map_err(PyRuntimeError::new_err)?;
+        Ok(drawn
+            .into_iter()
+            .map(|(png, missing)| (PyBytes::new(py, &png), missing))
+            .collect())
     }
-}
 
-/// A page's frame row (see `LaidPages.pages`).
-type PageRow = (
-    (i64, usize, bool, &'static str, bool),
-    (i64, i64, Exact, Exact, (Exact, Exact, Exact, Exact)),
-);
+    /// The files a rasteriser is handed to draw `pages` (0-based) as Word draws them:
+    /// `(files, sans_serif, skip_system, missing)`, each file a path or the bytes of a face
+    /// the document embeds; `sans_serif` the face the generic `sans-serif` names;
+    /// `skip_system` whether the system's fonts are left out (no face is `missing`).
+    fn raster_files<'py>(&self, py: Python<'py>, pages: Vec<usize>) -> PyResult<Bound<'py, PyAny>> {
+        let (version, engine) = (&self.version, &self.engine);
+        let faces = py.detach(|| crate::drawn::raster_faces(engine, version, &pages));
+        crate::drawn::raster_faces_row(py, &faces)
+    }
 
-fn page_row(info: &ooxml_word_layout::paginate::PageInfo, frame: &ooxml_word_layout::geometry::PageFrame) -> PageRow {
-    let q = |v: ooxml_base::Q| (*v.numer(), *v.denom());
-    (
-        (
-            info.number,
-            info.section,
-            info.section_first,
-            info.story.name(),
-            info.blank,
-        ),
-        (
-            frame.width_px,
-            frame.height_px,
-            q(frame.width_pt),
-            q(frame.height_pt),
-            (
-                exact(frame.left),
-                exact(frame.right),
-                exact(frame.top),
-                exact(frame.bottom),
-            ),
-        ),
-    )
-}
-
-fn slot_dict<'py>(py: Python<'py>, slot: &DrawingSlot) -> PyResult<Bound<'py, PyDict>> {
-    let d = PyDict::new(py);
-    d.set_item("path", &slot.path)?;
-    d.set_item("paragraph_path", &slot.paragraph_path)?;
-    d.set_item("run", slot.run)?;
-    d.set_item("index", slot.index)?;
-    d.set_item("inline", slot.inline)?;
-    d.set_item("x", exact(slot.x))?;
-    d.set_item("y", exact(slot.y))?;
-    d.set_item("width", exact(slot.width))?;
-    d.set_item("height", exact(slot.height))?;
-    d.set_item("behind", slot.layer == Layer::Behind)?;
-    d.set_item("order", slot.order)?;
-    d.set_item("story", slot.story.as_ref().map(|(k, p)| (*k, p.to_string())))?;
-    Ok(d)
-}
-
-fn span_tuple<'py>(py: Python<'py>, s: &Span) -> PyResult<Bound<'py, PyTuple>> {
-    let xs: Vec<Exact> = s.pens().map(exact).collect();
-    let items: Vec<Bound<'py, PyAny>> = vec![
-        s.path.as_str().into_pyobject(py)?.into_any(),
-        s.chars.iter().collect::<String>().into_pyobject(py)?.into_any(),
-        xs.into_pyobject(py)?.into_any(),
-        s.y.into_pyobject(py)?.into_any(),
-        exact(s.end).into_pyobject(py)?.into_any(),
-        s.face.as_ref().into_pyobject(py)?.into_any(),
-        s.bold.into_pyobject(py)?.to_owned().into_any(),
-        s.italic.into_pyobject(py)?.to_owned().into_any(),
-        s.half_points.into_pyobject(py)?.into_any(),
-        s.color.as_deref().into_pyobject(py)?.into_any(),
-        s.underline.as_deref().into_pyobject(py)?.into_any(),
-        s.strike.into_pyobject(py)?.to_owned().into_any(),
-        s.double_strike.into_pyobject(py)?.to_owned().into_any(),
-        s.highlight.into_pyobject(py)?.into_any(),
-        s.shading.as_deref().into_pyobject(py)?.into_any(),
-        s.kind.name().into_pyobject(py)?.into_any(),
-        s.line_baseline.into_pyobject(py)?.into_any(),
-        s.vertical_align.as_deref().into_pyobject(py)?.into_any(),
-    ];
-    PyTuple::new(py, items)
-}
-
-fn line_tuple<'py>(py: Python<'py>, l: &PaintedLine) -> PyResult<Bound<'py, PyTuple>> {
-    let spans = l
-        .spans
-        .iter()
-        .map(|s| span_tuple(py, s))
-        .collect::<PyResult<Vec<_>>>()?;
-    let (story, part) = match &l.story {
-        Some((kind, part)) => (Some(*kind), Some(part.to_string())),
-        None => (None, None),
-    };
-    let items: Vec<Bound<'py, PyAny>> = vec![
-        l.path.as_ref().into_pyobject(py)?.into_any(),
-        l.number.into_pyobject(py)?.into_any(),
-        l.baseline.into_pyobject(py)?.into_any(),
-        exact(l.top).into_pyobject(py)?.into_any(),
-        exact(l.pitch).into_pyobject(py)?.into_any(),
-        l.paragraph_id.as_deref().into_pyobject(py)?.into_any(),
-        l.band.into_pyobject(py)?.into_any(),
-        story.into_pyobject(py)?.into_any(),
-        part.into_pyobject(py)?.into_any(),
-        l.column.into_pyobject(py)?.into_any(),
-        spans.into_pyobject(py)?.into_any(),
-    ];
-    PyTuple::new(py, items)
-}
-
-fn rule_tuple(r: &Rule) -> RuleRow<'_> {
-    (
-        r.kind,
-        r.path.as_str(),
-        exact(r.x),
-        exact(r.y),
-        exact(r.width),
-        exact(r.height),
-        r.color.as_deref(),
-        r.style.as_deref(),
-    )
-}
-
-/// A rule's row (see `LaidPages.page`).
-type RuleRow<'a> = (
-    &'static str,
-    &'a str,
-    Exact,
-    Exact,
-    Exact,
-    Exact,
-    Option<&'a str>,
-    Option<&'a str>,
-);
-
-type CropRow = Option<[Exact; 4]>;
-
-fn picture_tuple(p: &Drawn) -> (&str, Option<&str>, Exact, Exact, Exact, Exact, Option<&str>, CropRow) {
-    let crop = p.crop.map(|c| c.map(|q| (*q.numer(), *q.denom())));
-    (
-        p.path.as_str(),
-        p.relationship.as_deref(),
-        exact(p.x),
-        exact(p.y),
-        exact(p.width),
-        exact(p.height),
-        p.part.as_deref(),
-        crop,
-    )
-}
-
-fn view_dict<'py>(py: Python<'py>, view: &PageView, with_lines: bool) -> PyResult<Bound<'py, PyDict>> {
-    let d = PyDict::new(py);
-    d.set_item("number", view.page + 1)?;
-    d.set_item("info", page_row(&view.info, &view.frame))?;
-    let lines = view
-        .lines
-        .iter()
-        .filter(|_| with_lines)
-        .map(|l| line_tuple(py, l))
-        .collect::<PyResult<Vec<_>>>()?;
-    d.set_item("lines", lines)?;
-    d.set_item("rules", view.rules.iter().map(rule_tuple).collect::<Vec<_>>())?;
-    d.set_item("pictures", view.pictures.iter().map(picture_tuple).collect::<Vec<_>>())?;
-    let slots = view
-        .drawings
-        .iter()
-        .zip(&view.drawing_faces)
-        .zip(&view.text_box_lines)
-        .map(|((s, faces), text)| {
-            let d = slot_dict(py, s)?;
-            d.set_item("faces", faces.clone())?;
-            let lines = text
-                .iter()
-                .filter(|_| with_lines)
-                .map(|l| line_tuple(py, l))
-                .collect::<PyResult<Vec<_>>>()?;
-            d.set_item("lines", lines)?;
-            Ok(d)
-        })
-        .collect::<PyResult<Vec<_>>>()?;
-    d.set_item("drawings", slots)?;
-    d.set_item(
-        "blocks",
-        view.blocks.iter().map(ToString::to_string).collect::<Vec<_>>(),
-    )?;
-    d.set_item("unpainted", &view.unpainted)?;
-    Ok(d)
+    /// Its coverage, as docx2svg's `Coverage` reads it (a dict: `complete`, `pages`,
+    /// `blocks`, `laid_out`, `substituted`, `missing`, `approximations`, `placeholders`,
+    /// `warnings`; see `drawn::coverage_dict`).
+    fn coverage_summary<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let (version, engine) = (&self.version, &self.engine);
+        let coverage = py
+            .detach(|| lock(engine).coverage(version))
+            .ok_or_else(|| PyRuntimeError::new_err("a version of another engine generation"))?;
+        crate::drawn::coverage_dict(py, &coverage)
+    }
 }

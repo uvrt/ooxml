@@ -18,7 +18,9 @@ answer -- the attribute text or result, and the resources the call declared.  Th
         python crates/ooxml-oracle/python/painter_record.py OUT.jsonl a.docx b.docx ...
 
 Python's behaviour is not changed: each wrapper calls the function with what it was given
-and returns its answer.
+and returns its answer.  docx2svg's Python painter is the frozen reference's (docx2svg draws
+with the Rust core since lane svg-thin): this runs only where the gates' reference is
+installed (``GATES_REFERENCE_SHA`` set, ``reference_packages.py``), and refuses otherwise.
 """
 
 from __future__ import annotations
@@ -87,6 +89,14 @@ class Recorder:
 
 def main() -> int:
     out_path, documents = Path(sys.argv[1]), sys.argv[2:]
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from reference_packages import check_frozen
+
+    if check_frozen() is None:
+        print("painter_record: docx2svg's Python painter is the frozen reference's: run this where the gates' "
+              "reference is installed (GATES_REFERENCE_SHA set; crates/ooxml-oracle/python/reference_packages.py)",
+              file=sys.stderr)
+        return 2
     import docx2svg
 
     with out_path.open("w", encoding="utf-8") as out:

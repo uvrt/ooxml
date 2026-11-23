@@ -169,7 +169,8 @@ def _recorded(key: str) -> dict[int, list]:
     import json
     from pathlib import Path
 
-    path = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "smartart-observations.json"
+    path = (Path(__file__).resolve().parents[3] / "crates" / "ooxml-oracle" / "word" / "observations" / "layout"
+            / "smartart-observations.json")
     if not path.exists():
         return {}
     return {int(k): v for k, v in json.loads(path.read_text(encoding="utf-8")).get(key, {}).items()}
@@ -180,7 +181,7 @@ def _recorded(key: str) -> dict[int, list]:
 #: paragraphs]`` -- each paragraph ``[text, size in 1/100 pt, align, bullet, marL,
 #: indent, line spacing, space after]`` -- and a colour ``accent1``, ``lt1``.  Read off a
 #: copy Word saved (``read_smartart_probe.py --caches``) and kept with the recording,
-#: ``tests/fixtures/smartart-observations.json``; empty for a case not yet read.
+#: ``crates/ooxml-oracle/word/observations/layout/smartart-observations.json``; empty for a case not yet read.
 CACHES: dict[int, list] = _recorded("caches")
 #: The ``wp:effectExtent`` Word gives each diagram's frame (``l t r b``, EMU), read with
 #: the caches: Word sets it from its layout, and an inline diagram stands that far in.

@@ -1355,10 +1355,6 @@ def _cell_drawing_aligned_on_its_character() -> bytes:
 
 
 def test_a_layout_that_approximates_says_where(box, session):
-    from docx2svg.coverage import Coverage
-
-    if not hasattr(Coverage, "status"):
-        pytest.skip("this docx2svg reports no approximations (it stops at such a table)")
     d = session.open(_cell_drawing_aligned_on_its_character(), "cover.docx")
     reflow = ok(box, session, "check", doc=d, include=["reflow"]).data["reflow"]
     coverage = reflow["coverage"]
