@@ -180,20 +180,18 @@ class RustOwner:
 
     def open_group(self, mirror: "reads.Mirror") -> "_Group":
         with mirror.lock:
-            return _Group(mirror.session.open_group(mirror.doc), mirror.tracking)
+            return _Group(mirror.session.open_group(mirror.doc))
 
-    def group_mark(self, mirror: "reads.Mirror", group: "_Group") -> tuple[Any, Any]:
+    def group_mark(self, mirror: "reads.Mirror", group: "_Group") -> Any:
         with mirror.lock:
-            return group.steps.mark(), mirror.tracking
+            return group.steps.mark()
 
-    def revert_group(self, mirror: "reads.Mirror", group: "_Group", mark: tuple[Any, Any] | None,
+    def revert_group(self, mirror: "reads.Mirror", group: "_Group", mark: Any,
                      caller: Mapping[str, Any] | None) -> Any:
-        """What the group committed after ``mark`` taken back (the session's tracking mode
-        too, as it was then): the new head, or ``None``."""
+        """What the group committed after ``mark`` taken back (the session restores its
+        tracking mode as it was then): the new head, or ``None``."""
         with mirror.lock:
-            made = group.steps.revert(mark[0] if mark is not None else None, context=context_of(caller))
-            mirror.tracking = mark[1] if mark is not None else group.tracking
-            return made
+            return group.steps.revert(mark, context=context_of(caller))
 
     def close_group(self, mirror: "reads.Mirror", group: "_Group", caller: Mapping[str, Any] | None,
                     tool: str | None = None) -> Any:
@@ -215,14 +213,12 @@ class RustOwner:
 
 
 class _Group:
-    """A document's open step group: the session's (``ooxml_core.StepGroup``) and the
-    tracking mode the session edited under when it opened."""
+    """A document's open step group: the session's (``ooxml_core.StepGroup``)."""
 
-    __slots__ = ("steps", "tracking")
+    __slots__ = ("steps",)
 
-    def __init__(self, steps: Any, tracking: Any) -> None:
+    def __init__(self, steps: Any) -> None:
         self.steps = steps
-        self.tracking = tracking
 
 
 def group_reflow(entry: Any, head: int) -> Any:

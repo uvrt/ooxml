@@ -39,7 +39,7 @@ pub struct Editing<'a> {
     pub caller: &'a Caller,
     /// The document as it was opened (what a session's own edits are told from).
     pub opened: &'a WordDoc,
-    /// The tracking mode the host keeps for the document: edits by this author are
+    /// The tracking mode the session keeps for the document: edits by this author are
     /// tracked changes (`None`: off).
     pub tracking: Option<&'a Tracking>,
     /// The document's id, for the calls a refusal offers.
@@ -140,7 +140,7 @@ impl<'a> Editing<'a> {
         self
     }
 
-    /// The tracking mode the host keeps for the document (`None`: off).
+    /// The tracking mode the session keeps for the document (`None`: off).
     #[must_use]
     pub fn with_tracking(mut self, tracking: Option<&'a Tracking>) -> Self {
         self.tracking = tracking;

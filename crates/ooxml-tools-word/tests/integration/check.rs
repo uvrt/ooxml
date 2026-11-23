@@ -78,6 +78,7 @@ pub(crate) fn limited(
             drawing: None,
             rows_written: None,
             made_by: None,
+            tracking: None,
         }))
         .with_word(Some(&doc));
     let args = Check::from_arg(&arguments, "").unwrap();

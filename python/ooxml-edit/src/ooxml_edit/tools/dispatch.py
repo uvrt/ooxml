@@ -2160,8 +2160,6 @@ class Toolbox:
         reason = self._block_sources_changed(session, context, read)
         if reason is not None:
             return reason
-        if (entry.tracking or None) != (committed.tracking or None):
-            return "tracking was switched"
         return None
 
     @staticmethod

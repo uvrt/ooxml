@@ -568,7 +568,6 @@ class DocumentEntry:
     #: entry alone.  ``None`` only for an entry made outside a session.
     locale: Any = None
     baseline_problems: list[Any] = field(default_factory=list)
-    tracking: dict[str, Any] | None = None
     #: Round 58: a :class:`~.timing.TimedLock` (an ``RLock`` that counts each thread's wait
     #: and hold, for :attr:`~.results.Result.timing`).
     lock: TimedLock = field(default_factory=TimedLock, repr=False)
@@ -736,15 +735,13 @@ class DocumentEntry:
         version = self.version
         committed = self.committed
         if committed is not None and committed.version == version:
-            if committed.refs != self.refs or (committed.tracking or None) != (self.tracking or None):
+            if committed.refs != self.refs:
                 # Round 47: a call that only defined refs (the version as it was): the
                 # same version with its refs now, so refs read at the committed version
-                # are never behind.  Round 51: likewise tracking switched (no new
-                # version) -- else every draft made from it found "tracking was switched"
-                # until a call under the lock made a version.
+                # are never behind.
                 self.committed = committed.with_refs(
                     dict(self.refs), dict(self.ref_states.get(version, self.refs)),
-                    dict(self.ref_owners), tracking=self.tracking)
+                    dict(self.ref_owners))
                 self._told()
             return
         try:
@@ -758,7 +755,7 @@ class DocumentEntry:
             return
         self.committed = Committed(version, data, make, dict(self.refs),
                                    dict(self.ref_states.get(version, self.refs)),
-                                   tracking=self.tracking, owners=dict(self.owners),
+                                   owners=dict(self.owners),
                                    seq=self.change_seq, ref_owners=dict(self.ref_owners))
         self._told()
 
@@ -946,7 +943,7 @@ class DocumentEntry:
         entry = DocumentEntry(
             doc_id=self.doc_id, kind=self.kind, name=self.name, source=self.source,
             held=document, size=self.size, font_dirs=self.font_dirs, locale=self.locale,
-            baseline_problems=self.baseline_problems, tracking=committed.tracking,
+            baseline_problems=self.baseline_problems,
             render_cache=LRU(1), check_cache=LRU(1), render_keys=LRU(16), font_keys=LRU(16),
             keys=dict(self.keys), refs=dict(committed.refs), owners=dict(committed.owners),
             ref_owners=dict(committed.ref_owners))
@@ -1147,11 +1144,9 @@ class Committed:
 
     def __init__(self, version: int, data: "bytes | Callable[[], bytes]", make: Callable[[Any], Any],
                  refs: dict[str, str], ref_state: dict[str, str], *,
-                 tracking: dict[str, Any] | None = None,
                  owners: dict[int, StepOwner] | None = None, seq: int = 0,
                  ref_owners: dict[tuple[str, str], Mapping[str, Any]] | None = None) -> None:
         self.version = version
-        self.tracking = tracking
         self.owners = owners or {}
         #: The document's change count (:attr:`DocumentEntry.change_seq`) when this version
         #: was committed: a patch prepared on it checks the parts changed since
@@ -1198,7 +1193,7 @@ class Committed:
                     doc_id=live.doc_id, kind=live.kind, name=live.name, source=live.source,
                     held=document, size=live.size, font_dirs=live.font_dirs,
                     locale=live.locale, baseline_problems=live.baseline_problems,
-                    tracking=self.tracking, render_cache=live.render_cache,
+                    render_cache=live.render_cache,
                     check_cache=live.check_cache, render_keys=live.render_keys,
                     font_keys=live.font_keys, log=live.log, refs=dict(self.refs),
                     owners=dict(self.owners), ref_owners=dict(self.ref_owners),
@@ -1209,23 +1204,21 @@ class Committed:
             return self._entry
 
     def with_refs(self, refs: dict[str, str], ref_state: dict[str, str],
-                  ref_owners: dict[tuple[str, str], Mapping[str, Any]], *,
-                  tracking: dict[str, Any] | None = None) -> "Committed":
-        """This version with other refs (round 47: a call that only defined refs) and
-        tracking (round 51: switched, no new version): its bytes and copy shared -- a
-        reader made already is kept, its document and lock shared, with the refs and
-        tracking now -- for the calls that read it next; the readers holding this one keep
-        the refs they began with."""
+                  ref_owners: dict[tuple[str, str], Mapping[str, Any]]) -> "Committed":
+        """This version with other refs (round 47: a call that only defined refs): its bytes
+        and copy shared -- a reader made already is kept, its document and lock shared,
+        with the refs now -- for the calls that read it next; the readers holding this one
+        keep the refs they began with."""
         data = self._data
         again = Committed(self.version, (lambda: self.data) if callable(data) else data, self.make, refs, ref_state,
-                          tracking=tracking, owners=self.owners, seq=self.seq,
+                          owners=self.owners, seq=self.seq,
                           ref_owners=ref_owners)
         with self._lock:
             again._failed = self._failed
             if self._entry is not None:
                 again._entry = dataclasses.replace(
                     self._entry, refs=dict(refs), ref_states={self.version: dict(ref_state)},
-                    ref_owners=dict(ref_owners), tracking=tracking)
+                    ref_owners=dict(ref_owners))
         return again
 
 

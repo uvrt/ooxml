@@ -94,8 +94,6 @@ class Mirror:
         #: highest its history gave (:meth:`.owner.RustOwner.opened`).
         self.opened: Any = None
         self.numbers_opened: tuple[int, int] = (0, 0)
-        #: The tracking mode the session edits the document under (:mod:`.edits`).
-        self.tracking: dict[str, Any] | None = None
         #: What the document's page engine was last set to (:mod:`.engines`).
         self.pages_key: Any = None
         #: The reflow of the last step group the session closed, measured once before it
