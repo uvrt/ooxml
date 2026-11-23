@@ -7,7 +7,7 @@ case, each followed by a paragraph ``After <Key>.``.  Every table is three colum
 rows: shaded cells centred vertically, paragraphs with no space after, the third column's
 centred; the runs Arial 8 pt, coloured, the third column's bold -- their paragraph marks
 with no run properties of their own unless the case says so.  Word -- through
-``tests/oracle.py``'s machine-wide lock -- opens it, makes each case's edits by
+``python/docx-agent/tests/oracle.py``'s machine-wide lock -- opens it, makes each case's edits by
 AppleScript (from the last table up) and saves.
 
 * ``Below`` / ``Above``: Insert Rows Below row 2 / Above row 1, then a word typed into each
@@ -21,7 +21,7 @@ AppleScript (from the last table up) and saves.
   into it.  ``EmptyMarked``: the same, its mark Arial 8 pt coloured.
 * ``Tracked``: as ``Below`` with tracking on.
 
-    python tools/row_format_probe.py     # writes tests/observations/row-format-word.json
+    python crates/ooxml-oracle/word/probes/row_format_probe.py     # writes crates/ooxml-oracle/word/observations/row-format-word.json
 
 Nothing Word writes is committed: only the cells' paragraph and run properties and text,
 rsids dropped, authors and dates replaced.
@@ -38,71 +38,18 @@ from pathlib import Path
 
 from lxml import etree
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tests"))
-sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import probe_paths  # noqa: E402  (the driver, the fixture makers and the cases on the path)
+from probe_paths import ROOT  # noqa: E402
 
 import oracle  # noqa: E402
-from e3_probe import _package, _script, _type  # noqa: E402
+from e3_probe import _script, _type  # noqa: E402
 
-OBSERVATIONS = ROOT / "tests" / "observations" / "row-format-word.json"
+OBSERVATIONS = probe_paths.OBSERVATIONS / "row-format-word.json"
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _W = "{%s}" % W
 
-TABLES = ["Below", "Above", "Blank", "Marked", "Mixed", "Empty", "EmptyMarked", "Tracked"]
-
-RUN = ('<w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:cs="Arial"/>{bold}<w:color w:val="1F4E79"/>'
-       '<w:sz w:val="16"/><w:szCs w:val="16"/>')
-MARK_OTHER = ('<w:rFonts w:ascii="Courier New" w:hAnsi="Courier New" w:cs="Courier New"/>'
-              '<w:color w:val="C00000"/><w:sz w:val="28"/><w:szCs w:val="28"/>')
-
-_paras = iter(range(1, 100000))
-
-
-def _pid() -> str:
-    return f"{0x50000000 + next(_paras):08X}"
-
-
-def _cell(key: str, i: int, j: int) -> str:
-    bold = "<w:b/><w:bCs/>" if j == 2 else ""
-    run_props = RUN.format(bold=bold)
-    mark = ""
-    if key == "Marked":
-        mark = MARK_OTHER
-    text = [f"{key}", f"text r{i}", f"{10 + i}"][j]
-    runs = f'<w:r><w:rPr>{run_props}</w:rPr><w:t xml:space="preserve">{text}</w:t></w:r>'
-    if key == "Mixed" and j == 0:
-        runs = ('<w:r><w:rPr><w:b/><w:color w:val="C00000"/></w:rPr><w:t xml:space="preserve">Lead</w:t></w:r>'
-                f'<w:r><w:t xml:space="preserve"> {text}</w:t></w:r>')
-    if key in ("Empty", "EmptyMarked") and i == 2 and j == 1:
-        runs = ""
-        mark = RUN.format(bold="") if key == "EmptyMarked" else ""
-    jc = '<w:jc w:val="center"/>' if j == 2 else ""
-    mark = f"<w:rPr>{mark}</w:rPr>" if mark else ""
-    return (f'<w:tc><w:tcPr><w:tcW w:w="2400" w:type="dxa"/><w:shd w:val="clear" w:color="auto" '
-            f'w:fill="DEEAF6"/><w:vAlign w:val="center"/></w:tcPr>'
-            f'<w:p w14:paraId="{_pid()}" w14:textId="77777777"><w:pPr><w:spacing w:after="0"/>{jc}{mark}</w:pPr>'
-            f'{runs}</w:p></w:tc>')
-
-
-def _table(key: str) -> str:
-    rows = "".join(f'<w:tr w14:paraId="{_pid()}" w14:textId="77777777">'
-                   + "".join(_cell(key, i, j) for j in range(3)) + "</w:tr>" for i in (1, 2))
-    grid = "<w:tblGrid>" + '<w:gridCol w:w="2400"/>' * 3 + "</w:tblGrid>"
-    props = '<w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr>'
-    return f"<w:tbl>{props}{grid}{rows}</w:tbl>"
-
-
-def _paragraph(text: str) -> str:
-    return f'<w:p w14:paraId="{_pid()}" w14:textId="77777777"><w:r><w:t xml:space="preserve">{text}</w:t></w:r></w:p>'
-
-
-def document() -> bytes:
-    out = [_paragraph("Tables follow.")]
-    for key in TABLES:
-        out.append(_table(key))
-        out.append(_paragraph(f"After {key}."))
-    return _package("".join(out))
+from row_format_cases import TABLES, document  # noqa: E402  (the probe document)
 
 
 def script() -> str:
@@ -182,10 +129,10 @@ def main() -> None:
         saved = outcome.path.read_bytes()
         outcome.path.unlink()
     OBSERVATIONS.write_text(json.dumps({
-        "_about": ("What Word 16.106 for Mac wrote for tools/row_format_probe.py: rows added by Insert Rows "
+        "_about": ("What Word 16.106 for Mac wrote for crates/ooxml-oracle/word/probes/row_format_probe.py: rows added by Insert Rows "
                    "Above/Below beside rows whose runs carry the formatting (their marks none, or other), words "
                    "typed into them and into empty cells. Each cell's paragraph properties and runs; rsids, ids, "
-                   "authors and dates dropped or replaced. Regenerate with python tools/row_format_probe.py."),
+                   "authors and dates dropped or replaced. Regenerate with python crates/ooxml-oracle/word/probes/row_format_probe.py."),
         **read(saved)}, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"wrote {OBSERVATIONS.relative_to(ROOT)}")
 

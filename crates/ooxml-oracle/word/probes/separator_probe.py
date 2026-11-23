@@ -4,13 +4,13 @@ with it -- between two tables, in a story's last paragraph, at the end of a para
 -- and then deleted again (round 51).
 
 The probe document is ``Start.``, table 1, an empty paragraph, table 2, ``Middle.``,
-``Last paragraph.``, table 3 and an empty last paragraph.  Word -- through ``tests/oracle.py``'s
+``Last paragraph.``, table 3 and an empty last paragraph.  Word -- through ``python/docx-agent/tests/oracle.py``'s
 machine-wide lock -- opens it, turns tracking on and, from the bottom up, inserts a 2x2 table
 (and types into its first cell) in the last paragraph (``end``), at the end of ``Last paragraph.``
 (``text``) and in the paragraph between tables 1 and 2 (``between``).  ``made`` is the
 result; ``deleted`` the same with each new table then deleted (selected, Backspace).
 
-    python tools/separator_probe.py      # writes tests/observations/separator-word.json
+    python crates/ooxml-oracle/word/probes/separator_probe.py      # writes crates/ooxml-oracle/word/observations/separator-word.json
 
 Nothing Word writes is committed: only the facts read from it, authors and dates replaced
 and rsids dropped.
@@ -22,16 +22,16 @@ import json
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tests"))
-sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import probe_paths  # noqa: E402  (the driver, the fixture makers and the cases on the path)
+from probe_paths import ROOT  # noqa: E402
 
 import oracle  # noqa: E402
 from e3_probe import BACKSPACE, _locate, _package, _script, _type  # noqa: E402
 from rows_probe import _paragraph, _row, _table  # noqa: E402
 from tracking_probe import read, user_name  # noqa: E402
 
-OBSERVATIONS = ROOT / "tests" / "observations" / "separator-word.json"
+OBSERVATIONS = probe_paths.OBSERVATIONS / "separator-word.json"
 
 
 def document() -> bytes:
@@ -76,10 +76,10 @@ def main() -> None:
             out[name] = [item.replace(me, "{author}") for item in read(outcome.path.read_bytes())]
             outcome.path.unlink()
     OBSERVATIONS.write_text(json.dumps({
-        "_about": ("What Word 16.106 for Mac wrote for tools/separator_probe.py: tables inserted, tracked, "
+        "_about": ("What Word 16.106 for Mac wrote for crates/ooxml-oracle/word/probes/separator_probe.py: tables inserted, tracked, "
                    "between two tables, in a story's last paragraph and at the end of a paragraph's text "
                    "(made), and the same each deleted again (deleted). Authors ({author} the Word user) and "
-                   "dates replaced, rsids dropped. Regenerate with python tools/separator_probe.py."),
+                   "dates replaced, rsids dropped. Regenerate with python crates/ooxml-oracle/word/probes/separator_probe.py."),
         **{key: out[key] for key in sorted(out)}}, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"wrote {OBSERVATIONS.relative_to(ROOT)}")
 

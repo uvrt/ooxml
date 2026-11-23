@@ -4,7 +4,7 @@ when paragraphs are typed one after another at a document's end, and which parag
 deleted paragraph mark keeps (round 50).
 
 Probe documents are written here (mode 15, every paragraph with its paraId), and Word --
-through ``tests/oracle.py``'s machine-wide lock -- opens each, turns tracking on, makes the
+through ``python/docx-agent/tests/oracle.py``'s machine-wide lock -- opens each, turns tracking on, makes the
 edits by AppleScript and saves; the joins are accepted with Word's own ``accept all
 revisions`` too, and exported in its final view (No Markup).
 
@@ -25,7 +25,7 @@ revisions`` too, and exported in its final view (No Markup).
   first line, in points; the first paragraphs are left-indented and centred, the second
   right-aligned).
 
-    python tools/tracking_probe.py           # writes tests/observations/tracking-word.json
+    python crates/ooxml-oracle/word/probes/tracking_probe.py           # writes crates/ooxml-oracle/word/observations/tracking-word.json
 
 Nothing Word writes is committed: only the facts read from it, authors and dates replaced
 (``{author}`` the Word user, ``{other}`` the file's other author) and rsids dropped.
@@ -40,14 +40,14 @@ import zipfile
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tests"))
-sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import probe_paths  # noqa: E402  (the driver, the fixture makers and the cases on the path)
+from probe_paths import ROOT  # noqa: E402
 
 import oracle  # noqa: E402
 from e3_probe import BACKSPACE, _locate, _package, _script, _type, blocks  # noqa: E402
 
-OBSERVATIONS = ROOT / "tests" / "observations" / "tracking-word.json"
+OBSERVATIONS = probe_paths.OBSERVATIONS / "tracking-word.json"
 OTHER = "Other Writer"
 DATE = 'w:date="2026-11-01T10:00:00Z"'
 
@@ -256,10 +256,10 @@ def main() -> None:
     for name, data in saved.items():
         out[name] = [item.replace(me, "{author}") for item in read(data)]
     OBSERVATIONS.write_text(json.dumps({
-        "_about": ("What Word 16.106 for Mac wrote for tools/tracking_probe.py: formatting what is a "
+        "_about": ("What Word 16.106 for Mac wrote for crates/ooxml-oracle/word/probes/tracking_probe.py: formatting what is a "
                    "pending insertion, paragraphs typed at the end, deleted paragraph marks and Accept All "
                    "of them, and the final view's line edges. Authors ({author} the Word user, {other} "
-                   "another) and dates replaced, rsids dropped. Regenerate with python tools/tracking_probe.py."),
+                   "another) and dates replaced, rsids dropped. Regenerate with python crates/ooxml-oracle/word/probes/tracking_probe.py."),
         **{key: out[key] for key in sorted(out)}}, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"wrote {OBSERVATIONS.relative_to(ROOT)}")
 

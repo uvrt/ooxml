@@ -6,7 +6,7 @@ One probe document (mode 15, every row and paragraph with its paraId) holds a ta
 case, each followed by a paragraph ``After <Key>.``.  Every table is three columns by five
 rows, its first column merged down over rows 2-4 (``w:vMerge`` restart, continue, continue;
 ``End``'s over rows 3-5, the table's last); cell text ``<Key> r<i>c<j>``.  Word -- through
-``tests/oracle.py``'s machine-wide lock -- opens it, makes each case's edits by AppleScript
+``python/docx-agent/tests/oracle.py``'s machine-wide lock -- opens it, makes each case's edits by AppleScript
 (from the last table up) and saves.
 
 * ``BelowLast``: the insertion point in row 4's second cell (the group's last row), Insert
@@ -20,7 +20,7 @@ rows, its first column merged down over rows 2-4 (``w:vMerge`` restart, continue
 * ``Paste…`` (:data:`PASTES`, a second document): a whole row selected (Select Row), copied,
   and pasted with another row selected whole.
 
-    python tools/merged_rows_probe.py   # writes tests/observations/merged-rows-word.json
+    python crates/ooxml-oracle/word/probes/merged_rows_probe.py   # writes crates/ooxml-oracle/word/observations/merged-rows-word.json
 
 Nothing Word writes is committed: per row its properties (rsids dropped, authors and dates
 replaced) and per cell its grid span, ``w:vMerge`` value, text and paragraph mark revision.
@@ -37,70 +37,18 @@ from pathlib import Path
 
 from lxml import etree
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tests"))
-sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import probe_paths  # noqa: E402  (the driver, the fixture makers and the cases on the path)
+from probe_paths import ROOT  # noqa: E402
 
 import oracle  # noqa: E402
-from e3_probe import _package, _script  # noqa: E402
+from e3_probe import _script  # noqa: E402
 
-OBSERVATIONS = ROOT / "tests" / "observations" / "merged-rows-word.json"
+OBSERVATIONS = probe_paths.OBSERVATIONS / "merged-rows-word.json"
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _W = "{%s}" % W
 
-TABLES = ["BelowLast", "BelowLastMerged", "BelowFirst", "Inside", "InsideAbove", "AboveFirst",
-          "AboveFirstMerged", "End", "TrackedInside", "TrackedBelowLast"]
-#: Copy and paste of a whole row (a second document): ``(key, row copied, row the insertion
-#: selected when pasting)``.
-PASTES = [("PasteInside", 3, 4), ("PasteFirst", 2, 3), ("PasteAfterGroup", 4, 5), ("PasteAboveFirst", 2, 2),
-          ("PasteEnd", 5, 5)]
-
-_paras = iter(range(1, 100000))
-
-
-def _pid() -> str:
-    return f"{0x51000000 + next(_paras):08X}"
-
-
-def _merged(key: str) -> tuple[int, int]:
-    """The rows (1-based, first and last) the first column is merged down over."""
-    return (3, 5) if key == "End" else (2, 4)
-
-
-def _cell(key: str, i: int, j: int) -> str:
-    first, last = _merged(key)
-    merge = ""
-    text = f"{key} r{i}c{j}"
-    if j == 1 and first <= i <= last:
-        merge = '<w:vMerge w:val="restart"/>' if i == first else "<w:vMerge/>"
-        if i != first:
-            text = ""
-    runs = f'<w:r><w:t xml:space="preserve">{text}</w:t></w:r>' if text else ""
-    return (f'<w:tc><w:tcPr><w:tcW w:w="2400" w:type="dxa"/>{merge}</w:tcPr>'
-            f'<w:p w14:paraId="{_pid()}" w14:textId="77777777"><w:pPr><w:spacing w:after="0"/></w:pPr>'
-            f'{runs}</w:p></w:tc>')
-
-
-def _table(key: str) -> str:
-    rows = "".join(f'<w:tr w14:paraId="{_pid()}" w14:textId="77777777">'
-                   + "".join(_cell(key, i, j) for j in (1, 2, 3)) + "</w:tr>" for i in range(1, 6))
-    grid = "<w:tblGrid>" + '<w:gridCol w:w="2400"/>' * 3 + "</w:tblGrid>"
-    borders = "".join(f'<w:{side} w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
-                      for side in ("top", "left", "bottom", "right", "insideH", "insideV"))
-    props = f'<w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders>{borders}</w:tblBorders></w:tblPr>'
-    return f"<w:tbl>{props}{grid}{rows}</w:tbl>"
-
-
-def _paragraph(text: str) -> str:
-    return f'<w:p w14:paraId="{_pid()}" w14:textId="77777777"><w:r><w:t xml:space="preserve">{text}</w:t></w:r></w:p>'
-
-
-def document(keys: list[str] = TABLES) -> bytes:
-    out = [_paragraph("Tables follow.")]
-    for key in keys:
-        out.append(_table(key))
-        out.append(_paragraph(f"After {key}."))
-    return _package("".join(out))
+from merged_rows_cases import PASTES, TABLES, document  # noqa: E402  (the probe document)
 
 
 def script() -> str:
@@ -195,11 +143,11 @@ def main() -> None:
         pasted_data = pasted.path.read_bytes()
         pasted.path.unlink()
     OBSERVATIONS.write_text(json.dumps({
-        "_about": ("What Word 16.106 for Mac wrote for tools/merged_rows_probe.py: Insert Rows Above/Below beside "
+        "_about": ("What Word 16.106 for Mac wrote for crates/ooxml-oracle/word/probes/merged_rows_probe.py: Insert Rows Above/Below beside "
                    "a first column merged down over rows 2-4 (End: 3-5, the last), the insertion point in the "
                    "row's second cell or (…Merged) in the merged cell. Per row its properties, per cell its span, "
                    "vMerge, text, inserted mark and cell revision records; rsids, ids, authors and dates dropped "
-                   "or replaced. Regenerate with python tools/merged_rows_probe.py."),
+                   "or replaced. Regenerate with python crates/ooxml-oracle/word/probes/merged_rows_probe.py."),
         **read(saved), **read(pasted_data, pastes)}, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"wrote {OBSERVATIONS.relative_to(ROOT)}")
 

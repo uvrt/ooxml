@@ -6,12 +6,12 @@ Made-up documents (``tests/toc_number_cases.py``): a stale ``TOC \\o "1-3" \\h \
 headings numbered through a list -- linked to the heading styles or on the paragraphs, a
 number then a tab, a space or nothing, numbers of many widths ("3" to "WWWWWW 3"), several
 fonts, sizes and ``toc N`` indents -- and ``toc N`` styles with right, left, inherited and
-cleared stops.  Word -- through ``tests/oracle.py``'s machine-wide lock, Normal.dotm backed up
+cleared stops.  Word -- through ``python/docx-agent/tests/oracle.py``'s machine-wide lock, Normal.dotm backed up
 and restored -- runs ``update (table of contents 1)`` on each and saves it; each entry's level,
 tab stops and the texts of its runs before the page number are read back into
-``tests/observations/toc-numbers-word.json``.
+``crates/ooxml-oracle/word/observations/toc-numbers-word.json``.
 
-    python tools/toc_numbers_probe.py [case ...]
+    python crates/ooxml-oracle/word/probes/toc_numbers_probe.py [case ...]
 
 Nothing Word writes is committed: only these facts.
 """
@@ -20,19 +20,16 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import shutil
 import sys
 import tempfile
-import zipfile
 from pathlib import Path
 
-from lxml import etree
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tests"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import probe_paths  # noqa: E402  (the driver, the fixture makers and the cases on the path)
 
-OBSERVED = ROOT / "tests" / "observations" / "toc-numbers-word.json"
+OBSERVED = probe_paths.OBSERVATIONS / "toc-numbers-word.json"
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 NORMAL = (Path.home() / "Library/Group Containers/UBF8T346G9.Office/User Content.localized/Templates.localized"
           / "Normal.dotm")
@@ -53,26 +50,7 @@ end run
 '''
 
 
-def entries(data: bytes) -> list[dict]:
-    """Each TOC entry Word wrote: level (Word renames the toc styles in its own language),
-    tab stops, and its runs' texts before the page number's tab (a tab run as ``\\t``)."""
-    root = etree.fromstring(zipfile.ZipFile(__import__("io").BytesIO(data)).read("word/document.xml"))
-    out = []
-    for p in root.iter(W + "p"):
-        style = p.find(f"{W}pPr/{W}pStyle")
-        found = re.match(r"\D+(\d)$", style.get(W + "val") if style is not None else "")
-        if not found or not style.get(W + "val").lower().startswith(("toc", "inhopg")):
-            continue
-        tabs = [[t.get(W + "val"), int(t.get(W + "pos"))] + ([t.get(W + "leader")] if t.get(W + "leader") else [])
-                for t in p.iterfind(f"{W}pPr/{W}tabs/{W}tab")]
-        runs = []
-        for r in (p.find(W + "hyperlink") if p.find(W + "hyperlink") is not None else p).iter(W + "r"):
-            if r.find(W + "fldChar") is not None or r.find(W + "instrText") is not None:
-                break
-            t = r.find(W + "t")
-            runs.append(t.text if t is not None else ("\t" if r.find(W + "tab") is not None else ""))
-        out.append({"level": int(found.group(1)), "tabs": tabs, "runs": runs[:-1] if runs[-1:] == ["\t"] else runs})
-    return out
+from toc_number_cases import entries  # noqa: E402  (what an update wrote, read as the tests read ours)
 
 
 def main(only: list[str]) -> None:

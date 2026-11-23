@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Measure what Word does with charts and SmartArt that docx-agent wrote or edited.
+"""Measure what Word does with charts and SmartArt the tools wrote or edited.
 
-Probe documents are written here (``tools/chart_parts.py``) or edited from the committed
-fixtures (``crates/ooxml-oracle/fixtures/generated/charts``) through docx-agent's own chart and diagram
-API, and Word -- through ``tests/oracle.py``'s machine-wide lock, no clipboard -- exports
+Probe documents are made here through the tools (``probe_tools``: ``new_document``,
+``edit_chart``), some then given part forms no tool writes by rewriting their chart or
+diagram parts, or edited from the committed fixtures (``crates/ooxml-oracle/fixtures/generated/charts``),
+and Word -- through ``python/docx-agent/tests/oracle.py``'s machine-wide lock, no clipboard -- exports
 each to PDF and saves it again.  What it drew is read off the PDF (text, and the face,
 size, weight and colour of a title's characters), and what it wrote off the saved file:
 
@@ -11,32 +12,37 @@ size, weight and colour of a title's characters), and what it wrote off the save
   ``Q1``... ``Cached``, 10 to 40; the workbook ``W1``... ``Booked``, 900s), with no
   ``c:autoUpdate``, with ``0`` and with ``1``: which Word draws, and whether a save
   refreshes the cache from the workbook;
-* ``extensions`` -- ``charts.docx`` with every chart edited (a value, a category and a
-  series added, a title): the ``c14``, ``c16r2``, ``c16r3`` and ``c16:uniqueId``
-  extensions after docx-agent's edit and after Word's save, and the workbooks;
-* ``titles`` -- one chart per title form: a paragraph with no ``a:defRPr``, an empty one
-  (ooxml-edit's own template), Word's chart-style form (docx-agent's template), a title
-  with no text (``c:title`` alone, what a title just added carries), and axis titles in
-  ooxml-edit's and docx-agent's forms: how Word draws each, and what it writes back;
-* ``tracking`` -- ``charts.docx`` and ``smartart.docx`` with ``w:trackRevisions`` on and
-  docx-agent's edits made under ``doc.tracking()``: the revisions Word's own review
-  counts, and what its PDF shows;
+* ``extensions`` -- ``charts.docx`` with every chart edited through ``edit_chart`` (a value, a
+  category and a series added, a category and a series renamed, a title): the ``c14``,
+  ``c16r2``, ``c16r3`` and ``c16:uniqueId`` extensions after the tools' edit and after Word's
+  save, and the workbooks;
+* ``titles`` -- one chart per title form: a paragraph with no ``a:defRPr``, an empty one, the
+  tools' ``set_title`` form, a title with no text (``c:title`` alone), and an axis title and
+  a title in the tools' form: how Word draws each, and what it writes back;
+* ``tracking`` -- ``charts.docx`` with tracking on and the chart edits made tracked: the
+  revisions Word's own review counts, and what its PDF shows;
 * ``places`` -- ``chart-places.docx`` with the chart in the header, the footnote, the
   text box, the group and the floating one each edited: Word's PDF, and the ids Word keeps
   (``docPr``, the group member's ``wpg:cNvPr``);
-* ``smartart`` -- pptx-agent E4's variants on ``smartart.docx``: the data model's text
-  changed with the drawing stale, the drawing's text alone changed, the drawing removed,
-  a node added (the drawing dropped, or kept stale), a node removed (likewise), and a
-  text edit the drawing follows exactly: what Word's PDF shows, and whether a save
+* ``smartart`` -- variants of ``smartart.docx``: the data model's text changed with the drawing
+  stale, and the drawing's text alone changed: what Word's PDF shows, and whether a save
   rewrites the drawing;
 * ``dictionary`` -- Word's AppleScript dictionary (``sdef``) searched for chart data,
   Edit Data or SmartArt objects (no Word needed).
 
-What it found is written to ``tests/observations/charts-word.json``: facts read off Word's
+What it found is written to ``crates/ooxml-oracle/word/observations/charts-word.json``: facts read off Word's
 PDFs and files, never the files themselves.
 
-    python tools/charts_probe.py              # every probe, the observations written
-    python tools/charts_probe.py titles       # one probe, printed
+    python crates/ooxml-oracle/word/probes/charts_probe.py              # every probe, the observations written
+    python crates/ooxml-oracle/word/probes/charts_probe.py titles       # one probe, printed
+
+Changed since docx-agent 0.2.0 (no Python document API): every edit is the tools'; a chart's
+``data`` is what ``edit_chart`` ``read`` gives; ``docx_agent_warns`` holds the tools' warnings.
+Dropped, as they measured forms only docx-agent's Python wrote: the ``titles`` probe's
+ooxml-edit axis-title template (``Plain ...``), the ``tracking`` probe's SmartArt edits and the
+``smartart`` variants made through the diagram API (``drawing-missing``, ``added-*``,
+``removed-*``, ``text-exact``, ``top-added-dropped``): no tool edits SmartArt.  The recorded
+observation keeps them until a re-run.
 
 Nothing Word writes is committed: only these facts.
 """
@@ -48,25 +54,20 @@ import json
 import re
 import subprocess
 import sys
-import warnings
 import zipfile
 from pathlib import Path
 
 from lxml import etree
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tests"))
-sys.path.insert(0, str(ROOT / "tools"))
-sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import probe_paths  # noqa: E402  (the driver, the fixture makers and the cases on the path)
+from probe_paths import ROOT  # noqa: E402
 
 import oracle  # noqa: E402
-import chart_parts as cp  # noqa: E402
-import make_chart_fixtures as fixtures  # noqa: E402
+import probe_tools  # noqa: E402
 
-from docx_agent import Document  # noqa: E402
-
-OBSERVATIONS = ROOT / "tests" / "observations" / "charts-word.json"
-FIXTURES = ROOT.parents[1] / "crates" / "ooxml-oracle" / "fixtures" / "generated" / "charts"
+OBSERVATIONS = probe_paths.OBSERVATIONS / "charts-word.json"
+FIXTURES = probe_paths.FIXTURES / "generated" / "charts"
 C = "{http://schemas.openxmlformats.org/drawingml/2006/chart}"
 A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
 DGM = "{http://schemas.openxmlformats.org/drawingml/2006/diagram}"
@@ -80,35 +81,58 @@ def parts(data: bytes) -> dict[str, bytes]:
         return {name: archive.read(name) for name in archive.namelist()}
 
 
-def build(builder_body, *, extra=None) -> bytes:
-    """A document from ``Document.new()``'s parts: ``builder_body(builder)`` returns the body."""
-    base = fixtures.base_parts()
-    builder = cp.Builder(base)
-    body = builder_body(builder)
-    fixtures._body(base, body)
-    if extra:
-        extra(base)
-    return cp.zip_parts(builder.finish())
+def replaced(data: bytes, edits: dict[str, object]) -> bytes:
+    """``data`` with each named part's text changed by its function."""
+    out = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(data)) as source, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as target:
+        for info in source.infolist():
+            content = source.read(info.filename)
+            if info.filename in edits:
+                content = edits[info.filename](content.decode("utf-8")).encode("utf-8")
+            target.writestr(info, content)
+    return out.getvalue()
+
+
+def chart_ids(session: probe_tools.Session) -> list[str]:
+    """The document's charts' ids, as ``describe`` lists them."""
+    return [d["id"] for d in session.call("describe").data["drawings"] if d.get("kind") == "chart"]
+
+
+def chart_parts(data: bytes) -> dict[str, str]:
+    """Each chart's part by its id (through its workbook's relationship)."""
+    session = probe_tools.Session(data)
+    files = parts(data)
+    out = {}
+    for identifier in chart_ids(session):
+        workbook = (session.call("edit_chart", target=identifier, action="read").data.get("workbook") or {})
+        name = (workbook.get("workbook") or "").rsplit("/", 1)[-1]
+        out[identifier] = next((rels.replace("/_rels/", "/").removesuffix(".rels") for rels, content in files.items()
+                                if rels.startswith("word/charts/_rels/") and name and name.encode() in content), None)
+    return out
 
 
 def charts_of(data: bytes) -> list[dict]:
-    """Every chart in a saved document, in drawing order: its id, caches and extensions."""
-    document = Document.open(data)
+    """Every chart in a saved document, in ``describe``'s order: its id, data, caches and extensions."""
+    import hashlib
+
+    session = probe_tools.Session(data)
+    files = parts(data)
     out = []
-    for chart in document.charts():
-        root = document.package.tree(chart.part)
-        names = [entry["name"] for entry in chart.data["series"]]
+    for identifier, part in chart_parts(data).items():
+        read = session.call("edit_chart", target=identifier, action="read").data
+        root = etree.fromstring(files[part]) if part else etree.Element(C + "chartSpace")
         series = []
-        for name, ser in zip(names, root.iter(C + "ser")):
+        for entry, ser in zip(read["series"], root.iter(C + "ser")):
             series.append({
-                "name": name,
+                "name": entry["name"],
                 "unique_id": next((n.get("val") for n in ser.iter() if isinstance(n.tag, str)
                                    and n.tag.endswith("}uniqueId")), None),
                 "ext_uris": [e.get("uri") for e in ser.findall(f"{C}extLst/{C}ext")],
             })
-        workbook = chart.workbook_part
+        workbook = (read.get("workbook") or {}).get("workbook")
         out.append({
-            "id": chart.id, "part": chart.part, "data": chart.data, "series": series,
+            "id": identifier, "part": part,
+            "data": {k: read.get(k) for k in ("type", "title", "categories", "series")}, "series": series,
             "c14_style": root.find(".//{http://schemas.microsoft.com/office/drawing/2007/8/2/chart}style") is not None,
             "c16r2_declared": "http://schemas.microsoft.com/office/drawing/2015/06/chart" in root.nsmap.values(),
             "c16r3": root.find(".//{http://schemas.microsoft.com/office/drawing/2017/03/chart}dataDisplayOptions16")
@@ -117,11 +141,26 @@ def charts_of(data: bytes) -> list[dict]:
             "auto_update": (root.find(f"{C}externalData/{C}autoUpdate").get("val")
                             if root.find(f"{C}externalData/{C}autoUpdate") is not None else None),
             "workbook": workbook,
-            "workbook_sha": __import__("hashlib").sha256(document.package.read(workbook)).hexdigest()[:16]
-            if workbook else None,
+            "workbook_sha": hashlib.sha256(files[workbook]).hexdigest()[:16] if workbook in files else None,
             "formulas": [f.text for f in root.iter(C + "f")],
         })
     return out
+
+
+def added_charts(title: str, charts: list[tuple[str, list[str], dict[str, list]]]) -> probe_tools.Session:
+    """A new document of a paragraph ``title`` and, per chart, a paragraph naming it and the
+    chart (a column chart, no legend) the tools add after it."""
+    session = probe_tools.Session(probe_tools.new())
+    last = session.paragraph_ids()[0]
+    session.call("word_set_text", target=last, text=title)
+    names = [label for label, _, _ in charts]
+    made = session.call("word_insert_markdown", at=f"after:{last}",
+                        markdown="\n\n".join(names) + "\n").data["blocks"]
+    for block, (_, categories, data) in zip(made, charts):
+        session.call("edit_chart", target=block, action="add", chart_type="column", categories=categories,
+                     data=[{"name": name, "values": values} for name, values in data.items()], width=288,
+                     position="none")
+    return session
 
 
 def pdf_text(path: Path) -> str:
@@ -142,18 +181,29 @@ def chars_of(path: Path, text: str) -> dict | None:
 
 
 def cache_document() -> bytes:
-    def body(builder: cp.Builder) -> str:
-        out = [fixtures.p("Cache against workbook.")]
-        for k, update in enumerate((None, "0", "1"), start=1):
-            spec = cp.ChartSpec("column", cp.ChartData(["Q1", "Q2", "Q3", "Q4"], {f"Cached{k}": [10, 20, 30, 40]}),
-                                auto_update=update, seed=20 + k,
-                                book=cp.ChartData(["W1", "W2", "W3", "W4"], {f"Booked{k}": [900, 910, 920, 930]}))
-            rel = builder.chart("word/document.xml", spec)
-            out.append(fixtures.p(f"autoUpdate {update}."))
-            out.append(fixtures.p(inner=cp.inline(k, f"Chart {k}", cp.chart_graphic(rel), fixtures.SMALL_CX * 2,
-                                                  fixtures.SMALL_CY)))
-        return "".join(out)
-    return build(body)
+    """Three charts whose caches (``Q1``... ``Cached<k>``, 10 to 40) disagree with their
+    workbooks (``W1``... ``Booked<k>``, 900s): the tools add each from the workbook's data, then
+    the caches are rewritten here, and ``c:autoUpdate`` left out, ``0`` and ``1``."""
+    updates = (None, "0", "1")
+    session = added_charts("Cache against workbook.", [
+        (f"autoUpdate {update}.", ["W1", "W2", "W3", "W4"], {f"Booked{k}": [900, 910, 920, 930]})
+        for k, update in enumerate(updates, start=1)])
+    data = session.data()
+    edits = {}
+    for k, (identifier, part) in enumerate(chart_parts(data).items(), start=1):
+        update = updates[k - 1]
+
+        def cached(xml: str, k: int = k, update: str | None = update) -> str:
+            for w, q in zip(("W1", "W2", "W3", "W4"), ("Q1", "Q2", "Q3", "Q4")):
+                xml = xml.replace(f"<c:v>{w}</c:v>", f"<c:v>{q}</c:v>")
+            for booked, cache in zip(("900", "910", "920", "930"), ("10", "20", "30", "40")):
+                xml = xml.replace(f"<c:v>{booked}</c:v>", f"<c:v>{cache}</c:v>")
+            xml = xml.replace(f"<c:v>Booked{k}</c:v>", f"<c:v>Cached{k}</c:v>")
+            auto = "" if update is None else f'<c:autoUpdate val="{update}"/>'
+            return re.sub(r"(<c:externalData [^>]*>)(?:<c:autoUpdate [^>]*/>)?", rf"\g<1>{auto}", xml)
+
+        edits[part] = cached
+    return replaced(data, edits)
 
 
 def probe_cache(word: oracle.Session) -> dict:
@@ -179,34 +229,30 @@ def probe_cache(word: oracle.Session) -> dict:
 # -- extensions ------------------------------------------------------------------------------------
 
 
-def edited_charts(tracking: bool = False) -> bytes:
-    document = Document.open(FIXTURES / "charts.docx")
+def edited_charts(tracking: bool = False) -> tuple[bytes, list[str]]:
+    """``charts.docx`` with every chart edited through ``edit_chart`` (tracked: by ``Probe``,
+    tracking on), and the tools' warnings."""
+    session = probe_tools.Session((FIXTURES / "charts.docx").read_bytes())
     if tracking:
-        document.set_word_tracks_changes(True)
-
-    def edits() -> None:
-        for chart in document.charts():
-            numeric = chart.chart_types == ["scatter"]
-            chart.series[0].set_value(0, 777)
-            chart.add_category(9.5 if numeric else "Added", None)
-            chart.add_series("New series", [5] * chart.point_count)
-            chart.set_category(1, 2.2 if numeric else "Renamed")
-            chart.series[0].name = chart.series[0].name + " edited"
-            chart.set_title(f"Edited {chart.id}")
-
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        if tracking:
-            with document.tracking(author="Probe"):
-                edits()
-        else:
-            edits()
-    document._probe_warnings = [str(w.message) for w in caught]
-    return document.to_bytes()
+        session.call("word_set_tracking", on=True, author="Probe")
+    warned: list[str] = []
+    for identifier in chart_ids(session):
+        read = session.call("edit_chart", target=identifier, action="read").data
+        numeric = read.get("types") == ["scatter"]
+        first = read["series"][0]["name"]
+        for arguments in ({"action": "set_value", "series": "0", "category": "0", "value": 777},
+                          {"action": "add_category", "text": "9.5" if numeric else "Added",
+                           "values": [None] * len(read["series"])},
+                          {"action": "add_series", "text": "New series", "values": [5] * (len(read["categories"]) + 1)},
+                          {"action": "rename_category", "category": "1", "text": "2.2" if numeric else "Renamed"},
+                          {"action": "rename_series", "series": "0", "text": f"{first} edited"},
+                          {"action": "set_title", "text": f"Edited {identifier}"}):
+            warned += session.call("edit_chart", target=identifier, **arguments).to_json().get("warnings", [])
+    return session.data(), [str(w) for w in warned]
 
 
 def probe_extensions(word: oracle.Session) -> dict:
-    data = edited_charts()
+    data, _ = edited_charts()
     pdf = word.export_pdf(data, name="charts-extensions")
     saved = word.resave(data, name="charts-extensions")
     out = {"exported": bool(pdf), "ours": charts_of(data)}
@@ -227,75 +273,52 @@ def _rich(text: str, ppr: str, *, vertical: bool = False) -> str:
             "</a:r></a:p></c:rich></c:tx>")
 
 
-def title_cases() -> dict[str, str | None]:
-    from docx_agent.edit.charts import title_text
-    from ooxml_edit.charts.dmltext import replace_body_text
-
-    holder = etree.Element(C + "chartSpace", nsmap={"c": C[1:-1], "a": A[1:-1]})
-    holder.append(title_text(False, lang="en-US"))
-    replace_body_text(holder[0][0], "Word style")  # as set_title writes it
-    word_form = re.sub(r' xmlns:\w+="[^"]+"', "", etree.tostring(holder[0]).decode())
-    return {
-        "none": _rich("No defaults", ""),
-        "empty": _rich("Empty defaults", "<a:pPr><a:defRPr/></a:pPr>"),
-        "word": word_form,
-        "auto": "",
-    }
+#: The title forms, each chart's series named ``Series <form>``.
+TITLE_FORMS = ("none", "empty", "word", "auto")
 
 
 def titles_document() -> bytes:
-    cases = title_cases()
-
-    def body(builder: cp.Builder) -> str:
-        out = [fixtures.p("Titles.")]
-        for k, (key, tx) in enumerate(cases.items(), start=1):
-            spec = cp.ChartSpec("column", cp.ChartData(["A", "B"], {f"Series {key}": [1, 2]}), title_xml=tx,
-                                legend=None, seed=30 + k)
-            rel = builder.chart("word/document.xml", spec)
-            out.append(fixtures.p(f"Title {key}."))
-            out.append(fixtures.p(inner=cp.inline(k, f"Chart {k}", cp.chart_graphic(rel), fixtures.SMALL_CX * 2,
-                                                  fixtures.SMALL_CY)))
-        return "".join(out)
-    return build(body)
+    """A chart per title form: the tools add each and set its title (``set_title``: the
+    ``word`` form), then the title's text is rewritten here: a paragraph with no ``a:defRPr``
+    (``none``), an empty one (``empty``), and none at all (``auto``, ``c:title`` alone)."""
+    session = added_charts("Titles.", [(f"Title {key}.", ["A", "B"], {f"Series {key}": [1, 2]})
+                                       for key in TITLE_FORMS])
+    for identifier in chart_ids(session):
+        session.call("edit_chart", target=identifier, action="set_title", text="Word style")
+    data = session.data()
+    forms = {"none": _rich("No defaults", ""), "empty": _rich("Empty defaults", "<a:pPr><a:defRPr/></a:pPr>"),
+             "auto": ""}
+    edits = {}
+    for key, part in zip(TITLE_FORMS, chart_parts(data).values()):
+        if key in forms:
+            edits[part] = lambda xml, tx=forms[key]: re.sub(r"(<c:title>)<c:tx>.*?</c:tx>", rf"\g<1>{tx}", xml,
+                                                             count=1, flags=re.S)
+    return replaced(data, edits)
 
 
 def axis_titles_document() -> bytes:
-    """Two charts whose value axis gets a title through the API: ooxml-edit's template and
-    docx-agent's."""
-    document = Document.open(build(lambda builder: "".join(
-        [fixtures.p("Axis titles.")] + [
-            fixtures.p(inner=cp.inline(k, f"Chart {k}", cp.chart_graphic(builder.chart(
-                "word/document.xml", cp.ChartSpec("column", cp.ChartData(["A", "B"], {f"S{k}": [1, 2]}),
-                                                  legend=None, seed=40 + k))), fixtures.SMALL_CX * 2,
-                fixtures.SMALL_CY)) for k in (1, 2)])))
-    import dataclasses
-
-    from ooxml_edit.charts import chart as raw
-
-    first, second = document.charts()
-    # ooxml-edit's own template: the host without docx-agent's.
-    plain = raw.Chart(lambda: dataclasses.replace(first._resolve(), title_template=None))
-    plain.set_axis_title("value", "Plain axis")
-    plain.set_title("Plain title")
-    second.set_axis_title("value", "Styled axis")
-    second.set_title("Styled title")
-    return document.to_bytes()
+    """A chart whose value axis and chart get a title through the tools."""
+    session = added_charts("Axis titles.", [("Chart 2.", ["A", "B"], {"S2": [1, 2]})])
+    identifier = chart_ids(session)[0]
+    session.call("edit_chart", target=identifier, action="set_axis_title", axis="value", text="Styled axis")
+    session.call("edit_chart", target=identifier, action="set_title", text="Styled title")
+    return session.data()
 
 
 def _saved_titles(data: bytes) -> list[dict]:
-    def serialize(node):
-        return etree.tostring(node)
-
-    document = Document.open(data)
+    session = probe_tools.Session(data)
+    files = parts(data)
     out = []
-    for chart in document.charts():
-        root = document.package.tree(chart.part)
+    for identifier, part in chart_parts(data).items():
+        root = etree.fromstring(files[part])
         title = root.find(f"{C}chart/{C}title")
         axis = root.find(f".//{C}valAx/{C}title")
-        out.append({"id": chart.id, "title": chart.title,
+        out.append({"id": identifier,
+                    "title": session.call("edit_chart", target=identifier, action="read").data.get("title"),
                     "title_xml": None if title is None else re.sub(r' xmlns:\w+="[^"]+"', "",
-                                                                    serialize(title).decode()),
-                    "axis_xml": None if axis is None else re.sub(r' xmlns:\w+="[^"]+"', "", serialize(axis).decode())})
+                                                                    etree.tostring(title).decode()),
+                    "axis_xml": None if axis is None else re.sub(r' xmlns:\w+="[^"]+"', "",
+                                                                  etree.tostring(axis).decode())})
     return out
 
 
@@ -322,8 +345,7 @@ def probe_titles(word: oracle.Session) -> dict:
     out = {}
     for name, data, texts in (("titles", titles_document(), ["No defaults", "Empty defaults", "Word style",
                                                                 "Series auto", "Chart Title", "Grafiektitel"]),
-                              ("axis", axis_titles_document(), ["Plain axis", "Plain title", "Styled axis",
-                                                                "Styled title"])):
+                              ("axis", axis_titles_document(), ["Styled axis", "Styled title"])):
         pdf = word.export_pdf(data, name=f"charts-{name}")
         saved = word.resave(data, name=f"charts-{name}")
         entry = {"exported": bool(pdf), "ours": _saved_titles(data)}
@@ -360,30 +382,9 @@ end run
 '''
 
 
-def edited_smartart(tracking: bool = False, policy: str | None = None) -> bytes:
-    document = Document.open(FIXTURES / "smartart.docx")
-    if tracking:
-        document.set_word_tracks_changes(True)
-
-    def edits() -> None:
-        first, second = document.diagrams()
-        first.set_text(1, "Drafted")
-        second.set_text(second.node(1), "Much faster edits")
-        second.node(0).add_child("Smaller files")
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        if tracking:
-            with document.tracking(author="Probe"):
-                edits()
-        else:
-            edits()
-    return document.to_bytes()
-
-
 def probe_tracking(word: oracle.Session) -> dict:
     out = {}
-    for name, data in (("charts", edited_charts(tracking=True)), ("smartart", edited_smartart(tracking=True))):
+    for name, data in (("charts", edited_charts(tracking=True)[0]),):
         # The count is the script's answer, which the cache does not keep: always ask Word.
         for stale in oracle.ORACLE_DIR.glob(f"charts-tracking-{name}-*-counted.docx"):
             stale.unlink()
@@ -398,12 +399,12 @@ def probe_tracking(word: oracle.Session) -> dict:
         if counted:
             entry["saved_has_markup"] = oracle._zip_has_markup(counted.path.read_bytes())
         out[name] = entry
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        document = Document.open(FIXTURES / "charts.docx")
-        with document.tracking(author="Probe"):
-            document.charts()[0].series[0].set_value(0, 1)
-    out["docx_agent_warns"] = [f"{type(w.message).__name__}: {w.message}" for w in caught]
+    # The tools' warnings on a tracked chart edit (once docx-agent's Python warnings).
+    session = probe_tools.Session((FIXTURES / "charts.docx").read_bytes())
+    session.call("word_set_tracking", on=True, author="Probe")
+    result = session.call("edit_chart", target=chart_ids(session)[0], action="set_value", series="0", category="0",
+                          value=1)
+    out["docx_agent_warns"] = [str(w) for w in result.to_json().get("warnings", [])]
     return out
 
 
@@ -411,23 +412,22 @@ def probe_tracking(word: oracle.Session) -> dict:
 
 
 def edited_places() -> bytes:
-    document = Document.open(FIXTURES / "chart-places.docx")
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        for chart in document.charts():
-            tag = chart.id.replace("d:", "").replace("/", "m")
-            chart.series[0].set_value(1, 4321)
-            chart.set_category(0, f"Cat{tag}")
-            chart.series[0].name = f"Name{tag}"
-    return document.to_bytes()
+    """``chart-places.docx`` with each chart's first series' second value, first category
+    and first series' name changed, the names tagged with the chart's id."""
+    session = probe_tools.Session((FIXTURES / "chart-places.docx").read_bytes())
+    for identifier in chart_ids(session):
+        tag = identifier.replace("d:", "").replace("/", "m")
+        session.call("edit_chart", target=identifier, action="set_value", series="0", category="1", value=4321)
+        session.call("edit_chart", target=identifier, action="rename_category", category="0", text=f"Cat{tag}")
+        session.call("edit_chart", target=identifier, action="rename_series", series="0", text=f"Name{tag}")
+    return session.data()
 
 
 def _ids(data: bytes) -> dict:
-    document = Document.open(data)
-    root = document.package.tree(document.package.document_part())
+    root = etree.fromstring(parts(data)["word/document.xml"])
     return {"docPr": sorted(int(n.get("id")) for n in root.iter(WP + "docPr")),
             "group_members": [(n.get("id"), n.get("name")) for n in root.iter(WPG + "cNvPr")],
-            "charts": [c.id for c in document.charts()]}
+            "charts": chart_ids(probe_tools.Session(data))}
 
 
 def probe_places(word: oracle.Session) -> dict:
@@ -455,69 +455,58 @@ def probe_places(word: oracle.Session) -> dict:
 # -- SmartArt --------------------------------------------------------------------------------------
 
 
+def _data_parts(files: dict[str, bytes]) -> list[str]:
+    """The diagrams' data model parts, in the order the document names them."""
+    rels = files.get("word/_rels/document.xml.rels", b"").decode()
+    return ["word/" + t for t in re.findall(r'Target="(diagrams/data\d+\.xml)"', rels)]
+
+
+def _drawing_part(files: dict[str, bytes], data_part: str) -> str | None:
+    """A data model's cached drawing (``dsp:dataModelExt``'s relationship), if any."""
+    found = re.search(rb'dataModelExt [^>]*relId="([^"]+)"', files[data_part])
+    rels = files.get("word/_rels/document.xml.rels", b"").decode()
+    if not found:
+        return None
+    target = re.search(rf'Id="{found.group(1).decode()}"[^>]*Target="([^"]+)"', rels) or re.search(
+        rf'Target="([^"]+)"[^>]*Id="{found.group(1).decode()}"', rels)
+    name = "word/" + target.group(1) if target else None
+    return name if name in files else None
+
+
 def _smartart_variant(name: str) -> bytes:
-    document = Document.open(FIXTURES / "smartart.docx")
-    package = document.package
-    second = document.diagrams()[1]
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        if name == "model-stale":
-            # The data model's text changed; the drawing left as it was.
-            root = package.tree(second.part)
-            point = next(p for p in root.iter(DGM + "pt") if "".join(t.text or "" for t in p.iter(A + "t")) == "Goals")
-            next(point.iter(A + "t")).text = "Objectives"
-            package.mark_dirty(second.part)
-        elif name == "drawing-only":
-            part = second.drawing_part
-            root = package.tree(part)
-            node = next(t for t in root.iter(A + "t") if t.text == "Goals")
-            node.text = "Drawn only"
-            package.mark_dirty(part)
-        elif name == "drawing-missing":
-            document.diagram(second.id, on_inexact_drawing="drop")._drop_drawing(
-                __import__("ooxml_edit.charts.diagram", fromlist=["DiagramModel"]).DiagramModel(
-                    package.tree(second.part), second._resolve()))
-            package.mark_dirty(second.part)
-        elif name == "added-dropped":
-            document.diagram(second.id, on_inexact_drawing="drop").node(0).add_child("Added child")
-        elif name == "added-stale":
-            document.diagram(second.id, on_inexact_drawing="keep").node(0).add_child("Added child")
-        elif name == "removed-dropped":
-            diagram = document.diagram(second.id, on_inexact_drawing="drop")
-            diagram.remove_node(diagram.node(3))  # "Risks" and its children
-        elif name == "removed-stale":
-            diagram = document.diagram(second.id, on_inexact_drawing="keep")
-            diagram.remove_node(diagram.node(3))
-        elif name == "text-exact":
-            document.diagram(second.id).set_text(1, "Exactly edited")
-        elif name == "top-added-dropped":
-            first = document.diagrams()[0]
-            document.diagram(first.id, on_inexact_drawing="drop").add_node("Sixth")
-        else:
-            raise KeyError(name)
-    return document.to_bytes()
+    """``smartart.docx`` with its second diagram's ``Goals`` changed in the data model alone
+    (``model-stale``) or in the drawing alone (``drawing-only``)."""
+    data = (FIXTURES / "smartart.docx").read_bytes()
+    files = parts(data)
+    second = _data_parts(files)[1]
+    if name == "model-stale":
+        return replaced(data, {second: lambda xml: xml.replace("<a:t>Goals</a:t>", "<a:t>Objectives</a:t>", 1)})
+    if name == "drawing-only":
+        return replaced(data, {_drawing_part(files, second): lambda xml: xml.replace(
+            "<a:t>Goals</a:t>", "<a:t>Drawn only</a:t>", 1)})
+    raise KeyError(name)
 
 
-SMARTART_VARIANTS = ("model-stale", "drawing-only", "drawing-missing", "added-dropped", "added-stale",
-                     "removed-dropped", "removed-stale", "text-exact", "top-added-dropped")
+SMARTART_VARIANTS = ("model-stale", "drawing-only")
 SMARTART_WORDS = ("Goals", "Objectives", "Drawn only", "Added child", "Risks", "Stale caches", "Exactly edited",
                   "Faster edits", "Sixth")
 
 
 def _drawing_texts(data: bytes) -> list:
-    document = Document.open(data)
+    files = parts(data)
     out = []
-    for diagram in document.diagrams():
-        part = diagram.drawing_part
-        texts = None
+    for k, data_part in enumerate(_data_parts(files), start=1):
+        model = etree.fromstring(files[data_part])
+        points = list(model.iter(DGM + "pt"))
+        texts = ["".join(t.text or "" for t in p.iter(A + "t")) for p in points
+                 if p.get("type") in (None, "node", "doc")]
+        part = _drawing_part(files, data_part)
+        drawing = None
         if part is not None:
-            root = document.package.tree(part)
-            texts = ["".join(t.text or "" for t in p.iter(A + "t")) for p in root.iter(A + "p")]
-            texts = [t for t in texts if t]
-        presentations = sum(1 for p in document.package.tree(diagram.part).iter(DGM + "pt")
-                            if p.get("type") == "pres")
-        out.append({"id": diagram.id, "texts": diagram.texts, "drawing": part, "drawing_texts": texts,
-                    "presentation_points": presentations})
+            drawing = ["".join(t.text or "" for t in p.iter(A + "t")) for p in etree.fromstring(files[part]).iter(A + "p")]
+            drawing = [t for t in drawing if t]
+        out.append({"id": data_part, "texts": [t for t in texts if t], "drawing": part, "drawing_texts": drawing,
+                    "presentation_points": sum(1 for p in points if p.get("type") == "pres")})
     return out
 
 

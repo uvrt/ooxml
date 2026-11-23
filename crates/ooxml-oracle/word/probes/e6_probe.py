@@ -2,7 +2,7 @@
 """Measure what Word does for E6's authoring: a new document, a document from a template,
 content copied between documents whose styles conflict, and Convert.
 
-Through ``tests/oracle.py``'s machine-wide lock, Word, by AppleScript:
+Through ``python/docx-agent/tests/oracle.py``'s machine-wide lock, Word, by AppleScript:
 
 * ``new``, ``new-typed``: makes a new blank document (``make new document``: File > New,
   on this Word's Normal template) and saves it as it is, and again with a line typed;
@@ -24,15 +24,15 @@ Through ``tests/oracle.py``'s machine-wide lock, Word, by AppleScript:
   ``resave-*``: two of them only opened and saved, to tell what Convert changes from what any
   save does.
 
-What it wrote is read back into ``tests/observations/e6-word.json`` as facts: settings and
+What it wrote is read back into ``crates/ooxml-oracle/word/observations/e6-word.json`` as facts: settings and
 compatibility options, which parts and relationships a document has, the body's blocks
 (normalised: rsids dropped, dates and authors replaced), style definitions by name for the
 documents written here -- **never** the new document's own styles, theme or font table,
 which are Word's Normal template: those are compared, part by part, with what
-``Document.new()`` writes, and only the comparison is recorded.
+``new_document`` writes, and only the comparison is recorded.
 
-    python tools/e6_probe.py                # every probe, the observations written
-    python tools/e6_probe.py new paste-keep # some probes, printed
+    python crates/ooxml-oracle/word/probes/e6_probe.py                # every probe, the observations written
+    python crates/ooxml-oracle/word/probes/e6_probe.py new paste-keep # some probes, printed
 
 Nothing Word writes is committed: only these facts.
 """
@@ -50,15 +50,14 @@ from pathlib import Path
 
 from lxml import etree
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tests"))
-sys.path.insert(0, str(ROOT / "tools"))
-sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import probe_paths  # noqa: E402  (the driver, the fixture makers and the cases on the path)
+from probe_paths import ROOT  # noqa: E402
 
 import oracle  # noqa: E402
 from make_fixtures import DECL, NS, REL, WML, content_types, png, relationships  # noqa: E402
 
-OBSERVATIONS = ROOT / "tests" / "observations" / "e6-word.json"
+OBSERVATIONS = probe_paths.OBSERVATIONS / "e6-word.json"
 
 
 def word_locale():
@@ -75,7 +74,7 @@ def word_locale():
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _W = "{%s}" % W
-FIXTURES = ROOT.parents[1] / "crates" / "ooxml-oracle" / "fixtures"
+FIXTURES = probe_paths.FIXTURES
 DRAWING_NS = ('xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
               'xmlns:wp14="http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing" '
               'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
@@ -653,209 +652,6 @@ def observe(name: str, data: bytes) -> dict:
     return entry
 
 
-# -- the new document's tables -------------------------------------------------------------------
-
-TABLES = ROOT / "src" / "docx_agent" / "edit" / "word_new.py"
-_PREFIXES = {W: "w", "http://schemas.microsoft.com/office/word/2010/wordml": "w14",
-             "http://schemas.openxmlformats.org/officeDocument/2006/math": "m"}
-
-
-def _name(qname: str) -> str:
-    namespace, _, local = qname[1:].partition("}") if qname.startswith("{") else ("", "", qname)
-    return f"{_PREFIXES[namespace]}:{local}" if namespace else local
-
-
-def node(element) -> tuple:
-    """An element as ``(tag, ((attribute, value), ...), (children...))``: values, in Word's
-    order, from which ``edit/blank.py`` writes the XML."""
-    attributes = tuple((_name(key), value) for key, value in element.attrib.items()
-                       if not key.endswith("}rsid") and "rsid" not in key)
-    return (_name(element.tag), attributes, tuple(node(child) for child in element))
-
-
-def english_name(name: str) -> str:
-    """English Word's display name of a built-in style ("heading 1" -> "Heading 1")."""
-    return " ".join(word[:1].upper() + word[1:] for word in name.split())
-
-
-def new_tables(data: bytes) -> dict:
-    """What a new document is made of, as values: read from the one Word made."""
-    files = parts(data)
-    styles = etree.fromstring(files["word/styles.xml"])
-    by_id = {s.get(_W + "styleId"): s.find(_W + "name").get(_W + "val") for s in styles.findall(_W + "style")}
-
-    def name_of(style) -> str:
-        name = style.find(_W + "name").get(_W + "val")
-        link = style.find(_W + "link")
-        if style.get(_W + "type") == "character" and link is not None:
-            # A linked style's name is the interface language's ("Kop 1 Char"); English
-            # Word's is its paragraph style's English name and " Char".
-            return english_name(by_id[link.get(_W + "val")]) + " Char"
-        return name
-
-    names = {sid: name_of(s) for sid, s in ((s.get(_W + "styleId"), s) for s in styles.findall(_W + "style"))}
-    out_styles = []
-    for style in styles.findall(_W + "style"):
-        entry: dict = {"type": style.get(_W + "type"), "name": names[style.get(_W + "styleId")]}
-        if style.get(_W + "default") == "1":
-            entry["default"] = True
-        if style.get(_W + "customStyle") == "1":
-            entry["custom"] = True
-        children = []
-        for child in style:
-            tag = _name(child.tag)
-            if tag in ("w:name", "w:rsid"):
-                continue
-            if tag in ("w:basedOn", "w:next", "w:link"):
-                children.append((tag, names[child.get(_W + "val")]))
-            elif tag == "w:uiPriority":
-                children.append((tag, int(child.get(_W + "val"))))
-            elif tag in ("w:pPr", "w:rPr", "w:tblPr", "w:trPr", "w:tcPr"):
-                children.append(node(child))
-            else:
-                children.append((tag,))
-        entry["children"] = tuple(children)
-        out_styles.append(entry)
-    latent = styles.find(_W + "latentStyles")
-    latent_rows = []
-    for exception in latent:
-        flags = "".join(flag for flag, key in (("s", "semiHidden"), ("u", "unhideWhenUsed"), ("q", "qFormat"),
-                                                ("l", "locked")) if exception.get(_W + key) == "1")
-        priority = exception.get(_W + "uiPriority")
-        latent_rows.append((exception.get(_W + "name"), None if priority is None else int(priority), flags))
-    defaults = styles.find(_W + "docDefaults")
-    settings = etree.fromstring(files["word/settings.xml"])
-    fonts = etree.fromstring(files["word/fontTable.xml"])
-    web = etree.fromstring(files["word/webSettings.xml"])
-    return {
-        "DOC_DEFAULTS": node(defaults),
-        "LATENT_DEFAULTS": tuple((_name(k), v) for k, v in latent.attrib.items()),
-        "LATENT": tuple(latent_rows),
-        "STYLES": tuple(out_styles),
-        "FONTS": tuple(node(font) for font in fonts),
-        "COMPAT": tuple((s.get(_W + "name"), s.get(_W + "val")) for s in settings.iter(_W + "compatSetting")),
-        "MATH": node(settings.find("{http://schemas.openxmlformats.org/officeDocument/2006/math}mathPr")),
-        "COLOR_MAPPING": tuple((_name(k), v) for k, v in settings.find(_W + "clrSchemeMapping").attrib.items()),
-        "WEB_SETTINGS": tuple(_name(child.tag) for child in web),
-    }
-
-
-def write_tables(data: bytes) -> None:
-    import pprint
-
-    values = new_tables(data)
-    lines = ['"""What Word 16.106 makes a new blank document of, as values: the document defaults, the',
-             "latent styles, the styles a new document has, the font table, the compatibility settings,",
-             "the math settings and the web settings.",
-             "",
-             "Generated by ``tools/e6_probe.py`` from the new document Word made (``make new document``)",
-             "and saved; do not edit by hand.  Nothing here is Word's XML: :mod:`docx_agent.edit.blank`",
-             "writes every part from these values.  An element is ``(tag, ((attribute, value), ...),",
-             "(children...))``; a style is its type, its English name (the interface's own names of",
-             "linked character styles, \"Kop 1 Char\", are given as English Word names them, \"Heading 1",
-             'Char"), and its children in order, where ``basedOn``, ``next`` and ``link`` name a style',
-             "and ``uiPriority`` is a number.  A latent style is ``(name, uiPriority, flags)``: ``s``",
-             "semi-hidden, ``u`` unhidden when used, ``q`` quick style, ``l`` locked.",
-             '"""', "", "# fmt: off"]
-    for key, value in values.items():
-        lines.append(f"{key} = " + pprint.pformat(value, width=110, sort_dicts=False))
-        lines.append("")
-    TABLES.write_text("\n".join(lines), encoding="utf-8")
-
-
-# -- Document.new() against Word's own new document ---------------------------------------------
-
-
-def _canonical_new(files: dict[str, bytes], part: str, *, word: bool) -> str:
-    """A part of a new document in a form both sides can be compared in: rsids, the
-    document id and the window's view dropped; style ids and the linked styles' localised
-    names as English Word writes them; the theme's localised name; dates and authors as
-    placeholders."""
-    data = files[part]
-    if part.endswith(".rels") or part == "[Content_Types].xml":
-        root = etree.fromstring(data)
-        children = sorted(root, key=lambda n: (n.get("PartName") or n.get("Extension") or n.get("Target") or ""))
-        for child in children:
-            root.remove(child)
-            child.attrib.pop("Id", None)
-            root.append(child)
-        return etree.tostring(root, method="c14n").decode()
-    root = etree.fromstring(data)
-    for node in list(root.iter()):
-        if not isinstance(node.tag, str):
-            continue
-        for key in list(node.attrib):
-            if "rsid" in key:
-                del node.attrib[key]
-        name = etree.QName(node).localname
-        if name in ("rsids", "rsid", "docId", "view") and node.getparent() is not None:
-            node.getparent().remove(node)
-    if part == "word/styles.xml":
-        tables = new_tables(_zip(files)) if word else None
-        names = {}
-        for style in root.findall(_W + "style"):
-            names[style.get(_W + "styleId")] = style.find(_W + "name").get(_W + "val")
-        if word:
-            english = {entry_id: entry for entry_id, entry in names.items()}
-            from docx_agent.edit.blank import style_id as english_id
-
-            renamed = {}
-            for style, entry in zip(root.findall(_W + "style"), tables["STYLES"]):
-                renamed[style.get(_W + "styleId")] = english_id(entry["name"])
-                style.find(_W + "name").set(_W + "val", entry["name"])
-            for node in root.iter(_W + "basedOn", _W + "next", _W + "link"):
-                node.set(_W + "val", renamed[node.get(_W + "val")])
-            for style in root.findall(_W + "style"):
-                style.set(_W + "styleId", renamed[style.get(_W + "styleId")])
-            del english
-    if part == "word/theme/theme1.xml":
-        root.set("name", "{theme}")
-    if part == "docProps/core.xml":
-        for node in root:
-            if etree.QName(node).localname in ("created", "modified"):
-                node.text = "{date}"
-            if etree.QName(node).localname in ("creator", "lastModifiedBy"):
-                node.text = "{author}"
-    if part == "docProps/app.xml":
-        for node in root:
-            if etree.QName(node).localname in ("Application", "AppVersion"):
-                root.remove(node)
-    if part == "word/document.xml":
-        for node in root.iter(_W + "p"):
-            for key in list(node.attrib):
-                del node.attrib[key]
-    return etree.tostring(root, method="c14n").decode()
-
-
-def _zip(files: dict[str, bytes]) -> bytes:
-    return zipped(dict(files))
-
-
-def compare_new(word: bytes) -> dict:
-    """``Document.new()``, built with this Word's language and locale, against the new
-    document Word made: per part, ``same`` or where they differ."""
-    from datetime import datetime, timezone
-
-    from docx_agent.edit import blank
-
-    ours = parts(blank.build(language="nl-BE", page_defaults=blank.METRIC, locale=word_locale(),
-                             author="Word's user",
-                             created=datetime(2026, 10, 4, tzinfo=timezone.utc)))
-    theirs = parts(word)
-    out: dict = {}
-    for part in sorted(set(ours) | set(theirs)):
-        if part not in ours or part not in theirs:
-            out[part] = "only in " + ("Word's" if part in theirs else "ours")
-            continue
-        a, b = _canonical_new(ours, part, word=False), _canonical_new(theirs, part, word=True)
-        if a == b:
-            out[part] = "same"
-        else:
-            at = next((k for k in range(min(len(a), len(b))) if a[k] != b[k]), min(len(a), len(b)))
-            out[part] = {"ours": a[max(0, at - 80):at + 160], "Word's": b[max(0, at - 80):at + 160]}
-    return out
-
-
 def main(names: list[str]) -> None:
     saved = measure(names or list(runs()))
     if names:
@@ -864,18 +660,20 @@ def main(names: list[str]) -> None:
         return
     previous = json.loads(OBSERVATIONS.read_text(encoding="utf-8")) if OBSERVATIONS.exists() else {}
     observations = {
-        "_about": ("What Word 16.106 for Mac (Dutch interface, metric) wrote for tools/e6_probe.py: per probe "
+        "_about": ("What Word 16.106 for Mac (Dutch interface, metric) wrote for crates/ooxml-oracle/word/probes/e6_probe.py: per probe "
                    "the package's parts, content types and relationships, the settings, the body's blocks, the "
                    "styles by name and the notes, comments, numbering, headers and footers of the documents "
                    "written here, and the properties. rsids dropped; authors and dates replaced by "
                    "placeholders. A new document's styles, theme and font table are Word's Normal template and "
-                   "are not recorded: 'new-compared' holds how Document.new() compares with them. "
-                   "Regenerate with python tools/e6_probe.py."),
+                   "are not recorded: 'new-compared' holds how new_document's compares with them. "
+                   "Regenerate with python crates/ooxml-oracle/word/probes/e6_probe.py."),
         **{name: observe(name, data) for name, data in saved.items()},
     }
     if "new" in saved:
+        from e6_new import TABLES_NAME, compare_new, write_tables
+
         write_tables(saved["new"])
-        print(f"wrote {TABLES.relative_to(ROOT)}")
+        print(f"wrote {probe_paths.measured(TABLES_NAME)}")
         observations["new-compared"] = compare_new(saved["new"])
     elif "new-compared" in previous:
         observations["new-compared"] = previous["new-compared"]

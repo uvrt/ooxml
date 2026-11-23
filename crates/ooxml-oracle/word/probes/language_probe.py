@@ -2,7 +2,7 @@
 """Measure what Word writes for a document's language, and which language tags it knows
 (round 35, R24: :meth:`docx_agent.Document.set_language`, ``docx_agent.edit.language``).
 
-Probe documents are written here and Word -- through ``tests/oracle.py``'s machine-wide
+Probe documents are written here and Word -- through ``python/docx-agent/tests/oracle.py``'s machine-wide
 lock -- opens each and, by AppleScript:
 
 * ``tags``: sets each paragraph of a document to one of the languages of Word's
@@ -18,7 +18,7 @@ lock -- opens each and, by AppleScript:
   default for new documents is; it also writes Normal.dotm, which this probe puts back,
   byte for byte, from the copy it takes first).
 
-    python tools/language_probe.py      # writes tests/observations/language-word.json
+    python crates/ooxml-oracle/word/probes/language_probe.py      # writes crates/ooxml-oracle/word/observations/language-word.json
 
 Word's Language dialog's *Default...* button is not driven here: System Events sees none of
 Word's windows while the screen is locked, and a dialog left open blocks Word's scripting.
@@ -34,14 +34,14 @@ import sys
 import zipfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tests"))
-sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import probe_paths  # noqa: E402  (the driver, the fixture makers and the cases on the path)
+from probe_paths import ROOT  # noqa: E402
 
 import oracle  # noqa: E402
 from make_fixtures import DECL, NS, REL, WML, content_types, relationships  # noqa: E402
 
-OBSERVATIONS = ROOT / "tests" / "observations" / "language-word.json"
+OBSERVATIONS = probe_paths.OBSERVATIONS / "language-word.json"
 NORMAL = oracle.GROUP_CONTAINER / "User Content.localized" / "Templates.localized" / "Normal.dotm"
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 

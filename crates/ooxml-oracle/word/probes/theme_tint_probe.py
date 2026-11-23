@@ -5,12 +5,12 @@
 
 A made-up document: one paragraph style per swatch for text and one for shading, their
 ``w:val`` / ``w:fill`` a decoy (``FF00FF`` / ``00FF00``) so the colour drawn shows whether
-Word follows the theme attributes.  Word -- through ``tests/oracle.py``'s machine-wide lock
+Word follows the theme attributes.  Word -- through ``python/docx-agent/tests/oracle.py``'s machine-wide lock
 -- exports it to PDF (in batches: one document of all 27 swatches did not open in time);
 text colours are read from the PDF's characters, fills from a 200 dpi raster beside the
-text, into ``tests/observations/theme-tints-word.json``.
+text, into ``crates/ooxml-oracle/word/observations/theme-tints-word.json``.
 
-    python tools/theme_tint_probe.py
+    python crates/ooxml-oracle/word/probes/theme_tint_probe.py
 
 Nothing Word writes is committed: only these facts.
 """
@@ -22,14 +22,13 @@ from pathlib import Path
 
 from lxml import etree
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tests"))
-sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import probe_paths  # noqa: E402  (the driver, the fixture makers and the cases on the path)
 
 import oracle  # noqa: E402
-from docx_agent import Document  # noqa: E402
+import probe_tools  # noqa: E402
 
-OBSERVED = ROOT / "tests" / "observations" / "theme-tints-word.json"
+OBSERVED = probe_paths.OBSERVATIONS / "theme-tints-word.json"
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 NS = {"w": W}
 
@@ -46,19 +45,21 @@ SWATCHES = [
 
 
 def make() -> bytes:
-    doc = Document.new()
-    first = doc.paragraphs()[0]
-    first.text = "Colour probe"
-    last = first.id
-    for k, _ in enumerate(SWATCHES):
-        doc.styles.add(f"Text sample {k}", based_on="Normal")
-        doc.styles.add(f"Fill sample {k}", based_on="Normal")
+    """The probe document, made through the tools (a new document, a paragraph style per
+    swatch for text and one for shading, a paragraph in each), then the styles' theme colours
+    written into styles.xml (no tool writes a theme tint or shade)."""
+    doc = probe_tools.Session(probe_tools.new())
+    first = doc.paragraph_ids()[0]
+    doc.call("word_set_text", target=first, text="Colour probe")
     for k, _ in enumerate(SWATCHES):
         for kind in ("Text", "Fill"):
-            made = doc.paragraph(last).insert_after(f"{kind} sample {k} lorem ipsum dolor")
-            doc.paragraph(made.id).set_style(f"{kind} sample {k}")
-            last = made.id
-    data = doc.to_bytes()
+            doc.call("word_styles", action="add", name=f"{kind} sample {k}", kind="paragraph", based_on="Normal")
+    names = [f"{kind} sample {k}" for k, _ in enumerate(SWATCHES) for kind in ("Text", "Fill")]
+    made = doc.call("word_insert_markdown", at=f"after:{first}",
+                    markdown="\n\n".join(f"{name} lorem ipsum dolor" for name in names) + "\n").data["blocks"]
+    for block, name in zip(made, names):
+        doc.call("word_format", targets=[block], paragraph_style=name)
+    data = doc.data()
     src = zipfile.ZipFile(io.BytesIO(data))
     out = io.BytesIO()
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as dst:

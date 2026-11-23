@@ -6,16 +6,16 @@ Made-up documents: "Contents", a ``TOC`` field whose cached result is ``?``, the
 paragraphs in made-up styles -- built-in headings, custom styles with and without an
 outline level, paragraphs stating their own (``w:outlineLvl``), empty ones, a heading in a
 table cell, a built-in heading whose definition lost (or changed) its outline level.  One
-copy per instruction.  Word -- through ``tests/oracle.py``'s machine-wide lock -- opens each,
+copy per instruction.  Word -- through ``python/docx-agent/tests/oracle.py``'s machine-wide lock -- opens each,
 updates its fields (``update field``) and saves it; the entries it wrote (TOC level, text)
-are read back into ``tests/observations/toc-word.json``.
+are read back into ``crates/ooxml-oracle/word/observations/toc-word.json``.
 
 Word splits ``\\t``'s list on its locale's list separator: this Mac's Word is Dutch (``;``),
 so most cases are measured there; the ``en-US`` ones are Word started with
 ``-AppleLocale en_US -AppleLanguages (en-US)`` (``open --args``), where the separator is
 ``,`` and the built-in styles' display names English.
 
-    python tools/toc_probe.py [case ...]
+    python crates/ooxml-oracle/word/probes/toc_probe.py [case ...]
 
 Nothing Word writes is committed: only these facts.
 """
@@ -32,11 +32,10 @@ from pathlib import Path
 
 from lxml import etree
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tests"))
-sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import probe_paths  # noqa: E402  (the driver, the fixture makers and the cases on the path)
 
-OBSERVED = ROOT / "tests" / "observations" / "toc-word.json"
+OBSERVED = probe_paths.OBSERVATIONS / "toc-word.json"
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _W = "{%s}" % W
 NS = {"w": W}
@@ -168,21 +167,25 @@ end run
 
 
 def make(body: str, instruction: str) -> bytes:
-    """The probe document of ``body`` with a TOC field of ``instruction``."""
-    from docx_agent import Document
+    """The probe document of ``body`` with a TOC field of ``instruction``: a new document, its
+    styles and paragraphs made through the tools, then patched (:func:`_patch`)."""
+    import probe_tools
 
-    document = Document.new(created="2026-10-28T09:00:00Z")
+    document = probe_tools.Session(probe_tools.new(created="2026-10-28T09:00:00Z"))
     for name, based in (("Section title", "Normal"), ("Report title", "Normal"), ("Leveled", "Normal"),
                         ("Leveled child", "Leveled"), ("Derived heading", "heading 1")):
-        document.styles.add(name, based_on=based)
-    first = document.paragraphs()[0]
-    first.set_text("Contents")
-    last = first.id
-    for text, style, _ in BODIES[body]:
-        made = document.paragraph(last).insert_after(text)
-        document.paragraph(made.id).set_style(style or "Normal")
-        last = made.id
-    return _patch(document.to_bytes(), body, instruction)
+        document.call("word_styles", action="add", name=name, kind="paragraph", based_on=based)
+    first = document.paragraph_ids()[0]
+    document.call("word_set_text", target=first, text="Contents")
+    # Each paragraph a block of its own; an empty one (which Markdown cannot say) is made with
+    # a placeholder, then emptied.
+    lines = BODIES[body]
+    made = document.call("word_insert_markdown", at=f"after:{first}",
+                         markdown="\n\n".join(f"Paragraph {k}" for k in range(len(lines))) + "\n").data["blocks"]
+    for block, (text, style, _) in zip(made, lines):
+        document.call("word_set_text", target=block, text=text)
+        document.call("word_format", targets=[block], paragraph_style=style or "Normal")
+    return _patch(document.data(), body, instruction)
 
 
 def _patch(data: bytes, body: str, instruction: str) -> bytes:

@@ -2,7 +2,7 @@
 """Measure what Word writes for E5's tables, drawings and content controls.
 
 Probe documents are written here (mode 15, ``e1_probe``'s handful of styles and Word's
-Table Grid), and Word -- through ``tests/oracle.py``'s machine-wide lock -- opens each and,
+Table Grid), and Word -- through ``python/docx-agent/tests/oracle.py``'s machine-wide lock -- opens each and,
 by AppleScript (no clipboard), makes one family of edits and saves:
 
 * ``tables`` (and ``tables-tracked``, the same with tracking on): on tables made as Word
@@ -24,10 +24,10 @@ by AppleScript (no clipboard), makes one family of edits and saves:
   stale on purpose.
 
 What it wrote is read back -- each part normalised (rsids, authors and dates replaced) --
-into ``tests/observations/e5-word.json``.
+into ``crates/ooxml-oracle/word/observations/e5-word.json``.
 
-    python tools/e5_probe.py            # every probe, the observations written
-    python tools/e5_probe.py tables     # one probe, printed
+    python crates/ooxml-oracle/word/probes/e5_probe.py            # every probe, the observations written
+    python crates/ooxml-oracle/word/probes/e5_probe.py tables     # one probe, printed
 
 Nothing Word writes is committed: only these facts.
 """
@@ -43,18 +43,17 @@ from pathlib import Path
 
 from lxml import etree
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tests"))
-sys.path.insert(0, str(ROOT / "tools"))
-sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import probe_paths  # noqa: E402  (the driver, the fixture makers and the cases on the path)
+from probe_paths import ROOT  # noqa: E402
 
 import oracle  # noqa: E402
 from e1_probe import minimal_styles  # noqa: E402
 from make_fixtures import DECL, NS, REL, WML, content_types, png, relationships, settings  # noqa: E402
 
-from docx_agent.edit.word_table_styles import STYLES as TABLE_STYLES  # noqa: E402
+from probe_package import PICTURE  # noqa: E402  (Word's inline picture, the drawings probe's first)
 
-OBSERVATIONS = ROOT / "tests" / "observations" / "e5-word.json"
+OBSERVATIONS = probe_paths.OBSERVATIONS / "e5-word.json"
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _W = "{%s}" % W
 SECTION = ('<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" '
@@ -114,8 +113,17 @@ def grid_table(ids: Ids, key: str, rows: int = 3, columns: int = 3, width: int =
                  [width] * columns, **options)
 
 
+def _table_grid() -> str:
+    """Word's Table Grid on its first use (the measured built-in styles' table)."""
+    table = probe_paths.ROOT / "crates" / "ooxml-word-edit" / "data" / "builtin-styles.tsv"
+    for line in table.read_text(encoding="utf-8").splitlines():
+        if line.startswith("Table Grid\t"):
+            return line.split("\t")[5]
+    raise LookupError("Table Grid")
+
+
 def styles() -> str:
-    grid = TABLE_STYLES["Table Grid"]["xml"].replace("{id}", "TableGrid").replace("{basedOn}", "TableNormal")
+    grid = _table_grid().replace("{id}", "TableGrid").replace("{basedOn}", "TableNormal")
     grid = grid.replace(f' xmlns:w="{W}"', "")
     return minimal_styles().replace("</w:styles>", grid + "</w:styles>")
 
@@ -438,16 +446,20 @@ DRAWING_CASES: dict[str, list[str]] = {
 }
 
 
-def drawings_document() -> bytes:
-    from docx_agent.edit.pictures import _drawing
+def _drawing(k: int, key: str) -> str:
+    """Case ``k``'s inline picture of 72 x 36 points, as Word inserts one: :data:`PICTURE`, its
+    ids, name and description the case's."""
+    names = f'id="{k}" name="Picture {k}" descr="Case {key}"'
+    return (PICTURE.replace('wp14:anchorId="3B000002"', f'wp14:anchorId="{0x3B000000 + 2 * k:08X}"')
+            .replace('wp14:editId="3B000003"', f'wp14:editId="{0x3B000001 + 2 * k:08X}"')
+            .replace('id="1" name="Picture 1" descr="Case 1"', names))
 
+
+def drawings_document() -> bytes:
     ids = Ids(0x3A000000)
     body = para(ids, "Drawings follow.")
     for k, key in enumerate(DRAWING_CASES, start=1):
-        drawing = etree.tostring(_drawing("rIdImg", k, f"Picture {k}", f"Case {key}", (72.0, 36.0),
-                                          f"{0x3B000000 + 2 * k:08X}", f"{0x3B000001 + 2 * k:08X}"),
-                                 encoding="unicode")
-        drawing = re.sub(r' xmlns:\w+="[^"]*"', "", drawing)
+        drawing = _drawing(k, key)
         body += (f'<w:p w14:paraId="{ids()}" w14:textId="77777777"><w:r><w:t xml:space="preserve">Case {key}: </w:t>'
                  f"</w:r><w:r>{drawing}</w:r><w:r><w:t xml:space=\"preserve\"> {FILLER * 3}</w:t></w:r></w:p>")
     body += para(ids, "Box anchor. " + FILLER) + para(ids, "Shape anchor. " + FILLER) + para(ids, "The end.")
@@ -633,10 +645,10 @@ def main(names: list[str]) -> None:
             print(name, json.dumps(observe(data), indent=1)[:200000])
         return
     OBSERVATIONS.write_text(json.dumps({
-        "_about": ("What Word 16.106 for Mac wrote for tools/e5_probe.py: each probe's body blocks and its "
+        "_about": ("What Word 16.106 for Mac wrote for crates/ooxml-oracle/word/probes/e5_probe.py: each probe's body blocks and its "
                    "settings, people and comments parts, custom XML items, relationships, content types and "
                    "style names. Authors and dates replaced by placeholders, rsids dropped. A step Word "
-                   "refused is listed under 'failed'. Regenerate with python tools/e5_probe.py."),
+                   "refused is listed under 'failed'. Regenerate with python crates/ooxml-oracle/word/probes/e5_probe.py."),
         **{name: observe(data) for name, data in saved.items()}}, indent=1, ensure_ascii=False) + "\n",
         encoding="utf-8")
     print(f"wrote {OBSERVATIONS.relative_to(ROOT)}")

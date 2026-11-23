@@ -7,11 +7,11 @@ and cached as ``?``, so a value Word did not compute shows as ``?``.  Word's val
 from its PDF after it updated every field (English interface), are
 docx2svg's ``tests/fixtures/styleref-observations.json`` (the same documents; its
 ``tools/make_styleref_probe.py``); what Word stored after updating them is
-``tests/observations/styleref-word.json``, which ``tests/test_styleref_update.py`` holds
-:meth:`FieldOps.update_fields` to.  Run (holds the machine-wide Word lock,
-``tests/oracle.py``)::
+``crates/ooxml-oracle/word/observations/styleref-word.json``, which the recorded-Word tests hold
+the tools' field update to (``crates/ooxml-oracle/word/index.py``).  Run (holds the machine-wide Word lock,
+``python/docx-agent/tests/oracle.py``)::
 
-    PYTHONPATH=src python tools/styleref_probe.py base:update names:update ...  Nine pages separated by page breaks: page 1 a title, a chapter title and a
+    python crates/ooxml-oracle/word/probes/styleref_probe.py base:update names:update ...  Nine pages separated by page breaks: page 1 a title, a chapter title and a
 heading; page 2 none; page 3 two chapter titles after body text; page 4 one at its foot;
 page 5 one in a table cell; page 6 one in a text box only; page 7 none; a chapter title split
 across pages 8 and 9 by a page break in it.  Standard library only.
@@ -442,7 +442,8 @@ import sys  # noqa: E402
 import time  # noqa: E402
 from pathlib import Path  # noqa: E402
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tests"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import probe_paths  # noqa: E402,F401  (the oracle driver on the path)
 import oracle  # noqa: E402
 
 #: Where the saved documents and PDFs go (outside the repository).

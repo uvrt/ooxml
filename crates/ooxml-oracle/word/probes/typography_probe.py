@@ -3,7 +3,7 @@
 (round 35, R21: ``docx_agent.edit.typography``).
 
 Probe documents are written here (one run per paragraph, the language on the run) and Word
--- through ``tests/oracle.py``'s machine-wide lock -- opens each and, by AppleScript:
+-- through ``python/docx-agent/tests/oracle.py``'s machine-wide lock -- opens each and, by AppleScript:
 
 * ``proofing``: waits until its grammar check settles (the count of its grammatical errors
   the same three times running, two seconds apart) and lists the paragraphs it flags, for
@@ -19,7 +19,7 @@ Probe documents are written here (one run per paragraph, the language on the run
 * ``language``: the language Word reports for a run with ``w:lang`` on ``w:docDefaults``,
   the paragraph style, the run, and with only ``w:themeFontLang``.
 
-    python tools/typography_probe.py      # writes tests/observations/typography-word.json
+    python crates/ooxml-oracle/word/probes/typography_probe.py      # writes crates/ooxml-oracle/word/observations/typography-word.json
 
 Nothing Word writes is committed: only these facts.  Back up Normal.dotm first (Word's
 grammar settings live with it); the probe changes no setting.
@@ -34,14 +34,14 @@ import sys
 import zipfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tests"))
-sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import probe_paths  # noqa: E402  (the driver, the fixture makers and the cases on the path)
+from probe_paths import ROOT  # noqa: E402
 
 import oracle  # noqa: E402
 from make_fixtures import DECL, NS, REL, WML, content_types, relationships  # noqa: E402
 
-OBSERVATIONS = ROOT / "tests" / "observations" / "typography-word.json"
+OBSERVATIONS = probe_paths.OBSERVATIONS / "typography-word.json"
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 NBSP, NNBSP = "\u00a0", "\u202f"
 

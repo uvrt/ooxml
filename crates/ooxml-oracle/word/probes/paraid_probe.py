@@ -3,7 +3,8 @@
 #925), and with note, comment, revision and bookmark ids.
 
 The question decides how durable ``p:<paraId>`` is.  Each probe is a document written here
-(or made by Word), edited through docx-agent, then handed to Word through ``tests/oracle.py``
+(or made by Word), edited through the tools (``probe_tools``: the tool host docx-agent serves),
+then handed to Word through ``python/docx-agent/tests/oracle.py``
 (the machine-wide lock, docx2svg's AppleScripts) in some of these scenarios:
 
 * ``save``          -- open it and save it, no edit;
@@ -31,10 +32,17 @@ The probes, in three groups:
   15, 14 and none, with a picture, and on a document Word made itself (which has no
   paraIds at all), in every scenario.
 
-    python tools/paraid_probe.py                 # prints the verdicts, writes the JSON
+    python crates/ooxml-oracle/word/probes/paraid_probe.py                 # prints the verdicts, writes the JSON
+
+Since docx-agent 0.2.0 the edits are the tools' (``word_set_text``, ``word_insert_markdown``),
+and the tools have one way of stamping ids: what they do on a document's first edit.  The
+documents the observations call *paragraph stamping* (docx-agent's Python ``stamping=
+"paragraph"``, which stamped only the paragraphs it edited) are now made with the tools'
+stamping too, so a re-run measures the tools' stamping under those keys; the recorded
+observation is the Python one's until then.  Snapshots read the package's parts directly.
 
 Nothing Word writes is committed; only the observations (ids and verdicts) are, in
-``tests/observations/paraid-durability.json``.
+``crates/ooxml-oracle/word/observations/paraid-durability.json``.
 """
 
 from __future__ import annotations
@@ -47,16 +55,16 @@ import sys
 import zipfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tests"))
-sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import probe_paths  # noqa: E402  (the driver, the fixture makers and the cases on the path)
 
 import oracle  # noqa: E402
 from make_fixtures import AUTHOR, DECL, NS, REL, WML, content_types, p, r, relationships, styles  # noqa: E402
 
-from docx_agent import Document  # noqa: E402
+import probe_tools  # noqa: E402
+from lxml import etree  # noqa: E402
 
-OBSERVATIONS = ROOT / "tests" / "observations" / "paraid-durability.json"
+OBSERVATIONS = probe_paths.OBSERVATIONS / "paraid-durability.json"
 SECTION = ('<w:sectPr>{refs}<w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" '
            'w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr>')
 
@@ -214,11 +222,12 @@ def mixed(mode: int | None) -> bytes:
         FOOTNOTE, COMMENT, INSERTION,
     ])
     data = package(body, mode=mode, footnotes=FOOTNOTES, comments=COMMENTS)
-    document = Document.open(data, stamping="paragraph")
+    document = probe_tools.Session(data)
     _stamp_by_editing(document, "S1")
-    document.insert_paragraph("S3 inserted by docx-agent", after=by_label(document, "S1").id)
+    document.call("word_insert_markdown", at=f"after:{by_label(document, 'S1')}",
+                  markdown="S3 inserted by docx-agent\n")
     _stamp_by_editing(document, "S2")
-    return document.to_bytes()
+    return document.data()
 
 
 def complete(mode: int | None = 15, *, change: str | None = None) -> bytes:
@@ -256,22 +265,23 @@ def complete(mode: int | None = 15, *, change: str | None = None) -> bytes:
     elif change == "footnote":
         body.insert(1, FOOTNOTE)
         footnotes = FOOTNOTES
-    document = Document.open(package("".join(body), mode=mode, header=header, footnotes=footnotes,
-                                      comments=comments, picture=picture), stamping="paragraph")
+    document = probe_tools.Session(package("".join(body), mode=mode, header=header, footnotes=footnotes,
+                                           comments=comments, picture=picture))
     _stamp_by_editing(document, "S2")
-    return document.to_bytes()
+    return document.data()
 
 
 def decided(data: bytes) -> bytes:
-    """docx-agent's default: the first edit stamps the whole document."""
-    document = Document.open(data)
+    """The tools' stamping on the document's first edit, then a paragraph inserted."""
+    document = probe_tools.Session(data)
     label = "S2" if _has(document, "S2") else "W2"
     _stamp_by_editing(document, label)
-    document.insert_paragraph("S3 inserted by docx-agent", after=document.paragraphs()[0].id)
-    return document.to_bytes()
+    document.call("word_insert_markdown", at=f"after:{document.paragraph_ids()[0]}",
+                  markdown="S3 inserted by docx-agent\n")
+    return document.data()
 
 
-def _has(document: Document, label: str) -> bool:
+def _has(document: probe_tools.Session, label: str) -> bool:
     try:
         by_label(document, label)
         return True
@@ -279,35 +289,63 @@ def _has(document: Document, label: str) -> bool:
         return False
 
 
-def _stamp_by_editing(document: Document, label: str) -> None:
-    paragraph = by_label(document, label)
-    paragraph.set_text(paragraph.text + ".")
+def _stamp_by_editing(document: probe_tools.Session, label: str) -> None:
+    block = by_label(document, label)
+    text = next(t for b, t in document.blocks() if b == block)
+    document.call("word_set_text", target=block, text=text + ".")
 
 
-def by_label(document: Document, label: str):
-    for story in document.stories:
-        for paragraph in story.paragraphs:
-            if paragraph.text.removeprefix("Edited ").startswith(label + " "):
-                return paragraph
+def by_label(document: probe_tools.Session, label: str) -> str:
+    """The body block whose text starts with ``label``: its id."""
+    for block, text in document.blocks():
+        if text.removeprefix("Edited ").startswith(label + " "):
+            return block
     raise KeyError(label)
 
 
 # -- observing --------------------------------------------------------------------------------
 
 
+_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+_W14 = "{http://schemas.microsoft.com/office/word/2010/wordml}"
+#: The story parts, in the order their paragraphs are read.
+_STORIES = re.compile(r"word/(document|header\d+|footer\d+|footnotes|endnotes|comments)\.xml$")
+
+
+def _parts(data: bytes) -> dict[str, bytes]:
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        return {name: archive.read(name) for name in archive.namelist()}
+
+
+def _paragraphs(data: bytes, body_only: bool = False) -> list[tuple[str, str | None, str | None]]:
+    """Each paragraph's text, paraId and textId: the body's, then (unless ``body_only``) the
+    other stories'."""
+    out = []
+    for name, content in sorted(_parts(data).items(), key=lambda item: item[0] != "word/document.xml"):
+        if not _STORIES.match(name) or (body_only and name != "word/document.xml"):
+            continue
+        for paragraph in etree.fromstring(content).iter(_W + "p"):
+            text = "".join(t.text or "" for t in paragraph.iter(_W + "t"))
+            out.append((text, paragraph.get(_W14 + "paraId"), paragraph.get(_W14 + "textId")))
+    return out
+
+
+def _mode(data: bytes) -> int:
+    """The compatibility mode (12, Word 2007's, where the settings name none)."""
+    found = re.search(rb'w:name="compatibilityMode"[^>]*w:val="(\d+)"', _parts(data).get("word/settings.xml", b""))
+    return int(found.group(1)) if found else 12
+
+
 def snapshot(data: bytes) -> dict:
     """Per label, ``[paraId, textId, typed into by Word]``; the table rows' paraIds; the
     note, comment, insertion and bookmark ids; and the compatibility mode."""
-    document = Document.open(data)
-    out: dict = {"paragraphs": {}, "mode": document.compatibility_mode}
-    for story in document.stories:
-        for paragraph in story.paragraphs:
-            match = re.match(r"([A-Z]\d) ", paragraph.text.removeprefix("Edited "))
-            if match:
-                out["paragraphs"][match.group(1)] = [paragraph.para_id, paragraph.text_id,
-                                                     paragraph.text.startswith("Edited ")]
-    xml = b"".join(document.package.read(n) or b"" for n in document.package.part_names
-                   if n.startswith("word/") and n.endswith(".xml"))
+    out: dict = {"paragraphs": {}, "mode": _mode(data)}
+    for text, para_id, text_id in _paragraphs(data):
+        match = re.match(r"([A-Z]\d) ", text.removeprefix("Edited "))
+        if match:
+            out["paragraphs"][match.group(1)] = [para_id, text_id, text.startswith("Edited ")]
+    xml = b"".join(content for name, content in _parts(data).items()
+                   if name.startswith("word/") and name.endswith(".xml"))
     out["rows"] = [m.decode() for m in re.findall(rb'<w:tr\b[^>]*?w14:paraId="([0-9A-Fa-f]+)"', xml)]
     for key, pattern in (("footnote ids", rb'<w:footnoteReference w:id="(-?\d+)"'),
                          ("comment ids", rb'<w:commentReference w:id="(\d+)"'),
@@ -334,9 +372,8 @@ def verdict(before: list | None, after: list | None) -> str:
 
 def paragraph_index(data: bytes, label: str) -> int:
     """The 1-based index Word's ``paragraph n of document`` has for a label."""
-    document = Document.open(data)
-    for number, paragraph in enumerate(document.paragraphs(), start=1):
-        if paragraph.text.removeprefix("Edited ").startswith(label + " "):
+    for number, (text, _, _) in enumerate(_paragraphs(data, body_only=True), start=1):
+        if text.removeprefix("Edited ").startswith(label + " "):
             return number
     raise KeyError(label)
 
@@ -419,9 +456,9 @@ def main() -> None:
 
 
 def _paragraph_stamped(data: bytes) -> bytes:
-    document = Document.open(data, stamping="paragraph")
+    document = probe_tools.Session(data)
     _stamp_by_editing(document, "W2")
-    return document.to_bytes()
+    return document.data()
 
 
 def word_version() -> str | None:
