@@ -21,7 +21,6 @@ import contextlib
 import datetime as dt
 import io
 import json
-import sys
 import zipfile
 from pathlib import Path
 

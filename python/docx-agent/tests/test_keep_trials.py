@@ -19,7 +19,7 @@ from test_tools_layout_facts import FILLER, call, docx, ok, p  # noqa: E402
 
 from docx_agent import Document  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
-from docx_agent.tools import keep_trials, shared  # noqa: E402
+from docx_agent.tools import keep_trials  # noqa: E402
 
 pytestmark = pytest.mark.any_faces
 

@@ -12,10 +12,8 @@ pytest.importorskip("ooxml_edit.tools.keys", reason="needs ooxml-edit 0.110 (loo
 
 from ooxml_edit.tools import Toolbox  # noqa: E402
 
-from docx_agent import Document  # noqa: E402
-from docx_agent import blocks as _blocks  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
-from test_table_sync import (CLOCK, COLUMNS, SETS, _markdown, _row_xml, _sync, _table, _texts,  # noqa: E402
+from test_table_sync import (_row_xml, _sync, _table, _texts,  # noqa: E402
                              rows_put)
 
 #: The table's spelling of five keys, and the source's.

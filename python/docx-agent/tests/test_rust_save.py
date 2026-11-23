@@ -21,7 +21,6 @@ from lxml import etree
 from ooxml_edit.tools import Toolbox
 
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
-from test_cleaning import bloated
 from conftest import FIXTURE_DIR  # noqa: E402
 
 HERE = Path(__file__).resolve().parent

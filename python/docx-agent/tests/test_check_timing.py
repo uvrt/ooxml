@@ -22,7 +22,6 @@ from ooxml_edit.tools import Toolbox  # noqa: E402
 
 from docx_agent import Document  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
-from docx_agent.tools import _base as base_module  # noqa: E402
 from docx_agent.tools import shared as shared_module  # noqa: E402
 from docx_agent.tools._base import Timing  # noqa: E402
 

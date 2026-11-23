@@ -9,8 +9,6 @@ every story, ``read_batch`` of several reads with a failing one among them.
 """
 from __future__ import annotations
 
-import dataclasses
-import json
 from pathlib import Path
 
 import pytest

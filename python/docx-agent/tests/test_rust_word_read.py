@@ -8,7 +8,6 @@ chart's and a SmartArt diagram's one-line summary in its drawing's comment (``[c
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest

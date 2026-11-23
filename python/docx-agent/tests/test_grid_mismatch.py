@@ -24,7 +24,6 @@ import datetime as dt
 import io
 import zipfile
 
-import docx2svg
 import pytest
 from lxml import etree
 from ooxml_edit.tools import Toolbox

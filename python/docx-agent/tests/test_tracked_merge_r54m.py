@@ -379,8 +379,6 @@ def test_without_a_pending_change_positions_are_the_grid_columns(box):
 def test_words_accept_and_reject_of_a_tracked_merge_equal_ours(box, case, action):
     """Word's own Accept All / Reject All of the merge form give the table docx-agent's
     own Accept All / Reject All give: the same cells, spans, merges and text (widths Word re-saves its own way)."""
-    import sys
-    from pathlib import Path
 
     import oracle
 

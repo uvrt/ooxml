@@ -5,7 +5,6 @@ character range, and Word's re-save keeping our markers where they are)."""
 
 from __future__ import annotations
 
-import hashlib
 
 import pytest
 from ooxml_edit.tools import Toolbox

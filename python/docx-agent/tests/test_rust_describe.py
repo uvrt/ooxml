@@ -22,8 +22,7 @@ if not hasattr(ooxml_core, "Session"):          # an ooxml-core before 0.9.0
     pytest.skip("ooxml_core has no Session", allow_module_level=True)
 
 from ooxml_edit.tools import Toolbox
-from ooxml_edit.tools.adapters import (anthropic_tool_result, openai_function_call_output,
-                                       to_anthropic, to_openai_chat, to_openai_responses)
+from ooxml_edit.tools.adapters import (anthropic_tool_result, openai_function_call_output)
 
 from docx_agent.rust.session import RUST_DESCRIBED, RustTools
 from docx_agent.tools import FORMAT, GROUPS, TOOLS

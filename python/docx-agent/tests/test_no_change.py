@@ -6,8 +6,6 @@ half: ``test_e5_units.py``.)  Made-up documents, Document.new()'s package."""
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 
 import pytest
 from ooxml_edit.tools import Toolbox

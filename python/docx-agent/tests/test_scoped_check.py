@@ -15,8 +15,6 @@ here is made up.
 
 from __future__ import annotations
 
-import threading
-import time
 
 import pytest
 
@@ -27,7 +25,7 @@ from ooxml_edit.tools import Toolbox  # noqa: E402
 from docx_agent import Document  # noqa: E402
 from docx_agent.edit import copies as copies_module  # noqa: E402
 from docx_agent.scope import Scope, ranges_of  # noqa: E402
-from docx_agent.tools import FORMAT, GROUPS, TOOLS, scoped  # noqa: E402
+from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
 from docx_agent.validate import Problem, check as validate_package, problems_in  # noqa: E402
 
 pytestmark = pytest.mark.any_faces

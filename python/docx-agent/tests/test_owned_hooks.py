@@ -21,7 +21,6 @@ ooxml_core = pytest.importorskip("ooxml_core")
 
 from docx_agent import Document  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
-from docx_agent.tools import format as docx_format  # noqa: E402
 from ooxml_edit.tools import OwnedDocument, Toolbox  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[3]

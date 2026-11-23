@@ -393,8 +393,6 @@ def test_a_tracked_replacement_accepts_with_the_untracked_edits_formatting():
 def test_words_accept_and_reject_equal_ours(box, case, action):
     """Word's own Accept All / Reject All of each form give the table docx-agent's own give:
     the same cells, spans, merges and text (widths Word re-saves its own way)."""
-    import sys
-    from pathlib import Path
 
     import oracle
 
