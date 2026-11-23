@@ -223,8 +223,15 @@ class RustOwner:
 
     def close_group(self, mirror: "reads.Mirror", group: "_Group", caller: Mapping[str, Any] | None,
                     tool: str | None = None) -> Any:
+        """The group closed as one step: its head, or ``None``.  What it committed reflowed is
+        measured once first, while it is open (its ops measure none of their own), for the
+        batch's checks (:func:`group_reflow`)."""
         with mirror.lock:
-            return group.steps.close(context=context_of(caller), tool=tool)
+            context = context_of(caller)
+            reflow = group.steps.reflow(context=context)
+            head = group.steps.close(context=context, tool=tool)
+            mirror.group_reflow = (head.number, reflow) if head is not None and reflow is not None else None
+            return head
 
     def save(self, mirror: "reads.Mirror") -> bytes:
         return bytes(mirror.session.save(mirror.doc))
@@ -242,6 +249,15 @@ class _Group:
     def __init__(self, steps: Any, tracking: Any) -> None:
         self.steps = steps
         self.tracking = tracking
+
+
+def group_reflow(entry: Any, head: int) -> Any:
+    """The reflow of the step group that closed at the session's version ``head`` (a batch's,
+    measured once before it closed), parsed; ``None`` where none was measured for it."""
+    found = reads.owned(entry).handle.group_reflow
+    if found is None or found[0] != head:
+        return None
+    return json.loads(found[1])
 
 
 def _validation(found: Any) -> dict[str, Any] | None:

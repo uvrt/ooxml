@@ -98,6 +98,10 @@ class Mirror:
         self.tracking: dict[str, Any] | None = None
         #: What the document's page engine was last set to (:mod:`.engines`).
         self.pages_key: Any = None
+        #: The reflow of the last step group the session closed, measured once before it
+        #: closed (``Session.group_reflow``): ``(the step's version number, JSON text)``, for
+        #: that batch's checks (:func:`.owner.group_reflow`).
+        self.group_reflow: tuple[int, str] | None = None
 
     def keep(self, version: Any, first: int | None = None) -> None:
         """Keep ``version`` (an ``ooxml_core.Version``) as the document's version

@@ -376,7 +376,7 @@ def test_report_actionable_leaves_the_copies_own_out_counted(box):
         assert short["not_followed"] == [d for d in full["not_followed"] if d["kind"] != "own"]
         assert short.get("own", 0) == len(own)
     assert actionable["copies"][1]["own"] == 1                     # the list membership
-    blank = _follow(box, session, doc, sample, copies, preview=True, report="")   # rule 1: a placeholder
+    blank = _follow(box, session, doc, sample, copies, preview=True)   # report left out: every form
     assert blank.ok, blank.to_json()
     assert blank.data["copies"] == every["copies"]
 

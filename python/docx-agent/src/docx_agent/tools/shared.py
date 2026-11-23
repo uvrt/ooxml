@@ -37,25 +37,33 @@ def _decks_only(name: str, use: str) -> ToolError:
 
 def new_document(call: Any, kind: str, template_blob: str | None = None, size: str | None = None,
                  title: str | None = None, author: str | None = None, name: str | None = None) -> Result:
-    """A new blank document's package made by the Rust core (``ooxml_core.new_document``),
+    """A new document's package made by the Rust core -- blank (``ooxml_core.new_document``),
+    or from the template a blob holds (``Session.new_from_template``: its content left out) --
     opened by the session alone."""
     if size is not None and size not in PAGE_SIZES:
         raise ToolError("invalid_arguments", f"a document's size is a page size, not {size!r}", field="size",
                         valid_options=list(PAGE_SIZES))
     if template_blob:
-        raise ToolError("refused", "a new document from a template is not supported yet: open the template's "
-                        "blob with open_document to edit the template itself, or make a blank document",
-                        field="template_blob", details={"not_supported": "new_document template_blob"},
-                        try_call={"tool": "new_document", "arguments": {
-                            "kind": kind, **{k: v for k, v in (("size", size), ("title", title),
-                                                               ("author", author), ("name", name)) if v}}})
-    doc_id = call.session.open(_blank_bytes(call, size, title, author), name or "new.docx", kind=KIND,
-                               source="new")
+        data = _from_template(call, call.blob(template_blob).data, size, title, author)
+    else:
+        data = _blank_bytes(call, size, title, author)
+    doc_id = call.session.open(data, name or "new.docx", kind=KIND, source=template_blob or "new")
     entry = call.session.entry(doc_id)
     from .format import summary
 
     return Result(summary=f"Made {entry.name} as {doc_id}", created=[doc_id],
                   data={**entry.describe(), "summary": summary(entry.subject)})
+
+
+def _from_template(call: Any, template: bytes, size: str | None, title: str | None, author: str | None) -> bytes:
+    """A new document's bytes from a template's (a .dotx, .dotm, .docx or .docm) made by the
+    Rust session: its content left out, the page, the properties and the call's clock."""
+    try:
+        return bytes(reads.session().new_from_template(template, created=_stamp(call.now()), page=size,
+                                                       title=title, author=author))
+    except ValueError as error:
+        raise ToolError("invalid_arguments", f"the blob is not a Word document or template: {error}",
+                        field="template_blob") from None
 
 
 def _stamp(value: Any) -> str:

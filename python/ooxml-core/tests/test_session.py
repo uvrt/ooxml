@@ -1,7 +1,7 @@
 """``ooxml_core.Session``: the Rust session from Python (lane P0d).
 
-Documents opened from bytes, ``describe`` called as JSON, a version's parts handed over
-(``update``), saved and closed; refusals as replies and the session's own errors as
+Documents opened from bytes, ``describe`` called as JSON, edited (``edit``: a Word tool's
+change), saved and closed; refusals as replies and the session's own errors as
 exceptions; cancellation and deadlines; many threads on one document, every Rust call
 made with the interpreter lock let go -- nothing here relies on that lock, and on a
 free-threaded build the module keeps it off.
@@ -38,7 +38,24 @@ def call(session, name: str, arguments, **options) -> dict:
     return json.loads(text)
 
 
-def test_open_describe_update_save_close():
+def edit(session, name: str, arguments, **options) -> tuple[dict, object]:
+    """A changing call: its reply and what it made (``None``: nothing)."""
+    text, _app, made = session.edit(name, json.dumps(arguments), ooxml_core.CallOptions(**options))
+    return json.loads(text), made
+
+
+def insert(session, doc: str, text: str, **options) -> dict:
+    reply, made = edit(session, "word_insert_markdown", {"doc": doc, "markdown": text, "at": "end"}, **options)
+    assert reply["ok"] and made is not None, reply
+    return reply
+
+
+def body(data: bytes) -> str:
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        return archive.read("word/document.xml").decode()
+
+
+def test_open_describe_edit_save_close():
     session = ooxml_core.Session()
     data = docx()
     doc = session.open(data, name="a.docx")
@@ -47,21 +64,15 @@ def test_open_describe_update_save_close():
     assert (reply["ok"], reply["doc"], reply["version"]) == (True, "d1", 0)
     assert reply["data"]["controls"] == 1 and reply["summary"] == "Described a.docx"
     assert session.save(doc) == data              # nothing changed: the same bytes
-    version, changed, attempts = session.update(doc, {"word/document.xml": docx_part(3)})
-    assert (version, changed, attempts) == (1, True, 1)
-    assert call(session, "describe", {"doc": doc})["data"]["controls"] == 3
+    assert insert(session, doc, "One.")["version"] == 1 and session.version(doc) == 1
+    assert call(session, "describe", {"doc": doc})["data"]["controls"] == 1
     again = session.open(session.save(doc), name="b.docx")
-    assert call(session, "describe", {"doc": again})["data"]["controls"] == 3
-    assert session.update(doc, {"word/media/x.bin": b"\0", "word/x.xml": b"<x/>"})[0] == 2
-    assert session.update(doc, {"word/media/x.bin": None})[0] == 3
+    assert "One." in body(session.save(again))
+    assert insert(session, doc, "Two.")["version"] == 2
     session.close(doc)
     assert session.documents() == [again]
-    assert dict(session.stats())["calls"] == 3
+    assert dict(session.stats())["calls"] == 4
     assert dict(session.store_stats(again))["commits"] == 0
-
-
-def docx_part(controls: int) -> bytes:
-    return f"<w:document {_W}><w:body>{'<w:sdt/>' * controls}</w:body></w:document>".encode()
 
 
 def test_refusals_are_replies_and_session_errors_are_exceptions():
@@ -82,8 +93,6 @@ def test_refusals_are_replies_and_session_errors_are_exceptions():
         session.open(docx(), kind="doc")
     with pytest.raises(ValueError):
         session.open(b"not a zip")
-    with pytest.raises(ValueError):
-        session.update(doc, {"word/document.xml": b"<w:document"})
     assert session.version(doc) == 0
 
 
@@ -97,8 +106,8 @@ def test_cancelled_and_late_calls_stop_with_timeout():
     assert call(session, "describe", {"doc": doc}, context=context)["error"]["code"] == "timeout"
     late = ooxml_core.CallContext(deadline=0.0)
     assert call(session, "describe", {"doc": doc}, context=late)["error"]["code"] == "timeout"
-    with pytest.raises(TimeoutError):
-        session.update(doc, {"word/x.xml": b"<x/>"}, context=late)
+    reply, made = edit(session, "word_insert_markdown", {"doc": doc, "markdown": "Late.", "at": "end"}, context=late)
+    assert reply["error"]["code"] == "timeout" and made is None
     assert session.version(doc) == 0
     with pytest.raises(ValueError):
         ooxml_core.CallContext(deadline=-1.0)
@@ -168,10 +177,7 @@ def test_many_threads_on_one_document_commit_every_change():
         try:
             context = ooxml_core.CallContext(caller=f"w{n}")
             for k in range(each):
-                parts = {f"word/w{n}.xml": f'<n v="{k}"/>'.encode()}
-                if k % 3 == 0:
-                    parts["word/shared.xml"] = f'<n w="{n}" v="{k}"/>'.encode()
-                assert session.update(doc, parts, context=context)[1]
+                insert(session, doc, f"Writer {n}, line {k}.", context=context)
                 assert call(session, "describe", {"doc": doc})["ok"]
         except BaseException as error:  # noqa: BLE001 -- reported below
             errors.append(error)
@@ -197,31 +203,23 @@ def test_undo_redo_and_the_save_gate():
     doc = session.open(docx(), name="a.docx")
     ann = ooxml_core.CallContext(caller="ann")
     bo = ooxml_core.CallContext(caller="bo")
-    session.update(doc, {"word/document.xml": docx_part(2)}, context=ann)
-    session.update(doc, {"word/document.xml": docx_part(3)}, context=bo)
+    insert(session, doc, "Ann's.", context=ann)
+    insert(session, doc, "Bo's.", context=bo)
     with pytest.raises(ValueError, match="not the latest"):
         session.undo(doc, context=ann)             # bo changed it after ann
     # (steps, state number): a plain undo or redo gives the number of the state it brings back,
     # as docx-agent's undo replies number them (bo's undo restores ann's state 1, the next the
     # opened state 0, the redo of both state 2) -- not a count of versions
     assert session.undo(doc, 5, context=bo) == (1, 1)
+    assert "Ann's." in body(session.save(doc)) and "Bo's." not in body(session.save(doc))
     assert session.undo(doc) == (1, 0)
-    assert call(session, "describe", {"doc": doc})["data"]["controls"] == 1
+    assert "Ann's." not in body(session.save(doc))
     assert session.redo(doc, 2) == (2, 2)
-    assert call(session, "describe", {"doc": doc})["data"]["controls"] == 3
+    assert "Bo's." in body(session.save(doc))
     assert session.validation(doc)[:2] == ([], [])
     assert session.save(doc, checked=True) == session.save(doc)
     reply = call(session, "word_set_tracking", {"doc": doc, "on": True, "author": "Ann"})
     assert reply["ok"] and reply["data"]["author"] == "Ann"
-
-
-def test_bridged_calls_are_counted():
-    session = ooxml_core.Session()
-    doc = session.open(docx(), name="a.docx")
-    version = session.bridge(doc, "word_format", {"word/document.xml": docx_part(2)})
-    assert version.number == 1
-    assert session.bridge_calls() == [("word_format", 1)]
-    assert call(session, "describe", {"doc": doc})["data"]["controls"] == 2
 
 
 def page_docx(result: str) -> bytes:

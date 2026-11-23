@@ -19,7 +19,7 @@ from ooxml_edit.tools import ToolError
 
 from ..rust import reads
 from ..rust.edits import Made
-from ..rust.owner import owned_validation
+from ..rust.owner import group_reflow, owned_validation
 
 
 class Timing:
@@ -56,6 +56,9 @@ def checks(entry: Any, touched: Sequence[Any]) -> dict[str, Any]:
     with timed.part("validate"):
         validated = made[-1].validation if made else owned_validation(entry)
     reflow = next((m.reflow for m in reversed(made) if m.reflow is not None), None)
+    if reflow is None and made:
+        # (a batch's ops measure none of their own: its group's, measured once as it closed)
+        reflow = group_reflow(entry, made[-1].head.number)
     return {"validate": validated, "reflow": reflow}
 
 
