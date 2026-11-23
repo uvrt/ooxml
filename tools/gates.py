@@ -5,7 +5,7 @@ The differentials run docx-agent (pure Python: ``DOCX_AGENT_RUST=0``) against th
 oracle binaries on the same documents, through crates/ooxml-oracle/python's harnesses, one
 shard of the documents at a time:
 
-    python tools/gates.py corpus OUT                      # docx2svg's tools/make_*.py, each in OUT/<name>
+    python tools/gates.py corpus OUT                      # docx2svg's tools/make_*.py, each in OUT/<name> (CORPUS's maker)
     python tools/gates.py report OUT 6 61                 # the 3k document: make_report 6, grown to 61 chapters
     python tools/gates.py diff --gate fixtures --mode styled --shard 2/4 --bin DIR --out DIR
     python tools/gates.py matrix --gates fixtures --store DIR  # the differential jobs (JSON; tools/gates_jobs.py)
@@ -40,10 +40,10 @@ only a hint; the summary says when it is one).
 Modes ``auto`` (the dispatch's default): the edit modes, and whether the reads' checks run,
 picked from the files the branch changes against origin/main (``git diff origin/main...``):
 a path counts for the modes it can change and no others (``gate_effects``), conservatively --
-the Rust code, the fixtures and what makes the corpus (docx2svg, ooxml-common) count for
-every mode, a harness's case maker for its own modes, notes, the checkout's docx-agent and
-ooxml-edit (the reference is installed from its frozen commit) and the packages and crates the
-gates do not run for none, and anything not named for every mode.  No change at all (the ref
+the Rust code, the fixtures and the frozen corpus count for every mode, a harness's case maker
+for its own modes, notes, the checkout's Python packages (the reference is installed from its
+frozen commit, and the corpus is frozen too) and the crates the gates do not run for none, and
+anything not named for every mode.  No change at all (the ref
 is main) is every mode too.
 
 Fixtures ``auto`` (``--fixtures``; the dispatch's default for a branch): the fixtures and
@@ -84,9 +84,17 @@ REPORT = ROOT / "python" / "ooxml-core" / "tests" / "harness"
 #: The edits harness's case keys per document (--cache-used), in a diff's --out.
 USED = "reference-used.json"
 
-#: The trees a gate reads by default (the corpus: the folder ``corpus`` made, given as --tree).
+#: The trees whose documents ``--fixtures`` picks.
 FIXTURES = gates_fixtures.FIXTURES
 TREES = {"fixtures": FIXTURES, "reads": FIXTURES}
+#: The corpus, frozen: docx2svg's tools/make_*.py's documents as ``corpus`` made them at the
+#: freeze (main 92bcca13; the generators had not changed since 6df60341, whose nightly made
+#: these bytes, and they make them byte for byte again).  The gates read it from the checkout,
+#: so a case's document is the same in every run (what goldens need); ``corpus OUT`` is how it
+#: was made, for a deliberate refreeze.
+CORPUS = ROOT / "crates" / "ooxml-oracle" / "corpus"
+#: The tree each gate reads when ``--tree`` names none.
+DEFAULT_TREES = {**TREES, "corpus": CORPUS}
 
 #: word_edits_diff.py's modes: each the flags it takes (``set_text`` none: set_text alone).
 EDIT_MODES = {
@@ -124,11 +132,6 @@ GATE_HARNESS = ("word_edits_", "word_tool_reference", "word_reads_", "reference_
 GATE_HARNESS_FOLDERS = ("crates/ooxml-oracle/python/no_core/",)
 #: The oracle binaries the gates run, and what each answers.
 GATE_BINARIES = {"word-edits": set(EDIT_MODES), "word-reads": {READS}, "word-ids": {READS}}
-#: The packages the gates install from the checkout: what makes the corpus (gates.yml's corpus
-#: job).  The reference's packages -- docx-agent, ooxml-edit and these two -- are installed from
-#: the commit crates/ooxml-oracle/reference.toml names instead (the gates-reference action), so a
-#: change to the checkout's docx-agent or ooxml-edit changes no gate.
-GATE_PACKAGES = ("docx2svg", "ooxml-common")
 #: The files the gates themselves are: they change every mode.
 GATE_FILES = ("tools/gates.py", ".github/workflows/gates.yml", ".github/actions/", "Cargo.toml", "Cargo.lock",
               ".cargo/", "rust-toolchain", "crates/ooxml-oracle/known-differences.toml")
@@ -342,7 +345,7 @@ def documents_of(tree: Path, only: list[str] | None, every: int = 1) -> list[Pat
 def run_diff(args) -> int:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    tree = Path(args.tree) if args.tree else TREES[args.gate]
+    tree = Path(args.tree) if args.tree else DEFAULT_TREES[args.gate]
     k, n = (int(x) for x in args.shard.split("/"))
     only = None
     if args.gate in TREES and not args.tree:
@@ -432,7 +435,8 @@ def run_cache_merge(args) -> int:
 
 def run_corpus(args) -> int:
     """docx2svg's made-up documents, as the word-model job makes them: each generator run in
-    its own folder (they write there by default)."""
+    its own folder (they write there by default).  How CORPUS was made: a refreeze copies the
+    ``*.docx`` files of OUT over it (and the goldens of the corpus are blessed again)."""
     out = Path(args.out)
     for script in sorted((ROOT / "python" / "docx2svg" / "tools").glob("make_*.py")):
         folder = out / script.stem
@@ -495,13 +499,9 @@ def gate_effects(path: str, crates: set[str]) -> set[str]:
         if path.startswith("crates/ooxml-oracle/src/bin/"):
             return set(GATE_BINARIES.get(parts[-1].removesuffix(".rs"), ()))
         return set(ALL)
-    if parts[0] == "python" and len(parts) > 2:
-        if parts[1] not in GATE_PACKAGES:
-            return set()
-        inside = "/".join(parts[2:])
-        if inside.startswith("src/") or inside == "pyproject.toml" \
-                or parts[1] == "docx2svg" and inside.startswith("tools/make_"):
-            return set(ALL)
+    if parts[0] == "python":
+        # the reference's packages are installed from its frozen commit (the gates-reference
+        # action) and the corpus is frozen (CORPUS): the checkout's python/ runs in no gate
         return set()
     if path.startswith(NOT_GATES) or len(parts) == 1 and path.endswith((".md", ".txt")) or path.startswith("."):
         return set()
@@ -698,7 +698,7 @@ def main(argv: list[str] | None = None) -> int:
     d = sub.add_parser("diff")
     d.add_argument("--gate", required=True, choices=["fixtures", "corpus", "reads"])
     d.add_argument("--mode", required=True, choices=[*EDIT_MODES, *READ_MODES])
-    d.add_argument("--tree", help="the documents (fixtures: crates/ooxml-oracle/fixtures, from the checkout)")
+    d.add_argument("--tree", help="the documents (default: crates/ooxml-oracle/fixtures, or corpus, from the checkout)")
     d.add_argument("--shard", default="1/1", help="K/N")
     d.add_argument("--every", type=int, default=1)
     d.add_argument("--per-tool", type=int, default=0)
