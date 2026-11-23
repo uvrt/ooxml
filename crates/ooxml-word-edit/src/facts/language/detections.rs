@@ -13,6 +13,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 #[derive(Debug, Default)]
 pub struct Detections {
     kept: Mutex<Arc<HashMap<String, Detected>>>,
+    /// Each paragraph's judgement, by the elements it read.
+    pub(super) paragraphs: super::judged::Judgements,
 }
 
 /// One check's detections: the kept ones read, the ones met kept for the next check.
