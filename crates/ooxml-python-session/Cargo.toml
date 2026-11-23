@@ -24,9 +24,11 @@ ooxml-word-edit.workspace = true
 ooxml-derive.workspace = true
 ooxml-fonts.workspace = true
 ooxml-word-layout.workspace = true
+ooxml-word-model.workspace = true
 ooxml-word-pages.workspace = true
 ooxml-numfmt.workspace = true
 ooxml-raster.workspace = true
+ooxml-xml.workspace = true
 serde_json.workspace = true
 pyo3.workspace = true
 

@@ -13,7 +13,7 @@ pub mod faces;
 pub mod inline;
 pub mod sized;
 
-use ooxml_fonts::plan::{text_queries, FacePool};
+use ooxml_fonts::plan::{text_queries, DrawingPlan, FacePool};
 use ooxml_fonts::FontStore;
 pub use ooxml_raster::{Fit, Rgba};
 
@@ -22,12 +22,32 @@ use ooxml_raster::{rasterise, Families, FontLoader, FontSet, RasterError, Raster
 use std::path::Path;
 use std::sync::Arc;
 
+/// The passes `svg` is drawn in with `files` and the files under `folders` handed to the
+/// rasteriser (docx2svg's `drawing_plan`, which its text as outlines follows), or `None`: one
+/// pass draws every text in its own face. `store` reads the files.
+#[must_use]
+pub fn drawing_plan(store: &dyn FontStore, svg: &str, (files, folders): (&[String], &[String])) -> Option<DrawingPlan> {
+    if files.is_empty() && folders.is_empty() || !svg.contains("<text") {
+        return None;
+    }
+    let paths: Vec<&Path> = files.iter().map(Path::new).collect();
+    let dirs: Vec<&Path> = folders.iter().map(Path::new).collect();
+    let handed = FontLoader::resvg_py(None, &paths, &dirs, Families::platform_default()).handed_files();
+    let queries = text_queries(svg);
+    if queries.is_empty() {
+        return None;
+    }
+    FacePool::read(store, &handed)?.plan(&queries)
+}
+
 /// The faces a document's pages are drawn with, read once.
 pub struct PageRaster {
     fonts: FontSet,
     pool: Option<FacePool>,
     /// The system's fonts it was handed, for a document's raster made from it.
     system: Option<FontSet>,
+    /// The files it was handed, for a document's raster made from it (after the faces').
+    files: Vec<String>,
     /// The folders it was handed, for a document's raster made from it.
     folders: Vec<String>,
 }
@@ -59,6 +79,7 @@ impl PageRaster {
             fonts,
             pool,
             system: system.cloned(),
+            files: files.to_vec(),
             folders: folders.to_vec(),
         }
     }
@@ -66,8 +87,8 @@ impl PageRaster {
     /// The raster that draws a document's pages as docx2svg's `convert_docx_to_png` draws
     /// them, made from this one's system fonts and folders: `faces`' files, each read where
     /// it is (an embedded face from its bytes), after the system's fonts only where a face
-    /// is missing, then the folders; `sans-serif` the face `faces` names. `store` reads the
-    /// files for the drawing plan.
+    /// is missing (or as `faces` asks), then the files and the folders this one was handed;
+    /// `sans-serif` the face `faces` names. `store` reads the files for the drawing plan.
     #[must_use]
     pub fn for_faces(&self, store: &dyn FontStore, faces: &RasterFaces) -> PageRaster {
         let families = families(faces.sans_serif.as_deref());
@@ -86,6 +107,9 @@ impl PageRaster {
                 }
             }
         }
+        for path in &self.files {
+            let _ = loader.file(Path::new(path));
+        }
         for folder in &self.folders {
             loader.folder(Path::new(folder));
         }
@@ -95,8 +119,39 @@ impl PageRaster {
             fonts,
             pool,
             system: self.system.clone(),
+            files: self.files.clone(),
             folders: self.folders.clone(),
         }
+    }
+
+    /// Each of `svgs` drawn at its own size, at once over scoped threads (at most as many as
+    /// the machine has cores); in order.
+    #[must_use]
+    pub fn png_all(&self, svgs: &[&str]) -> Vec<Result<Vec<u8>, String>> {
+        let workers = std::thread::available_parallelism()
+            .map_or(1, std::num::NonZeroUsize::get)
+            .min(svgs.len())
+            .max(1);
+        let chunk = svgs.len().div_ceil(workers).max(1);
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = svgs
+                .chunks(chunk)
+                .map(|part| {
+                    scope.spawn(move || {
+                        part.iter()
+                            .map(|svg| self.png(svg, Fit::Original, None).map_err(|e| e.to_string()))
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .flat_map(|h| {
+                    h.join()
+                        .unwrap_or_else(|_| vec![Err("the rasteriser panicked".to_owned())])
+                })
+                .collect()
+        })
     }
 
     /// `svg` drawn at `fit` over `background`, as PNG bytes.

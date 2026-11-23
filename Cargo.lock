@@ -597,7 +597,9 @@ dependencies = [
  "ooxml-tools-word",
  "ooxml-word-edit",
  "ooxml-word-layout",
+ "ooxml-word-model",
  "ooxml-word-pages",
+ "ooxml-xml",
  "pyo3",
  "serde_json",
 ]

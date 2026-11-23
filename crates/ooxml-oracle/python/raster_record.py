@@ -16,7 +16,10 @@ pixels.
     python crates/ooxml-oracle/python/raster_record.py OUT --tree DIR    # every .docx/.pptx below DIR
 
 Python's behaviour is not changed: the wrapper calls resvg-py with what it was given and
-returns its answer.
+returns its answer.  docx2svg's Python renderer is the frozen reference's (docx2svg draws
+with the Rust core since lane svg-thin): a ``.docx`` is recorded only where the gates'
+reference is installed (``GATES_REFERENCE_SHA`` set, ``reference_packages.py``), and
+refused otherwise.
 """
 
 from __future__ import annotations
@@ -109,6 +112,14 @@ def main() -> int:
     args = parser.parse_args()
     import resvg_py
 
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from reference_packages import check_frozen
+
+    if any(path.suffix == ".docx" for path in documents(args.documents, args.tree)) and check_frozen() is None:
+        print("raster_record: docx2svg's Python renderer is the frozen reference's: run this where the gates' "
+              "reference is installed (GATES_REFERENCE_SHA set; crates/ooxml-oracle/python/reference_packages.py), "
+              "or record .pptx documents only", file=sys.stderr)
+        return 2
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     recorder = Recorder(out, resvg_py.svg_to_bytes)

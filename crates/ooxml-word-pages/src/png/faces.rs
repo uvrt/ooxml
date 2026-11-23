@@ -45,13 +45,17 @@ pub struct RasterFaces {
     /// The family the generic `sans-serif` names, where one of Arial, Helvetica and Calibri
     /// is installed.
     pub sans_serif: Option<String>,
+    /// Whether the system's fonts are handed over, where the caller says (docx2svg's
+    /// `skip_system_fonts` given); `None`: only where a face is missing.
+    pub system: Option<bool>,
 }
 
 impl RasterFaces {
-    /// Whether the system's fonts are left out (every face drawn was found).
+    /// Whether the system's fonts are left out: as the caller says, else where every face
+    /// drawn was found.
     #[must_use]
     pub fn skip_system(&self) -> bool {
-        self.missing.is_empty()
+        self.system.map_or(self.missing.is_empty(), |system| !system)
     }
 
     /// What tells two sets apart: the files (an embedded face by its bytes' digest), the

@@ -182,7 +182,7 @@ fn sheet_png(
                 })
                 .collect();
             let (svg, _, _) = tiled_svg(&tiles, tiling, base64);
-            let made = draw::rasterise(call.drawing.raster, &[svg.as_str()]);
+            let made = call.drawing.raster.png_all(&[svg.as_str()]);
             let png: Arc<[u8]> = match made.into_iter().next() {
                 Some(Ok(png)) => Arc::from(png),
                 Some(Err(e)) => {

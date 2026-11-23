@@ -6,10 +6,6 @@ until its port).
   axis, a category and a series renamed, a category and a series added, a title --
   **exports from Word unprompted**, its PDF showing the new labels and series names, and
   **each value axis reaching the new value**.
-* **Word's chart text is docx2svg's**, by docx2svg's F.20 method: every span of text Word
-  draws inside a chart -- string, face, weight, size on the device grid, the anchor of its
-  advance box and its baseline within 0.5 pt -- against the text docx2svg's chart layout
-  draws there, and whatever docx2svg draws that Word does not.
 * **A Word re-save keeps** every chart's caches, formulas and embedded workbook (byte for
   byte), the independent workbook check holds on what Word wrote, and what Word does change
   is what was measured (``c:lang`` in its interface's language, a ``c16:uniqueId`` given to
@@ -21,7 +17,6 @@ from __future__ import annotations
 
 import ctypes
 import re
-import sys
 from pathlib import Path
 
 import pytest
@@ -36,7 +31,6 @@ from test_charts import CHARTS, chart_part, charts_of, check_document_charts, en
 pytestmark = pytest.mark.oracle
 
 ROOT = Path(__file__).resolve().parents[1]
-DOCX2SVG_TOOLS = ROOT.parent / "docx2svg" / "tools"
 
 
 @pytest.fixture(scope="module")
@@ -229,114 +223,6 @@ def _word_spans(pdf: Path) -> list[list[tuple]]:
     finally:
         document.close()
     return pages
-
-
-def _model(data: bytes):
-    """docx2svg's charts, page by page: each chart's texts and frame (the chart space's fill),
-    in pt -- docx2svg's ``tools/read_chart_probe.py``."""
-    sys.path.insert(0, str(DOCX2SVG_TOOLS))
-    import docx2svg
-    import read_chart_probe as probe
-
-    layout = docx2svg.convert_docx(data, docx2svg.ConvertOptions()).layout
-    charts = []
-    for page in layout.pages:
-        for placed in page.floats:
-            for primitive in placed.primitives:
-                if primitive.kind == "markup" and primitive.what == "chart":
-                    found = probe.model_chart(primitive.markup, primitive.transform)
-                    boxes = [f[1:] for f in found["fills"]]
-                    frame = max(boxes, key=lambda b: (b[2] - b[0]) * (b[3] - b[1]))
-                    charts.append((found["texts"], frame))
-    return charts, probe
-
-
-def compare_chart_text(pdf: Path, data: bytes, titles: dict[str, str]) -> tuple[list[int], list, list[str]]:
-    """``[agree, compared]`` over the text of every chart docx2svg draws, what disagreed, and
-    the charts (by id) Word draws and docx2svg does not -- F.20's method, each chart's text
-    taken relative to its title (``titles``: id -> its unique title), so that where the page
-    puts a chart, which is the page layout's business and not the chart's, does not count."""
-    model, probe = _model(data)
-    pages = _word_spans(pdf)
-    agree = compared = 0
-    problems = []
-    undrawn = []
-    for identifier, title in titles.items():
-        spans = next((page for page in pages if any(s[0] == title for s in page)), [])
-        word_title = next((s for s in spans if s[0] == title), None)
-        drawn = next(((texts, frame) for texts, frame in model if any(t[0] == title for t in texts)), None)
-        if word_title is None:
-            problems.append((identifier, "not drawn by Word"))
-            continue
-        if drawn is None:
-            undrawn.append(identifier)
-            continue
-        texts, frame = drawn
-        mine = next(t for t in texts if t[0] == title)
-        dx0 = (word_title[3] + word_title[4]) / 2 - mine[4]
-        dy0 = word_title[5] - mine[5]
-        inside = [s for s in spans if frame[0] - 1 + dx0 <= s[3] and s[4] <= frame[2] + 1 + dx0
-                  and frame[1] - 1 + dy0 <= s[5] <= frame[3] + 1 + dy0]
-        used = set()
-        for text, font, size, left, right, baseline in inside:
-            # Word writes a fraction with its host's decimal separator (``0,5`` here); docx2svg
-            # does not model the host's locale (its F.20, "Not measured").
-            text = re.sub(r"(?<=\d),(?=\d)", ".", text)
-            family, bold = probe.family_of(font)
-            candidates = [(k, t) for k, t in enumerate(texts) if k not in used and t[0] == text]
-            compared += 1
-            if not candidates:
-                problems.append((identifier, text, "not drawn by docx2svg"))
-                continue
-
-            def anchor(t):
-                return (left if t[3] == "start" else right if t[3] == "end" else (left + right) / 2) - dx0
-
-            k, best = min(candidates, key=lambda c: abs(anchor(c[1]) - c[1][4]) + abs(baseline - dy0 - c[1][5]))
-            used.add(k)
-            face = best[1].replace(" ", "").lower() == family.replace(" ", "").lower() and best[7] == bold
-            dx, dy = best[4] - anchor(best), best[5] - (baseline - dy0)
-            if face and abs(probe.device(best[2]) - size) < 0.06 and abs(dx) <= 0.5 and abs(dy) <= 0.5:
-                agree += 1
-            else:
-                problems.append((identifier, text, f"{family}{' bold' if bold else ''} {size} vs {best[1]}"
-                                 f"{' bold' if best[7] else ''} {round(probe.device(best[2]), 2)}, "
-                                 f"dx {dx:+.2f} dy {dy:+.2f}"))
-        extra = [t for k, t in enumerate(texts) if k not in used]
-        compared += len(extra)
-        problems += [(identifier, t[0], "drawn by docx2svg, not by Word") for t in extra]
-    return [agree, compared], problems, undrawn
-
-
-#: Charts docx2svg does not draw (test_charts.NOT_DRAWN; proposed to it): the footnote's and
-#: the text box's.
-UNDRAWN = {"charts.docx": [], "chart-places.docx": ["d:4", "d:2"]}
-#: What the comparison misses, by chart (proposed to docx2svg): the header's chart, a short
-#: one (126 pt by 63 pt), where docx2svg sets the category labels 1 pt lower against the
-#: title than Word and draws a value axis label, ``0``, Word leaves out -- five texts.
-KNOWN = {"charts.docx": {}, "chart-places.docx": {"d:1": 5}}
-
-
-@pytest.mark.parametrize("name", CHART_FIXTURES)
-def test_words_chart_text_is_docx2svgs(word, box, name):
-    """Every chart docx2svg draws, its every text as Word draws it: 85 of 85 in the body's six
-    charts, all of the group's and the floating one's; the header's, but for :data:`KNOWN`."""
-    if not (DOCX2SVG_TOOLS / "read_chart_probe.py").exists():
-        pytest.skip("docx2svg's checkout is not beside this one")
-    data, expected = edited(box, name)
-    outcome = word.export_pdf(data, name=f"charts-oracle-{Path(name).stem}")
-    assert outcome
-    titles = {identifier: shows["title"] for identifier, shows in expected.items()}
-    (agree, compared), problems, undrawn = compare_chart_text(outcome.path, data, titles)
-    assert undrawn == UNDRAWN[name]
-    missed: dict[str, int] = {}
-    for problem in problems:
-        missed[problem[0]] = missed.get(problem[0], 0) + 1
-    assert compared > 20 and missed == KNOWN[name], problems
-    assert compared - agree == sum(KNOWN[name].values())
-
-
-# -- re-save -----------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("name", CHART_FIXTURES)

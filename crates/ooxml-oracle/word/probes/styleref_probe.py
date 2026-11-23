@@ -5,7 +5,7 @@ through AppleScript (Word in English, ``-AppleLocale en_US``), the document save
 :func:`documents` -> ``[(name, .docx bytes)]``.  Every probe field is labelled (``C=[...]``)
 and cached as ``?``, so a value Word did not compute shows as ``?``.  Word's values, read
 from its PDF after it updated every field (English interface), are
-docx2svg's ``tests/fixtures/styleref-observations.json`` (the same documents; its
+``word/observations/layout/styleref-observations.json`` (docx2svg's, the same documents; its
 ``tools/make_styleref_probe.py``); what Word stored after updating them is
 ``crates/ooxml-oracle/word/observations/styleref-word.json``, which the recorded-Word tests hold
 the tools' field update to (``crates/ooxml-oracle/word/index.py``).  Run (holds the machine-wide Word lock,
