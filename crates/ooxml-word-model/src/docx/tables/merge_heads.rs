@@ -3,7 +3,9 @@
 //! row holding the merge's first cell goes, the first kept cell continuing it starts the
 //! merge (`restart`), with its own (empty) content -- the first cell's text goes with its
 //! row -- or, with no kept cell continuing after it, stands alone (no merge). Rows between
-//! kept cells of a merge going leave the merge as it was.
+//! kept cells of a merge going leave the merge as it was, also where their cell in that
+//! column is no part of it (as a tracked merge across a pending row deletion writes it:
+//! R137b, `MergeAcross`, `TrackedMergeAcross`).
 //!
 //! Must not: change a table, or decide which rows a view keeps (the caller says).
 
@@ -69,7 +71,9 @@ pub fn merge_heads(
         for (n, cell) in cells_at(row, &[]).into_iter().enumerate() {
             let me = (r, n);
             match merge(&cell.element) {
-                VMerge::Continue if !row_kept => {}
+                // a cell of a row that goes leaves the merge around it as it was, unless
+                // it is the merge's first cell
+                VMerge::Continue | VMerge::None if !row_kept => {}
                 VMerge::Continue => {
                     if held.get(&cell.column).copied().unwrap_or(true) {
                         if let Some(head) = waiting.remove(&cell.column) {
@@ -134,5 +138,15 @@ mod tests {
         ] {
             assert_eq!(heads(&kept_merge), [None; 4]);
         }
+        // MergeAcross, TrackedMergeAcross (R137b): the deleted row's cell is no part of the
+        // merge around it; the merge stays
+        let across = heads(&[(false, ""), (false, RESTART), (true, ""), (false, CONTINUE)]);
+        assert_eq!(across, [None; 4]);
+        let tracked = [
+            (false, r#"<w:cellMerge w:vMerge="rest"/>"#),
+            (true, ""),
+            (false, r#"<w:cellMerge w:vMerge="cont"/>"#),
+        ];
+        assert_eq!(heads(&tracked), [None; 3]);
     }
 }

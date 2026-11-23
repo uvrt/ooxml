@@ -141,8 +141,6 @@ DEFERRED: dict[str, str] = {
         "word_edit_table on a table with Accept All's cell ends",
     "test_table_fill_speed.py::test_cells_by_position_write_what_they_wrote_one_by_one[True]":
         "word_edit_table on a table with Accept All's cell ends",
-    "test_table_sync.py::test_tracked_when_tracking_is_on":
-        "word_edit_table on a table with Accept All's cell ends",
     "test_dataset_markdown.py::test_a_table_cell_takes_the_value_itself":
         "word_insert_markdown from data (from, blob)",
     "test_dataset_text.py::test_rows_are_still_a_table":
