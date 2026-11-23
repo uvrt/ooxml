@@ -15,7 +15,7 @@ use ooxml_tools::{Failure, Refusal, ToolError, TryCall, WayOut};
 use ooxml_word_pages::png::{sized::sized, Fit, PageRaster};
 use ooxml_word_pages::{DiskFonts, LaidVersion};
 use serde_json::{json, Map, Value};
-use std::sync::{Arc, PoisonError};
+use std::sync::Arc;
 
 /// What a call draws pages with: the host's raster (the system's fonts and font folders)
 /// and the session's store of the document's images.
@@ -134,7 +134,7 @@ pub(super) fn draw(
 ) -> Result<Vec<Drawn>, ToolError> {
     let indexes: Vec<usize> = pages.iter().map(|p| p - 1).collect();
     let (svgs, faces) = {
-        let mut engine = layout.engine().lock().unwrap_or_else(PoisonError::into_inner);
+        let mut engine = ooxml_word_pages::lock_engine(layout.engine());
         let mut svgs = Vec::with_capacity(pages.len());
         for (&page, &index) in pages.iter().zip(&indexes) {
             let internal = || ToolError::internal(format!("page {page} could not be drawn"), "render.draw");

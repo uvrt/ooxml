@@ -117,7 +117,7 @@ pub(super) struct Laid {
 /// # Errors
 /// Where the version is not the engine's (a version laid out by another generation).
 pub(super) fn laid_facts(layout: &dyn WordLayout, version: &LaidVersion) -> Result<Laid, NotLaid> {
-    let mut engine = layout.engine().lock().unwrap_or_else(PoisonError::into_inner);
+    let mut engine = ooxml_word_pages::lock_engine(layout.engine());
     let not_ours = || NotLaid::NotTheEngines;
     let coverage = engine.coverage(version).ok_or_else(not_ours)?;
     drop(engine);

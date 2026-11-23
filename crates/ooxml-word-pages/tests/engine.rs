@@ -184,6 +184,41 @@ fn a_version_is_laid_out_from_the_one_before_reading_only_what_changed() {
     assert_eq!(second.facts(), whole.facts());
 }
 
+/// What a new engine says it did: nothing.
+fn engine_fresh_stats() -> ooxml_word_pages::EngineStats {
+    engine().stats()
+}
+
+#[test]
+fn a_poisoned_engine_is_made_again_from_its_seed() {
+    // R2 #11: an engine a panic left mid-layout is not reused; the next lock gets one made
+    // again from its seed (nothing laid out), which lays the version out whole, as before
+    let bytes = package(&paragraphs(40, None));
+    let engine = std::sync::Mutex::new(engine());
+    let first = {
+        let mut held = ooxml_word_pages::lock_engine(&engine);
+        held.lay_out_bytes(Arc::from(bytes.clone())).unwrap().unwrap()
+    };
+    let fresh = format!("{:?}", engine_fresh_stats());
+    assert_ne!(format!("{:?}", ooxml_word_pages::lock_engine(&engine).stats()), fresh);
+    let poisoned = std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                let _held = engine.lock().unwrap();
+                panic!("a panic while the engine is held");
+            })
+            .join()
+    });
+    assert!(poisoned.is_err() && engine.is_poisoned());
+    let mut held = ooxml_word_pages::lock_engine(&engine);
+    assert!(!engine.is_poisoned());
+    // made again: nothing laid out yet, as a new engine
+    assert_eq!(format!("{:?}", held.stats()), fresh);
+    let again = held.lay_out_bytes(Arc::from(bytes)).unwrap().unwrap();
+    assert!(!again.relaid());
+    assert_eq!(again.facts(), first.facts());
+}
+
 #[test]
 fn a_version_given_by_its_touched_parts_is_the_version_given_whole() {
     let mut kept = engine();

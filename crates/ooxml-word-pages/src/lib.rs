@@ -66,7 +66,7 @@ mod weight;
 
 pub use causes::RelaidCause;
 pub use disk::DiskFonts;
-pub use engine::{EngineBudgets, EngineOptions, EngineSeed, Laid, PageDigests, PageEngine, Trial};
+pub use engine::{lock_engine, EngineBudgets, EngineOptions, EngineSeed, Laid, PageDigests, PageEngine, Trial};
 pub use error::{Fallback, PagesError};
 pub use fonts::{embedded_parts, font_table, DocumentFonts, FontSetup};
 pub use pictures::PackagePictures;
