@@ -80,7 +80,7 @@ def made(box) -> dict:
             "table": "t:000000B1", "cell": "p:000000B3", "nested": "t:000000A1", "inner": "p:000000A2",
             "control": "cc:123", "inside": "p:00000014", "closing": "p:00000015", "note": note,
             "comment": comment, "box": f"p:{boxed.get(word_docs.W14_PARA)}", "link": link, "field": field,
-            "header": next(c for c in header.created if "/p:" in c).split("/", 1)[1],
+            "header": next(c for c in header.created if "/p:" in c),          # header1/p:...
             "header_story": header.data["story"], "drawing": drawing}
 
 
