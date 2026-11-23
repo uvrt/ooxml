@@ -47,9 +47,28 @@ class KnownDifferences(unittest.TestCase):
     def test_a_case_number_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "known.toml"
-            path.write_text('[[difference]]\nmode = "structure"\ncase = 3\ncause = "x"\n')
+            path.write_text('[[difference]]\nmode = "structure"\ncase = 3\nword = "n/a"\ncause = "x"\n')
             with self.assertRaises(SystemExit):
                 gates.known_entries(path)
+
+    def test_every_entry_has_a_word_verdict(self) -> None:
+        verdicts = {entry["word"] for entry in gates.known_entries()}
+        self.assertLessEqual(verdicts, set(gates.VERDICTS))
+
+    def test_a_verdict_is_required_and_checked(self) -> None:
+        observation = "crates/ooxml-oracle/word/observations/e4-word.json#fields"
+        refused = ['', 'word = "python"\n', 'word = "rust"\n', 'word = "rust"\nobservation = "no/such.json#x"\n',
+                   f'word = "n/a"\nobservation = "{observation}"\n']
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "known.toml"
+            for verdict in refused:
+                path.write_text(f'[[difference]]\nmode = "structure"\n{verdict}cause = "x"\n')
+                with self.assertRaises(SystemExit, msg=verdict):
+                    gates.known_entries(path)
+            for verdict in ('word = "n/a"\n', 'word = "unmeasured"\n',
+                            f'word = "rust"\nobservation = "{observation}"\n'):
+                path.write_text(f'[[difference]]\nmode = "structure"\n{verdict}cause = "x"\n')
+                self.assertEqual(len(gates.known_entries(path)), 1)
 
     def test_covered_whatever_the_case_number(self) -> None:
         # the text-box SEQ field (#84), untracked and tracked, numbered as a full run and as
@@ -103,7 +122,7 @@ class DocumentCondition(unittest.TestCase):
             path = Path(folder) / "known.toml"
             for condition in ('"word/document.xml"', '{ part = "word/document.xml" }',
                               '{ lacks_namespace = "x", root = "y" }'):
-                path.write_text(f'[[difference]]\nmode = "objects"\ndocument = {condition}\ncause = "x"\n')
+                path.write_text(f'[[difference]]\nmode = "objects"\ndocument = {condition}\nword = "n/a"\ncause = "x"\n')
                 with self.assertRaises(SystemExit):
                     gates.known_entries(path)
 
