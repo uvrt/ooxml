@@ -65,6 +65,10 @@ impl PageReads for Painted<'_> {
         engine.page_read(&self.version, page)
     }
 
+    fn laid_entry(&self, page: usize) -> Option<Arc<ooxml_word_pages::laid_entry::LaidEntry>> {
+        ooxml_word_pages::lock_engine(self.engine).laid_entry(&self.version, page)
+    }
+
     fn resolved_table(
         &self,
         table: &ooxml_word_model::model::Table,

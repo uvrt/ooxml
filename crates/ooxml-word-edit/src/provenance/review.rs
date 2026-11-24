@@ -83,7 +83,7 @@ pub(crate) fn follow_review(sink: &mut EditSink<'_, '_>, accept: bool) -> Result
 /// The table `key` names as written in `docx` (docx-agent's `_direct`).
 fn table(docx: &Docx, key: &str) -> Option<Arc<Element>> {
     match direct(docx, key)? {
-        (part, Entry::Table(k)) => part.ids.tables().get(k).map(|t| t.element),
+        (part, Entry::Table(k)) => part.ids.tables().head(k).map(|t| t.element),
         (_, Entry::Paragraph(_)) => None,
     }
 }
@@ -92,7 +92,7 @@ fn table(docx: &Docx, key: &str) -> Option<Arc<Element>> {
 /// table goes by now, dropped; then the entries whose object is gone.
 fn drop_record(draft: &mut Draft, now: &Docx, aliases: &BTreeMap<String, String>, key: &str) {
     let current = resolve_followed(now, aliases, key).and_then(|(part, entry)| match entry {
-        Entry::Table(k) => part.ids.tables().get(k).map(|t| t.id),
+        Entry::Table(k) => part.ids.tables().head(k).map(|t| t.id),
         Entry::Paragraph(_) => None,
     });
     let current = current.filter(|id| kind_of(id) == Some(Kind::Table));

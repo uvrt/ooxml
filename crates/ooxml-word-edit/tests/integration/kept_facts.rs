@@ -1,7 +1,9 @@
 //! What a document keeps of its blocks' facts across its versions (the block tier's
 //! `block_fact` slot) read as a cold read does: `direct_formatting` of a document with
-//! paragraphs and runs formatted directly and a table kept together, after its formatted
-//! paragraph and a cell's paragraph are set again -- also where a budget of a few bytes
+//! paragraphs and runs formatted directly and a table kept together, and
+//! `table_grid_mismatch` (the same slot; `punctuation_spacing` beside them), after its
+//! formatted paragraph, a cell's paragraph, a paragraph with spacing problems and an
+//! off-grid table's paragraph are set again -- also where a budget of a few bytes
 //! lets what it keeps go at once.
 // Tests may unwrap, panic and index (docs/architecture/README.md, section 2.5).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
@@ -12,14 +14,18 @@ use ooxml_base::Limits;
 use ooxml_derive::{CacheBudget, Limit};
 use ooxml_opc::Package;
 use ooxml_store::{Caller, StoreConfig};
-use ooxml_word_edit::facts::{direct_formatting, DirectFormatting};
+use ooxml_word_edit::facts::{
+    direct_formatting, punctuation_spacing, table_grid_mismatch, DirectFormatting, GridMismatch, SpacingProblem,
+};
 use ooxml_word_edit::{Editor, RevisionPolicy, SetText, WordDoc};
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::time::Instant;
 
-/// Paragraphs formatted directly (the paragraph, all its text, some of it) and a table
-/// kept together whose rows keep with the next by direct formatting, before the body's end.
+/// Paragraphs formatted directly (the paragraph, all its text, some of it), a table kept
+/// together whose rows keep with the next by direct formatting, paragraphs whose
+/// punctuation's spacing their language does not want, and a table with a row off its grid,
+/// before the body's end.
 const FORMATTED: &str = concat!(
     r#"<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:after="400"/></w:pPr>"#,
     r#"<w:r><w:rPr><w:b/><w:sz w:val="30"/></w:rPr><w:t>Formatted all through</w:t></w:r></w:p>"#,
@@ -28,6 +34,12 @@ const FORMATTED: &str = concat!(
     r#"<w:tr><w:tc><w:p><w:pPr><w:keepNext/><w:jc w:val="right"/></w:pPr><w:r><w:t>Kept one</w:t></w:r></w:p></w:tc></w:tr>"#,
     r#"<w:tr><w:tc><w:p><w:pPr><w:keepNext/></w:pPr><w:r><w:t>Kept two</w:t></w:r></w:p></w:tc></w:tr>"#,
     r#"<w:tr><w:tc><w:p><w:r><w:rPr><w:color w:val="FF0000"/></w:rPr><w:t>Last row</w:t></w:r></w:p></w:tc></w:tr>"#,
+    r#"</w:tbl>"#,
+    r#"<w:p><w:r><w:rPr><w:lang w:val="fr-FR"/></w:rPr><w:t xml:space="preserve">Vraiment ? Oui ! Bien sûr : toujours.</w:t></w:r></w:p>"#,
+    r#"<w:p><w:r><w:rPr><w:lang w:val="en-US"/></w:rPr><w:t xml:space="preserve">Really ? Yes !</w:t></w:r></w:p>"#,
+    r#"<w:tbl><w:tblGrid><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/></w:tblGrid>"#,
+    r#"<w:tr><w:tc><w:p><w:r><w:t>Off the grid</w:t></w:r></w:p></w:tc></w:tr>"#,
+    r#"<w:tr><w:tc><w:p><w:r><w:t>On it</w:t></w:r></w:p></w:tc><w:tc><w:p/></w:tc></w:tr>"#,
     r#"</w:tbl>"#
 );
 
@@ -54,6 +66,25 @@ fn editor_within(budget: Arc<dyn CacheBudget>) -> Editor {
 /// reads it.
 fn warm_and_cold(doc: &WordDoc) -> (Vec<DirectFormatting>, Vec<DirectFormatting>) {
     let cold = WordDoc::open(doc.package().clone(), Arc::new(Limit::new(64 << 20))).unwrap();
+    let spacing = |d: &WordDoc| punctuation_spacing(d, Some("fr-BE")).unwrap();
+    let (spacing_warm, spacing_cold) = (spacing(doc), spacing(&cold));
+    assert_eq!(spacing_warm, spacing_cold, "punctuation_spacing");
+    assert!(
+        spacing_warm.iter().any(|p| matches!(p, SpacingProblem::Spacing(_)))
+            && spacing_warm
+                .iter()
+                .any(|p| matches!(p, SpacingProblem::LanguageMismatch(_))),
+        "{spacing_warm:?}"
+    );
+    let (grid_warm, grid_cold) = (
+        table_grid_mismatch(doc, None).unwrap(),
+        table_grid_mismatch(&cold, None).unwrap(),
+    );
+    assert_eq!(grid_warm, grid_cold, "table_grid_mismatch");
+    assert!(
+        grid_warm.iter().any(|g| matches!(g, GridMismatch::OffGrid { .. })),
+        "{grid_warm:?}"
+    );
     (direct_formatting(doc).unwrap(), direct_formatting(&cold).unwrap())
 }
 
@@ -85,6 +116,8 @@ fn kept_and_cold(editor: &Editor) {
     for (start, text) in [
         ("Formatted all", "Formatted, set again"),
         ("Kept two", "Kept two, again"),
+        ("Vraiment", "Vraiment ? Toujours!"),
+        ("Off the grid", "Still off the grid"),
     ] {
         let command = SetText {
             target: paragraph(&editor.store().snapshot().doc().clone(), start),

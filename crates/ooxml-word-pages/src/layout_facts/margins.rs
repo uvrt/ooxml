@@ -10,6 +10,8 @@
 
 use super::tree::{self, is_w, row_of, W};
 use super::{points, Facts};
+use crate::page_parts::Part;
+use crate::page_read::PageRead;
 use ooxml_base::Q;
 use ooxml_word_layout::px::Px;
 use ooxml_word_layout::tables::outer_part;
@@ -140,35 +142,18 @@ impl Reader<'_, '_> {
     /// drawn, its rules' and its lines' ink.
     fn tables(&mut self, index: usize, column: Column, entries: &mut Vec<PastMargins>) {
         let facts = self.facts;
-        let mut extents: Vec<(&str, (Px, Px))> = Vec::new();
-        let rules = facts
-            .boxes(index)
-            .into_iter()
-            .flat_map(|b| b.rules.iter())
-            .map(|r| (r.path.as_str(), r.x, r.x + r.width));
-        let inks = facts
-            .texts(index)
-            .unwrap_or_default()
-            .iter()
-            .filter(|l| l.story.is_none())
-            .filter_map(|l| l.ink.map(|(low, high)| (l.path.as_str(), low, high)));
-        for (path, low, high) in rules.chain(inks) {
-            let Some((table, _)) = row_of(path) else { continue };
-            match extents.iter_mut().find(|(t, _)| *t == table) {
-                Some((_, extent)) => *extent = (extent.0.min(low), extent.1.max(high)),
-                None => extents.push((table, (low, high))),
-            }
-        }
-        for (table, (low, high)) in extents {
-            let (left, right) = self.allowed.get(table).copied().unwrap_or((Px::ZERO, Px::ZERO));
+        let Some(entry) = facts.entry(index) else { return };
+        for table in &entry.tables().0 {
+            let (low, high) = table.extent;
+            let (left, right) = self.allowed.get(&*table.path).copied().unwrap_or((Px::ZERO, Px::ZERO));
             let mut over = past(low + left, high - right, None, column, false);
             if !over.is_empty() {
                 let drawn = past(low, high, None, column, false);
-                self.within_body_lines(table, &mut over, &drawn);
+                self.within_body_lines(&table.path, &mut over, &drawn);
             }
             if !over.is_empty() {
                 entries.push(PastMargins::Table {
-                    table: facts.version().id_of(table).unwrap_or(table).to_owned(),
+                    table: facts.version().id_of(&table.path).unwrap_or(&table.path).to_owned(),
                     page: index + 1,
                     past: over,
                 });
@@ -190,6 +175,69 @@ impl Reader<'_, '_> {
             let drawn = drawn.iter().find(|(s, _)| s == side).map_or(0.0, |(_, a)| *a);
             !(reach > 0.0 && drawn <= reach + 2.0 * MARGIN_TOLERANCE)
         });
+    }
+}
+
+/// One page's contribution to `past_margins` and to the tables as drawn (the page tier's,
+/// [`crate::page_entry`]): the body tables it draws a rule or an inked line of, in the
+/// order first drawn (its rules, then its lines), each with its extent as drawn.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TableInkPart(pub(crate) Vec<TableInk>);
+
+/// A body table's rules and lines' ink on one page.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct TableInk {
+    /// The outermost table's path (as [`row_of`] reads it).
+    pub(crate) path: Box<str>,
+    /// Its rules' and lines' ink from left to right, device px.
+    pub(crate) extent: (Px, Px),
+    /// It draws a rule.
+    pub(crate) ruled: bool,
+}
+
+impl Part<PageRead> for TableInkPart {
+    fn of(read: &PageRead) -> TableInkPart {
+        let mut out: Vec<TableInk> = Vec::new();
+        let rules = read
+            .boxes
+            .rules
+            .iter()
+            .map(|r| (r.path.as_str(), r.x, r.x + r.width, true));
+        let inks = read
+            .texts
+            .iter()
+            .filter(|l| l.story.is_none())
+            .filter_map(|l| l.ink.map(|(low, high)| (l.path.as_str(), low, high, false)));
+        for (path, low, high, ruled) in rules.chain(inks) {
+            let Some((table, _)) = row_of(path) else { continue };
+            match out.iter_mut().find(|t| &*t.path == table) {
+                Some(found) => {
+                    found.extent = (found.extent.0.min(low), found.extent.1.max(high));
+                    found.ruled |= ruled;
+                }
+                None => out.push(TableInk {
+                    path: table.into(),
+                    extent: (low, high),
+                    ruled,
+                }),
+            }
+        }
+        TableInkPart(out)
+    }
+
+    fn weight_of(read: &PageRead) -> usize {
+        let each = std::mem::size_of::<TableInk>();
+        let rules = read.boxes.rules.iter().map(|r| r.path.as_str());
+        let lines = read
+            .texts
+            .iter()
+            .filter(|l| l.story.is_none() && l.ink.is_some())
+            .map(|l| l.path.as_str());
+        let tables = rules
+            .chain(lines)
+            .filter(|p| p.contains("w:tbl["))
+            .map(|p| each + p.len());
+        std::mem::size_of::<TableInkPart>() + tables.sum::<usize>()
     }
 }
 

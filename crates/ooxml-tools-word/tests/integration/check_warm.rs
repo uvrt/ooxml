@@ -12,7 +12,7 @@ use crate::common::{engine, engine_with};
 use ooxml_base::Limits;
 use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
-use ooxml_tools_word::{EnginePages, LastCheck};
+use ooxml_tools_word::{EnginePages, LastCheck, WordLayout};
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -211,10 +211,10 @@ fn versions(seed: u64, rounds: usize) -> Vec<Package> {
 }
 
 /// `rounds` random edits from `seed`, each version checked by `warm` (kept across them)
-/// and by a fresh engine: the same layout facts (and range). How many rounds found small
-/// text, and how many columns that fit badly.
-fn warm_equals_cold(warm: &EnginePages, seed: u64, rounds: usize) -> (usize, usize) {
-    let (mut small, mut fit) = (0, 0);
+/// and by a fresh engine: the same layout facts (and range). How many rounds found each
+/// of [`FOUND`].
+fn warm_equals_cold(warm: &EnginePages, seed: u64, rounds: usize) -> [usize; 3] {
+    let mut found = [0; 3];
     for (round, version) in versions(seed, rounds).iter().enumerate() {
         let number = u64::try_from(round).unwrap() + 1;
         let asked = asked(round);
@@ -230,32 +230,45 @@ fn warm_equals_cold(warm: &EnginePages, seed: u64, rounds: usize) -> (usize, usi
             ours["data"]["range"], theirs["data"]["range"],
             "seed {seed} round {round}"
         );
-        if ours["data"]["layout"]["small_text"]
-            .as_array()
-            .is_some_and(|s| !s.is_empty())
-        {
-            small += 1;
-        }
-        if ours["data"]["layout"]["column_fit"]
-            .as_array()
-            .is_some_and(|s| !s.is_empty())
-        {
-            fit += 1;
+        for (count, fact) in found.iter_mut().zip(FOUND) {
+            if ours["data"]["layout"][fact].as_array().is_some_and(|s| !s.is_empty()) {
+                *count += 1;
+            }
         }
     }
-    (small, fit)
+    found
 }
+
+/// The facts the edits are to make: small text, columns that fit badly and empty
+/// paragraphs used as space (each folded from the pages' entries).
+const FOUND: [&str; 3] = ["small_text", "column_fit", "spacers"];
 
 #[test]
 fn a_check_kept_warm_across_random_edits_reports_as_a_cold_check() {
-    let (mut small, mut fit) = (0, 0);
+    let mut found = [0; 3];
     for seed in [1, 2] {
         let warm = EnginePages::of(engine());
-        let (s, f) = warm_equals_cold(&warm, seed, 8);
-        (small, fit) = (small + s, fit + f);
+        for (count, more) in found.iter_mut().zip(warm_equals_cold(&warm, seed, 8)) {
+            *count += more;
+        }
     }
-    assert!(small > 0, "the edits make small text");
-    assert!(fit > 0, "the edits make columns that fit badly");
+    for (count, fact) in found.iter().zip(FOUND) {
+        assert!(*count > 0, "the edits make {fact}");
+    }
+}
+
+#[test]
+fn a_page_s_layout_facts_entry_is_made_once_and_kept() {
+    let warm = EnginePages::of(engine());
+    let version = versions(4, 1).remove(0);
+    let first = checked(&version, 1, asked(0), &LastCheck::default(), Some(&warm));
+    let made = warm.engine().lock().unwrap().laid_tier();
+    assert!(made.misses > 0 && made.entries > 0, "{made:?}");
+    let again = checked(&version, 2, asked(0), &LastCheck::default(), Some(&warm));
+    let kept = warm.engine().lock().unwrap().laid_tier();
+    assert_eq!(kept.misses, made.misses, "every page's entry kept: {kept:?}");
+    assert!(kept.hits > made.hits, "{kept:?}");
+    assert_eq!(first["data"]["layout"], again["data"]["layout"]);
 }
 
 #[test]
@@ -266,6 +279,19 @@ fn a_page_tier_too_small_for_the_pages_still_reports_as_a_cold_check() {
     });
     let warm = EnginePages::of(engine_with(budget));
     warm_equals_cold(&warm, 3, 6);
+}
+
+#[test]
+fn a_layout_half_too_small_for_the_pages_still_reports_as_a_cold_check() {
+    let limit = 6 << 10;
+    let budget = Arc::new(Capped {
+        used: AtomicUsize::new(0),
+        limit,
+    });
+    let warm = EnginePages::of(engine_with(budget));
+    warm_equals_cold(&warm, 5, 4);
+    let laid = warm.engine().lock().unwrap().laid_tier();
+    assert!(laid.evictions > 0 && laid.bytes <= limit, "{laid:?}");
 }
 
 #[test]

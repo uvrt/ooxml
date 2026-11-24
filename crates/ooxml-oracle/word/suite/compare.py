@@ -15,6 +15,56 @@ from typing import Any
 #: A paragraph is looked for in Word's PDF by the first characters of its text.
 _KEY_CHARS = 30
 
+# -- what depends on the machine running Word, not on the tools ---------------------------------
+#
+# Three named rules, each as narrow as the measurement behind it (the gates' sample, Word 16.106):
+#
+# * CLOCK_FIELDS: Word fills a date or time field from its clock when it updates the field (its
+#   re-save did, ``gates/docx2svg/layout-sweep.docx/structure:449ba5552704e6ab``: the day Word
+#   ran); the tools from the session's clock.  Compared by the field's keyword only.
+# * USER_FIELDS: Word fills AUTHOR and its kin from the user Word runs as
+#   (``gates/generated/ids-and-markup.docx/tools:8a40725a7ad02617``); the tools from the
+#   document's properties.  Compared by the field's keyword only.
+# * An empty table of contents: Word's update writes its placeholder in the language of Word's
+#   interface (``gates/docx2svg/layout-sweep.docx/structure:0b868ed3a73f3fea``: Dutch), the tools
+#   theirs in English.  Word's placeholder in each language measured counts as the tools'.
+
+#: Fields whose result is Word's clock at its update.
+CLOCK_FIELDS = frozenset({"DATE", "TIME", "PRINTDATE", "SAVEDATE", "CREATEDATE"})
+#: Fields whose result is the user Word runs as.
+USER_FIELDS = frozenset({"AUTHOR", "USERNAME", "USERINITIALS"})
+#: The fields compared by their keyword only (the results depend on the machine running Word).
+KEYWORD_ONLY_FIELDS = CLOCK_FIELDS | USER_FIELDS
+#: The tools' result of a table of contents with no entries.
+TOOLS_EMPTY_TOC = "No table of contents entries found."
+#: Word's, by the language of its interface (measured: Word 16.106 for Mac).
+WORD_EMPTY_TOC = frozenset({
+    "No table of contents entries found.",          # English
+    "Geen inhoudsopgavegegevens gevonden.",         # Dutch
+})
+
+
+def same_field(mine: list[str], theirs: list[str]) -> bool:
+    """One field's ``[keyword, result]`` on each side is the same field with the same result,
+    under the rules above."""
+    if mine[0] != theirs[0]:
+        return False
+    if mine[0] in KEYWORD_ONLY_FIELDS:
+        return True
+    if mine[0] == "TOC" and mine[1] == TOOLS_EMPTY_TOC and theirs[1] in WORD_EMPTY_TOC:
+        return True
+    return mine[1] == theirs[1]
+
+
+def masked_text(paragraph: dict[str, Any]) -> str:
+    """A paragraph's text with the result of each field compared by keyword only (its
+    ``fields``, ``answers.kept_facts``) written as ``{KEYWORD}``."""
+    text = paragraph.get("text", "")
+    for keyword, result in paragraph.get("fields", []):
+        if keyword in KEYWORD_ONLY_FIELDS and result:
+            text = text.replace(result, "{%s}" % keyword, 1)
+    return text
+
 
 def _group(story: str) -> str:
     """Word numbers header and footer parts as it saves them: they are compared as a set."""
@@ -35,15 +85,17 @@ def _paragraph_differences(story: str, ours: list[dict], word: list[dict]) -> li
     for k, (mine, theirs) in enumerate(zip(ours, word)):
         if mine.get("id") and mine["id"] != theirs.get("id"):
             out.append(f"{story} paragraph {k + 1}: paraId {mine['id']}, Word's {theirs.get('id')}")
-        for key in ("text", "deleted"):
-            if mine.get(key, "") != theirs.get(key, ""):
-                out.append(f"{story} paragraph {k + 1}: {key} {mine.get(key, '')!r}, Word's {theirs.get(key, '')!r}")
+        if masked_text(mine) != masked_text(theirs):
+            out.append(f"{story} paragraph {k + 1}: text {mine.get('text', '')!r}, Word's {theirs.get('text', '')!r}")
+        if mine.get("deleted", "") != theirs.get("deleted", ""):
+            out.append(f"{story} paragraph {k + 1}: deleted {mine.get('deleted', '')!r}, "
+                       f"Word's {theirs.get('deleted', '')!r}")
     return out
 
 
 def kept(ours: dict[str, Any], word: dict[str, Any]) -> list[str]:
-    """Word's re-save keeps every paraId, every paragraph's text, every revision's author and
-    date and every comment (``answers.kept_facts`` on each side)."""
+    """Word's re-save keeps every paraId, every paragraph's text (:func:`masked_text`), every
+    revision's author and date and every comment (``answers.kept_facts`` on each side)."""
     mine, theirs = _grouped(ours), _grouped(word)
     out = []
     if sorted(mine) != sorted(theirs):
@@ -109,18 +161,21 @@ def pages(ours: dict[str, Any], word: dict[str, Any]) -> tuple[list[str], list[s
 
 
 def fields(ours: list[list[str]], word: list[list[str]]) -> list[str]:
-    """After an update of every field, each field's result is Word's."""
+    """After an update of every field, each field's result is Word's (:func:`same_field`)."""
     if ours == word:
         return []
     out = [f"{len(ours)} fields, Word's {len(word)}"] if len(ours) != len(word) else []
     for k, (mine, theirs) in enumerate(zip(ours, word)):
-        if mine != theirs:
+        if not same_field(mine, theirs):
             out.append(f"field {k + 1} {mine[0]}: {mine[1]!r}, Word's {theirs[0]}: {theirs[1]!r}")
     return out
 
 
 def judge(check: str, ours: Any, word: Any) -> list[str]:
-    """The differences between the tools' answer to ``check`` and Word's."""
+    """The differences between the tools' answer to ``check`` and Word's; an answer the tools
+    could not give (``answers.answer``: an exception in its place) is one."""
+    if isinstance(ours, Exception):
+        return [f"the tools could not answer {check}: {ours}"]
     if check == "kept":
         return kept(ours, word)
     if check in ("accept", "reject"):

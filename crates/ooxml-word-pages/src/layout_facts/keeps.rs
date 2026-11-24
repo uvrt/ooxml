@@ -12,10 +12,12 @@
 
 use super::tree::{is_w, page_break_at, row_of, W};
 use super::{story_kind, Block, BlockKind, Facts};
-use ooxml_word_layout::facts::{BlockKeeps, LineFact};
+use crate::page_parts::Part;
+use ooxml_word_layout::facts::{BlockKeeps, LineFact, PageFacts};
 use ooxml_word_model::docx::keeps::{row_keeps, RowKeep, TableKeeps};
 use ooxml_word_model::docx::StoryPart;
 use ooxml_word_model::model::Block as ModelBlock;
+use ooxml_word_model::value::Text;
 use ooxml_xml::Element;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
@@ -98,15 +100,20 @@ pub fn kept_tables(facts: &Facts<'_>) -> KeptTables {
         if story.story == "comments" {
             continue;
         }
-        for table in story.ids.tables().iter() {
-            let pages = facts.table_pages_of(&table.id);
-            if !pages.is_empty() && !facts.shown(pages.iter().copied()) {
-                continue;
-            }
-            let Some(rows) = row_keeps(facts.formatting(), story, &table.path) else {
+        let tables = story.ids.tables();
+        for placed in tables.placed() {
+            // A table's id is named (and its pages found) only where it is kept together.
+            let Some(rows) = row_keeps(facts.formatting(), story, &placed.path) else {
                 continue;
             };
             if !TableKeeps::of(&rows).together {
+                continue;
+            }
+            let Some(table) = tables.head(placed.ordinal) else {
+                continue;
+            };
+            let pages = facts.table_pages_of(&table.id);
+            if !pages.is_empty() && !facts.shown(pages.iter().copied()) {
                 continue;
             }
             let direct = direct(story, &table.path, &rows);
@@ -148,28 +155,48 @@ pub fn keep_together(facts: &Facts<'_>, kept: &KeptTables) -> Vec<KeptTogether> 
         .collect()
 }
 
+/// One page's contribution to `keep_with_next_at_foot` (the layout half of the page tier,
+/// [`crate::laid_entry`]): the paragraphs of its body lines, lowest first (of lines at the
+/// same height, the one drawn first), each once. The line at the page's foot is the first
+/// of them the version names: which it names is the fold's.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FootPart(Vec<Text>);
+
+impl Part<PageFacts> for FootPart {
+    fn of(page: &PageFacts) -> FootPart {
+        let mut lines: Vec<&LineFact> = page.lines.iter().filter(|l| story_kind(&l.path) == "body").collect();
+        lines.sort_by_key(|l| std::cmp::Reverse(l.top));
+        let mut out: Vec<Text> = Vec::new();
+        for line in lines {
+            if !out.contains(&line.path) {
+                out.push(Text::clone(&line.path));
+            }
+        }
+        FootPart(out)
+    }
+
+    fn weight_of(page: &PageFacts) -> usize {
+        std::mem::size_of::<FootPart>() + page.lines.len() * std::mem::size_of::<Text>()
+    }
+}
+
 /// `keep_with_next_at_foot`: page by page, then the tables split after a keeping row.
 #[must_use]
 pub fn keep_with_next_at_foot(facts: &Facts<'_>, kept: &KeptTables) -> Vec<KeepAtFoot> {
     let mut out = Vec::new();
     let version = facts.version();
-    for (index, page) in version.facts().pages.iter().enumerate() {
+    for index in 0..version.facts().pages.len() {
         let number = index + 1;
         if !facts.shown([number]) {
             continue;
         }
-        let lowest = page
-            .lines
-            .iter()
-            .filter(|l| story_kind(&l.path) == "body" && version.is_named(&l.path))
-            .fold(None::<&LineFact>, |best, l| match best {
-                Some(b) if b.top >= l.top => Some(b),
-                _ => Some(l),
-            });
-        let Some(line) = lowest else { continue };
-        let found = match facts.block_at(&line.path) {
+        let Some(entry) = facts.laid(index) else { continue };
+        let Some(path) = entry.foot().0.iter().find(|p| version.is_named(p)) else {
+            continue;
+        };
+        let found = match facts.block_at(path) {
             Some((k, block)) => paragraph_at_foot(facts, k, block, number),
-            None => table_end_at_foot(facts, line, number),
+            None => table_end_at_foot(facts, path, number),
         };
         out.extend(found);
     }
@@ -197,10 +224,11 @@ fn paragraph_at_foot(facts: &Facts<'_>, k: usize, block: &Block<'_>, number: usi
     })
 }
 
-/// A top-level table whose last row keeps with the next, its last row's `line` last on
-/// page `number`, the block after it on a later page (`_table_end_at_foot`).
-fn table_end_at_foot(facts: &Facts<'_>, line: &LineFact, number: usize) -> Option<KeepAtFoot> {
-    let (table, row) = row_of(&line.path)?;
+/// A top-level table whose last row keeps with the next, its last row's line (of the
+/// paragraph at `path`) last on page `number`, the block after it on a later page
+/// (`_table_end_at_foot`).
+fn table_end_at_foot(facts: &Facts<'_>, path: &str, number: usize) -> Option<KeepAtFoot> {
+    let (table, row) = row_of(path)?;
     let (k, block) = facts.block_at(table)?;
     let next = facts.blocks().get(k + 1)?;
     if block.kind != BlockKind::Table {
@@ -228,21 +256,21 @@ fn table_end_at_foot(facts: &Facts<'_>, line: &LineFact, number: usize) -> Optio
 }
 
 /// The body's tables as drawn: each outermost table's rows' pages, tables in the order
-/// first drawn.
-fn drawn_rows(facts: &Facts<'_>) -> Vec<(String, BTreeMap<usize, BTreeSet<usize>>)> {
-    let mut out: Vec<(String, BTreeMap<usize, BTreeSet<usize>>)> = Vec::new();
-    let mut seen: HashMap<String, usize> = HashMap::new();
-    for (index, page) in facts.version().facts().pages.iter().enumerate() {
-        for line in page.lines.iter().filter(|l| story_kind(&l.path) == "body") {
-            let Some((table, row)) = row_of(&line.path) else {
-                continue;
-            };
-            let at = *seen.entry(table.to_owned()).or_insert_with(|| {
-                out.push((table.to_owned(), BTreeMap::new()));
+/// first drawn -- a fold over the pages' contributions ([`super::tables::RowsPart`]).
+fn drawn_rows<'f>(facts: &'f Facts<'_>) -> Vec<(&'f str, BTreeMap<usize, BTreeSet<usize>>)> {
+    let mut out: Vec<(&str, BTreeMap<usize, BTreeSet<usize>>)> = Vec::new();
+    let mut seen: HashMap<&str, usize> = HashMap::new();
+    for index in 0..facts.version().facts().pages.len() {
+        let Some(entry) = facts.laid(index) else { continue };
+        for table in entry.rows().tables() {
+            let at = *seen.entry(table.path()).or_insert_with(|| {
+                out.push((table.path(), BTreeMap::new()));
                 out.len() - 1
             });
             if let Some((_, rows)) = out.get_mut(at) {
-                rows.entry(row).or_default().insert(index + 1);
+                for row in table.rows() {
+                    rows.entry(row).or_default().insert(index + 1);
+                }
             }
         }
     }
@@ -256,10 +284,10 @@ fn kept_rows(facts: &Facts<'_>, kept: &KeptTables) -> Vec<KeepAtFoot> {
         if !facts.shown(rows.values().flatten().copied()) {
             continue;
         }
-        let Some(block) = facts.block_at(&table).map(|(_, b)| b) else {
+        let Some(block) = facts.block_at(table).map(|(_, b)| b) else {
             continue;
         };
-        let Some(keeps) = model_keeps(facts, &table) else {
+        let Some(keeps) = model_keeps(facts, table) else {
             continue;
         };
         let own = block.element.child_elements().filter(|e| is_w(e, "tr")).count();

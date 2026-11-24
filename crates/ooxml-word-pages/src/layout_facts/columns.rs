@@ -9,6 +9,7 @@
 
 use super::tree::{self, cell_line, is_w, W};
 use super::{points, round, Facts};
+use crate::page_parts::Part;
 use crate::page_read::PageRead;
 use ooxml_xml::Element;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -82,10 +83,9 @@ struct PageCell {
     word: f64,
 }
 
-impl CellsPart {
+impl Part<PageRead> for CellsPart {
     /// The contribution of a page read as `read`.
-    #[must_use]
-    pub fn of(read: &PageRead) -> CellsPart {
+    fn of(read: &PageRead) -> CellsPart {
         let mut tables: Vec<PageTable> = Vec::new();
         for line in read.texts.iter().filter(|l| l.story.is_none()) {
             let Some((table, row, cell, paragraph)) = cell_line(&line.path) else {
@@ -132,8 +132,7 @@ impl CellsPart {
     }
 
     /// What the contribution of a page read as `read` holds at most, bytes.
-    #[must_use]
-    pub fn weight_of(read: &PageRead) -> usize {
+    fn weight_of(read: &PageRead) -> usize {
         let each = std::mem::size_of::<PageTable>()
             + std::mem::size_of::<PageCell>()
             + std::mem::size_of::<(String, usize, f64)>();

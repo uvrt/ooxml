@@ -11,7 +11,7 @@
 use super::cells::{held_roots, same_roots, HeldRoots};
 use super::formatting::Formatting;
 use super::keeps::RowKeep;
-use ooxml_derive::{CacheBudget, Limit, Memo, MemoStats, Weigh};
+use ooxml_derive::{AddressHash, CacheBudget, Limit, Memo, MemoStats, Weigh};
 use ooxml_xml::Element;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 
@@ -56,7 +56,7 @@ impl Weigh for KeptRows {
 /// address (a weak reference keeps the address its own while it is kept), and how many
 /// were alive when last swept.
 pub(crate) struct RowsMemo {
-    memo: Mutex<(Memo<usize, KeptRows>, usize)>,
+    memo: Mutex<(Memo<usize, KeptRows, AddressHash>, usize)>,
 }
 
 impl std::fmt::Debug for RowsMemo {
@@ -76,7 +76,7 @@ impl RowsMemo {
     /// An empty memo counted on `budget`.
     pub(crate) fn new(budget: Arc<dyn CacheBudget>) -> RowsMemo {
         RowsMemo {
-            memo: Mutex::new((Memo::new(budget), 0)),
+            memo: Mutex::new((Memo::with_hasher(budget), 0)),
         }
     }
 
