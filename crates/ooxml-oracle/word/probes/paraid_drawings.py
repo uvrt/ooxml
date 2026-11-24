@@ -13,8 +13,8 @@ paragraph with a paraId:
 Scenarios: ``save`` (open, save); ``edit-other`` (type into another paragraph, ``T1``);
 ``edit-beside`` (type into the inline picture's paragraph, next to it); ``resize-inline`` and
 ``resize-anchored`` (the picture made wider in Word).  For each drawing the ids before and
-after (kept, added, renewed, dropped), and the part's ``wp14`` declaration and
-``mc:Ignorable`` after.
+after (kept, added, renewed, dropped), how many of the paragraphs' paraIds Word kept, and the
+part's ``wp14`` declaration and ``mc:Ignorable`` after.
 """
 
 from __future__ import annotations
@@ -88,7 +88,7 @@ def drawings(data: bytes) -> dict:
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         xml = archive.read("word/document.xml").decode("utf-8")
     root = re.search(r"<w:document\b[^>]*>", xml).group(0)
-    out: dict = {"declares wp14": f'"{WP14}"' in root,
+    out: dict = {"paraIds": re.findall(r'w14:paraId="([^"]*)"', xml), "declares wp14": f'"{WP14}"' in root,
                  "mc:Ignorable": (re.search(r'mc:Ignorable="([^"]*)"', root) or [None, None])[1]}
     for kind in ("inline", "anchor"):
         found = re.findall(rf"<wp:{kind}\b[^>]*>", xml)
@@ -104,7 +104,9 @@ def _verdict(before: str | None, after: str | None, renewed: str) -> str:
 
 
 def compare(before: dict, after: dict) -> dict:
-    out = {"declares wp14": after["declares wp14"], "mc:Ignorable": after["mc:Ignorable"]}
+    kept = [i for i in before["paraIds"] if i in after["paraIds"]]
+    out = {"paraIds kept": f"{len(kept)} of {len(before['paraIds'])}", "declares wp14": after["declares wp14"],
+           "mc:Ignorable": after["mc:Ignorable"]}
     for kind in ("inline", "anchor"):
         pairs = list(zip(before[kind], after[kind]))
         out[kind] = [{"anchorId": _verdict(b[0], a[0], "replaced"), "editId": _verdict(b[1], a[1], "renewed"),
