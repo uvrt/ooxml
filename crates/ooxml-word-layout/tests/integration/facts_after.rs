@@ -86,5 +86,8 @@ fn first_pages_carried_when_an_edit_in_the_middle_moves_the_pages_after_it() {
         moved > 20 && moved < 60,
         "the paragraphs after the edit start on another page: {moved}"
     );
-    assert!(shared > 0, "the pages before the edit are shared with the version before");
+    assert!(
+        shared > 0,
+        "the pages before the edit are shared with the version before"
+    );
 }
