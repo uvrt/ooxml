@@ -118,7 +118,7 @@ pub fn empty_paragraphs(doc: &WordDoc) -> Result<Vec<EmptyRun>> {
                 let merge = find_path(&cell.element, &["tcPr", "vMerge"]);
                 if merge.is_none_or(|m| m.attribute(Some(W), "val") == Some("restart")) {
                     if let Some(run) = reading.runs(&sequence(&cell.element, &cell.path)) {
-                        let id = body.ids.tables().get(table.ordinal).map(|t| t.id).unwrap_or_default();
+                        let id = body.ids.tables().head(table.ordinal).map(|t| t.id).unwrap_or_default();
                         found.push(run.at(format!("{id}/c{r},{}", cell.column)));
                     }
                 }

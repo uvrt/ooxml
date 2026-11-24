@@ -128,7 +128,7 @@ fn separator(story: &StoryPart, path: &[u32]) -> bool {
 /// (each table's rows' keeps as the document keeps them, `row_keeps`).
 fn kept_leads(formatting: &Formatting, story: &StoryPart) -> HashSet<Vec<u32>> {
     let mut out = HashSet::new();
-    for table in story.ids.tables().iter() {
+    for table in story.ids.tables().placed() {
         let Some(rows) = row_keeps(formatting, story, &table.path) else {
             continue;
         };

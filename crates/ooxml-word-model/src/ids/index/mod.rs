@@ -86,6 +86,18 @@ pub struct TableId {
     pub rows: Vec<(Path, String)>,
 }
 
+/// A table named without its rows ([`Tables::head`]): what [`TableId`] holds but its
+/// rows, which are named one by one.
+#[derive(Debug, Clone)]
+pub struct TableHead {
+    /// The table.
+    pub element: Arc<Element>,
+    /// Its place in the part.
+    pub path: Path,
+    /// Its id.
+    pub id: String,
+}
+
 /// A table found, not named ([`Tables::placed`]).
 #[derive(Debug, Clone)]
 pub struct PlacedTable<'a> {
@@ -354,27 +366,41 @@ impl PartIds {
         })
     }
 
-    /// The table at place `k` of `at`'s blocks.
-    fn table_in(&self, at: &Located<'_>, k: usize) -> Option<TableId> {
+    /// The table at place `k` of `at`'s blocks, named, without its rows: its id is its
+    /// first own row's (where that is valid and not repeated).
+    fn table_head_in(&self, at: &Located<'_>, k: usize) -> Option<TableHead> {
         let block = at.body.blocks.get(k).filter(|b| b.kind == Kind::Tbl)?;
         let number = at.tables + block.ordinal as usize;
-        let prefix = self.prefix();
-        let rows = Self::own_rows(at, k);
-        let good = |(r, row): &(usize, &Block)| {
-            row.raw
-                .as_deref()
-                .filter(|raw| valid_long_hex(raw) && self.repeat_of(at, *r, row) == 0)
-                .map(str::to_owned)
-        };
-        let id = match rows.first().and_then(good) {
-            Some(first) => format!("{prefix}t:{first}"),
+        let first = Self::own_rows(at, k).into_iter().next();
+        let id = match first.and_then(|row| self.row_raw(at, row)) {
+            Some(raw) => format!("{}t:{raw}", self.prefix()),
             None => format!("t@{}/{number}", self.story),
         };
-        let rows = rows
-            .iter()
+        Some(TableHead {
+            element: Arc::clone(&block.element),
+            path: Self::path_of(at, block),
+            id,
+        })
+    }
+
+    /// A row's own `w14:paraId`, where it is valid and its first occurrence: what names it
+    /// (and its table, for a first row).
+    fn row_raw(&self, at: &Located<'_>, (r, row): (usize, &Block)) -> Option<String> {
+        row.raw
+            .as_deref()
+            .filter(|raw| valid_long_hex(raw) && self.repeat_of(at, r, row) == 0)
+            .map(str::to_owned)
+    }
+
+    /// The table at place `k` of `at`'s blocks.
+    fn table_in(&self, at: &Located<'_>, k: usize) -> Option<TableId> {
+        let TableHead { element, path, id } = self.table_head_in(at, k)?;
+        let prefix = self.prefix();
+        let rows = Self::own_rows(at, k)
+            .into_iter()
             .enumerate()
             .map(|(n, found)| {
-                let row = match good(found) {
+                let row = match self.row_raw(at, found) {
                     Some(raw) => format!("{prefix}tr:{raw}"),
                     None => format!("{id}/r{n}"),
                 };
@@ -382,8 +408,8 @@ impl PartIds {
             })
             .collect();
         Some(TableId {
-            element: Arc::clone(&block.element),
-            path: Self::path_of(at, block),
+            element,
+            path,
             id,
             rows,
         })
@@ -547,7 +573,7 @@ impl PartIds {
     pub fn id_of(&self, entry: Entry) -> Option<String> {
         match entry {
             Entry::Paragraph(k) => self.paragraphs().get(k).map(|p| p.id),
-            Entry::Table(k) => self.tables().get(k).map(|t| t.id),
+            Entry::Table(k) => self.tables().head(k).map(|t| t.id),
         }
     }
 }
@@ -658,6 +684,26 @@ impl<'a> Tables<'a> {
         let local = n.checked_sub(at.tables)?;
         let k = *at.body.tables.get(local)? as usize;
         self.ids.table_in(&at, k)
+    }
+
+    /// The table with ordinal `n` named without its rows ([`TableHead`]: what
+    /// [`Tables::get`] gives but the rows), in O(log n).
+    #[must_use]
+    pub fn head(&self, n: usize) -> Option<TableHead> {
+        let at = self.ids.holding(n, true)?;
+        let local = n.checked_sub(at.tables)?;
+        let k = *at.body.tables.get(local)? as usize;
+        self.ids.table_head_in(&at, k)
+    }
+
+    /// The place of the table with ordinal `n`, without naming it, in O(log n).
+    #[must_use]
+    pub fn place(&self, n: usize) -> Option<Path> {
+        let at = self.ids.holding(n, true)?;
+        let local = n.checked_sub(at.tables)?;
+        let k = *at.body.tables.get(local)? as usize;
+        let block = at.body.blocks.get(k).filter(|b| b.kind == Kind::Tbl)?;
+        Some(PartIds::path_of(&at, block))
     }
 
     /// Every table's ordinal (what [`Tables::get`] takes), element, place and its own rows'

@@ -50,8 +50,13 @@ pub fn accept_loses_text(doc: &WordDoc) -> Result<Vec<LostCell>> {
     let body = docx.body().ok_or_else(|| EditError::NoPart(docx.main.clone()))?;
     let mut changes: Option<HashMap<Box<[u32]>, String>> = None;
     let mut found = Vec::new();
-    for table in body.ids.tables().iter() {
-        for (row, cell) in cells_lost_on_accept(body, &table) {
+    let tables = body.ids.tables();
+    for placed in tables.placed() {
+        let lost = cells_lost_on_accept(body, &placed.rows);
+        let Some(table) = (!lost.is_empty()).then(|| tables.head(placed.ordinal)).flatten() else {
+            continue;
+        };
+        for (row, cell) in lost {
             let by_record = changes.get_or_insert_with(|| {
                 records(&docx)
                     .into_iter()

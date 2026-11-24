@@ -82,7 +82,8 @@ pub fn style_list(doc: &WordDoc, allowed: &[String]) -> Result<StyleList> {
                 count("paragraph", style, &paragraph.id);
             }
         }
-        for table in story.ids.tables().iter() {
+        let tables = story.ids.tables();
+        for table in tables.placed().filter_map(|t| tables.head(t.ordinal)) {
             let named = find_path(&table.element, &["tblPr", "tblStyle"]);
             let style = match named {
                 Some(node) => node.attribute(Some(W), "val").map(str::to_owned),

@@ -100,15 +100,20 @@ pub fn kept_tables(facts: &Facts<'_>) -> KeptTables {
         if story.story == "comments" {
             continue;
         }
-        for table in story.ids.tables().iter() {
-            let pages = facts.table_pages_of(&table.id);
-            if !pages.is_empty() && !facts.shown(pages.iter().copied()) {
-                continue;
-            }
-            let Some(rows) = row_keeps(facts.formatting(), story, &table.path) else {
+        let tables = story.ids.tables();
+        for placed in tables.placed() {
+            // A table's id is named (and its pages found) only where it is kept together.
+            let Some(rows) = row_keeps(facts.formatting(), story, &placed.path) else {
                 continue;
             };
             if !TableKeeps::of(&rows).together {
+                continue;
+            }
+            let Some(table) = tables.head(placed.ordinal) else {
+                continue;
+            };
+            let pages = facts.table_pages_of(&table.id);
+            if !pages.is_empty() && !facts.shown(pages.iter().copied()) {
                 continue;
             }
             let direct = direct(story, &table.path, &rows);
