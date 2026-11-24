@@ -84,26 +84,30 @@ pub fn direct_formatting(doc: &WordDoc) -> Result<Vec<DirectFormatting>> {
         }
         let mut look = Keeps::new(&formatting, story);
         let kept = kept_leads(&formatting, story);
-        for paragraph in story.ids.paragraphs().iter() {
-            if separator(story, &paragraph.path) {
+        // Each paragraph found by its element and place; its id named only for an entry.
+        for (ordinal, element, place) in story.ids.paragraphs().placed() {
+            if separator(story, &place) {
                 continue;
             }
-            let leads = kept.contains(&*paragraph.path);
-            let kept_direct = story.block_fact::<Direct>(&formatting, &paragraph.element, &paragraph.path, || {
-                direct(&formatting, &mut look, &paragraph.element, &paragraph.path)
+            let leads = kept.contains(&*place);
+            let kept_direct = story.block_fact::<Direct>(&formatting, element, &place, || {
+                direct(&formatting, &mut look, element, &place)
             });
-            if let Some((props, in_part)) = led(kept_direct, leads) {
-                let style = style_of(&paragraph.element, default.as_deref(), &names);
-                found.push((
-                    found.len(),
-                    DirectFormatting {
-                        para: paragraph.id.clone(),
-                        style,
-                        props,
-                        in_part,
-                    },
-                ));
-            }
+            let Some((props, in_part)) = led(kept_direct, leads) else {
+                continue;
+            };
+            let Some(paragraph) = story.ids.paragraphs().get(ordinal) else {
+                continue;
+            };
+            found.push((
+                found.len(),
+                DirectFormatting {
+                    para: paragraph.id,
+                    style: style_of(element, default.as_deref(), &names),
+                    props,
+                    in_part,
+                },
+            ));
         }
     }
     found.sort_by_key(|(order, e)| (e.props.is_empty(), std::cmp::Reverse(e.props.len()), *order));

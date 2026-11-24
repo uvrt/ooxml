@@ -583,6 +583,22 @@ impl<'a> Paragraphs<'a> {
         })
     }
 
+    /// Every paragraph's ordinal (what [`Paragraphs::get`] takes), element and place, in
+    /// document order: what [`Paragraphs::iter`] gives, without making each one's id.
+    pub fn placed(&self) -> impl Iterator<Item = (usize, &'a Arc<Element>, Path)> + 'a {
+        self.ids.located().flat_map(|at| {
+            let body = at.body;
+            body.paragraphs.iter().filter_map(move |k| {
+                let block = body.blocks.get(*k as usize).filter(|b| b.kind == Kind::P)?;
+                Some((
+                    at.paragraphs + block.ordinal as usize,
+                    &block.element,
+                    PartIds::path_of(&at, block),
+                ))
+            })
+        })
+    }
+
     /// Every paragraph, in document order.
     pub fn iter(&self) -> impl Iterator<Item = ParagraphId> + 'a {
         let ids = self.ids;
