@@ -2,15 +2,22 @@
 //! before the break) takes the split section's header and footer references, and the split
 //! section names none from then on and inherits them -- tracked or not. Two sections naming
 //! one header holding a chart stopped Word opening the file (the Word suite's
-//! `chart-places.docx` case, `word-own.docx` the form Word wrote at that place).
+//! `chart-places.docx` case, `word-own.docx` the form Word wrote at that place). Rejecting
+//! the tracked break gives the header back to the section left (Word 16.106's Reject All of
+//! its own break and of this one).
 // Tests may unwrap, panic and index (docs/architecture/README.md, section 2.5).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
 use crate::common::{editor, fixture};
 use ooxml_store::Caller;
-use ooxml_word_edit::{InsertSectionBreak, RevisionPolicy, Tracking};
+use ooxml_word_edit::{InsertSectionBreak, Review, RevisionPolicy, Selection, Tracking};
 
 fn body_after(policy: RevisionPolicy) -> String {
+    body_reviewed(policy, None)
+}
+
+/// The body after the break, and after reviewing everything (`accept`) if asked.
+fn body_reviewed(policy: RevisionPolicy, accept: Option<bool>) -> String {
     let editor = editor(&fixture("generated/charts/chart-places.docx"));
     let command = InsertSectionBreak {
         after: Some("p@body/0".to_owned()),
@@ -20,6 +27,13 @@ fn body_after(policy: RevisionPolicy) -> String {
     };
     let done = editor.run(&Caller::anonymous(), &command).unwrap();
     assert!(done.out.changed);
+    if let Some(accept) = accept {
+        let review = Review {
+            accept,
+            selection: Selection::All,
+        };
+        editor.run(&Caller::anonymous(), &review).unwrap();
+    }
     let head = editor.store().snapshot();
     String::from_utf8(head.doc().tree("word/document.xml").unwrap().unwrap().write()).unwrap()
 }
@@ -54,4 +68,27 @@ fn a_tracked_break_gives_the_split_sections_header_to_the_new_one() {
 #[test]
 fn an_untracked_break_gives_the_split_sections_header_to_the_new_one() {
     check(&body_after(RevisionPolicy::Untracked));
+}
+
+fn tracked() -> RevisionPolicy {
+    RevisionPolicy::Tracked(Tracking {
+        author: "Writer A".to_owned(),
+        date: "2026-11-17T10:00:00Z".to_owned(),
+    })
+}
+
+#[test]
+fn rejecting_a_tracked_break_gives_the_header_back() {
+    let body = body_reviewed(tracked(), Some(false));
+    let sects: Vec<&str> = body.split("<w:sectPr").skip(1).collect();
+    assert_eq!(sects.len(), 1, "the break is gone: {body}");
+    assert!(
+        sects[0].contains(r#"<w:headerReference w:type="default" r:id="rId10"/>"#),
+        "the section left names the header again: {body}"
+    );
+}
+
+#[test]
+fn accepting_a_tracked_break_keeps_the_new_sections_header() {
+    check(&body_reviewed(tracked(), Some(true)));
 }

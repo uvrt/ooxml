@@ -18,7 +18,7 @@ use crate::delete::{editable_opening, Opening};
 use crate::doc::Key;
 use crate::names::{W, W14, W16DU};
 use crate::policy::RevisionPolicy;
-use crate::review::xml::make;
+use crate::review::xml::{insert_in_order, make};
 use crate::sink::EditSink;
 use crate::stamping::{stamp_document, w14_prefix};
 use crate::validate::Orders;
@@ -358,6 +358,28 @@ pub(crate) fn order_references(work: &mut Work, sect: Id) {
     references.sort_by_key(|n| key(work, *n));
     for (k, node) in references.into_iter().enumerate() {
         work.insert(sect, k, node);
+    }
+}
+
+/// Hand on the header and footer references `sect` names that `next_sect` does not: the
+/// section after a break that goes shows them from then on (a removed break, and Word
+/// 16.106's Reject All of an inserted one, which gives the split section its header back).
+pub(crate) fn hand_on(work: &mut Work, sect: Id, next_sect: Id, orders: &Orders) {
+    for node in work.children(sect).to_vec() {
+        if !work.is_any(node, W, &REFERENCES) {
+            continue;
+        }
+        let which = if work.is(node, W, "headerReference") {
+            "header"
+        } else {
+            "footer"
+        };
+        let kind = work.get(node, Some(W), "type").unwrap_or("default").to_owned();
+        if own_reference(work, next_sect, which, &kind).is_none() {
+            let copy = work.deep_copy(node);
+            insert_in_order(work, next_sect, copy, orders);
+            order_references(work, next_sect);
+        }
     }
 }
 

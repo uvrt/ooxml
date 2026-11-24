@@ -195,6 +195,7 @@ impl PartReview<'_, '_> {
         }
         let breaks = find_path(self.work, paragraph, &["pPr", "sectPr"]).is_some();
         if empty && (blocks.len() > 1 || !in_cell) && (!breaks || self.work.is(cell, W, "body")) {
+            self.hand_on_section(paragraph);
             self.removed_paragraphs.push(paragraph);
             self.released
                 .extend(crate::inline::relationship_ids(self.work, paragraph));
@@ -219,6 +220,7 @@ impl PartReview<'_, '_> {
     /// `paragraph` joined to `following`: its content moves to the start of `following`,
     /// which keeps its element, id and properties (Word's accept).
     pub(super) fn join(&mut self, paragraph: Id, following: Id) {
+        self.hand_on_section(paragraph);
         let mut at = usize::from(self.work.find(following, W, "pPr").is_some());
         for child in self.work.children(paragraph).to_vec() {
             if self.work.is(child, W, "pPr") {
@@ -230,6 +232,54 @@ impl PartReview<'_, '_> {
         self.joined.push((paragraph, following));
         self.removed_paragraphs.push(paragraph);
         self.work.remove(paragraph);
+    }
+}
+
+impl PartReview<'_, '_> {
+    /// A paragraph that ends a section and goes hands the header and footer references its
+    /// `w:sectPr` names on to the next section's, where that names none of its own: Word
+    /// 16.106's Reject All of an inserted section break gives the split section its header
+    /// back (`word-own.docx`, a tracked break on `chart-places.docx`).
+    fn hand_on_section(&mut self, paragraph: Id) {
+        let Some(sect) = find_path(self.work, paragraph, &["pPr", "sectPr"]) else {
+            return;
+        };
+        if let Some(next) = next_section(self.work, paragraph) {
+            crate::sections::hand_on(self.work, sect, next, self.orders);
+        }
+    }
+}
+
+/// The `w:sectPr` of the section after the one `paragraph` ends: the next paragraph's that
+/// ends one (also inside a block-level control or custom XML), else the body's.
+fn next_section(work: &Work, paragraph: Id) -> Option<Id> {
+    let mut node = paragraph;
+    loop {
+        let mut sibling = work.next(node);
+        while let Some(n) = sibling {
+            if work.is(n, W, "sectPr") {
+                return Some(n);
+            }
+            if work.is(n, W, "p") {
+                if let Some(sect) = find_path(work, n, &["pPr", "sectPr"]) {
+                    return Some(sect);
+                }
+            } else if work.is_any(n, W, &["sdt", "customXml"]) {
+                let inner = work
+                    .descendants(n)
+                    .into_iter()
+                    .filter(|d| work.is(*d, W, "p"))
+                    .find_map(|d| find_path(work, d, &["pPr", "sectPr"]));
+                if inner.is_some() {
+                    return inner;
+                }
+            }
+            sibling = work.next(n);
+        }
+        node = work.parent(node)?;
+        if work.is(node, W, "body") {
+            return None;
+        }
     }
 }
 
