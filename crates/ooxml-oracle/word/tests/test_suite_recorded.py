@@ -65,8 +65,13 @@ def test_every_recorded_case_is_still_made():
 
 
 def test_word_opened_every_recorded_output():
-    refused = {k: v["opens"] for k, v in OBSERVED.items() if isinstance(v, dict) and v.get("opens") != "done"}
+    """Word opened every output it was asked about, but those ``deviations.py`` lists as
+    known not to open (strict: one Word opened is no longer a deviation)."""
+    entries = {k: v for k, v in OBSERVED.items() if isinstance(v, dict) and "opens" in v}
+    refused = {k: v["opens"] for k, v in entries.items() if v["opens"] != "done" and not reason(k, "opens")}
     assert not refused, refused
+    opened = sorted(k for k, v in entries.items() if v["opens"] == "done" and reason(k, "opens"))
+    assert not opened, f"listed as a deviation, but Word opened it: {opened}"
 
 
 @pytest.mark.parametrize("case, check", _PARAMS, ids=[f"{c}:{k}" for c, k in _PARAMS])

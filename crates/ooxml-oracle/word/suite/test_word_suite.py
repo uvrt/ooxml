@@ -6,9 +6,10 @@ out on Word's pages (page count, and each paragraph on Word's page); (e) has Wor
 after an update of every field.  Word's answers are recorded (``observed.py``) whatever the
 verdict; ``deviations.py`` lists where the tools differ knowingly.
 
-The gates' cases are a sample by default, one per tool and mode (``WORD_SUITE_GATES=sample``,
-about an hour of Word cold); ``WORD_SUITE_GATES=full`` takes the full set, some 1,600 cases and
-ten hours and more (``edit_sets.py``, gates)."""
+The gates' cases are a sample by default (``WORD_SUITE_GATES=sample``, about an hour of Word
+cold): per tool and mode, the first case the tools accept, kept in ``gate-sample.json``;
+``WORD_SUITE_GATES=full`` takes the full set, some 1,600 cases and ten hours and more
+(``edit_sets.py``, gates)."""
 
 from __future__ import annotations
 
@@ -92,12 +93,26 @@ def test_gates_cases_are_frozen_as_data():
     assert cases
 
 
+def test_the_gates_sample_is_what_the_rule_picks(box):
+    """The kept sample (``gate-sample.json``) is still the first case per tool and action the
+    tools accept; where it is not, ``edit_sets.py sample`` writes it again."""
+    if edit_sets.GATES != "sample":
+        pytest.skip("the full gate set")
+    kept = [case.id for case in edit_sets.gate_cases()[0]]
+    assert edit_sets.choose_sample(box) == kept, "the gates' sample is stale: python edit_sets.py sample"
+
+
 @pytest.mark.parametrize("case", CASES, ids=IDS)
 def test_word_opens_and_exports_it(word, store, outputs, case):
     data = outputs(case)
     output = edit_sets.digest(data)
     outcome = word.export(data, _name(case))
     store.record(case.id, output, "opens", outcome.outcome)
+    why = reason(case.id, "opens")
+    if why:
+        if not outcome:
+            pytest.xfail(why)
+        pytest.fail(f"listed as a deviation ({why}), but Word now opens it", pytrace=False)
     assert outcome, f"Word did not open it: {outcome.outcome} {outcome.detail}"
     if case.shows:
         text = " ".join(" ".join(oracle.pdf_pages(outcome.path)).split())

@@ -12,11 +12,15 @@ its document to give one tool output that Word is asked about.  Three sources:
 * **trial**: the golden transcripts (``python/docx-agent/tests/goldens/transcripts``), the
   trial's tasks as the tools were called, with the text Word must show in each output.
 * **gates**: the gates' frozen cases (``crates/ooxml-oracle/cases/**.jsonl``, one call each),
-  sampled (``WORD_SUITE_GATES``): by default ``sample``, one case per tool and per mode (its
-  ``action``) over every fixture, the first by fixture path and case id, about an hour of Word
-  cold; ``full``, ``WORD_SUITE_GATES_PER_TOOL`` (default 1) per fixture and tool, tracked or
-  not, some 1,600 cases and ten hours and more of Word.  A case with a second document or a
-  host locale is never taken.
+  as ``WORD_SUITE_GATES`` says.  ``sample`` (the default, about an hour of Word cold): one case
+  per tool and per mode (its ``action``) over every fixture, the first the tools accept (that
+  gives an output), by fixture path and case id; a case that needs blobs or datasets (which the
+  suite does not supply) is never taken.  Which case that is depends on the tools, so the
+  sample is kept as data, :data:`GATE_SAMPLE`: ``python crates/ooxml-oracle/word/suite/edit_sets.py
+  sample`` writes it again (the tools run, no Word), and the Word run fails while it is not
+  what the rule picks.  ``full``: ``WORD_SUITE_GATES_PER_TOOL`` (default 1) per fixture and
+  tool, tracked or not, some 1,600 cases and ten hours and more of Word.  A case with a second
+  document or a host locale is never taken.
 
 Must not: import pytest or docx-agent's library (only its tool host).
 """
@@ -40,6 +44,8 @@ ROOT = ORACLE.parents[1]
 FIXTURES = ORACLE / "fixtures"
 SETS = SUITE / "sets"
 GATE_CASES = ORACLE / "cases"
+#: The gates' sample: the case ids :func:`choose_sample` picked (``edit_sets.py sample``).
+GATE_SAMPLE = SUITE / "gate-sample.json"
 TRANSCRIPTS = ROOT / "python" / "docx-agent" / "tests" / "goldens"
 #: The suite's clock: every tracked edit and comment is dated by it.
 CLOCK = dt.datetime(2026, 11, 17, 10, 0, 0, tzinfo=dt.timezone.utc)
@@ -118,19 +124,45 @@ def gate_cases() -> tuple[list[Case], str | None]:
     entries = _gate_entries(files)
     if GATES == "full":
         return [_gate_case(fixture, entry) for fixture, entry in entries], None
+    by_id = {f"gates/{fixture}/{entry['id']}": (fixture, entry) for fixture, entry in entries}
+    sample = json.loads(GATE_SAMPLE.read_text(encoding="utf-8"))["cases"]
+    gone = [case for case in sample if case not in by_id]
+    if gone:
+        raise ValueError(f"the gates' sample names cases the gates no longer have (edit_sets.py sample): {gone}")
+    return [_gate_case(*by_id[case]) for case in sample], None
+
+
+def sample_strata() -> list[list[Case]]:
+    """The candidates for the gates' sample: per (tool, action), its cases in the order the
+    sample takes them (by fixture path and case id), those needing blobs or datasets left out."""
+    files = sorted(GATE_CASES.glob("fixtures/**/*.jsonl"))
+    strata: dict[tuple[str, str | None], list[Case]] = {}
+    for fixture, entry in sorted(_gate_entries(files, every=True), key=lambda item: (item[0], item[1]["id"])):
+        case = entry["case"]
+        if case.get("blobs") or case.get("datasets"):
+            continue
+        strata.setdefault((case["tool"], case["arguments"].get("action")), []).append(_gate_case(fixture, entry))
+    return [strata[key] for key in sorted(strata, key=lambda k: (k[0], k[1] or ""))]
+
+
+def choose_sample(box: Any) -> list[str]:
+    """The gates' sample (:data:`GATE_SAMPLE`): per stratum, the first case the tools accept."""
     out = []
-    sampled: set[tuple[str, str | None]] = set()
-    for fixture, entry in sorted(entries, key=lambda item: (item[0], item[1]["id"])):
-        stratum = (entry["case"]["tool"], entry["case"]["arguments"].get("action"))
-        if stratum not in sampled:
-            sampled.add(stratum)
-            out.append(_gate_case(fixture, entry))
-    return out, None
+    for candidates in sample_strata():
+        for case in candidates:
+            try:
+                run(box, case)
+            except Refused:
+                continue
+            out.append(case.id)
+            break
+    return out
 
 
-def _gate_entries(files: list[Path]) -> list[tuple[str, dict[str, Any]]]:
+def _gate_entries(files: list[Path], *, every: bool = False) -> list[tuple[str, dict[str, Any]]]:
     """The tool-call cases of these files, with their fixture: ``full`` takes
-    :data:`GATES_PER_TOOL` per fixture and tool (tracked or not), ``sample`` every one."""
+    :data:`GATES_PER_TOOL` per fixture and tool (tracked or not), ``sample`` (or ``every``)
+    every one."""
     out = []
     for path in files:
         fixture = path.relative_to(GATE_CASES / "fixtures").as_posix().removesuffix(".jsonl")
@@ -140,7 +172,7 @@ def _gate_entries(files: list[Path]) -> list[tuple[str, dict[str, Any]]]:
             case = entry["case"]
             if "tool" not in case or case.get("reference_file") or case.get("reference_copy") or case.get("locale"):
                 continue                     # an op case, or one with a second document or a host locale
-            if GATES == "full":
+            if GATES == "full" and not every:
                 key = case["tool"] + ("+tracked" if case.get("tracked") else "")
                 if taken.get(key, 0) >= GATES_PER_TOOL:
                     continue
@@ -250,3 +282,31 @@ def digest(data: bytes) -> str:
         for name in sorted(archive.namelist()):
             h.update(name.encode() + b"\0" + archive.read(name) + b"\0")
     return h.hexdigest()[:16]
+
+
+def _write_sample() -> None:
+    """``edit_sets.py sample``: the tools choose the gates' sample, written to :data:`GATE_SAMPLE`."""
+    import sys
+
+    for path in (SUITE, SUITE.parent, SUITE.parent / "probes"):
+        if str(path) not in sys.path:
+            sys.path.insert(0, str(path))
+    import probe_paths  # noqa: F401  (docx-agent's test helpers on the path)
+    from docx_agent.tools import FORMAT, GROUPS, TOOLS
+    from ooxml_edit.tools import Toolbox
+
+    with Toolbox(list(TOOLS), formats=[FORMAT], groups=GROUPS, workers=0) as box:
+        cases = choose_sample(box)
+    about = ("The Word suite's sample of the gates' cases (edit_sets.py, gates): per tool and action, "
+             "the first case the tools accept, by fixture path and case id. Written by "
+             "python crates/ooxml-oracle/word/suite/edit_sets.py sample.")
+    GATE_SAMPLE.write_text(json.dumps({"_about": about, "cases": cases}, indent=1) + "\n", encoding="utf-8")
+    print(f"{len(cases)} cases -> {GATE_SAMPLE}")
+
+
+if __name__ == "__main__":
+    import sys
+
+    if sys.argv[1:] != ["sample"]:
+        raise SystemExit("usage: edit_sets.py sample")
+    _write_sample()
