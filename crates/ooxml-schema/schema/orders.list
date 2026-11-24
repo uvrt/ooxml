@@ -1,0 +1,156 @@
+# The child orders: the source of src/orders.rs (`cargo xtask codegen`; the grammar is in
+# xtask/src/orders.rs). Each parent's order is generated from the XML schemas in ../xsd (see
+# ../xsd/SOURCE): the 1st edition's sequences first (the order Word writes), completed by the
+# 5th edition Transitional's. An overlay replaces a parent's generated order; it holds only an
+# order measured in Word, or the frozen Python's order with "frozen Python, unmeasured" and why
+# the schemas do not give it.
+#
+# - `source <dir>`: a folder of ../xsd, in order (the first gives the base order, later ones
+#   place what it lacks);
+# - `ns <prefix> <uri>`: the prefix a namespace's names are written with (the first listed);
+# - `parent <name>`: a parent whose order is generated (widening this list changes where
+#   edits put children and what validation checks: Phase 5, not now);
+# - `overlay <name> = <step> | <step>...` (names of one step separated by spaces), after a
+#   `cause <why>` line.
+
+source ecma-376-1st-edition
+source ecma-376-5th-edition-transitional
+
+ns r http://schemas.openxmlformats.org/officeDocument/2006/relationships
+ns mc http://schemas.openxmlformats.org/markup-compatibility/2006
+ns ct http://schemas.openxmlformats.org/package/2006/content-types
+ns pr http://schemas.openxmlformats.org/package/2006/relationships
+ns w http://schemas.openxmlformats.org/wordprocessingml/2006/main
+ns w14 http://schemas.microsoft.com/office/word/2010/wordml
+ns w15 http://schemas.microsoft.com/office/word/2012/wordml
+ns w16cid http://schemas.microsoft.com/office/word/2016/wordml/cid
+ns w16cex http://schemas.microsoft.com/office/word/2018/wordml/cex
+ns w16se http://schemas.microsoft.com/office/word/2015/wordml/symex
+ns w16du http://schemas.microsoft.com/office/word/2023/wordml/word16du
+ns wp http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing
+ns wp14 http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing
+ns wps http://schemas.microsoft.com/office/word/2010/wordprocessingShape
+ns wpg http://schemas.microsoft.com/office/word/2010/wordprocessingGroup
+ns wpc http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas
+ns a http://schemas.openxmlformats.org/drawingml/2006/main
+ns pic http://schemas.openxmlformats.org/drawingml/2006/picture
+ns m http://schemas.openxmlformats.org/officeDocument/2006/math
+ns v urn:schemas-microsoft-com:vml
+ns o urn:schemas-microsoft-com:office:office
+ns w10 urn:schemas-microsoft-com:office:word
+ns wne http://schemas.microsoft.com/office/word/2006/wordml
+ns c http://schemas.openxmlformats.org/drawingml/2006/chart
+ns dgm http://schemas.openxmlformats.org/drawingml/2006/diagram
+ns dsp http://schemas.microsoft.com/office/drawing/2008/diagram
+ns x http://schemas.openxmlformats.org/spreadsheetml/2006/main
+
+parent w:body
+parent w:p
+parent w:r
+parent w:pPr
+parent w:rPr
+parent w:sectPr
+parent w:tbl
+parent w:tblPr
+parent w:tblGrid
+parent w:tblStylePr
+parent w:tr
+parent w:trPr
+parent w:tc
+parent w:tcPr
+parent w:tblPrEx
+parent w:tblBorders
+parent w:tcBorders
+parent w:tcMar
+parent w:tblCellMar
+parent w:sdt
+parent w:sdtPr
+parent wp:anchor
+parent wp:inline
+parent w:hdr
+parent w:ftr
+parent w:footnote
+parent w:endnote
+parent w:comment
+parent w:txbxContent
+parent w:settings
+parent w:numPr
+parent w:footnotePr
+parent w:endnotePr
+parent w:numbering
+parent w:abstractNum
+parent w:num
+parent w:lvlOverride
+parent w:lvl
+parent w:hyperlink
+parent w:style
+parent a:r
+parent a:fld
+parent a:br
+parent a:p
+parent c:chart
+parent c:title
+parent c:legend
+parent c:catAx
+parent c:valAx
+parent c:dateAx
+parent c:serAx
+parent c:ser
+parent c:barChart
+parent c:dLbls
+parent c:strRef
+parent c:numRef
+parent c:multiLvlStrRef
+parent c:strCache
+parent c:strLit
+parent c:numCache
+parent c:numLit
+parent c:multiLvlStrCache
+parent c:lvl
+parent c:rich
+parent c:tx
+parent c:scaling
+parent c:dPt
+parent c:dLbl
+parent c:marker
+parent c:lineChart
+parent c:radarChart
+parent c:scatterChart
+parent c:bubbleChart
+parent c:plotArea
+parent c:spPr
+parent dgm:pt
+parent dgm:t
+parent dsp:txBody
+parent dgm:dataModel
+
+cause frozen Python, unmeasured: mc:AlternateContent (markup compatibility, ECMA-376 Part 3) is not in wml.xsd
+overlay w:r = w:rPr | w:br w:t w:contentPart w:delText w:instrText w:delInstrText w:noBreakHyphen w:softHyphen w:dayShort w:monthShort w:yearShort w:dayLong w:monthLong w:yearLong w:annotationRef w:footnoteRef w:endnoteRef w:separator w:continuationSeparator w:sym w:pgNum w:cr w:tab w:object w:pict w:fldChar w:ruby w:footnoteReference w:endnoteReference w:commentReference w:drawing w:ptab w:lastRenderedPageBreak mc:AlternateContent
+cause frozen Python, unmeasured: the 5th edition adds m:oMath and m:oMathPara among a table's children; the table leaves them unlisted (placed last)
+overlay w:tbl = w:proofErr w:permStart w:permEnd w:bookmarkStart w:bookmarkEnd w:moveFromRangeStart w:moveFromRangeEnd w:moveToRangeStart w:moveToRangeEnd w:commentRangeStart w:commentRangeEnd w:customXmlInsRangeStart w:customXmlInsRangeEnd w:customXmlDelRangeStart w:customXmlDelRangeEnd w:customXmlMoveFromRangeStart w:customXmlMoveFromRangeEnd w:customXmlMoveToRangeStart w:customXmlMoveToRangeEnd w:ins w:del w:moveFrom w:moveTo | w:tblPr | w:tblGrid | w:tr w:customXml w:sdt w:proofErr w:permStart w:permEnd w:bookmarkStart w:bookmarkEnd w:moveFromRangeStart w:moveFromRangeEnd w:moveToRangeStart w:moveToRangeEnd w:commentRangeStart w:commentRangeEnd w:customXmlInsRangeStart w:customXmlInsRangeEnd w:customXmlDelRangeStart w:customXmlDelRangeEnd w:customXmlMoveFromRangeStart w:customXmlMoveFromRangeEnd w:customXmlMoveToRangeStart w:customXmlMoveToRangeEnd w:ins w:del w:moveFrom w:moveTo
+cause frozen Python, unmeasured: the 5th edition adds m:oMath and m:oMathPara among a row's children; the table leaves them unlisted (placed last)
+overlay w:tr = w:tblPrEx | w:trPr | w:tc w:customXml w:sdt w:proofErr w:permStart w:permEnd w:bookmarkStart w:bookmarkEnd w:moveFromRangeStart w:moveFromRangeEnd w:moveToRangeStart w:moveToRangeEnd w:commentRangeStart w:commentRangeEnd w:customXmlInsRangeStart w:customXmlInsRangeEnd w:customXmlDelRangeStart w:customXmlDelRangeEnd w:customXmlMoveFromRangeStart w:customXmlMoveFromRangeEnd w:customXmlMoveToRangeStart w:customXmlMoveToRangeEnd w:ins w:del w:moveFrom w:moveTo
+cause frozen Python, unmeasured: w:left and w:start, w:right and w:end share a step here; the 5th edition puts w:start before w:left as steps of their own
+overlay w:tblBorders = w:top | w:left w:start | w:bottom | w:right w:end | w:insideH | w:insideV
+cause frozen Python, unmeasured: w:left and w:start, w:right and w:end share a step here; the 5th edition puts w:start before w:left as steps of their own
+overlay w:tcBorders = w:top | w:left w:start | w:bottom | w:right w:end | w:insideH | w:insideV | w:tl2br | w:tr2bl
+cause frozen Python, unmeasured: w:left and w:start, w:right and w:end share a step here; the 5th edition puts w:start before w:left as steps of their own
+overlay w:tcMar = w:top | w:left w:start | w:bottom | w:right w:end
+cause frozen Python, unmeasured: w:left and w:start, w:right and w:end share a step here; the 5th edition puts w:start before w:left as steps of their own
+overlay w:tblCellMar = w:top | w:left w:start | w:bottom | w:right w:end
+cause frozen Python, unmeasured: the w14:/w15: control kinds and properties are Microsoft extensions ([MS-DOCX]), not in ECMA-376
+overlay w:sdtPr = w:rPr | w:alias | w:tag | w:id | w:lock | w:placeholder | w:temporary | w:showingPlcHdr | w:dataBinding | w:label | w:tabIndex | w:equation w:comboBox w:date w:docPartObj w:docPartList w:dropDownList w:picture w:richText w:text w:citation w:group w:bibliography w14:checkbox w15:color w15:appearance w15:dataBinding w15:webExtensionLinked w15:webExtensionCreated w15:repeatingSection w15:repeatingSectionItem
+cause frozen Python, unmeasured: wp14:sizeRelH and wp14:sizeRelV are Microsoft extensions ([MS-ODRAWXML]), not in ECMA-376
+overlay wp:anchor = wp:simplePos | wp:positionH | wp:positionV | wp:extent | wp:effectExtent | wp:wrapNone wp:wrapSquare wp:wrapTight wp:wrapThrough wp:wrapTopAndBottom | wp:docPr | wp:cNvGraphicFramePr | a:graphic | wp14:sizeRelH | wp14:sizeRelV
+cause frozen Python, unmeasured: schemaLibrary is listed as w:schemaLibrary (ECMA-376 has sl:schemaLibrary), and the 5th edition's w:uiCompat97To2003 is unlisted
+overlay w:settings = w:writeProtection | w:view | w:zoom | w:removePersonalInformation | w:removeDateAndTime | w:doNotDisplayPageBoundaries | w:displayBackgroundShape | w:printPostScriptOverText | w:printFractionalCharacterWidth | w:printFormsData | w:embedTrueTypeFonts | w:embedSystemFonts | w:saveSubsetFonts | w:saveFormsData | w:mirrorMargins | w:alignBordersAndEdges | w:bordersDoNotSurroundHeader | w:bordersDoNotSurroundFooter | w:gutterAtTop | w:hideSpellingErrors | w:hideGrammaticalErrors | w:activeWritingStyle | w:proofState | w:formsDesign | w:attachedTemplate | w:linkStyles | w:stylePaneFormatFilter | w:stylePaneSortMethod | w:documentType | w:mailMerge | w:revisionView | w:trackRevisions | w:doNotTrackMoves | w:doNotTrackFormatting | w:documentProtection | w:autoFormatOverride | w:styleLockTheme | w:styleLockQFSet | w:defaultTabStop | w:autoHyphenation | w:consecutiveHyphenLimit | w:hyphenationZone | w:doNotHyphenateCaps | w:showEnvelope | w:summaryLength | w:clickAndTypeStyle | w:defaultTableStyle | w:evenAndOddHeaders | w:bookFoldRevPrinting | w:bookFoldPrinting | w:bookFoldPrintingSheets | w:drawingGridHorizontalSpacing | w:drawingGridVerticalSpacing | w:displayHorizontalDrawingGridEvery | w:displayVerticalDrawingGridEvery | w:doNotUseMarginsForDrawingGridOrigin | w:drawingGridHorizontalOrigin | w:drawingGridVerticalOrigin | w:doNotShadeFormData | w:noPunctuationKerning | w:characterSpacingControl | w:printTwoOnOne | w:strictFirstAndLastChars | w:noLineBreaksAfter | w:noLineBreaksBefore | w:savePreviewPicture | w:doNotValidateAgainstSchema | w:saveInvalidXml | w:ignoreMixedContent | w:alwaysShowPlaceholderText | w:doNotDemarcateInvalidXml | w:saveXmlDataOnly | w:useXSLTWhenSaving | w:saveThroughXslt | w:showXMLTags | w:alwaysMergeEmptyNamespace | w:updateFields | w:hdrShapeDefaults | w:footnotePr | w:endnotePr | w:compat | w:docVars | w:rsids | m:mathPr | w:attachedSchema | w:themeFontLang | w:clrSchemeMapping | w:doNotIncludeSubdocsInStats | w:doNotAutoCompressPictures | w:forceUpgrade | w:captions | w:readModeInkLockDown | w:smartTagType | w:schemaLibrary | w:shapeDefaults | w:doNotEmbedSmartTags | w:decimalSymbol | w:listSeparator
+cause frozen Python, unmeasured: mc:AlternateContent (markup compatibility, ECMA-376 Part 3) is not in DrawingML's CT_TextParagraph
+overlay a:p = a:pPr | a:r a:br a:fld mc:AlternateContent | a:endParaRPr
+cause frozen Python, unmeasured: one order for every chart kind's series; the kinds' own sequences leave the order of their alternatives open
+overlay c:ser = c:idx | c:order | c:tx | c:spPr | c:invertIfNegative | c:pictureOptions | c:marker | c:explosion | c:dPt | c:dLbls | c:trendline | c:errBars | c:cat | c:xVal | c:val | c:yVal | c:bubbleSize | c:bubble3D | c:shape | c:smooth | c:extLst
+cause frozen Python, unmeasured: c:extLst after c:pt is not in ECMA-376's CT_Lvl
+overlay c:lvl = c:pt | c:extLst
+cause frozen Python, unmeasured: one order for a title's CT_Tx (strRef or rich) and a series' CT_SerTx (strRef or v)
+overlay c:tx = c:strRef | c:rich | c:v
+cause frozen Python, unmeasured: dsp: is Microsoft's diagram drawing ([MS-ODRAWXML]), not in ECMA-376
+overlay dsp:txBody = a:bodyPr | a:lstStyle | a:p
