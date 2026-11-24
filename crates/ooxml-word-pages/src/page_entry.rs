@@ -3,7 +3,10 @@
 //! and each layout fact's contribution of that page, made from the read when first asked
 //! and kept with it -- the text drawn per paragraph, kind and size
 //! ([`crate::layout_facts::sizes::SizesPart`]) and the body cells' lines as measured
-//! ([`crate::layout_facts::columns::CellsPart`]).
+//! ([`crate::layout_facts::columns::CellsPart`]), the body lines' ink
+//! ([`crate::layout_facts::spacers::InkedPart`]) and the body tables' rules and ink
+//! ([`crate::layout_facts::margins::TableInkPart`]) -- each a [`crate::page_parts::Part`]
+//! of the read.
 //!
 //! The entry is kept by the engine's page memo ([`crate::page_reads::ReadMemo`]) under
 //! what the read depends on, so a page another version lays out the same keeps its
@@ -15,16 +18,20 @@
 //! version's naming is the fold's), or paint.
 
 use crate::layout_facts::columns::CellsPart;
+use crate::layout_facts::margins::TableInkPart;
 use crate::layout_facts::sizes::SizesPart;
+use crate::layout_facts::spacers::InkedPart;
+use crate::page_parts::{Part, Slot};
 use crate::page_read::PageRead;
-use std::sync::OnceLock;
 
 /// One page as the page tier keeps it: its read, and its facts' contributions.
 #[derive(Debug, Default)]
 pub struct PageEntry {
     read: PageRead,
-    sizes: OnceLock<SizesPart>,
-    cells: OnceLock<CellsPart>,
+    sizes: Slot<SizesPart>,
+    cells: Slot<CellsPart>,
+    inked: Slot<InkedPart>,
+    tables: Slot<TableInkPart>,
 }
 
 impl PageEntry {
@@ -33,8 +40,7 @@ impl PageEntry {
     pub fn new(read: PageRead) -> PageEntry {
         PageEntry {
             read,
-            sizes: OnceLock::new(),
-            cells: OnceLock::new(),
+            ..PageEntry::default()
         }
     }
 
@@ -47,19 +53,36 @@ impl PageEntry {
     /// The page's text drawn per paragraph, kind and size, made once.
     #[must_use]
     pub fn sizes(&self) -> &SizesPart {
-        self.sizes.get_or_init(|| SizesPart::of(&self.read))
+        self.sizes.get(&self.read)
     }
 
     /// The page's body cells' lines as measured, by table, made once.
     #[must_use]
     pub fn cells(&self) -> &CellsPart {
-        self.cells.get_or_init(|| CellsPart::of(&self.read))
+        self.cells.get(&self.read)
+    }
+
+    /// The page's body lines' characters that are not white space, made once.
+    #[must_use]
+    pub fn inked(&self) -> &InkedPart {
+        self.inked.get(&self.read)
+    }
+
+    /// The body tables the page draws a rule or a line's ink of, with their extents, made
+    /// once.
+    #[must_use]
+    pub fn tables(&self) -> &TableInkPart {
+        self.tables.get(&self.read)
     }
 
     /// What its contributions hold at most, bytes, made or not: what the memo counts for
     /// them beside the read when it keeps the entry.
     #[must_use]
     pub(crate) fn parts_weight(&self) -> usize {
-        SizesPart::weight_of(&self.read) + CellsPart::weight_of(&self.read)
+        let read = &self.read;
+        <SizesPart as Part<PageRead>>::weight_of(read)
+            + <CellsPart as Part<PageRead>>::weight_of(read)
+            + <InkedPart as Part<PageRead>>::weight_of(read)
+            + <TableInkPart as Part<PageRead>>::weight_of(read)
     }
 }
