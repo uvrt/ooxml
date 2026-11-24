@@ -34,8 +34,8 @@ mod tree;
 pub mod trials;
 pub mod uncertain;
 
-use crate::line_text::LineText;
 use crate::laid_entry::LaidEntry;
+use crate::line_text::LineText;
 use crate::page_entry::PageEntry;
 use crate::page_read::{PageBoxes, PageRead};
 use crate::LaidVersion;
@@ -358,7 +358,10 @@ impl<'a> Facts<'a> {
     /// contributions made from its layout facts, asked once.
     #[must_use]
     pub fn laid(&self, page: usize) -> Option<&LaidEntry> {
-        self.laid.get(page)?.get_or_init(|| self.reads.laid_entry(page)).as_deref()
+        self.laid
+            .get(page)?
+            .get_or_init(|| self.reads.laid_entry(page))
+            .as_deref()
     }
 
     /// The 0-based page `page` as a check reads it, painted once.

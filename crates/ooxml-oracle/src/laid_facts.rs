@@ -37,7 +37,10 @@ impl PageReads for Painted<'_> {
     }
 
     fn laid_entry(&self, page: usize) -> Option<Arc<ooxml_word_pages::laid_entry::LaidEntry>> {
-        self.engine.lock().unwrap_or_else(PoisonError::into_inner).laid_entry(&self.version, page)
+        self.engine
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .laid_entry(&self.version, page)
     }
 
     fn resolved_table(

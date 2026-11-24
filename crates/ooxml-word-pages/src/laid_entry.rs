@@ -88,14 +88,20 @@ impl std::fmt::Debug for LaidMemo {
 impl LaidMemo {
     /// An empty memo counted on `budget`.
     pub(crate) fn new(budget: Arc<dyn CacheBudget>) -> LaidMemo {
-        LaidMemo { memo: Memo::new(budget) }
+        LaidMemo {
+            memo: Memo::new(budget),
+        }
     }
 
     /// The entry of the page whose layout facts are `facts`: kept, or made and kept.
     pub(crate) fn entry(&mut self, facts: &Arc<PageFacts>) -> Arc<LaidEntry> {
         let key = Arc::as_ptr(facts) as usize;
         // A weak reference holds its allocation: the address is the same facts' while kept.
-        if let Some(kept) = self.memo.touch(&key).filter(|k| Weak::as_ptr(&k.facts) == Arc::as_ptr(facts)) {
+        if let Some(kept) = self
+            .memo
+            .touch(&key)
+            .filter(|k| Weak::as_ptr(&k.facts) == Arc::as_ptr(facts))
+        {
             return Arc::clone(&kept.entry);
         }
         let entry = Arc::new(LaidEntry::of(facts));

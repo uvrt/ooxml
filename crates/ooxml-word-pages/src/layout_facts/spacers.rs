@@ -110,7 +110,11 @@ impl Part<PageRead> for InkedPart {
 
     fn weight_of(read: &PageRead) -> usize {
         let each = std::mem::size_of::<(Box<str>, Vec<(usize, usize)>)>() + 2 * std::mem::size_of::<(usize, usize)>();
-        let lines = read.texts.iter().filter(|l| l.story.is_none()).map(|l| each + l.path.len());
+        let lines = read
+            .texts
+            .iter()
+            .filter(|l| l.story.is_none())
+            .map(|l| each + l.path.len());
         std::mem::size_of::<InkedPart>() + lines.sum::<usize>()
     }
 }

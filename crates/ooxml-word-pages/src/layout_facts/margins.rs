@@ -198,7 +198,11 @@ pub(crate) struct TableInk {
 impl Part<PageRead> for TableInkPart {
     fn of(read: &PageRead) -> TableInkPart {
         let mut out: Vec<TableInk> = Vec::new();
-        let rules = read.boxes.rules.iter().map(|r| (r.path.as_str(), r.x, r.x + r.width, true));
+        let rules = read
+            .boxes
+            .rules
+            .iter()
+            .map(|r| (r.path.as_str(), r.x, r.x + r.width, true));
         let inks = read
             .texts
             .iter()
@@ -224,8 +228,15 @@ impl Part<PageRead> for TableInkPart {
     fn weight_of(read: &PageRead) -> usize {
         let each = std::mem::size_of::<TableInk>();
         let rules = read.boxes.rules.iter().map(|r| r.path.as_str());
-        let lines = read.texts.iter().filter(|l| l.story.is_none() && l.ink.is_some()).map(|l| l.path.as_str());
-        let tables = rules.chain(lines).filter(|p| p.contains("w:tbl[")).map(|p| each + p.len());
+        let lines = read
+            .texts
+            .iter()
+            .filter(|l| l.story.is_none() && l.ink.is_some())
+            .map(|l| l.path.as_str());
+        let tables = rules
+            .chain(lines)
+            .filter(|p| p.contains("w:tbl["))
+            .map(|p| each + p.len());
         std::mem::size_of::<TableInkPart>() + tables.sum::<usize>()
     }
 }

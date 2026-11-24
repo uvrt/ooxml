@@ -10,12 +10,12 @@ use super::tree::{self, is_w, row_of, W};
 use super::Facts;
 use crate::page_parts::Part;
 use ooxml_word_layout::facts::PageFacts;
-use ooxml_word_model::value::Text;
 use ooxml_word_model::docx::cells::PartCells;
 use ooxml_word_model::docx::text::{shown_runs, View};
 use ooxml_word_model::docx::{at_path, StoryPart};
 use ooxml_word_model::model::{Block, Table};
 use ooxml_word_model::resolve::Sources;
+use ooxml_word_model::value::Text;
 use ooxml_word_model::value::Value;
 use ooxml_xml::Element;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -68,7 +68,9 @@ impl Part<PageFacts> for RowsPart {
     fn of(page: &PageFacts) -> RowsPart {
         let mut tables: Vec<RowsOnPage> = Vec::new();
         for line in page.lines.iter().filter(|l| super::story_kind(&l.path) == "body") {
-            let Some((table, row)) = row_of(&line.path) else { continue };
+            let Some((table, row)) = row_of(&line.path) else {
+                continue;
+            };
             let k = match tables.iter().position(|t| &*t.path == table) {
                 Some(k) => k,
                 None => {
@@ -79,7 +81,9 @@ impl Part<PageFacts> for RowsPart {
                     tables.len() - 1
                 }
             };
-            let Some(rows) = tables.get_mut(k).map(|t| &mut t.rows) else { continue };
+            let Some(rows) = tables.get_mut(k).map(|t| &mut t.rows) else {
+                continue;
+            };
             let at = match rows.binary_search_by_key(&row, |(r, _)| *r) {
                 Ok(at) => at,
                 Err(at) => {
@@ -104,7 +108,11 @@ impl Part<PageFacts> for RowsPart {
         let each = std::mem::size_of::<RowsOnPage>()
             + std::mem::size_of::<(usize, Vec<(Text, usize)>)>()
             + std::mem::size_of::<(Text, usize)>();
-        let lines = page.lines.iter().filter(|l| l.path.contains("w:tbl[")).map(|l| each + l.path.len());
+        let lines = page
+            .lines
+            .iter()
+            .filter(|l| l.path.contains("w:tbl["))
+            .map(|l| each + l.path.len());
         std::mem::size_of::<RowsPart>() + lines.sum::<usize>()
     }
 }
