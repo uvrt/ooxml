@@ -7,26 +7,11 @@
 //! which application's look a size comes from (the caller gives it).
 
 use super::make::Make;
-use super::owned::{Order, Owned};
-use super::series::SER_ORDER;
-use super::title::CHART_ORDER;
+use super::owned::Owned;
 use super::ChartTree;
+use ooxml_schema::orders::local as schema;
 use ooxml_xml::view::{attr, child, children, local, py_int};
 use ooxml_xml::Element;
-
-/// `c:barChart`'s.
-const BAR_ORDER: Order = &[
-    &["barDir"],
-    &["grouping"],
-    &["varyColors"],
-    &["ser"],
-    &["dLbls"],
-    &["gapWidth"],
-    &["overlap"],
-    &["serLines"],
-    &["axId"],
-    &["extLst"],
-];
 
 /// The gap a bar plot without `c:gapWidth` draws (`gap_width`).
 const DEFAULT_GAP: i64 = 150;
@@ -69,7 +54,7 @@ impl ChartTree {
                         .c("legend")
                         .with(make.c("legendPos").with_attr("val", position))
                         .with(make.c("overlay").with_attr("val", "0"));
-                    chart.insert_ordered(Some(CHART_ORDER), legend);
+                    chart.insert_ordered(Some(schema::CHART), legend);
                 }
                 None => {
                     if let Some(at) = chart.place("legend") {
@@ -113,7 +98,7 @@ impl ChartTree {
             for at in area.places("barChart") {
                 if let Some(plot) = area.at(at) {
                     let c = std::sync::Arc::clone(plot.name());
-                    plot.sub(&c, "gapWidth", Some(BAR_ORDER)).set_attr("val", &text);
+                    plot.sub(&c, "gapWidth", Some(schema::BAR_CHART)).set_attr("val", &text);
                 }
             }
         });
@@ -136,10 +121,10 @@ impl ChartTree {
                     ser.remove(at);
                 }
                 if show {
-                    ser.insert_ordered(Some(SER_ORDER), value_labels(&make, labels, pie));
+                    ser.insert_ordered(Some(schema::SER), value_labels(&make, labels, pie));
                 } else if plot_shows {
                     let hidden = make.c("dLbls").with(make.c("delete").with_attr("val", "1"));
-                    ser.insert_ordered(Some(SER_ORDER), hidden);
+                    ser.insert_ordered(Some(schema::SER), hidden);
                 }
             });
         }

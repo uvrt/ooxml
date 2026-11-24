@@ -8,7 +8,7 @@
 # tree reads alike under `p:` (slides), `dsp:` (SmartArt drawings), `xdr:` and `cdr:`, and a
 # strict-namespace part as a transitional one. Only `nsattr` attributes are read in their
 # exact namespace. A view with a prefix has a constructor (`create`); child sequences
-# (`order`) follow the schema, as the repository's insertion tables state them.
+# (`order = NAME`) are generated from the XML schemas (schema/orders.list).
 
 ns a http://schemas.openxmlformats.org/drawingml/2006/main
 ns r http://schemas.openxmlformats.org/officeDocument/2006/relationships
@@ -63,7 +63,7 @@ view GradFill gradFill a | `a:gradFill`: stops, and a linear or path shade.
   child path PathShade path
   child linear LinearShade lin
   attr rotate_with_shape str rotWithShape
-  order gsLst lin/path tileRect
+  order = GRAD_FILL
 view GradientStops gsLst a | `a:gsLst`.
   children stops GradientStop gs
 view GradientStop gs a | `a:gs`: a position in 1/1000 percent and a colour choice.
@@ -80,7 +80,7 @@ view BlipFill blipFill | `a:blipFill` / `p:blipFill`: a picture, cropped, stretc
   child tile Tile tile
   child src_rect RelativeRect srcRect
   child stretch Stretch stretch
-  order blip srcRect tile/stretch
+  order = BLIP_FILL
 view Blip blip a | `a:blip`: the picture's relationship, its extensions and its effects.
   nsattr embed r embed
   nsattr link r link
@@ -126,7 +126,7 @@ view Ln ln a | `a:ln` (and a cell's `a:lnL`, `a:lnR`, `a:lnT`, `a:lnB`): a line'
   child miter Any miter
   child head_end LineEnd headEnd
   child tail_end LineEnd tailEnd
-  order noFill/solidFill/gradFill/pattFill prstDash/custDash round/bevel/miter headEnd tailEnd extLst
+  order = LINE
 view CustomDash custDash a | `a:custDash`.
   children segments DashStop ds
 view DashStop ds a | `a:ds`: a dash and a space in 1/1000 percent of the width.
@@ -189,7 +189,7 @@ view Xfrm xfrm | `a:xfrm` / `p:xfrm` / `dsp:txXfrm`: offset, extent, rotation an
   attr rotation num rot
   attr flip_h str flipH
   attr flip_v str flipV
-  order off ext chOff chExt
+  order = XFRM
 view Point * | `a:off`, `a:chOff`: a point in EMU.
   attr x num x
   attr y num y
@@ -202,7 +202,7 @@ view ShapeProperties spPr | `spPr` in any host: transform, geometry, fill, line 
   child custom CustomGeometry custGeom
   child line Ln ln
   child effects EffectList effectLst
-  order xfrm custGeom/prstGeom noFill/solidFill/gradFill/blipFill/pattFill/grpFill ln effectLst/effectDag scene3d sp3d extLst
+  order = SHAPE_PROPERTIES
 view PresetGeometry prstGeom a | `a:prstGeom`: a preset's name and its adjustments.
   attr preset str prst
   child adjustments GuideList avLst
@@ -297,7 +297,7 @@ view TextBody * | `p:txBody`, `a:txBody`, `c:rich`, `c:txPr`: body properties, a
   child body BodyProperties bodyPr
   child list_style ListStyle lstStyle
   children paragraphs Paragraph p
-  order bodyPr lstStyle p
+  order = TEXT_BODY
 view BodyProperties bodyPr a | `a:bodyPr`: insets in EMU, anchoring, wrapping, autofit, columns, rotation.
   attr inset_left num lIns
   attr inset_right num rIns
@@ -312,7 +312,7 @@ view BodyProperties bodyPr a | `a:bodyPr`: insets in EMU, anchoring, wrapping, a
   child norm_autofit NormAutofit normAutofit
   child shape_autofit Any spAutoFit
   child no_autofit Any noAutofit
-  order prstTxWarp noAutofit/normAutofit/spAutoFit scene3d sp3d/flatTx extLst
+  order = BODY_PROPERTIES
 view NormAutofit normAutofit a | `a:normAutofit`: a font scale and a line-spacing reduction in 1/1000 percent.
   attr font_scale num fontScale
   attr line_reduction num lnSpcReduction
@@ -331,7 +331,7 @@ view Paragraph p a | `a:p`: properties, runs, breaks and fields in order, and th
   child properties ParagraphProperties pPr
   child end RunProperties endParaRPr
   all items TextRun
-  order pPr r/br/fld endParaRPr
+  order = PARAGRAPH
 view ParagraphProperties * | `a:pPr`, `a:defPPr`, `a:lvlNpPr`: alignment, level, indents, spacing, bullet, tabs, default run.
   attr align str algn
   attr level num lvl
@@ -350,7 +350,7 @@ view ParagraphProperties * | `a:pPr`, `a:defPPr`, `a:lvlNpPr`: alignment, level,
   child bullet_size_points Val buSzPts
   child tabs TabList tabLst
   child default_run RunProperties defRPr
-  order lnSpc spcBef spcAft buClrTx/buClr buSzTx/buSzPct/buSzPts buFontTx/buFont buNone/buAutoNum/buChar/buBlip tabLst defRPr extLst
+  order = PARAGRAPH_PROPERTIES
 view Spacing * | `a:lnSpc`, `a:spcBef`, `a:spcAft`: points (1/100 pt) or a percentage (1/1000 percent).
   child points Val spcPts
   child percent Val spcPct
@@ -386,7 +386,7 @@ view RunProperties * | `a:rPr`, `a:defRPr`, `a:endParaRPr`: character formatting
   child east_asian TextFont ea
   child complex_script TextFont cs
   child hyperlink Hyperlink hlinkClick
-  order ln noFill/solidFill/gradFill/blipFill/pattFill/grpFill effectLst/effectDag highlight uLnTx/uLn uFillTx/uFill latin ea cs sym hlinkClick hlinkMouseOver rtl extLst
+  order = RUN_PROPERTIES
 view Hyperlink * | `a:hlinkClick`: a relationship and a tooltip.
   nsattr id r id
   attr tooltip str tooltip
@@ -401,7 +401,7 @@ view Shape sp | `sp`: a shape.
   child style ShapeStyle style
   child text TextBody txBody
   child text_xfrm Xfrm txXfrm
-  order nvSpPr spPr style txBody extLst
+  order = SHAPE
 view NonVisual * | `nvSpPr`, `nvPicPr`, `nvCxnSpPr`, `nvGrpSpPr`, `nvGraphicFramePr`.
   child drawing DrawingProperties cNvPr
   child application ApplicationProperties nvPr
@@ -460,7 +460,7 @@ view Table tbl a | `a:tbl`.
   child properties TableProperties tblPr
   child grid TableGrid tblGrid
   children rows TableRow tr
-  order tblPr tblGrid tr
+  order = TABLE
 view TableProperties tblPr a | `a:tblPr`: which style regions apply, and the style.
   attr first_row str firstRow
   attr last_row str lastRow
@@ -469,7 +469,7 @@ view TableProperties tblPr a | `a:tblPr`: which style regions apply, and the sty
   attr band_row str bandRow
   attr band_col str bandCol
   child style_id Any tableStyleId
-  order noFill/solidFill/gradFill/blipFill/pattFill/grpFill effectLst/effectDag tableStyle/tableStyleId extLst
+  order = TABLE_PROPERTIES
 view TableGrid tblGrid a | `a:tblGrid`.
   children columns GridColumn gridCol
 view GridColumn gridCol a | `a:gridCol`: a width in EMU.
@@ -477,7 +477,7 @@ view GridColumn gridCol a | `a:gridCol`: a width in EMU.
 view TableRow tr a | `a:tr`: a height in EMU and cells.
   attr height num h
   children cells TableCell tc
-  order tc extLst
+  order = TABLE_ROW
 view TableCell tc a | `a:tc`: spans, merges, text and properties.
   attr grid_span num gridSpan
   attr row_span num rowSpan
@@ -485,7 +485,7 @@ view TableCell tc a | `a:tc`: spans, merges, text and properties.
   attr v_merge str vMerge
   child text TextBody txBody
   child properties TableCellProperties tcPr
-  order txBody tcPr extLst
+  order = TABLE_CELL
 view TableCellProperties tcPr a | `a:tcPr`: margins in EMU, anchoring, borders and fill.
   attr margin_left num marL
   attr margin_right num marR
@@ -496,4 +496,4 @@ view TableCellProperties tcPr a | `a:tcPr`: margins in EMU, anchoring, borders a
   child border_right Ln lnR
   child border_top Ln lnT
   child border_bottom Ln lnB
-  order lnL lnR lnT lnB lnTlToBr lnBlToTr cell3D noFill/solidFill/gradFill/blipFill/pattFill/grpFill headers extLst
+  order = TABLE_CELL_PROPERTIES

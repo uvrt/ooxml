@@ -37,6 +37,7 @@ pub const NAMESPACES: &[(&str, &str)] = &[
     ("dgm", "http://schemas.openxmlformats.org/drawingml/2006/diagram"),
     ("dsp", "http://schemas.microsoft.com/office/drawing/2008/diagram"),
     ("x", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+    ("p", "http://schemas.openxmlformats.org/presentationml/2006/main"),
 ];
 
 /// Each parent and its steps, in the description's order (an overlay's cause noted).
@@ -136,3 +137,127 @@ pub const ORDERS: &[(&str, Steps)] = &[
     ("dsp:txBody", &[&["a:bodyPr"], &["a:lstStyle"], &["a:p"]]),
     ("dgm:dataModel", &[&["dgm:ptLst"], &["dgm:cxnLst"], &["dgm:bg"], &["dgm:whole"], &["dgm:extLst"]]),
 ];
+
+/// The orders a reader that finds children by local name inserts with (charts, DrawingML):
+/// each its parents' orders joined, by local name. Apart from [`ORDERS`], so Word's edits
+/// and validation do not widen.
+pub mod local {
+    use super::Steps;
+
+    /// `c:chartSpace`.
+    pub const CHART_SPACE: Steps = &[&["date1904"], &["lang"], &["roundedCorners"], &["AlternateContent"], &["style"], &["clrMapOvr"], &["pivotSource"], &["protection"], &["chart"], &["spPr"], &["txPr"], &["externalData"], &["printSettings"], &["userShapes"], &["extLst"]];
+
+    /// `c:chart`.
+    pub const CHART: Steps = &[&["title"], &["autoTitleDeleted"], &["pivotFmts"], &["view3D"], &["floor"], &["sideWall"], &["backWall"], &["plotArea"], &["legend"], &["plotVisOnly"], &["dispBlanksAs"], &["showDLblsOverMax"], &["extLst"]];
+
+    /// `c:title`.
+    pub const TITLE: Steps = &[&["tx"], &["layout"], &["overlay"], &["spPr"], &["txPr"], &["extLst"]];
+
+    /// `c:tx`.
+    pub const TX: Steps = &[&["strRef"], &["rich"], &["v"]];
+
+    /// `c:view3D`.
+    pub const VIEW_3D: Steps = &[&["rotX"], &["hPercent"], &["rotY"], &["depthPercent"], &["rAngAx"], &["perspective"], &["extLst"]];
+
+    /// `c:plotArea`.
+    pub const PLOT_AREA: Steps = &[&["layout"], &["areaChart", "area3DChart", "lineChart", "line3DChart", "stockChart", "radarChart", "scatterChart", "pieChart", "pie3DChart", "doughnutChart", "barChart", "bar3DChart", "ofPieChart", "surfaceChart", "surface3DChart", "bubbleChart"], &["valAx", "catAx", "dateAx", "serAx"], &["dTable"], &["spPr"], &["extLst"]];
+
+    /// `c:barChart`.
+    pub const BAR_CHART: Steps = &[&["barDir"], &["grouping"], &["varyColors"], &["ser"], &["dLbls"], &["gapWidth"], &["overlap"], &["serLines"], &["axId"], &["extLst"]];
+
+    /// `c:ser`.
+    pub const SER: Steps = &[&["idx"], &["order"], &["tx"], &["spPr"], &["invertIfNegative"], &["pictureOptions"], &["marker"], &["explosion"], &["dPt"], &["dLbls"], &["trendline"], &["errBars"], &["cat"], &["xVal"], &["val"], &["yVal"], &["bubbleSize"], &["bubble3D"], &["shape"], &["smooth"], &["extLst"]];
+
+    /// `c:dPt`.
+    pub const DATA_POINT: Steps = &[&["idx"], &["invertIfNegative"], &["marker"], &["bubble3D"], &["explosion"], &["spPr"], &["pictureOptions"], &["extLst"]];
+
+    /// `c:marker`.
+    pub const MARKER: Steps = &[&["symbol"], &["size"], &["spPr"], &["extLst"]];
+
+    /// `c:numRef`, `c:strRef`, `c:multiLvlStrRef`.
+    pub const DATA_REFERENCE: Steps = &[&["f"], &["numCache", "strCache", "multiLvlStrCache"], &["extLst"]];
+
+    /// `c:numCache`, `c:strCache`.
+    pub const CACHE: Steps = &[&["formatCode"], &["ptCount"], &["pt"], &["extLst"]];
+
+    /// `c:numCache`, `c:strCache`, `c:multiLvlStrCache`.
+    pub const DATA_CACHE: Steps = &[&["formatCode"], &["ptCount"], &["pt", "lvl"], &["extLst"]];
+
+    /// `c:multiLvlStrCache`.
+    pub const LEVELS: Steps = &[&["ptCount"], &["lvl"], &["extLst"]];
+
+    /// `c:lvl`.
+    pub const LEVEL: Steps = &[&["pt"], &["extLst"]];
+
+    /// `c:dLbls`.
+    pub const DATA_LABELS: Steps = &[&["dLbl"], &["delete"], &["numFmt"], &["spPr"], &["txPr"], &["dLblPos"], &["showLegendKey"], &["showVal"], &["showCatName"], &["showSerName"], &["showPercent"], &["showBubbleSize"], &["separator"], &["showLeaderLines"], &["leaderLines"], &["extLst"]];
+
+    /// `c:dLbl`.
+    pub const DATA_LABEL: Steps = &[&["idx"], &["delete"], &["layout"], &["tx"], &["numFmt"], &["spPr"], &["txPr"], &["dLblPos"], &["showLegendKey"], &["showVal"], &["showCatName"], &["showSerName"], &["showPercent"], &["showBubbleSize"], &["separator"], &["extLst"]];
+
+    /// `c:legend`.
+    pub const LEGEND: Steps = &[&["legendPos"], &["legendEntry"], &["layout"], &["overlay"], &["spPr"], &["txPr"], &["extLst"]];
+
+    /// `c:catAx`.
+    pub const CAT_AX: Steps = &[&["axId"], &["scaling"], &["delete"], &["axPos"], &["majorGridlines"], &["minorGridlines"], &["title"], &["numFmt"], &["majorTickMark"], &["minorTickMark"], &["tickLblPos"], &["spPr"], &["txPr"], &["crossAx"], &["crosses", "crossesAt"], &["auto"], &["lblAlgn"], &["lblOffset"], &["tickLblSkip"], &["tickMarkSkip"], &["noMultiLvlLbl"], &["extLst"]];
+
+    /// `c:valAx`.
+    pub const VAL_AX: Steps = &[&["axId"], &["scaling"], &["delete"], &["axPos"], &["majorGridlines"], &["minorGridlines"], &["title"], &["numFmt"], &["majorTickMark"], &["minorTickMark"], &["tickLblPos"], &["spPr"], &["txPr"], &["crossAx"], &["crosses", "crossesAt"], &["crossBetween"], &["majorUnit"], &["minorUnit"], &["dispUnits"], &["extLst"]];
+
+    /// `c:dateAx`.
+    pub const DATE_AX: Steps = &[&["axId"], &["scaling"], &["delete"], &["axPos"], &["majorGridlines"], &["minorGridlines"], &["title"], &["numFmt"], &["majorTickMark"], &["minorTickMark"], &["tickLblPos"], &["spPr"], &["txPr"], &["crossAx"], &["crosses", "crossesAt"], &["auto"], &["lblOffset"], &["baseTimeUnit"], &["majorUnit"], &["majorTimeUnit"], &["minorUnit"], &["minorTimeUnit"], &["extLst"]];
+
+    /// `c:serAx`.
+    pub const SER_AX: Steps = &[&["axId"], &["scaling"], &["delete"], &["axPos"], &["majorGridlines"], &["minorGridlines"], &["title"], &["numFmt"], &["majorTickMark"], &["minorTickMark"], &["tickLblPos"], &["spPr"], &["txPr"], &["crossAx"], &["crosses", "crossesAt"], &["tickLblSkip"], &["tickMarkSkip"], &["extLst"]];
+
+    /// `c:scaling`.
+    pub const SCALING: Steps = &[&["logBase"], &["orientation"], &["max"], &["min"], &["extLst"]];
+
+    /// `a:gradFill`.
+    pub const GRAD_FILL: Steps = &[&["gsLst"], &["lin", "path"], &["tileRect"]];
+
+    /// `a:blipFill`.
+    pub const BLIP_FILL: Steps = &[&["blip"], &["srcRect"], &["tile", "stretch"]];
+
+    /// `a:ln`.
+    pub const LINE: Steps = &[&["noFill", "solidFill", "gradFill", "pattFill"], &["prstDash", "custDash"], &["round", "bevel", "miter"], &["headEnd"], &["tailEnd"], &["extLst"]];
+
+    /// `a:xfrm`.
+    pub const XFRM: Steps = &[&["off"], &["ext"], &["chOff"], &["chExt"]];
+
+    /// `a:spPr`, `c:spPr`.
+    pub const SHAPE_PROPERTIES: Steps = &[&["xfrm"], &["custGeom", "prstGeom"], &["noFill", "solidFill", "gradFill", "blipFill", "pattFill", "grpFill"], &["ln"], &["effectLst", "effectDag"], &["scene3d"], &["sp3d"], &["extLst"]];
+
+    /// `c:rich`, `c:txPr`, `a:txBody`.
+    pub const TEXT_BODY: Steps = &[&["bodyPr"], &["lstStyle"], &["p"]];
+
+    /// `a:bodyPr`.
+    pub const BODY_PROPERTIES: Steps = &[&["prstTxWarp"], &["noAutofit", "normAutofit", "spAutoFit"], &["scene3d"], &["sp3d", "flatTx"], &["extLst"]];
+
+    /// `a:p`.
+    pub const PARAGRAPH: Steps = &[&["pPr"], &["r", "br", "fld", "AlternateContent"], &["endParaRPr"]];
+
+    /// `a:pPr`, `a:defPPr`, `a:lvl1pPr`.
+    pub const PARAGRAPH_PROPERTIES: Steps = &[&["lnSpc"], &["spcBef"], &["spcAft"], &["buClrTx", "buClr"], &["buSzTx", "buSzPct", "buSzPts"], &["buFontTx", "buFont"], &["buNone", "buAutoNum", "buChar", "buBlip"], &["tabLst"], &["defRPr"], &["extLst"]];
+
+    /// `a:rPr`, `a:defRPr`, `a:endParaRPr`.
+    pub const RUN_PROPERTIES: Steps = &[&["ln"], &["noFill", "solidFill", "gradFill", "blipFill", "pattFill", "grpFill"], &["effectLst", "effectDag"], &["highlight"], &["uLnTx", "uLn"], &["uFillTx", "uFill"], &["latin"], &["ea"], &["cs"], &["sym"], &["hlinkClick"], &["hlinkMouseOver"], &["rtl"], &["extLst"]];
+
+    /// `a:tbl`.
+    pub const TABLE: Steps = &[&["tblPr"], &["tblGrid"], &["tr"]];
+
+    /// `a:tblPr`.
+    pub const TABLE_PROPERTIES: Steps = &[&["noFill", "solidFill", "gradFill", "blipFill", "pattFill", "grpFill"], &["effectLst", "effectDag"], &["tableStyle", "tableStyleId"], &["extLst"]];
+
+    /// `a:tr`.
+    pub const TABLE_ROW: Steps = &[&["tc"], &["extLst"]];
+
+    /// `a:tc`.
+    pub const TABLE_CELL: Steps = &[&["txBody"], &["tcPr"], &["extLst"]];
+
+    /// `a:tcPr`.
+    pub const TABLE_CELL_PROPERTIES: Steps = &[&["lnL"], &["lnR"], &["lnT"], &["lnB"], &["lnTlToBr"], &["lnBlToTr"], &["cell3D"], &["noFill", "solidFill", "gradFill", "blipFill", "pattFill", "grpFill"], &["headers"], &["extLst"]];
+
+    /// `p:sp`.
+    pub const SHAPE: Steps = &[&["nvSpPr"], &["spPr"], &["style"], &["txBody"], &["extLst"]];
+}
