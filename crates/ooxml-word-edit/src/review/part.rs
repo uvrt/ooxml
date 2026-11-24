@@ -7,6 +7,7 @@
 //! Must not: read or write outside its part's tree, or decide which records a call
 //! selects (the command does).
 
+use super::placeholders::{emptied_control, show, PlaceholderTexts};
 use super::xml::{
     ancestor, attr, find_all, find_path, insert_in_order, is_record, kind_of, made_with, make, set_attr, RecordKind,
     CELL, DELETED, INSERTED,
@@ -22,44 +23,6 @@ pub(crate) type GridMap = Vec<GridRow>;
 
 /// A row with its cells' first grid column and span.
 pub(crate) type GridRow = (Id, Vec<(Id, i64, i64)>);
-
-/// What an inline control shows when it holds nothing and names no placeholder text: five
-/// spaces (Word 16.106's Reject All of `controls.docx`'s inserted-only control 309).
-const PLACEHOLDER: &str = "     ";
-
-/// What a control's content shows: text, a tab or break, an object, a field, a deleted
-/// text still pending.
-const SHOWN: [&str; 17] = [
-    "t",
-    "delText",
-    "tab",
-    "ptab",
-    "br",
-    "cr",
-    "sym",
-    "noBreakHyphen",
-    "softHyphen",
-    "drawing",
-    "pict",
-    "object",
-    "footnoteReference",
-    "endnoteReference",
-    "fldChar",
-    "fldSimple",
-    "instrText",
-];
-
-/// An element of another vocabulary (an equation, a choice of content): shown.
-fn foreign(work: &Work, node: Id) -> bool {
-    work.is_element(node) && work.name(node).is_some_and(|n| n.namespace() != Some(W))
-}
-
-/// The inline content control (`w:sdt` in a paragraph) `node` stands directly in.
-fn inline_control(work: &Work, node: Id) -> Option<Id> {
-    let content = work.parent(node).filter(|c| work.is(*c, W, "sdtContent"))?;
-    let sdt = work.parent(content).filter(|s| work.is(*s, W, "sdt"))?;
-    work.parent(sdt).filter(|p| work.is(*p, W, "p")).map(|_| sdt)
-}
 
 /// One accept or reject over records of one part.
 pub(crate) struct PartReview<'w, 'o> {
@@ -104,13 +67,21 @@ pub(crate) struct PartReview<'w, 'o> {
     pub(crate) edged_rows: HashSet<Id>,
     /// The record groups of the part as they are listed (its logical changes).
     pub(crate) groups: HashMap<Id, Vec<Id>>,
-    /// Inline content controls the review took content out of, in the order met.
-    pub(crate) emptied_controls: Vec<Id>,
+    /// Content controls the review took content out of, each with where its placeholder
+    /// run would go, in the order met.
+    pub(crate) emptied_controls: Vec<(Id, Id)>,
+    /// The glossary's placeholder texts, by building block name.
+    pub(crate) placeholder_texts: &'o PlaceholderTexts,
 }
 
 impl<'w, 'o> PartReview<'w, 'o> {
     /// A review of `work` (a story part's root), the part's record groups `groups`.
-    pub(crate) fn new(work: &'w mut Work, accept: bool, orders: &'o Orders, groups: HashMap<Id, Vec<Id>>) -> Self {
+    pub(crate) fn new(
+        work: &'w mut Work,
+        accept: bool,
+        (orders, placeholder_texts): (&'o Orders, &'o PlaceholderTexts),
+        groups: HashMap<Id, Vec<Id>>,
+    ) -> Self {
         let mut maps = HashMap::new();
         for table in work.iter(work.root(), W, &["tbl"]) {
             maps.insert(table, super::grid::grid_map(work, table));
@@ -139,6 +110,7 @@ impl<'w, 'o> PartReview<'w, 'o> {
             edged_rows: HashSet::new(),
             groups,
             emptied_controls: Vec::new(),
+            placeholder_texts,
         }
     }
 
@@ -409,36 +381,10 @@ impl<'w, 'o> PartReview<'w, 'o> {
         self.tidy();
     }
 
-    /// Every inline control the review emptied shows its placeholder, as Word 16.106's
-    /// Accept All and Reject All leave one: `w:showingPlcHdr` set, and -- the control
-    /// naming no placeholder text of its own -- five spaces as its content.
+    /// Every control the review emptied shows its placeholder (`super::placeholders`).
     fn show_placeholders(&mut self) {
-        for sdt in std::mem::take(&mut self.emptied_controls) {
-            if self.work.parent(sdt).is_none() {
-                continue;
-            }
-            let (Some(properties), Some(content)) =
-                (self.work.find(sdt, W, "sdtPr"), self.work.find(sdt, W, "sdtContent"))
-            else {
-                continue;
-            };
-            let holds = self
-                .work
-                .descendants(content)
-                .into_iter()
-                .any(|n| self.work.is_any(n, W, &SHOWN) || foreign(self.work, n));
-            if holds {
-                continue;
-            }
-            if self.work.find(properties, W, "showingPlcHdr").is_none() {
-                let shown = make(self.work, "showingPlcHdr", &[]);
-                insert_in_order(self.work, properties, shown, self.orders);
-            }
-            let run = make(self.work, "r", &[]);
-            let text = make(self.work, "t", &[]);
-            crate::text::write::set_spaced_text(self.work, text, PLACEHOLDER);
-            self.work.append(run, text);
-            self.work.append(content, run);
+        for control in std::mem::take(&mut self.emptied_controls) {
+            show(self.work, self.orders, control, self.placeholder_texts);
         }
     }
 
@@ -574,8 +520,8 @@ impl<'w, 'o> PartReview<'w, 'o> {
         } else {
             self.released.extend(crate::inline::relationship_ids(self.work, record));
             self.removing(record);
-            if let Some(sdt) = inline_control(self.work, record) {
-                self.emptied_controls.push(sdt);
+            if let Some(control) = emptied_control(self.work, record) {
+                self.emptied_controls.push(control);
             }
             self.work.remove(record);
         }
