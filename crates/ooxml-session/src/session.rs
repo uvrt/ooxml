@@ -125,6 +125,10 @@ pub struct SessionStats {
     /// `panics{tool}`: the calls of each tool that panicked, each answered as an `internal`
     /// failure ([`crate::panics`]).
     pub panics: BTreeMap<String, u64>,
+    /// `internal{tool}`: the calls of each tool answered as an `internal` failure -- a bug,
+    /// never the caller's input (the edit core's `EditError::Internal` among them; a panic
+    /// too, counted in `panics` as well).
+    pub internal: BTreeMap<String, u64>,
 }
 
 #[derive(Default)]
@@ -134,6 +138,26 @@ pub(crate) struct Counts {
     pub(crate) cancelled: AtomicU64,
     /// `panics{tool}`.
     pub(crate) panics: std::sync::Mutex<BTreeMap<String, u64>>,
+    /// `internal{tool}`.
+    pub(crate) internal: std::sync::Mutex<BTreeMap<String, u64>>,
+}
+
+impl Counts {
+    /// A call of `tool` that failed with `error`: counted as failed, cancelled when it timed
+    /// out, internal when it is a bug.
+    pub(crate) fn failed(&self, tool: &str, error: &ooxml_tools::ToolError) {
+        self.failed.fetch_add(1, Ordering::Relaxed);
+        match error.code().as_str() {
+            "timeout" => {
+                self.cancelled.fetch_add(1, Ordering::Relaxed);
+            }
+            "internal" => {
+                let mut internal = self.internal.lock().unwrap_or_else(PoisonError::into_inner);
+                *internal.entry(tool.to_owned()).or_insert(0) += 1;
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Documents by id, their versions, and the tools that read and change them.
@@ -379,6 +403,12 @@ impl Session {
             panics: self
                 .counts
                 .panics
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone(),
+            internal: self
+                .counts
+                .internal
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .clone(),

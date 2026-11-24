@@ -225,7 +225,7 @@ pub(super) fn copy_row(
     let rows = own_rows(work, table);
     let source = *rows
         .get(index)
-        .ok_or_else(|| EditError::Path(held.found.part.clone()))?;
+        .ok_or_else(|| EditError::no_element(held.found.part.clone()))?;
     let row = work.deep_copy(source);
     current_view(work, row);
     let dropped = leave_marks(work, row);

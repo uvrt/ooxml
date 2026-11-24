@@ -61,9 +61,12 @@ impl RemoveSectionBreak {
         let tracked = matches!(self.policy, RevisionPolicy::Tracked(_));
         let renamed = stamp_document(&mut *sink, &docx)?;
         let entry_id = crate::ranges::renamed_id(&renamed, &entry_id);
-        let tree = sink.doc().tree(&main)?.ok_or_else(|| EditError::NoPart(main.clone()))?;
+        let tree = sink
+            .doc()
+            .tree(&main)?
+            .ok_or_else(|| EditError::no_part(main.clone()))?;
         let wanted: Vec<&[u32]> = paths.iter().map(Vec::as_slice).collect();
-        let path_error = || EditError::Path(main.clone());
+        let path_error = || EditError::no_element(main.clone());
         let (mut work, parent, stretch, nodes) = editable(tree.root(), &paths, &wanted).ok_or_else(path_error)?;
         let (&paragraph, &next_sect) = (
             nodes.first().ok_or_else(path_error)?,
@@ -141,10 +144,10 @@ impl RemoveSectionBreak {
         let all = sections(docx);
         let next = all
             .get(found.index + 1)
-            .ok_or_else(|| EditError::Path(docx.main.clone()))?;
+            .ok_or_else(|| EditError::no_element(docx.main.clone()))?;
         let paragraph_path = found
             .paragraph_path()
-            .ok_or_else(|| EditError::Path(docx.main.clone()))?
+            .ok_or_else(|| EditError::no_element(docx.main.clone()))?
             .to_vec();
         let main = docx.main.clone();
         let entry_id = docx
@@ -153,7 +156,10 @@ impl RemoveSectionBreak {
             .map(|p| p.id)
             .unwrap_or_default();
         let next_path = next.path.to_vec();
-        let tree = sink.doc().tree(&main)?.ok_or_else(|| EditError::NoPart(main.clone()))?;
+        let tree = sink
+            .doc()
+            .tree(&main)?
+            .ok_or_else(|| EditError::no_part(main.clone()))?;
         let following_path = next_sibling_path(tree.root(), &paragraph_path);
         Ok(Planned {
             wanted_id,

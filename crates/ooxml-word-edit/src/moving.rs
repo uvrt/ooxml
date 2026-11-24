@@ -180,7 +180,7 @@ impl MoveBlocks {
                 ));
             }
             let id = block_id(docx, &part, block).unwrap_or_default();
-            let element = element_at(docx, &part, block).ok_or_else(|| EditError::Path(part.clone()))?;
+            let element = element_at(docx, &part, block).ok_or_else(|| EditError::no_element(part.clone()))?;
             if block.kind == BlockKind::Paragraph
                 && ooxml_word_model::docx::find_path(&element, &["pPr", "sectPr"]).is_some()
             {
@@ -406,7 +406,7 @@ impl MoveBlocks {
             return Ok((tracked, warnings));
         };
         for (k, block) in blocks.iter().enumerate() {
-            let element = element_at(docx, part, block).ok_or_else(|| EditError::Path(part.to_owned()))?;
+            let element = element_at(docx, part, block).ok_or_else(|| EditError::no_element(part.to_owned()))?;
             if block.kind == BlockKind::Control {
                 warnings.push((
                     k,
@@ -448,7 +448,7 @@ impl MoveBlocks {
         let mut paths: Vec<Vec<u32>> = blocks.iter().map(|b| b.path.clone()).collect();
         paths.push(anchor.path.clone());
         let wanted: Vec<&[u32]> = paths.iter().map(Vec::as_slice).collect();
-        let path_error = || EditError::Path(part.to_owned());
+        let path_error = || EditError::no_element(part.to_owned());
         // the blocks and the target are read whole, the stretch between passed sealed
         let (mut work, parent, stretch, nodes) =
             editable_opening(root, &paths, &wanted, Opening::Ends).ok_or_else(path_error)?;
@@ -544,7 +544,10 @@ impl MoveBlocks {
         let docx = sink.docx()?;
         let (part, blocks, ids, anchor) = self.plan(sink.doc(), &docx)?;
         self.read_planned(sink, by_id, &docx, (&part, &ids, &anchor));
-        let before = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
+        let before = sink
+            .doc()
+            .tree(&part)?
+            .ok_or_else(|| EditError::no_part(part.clone()))?;
         let Some(arranged) = self.arrange(before.root(), &part, (&blocks, &ids, &anchor))? else {
             return Ok(BlocksMoved {
                 id: ids.first().cloned(),
@@ -580,17 +583,20 @@ impl MoveBlocks {
             });
         }
         let docx = sink.docx()?;
-        let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
+        let tree = sink
+            .doc()
+            .tree(&part)?
+            .ok_or_else(|| EditError::no_part(part.clone()))?;
         // arranged again only where the stamping changed the part (its tree is another)
         let (work, parent, stretch) = if Arc::ptr_eq(tree.root(), before.root()) {
             arranged
         } else {
             self.arrange(tree.root(), &part, (&blocks, &ids, &anchor))?
-                .ok_or_else(|| EditError::Path(part.clone()))?
+                .ok_or_else(|| EditError::no_element(part.clone()))?
         };
         let built = work
             .build_content(work.root())
-            .ok_or_else(|| EditError::Path(part.clone()))?;
+            .ok_or_else(|| EditError::no_element(part.clone()))?;
         let count = (stretch.1 - stretch.0) as usize + 1;
         sink.splice_stretch(
             &docx,

@@ -96,7 +96,7 @@ impl AddChart {
                 let tree = docx
                     .package
                     .tree(part)?
-                    .ok_or_else(|| EditError::NoPart(part.to_owned()))?;
+                    .ok_or_else(|| EditError::no_part(part.to_owned()))?;
                 let data =
                     chart_data(tree.root()).map_err(|_| chart_not_supported("a new chart the model cannot read"))?;
                 return add_scale(address, tree.root(), &data, scale, self.finish.axis)

@@ -73,7 +73,7 @@ pub(crate) fn resolve_block_with(ids: &crate::Ids, docx: &Docx, id: &str) -> Res
         })?;
         let part = docx
             .part(&found.part)
-            .ok_or_else(|| EditError::NoPart(found.part.clone()))?;
+            .ok_or_else(|| EditError::no_part(found.part.clone()))?;
         let level = found.level(part);
         if level != "block" {
             let level = if level == "inline" { "line" } else { level };
@@ -105,7 +105,7 @@ pub(crate) fn resolve_block_with(ids: &crate::Ids, docx: &Docx, id: &str) -> Res
                 .ids
                 .tables()
                 .get(k)
-                .ok_or_else(|| EditError::Path(story.part.clone()))?;
+                .ok_or_else(|| EditError::no_element(story.part.clone()))?;
             Ok((
                 story.part.clone(),
                 BlockAt {
@@ -145,12 +145,15 @@ pub(crate) fn span_or_block(doc: &WordDoc, docx: &Docx, address: &str) -> Result
     let Some((part, anchor)) = ends.first().cloned() else {
         return Err(EditError::Refused(format!("{given:?}: no blocks")));
     };
-    let story = docx.part(&part).ok_or_else(|| EditError::NoPart(part.clone()))?;
-    let (_, above) = anchor.path.split_last().ok_or_else(|| EditError::Path(part.clone()))?;
+    let story = docx.part(&part).ok_or_else(|| EditError::no_part(part.clone()))?;
+    let (_, above) = anchor
+        .path
+        .split_last()
+        .ok_or_else(|| EditError::no_element(part.clone()))?;
     let container = if above.is_empty() {
         story.root()
     } else {
-        at_path(story.root(), above).ok_or_else(|| EditError::Path(part.clone()))?
+        at_path(story.root(), above).ok_or_else(|| EditError::no_element(part.clone()))?
     };
     let siblings: Vec<BlockAt> = container
         .children()
@@ -181,7 +184,7 @@ pub(crate) fn span_or_block(doc: &WordDoc, docx: &Docx, address: &str) -> Result
         _ => (Some(0), index(&anchor)),
     };
     let (Some(a), Some(b)) = (a, b) else {
-        return Err(EditError::Path(part));
+        return Err(EditError::no_element(part));
     };
     if b < a {
         return Err(EditError::Refused(format!(

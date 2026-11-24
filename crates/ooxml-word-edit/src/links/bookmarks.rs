@@ -67,7 +67,7 @@ fn place(doc: &WordDoc, docx: &Docx, address: &str) -> Result<Place> {
             last_block: None,
         });
     };
-    let story = docx.part(&part).ok_or_else(|| EditError::NoPart(part.clone()))?;
+    let story = docx.part(&part).ok_or_else(|| EditError::no_part(part.clone()))?;
     let (Some(first), Some(last)) = (blocks.first(), blocks.last()) else {
         return Err(EditError::Refused(format!("{address} holds no paragraph to mark")));
     };
@@ -164,7 +164,7 @@ impl AddBookmark {
         }
         let span = Span::of(sink.doc(), &docx, &place.range)?;
         let (Some(first), Some(last)) = (span.first(), span.last()) else {
-            return Err(EditError::Path(span.part.clone()));
+            return Err(EditError::no_element(span.part.clone()));
         };
         let length = |element: &Arc<Element>| {
             let work = Work::of(element, Vec::new());
@@ -180,7 +180,10 @@ impl AddBookmark {
         let renamed = stamp_document(&mut *sink, &docx)?;
         let (value, offset) = sink.marker_id()?;
         let docx = sink.docx()?;
-        let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
+        let tree = sink
+            .doc()
+            .tree(&part)?
+            .ok_or_else(|| EditError::no_part(part.clone()))?;
         let root = tree.root();
         let start_anchor = place.first_block.as_ref().map_or(first_path, |b| b.path.clone());
         let end_anchor = place.last_block.as_ref().map_or(last_path, |b| b.path.clone());
@@ -191,7 +194,7 @@ impl AddBookmark {
         if let Some(next) = &next {
             wanted.push(next);
         }
-        let path_error = || EditError::Path(part.clone());
+        let path_error = || EditError::no_element(part.clone());
         let (mut work, parent, stretch, found) = editable(root, &paths, &wanted).ok_or_else(path_error)?;
         let (&start_node, &end_node) = (
             found.first().ok_or_else(path_error)?,
@@ -333,7 +336,7 @@ impl Marks {
         let (parent, mut index) = if before_block {
             let parent = work
                 .parent(node)
-                .ok_or_else(|| EditError::Path("the control's parent".to_owned()))?;
+                .ok_or_else(|| EditError::no_element("the control's parent".to_owned()))?;
             (parent, work.index(node).unwrap_or(0))
         } else {
             crate::inline::position(work, node, offset)?

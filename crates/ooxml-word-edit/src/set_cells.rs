@@ -270,7 +270,7 @@ impl SetCells {
         let tree = sink
             .doc()
             .tree(&found.part)?
-            .ok_or_else(|| EditError::NoPart(found.part.clone()))?;
+            .ok_or_else(|| EditError::no_part(found.part.clone()))?;
         let places = grid(tree.root(), &found.rows);
         let mut out = CellsSet {
             edits: Vec::new(),
@@ -393,7 +393,7 @@ pub(crate) fn set_cell(
     let tree = sink
         .doc()
         .tree(&found.part)?
-        .ok_or_else(|| EditError::NoPart(found.part.clone()))?;
+        .ok_or_else(|| EditError::no_part(found.part.clone()))?;
     let places = grid(tree.root(), &found.rows);
     let mut edits = Vec::new();
     write_cell(sink, &found, &places, (row, column), (text, true), &mut edits)?;
@@ -420,7 +420,7 @@ fn write_cell(
     let tree = sink
         .doc()
         .tree(&table.part)?
-        .ok_or_else(|| EditError::NoPart(table.part.clone()))?;
+        .ok_or_else(|| EditError::no_part(table.part.clone()))?;
     let row_path = table.rows.get(r).ok_or_else(missing)?;
     let path = cell_path(tree.root(), row_path, c).ok_or_else(missing)?;
     let docx = sink.docx()?;

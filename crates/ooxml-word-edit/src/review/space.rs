@@ -339,14 +339,14 @@ impl Copy {
     /// XML is as it was).
     fn put(&self, sink: &mut EditSink<'_, '_>, part: &str, changed_only: bool) -> Result<()> {
         sink.keep_written(part, None, &self.work);
-        let root: Arc<Element> = self.work.build().ok_or_else(|| EditError::Path(part.to_owned()))?;
+        let root: Arc<Element> = self.work.build().ok_or_else(|| EditError::unbuilt(part.to_owned()))?;
         let Some(within) = &self.within else {
             if changed_only && *root == **self.tree.root() {
                 return Ok(());
             }
             return sink.put(part, self.tree.with_root(root));
         };
-        let holder = self.holder().ok_or_else(|| EditError::Path(part.to_owned()))?;
+        let holder = self.holder().ok_or_else(|| EditError::no_element(part.to_owned()))?;
         let old = holder
             .children()
             .iter()

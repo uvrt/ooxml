@@ -34,7 +34,9 @@ pub(super) fn mark_reply(
             continue;
         }
         let part = story.part.clone();
-        let work = space.work(doc, &part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
+        let work = space
+            .work(doc, &part)?
+            .ok_or_else(|| EditError::no_part(part.clone()))?;
         let root = work.root();
         for tag in MARKERS {
             for node in work.iter(root, W, &[tag]) {

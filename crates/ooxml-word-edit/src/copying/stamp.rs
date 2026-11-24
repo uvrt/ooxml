@@ -39,7 +39,7 @@ enum Stampable {
 /// When the ledger cannot be written.
 pub(crate) fn stamp(sink: &mut EditSink<'_, '_>, work: &mut Work, place: &Place, elements: &[Id]) -> Result<Stamped> {
     let part = &place.part;
-    let tree = sink.doc().tree(part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
+    let tree = sink.doc().tree(part)?.ok_or_else(|| EditError::no_part(part.clone()))?;
     let w14 = w14_prefix(tree.root(), &place.container);
     let wp14 = wp14_prefix(tree.root(), &place.container);
     let prefix = if place.story == "body" {

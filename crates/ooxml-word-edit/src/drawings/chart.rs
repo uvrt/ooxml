@@ -202,8 +202,11 @@ impl<P: ChartParts> InsertChart<P> {
             ids.get(1).map_or("", String::as_str),
         );
         let parsed = ooxml_xml::parse(self.xml(number, &rid, drawn).as_bytes(), &Limits::default().xml)
-            .map_err(|e| EditError::Refused(e.to_string()))?;
-        let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
+            .map_err(|e| EditError::own_xml(e))?;
+        let tree = sink
+            .doc()
+            .tree(&part)?
+            .ok_or_else(|| EditError::no_part(part.clone()))?;
         let mut scope = scope_above(tree.root(), &found.path);
         scope.extend_from_slice(found.element.namespaces());
         let drawing = crate::namespaces::strip_redundant(parsed.root(), &mut scope);
@@ -217,7 +220,9 @@ impl<P: ChartParts> InsertChart<P> {
             ensure_w14: false,
         };
         rewrite(sink, &at, how, |sink, work| {
-            let drawing = work.adopt(&drawing).ok_or_else(|| EditError::Path(part.clone()))?;
+            let drawing = work
+                .adopt(&drawing)
+                .ok_or_else(|| EditError::no_element(part.clone()))?;
             let run = crate::inline::new_run(work, work.root(), place.offset, &[drawing])?;
             no_proof(work, run);
             let wrote = sink.track(work, |work, stamp, _| {

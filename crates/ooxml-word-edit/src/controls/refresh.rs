@@ -65,14 +65,14 @@ impl Command<WordDoc> for RefreshBound {
             let docx = sink.docx()?;
             let found = located(&docx, &id)?;
             let at = InParagraph::above(&docx, &found.part, &found.path)
-                .ok_or_else(|| EditError::Path(found.part.clone()))?;
+                .ok_or_else(|| EditError::no_element(found.part.clone()))?;
             let inside = found.path.get(at.path.len()..).unwrap_or_default().to_vec();
             let how = Rewrite {
                 renew: true,
                 ensure_w14: false,
             };
             rewrite(&mut sink, &at, how, |sink, work| {
-                let sdt = at_place(work, &inside).ok_or_else(|| EditError::Path(at.part.clone()))?;
+                let sdt = at_place(work, &inside).ok_or_else(|| EditError::no_element(at.part.clone()))?;
                 let wrote = fill_inline(sink, work, sdt, &value)?;
                 drop_placeholder(work, sdt);
                 Ok(((), wrote))

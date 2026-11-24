@@ -70,17 +70,17 @@ pub(super) fn bring(
         };
         let part = ensure_notes_part(sink, kind)?;
         let doc = sink.doc().clone();
-        let tree = doc.tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
+        let tree = doc.tree(&part)?.ok_or_else(|| EditError::no_part(part.clone()))?;
         let mut number = next_number(tree.root(), kind);
         let into = stories
             .work(&doc, &part)?
-            .ok_or_else(|| EditError::NoPart(part.clone()))?;
+            .ok_or_else(|| EditError::no_part(part.clone()))?;
         for node in references {
             let old = work.get(node, Some(W), "id").unwrap_or("").to_owned();
             let Some(note) = notes.get(&old) else { continue };
             let copy = into
                 .adopt_copy(note)
-                .ok_or_else(|| EditError::Path(source_part.clone()))?;
+                .ok_or_else(|| EditError::no_element(source_part.clone()))?;
             let id = number.to_string();
             let attribute = into.qname(W, "id", "w");
             into.set(copy, attribute, &id);
@@ -130,14 +130,14 @@ impl NotesCopied {
         for (part, note) in &self.made {
             let story = docx.part(part).map_or_else(String::new, |s| s.story.clone());
             let seed = format!("{part}\0import");
-            let work = stories.get_mut(part).ok_or_else(|| EditError::NoPart(part.clone()))?;
+            let work = stories.get_mut(part).ok_or_else(|| EditError::no_part(part.clone()))?;
             let nodes: Vec<Id> = work.iter(*note, W, &["p", "tr"]);
             for node in nodes {
                 let drawn = sink.draw(&seed, 2)?;
                 let (Some(para), Some(text)) = (drawn.first(), drawn.get(1)) else {
-                    return Err(EditError::Path(part.clone()));
+                    return Err(EditError::no_element(part.clone()));
                 };
-                let work = stories.get_mut(part).ok_or_else(|| EditError::NoPart(part.clone()))?;
+                let work = stories.get_mut(part).ok_or_else(|| EditError::no_part(part.clone()))?;
                 for (local, value) in [("paraId", para), ("textId", text)] {
                     let attribute = work.qname(W14, local, "w14");
                     work.set(node, attribute, value);
@@ -146,7 +146,7 @@ impl NotesCopied {
                     created.push(format!("{story}/p:{para}"));
                 }
             }
-            let work = stories.get(part).ok_or_else(|| EditError::NoPart(part.clone()))?;
+            let work = stories.get(part).ok_or_else(|| EditError::no_part(part.clone()))?;
             let drawings = !work.iter(*note, WP, &["inline", "anchor"]).is_empty();
             match parts.iter_mut().find(|(p, _)| p == part) {
                 Some(found) => found.1 |= drawings,
@@ -172,7 +172,7 @@ impl NotesCopied {
         let orders = shared.facts.orders();
         let mut dated: Vec<String> = Vec::new();
         for (part, note) in &self.made {
-            let work = stories.get_mut(part).ok_or_else(|| EditError::NoPart(part.clone()))?;
+            let work = stories.get_mut(part).ok_or_else(|| EditError::no_part(part.clone()))?;
             let content: Vec<Id> = work
                 .children(*note)
                 .iter()

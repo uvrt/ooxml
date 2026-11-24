@@ -115,11 +115,11 @@ pub(crate) fn rewrite<R>(
     write: impl FnOnce(&mut EditSink<'_, '_>, &mut Work) -> Result<(R, TextWrite)>,
 ) -> Result<R> {
     let part = at.part.as_str();
-    let path_error = || EditError::Path(part.to_owned());
+    let path_error = || EditError::no_element(part.to_owned());
     let tree = sink
         .doc()
         .tree(part)?
-        .ok_or_else(|| EditError::NoPart(part.to_owned()))?;
+        .ok_or_else(|| EditError::no_part(part.to_owned()))?;
     let element = Arc::clone(at_path(tree.root(), &at.path).ok_or_else(path_error)?);
     let mut work = Work::of(&element, scope_above(tree.root(), &at.path));
     sink.load_written(part, Some(&at.path), &mut work);

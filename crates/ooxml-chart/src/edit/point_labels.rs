@@ -12,9 +12,9 @@
 use super::look::{value_labels, LabelLook};
 use super::make::Make;
 use super::owned::Owned;
-use super::series::{Hash, SER_ORDER};
-use super::text_style::DLBLS_ORDER;
+use super::series::Hash;
 use super::{ChartTree, DataError};
+use ooxml_schema::orders::local as schema;
 use ooxml_xml::view::{attr, child, children, local};
 use ooxml_xml::Element;
 use std::sync::Arc;
@@ -158,7 +158,7 @@ impl ChartTree {
                     if let Some(flag) = holder.child("showVal") {
                         flag.set_attr("val", "0");
                     }
-                    ser.insert_ordered(Some(SER_ORDER), holder)
+                    ser.insert_ordered(Some(schema::SER), holder)
                 }
             };
             if let Some(formula) = look.cells {
@@ -173,7 +173,7 @@ impl ChartTree {
                 match holder.child("dLblPos") {
                     Some(node) => node.set_attr("val", code),
                     None => {
-                        holder.insert_ordered(Some(DLBLS_ORDER), make.c("dLblPos").with_attr("val", code));
+                        holder.insert_ordered(Some(schema::DATA_LABELS), make.c("dLblPos").with_attr("val", code));
                     }
                 }
             }
@@ -366,7 +366,7 @@ fn link_range(ser: &mut Owned, make: &Make, formula: &str, labels: &[String]) {
     let ext = make.top15(make.c("ext").with_attr("uri", LABEL_RANGE_EXT).with(range));
     let at = match ser.place("extLst") {
         Some(at) => at,
-        None => ser.insert_ordered(Some(SER_ORDER), make.c("extLst")),
+        None => ser.insert_ordered(Some(schema::SER), make.c("extLst")),
     };
     if let Some(list) = ser.at(at) {
         list.insert(0, ext);
@@ -377,7 +377,7 @@ fn link_range(ser: &mut Owned, make: &Make, formula: &str, labels: &[String]) {
 fn range_flag(holder: &mut Owned, make: &Make) {
     let list_at = match holder.place("extLst") {
         Some(at) => at,
-        None => holder.insert_ordered(Some(DLBLS_ORDER), make.c("extLst")),
+        None => holder.insert_ordered(Some(schema::DATA_LABELS), make.c("extLst")),
     };
     let Some(list) = holder.at(list_at) else { return };
     let found = list

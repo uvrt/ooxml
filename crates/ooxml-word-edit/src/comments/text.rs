@@ -62,10 +62,10 @@ impl Command<WordDoc> for EditCommentText {
             space.work(&held, &comment.part)?;
             let node = space
                 .locate(&comment.part, &comment.path)
-                .ok_or_else(|| EditError::Path(comment.part.clone()))?;
+                .ok_or_else(|| EditError::no_element(comment.part.clone()))?;
             let work = space
                 .get_mut(&comment.part)
-                .ok_or_else(|| EditError::NoPart(comment.part.clone()))?;
+                .ok_or_else(|| EditError::no_part(comment.part.clone()))?;
             for paragraph in work.children(node).to_vec() {
                 if work.is(paragraph, W, "p") {
                     work.remove(paragraph);
@@ -76,7 +76,7 @@ impl Command<WordDoc> for EditCommentText {
             for (k, line) in lines.iter().enumerate() {
                 let drawn = sink.draw(&seed, 2)?;
                 let (Some(para), Some(text_id)) = (drawn.first(), drawn.get(1)) else {
-                    return Err(EditError::Path(comment.part.clone()));
+                    return Err(EditError::no_element(comment.part.clone()));
                 };
                 let para = if k + 1 == lines.len() {
                     comment.last_para.clone()
@@ -85,7 +85,7 @@ impl Command<WordDoc> for EditCommentText {
                 };
                 let work = space
                     .get_mut(&comment.part)
-                    .ok_or_else(|| EditError::NoPart(comment.part.clone()))?;
+                    .ok_or_else(|| EditError::no_part(comment.part.clone()))?;
                 let paragraph = comment_paragraph(work, node, (&para, text_id), (&style, &reference), (k == 0, line));
                 work.append(node, paragraph);
             }
