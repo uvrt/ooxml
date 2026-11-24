@@ -14,6 +14,8 @@ import re
 import zipfile
 from typing import Any
 
+from compare import KEYWORD_ONLY_FIELDS
+
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 W14 = "http://schemas.microsoft.com/office/word/2010/wordml"
 _W = "{%s}" % W
@@ -50,6 +52,51 @@ def _text(element: Any, tags: tuple[str, ...]) -> str:
     return "".join(node.text or "" for node in element.iter(*(_W + t for t in tags)))
 
 
+def _field_results(root: Any, keywords: frozenset[str]) -> dict[Any, tuple[int, str]]:
+    """Each ``w:t`` in the result of a field with one of these keywords, in a story: the field's
+    occurrence (counted in document order) and keyword.  Simple fields and complex ones (which
+    may span paragraphs and nest) alike; the innermost field a text is the result of counts."""
+    out: dict[Any, tuple[int, str]] = {}
+    stack: list[list[Any]] = []          # [occurrence, instruction, in its result]
+    count = 0
+    for node in root.iter(_W + "fldSimple", _W + "fldChar", _W + "instrText", _W + "t"):
+        tag = node.tag
+        if tag == _W + "fldSimple":
+            count += 1
+            keyword = (node.get(_W + "instr") or "").split(None, 1)[0:1]
+            if keyword and keyword[0].upper() in keywords:
+                for text in node.iter(_W + "t"):
+                    out.setdefault(text, (count, keyword[0].upper()))
+        elif tag == _W + "fldChar":
+            kind = node.get(_W + "fldCharType")
+            if kind == "begin":
+                count += 1
+                stack.append([count, "", False])
+            elif kind == "separate" and stack:
+                stack[-1][2] = True
+            elif kind == "end" and stack:
+                stack.pop()
+        elif tag == _W + "instrText":
+            if stack and not stack[-1][2]:
+                stack[-1][1] += node.text or ""
+        elif stack and stack[-1][2] and node not in out:
+            keyword = stack[-1][1].split(None, 1)[0:1]
+            if keyword and keyword[0].upper() in keywords:
+                out[node] = (stack[-1][0], keyword[0].upper())
+    return out
+
+
+def _paragraph_fields(paragraph: Any, results: dict[Any, tuple[int, str]]) -> list[list[str]]:
+    """The ``[keyword, result]`` of each field (of :func:`_field_results`) with text in this
+    paragraph, the result as the paragraph holds it."""
+    found: dict[int, list[str]] = {}
+    for text in paragraph.iter(_W + "t"):
+        if text in results:
+            occurrence, keyword = results[text]
+            found.setdefault(occurrence, [keyword, ""])[1] += text.text or ""
+    return [found[k] for k in sorted(found)]
+
+
 def has_markup(data: bytes) -> bool:
     """Whether the document has tracked changes or comments (Word exports its final view)."""
     for body in _parts(data).values():
@@ -60,8 +107,9 @@ def has_markup(data: bytes) -> bool:
 
 def kept_facts(data: bytes) -> dict[str, Any]:
     """What a re-save must keep, story by story: every paragraph's paraId and text (deleted text
-    apart), the kind, author and date of the revisions, every comment's author, initials, date and
-    text.  Paragraphs without a paraId are listed by text alone (Word gives them one).
+    apart; the results of the fields ``compare`` takes by keyword only listed with it, as
+    ``fields``, for ``compare.masked_text``), the kind, author and date of the revisions, every
+    comment's author, initials, date and text.  Paragraphs without a paraId are listed by text alone (Word gives them one).
 
     Three allowances for how Word saves, each measured by the suite (Word 16.106 for Mac; the
     evidence is Word's re-save in ``observations/suite-word.json``):
@@ -94,6 +142,7 @@ def kept_facts(data: bytes) -> dict[str, Any]:
             for comment in [c for c in root.iter(_W + "comment") if c.get(_W + "id") in dropped]:
                 comment.getparent().remove(comment)
         story = name.removeprefix("word/").removesuffix(".xml")
+        results = _field_results(root, KEYWORD_ONLY_FIELDS)
         paragraphs = []
         for paragraph in root.iter(_W + "p"):
             note = next((a for a in paragraph.iterancestors(_W + "footnote", _W + "endnote")), None)
@@ -101,6 +150,9 @@ def kept_facts(data: bytes) -> dict[str, Any]:
                                                               "continuationNotice"):
                 continue
             entry = {"id": paragraph.get("{%s}paraId" % W14), "text": _text(paragraph, ("t",))}
+            fields = _paragraph_fields(paragraph, results)
+            if fields:
+                entry["fields"] = fields
             deleted = _text(paragraph, ("delText",))
             if deleted:
                 entry["deleted"] = deleted
@@ -133,7 +185,7 @@ class Reader:
     def _call(self, session: Any, tool: str, **arguments: Any) -> Any:
         result = self.box.dispatch(session, tool, {"doc": "d1", **arguments})
         if not result.ok:
-            raise RuntimeError(f"{tool} {arguments}: {result.to_json().get('error')}")
+            raise ToolsRefused(f"{tool} {arguments}: {result.to_json().get('error')}")
         return result
 
     def _markdown(self, session: Any) -> str:
@@ -182,6 +234,20 @@ class Reader:
         out = self._call(session, "word_fields", action="list").data
         return [[f["keyword"], " ".join((f.get("result") or "").split())] for f in out
                 if f["keyword"] not in VOLATILE_FIELDS]
+
+
+class ToolsRefused(RuntimeError):
+    """The tools refused a call a check needs to read their output (``word_inspect``'s layout of
+    a text box it cannot lay out yet, say): their answer is not there to compare."""
+
+
+def answer(reader: Reader, data: bytes, check: str) -> Any:
+    """:func:`ours`, or the :class:`ToolsRefused` that stood in its way (a difference from
+    Word's answer, ``compare.judge``)."""
+    try:
+        return ours(reader, data, check)
+    except ToolsRefused as refused:
+        return refused
 
 
 #: The checks, cheapest first, each the tools' answer and Word's compared (``compare.judge``).
