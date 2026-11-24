@@ -942,11 +942,11 @@
 {"digest":"sha256:ec576fe4c12dfecce2b3314013a5d98a","id":"review:91e077e476431261","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:ec576fe4c12dfecce2b3314013a5d98a","id":"review:a8dab8cb756cd259","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:ec576fe4c12dfecce2b3314013a5d98a","id":"review:30a1880d0669c6eb","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ea0ce4da2f608391588b231383686abb","id":"review:db2ebe912028c770","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ea0ce4da2f608391588b231383686abb","id":"review:389d298032606d0e","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ea0ce4da2f608391588b231383686abb","id":"review:2d9238835083bfd5","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ea0ce4da2f608391588b231383686abb","id":"review:c0ba086e7adfbcd1","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ea0ce4da2f608391588b231383686abb","id":"review:f5c86c47ea68baee","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:7a2e6ff5f4206000207a84078b4b71e7","id":"review:db2ebe912028c770","source":"Word 16.106: emptied controls show their placeholder on Accept/Reject All (fu-word3 measure b3-accept/b3-reject, #355)"}
+{"digest":"sha256:7a2e6ff5f4206000207a84078b4b71e7","id":"review:389d298032606d0e","source":"Word 16.106: emptied controls show their placeholder on Accept/Reject All (fu-word3 measure b3-accept/b3-reject, #355)"}
+{"digest":"sha256:7a2e6ff5f4206000207a84078b4b71e7","id":"review:2d9238835083bfd5","source":"Word 16.106: emptied controls show their placeholder on Accept/Reject All (fu-word3 measure b3-accept/b3-reject, #355)"}
+{"digest":"sha256:7a2e6ff5f4206000207a84078b4b71e7","id":"review:c0ba086e7adfbcd1","source":"Word 16.106: emptied controls show their placeholder on Accept/Reject All (fu-word3 measure b3-accept/b3-reject, #355)"}
+{"digest":"sha256:7a2e6ff5f4206000207a84078b4b71e7","id":"review:f5c86c47ea68baee","source":"Word 16.106: emptied controls show their placeholder on Accept/Reject All (fu-word3 measure b3-accept/b3-reject, #355)"}
 {"digest":"sha256:6bf90aa9dc59af90c52fb37a2ddea7aa","id":"review:6073fc75560a8ead","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:12c5f7c4ee5b54a86a895548037466cc","id":"set_text:7c6b8a08f7b2cada","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:791d50d6050e525bd1a5c85fe723ab02","id":"set_text:6a08a50b134cdbe5","source":"frozen Python a512c901, unmeasured"}
@@ -1620,17 +1620,17 @@
 {"digest":"sha256:2cf1ec76bf1c09351d5338260901c123","id":"structure:7bfbeedc7e70f9b8","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:204b628f6330163c51490fc12d967d72","id":"structure:4d925d81d1818997","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:3baba645e53d55c601adba1e144fb648","id":"structure:8ae03e9287c7967f","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:2e134b941779ad346eb64cab0e5ea725","id":"structure:a36c29db8afcfbf1","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:00a47a317312f4862b0589b58f8baaea","id":"structure:a36c29db8afcfbf1","source":"Word 16.106: emptied controls show their placeholder on Accept/Reject All (fu-word3 measure b3-accept/b3-reject, #355)"}
 {"digest":"sha256:0c698a0e39e4a1dda0a9095af5e1de65","id":"structure:541ea76a5bd50960","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:fa8fcb11d79ef141ccc090a908d639a2","id":"structure:d08c87d4f571c308","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:204b628f6330163c51490fc12d967d72","id":"structure:d7a313dea497fcdc","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:3baba645e53d55c601adba1e144fb648","id":"structure:77fc029c7fef1571","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:2e134b941779ad346eb64cab0e5ea725","id":"structure:529dd11414bc4591","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:00a47a317312f4862b0589b58f8baaea","id":"structure:529dd11414bc4591","source":"Word 16.106: emptied controls show their placeholder on Accept/Reject All (fu-word3 measure b3-accept/b3-reject, #355)"}
 {"digest":"sha256:0c698a0e39e4a1dda0a9095af5e1de65","id":"structure:78eb2fc2347e44f9","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:fa8fcb11d79ef141ccc090a908d639a2","id":"structure:dd4e954a70424761","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:204b628f6330163c51490fc12d967d72","id":"structure:1f624484c0f69a36","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:3baba645e53d55c601adba1e144fb648","id":"structure:cc78d26e6f6095c9","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:2e134b941779ad346eb64cab0e5ea725","id":"structure:cf7ff61d8f87a6b9","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:00a47a317312f4862b0589b58f8baaea","id":"structure:cf7ff61d8f87a6b9","source":"Word 16.106: emptied controls show their placeholder on Accept/Reject All (fu-word3 measure b3-accept/b3-reject, #355)"}
 {"digest":"sha256:3ced487a1bdeae1881981f7b28cc429d","id":"structure:473b0736dee1cb6e","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:3ced487a1bdeae1881981f7b28cc429d","id":"structure:f2e17fc2ebd4b7e3","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:500f97672a4688de3369f48795c13a3c","id":"structure:c55528914f1a9e1a","source":"frozen Python a512c901, unmeasured"}
@@ -1928,14 +1928,14 @@
 {"digest":"sha256:72319b09930b14cb6850ccd749c0f827","id":"tools:9ea1ccd21be03a0b","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:323c469d60c880e593c9eb5d6697fb41","id":"tools:47ca2fb246677139","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:92a9bcef621d5e58ebcd39b04452e56e","id":"tools:652d9e1679f184c0","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:e33eb30f1aacb2962f6bdb2a2a285a85","id":"tools:c6d19180fcacf8a1","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:225189286139932415a5fa19c5a13f2d","id":"tools:c6d19180fcacf8a1","source":"Word 16.106: emptied controls show their placeholder on Accept/Reject All (fu-word3 measure b3-accept/b3-reject, #355)"}
 {"digest":"sha256:92a9bcef621d5e58ebcd39b04452e56e","id":"tools:795979656706b997","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:6c98f47946bd752f3adf7cbd2187f214","id":"tools:6caa190d857feae1","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:531845274009361f865d6bca4fd8f672","id":"tools:3a1922871e9cc4d1","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:531845274009361f865d6bca4fd8f672","id":"tools:5d940249efd5d35a","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:ef49d5a77e83b750ff130b3b9c223f29","id":"tools:5deb48b9871bfd6c","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:fe4e866e2e66f4f19442a62961c84798","id":"tools:0ba1fe7de8bb6390","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:e33eb30f1aacb2962f6bdb2a2a285a85","id":"tools:516bbf095bc0b6ac","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:225189286139932415a5fa19c5a13f2d","id":"tools:516bbf095bc0b6ac","source":"Word 16.106: emptied controls show their placeholder on Accept/Reject All (fu-word3 measure b3-accept/b3-reject, #355)"}
 {"digest":"sha256:ef49d5a77e83b750ff130b3b9c223f29","id":"tools:a03ae3d19c1b59ab","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:ef49d5a77e83b750ff130b3b9c223f29","id":"tools:91edf53538a54bd9","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:92a9bcef621d5e58ebcd39b04452e56e","id":"tools:dc5aa3fa7c607591","source":"frozen Python a512c901, unmeasured"}
