@@ -60,6 +60,24 @@ fn level_range(level: i64) -> Result<()> {
     }
 }
 
+/// `action`'s refusals that hold for the paragraph at `place` before any step runs: its level
+/// out of range, or, for a level, the paragraph in no list. The command checks every targeted
+/// paragraph this way first, so a step's own refusal (a single-level list's, offering level 0)
+/// comes only when its way out works for the whole target.
+///
+/// # Errors
+/// docx-agent's refusals; when the paragraph is not found.
+pub(crate) fn precheck(docx: &Docx, place: &Place, action: &ListAction) -> Result<()> {
+    if let ListAction::Level(level) = action {
+        level_range(*level)?;
+        let read::At { id, element, .. } = read::at(docx, place).ok_or_else(|| EditError::Path(place.part.clone()))?;
+        if membership(docx, &Lists::read(docx), &element).is_none() {
+            return Err(refused(format!("{id} is not in a list")));
+        }
+    }
+    Ok(())
+}
+
 /// Run `action`'s step on the paragraph at `place`.
 ///
 /// # Errors
@@ -91,6 +109,16 @@ pub(crate) fn step(
         ListAction::Level(level) => {
             level_range(*level)?;
             let num_id = in_list()?.num_id;
+            if *level > 0 && Lists::read(&docx).single_level(&docx, num_id) {
+                return Err(EditError::Argument {
+                    field: "level".to_owned(),
+                    message: format!(
+                        "{id}'s list ({num_id}) is single-level: Word sets its paragraphs to no level but 0; \
+                         to nest it, number it with a multi-level list first"
+                    ),
+                    options: vec!["0".to_owned()],
+                });
+            }
             list_edit(sink, stamped, place, found.as_ref(), |sink| {
                 rewrite(sink, place, |work, p, orders| {
                     pp::set_numbering(work, p, (num_id, *level), orders)
