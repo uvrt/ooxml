@@ -190,7 +190,7 @@ pub fn records_within(docx: &Docx, within: &str) -> Result<BTreeSet<String>> {
         .collect();
     let block = ooxml_word_model::address::direct(docx, within).and_then(|(story, entry)| match entry {
         Entry::Paragraph(k) => story.ids.paragraphs().get(k).map(|p| p.path),
-        Entry::Table(k) => story.ids.tables().get(k).map(|t| t.path),
+        Entry::Table(k) => story.ids.tables().place(k),
     });
     let mut found = BTreeSet::new();
     for r in records(docx).into_iter().filter(|r| r.part == part.part) {

@@ -239,14 +239,15 @@ pub fn own_rows(table: &Element) -> Vec<(Arc<Element>, Vec<u32>)> {
     out
 }
 
-/// The cells of `table` (a table of `part`) Word's Accept All removes with their text, as
+/// The cells of the table whose own rows are at `rows` (in `part`) Word's Accept All removes
+/// with their text, as
 /// `(row, cell)` (docx-agent's `cells_lost_on_accept`): in each row not itself deleted, a
 /// cell with no next cell kept in its row whose last paragraph mark is a pending deletion,
 /// not taken into a cell before it.
 #[must_use]
-pub fn cells_lost_on_accept(part: &StoryPart, table: &TableId) -> Vec<(usize, PlacedCell)> {
+pub fn cells_lost_on_accept(part: &StoryPart, rows: &[crate::ids::Path]) -> Vec<(usize, PlacedCell)> {
     let mut out = Vec::new();
-    for (r, (path, _)) in table.rows.iter().enumerate() {
+    for (r, path) in rows.iter().enumerate() {
         let Some(row) = at_path(part.root(), path) else {
             continue;
         };

@@ -211,7 +211,7 @@ impl VersionIds {
         let (root, ids) = self.part.as_ref()?;
         let place = match ids.get(id) {
             Some(Entry::Paragraph(k)) => ids.paragraphs().get(k).map(|p| p.path),
-            Some(Entry::Table(k)) => ids.tables().get(k).map(|t| t.path),
+            Some(Entry::Table(k)) => ids.tables().place(k),
             None => None,
         };
         match place {

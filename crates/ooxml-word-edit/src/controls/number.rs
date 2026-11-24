@@ -74,7 +74,7 @@ impl NumbersControl {
         let ids = &story.ids;
         let path = match ids.get(id) {
             Some(Entry::Paragraph(k)) => ids.paragraphs().get(k).map(|p| p.path),
-            Some(Entry::Table(k)) => ids.tables().get(k).map(|t| t.path),
+            Some(Entry::Table(k)) => ids.tables().place(k),
             None => None,
         };
         let Some(path) = path else { return true };
