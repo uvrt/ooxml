@@ -16,11 +16,6 @@ DEVIATIONS: dict[str, dict[str, str]] = {
     "gates/generated/charts/chart-places.docx/objects:0ab11bf053a1ef1d": {
         "pages": "tools limitation: the layout refuses a text box it cannot lay out yet (not supported)",
     },
-    "gates/generated/charts/chart-places.docx/structure:2059124caf17ded5": {
-        "opens": "known, fix to come: word_notes move puts the note's reference inside a text box (in both "
-                 "its wps and its VML copy); Word stops on an alert as it opens the file, and opens it with "
-                 "the reference moved out of the text box",
-    },
     "gates/generated/controls.docx/objects:09dbf7b1f77502ee": {
         "kept": "known, to investigate: Word's re-save adds a tblPrChange (Writer A) the tools don't write; "
                 "Word may expect the tracked split to record a table-property change",
