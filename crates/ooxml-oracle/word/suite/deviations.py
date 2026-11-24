@@ -14,10 +14,6 @@ _CONTROL_309 = ("known, fix to come: after Reject All Word shows content control
                 "the tools' reject leaves the control empty")
 
 DEVIATIONS: dict[str, dict[str, str]] = {
-    "gates/docx2svg/style-document.docx/style:1b2189e4005924c7": {
-        "accept": "known, fix to come: after Accept All Word joins p@body/11 and the next paragraph under "
-                  "'1.' numbering; the tools keep two paragraphs and a '*' bullet",
-    },
     "gates/generated/charts/chart-places.docx/objects:0ab11bf053a1ef1d": {
         "pages": "tools limitation: the layout refuses a text box it cannot lay out yet (not supported)",
     },
