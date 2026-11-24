@@ -12,8 +12,11 @@ its document to give one tool output that Word is asked about.  Three sources:
 * **trial**: the golden transcripts (``python/docx-agent/tests/goldens/transcripts``), the
   trial's tasks as the tools were called, with the text Word must show in each output.
 * **gates**: the gates' frozen cases (``crates/ooxml-oracle/cases/**.jsonl``, one call each),
-  sampled per fixture and tool; absent until the cases are frozen as data, then read as they
-  are.
+  sampled (``WORD_SUITE_GATES``): by default ``sample``, one case per tool and per mode (its
+  ``action``) over every fixture, the first by fixture path and case id, about an hour of Word
+  cold; ``full``, ``WORD_SUITE_GATES_PER_TOOL`` (default 1) per fixture and tool, tracked or
+  not, some 1,600 cases and ten hours and more of Word.  A case with a second document or a
+  host locale is never taken.
 
 Must not: import pytest or docx-agent's library (only its tool host).
 """
@@ -40,7 +43,9 @@ GATE_CASES = ORACLE / "cases"
 TRANSCRIPTS = ROOT / "python" / "docx-agent" / "tests" / "goldens"
 #: The suite's clock: every tracked edit and comment is dated by it.
 CLOCK = dt.datetime(2026, 11, 17, 10, 0, 0, tzinfo=dt.timezone.utc)
-#: The gates' cases taken per fixture and tool (``WORD_SUITE_GATES_PER_TOOL``; 0: none).
+#: Which of the gates' cases the suite takes (``WORD_SUITE_GATES``): ``sample`` or ``full``.
+GATES = os.environ.get("WORD_SUITE_GATES", "sample")
+#: The full set's cases per fixture and tool (``WORD_SUITE_GATES_PER_TOOL``; 0: none).
 GATES_PER_TOOL = int(os.environ.get("WORD_SUITE_GATES_PER_TOOL", "1"))
 
 #: Text Word must show in a trial output's final view (the trial's own checks).
@@ -104,11 +109,28 @@ def trial_cases() -> list[Case]:
 
 
 def gate_cases() -> tuple[list[Case], str | None]:
-    """The gates' frozen tool-call cases, ``GATES_PER_TOOL`` per fixture and tool, and why none
-    are when none are."""
+    """The gates' frozen tool-call cases :data:`GATES` takes, and why none are when none are."""
+    if GATES not in ("sample", "full"):
+        raise ValueError(f"WORD_SUITE_GATES is sample or full, not {GATES!r}")
     files = sorted(GATE_CASES.glob("fixtures/**/*.jsonl"))
     if not files:
         return [], "the gates' cases are not frozen as data yet (crates/ooxml-oracle/cases)"
+    entries = _gate_entries(files)
+    if GATES == "full":
+        return [_gate_case(fixture, entry) for fixture, entry in entries], None
+    out = []
+    sampled: set[tuple[str, str | None]] = set()
+    for fixture, entry in sorted(entries, key=lambda item: (item[0], item[1]["id"])):
+        stratum = (entry["case"]["tool"], entry["case"]["arguments"].get("action"))
+        if stratum not in sampled:
+            sampled.add(stratum)
+            out.append(_gate_case(fixture, entry))
+    return out, None
+
+
+def _gate_entries(files: list[Path]) -> list[tuple[str, dict[str, Any]]]:
+    """The tool-call cases of these files, with their fixture: ``full`` takes
+    :data:`GATES_PER_TOOL` per fixture and tool (tracked or not), ``sample`` every one."""
     out = []
     for path in files:
         fixture = path.relative_to(GATE_CASES / "fixtures").as_posix().removesuffix(".jsonl")
@@ -118,15 +140,21 @@ def gate_cases() -> tuple[list[Case], str | None]:
             case = entry["case"]
             if "tool" not in case or case.get("reference_file") or case.get("reference_copy") or case.get("locale"):
                 continue                     # an op case, or one with a second document or a host locale
-            key = case["tool"] + ("+tracked" if case.get("tracked") else "")
-            if taken.get(key, 0) >= GATES_PER_TOOL:
-                continue
-            taken[key] = taken.get(key, 0) + 1
-            spec = {"document": fixture, "tracked": (case.get("tracked") or {}).get("author"),
-                    "calls": [{"tool": case["tool"], "arguments": case["arguments"]}],
-                    "may_refuse": True}
-            out.append(Case(f"gates/{fixture}/{entry['id']}", "gates", spec))
-    return out, None
+            if GATES == "full":
+                key = case["tool"] + ("+tracked" if case.get("tracked") else "")
+                if taken.get(key, 0) >= GATES_PER_TOOL:
+                    continue
+                taken[key] = taken.get(key, 0) + 1
+            out.append((fixture, entry))
+    return out
+
+
+def _gate_case(fixture: str, entry: dict[str, Any]) -> Case:
+    case = entry["case"]
+    spec = {"document": fixture, "tracked": (case.get("tracked") or {}).get("author"),
+            "calls": [{"tool": case["tool"], "arguments": case["arguments"]}],
+            "may_refuse": True}
+    return Case(f"gates/{fixture}/{entry['id']}", "gates", spec)
 
 
 def all_cases() -> list[Case]:

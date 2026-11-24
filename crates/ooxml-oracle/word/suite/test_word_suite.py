@@ -4,7 +4,11 @@ case expects; (b) keeps its paraIds, texts, revision authors and dates and comme
 Word's re-save; (c) reads after Word's Accept All and Reject All as after the tools'; (d) lays
 out on Word's pages (page count, and each paragraph on Word's page); (e) has Word's field results
 after an update of every field.  Word's answers are recorded (``observed.py``) whatever the
-verdict; ``deviations.py`` lists where the tools differ knowingly."""
+verdict; ``deviations.py`` lists where the tools differ knowingly.
+
+The gates' cases are a sample by default, one per tool and mode (``WORD_SUITE_GATES=sample``,
+about an hour of Word cold); ``WORD_SUITE_GATES=full`` takes the full set, some 1,600 cases and
+ten hours and more (``edit_sets.py``, gates)."""
 
 from __future__ import annotations
 
