@@ -15,7 +15,7 @@ use super::new_column::stamp_new;
 use super::new_row::{clean_cell_properties, empty_paragraph_like, vmerge};
 use super::pending::column_deleted;
 use super::rows::{merges_as_cell_merges, put, under_policy, Held};
-use super::shape::{grid_widths, own_rows, row_cells, set_grid};
+use super::shape::{grid_of, grid_widths, own_rows, row_cells, set_grid, skips};
 use super::tracker::TableTracker;
 use super::TableChanged;
 use crate::marks::{insert_in_order, mark, mark_record};
@@ -83,28 +83,29 @@ pub(super) fn plan_split(
 /// `t:X has no cell at (1, 2)`, then what the table has ([`no_cell_text`] over the grid
 /// `Table.grid` gives).
 fn no_cell_message(work: &Work, rows: &[Id], id: &str, row: usize, column: usize) -> String {
-    let mut grid: Vec<Vec<Option<Spot>>> = Vec::new();
-    let mut origins: HashMap<usize, Spot> = HashMap::new();
-    for (r, element) in rows.iter().enumerate() {
-        let before =
-            usize::try_from(int(work, find_path(work, *element, &["trPr", "gridBefore"]), "val", 0)).unwrap_or(0);
-        let mut line = vec![None; before];
-        for placed in row_cells(work, *element) {
-            let continues = vmerge(work, placed.cell).as_deref() == Some("continue");
-            let origin = continues
-                .then(|| origins.get(&placed.start).copied())
-                .flatten()
-                .unwrap_or_else(|| {
-                    for c in placed.start..placed.start + placed.span {
-                        origins.insert(c, (r, placed.start));
-                    }
-                    (r, placed.start)
-                });
-            line.extend(std::iter::repeat_n(Some(origin), placed.span));
-        }
-        grid.push(line);
-    }
-    no_cell_text(&grid, id, row, column)
+    no_cell_text(&spots(work, rows), id, row, column)
+}
+
+/// Every grid place's cell of `rows` (the table's own), as its first place `(row, column)`
+/// (`Table.grid`, by [`grid_of`]); `None` where a row has no cell.
+pub(crate) fn spots(work: &Work, rows: &[Id]) -> Vec<Vec<Option<Spot>>> {
+    let grid = grid_of(work, work.root(), rows);
+    grid.rows
+        .iter()
+        .map(|line| {
+            let mut out = vec![None; line.before];
+            for cell in &line.cells {
+                let (r, k) = cell.origin;
+                let first = grid
+                    .rows
+                    .get(r)
+                    .and_then(|o| o.cells.get(k))
+                    .map_or(cell.first, |o| o.first);
+                out.extend(std::iter::repeat_n(Some((r, first)), cell.span));
+            }
+            out
+        })
+        .collect()
 }
 
 /// A cell's span set to `span` grid columns and its width to `width` twips
@@ -281,12 +282,6 @@ fn regrid(work: &mut Work, lines: &[i64], new: &[i64], orders: &Orders) -> Resul
 
 fn signed(n: usize) -> i64 {
     i64::try_from(n).unwrap_or(i64::MAX)
-}
-
-/// A row's `w:gridBefore` and `w:gridAfter` (`_skips`).
-fn skips(work: &Work, row: Id) -> (usize, usize) {
-    let of = |local: &str| usize::try_from(int(work, find_path(work, row, &["trPr", local]), "val", 0)).unwrap_or(0);
-    (of("gridBefore"), of("gridAfter"))
 }
 
 /// `cell` (and the cells under it in its vertical merge, rows `top`..=`bottom`) split into

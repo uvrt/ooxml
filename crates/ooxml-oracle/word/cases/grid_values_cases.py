@@ -4,8 +4,8 @@ columns (2000 twips, fixed layout) and two rows. The first row is the case's; th
 three plain cells ``R1`` ``R2`` ``R3`` that fix where each grid column is drawn. Case cells
 hold ``K1``, ``K2``... in document order.
 
-Cases (:data:`CASES`): ``w:gridSpan`` values ``0``, ``-1``, ``+2``, `` 2``, ``1_0`` (and
-``2``, the control) on the first cell; ``w:gridBefore`` / ``w:gridAfter`` of ``-1`` (and
+Cases (:data:`CASES`): ``w:gridSpan`` values ``0``, ``-1``, ``+2``, `` 2``, ``1_0``, ``x``,
+empty, ``2.0`` and one past 64 bits (and ``2``, the control) on the first cell; ``w:gridBefore`` / ``w:gridAfter`` of ``-1`` (and
 ``1``, the control); cells inside ``w:sdt``/``w:sdtContent`` and ``w:customXml`` (and both
 nested); a ``w:vMerge`` continuation with no start above it (in the first row, and under a
 cell not merged).
@@ -63,6 +63,10 @@ CASES: dict[str, tuple[str, str]] = {
     "span-plus-2": (_span("+2"), REFERENCE),
     "span-space-2": (_span(" 2"), REFERENCE),
     "span-1_0": (_span("1_0"), REFERENCE),
+    "span-x": (_span("x"), REFERENCE),
+    "span-empty": (_span(""), REFERENCE),
+    "span-2.0": (_span("2.0"), REFERENCE),
+    "span-overflow": (_span("99999999999999999999"), REFERENCE),
     "before-1": (_row(_tc("K1") + _tc("K2"), before="1"), REFERENCE),
     "before-minus-1": (_row(_tc("K1") + _tc("K2"), before="-1"), REFERENCE),
     "after-1": (_row(_tc("K1") + _tc("K2"), after="1"), REFERENCE),

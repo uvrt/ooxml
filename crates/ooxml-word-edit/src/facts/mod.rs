@@ -16,7 +16,7 @@
 mod accept;
 mod direct;
 mod empty;
-mod grid;
+pub(crate) mod grid;
 mod language;
 mod numbering;
 mod original;
