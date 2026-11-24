@@ -84,8 +84,11 @@ fn cells_kept_and_cold(editor: &ooxml_word_edit::Editor) {
     assert_eq!(cells_of(&first, true), read, "the version before reads as it did");
 }
 
+/// Every story table's rows' keeps, in order.
+type TablesRows = Vec<Option<Vec<RowKeep>>>;
+
 /// Every story table's rows' keeps as `docx` reads them.
-fn rows_of(docx: &Docx) -> Vec<Option<Vec<RowKeep>>> {
+fn rows_of(docx: &Docx) -> TablesRows {
     let formatting = Formatting::read(docx);
     docx.parts
         .iter()
@@ -102,7 +105,7 @@ fn rows_of(docx: &Docx) -> Vec<Option<Vec<RowKeep>>> {
 
 /// The rows' keeps of `doc` as kept, and as a document opened afresh from its package reads
 /// them.
-fn rows_warm_and_cold(doc: &WordDoc) -> (Vec<Option<Vec<RowKeep>>>, Vec<Option<Vec<RowKeep>>>) {
+fn rows_warm_and_cold(doc: &WordDoc) -> (TablesRows, TablesRows) {
     let warm = rows_of(&doc.docx().unwrap());
     let cold = rows_of(&Docx::open(doc.package()).unwrap());
     (warm, cold)
