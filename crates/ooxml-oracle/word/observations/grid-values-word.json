@@ -1,0 +1,814 @@
+{
+ "_about": "What Word 16.106 for Mac does with a table grid's odd values, for crates/ooxml-oracle/word/probes/grid_values_probe.py (documents in cases/grid_values_cases.py: three 2000-twip grid columns, fixed layout; the case's row, then R1 R2 R3). 'table': the case's table as written; 'opened': whether Word opened and saved it; 'saved': the rows as Word wrote them again (gridBefore/gridAfter/gridSpan/vMerge values, text, the wrappers a cell sits in) and the tblGrid widths; 'drawn': per marker in Word's PDF the grid column its text starts in (R1's left is 0, 100 pt a column) and whether it is on R1's line. Regenerate with python crates/ooxml-oracle/word/probes/grid_values_probe.py.",
+ "span-2": {
+  "table": "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders><w:tblLayout w:type=\"fixed\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/><w:gridSpan w:val=\"2\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K2</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R3</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+  "opened": "done",
+  "saved": {
+   "tblGrid": [
+    2000,
+    2000,
+    2000
+   ],
+   "rows": [
+    {
+     "gridBefore": null,
+     "gridAfter": null,
+     "cells": [
+      {
+       "text": "K1",
+       "gridSpan": "2",
+       "vMerge": null,
+       "in": []
+      },
+      {
+       "text": "K2",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      }
+     ]
+    },
+    {
+     "gridBefore": null,
+     "gridAfter": null,
+     "cells": [
+      {
+       "text": "R1",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      },
+      {
+       "text": "R2",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      },
+      {
+       "text": "R3",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      }
+     ]
+    }
+   ]
+  },
+  "drawn": {
+   "K1": {
+    "column": 0.0,
+    "reference_row": false
+   },
+   "K2": {
+    "column": 2.0,
+    "reference_row": false
+   },
+   "K3": null,
+   "R1": {
+    "column": 0.0,
+    "reference_row": true
+   },
+   "R2": {
+    "column": 1.0,
+    "reference_row": true
+   },
+   "R3": {
+    "column": 2.0,
+    "reference_row": true
+   }
+  }
+ },
+ "span-0": {
+  "table": "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders><w:tblLayout w:type=\"fixed\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/><w:gridSpan w:val=\"0\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K2</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R3</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+  "opened": "done",
+  "saved": {
+   "tblGrid": [
+    2968,
+    1516,
+    1516
+   ],
+   "rows": [
+    {
+     "gridBefore": null,
+     "gridAfter": "1",
+     "cells": [
+      {
+       "text": "K1",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      },
+      {
+       "text": "K2",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      }
+     ]
+    },
+    {
+     "gridBefore": null,
+     "gridAfter": null,
+     "cells": [
+      {
+       "text": "R1",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      },
+      {
+       "text": "R2",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      },
+      {
+       "text": "R3",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      }
+     ]
+    }
+   ]
+  },
+  "drawn": {
+   "K1": {
+    "column": 0.0,
+    "reference_row": false
+   },
+   "K2": {
+    "column": 1.48,
+    "reference_row": false
+   },
+   "K3": null,
+   "R1": {
+    "column": 0.0,
+    "reference_row": true
+   },
+   "R2": {
+    "column": 1.48,
+    "reference_row": true
+   },
+   "R3": {
+    "column": 2.24,
+    "reference_row": true
+   }
+  }
+ },
+ "span-minus-1": {
+  "table": "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders><w:tblLayout w:type=\"fixed\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/><w:gridSpan w:val=\"-1\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K2</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R3</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+  "opened": "error",
+  "drawn": "error"
+ },
+ "span-plus-2": {
+  "table": "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders><w:tblLayout w:type=\"fixed\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/><w:gridSpan w:val=\"+2\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K2</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R3</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+  "opened": "done",
+  "saved": {
+   "tblGrid": [
+    2000,
+    2000,
+    2000
+   ],
+   "rows": [
+    {
+     "gridBefore": null,
+     "gridAfter": null,
+     "cells": [
+      {
+       "text": "K1",
+       "gridSpan": "2",
+       "vMerge": null,
+       "in": []
+      },
+      {
+       "text": "K2",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      }
+     ]
+    },
+    {
+     "gridBefore": null,
+     "gridAfter": null,
+     "cells": [
+      {
+       "text": "R1",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      },
+      {
+       "text": "R2",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      },
+      {
+       "text": "R3",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      }
+     ]
+    }
+   ]
+  },
+  "drawn": {
+   "K1": {
+    "column": 0.0,
+    "reference_row": false
+   },
+   "K2": {
+    "column": 2.0,
+    "reference_row": false
+   },
+   "K3": null,
+   "R1": {
+    "column": 0.0,
+    "reference_row": true
+   },
+   "R2": {
+    "column": 1.0,
+    "reference_row": true
+   },
+   "R3": {
+    "column": 2.0,
+    "reference_row": true
+   }
+  }
+ },
+ "span-space-2": {
+  "table": "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders><w:tblLayout w:type=\"fixed\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/><w:gridSpan w:val=\" 2\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K2</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R3</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+  "opened": "rejected",
+  "drawn": "rejected"
+ },
+ "span-1_0": {
+  "table": "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders><w:tblLayout w:type=\"fixed\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/><w:gridSpan w:val=\"1_0\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K2</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R3</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+  "opened": "rejected",
+  "drawn": "rejected"
+ },
+ "before-1": {
+  "table": "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders><w:tblLayout w:type=\"fixed\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr><w:trPr><w:gridBefore w:val=\"1\"/></w:trPr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K2</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R3</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+  "opened": "done",
+  "saved": {
+   "tblGrid": [
+    2000,
+    2000,
+    2000
+   ],
+   "rows": [
+    {
+     "gridBefore": "1",
+     "gridAfter": null,
+     "cells": [
+      {
+       "text": "K1",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      },
+      {
+       "text": "K2",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      }
+     ]
+    },
+    {
+     "gridBefore": null,
+     "gridAfter": null,
+     "cells": [
+      {
+       "text": "R1",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      },
+      {
+       "text": "R2",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      },
+      {
+       "text": "R3",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      }
+     ]
+    }
+   ]
+  },
+  "drawn": {
+   "K1": {
+    "column": 1.0,
+    "reference_row": false
+   },
+   "K2": {
+    "column": 2.0,
+    "reference_row": false
+   },
+   "K3": null,
+   "R1": {
+    "column": 0.0,
+    "reference_row": true
+   },
+   "R2": {
+    "column": 1.0,
+    "reference_row": true
+   },
+   "R3": {
+    "column": 2.0,
+    "reference_row": true
+   }
+  }
+ },
+ "before-minus-1": {
+  "table": "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders><w:tblLayout w:type=\"fixed\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr><w:trPr><w:gridBefore w:val=\"-1\"/></w:trPr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K2</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R3</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+  "opened": "error",
+  "drawn": "error"
+ },
+ "after-1": {
+  "table": "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders><w:tblLayout w:type=\"fixed\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr><w:trPr><w:gridAfter w:val=\"1\"/></w:trPr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K2</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R3</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+  "opened": "done",
+  "saved": {
+   "tblGrid": [
+    2000,
+    2000,
+    2000
+   ],
+   "rows": [
+    {
+     "gridBefore": null,
+     "gridAfter": "1",
+     "cells": [
+      {
+       "text": "K1",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      },
+      {
+       "text": "K2",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      }
+     ]
+    },
+    {
+     "gridBefore": null,
+     "gridAfter": null,
+     "cells": [
+      {
+       "text": "R1",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      },
+      {
+       "text": "R2",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      },
+      {
+       "text": "R3",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      }
+     ]
+    }
+   ]
+  },
+  "drawn": {
+   "K1": {
+    "column": 0.0,
+    "reference_row": false
+   },
+   "K2": {
+    "column": 1.0,
+    "reference_row": false
+   },
+   "K3": null,
+   "R1": {
+    "column": 0.0,
+    "reference_row": true
+   },
+   "R2": {
+    "column": 1.0,
+    "reference_row": true
+   },
+   "R3": {
+    "column": 2.0,
+    "reference_row": true
+   }
+  }
+ },
+ "after-minus-1": {
+  "table": "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders><w:tblLayout w:type=\"fixed\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr><w:trPr><w:gridAfter w:val=\"-1\"/></w:trPr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K2</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R3</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+  "opened": "done",
+  "saved": {
+   "tblGrid": [
+    2000,
+    2000,
+    2000
+   ],
+   "rows": [
+    {
+     "gridBefore": null,
+     "gridAfter": "1",
+     "cells": [
+      {
+       "text": "K1",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      },
+      {
+       "text": "K2",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      }
+     ]
+    },
+    {
+     "gridBefore": null,
+     "gridAfter": null,
+     "cells": [
+      {
+       "text": "R1",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      },
+      {
+       "text": "R2",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      },
+      {
+       "text": "R3",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      }
+     ]
+    }
+   ]
+  },
+  "drawn": {
+   "K1": {
+    "column": 0.0,
+    "reference_row": false
+   },
+   "K2": {
+    "column": 1.0,
+    "reference_row": false
+   },
+   "K3": null,
+   "R1": {
+    "column": 0.0,
+    "reference_row": true
+   },
+   "R2": {
+    "column": 1.0,
+    "reference_row": true
+   },
+   "R3": {
+    "column": 2.0,
+    "reference_row": true
+   }
+  }
+ },
+ "sdt-cell": {
+  "table": "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders><w:tblLayout w:type=\"fixed\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K1</w:t></w:r></w:p></w:tc><w:sdt><w:sdtPr><w:id w:val=\"7001\"/></w:sdtPr><w:sdtContent><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K2</w:t></w:r></w:p></w:tc></w:sdtContent></w:sdt><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K3</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R3</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+  "opened": "done",
+  "saved": {
+   "tblGrid": [
+    2000,
+    2000,
+    2000
+   ],
+   "rows": [
+    {
+     "gridBefore": null,
+     "gridAfter": null,
+     "cells": [
+      {
+       "text": "K1",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      },
+      {
+       "text": "K2",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": [
+        "sdt"
+       ]
+      },
+      {
+       "text": "K3",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      }
+     ]
+    },
+    {
+     "gridBefore": null,
+     "gridAfter": null,
+     "cells": [
+      {
+       "text": "R1",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      },
+      {
+       "text": "R2",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      },
+      {
+       "text": "R3",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      }
+     ]
+    }
+   ]
+  },
+  "drawn": {
+   "K1": {
+    "column": 0.0,
+    "reference_row": false
+   },
+   "K2": {
+    "column": 1.0,
+    "reference_row": false
+   },
+   "K3": {
+    "column": 2.0,
+    "reference_row": false
+   },
+   "R1": {
+    "column": 0.0,
+    "reference_row": true
+   },
+   "R2": {
+    "column": 1.0,
+    "reference_row": true
+   },
+   "R3": {
+    "column": 2.0,
+    "reference_row": true
+   }
+  }
+ },
+ "customxml-cell": {
+  "table": "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders><w:tblLayout w:type=\"fixed\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K1</w:t></w:r></w:p></w:tc><w:customXml w:uri=\"urn:probe\" w:element=\"cell\"><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K2</w:t></w:r></w:p></w:tc></w:customXml><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K3</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R3</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+  "opened": "rejected",
+  "drawn": {
+   "K1": {
+    "column": 0.0,
+    "reference_row": false
+   },
+   "K2": {
+    "column": 1.0,
+    "reference_row": false
+   },
+   "K3": {
+    "column": 2.0,
+    "reference_row": false
+   },
+   "R1": {
+    "column": 0.0,
+    "reference_row": true
+   },
+   "R2": {
+    "column": 1.0,
+    "reference_row": true
+   },
+   "R3": {
+    "column": 2.0,
+    "reference_row": true
+   }
+  }
+ },
+ "nested-wrappers": {
+  "table": "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders><w:tblLayout w:type=\"fixed\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K1</w:t></w:r></w:p></w:tc><w:customXml w:uri=\"urn:probe\" w:element=\"cell\"><w:sdt><w:sdtPr><w:id w:val=\"7001\"/></w:sdtPr><w:sdtContent><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K2</w:t></w:r></w:p></w:tc></w:sdtContent></w:sdt></w:customXml><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K3</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R3</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+  "opened": "rejected",
+  "drawn": {
+   "K1": {
+    "column": 0.0,
+    "reference_row": false
+   },
+   "K2": {
+    "column": 1.0,
+    "reference_row": false
+   },
+   "K3": {
+    "column": 2.0,
+    "reference_row": false
+   },
+   "R1": {
+    "column": 0.0,
+    "reference_row": true
+   },
+   "R2": {
+    "column": 1.0,
+    "reference_row": true
+   },
+   "R3": {
+    "column": 2.0,
+    "reference_row": true
+   }
+  }
+ },
+ "vmerge-first-row": {
+  "table": "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders><w:tblLayout w:type=\"fixed\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/><w:vMerge/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K3</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R3</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+  "opened": "done",
+  "saved": {
+   "tblGrid": [
+    2000,
+    2000,
+    2000
+   ],
+   "rows": [
+    {
+     "gridBefore": null,
+     "gridAfter": null,
+     "cells": [
+      {
+       "text": "K1",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      },
+      {
+       "text": "K2",
+       "gridSpan": null,
+       "vMerge": "continue",
+       "in": []
+      },
+      {
+       "text": "K3",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      }
+     ]
+    },
+    {
+     "gridBefore": null,
+     "gridAfter": null,
+     "cells": [
+      {
+       "text": "R1",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      },
+      {
+       "text": "R2",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      },
+      {
+       "text": "R3",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      }
+     ]
+    }
+   ]
+  },
+  "drawn": {
+   "K1": {
+    "column": 0.0,
+    "reference_row": false
+   },
+   "K2": {
+    "column": 1.0,
+    "reference_row": false
+   },
+   "K3": {
+    "column": 2.0,
+    "reference_row": false
+   },
+   "R1": {
+    "column": 0.0,
+    "reference_row": true
+   },
+   "R2": {
+    "column": 1.0,
+    "reference_row": true
+   },
+   "R3": {
+    "column": 2.0,
+    "reference_row": true
+   }
+  }
+ },
+ "vmerge-under-plain": {
+  "table": "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tblBorders><w:tblLayout w:type=\"fixed\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">K3</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/><w:vMerge/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R2</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t xml:space=\"preserve\">R3</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+  "opened": "done",
+  "saved": {
+   "tblGrid": [
+    2000,
+    2000,
+    2000
+   ],
+   "rows": [
+    {
+     "gridBefore": null,
+     "gridAfter": null,
+     "cells": [
+      {
+       "text": "K1",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      },
+      {
+       "text": "K2",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      },
+      {
+       "text": "K3",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      }
+     ]
+    },
+    {
+     "gridBefore": null,
+     "gridAfter": null,
+     "cells": [
+      {
+       "text": "R1",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      },
+      {
+       "text": "R2",
+       "gridSpan": null,
+       "vMerge": "continue",
+       "in": []
+      },
+      {
+       "text": "R3",
+       "gridSpan": null,
+       "vMerge": null,
+       "in": []
+      }
+     ]
+    }
+   ]
+  },
+  "drawn": {
+   "K1": {
+    "column": 0.0,
+    "reference_row": false
+   },
+   "K2": {
+    "column": 1.0,
+    "reference_row": false
+   },
+   "K3": {
+    "column": 2.0,
+    "reference_row": false
+   },
+   "R1": {
+    "column": 0.0,
+    "reference_row": true
+   },
+   "R2": {
+    "column": 1.0,
+    "reference_row": true
+   },
+   "R3": {
+    "column": 2.0,
+    "reference_row": true
+   }
+  }
+ }
+}

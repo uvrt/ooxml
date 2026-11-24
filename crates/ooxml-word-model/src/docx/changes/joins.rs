@@ -6,6 +6,7 @@
 //! Must not: group anything outside one part.
 
 use super::{container, is_mark, Grouping};
+use crate::docx::tables::{CellSpec, RowSpec, VMerge};
 use crate::ids::W;
 use std::collections::{BTreeMap, HashMap};
 
@@ -211,26 +212,25 @@ impl Grouping<'_> {
         self.labels.entry(k).or_insert(what);
     }
 
-    /// A row's own cells with the grid column each starts at.
+    /// A row's own cells with the grid column each starts at (the grid's value rule:
+    /// [`CellSpec`], [`RowSpec`]).
     fn row_cells(&self, row: usize) -> Vec<(usize, i64)> {
-        let before = self
-            .arena
-            .find(row, "trPr")
-            .and_then(|p| self.arena.find(p, "gridBefore"))
-            .map_or(0, |g| int(self.arena.attr(g, "val"), 0));
-        let mut at = before;
+        let raw = |at: usize, holder: &str, name: &str| {
+            self.arena
+                .find(at, holder)
+                .and_then(|p| self.arena.find(p, name))
+                .and_then(|g| self.arena.attr(g, "val"))
+        };
+        let before = RowSpec::new(raw(row, "trPr", "gridBefore"), None, Vec::new()).before;
+        let mut at = i64::try_from(before).unwrap_or(i64::MAX);
         let mut out = Vec::new();
         for cell in self.arena.subtree(row).into_iter().skip(1) {
             if !self.arena.is(cell, "tc") || !self.nearest_is(cell, "tr", row) {
                 continue;
             }
             out.push((cell, at));
-            let span = self
-                .arena
-                .find(cell, "tcPr")
-                .and_then(|p| self.arena.find(p, "gridSpan"))
-                .map_or(1, |g| int(self.arena.attr(g, "val"), 1));
-            at += span;
+            let span = CellSpec::new(raw(cell, "tcPr", "gridSpan"), VMerge::None).span;
+            at = at.saturating_add(i64::try_from(span).unwrap_or(i64::MAX));
         }
         out
     }
@@ -616,8 +616,4 @@ impl Grouping<'_> {
             }
         }
     }
-}
-
-fn int(value: Option<&str>, default: i64) -> i64 {
-    value.and_then(|v| v.trim().parse().ok()).unwrap_or(default)
 }

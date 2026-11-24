@@ -6,7 +6,7 @@
 //!
 //! Must not: change anything, or know a tool's reply.
 
-use ooxml_word_model::docx::find_path;
+use ooxml_word_model::docx::tables::placed_row_cells;
 use ooxml_word_model::ids::W;
 use ooxml_word_model::xmlread::py_int;
 use ooxml_xml::{Element, Node};
@@ -56,28 +56,19 @@ pub(crate) fn own_rows(table: &Element) -> Vec<Placed> {
 }
 
 /// A row's own cells (docx-agent's `_cells`), each with its first grid column (after
-/// `w:gridBefore`) and span; their places below the table the row's place is.
+/// `w:gridBefore`) and span, by the table grid's rules (`ooxml_word_model`'s `Grid`); their places below the
+/// table the row's place is.
 pub(crate) fn row_cells(row: &Placed) -> Vec<(Placed, usize, usize)> {
-    let mut found = Vec::new();
-    own(&row.element, &mut row.path.clone(), "tc", "tr", &mut found);
-    let mut column = int_val(find_path(&row.element, &["trPr", "gridBefore"])).unwrap_or(0);
-    let mut out = Vec::new();
-    for cell in found {
-        let span = int_val(find_path(&cell.element, &["tcPr", "gridSpan"]))
-            .unwrap_or(1)
-            .max(1);
-        let (first, span) = (usize::try_from(column).unwrap_or(0), usize::try_from(span).unwrap_or(1));
-        out.push((cell, first, span));
-        column = column.saturating_add(i64::try_from(span).unwrap_or(1));
-    }
-    out
+    placed_row_cells(&row.element)
+        .into_iter()
+        .map(|(element, place, cell)| {
+            let path = [&row.path[..], &place[..]].concat();
+            (Placed { element, path }, cell.first, cell.span)
+        })
+        .collect()
 }
 
 /// A `w:val` read as Python's `int()` reads it.
-fn int_val(node: Option<&Element>) -> Option<i64> {
-    node.and_then(|n| n.attribute(Some(W), "val")).and_then(py_int)
-}
-
 /// The grid's column widths, twips (docx-agent's `grid_widths`).
 pub(crate) fn grid_widths(table: &Element) -> Vec<i64> {
     table
