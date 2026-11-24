@@ -3,7 +3,7 @@
 //! and found again for the paths the remade pages draw, equals the one a whole layout's
 //! facts find -- with the edit on the first page (every page remade, every paragraph moved
 //! to another page) and in the middle (the pages before it kept, their paragraphs' first
-//! pages carried as they were).
+//! pages carried as they were, their facts shared with the version before).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
 use crate::support::{engine, model, open, para, run, sect};
@@ -26,8 +26,9 @@ fn body(grown: usize, extra: usize) -> String {
 }
 
 /// The first pages `LayoutFacts::after` carries for `after`'s body laid out again from
-/// `before`'s equal those of its whole layout; how many paragraphs' first pages moved.
-fn carried_equal_whole(before: &str, after: &str) -> usize {
+/// `before`'s equal those of its whole layout; how many paragraphs' first pages moved, and
+/// how many pages' facts are the very ones of the version before (shared, not copied).
+fn carried_equal_whole(before: &str, after: &str) -> (usize, usize) {
     let mut kept_model = model();
     let mut kept = engine();
     let first = open(&mut kept_model, before, None);
@@ -58,23 +59,32 @@ fn carried_equal_whole(before: &str, after: &str) -> usize {
         made.first_pages(),
         "the whole layout's first pages differ"
     );
-    made.first_pages()
+    let shared = carried
+        .pages
+        .iter()
+        .filter(|page| known.pages.iter().any(|old| std::sync::Arc::ptr_eq(old, page)))
+        .count();
+    let moved = made
+        .first_pages()
         .iter()
         .filter(|(path, page)| old.get(*path) != Some(page))
-        .count()
+        .count();
+    (moved, shared)
 }
 
 #[test]
 fn first_pages_carried_when_an_edit_on_the_first_page_moves_every_page() {
-    let moved = carried_equal_whole(&body(0, 0), &body(0, 25));
+    let (moved, shared) = carried_equal_whole(&body(0, 0), &body(0, 25));
     assert!(moved > 60, "most paragraphs start on another page: {moved}");
+    assert_eq!(shared, 0, "every page is made again");
 }
 
 #[test]
 fn first_pages_carried_when_an_edit_in_the_middle_moves_the_pages_after_it() {
-    let moved = carried_equal_whole(&body(45, 0), &body(45, 25));
+    let (moved, shared) = carried_equal_whole(&body(45, 0), &body(45, 25));
     assert!(
         moved > 20 && moved < 60,
         "the paragraphs after the edit start on another page: {moved}"
     );
+    assert!(shared > 0, "the pages before the edit are shared with the version before");
 }

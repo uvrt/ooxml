@@ -140,8 +140,9 @@ pub enum BlockKeeps {
 /// One layout's facts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LayoutFacts {
-    /// Every page, blank ones included.
-    pub pages: Vec<PageFacts>,
+    /// Every page, blank ones included: each shared with the layout before where it kept
+    /// the page ([`LayoutFacts::after`]), so a reader can tell a page unchanged by identity.
+    pub pages: Vec<Arc<PageFacts>>,
     /// The top-level body block the layout stopped at, if it did.
     pub stopped: Option<usize>,
     /// Each top-level body block laid out in the flow, by its index in the body.
@@ -258,7 +259,7 @@ impl LayoutFacts {
     /// The facts of `layout`, every page's.
     pub fn of(layout: &DocumentLayout) -> LayoutFacts {
         let pages = (0..layout.page_count())
-            .filter_map(|k| PageFacts::of(layout, k))
+            .filter_map(|k| PageFacts::of(layout, k).map(Arc::new))
             .collect();
         LayoutFacts {
             pages,
@@ -274,14 +275,14 @@ impl LayoutFacts {
     /// are made. Equal to [`LayoutFacts::of`] (an edit pays for the pages it moved).
     pub fn after(layout: &DocumentLayout, before: &DocumentLayout, known: &LayoutFacts) -> LayoutFacts {
         let same_paths = layout.mode15 == before.mode15 && layout.line_paths() == before.line_paths();
-        let pages: Vec<PageFacts> = (0..layout.page_count())
+        let pages: Vec<Arc<PageFacts>> = (0..layout.page_count())
             .filter_map(|k| {
                 let kept = if same_paths {
                     kept_page(layout, before, known, k)
                 } else {
                     None
                 };
-                kept.or_else(|| PageFacts::of(layout, k))
+                kept.or_else(|| PageFacts::of(layout, k).map(Arc::new))
             })
             .collect();
         LayoutFacts {
@@ -430,8 +431,13 @@ fn stopped(layout: &DocumentLayout) -> Option<usize> {
 
 /// Page `page`'s facts as `known` (`before`'s) holds them, where `layout` kept the page as
 /// `before` laid it out (see [`LayoutFacts::after`]); the paths of the body's paragraphs
-/// are the caller's to have compared.
-fn kept_page(layout: &DocumentLayout, before: &DocumentLayout, known: &LayoutFacts, page: usize) -> Option<PageFacts> {
+/// are the caller's to have compared. The very same facts, shared.
+fn kept_page(
+    layout: &DocumentLayout,
+    before: &DocumentLayout,
+    known: &LayoutFacts,
+    page: usize,
+) -> Option<Arc<PageFacts>> {
     let laid = laid_arc(layout, page)?;
     let old = laid_arc(before, page)?;
     let facts = known.pages.get(page).filter(|f| f.page == page)?;
@@ -450,7 +456,7 @@ fn kept_page(layout: &DocumentLayout, before: &DocumentLayout, known: &LayoutFac
             .map(|l| l.item)
             .chain(laid.rows.iter().map(|r| r.item))
             .all(|item| same_flow_item(layout.flow.items.get(item), before.flow.items.get(item)));
-    same.then(|| facts.clone())
+    same.then(|| Arc::clone(facts))
 }
 
 /// Page `page`'s laid page, shared.
