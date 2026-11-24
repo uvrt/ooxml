@@ -71,7 +71,9 @@ impl AddressHasher {
 
 impl Hasher for AddressHasher {
     fn finish(&self) -> u64 {
-        self.0
+        // A product keeps its factor's trailing zeros (an address's alignment): its well
+        // mixed high bits are turned down to where a table picks its bucket.
+        self.0.rotate_left(26)
     }
 
     fn write(&mut self, bytes: &[u8]) {

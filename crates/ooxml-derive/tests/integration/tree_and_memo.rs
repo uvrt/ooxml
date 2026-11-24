@@ -254,3 +254,13 @@ fn a_memo_keyed_by_address_evicts_and_sweeps_as_a_plain_least_recently_used_list
 fn overhead() -> usize {
     2 * std::mem::size_of::<usize>() + 4 * std::mem::size_of::<u64>()
 }
+
+#[test]
+fn addresses_hash_to_distinct_buckets() {
+    use std::hash::BuildHasher;
+    // Aligned addresses (multiples of 16) spread over a small table's buckets.
+    let buckets: std::collections::HashSet<u64> = (0..64u64)
+        .map(|k| AddressHash.hash_one(0x7f00_0000_1000_usize + 16 * k as usize) & 63)
+        .collect();
+    assert!(buckets.len() > 32, "{} of 64 buckets", buckets.len());
+}
