@@ -558,31 +558,19 @@ fn cell_paragraphs(found: &InTable<'_>) -> Vec<usize> {
     }
 }
 
-/// The child index of the `w:tc` of `row` that covers grid `column` (`w:gridBefore` and
-/// the spans before it counted).
+/// The child index of the `w:tc` of `row` that covers grid `column`, placed by the table
+/// grid's rules ([`crate::docx::tables::Grid`]); `None` where no cell covers it, or the cell
+/// that does is inside a row-level wrapper (`w:sdt`, `w:customXml`: no child index of the
+/// row's names it).
 #[must_use]
 pub fn cell_at(row: &Arc<Element>, column: usize) -> Option<u32> {
-    let before = crate::docx::find_path(row, &["trPr", "gridBefore"])
-        .and_then(|g| g.attribute(Some(W), "val"))
-        .and_then(|v| v.trim().parse::<usize>().ok())
-        .unwrap_or(0);
-    let mut at = before;
-    for (k, node) in row.children().iter().enumerate() {
-        let Node::Element(cell) = node else { continue };
-        if !cell.name().is(Some(W), "tc") {
-            continue;
-        }
-        let span = crate::docx::find_path(cell, &["tcPr", "gridSpan"])
-            .and_then(|g| g.attribute(Some(W), "val"))
-            .and_then(|v| v.trim().parse::<usize>().ok())
-            .unwrap_or(1)
-            .max(1);
-        if (at..at + span).contains(&column) {
-            return u32::try_from(k).ok();
-        }
-        at += span;
+    use crate::docx::tables::{row_cells, Grid, RowSpec};
+    let grid = Grid::build(std::slice::from_ref(&RowSpec::of(row)), 0);
+    let (_, k) = grid.cell_at(0, column)?;
+    match row_cells(row).get(k).map(|(_, place)| &place[..]) {
+        Some(&[index]) => Some(index),
+        _ => None,
     }
-    None
 }
 
 /// The paragraphs of the blocks of a span (either end open), both ends in one container.

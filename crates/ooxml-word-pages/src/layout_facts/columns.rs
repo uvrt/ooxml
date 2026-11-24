@@ -11,6 +11,7 @@ use super::tree::{self, cell_line, is_w, W};
 use super::{points, round, Facts};
 use crate::page_parts::Part;
 use crate::page_read::PageRead;
+use ooxml_word_model::docx::tables::placed_row_cells;
 use ooxml_xml::Element;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
@@ -366,34 +367,12 @@ fn grid_widths(table: &Element) -> Vec<i64> {
 }
 
 /// A row's own cells (row-level content controls seen through): each one's first grid
-/// column (`w:gridBefore` counted) and span (`row_cells`).
+/// column (`w:gridBefore` counted) and span (`row_cells`), by the table grid's rules.
 fn row_cells(row: &Element) -> Vec<(usize, usize)> {
-    let before = row
-        .find(Some(W), "trPr")
-        .and_then(|p| p.find(Some(W), "gridBefore"))
-        .and_then(|g| int(g.attribute(Some(W), "val")))
-        .unwrap_or(0);
-    let mut column = usize::try_from(before).unwrap_or(0);
-    let mut out = Vec::new();
-    let mut stack: Vec<&Arc<Element>> = row.child_elements().collect();
-    stack.reverse();
-    while let Some(node) = stack.pop() {
-        if is_w(node, "tc") {
-            let span = node
-                .find(Some(W), "tcPr")
-                .and_then(|p| p.find(Some(W), "gridSpan"))
-                .and_then(|g| int(g.attribute(Some(W), "val")))
-                .unwrap_or(1)
-                .max(1);
-            let span = usize::try_from(span).unwrap_or(1);
-            out.push((column, span));
-            column += span;
-        } else if !is_w(node, "tr") {
-            let below: Vec<&Arc<Element>> = node.child_elements().collect();
-            stack.extend(below.into_iter().rev());
-        }
-    }
-    out
+    placed_row_cells(row)
+        .into_iter()
+        .map(|(_, _, cell)| (cell.first, cell.span))
+        .collect()
 }
 
 /// An attribute as Python's `int()` reads it (surrounding white space allowed).

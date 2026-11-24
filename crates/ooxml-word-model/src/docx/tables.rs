@@ -11,15 +11,20 @@
 use crate::docx::text::{paragraph_text, View};
 use crate::docx::{at_path, find_path, StoryPart};
 use crate::ids::{TableId, W};
-use crate::xmlread::py_int;
 use ooxml_xml::Element;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 mod accepted;
+mod grid;
+#[cfg(test)]
+mod grid_reference_tests;
 mod labels;
 mod merge_heads;
 pub use accepted::{Accepted, Axis, Misplaced};
+pub use grid::{
+    grid_columns, grid_value, placed_row_cells, row_cells, CellSpec, Coverage, Grid, GridCell, GridRow, RowSpec,
+};
 pub use labels::{collapse_space, no_cell_text};
 pub use merge_heads::{cell_merge, merge_heads, VMerge};
 
@@ -37,35 +42,12 @@ pub struct TableGrid<'a> {
     cells: HashMap<(usize, usize), Placed>,
 }
 
-fn int_val(node: Option<&Element>, default: i64) -> i64 {
-    node.and_then(|n| n.attribute(Some(W), "val"))
-        .and_then(py_int)
-        .unwrap_or(default)
-}
-
-/// A row's `w:tc`, with their places, also inside row-level `w:sdt` and `w:customXml`.
+/// A row's `w:tc` ([`row_cells`]), with their places in the part (`base`, the row's).
 fn cells_of(row: &Element, base: &[u32]) -> Vec<(Arc<Element>, Box<[u32]>)> {
-    let mut out = Vec::new();
-    for (k, node) in row.children().iter().enumerate() {
-        let Some(child) = node.as_element() else { continue };
-        let mut path = base.to_vec();
-        path.push(u32::try_from(k).unwrap_or(u32::MAX));
-        if child.name().is(Some(W), "tc") {
-            out.push((Arc::clone(child), path.into_boxed_slice()));
-        } else if child.name().is(Some(W), "sdt") {
-            if let Some((j, content)) = child.children().iter().enumerate().find_map(|(j, n)| {
-                n.as_element()
-                    .filter(|e| e.name().is(Some(W), "sdtContent"))
-                    .map(|e| (j, e))
-            }) {
-                path.push(u32::try_from(j).unwrap_or(u32::MAX));
-                out.extend(cells_of(content, &path));
-            }
-        } else if child.name().is(Some(W), "customXml") {
-            out.extend(cells_of(child, &path));
-        }
-    }
-    out
+    row_cells(row)
+        .into_iter()
+        .map(|(tc, place)| (tc, [base, &place].concat().into_boxed_slice()))
+        .collect()
 }
 
 impl<'a> TableGrid<'a> {
@@ -79,33 +61,30 @@ impl<'a> TableGrid<'a> {
             grid: Vec::new(),
             cells: HashMap::new(),
         };
-        let mut origins: HashMap<usize, (usize, usize)> = HashMap::new();
-        for (r, (path, _)) in table.rows.iter().enumerate() {
-            let Some(row) = at_path(part.root(), path) else {
-                continue;
-            };
-            out.rows.push(Arc::clone(row));
-            let before = usize::try_from(int_val(find_path(row, &["trPr", "gridBefore"]), 0)).unwrap_or(0);
-            let mut line = vec![None; before];
-            let mut column = before;
-            for (tc, cell_path) in cells_of(row, path) {
-                let span = usize::try_from(int_val(find_path(&tc, &["tcPr", "gridSpan"]), 1).max(1)).unwrap_or(1);
-                let merge = find_path(&tc, &["tcPr", "vMerge"]);
-                let continues = merge.is_some_and(|m| matches!(m.attribute(Some(W), "val"), None | Some("continue")));
-                let origin = match (continues, origins.get(&column)) {
-                    (true, Some(origin)) => *origin,
-                    _ => {
-                        for c in column..column + span {
-                            origins.insert(c, (r, column));
-                        }
-                        out.cells.insert((r, column), (Arc::clone(&tc), cell_path));
-                        (r, column)
-                    }
-                };
-                line.extend(std::iter::repeat_n(Some(origin), span));
-                column += span;
+        let mut paths = Vec::new();
+        for (path, _) in &table.rows {
+            if let Some(row) = at_path(part.root(), path) {
+                out.rows.push(Arc::clone(row));
+                paths.push(path);
             }
-            out.grid.push(line);
+        }
+        let specs: Vec<RowSpec> = out.rows.iter().map(|row| RowSpec::of(row)).collect();
+        let grid = Grid::build(&specs, grid_columns(&table.element));
+        for (r, ((row, path), line)) in out.rows.iter().zip(&paths).zip(&grid.rows).enumerate() {
+            let mut positions = vec![None; line.before];
+            for (k, ((tc, place), cell)) in cells_of(row, path).into_iter().zip(&line.cells).enumerate() {
+                let (or, ok) = cell.origin;
+                let first = grid
+                    .rows
+                    .get(or)
+                    .and_then(|l| l.cells.get(ok))
+                    .map_or(cell.first, |c| c.first);
+                if cell.origin == (r, k) {
+                    out.cells.insert((r, cell.first), (tc, place));
+                }
+                positions.extend(std::iter::repeat_n(Some((or, first)), cell.span));
+            }
+            out.grid.push(positions);
         }
         out
     }
@@ -113,9 +92,7 @@ impl<'a> TableGrid<'a> {
     /// The number of grid columns (`w:gridCol` in `w:tblGrid`).
     #[must_use]
     pub fn column_count(&self) -> usize {
-        self.table.find(Some(W), "tblGrid").map_or(0, |g| {
-            g.child_elements().filter(|c| c.name().is(Some(W), "gridCol")).count()
-        })
+        grid_columns(&self.table)
     }
 
     /// How many grid columns accepting the tracked changes keeps (docx-agent's
@@ -204,19 +181,15 @@ pub struct PlacedCell {
 /// the grid column it starts at and its span.
 #[must_use]
 pub fn cells_at(row: &Element, path: &[u32]) -> Vec<PlacedCell> {
-    let mut column = usize::try_from(int_val(find_path(row, &["trPr", "gridBefore"]), 0)).unwrap_or(0);
-    let mut out = Vec::new();
-    for (element, path) in cells_of(row, path) {
-        let span = usize::try_from(int_val(find_path(&element, &["tcPr", "gridSpan"]), 1).max(1)).unwrap_or(1);
-        out.push(PlacedCell {
+    placed_row_cells(row)
+        .into_iter()
+        .map(|(element, place, cell)| PlacedCell {
             element,
-            path,
-            column,
-            span,
-        });
-        column += span;
-    }
-    out
+            path: [path, &place[..]].concat().into_boxed_slice(),
+            column: cell.first,
+            span: cell.span,
+        })
+        .collect()
 }
 
 /// A table's own rows (inside row-level wrappers too, not its nested tables'), each with its
