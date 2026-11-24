@@ -101,7 +101,7 @@ pub fn blocks_named(doc: &WordDoc, address: &str) -> Result<Vec<String>> {
 /// and `_block_id`).
 fn block_ids(doc: &WordDoc, docx: &Docx, address: &str) -> Result<Vec<String>> {
     let (part, blocks) = blocks_of(doc, docx, address)?;
-    let story = docx.part(&part).ok_or_else(|| EditError::NoPart(part.clone()))?;
+    let story = docx.part(&part).ok_or_else(|| EditError::no_part(part.clone()))?;
     let found = controls(docx);
     blocks
         .iter()

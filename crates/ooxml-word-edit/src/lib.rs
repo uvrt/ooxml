@@ -140,7 +140,7 @@ pub use drawings::{
 };
 pub use drawn::Drawn;
 pub use editor::{EditTiming, Edited, Editor};
-pub use error::{EditError, Result};
+pub use error::{EditError, Internal, Mismatch, Result};
 pub use fields::{
     field_facts, fields, format_date, toc_paragraphs, CharAdvance, Day, EditLayout, FieldEdited, FieldFacts, FieldInfo,
     FieldLayout, FieldPlace, FieldRun, InsertCaption, InsertCrossReference, InsertField, InsertToc, LaidFields,

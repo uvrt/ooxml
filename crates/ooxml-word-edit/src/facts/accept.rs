@@ -50,7 +50,7 @@ impl LostCell {
 /// When the version cannot be read.
 pub fn accept_loses_text(doc: &WordDoc) -> Result<Vec<LostCell>> {
     let docx = doc.docx()?;
-    let body = docx.body().ok_or_else(|| EditError::NoPart(docx.main.clone()))?;
+    let body = docx.body().ok_or_else(|| EditError::no_part(docx.main.clone()))?;
     let mut changes: Option<HashMap<Box<[u32]>, String>> = None;
     let mut found = Vec::new();
     let tables = body.ids.tables();

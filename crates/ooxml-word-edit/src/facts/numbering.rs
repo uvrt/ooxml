@@ -52,7 +52,7 @@ pub struct SkippedLevel {
 pub fn numbering_skips_level(doc: &WordDoc) -> Result<Vec<SkippedLevel>> {
     let docx = doc.docx()?;
     let lists = Lists::read(&docx);
-    let body = docx.body().ok_or_else(|| EditError::NoPart(docx.main.clone()))?;
+    let body = docx.body().ok_or_else(|| EditError::no_part(docx.main.clone()))?;
     let names = style_names(&docx);
     let default = docx.default_style("paragraph").map(|s| style_name(s));
     let mut used: HashMap<*const Element, HashSet<i64>> = HashMap::new();

@@ -108,7 +108,7 @@ pub enum GridMismatch {
 /// When the version cannot be read.
 pub fn table_grid_mismatch(doc: &WordDoc, keep: Option<&dyn Fn(&str) -> bool>) -> Result<Vec<GridMismatch>> {
     let docx = doc.docx()?;
-    let body = docx.body().ok_or_else(|| EditError::NoPart(docx.main.clone()))?;
+    let body = docx.body().ok_or_else(|| EditError::no_part(docx.main.clone()))?;
     // Each table found by its element and place; its id named only for an entry (or `keep`).
     let named = |table: &PlacedTable<'_>| body.ids.tables().head(table.ordinal).map(|t| t.id).unwrap_or_default();
     let tables: Vec<PlacedTable<'_>> = body

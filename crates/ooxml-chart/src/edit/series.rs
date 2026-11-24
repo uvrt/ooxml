@@ -10,43 +10,15 @@
 //! `ooxml-sheets`), or hash (the caller gives SHA-256, as ooxml-edit takes `hashlib`'s).
 
 use super::make::Make;
-use super::owned::{Order, Owned};
+use super::owned::Owned;
 use super::points::{insert_point, reference, shift_point_formats, to_literal};
-use super::{encode, ChartTree, DataError, PointValue, Which, CACHE_ORDER};
+use super::{encode, ChartTree, DataError, PointValue, Which};
+use ooxml_schema::orders::local as schema;
 use ooxml_xml::view::{attr, child, local, py_int};
 use std::sync::Arc;
 
 /// The sources with one point per category (`point_sources`), in their order.
 pub const POINT_SOURCES: [Which; 4] = [Which::Categories, Which::Values, Which::Sizes, Which::Labels];
-
-/// `c:ser`'s sequence (ooxml-edit's `CHILD_ORDER`).
-pub(crate) const SER_ORDER: Order = &[
-    &["idx"],
-    &["order"],
-    &["tx"],
-    &["spPr"],
-    &["invertIfNegative"],
-    &["pictureOptions"],
-    &["marker"],
-    &["explosion"],
-    &["dPt"],
-    &["dLbls"],
-    &["trendline"],
-    &["errBars"],
-    &["cat"],
-    &["xVal"],
-    &["val"],
-    &["yVal"],
-    &["bubbleSize"],
-    &["bubble3D"],
-    &["shape"],
-    &["smooth"],
-    &["extLst"],
-];
-/// `c:marker`'s sequence.
-const MARKER_ORDER: Order = &[&["symbol"], &["size"], &["spPr"], &["extLst"]];
-/// `c:tx`'s.
-const TX_ORDER: Order = &[&["strRef"], &["rich"], &["v"]];
 
 /// The `c:ext` a series' `c16:uniqueId` is written in (`SERIES_ID_EXT`), and its namespace.
 const SERIES_ID_EXT: &str = "{C3380CC4-5D6E-409C-BE32-E72D297353CC}";
@@ -365,26 +337,26 @@ fn new_series(
     }
     let c = Arc::clone(element.name());
     let idx_text = idx.to_string();
-    element.sub(&c, "idx", Some(SER_ORDER)).set_attr("val", &idx_text);
-    element.sub(&c, "order", Some(SER_ORDER)).set_attr("val", &idx_text);
+    element.sub(&c, "idx", Some(schema::SER)).set_attr("val", &idx_text);
+    element.sub(&c, "order", Some(schema::SER)).set_attr("val", &idx_text);
     let index = usize::try_from(idx).unwrap_or(0);
     if dot {
         if let Some(at) = element.place("marker") {
             element.remove(at);
         }
-        element.insert_ordered(Some(SER_ORDER), no_line_shape(make, LINE_WIDTH));
+        element.insert_ordered(Some(schema::SER), no_line_shape(make, LINE_WIDTH));
         let marker = make
             .c("marker")
             .with(make.c("symbol").with_attr("val", "circle"))
             .with(make.c("size").with_attr("val", "5"))
             .with(marker_shape(make, index));
-        element.insert_ordered(Some(SER_ORDER), marker);
+        element.insert_ordered(Some(schema::SER), marker);
     } else if scatter_lineless {
-        element.insert_ordered(Some(SER_ORDER), no_line_shape(make, SCATTER_LINE_WIDTH));
+        element.insert_ordered(Some(schema::SER), no_line_shape(make, SCATTER_LINE_WIDTH));
         if let Some(marker) = element.child("marker") {
             let symbol = marker.place("symbol").and_then(|at| marker.read(at));
             if symbol.is_none_or(|s| attr(&s, "val") != Some("none")) {
-                marker.insert_ordered(Some(MARKER_ORDER), marker_shape(make, index));
+                marker.insert_ordered(Some(schema::MARKER), marker_shape(make, index));
             }
         }
     }
@@ -403,9 +375,9 @@ fn new_name(element: &mut Owned, name: Option<&str>) {
                 for at in cache.places("pt").into_iter().rev() {
                     cache.remove(at);
                 }
-                cache.sub(&c, "ptCount", Some(&CACHE_ORDER)).set_attr("val", "1");
+                cache.sub(&c, "ptCount", Some(schema::CACHE)).set_attr("val", "1");
                 if let Some(name) = name {
-                    insert_point(cache, &c, Some(&CACHE_ORDER), 0, name);
+                    insert_point(cache, &c, Some(schema::CACHE), 0, name);
                 }
             }
         }
@@ -442,12 +414,12 @@ fn new_data(element: &mut Owned, values: &[Option<f64>]) -> Result<(), DataError
                 cache.remove(at);
             }
             cache
-                .sub(&c, "ptCount", Some(&CACHE_ORDER))
+                .sub(&c, "ptCount", Some(schema::CACHE))
                 .set_attr("val", &values.len().to_string());
             for (at, value) in values.iter().enumerate() {
                 if let Some(value) = value {
                     let text = encode(&PointValue::Number(*value), numeric)?;
-                    insert_point(cache, &c, Some(&CACHE_ORDER), at, &text);
+                    insert_point(cache, &c, Some(schema::CACHE), at, &text);
                 }
             }
         }
@@ -459,7 +431,7 @@ fn new_data(element: &mut Owned, values: &[Option<f64>]) -> Result<(), DataError
                 cache.remove(at);
             }
             cache
-                .sub(&c, "ptCount", Some(&CACHE_ORDER))
+                .sub(&c, "ptCount", Some(schema::CACHE))
                 .set_attr("val", &values.len().to_string());
         }
         to_literal(element, Which::Sizes);
@@ -470,11 +442,11 @@ fn new_data(element: &mut Owned, values: &[Option<f64>]) -> Result<(), DataError
 /// `_give_name`: a literal name (`c:tx/c:v`), the `c:tx` made in order where there is none.
 fn give_name(ser: &mut Owned, name: &str) {
     let c = Arc::clone(ser.name());
-    let tx = ser.sub(&c, "tx", Some(SER_ORDER));
+    let tx = ser.sub(&c, "tx", Some(schema::SER));
     for at in tx.elements().into_iter().map(|(at, _)| at).rev() {
         tx.remove(at);
     }
-    tx.insert_ordered(Some(TX_ORDER), Owned::like(&c, "v").with_text(name));
+    tx.insert_ordered(Some(schema::TX), Owned::like(&c, "v").with_text(name));
 }
 
 /// `_give_unique_id`: the series' `c16:uniqueId`, `{00000000-XXXX-XXXX-XXXX-XXXXXXXXXXXX}`
@@ -507,7 +479,7 @@ fn give_unique_id(element: &mut Owned, make: &Make, part: &str, idx: i64, taken:
     ext.declare("c16", C16);
     ext.set_attr("uri", SERIES_ID_EXT);
     let ext = ext.with(Owned::named(Some("c16"), "uniqueId", Some(C16)).with_attr("val", &value));
-    element.insert_ordered(Some(SER_ORDER), make.c("extLst").with(ext));
+    element.insert_ordered(Some(schema::SER), make.c("extLst").with(ext));
 }
 
 /// `no_line_shape`: a series' `c:spPr` with its line off.

@@ -38,14 +38,14 @@ impl MoveNote {
         let (notes, note_path, _) = note_element(sink.doc(), &docx, &self.note)?;
         let held = sink.doc().clone();
         let number = {
-            let tree = held.tree(&notes)?.ok_or_else(|| EditError::NoPart(notes.clone()))?;
+            let tree = held.tree(&notes)?.ok_or_else(|| EditError::no_part(notes.clone()))?;
             next_number(tree.root(), kind)
         };
         let mut space = Space::default();
         space.work(&held, &notes)?;
         let note = space
             .locate(&notes, &note_path)
-            .ok_or_else(|| EditError::Path(notes.clone()))?;
+            .ok_or_else(|| EditError::no_element(notes.clone()))?;
         let paragraphs = twin(sink, &mut space, &notes, note, number)?;
         let mut old = editable(&*sink, &old_part, &reference)?;
         let same = old.part == paragraph.part && old.path == paragraph.path.to_vec();
@@ -57,13 +57,14 @@ impl MoveNote {
         let run = new_reference(&mut old, new.as_mut(), kind, number, offset)?;
         let old_node = old.node;
         let (released, deleted, dated_old) = sink.stamped(tracking.clone(), |stamp| {
-            let moved = isolate_reference(&mut old.work, old_node).ok_or_else(|| EditError::Path(old.part.clone()))?;
+            let moved =
+                isolate_reference(&mut old.work, old_node).ok_or_else(|| EditError::no_element(old.part.clone()))?;
             Ok(crate::track::delete_runs(&mut old.work, &[moved], stamp))
         })?;
         let gone = !attached(&old.work, old_node);
         let target = new.as_mut().unwrap_or(&mut old);
         let (inserted, dated_new) = track_inserted(sink, &tracking, &mut target.work, run)?;
-        let notes_work = space.get_mut(&notes).ok_or_else(|| EditError::NoPart(notes.clone()))?;
+        let notes_work = space.get_mut(&notes).ok_or_else(|| EditError::no_part(notes.clone()))?;
         if gone {
             notes_work.remove(note);
         }
@@ -109,7 +110,7 @@ impl MoveNote {
 fn twin(sink: &mut EditSink<'_, '_>, space: &mut Space, notes: &str, note: Id, number: i64) -> Result<Vec<Id>> {
     let work = space
         .get_mut(notes)
-        .ok_or_else(|| EditError::NoPart(notes.to_owned()))?;
+        .ok_or_else(|| EditError::no_part(notes.to_owned()))?;
     let copy = work.deep_copy(note);
     let id = work.qname(W, "id", "w");
     work.set(copy, id, &number.to_string());
@@ -118,7 +119,7 @@ fn twin(sink: &mut EditSink<'_, '_>, space: &mut Space, notes: &str, note: Id, n
     for p in &paragraphs {
         let work = space
             .get_mut(notes)
-            .ok_or_else(|| EditError::NoPart(notes.to_owned()))?;
+            .ok_or_else(|| EditError::no_part(notes.to_owned()))?;
         stamp_paragraph(sink, work, *p, notes)?;
     }
     Ok(paragraphs)
@@ -141,9 +142,9 @@ fn new_reference(
             target
                 .work
                 .adopt(&element)
-                .ok_or_else(|| EditError::Path(target.part.clone()))?,
+                .ok_or_else(|| EditError::no_element(target.part.clone()))?,
         ),
-        Some(None) => return Err(EditError::Path(target.part.clone())),
+        Some(None) => return Err(EditError::no_element(target.part.clone())),
         None => None,
     };
     let reference = make(

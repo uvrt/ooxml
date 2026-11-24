@@ -72,7 +72,7 @@ struct Unit {
 /// When the version cannot be read.
 pub fn accept_loses_original(doc: &WordDoc, opened: Arc<Docx>) -> Result<Vec<LostOriginal>> {
     let docx = doc.docx()?;
-    let body = docx.body().ok_or_else(|| EditError::NoPart(docx.main.clone()))?;
+    let body = docx.body().ok_or_else(|| EditError::no_part(docx.main.clone()))?;
     let mut originals = Originals::new(opened, doc);
     let mut records = Vec::new();
     deletions(body.root(), &mut Vec::new(), &mut Vec::new(), &mut records);

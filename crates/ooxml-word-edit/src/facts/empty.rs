@@ -88,7 +88,7 @@ enum Item<'a> {
 /// When the version cannot be read.
 pub fn empty_paragraphs(doc: &WordDoc) -> Result<Vec<EmptyRun>> {
     let docx = doc.docx()?;
-    let body = docx.body().ok_or_else(|| EditError::NoPart(docx.main.clone()))?;
+    let body = docx.body().ok_or_else(|| EditError::no_part(docx.main.clone()))?;
     let formatting = Formatting::read(&docx);
     let mut reading = Reading {
         part: body,

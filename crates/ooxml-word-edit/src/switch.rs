@@ -90,7 +90,7 @@ impl Command<WordDoc> for SetWordTracking {
         let mut space = Space::default();
         let work = space
             .work(&held, &part)?
-            .ok_or_else(|| EditError::NoPart(part.clone()))?;
+            .ok_or_else(|| EditError::no_part(part.clone()))?;
         for node in work.children(work.root()).to_vec() {
             if work.is(node, W, "trackRevisions") {
                 work.remove(node);

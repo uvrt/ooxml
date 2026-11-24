@@ -21,9 +21,12 @@
 //!   not 0, false, off)`), `nsattr <fn> <prefix> <local>`, `text <fn>` (the element's text
 //!   before its first child) and `alltext <fn>` (every text node below it);
 //! - a view may name its namespace, `view <Type> <local> <prefix> | <doc>`, which gives it a
-//!   constructor of the empty element (`create`); and inside a view, `order <step> <step>...`
-//!   is the schema's child sequence (a step lists a choice's names as `a/b`), which gives it
-//!   `insert`: the element with a child added where the sequence puts it.
+//!   constructor of the empty element (`create`); and inside a view, `order = <NAME>` names
+//!   the schema's child sequence generated from the XML schemas (`ooxml_schema::orders::local`,
+//!   [`crate::orders`]), which gives it `insert`: the element with a child added where the
+//!   sequence puts it. `order <step> <step>...` (a step lists a choice's names as `a/b`) gives
+//!   the sequence by hand, only for a namespace the vendored schemas lack (markup
+//!   compatibility, package relationships).
 //!
 //! Each target names the module its getters call (`reader`): a crate's own (`crate::xmlread`,
 //! the Word model's reading rules) or `ooxml_xml::view`.
@@ -42,6 +45,8 @@ pub struct Target {
 }
 
 const SHARED: &str = "use ooxml_xml::view as xmlread;";
+/// The crate that holds the generated orders (`crate::orders::local`), where `order =` works.
+const GENERATED_ORDERS_CRATE: &str = "crates/ooxml-schema/";
 
 /// Every description in the workspace.
 pub const TARGETS: &[Target] = &[
@@ -113,7 +118,18 @@ struct View {
     prefix: Option<String>,
     doc: String,
     items: Vec<Item>,
-    order: Vec<Vec<String>>,
+    order: Order,
+}
+
+/// A view's child sequence.
+#[derive(Debug)]
+enum Order {
+    /// None: no `insert`.
+    None,
+    /// Given by hand (a namespace the vendored schemas lack).
+    Hand(Vec<Vec<String>>),
+    /// Generated: the name of an `ooxml_schema::orders::local` order.
+    Generated(String),
 }
 
 struct Description {
@@ -197,7 +213,7 @@ fn parse(source: &str) -> Result<Description, String> {
                         prefix: head.get(3).map(|p| (*p).to_string()),
                         doc: doc.trim().to_string(),
                         items: Vec::new(),
-                        order: Vec::new(),
+                        order: Order::None,
                     });
                 }
                 other => return Err(format!("line {}: unknown statement {other:?}", k + 1)),
@@ -209,9 +225,16 @@ fn parse(source: &str) -> Result<Description, String> {
             .last_mut()
             .ok_or(format!("line {}: an item outside a view", k + 1))?;
         if fields.first() == Some(&"order") {
-            let steps = fields.iter().skip(1);
-            view.order
-                .extend(steps.map(|step| step.split('/').map(String::from).collect()));
+            view.order = match fields.get(1..) {
+                Some(["=", name]) => Order::Generated((*name).to_string()),
+                Some(steps) if !steps.is_empty() && !steps.contains(&"=") => Order::Hand(
+                    steps
+                        .iter()
+                        .map(|step| step.split('/').map(String::from).collect())
+                        .collect(),
+                ),
+                _ => return Err(format!("line {}: order = <NAME>, or order <step>...", k + 1)),
+            };
         } else {
             view.items.push(parse_item(&fields, k + 1)?);
         }
@@ -354,27 +377,29 @@ fn emit_create(out: &mut String, local: &str, prefix: &str) {
 }
 
 fn emit_order(out: &mut String, view: &View) {
-    if view.order.is_empty() {
-        return;
-    }
-    let steps: Vec<String> = view
-        .order
-        .iter()
-        .map(|step| {
-            format!(
-                "&[{}]",
-                step.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(", ")
-            )
-        })
-        .collect();
+    let value = match &view.order {
+        Order::None => return,
+        Order::Generated(name) => format!("crate::orders::local::{name}"),
+        Order::Hand(order) => {
+            let steps: Vec<String> = order
+                .iter()
+                .map(|step| {
+                    format!(
+                        "&[{}]",
+                        step.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(", ")
+                    )
+                })
+                .collect();
+            format!("&[{}]", steps.join(", "))
+        }
+    };
     let _ = writeln!(
         out,
         "\n    /// The schema's sequence of children, by local name (a step lists a choice).\n    \
-         pub const ORDER: &'static [&'static [&'static str]] = &[{}];\n\n    \
+         pub const ORDER: &'static [&'static [&'static str]] = {value};\n\n    \
          /// The element with `child` added where [`Self::ORDER`] puts it.\n    \
          pub fn insert(self, child: Element) -> Element {{\n        \
          xmlread::insert_ordered(self.0, Self::ORDER, child)\n    }}",
-        steps.join(", ")
     );
 }
 
@@ -408,9 +433,21 @@ fn generate(description: &Description, target: &Target) -> String {
 /// instead of writing them.
 pub fn run(root: &Path, check: bool) -> Result<Vec<String>, String> {
     let mut differ = Vec::new();
+    let locals = crate::orders::local_names(root)?;
     for target in TARGETS {
         let source = std::fs::read_to_string(root.join(target.description)).map_err(|e| e.to_string())?;
-        let generated = generate(&parse(&source)?, target);
+        let description = parse(&source)?;
+        for view in &description.views {
+            if let Order::Generated(name) = &view.order {
+                if !target.output.starts_with(GENERATED_ORDERS_CRATE) || !locals.contains(name) {
+                    return Err(format!(
+                        "{}: {}: order = {name} names no local order in {GENERATED_ORDERS_CRATE}",
+                        target.description, view.name
+                    ));
+                }
+            }
+        }
+        let generated = generate(&description, target);
         let path = root.join(target.output);
         let current = std::fs::read_to_string(&path).unwrap_or_default();
         if current != generated {
@@ -420,5 +457,6 @@ pub fn run(root: &Path, check: bool) -> Result<Vec<String>, String> {
             }
         }
     }
+    differ.extend(crate::orders::run(root, check)?);
     Ok(differ)
 }

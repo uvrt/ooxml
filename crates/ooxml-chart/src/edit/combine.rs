@@ -11,10 +11,11 @@
 //! SHA-256, as ooxml-edit takes `hashlib`'s).
 
 use super::make::Make;
-use super::owned::{Order, Owned};
+use super::owned::Owned;
 use super::path::indexed;
-use super::series::{Hash, SER_ORDER};
+use super::series::Hash;
 use super::{ChartTree, DataError, PLOTS};
+use ooxml_schema::orders::local as schema;
 use ooxml_xml::view::{attr, child, children, local, py_int};
 use ooxml_xml::Element;
 use std::collections::BTreeSet;
@@ -23,8 +24,6 @@ use std::collections::BTreeSet;
 const AXES: [&str; 4] = ["valAx", "catAx", "dateAx", "serAx"];
 /// A plot's head: what a series goes after where the plot has none (`_insert_series`).
 const PLOT_HEAD: [&str; 5] = ["barDir", "grouping", "varyColors", "radarStyle", "scatterStyle"];
-/// `c:plotArea`'s sequence.
-const PLOT_AREA_ORDER: Order = &[&["layout"], &PLOTS, &AXES, &["dTable"], &["spPr"], &["extLst"]];
 /// A line series' line width, EMU (`_to_line`).
 const LINE_WIDTH: &str = "28575";
 
@@ -368,8 +367,8 @@ impl Move<'_> {
                 vec![at, at + 1]
             }
             None => {
-                let first = owned.insert_ordered(Some(PLOT_AREA_ORDER), value);
-                vec![first, owned.insert_ordered(Some(PLOT_AREA_ORDER), category)]
+                let first = owned.insert_ordered(Some(schema::PLOT_AREA), value);
+                vec![first, owned.insert_ordered(Some(schema::PLOT_AREA), category)]
             }
         }
     }
@@ -462,13 +461,13 @@ fn to_line(ser: &mut Owned, make: &Make) {
         .with(colour.unwrap_or_else(|| make.a("noFill")))
         .with(make.a("round"));
     let shape = make.c("spPr").with(make.top(line)).with(make.top(make.a("effectLst")));
-    ser.insert_ordered(Some(SER_ORDER), shape);
+    ser.insert_ordered(Some(schema::SER), shape);
     if ser.place("marker").is_none() {
         let marker = make.c("marker").with(make.c("symbol").with_attr("val", "none"));
-        ser.insert_ordered(Some(SER_ORDER), marker);
+        ser.insert_ordered(Some(schema::SER), marker);
     }
     if ser.place("smooth").is_none() {
-        ser.insert_ordered(Some(SER_ORDER), make.c("smooth").with_attr("val", "0"));
+        ser.insert_ordered(Some(schema::SER), make.c("smooth").with_attr("val", "0"));
     }
 }
 
@@ -488,8 +487,8 @@ fn to_column(ser: &mut Owned, make: &Make) {
         .with(make.top(fill))
         .with(make.top(make.a("ln").with(make.a("noFill"))))
         .with(make.top(make.a("effectLst")));
-    ser.insert_ordered(Some(SER_ORDER), shape);
-    ser.insert_ordered(Some(SER_ORDER), make.c("invertIfNegative").with_attr("val", "0"));
+    ser.insert_ordered(Some(schema::SER), shape);
+    ser.insert_ordered(Some(schema::SER), make.c("invertIfNegative").with_attr("val", "0"));
 }
 
 /// A series' `c:order` as `_insert_series` reads it (0 where it is not a number).

@@ -427,9 +427,13 @@ impl<'s> Styles<'s> {
         if kind == Some("paragraph") && self.based_in_destination(&work, copy) {
             self.fold_defaults(&mut work, copy, shared.facts.orders())?;
         }
-        let built = work.build_element(copy).ok_or_else(|| EditError::Path(part.clone()))?;
+        let built = work
+            .build_element(copy)
+            .ok_or_else(|| EditError::no_element(part.clone()))?;
         let styles = styles_work(sink, space, &part)?;
-        let adopted = styles.adopt(&built).ok_or_else(|| EditError::Path(part.clone()))?;
+        let adopted = styles
+            .adopt(&built)
+            .ok_or_else(|| EditError::no_element(part.clone()))?;
         let root = styles.root();
         styles.append(root, adopted);
         let own_kind = built.attribute(Some(W), "type").map(str::to_owned);
@@ -499,7 +503,9 @@ impl<'s> Styles<'s> {
                     }
                 };
                 let value = self.themes.concrete(child);
-                let adopted = work.adopt_copy(&value).ok_or_else(|| EditError::Path(tag.to_owned()))?;
+                let adopted = work
+                    .adopt_copy(&value)
+                    .ok_or_else(|| EditError::no_element(tag.to_owned()))?;
                 crate::marks::insert_in_order(work, into, adopted, orders);
             }
         }
@@ -531,7 +537,7 @@ pub(super) fn detached_copy(element: &Arc<Element>) -> Result<(Work, Id)> {
     let mut work = Work::of(element, Vec::new());
     let copy = work
         .adopt_copy(element)
-        .ok_or_else(|| EditError::Path(element.name().local().to_owned()))?;
+        .ok_or_else(|| EditError::no_element(element.name().local().to_owned()))?;
     Ok((work, copy))
 }
 
@@ -540,7 +546,7 @@ fn styles_work<'w>(sink: &EditSink<'_, '_>, space: &'w mut Space, part: &str) ->
     let held = sink.doc().clone();
     space
         .work(&held, part)?
-        .ok_or_else(|| EditError::NoPart(part.to_owned()))
+        .ok_or_else(|| EditError::no_part(part.to_owned()))
 }
 
 /// The paragraph style most of `docx`'s body's plain paragraphs use, `None` for its

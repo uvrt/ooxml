@@ -37,12 +37,12 @@ impl EditSink<'_, '_> {
             .tx
             .doc()
             .tree(part)?
-            .ok_or_else(|| EditError::NoPart(part.to_owned()))?;
-        let element =
-            ooxml_word_model::docx::at_path(tree.root(), parent).ok_or_else(|| EditError::Path(part.to_owned()))?;
+            .ok_or_else(|| EditError::no_part(part.to_owned()))?;
+        let element = ooxml_word_model::docx::at_path(tree.root(), parent)
+            .ok_or_else(|| EditError::no_element(part.to_owned()))?;
         let old: Vec<Node> = element.children().iter().skip(start).take(count).cloned().collect();
         if old.len() != count {
-            return Err(EditError::Path(part.to_owned()));
+            return Err(EditError::no_element(part.to_owned()));
         }
         let runs = changed_runs(&Children::from_vec(old), &Children::from_vec(nodes.clone()));
         let placed = |d: &Draw| runs.iter().any(|r| r.new.contains(&(d.node as usize)));

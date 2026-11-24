@@ -243,7 +243,7 @@ pub fn text_language(doc: &WordDoc, scope: LanguageScope<'_>) -> Result<Option<T
             .parts
             .iter()
             .position(|p| p.part == docx.main)
-            .ok_or_else(|| EditError::NoPart(docx.main.clone()))?;
+            .ok_or_else(|| EditError::no_part(docx.main.clone()))?;
         top_level(&docx, body)
     } else {
         Vec::new()

@@ -8,23 +8,13 @@
 
 use super::format::{effects, points_to_emu, set_fill, set_line, set_marker, Colour, MarkerLook};
 use super::make::Make;
-use super::owned::{Order, Owned};
+use super::owned::Owned;
 use super::points::reference;
-use super::series::{POINT_SOURCES, SER_ORDER};
+use super::series::POINT_SOURCES;
 use super::{ChartTree, DataError};
+use ooxml_schema::orders::local as schema;
 use ooxml_xml::view::{attr, child, local};
 
-/// `c:dPt`'s sequence.
-const DPT_ORDER: Order = &[
-    &["idx"],
-    &["invertIfNegative"],
-    &["marker"],
-    &["bubble3D"],
-    &["explosion"],
-    &["spPr"],
-    &["pictureOptions"],
-    &["extLst"],
-];
 /// Plots whose series are areas (`_FILLED`), and lines (`_LINED`).
 const FILLED: [&str; 9] = [
     "barChart",
@@ -120,8 +110,8 @@ impl ChartTree {
         let make = Make::of(&self.root);
         self.change_series(series, |ser| {
             let (owner, order) = match point {
-                None => (ser, SER_ORDER),
-                Some(point) => (data_point(ser, &make, &plot, point), DPT_ORDER),
+                None => (ser, schema::SER),
+                Some(point) => (data_point(ser, &make, &plot, point), schema::DATA_POINT),
             };
             let shape = owner.child_or_insert("spPr", Some(order), || make.c("spPr"));
             if let Some(fill) = &fill {
@@ -197,6 +187,6 @@ fn data_point<'a>(ser: &'a mut Owned, make: &Make, plot: &str, index: usize) -> 
     });
     match later {
         Some(at) => ser.put(at, point),
-        None => ser.put_ordered(Some(SER_ORDER), point),
+        None => ser.put_ordered(Some(schema::SER), point),
     }
 }

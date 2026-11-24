@@ -238,7 +238,10 @@ pub(crate) fn ensure(sink: &mut EditSink<'_, '_>, name: &str, kind: &str) -> Res
         Some(part) => part,
         None => styles_part(sink)?,
     };
-    let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
+    let tree = sink
+        .doc()
+        .tree(&part)?
+        .ok_or_else(|| EditError::no_part(part.clone()))?;
     let at = tree.root().children().len();
     sink.splice_children(
         &part,

@@ -109,13 +109,13 @@ impl FollowSample {
         let tree = sink
             .doc()
             .tree(&found.part)?
-            .ok_or_else(|| EditError::NoPart(found.part.clone()))?;
-        let element = at_path(tree.root(), &found.path).ok_or_else(|| EditError::Path(found.part.clone()))?;
+            .ok_or_else(|| EditError::no_part(found.part.clone()))?;
+        let element = at_path(tree.root(), &found.path).ok_or_else(|| EditError::no_element(found.part.clone()))?;
         let mut work = Work::of(element, scope_above(tree.root(), &found.path));
         let root = work.root();
         let sample_node = work
             .adopt(&sample.element)
-            .ok_or_else(|| EditError::Path(sample.part.clone()))?;
+            .ok_or_else(|| EditError::no_element(sample.part.clone()))?;
         let shared = sink.doc().shared_handle();
         let orders = shared.facts.orders();
         let alike = found.table == sample.table;
@@ -183,7 +183,7 @@ fn put(
     written: &Written,
     places: &[Vec<u32>],
 ) -> Result<Vec<String>> {
-    let new = work.build().ok_or_else(|| EditError::Path(found.part.clone()))?;
+    let new = work.build().ok_or_else(|| EditError::unbuilt(found.part.clone()))?;
     if new.as_ref() != element.as_ref() {
         let at = Found {
             part: found.part.clone(),

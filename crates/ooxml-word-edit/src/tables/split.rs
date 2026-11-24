@@ -489,7 +489,7 @@ pub(super) fn split_cell(
                 .into_iter()
                 .find(|p| p.start <= column && column < p.start + p.span)
         })
-        .ok_or_else(|| EditError::Path(held.found.part.clone()))?;
+        .ok_or_else(|| EditError::no_element(held.found.part.clone()))?;
     let (top, bottom) = extents(work, &before).get(&found.cell).copied().unwrap_or((row, row));
     // a cell merged down is split from its merge's first row
     let cell = cell_at(work, before.get(top), found.start).unwrap_or(found.cell);

@@ -112,7 +112,7 @@ pub(super) fn mark_control(
 ) -> Result<()> {
     let part = found.part.clone();
     space.work(doc, &part)?;
-    let gone = || EditError::Path(part.clone());
+    let gone = || EditError::no_element(part.clone());
     let sdt = space.locate(&part, &found.path).ok_or_else(gone)?;
     let work = space.get(&part).ok_or_else(gone)?;
     let inline = level(work, sdt) == "inline";

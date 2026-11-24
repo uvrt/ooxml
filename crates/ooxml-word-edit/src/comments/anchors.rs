@@ -68,7 +68,7 @@ pub(super) fn anchor(doc: &WordDoc, docx: &Docx, place: &str) -> Result<Anchor> 
     let found = range(doc, docx, place)?;
     let span = Span::of(doc, docx, &found)?;
     let (Some(first), Some(last)) = (span.first(), span.last()) else {
-        return Err(EditError::Path(span.part.clone()));
+        return Err(EditError::no_element(span.part.clone()));
     };
     let length = |element: &std::sync::Arc<ooxml_xml::Element>| {
         let work = Work::of(element, Vec::new());
@@ -148,7 +148,7 @@ pub(super) fn mark(
         Anchor::Control(found) => return mark_control(space, doc, found, sizes, (id, reference)),
     };
     copy_anchored(space, doc, &part, anchor)?;
-    let gone = || EditError::Path(part.clone());
+    let gone = || EditError::no_element(part.clone());
     match anchor {
         Anchor::Range {
             first,

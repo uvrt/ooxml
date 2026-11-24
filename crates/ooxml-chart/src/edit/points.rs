@@ -10,16 +10,12 @@
 //! with `ooxml-sheets`).
 
 use super::owned::{Order, Owned};
-use super::{encode, DataError, PointValue, Which, CACHE_ORDER};
+use super::{encode, DataError, PointValue, Which};
+use ooxml_schema::orders::local as schema;
 use ooxml_xml::view::py_int;
 
 /// The namespace of a series' Value From Cells labels (`_LabelRange.C15`).
 pub(crate) const C15: &str = "http://schemas.microsoft.com/office/drawing/2012/chart";
-
-/// `c:lvl`'s sequence.
-const LEVEL_ORDER: Order = &[&["pt"], &["extLst"]];
-/// `c:multiLvlStrCache`'s sequence.
-const LEVELS_ORDER: Order = &[&["ptCount"], &["lvl"], &["extLst"]];
 
 /// The references a data source may hold (`_REF_TAGS`).
 const REFERENCES: [&str; 6] = ["strRef", "numRef", "multiLvlStrRef", "strLit", "numLit", "v"];
@@ -156,7 +152,7 @@ impl Reference<'_> {
                 ));
             }
             let level = cache.child("lvl").ok_or_else(no_cache)?;
-            return Ok((level, Some(LEVEL_ORDER)));
+            return Ok((level, Some(schema::LEVEL)));
         }
         let order = self.cache_order();
         let cache = self.cache().ok_or_else(no_cache)?;
@@ -165,9 +161,9 @@ impl Reference<'_> {
 
     fn cache_order(&self) -> Option<Order> {
         match self.kind.as_str() {
-            "numRef" | "numLit" => Some(&CACHE_ORDER),
-            "strRef" | "strLit" => Some(&CACHE_ORDER),
-            "multiLvlStrRef" => Some(LEVELS_ORDER),
+            "numRef" | "numLit" => Some(schema::CACHE),
+            "strRef" | "strLit" => Some(schema::CACHE),
+            "multiLvlStrRef" => Some(schema::LEVELS),
             _ => None, // c15:dlblRangeCache: no sequence, appended
         }
     }

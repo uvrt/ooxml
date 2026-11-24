@@ -260,7 +260,7 @@ pub(crate) fn sync_holder(
         let copy = work.deep_copy(child);
         work.append(into, copy);
     }
-    let synced = work.build().ok_or_else(|| EditError::Path(part.to_owned()))?;
+    let synced = work.build().ok_or_else(|| EditError::unbuilt(part.to_owned()))?;
     sink.replace(part, path, synced, vec![crate::doc::Key::Part(Arc::from(part))])?;
     Ok(true)
 }

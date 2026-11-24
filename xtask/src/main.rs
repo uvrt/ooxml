@@ -1,7 +1,8 @@
 //! The workspace's tasks (`cargo xtask <command>`, design section 3).
 //!
 //! - `codegen [--check]`: regenerate the typed views from their schema descriptions
-//!   ([`codegen`]); `--check` fails when a checked-in file differs.
+//!   ([`codegen`]) and the child orders from the XML schemas ([`orders`]); `--check` fails
+//!   when a checked-in file differs.
 //! - `check-layers`: fail on a dependency that goes sideways or upward against the layer
 //!   map, or a crate the map does not place ([`layers`]).
 //!
@@ -9,6 +10,7 @@
 
 mod codegen;
 mod layers;
+mod orders;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
