@@ -161,7 +161,7 @@ pub fn keep_with_next_at_foot(facts: &Facts<'_>, kept: &KeptTables) -> Vec<KeepA
         let lowest = page
             .lines
             .iter()
-            .filter(|l| story_kind(&l.path) == "body" && version.id_of(&l.path).is_some())
+            .filter(|l| story_kind(&l.path) == "body" && version.is_named(&l.path))
             .fold(None::<&LineFact>, |best, l| match best {
                 Some(b) if b.top >= l.top => Some(b),
                 _ => Some(l),

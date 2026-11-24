@@ -114,7 +114,7 @@ impl Facts<'_> {
             let mut mine: Vec<(Px, Px, usize)> = page
                 .lines
                 .iter()
-                .filter(|l| super::story_kind(&l.path) == "body" && version.id_of(&l.path).is_some())
+                .filter(|l| super::story_kind(&l.path) == "body" && version.is_named(&l.path))
                 .filter(|l| held(&l.path))
                 .map(|l| (l.top, l.pitch, l.column.unwrap_or(0)))
                 .collect();

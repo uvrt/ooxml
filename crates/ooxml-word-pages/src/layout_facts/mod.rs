@@ -133,7 +133,7 @@ impl<'a> Facts<'a> {
                 let is_named = match named {
                     Some((last, known)) if last == path => known,
                     _ => {
-                        let known = story_kind(path) == "body" && version.id_of(path).is_some();
+                        let known = story_kind(path) == "body" && version.is_named(path);
                         named = Some((path, known));
                         known
                     }
