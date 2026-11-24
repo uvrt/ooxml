@@ -9,6 +9,7 @@
 
 use super::tree::{self, cell_line, is_w, W};
 use super::{points, round, Facts};
+use crate::page_read::PageRead;
 use ooxml_xml::Element;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
@@ -52,12 +53,112 @@ pub struct ColumnFit {
     pub pages: Vec<usize>,
 }
 
-/// What one cell draws: each paragraph's lines' ink widths and each line's widest word, pt.
+/// One page's contribution to `column_fit` (the page tier's, [`crate::page_entry`]): the
+/// body cells it draws lines of, table by table in the order first drawn, with what each
+/// cell's lines measure. A pure function of the page's read: which tables are asked for,
+/// their elements and their ids are the fold's ([`column_fit`]).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct CellsPart {
+    tables: Vec<PageTable>,
+}
+
+/// A table's cells drawn on one page.
+#[derive(Debug, Clone, PartialEq)]
+struct PageTable {
+    /// The table's layout path.
+    path: String,
+    cells: Vec<PageCell>,
+}
+
+/// One cell's lines drawn on one page.
+#[derive(Debug, Clone, PartialEq)]
+struct PageCell {
+    /// Its row and its place in the row, from 0.
+    at: (usize, usize),
+    /// Each paragraph's lines measured on the page, in the order first drawn: its path in
+    /// the cell, how many, and the widest one's ink, pt.
+    paragraphs: Vec<(String, usize, f64)>,
+    /// The widest run without a space of those lines, pt (0 where none is measured).
+    word: f64,
+}
+
+impl CellsPart {
+    /// The contribution of a page read as `read`.
+    #[must_use]
+    pub fn of(read: &PageRead) -> CellsPart {
+        let mut tables: Vec<PageTable> = Vec::new();
+        for line in read.texts.iter().filter(|l| l.story.is_none()) {
+            let Some((table, row, cell, paragraph)) = cell_line(&line.path) else {
+                continue;
+            };
+            let k = match tables.iter().position(|t| t.path == table) {
+                Some(k) => k,
+                None => {
+                    tables.push(PageTable {
+                        path: table.to_owned(),
+                        cells: Vec::new(),
+                    });
+                    tables.len() - 1
+                }
+            };
+            let Some(cells) = tables.get_mut(k).map(|t| &mut t.cells) else {
+                continue;
+            };
+            let c = match cells.iter().position(|c| c.at == (row, cell)) {
+                Some(c) => c,
+                None => {
+                    cells.push(PageCell {
+                        at: (row, cell),
+                        paragraphs: Vec::new(),
+                        word: 0.0,
+                    });
+                    cells.len() - 1
+                }
+            };
+            let (Some(seen), (Some((low, high)), Some(widest))) = (cells.get_mut(c), (line.ink, line.widest)) else {
+                continue;
+            };
+            let width = points(high - low);
+            match seen.paragraphs.iter_mut().find(|(p, ..)| p == paragraph) {
+                Some((_, lines, wide)) => {
+                    *lines += 1;
+                    *wide = wide.max(width);
+                }
+                None => seen.paragraphs.push((paragraph.to_owned(), 1, width)),
+            }
+            seen.word = seen.word.max(points(widest));
+        }
+        CellsPart { tables }
+    }
+
+    /// What the contribution of a page read as `read` holds at most, bytes.
+    #[must_use]
+    pub fn weight_of(read: &PageRead) -> usize {
+        let each = std::mem::size_of::<PageTable>()
+            + std::mem::size_of::<PageCell>()
+            + std::mem::size_of::<(String, usize, f64)>();
+        let lines = read
+            .texts
+            .iter()
+            .filter(|l| l.story.is_none() && l.path.contains("/w:tc["))
+            .map(|l| each + l.path.len());
+        std::mem::size_of::<CellsPart>() + lines.sum::<usize>()
+    }
+}
+
+/// What one cell draws over the pages folded so far: each paragraph's lines and the widest
+/// one's ink, and the widest run without a space, pt.
 #[derive(Debug, Default)]
-struct DrawnCell {
-    lines: HashMap<String, Vec<f64>>,
-    words: Vec<f64>,
+struct DrawnCell<'p> {
+    lines: HashMap<&'p str, (usize, f64)>,
+    word: f64,
+}
+
+/// A table's cells as drawn, by `(row, cell)` from 0, and the pages drawing them.
+#[derive(Debug, Default)]
+struct DrawnTable<'p> {
     pages: BTreeSet<usize>,
+    cells: BTreeMap<(usize, usize), DrawnCell<'p>>,
 }
 
 /// `column_fit` of the body's tables, the most wrapped first; on the pages asked for, every
@@ -70,21 +171,23 @@ pub fn column_fit(facts: &Facts<'_>) -> Vec<ColumnFit> {
     };
     let mut entries = Vec::new();
     for path in order {
-        let Some(cells) = drawn.get(&path) else { continue };
-        let pages: Vec<usize> = cells
-            .values()
-            .flat_map(|c| c.pages.iter().copied())
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
+        let Some(table) = drawn.get(path) else { continue };
+        let pages: Vec<usize> = table.pages.iter().copied().collect();
         if !facts.shown(pages.iter().copied()) {
             continue;
         }
-        let Some((element, _)) = tree::resolve(body, &path) else {
+        if !table.wraps() {
+            continue; // no column can wrap: its element and margins are not read
+        }
+        let Some((element, _)) = tree::resolve(body, path) else {
             continue;
         };
-        let id = facts.version().id_of(&path).unwrap_or(&path).to_owned();
-        for (roomy, wraps, widths) in fit_columns(facts, element, cells, &path) {
+        let fits = fit_columns(facts, element, &table.cells, path);
+        if fits.is_empty() {
+            continue;
+        }
+        let id = facts.version().id_of(path).unwrap_or(path).to_owned();
+        for (roomy, wraps, widths) in fits {
             entries.push(ColumnFit {
                 table: id.clone(),
                 roomy,
@@ -98,12 +201,20 @@ pub fn column_fit(facts: &Facts<'_>) -> Vec<ColumnFit> {
     entries
 }
 
-/// A table's cells as drawn, by `(row, cell)` from 0.
-type TableCells = BTreeMap<(usize, usize), DrawnCell>;
+impl DrawnTable<'_> {
+    /// Whether one of its paragraphs is drawn on [`WRAP_LINES`] lines at least: without
+    /// one, no column wraps and the table has no entry.
+    fn wraps(&self) -> bool {
+        self.cells
+            .values()
+            .any(|c| c.lines.values().any(|&(lines, _)| lines >= WRAP_LINES))
+    }
+}
 
-/// Each body table's cells as drawn, with the tables in the order first drawn: with pages
-/// asked for, only the tables drawn on them, on every page each is.
-fn drawn_cells(facts: &Facts<'_>) -> (Vec<String>, HashMap<String, TableCells>) {
+/// Each body table's cells as drawn, with the tables in the order first drawn: a fold over
+/// the pages' contributions ([`CellsPart`]); with pages asked for, only the tables drawn on
+/// them, on every page each is.
+fn drawn_cells<'f>(facts: &'f Facts<'_>) -> (Vec<&'f str>, HashMap<&'f str, DrawnTable<'f>>) {
     let pages = &facts.version().facts().pages;
     let body_cells = |index: usize| {
         pages
@@ -111,50 +222,37 @@ fn drawn_cells(facts: &Facts<'_>) -> (Vec<String>, HashMap<String, TableCells>) 
             .into_iter()
             .flat_map(|p| p.lines.iter())
             .filter(|l| super::story_kind(&l.path) == "body")
-            .filter_map(|l| cell_line(&l.path).map(|(t, ..)| t.to_owned()))
+            .filter_map(|l| cell_line(&l.path).map(|(t, ..)| t))
     };
-    let shown: Option<BTreeSet<String>> = (!facts.whole()).then(|| {
+    let shown: Option<BTreeSet<&str>> = (!facts.whole()).then(|| {
         (0..pages.len())
             .filter(|i| facts.shown([i + 1]))
             .flat_map(body_cells)
             .collect()
     });
     let wanted = |table: &str| shown.as_ref().is_none_or(|s| s.contains(table));
-    let mut order: Vec<String> = Vec::new();
-    let mut drawn: HashMap<String, TableCells> = HashMap::new();
+    let mut order: Vec<&str> = Vec::new();
+    let mut drawn: HashMap<&str, DrawnTable<'_>> = HashMap::new();
     for index in 0..pages.len() {
-        if !body_cells(index).any(|t| wanted(&t)) {
+        if !body_cells(index).any(wanted) {
             continue; // only the pages drawing a cell's line are painted
         }
-        for line in facts
-            .texts(index)
-            .unwrap_or_default()
-            .iter()
-            .filter(|l| l.story.is_none())
-        {
-            let Some((table, row, cell, paragraph)) = cell_line(&line.path) else {
-                continue;
-            };
-            if !wanted(table) {
-                continue;
+        let Some(entry) = facts.entry(index) else { continue };
+        for table in entry.cells().tables.iter().filter(|t| wanted(&t.path)) {
+            if !drawn.contains_key(table.path.as_str()) {
+                order.push(&table.path);
             }
-            if !drawn.contains_key(table) {
-                order.push(table.to_owned());
-            }
-            let seen = drawn
-                .entry(table.to_owned())
-                .or_default()
-                .entry((row, cell))
-                .or_default();
+            let seen = drawn.entry(&table.path).or_default();
             seen.pages.insert(index + 1);
-            let (Some((low, high)), Some(widest)) = (line.ink, line.widest) else {
-                continue;
-            };
-            seen.lines
-                .entry(paragraph.to_owned())
-                .or_default()
-                .push(points(high - low));
-            seen.words.push(points(widest));
+            for cell in &table.cells {
+                let found = seen.cells.entry(cell.at).or_default();
+                for (paragraph, lines, wide) in &cell.paragraphs {
+                    let (count, widest) = found.lines.entry(paragraph).or_insert((0, 0.0));
+                    *count += lines;
+                    *widest = widest.max(*wide);
+                }
+                found.word = found.word.max(cell.word);
+            }
         }
     }
     (order, drawn)
@@ -174,7 +272,7 @@ struct Measured {
 fn fit_columns(
     facts: &Facts<'_>,
     table: &Arc<Element>,
-    cells: &TableCells,
+    cells: &BTreeMap<(usize, usize), DrawnCell<'_>>,
     path: &str,
 ) -> Vec<(FitColumn, FitColumn, Vec<f64>)> {
     #[allow(clippy::cast_precision_loss)]
@@ -200,11 +298,11 @@ fn fit_columns(
             });
             column.text_width = column.text_width.min(width - left - right);
             column.margins = column.margins.max(left + right);
-            for widths in seen.lines.values() {
-                column.widest_line = widths.iter().copied().fold(column.widest_line, f64::max);
-                column.lines = column.lines.max(widths.len());
+            for &(lines, widest) in seen.lines.values() {
+                column.widest_line = column.widest_line.max(widest);
+                column.lines = column.lines.max(lines);
             }
-            column.longest_word = seen.words.iter().copied().fold(column.longest_word, f64::max);
+            column.longest_word = column.longest_word.max(seen.word);
         }
     }
     let mut out = Vec::new();
