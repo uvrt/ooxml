@@ -70,7 +70,7 @@ fn level_range(level: i64) -> Result<()> {
 pub(crate) fn precheck(docx: &Docx, place: &Place, action: &ListAction) -> Result<()> {
     if let ListAction::Level(level) = action {
         level_range(*level)?;
-        let read::At { id, element, .. } = read::at(docx, place).ok_or_else(|| EditError::Path(place.part.clone()))?;
+        let read::At { id, element, .. } = read::at(docx, place).ok_or_else(|| EditError::no_element(place.part.clone()))?;
         if membership(docx, &Lists::read(docx), &element).is_none() {
             return Err(refused(format!("{id} is not in a list")));
         }
