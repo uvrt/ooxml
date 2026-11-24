@@ -13,6 +13,7 @@
 //! ([`Docx::open_after`]), and [`Versions`] keeps the latest versions' readings for a
 //! document.
 
+pub mod block_facts;
 pub mod cells;
 pub mod changes;
 pub mod comments;
@@ -114,6 +115,20 @@ impl StoryPart {
         self.tree.root()
     }
 
+    /// `F`'s value for the block `element` at `place` (child indexes from the root) under
+    /// `formatting`: as the document keeps it across its versions (the block, the outermost
+    /// table holding it and the formatting parts unchanged), else made by `read` and kept.
+    pub fn block_fact<F: block_facts::BlockFact>(
+        &self,
+        formatting: &formatting::Formatting,
+        element: &Arc<Element>,
+        place: &[u32],
+        read: impl FnOnce() -> F::Value,
+    ) -> F::Value {
+        let outer = block_facts::outer_table(self.root(), place);
+        self.kept.blocks().get::<F>(formatting, element, outer, read)
+    }
+
     /// Each paragraph's text in the current view ([`PartTexts`]), read once.
     pub fn texts(&self) -> &Arc<PartTexts> {
         self.texts.get_or_init(|| {
@@ -198,6 +213,13 @@ impl Docx {
     #[must_use]
     pub fn table_readings(&self) -> (usize, usize) {
         self.kept.table_readings()
+    }
+
+    /// What its versions keep of its blocks' facts: entries and bytes.
+    #[must_use]
+    pub fn block_facts(&self) -> (usize, usize) {
+        let stats = self.kept.blocks().stats();
+        (stats.entries, stats.bytes)
     }
 
     /// What its versions keep of its tables' rows' keeps: entries and bytes.

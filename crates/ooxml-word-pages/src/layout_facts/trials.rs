@@ -15,6 +15,7 @@ use super::tree::block_keys_top;
 use super::Facts;
 use ooxml_word_layout::facts::{LayoutFacts, PageFacts};
 use std::collections::HashSet;
+use std::sync::Arc;
 
 /// The blank at the foot of the page before a range kept, then and now.
 #[derive(Debug, Clone, PartialEq)]
@@ -105,7 +106,7 @@ struct Placed {
 }
 
 impl Placed {
-    fn of(pages: &[PageFacts], blocks: &TrialBlocks) -> Placed {
+    fn of(pages: &[Arc<PageFacts>], blocks: &TrialBlocks) -> Placed {
         let wanted: HashSet<&str> = blocks.keys.iter().map(String::as_str).collect();
         let drawn: Vec<usize> = pages
             .iter()

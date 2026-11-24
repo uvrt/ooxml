@@ -125,11 +125,16 @@ impl<'a> Facts<'a> {
         let mut by_block: HashMap<&str, Vec<Drawn<'_>>> = HashMap::new();
         let mut by_table: HashMap<&str, BTreeSet<usize>> = HashMap::new();
         let facts = version.facts();
-        // A paragraph's lines stand together: whether the version names it is asked once.
+        // A paragraph's lines stand together on a page: each run of them is mapped at once,
+        // and whether the version names the paragraph asked once (a run on the next page
+        // too).
         let mut named: Option<(&str, bool)> = None;
         for (index, page) in facts.pages.iter().enumerate() {
-            for line in &page.lines {
-                let path: &str = &line.path;
+            for run in page.lines.chunk_by(|a, b| a.path == b.path) {
+                let Some(first) = run.first() else {
+                    continue;
+                };
+                let path: &str = &first.path;
                 let is_named = match named {
                     Some((last, known)) if last == path => known,
                     _ => {
@@ -141,10 +146,10 @@ impl<'a> Facts<'a> {
                 if !is_named {
                     continue;
                 }
-                let drawn = Drawn { page: index + 1, line };
-                by_path.entry(path).or_default().push(drawn);
+                let drawn = run.iter().map(|line| Drawn { page: index + 1, line });
+                by_path.entry(path).or_default().extend(drawn.clone());
                 if let Some(top) = tree::top_block_path(path) {
-                    by_block.entry(top).or_default().push(drawn);
+                    by_block.entry(top).or_default().extend(drawn);
                 }
                 for table in tree::table_paths(path) {
                     by_table.entry(table).or_default().insert(index + 1);

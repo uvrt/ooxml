@@ -9,6 +9,7 @@
 //! Must not: keep anything but the latest reading of each part; hold a lock other than its
 //! own part's first-reading gate while reading.
 
+use super::block_facts::BlockFacts;
 use super::cells::TableMemo;
 use super::facts::PartFacts;
 use super::keeps::RowKeep;
@@ -81,6 +82,9 @@ pub struct Kept {
     /// Each table's rows' keeps, by the table element, the outermost table holding it and
     /// the parts they were read with, across the versions that share them.
     rows: RowsMemo,
+    /// Each block's facts its readers name, by the block element, the outermost table
+    /// holding it and the parts they were made with, across the versions that share them.
+    blocks: BlockFacts,
 }
 
 impl Kept {
@@ -91,7 +95,8 @@ impl Kept {
             texts: Latest::default(),
             facts: Latest::default(),
             tables: TableMemo::new(Arc::clone(&budget)),
-            rows: RowsMemo::new(budget),
+            rows: RowsMemo::new(Arc::clone(&budget)),
+            blocks: BlockFacts::new(budget),
         }
     }
 
@@ -119,6 +124,11 @@ impl Kept {
     /// (`None`: no version has yet), kept as the latest.
     pub fn facts(&self, part: &str, read: impl FnOnce(Option<&PartFacts>) -> PartFacts) -> Arc<PartFacts> {
         self.facts.read_with(part, read)
+    }
+
+    /// The blocks' facts kept across the versions.
+    pub(crate) fn blocks(&self) -> &BlockFacts {
+        &self.blocks
     }
 
     /// The tables' readings kept across the versions.

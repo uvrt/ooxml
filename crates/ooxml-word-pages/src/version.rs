@@ -167,7 +167,7 @@ impl LaidVersion {
     /// layout's where made already, else that page's alone, made once.
     pub fn page_facts(&self, page: usize) -> Option<&PageFacts> {
         match self.facts.get() {
-            Some(all) => all.pages.get(page),
+            Some(all) => all.pages.get(page).map(|p| &**p),
             None => self.layout.page_facts(page),
         }
     }
