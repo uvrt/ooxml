@@ -2,8 +2,10 @@
 //! `insert_section_break` and `remove_section_break` make them: a break is a paragraph of
 //! its own holding a copy of the split section's `w:sectPr`, its properties the paragraph's
 //! it is put before; the split section takes the break's kind and gives its header and
-//! footer references to the new one (tracked: its kind a recorded change, its references
-//! kept). A removed break's mark is deleted: the paragraph joins the one after it (an empty
+//! footer references to the new one, inheriting them from then on, tracked or not (Word
+//! 16.106's own tracked break: two sections naming one header is no form Word writes, and
+//! one holding a chart stops Word opening the file); tracked, its kind is a recorded change.
+//! A removed break's mark is deleted: the paragraph joins the one after it (an empty
 //! one simply goes), what the section stated that the next does not is handed on, the rest
 //! released; tracked, the mark is a deletion.
 //!
@@ -304,8 +306,9 @@ fn make_break(
     Ok((paragraph, filler, created))
 }
 
-/// Tracked, the break's (and filler's) marks inserted and the split section's kind a
-/// recorded change; untracked, the split section's references given to the new one.
+/// The split section's references given to the new one (it inherits them from then on,
+/// as Word writes a break, tracked or not); tracked, the break's (and filler's) marks
+/// inserted and the split section's kind a recorded change.
 fn track_break(
     sink: &mut EditSink<'_, '_>,
     work: &mut Work,
@@ -313,12 +316,12 @@ fn track_break(
     before: &[(String, Id)],
     orders: &Orders,
 ) -> Result<(Option<crate::sink::Numbered>, bool)> {
-    let RevisionPolicy::Tracked(tracking) = sink.policy().clone() else {
-        for node in work.children(sect).to_vec() {
-            if work.is_any(node, W, &REFERENCES) {
-                work.remove(node);
-            }
+    for node in work.children(sect).to_vec() {
+        if work.is_any(node, W, &REFERENCES) {
+            work.remove(node);
         }
+    }
+    let RevisionPolicy::Tracked(tracking) = sink.policy().clone() else {
         return Ok((None, false));
     };
     let ((), numbered, dated) = sink.stamped(tracking, |stamp| {
