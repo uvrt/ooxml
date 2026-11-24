@@ -170,6 +170,7 @@ impl MoveBlocks {
                 "{target} is one of the blocks moved, or inside one"
             )));
         }
+        notes_stay_out_of_text_boxes(docx, &part, &blocks, (&anchor, self.after.is_some()))?;
         let mut ids = Vec::new();
         for block in &blocks {
             if block.kind == BlockKind::Custom {
@@ -335,6 +336,46 @@ fn direct_blocks(work: &Work, container: Id, out: &mut Vec<Id>) {
             direct_blocks(work, child, out);
         }
     }
+}
+
+/// Blocks holding a note's reference refused beside a block in a text box, as Word 16.106 has
+/// no note reference there (`word_notes`' and the copy's refusal): moved there, the reference
+/// landed in the text box's drawing and its VML fallback both. The way out: beside the
+/// paragraph anchoring the text box.
+fn notes_stay_out_of_text_boxes(
+    docx: &Docx,
+    part: &str,
+    blocks: &[BlockAt],
+    (target, after): (&BlockAt, bool),
+) -> Result<()> {
+    let Some(anchor) = crate::textbox::text_box_anchor(docx, part, &target.path) else {
+        return Ok(());
+    };
+    let noted = |b: &BlockAt| element_at(docx, part, b).is_some_and(|e| holds_note_reference(&e));
+    if !blocks.iter().any(noted) {
+        return Ok(());
+    }
+    let message = "the blocks hold a note's reference and the place is in a text box: Word puts no note \
+                   reference in a text box";
+    let Some(paragraph) = docx.part(part).and_then(|story| story.ids.paragraph_at(&anchor)) else {
+        return Err(EditError::Refused(message.to_owned()));
+    };
+    Err(EditError::Argument {
+        field: if after { "after" } else { "before" }.to_owned(),
+        message: format!(
+            "{message}; move them before or after the paragraph anchoring the text box, {}",
+            paragraph.id
+        ),
+        options: vec![paragraph.id],
+    })
+}
+
+/// Whether a block holds a note's reference.
+fn holds_note_reference(element: &Element) -> bool {
+    element.child_elements().any(|c| {
+        (c.name().namespace() == Some(W) && matches!(c.name().local(), "footnoteReference" | "endnoteReference"))
+            || holds_note_reference(c)
+    })
 }
 
 /// Whether a block holds a note or comment reference.

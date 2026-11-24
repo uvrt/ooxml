@@ -1,10 +1,11 @@
 //! What a document keeps of its blocks' facts across its versions (the block tier's
 //! `block_fact` slot) read as a cold read does: `direct_formatting` of a document with
 //! paragraphs and runs formatted directly and a table kept together, and
-//! `table_grid_mismatch` (the same slot; `punctuation_spacing` beside them), after its
-//! formatted paragraph, a cell's paragraph, a paragraph with spacing problems and an
-//! off-grid table's paragraph are set again -- also where a budget of a few bytes
-//! lets what it keeps go at once.
+//! `table_grid_mismatch` and `empty_paragraphs` (the same slot; `punctuation_spacing` beside
+//! them), after its formatted paragraph, a cell's paragraph, a paragraph with spacing
+//! problems, an off-grid table's paragraph and paragraphs beside blank lines in a cell and
+//! in a nested table are set again -- also where a budget of a few bytes lets what it keeps
+//! go at once.
 // Tests may unwrap, panic and index (docs/architecture/README.md, section 2.5).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
@@ -15,7 +16,8 @@ use ooxml_derive::{CacheBudget, Limit};
 use ooxml_opc::Package;
 use ooxml_store::{Caller, StoreConfig};
 use ooxml_word_edit::facts::{
-    direct_formatting, punctuation_spacing, table_grid_mismatch, DirectFormatting, GridMismatch, SpacingProblem,
+    direct_formatting, empty_paragraphs, punctuation_spacing, table_grid_mismatch, DirectFormatting, GridMismatch,
+    SpacingProblem,
 };
 use ooxml_word_edit::{Editor, RevisionPolicy, SetText, WordDoc};
 use std::sync::atomic::AtomicUsize;
@@ -24,8 +26,9 @@ use std::time::Instant;
 
 /// Paragraphs formatted directly (the paragraph, all its text, some of it), a table kept
 /// together whose rows keep with the next by direct formatting, paragraphs whose
-/// punctuation's spacing their language does not want, and a table with a row off its grid,
-/// before the body's end.
+/// punctuation's spacing their language does not want, a table with a row off its grid, and
+/// a table whose cell and nested table's cell hold blank lines used as space, before the
+/// body's end.
 const FORMATTED: &str = concat!(
     r#"<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:after="400"/></w:pPr>"#,
     r#"<w:r><w:rPr><w:b/><w:sz w:val="30"/></w:rPr><w:t>Formatted all through</w:t></w:r></w:p>"#,
@@ -40,7 +43,12 @@ const FORMATTED: &str = concat!(
     r#"<w:tbl><w:tblGrid><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/></w:tblGrid>"#,
     r#"<w:tr><w:tc><w:p><w:r><w:t>Off the grid</w:t></w:r></w:p></w:tc></w:tr>"#,
     r#"<w:tr><w:tc><w:p><w:r><w:t>On it</w:t></w:r></w:p></w:tc><w:tc><w:p/></w:tc></w:tr>"#,
-    r#"</w:tbl>"#
+    r#"</w:tbl>"#,
+    r#"<w:tbl><w:tblGrid><w:gridCol w:w="4500"/></w:tblGrid><w:tr><w:tc>"#,
+    r#"<w:p><w:r><w:t>Above the gap</w:t></w:r></w:p><w:p/><w:p/><w:p><w:r><w:t>Below the gap</w:t></w:r></w:p>"#,
+    r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc>"#,
+    r#"<w:p><w:r><w:t>Nested above</w:t></w:r></w:p><w:p/><w:p><w:r><w:t>Nested below</w:t></w:r></w:p>"#,
+    r#"</w:tc></w:tr></w:tbl><w:p/></w:tc></w:tr></w:tbl>"#
 );
 
 /// The Markdown constructs fixture with [`FORMATTED`] at the end of its body.
@@ -81,6 +89,18 @@ fn warm_and_cold(doc: &WordDoc) -> (Vec<DirectFormatting>, Vec<DirectFormatting>
         table_grid_mismatch(&cold, None).unwrap(),
     );
     assert_eq!(grid_warm, grid_cold, "table_grid_mismatch");
+    let (empty_warm, empty_cold) = (empty_paragraphs(doc).unwrap(), empty_paragraphs(&cold).unwrap());
+    assert_eq!(empty_warm, empty_cold, "empty_paragraphs");
+    let cells: Vec<&str> = empty_warm
+        .iter()
+        .map(|e| e.at.as_str())
+        .filter(|at| *at != "body")
+        .collect();
+    assert_eq!(
+        cells.len(),
+        2,
+        "the cell's and the nested table's blank lines: {empty_warm:?}"
+    );
     assert!(
         grid_warm.iter().any(|g| matches!(g, GridMismatch::OffGrid { .. })),
         "{grid_warm:?}"
@@ -118,6 +138,8 @@ fn kept_and_cold(editor: &Editor) {
         ("Kept two", "Kept two, again"),
         ("Vraiment", "Vraiment ? Toujours!"),
         ("Off the grid", "Still off the grid"),
+        ("Above the gap", "Above the gap, again"),
+        ("Nested below", "Nested below, again"),
     ] {
         let command = SetText {
             target: paragraph(&editor.store().snapshot().doc().clone(), start),

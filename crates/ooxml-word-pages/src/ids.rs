@@ -40,7 +40,7 @@ pub struct VersionIds {
     /// A long parent's (the body's, a long table's) counted children by local name (child
     /// indexes, in order), by the parent's address in the main part's tree (which the
     /// version holds), made when a path first steps through it.
-    long: Mutex<HashMap<usize, Arc<ByName>>>,
+    long: Mutex<LongParents>,
     /// Where a layout path's indexed steps are among the main part's long parents'
     /// children, made as paths are asked.
     paths: ooxml_word_model::read::paths::ChildIndex,
@@ -116,7 +116,7 @@ impl VersionIds {
             return false;
         };
         match self.found(root, ids, path) {
-            Some(Found::Row(place)) => self.rows(ids).contains_key(&*place),
+            Some(Found::Row(place)) => self.names(ids, &place, true),
             Some(Found::Block(Entry::Paragraph(k))) => k < ids.paragraphs().len(),
             Some(Found::Block(Entry::Table(k))) => k < ids.tables().len(),
             None => false,
@@ -144,9 +144,41 @@ impl VersionIds {
         }
     }
 
+    /// Whether each of the body paths `paths` names a paragraph, table or row the ids name
+    /// ([`VersionIds::is_named`] for many paths at once), in order: the long parents' index
+    /// locked once, one place reused, and nothing remembered per path (a check asks each of
+    /// a version's paths once, and a new version is asked anew).
+    pub fn are_named<'p>(&self, paths: impl IntoIterator<Item = &'p str>) -> Vec<bool> {
+        let Some((root, ids)) = self.part.as_ref() else {
+            return paths.into_iter().map(|_| false).collect();
+        };
+        let mut long = self.long.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut place = Vec::new();
+        paths
+            .into_iter()
+            .map(|path| block_place(root, path, &mut long, &mut place).is_some_and(|row| self.names(ids, &place, row)))
+            .collect()
+    }
+
+    /// Whether the block at `place` (a row where `row`) is one the ids name.
+    fn names(&self, ids: &PartIds, place: &[u32], row: bool) -> bool {
+        if row {
+            return self.rows(ids).contains_key(place);
+        }
+        match ids.at(place) {
+            Some(Entry::Paragraph(k)) => k < ids.paragraphs().len(),
+            Some(Entry::Table(k)) => k < ids.tables().len(),
+            None => false,
+        }
+    }
+
     /// What the body path `path` names among the blocks the ids name, found from its steps.
     fn find(&self, root: &Element, ids: &PartIds, path: &str) -> Option<Found> {
-        let (place, row) = self.block_place(root, path)?;
+        let mut place = Vec::new();
+        let row = {
+            let mut long = self.long.lock().unwrap_or_else(PoisonError::into_inner);
+            block_place(root, path, &mut long, &mut place)?
+        };
         if row {
             return Some(Found::Row(place.into()));
         }
@@ -162,48 +194,6 @@ impl VersionIds {
                 .map(|(place, id)| (place.to_vec(), Text::from(id.as_str())))
                 .collect()
         })
-    }
-
-    /// The place (child indexes from the root) of the block a body path names, and
-    /// whether it is a row: each step `w:<local>[<n>]` the n-th counted child of that local
-    /// name, from the root's first `w:body`, through no paragraph (the inverse of the
-    /// paths [`path_at`] writes).
-    fn block_place(&self, root: &Element, path: &str) -> Option<(Vec<u32>, bool)> {
-        let mut steps = path.split('/');
-        if steps.next()? != "w:body" {
-            return None;
-        }
-        let (at, body) = root
-            .children()
-            .iter()
-            .enumerate()
-            .find_map(|(k, n)| n.as_element().filter(|e| e.name().is(Some(W), "body")).map(|e| (k, e)))?;
-        let mut place = vec![u32::try_from(at).ok()?];
-        let mut node: &Element = body;
-        for (depth, text) in steps.enumerate() {
-            if depth > 0 && node.name().is(Some(W), "p") {
-                return None;
-            }
-            let (local, n) = parse_step(text)?;
-            let k = self.nth_named(node, local, n)?;
-            node = node.children().get(k as usize)?.as_element()?;
-            place.push(k);
-        }
-        (place.len() > 1).then(|| (place, node.name().is(Some(W), "tr")))
-    }
-
-    /// The child index of `parent`'s `n`-th counted child named `local` (from 1): from the
-    /// parent's children by name, made once, where it has many; else counted through.
-    fn nth_named(&self, parent: &Element, local: &str, n: usize) -> Option<u32> {
-        if parent.children().len() < INDEXED_FROM {
-            return nth_named(parent, local, n);
-        }
-        let named = {
-            let mut long = self.long.lock().unwrap_or_else(PoisonError::into_inner);
-            let key = std::ptr::from_ref(parent) as usize;
-            Arc::clone(long.entry(key).or_insert_with(|| Arc::new(by_name(parent))))
-        };
-        named.get(local)?.get(n - 1).copied()
     }
 
     /// The body path (`w:body/w:p[3]`) of the paragraph, table or row the id `id` names.
@@ -296,7 +286,47 @@ fn parse_step(text: &str) -> Option<(&str, usize)> {
     let (local, rest) = text.strip_prefix("w:")?.split_once('[')?;
     let digits = rest.strip_suffix(']')?;
     let n: usize = digits.parse().ok()?;
-    (n >= 1 && n.to_string() == digits && !local.is_empty()).then_some((local, n))
+    // Written as `path_at` writes it: digits only, no sign and no leading zero.
+    let plain = digits.bytes().all(|b| b.is_ascii_digit()) && !digits.starts_with('0');
+    (plain && n >= 1 && !local.is_empty()).then_some((local, n))
+}
+
+/// The long parents' counted children by name, by the parent's address in the tree.
+type LongParents = HashMap<usize, ByName>;
+
+/// The place (child indexes from the root) of the block the body path `path` names, into
+/// `place`, and whether it is a row: each step `w:<local>[<n>]` the n-th counted child of
+/// that local name, from the root's first `w:body`, through no paragraph (the inverse of
+/// the paths [`path_at`] writes); a long parent's children by name made once into `long`.
+fn block_place(root: &Element, path: &str, long: &mut LongParents, place: &mut Vec<u32>) -> Option<bool> {
+    place.clear();
+    let mut steps = path.split('/');
+    if steps.next()? != "w:body" {
+        return None;
+    }
+    let (at, body) = root
+        .children()
+        .iter()
+        .enumerate()
+        .find_map(|(k, n)| n.as_element().filter(|e| e.name().is(Some(W), "body")).map(|e| (k, e)))?;
+    place.push(u32::try_from(at).ok()?);
+    let mut node: &Element = body;
+    for (depth, text) in steps.enumerate() {
+        if depth > 0 && node.name().is(Some(W), "p") {
+            return None;
+        }
+        let (local, n) = parse_step(text)?;
+        let k = if node.children().len() < INDEXED_FROM {
+            nth_named(node, local, n)?
+        } else {
+            let key = std::ptr::from_ref(node) as usize;
+            let named = long.entry(key).or_insert_with(|| by_name(node));
+            *named.get(local)?.get(n - 1)?
+        };
+        node = node.children().get(k as usize)?.as_element()?;
+        place.push(k);
+    }
+    (place.len() > 1).then(|| node.name().is(Some(W), "tr"))
 }
 
 /// A parent with fewer children than this is counted through for each step: only a long
@@ -560,6 +590,22 @@ mod tests {
             assert_eq!(fresh.is_named(path), walked.get(path).is_some(), "{path}");
         }
         assert!(fresh.named.get().is_none(), "nothing named");
+        // The same asked all at once, of a version that has found nothing, and remembering
+        // nothing per path; the odd spellings too.
+        let all = VersionIds::new(Arc::clone(&root), Arc::clone(&fresh.part.as_ref().unwrap().1));
+        let odd = [
+            "w:body/w:p[+1]",
+            "w:body/w:p[01]",
+            "w:body/w:p[0]",
+            "w:body/w:p[]",
+            "w:body/w:p[1",
+        ];
+        let asked: Vec<&str> = every.iter().map(String::as_str).chain(odd).collect();
+        let at_once = all.are_named(asked.iter().copied());
+        for (path, named) in asked.iter().zip(&at_once) {
+            assert_eq!(*named, walked.get(path).is_some(), "{path}");
+        }
+        assert!(all.found.lock().unwrap().is_empty(), "nothing remembered per path");
     }
 
     /// The path of every element below `element` (whose path is `path`), counted as the
