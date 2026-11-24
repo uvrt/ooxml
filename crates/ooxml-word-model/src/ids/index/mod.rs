@@ -86,6 +86,19 @@ pub struct TableId {
     pub rows: Vec<(Path, String)>,
 }
 
+/// A table found, not named ([`Tables::placed`]).
+#[derive(Debug, Clone)]
+pub struct PlacedTable<'a> {
+    /// Its ordinal among the part's tables (what [`Tables::get`] takes).
+    pub ordinal: usize,
+    /// The table.
+    pub element: &'a Arc<Element>,
+    /// Its place in the part.
+    pub path: Path,
+    /// Its own rows' places (not a nested table's), in order.
+    pub rows: Vec<Path>,
+}
+
 /// One entry of the index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Entry {
@@ -301,6 +314,24 @@ impl PartIds {
         path.into()
     }
 
+    /// The own rows (not a nested table's) of the table at place `k` of `at`'s blocks, with
+    /// their places there: among the blocks below it, which follow it (the blocks are in
+    /// document order).
+    fn own_rows<'b>(at: &Located<'b>, k: usize) -> Vec<(usize, &'b Block)> {
+        let Some(table) = at.body.blocks.get(k) else {
+            return Vec::new();
+        };
+        let owner = u32::try_from(k).ok();
+        at.body
+            .blocks
+            .iter()
+            .enumerate()
+            .skip(k + 1)
+            .take_while(|(_, b)| b.rel.len() > table.rel.len() && b.rel.starts_with(&table.rel))
+            .filter(|(_, b)| b.kind == Kind::Tr && b.owner == owner)
+            .collect()
+    }
+
     /// The paragraph at place `k` of `at`'s blocks.
     fn paragraph_in(&self, at: &Located<'_>, k: usize) -> Option<ParagraphId> {
         let block = at.body.blocks.get(k).filter(|b| b.kind == Kind::P)?;
@@ -328,15 +359,7 @@ impl PartIds {
         let block = at.body.blocks.get(k).filter(|b| b.kind == Kind::Tbl)?;
         let number = at.tables + block.ordinal as usize;
         let prefix = self.prefix();
-        let owner = u32::try_from(k).ok();
-        let rows: Vec<(usize, &Block)> = at
-            .body
-            .blocks
-            .iter()
-            .enumerate()
-            .skip(k + 1)
-            .filter(|(_, b)| b.kind == Kind::Tr && b.owner == owner)
-            .collect();
+        let rows = Self::own_rows(at, k);
         let good = |(r, row): &(usize, &Block)| {
             row.raw
                 .as_deref()
@@ -635,6 +658,26 @@ impl<'a> Tables<'a> {
         let local = n.checked_sub(at.tables)?;
         let k = *at.body.tables.get(local)? as usize;
         self.ids.table_in(&at, k)
+    }
+
+    /// Every table's ordinal (what [`Tables::get`] takes), element, place and its own rows'
+    /// places, in document order: what [`Tables::iter`] gives, without naming any.
+    pub fn placed(&self) -> impl Iterator<Item = PlacedTable<'a>> + 'a {
+        self.ids.located().flat_map(|at| {
+            let places: Vec<usize> = at.body.tables.iter().map(|k| *k as usize).collect();
+            places.into_iter().filter_map(move |k| {
+                let block = at.body.blocks.get(k).filter(|b| b.kind == Kind::Tbl)?;
+                Some(PlacedTable {
+                    ordinal: at.tables + block.ordinal as usize,
+                    element: &block.element,
+                    path: PartIds::path_of(&at, block),
+                    rows: PartIds::own_rows(&at, k)
+                        .into_iter()
+                        .map(|(_, row)| PartIds::path_of(&at, row))
+                        .collect(),
+                })
+            })
+        })
     }
 
     /// Every table, in document order.

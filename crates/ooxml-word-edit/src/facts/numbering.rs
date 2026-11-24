@@ -60,8 +60,9 @@ pub fn numbering_skips_level(doc: &WordDoc) -> Result<Vec<SkippedLevel>> {
     // document), without asking `membership`.
     let mut style_numbers: HashMap<Option<String>, bool> = HashMap::new();
     let mut style_lists: HashMap<Option<String>, bool> = HashMap::new();
-    for paragraph in body.ids.paragraphs().iter() {
-        let properties = paragraph.element.find(Some(W), "pPr");
+    // Each paragraph found by its element; its id named only for a group's first.
+    for (ordinal, element, _) in body.ids.paragraphs().placed() {
+        let properties = element.find(Some(W), "pPr");
         let style_id = properties
             .and_then(|p| p.find(Some(W), "pStyle"))
             .and_then(|s| s.attribute(Some(W), "val"));
@@ -76,7 +77,7 @@ pub fn numbering_skips_level(doc: &WordDoc) -> Result<Vec<SkippedLevel>> {
                 continue;
             }
         }
-        let Some(found) = membership(&docx, &lists, &paragraph.element) else {
+        let Some(found) = membership(&docx, &lists, element) else {
             continue;
         };
         let mut tied = || {
@@ -105,7 +106,7 @@ pub fn numbering_skips_level(doc: &WordDoc) -> Result<Vec<SkippedLevel>> {
         groups.push((
             definition,
             SkippedLevel {
-                para: paragraph.id.clone(),
+                para: body.ids.paragraphs().get(ordinal).map(|p| p.id).unwrap_or_default(),
                 style: name,
                 level: found.level,
                 list: found.num_id,

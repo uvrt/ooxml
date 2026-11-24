@@ -10,8 +10,7 @@ use crate::spacing::table_of;
 use crate::styles::REL_STYLES;
 use crate::Result;
 use ooxml_word_model::docx::text::leading_text;
-use ooxml_word_model::docx::Docx;
-use ooxml_word_model::ids::ParagraphId;
+use ooxml_word_model::docx::{Docx, StoryPart};
 use ooxml_word_model::typography::{Cascade, RunContext, RunLanguage, StyleKey};
 use ooxml_xml::{Element, Tree};
 use std::collections::HashMap;
@@ -76,33 +75,78 @@ impl Proofing {
     }
 }
 
-/// A paragraph of a story with what its runs are under.
-pub(super) struct Placed {
-    /// The paragraph, its place and id.
-    pub(super) paragraph: ParagraphId,
+/// A paragraph of a story with what its runs are under, its id named only when asked.
+pub(super) struct Placed<'a> {
+    /// Its story: the part's place among the document's parts, and the part.
+    pub(super) part: (usize, &'a StoryPart),
+    /// Its ordinal among the part's paragraphs.
+    pub(super) ordinal: usize,
+    /// The paragraph.
+    pub(super) element: &'a Arc<Element>,
     /// `Some` when it is in a table: the innermost one's `w:tblPr`.
     pub(super) table: Option<Option<Arc<Element>>>,
 }
 
-impl Placed {
+impl Placed<'_> {
     /// The context of a run with `run_properties` (its `w:rPr`) in the paragraph.
     pub(super) fn context<'e>(&'e self, run_properties: Option<&'e Element>) -> RunContext<'e> {
         RunContext {
-            paragraph_properties: self.paragraph.element.find(Some(W), "pPr").map(|p| &**p),
+            paragraph_properties: self.element.find(Some(W), "pPr").map(|p| &**p),
             table: self.table.as_ref().map(|t| t.as_deref()),
             run_properties,
         }
     }
+
+    /// Which paragraph of the document it is: its part's place and its ordinal there.
+    pub(super) fn who(&self) -> Who {
+        Who {
+            part: self.part.0,
+            ordinal: self.ordinal,
+        }
+    }
+
+    /// Its id.
+    pub(super) fn id(&self) -> String {
+        name(self.part.1, self.ordinal)
+    }
+}
+
+/// A paragraph of a document: its part's place among the document's parts and its ordinal
+/// among the part's paragraphs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) struct Who {
+    pub(super) part: usize,
+    pub(super) ordinal: usize,
+}
+
+impl Who {
+    /// Its id in `docx`.
+    pub(super) fn id(self, docx: &Docx) -> String {
+        docx.parts
+            .get(self.part)
+            .map(|part| name(part, self.ordinal))
+            .unwrap_or_default()
+    }
+}
+
+/// The id of the paragraph with ordinal `ordinal` in `part`.
+fn name(part: &StoryPart, ordinal: usize) -> String {
+    part.ids.paragraphs().get(ordinal).map(|p| p.id).unwrap_or_default()
 }
 
 /// Every story's paragraphs in document order (docx-agent's `_parts()`, each part's index's
-/// paragraphs).
-pub(super) fn paragraphs(docx: &Docx) -> impl Iterator<Item = Placed> + '_ {
-    docx.parts.iter().flat_map(|part| {
-        part.ids.paragraphs().iter().map(move |paragraph| Placed {
-            table: table_of(part.root(), &paragraph.path),
-            paragraph,
-        })
+/// paragraphs), none named.
+pub(super) fn paragraphs(docx: &Docx) -> impl Iterator<Item = Placed<'_>> + '_ {
+    docx.parts.iter().enumerate().flat_map(|(k, part)| {
+        part.ids
+            .paragraphs()
+            .placed()
+            .map(move |(ordinal, element, path)| Placed {
+                part: (k, &**part),
+                ordinal,
+                element,
+                table: table_of(part.root(), &path),
+            })
     })
 }
 

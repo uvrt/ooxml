@@ -9,12 +9,12 @@
 //! Must not: keep an element alive (they are held weakly; a judgement no version can ask
 //! for is swept), or keep anything a paragraph's judgement does not read.
 
-use super::{Judged, Unjudged};
+use super::{Judged, Unjudged, Who};
 use ooxml_derive::{CacheBudget, Limit, Memo, MemoStats, Weigh};
 use ooxml_xml::Element;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 
-/// A paragraph's judgement, without its id (its version's to name).
+/// A paragraph's judgement, without which paragraph it is (its version's to say).
 #[derive(Debug, Clone)]
 pub(super) enum Judgement {
     /// Judged: its tag, the tag's source, its language, the detection's confidence, its words.
@@ -50,8 +50,8 @@ impl Judgement {
         }
     }
 
-    /// It, the paragraph's id `id` named.
-    pub(super) fn named(&self, id: &str) -> Result<Judged, Unjudged> {
+    /// It, of the paragraph `who`.
+    pub(super) fn judged(&self, who: Who) -> Result<Judged, Unjudged> {
         match self {
             Judgement::Judged {
                 tag,
@@ -60,7 +60,7 @@ impl Judgement {
                 confidence,
                 words,
             } => Ok(Judged {
-                id: id.to_owned(),
+                who,
                 tag: tag.clone(),
                 source: source.clone(),
                 language: *language,

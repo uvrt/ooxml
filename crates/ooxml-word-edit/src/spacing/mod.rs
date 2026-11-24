@@ -19,7 +19,6 @@
 use crate::names::W;
 use crate::text::{atoms, AtomKind};
 use crate::work::{Id, Work};
-use ooxml_word_model::docx::at_path;
 use ooxml_word_model::typography::{find, Action, Cascade, RunContext, RunLanguage, NBSP};
 use ooxml_xml::Element;
 use std::collections::{BTreeMap, BTreeSet};
@@ -111,11 +110,15 @@ pub(crate) struct Context<'a> {
 /// `Some` with the `w:tblPr` of the innermost table above the element at `path` of `root`
 /// when there is one.
 pub(crate) fn table_of(root: &Arc<Element>, path: &[u32]) -> Option<Option<Arc<Element>>> {
+    let (_, above) = path.split_last()?;
+    let mut node = root;
     let mut table = None;
-    for k in 0..path.len() {
-        let at = at_path(root, path.get(..k).unwrap_or_default())?;
-        if at.name().is(Some(W), "tbl") {
-            table = Some(at.find(Some(W), "tblPr").cloned());
+    for k in std::iter::once(None).chain(above.iter().map(Some)) {
+        if let Some(k) = k {
+            node = node.children().get(*k as usize)?.as_element()?;
+        }
+        if node.name().is(Some(W), "tbl") {
+            table = Some(node.find(Some(W), "tblPr").cloned());
         }
     }
     table
