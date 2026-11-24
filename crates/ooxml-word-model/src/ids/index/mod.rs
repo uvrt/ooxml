@@ -635,10 +635,22 @@ impl<'a> Paragraphs<'a> {
     /// Every paragraph's ordinal (what [`Paragraphs::get`] takes), element and place, in
     /// document order: what [`Paragraphs::iter`] gives, without making each one's id.
     pub fn placed(&self) -> impl Iterator<Item = (usize, &'a Arc<Element>, Path)> + 'a {
-        self.ids.located().flat_map(|at| {
+        self.placed_where(|_| true)
+    }
+
+    /// [`Paragraphs::placed`] of the paragraphs whose element `keep` takes: the others'
+    /// places are not made.
+    pub fn placed_where<F>(&self, keep: F) -> impl Iterator<Item = (usize, &'a Arc<Element>, Path)> + 'a
+    where
+        F: Fn(&Element) -> bool + Copy + 'a,
+    {
+        self.ids.located().flat_map(move |at| {
             let body = at.body;
             body.paragraphs.iter().filter_map(move |k| {
-                let block = body.blocks.get(*k as usize).filter(|b| b.kind == Kind::P)?;
+                let block = body
+                    .blocks
+                    .get(*k as usize)
+                    .filter(|b| b.kind == Kind::P && keep(&b.element))?;
                 Some((
                     at.paragraphs + block.ordinal as usize,
                     &block.element,
