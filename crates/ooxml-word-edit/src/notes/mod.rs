@@ -299,7 +299,7 @@ fn place(doc: &WordDoc, docx: &Docx, at: &str) -> Result<(Found, usize)> {
         .last()
         .ok_or_else(|| EditError::Path(span.part.clone()))?;
     if let Some(anchor) = crate::textbox::text_box_anchor(docx, &span.part, &last.path) {
-        return Err(in_text_box(docx, &span.part, &anchor, &last.path, &id));
+        return Err(in_text_box(docx, &span.part, &anchor, &last.path, at));
     }
     let work = Work::of(&last.element, Vec::new());
     let items = atoms(&work, work.root());
