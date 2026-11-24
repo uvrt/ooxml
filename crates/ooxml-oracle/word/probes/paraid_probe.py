@@ -39,6 +39,7 @@ The probes, in four groups:
 
     python crates/ooxml-oracle/word/probes/paraid_probe.py                 # prints the verdicts, writes the JSON
     python crates/ooxml-oracle/word/probes/paraid_probe.py --tools         # the tools group only, into the JSON
+    python crates/ooxml-oracle/word/probes/paraid_probe.py --drawings      # the drawings group only (paraid_drawings.py)
 
 Since docx-agent 0.2.0 the edits are the tools' (``word_set_text``, ``word_insert_markdown``),
 and the tools have one way of stamping ids: what they do on a document's first edit.  The
@@ -67,6 +68,7 @@ import probe_paths  # noqa: E402  (the driver, the fixture makers and the cases 
 import oracle  # noqa: E402
 from make_fixtures import AUTHOR, DECL, NS, REL, WML, content_types, p, r, relationships, styles  # noqa: E402
 
+import paraid_drawings  # noqa: E402
 import probe_tools  # noqa: E402
 from lxml import etree  # noqa: E402
 
@@ -520,15 +522,23 @@ def main() -> None:
     parser.add_argument("--json", type=Path, default=OBSERVATIONS)
     parser.add_argument("--tools", action="store_true",
                         help="measure the tools group only, into the observations as they are")
+    parser.add_argument("--drawings", action="store_true",
+                        help="measure the drawings group only (wp14 ids), into the observations as they are")
     args = parser.parse_args()
-    if args.tools:
+    if args.tools or args.drawings:
         observations = json.loads(args.json.read_text(encoding="utf-8"))
         if word_version() != observations["word"]:
             raise SystemExit(f"Word {word_version()} is not the observations' {observations['word']}: run them all")
         with oracle.session() as session:
-            observations["tools"] = run_tools(session)
+            if args.tools:
+                observations["tools"] = run_tools(session)
+            if args.drawings:
+                observations["drawings"] = paraid_drawings.run(session)
         args.json.write_text(json.dumps(observations, indent=1) + "\n")
-        report_tools(observations["tools"])
+        if args.tools:
+            report_tools(observations["tools"])
+        if args.drawings:
+            paraid_drawings.report(observations["drawings"], sys.stdout)
         return
     observations: dict = {"word": word_version(), "mixed": {}, "factors": {}, "decided": {}}
     with oracle.session() as session:
@@ -556,6 +566,7 @@ def main() -> None:
         else:
             observations["word-created"] = {"outcome": created.outcome, "detail": created.detail}
         observations["tools"] = run_tools(session)
+        observations["drawings"] = paraid_drawings.run(session)
     args.json.parent.mkdir(parents=True, exist_ok=True)
     args.json.write_text(json.dumps(observations, indent=1) + "\n")
     report(observations)
