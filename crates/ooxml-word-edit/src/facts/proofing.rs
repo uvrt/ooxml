@@ -122,7 +122,10 @@ pub(super) struct Who {
 impl Who {
     /// Its id in `docx`.
     pub(super) fn id(self, docx: &Docx) -> String {
-        docx.parts.get(self.part).map(|part| name(part, self.ordinal)).unwrap_or_default()
+        docx.parts
+            .get(self.part)
+            .map(|part| name(part, self.ordinal))
+            .unwrap_or_default()
     }
 }
 
@@ -135,12 +138,15 @@ fn name(part: &StoryPart, ordinal: usize) -> String {
 /// paragraphs), none named.
 pub(super) fn paragraphs(docx: &Docx) -> impl Iterator<Item = Placed<'_>> + '_ {
     docx.parts.iter().enumerate().flat_map(|(k, part)| {
-        part.ids.paragraphs().placed().map(move |(ordinal, element, path)| Placed {
-            part: (k, &**part),
-            ordinal,
-            element,
-            table: table_of(part.root(), &path),
-        })
+        part.ids
+            .paragraphs()
+            .placed()
+            .map(move |(ordinal, element, path)| Placed {
+                part: (k, &**part),
+                ordinal,
+                element,
+                table: table_of(part.root(), &path),
+            })
     })
 }
 

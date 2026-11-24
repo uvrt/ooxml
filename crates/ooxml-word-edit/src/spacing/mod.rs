@@ -19,7 +19,6 @@
 use crate::names::W;
 use crate::text::{atoms, AtomKind};
 use crate::work::{Id, Work};
-use ooxml_word_model::docx::at_path;
 use ooxml_word_model::typography::{find, Action, Cascade, RunContext, RunLanguage, NBSP};
 use ooxml_xml::Element;
 use std::collections::{BTreeMap, BTreeSet};

@@ -126,11 +126,11 @@ pub fn table_grid_mismatch(doc: &WordDoc, keep: Option<&dyn Fn(&str) -> bool>) -
             .iter()
             .filter_map(|path| at_path(body.root(), path).cloned())
             .collect();
-        let (grid, off) = off_grid_rows(&table.element, &rows);
+        let (grid, off) = off_grid_rows(table.element, &rows);
         if off.is_empty() {
             continue;
         }
-        let tracked = has_any(&table.element, &TRACKED_CELLS);
+        let tracked = has_any(table.element, &TRACKED_CELLS);
         let (changes, fix) = if tracked {
             let named = by_place.get_or_insert_with(|| {
                 records(&docx)
@@ -155,7 +155,7 @@ pub fn table_grid_mismatch(doc: &WordDoc, keep: Option<&dyn Fn(&str) -> bool>) -
         });
     }
     for table in &tables {
-        let Some(ragged) = ragged_rows(doc, &table.element) else {
+        let Some(ragged) = ragged_rows(doc, table.element) else {
             continue;
         };
         // A row off the grid is said above; as it is now, that is the ragged shape too.
@@ -262,7 +262,7 @@ fn settled_by(
     for entry in off {
         if let Some(path) = table.rows.get(entry.row) {
             let Some(row) =
-                ooxml_word_model::docx::at_path(&table.element, path.get(table.path.len()..).unwrap_or_default())
+                ooxml_word_model::docx::at_path(table.element, path.get(table.path.len()..).unwrap_or_default())
             else {
                 continue;
             };
@@ -296,7 +296,7 @@ fn settled_by(
         .filter_map(|p| p.get(table.path.len()..).map(<[u32]>::to_vec))
         .collect();
     let fix = [false, true].into_iter().find_map(|accept| {
-        let copy = settled(doc, &table.element, accept, Some(&relative))?;
+        let copy = settled(doc, table.element, accept, Some(&relative))?;
         let rows: Vec<Arc<Element>> = own_rows(&copy).into_iter().map(|(row, _)| row).collect();
         (off_grid_rows(&copy, &rows).1.is_empty() && shape(&copy).is_none()).then(|| GridFix {
             accept,

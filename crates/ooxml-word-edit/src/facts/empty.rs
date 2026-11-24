@@ -101,7 +101,11 @@ pub fn empty_paragraphs(doc: &WordDoc) -> Result<Vec<EmptyRun>> {
         .position(|n| n.as_element().is_some_and(|e| e.name().is(Some(W), "body")));
     if let Some(k) = at_body.and_then(|k| u32::try_from(k).ok()) {
         if let Some(element) = at_path(root, &[k]) {
-            found.extend(reading.runs(&sequence(element, &[k])).map(|run| run.at("body".to_owned())));
+            found.extend(
+                reading
+                    .runs(&sequence(element, &[k]))
+                    .map(|run| run.at("body".to_owned())),
+            );
         }
     }
     // Each table found by its element and place; its id named only for an entry.

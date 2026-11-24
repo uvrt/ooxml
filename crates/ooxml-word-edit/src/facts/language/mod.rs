@@ -461,7 +461,10 @@ fn top_level(docx: &Docx, body: usize) -> Vec<Block<'_>> {
                     None => continue,
                 };
                 if paragraph.is_some() == child.name().is(Some(W), "p") {
-                    out.push(Block { element: child, paragraph });
+                    out.push(Block {
+                        element: child,
+                        paragraph,
+                    });
                 }
             }
         }
@@ -494,11 +497,11 @@ fn grouped(docx: &Docx, listed: Vec<Judged>, blocks: &[Block<'_>], short: &HashS
         if (primary(a.tag.as_deref()), &a.source, a.language) != (primary(b.tag.as_deref()), &b.source, b.language) {
             return false;
         }
-        blocks
-            .get(from + 1..to)
-            .unwrap_or_default()
-            .iter()
-            .all(|block| block.paragraph.is_some_and(|who| short.contains(&who) || !has_text(block.element)))
+        blocks.get(from + 1..to).unwrap_or_default().iter().all(|block| {
+            block
+                .paragraph
+                .is_some_and(|who| short.contains(&who) || !has_text(block.element))
+        })
     };
     let mut out = Vec::new();
     let mut run: Vec<Judged> = Vec::new();
