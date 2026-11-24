@@ -30,8 +30,23 @@ const PLACEHOLDER: &str = "     ";
 /// What a control's content shows: text, a tab or break, an object, a field, a deleted
 /// text still pending.
 const SHOWN: [&str; 17] = [
-    "t", "delText", "tab", "ptab", "br", "cr", "sym", "noBreakHyphen", "softHyphen", "drawing", "pict", "object",
-    "footnoteReference", "endnoteReference", "fldChar", "fldSimple", "instrText",
+    "t",
+    "delText",
+    "tab",
+    "ptab",
+    "br",
+    "cr",
+    "sym",
+    "noBreakHyphen",
+    "softHyphen",
+    "drawing",
+    "pict",
+    "object",
+    "footnoteReference",
+    "endnoteReference",
+    "fldChar",
+    "fldSimple",
+    "instrText",
 ];
 
 /// An element of another vocabulary (an equation, a choice of content): shown.
