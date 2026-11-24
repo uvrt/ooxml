@@ -60,6 +60,24 @@ fn level_range(level: i64) -> Result<()> {
     }
 }
 
+/// `action`'s refusals that hold for the paragraph at `place` before any step runs: its level
+/// out of range, or, for a level, the paragraph in no list. The command checks every targeted
+/// paragraph this way first, so a step's own refusal (a single-level list's, offering level 0)
+/// comes only when its way out works for the whole target.
+///
+/// # Errors
+/// docx-agent's refusals; when the paragraph is not found.
+pub(crate) fn precheck(docx: &Docx, place: &Place, action: &ListAction) -> Result<()> {
+    if let ListAction::Level(level) = action {
+        level_range(*level)?;
+        let read::At { id, element, .. } = read::at(docx, place).ok_or_else(|| EditError::Path(place.part.clone()))?;
+        if membership(docx, &Lists::read(docx), &element).is_none() {
+            return Err(refused(format!("{id} is not in a list")));
+        }
+    }
+    Ok(())
+}
+
 /// Run `action`'s step on the paragraph at `place`.
 ///
 /// # Errors

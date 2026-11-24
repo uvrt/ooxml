@@ -57,21 +57,26 @@ fn a_tracked_level_change_writes_the_level_and_the_old_properties_only() {
     assert_eq!(part(&editor, "word/numbering.xml"), numbering);
 }
 
-#[test]
-fn a_level_past_0_in_a_single_level_list_is_refused_with_level_0() {
+/// `style-document.docx` with its list definition made single-level (the only change).
+fn single_level_editor() -> Editor {
     let bytes = fixture("docx2svg/style-document.docx");
     let package = Package::open(Arc::clone(&bytes), &Limits::default()).unwrap();
     let numbering = String::from_utf8(package.read("word/numbering.xml").unwrap().unwrap().to_vec()).unwrap();
     let single = numbering.replace(r#"w:val="hybridMultilevel""#, r#"w:val="singleLevel""#);
     assert_ne!(single, numbering);
     let package = package.with_bytes("word/numbering.xml", Arc::from(single.into_bytes()));
-    let editor = Editor::open(
+    Editor::open(
         package,
         StoreConfig::default(),
         Arc::new(crate::common::Monotonic(std::time::Instant::now())),
         Arc::new(crate::common::Unlimited),
     )
-    .unwrap();
+    .unwrap()
+}
+
+#[test]
+fn a_level_past_0_in_a_single_level_list_is_refused_with_level_0() {
+    let editor = single_level_editor();
     let error = editor.run(&Caller::anonymous(), &level_one()).unwrap_err();
     let EditError::Argument {
         field,
@@ -90,4 +95,20 @@ fn a_level_past_0_in_a_single_level_list_is_refused_with_level_0() {
         ..level_one()
     };
     editor.run(&Caller::anonymous(), &zero).unwrap();
+}
+
+#[test]
+fn a_target_with_a_paragraph_in_no_list_is_refused_as_not_in_a_list_first() {
+    // level 0 would not get past the paragraph in no list: that refusal comes first, wherever
+    // it stands in the target
+    let editor = single_level_editor();
+    let mixed = ListEdit {
+        targets: vec!["p@body/11".to_owned(), "p@body/0".to_owned()],
+        ..level_one()
+    };
+    let error = editor.run(&Caller::anonymous(), &mixed).unwrap_err();
+    let EditError::Refused(message) = error else {
+        panic!("not the not-in-a-list refusal: {error:?}")
+    };
+    assert!(message.ends_with("is not in a list"), "{message}");
 }
