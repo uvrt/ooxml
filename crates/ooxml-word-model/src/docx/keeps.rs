@@ -203,10 +203,23 @@ impl TableKeeps {
 }
 
 /// Per row of the table at `path` in `story`, its keep under `formatting` (docx-agent's
-/// `row_keeps`); `None` where `path` holds nothing.
+/// `row_keeps`); `None` where `path` holds nothing. Kept across the document's versions by
+/// the table element, the outermost table holding it and the formatting parts
+/// ([`super::Kept`]).
 #[must_use]
-pub fn row_keeps(formatting: &Formatting, story: &StoryPart, path: &[u32]) -> Option<Vec<RowKeep>> {
+pub fn row_keeps(formatting: &Formatting, story: &StoryPart, path: &[u32]) -> Option<Arc<[RowKeep]>> {
     let table = at_path(story.root(), path)?;
+    let outer = (1..=path.len())
+        .filter_map(|d| at_path(story.root(), path.get(..d)?))
+        .find(|e| is_w(e, "tbl"))
+        .unwrap_or(table);
+    Some(story.kept.rows(formatting, table, outer, || {
+        read_row_keeps(formatting, story, table, path)
+    }))
+}
+
+/// Per row of `table` (at `path` in `story`), its keep under `formatting`, read.
+fn read_row_keeps(formatting: &Formatting, story: &StoryPart, table: &Element, path: &[u32]) -> Vec<RowKeep> {
     let mut look = Keeps::new(formatting, story);
     let mut out = Vec::new();
     for lead in row_leads(table, path) {
@@ -227,5 +240,5 @@ pub fn row_keeps(formatting: &Formatting, story: &StoryPart, path: &[u32]) -> Op
             declared: declared(paragraph, "keepNext"),
         });
     }
-    Some(out)
+    out
 }

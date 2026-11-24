@@ -110,23 +110,36 @@ impl TableFacts {
     }
 }
 
+/// The theme's, settings', styles' and numbering's root elements a reading was made with,
+/// held weakly.
+pub(crate) type HeldRoots = [Option<Weak<Element>>; 4];
+
+/// `formatting`'s root elements, held weakly.
+pub(crate) fn held_roots(formatting: &Formatting) -> HeldRoots {
+    formatting.roots().clone().map(|r| r.as_ref().map(Arc::downgrade))
+}
+
+/// Whether `roots` are `formatting`'s root elements, by identity.
+pub(crate) fn same_roots(roots: &HeldRoots, formatting: &Formatting) -> bool {
+    roots.iter().zip(formatting.roots()).all(|pair| match pair {
+        (Some(kept), Some(now)) => std::ptr::eq(kept.as_ptr(), Arc::as_ptr(now)),
+        (None, None) => true,
+        _ => false,
+    })
+}
+
 /// One table's reading, and the elements it was read from, held weakly.
 #[derive(Debug, Clone)]
 struct KeptTable {
     table: Weak<Element>,
-    roots: [Option<Weak<Element>>; 4],
+    roots: HeldRoots,
     facts: Arc<TableFacts>,
 }
 
 impl KeptTable {
     /// Whether it was read from `table` with `formatting`'s parts.
     fn of(&self, table: &Arc<Element>, formatting: &Formatting) -> bool {
-        std::ptr::eq(self.table.as_ptr(), Arc::as_ptr(table))
-            && self.roots.iter().zip(formatting.roots()).all(|pair| match pair {
-                (Some(kept), Some(now)) => std::ptr::eq(kept.as_ptr(), Arc::as_ptr(now)),
-                (None, None) => true,
-                _ => false,
-            })
+        std::ptr::eq(self.table.as_ptr(), Arc::as_ptr(table)) && same_roots(&self.roots, formatting)
     }
 
     /// Whether a version can still ask for it: its table element is held.
@@ -198,7 +211,7 @@ impl TableMemo {
         let facts = Arc::new(TableFacts::read(formatting, table));
         let kept = KeptTable {
             table: Arc::downgrade(table),
-            roots: formatting.roots().clone().map(|r| r.as_ref().map(Arc::downgrade)),
+            roots: held_roots(formatting),
             facts: Arc::clone(&facts),
         };
         let mut memo = self.memo.lock().unwrap_or_else(PoisonError::into_inner);

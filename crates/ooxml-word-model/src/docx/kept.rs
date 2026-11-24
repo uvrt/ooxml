@@ -11,6 +11,8 @@
 
 use super::cells::TableMemo;
 use super::facts::PartFacts;
+use super::keeps::RowKeep;
+use super::kept_rows::RowsMemo;
 use super::texts::PartTexts;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -76,6 +78,9 @@ pub struct Kept {
     /// Each table's reading (its paragraphs' cells), by the table element and the parts
     /// it was read with, across the versions that share them.
     tables: TableMemo,
+    /// Each table's rows' keeps, by the table element, the outermost table holding it and
+    /// the parts they were read with, across the versions that share them.
+    rows: RowsMemo,
 }
 
 impl Kept {
@@ -85,7 +90,8 @@ impl Kept {
         Kept {
             texts: Latest::default(),
             facts: Latest::default(),
-            tables: TableMemo::new(budget),
+            tables: TableMemo::new(Arc::clone(&budget)),
+            rows: RowsMemo::new(budget),
         }
     }
 
@@ -93,6 +99,13 @@ impl Kept {
     #[must_use]
     pub fn table_readings(&self) -> (usize, usize) {
         let stats = self.tables.stats();
+        (stats.entries, stats.bytes)
+    }
+
+    /// What the tables' rows' keeps hold: entries and bytes.
+    #[must_use]
+    pub fn row_keeps(&self) -> (usize, usize) {
+        let stats = self.rows.stats();
         (stats.entries, stats.bytes)
     }
 
@@ -111,6 +124,18 @@ impl Kept {
     /// The tables' readings kept across the versions.
     pub(crate) fn tables(&self) -> &TableMemo {
         &self.tables
+    }
+
+    /// The rows' keeps of `table` (in `outer`, the outermost table holding it) with
+    /// `formatting`, as kept across the versions, else made by `read` and kept.
+    pub(crate) fn rows(
+        &self,
+        formatting: &super::formatting::Formatting,
+        table: &Arc<ooxml_xml::Element>,
+        outer: &Arc<ooxml_xml::Element>,
+        read: impl FnOnce() -> Vec<RowKeep>,
+    ) -> Arc<[RowKeep]> {
+        self.rows.rows(formatting, table, outer, read)
     }
 }
 
