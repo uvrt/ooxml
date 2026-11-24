@@ -17,11 +17,6 @@ DEVIATIONS: dict[str, dict[str, str]] = {
     "gates/generated/charts/chart-places.docx/objects:0ab11bf053a1ef1d": {
         "pages": "tools limitation: the layout refuses a text box it cannot lay out yet (not supported)",
     },
-    "gates/generated/charts/chart-places.docx/structure:2059124caf17ded5": {
-        "opens": "known, fix to come: word_notes move puts the note's reference inside a text box (in both "
-                 "its wps and its VML copy); Word stops on an alert as it opens the file, and opens it with "
-                 "the reference moved out of the text box",
-    },
     "gates/generated/controls.docx/objects:02e833d45f2a311e": {"reject": _CONTROL_309},
     "gates/generated/controls.docx/objects:031165bebdad8fb3": {"reject": _CONTROL_309},
     "gates/generated/controls.docx/objects:03acdd1b12512576": {"reject": _CONTROL_309},
