@@ -15,8 +15,11 @@
 //! Must not: paint, or digest what is not the page's own (one page more changes only the
 //! pages whose counts it changes, not every page's).
 
-use ooxml_base::{Digest, DigestKey};
+use ooxml_base::{Digest, DigestKey, Digester};
 use ooxml_word_layout::fields::page_counts;
+use ooxml_word_layout::paginate::PageInfo;
+use ooxml_word_layout::paint::LineNumber;
+use ooxml_word_layout::sections::StoryKind;
 use ooxml_word_layout::DocumentLayout;
 use ooxml_word_model::Model;
 use std::collections::BTreeMap;
@@ -60,18 +63,197 @@ pub(crate) fn page_contexts(
         .iter()
         .enumerate()
         .map(|(page, info)| {
-            let counts = page_counts(layout, info.section);
-            let section = sections.get(info.section).copied().unwrap_or_default().0;
+            let section = sections.get(info.section).copied().unwrap_or_default();
             let referenced = references.get(&page).map(Vec::as_slice).unwrap_or_default();
-            let numbered = numbers.on(page);
-            PageContext {
-                whole: Digest::of(
-                    key,
-                    format!("{info:?}|{counts:?}|{section:?}|{referenced:?}|{numbered:?}").as_bytes(),
-                ),
-                body: Digest::of(key, format!("{info:?}|{section:?}|{numbered:?}").as_bytes()),
-                stories: Digest::of(key, format!("{counts:?}|{referenced:?}").as_bytes()),
-            }
+            let parts = Parts {
+                info,
+                counts: page_counts(layout, info.section),
+                section,
+                referenced,
+                numbered: numbers.on(page),
+            };
+            parts.context(key)
         })
         .collect()
+}
+
+/// What one page's context is made of, each fed to the digests field by field.
+struct Parts<'a> {
+    info: &'a PageInfo,
+    counts: (Option<i64>, Option<i64>),
+    section: Digest,
+    referenced: &'a [(&'a str, String)],
+    numbered: &'a [LineNumber],
+}
+
+impl Parts<'_> {
+    fn context(&self, key: DigestKey) -> PageContext {
+        let mut whole = Digester::new(key);
+        info_fields(&mut whole, self.info);
+        counts_fields(&mut whole, self.counts);
+        whole.update(&self.section.0);
+        referenced_fields(&mut whole, self.referenced);
+        numbered_fields(&mut whole, self.numbered);
+        let mut body = Digester::new(key);
+        info_fields(&mut body, self.info);
+        body.update(&self.section.0);
+        numbered_fields(&mut body, self.numbered);
+        let mut stories = Digester::new(key);
+        counts_fields(&mut stories, self.counts);
+        referenced_fields(&mut stories, self.referenced);
+        PageContext {
+            whole: whole.finish(),
+            body: body.finish(),
+            stories: stories.finish(),
+        }
+    }
+}
+
+/// Every field of a `PageInfo`, fixed width (destructured: a field added to it must be
+/// fed here too).
+fn info_fields(d: &mut Digester, info: &PageInfo) {
+    let PageInfo {
+        number,
+        section,
+        section_first,
+        story,
+        blank,
+    } = *info;
+    d.update(&number.to_le_bytes());
+    d.update(&(section as u64).to_le_bytes());
+    let story = match story {
+        StoryKind::Default => 0u8,
+        StoryKind::First => 1,
+        StoryKind::Even => 2,
+    };
+    d.update(&[u8::from(section_first), story, u8::from(blank)]);
+}
+
+fn counts_fields(d: &mut Digester, (pages, section_pages): (Option<i64>, Option<i64>)) {
+    for count in [pages, section_pages] {
+        match count {
+            Some(n) => {
+                d.update(&[1]);
+                d.update(&n.to_le_bytes());
+            }
+            None => d.update(&[0]),
+        }
+    }
+}
+
+fn referenced_fields(d: &mut Digester, referenced: &[(&str, String)]) {
+    d.update(&(referenced.len() as u64).to_le_bytes());
+    for (id, texts) in referenced {
+        d.field(id.as_bytes());
+        d.field(texts.as_bytes());
+    }
+}
+
+fn numbered_fields(d: &mut Digester, numbered: &[LineNumber]) {
+    d.update(&(numbered.len() as u64).to_le_bytes());
+    for n in numbered {
+        let LineNumber {
+            path,
+            line,
+            baseline,
+            count,
+            section,
+        } = n;
+        d.field(path.as_bytes());
+        d.update(&(*line as u64).to_le_bytes());
+        d.update(&baseline.to_le_bytes());
+        d.update(&count.to_le_bytes());
+        d.update(&(*section as u64).to_le_bytes());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
+    use super::*;
+
+    const KEY: DigestKey = DigestKey::new(1, 2);
+
+    fn digest(info: &PageInfo) -> PageContext {
+        Parts {
+            info,
+            counts: (Some(3), Some(2)),
+            section: Digest::default(),
+            referenced: &[],
+            numbered: &[],
+        }
+        .context(KEY)
+    }
+
+    #[test]
+    fn page_infos_differing_in_any_field_digest_apart() {
+        let base = PageInfo {
+            number: 4,
+            section: 1,
+            section_first: false,
+            story: StoryKind::Default,
+            blank: false,
+        };
+        assert_eq!(digest(&base), digest(&PageInfo { ..base }));
+        let others = [
+            PageInfo { number: 5, ..base },
+            PageInfo { section: 2, ..base },
+            PageInfo {
+                section_first: true,
+                ..base
+            },
+            PageInfo {
+                story: StoryKind::First,
+                ..base
+            },
+            PageInfo {
+                story: StoryKind::Even,
+                ..base
+            },
+            PageInfo { blank: true, ..base },
+        ];
+        let mut seen = vec![digest(&base)];
+        for other in &others {
+            let made = digest(other);
+            for was in &seen {
+                assert_ne!(made.whole, was.whole, "{other:?}");
+                assert_ne!(made.body, was.body, "{other:?}");
+                // A page's stories do not read its PageInfo.
+                assert_eq!(made.stories, was.stories, "{other:?}");
+            }
+            seen.push(made);
+        }
+    }
+
+    #[test]
+    fn counts_reach_the_stories_only() {
+        let info = PageInfo {
+            number: 1,
+            section: 0,
+            section_first: true,
+            story: StoryKind::Default,
+            blank: false,
+        };
+        let a = digest(&info);
+        let b = Parts {
+            info: &info,
+            counts: (Some(4), Some(2)),
+            section: Digest::default(),
+            referenced: &[],
+            numbered: &[],
+        }
+        .context(KEY);
+        assert_ne!(a.whole, b.whole);
+        assert_ne!(a.stories, b.stories);
+        assert_eq!(a.body, b.body);
+        let none = Parts {
+            info: &info,
+            counts: (None, Some(2)),
+            section: Digest::default(),
+            referenced: &[],
+            numbered: &[],
+        }
+        .context(KEY);
+        assert_ne!(none.stories, a.stories);
+    }
 }
