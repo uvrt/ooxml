@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Measure how Word reads a table grid's odd values: ``w:gridSpan`` 0, -1, +2, " 2" and
-"1_0"; ``w:gridBefore``/``w:gridAfter`` of -1; cells inside ``w:sdt``/``w:sdtContent`` and
+"""Measure how Word reads a table grid's odd values: ``w:gridSpan`` 0, -1, +2, " 2",
+"1_0", "x", "", "2.0" and one past 64 bits (lane ph2-types3); ``w:gridBefore``/``w:gridAfter`` of -1; cells inside ``w:sdt``/``w:sdtContent`` and
 ``w:customXml``; a ``w:vMerge`` continuation with no start (lane ph2-types2, the one table
 grid's value and cell-walk rules).
 

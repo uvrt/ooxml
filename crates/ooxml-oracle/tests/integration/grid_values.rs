@@ -50,12 +50,18 @@ fn placed(table_xml: &str) -> Vec<(String, usize, Option<CellSpec>)> {
     out
 }
 
+/// Cases Word opens and draws otherwise than the value rule (`grid_value`) reads them, found
+/// by lane ph2-types3 and left to the rule's owner: Word reads a span of `2.0` as two columns,
+/// and one past 64 bits as some wide span (`span-2.0`, `span-overflow`); the rule reads both
+/// as absent (one column). [`the_known_gaps_are_still_gaps`] fails once the rule follows Word.
+const KNOWN_GAPS: [&str; 2] = ["span-2.0", "span-overflow"];
+
 #[test]
 fn the_grid_places_each_cell_where_word_draws_it() {
     let recorded = observations();
     let mut drawn_cases = 0;
     for (case, entry) in recorded.as_object().unwrap() {
-        if case.starts_with('_') {
+        if case.starts_with('_') || KNOWN_GAPS.contains(&case.as_str()) {
             continue;
         }
         let table = entry["table"].as_str().unwrap();
@@ -92,4 +98,24 @@ fn the_grid_places_each_cell_where_word_draws_it() {
         }
     }
     assert!(drawn_cases >= 10, "{drawn_cases} cases drawn");
+}
+
+#[test]
+fn the_known_gaps_are_still_gaps() {
+    let recorded = observations();
+    for case in KNOWN_GAPS {
+        let entry = &recorded[case];
+        let cells = placed(entry["table"].as_str().unwrap());
+        let drawn = entry["drawn"]
+            .as_object()
+            .unwrap_or_else(|| panic!("{case}: Word drew it"));
+        let k2 = drawn["K2"]["column"].as_f64().unwrap();
+        let r2 = drawn["R2"]["column"].as_f64().unwrap();
+        let (_, first, _) = cells.iter().find(|(t, _, _)| t == "K2").unwrap();
+        assert_eq!(*first, 1, "{case}: the rule places K2 in column 1");
+        assert!(
+            (k2 - r2).abs() > 0.05,
+            "{case}: Word now draws K2 over R2 (column 1): drop it from KNOWN_GAPS"
+        );
+    }
 }

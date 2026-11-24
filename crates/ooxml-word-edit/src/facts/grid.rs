@@ -14,10 +14,9 @@ use crate::{EditError, Result, WordDoc};
 use ooxml_word_model::docx::block_facts::BlockFact;
 use ooxml_word_model::docx::formatting::Formatting;
 use ooxml_word_model::docx::revisions::records;
-use ooxml_word_model::docx::tables::{cells_at, own_rows};
+use ooxml_word_model::docx::tables::{cells_at, own_rows, Coverage, Grid};
 use ooxml_word_model::docx::{at_path, find_path};
 use ooxml_word_model::ids::PlacedTable;
-use ooxml_word_model::xmlread::py_int;
 use ooxml_xml::Element;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -248,31 +247,24 @@ pub fn ragged_rows(doc: &WordDoc, table: &Arc<Element>) -> Option<Ragged> {
     })
 }
 
-fn int_val(node: Option<&Element>, default: i64) -> i64 {
-    node.and_then(|n| n.attribute(Some(W), "val"))
-        .and_then(py_int)
-        .unwrap_or(default)
-}
-
 /// A table's grid columns, and its rows (`rows`, its own, in order) whose cells -- with
-/// `w:gridBefore` and `w:gridAfter` -- do not reach exactly across them.
-fn off_grid_rows(table: &Element, rows: &[Arc<Element>]) -> (i64, Vec<OffGridRow>) {
-    let count = table.find(Some(W), "tblGrid").map_or(0, |g| {
-        g.child_elements().filter(|c| c.name().is(Some(W), "gridCol")).count()
-    });
-    let count = i64::try_from(count).unwrap_or(i64::MAX);
-    let mut out = Vec::new();
-    for (r, row) in rows.iter().enumerate() {
-        let mut reach =
-            int_val(find_path(row, &["trPr", "gridBefore"]), 0) + int_val(find_path(row, &["trPr", "gridAfter"]), 0);
-        for cell in cells_at(row, &[]) {
-            reach += int_val(find_path(&cell.element, &["tcPr", "gridSpan"]), 1).max(1);
-        }
-        if reach != count {
-            out.push(OffGridRow { row: r, reaches: reach });
-        }
-    }
-    (count, out)
+/// `w:gridBefore` and `w:gridAfter` -- do not reach exactly across them ([`Grid`]'s
+/// coverage).
+pub(crate) fn off_grid_rows(table: &Element, rows: &[Arc<Element>]) -> (i64, Vec<OffGridRow>) {
+    let rows: Vec<&Element> = rows.iter().map(|r| &**r).collect();
+    let grid = Grid::of(table, &rows);
+    let signed = |n: usize| i64::try_from(n).unwrap_or(i64::MAX);
+    let out = grid
+        .rows
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| line.coverage != Coverage::Exact)
+        .map(|(r, line)| OffGridRow {
+            row: r,
+            reaches: signed(line.end.saturating_add(line.after)),
+        })
+        .collect();
+    (signed(grid.columns), out)
 }
 
 /// Whether any element below `element` is a `w:` element named in `locals`.

@@ -23,7 +23,8 @@ mod labels;
 mod merge_heads;
 pub use accepted::{Accepted, Axis, Misplaced};
 pub use grid::{
-    grid_columns, grid_value, placed_row_cells, row_cells, CellSpec, Coverage, Grid, GridCell, GridRow, RowSpec,
+    grid_columns, grid_count, grid_span, grid_value, placed_row_cells, row_cells, source_cells, CellSpec, Coverage,
+    Elements, Grid, GridCell, GridRow, GridSource, RowSpec,
 };
 pub use labels::{collapse_space, no_cell_text};
 pub use merge_heads::{cell_merge, merge_heads, VMerge};

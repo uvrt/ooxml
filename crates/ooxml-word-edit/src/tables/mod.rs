@@ -26,7 +26,7 @@ mod props;
 mod row_look;
 mod rows;
 pub(crate) mod shape;
-mod split;
+pub(crate) mod split;
 pub(crate) mod tracker;
 mod window;
 

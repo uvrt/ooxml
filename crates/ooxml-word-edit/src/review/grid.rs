@@ -11,10 +11,11 @@
 use super::edges::cells_of;
 use super::part::{GridMap, GridRow, PartReview};
 use super::xml::{
-    ancestor, attr, digits, find_all, find_path, has_content, insert_in_order, int, keep_markers, make, mark_record,
-    prune, set_attr, DELETED,
+    ancestor, attr, digits, find_all, find_path, has_content, insert_in_order, keep_markers, make, mark_record, prune,
+    set_attr, DELETED,
 };
 use crate::names::W;
+use crate::tables::shape::{count_of, grid_of, own_rows, span_of};
 use crate::validate::Orders;
 use crate::work::{Id, Work};
 use std::collections::{BTreeMap, HashSet};
@@ -47,27 +48,12 @@ const SHOWN: [&str; 10] = [
 ];
 
 /// Each row of `table` (its own) with its cells' first grid columns and spans
-/// (`_grid_map`: a span or skip read only when all digits).
+/// (`_grid_map`, placed by [`cells_of`]).
 pub(crate) fn grid_map(work: &Work, table: Id) -> GridMap {
-    let mut out = Vec::new();
-    for row in work.iter(table, W, &["tr"]) {
-        if ancestor(work, row, "tbl") != Some(table) {
-            continue;
-        }
-        let properties = work.find(row, W, "trPr");
-        let mut column = digits(work, properties.and_then(|p| work.find(p, W, "gridBefore")), "val").unwrap_or(0);
-        let mut cells = Vec::new();
-        for cell in work.iter(row, W, &["tc"]) {
-            if ancestor(work, cell, "tr") != Some(row) {
-                continue;
-            }
-            let span = digits(work, find_path(work, cell, &["tcPr", "gridSpan"]), "val").unwrap_or(1);
-            cells.push((cell, column, span));
-            column += span;
-        }
-        out.push((row, cells));
-    }
-    out
+    own_rows(work, table)
+        .into_iter()
+        .map(|row| (row, cells_of(work, row)))
+        .collect()
 }
 
 /// Whether a deleted cell keeps anything: content not deleted, or a mark not deleted.
@@ -119,9 +105,7 @@ pub(crate) fn cell_before(work: &Work, cell: Id) -> Option<Id> {
 
 /// `before` widened by `cell`'s grid columns and width (`_absorb`).
 pub(crate) fn absorb(work: &mut Work, before: Id, cell: Id, orders: &Orders) {
-    let span = |work: &Work, of: Id| -> i64 {
-        digits(work, find_path(work, of, &["tcPr", "gridSpan"]), "val").map_or(1, |v| v.max(1))
-    };
+    let span = |work: &Work, of: Id| -> i64 { span_of(work, find_path(work, of, &["tcPr", "gridSpan"])) };
     let total = span(work, before) + span(work, cell);
     let properties = match work.find(before, W, "tcPr") {
         Some(p) => p,
@@ -153,13 +137,12 @@ pub(crate) fn absorb(work: &mut Work, before: Id, cell: Id, orders: &Orders) {
 }
 
 /// Whether every row of `table` reaches exactly across its grid.
-fn fits(work: &Work, table: Id) -> bool {
+pub(crate) fn fits(work: &Work, table: Id) -> bool {
     let count = work
         .find(table, W, "tblGrid")
         .map_or(0, |g| find_all(work, g, "gridCol").len());
     for (row, cells) in grid_map(work, table) {
-        let after = find_path(work, row, &["trPr", "gridAfter"]);
-        let extra = digits(work, after, "val").unwrap_or(0);
+        let extra = count_of(work, find_path(work, row, &["trPr", "gridAfter"]));
         let reach = cells.last().map_or(0, |(_, start, span)| start + span) + extra;
         if usize::try_from(reach).ok() != Some(count) {
             return false;
@@ -230,6 +213,18 @@ fn normalise_grid(work: &mut Work, table: Id, orders: &Orders) {
     }
 }
 
+/// Each row of `table` (its own) with the grid column after its last cell and its
+/// `w:gridAfter` ([`grid_of`]).
+pub(crate) fn reaches(work: &Work, table: Id) -> Vec<(Id, i64, i64)> {
+    let rows = own_rows(work, table);
+    let grid = grid_of(work, table, &rows);
+    let signed = |n: usize| i64::try_from(n).unwrap_or(i64::MAX);
+    rows.iter()
+        .zip(&grid.rows)
+        .map(|(row, line)| (*row, signed(line.end), signed(line.after)))
+        .collect()
+}
+
 /// Make `table`'s grid fit its rows as Word writes it (`edit/tables.py`'s `fit_grid`).
 fn fit_grid(work: &mut Work, table: Id, orders: &Orders) {
     let grid = match work.find(table, W, "tblGrid") {
@@ -244,20 +239,7 @@ fn fit_grid(work: &mut Work, table: Id, orders: &Orders) {
         .into_iter()
         .map(|c| attr(work, c, "w").map_or(0, |w| if w.is_empty() { 0 } else { w.trim().parse().unwrap_or(0) }))
         .collect();
-    let rows: Vec<Id> = work
-        .iter(table, W, &["tr"])
-        .into_iter()
-        .filter(|r| ancestor(work, *r, "tbl") == Some(table))
-        .collect();
-    let mut reaches = Vec::new();
-    for &row in &rows {
-        let properties = work.find(row, W, "trPr");
-        let before = int(work, properties.and_then(|p| work.find(p, W, "gridBefore")), "val", 0);
-        let after = int(work, properties.and_then(|p| work.find(p, W, "gridAfter")), "val", 0);
-        let cells = cells_of(work, row);
-        let end = cells.last().map_or(before, |(_, start, span)| start + span);
-        reaches.push((row, end, after));
-    }
+    let reaches = reaches(work, table);
     let Some(longest) = reaches.iter().map(|(_, end, after)| end + after).max() else {
         return;
     };
@@ -346,7 +328,7 @@ fn set_after(work: &mut Work, row: Id, count: i64, width: i64, orders: &Orders) 
 fn skip_after(work: &mut Work, row: Id, cells: &[(Id, i64, i64)], widths: &[String], orders: &Orders) {
     let properties = work.find(row, W, "trPr");
     let after = properties.and_then(|p| work.find(p, W, "gridAfter"));
-    let mut skipped = digits(work, after, "val").unwrap_or(0);
+    let mut skipped = count_of(work, after);
     let reach = cells.last().map_or(0, |(_, start, span)| start + span) + skipped;
     let count = i64::try_from(widths.len()).unwrap_or(i64::MAX);
     if reach >= count {
@@ -425,7 +407,7 @@ fn fix_grid(review: &mut PartReview<'_, '_>, tables: &[Id], grid: &GridMap, remo
         let properties = work.find(*row, W, "trPr");
         let mut total = 0;
         for local in ["gridBefore", "gridAfter"] {
-            total += digits(work, properties.and_then(|p| work.find(p, W, local)), "val").unwrap_or(0);
+            total += count_of(work, properties.and_then(|p| work.find(p, W, local)));
         }
         total += cells
             .iter()

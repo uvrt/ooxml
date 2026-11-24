@@ -66,6 +66,8 @@ pub mod find;
 mod follow;
 mod format;
 mod from_template;
+#[cfg(test)]
+mod grid_reference_tests;
 mod ids_delta;
 mod imported;
 mod inline;

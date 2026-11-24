@@ -20,11 +20,11 @@
 //! Must not: read anything but the values it is given (the elements are read only by the
 //! adapters), or decide what a view of the table keeps.
 
-use super::merge_heads::{cell_merge, VMerge};
-use crate::docx::find_path;
+use super::merge_heads::VMerge;
 use crate::ids::W;
 use ooxml_xml::Element;
 use std::collections::HashMap;
+use std::marker::PhantomData;
 use std::sync::Arc;
 
 /// A grid value (`w:gridSpan`, `w:gridBefore`, `w:gridAfter`) as Word reads it: an
@@ -39,11 +39,19 @@ pub fn grid_value(raw: &str) -> Option<i64> {
     raw.parse::<i64>().ok()
 }
 
-/// A count of grid columns (`w:gridBefore`, `w:gridAfter`): absent or not valid is 0, below
-/// 0 is 0.
-fn count(raw: Option<&str>) -> usize {
+/// A count of grid columns (`w:gridBefore`, `w:gridAfter`) as written: absent or not valid
+/// is 0, below 0 is 0.
+#[must_use]
+pub fn grid_count(raw: Option<&str>) -> usize {
     raw.and_then(grid_value)
         .map_or(0, |v| usize::try_from(v.max(0)).unwrap_or(usize::MAX))
+}
+
+/// A cell's span (`w:gridSpan`) as written: absent or not valid is 1, below 1 is 1.
+#[must_use]
+pub fn grid_span(raw: Option<&str>) -> usize {
+    raw.and_then(grid_value)
+        .map_or(1, |v| usize::try_from(v.max(1)).unwrap_or(usize::MAX))
 }
 
 /// One cell's values.
@@ -61,12 +69,9 @@ impl CellSpec {
     /// A cell of `w:gridSpan` `span_raw` (as written) and vertical merge `vmerge`.
     #[must_use]
     pub fn new(span_raw: Option<&str>, vmerge: VMerge) -> CellSpec {
-        let span = span_raw
-            .and_then(grid_value)
-            .map_or(1, |v| usize::try_from(v.max(1)).unwrap_or(usize::MAX));
         CellSpec {
             span_raw: span_raw.map(Into::into),
-            span,
+            span: grid_span(span_raw),
             vmerge,
         }
     }
@@ -82,8 +87,25 @@ impl CellSpec {
     /// The values of the cell `tc`.
     #[must_use]
     pub fn of(tc: &Element) -> CellSpec {
-        let raw = find_path(tc, &["tcPr", "gridSpan"]).and_then(|g| g.attribute(Some(W), "val"));
-        CellSpec::new(raw, cell_merge(tc, false))
+        CellSpec::read(&Elements::default(), tc)
+    }
+
+    /// The values of the cell `tc` of `source`.
+    #[must_use]
+    pub fn read<S: GridSource>(source: &S, tc: S::Node) -> CellSpec {
+        let properties = child(source, tc, "tcPr");
+        let raw = properties
+            .and_then(|p| child(source, p, "gridSpan"))
+            .and_then(|g| source.w_val(g));
+        let vmerge = match properties
+            .and_then(|p| child(source, p, "vMerge"))
+            .map(|m| source.w_val(m))
+        {
+            Some(None | Some("continue")) => VMerge::Continue,
+            Some(Some("restart")) => VMerge::Restart,
+            _ => VMerge::None,
+        };
+        CellSpec::new(raw, vmerge)
     }
 }
 
@@ -103,8 +125,8 @@ impl RowSpec {
     #[must_use]
     pub fn new(before_raw: Option<&str>, after_raw: Option<&str>, cells: Vec<CellSpec>) -> RowSpec {
         RowSpec {
-            before: count(before_raw),
-            after: count(after_raw),
+            before: grid_count(before_raw),
+            after: grid_count(after_raw),
             cells,
         }
     }
@@ -112,33 +134,106 @@ impl RowSpec {
     /// The values of the row `tr` (its cells by [`row_cells`]).
     #[must_use]
     pub fn of(tr: &Element) -> RowSpec {
-        let value = |name: &str| find_path(tr, &["trPr", name]).and_then(|g| g.attribute(Some(W), "val"));
-        let cells = row_cells(tr).iter().map(|(tc, _)| CellSpec::of(tc)).collect();
+        RowSpec::read(&Elements::default(), tr)
+    }
+
+    /// The values of the row `tr` of `source` (its cells by [`source_cells`]).
+    #[must_use]
+    pub fn read<S: GridSource>(source: &S, tr: S::Node) -> RowSpec {
+        let properties = child(source, tr, "trPr");
+        let value = |name: &str| {
+            properties
+                .and_then(|p| child(source, p, name))
+                .and_then(|g| source.w_val(g))
+        };
+        let cells = source_cells(source, tr)
+            .into_iter()
+            .map(|(tc, _)| CellSpec::read(source, tc))
+            .collect();
         RowSpec::new(value("gridBefore"), value("gridAfter"), cells)
     }
 }
 
-/// A row's cells: its `w:tc`, also inside `w:sdt`/`w:sdtContent` and `w:customXml` at any
-/// depth (never inside a cell or a nested table), each with its place below the row (child
-/// indexes).
+/// A tree a table's grid is read from: [`Element`]s, or an editor's own copy of them. Every
+/// tree's rows are read by the one cell walk ([`source_cells`]) and value rule
+/// ([`RowSpec::read`], [`grid_value`]).
+pub trait GridSource {
+    /// A node of the tree.
+    type Node: Copy;
+    /// `node`'s child elements, each with its place among `node`'s children.
+    fn element_children(&self, node: Self::Node) -> Vec<(u32, Self::Node)>;
+    /// Whether `node` is the element `w:<local>`.
+    fn is_w(&self, node: Self::Node, local: &str) -> bool;
+    /// `node`'s `w:val`.
+    fn w_val(&self, node: Self::Node) -> Option<&str>;
+}
+
+/// [`Element`]s (of lifetime `'a`) as a [`GridSource`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Elements<'a>(PhantomData<&'a Element>);
+
+impl<'a> GridSource for Elements<'a> {
+    type Node = &'a Element;
+    fn element_children(&self, node: &'a Element) -> Vec<(u32, &'a Element)> {
+        node.children()
+            .iter()
+            .enumerate()
+            .filter_map(|(k, n)| n.as_element().map(|e| (u32::try_from(k).unwrap_or(u32::MAX), &**e)))
+            .collect()
+    }
+    fn is_w(&self, node: &'a Element, local: &str) -> bool {
+        node.name().is(Some(W), local)
+    }
+    fn w_val(&self, node: &'a Element) -> Option<&str> {
+        node.attribute(Some(W), "val")
+    }
+}
+
+/// `node`'s first child element `w:<local>`.
+fn child<S: GridSource>(source: &S, node: S::Node, local: &str) -> Option<S::Node> {
+    source
+        .element_children(node)
+        .into_iter()
+        .map(|(_, c)| c)
+        .find(|c| source.is_w(*c, local))
+}
+
+/// A row's cells in `source`: its `w:tc`, also inside `w:sdt`/`w:sdtContent` and
+/// `w:customXml` at any depth (never inside a cell or a nested table), each with its place
+/// below the row (child indexes).
 #[must_use]
-pub fn row_cells(row: &Element) -> Vec<(Arc<Element>, Box<[u32]>)> {
-    fn walk(element: &Element, at: &mut Vec<u32>, out: &mut Vec<(Arc<Element>, Box<[u32]>)>) {
-        for (k, node) in element.children().iter().enumerate() {
-            let Some(child) = node.as_element() else { continue };
-            at.push(u32::try_from(k).unwrap_or(u32::MAX));
-            let name = child.name();
-            if name.is(Some(W), "tc") {
-                out.push((Arc::clone(child), at.clone().into_boxed_slice()));
-            } else if ["sdt", "sdtContent", "customXml"].iter().any(|n| name.is(Some(W), n)) {
-                walk(child, at, out);
+pub fn source_cells<S: GridSource>(source: &S, row: S::Node) -> Vec<(S::Node, Box<[u32]>)> {
+    fn walk<S: GridSource>(source: &S, node: S::Node, at: &mut Vec<u32>, out: &mut Vec<(S::Node, Box<[u32]>)>) {
+        for (k, child) in source.element_children(node) {
+            at.push(k);
+            if source.is_w(child, "tc") {
+                out.push((child, at.clone().into_boxed_slice()));
+            } else if ["sdt", "sdtContent", "customXml"].iter().any(|n| source.is_w(child, n)) {
+                walk(source, child, at, out);
             }
             at.pop();
         }
     }
     let mut out = Vec::new();
-    walk(row, &mut Vec::new(), &mut out);
+    walk(source, row, &mut Vec::new(), &mut out);
     out
+}
+
+/// A row's cells ([`source_cells`] over [`Element`]s), each with its place below the row.
+#[must_use]
+pub fn row_cells(row: &Element) -> Vec<(Arc<Element>, Box<[u32]>)> {
+    source_cells(&Elements::default(), row)
+        .into_iter()
+        .filter_map(|(_, place)| {
+            let (last, path) = place.split_last()?;
+            let mut at = row;
+            for k in path {
+                at = at.children().get(usize::try_from(*k).ok()?)?.as_element()?;
+            }
+            let tc = at.children().get(usize::try_from(*last).ok()?)?.as_element()?;
+            Some((Arc::clone(tc), place))
+        })
+        .collect()
 }
 
 /// A row's cells ([`row_cells`]) placed on the grid by the row alone (no merges): each with
