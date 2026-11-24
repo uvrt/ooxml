@@ -92,3 +92,49 @@ fn rejecting_a_tracked_break_gives_the_header_back() {
 fn accepting_a_tracked_break_keeps_the_new_sections_header() {
     check(&body_reviewed(tracked(), Some(true)));
 }
+
+/// `touched` for the body: one entry for the heading section holding the break (with its
+/// blocks), and one plain `{"part"}` entry for the last section's properties, which lost
+/// their references -- a change in no block, as `touched` has named one since round 16
+/// (F12). Tracked and untracked alike; the reject that hands the references back the same.
+fn document_entries(found: &[ooxml_word_edit::touched::Touched]) -> (Vec<[String; 2]>, usize) {
+    let body: Vec<_> = found.iter().filter(|t| t.part == "word/document.xml").collect();
+    let blocks = body
+        .iter()
+        .filter_map(|t| t.section.as_ref())
+        .map(|s| s.blocks.clone())
+        .collect();
+    (blocks, body.iter().filter(|t| t.section.is_none()).count())
+}
+
+#[test]
+fn a_break_after_a_paragraph_touches_its_section_and_the_last_sections_properties() {
+    for policy in [RevisionPolicy::Untracked, tracked()] {
+        let editor = editor(&fixture("generated/charts/chart-places.docx"));
+        let command = InsertSectionBreak {
+            after: Some("p@body/0".to_owned()),
+            before: None,
+            kind: "nextPage".to_owned(),
+            policy: policy.clone(),
+        };
+        let done = editor.run(&Caller::anonymous(), &command).unwrap();
+        let (blocks, plain) = document_entries(&done.touched);
+        assert_eq!(blocks.len(), 1, "{policy:?}: {:?}", done.touched);
+        assert_eq!(blocks[0][0], "p:5FCB534E", "{policy:?}: {:?}", done.touched);
+        assert_eq!(
+            plain, 1,
+            "{policy:?}: the last section's properties: {:?}",
+            done.touched
+        );
+        if matches!(policy, RevisionPolicy::Tracked(_)) {
+            let review = Review {
+                accept: false,
+                selection: Selection::All,
+            };
+            let rejected = editor.run(&Caller::anonymous(), &review).unwrap();
+            let (blocks, plain) = document_entries(&rejected.touched);
+            assert_eq!(blocks.len(), 1, "reject: {:?}", rejected.touched);
+            assert_eq!(plain, 1, "reject: the header handed back: {:?}", rejected.touched);
+        }
+    }
+}
