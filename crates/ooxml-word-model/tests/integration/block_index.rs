@@ -266,6 +266,22 @@ fn named(ids: &PartIds) -> Named {
     }
 }
 
+/// The paragraphs placed without naming them: each one's ordinal, element and place as the
+/// named ones give them.
+fn placed_as_named(ids: &PartIds) {
+    let placed: Vec<(usize, *const Element, Vec<u32>)> = ids
+        .paragraphs()
+        .placed()
+        .map(|(n, e, p)| (n, Arc::as_ptr(e), p.to_vec()))
+        .collect();
+    let iterated: Vec<(usize, *const Element, Vec<u32>)> = ids
+        .paragraphs()
+        .iter()
+        .map(|p| (p.index, Arc::as_ptr(&p.element), p.path.to_vec()))
+        .collect();
+    assert_eq!(placed, iterated);
+}
+
 fn check(story: &str, ids: &PartIds, root: &Element, rng: &mut Rng) {
     let want = reference(story, root);
     assert_eq!(named(ids), want);
@@ -276,6 +292,7 @@ fn check(story: &str, ids: &PartIds, root: &Element, rng: &mut Rng) {
         assert_eq!(ids.at(path), Some(Entry::Paragraph(k)));
         assert_eq!(ids.paragraphs().get(k).map(|p| p.id), Some(id.clone()));
     }
+    placed_as_named(ids);
     for (k, (id, path, _)) in want.tables.iter().enumerate() {
         first.entry(id).or_insert(Entry::Table(k));
         assert_eq!(ids.at(path), Some(Entry::Table(k)));

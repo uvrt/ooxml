@@ -176,7 +176,7 @@ fn texts_languages_kept_across_checks_are_read_as_cold_after_a_language_change()
 }
 
 /// A budget of a few bytes: the judgements kept are let go almost at once.
-struct Tight(std::sync::atomic::AtomicUsize);
+pub(crate) struct Tight(pub(crate) std::sync::atomic::AtomicUsize);
 
 impl ooxml_derive::CacheBudget for Tight {
     fn reserve(&self, bytes: usize) -> bool {
