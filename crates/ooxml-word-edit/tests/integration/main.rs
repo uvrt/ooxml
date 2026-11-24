@@ -10,6 +10,7 @@ mod copy_writers;
 mod history;
 mod interleave;
 mod kept_facts;
+mod kept_lost;
 mod kept_reads;
 mod notes_placed;
 mod object_bench;
