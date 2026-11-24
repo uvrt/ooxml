@@ -11,8 +11,9 @@ use super::style_names;
 use crate::names::W;
 use crate::{Result, WordDoc};
 use ooxml_base::pyfmt::round2;
+use ooxml_word_model::docx::block_facts::BlockFact;
 use ooxml_word_model::docx::formatting::{Cell, EffectiveParagraph, EffectiveRun, Formatting};
-use ooxml_word_model::docx::keeps::{row_leads, Keeps};
+use ooxml_word_model::docx::keeps::{row_keeps, Keeps, TableKeeps};
 use ooxml_word_model::docx::text::{text_runs, View};
 use ooxml_word_model::docx::{at_path, StoryPart};
 use ooxml_xml::Element;
@@ -82,14 +83,16 @@ pub fn direct_formatting(doc: &WordDoc) -> Result<Vec<DirectFormatting>> {
             continue;
         }
         let mut look = Keeps::new(&formatting, story);
-        let kept = kept_leads(story, &mut look);
+        let kept = kept_leads(&formatting, story);
         for paragraph in story.ids.paragraphs().iter() {
             if separator(story, &paragraph.path) {
                 continue;
             }
             let leads = kept.contains(&*paragraph.path);
-            let entry = direct(&formatting, &mut look, &paragraph.element, &paragraph.path, leads);
-            if let Some((props, in_part)) = entry {
+            let kept_direct = story.block_fact::<Direct>(&formatting, &paragraph.element, &paragraph.path, || {
+                direct(&formatting, &mut look, &paragraph.element, &paragraph.path)
+            });
+            if let Some((props, in_part)) = led(kept_direct, leads) {
                 let style = style_of(&paragraph.element, default.as_deref(), &names);
                 found.push((
                     found.len(),
@@ -117,21 +120,19 @@ fn separator(story: &StoryPart, path: &[u32]) -> bool {
         && parent.attribute(Some(W), "type").is_some_and(|t| !t.is_empty())
 }
 
-/// The places of the paragraphs each row of a table kept together keeps with the next by.
-fn kept_leads(story: &StoryPart, look: &mut Keeps<'_>) -> HashSet<Vec<u32>> {
+/// The places of the paragraphs each row of a table kept together keeps with the next by
+/// (each table's rows' keeps as the document keeps them, `row_keeps`).
+fn kept_leads(formatting: &Formatting, story: &StoryPart) -> HashSet<Vec<u32>> {
     let mut out = HashSet::new();
     for table in story.ids.tables().iter() {
-        let leads = row_leads(&table.element, &table.path);
-        let Some(places) = leads.into_iter().collect::<Option<Vec<_>>>() else {
+        let Some(rows) = row_keeps(formatting, story, &table.path) else {
             continue;
         };
-        let keeps = |look: &mut Keeps<'_>, place: &Vec<u32>| {
-            at_path(story.root(), place).is_some_and(|p| look.effective(p, place, true).keep_with_next)
-        };
-        let but_last = places.get(..places.len().saturating_sub(1)).unwrap_or_default();
-        if places.len() >= 2 && but_last.iter().all(|p| keeps(look, p)) {
-            out.extend(places);
+        if !TableKeeps::of(&rows).together {
+            continue;
         }
+        let place: &[u32] = &table.path;
+        out.extend(rows.iter().filter_map(|r| Some([place, r.lead.as_deref()?].concat())));
     }
     out
 }
@@ -148,16 +149,49 @@ fn style_of(paragraph: &Element, default: Option<&str>, names: &HashMap<String, 
 
 type Found = (Vec<(&'static str, FormatValue, FormatValue)>, Vec<&'static str>);
 
+/// A paragraph's direct formatting as the block tier keeps it ([`BlockFact`]): [`direct`]'s
+/// value, before a table kept together takes its keep with the next ([`led`]).
+struct Direct;
+
+impl BlockFact for Direct {
+    type Value = Option<Arc<Found>>;
+
+    fn weight(value: &Self::Value) -> usize {
+        value.as_ref().map_or(0, |found| {
+            let names = |v: &FormatValue| match v {
+                FormatValue::Name(n) | FormatValue::Ruled(n, _) => n.len(),
+                _ => 0,
+            };
+            let props: usize = found
+                .0
+                .iter()
+                .map(|(_, a, b)| std::mem::size_of::<(&str, FormatValue, FormatValue)>() + names(a) + names(b))
+                .sum();
+            std::mem::size_of::<Found>() + props + found.1.len() * std::mem::size_of::<&str>()
+        })
+    }
+}
+
+/// A paragraph's direct properties and those on some of its text, as [`direct`] found
+/// them, its keep with the next left out where `leads` (a row of a table kept together
+/// keeps with the next by it); `None` where it has neither then.
+fn led(found: Option<Arc<Found>>, leads: bool) -> Option<Found> {
+    let (props, in_part) = Arc::unwrap_or_clone(found?);
+    let props: Vec<_> = props
+        .into_iter()
+        .filter(|(name, ..)| !(leads && *name == "keep_with_next"))
+        .collect();
+    (!props.is_empty() || !in_part.is_empty()).then_some((props, in_part))
+}
+
 /// A paragraph's direct properties and those on some of its text, `None` where it has
-/// neither (docx-agent's `_direct`). `leads`: a row of a table kept together keeps with
-/// the next by it.
+/// neither (docx-agent's `_direct`, before [`led`]).
 fn direct(
     formatting: &Formatting,
     look: &mut Keeps<'_>,
     paragraph: &Arc<Element>,
     place: &[u32],
-    leads: bool,
-) -> Option<Found> {
+) -> Option<Arc<Found>> {
     let mut props = Vec::new();
     let declares = paragraph
         .find(Some(W), "pPr")
@@ -166,14 +200,14 @@ fn direct(
         let mine = look.effective(paragraph, place, true);
         let styled = look.effective(paragraph, place, false);
         for (name, value, base) in paragraph_values(&mine, &styled) {
-            if value != base && !(name == "keep_with_next" && leads) {
+            if value != base {
                 props.push((name, value, base));
             }
         }
     }
     let cell = look.cell(place);
     let in_part = run_props(formatting, paragraph, cell.as_ref(), &mut props);
-    (!props.is_empty() || !in_part.is_empty()).then_some((props, in_part))
+    (!props.is_empty() || !in_part.is_empty()).then(|| Arc::new((props, in_part)))
 }
 
 /// What a property overridden in some runs was set to: the characters it covers, each
