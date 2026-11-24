@@ -42,11 +42,7 @@ DEVIATIONS: dict[str, dict[str, str]] = {
     "gates/generated/controls.docx/objects:8b6d3f46eaa20267": {"reject": _CONTROL_309},
     "gates/generated/controls.docx/structure:1f624484c0f69a36": {"reject": _CONTROL_309},
     "gates/generated/controls.docx/structure:50664644cd359314": {"reject": _CONTROL_309},
-    "gates/generated/controls.docx/structure:9c1e3b8d58c39cab": {
-        "reject": _CONTROL_309,
-        "fields": "known, fix to come: Word's update finds no bookmark 'around' (Error! Invalid bookmark "
-                  "reference); the tools resolve it",
-    },
+    "gates/generated/controls.docx/structure:b04b88316aae0005": {"reject": _CONTROL_309},
     "gates/generated/controls.docx/structure:e8d562b45b0f0b25": {"reject": _CONTROL_309},
 }
 

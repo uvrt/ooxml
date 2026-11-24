@@ -30,6 +30,7 @@ use crate::text_range::{range, range_id, Span};
 use crate::work::{scope_above, Id, Work};
 use crate::{EditError, Result, WordDoc};
 use ooxml_store::{Command, Txn};
+use ooxml_word_model::address::marks::Bookmark;
 use ooxml_word_model::docx::text::OBJECT;
 use ooxml_word_model::docx::{at_path, Docx};
 use ooxml_word_model::fieldtext::argument;
@@ -444,6 +445,11 @@ impl InsertCrossReference<'_> {
     fn check(&self, doc: &WordDoc, docx: &Docx) -> Result<(String, Place)> {
         let name = ooxml_word_model::address::bookmark(docx, &self.bookmark).map_err(EditError::Address)?;
         let here = place(doc, docx, &self.at, true)?;
+        if !self.page {
+            if let Some(refused) = inside_own_bookmark(docx, &name, &here, &self.at) {
+                return Err(refused);
+            }
+        }
         Ok((name.name.clone(), here))
     }
 
@@ -523,6 +529,65 @@ impl InsertCrossReference<'_> {
             ..FieldEdited::default()
         })
     }
+}
+
+/// The text cross-reference at `here` refused where it stands inside the bookmark it shows:
+/// Word 16.106's update of a `REF` inside its own bookmark gives an error for its result
+/// ("Invalid bookmark reference"), the bookmark around a content control or a plain
+/// paragraph's alike (a `PAGEREF` there it resolves: measured). The way out: the end of the
+/// last paragraph before the bookmark, the start of the first after it, or its page.
+fn inside_own_bookmark(docx: &Docx, marked: &Bookmark<'_>, here: &Place, at: &str) -> Option<EditError> {
+    if marked.part.part != here.part {
+        return None;
+    }
+    let (start, end) = (&*marked.start, marked.end.as_deref()?);
+    let story = docx.part(&here.part)?;
+    let element = at_path(story.root(), &here.path)?;
+    let work = Work::of(element, Vec::new());
+    let root = work.root();
+    // the place as a point among the paragraph's children: before the one holding the
+    // character at the offset, or after the last
+    let children = work.children(root);
+    let child = atoms(&work, root).get(here.offset).and_then(|atom| {
+        let mut node = atom.node;
+        while let Some(parent) = work.parent(node).filter(|p| *p != root) {
+            node = parent;
+        }
+        children.iter().position(|c| *c == node)
+    });
+    let mut point = here.path.clone();
+    point.push(u32::try_from(child.unwrap_or(children.len())).ok()?);
+    if !(start < point.as_slice() && point.as_slice() < end) {
+        return None;
+    }
+    let mut before = None;
+    let mut after = None;
+    for paragraph in story.ids.paragraphs().iter() {
+        let path: &[u32] = &paragraph.path;
+        if path < start && !start.starts_with(path) {
+            before = Some(paragraph);
+        } else if after.is_none() && path > end && !end.starts_with(path) {
+            after = Some(paragraph);
+        }
+    }
+    let mut options = Vec::new();
+    if let Some(paragraph) = before {
+        let work = Work::of(&paragraph.element, Vec::new());
+        options.push(format!("{}@{}", paragraph.id, atoms(&work, work.root()).len()));
+    }
+    if let Some(paragraph) = after {
+        options.push(format!("{}@0", paragraph.id));
+    }
+    Some(EditError::Argument {
+        field: "at".to_owned(),
+        message: format!(
+            "{at} is inside bookmark {name}: Word's update of a cross-reference to the text of the bookmark \
+             holding it gives an error, not the text; put it outside the bookmark (before it or after it), \
+             or refer to its page number instead",
+            name = marked.name
+        ),
+        options,
+    })
 }
 
 impl Command<WordDoc> for InsertCrossReference<'_> {

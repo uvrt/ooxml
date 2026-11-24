@@ -7,6 +7,7 @@ mod common;
 mod chart_target;
 mod control_delete;
 mod copy_writers;
+mod cross_references;
 mod history;
 mod interleave;
 mod kept_facts;
