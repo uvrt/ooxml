@@ -13,6 +13,7 @@ mod kept_facts;
 mod kept_reads;
 mod object_bench;
 mod object_writers;
+mod review_controls;
 mod review_reads;
 mod review_writers;
 mod saving;
