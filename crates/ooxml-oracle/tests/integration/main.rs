@@ -6,3 +6,4 @@ mod chart_goldens;
 mod chart_layout;
 mod metafile_cases;
 mod scene_goldens;
+mod word_observed;
