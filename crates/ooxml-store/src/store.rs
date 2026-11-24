@@ -23,7 +23,8 @@ use crate::history::{Garbage, GroupMark, History, Planned, Step};
 use crate::ids::IdAllocator;
 use crate::journal::Journal;
 use crate::stats::Counts;
-use crate::sync::{lock, HeadCell, Mutex};
+use crate::sync::{lock, HeadCell, Mutex, MutexGuard};
+use crate::times::LockTimes;
 use crate::txn::TxnParts;
 use crate::{
     Clock, Command, Counters, CountersError, DocModel, Error, HistoryOutcome, KeySet, ReadPredicate, Seq, Snapshot,
@@ -144,6 +145,36 @@ struct State<D: DocModel> {
     /// The latest versions' change sets: within the rebase window, and back to the oldest
     /// version the history may still move a change set from.
     journal: Journal<D>,
+    /// How long this lock was held and waited for.
+    times: LockTimes,
+}
+
+/// The state, locked: when it is let go, how long it was held is counted (the wait is
+/// counted as it is taken).
+struct Locked<'s, D: DocModel> {
+    guard: MutexGuard<'s, State<D>>,
+    clock: &'s dyn Clock,
+    entered: Duration,
+}
+
+impl<D: DocModel> std::ops::Deref for Locked<'_, D> {
+    type Target = State<D>;
+    fn deref(&self) -> &State<D> {
+        &self.guard
+    }
+}
+
+impl<D: DocModel> std::ops::DerefMut for Locked<'_, D> {
+    fn deref_mut(&mut self) -> &mut State<D> {
+        &mut self.guard
+    }
+}
+
+impl<D: DocModel> Drop for Locked<'_, D> {
+    fn drop(&mut self) {
+        let held = self.clock.monotonic().saturating_sub(self.entered);
+        self.guard.times.held.record(held);
+    }
 }
 
 /// One document's versions. Readers load the head without a lock; writers prepare in
@@ -184,6 +215,7 @@ impl<D: DocModel> Store<D> {
                 numbered: 0,
                 history: History::new(config.history_depth),
                 journal: Journal::new(),
+                times: LockTimes::default(),
             }),
             ids: IdAllocator::new(counters.cursors),
             config,
@@ -203,7 +235,7 @@ impl<D: DocModel> Store<D> {
         if state > highest {
             return Err(CountersError::StateAboveHighest { state, highest });
         }
-        let mut locked = lock(&self.state);
+        let mut locked = self.lock_state();
         let head = self.head.load();
         if locked.numbered != 0 || head.number() != 0 || locked.history.grouped() || !locked.history.steps().is_empty()
         {
@@ -219,9 +251,27 @@ impl<D: DocModel> Store<D> {
         self.head.load()
     }
 
+    /// How long the commit lock was held and waited for, each time it was taken so far.
+    pub fn lock_times(&self) -> LockTimes {
+        self.lock_state().times.clone()
+    }
+
+    /// The state under the commit lock; the wait counted.
+    fn lock_state(&self) -> Locked<'_, D> {
+        let asked = self.clock.monotonic();
+        let mut guard = lock(&self.state);
+        let entered = self.clock.monotonic();
+        guard.times.waited.record(entered.saturating_sub(asked));
+        Locked {
+            guard,
+            clock: &*self.clock,
+            entered,
+        }
+    }
+
     /// The counters to save beside the bytes of `at`.
     pub fn counters(&self, at: &Snapshot<D>) -> Counters {
-        let last = lock(&self.state).last;
+        let last = self.lock_state().last;
         Counters {
             version: at.seq(),
             last,
@@ -236,23 +286,23 @@ impl<D: DocModel> Store<D> {
 
     /// The steps undo can reach, oldest first.
     pub fn steps(&self) -> Vec<StepInfo<D::Key>> {
-        lock(&self.state).history.steps()
+        self.lock_state().history.steps()
     }
 
     /// The steps plain redo can bring back, the next one last.
     pub fn redoable(&self) -> Vec<StepInfo<D::Key>> {
-        lock(&self.state).history.redoable()
+        self.lock_state().history.redoable()
     }
 
     /// The highest state number given ([`Version::number`]): the next step's is one more.
     pub fn highest(&self) -> u64 {
-        lock(&self.state).numbered
+        self.lock_state().numbered
     }
 
     /// The highest state number given ([`Version::number`]), the steps undo can reach
     /// (oldest first) and those plain redo can bring back (the next one last), read at once.
     pub fn listed(&self) -> Listed<D::Key> {
-        let state = lock(&self.state);
+        let state = self.lock_state();
         Listed {
             highest: state.numbered,
             steps: state.history.steps(),
@@ -268,12 +318,12 @@ impl<D: DocModel> Store<D> {
         if head.number() == number {
             return Some(head);
         }
-        lock(&self.state).history.numbered(number)
+        self.lock_state().history.numbered(number)
     }
 
     /// The newest step `caller` made that undo can reach.
     pub fn latest_step_by(&self, caller: &str) -> Option<Seq> {
-        lock(&self.state).history.latest_by(caller)
+        self.lock_state().history.latest_by(caller)
     }
 
     /// Run `command`: validate and prepare on the head's snapshot, commit if nothing it
@@ -331,7 +381,7 @@ impl<D: DocModel> Store<D> {
         // transaction can have read them, and its own reads of them are of its own work
         let mut depends = parts.reads.without(&parts.created);
         depends.extend(&parts.writes.without(&parts.merges).without_where(D::derived));
-        let mut state = lock(&self.state);
+        let mut state = self.lock_state();
         let entered = self.clock.monotonic();
         let head = self.head.load();
         if head.written_since(parts.base.seq(), &depends) {
@@ -388,14 +438,22 @@ impl<D: DocModel> Store<D> {
         start: Duration,
     ) -> Result<Committed<D, C::Out>, C::Error> {
         self.counts.exclusive();
-        let mut state = lock(&self.state);
+        let mut state = self.lock_state();
         let entered = self.clock.monotonic();
         let base = self.head.load();
-        command.validate(base.doc())?;
         let mut tx = Txn::new(Arc::clone(&base), &self.ids, setup);
-        let out = command.prepare(&mut tx)?;
+        let out = match command.validate(base.doc()).and_then(|()| command.prepare(&mut tx)) {
+            Ok(out) => out,
+            Err(error) => {
+                let held = self.clock.monotonic().saturating_sub(entered);
+                state.times.exclusive.record(held);
+                return Err(error);
+            }
+        };
         let parts = tx.into_parts();
         if parts.changes.is_empty() {
+            let held = self.clock.monotonic().saturating_sub(entered);
+            state.times.exclusive.record(held);
             drop(state);
             let done = Done {
                 version: base,
@@ -414,6 +472,7 @@ impl<D: DocModel> Store<D> {
         };
         let (version, writes, garbage) = self.publish(&mut state, Arc::clone(&base), parts.work, body);
         let held = self.clock.monotonic().saturating_sub(entered);
+        state.times.exclusive.record(held);
         drop(state);
         drop(garbage);
         Ok(self.committed(
@@ -531,7 +590,7 @@ impl<D: DocModel> Store<D> {
         &self,
         plan: impl FnOnce(&History<D>, &Snapshot<D>, &Journal<D>) -> Result<Planned<D>, Error<D>>,
     ) -> Result<HistoryOutcome<D>, Error<D>> {
-        let mut state = lock(&self.state);
+        let mut state = self.lock_state();
         if state.history.grouped() {
             return Err(StoreError::GroupOpen);
         }
@@ -584,7 +643,7 @@ impl<D: DocModel> Store<D> {
     /// # Errors
     /// None today; the store's own, should a group refuse.
     pub fn open_group(&self) -> Result<GroupMark, Error<D>> {
-        let mut state = lock(&self.state);
+        let mut state = self.lock_state();
         let start = self.head.load().number();
         let number = state.numbered.saturating_add(1);
         state.history.open_group(start, number);
@@ -593,7 +652,7 @@ impl<D: DocModel> Store<D> {
 
     /// Where the open group is now, for [`Store::revert_group`]; `None` without one.
     pub fn group_mark(&self) -> Option<GroupMark> {
-        lock(&self.state).history.group_mark()
+        self.lock_state().history.group_mark()
     }
 
     /// Take back the open group's commits after `mark`: the content before them published
@@ -602,7 +661,7 @@ impl<D: DocModel> Store<D> {
     /// # Errors
     /// [`StoreError::NoGroup`] without an open group (or with a mark of none of its).
     pub fn revert_group(&self, mark: GroupMark) -> Result<Option<Snapshot<D>>, Error<D>> {
-        let mut state = lock(&self.state);
+        let mut state = self.lock_state();
         let entered = self.clock.monotonic();
         let Some(revert) = state.history.plan_revert(mark)? else {
             return Ok(None);
@@ -632,7 +691,7 @@ impl<D: DocModel> Store<D> {
     /// # Errors
     /// [`StoreError::NoGroup`] without an open group.
     pub fn close_group(&self, caller: &Caller) -> Result<Option<Seq>, Error<D>> {
-        let mut state = lock(&self.state);
+        let mut state = self.lock_state();
         let head = self.head.load();
         let (made, garbage) = state.history.close_group(caller.0.clone(), &head)?;
         if let Some((_, number)) = made {

@@ -297,6 +297,14 @@ impl Document {
         }
     }
 
+    /// How long the store's commit lock was held and waited for.
+    pub(crate) fn lock_times(&self) -> ooxml_store::LockTimes {
+        match &self.held {
+            Held::Package(store) => store.lock_times(),
+            Held::Word(word) => word.editor.store().lock_times(),
+        }
+    }
+
     /// Commit a test's update of parts as `caller`, made by `tool`: the version it leaves,
     /// whether it changed anything, and how many times it was prepared. A Word document's
     /// retired ids note what it removed.

@@ -35,6 +35,7 @@ mod stamps;
 mod stats;
 mod store;
 mod sync;
+mod times;
 mod txn;
 mod version;
 
@@ -48,5 +49,6 @@ pub use model::DocModel;
 pub use predicate::ReadPredicate;
 pub use stats::StoreStats;
 pub use store::{Caller, CommitTiming, Committed, Listed, Store, StoreConfig};
+pub use times::{Histogram, LockTimes};
 pub use txn::{Savepoint, Txn};
 pub use version::{Seq, Snapshot, Version};

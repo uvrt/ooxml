@@ -368,6 +368,14 @@ impl Session {
         Ok(self.document(id)?.stats())
     }
 
+    /// How long the document's commit lock was held and waited for, each time it was taken.
+    ///
+    /// # Errors
+    /// [`SessionError::NotOpen`].
+    pub fn lock_times(&self, id: &DocId) -> Result<ooxml_store::LockTimes, SessionError> {
+        Ok(self.document(id)?.lock_times())
+    }
+
     /// The session's counters.
     #[must_use]
     pub fn stats(&self) -> SessionStats {
