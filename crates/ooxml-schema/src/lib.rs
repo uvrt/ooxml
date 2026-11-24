@@ -6,7 +6,9 @@
 //! element, a copy of a borrowed `ooxml_xml::Element` with typed getters for the children and
 //! attributes a reader asks for (found by local name, through `ooxml_xml::view`); for a view
 //! in a known namespace, a constructor of the empty element; and where the description gives
-//! the schema's child sequence, `insert`, which adds a child where the sequence puts it.
+//! the schema's child sequence, `insert`, which adds a child where the sequence puts it; and
+//! [`orders`], the child orders generated from the published XML schemas (`xsd/`, with an
+//! overlay in `schema/orders.list` for what they do not give).
 //!
 //! Must not: contain hand-written code. A reader that needs another child or attribute adds
 //! it to the description and regenerates; meaning (what a value is, what a default is) belongs
@@ -19,5 +21,7 @@ pub mod a;
 pub mod c;
 #[rustfmt::skip]
 pub mod mc;
+#[rustfmt::skip]
+pub mod orders;
 #[rustfmt::skip]
 pub mod rels;

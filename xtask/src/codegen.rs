@@ -420,5 +420,6 @@ pub fn run(root: &Path, check: bool) -> Result<Vec<String>, String> {
             }
         }
     }
+    differ.extend(crate::orders::run(root, check)?);
     Ok(differ)
 }

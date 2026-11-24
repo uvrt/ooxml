@@ -1,0 +1,72 @@
+The XML schemas the child orders are generated from (`cargo xtask codegen`, xtask/src/orders.rs;
+the parents and overlay in ../schema/orders.list). The published ECMA-376 standard, copied
+unchanged.
+
+ecma-376-1st-edition/
+  ECMA-376 1st edition (December 2006), "ECMA-376 Annexes.zip" > OfficeOpenXML-XMLSchema.zip.
+  Download: https://ecma-international.org/wp-content/uploads/ECMA-376_1st_edition_december_2006.zip
+    sha256 c8b695305ef2d6acf277af04e4eeac8453ff4c7b4f70a33fb28f6465001458f7
+  OfficeOpenXML-XMLSchema.zip
+    sha256 3f57fb7442375c167947fa0180bb9ffafcbb6a58dd65c9bed94c5f460147b955
+  The base order: its sequences are the order Word writes (later editions turned some into
+  repeating choices, w:rPr's among them, which say nothing about order).
+
+ecma-376-5th-edition-transitional/
+  ECMA-376 5th edition (December 2016), Part 4 (Transitional Migration Features),
+  OfficeOpenXML-XMLSchema-Transitional.zip.
+  Download: https://ecma-international.org/wp-content/uploads/ECMA-376-4_5th_edition_december_2016.zip
+    sha256 bd25da1109f73762356596918bf5ff8b74a1331642dba5f1c1d1dfc6bed34ecd
+  OfficeOpenXML-XMLSchema-Transitional.zip
+    sha256 d34187520749998af306faf1b730e568b0ca6d88ad24638a407c0a9bb4ca04fc
+  The completion: elements later editions added (w:tblCaption, w:start, w:headers, ...) placed
+  where these sequences put them.
+
+Each file's sha256:
+c1d0584b2185fd6c6c8d728df20d1eaf6842dc64abf1c813bb1e710b9c1489dc  ecma-376-1st-edition/dml-audioVideo.xsd
+3155d13d18d9b3c88ff415e219f113c3165fd44550866a4bb5e1ec12c566014d  ecma-376-1st-edition/dml-baseStylesheet.xsd
+a91757f8e3f674abe3aabae6831338d0a41741b9b501d36048a9757c04528869  ecma-376-1st-edition/dml-baseTypes.xsd
+ccaecd42bed07dc75f9d86cbdaa7fadfd91c95259954181988f333d0511a51af  ecma-376-1st-edition/dml-chart.xsd
+2e6a9604274e4dab9c899d1ad895d43ee4893d4ca50cd8b635556ab2c006d38e  ecma-376-1st-edition/dml-chartDrawing.xsd
+346bdfaee41b44e3b892490e025919419fc9efd41ea6a9d3f60bfbdeb38984d2  ecma-376-1st-edition/dml-compatibility.xsd
+65be84d0fcaaf2678e723f2631b52be91a78cccf0c793cc73189ef9e1d3aff67  ecma-376-1st-edition/dml-diagramColorTransform.xsd
+34ab7a4e01fb82d3b49fa88f7618ad22bbfa0ac09858e074d34b73833b5d853b  ecma-376-1st-edition/dml-diagramDataModel.xsd
+b98f6192fc4efcdcb11e11ef7417e77332cf04796a9cbc5decabfe1ea290bcfb  ecma-376-1st-edition/dml-diagramDefinition.xsd
+4da61eb26558f54f71c2fea9145dee56c3ab5d75e294b48f29a23e4ccdea8987  ecma-376-1st-edition/dml-diagramElementPropertySet.xsd
+3f21e2d6561e2a536a8f4481ef382078193c74deeb3d1fbe9e72dce1e0b6d2c9  ecma-376-1st-edition/dml-diagramLayoutVariables.xsd
+fec1883b9e7c123ad9ef8aa65ea7b5a1c8d1e49ce46ab941dbb3baca2affe459  ecma-376-1st-edition/dml-diagramStyleDefinition.xsd
+039b4dba7a79274b21e7ca520117d5f56d441129fafb7917cf80afcb56236520  ecma-376-1st-edition/dml-diagramTypes.xsd
+506a084045c2aee7fa98b130057595c69ef8b8f68b0df1b123075d140652d6f5  ecma-376-1st-edition/dml-documentProperties.xsd
+9c4f6718fd1dc83084847a8af9a9fc33de482b3ffd737d48fd782a86bb957ea6  ecma-376-1st-edition/dml-graphicalObject.xsd
+08a39881b54cd21c6cc65b9c43c7b30f626a541a23fc4eddaecc57d8524d34e4  ecma-376-1st-edition/dml-graphicalObjectAnimation.xsd
+f17c94b8436663afe71f19e98d45910a4a2afaf0283ae5545825aec938ee3b60  ecma-376-1st-edition/dml-graphicalObjectFormat.xsd
+88a67bdd360739482842188955749b4d4f04c67472836e3be07f6621151bc9d4  ecma-376-1st-edition/dml-gvml.xsd
+01e62e53d4c72da0be1e49e34d40cec7ef7503550583e35502b6317d16224013  ecma-376-1st-edition/dml-lockedCanvas.xsd
+03e3b9ac07786040992b4ccc65851c91fa84185c5e7ae751b34dd525b82290cf  ecma-376-1st-edition/dml-picture.xsd
+06e24504e7e9ef67dd927245a9cf4e5bcda843068230dc3ac92c78468780480a  ecma-376-1st-edition/dml-shape3DCamera.xsd
+9700e6861b718e1d3fdc65d518aba90d30671690bb1ec8e61b74813b5bddcf7a  ecma-376-1st-edition/dml-shape3DLighting.xsd
+ac4df3ca94ff0953c815ab50cac52a310e54674316f79379728d83a496398986  ecma-376-1st-edition/dml-shape3DScene.xsd
+f7adfe665e0e71dbf685d41e16061a30c3f8d5dc9b7e9d03fe85fc3531c0d73e  ecma-376-1st-edition/dml-shape3DScenePlane.xsd
+9d13509cee606c0988a8385d0043c92d5d51194d5777279f69de63afe8f82e0b  ecma-376-1st-edition/dml-shape3DStyles.xsd
+218063e543ee804bfb8c16fc23030c08b0987ea987355f79edfe11f8603009cc  ecma-376-1st-edition/dml-shapeEffects.xsd
+7572e9feb885ba09ba853423c0475438eae220aa00b6da12e66184cf6395769a  ecma-376-1st-edition/dml-shapeGeometry.xsd
+2a4fc30cae1a77375bedba92366b5f53a8c6d7b9f6b9f8d9dd42d2b9c8de2a76  ecma-376-1st-edition/dml-shapeLineProperties.xsd
+7f055a7f0af143038842c4b1f9f645507b0fb964940809e9b62aabc412c1826d  ecma-376-1st-edition/dml-shapeMiscellaneous.xsd
+1308116e83c13687879c88285a4d657a0a46876a445b8aec09222a74503392f7  ecma-376-1st-edition/dml-shapeProperties.xsd
+591a1b32b7d09182691eebc7b906f0086611d7b28ff57528e106b171ecdac38e  ecma-376-1st-edition/dml-shapeStyle.xsd
+076c2ab1c15eb313014401f27e1249149668f5646df2c8ff5b3bff1e5341a6a2  ecma-376-1st-edition/dml-spreadsheetDrawing.xsd
+d7d44aef62830deabc29cab690e88ef2444426952c6134bb4c869ab5d5e308f7  ecma-376-1st-edition/dml-styleDefaults.xsd
+1fe3c6f46430bfcb9874e64a812ea0e4cdcf4be5dbb43d4fc159f944ac69deb6  ecma-376-1st-edition/dml-stylesheet.xsd
+7a9135c2dcccfdf0333cdd4b4b785daa7bdd7aeff6f371475a1a2127a838a89e  ecma-376-1st-edition/dml-table.xsd
+f8cbb331a69df06d8b46eb19669f0a4a839ab29e07c255bfc4a46264890e96e5  ecma-376-1st-edition/dml-tableStyle.xsd
+7ed879972051199747a13427537574827ad52a218e19b97236ecfde6c0c496c8  ecma-376-1st-edition/dml-text.xsd
+964671fb5f7730de1cd064ff4cb121eefc4284e47e4e0b791662e410707cb5d0  ecma-376-1st-edition/dml-textBullet.xsd
+6c98dfb8ed5fd142d62dce76a5a1bada97922d41e934fcd9063a47bdf84c8f84  ecma-376-1st-edition/dml-textCharacter.xsd
+30fc392e91470d5b506f9332f7999e4039ea3172ee9f08869345a19c95a99db7  ecma-376-1st-edition/dml-textParagraph.xsd
+2b652f79f5784b9e016deb711024d12430ecf8ef6daac072ff0eb7b41a45bb5e  ecma-376-1st-edition/dml-textRun.xsd
+ce8fe011aaef4c00716fb966ca4bd470c0294572b7a0919d00c0818f6783979c  ecma-376-1st-edition/dml-wordprocessingDrawing.xsd
+7d21bd96c077a7efa497c5fb3d8fc19f1360d0c1bcb833065d56ad38540f46c6  ecma-376-1st-edition/wml.xsd
+4de4390a26e7e44e682ed98b39872cce2620f807f5b0de421567a43f74526388  ecma-376-5th-edition-transitional/dml-chart.xsd
+809f77f658f71e10f5cfbf99e25c895a23a4e62c81210b59a2fe8c7fb24849d2  ecma-376-5th-edition-transitional/dml-diagram.xsd
+6978ba7e889070b0c3cb5b546b23e5a6c3516134afc53b87a21f482ca33f3858  ecma-376-5th-edition-transitional/dml-main.xsd
+2dbfd4719505bf39b568005994a433997cbeac59cebc9d4867d564c94e9ba03a  ecma-376-5th-edition-transitional/dml-wordprocessingDrawing.xsd
+0f7784b36ddc42950e5ff354cd608b83b60e4de39325d5568913f1225365029b  ecma-376-5th-edition-transitional/wml.xsd

@@ -79,3 +79,47 @@ impl Orders {
         self.ranks.get(parent)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+    use super::*;
+    use std::collections::BTreeSet;
+
+    /// The orders generated from the XML schemas (with their overlay) are the frozen Python's
+    /// table, step for step, and name the same prefixes.
+    #[test]
+    fn the_generated_orders_are_the_tables() {
+        let mut steps_of: Vec<(String, Vec<BTreeSet<String>>)> = Vec::new();
+        let mut namespaces = Vec::new();
+        for line in DATA.lines() {
+            if let Some(rest) = line.strip_prefix("ns ") {
+                let (prefix, uri) = rest.split_once(' ').unwrap();
+                namespaces.push((prefix.to_owned(), uri.to_owned()));
+            } else if let Some(rest) = line.strip_prefix("order ") {
+                let (parent, steps) = rest.split_once(" = ").unwrap();
+                let steps = steps
+                    .split(" | ")
+                    .map(|s| s.split(' ').map(str::to_owned).collect())
+                    .collect();
+                steps_of.push((parent.to_owned(), steps));
+            }
+        }
+        let generated: Vec<(String, Vec<BTreeSet<String>>)> = ooxml_schema::orders::ORDERS
+            .iter()
+            .map(|(parent, steps)| {
+                let steps = steps
+                    .iter()
+                    .map(|s| s.iter().map(|n| (*n).to_owned()).collect())
+                    .collect();
+                ((*parent).to_owned(), steps)
+            })
+            .collect();
+        assert_eq!(generated, steps_of);
+        let generated: Vec<(String, String)> = ooxml_schema::orders::NAMESPACES
+            .iter()
+            .map(|(p, u)| ((*p).to_owned(), (*u).to_owned()))
+            .collect();
+        assert_eq!(generated, namespaces);
+    }
+}
