@@ -254,7 +254,7 @@ pub(super) fn merge_cells(
         .first()
         .and_then(|row| row.first())
         .map(|p| p.cell)
-        .ok_or_else(|| EditError::Path(held.found.part.clone()))?;
+        .ok_or_else(|| EditError::no_element(held.found.part.clone()))?;
     let (written, released, copied) = if tracked {
         let copies = tracked_copies(&mut held.work, &plan);
         stamp_new(sink, held, &copies, "\0table")?;

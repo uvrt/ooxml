@@ -145,7 +145,7 @@ impl EditSink<'_, '_> {
                 continue;
             }
             made += spaced;
-            let new = work.build().ok_or_else(|| crate::EditError::Path(part.clone()))?;
+            let new = work.build().ok_or_else(|| crate::EditError::unbuilt(part.clone()))?;
             self.replace(&part, &found.path, new, vec![found.key])?;
             changed.push((part, found.path));
         }

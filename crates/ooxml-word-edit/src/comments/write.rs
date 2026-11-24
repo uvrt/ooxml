@@ -94,7 +94,7 @@ pub(super) fn write_comment(
     let doc = sink.doc().clone();
     let work = space
         .work(&doc, &comments)?
-        .ok_or_else(|| EditError::NoPart(comments.clone()))?;
+        .ok_or_else(|| EditError::no_part(comments.clone()))?;
     let root = work.root();
     let id_text = id.to_string();
     let node = make(
@@ -162,7 +162,7 @@ pub(crate) fn complete(sink: &mut EditSink<'_, '_>, space: &mut Space, main: &st
     let listed: Vec<(String, Option<String>)> = {
         let work = space
             .get(comments)
-            .ok_or_else(|| EditError::NoPart(comments.to_owned()))?;
+            .ok_or_else(|| EditError::no_part(comments.to_owned()))?;
         work.children(work.root())
             .iter()
             .filter(|c| work.is(**c, W, "comment"))
@@ -254,9 +254,9 @@ fn paragraphs(sink: &mut EditSink<'_, '_>, space: &mut Space, part: &str, node: 
     for (k, line) in lines.iter().enumerate() {
         let drawn = sink.draw(&seed, 2)?;
         let (Some(para), Some(text_id)) = (drawn.first(), drawn.get(1)) else {
-            return Err(EditError::Path(part.to_owned()));
+            return Err(EditError::no_element(part.to_owned()));
         };
-        let work = space.get_mut(part).ok_or_else(|| EditError::NoPart(part.to_owned()))?;
+        let work = space.get_mut(part).ok_or_else(|| EditError::no_part(part.to_owned()))?;
         let paragraph = comment_paragraph(work, node, (para, text_id), (&style, &reference), (k == 0, line));
         work.append(node, paragraph);
         last.clone_from(para);
@@ -276,7 +276,7 @@ pub(crate) fn append(
     let doc = sink.doc().clone();
     let work = space
         .work(&doc, part)?
-        .ok_or_else(|| EditError::NoPart(part.to_owned()))?;
+        .ok_or_else(|| EditError::no_part(part.to_owned()))?;
     let root = work.root();
     let element = work.new_element(work.element_name(root, ns, local, prefix));
     for (name, value) in attributes {

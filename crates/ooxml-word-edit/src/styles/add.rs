@@ -49,7 +49,7 @@ fn open_sheet(sink: &mut EditSink<'_, '_>, space: &mut Space) -> Result<Sheet> {
         return Ok(sheet);
     }
     builtin::styles_part(sink)?;
-    Sheet::open(sink, space)?.ok_or_else(|| EditError::NoPart("word/styles.xml".to_owned()))
+    Sheet::open(sink, space)?.ok_or_else(|| EditError::no_part("word/styles.xml".to_owned()))
 }
 
 fn check_name(sink: &mut EditSink<'_, '_>, name: &str) -> Result<()> {

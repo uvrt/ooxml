@@ -93,25 +93,25 @@ impl<'s, 't, 'x> Run<'s, 't, 'x> {
     ) -> Result<FormatStep> {
         let renamed = self.stamp()?;
         let docx = self.sink.docx()?;
-        let story = docx.part(part).ok_or_else(|| EditError::NoPart(part.to_owned()))?;
+        let story = docx.part(part).ok_or_else(|| EditError::no_part(part.to_owned()))?;
         let paragraph = story
             .ids
             .paragraphs()
             .get(index)
-            .ok_or_else(|| EditError::Path(part.to_owned()))?;
+            .ok_or_else(|| EditError::no_element(part.to_owned()))?;
         let tree = self
             .sink
             .doc()
             .tree(part)?
-            .ok_or_else(|| EditError::NoPart(part.to_owned()))?;
-        let element = at_path(tree.root(), &paragraph.path).ok_or_else(|| EditError::Path(part.to_owned()))?;
+            .ok_or_else(|| EditError::no_part(part.to_owned()))?;
+        let element = at_path(tree.root(), &paragraph.path).ok_or_else(|| EditError::no_element(part.to_owned()))?;
         let mut work = Work::of(element, scope_above(tree.root(), &paragraph.path));
         let root = work.root();
         let tracker = self.sink.watch_properties(&mut work, &[root]);
         let shared = self.sink.doc().shared_handle();
         change(&mut work, root, shared.facts.orders(), &self.colours)?;
         let wrote = self.sink.properties_changed(&mut work, tracker)?;
-        let new = work.build().ok_or_else(|| EditError::Path(part.to_owned()))?;
+        let new = work.build().ok_or_else(|| EditError::unbuilt(part.to_owned()))?;
         if *new != **element {
             let draws = wrote
                 .annotations

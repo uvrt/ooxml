@@ -71,7 +71,8 @@ pub(crate) fn step(
     action: &ListAction,
 ) -> Result<Stepped> {
     let docx = sink.docx()?;
-    let read::At { id, element, .. } = read::at(&docx, place).ok_or_else(|| EditError::Path(place.part.clone()))?;
+    let read::At { id, element, .. } =
+        read::at(&docx, place).ok_or_else(|| EditError::no_element(place.part.clone()))?;
     let found = membership(&docx, &Lists::read(&docx), &element);
     let in_list = || found.clone().ok_or_else(|| refused(format!("{id} is not in a list")));
     let step = match action {
@@ -158,7 +159,7 @@ fn list_edit(
     let main = sink.docx()?.main.clone();
     let removed = nb::reap(sink, &main, &candidates)?;
     let docx = sink.docx()?;
-    let read::At { id, .. } = read::at(&docx, place).ok_or_else(|| EditError::Path(place.part.clone()))?;
+    let read::At { id, .. } = read::at(&docx, place).ok_or_else(|| EditError::no_element(place.part.clone()))?;
     Ok(ListStep {
         id,
         changed: true,
@@ -177,11 +178,11 @@ fn rewrite(
 ) -> Result<()> {
     let docx = sink.docx()?;
     let read::At { id, path, element, .. } =
-        read::at(&docx, place).ok_or_else(|| EditError::Path(place.part.clone()))?;
+        read::at(&docx, place).ok_or_else(|| EditError::no_element(place.part.clone()))?;
     let tree = sink
         .doc()
         .tree(&place.part)?
-        .ok_or_else(|| EditError::NoPart(place.part.clone()))?;
+        .ok_or_else(|| EditError::no_part(place.part.clone()))?;
     let mut work = Work::of(&element, scope_above(tree.root(), &path));
     let paragraph = work.root();
     let properties = work.find(paragraph, W, "pPr");
@@ -189,7 +190,7 @@ fn rewrite(
     let shared = sink.doc().shared_handle();
     edit(&mut work, paragraph, shared.facts.orders());
     let wrote = sink.paragraph_properties_changed(&mut work, paragraph, old)?;
-    let new = work.build().ok_or_else(|| EditError::Path(place.part.clone()))?;
+    let new = work.build().ok_or_else(|| EditError::unbuilt(place.part.clone()))?;
     if *new != *element {
         let draws = wrote
             .annotations
@@ -264,7 +265,7 @@ fn add(sink: &mut EditSink<'_, '_>, place: &Place, kind: &str, level: i64) -> Re
         None => nb::new_list(sink, &docx.main, kind)?,
     };
     let docx = sink.docx()?;
-    let read::At { element, .. } = read::at(&docx, place).ok_or_else(|| EditError::Path(place.part.clone()))?;
+    let read::At { element, .. } = read::at(&docx, place).ok_or_else(|| EditError::no_element(place.part.clone()))?;
     let current = read::paragraph_style_id(&element);
     let style = if current.is_none() || current == default_style(&docx) {
         Some(crate::builtin::ensure(sink, "List Paragraph", "paragraph")?)
@@ -360,7 +361,8 @@ fn restart(
         following(&docx, place, list.num_id)
     };
     let num_id = if list.from_style {
-        let read::At { element, .. } = read::at(&docx, place).ok_or_else(|| EditError::Path(place.part.clone()))?;
+        let read::At { element, .. } =
+            read::at(&docx, place).ok_or_else(|| EditError::no_element(place.part.clone()))?;
         let style_id = read::paragraph_style_id(&element);
         nb::add_restart(
             sink,
@@ -389,7 +391,7 @@ fn restart_note(sink: &EditSink<'_, '_>, place: &Place, id: &str) -> Result<Opti
     let Some(moved) = read::list_at(&docx, place) else {
         return Ok(None);
     };
-    let read::At { element, .. } = read::at(&docx, place).ok_or_else(|| EditError::Path(place.part.clone()))?;
+    let read::At { element, .. } = read::at(&docx, place).ok_or_else(|| EditError::no_element(place.part.clone()))?;
     let style_ind = read::style_indent(&docx, read::paragraph_style_id(&element).as_deref());
     Ok(read::indent_note(&docx, (moved.num_id, moved.level), style_ind.as_deref()).map(|n| format!("{id}: {n}")))
 }
@@ -397,7 +399,7 @@ fn restart_note(sink: &EditSink<'_, '_>, place: &Place, id: &str) -> Result<Opti
 /// The instance `continue` joins (docx-agent's `continue_numbering` before its change).
 fn continued(docx: &Docx, place: &Place, id: &str, list: &Membership, from: Option<&str>) -> Result<i64> {
     let lists = Lists::read(docx);
-    let read::At { element, .. } = read::at(docx, place).ok_or_else(|| EditError::Path(place.part.clone()))?;
+    let read::At { element, .. } = read::at(docx, place).ok_or_else(|| EditError::no_element(place.part.clone()))?;
     let own_style = if list.from_style {
         None
     } else {
@@ -412,7 +414,7 @@ fn continued(docx: &Docx, place: &Place, id: &str, list: &Membership, from: Opti
     }
     let story = docx
         .part(&place.part)
-        .ok_or_else(|| EditError::NoPart(place.part.clone()))?;
+        .ok_or_else(|| EditError::no_part(place.part.clone()))?;
     let earlier = story.ids.paragraphs().iter().take(place.index).collect::<Vec<_>>();
     let mut styles = StyleNumbers::default();
     for other in earlier.into_iter().rev() {
@@ -464,7 +466,8 @@ fn continue_list(sink: &mut EditSink<'_, '_>, place: &Place, list: &Membership, 
         let docx = sink.docx()?;
         let lists = Lists::read(&docx);
         let target_abstract = lists.canonical(lists.abstract_of(target));
-        let read::At { element, .. } = read::at(&docx, member).ok_or_else(|| EditError::Path(member.part.clone()))?;
+        let read::At { element, .. } =
+            read::at(&docx, member).ok_or_else(|| EditError::no_element(member.part.clone()))?;
         let level = read::list_at(&docx, member).map_or(0, |m| m.level);
         let by_style = read::style_list(&docx, read::paragraph_style_id(&element).as_deref());
         let take_style =
@@ -490,9 +493,9 @@ fn set_format(
 ) -> Result<BTreeSet<i64>> {
     let docx = sink.docx()?;
     let main = docx.main.clone();
-    let part = nb::part_of(sink, &main)?.ok_or_else(|| EditError::NoPart("word/numbering.xml".to_owned()))?;
+    let part = nb::part_of(sink, &main)?.ok_or_else(|| EditError::no_part("word/numbering.xml".to_owned()))?;
     let lists = Lists::read(&docx);
-    let root = read::numbering_root(&docx).ok_or_else(|| EditError::NoPart(part.clone()))?;
+    let root = read::numbering_root(&docx).ok_or_else(|| EditError::no_part(part.clone()))?;
     let sharing = nb::listed(&root, "num", "numId")
         .iter()
         .any(|(n, _)| *n != list.num_id && lists.abstract_of(*n) == Some(abstract_id));

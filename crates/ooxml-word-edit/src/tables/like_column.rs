@@ -68,8 +68,8 @@ impl Command<WordDoc> for LikeTheColumn {
         let tree = sink
             .doc()
             .tree(&found.part)?
-            .ok_or_else(|| EditError::NoPart(found.part.clone()))?;
-        let element = at_path(tree.root(), &found.path).ok_or_else(|| EditError::Path(found.part.clone()))?;
+            .ok_or_else(|| EditError::no_part(found.part.clone()))?;
+        let element = at_path(tree.root(), &found.path).ok_or_else(|| EditError::no_element(found.part.clone()))?;
         let mut work = Work::of(element, scope_above(tree.root(), &found.path));
         let table = work.root();
         let rows = own_rows(&work, table);
@@ -80,7 +80,7 @@ impl Command<WordDoc> for LikeTheColumn {
         if !done.iter().any(|d| *d) {
             return Ok(done);
         }
-        let new = work.build().ok_or_else(|| EditError::Path(found.part.clone()))?;
+        let new = work.build().ok_or_else(|| EditError::unbuilt(found.part.clone()))?;
         write(&mut sink, &found, &found.id, new, &Written::of(None))?;
         crate::after::after_edit(&mut sink)?;
         Ok(done)

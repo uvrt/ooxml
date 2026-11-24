@@ -51,7 +51,7 @@ impl EditNote {
         check_text(&self.text.replace('\n', ""))?;
         let docx = sink.docx()?;
         let (part, path, _) = note_element(sink.doc(), &docx, &self.note)?;
-        let story = docx.part(&part).ok_or_else(|| EditError::NoPart(part.clone()))?;
+        let story = docx.part(&part).ok_or_else(|| EditError::no_part(part.clone()))?;
         let entries: Vec<_> = story
             .ids
             .paragraphs_within(&path)

@@ -198,7 +198,7 @@ fn places(run: &Run<'_, '_, '_>, address: &str) -> Result<Vec<(String, usize)>> 
         let span = Span::of(run.sink.doc(), &docx, &range(run.sink.doc(), &docx, address)?)?;
         let story = docx
             .part(&span.part)
-            .ok_or_else(|| EditError::NoPart(span.part.clone()))?;
+            .ok_or_else(|| EditError::no_part(span.part.clone()))?;
         return Ok(span
             .paragraphs
             .iter()
@@ -299,7 +299,7 @@ fn paragraph_length(run: &Run<'_, '_, '_>, part: &str, index: usize) -> Result<u
     let paragraph = docx
         .part(part)
         .and_then(|s| s.ids.paragraphs().get(index))
-        .ok_or_else(|| EditError::Path(part.to_owned()))?;
+        .ok_or_else(|| EditError::no_element(part.to_owned()))?;
     let work = Work::of(&paragraph.element, Vec::new());
     Ok(crate::text::paragraph_text(&work, work.root()).chars().count())
 }
@@ -334,7 +334,7 @@ fn on_range(run: &mut Run<'_, '_, '_>, address: &str, op: &RangeOp<'_>) -> Resul
     let id = crate::text_range::range_id(&found);
     let story = docx
         .part(&span.part)
-        .ok_or_else(|| EditError::NoPart(span.part.clone()))?;
+        .ok_or_else(|| EditError::no_part(span.part.clone()))?;
     let last = span.paragraphs.len().saturating_sub(1);
     let mut pieces = Vec::new();
     for (k, paragraph) in span.paragraphs.iter().enumerate() {
@@ -351,7 +351,7 @@ fn on_range(run: &mut Run<'_, '_, '_>, address: &str, op: &RangeOp<'_>) -> Resul
             .ids
             .paragraph_at(&paragraph.path)
             .map(|p| p.index)
-            .ok_or_else(|| EditError::Path(span.part.clone()))?;
+            .ok_or_else(|| EditError::no_element(span.part.clone()))?;
         pieces.push((index, start, end, k < last));
     }
     let part = span.part.clone();
@@ -402,7 +402,7 @@ fn keep_blocks(run: &mut Run<'_, '_, '_>, address: &str, on: bool) -> Result<For
             .part(&main)
             .and_then(|s| s.ids.paragraph_at(path))
             .map(|p| p.index)
-            .ok_or_else(|| EditError::Path(main.clone()))?;
+            .ok_or_else(|| EditError::no_element(main.clone()))?;
         run.paragraph(&main, index, &ParagraphOp::Settings(settings, &[]))?;
     }
     Ok(FormatStep {
@@ -448,7 +448,7 @@ fn like_targets(
             let paragraph = docx
                 .part(&part)
                 .and_then(|s| s.ids.paragraphs().get(k))
-                .ok_or_else(|| EditError::Path(part.clone()))?;
+                .ok_or_else(|| EditError::no_element(part.clone()))?;
             let parts = differs(&paragraph.element, &like.look, &like.skip);
             if parts.is_empty() {
                 done.alike.push(paragraph.id.clone());
