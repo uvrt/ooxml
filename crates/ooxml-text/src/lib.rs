@@ -4,8 +4,8 @@
 //! ([`mod@pieces`]), break opportunities and the one break loop with Word's compatibility
 //! rules as data ([`breaks`], [`geometry`]), hyphenation ([`hyphenate`], automatic
 //! hyphens), and measures memoised by content ([`Measurer`]). A port of docx2svg's
-//! `linebreak`, `measure` and `hyphenate`, equal to them on every corpus paragraph (the
-//! differential, `ooxml-oracle`'s `text-diff`).
+//! former `linebreak`, `measure` and `hyphenate`, once held equal to them on every corpus
+//! paragraph (a differential retired with them, lane svg-thin).
 //!
 //! Must not: know about paragraphs' properties or styles -- its input is runs of text with
 //! resolved character formats ([`input`]) and a geometry -- or find faces: it reads them

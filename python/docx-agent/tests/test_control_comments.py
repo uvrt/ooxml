@@ -373,7 +373,7 @@ LEVELS_RANGES = [(14, 28), (39, 42), (46, 58), (83, 96), (126, 137), (138, 148),
 def _oracle():
     oracle = pytest.importorskip("oracle")
     if not oracle.available():
-        pytest.skip("Microsoft Word or docx2svg's oracle scripts are not available")
+        pytest.skip("Microsoft Word or the Word oracle's scripts are not available")
     return oracle
 
 

@@ -129,7 +129,8 @@ impl WordDoc {
         budget: Arc<dyn CacheBudget>,
         earlier: &EarlierIds,
     ) -> Result<WordDoc, EditError> {
-        let docx = Arc::new(Docx::open(&package)?);
+        let kept = Arc::new(ooxml_word_model::docx::Kept::new(Arc::clone(&budget)));
+        let docx = Arc::new(Docx::open_keeping(&package, kept)?);
         Ok(WordDoc::of_docx(package, docx, budget, earlier))
     }
 
@@ -145,7 +146,8 @@ impl WordDoc {
         budget: Arc<dyn CacheBudget>,
         state: &str,
     ) -> Result<(WordDoc, LoadedState), EditError> {
-        let docx = Arc::new(Docx::open(&package)?);
+        let kept = Arc::new(ooxml_word_model::docx::Kept::new(Arc::clone(&budget)));
+        let docx = Arc::new(Docx::open_keeping(&package, kept)?);
         let loaded = {
             let roots: Vec<&ooxml_xml::Element> = docx.parts.iter().map(|p| &**p.root()).collect();
             load_state(state, &roots)?

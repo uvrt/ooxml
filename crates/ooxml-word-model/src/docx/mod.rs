@@ -174,16 +174,36 @@ impl Docx {
         Docx::open_after(package, None)
     }
 
+    /// [`Docx::open`], what its versions keep of its parts in `kept` (a document's first
+    /// version: its later ones share it).
+    ///
+    /// # Errors
+    /// As [`Docx::open`].
+    pub fn open_keeping(package: &Package, kept: Arc<Kept>) -> Result<Docx, WordError> {
+        Docx::read(package, None, kept)
+    }
+
     /// Read `package`, taking from `before` (an earlier version's reading of the same
     /// document) every story part whose tree is the very same: its ids are not found again.
     ///
     /// # Errors
     /// As [`Docx::open`].
     pub fn open_after(package: &Package, before: Option<&Docx>) -> Result<Docx, WordError> {
+        let latest = before.map_or_else(|| Arc::new(Kept::default()), |b| Arc::clone(&b.kept));
+        Docx::read(package, before, latest)
+    }
+
+    /// What its versions keep of its tables' readings: entries and bytes.
+    #[must_use]
+    pub fn table_readings(&self) -> (usize, usize) {
+        self.kept.table_readings()
+    }
+
+    /// `package` read, taking from `before` its parts kept, what its versions keep in `latest`.
+    fn read(package: &Package, before: Option<&Docx>, latest: Arc<Kept>) -> Result<Docx, WordError> {
         let main = main_part(package)?.ok_or_else(|| WordError::NoMainPart(String::new()))?;
         let mut names = vec![main.clone()];
         names.extend(story_parts(package, &main)?);
-        let latest = before.map_or_else(|| Arc::new(Kept::default()), |b| Arc::clone(&b.kept));
         let mut parts = Vec::with_capacity(names.len());
         for part in names {
             let Some(tree) = package.tree(&part)? else { continue };

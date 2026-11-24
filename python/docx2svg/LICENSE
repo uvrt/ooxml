@@ -20,8 +20,8 @@ Both grant use without attribution; the provenance notes are kept anyway.
 tests/fixtures/filesamples/ holds only a note: the documents it describes carry no
 licence and are not in this repository.
 
-The hyphenation patterns and word lists under src/docx2svg/patterns/ are third-party data
-under their own permissive licences, which src/docx2svg/patterns/SOURCES.txt reproduces.
+The hyphenation patterns and word lists docx2svg once shipped are now ooxml-text's
+(crates/ooxml-text/patterns/, with their licences in SOURCES.txt there).
 
 It does not cover, and this repository does not contain, any font file. Microsoft's
 typefaces -- Calibri, Cambria, Aptos and the rest -- are licensed to Office and are not

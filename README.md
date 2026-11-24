@@ -105,13 +105,10 @@ example `pip install ./python/ooxml-common ./python/ooxml-edit ./python/docx2svg
   request only when it changes their own paths (`tools/ci.py`, `RUST_JOBS`), and on main,
   nightly and manual runs: `loom` (ooxml-store's commit path), `oracles`
   (`tools/rust_oracles.py`: the XML writer and the package save against ooxml-edit),
-  `word-model` (the Word model against docx2svg, on the repository's documents and those
-  docx2svg's `tools/make_*.py` make) and `cargo-deny` (`deny.toml`: the licences
+  `models` (the DrawingML model and the charts against ooxml-common's) and `cargo-deny` (`deny.toml`: the licences
   `DEPENDENCIES.md` allows), all under `required (rust)`; and `fuzz` (the three targets in
   `fuzz/`, 5 minutes each, nightly and manual runs, not on a push to main), which is not
-  required. ooxml-oracle's `text-diff` (the text engine against docx2svg's records) needs
-  Word's own fonts, so it is not in CI: it stays a local gate for changes to ooxml-fonts and
-  ooxml-text.
+  required.
 - Changelogs (`tools/changelog.py`): a pull request never edits a package's `CHANGELOG.md`
   (two that do always conflict); it adds a fragment, `python/<package>/changes/<topic>.<kind>.md`,
   `topic` its branch or subject (lower case, digits, `-`), `kind` one of `added`, `changed`,

@@ -1,13 +1,13 @@
 """Driving Microsoft Word -- one instance per machine -- as the oracle.
 
 Word is the only authoritative answer to "will this file open?", and there is one of it.
-docx2svg's measuring work drives the same Word, and its recovery path kills Word and deletes
-``~$`` lock files, which would destroy an export of ours in flight, and ours would destroy
-one of its.  So (ROADMAP.md, "Word is one instance per machine"):
+Other measuring work (pptx2svg's, the probes') drives the same Word, and a recovery path
+kills Word and deletes ``~$`` lock files, which would destroy an export of ours in flight,
+and ours would destroy one of its.  So (ROADMAP.md, "Word is one instance per machine"):
 
 * **One machine-wide lock.**  Every launch, export, save and recovery happens while holding
   an advisory ``flock`` on :data:`LOCK`, a file in the Office group container.  docx2svg's
-  oracle takes the same lock (blocking, for up to 600 s) around its own Word work, and never
+  former oracle took the same lock (blocking, for up to 600 s) around its own Word work, and never
   quits a Word it did not start.  Here it is not waited for: if someone holds it, the
   oracle is skipped.
 * **Word already running means someone is using it** -- a person, or a tool that does not
@@ -23,11 +23,10 @@ one of its.  So (ROADMAP.md, "Word is one instance per machine"):
 * **Paths under the sandbox.**  Word may read and write the Office group container without
   a grant; documents are staged there.
 
-The AppleScripts are docx2svg's (``tools/word_export_pdf.applescript``, whose third argument
-``final`` exports Word's final view of a document with revisions or comments, and
-``tools/word_save_docx.applescript``), found in the sibling checkout or through
-``DOCX2SVG_ORACLE_SCRIPT`` (the export script's path; the save script is beside it), as
-pptx-agent finds pptx2svg's.
+The AppleScripts are in ``scripts/`` beside this module (``word_export_pdf.applescript``,
+whose third argument ``final`` exports Word's final view of a document with revisions or
+comments, and ``word_save_docx.applescript``; docx2svg's until lane svg-thin), or where
+``DOCX2SVG_ORACLE_SCRIPT`` names the export script (the save script beside it).
 """
 
 from __future__ import annotations
@@ -49,7 +48,7 @@ except ImportError:  # Windows: there is no Word oracle there (it drives Word on
 WORD_APP = Path("/Applications/Microsoft Word.app")
 EXPORT_SCRIPT = Path(
     os.environ.get("DOCX2SVG_ORACLE_SCRIPT")
-    or Path(__file__).resolve().parents[3] / "python" / "docx2svg" / "tools" / "word_export_pdf.applescript"
+    or Path(__file__).resolve().parent / "scripts" / "word_export_pdf.applescript"
 )
 SAVE_SCRIPT = EXPORT_SCRIPT.with_name("word_save_docx.applescript")
 
@@ -116,7 +115,7 @@ def session() -> Iterator["Session"]:
     """Hold the machine-wide lock for a run of Word work; :class:`WordBusy` if Word or the
     lock is taken.  Word is left not running on exit."""
     if not available():
-        raise WordBusy("Microsoft Word or docx2svg's oracle scripts are not available")
+        raise WordBusy("Microsoft Word or the Word oracle's scripts are not available")
     GROUP_CONTAINER.mkdir(parents=True, exist_ok=True)
     handle = open(LOCK, "a+")
     try:
@@ -192,7 +191,7 @@ class Session:
         if data is not None:
             staged.write_bytes(data)
         # The previous run's Word may still be quitting; launching into it fails with -609
-        # or -1712 and nothing else to show for it (docx2svg's tools/oracle.py measured).
+        # or -1712 and nothing else to show for it (docx2svg's former tools/oracle.py measured).
         for _ in range(150):
             if not word_running():
                 break
@@ -263,7 +262,7 @@ def _zip_has_markup(data: bytes) -> bool:
 
 
 def pdf_pages(pdf: Path) -> list[str]:
-    """The text of every page of a PDF (pypdfium2, docx2svg's oracle extra)."""
+    """The text of every page of a PDF (pypdfium2)."""
     import pypdfium2
 
     document = pypdfium2.PdfDocument(str(pdf))

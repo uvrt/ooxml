@@ -37,14 +37,6 @@ dependencies = ["ooxml-common>=0.38.0", "ooxml-core>=0.10.0"]
 # PNG is drawn by ooxml-core now: the extra needs nothing.  Kept for one release, so that
 # `pip install docx2svg[png]` still installs; then removed.
 png = []
-# Reading the ground-truth PDF that Microsoft Word exports.  Development only:
-# nothing under src/ imports it, and the harness additionally needs Word itself,
-# which pip cannot supply.
-oracle = ["pypdfium2>=4"]
-# Measure with real font files instead of generated metric tables, and regenerate
-# those tables.  Never used to *ship* a metric -- a measurement is a fact this
-# project may record; the font file it came from is not ours to redistribute.
-measure = ["fonttools>=4.40"]
 dev = [
   "pytest>=7",
   # `pytest -n auto` (docs/development.md).  Opt-in: a bare `pytest` stays serial,
@@ -54,21 +46,6 @@ dev = [
   "ruff==0.17.2",
   # The type checker (CI's build job runs it, at the same pin; [tool.mypy] below).
   "mypy==2.4.0",
-]
-# The fidelity instrument's converter (tools/pdf_svg.py): Word's PDF page to SVG, so that
-# resvg rasterises both sides of the score.  Development only, and deliberately not in
-# `dev`, so CI does not install it and the tests that need it skip there.  PyMuPDF is
-# AGPL-3.0: fine for a local development tool that is not distributed with the library,
-# and nothing under src/ imports it.  Install into the project's virtual environment:
-#   python3 -m venv --system-site-packages .venv && .venv/bin/pip install pymupdf
-# (or `.venv/bin/pip install -e .[dev,fidelity]` where ooxml-common is installed).
-fidelity = [
-  "pymupdf>=1.24",
-  "numpy",
-  "pillow",
-  "pypdfium2>=4",
-  "resvg-py>=0.5",
-  "fonttools>=4.40",
 ]
 
 [project.scripts]
@@ -82,10 +59,9 @@ Roadmap = "https://github.com/uvrt/docx2svg/blob/main/ROADMAP.md"
 [tool.setuptools.packages.find]
 where = ["src"]
 
-# The hyphenation patterns (docx2svg.hyphenate) and their sources and licences; py.typed,
-# so a caller's type checker reads the package's annotations (PEP 561).
+# py.typed, so a caller's type checker reads the package's annotations (PEP 561).
 [tool.setuptools.package-data]
-docx2svg = ["patterns/*.txt", "patterns/*.txt.gz", "py.typed"]
+docx2svg = ["py.typed"]
 
 # A small set of bug-finding rules, not a style: pyflakes (F), syntax errors (E9),
 # mutable or called defaults (B006, B008), return in finally (B012), comparisons that do
@@ -98,25 +74,12 @@ src = ["src"]
 select = ["F", "E9", "B006", "B008", "B012", "B015", "PLE"]
 
 # `mypy` (CI's build job): the package, not strict -- the annotations as written are
-# checked, an unannotated function's body is not.  The optional imports (the rasterisers
-# for docx2svg.png, fontTools for docx2svg.fonts' measure path) are found only where they
-# are installed.
+# checked, an unannotated function's body is not.
 [tool.mypy]
 python_version = "3.10"
 files = ["src/docx2svg"]
 mypy_path = "src"
 disable_error_code = ["annotation-unchecked"]
 
-[[tool.mypy.overrides]]
-module = ["fontTools.*", "resvg_py", "cairosvg"]
-ignore_missing_imports = true
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = [
-  "slow: minutes long, and needs Word's exports and faces (tools/fidelity.py); run with --run-slow",
-  "pdfium: scores against the fidelity harness's old instrument (tools/fidelity.py --truth pdfium); skipped unless `pytest --pdfium`, since the default truth is svg",
-  "faces: lays out a document in faces only an Office machine has (Georgia, Cambria, ...); skips where the layout finds one absent (tests/conftest.py)",
-  "long: seconds long, and on every pull request covered by a faster case of the same code (the test's other parameters, or the measured rule a refuted alternative is scored against); a pull request's CI leaves these out (-m \"not long\"), a push to main, the nightly run and a manual run take them (.github/workflows/ci.yml)",
-  "word: drives Microsoft Word (tools/oracle.py's export), which is one instance per machine; such a test runs only serially or in the one xdist group `--dist loadgroup` keeps on a single worker (tests/conftest.py)",
-]

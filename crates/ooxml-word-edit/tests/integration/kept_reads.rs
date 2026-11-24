@@ -1,6 +1,7 @@
 //! What a document's checks keep across its versions read as a cold read does: each
 //! table's cells (`PartCells::of`, kept by the table element) after an edit inside a
-//! table, and the texts' languages (`Detections`) after a paragraph's language changed.
+//! table, and the texts' languages (`Detections`) after a paragraph's language changed --
+//! also where a budget of a few bytes lets what they keep go at once.
 // Tests may unwrap, panic and index (docs/architecture/README.md, section 2.5).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
@@ -30,7 +31,28 @@ fn cells_of(doc: &WordDoc, kept: bool) -> Vec<(Vec<u32>, Option<ooxml_word_model
 
 #[test]
 fn a_table_s_cells_kept_across_versions_are_read_as_cold_after_an_edit_in_a_table() {
-    let editor = editor(&fixture("generated/markdown/constructs.docx"));
+    cells_kept_and_cold(&editor(&fixture("generated/markdown/constructs.docx")));
+}
+
+#[test]
+fn tables_readings_let_go_for_the_budget_are_read_as_cold() {
+    let bytes = fixture("generated/markdown/constructs.docx");
+    let package = ooxml_opc::Package::open(std::sync::Arc::clone(&bytes), &ooxml_base::Limits::default()).unwrap();
+    let editor = ooxml_word_edit::Editor::open(
+        package,
+        ooxml_store::StoreConfig::default(),
+        std::sync::Arc::new(crate::common::Monotonic(std::time::Instant::now())),
+        std::sync::Arc::new(Tight(std::sync::atomic::AtomicUsize::new(0))),
+    )
+    .unwrap();
+    cells_kept_and_cold(&editor);
+    let (_, bytes) = editor.store().snapshot().doc().docx().unwrap().table_readings();
+    assert!(bytes <= 512, "{bytes}");
+}
+
+/// The cells read with the tables' readings kept equal a cold read, before and after a
+/// paragraph in a table is set again.
+fn cells_kept_and_cold(editor: &ooxml_word_edit::Editor) {
     let first = editor.store().snapshot().doc().clone();
     let read = cells_of(&first, true);
     assert!(

@@ -258,7 +258,7 @@ def test_fitting_tracked_is_a_property_change_word_can_reject():
 def _oracle():
     oracle = pytest.importorskip("oracle")
     if not oracle.available():
-        pytest.skip("Microsoft Word or docx2svg's oracle scripts are not available")
+        pytest.skip("Microsoft Word or the Word oracle's scripts are not available")
     return oracle
 
 
