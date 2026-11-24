@@ -34,7 +34,11 @@ fn check(body: &str) {
         "the new section keeps the header: {first}"
     );
     assert!(!last.contains("Reference"), "the split section inherits: {last}");
-    assert_eq!(body.matches(r#"r:id="rId10""#).count(), 1, "one section names the header");
+    assert_eq!(
+        body.matches(r#"r:id="rId10""#).count(),
+        1,
+        "one section names the header"
+    );
 }
 
 #[test]
