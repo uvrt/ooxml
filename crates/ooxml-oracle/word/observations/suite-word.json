@@ -2057,110 +2057,110 @@
   ]
  },
  "e4/toc-update": {
-  "output": "438d947303c9c11e",
+  "output": "d0bdf33912844f27",
   "word": "16.106",
   "opens": "done",
   "kept": {
    "document": {
     "paragraphs": [
      {
-      "id": null,
+      "id": "6B100001",
       "text": "Contents"
      },
      {
-      "id": null,
+      "id": "37491D3A",
       "text": "1.Introduction1"
      },
      {
-      "id": null,
+      "id": "78A22D80",
       "text": "1.1 Background1"
      },
      {
-      "id": null,
+      "id": "329A541A",
       "text": "1.1.1 Details1"
      },
      {
-      "id": null,
+      "id": "1ECCF74F",
       "text": "1.1.2 More details1"
      },
      {
-      "id": null,
+      "id": "33FB62DC",
       "text": "Not numbered1"
      },
      {
-      "id": null,
+      "id": "7123CF1D",
       "text": "2.Method1"
      },
      {
-      "id": null,
+      "id": "0061C2CE",
       "text": "2.1 Approach1"
      },
      {
-      "id": null,
+      "id": "141B495C",
       "text": "2.2 In a table1"
      },
      {
-      "id": null,
+      "id": "41466755",
       "text": "3.Results1"
      },
      {
-      "id": null,
+      "id": "6B000001",
       "text": ""
      },
      {
-      "id": null,
+      "id": "6B000002",
       "text": "A list of its own, before the headings:"
      },
      {
-      "id": null,
+      "id": "6B000003",
       "text": "First item"
      },
      {
-      "id": null,
+      "id": "6B000004",
       "text": "Second item"
      },
      {
-      "id": null,
+      "id": "6B000005",
       "text": "Introduction"
      },
      {
-      "id": null,
+      "id": "6B000006",
       "text": "Some text."
      },
      {
-      "id": null,
+      "id": "6B000007",
       "text": "Background"
      },
      {
-      "id": null,
+      "id": "6B000008",
       "text": "Details"
      },
      {
-      "id": null,
+      "id": "6B000009",
       "text": "More details"
      },
      {
-      "id": null,
+      "id": "6B00000A",
       "text": "Not numbered"
      },
      {
-      "id": null,
+      "id": "6B00000B",
       "text": "Method"
      },
      {
-      "id": null,
+      "id": "6B00000C",
       "text": "Approach"
      },
      {
-      "id": null,
+      "id": "6B00000D",
       "text": "In a table"
      },
      {
-      "id": null,
+      "id": "6B00000E",
       "text": "Results"
      },
      {
-      "id": null,
+      "id": "6B00000F",
       "text": "The end."
      }
     ]
