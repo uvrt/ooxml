@@ -90,6 +90,16 @@ pub(crate) fn step(
         ListAction::Level(level) => {
             level_range(*level)?;
             let num_id = in_list()?.num_id;
+            if *level > 0 && Lists::read(&docx).single_level(&docx, num_id) {
+                return Err(EditError::Argument {
+                    field: "level".to_owned(),
+                    message: format!(
+                        "{id}'s list ({num_id}) is single-level: Word sets its paragraphs to no level but 0; \
+                         to nest it, number it with a multi-level list first"
+                    ),
+                    options: vec!["0".to_owned()],
+                });
+            }
             list_edit(sink, stamped, place, found.as_ref(), |sink| {
                 rewrite(sink, place, |work, p, orders| {
                     pp::set_numbering(work, p, (num_id, *level), orders)
