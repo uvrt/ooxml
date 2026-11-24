@@ -205,7 +205,7 @@ impl Facts<'_> {
             // A paragraph is whole where it is held (what its text boxes hold is its own); a
             // table where every paragraph in it is (`range_keeps`).
             let whole = match block.kind {
-                BlockKind::Paragraph => held.contains(block.id.as_str()),
+                BlockKind::Paragraph => held.contains(block.id()),
                 BlockKind::Table => paragraphs_below(block.element, &block.place).iter().all(|(_, place)| {
                     body.ids
                         .paragraph_at(place)
@@ -233,8 +233,8 @@ impl Facts<'_> {
                     if let (Some(&last), Some(&first)) = (last, first) {
                         if last < first {
                             breaks.push(Break::Between {
-                                after: before.id.clone(),
-                                before: block.id.clone(),
+                                after: before.id().to_owned(),
+                                before: block.id().to_owned(),
                                 page: first,
                                 page_break: self.starts_page(before.element, block.element),
                             });
@@ -243,7 +243,7 @@ impl Facts<'_> {
                 }
                 if pages.len() > 1 {
                     breaks.push(Break::Inside {
-                        block: block.id.clone(),
+                        block: block.id().to_owned(),
                         pages: pages.clone(),
                     });
                 }
@@ -267,21 +267,27 @@ impl Facts<'_> {
     /// The body's block `id` names -- a top-level one, or a paragraph or table inside one
     /// (a cell's) -- with its place and layout path.
     fn body_block(&self, id: &str) -> Option<Block<'_>> {
-        if let Some(top) = self.blocks().iter().find(|b| b.id == id) {
+        let body = self.docx().body()?;
+        let entry = body.ids.get(id)?;
+        // Only the top-level block holding the entry is named, to be compared.
+        if let Some(top) = self.blocks().iter().find(|b| b.entry() == entry && b.id() == id) {
             return Some(top.clone());
         }
-        let body = self.docx().body()?;
-        let (kind, place) = match body.ids.get(id)? {
+        let (kind, place) = match entry {
             Entry::Paragraph(k) => (BlockKind::Paragraph, body.ids.paragraphs().get(k)?.path),
             Entry::Table(k) => (BlockKind::Table, body.ids.tables().get(k)?.path),
         };
-        Some(Block {
-            kind,
-            element: at_path(body.root(), &place)?,
-            place: place.to_vec(),
-            path: self.version().path_of(id)?.to_string(),
-            id: id.to_owned(),
-        })
+        Some(
+            Block::of(
+                kind,
+                at_path(body.root(), &place)?,
+                place.to_vec(),
+                self.version().path_of(id)?.to_string(),
+                &body.ids,
+                entry,
+            )
+            .named(id),
+        )
     }
 
     /// Whether a range kept on one page, starting on the 1-based `start`, starts that page
@@ -293,10 +299,10 @@ impl Facts<'_> {
         let Some(first) = range.blocks.first() else {
             return false;
         };
-        if start < 2 || self.blocks_on(start).first().is_none_or(|b| b.id != *first) {
+        if start < 2 || self.blocks_on(start).first().is_none_or(|b| b.id() != *first) {
             return false;
         }
-        let Some(block) = self.blocks().iter().find(|b| b.id == *first) else {
+        let Some(block) = self.blocks().iter().find(|b| b.id() == *first) else {
             return false;
         };
         match self.block_before(block) {

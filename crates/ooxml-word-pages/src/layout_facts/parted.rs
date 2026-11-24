@@ -122,8 +122,8 @@ fn lead_in(facts: &Facts<'_>, k: usize, table: &Block<'_>, lead: &Block<'_>, fir
         return None;
     }
     Some(Parted::LeadIn {
-        table: table.id.clone(),
-        para: lead.id.clone(),
+        table: table.id().to_owned(),
+        para: lead.id().to_owned(),
         kind,
         para_page,
         table_page: first,
@@ -153,8 +153,8 @@ fn line_after(facts: &Facts<'_>, table: &Block<'_>, after: &Block<'_>, pages: us
         })
     };
     Some(Parted::LineAfter {
-        table: table.id.clone(),
-        para: after.id.clone(),
+        table: table.id().to_owned(),
+        para: after.id().to_owned(),
         kind,
         row: rows.len() - 1,
         row_page: last,

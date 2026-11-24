@@ -189,10 +189,10 @@ fn paragraph_at_foot(facts: &Facts<'_>, k: usize, block: &Block<'_>, number: usi
         return None;
     }
     Some(KeepAtFoot::Paragraph {
-        para: block.id.clone(),
+        para: block.id().to_owned(),
         style: facts.style_of(block.element),
         page: number,
-        next: next.id.clone(),
+        next: next.id().to_owned(),
         next_page,
     })
 }
@@ -219,10 +219,10 @@ fn table_end_at_foot(facts: &Facts<'_>, line: &LineFact, number: usize) -> Optio
         return None;
     }
     Some(KeepAtFoot::TableEnd {
-        table: block.id.clone(),
+        table: block.id().to_owned(),
         row,
         page: number,
-        next: next.id.clone(),
+        next: next.id().to_owned(),
         next_page,
     })
 }
@@ -264,7 +264,7 @@ fn kept_rows(facts: &Facts<'_>, kept: &KeptTables) -> Vec<KeepAtFoot> {
         };
         let own = block.element.child_elements().filter(|e| is_w(e, "tr")).count();
         let header_rows = header_rows(block.element);
-        let taller = kept.taller.contains(&block.id);
+        let taller = kept.taller.contains(block.id());
         for (&row, drawn) in &rows {
             let Some(after) = rows.get(&(row + 1)) else { continue };
             if row < header_rows || row >= own || row >= keeps.len() {
@@ -277,7 +277,7 @@ fn kept_rows(facts: &Facts<'_>, kept: &KeptTables) -> Vec<KeepAtFoot> {
                 continue;
             }
             out.push(KeepAtFoot::Row {
-                table: block.id.clone(),
+                table: block.id().to_owned(),
                 row,
                 page,
                 next_row: row + 1,
