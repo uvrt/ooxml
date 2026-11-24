@@ -10,6 +10,7 @@
 use super::painters::Painter;
 use super::{PageEngine, KEY};
 use crate::page_context::PageContext;
+use crate::laid_entry::LaidEntry;
 use crate::page_entry::PageEntry;
 use crate::page_read::PageRead;
 use crate::page_reads::{places, Found, ReadOf, Split};
@@ -61,6 +62,24 @@ impl PageEngine {
                 Some(self.keep_read(&of, read, split))
             }
         }
+    }
+
+    /// Page `page` of `version`'s entry in the layout half of the page tier
+    /// ([`crate::laid_entry`]): its facts' contributions made from its layout facts, as a
+    /// version before made them where it shares the page's facts; else made and kept.
+    /// `None` past the last page.
+    pub fn laid_entry(&mut self, version: &LaidVersion, page: usize) -> Option<Arc<LaidEntry>> {
+        let facts = version.facts().pages.get(page)?;
+        match self.generation.as_mut() {
+            Some(generation) => Some(generation.laid.entry(facts)),
+            None => Some(Arc::new(LaidEntry::of(facts))),
+        }
+    }
+
+    /// What the layout half of the page tier holds now (on the paint budget's bounded
+    /// account): its entries and bytes, the lookups it answered and missed.
+    pub fn laid_tier(&self) -> ooxml_derive::MemoStats {
+        self.generation.as_ref().map(|g| g.laid.stats()).unwrap_or_default()
     }
 
     /// `read` as the page `of` names, its entry kept in the page tier.

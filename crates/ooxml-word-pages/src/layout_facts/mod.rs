@@ -35,6 +35,7 @@ pub mod trials;
 pub mod uncertain;
 
 use crate::line_text::LineText;
+use crate::laid_entry::LaidEntry;
 use crate::page_entry::PageEntry;
 use crate::page_read::{PageBoxes, PageRead};
 use crate::LaidVersion;
@@ -61,6 +62,11 @@ pub trait PageReads {
     /// The 0-based page `page`'s entry: its lines' text and boxes, and its facts'
     /// contributions (`None`: the page is not painted).
     fn page_read(&self, page: usize) -> Option<Arc<PageEntry>>;
+
+    /// The 0-based page `page`'s entry in the layout half of the page tier: its facts'
+    /// contributions made from its layout facts, without painting it
+    /// (`PageEngine::laid_entry`; `None`: no such page).
+    fn laid_entry(&self, page: usize) -> Option<Arc<LaidEntry>>;
 
     /// A table of the version's layout model resolved as the layout resolved it, from the
     /// engine's block tier (`PageEngine::resolved_table`); `None` where the engine no
@@ -95,6 +101,7 @@ pub struct Facts<'a> {
     positions: HashMap<String, usize>,
     reads: &'a dyn PageReads,
     painted: Vec<OnceCell<Option<Arc<PageEntry>>>>,
+    laid: Vec<OnceCell<Option<Arc<LaidEntry>>>>,
     /// Each table of the layout model resolved, by its address, when first asked.
     resolved: RefCell<HashMap<usize, Arc<ResolvedTable>>>,
     /// The layout model's tables (nested ones too) by path, made when first asked.
@@ -170,6 +177,7 @@ impl<'a> Facts<'a> {
             positions,
             reads,
             painted: (0..facts.pages.len()).map(|_| OnceCell::new()).collect(),
+            laid: (0..facts.pages.len()).map(|_| OnceCell::new()).collect(),
             resolved: RefCell::new(HashMap::new()),
             model_tables: OnceCell::new(),
             scope: None,
@@ -344,6 +352,13 @@ impl<'a> Facts<'a> {
             .get(page)?
             .get_or_init(|| self.reads.page_read(page))
             .as_deref()
+    }
+
+    /// The 0-based page `page`'s entry in the layout half of the page tier: its facts'
+    /// contributions made from its layout facts, asked once.
+    #[must_use]
+    pub fn laid(&self, page: usize) -> Option<&LaidEntry> {
+        self.laid.get(page)?.get_or_init(|| self.reads.laid_entry(page)).as_deref()
     }
 
     /// The 0-based page `page` as a check reads it, painted once.

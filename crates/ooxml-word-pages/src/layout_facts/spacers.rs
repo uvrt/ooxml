@@ -13,6 +13,8 @@
 
 use super::tree::has_content;
 use super::{points, round, Block, BlockKind, Facts};
+use crate::page_parts::Part;
+use crate::page_read::PageRead;
 use std::collections::HashMap;
 
 /// The most space before `word_format` takes, points.
@@ -42,11 +44,7 @@ pub struct Spacer {
 #[must_use]
 pub fn spacers(facts: &Facts<'_>) -> Vec<Spacer> {
     let blocks = facts.blocks();
-    let mut inked = Inked::default();
-    let mut empty: Vec<bool> = Vec::with_capacity(blocks.len());
-    for block in blocks {
-        empty.push(is_empty(facts, block, &mut inked));
-    }
+    let empty: Vec<bool> = blocks.iter().map(|block| is_empty(facts, block)).collect();
     let mut out = Vec::new();
     let mut k = 0;
     while k < blocks.len() {
@@ -81,27 +79,44 @@ fn table(block: &Block<'_>) -> bool {
     block.kind == BlockKind::Table
 }
 
-/// Each page's body lines' characters that are not white space, by path and number.
-#[derive(Default)]
-struct Inked(HashMap<usize, HashMap<(String, usize), usize>>);
+/// One page's contribution to `spacers` (the page tier's, [`crate::page_entry`]): its body
+/// lines' characters that are not white space, by paragraph path and line number (a line
+/// drawn twice counts as drawn last).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct InkedPart(HashMap<Box<str>, Vec<(usize, usize)>>);
 
-impl Inked {
-    fn of(&mut self, facts: &Facts<'_>, page: usize, path: &str, number: usize) -> Option<usize> {
-        let found = self.0.entry(page).or_insert_with(|| {
-            facts
-                .texts(page - 1)
-                .unwrap_or_default()
-                .iter()
-                .filter(|l| l.story.is_none())
-                .map(|l| ((l.path.clone(), l.number), l.inked))
-                .collect()
-        });
-        found.get(&(path.to_owned(), number)).copied()
+impl InkedPart {
+    /// The characters that are not white space of the body line `number` of the paragraph
+    /// at `path`, where the page draws it.
+    fn of_line(&self, path: &str, number: usize) -> Option<usize> {
+        let lines = self.0.get(path)?;
+        lines.iter().rev().find(|(n, _)| *n == number).map(|(_, inked)| *inked)
+    }
+}
+
+impl Part<PageRead> for InkedPart {
+    fn of(read: &PageRead) -> InkedPart {
+        let mut out: HashMap<Box<str>, Vec<(usize, usize)>> = HashMap::new();
+        for line in read.texts.iter().filter(|l| l.story.is_none()) {
+            match out.get_mut(line.path.as_str()) {
+                Some(lines) => lines.push((line.number, line.inked)),
+                None => {
+                    out.insert(line.path.as_str().into(), vec![(line.number, line.inked)]);
+                }
+            }
+        }
+        InkedPart(out)
+    }
+
+    fn weight_of(read: &PageRead) -> usize {
+        let each = std::mem::size_of::<(Box<str>, Vec<(usize, usize)>)>() + 2 * std::mem::size_of::<(usize, usize)>();
+        let lines = read.texts.iter().filter(|l| l.story.is_none()).map(|l| each + l.path.len());
+        std::mem::size_of::<InkedPart>() + lines.sum::<usize>()
     }
 }
 
 /// Whether a top-level block is an empty paragraph drawn (`_empty`).
-fn is_empty(facts: &Facts<'_>, block: &Block<'_>, inked: &mut Inked) -> bool {
+fn is_empty(facts: &Facts<'_>, block: &Block<'_>) -> bool {
     if block.kind != BlockKind::Paragraph || has_content(block.element) {
         return false;
     }
@@ -110,8 +125,9 @@ fn is_empty(facts: &Facts<'_>, block: &Block<'_>, inked: &mut Inked) -> bool {
         return false;
     }
     !lines.iter().any(|d| {
-        inked
-            .of(facts, d.page, &d.line.path, d.line.number)
+        facts
+            .entry(d.page - 1)
+            .and_then(|e| e.inked().of_line(&d.line.path, d.line.number))
             .is_some_and(|n| n > 0)
     })
 }
