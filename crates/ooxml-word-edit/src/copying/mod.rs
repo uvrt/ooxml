@@ -72,6 +72,35 @@ const NOTED: [&str; 7] = [
     "bookmarkEnd",
 ];
 
+/// A note's reference in a story.
+const NOTE_REFERENCES: [&str; 2] = ["footnoteReference", "endnoteReference"];
+
+/// Blocks holding a note's reference refused at a place in a text box, as Word 16.106 has no
+/// note reference there (its Insert Footnote is off in a text box, and its paste there drops
+/// the reference): the way out the places before and after the paragraph anchoring the text
+/// box (`word_notes`' refusal, [`crate::textbox::text_box_anchor`]).
+fn no_notes_in_text_box(work: &Work, elements: &[Id], docx: &Docx, place: &Place) -> Result<()> {
+    if !view::holds(work, elements, &NOTE_REFERENCES) {
+        return Ok(());
+    }
+    let mut inside = place.container.clone();
+    inside.push(place.before.unwrap_or(0));
+    let Some(anchor) = crate::textbox::text_box_anchor(docx, &place.part, &inside) else {
+        return Ok(());
+    };
+    let message = "the blocks hold a note's reference and the place is in a text box: Word puts no note \
+                   reference in a text box";
+    let Some(paragraph) = docx.part(&place.part).and_then(|story| story.ids.paragraph_at(&anchor)) else {
+        return Err(EditError::Refused(message.to_owned()));
+    };
+    let paragraph = paragraph.id;
+    Err(EditError::Argument {
+        field: "at".to_owned(),
+        message: format!("{message}; put them before or after the paragraph anchoring the text box, {paragraph}"),
+        options: vec![format!("before:{paragraph}"), format!("after:{paragraph}")],
+    })
+}
+
 /// The document the blocks are copied from.
 #[derive(Debug, Clone)]
 pub enum CopySource {
@@ -270,6 +299,7 @@ impl CopyBlocks {
         let from = stretch.from;
         let work = &mut stretch.work;
         let mut elements = copies(work, &selected)?;
+        no_notes_in_text_box(work, &elements, &docx, &place)?;
         if view::holds(work, &elements, &NOTED) {
             sink.read_everything();
         }

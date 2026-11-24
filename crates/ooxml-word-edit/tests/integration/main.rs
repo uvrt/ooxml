@@ -11,6 +11,7 @@ mod history;
 mod interleave;
 mod kept_facts;
 mod kept_reads;
+mod notes_copied;
 mod notes_placed;
 mod object_bench;
 mod object_writers;
