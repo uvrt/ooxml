@@ -93,6 +93,12 @@ impl LaidVersion {
         self.ids.id_of(path)
     }
 
+    /// Whether the body path `path` names a paragraph, table or row the tool names in this
+    /// version (`id_of` is `Some`), without naming it.
+    pub fn is_named(&self, path: &str) -> bool {
+        self.ids.is_named(path)
+    }
+
     /// The tool's ids of the body's top-level blocks (paragraphs and tables, those of its
     /// block-level content controls too) page `page` (0-based) draws something of, each once,
     /// in document order (docx-agent's `DocumentLayout.blocks_on`): a block split across

@@ -94,26 +94,7 @@ impl VersionIds {
     /// tool names it; `None` where the path names no block of the body the ids name.
     pub fn id_of(&self, path: &str) -> Option<&str> {
         let (root, ids) = self.part.as_ref()?;
-        let found = {
-            let known = self
-                .found
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .get(path)
-                .cloned();
-            match known {
-                Some(found) => found,
-                None => {
-                    let found = self.find(root, ids, path);
-                    self.found
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .insert(path.into(), found.clone());
-                    found
-                }
-            }
-        };
-        match found? {
+        match self.found(root, ids, path)? {
             Found::Row(place) => self.rows(ids).get(&*place).map(|id| &**id),
             Found::Block(entry) => {
                 let named = self.named.get_or_init(|| Named::of(ids));
@@ -123,6 +104,42 @@ impl VersionIds {
                 };
                 slot.get_or_init(|| ids.id_of(entry).map(|id| Text::from(id.as_str())))
                     .as_deref()
+            }
+        }
+    }
+
+    /// Whether the body path `path` names a paragraph, table or row the ids name -- what
+    /// [`VersionIds::id_of`] answers `Some` for -- without naming it: a check names only the
+    /// blocks it reports.
+    pub fn is_named(&self, path: &str) -> bool {
+        let Some((root, ids)) = self.part.as_ref() else {
+            return false;
+        };
+        match self.found(root, ids, path) {
+            Some(Found::Row(place)) => self.rows(ids).contains_key(&*place),
+            Some(Found::Block(Entry::Paragraph(k))) => k < ids.paragraphs().len(),
+            Some(Found::Block(Entry::Table(k))) => k < ids.tables().len(),
+            None => false,
+        }
+    }
+
+    /// What the body path `path` names, found once.
+    fn found(&self, root: &Element, ids: &PartIds, path: &str) -> Option<Found> {
+        let known = self
+            .found
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(path)
+            .cloned();
+        match known {
+            Some(found) => found,
+            None => {
+                let found = self.find(root, ids, path);
+                self.found
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .insert(path.into(), found.clone());
+                found
             }
         }
     }
@@ -537,6 +554,12 @@ mod tests {
         for path in &every {
             assert_eq!(version.id_of(path), walked.get(path).map(|i| &**i), "{path}");
         }
+        // Whether a path names a block, asked of a version that has named none.
+        let fresh = VersionIds::new(Arc::clone(&root), ids);
+        for path in &every {
+            assert_eq!(fresh.is_named(path), walked.get(path).is_some(), "{path}");
+        }
+        assert!(fresh.named.get().is_none(), "nothing named");
     }
 
     /// The path of every element below `element` (whose path is `path`), counted as the
