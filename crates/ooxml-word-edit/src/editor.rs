@@ -159,10 +159,12 @@ impl Editor {
     where
         C: Command<WordDoc, Error = EditError>,
     {
-        // docx-agent's records of placed values follow every edit, in its own step
+        // docx-agent's records of placed values follow every edit, in its own step; then
+        // every block the edit left without a durable id is stamped
+        let followed = crate::provenance::Followed(command);
         let committed = self
             .store
-            .run_with(caller, &crate::provenance::Followed(command), setup)?;
+            .run_with(caller, &crate::stamping::Stamped(&followed), setup)?;
         let started = self.clock.monotonic();
         let (touched, ids) = match &committed.previous {
             Some(previous) if committed.changed => (

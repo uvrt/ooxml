@@ -231,12 +231,12 @@
 {"digest":"sha256:f2b2a51ea535e47971fa10d9a188c007","id":"structure:f3f4221a58673753","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:d9925ad3fb0ce00cb7111787c9d01a00","id":"structure:2be9c89a8da08c20","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:d9925ad3fb0ce00cb7111787c9d01a00","id":"structure:d50e11920e313a6f","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:a68867db73178ca95aa693bad8da7046","id":"structure:653b05b52a2aa819","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:56c7b1c33dacb1fa8d9c42305f56b050","id":"structure:3da82bd3ddf2818c","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:6c2f63b4815ff11b154a0500d6d484db","id":"structure:4072acf7c7ee05b0","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:6d3e0297d8f7c3d2c0c6cfc463c93734","id":"structure:5fed761febc0032f","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:4506a3c4723bb409b8af6603469e59d5","id":"structure:302d3392cae6145d","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:15d24f5b065c0e167c973616a2d73960","id":"structure:d5ff7a46973b6e2e","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:e9e2fe7bd55311189f6c1ce2638fb75f","id":"structure:653b05b52a2aa819","source":"Word 16.106: crates/ooxml-oracle/word/observations/paraid-durability.json#tools (paragraph and row ids) and #drawings (Word keeps every paraId only when drawings carry wp14 ids; it never adds them)"}
+{"digest":"sha256:277e01c09622f5742a939ac3729a90c9","id":"structure:3da82bd3ddf2818c","source":"Word 16.106: crates/ooxml-oracle/word/observations/paraid-durability.json#tools (paragraph and row ids) and #drawings (Word keeps every paraId only when drawings carry wp14 ids; it never adds them)"}
+{"digest":"sha256:b8e7b0cda2581dfdc1e5f05a5eac12d4","id":"structure:4072acf7c7ee05b0","source":"Word 16.106: crates/ooxml-oracle/word/observations/paraid-durability.json#tools (paragraph and row ids) and #drawings (Word keeps every paraId only when drawings carry wp14 ids; it never adds them)"}
+{"digest":"sha256:a5415ca59e32c7d108c54553b90af98b","id":"structure:5fed761febc0032f","source":"Word 16.106: crates/ooxml-oracle/word/observations/paraid-durability.json#tools (paragraph and row ids) and #drawings (Word keeps every paraId only when drawings carry wp14 ids; it never adds them)"}
+{"digest":"sha256:bf644e07c074534832518f07dfb237ac","id":"structure:302d3392cae6145d","source":"Word 16.106: crates/ooxml-oracle/word/observations/paraid-durability.json#tools (paragraph and row ids) and #drawings (Word keeps every paraId only when drawings carry wp14 ids; it never adds them)"}
+{"digest":"sha256:802e6424992dea67e9c9d01707ccb09d","id":"structure:d5ff7a46973b6e2e","source":"Word 16.106: crates/ooxml-oracle/word/observations/paraid-durability.json#tools (paragraph and row ids) and #drawings (Word keeps every paraId only when drawings carry wp14 ids; it never adds them)"}
 {"digest":"sha256:c52bea81e998fa9bb4ac329924d1d757","id":"structure:bebdcfc6b14b4021","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:078f81627a9525768ecba61ca243a8f3","id":"style:f544086cf1a650fe","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:078f81627a9525768ecba61ca243a8f3","id":"style:f653464a989b42d1","source":"frozen Python a512c901, unmeasured"}
@@ -268,8 +268,8 @@
 {"digest":"sha256:cdb221742dc5447abb3b8df0fab77b54","id":"style:4c2ec5023ef0c958","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:eb2e45084c1245f32766f7926a391f52","id":"style:57051ba23ed03c07","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:18e492124823f55398da7a56f8cba266","id":"style:f259502f020a15d6","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:0dd361970cf9a417ea78a839cb2ce258","id":"style:c061513e50e910f4","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:dbd29c07567dfe7ef1103eaa586a1005","id":"style:818810f3f333e463","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:4b2cad6b167e5286ff244bc9290263e1","id":"style:c061513e50e910f4","source":"Word 16.106: crates/ooxml-oracle/word/observations/paraid-durability.json#tools (paragraph and row ids) and #drawings (Word keeps every paraId only when drawings carry wp14 ids; it never adds them)"}
+{"digest":"sha256:37b779d289dcbec8a2ed0084c229d73b","id":"style:818810f3f333e463","source":"Word 16.106: crates/ooxml-oracle/word/observations/paraid-durability.json#tools (paragraph and row ids) and #drawings (Word keeps every paraId only when drawings carry wp14 ids; it never adds them)"}
 {"digest":"sha256:db80fa18cb33aa302591826ace47e1c8","id":"style:7533cf633c261b70","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:2770ff46d217d3c6d78f7145d962bb30","id":"style:21e42ea980d4457d","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:99fac8f3b8fba15a5bf96e6108313b95","id":"style:7669edd601dfc136","source":"frozen Python a512c901, unmeasured"}
@@ -278,10 +278,10 @@
 {"digest":"sha256:cdb221742dc5447abb3b8df0fab77b54","id":"style:f14e4926fb80d666","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:eb2e45084c1245f32766f7926a391f52","id":"style:705e4839282f2171","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:18e492124823f55398da7a56f8cba266","id":"style:a5068d23273e326a","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:0dd361970cf9a417ea78a839cb2ce258","id":"style:3c93c926e8932deb","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:dbd29c07567dfe7ef1103eaa586a1005","id":"style:6d6039a9b53aff20","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:62446b3a9850e22048c0d9e0aa653edb","id":"style:c9daf4df219ad569","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:62446b3a9850e22048c0d9e0aa653edb","id":"style:779c3a34348bb8bf","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:4b2cad6b167e5286ff244bc9290263e1","id":"style:3c93c926e8932deb","source":"Word 16.106: crates/ooxml-oracle/word/observations/paraid-durability.json#tools (paragraph and row ids) and #drawings (Word keeps every paraId only when drawings carry wp14 ids; it never adds them)"}
+{"digest":"sha256:37b779d289dcbec8a2ed0084c229d73b","id":"style:6d6039a9b53aff20","source":"Word 16.106: crates/ooxml-oracle/word/observations/paraid-durability.json#tools (paragraph and row ids) and #drawings (Word keeps every paraId only when drawings carry wp14 ids; it never adds them)"}
+{"digest":"sha256:1ce4c02da1cc1c043d02b3f227108555","id":"style:c9daf4df219ad569","source":"Word 16.106: crates/ooxml-oracle/word/observations/paraid-durability.json#tools (paragraph and row ids) and #drawings (Word keeps every paraId only when drawings carry wp14 ids; it never adds them)"}
+{"digest":"sha256:1ce4c02da1cc1c043d02b3f227108555","id":"style:779c3a34348bb8bf","source":"Word 16.106: crates/ooxml-oracle/word/observations/paraid-durability.json#tools (paragraph and row ids) and #drawings (Word keeps every paraId only when drawings carry wp14 ids; it never adds them)"}
 {"digest":"sha256:d1d5db43ba4d6efb90e90de1e3718bb7","id":"style:c546035e9406a072","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:1733daa332bac138d3b050b6b617f49a","id":"style:e6fb92fad9e297c4","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:5cd631c6b0cccec5f30cdef3e47143ee","id":"style:6df62c9207ae8048","source":"frozen Python a512c901, unmeasured"}

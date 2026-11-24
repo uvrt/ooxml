@@ -16,7 +16,7 @@ then handed to Word through ``crates/ooxml-oracle/word/oracle.py``
 For every labelled paragraph (its text starts with a label, ``S1``, ``O1``...) the paraId
 and textId before and after are compared: kept, replaced, dropped, added.
 
-The probes, in three groups:
+The probes, in four groups:
 
 * **mixed** (modes 15, 14 and none -- Word 2007's 12): paraIds docx-agent stamped
   (paragraph stamping: one by ``set_text``, one inserted, one stamped then typed into in
@@ -30,9 +30,16 @@ The probes, in three groups:
   comment, an insertion, a bookmark, a footnote;
 * **decided** -- docx-agent's default, document stamping, on the complete document in modes
   15, 14 and none, with a picture, and on a document Word made itself (which has no
-  paraIds at all), in every scenario.
+  paraIds at all), in every scenario;
+* **tools** (save only) -- the tools' outputs Word is handed in production: a fixture with a
+  table row without a paraId after ``word_fields update`` (which writes no row) and after
+  ``word_move``, and each factor's document (one row, header paragraph, picture or paragraph
+  without its id) after ``word_fields update``: how many blocks each output holds, how many
+  without an id, and how many of its ids Word's saved file keeps.
 
     python crates/ooxml-oracle/word/probes/paraid_probe.py                 # prints the verdicts, writes the JSON
+    python crates/ooxml-oracle/word/probes/paraid_probe.py --tools         # the tools group only, into the JSON
+    python crates/ooxml-oracle/word/probes/paraid_probe.py --drawings      # the drawings group only (paraid_drawings.py)
 
 Since docx-agent 0.2.0 the edits are the tools' (``word_set_text``, ``word_insert_markdown``),
 and the tools have one way of stamping ids: what they do on a document's first edit.  The
@@ -61,6 +68,7 @@ import probe_paths  # noqa: E402  (the driver, the fixture makers and the cases 
 import oracle  # noqa: E402
 from make_fixtures import AUTHOR, DECL, NS, REL, WML, content_types, p, r, relationships, styles  # noqa: E402
 
+import paraid_drawings  # noqa: E402
 import probe_tools  # noqa: E402
 from lxml import etree  # noqa: E402
 
@@ -233,6 +241,13 @@ def mixed(mode: int | None) -> bytes:
 def complete(mode: int | None = 15, *, change: str | None = None) -> bytes:
     """Every paragraph with a valid, unique paraId, S2 stamped by docx-agent among them --
     then, with ``change``, exactly one thing different."""
+    document = probe_tools.Session(unstamped(mode, change=change))
+    _stamp_by_editing(document, "S2")
+    return document.data()
+
+
+def unstamped(mode: int | None = 15, *, change: str | None = None) -> bytes:
+    """:func:`complete`'s document as written, before the tools stamped S2."""
     body = [
         p("O1 another tool's paraId, in range", "1A2B3C01"),
         p("T1 Word types into this other paragraph", "1A2B3C02"),
@@ -265,10 +280,8 @@ def complete(mode: int | None = 15, *, change: str | None = None) -> bytes:
     elif change == "footnote":
         body.insert(1, FOOTNOTE)
         footnotes = FOOTNOTES
-    document = probe_tools.Session(package("".join(body), mode=mode, header=header, footnotes=footnotes,
-                                           comments=comments, picture=picture))
-    _stamp_by_editing(document, "S2")
-    return document.data()
+    return package("".join(body), mode=mode, header=header, footnotes=footnotes, comments=comments,
+                   picture=picture)
 
 
 def decided(data: bytes) -> bytes:
@@ -279,6 +292,89 @@ def decided(data: bytes) -> bytes:
     document.call("word_insert_markdown", at=f"after:{document.paragraph_ids()[0]}",
                   markdown="S3 inserted by docx-agent\n")
     return document.data()
+
+
+#: The tools' writes the ``tools`` group hands to Word: on a fixture as opened, or on a factor's
+#: document as written (one block without its id), one call each.
+TOOL_WRITES: dict[str, tuple[str, str, dict]] = {
+    "toc-numbered, word_fields update": ("generated/toc-numbered.docx", "word_fields", {"action": "update"}),
+    "toc-numbered, word_move": ("generated/toc-numbered.docx", "word_move",
+                                {"section_heading": "$p12", "before": "$p6"}),
+    **{f"factor {change}, word_fields update": (f"factor:{change}", "word_fields", {"action": "update"})
+       for change in ("row", "header", "picture", "missing")},
+}
+
+#: A field for the factors' documents, so that ``word_fields update`` has something to write.
+DATE_FIELD = p(inner='<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> '
+                     'NUMPAGES </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+                     + r("9") + '<w:r><w:fldChar w:fldCharType="end"/></w:r>', para="1A2B3C20")
+
+
+def tool_write(name: str) -> tuple[bytes, bytes]:
+    """The document a :data:`TOOL_WRITES` case starts from, and the tools' output."""
+    source, tool, arguments = TOOL_WRITES[name]
+    if source.startswith("factor:"):
+        data = unstamped(change=source.removeprefix("factor:"))
+        data = _with_field(data)
+    else:
+        data = (probe_paths.FIXTURES / source).read_bytes()
+    document = probe_tools.Session(data)
+    if "$p" in json.dumps(arguments):
+        ids = document.paragraph_ids()
+        arguments = {k: re.sub(r"\$p(\d+)", lambda m: ids[int(m.group(1)) - 1], v) if isinstance(v, str) else v
+                     for k, v in arguments.items()}
+    document.call(tool, **arguments)
+    return data, document.data()
+
+
+def _with_field(data: bytes) -> bytes:
+    """``data`` with :data:`DATE_FIELD` as the body's first paragraph."""
+    parts = _parts(data)
+    parts["word/document.xml"] = parts["word/document.xml"].replace(b"<w:body>", b"<w:body>" + DATE_FIELD.encode(), 1)
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, content in parts.items():
+            archive.writestr(zipfile.ZipInfo(name, date_time=(2026, 10, 3, 12, 0, 0)), content)
+    return buffer.getvalue()
+
+
+def ids_of(data: bytes) -> dict[str, list[str | None]]:
+    """Every paragraph's and table row's paraId, of every story, in order."""
+    out: dict[str, list[str | None]] = {"paragraphs": [], "rows": []}
+    for name, content in sorted(_parts(data).items(), key=lambda item: item[0] != "word/document.xml"):
+        if not _STORIES.match(name):
+            continue
+        root = etree.fromstring(content)
+        out["paragraphs"] += [e.get(_W14 + "paraId") for e in root.iter(_W + "p")]
+        out["rows"] += [e.get(_W14 + "paraId") for e in root.iter(_W + "tr")]
+    return out
+
+
+def durability(output: bytes, saved: bytes) -> dict:
+    """What Word kept of the tools' output's ids on saving it: per kind, how many blocks the
+    output had, how many without an id, and how many of its ids Word's file still has."""
+    before, after = ids_of(output), ids_of(saved)
+    out = {}
+    for kind in ("paragraphs", "rows"):
+        held = [i for i in before[kind] if i]
+        out[kind] = {"blocks": len(before[kind]), "without an id": len(before[kind]) - len(held),
+                     "ids kept by Word": len(set(held) & {i for i in after[kind] if i})}
+    return out
+
+
+def run_tools(session: oracle.Session) -> dict:
+    """The ``tools`` group: each :data:`TOOL_WRITES` output, as written and saved by Word."""
+    results: dict = {}
+    for k, name in enumerate(TOOL_WRITES):
+        source, output = tool_write(name)
+        outcome = session.resave(output, name=f"tools-{k}")
+        if not outcome:
+            results[name] = {"outcome": outcome.outcome, "detail": outcome.detail}
+            continue
+        results[name] = {"input": {kind: {"blocks": v["blocks"], "without an id": v["without an id"]}
+                                   for kind, v in durability(source, source).items()},
+                         "save": durability(output, outcome.path.read_bytes())}
+    return results
 
 
 def _has(document: probe_tools.Session, label: str) -> bool:
@@ -424,7 +520,26 @@ def run(session: oracle.Session, name: str, data: bytes, *, other: str | None = 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--json", type=Path, default=OBSERVATIONS)
+    parser.add_argument("--tools", action="store_true",
+                        help="measure the tools group only, into the observations as they are")
+    parser.add_argument("--drawings", action="store_true",
+                        help="measure the drawings group only (wp14 ids), into the observations as they are")
     args = parser.parse_args()
+    if args.tools or args.drawings:
+        observations = json.loads(args.json.read_text(encoding="utf-8"))
+        if word_version() != observations["word"]:
+            raise SystemExit(f"Word {word_version()} is not the observations' {observations['word']}: run them all")
+        with oracle.session() as session:
+            if args.tools:
+                observations["tools"] = run_tools(session)
+            if args.drawings:
+                observations["drawings"] = paraid_drawings.run(session)
+        args.json.write_text(json.dumps(observations, indent=1) + "\n")
+        if args.tools:
+            report_tools(observations["tools"])
+        if args.drawings:
+            paraid_drawings.report(observations["drawings"], sys.stdout)
+        return
     observations: dict = {"word": word_version(), "mixed": {}, "factors": {}, "decided": {}}
     with oracle.session() as session:
         for mode in (15, 14, None):
@@ -450,6 +565,8 @@ def main() -> None:
                                                                     other="W3", stamped="S3")
         else:
             observations["word-created"] = {"outcome": created.outcome, "detail": created.detail}
+        observations["tools"] = run_tools(session)
+        observations["drawings"] = paraid_drawings.run(session)
     args.json.parent.mkdir(parents=True, exist_ok=True)
     args.json.write_text(json.dumps(observations, indent=1) + "\n")
     report(observations)
@@ -483,6 +600,17 @@ def report(observations: dict, out=sys.stdout) -> None:
         print("    " + ", ".join(f"{k}: {v[0]}" for k, v in created["as made"].items()), file=out)
         print("## Word-created, paragraph stamping", file=out)
         _scenarios(created["paragraph stamping"], out)
+    if "tools" in observations:
+        print("\n## tools: their outputs, saved by Word", file=out)
+        report_tools(observations["tools"], out)
+
+
+def report_tools(tools: dict, out=sys.stdout) -> None:
+    for name, result in tools.items():
+        if "save" not in result:
+            print(f"- {name}: {result.get('outcome')} {result.get('detail', '')}", file=out)
+            continue
+        print(f"- {name}: input {result['input']}; output and Word's save {result['save']}", file=out)
 
 
 def _scenarios(scenarios: dict, out) -> None:
