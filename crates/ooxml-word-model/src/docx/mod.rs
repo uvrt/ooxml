@@ -25,6 +25,7 @@ pub mod formatting;
 pub mod graphics;
 pub mod keeps;
 mod kept;
+mod kept_rows;
 pub mod numbering;
 pub mod outline;
 pub mod provenance;
@@ -197,6 +198,12 @@ impl Docx {
     #[must_use]
     pub fn table_readings(&self) -> (usize, usize) {
         self.kept.table_readings()
+    }
+
+    /// What its versions keep of its tables' rows' keeps: entries and bytes.
+    #[must_use]
+    pub fn row_keeps(&self) -> (usize, usize) {
+        self.kept.row_keeps()
     }
 
     /// `package` read, taking from `before` its parts kept, what its versions keep in `latest`.

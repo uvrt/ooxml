@@ -1,5 +1,6 @@
 //! What a document's checks keep across its versions read as a cold read does: each
-//! table's cells (`PartCells::of`, kept by the table element) after an edit inside a
+//! table's cells (`PartCells::of`, kept by the table element) and its rows' keeps
+//! (`row_keeps`, kept by the table element and the outermost table) after an edit inside a
 //! table, and the texts' languages (`Detections`) after a paragraph's language changed --
 //! also where a budget of a few bytes lets what they keep go at once.
 // Tests may unwrap, panic and index (docs/architecture/README.md, section 2.5).
@@ -11,6 +12,8 @@ use ooxml_word_edit::facts::{text_language, Detections, LanguageScope};
 use ooxml_word_edit::{RevisionPolicy, SetText, WordDoc};
 use ooxml_word_model::docx::cells::PartCells;
 use ooxml_word_model::docx::formatting::Formatting;
+use ooxml_word_model::docx::keeps::{row_keeps, RowKeep};
+use ooxml_word_model::docx::Docx;
 
 /// Every body paragraph's place, and the cell each is in as `cells` reads it.
 fn cells_of(doc: &WordDoc, kept: bool) -> Vec<(Vec<u32>, Option<ooxml_word_model::docx::formatting::Cell>)> {
@@ -79,6 +82,80 @@ fn cells_kept_and_cold(editor: &ooxml_word_edit::Editor) {
     let second = editor.store().snapshot().doc().clone();
     assert_eq!(cells_of(&second, true), cells_of(&second, false));
     assert_eq!(cells_of(&first, true), read, "the version before reads as it did");
+}
+
+/// Every story table's rows' keeps as `docx` reads them.
+fn rows_of(docx: &Docx) -> Vec<Option<Vec<RowKeep>>> {
+    let formatting = Formatting::read(docx);
+    docx.parts
+        .iter()
+        .flat_map(|story| {
+            let formatting = &formatting;
+            story
+                .ids
+                .tables()
+                .iter()
+                .map(move |t| row_keeps(formatting, story, &t.path).map(|r| r.to_vec()))
+        })
+        .collect()
+}
+
+/// The rows' keeps of `doc` as kept, and as a document opened afresh from its package reads
+/// them.
+fn rows_warm_and_cold(doc: &WordDoc) -> (Vec<Option<Vec<RowKeep>>>, Vec<Option<Vec<RowKeep>>>) {
+    let warm = rows_of(&doc.docx().unwrap());
+    let cold = rows_of(&Docx::open(doc.package()).unwrap());
+    (warm, cold)
+}
+
+/// The rows' keeps kept across versions equal a cold read, before and after a paragraph in
+/// a table is set again.
+fn rows_kept_and_cold(editor: &ooxml_word_edit::Editor) {
+    let first = editor.store().snapshot().doc().clone();
+    let (warm, cold) = rows_warm_and_cold(&first);
+    assert!(warm.iter().flatten().count() > 0, "the fixture has tables");
+    assert_eq!(warm, cold);
+    let docx = first.docx().unwrap();
+    let in_table = docx
+        .body()
+        .unwrap()
+        .ids
+        .paragraphs()
+        .iter()
+        .find(|p| p.path.len() > 2)
+        .map(|p| p.id.clone())
+        .unwrap();
+    let command = SetText {
+        target: in_table,
+        text: "Other words in the cell".to_owned(),
+        policy: RevisionPolicy::Untracked,
+    };
+    editor.run(&Caller::anonymous(), &command).unwrap();
+    let second = editor.store().snapshot().doc().clone();
+    let (warm_after, cold_after) = rows_warm_and_cold(&second);
+    assert_eq!(warm_after, cold_after);
+    assert_eq!(rows_warm_and_cold(&first).0, warm, "the version before reads as it did");
+}
+
+#[test]
+fn a_table_s_rows_keeps_kept_across_versions_are_read_as_cold_after_an_edit_in_a_table() {
+    rows_kept_and_cold(&editor(&fixture("generated/markdown/constructs.docx")));
+}
+
+#[test]
+fn rows_keeps_let_go_for_the_budget_are_read_as_cold() {
+    let bytes = fixture("generated/markdown/constructs.docx");
+    let package = ooxml_opc::Package::open(std::sync::Arc::clone(&bytes), &ooxml_base::Limits::default()).unwrap();
+    let editor = ooxml_word_edit::Editor::open(
+        package,
+        ooxml_store::StoreConfig::default(),
+        std::sync::Arc::new(crate::common::Monotonic(std::time::Instant::now())),
+        std::sync::Arc::new(Tight(std::sync::atomic::AtomicUsize::new(0))),
+    )
+    .unwrap();
+    rows_kept_and_cold(&editor);
+    let (_, bytes) = editor.store().snapshot().doc().docx().unwrap().row_keeps();
+    assert!(bytes <= 512, "{bytes}");
 }
 
 fn language(doc: &WordDoc, detections: Option<&Detections>) -> Option<ooxml_word_edit::facts::TextLanguage> {
