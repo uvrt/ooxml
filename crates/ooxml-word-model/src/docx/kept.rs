@@ -79,6 +79,23 @@ pub struct Kept {
 }
 
 impl Kept {
+    /// Nothing kept yet; the tables' readings counted on `budget` (the document's account).
+    #[must_use]
+    pub fn new(budget: Arc<dyn ooxml_derive::CacheBudget>) -> Kept {
+        Kept {
+            texts: Latest::default(),
+            facts: Latest::default(),
+            tables: TableMemo::new(budget),
+        }
+    }
+
+    /// What the tables' readings hold: entries and bytes.
+    #[must_use]
+    pub fn table_readings(&self) -> (usize, usize) {
+        let stats = self.tables.stats();
+        (stats.entries, stats.bytes)
+    }
+
     /// `part`'s texts as `read` reads them from the latest texts a version of it read
     /// (`None`: no version has yet), kept as the latest.
     pub fn texts(&self, part: &str, read: impl FnOnce(Option<&PartTexts>) -> PartTexts) -> Arc<PartTexts> {

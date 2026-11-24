@@ -23,7 +23,7 @@ mod monoid;
 mod tree;
 
 pub use blocks::{BlockFact, BlockFacts, Edit};
-pub use budget::CacheBudget;
+pub use budget::{CacheBudget, Limit};
 pub use error::DeriveError;
 pub use map::PersistentMap;
 pub use memo::{Memo, MemoStats, Weigh};

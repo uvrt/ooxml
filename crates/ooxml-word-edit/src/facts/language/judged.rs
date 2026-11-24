@@ -10,9 +10,8 @@
 //! for is swept), or keep anything a paragraph's judgement does not read.
 
 use super::{Judged, Unjudged};
-use ooxml_derive::{CacheBudget, Memo, MemoStats, Weigh};
+use ooxml_derive::{CacheBudget, Limit, Memo, MemoStats, Weigh};
 use ooxml_xml::Element;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 /// A paragraph's judgement, without its id (its version's to name).
@@ -126,30 +125,6 @@ impl Kept {
 /// paragraphs (~70,000 at ~100 B) with room to spare.
 pub const JUDGEMENT_BYTES: usize = 16 << 20;
 
-/// A budget of a fixed number of bytes.
-struct Limited {
-    limit: usize,
-    used: AtomicUsize,
-}
-
-impl CacheBudget for Limited {
-    fn reserve(&self, bytes: usize) -> bool {
-        self.used
-            .try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
-                used.checked_add(bytes).filter(|after| *after <= self.limit)
-            })
-            .is_ok()
-    }
-    fn release(&self, bytes: usize) {
-        let _ = self.used.try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
-            Some(used.saturating_sub(bytes))
-        });
-    }
-    fn used(&self) -> usize {
-        self.used.load(Ordering::Acquire)
-    }
-}
-
 /// Each paragraph's judgement kept across a document's checks, by the paragraph element's
 /// address (a weak reference keeps the address its own while it is kept), within a budget:
 /// the least recently used let go first, and those of paragraphs no version holds swept.
@@ -166,10 +141,7 @@ impl std::fmt::Debug for Judgements {
 
 impl Default for Judgements {
     fn default() -> Judgements {
-        Judgements::new(Arc::new(Limited {
-            limit: JUDGEMENT_BYTES,
-            used: AtomicUsize::new(0),
-        }))
+        Judgements::new(Arc::new(Limit::new(JUDGEMENT_BYTES)))
     }
 }
 
