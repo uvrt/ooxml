@@ -2,12 +2,18 @@
 //! digest with the context it was computed in), evicted least recently used first when the
 //! [`CacheBudget`] is spent.
 //!
+//! A hit is a hash lookup and a clock stamp: the order of use is kept lazily (an entry sits
+//! in the age order under the use it was queued at; eviction and sweeps read its last use
+//! and queue it again where it was used since). A memo keyed by addresses hashes them with
+//! [`AddressHash`] rather than SipHash.
+//!
 //! Must not: invalidate by hand -- a changed block has a new key, and an entry no version
 //! asks for again ages out -- or hold more than its budget gives it.
 
 use crate::CacheBudget;
+use std::collections::hash_map::RandomState;
 use std::collections::{BTreeMap, HashMap};
-use std::hash::Hash;
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::sync::Arc;
 
 /// What a cached value costs in bytes, beyond the memo's own bookkeeping.
@@ -40,7 +46,57 @@ pub struct MemoStats {
 struct Entry<V> {
     value: V,
     bytes: usize,
+    /// Its last use.
     age: u64,
+    /// The use it sits under in the age order: its last use, or one before.
+    queued: u64,
+}
+
+/// Hashes a key of addresses and small integers (an element's address, a type's id): a
+/// multiply-rotate per word, for a memo whose keys no document chooses.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AddressHash;
+
+/// [`AddressHash`]'s hasher.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AddressHasher(u64);
+
+impl AddressHasher {
+    const SEED: u64 = 0x51_7c_c1_b7_27_22_0a_95;
+
+    fn add(&mut self, word: u64) {
+        self.0 = (self.0.rotate_left(5) ^ word).wrapping_mul(Self::SEED);
+    }
+}
+
+impl Hasher for AddressHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for chunk in bytes.chunks(8) {
+            let mut word = [0u8; 8];
+            word.get_mut(..chunk.len()).unwrap_or_default().copy_from_slice(chunk);
+            self.add(u64::from_le_bytes(word));
+        }
+    }
+
+    fn write_u64(&mut self, word: u64) {
+        self.add(word);
+    }
+
+    fn write_usize(&mut self, word: usize) {
+        self.add(word as u64);
+    }
+}
+
+impl BuildHasher for AddressHash {
+    type Hasher = AddressHasher;
+
+    fn build_hasher(&self) -> AddressHasher {
+        AddressHasher::default()
+    }
 }
 
 /// Values memoised by content key, within a budget.
@@ -49,9 +105,9 @@ struct Entry<V> {
 /// held behind an `Arc`. A memo belongs to one owner (a document's derived engine, a layout
 /// pass) and takes `&mut self`; a pass that computes its misses in parallel looks them up
 /// with [`Memo::get`] and keeps them with [`Memo::insert`].
-pub struct Memo<K, V> {
-    entries: HashMap<K, Entry<V>>,
-    /// Entries by last use, oldest first.
+pub struct Memo<K, V, S = RandomState> {
+    entries: HashMap<K, Entry<V>, S>,
+    /// Entries by the use they are queued at (their last use, or one before), oldest first.
     ages: BTreeMap<u64, K>,
     clock: u64,
     /// The clock at the last [`Memo::sweep`]: an entry last used at or before it was not
@@ -64,8 +120,15 @@ pub struct Memo<K, V> {
 impl<K: Hash + Eq + Clone, V: Clone + Weigh> Memo<K, V> {
     /// An empty memo reserving from `budget`.
     pub fn new(budget: Arc<dyn CacheBudget>) -> Self {
+        Self::with_hasher(budget)
+    }
+}
+
+impl<K: Hash + Eq + Clone, V: Clone + Weigh, S: BuildHasher + Default> Memo<K, V, S> {
+    /// An empty memo reserving from `budget`, its keys hashed by `S`.
+    pub fn with_hasher(budget: Arc<dyn CacheBudget>) -> Self {
         Self {
-            entries: HashMap::new(),
+            entries: HashMap::with_hasher(S::default()),
             ages: BTreeMap::new(),
             clock: 0,
             swept: 0,
@@ -100,9 +163,7 @@ impl<K: Hash + Eq + Clone, V: Clone + Weigh> Memo<K, V> {
             self.stats.misses += 1;
             return None;
         };
-        self.ages.remove(&entry.age);
         entry.age = self.clock;
-        self.ages.insert(self.clock, key.clone());
         self.stats.hits += 1;
         Some(&entry.value)
     }
@@ -113,7 +174,7 @@ impl<K: Hash + Eq + Clone, V: Clone + Weigh> Memo<K, V> {
     pub fn insert(&mut self, key: K, value: V) -> bool {
         self.clock += 1;
         if let Some(old) = self.entries.remove(&key) {
-            self.ages.remove(&old.age);
+            self.ages.remove(&old.queued);
             self.budget.release(old.bytes);
             self.stats.bytes -= old.bytes;
         }
@@ -131,6 +192,7 @@ impl<K: Hash + Eq + Clone, V: Clone + Weigh> Memo<K, V> {
                 value,
                 bytes,
                 age: self.clock,
+                queued: self.clock,
             },
         );
         true
@@ -167,7 +229,12 @@ impl<K: Hash + Eq + Clone, V: Clone + Weigh> Memo<K, V> {
         let stale: Vec<u64> = self
             .ages
             .range(..=since)
-            .filter(|(_, key)| !self.entries.get(*key).is_some_and(|entry| held(&entry.value)))
+            .filter(|(_, key)| {
+                // queued before the sweep, used since: not stale
+                self.entries
+                    .get(*key)
+                    .is_none_or(|entry| entry.age <= since && !held(&entry.value))
+            })
             .map(|(age, _)| *age)
             .collect();
         for age in &stale {
@@ -180,20 +247,30 @@ impl<K: Hash + Eq + Clone, V: Clone + Weigh> Memo<K, V> {
         stale.len()
     }
 
+    /// Evict the least recently used entry: the oldest queued whose last use is the one it
+    /// is queued at (one used since is queued again at its last use). Whether there was one.
     fn evict_oldest(&mut self) -> bool {
-        let Some((_, key)) = self.ages.pop_first() else {
-            return false;
-        };
-        if let Some(entry) = self.entries.remove(&key) {
-            self.budget.release(entry.bytes);
-            self.stats.bytes -= entry.bytes;
-            self.stats.evictions += 1;
+        while let Some((queued, key)) = self.ages.pop_first() {
+            let Some(entry) = self.entries.get_mut(&key) else {
+                continue;
+            };
+            if entry.age != queued {
+                entry.queued = entry.age;
+                self.ages.insert(entry.age, key);
+                continue;
+            }
+            if let Some(entry) = self.entries.remove(&key) {
+                self.budget.release(entry.bytes);
+                self.stats.bytes -= entry.bytes;
+                self.stats.evictions += 1;
+            }
+            return true;
         }
-        true
+        false
     }
 }
 
-impl<K, V> Drop for Memo<K, V> {
+impl<K, V, S> Drop for Memo<K, V, S> {
     fn drop(&mut self) {
         self.budget.release(self.stats.bytes);
     }

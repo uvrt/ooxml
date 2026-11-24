@@ -16,7 +16,7 @@
 use super::cells::{held_roots, same_roots, HeldRoots};
 use super::formatting::Formatting;
 use crate::ids::W;
-use ooxml_derive::{CacheBudget, Limit, Memo, MemoStats, Weigh};
+use ooxml_derive::{AddressHash, CacheBudget, Limit, Memo, MemoStats, Weigh};
 use ooxml_xml::Element;
 use std::any::{Any, TypeId};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
@@ -74,7 +74,7 @@ type Key = (TypeId, usize);
 /// address (a weak reference keeps the address its own while it is kept), and how many
 /// were alive when last swept.
 pub(crate) struct BlockFacts {
-    memo: Mutex<(Memo<Key, Kept>, usize)>,
+    memo: Mutex<(Memo<Key, Kept, AddressHash>, usize)>,
 }
 
 impl std::fmt::Debug for BlockFacts {
@@ -94,7 +94,7 @@ impl BlockFacts {
     /// An empty memo counted on `budget`.
     pub(crate) fn new(budget: Arc<dyn CacheBudget>) -> BlockFacts {
         BlockFacts {
-            memo: Mutex::new((Memo::new(budget), 0)),
+            memo: Mutex::new((Memo::with_hasher(budget), 0)),
         }
     }
 

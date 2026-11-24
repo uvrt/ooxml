@@ -26,6 +26,6 @@ pub use blocks::{BlockFact, BlockFacts, Edit};
 pub use budget::{CacheBudget, Limit};
 pub use error::DeriveError;
 pub use map::PersistentMap;
-pub use memo::{Memo, MemoStats, Weigh};
+pub use memo::{AddressHash, Memo, MemoStats, Weigh};
 pub use monoid::{Measured, Monoid};
 pub use tree::{Iter, MonoidTree};
