@@ -1446,7 +1446,7 @@
 {"digest":"sha256:bb32a4583cf896f361719453c0235529","id":"style:5a54715de8fba894","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:6fd272030ea783b6f06c859b0d6a745b","id":"style:cba61c971d9074a4","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:51d27b87cdfb6c1f08fe1dffdcfe02fe","id":"style:4ffa4f562858fce5","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:17000b3187a6f721e6e75f55951fae04","id":"style:fc53002e4107c17a","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:256e25a4deec9f462fa9892e4f44316a","id":"style:fc53002e4107c17a","source":"Word 16.106: a single-level list takes no level past 0 (fu-word4 measure, #364)"}
 {"digest":"sha256:667404352f90cab5671f8fa44962be93","id":"style:6fe2be2eca18f409","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:b01a9c12e363932946a7cdcf703d8f66","id":"style:e3d1c9c23dad0e63","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:2506ac510613b744844f8fdc188496de","id":"style:603fa71a137a3eea","source":"frozen Python a512c901, unmeasured"}
@@ -1456,7 +1456,7 @@
 {"digest":"sha256:47339da539226021dead80b4f1eb7ac0","id":"style:b30a64a68040c01c","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:0e09fdaad2982952f286524651716a26","id":"style:df4cc8d73accb663","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:5aa9fd7dbc0de142ca540da925156a9e","id":"style:7491fdca563ceec6","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:fc24456d7eb84f768a94c053a4a9742d","id":"style:75575eda9cd5777f","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:0e42816ae4d905e7f2e90e7e2459e535","id":"style:75575eda9cd5777f","source":"Word 16.106: a single-level list takes no level past 0 (fu-word4 measure, #364)"}
 {"digest":"sha256:4609596a06464892dc677974180693b1","id":"style:dbe63c11c4220406","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:825ab4c2abb04e4f08955b895ff2c34e","id":"style:7ef3229a1cb9b496","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:ecd96f57f3c6990b0ad3e883c6e27b76","id":"style:5703e75681f6e327","source":"frozen Python a512c901, unmeasured"}
@@ -1466,7 +1466,7 @@
 {"digest":"sha256:f00e92b91df5ab9e38adc3d64098a453","id":"style:4ee3c2c2fd727f45","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:120ad0a1a3b1b5a3ef8de4a9db4e9b54","id":"style:8fb38ac33c37e779","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:eeedc3732e3cedda251796224ab7ad74","id":"style:96a5e21ef831527f","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:4cca53b9c17dd6d9f524fe61c9594273","id":"style:23987f1a2750bbf8","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:657a95582243dbb846034781da03f4ea","id":"style:23987f1a2750bbf8","source":"Word 16.106: a single-level list takes no level past 0 (fu-word4 measure, #364)"}
 {"digest":"sha256:bdcd9b9878d44684997651e7c5d59ae1","id":"style:f48bdd9c140111d2","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:de25edb07b55297dc31b8f3a5a81d966","id":"style:d51525bea5f2269f","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:e0848988bbb963f679bfa00b173612ec","id":"style:95923308d01746f7","source":"frozen Python a512c901, unmeasured"}
@@ -1476,7 +1476,7 @@
 {"digest":"sha256:04405137ceb3f2465d7f3136021bfc60","id":"style:0237477cc84c7b55","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:519c67720440c2f9f82e566393fa7919","id":"style:395ef9100a2ca749","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:99374d9f10354195928fa58a0561aa16","id":"style:417618a0175454f4","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:d8326cb02c793fe20f48c1d2fe5ec9d9","id":"style:8b72f6f4ccfcdd18","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:e5f78b43f2ac9db4c768676d1a6f6e83","id":"style:8b72f6f4ccfcdd18","source":"Word 16.106: a single-level list takes no level past 0 (fu-word4 measure, #364)"}
 {"digest":"sha256:84cf71dbc1d6a83051116cc2fd74e11e","id":"style:8604b5bce302d839","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:8e9831ab380622a547c470602f2cbe0b","id":"style:26d4e803c461d879","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:7d52e264eb57cdfe9f69f2ee7c0434e1","id":"style:0311da3626dd54f6","source":"frozen Python a512c901, unmeasured"}
@@ -1485,7 +1485,7 @@
 {"digest":"sha256:bc7d95690a678396b4b21ac5589f52c8","id":"style:2080877b55ff71b7","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:b21e3393568fa4f8a81f9a5808800eda","id":"style:005015d8cb2246d0","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:4a4b3ad65505ffa8e3fe099dc2b0292c","id":"style:e829b4cd8e390563","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:be12ff72ec5a3016b3373ee1215832f7","id":"style:444213fc91a8d9ce","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:6a7bef515a3ce4aa569f4420a9b5a877","id":"style:444213fc91a8d9ce","source":"Word 16.106: a single-level list takes no level past 0 (fu-word4 measure, #364)"}
 {"digest":"sha256:23d842f9a5e6feb5e7e6c29022d4e21d","id":"style:9dc659f701ca56d0","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:f8b7f1dafb4497917d41bbf296582552","id":"style:f544086cf1a650fe","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:53162c1c2066a989a26f71559f52ec6b","id":"style:2c7c8861121b2032","source":"frozen Python a512c901, unmeasured"}
@@ -1500,7 +1500,7 @@
 {"digest":"sha256:d3de9880fec42163a21df6c85b1107a7","id":"style:57b6148f8113ef31","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:6fd272030ea783b6f06c859b0d6a745b","id":"style:384d99c9465b028b","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:d05fa9adc51a6ffe7b178f49e377fdd9","id":"style:e7d87620cfcc1234","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:b2c71ec3f8f390016e0684e58a4558ca","id":"style:492d1d53504d7f90","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:256e25a4deec9f462fa9892e4f44316a","id":"style:492d1d53504d7f90","source":"Word 16.106: a single-level list takes no level past 0 (fu-word4 measure, #364)"}
 {"digest":"sha256:667404352f90cab5671f8fa44962be93","id":"style:25625e79eb4fa7e2","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:50ee3801e6fd563cec8c07cd9ead8f62","id":"style:29acfd5f2c0f40e1","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:2506ac510613b744844f8fdc188496de","id":"style:ae8d312ebd7275e1","source":"frozen Python a512c901, unmeasured"}
@@ -1510,7 +1510,7 @@
 {"digest":"sha256:47339da539226021dead80b4f1eb7ac0","id":"style:cce90403b2863b54","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:0e09fdaad2982952f286524651716a26","id":"style:fd2fbdeccf8ea10d","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:5ebfbb3c72230623e9b7f62b78c7e397","id":"style:d4241fba50f9e83f","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:96598adae73dc414008a57db29fa8dd0","id":"style:b30c2bf44116dc89","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:0e42816ae4d905e7f2e90e7e2459e535","id":"style:b30c2bf44116dc89","source":"Word 16.106: a single-level list takes no level past 0 (fu-word4 measure, #364)"}
 {"digest":"sha256:4609596a06464892dc677974180693b1","id":"style:e8907cd22f468fc8","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:86480291950f93b98707b4997dba7451","id":"style:adb84092c3131f37","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:ecd96f57f3c6990b0ad3e883c6e27b76","id":"style:df5a14df2e33f260","source":"frozen Python a512c901, unmeasured"}
@@ -1520,7 +1520,7 @@
 {"digest":"sha256:f00e92b91df5ab9e38adc3d64098a453","id":"style:8d153dc6ecbcf45b","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:120ad0a1a3b1b5a3ef8de4a9db4e9b54","id":"style:0185372c32c267d3","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:9d74ddce2334f30dca00224edf873370","id":"style:587803e7bc3fe00a","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:e6a2cb1f7903d775805a3cc3a320f585","id":"style:b5d9e0dd894666ce","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:657a95582243dbb846034781da03f4ea","id":"style:b5d9e0dd894666ce","source":"Word 16.106: a single-level list takes no level past 0 (fu-word4 measure, #364)"}
 {"digest":"sha256:bdcd9b9878d44684997651e7c5d59ae1","id":"style:ff6fff6487841cc1","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:076eb357c0dc33f1f5fccf08b725bd0d","id":"style:4b3aba66988c912b","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:e0848988bbb963f679bfa00b173612ec","id":"style:72fddb9c028c6c2e","source":"frozen Python a512c901, unmeasured"}
@@ -1530,7 +1530,7 @@
 {"digest":"sha256:04405137ceb3f2465d7f3136021bfc60","id":"style:6eccdb482e9d1453","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:519c67720440c2f9f82e566393fa7919","id":"style:1568a54598e519a6","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:566e4bb8e9698be9621bc87809d4098e","id":"style:8f1aa346ae1c07f1","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:4028d11cfe4cf6557e8bc955b620b129","id":"style:9eb8d233da3d92be","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:e5f78b43f2ac9db4c768676d1a6f6e83","id":"style:9eb8d233da3d92be","source":"Word 16.106: a single-level list takes no level past 0 (fu-word4 measure, #364)"}
 {"digest":"sha256:84cf71dbc1d6a83051116cc2fd74e11e","id":"style:1ce71357e5cea792","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:61b29f002dfb043232848a7c58c1ecd2","id":"style:49dbdee5c3b13483","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:7d52e264eb57cdfe9f69f2ee7c0434e1","id":"style:8c39566df899d3f9","source":"frozen Python a512c901, unmeasured"}
@@ -1539,7 +1539,7 @@
 {"digest":"sha256:bc7d95690a678396b4b21ac5589f52c8","id":"style:59138b9b55e6ddbb","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:b21e3393568fa4f8a81f9a5808800eda","id":"style:fabd35c7c7c8dc94","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:67000023ab85e65a46d1c2eb754e8d56","id":"style:904b3d2059acfd5f","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:be12ff72ec5a3016b3373ee1215832f7","id":"style:fcbe9eff007e7ab8","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:6a7bef515a3ce4aa569f4420a9b5a877","id":"style:fcbe9eff007e7ab8","source":"Word 16.106: a single-level list takes no level past 0 (fu-word4 measure, #364)"}
 {"digest":"sha256:64fd6d2d18996672f9a46471f929d380","id":"style:66b920b04ebff9c0","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:f8b7f1dafb4497917d41bbf296582552","id":"style:f653464a989b42d1","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:d8eaa13f5cba0180c5f54ba8433d55ff","id":"style:1f888a5dcb80858d","source":"frozen Python a512c901, unmeasured"}
