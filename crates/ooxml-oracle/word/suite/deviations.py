@@ -22,11 +22,7 @@ DEVIATIONS: dict[str, dict[str, str]] = {
     "gates/generated/controls.docx/objects:03acdd1b12512576": {"reject": _CONTROL_309},
     "gates/generated/controls.docx/objects:041ad9ff89bd6d04": {"reject": _CONTROL_309},
     "gates/generated/controls.docx/objects:08f8cd07787e4d2a": {"reject": _CONTROL_309},
-    "gates/generated/controls.docx/objects:09dbf7b1f77502ee": {
-        "reject": _CONTROL_309,
-        "kept": "known, to investigate: Word's re-save adds a tblPrChange (Writer A) the tools don't write; "
-                "Word may expect the tracked split to record a table-property change",
-    },
+    "gates/generated/controls.docx/objects:09dbf7b1f77502ee": {"reject": _CONTROL_309},
     "gates/generated/controls.docx/objects:19bd0fc9862ebeb1": {"reject": _CONTROL_309},
     "gates/generated/controls.docx/objects:1c38f902a0ff6dbe": {"reject": _CONTROL_309},
     "gates/generated/controls.docx/objects:3b9a78c7a9905fea": {"reject": _CONTROL_309},

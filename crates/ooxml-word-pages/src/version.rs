@@ -99,6 +99,12 @@ impl LaidVersion {
         self.ids.is_named(path)
     }
 
+    /// Whether each of the body paths `paths` names a block the tool names in this version
+    /// ([`LaidVersion::is_named`] for many paths at once), in order.
+    pub fn are_named<'p>(&self, paths: impl IntoIterator<Item = &'p str>) -> Vec<bool> {
+        self.ids.are_named(paths)
+    }
+
     /// The tool's ids of the body's top-level blocks (paragraphs and tables, those of its
     /// block-level content controls too) page `page` (0-based) draws something of, each once,
     /// in document order (docx-agent's `DocumentLayout.blocks_on`): a block split across
