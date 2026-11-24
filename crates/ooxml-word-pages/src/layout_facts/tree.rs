@@ -7,9 +7,10 @@
 //! Must not: read the layout.
 
 use ooxml_word_model::docx::{Docx, StoryPart};
+use ooxml_word_model::ids::{Entry, PartIds};
 use ooxml_xml::{Element, Node};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 /// The WordprocessingML namespace.
 pub(crate) const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
@@ -36,8 +37,52 @@ pub struct Block<'a> {
     pub place: Vec<u32>,
     /// Its layout path.
     pub path: String,
-    /// Its id.
-    pub id: String,
+    /// The ids that name it, and its entry among them.
+    ids: &'a PartIds,
+    entry: Entry,
+    /// Its id, named when first asked.
+    id: OnceLock<String>,
+}
+
+impl<'a> Block<'a> {
+    /// The block `entry` of `ids` names, at `place` (its layout path `path`).
+    pub(crate) fn of(
+        kind: BlockKind,
+        element: &'a Arc<Element>,
+        place: Vec<u32>,
+        path: String,
+        ids: &'a PartIds,
+        entry: Entry,
+    ) -> Block<'a> {
+        Block {
+            kind,
+            element,
+            place,
+            path,
+            ids,
+            entry,
+            id: OnceLock::new(),
+        }
+    }
+
+    /// The block, named `id` (where it was asked for by an id its entry is found by).
+    pub(crate) fn named(self, id: &str) -> Block<'a> {
+        let _ = self.id.set(id.to_owned());
+        self
+    }
+
+    /// Its entry among the ids.
+    pub(crate) fn entry(&self) -> Entry {
+        self.entry
+    }
+
+    /// Its id, named when first asked: a check names only the blocks it reports.
+    #[must_use]
+    pub fn id(&self) -> &str {
+        self.id
+            .get_or_init(|| self.ids.id_of(self.entry).unwrap_or_default())
+            .as_str()
+    }
 }
 
 /// Whether `e` is the `w:` element `local`.
@@ -91,20 +136,14 @@ fn visit<'a>(
                 place.pop();
             }
         } else if is_w(child, "p") || is_w(child, "tbl") {
-            let id = story.ids.at(place).and_then(|entry| story.ids.id_of(entry));
-            if let Some(id) = id {
+            // Named where the ids hold it (`id_of` answers for every entry `at` finds).
+            if let Some(entry) = story.ids.at(place) {
                 let kind = if is_w(child, "p") {
                     BlockKind::Paragraph
                 } else {
                     BlockKind::Table
                 };
-                out.push(Block {
-                    kind,
-                    element: child,
-                    place: place.clone(),
-                    path: here,
-                    id,
-                });
+                out.push(Block::of(kind, child, place.clone(), here, &story.ids, entry));
             }
         }
         place.pop();

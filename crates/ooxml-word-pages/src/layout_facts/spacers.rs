@@ -138,11 +138,11 @@ fn spacer(
 ) -> Option<Spacer> {
     let (first, last) = (run.first()?, run.last()?);
     let (page, top) = facts.first_line(first)?;
-    let paras: Vec<String> = run.iter().map(|b| b.id.clone()).collect();
+    let paras: Vec<String> = run.iter().map(|b| b.id().to_owned()).collect();
     let target = if run.len() == 1 {
-        first.id.clone()
+        first.id().to_owned()
     } else {
-        format!("{}..{}", first.id, last.id)
+        format!("{}..{}", first.id(), last.id())
     };
     let previous_after = before.map_or(0.0, |b| space(facts, b, false));
     let above = previous_after.max(space(facts, first, true));
@@ -151,7 +151,7 @@ fn spacer(
         paras,
         page,
         height_pt: 0.0,
-        next: after.map(|a| a.id.clone()),
+        next: after.map(|a| a.id().to_owned()),
         target,
         keep_space: None,
         page_end: false,
