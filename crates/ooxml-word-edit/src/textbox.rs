@@ -15,6 +15,23 @@ use crate::{EditError, Result};
 use ooxml_xml::{changed_runs, Element, Node};
 use std::sync::Arc;
 
+/// The place of the paragraph anchoring the text box the element at `path` of `part`
+/// stands in (the outermost paragraph on its path), if it stands in one.
+pub(crate) fn text_box_anchor(docx: &ooxml_word_model::docx::Docx, part: &str, path: &[u32]) -> Option<Vec<u32>> {
+    let root = docx.part(part)?.root();
+    let mut anchor = None;
+    for n in 1..path.len() {
+        let element = ooxml_word_model::docx::at_path(root, path.get(..n)?)?;
+        if element.name().is(Some(W), "txbxContent") {
+            return anchor;
+        }
+        if anchor.is_none() && element.name().is(Some(W), "p") {
+            anchor = Some(path.get(..n)?.to_vec());
+        }
+    }
+    None
+}
+
 /// The first `w:txbxContent` at or below `element`, in document order.
 fn first_content(element: &Arc<Element>) -> Option<Arc<Element>> {
     if element.name().is(Some(W), "txbxContent") {

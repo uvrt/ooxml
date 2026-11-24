@@ -5,7 +5,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
 use crate::labels::Budget;
-use ooxml_derive::{CacheBudget, DeriveError, Measured, Memo, Monoid, MonoidTree, Weigh};
+use ooxml_derive::{AddressHash, CacheBudget, DeriveError, Measured, Memo, Monoid, MonoidTree, Weigh};
 use std::sync::Arc;
 
 /// A polynomial hash of the sequence: equal only for the same items in the same order.
@@ -201,4 +201,66 @@ fn a_sweep_drops_what_was_not_used_since_the_last_and_nothing_else_holds() {
     assert_eq!(memo.sweep(|blob| blob.0 == 10), 0, "held entries stay, used or not");
     assert_eq!(memo.sweep(|_| false), 3);
     assert_eq!(budget.used(), 0);
+}
+
+#[test]
+fn a_memo_keyed_by_address_evicts_and_sweeps_as_a_plain_least_recently_used_list() {
+    // A reference: keys from the most recently used, each with its last use.
+    let budget = Arc::new(Budget::new(10 * 200));
+    let mut memo: Memo<usize, Blob, AddressHash> = Memo::with_hasher(budget.clone());
+    let mut list: Vec<(usize, u64)> = Vec::new();
+    let (mut clock, mut swept) = (0u64, 0u64);
+    let mut random = Rng(7);
+    for _ in 0..20_000 {
+        let key = 0x1000 + 8 * usize::try_from(random.below(24)).unwrap();
+        match random.below(10) {
+            0..=5 => {
+                clock += 1;
+                let found = memo.get(&key).is_some();
+                assert_eq!(found, list.iter().any(|(k, _)| *k == key));
+                if let Some(at) = list.iter().position(|(k, _)| *k == key) {
+                    list.remove(at);
+                    list.insert(0, (key, clock));
+                }
+            }
+            6..=8 => {
+                clock += 1;
+                assert!(memo.insert(key, Blob(200 - overhead())));
+                list.retain(|(k, _)| *k != key);
+                list.insert(0, (key, clock));
+                list.truncate(10);
+            }
+            _ => {
+                let gone = memo.sweep(|_| false);
+                let before = list.len();
+                list.retain(|(_, used)| *used > swept);
+                assert_eq!(gone, before - list.len());
+                swept = clock;
+            }
+        }
+        let mut held: Vec<usize> = list.iter().map(|(k, _)| *k).collect();
+        held.sort_unstable();
+        let mut kept: Vec<usize> = (0..24)
+            .map(|k| 0x1000 + 8 * k)
+            .filter(|k| memo.peek(k).is_some())
+            .collect();
+        kept.sort_unstable();
+        assert_eq!(kept, held);
+        assert_eq!(budget.used(), memo.stats().bytes);
+    }
+}
+
+/// What the memo counts for an entry of `Memo<usize, _>` beside its value.
+fn overhead() -> usize {
+    2 * std::mem::size_of::<usize>() + 4 * std::mem::size_of::<u64>()
+}
+
+#[test]
+fn addresses_hash_to_distinct_buckets() {
+    use std::hash::BuildHasher;
+    // Aligned addresses (multiples of 16) spread over a small table's buckets.
+    let buckets: std::collections::HashSet<u64> = (0..64u64)
+        .map(|k| AddressHash.hash_one(0x7f00_0000_1000_usize + 16 * k as usize) & 63)
+        .collect();
+    assert!(buckets.len() > 32, "{} of 64 buckets", buckets.len());
 }

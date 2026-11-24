@@ -19,7 +19,7 @@ use crate::model::{Block, Story, Table};
 use crate::read::{Fields, Reader};
 use crate::resolve::resolve_table;
 use crate::value::{text, Props, Text};
-use ooxml_derive::{CacheBudget, Limit, Memo, MemoStats, Weigh};
+use ooxml_derive::{AddressHash, CacheBudget, Limit, Memo, MemoStats, Weigh};
 use ooxml_xml::{Element, Node};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
@@ -165,7 +165,7 @@ pub const TABLE_MEMO_BYTES: usize = 32 << 20;
 /// least recently used let go first, and those of tables no version holds swept.
 pub(crate) struct TableMemo {
     /// The readings, and how many were held after the last sweep.
-    memo: Mutex<(Memo<usize, KeptTable>, usize)>,
+    memo: Mutex<(Memo<usize, KeptTable, AddressHash>, usize)>,
 }
 
 impl std::fmt::Debug for TableMemo {
@@ -185,7 +185,7 @@ impl TableMemo {
     /// An empty memo counted on `budget`.
     pub(crate) fn new(budget: Arc<dyn CacheBudget>) -> TableMemo {
         TableMemo {
-            memo: Mutex::new((Memo::new(budget), 0)),
+            memo: Mutex::new((Memo::with_hasher(budget), 0)),
         }
     }
 
