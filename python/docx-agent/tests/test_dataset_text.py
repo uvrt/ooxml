@@ -510,7 +510,7 @@ def test_word_anchors_a_selected_table_so(toolbox):
     import oracle
 
     if not oracle.available():
-        pytest.skip("Microsoft Word or docx2svg's oracle scripts are not available")
+        pytest.skip("Microsoft Word or the Word oracle's scripts are not available")
     script = '''
 on run argv
   with timeout of 170 seconds

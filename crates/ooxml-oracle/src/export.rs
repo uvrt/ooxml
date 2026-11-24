@@ -1,8 +1,8 @@
-//! `word-model <file.docx>`: the Word model of a document as JSON, in the form
-//! the differential harness (`tools/word_model_diff.py`) writes docx2svg's model in, field by
-//! field: the source model (body, sections, stories, notes, styles, numbering, settings,
-//! theme), every body paragraph's and table's resolved formats, each run's format per
-//! character slot, and the body's list labels.
+//! Owns: the Word model of a document as JSON, field by field (the form docx2svg's model was
+//! once compared in): the source model (body, sections, stories, notes, styles, numbering,
+//! settings, theme), every body paragraph's and table's resolved formats, each run's format
+//! per character slot, and the body's list labels -- what the model's open and reopen
+//! benchmark compares (`bench`); and the unlimited budget and key the benchmarks open with.
 //!
 //! Must not: be used by any library; it is a test instrument.
 
@@ -305,20 +305,4 @@ pub fn document_json(model: &mut Model, d: &WordDocument) -> J {
     out.insert("resolved_paragraphs".into(), paragraphs);
     out.insert("resolved_tables".into(), tables);
     J::Object(out)
-}
-
-/// `word-model <file.docx>...`: print each document's model as one JSON line.
-pub fn run(args: &[String]) -> Result<(), String> {
-    if args.is_empty() {
-        return Err("word-model: give one or more .docx files".into());
-    }
-    for path in args {
-        let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
-        let line = match open(bytes) {
-            Ok((mut model, document)) => json!({"file": path, "model": document_json(&mut model, &document)}),
-            Err(e) => json!({"file": path, "error": e}),
-        };
-        println!("{line}");
-    }
-    Ok(())
 }

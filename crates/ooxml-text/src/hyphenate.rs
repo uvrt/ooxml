@@ -1,8 +1,8 @@
 //! Owns: where a word may break, by language -- Liang's method over the openly licensed
-//! patterns docx2svg ships (hyph-utf8; their sources and licences are in
-//! `python/docx2svg/src/docx2svg/patterns/SOURCES.txt`), after the word lists a language
-//! consults first (English: the probe's observed exceptions, then the Moby list). A port
-//! of docx2svg's `hyphenate`, reading the very same files.
+//! patterns in this crate's `patterns/` (hyph-utf8; their sources and licences are in
+//! `patterns/SOURCES.txt`), after the word lists a language consults first (English: the
+//! probe's observed exceptions, then the Moby list). A port of docx2svg's former
+//! `hyphenate`, reading the very same files (moved here with it, lane svg-thin).
 //!
 //! Must not: decide which points a line takes (that is the `auto` module and
 //! [`crate::breaks`]), or hold anything but the tables parsed once from the files compiled
@@ -15,11 +15,7 @@ use std::sync::OnceLock;
 
 macro_rules! patterns_file {
     ($name:literal) => {
-        include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../python/docx2svg/src/docx2svg/patterns/",
-            $name
-        ))
+        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/patterns/", $name))
     };
 }
 

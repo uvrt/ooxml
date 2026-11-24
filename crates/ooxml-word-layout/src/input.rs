@@ -1,8 +1,8 @@
 //! Owns: what the text engine is given for one paragraph of the Word model -- its runs with
 //! every character's format by its slot, its marks, its list label, its hyphenation
 //! ([`text_paragraph`]) -- and the geometry its lines are broken at ([`geometry`]):
-//! docx2svg's `linebreak.pieces`' and `label_pieces`' inputs and `linebreak.geometry`,
-//! as `tools/text_differential.py` records them for the text engine's differential.
+//! docx2svg's former `linebreak.pieces`' and `label_pieces`' inputs and
+//! `linebreak.geometry`.
 //!
 //! Must not: measure or break lines (`ooxml-text` does), resolve styles (the model has),
 //! or know where the paragraph is placed.

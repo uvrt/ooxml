@@ -7,7 +7,7 @@ use ooxml_base::{Limits, Locale};
 use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
 use ooxml_oracle::export::{Unlimited, KEY};
-use ooxml_oracle::text::fonts_of;
+use ooxml_oracle::fonts_record::fonts_of;
 use ooxml_word_layout::facts::LayoutFacts;
 use ooxml_word_layout::paint::svg::{page_svg, NoDrawings, NoPictures, SvgContext};
 use ooxml_word_layout::paint::{paint_page, DocumentNames, GlyphSize, PaintContext};

@@ -1,14 +1,11 @@
 """Element paths: what ``data-docx-path`` and every layout object's ``path`` name.
 
-Every element the SVG draws from the document carries ``data-docx-path``, and the layout
-objects behind it carry the same string: :attr:`docx2svg.layout.Line.path` (the
-paragraph a line is of), :attr:`~docx2svg.layout.Span.path` (the run),
-:attr:`~docx2svg.layout.Float.path` (the floating drawing),
-:attr:`~docx2svg.layout.Stop.path` (the obstacle the layout stopped at).  A path is a
-chain of steps from its part's root, counted as the parser counts them when it reads the
-part (:class:`Steps`, :func:`row_level`), so that :func:`resolve_path` finds the element
-again in any ElementTree-compatible tree of the same part -- the standard library's, or
-lxml's -- and a caller that edits the document can find what was drawn:
+Every element the SVG draws from the document carries ``data-docx-path``, and the layout's
+lines, spans, rules and drawings (``ooxml_core.LaidPages.page``) carry the same string.  A
+path is a chain of steps from its part's root, counted as the Word model counts them when it
+reads the part (``ooxml_word_model::read::paths``), so that :func:`resolve_path` finds the
+element again in any ElementTree-compatible tree of the same part -- the standard
+library's, or lxml's -- and a caller that edits the document can find what was drawn:
 
 * ``w:name[k]``: the k-th child with that **local name**, whatever its namespace (the
   prefix written is always ``w:`` for WordprocessingML's own steps), comments and
@@ -30,158 +27,14 @@ lxml's -- and a caller that edits the document can find what was drawn:
   sections' ``w:sectPr`` taken in document order.
 
 The part a path is in is the main document part for the body, the story's part for a
-header or footer (:attr:`Line.part <docx2svg.layout.Line.part>`, ``data-docx-part``), and
-the footnotes or endnotes part for a path that starts at a note: :func:`path_part`.
-:func:`locate` does both against a package.
+header or footer (``data-docx-part``), and the footnotes or endnotes part for a path that
+starts at a note.
 
 A few paths name something the document does not hold, and resolve to ``None``: Word's
 own footnote separator where the document has none (``w:footnotes/separator``).
 """
 
 from __future__ import annotations
-
-import re
-from typing import Iterator
-
-from ooxml_common.xmlutil import local_name
-from ooxml_common.xmlutil import element_child as child
-from ooxml_common.xmlutil import element_children as children
-
-__all__ = ["Steps", "block_keys", "locate", "path_part", "resolve_path", "row_level", "split_path"]
-
-
-class Steps:
-    """The parser's step counter: 1-based indexes among same-named siblings (by local
-    name), as XPath counts them, each step written after ``prefix``."""
-
-    def __init__(self, prefix: str) -> None:
-        self.prefix = prefix
-        self.counts: dict[str, int] = {}
-
-    def __call__(self, node) -> str:
-        name = local_name(node.tag)
-        self.counts[name] = self.counts.get(name, 0) + 1
-        step = f"w:{name}[{self.counts[name]}]"
-        return f"{self.prefix}/{step}" if self.prefix else step
-
-
-def row_level(parent, name: str) -> Iterator:
-    """``parent``'s ``w:tr`` or ``w:tc`` children, also those inside a ``w:sdt``'s
-    ``w:sdtContent`` or a ``w:customXml`` (row- and cell-level containers)."""
-    for node in children(parent):
-        local = local_name(node.tag)
-        if local == name:
-            yield node
-        elif local == "sdt":
-            content = child(node, "sdtContent")
-            if content is not None:
-                yield from row_level(content, name)
-        elif local == "customXml":
-            yield from row_level(node, name)
-
-
-_STEP = re.compile(r"(?:(?P<prefix>\w+):)?(?P<name>\w+)(?:\[(?P<index>\d+)\]|\[@w:id=(?P<id>-?\d+)\])?")
-
-
-def split_path(path: str) -> list[tuple[str | None, str, int | None, str | None]]:
-    """A path's steps as ``(prefix, local name, 1-based index, note id)``; ``ValueError``
-    for a string that is not a path."""
-    out = []
-    for step in path.split("/"):
-        match = _STEP.fullmatch(step)
-        if match is None:
-            raise ValueError(f"not a docx2svg path step: {step!r} in {path!r}")
-        index = match.group("index")
-        out.append((match.group("prefix"), match.group("name"), int(index) if index else None, match.group("id")))
-    return out
-
-
-#: The steps a body block's key ends at (:func:`block_keys`): a paragraph, a table, a row, a cell.
-BLOCK_STEPS = frozenset({"p", "tbl", "tr", "tc"})
-#: The block-level containers a key passes through to reach one.
-_BLOCK_CONTAINERS = frozenset({"sdt", "sdtContent", "customXml"})
-
-
-def block_keys(path: str) -> list[str]:
-    """The body's blocks a drawn object's ``path`` is in, outermost first: every prefix of
-    the path that ends at a paragraph, table, row or cell step, up to the first step inside
-    a paragraph (a run, a drawing, a text box's own paragraphs) -- ``w:body/w:tbl[2]``,
-    ``w:body/w:tbl[2]/w:tr[3]``, ``w:body/w:tbl[2]/w:tr[3]/w:tc[1]``,
-    ``w:body/w:tbl[2]/w:tr[3]/w:tc[1]/w:p[1]`` for a cell's line.  Each is a path
-    :func:`resolve_path` finds in the main document part, derived from the XML alone (the
-    keys :meth:`docx2svg.layout.Layout.pages_of` takes).  Empty for a path outside the
-    body: a header's, a footer's or a note's."""
-    steps = path.split("/")
-    if steps[0] != "w:body":
-        return []
-    out = []
-    prefix = steps[0]
-    for step in steps[1:]:
-        prefix += "/" + step
-        name = step.split("[", 1)[0].split(":", 1)[-1]
-        if name in BLOCK_STEPS:
-            out.append(prefix)
-            if name == "p":
-                break
-        elif name not in _BLOCK_CONTAINERS:
-            break
-    return out
-
-
-def _run_objects(run) -> Iterator:
-    """A run's objects, as the parser meets them: each child that may be a drawing."""
-    from .parse.document import _RUN_OBJECTS
-
-    for node in children(run):
-        if local_name(node.tag) in _RUN_OBJECTS:
-            yield node
-
-
-def _anchors(run) -> list:
-    """A run's floating drawings, in order (``wp:anchor[k]``)."""
-    from .parse.drawing import drawing_element
-
-    out = []
-    for node in _run_objects(run):
-        drawing = drawing_element(node)
-        anchor = child(drawing, "anchor") if drawing is not None else None
-        if anchor is not None:
-            out.append(anchor)
-    return out
-
-
-def _inlines(run) -> list:
-    """A run's inline DrawingML objects, in order (``wp:inline[k]``): each object the
-    parser marks ``drawing:...`` (one ``wp:inline`` with an extent)."""
-    from .parse.document import _object
-    from .parse.drawing import drawing_element
-
-    out = []
-    for node in _run_objects(run):
-        if _object(node).startswith("drawing:"):
-            out.append(child(drawing_element(node), "inline"))
-    return out
-
-
-def _members(node):
-    """Where a drawing's group members are counted: the group itself, or the group an
-    anchor or inline drawing shows."""
-    if local_name(node.tag) in ("anchor", "inline"):
-        data = child(child(node, "graphic"), "graphicData")
-        content = next(iter(children(data)), None)
-        if content is not None and local_name(content.tag) in ("wgp", "grpSp"):
-            return content
-    return node
-
-
-def _sections(root) -> list:
-    """Every section's ``w:sectPr`` in a main document part, in document order: each
-    paragraph's (``w:pPr/w:sectPr``), then the body's own."""
-    body = child(root, "body")
-    out = [found for node in root.iter() if isinstance(node.tag, str) and local_name(node.tag) == "pPr"
-           for found in children(node, "sectPr")]
-    final = child(body, "sectPr")
-    return out + ([final] if final is not None else [])
 
 
 def resolve_path(root, path: str):
@@ -216,43 +69,4 @@ def resolve_path(root, path: str):
     return node
 
 
-def path_part(package, path: str, part: str | None = None) -> str | None:
-    """The part a path is in: ``part`` when the drawn object says (a header's or footer's
-    line, :attr:`Line.part <docx2svg.layout.Line.part>`), the footnotes or endnotes part
-    for a note's path, else the main document part.  ``package`` is an
-    :class:`ooxml_common.opc.OpcPackage`, or anything with a ``main_document_part`` and a
-    ``related(part, relationship type)`` (the reader docx2svg had, which docx-agent's
-    adapter over its own package still speaks)."""
-    from ooxml_common.opc import OpcPackage
-
-    from .opc import REL_ENDNOTES, REL_FOOTNOTES, main_part
-
-    if part:
-        return part
-    if isinstance(package, OpcPackage):
-        main, related = main_part(package), package.related_parts_of_type
-    else:
-        main, related = package.main_document_part, package.related
-    first = path.split("/", 1)[0]
-    for prefix, relationship in (("w:footnote", REL_FOOTNOTES), ("w:endnote", REL_ENDNOTES)):
-        if first == f"{prefix}s" or first.startswith(f"{prefix}["):
-            found = related(main, relationship)
-            return found[0] if found else None
-    return main
-
-
-def locate(source, path: str, part: str | None = None):
-    """``(part, element)`` for a drawn object's path, ``element`` parsed by the standard
-    library from ``source`` (an :class:`ooxml_common.opc.OpcPackage`, the ``.docx``'s bytes
-    or a file name); ``element`` is ``None`` where the path names nothing in the part.
-
-    For many lookups, parse each part once and call :func:`resolve_path`."""
-    from ooxml_common.opc import OpcPackage
-    from ooxml_common.xmlutil import parse_xml
-
-    package = source if isinstance(source, OpcPackage) else OpcPackage.open(source)
-    where = path_part(package, path, part)
-    data = package.read(where) if where is not None else None
-    if data is None:
-        return where, None
-    return where, resolve_path(parse_xml(data), path)
+__all__ = ["resolve_path"]

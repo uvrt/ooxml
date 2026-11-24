@@ -1,46 +1,30 @@
 """How much of a document a layout covers: the summary a caller reads before trusting it.
 
-Where the layout meets what its measured rules do not reach it carries on (round 16):
-it lays it out by an approximate rule or draws it as a marked placeholder of its height
-(``layout-placeholder:<reason>``) -- with :data:`docx2svg.paginate.CARRY_ON` off it stops,
-the body at the first obstacle (``layout-stopped:<reason>``), a header, footer or text box
-at its own (``story-stopped:<reason>``) -- and an absent face is laid out with a substitute
-(:mod:`docx2svg.fonts`).  Each of those is a warning; this is their sum, so that "laid out
-and nothing was wrong" is told apart from "could not lay it all out" without reading every
-warning:
+The Rust layout always reaches the end: where its measured rules do not reach it lays out by
+an approximate rule (``layout-approximate:<reason>``) or draws a marked placeholder of the
+item's height (``layout-placeholder:<reason>``), and an absent face is laid out with a
+substitute.  Each of those is a warning; this is their sum (:func:`coverage_from`, from
+``LaidPages.coverage_summary()``), so that "laid out and nothing was wrong" is told apart from
+"could not lay it all out" without reading every warning:
 
-* ``pages`` laid out and ``estimated_pages`` -- the layout's own count when it reached the
-  end, else Word's count from ``docProps/app.xml`` as last saved (``estimate_source`` says
-  which), else ``None``: past a stop the pages are not known, and none is invented;
+* ``pages`` laid out (``estimated_pages`` the same, ``estimate_source`` ``layout``);
 * ``blocks`` (the body's top-level paragraphs and tables), ``blocks_laid_out`` and
-  ``blocks_skipped`` -- a table the layout stopped in counts as skipped;
-* ``stop`` -- the first body stop, with its reason, message, page and element path;
-  ``story_stops`` -- every header, footer, note or text box drawn only up to a point;
-  ``placeholders`` -- every placeholder drawn instead (a body block drawn as one counts
-  as skipped);
+  ``blocks_skipped`` -- a block drawn as a placeholder counts as skipped;
+* ``placeholders`` -- every placeholder drawn; ``stop`` and ``story_stops`` are always empty
+  (the layout never stops);
 * ``substituted_fonts`` and ``missing_fonts``;
-* ``approximations`` -- every place laid out *without stopping* but by a rule no probe
-  measured (``layout-approximate:<reason>``): its reason, message, page and element path.
-  A floating drawing anchored in a table cell at a position not measured there, say: the
-  cell's text is laid out as if text did not wrap around it and the drawing is placed by
-  its anchor, and the rest of the page and the document goes on.
+* ``approximations`` -- every place laid out by a rule no probe measured: its reason,
+  message, page and element path.
 
-``complete`` is true only when every block was laid out, no story stopped, nothing was
-drawn as a placeholder and no face was missing.  A complete layout with substituted faces is complete: what it says about
-pagination holds as far as the substitutes are metric compatible
-(``substituted_fonts[...]["metric_compatible"]``).  ``status`` says the three apart:
-``complete`` (and nothing approximated), ``approximate`` (complete, with
-``approximations``: what they touch, and what follows them on their page, may be off) and
-``partial`` (not complete: a stop, a story stop, a placeholder or a missing face).
+``complete`` is true only when nothing was drawn as a placeholder and no face was missing.
+``status`` says ``complete`` (and nothing approximated), ``approximate`` (complete, with
+``approximations``) or ``partial``.
 
 Standard library only.
 """
 
 from __future__ import annotations
 
-import io
-import re
-import zipfile
 from dataclasses import asdict, dataclass, field
 
 
@@ -135,98 +119,3 @@ def coverage_from(summary: dict) -> Coverage:
     return Coverage(summary["complete"], summary["pages"], summary["pages"], "layout", blocks, laid_out,
                     blocks - laid_out, None, [], substituted, list(summary["missing"]),
                     listed(summary["approximations"]), listed(summary["placeholders"]))
-
-
-def saved_pages(package: bytes | None) -> int | None:
-    """``<Pages>`` of ``docProps/app.xml``: Word's page count when the file was last saved
-    (any other writer's, or none)."""
-    if not package:
-        return None
-    try:
-        with zipfile.ZipFile(io.BytesIO(package)) as archive:
-            text = archive.read("docProps/app.xml").decode("utf-8", "replace")
-    except (KeyError, zipfile.BadZipFile, OSError):
-        return None
-    found = re.search(r"<(?:\w+:)?Pages>\s*(\d+)\s*</", text)
-    return int(found.group(1)) if found and int(found.group(1)) > 0 else None
-
-
-def _reason(code: str) -> str:
-    return code.split(":", 1)[1] if ":" in code else code
-
-
-def in_layout_order(layout, substitutions: dict) -> list:
-    """``substitutions`` (:attr:`docx2svg.fonts.InstalledFonts.substitutions`, by family) in
-    the order ``layout`` meets their faces: those its body's lines draw text in, in the
-    order the body's lines draw them (page by page), then the others as they were recorded
-    (0.12.1).  A layout made from a previous one measures with the previous one's faces,
-    whose record holds the faces in the order the earlier versions met them: so the faces
-    are said in the order of the document laid out, as a layout made afresh says them,
-    whatever layouts came before."""
-    if len(substitutions) < 2:
-        return list(substitutions.values())
-    body: dict = {}
-    for page in layout.pages:
-        for line in page.lines:
-            if line.story is None:
-                for span in line.spans:
-                    body.setdefault(span.face, None)
-    first = [substitutions[face] for face in body if face in substitutions]
-    return first + [found for face, found in substitutions.items() if face not in body]
-
-
-def coverage_of(layout, document, package: bytes | None = None, fonts=None) -> Coverage:
-    """The :class:`Coverage` of ``layout`` (:class:`docx2svg.layout.Layout`) of
-    ``document``; ``fonts`` the :class:`docx2svg.fonts.InstalledFonts` it was measured
-    with, if any."""
-    body = list(document.body)
-    stop = None
-    for page in layout.pages:
-        if page.stop is not None:
-            message = next((m for c, m, p in layout.warnings if c.startswith("layout-stopped:")
-                            and p == page.number + 1), "")
-            code = next((c for c, m, p in layout.warnings if c.startswith("layout-stopped:")
-                         and p == page.number + 1), f"layout-stopped:{page.stop.reason}")
-            stop = StopInfo(code, page.stop.reason, message, page.number + 1, page.stop.path)
-            break
-    if stop is None:
-        found = next(((c, m, p) for c, m, p in layout.warnings if c.startswith("layout-stopped:")), None)
-        if found is not None:
-            stop = StopInfo(found[0], _reason(found[0]), found[1], found[2])
-    story_stops = [StopInfo(c, _reason(c), m, p) for c, m, p in layout.warnings if c.startswith("story-stopped:")]
-    approximations = [StopInfo(c, _reason(c), m, p, path)
-                      for c, m, p, path in getattr(layout, "approximations", ())]
-    approximations += [StopInfo("layout-approximate:glyph", f"{family!r} has no glyph for {char!r}: measured with "
-                                f"{'its missing glyph' if used == '.notdef' else repr(used)}", None, None)
-                       for (family, char), used in getattr(fonts, "glyph_fallbacks", {}).items()]
-    placeholders = [StopInfo(c, _reason(c), m, p, path) for c, m, p, path in getattr(layout, "placeholders", ())]
-
-    laid_out = len(body)
-    if stop is not None:
-        laid_out = 0
-        if stop.path:
-            for index, block in enumerate(body):
-                path = getattr(block, "path", "")
-                if path and (stop.path == path or stop.path.startswith(path + "/")):
-                    laid_out = index
-                    break
-            else:
-                laid_out = max(0, len(body) - (layout.pages[stop.page - 1].stop.remaining if stop.page else 0))
-
-    # Any measuring object may stand in for InstalledFonts; one that substitutes nothing says so.
-    substituted = [s.as_dict() for s in in_layout_order(layout, getattr(fonts, "substitutions", None) or {})]
-    missing = sorted(getattr(fonts, "missing", ()))
-    # A body block drawn as a placeholder is not laid out.
-    skipped = {path for *_, path in getattr(layout, "placeholders", ()) if path}
-    if stop is None and skipped:
-        laid_out -= sum(1 for block in body if getattr(block, "path", "") in skipped)
-    complete = stop is None and not story_stops and not missing and not placeholders
-    pages = len(layout.pages)
-    if stop is None:
-        estimate, source = pages, "layout"
-    elif (saved := saved_pages(package)) is not None:
-        estimate, source = max(saved, pages), "app.xml"
-    else:
-        estimate, source = None, None
-    return Coverage(complete, pages, estimate, source, len(body), laid_out, len(body) - laid_out, stop, story_stops,
-                    substituted, missing, approximations, placeholders)

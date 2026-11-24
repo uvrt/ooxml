@@ -9,7 +9,7 @@
 
 use crate::bench::edited;
 use crate::export::{Unlimited, KEY};
-use crate::text::fonts_of;
+use crate::fonts_record::fonts_of;
 use ooxml_base::{Limits, Locale};
 use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
