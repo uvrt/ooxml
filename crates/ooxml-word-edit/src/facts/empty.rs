@@ -52,6 +52,13 @@ const VISIBLE: [&str; 18] = [
     "pgNum",
 ];
 
+impl EmptyRun {
+    /// It, of the container `at`.
+    fn at(self, at: String) -> EmptyRun {
+        EmptyRun { at, ..self }
+    }
+}
+
 /// What a paragraph is in a run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum State {
@@ -94,19 +101,22 @@ pub fn empty_paragraphs(doc: &WordDoc) -> Result<Vec<EmptyRun>> {
         .position(|n| n.as_element().is_some_and(|e| e.name().is(Some(W), "body")));
     if let Some(k) = at_body.and_then(|k| u32::try_from(k).ok()) {
         if let Some(element) = at_path(root, &[k]) {
-            found.extend(reading.runs("body", &sequence(element, &[k])));
+            found.extend(reading.runs(&sequence(element, &[k])).map(|run| run.at("body".to_owned())));
         }
     }
-    for table in body.ids.tables().iter() {
-        for (r, (path, _)) in table.rows.iter().enumerate() {
+    // Each table found by its element and place; its id named only for an entry.
+    for table in body.ids.tables().placed() {
+        for (r, path) in table.rows.iter().enumerate() {
             let Some(row) = at_path(body.root(), path) else {
                 continue;
             };
             for cell in cells_at(row, path) {
                 let merge = find_path(&cell.element, &["tcPr", "vMerge"]);
                 if merge.is_none_or(|m| m.attribute(Some(W), "val") == Some("restart")) {
-                    let at = format!("{}/c{r},{}", table.id, cell.column);
-                    found.extend(reading.runs(&at, &sequence(&cell.element, &cell.path)));
+                    if let Some(run) = reading.runs(&sequence(&cell.element, &cell.path)) {
+                        let id = body.ids.tables().get(table.ordinal).map(|t| t.id).unwrap_or_default();
+                        found.push(run.at(format!("{id}/c{r},{}", cell.column)));
+                    }
                 }
             }
         }
@@ -201,8 +211,9 @@ impl Reading<'_> {
     }
 
     /// The runs of empty paragraphs between paragraphs of text in one container's
-    /// `sequence` (docx-agent's `_empty_runs`): one entry for the container, or none.
-    fn runs(&mut self, at: &str, sequence: &[Item<'_>]) -> Option<EmptyRun> {
+    /// `sequence` (docx-agent's `_empty_runs`): one entry for the container (its `at` the
+    /// caller's to name), or none.
+    fn runs(&mut self, sequence: &[Item<'_>]) -> Option<EmptyRun> {
         let mut states: Vec<(usize, Option<&[u32]>, State)> = Vec::new();
         let mut position = 0;
         for item in sequence {
@@ -217,7 +228,7 @@ impl Reading<'_> {
             }
         }
         let mut entry = EmptyRun {
-            at: at.to_owned(),
+            at: String::new(),
             paragraphs: Vec::new(),
             ids: Vec::new(),
             targets: Vec::new(),

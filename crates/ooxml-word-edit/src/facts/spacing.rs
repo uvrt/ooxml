@@ -193,7 +193,7 @@ pub fn punctuation_spacing(doc: &WordDoc, locale: Option<&str>) -> Result<Vec<Sp
     };
     let mut out = Vec::new();
     for placed in paragraphs(&docx) {
-        if !has_marks(&all_text(&placed.paragraph.element)) {
+        if !has_marks(&all_text(placed.element)) {
             continue; // nothing to look at (cheaper than the paragraph's atoms)
         }
         reading.paragraph(&placed, &mut out);
@@ -213,8 +213,8 @@ struct Reading<'a> {
 
 impl Reading<'_> {
     /// One paragraph's entries (docx-agent's `paragraph_problems`).
-    fn paragraph(&mut self, placed: &Placed, out: &mut Vec<SpacingProblem>) {
-        let work = Work::of(&placed.paragraph.element, Vec::new());
+    fn paragraph(&mut self, placed: &Placed<'_>, out: &mut Vec<SpacingProblem>) {
+        let work = Work::of(placed.element, Vec::new());
         let items = atoms(&work, work.root());
         let text: Vec<char> = items.iter().map(|a| a.ch).collect();
         let mut runs: HashMap<Option<Id>, RunLanguage> = HashMap::new();
@@ -252,7 +252,10 @@ impl Reading<'_> {
         let (mismatched, spacing): (Vec<Spot>, Vec<Spot>) = spots
             .into_iter()
             .partition(|s| matches!(s.kind, SpotKind::SpaceBefore | SpotKind::SpaceInside));
-        let para = placed.paragraph.id.clone();
+        if spacing.is_empty() && mismatched.is_empty() {
+            return;
+        }
+        let para = placed.id();
         if let Some(first) = spacing.first() {
             out.push(SpacingProblem::Spacing(Spacing {
                 para: para.clone(),

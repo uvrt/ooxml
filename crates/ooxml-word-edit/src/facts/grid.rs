@@ -15,6 +15,7 @@ use crate::{EditError, Result, WordDoc};
 use ooxml_word_model::docx::revisions::records;
 use ooxml_word_model::docx::tables::{cells_at, own_rows};
 use ooxml_word_model::docx::{at_path, find_path};
+use ooxml_word_model::ids::PlacedTable;
 use ooxml_word_model::xmlread::py_int;
 use ooxml_xml::Element;
 use std::collections::HashMap;
@@ -107,19 +108,23 @@ pub enum GridMismatch {
 pub fn table_grid_mismatch(doc: &WordDoc, keep: Option<&dyn Fn(&str) -> bool>) -> Result<Vec<GridMismatch>> {
     let docx = doc.docx()?;
     let body = docx.body().ok_or_else(|| EditError::NoPart(docx.main.clone()))?;
-    let tables: Vec<_> = body
+    // Each table found by its element and place; its id named only for an entry (or `keep`).
+    let named = |table: &PlacedTable<'_>| body.ids.tables().get(table.ordinal).map(|t| t.id).unwrap_or_default();
+    let tables: Vec<PlacedTable<'_>> = body
         .ids
         .tables()
-        .iter()
-        .filter(|t| keep.is_none_or(|k| k(&t.id)))
+        .placed()
+        .filter(|t| keep.is_none_or(|k| k(&named(t))))
         .collect();
     let mut by_place: Option<HashMap<Box<[u32]>, String>> = None;
     let mut found = Vec::new();
+    // The tables said off their grid, by ordinal.
+    let mut off_grid: Vec<usize> = Vec::new();
     for table in &tables {
         let rows: Vec<Arc<Element>> = table
             .rows
             .iter()
-            .filter_map(|(path, _)| at_path(body.root(), path).cloned())
+            .filter_map(|path| at_path(body.root(), path).cloned())
             .collect();
         let (grid, off) = off_grid_rows(&table.element, &rows);
         if off.is_empty() {
@@ -138,8 +143,9 @@ pub fn table_grid_mismatch(doc: &WordDoc, keep: Option<&dyn Fn(&str) -> bool>) -
         } else {
             (Vec::new(), None)
         };
+        off_grid.push(table.ordinal);
         found.push(GridMismatch::OffGrid {
-            table: table.id.clone(),
+            table: named(table),
             grid,
             widened: off.iter().any(|r| r.reaches > grid),
             rows: off,
@@ -148,21 +154,14 @@ pub fn table_grid_mismatch(doc: &WordDoc, keep: Option<&dyn Fn(&str) -> bool>) -
             fix,
         });
     }
-    let off_grid: Vec<String> = found
-        .iter()
-        .filter_map(|e| match e {
-            GridMismatch::OffGrid { table, .. } => Some(table.clone()),
-            GridMismatch::Ragged { .. } => None,
-        })
-        .collect();
     for table in &tables {
         let Some(ragged) = ragged_rows(doc, &table.element) else {
             continue;
         };
         // A row off the grid is said above; as it is now, that is the ragged shape too.
-        if ragged.after_accept || !off_grid.contains(&table.id) {
+        if ragged.after_accept || !off_grid.contains(&table.ordinal) {
             found.push(GridMismatch::Ragged {
-                table: table.id.clone(),
+                table: named(table),
                 grid: ragged.grid,
                 rows: ragged.rows,
                 after_accept: ragged.after_accept,
@@ -255,13 +254,13 @@ fn below(element: &Element, at: &[u32], locals: &[&str], out: &mut Vec<Vec<u32>>
 /// else accepting them (docx-agent's `_grid_settled_by`).
 fn settled_by(
     doc: &WordDoc,
-    table: &ooxml_word_model::ids::TableId,
+    table: &PlacedTable<'_>,
     off: &[OffGridRow],
     named: &HashMap<Box<[u32]>, String>,
 ) -> (Vec<String>, Option<GridFix>) {
     let mut places: Vec<Vec<u32>> = Vec::new();
     for entry in off {
-        if let Some((path, _)) = table.rows.get(entry.row) {
+        if let Some(path) = table.rows.get(entry.row) {
             let Some(row) =
                 ooxml_word_model::docx::at_path(&table.element, path.get(table.path.len()..).unwrap_or_default())
             else {

@@ -14,7 +14,7 @@ pub use detect::{detect, words_of, Detected, LANGUAGES, MIN_WORDS};
 use detections::Detecting;
 pub use detections::Detections;
 
-use super::proofing::{all_text, paragraphs, primary, Placed, Proofing};
+use super::proofing::{all_text, paragraphs, primary, Placed, Proofing, Who};
 use super::py_space;
 use crate::names::W;
 use crate::text::walk;
@@ -23,6 +23,7 @@ use crate::{EditError, Result, WordDoc};
 use detect::two_places;
 use ooxml_word_model::docx::text::leading_text;
 use ooxml_word_model::docx::{Docx, StoryPart};
+use ooxml_word_model::ids::Entry;
 use ooxml_word_model::typography::RunContext;
 use ooxml_xml::Element;
 use std::collections::{HashMap, HashSet};
@@ -155,7 +156,7 @@ pub struct Mistagged {
 
 /// A paragraph judged.
 struct Judged {
-    id: String,
+    who: Who,
     tag: Option<String>,
     source: Option<String>,
     language: usize,
@@ -238,19 +239,24 @@ pub fn text_language(doc: &WordDoc, scope: LanguageScope<'_>) -> Result<Option<T
         }),
     });
     let blocks = if scope.ranges {
-        top_level(docx.body().ok_or_else(|| EditError::NoPart(docx.main.clone()))?)
+        let body = docx
+            .parts
+            .iter()
+            .position(|p| p.part == docx.main)
+            .ok_or_else(|| EditError::NoPart(docx.main.clone()))?;
+        top_level(&docx, body)
     } else {
         Vec::new()
     };
-    out.mismatched = grouped(listed, &blocks, &short);
+    out.mismatched = grouped(&docx, listed, &blocks, &short);
     Ok(Some(out))
 }
 
-/// What the paragraphs checked are: those judged, the ids of those too short to judge, the
-/// count of those unclear.
+/// What the paragraphs checked are: those judged, those too short to judge, the count of
+/// those unclear.
 struct Reading {
     judged: Vec<Judged>,
-    short: HashSet<String>,
+    short: HashSet<Who>,
     unclear: usize,
 }
 
@@ -265,16 +271,16 @@ fn read(docx: &Docx, proofing: &mut Proofing, scope: LanguageScope<'_>) -> Readi
     let styles = proofing.styles.as_ref().map(|t| Arc::clone(t.root()));
     let memo = scope.detections.map(|d| &d.paragraphs);
     for placed in paragraphs(docx) {
-        if scope.keep.is_some_and(|keep| !keep(&placed.paragraph.id)) {
+        if scope.keep.is_some_and(|keep| !keep(&placed.id())) {
             continue;
         }
         let of = judged::Of {
-            paragraph: &placed.paragraph.element,
+            paragraph: placed.element,
             table: placed.table.as_ref().map(Option::as_ref),
             styles: styles.as_ref(),
         };
         let found = match memo.and_then(|m| m.get(&of)) {
-            Some(kept) => kept.named(&placed.paragraph.id),
+            Some(kept) => kept.judged(placed.who()),
             None => {
                 let found = judge(proofing, &placed, &mut detecting);
                 if let Some(memo) = memo {
@@ -286,7 +292,7 @@ fn read(docx: &Docx, proofing: &mut Proofing, scope: LanguageScope<'_>) -> Readi
         match found {
             Ok(found) => out.judged.push(found),
             Err(Unjudged::TooShort) => {
-                out.short.insert(placed.paragraph.id.clone());
+                out.short.insert(placed.who());
             }
             Err(Unjudged::Unclear) => out.unclear += 1,
             Err(Unjudged::NoText) => {}
@@ -307,10 +313,10 @@ type Tagged = (Option<String>, Option<String>);
 /// proof or that is code.
 fn judge(
     proofing: &mut Proofing,
-    placed: &Placed,
+    placed: &Placed<'_>,
     detecting: &mut Detecting<'_>,
 ) -> std::result::Result<Judged, Unjudged> {
-    let element = &placed.paragraph.element;
+    let element = placed.element;
     let raw = all_text(element);
     if words_of(&raw).len() < MIN_WORDS {
         return Err(if raw.chars().all(py_space) {
@@ -377,7 +383,7 @@ fn judge(
         })
         .unwrap_or_default();
     Ok(Judged {
-        id: placed.paragraph.id.clone(),
+        who: placed.who(),
         tag,
         source,
         language,
@@ -425,17 +431,16 @@ fn tag_for(proofing: &Proofing, locale: Option<&str>, language: usize) -> String
         .to_owned()
 }
 
-/// A top-level block of the body: whether it is a paragraph, its element and id.
+/// A top-level block of the body: its element and, a paragraph, which one.
 struct Block<'a> {
-    paragraph: bool,
     element: &'a Element,
-    id: String,
+    paragraph: Option<Who>,
 }
 
 /// The body's blocks in order, a block-level content control opened (`_top_level`): those
-/// the index names.
-fn top_level(body: &StoryPart) -> Vec<Block<'_>> {
-    fn visit<'a>(body: &'a StoryPart, container: &'a Element, at: &[u32], out: &mut Vec<Block<'a>>) {
+/// the index names. `body`: the body's place among `docx`'s parts.
+fn top_level(docx: &Docx, body: usize) -> Vec<Block<'_>> {
+    fn visit<'a>(part: (usize, &'a StoryPart), container: &'a Element, at: &[u32], out: &mut Vec<Block<'a>>) {
         for (k, child) in container.children().iter().enumerate() {
             let Some(child) = child.as_element() else { continue };
             let place = [at, &[u32::try_from(k).unwrap_or(u32::MAX)]].concat();
@@ -447,32 +452,28 @@ fn top_level(body: &StoryPart) -> Vec<Block<'_>> {
                     .find(|(_, n)| n.as_element().is_some_and(|e| e.name().is(Some(W), "sdtContent")));
                 if let Some((j, content)) = content.and_then(|(j, n)| n.as_element().map(|e| (j, e))) {
                     let inner = [place.as_slice(), &[u32::try_from(j).unwrap_or(u32::MAX)]].concat();
-                    visit(body, content, &inner, out);
+                    visit(part, content, &inner, out);
                 }
-            } else if child.name().is(Some(W), "p") {
-                if let Some(found) = body.ids.paragraph_at(&place) {
-                    out.push(Block {
-                        paragraph: true,
-                        element: child,
-                        id: found.id,
-                    });
-                }
-            } else if child.name().is(Some(W), "tbl") {
-                if let Some(found) = body.ids.table_at(&place) {
-                    out.push(Block {
-                        paragraph: false,
-                        element: child,
-                        id: found.id,
-                    });
+            } else if child.name().is(Some(W), "p") || child.name().is(Some(W), "tbl") {
+                let paragraph = match part.1.ids.at(&place) {
+                    Some(Entry::Paragraph(ordinal)) => Some(Who { part: part.0, ordinal }),
+                    Some(Entry::Table(_)) => None,
+                    None => continue,
+                };
+                if paragraph.is_some() == child.name().is(Some(W), "p") {
+                    out.push(Block { element: child, paragraph });
                 }
             }
         }
     }
-    let root = body.root();
+    let Some(part) = docx.parts.get(body) else {
+        return Vec::new();
+    };
+    let root = part.root();
     let mut out = Vec::new();
     for (k, child) in root.children().iter().enumerate() {
         if let Some(element) = child.as_element().filter(|e| e.name().is(Some(W), "body")) {
-            visit(body, element, &[u32::try_from(k).unwrap_or(u32::MAX)], &mut out);
+            visit((body, part), element, &[u32::try_from(k).unwrap_or(u32::MAX)], &mut out);
         }
     }
     out
@@ -480,15 +481,14 @@ fn top_level(body: &StoryPart) -> Vec<Block<'_>> {
 
 /// `listed` as entries (`_grouped`), consecutive top-level paragraphs alike -- only
 /// paragraphs too short to judge or without text between them -- as one range.
-fn grouped(listed: Vec<Judged>, blocks: &[Block<'_>], short: &HashSet<String>) -> Vec<Mistagged> {
-    let order: HashMap<&str, usize> = blocks
+fn grouped(docx: &Docx, listed: Vec<Judged>, blocks: &[Block<'_>], short: &HashSet<Who>) -> Vec<Mistagged> {
+    let order: HashMap<Who, usize> = blocks
         .iter()
         .enumerate()
-        .filter(|(_, b)| b.paragraph)
-        .map(|(k, b)| (b.id.as_str(), k))
+        .filter_map(|(k, b)| Some((b.paragraph?, k)))
         .collect();
     let alike = |a: &Judged, b: &Judged| {
-        let (Some(&from), Some(&to)) = (order.get(a.id.as_str()), order.get(b.id.as_str())) else {
+        let (Some(&from), Some(&to)) = (order.get(&a.who), order.get(&b.who)) else {
             return false;
         };
         if (primary(a.tag.as_deref()), &a.source, a.language) != (primary(b.tag.as_deref()), &b.source, b.language) {
@@ -498,7 +498,7 @@ fn grouped(listed: Vec<Judged>, blocks: &[Block<'_>], short: &HashSet<String>) -
             .get(from + 1..to)
             .unwrap_or_default()
             .iter()
-            .all(|block| block.paragraph && (short.contains(&block.id) || !has_text(block.element)))
+            .all(|block| block.paragraph.is_some_and(|who| short.contains(&who) || !has_text(block.element)))
     };
     let mut out = Vec::new();
     let mut run: Vec<Judged> = Vec::new();
@@ -510,13 +510,11 @@ fn grouped(listed: Vec<Judged>, blocks: &[Block<'_>], short: &HashSet<String>) -
         #[allow(clippy::cast_precision_loss)] // word counts
         let weighted: f64 = run.iter().map(|j| j.confidence * j.words as f64).sum::<f64>() / words as f64;
         let through = (run.len() > 1).then(|| {
-            let span = order.get(last.id.as_str()).copied().unwrap_or(0)
-                - order.get(first.id.as_str()).copied().unwrap_or(0)
-                + 1;
-            (last.id.clone(), span)
+            let span = order.get(&last.who).copied().unwrap_or(0) - order.get(&first.who).copied().unwrap_or(0) + 1;
+            (last.who.id(docx), span)
         });
         out.push(Mistagged {
-            para: first.id.clone(),
+            para: first.who.id(docx),
             through,
             tag: first.tag.clone(),
             source: first.source.clone(),
