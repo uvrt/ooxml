@@ -4,7 +4,12 @@ case expects; (b) keeps its paraIds, texts, revision authors and dates and comme
 Word's re-save; (c) reads after Word's Accept All and Reject All as after the tools'; (d) lays
 out on Word's pages (page count, and each paragraph on Word's page); (e) has Word's field results
 after an update of every field.  Word's answers are recorded (``observed.py``) whatever the
-verdict; ``deviations.py`` lists where the tools differ knowingly."""
+verdict; ``deviations.py`` lists where the tools differ knowingly.
+
+The gates' cases are a sample by default (``WORD_SUITE_GATES=sample``, about an hour of Word
+cold): per tool and mode, the first case the tools accept, kept in ``gate-sample.json``;
+``WORD_SUITE_GATES=full`` takes the full set, some 1,600 cases and ten hours and more
+(``edit_sets.py``, gates)."""
 
 from __future__ import annotations
 
@@ -88,12 +93,26 @@ def test_gates_cases_are_frozen_as_data():
     assert cases
 
 
+def test_the_gates_sample_is_what_the_rule_picks(box):
+    """The kept sample (``gate-sample.json``) is still the first case per tool and action the
+    tools accept; where it is not, ``edit_sets.py sample`` writes it again."""
+    if edit_sets.GATES != "sample":
+        pytest.skip("the full gate set")
+    kept = [case.id for case in edit_sets.gate_cases()[0]]
+    assert edit_sets.choose_sample(box) == kept, "the gates' sample is stale: python edit_sets.py sample"
+
+
 @pytest.mark.parametrize("case", CASES, ids=IDS)
 def test_word_opens_and_exports_it(word, store, outputs, case):
     data = outputs(case)
     output = edit_sets.digest(data)
     outcome = word.export(data, _name(case))
     store.record(case.id, output, "opens", outcome.outcome)
+    why = reason(case.id, "opens")
+    if why:
+        if not outcome:
+            pytest.xfail(why)
+        pytest.fail(f"listed as a deviation ({why}), but Word now opens it", pytrace=False)
     assert outcome, f"Word did not open it: {outcome.outcome} {outcome.detail}"
     if case.shows:
         text = " ".join(" ".join(oracle.pdf_pages(outcome.path)).split())
@@ -124,7 +143,7 @@ def test_word_review_reads_as_ours(word, store, outputs, box, case, action):
     reader = answers.Reader(box)
     theirs = reader.markdown(reviewed)
     store.record(case.id, edit_sets.digest(data), action, theirs)
-    _verdict(case, action, answers.ours(reader, data, action), theirs)
+    _verdict(case, action, answers.answer(reader, data, action), theirs)
 
 
 @pytest.mark.parametrize("case", CASES, ids=IDS)
@@ -138,7 +157,7 @@ def test_word_pages_are_ours(word, store, outputs, box, case):
     text = WordSide.pdf_pages(outcome.path)
     theirs = {"count": len(text), "text": text}
     store.record(case.id, edit_sets.digest(data), "pages", theirs)
-    _verdict(case, "pages", answers.ours(reader, data, "pages"), theirs)
+    _verdict(case, "pages", answers.answer(reader, data, "pages"), theirs)
 
 
 @pytest.mark.parametrize("case", CASES, ids=IDS)
@@ -152,4 +171,4 @@ def test_word_field_results_are_ours(word, store, outputs, box, case):
     assert updated is not None, "Word's field update did not save"
     theirs = reader.fields(updated, update=False)
     store.record(case.id, edit_sets.digest(data), "fields", theirs)
-    _verdict(case, "fields", answers.ours(reader, data, "fields"), theirs)
+    _verdict(case, "fields", answers.answer(reader, data, "fields"), theirs)

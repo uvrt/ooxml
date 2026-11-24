@@ -116,7 +116,7 @@ impl BlockFacts {
         let found = {
             let mut memo = self.memo.lock().unwrap_or_else(PoisonError::into_inner);
             memo.0
-                .get(&key)
+                .touch(&key)
                 .filter(|k| k.of(element, outer, formatting))
                 .and_then(|k| k.value.downcast_ref::<F::Value>().cloned())
         };
