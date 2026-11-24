@@ -14,6 +14,13 @@
 //! gives the order, a later one places only the names the earlier ones lack, in the same way.
 //! A parent with an overlay takes the overlay's order instead.
 //!
+//! A `local` order is for a reader that finds children by local name (charts, DrawingML): its
+//! parents' orders (each generated, or overlaid, as above), joined, with the prefixes dropped.
+//! Two orders join at the steps that share a name; between two such steps, steps only one
+//! order has are kept, and the same number of steps on both sides are joined one to one (the
+//! alternatives of one choice); anything else is an error. A `local` parent need not be a
+//! `parent`: [`ORDERS`] stays the set Word's edits and validation read.
+//!
 //! Must not: hold an order by hand (that is the overlay's, with its cause), or read a schema
 //! it does not name: a group, type or namespace a parent needs and the sources lack is an
 //! error, never a silently shorter order.
@@ -36,6 +43,8 @@ type Q = (String, String);
 type Ranks = Vec<Vec<Q>>;
 /// A parent, its steps as written, and its overlay's cause (none: generated).
 type Written = (String, Vec<Vec<String>>, Option<String>);
+/// A `local` order: its name and its steps by local name.
+type Local = (String, Vec<Vec<String>>);
 
 /// What the description says.
 #[derive(Default)]
@@ -46,6 +55,8 @@ struct Description {
     parents: Vec<String>,
     /// Parent to its overlay: its cause and its steps as written.
     overlays: BTreeMap<String, (String, Vec<Vec<String>>)>,
+    /// The `local` orders: a constant's name and the parents it joins.
+    locals: Vec<(String, Vec<String>)>,
 }
 
 fn parse(source: &str) -> Result<Description, String> {
@@ -67,6 +78,20 @@ fn parse(source: &str) -> Result<Description, String> {
                 out.namespaces.push((prefix.to_owned(), uri.to_owned()));
             }
             "parent" => out.parents.push(rest.to_owned()),
+            "local" => {
+                let (name, parents) = rest
+                    .split_once(" = ")
+                    .ok_or_else(|| format!("{}: local <NAME> = <parent>...", at()))?;
+                let parents: Vec<String> = parents.split_whitespace().map(str::to_owned).collect();
+                let constant = !name.is_empty()
+                    && name
+                        .chars()
+                        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+                if !constant || parents.is_empty() {
+                    return Err(format!("{}: local <NAME> = <parent>... (NAME in capitals)", at()));
+                }
+                out.locals.push((name.to_owned(), parents));
+            }
             "cause" => cause = Some(rest.to_owned()),
             "overlay" => {
                 let (parent, steps) = rest
@@ -387,21 +412,21 @@ fn merge(mut base: Ranks, other: &Ranks) -> Ranks {
     base
 }
 
-/// The generated ranks of every listed parent, as written names.
-fn generate_orders(root: &Path, d: &Description) -> Result<Vec<Written>, String> {
-    let sources: Vec<Schemas> = d
-        .sources
-        .iter()
-        .map(|s| load(&root.join(SCHEMAS).join(s)))
-        .collect::<Result<_, _>>()?;
-    let uri_of = |prefix: &str| d.namespaces.iter().find(|(p, _)| p == prefix).map(|(_, u)| u.clone());
-    let prefix_of = |uri: &str| d.namespaces.iter().find(|(_, u)| u == uri).map(|(p, _)| p.clone());
-    let mut out = Vec::new();
-    for parent in &d.parents {
-        if let Some((cause, steps)) = d.overlays.get(parent) {
-            out.push((parent.clone(), steps.clone(), Some(cause.clone())));
-            continue;
+/// The sources' schemas and the description: each parent's order, as written names.
+struct Orders<'a> {
+    d: &'a Description,
+    sources: Vec<Schemas>,
+}
+
+impl Orders<'_> {
+    /// A parent's steps as written, and its overlay's cause (none: generated).
+    fn of(&self, parent: &str) -> Result<(Vec<Vec<String>>, Option<String>), String> {
+        if let Some((cause, steps)) = self.d.overlays.get(parent) {
+            return Ok((steps.clone(), Some(cause.clone())));
         }
+        let d = self.d;
+        let uri_of = |prefix: &str| d.namespaces.iter().find(|(p, _)| p == prefix).map(|(_, u)| u.clone());
+        let prefix_of = |uri: &str| d.namespaces.iter().find(|(_, u)| u == uri).map(|(p, _)| p.clone());
         let (prefix, local) = parent
             .split_once(':')
             .ok_or_else(|| format!("{parent}: not prefixed"))?;
@@ -410,7 +435,7 @@ fn generate_orders(root: &Path, d: &Description) -> Result<Vec<Written>, String>
             local.to_owned(),
         );
         let mut ranks: Option<Ranks> = None;
-        for schemas in &sources {
+        for schemas in &self.sources {
             for steps in schemas.parent_steps(&key)? {
                 ranks = Some(match ranks {
                     None => steps,
@@ -428,12 +453,128 @@ fn generate_orders(root: &Path, d: &Description) -> Result<Vec<Written>, String>
             }
             written.push(names);
         }
-        out.push((parent.clone(), written, None));
+        Ok((written, None))
+    }
+
+    /// A `local` order: its parents' orders by local name, joined.
+    fn local(&self, parents: &[String]) -> Result<Vec<Vec<String>>, String> {
+        let mut out: Option<Vec<Vec<String>>> = None;
+        for parent in parents {
+            let (steps, _) = self.of(parent)?;
+            let mut seen = BTreeSet::new();
+            let mut locals = Vec::new();
+            for step in steps {
+                let mut names = Vec::new();
+                for name in step {
+                    let local = name.split_once(':').map_or(name.as_str(), |(_, l)| l).to_owned();
+                    if !seen.insert(local.clone()) {
+                        return Err(format!(
+                            "{parent}: {local} in two steps; a local order ranks a name once"
+                        ));
+                    }
+                    names.push(local);
+                }
+                locals.push(names);
+            }
+            out = Some(match out {
+                None => locals,
+                Some(base) => join(base, &locals).map_err(|e| format!("{}: {e}", parents.join(" ")))?,
+            });
+        }
+        out.ok_or_else(|| "a local order without parents".to_owned())
+    }
+}
+
+/// Two orders by local name joined ([module docs](self)): at the steps that share a name,
+/// with the steps between two such steps kept (one side has none) or joined one to one.
+fn join(base: Vec<Vec<String>>, other: &[Vec<String>]) -> Result<Vec<Vec<String>>, String> {
+    let shares = |a: &[String], b: &[String]| a.iter().any(|n| b.contains(n));
+    let mut anchors = Vec::new();
+    for (j, step) in other.iter().enumerate() {
+        if let Some(i) = base.iter().position(|b| shares(b, step)) {
+            if anchors.last().is_some_and(|&(last, _)| last >= i) {
+                return Err(format!("the orders cross at {}", step.join(" ")));
+            }
+            anchors.push((i, j));
+        }
+    }
+    let ends = anchors.iter().copied().chain([(base.len(), other.len())]);
+    let mut out: Vec<Vec<String>> = Vec::new();
+    let (mut i0, mut j0) = (0, 0);
+    let union = |a: &[String], b: &[String]| {
+        let mut step = a.to_vec();
+        step.extend(b.iter().filter(|n| !a.contains(n)).cloned());
+        step
+    };
+    for (i, j) in ends {
+        let (ours, theirs) = (base.get(i0..i).unwrap_or(&[]), other.get(j0..j).unwrap_or(&[]));
+        if ours.is_empty() || theirs.is_empty() {
+            out.extend(ours.iter().chain(theirs).cloned());
+        } else if ours.len() == theirs.len() {
+            out.extend(ours.iter().zip(theirs).map(|(a, b)| union(a, b)));
+        } else {
+            return Err(format!(
+                "between two shared steps, {} and {} steps of their own",
+                ours.len(),
+                theirs.len()
+            ));
+        }
+        if let (Some(a), Some(b)) = (base.get(i), other.get(j)) {
+            out.push(union(a, b));
+        }
+        (i0, j0) = (i + 1, j + 1);
+    }
+    let mut seen = BTreeSet::new();
+    for name in out.iter().flatten() {
+        if !seen.insert(name) {
+            return Err(format!("{name} in two steps"));
+        }
     }
     Ok(out)
 }
 
-fn emit(d: &Description, orders: &[Written]) -> String {
+/// The generated ranks of every listed parent, as written names; and the `local` orders.
+fn generate_orders(root: &Path, d: &Description) -> Result<(Vec<Written>, Vec<Local>), String> {
+    let orders = Orders {
+        d,
+        sources: d
+            .sources
+            .iter()
+            .map(|s| load(&root.join(SCHEMAS).join(s)))
+            .collect::<Result<_, _>>()?,
+    };
+    let mut out = Vec::new();
+    for parent in &d.parents {
+        let (steps, cause) = orders.of(parent)?;
+        out.push((parent.clone(), steps, cause));
+    }
+    let mut locals = Vec::new();
+    for (name, parents) in &d.locals {
+        locals.push((name.clone(), orders.local(parents)?));
+    }
+    Ok((out, locals))
+}
+
+/// The `local` orders' names (what a view's `order = NAME` may name).
+pub fn local_names(root: &Path) -> Result<Vec<String>, String> {
+    let source = std::fs::read_to_string(root.join(DESCRIPTION)).map_err(|e| format!("{DESCRIPTION}: {e}"))?;
+    Ok(parse(&source)?.locals.into_iter().map(|(name, _)| name).collect())
+}
+
+fn steps_literal(steps: &[Vec<String>]) -> String {
+    let steps: Vec<String> = steps
+        .iter()
+        .map(|step| {
+            format!(
+                "&[{}]",
+                step.iter().map(|n| format!("{n:?}")).collect::<Vec<_>>().join(", ")
+            )
+        })
+        .collect();
+    format!("&[{}]", steps.join(", "))
+}
+
+fn emit(d: &Description, orders: &[Written], locals: &[Local]) -> String {
     let mut out = String::new();
     out.push_str("// @generated by `cargo xtask codegen` from schema/orders.list and the schemas in xsd/;\n");
     out.push_str("// do not edit.\n\n");
@@ -454,18 +595,27 @@ fn emit(d: &Description, orders: &[Written]) -> String {
         if let Some(cause) = cause {
             let _ = writeln!(out, "    // overlay: {cause}");
         }
-        let _ = write!(out, "    ({parent:?}, &[");
-        for (k, step) in steps.iter().enumerate() {
-            if k > 0 {
-                out.push_str(", ");
-            }
-            out.push_str("&[");
-            out.push_str(&step.iter().map(|n| format!("{n:?}")).collect::<Vec<_>>().join(", "));
-            out.push(']');
-        }
-        out.push_str("]),\n");
+        let _ = writeln!(out, "    ({parent:?}, {}),", steps_literal(steps));
     }
-    out.push_str("];\n");
+    out.push_str("];\n\n");
+    out.push_str("/// The orders a reader that finds children by local name inserts with (charts, DrawingML):\n");
+    out.push_str("/// each its parents' orders joined, by local name. Apart from [`ORDERS`], so Word's edits\n");
+    out.push_str("/// and validation do not widen.\n");
+    out.push_str("pub mod local {\n    use super::Steps;\n");
+    for (name, steps) in locals {
+        let parents = d
+            .locals
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, p)| p.iter().map(|p| format!("`{p}`")).collect::<Vec<_>>().join(", "))
+            .unwrap_or_default();
+        let _ = writeln!(
+            out,
+            "\n    /// {parents}.\n    pub const {name}: Steps = {};",
+            steps_literal(steps)
+        );
+    }
+    out.push_str("}\n");
     out
 }
 
@@ -473,7 +623,8 @@ fn emit(d: &Description, orders: &[Written]) -> String {
 pub fn run(root: &Path, check: bool) -> Result<Option<String>, String> {
     let source = std::fs::read_to_string(root.join(DESCRIPTION)).map_err(|e| format!("{DESCRIPTION}: {e}"))?;
     let d = parse(&source)?;
-    let generated = emit(&d, &generate_orders(root, &d)?);
+    let (orders, locals) = generate_orders(root, &d)?;
+    let generated = emit(&d, &orders, &locals);
     let path = root.join(OUTPUT);
     let current = std::fs::read_to_string(&path).unwrap_or_default();
     if current == generated {
@@ -483,4 +634,39 @@ pub fn run(root: &Path, check: bool) -> Result<Option<String>, String> {
         std::fs::write(&path, generated).map_err(|e| e.to_string())?;
     }
     Ok(Some(OUTPUT.to_owned()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::join;
+
+    fn order(steps: &[&[&str]]) -> Vec<Vec<String>> {
+        steps
+            .iter()
+            .map(|s| s.iter().map(|n| (*n).to_owned()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn orders_join_at_shared_steps_and_one_to_one_between() {
+        let cache = order(&[&["formatCode"], &["ptCount"], &["pt"], &["extLst"]]);
+        let levels = order(&[&["ptCount"], &["lvl"], &["extLst"]]);
+        assert_eq!(
+            join(cache, &levels),
+            Ok(order(&[&["formatCode"], &["ptCount"], &["pt", "lvl"], &["extLst"]]))
+        );
+    }
+
+    #[test]
+    fn orders_that_cross_or_leave_the_place_open_do_not_join() {
+        let ab = order(&[&["a"], &["b"]]);
+        assert!(join(ab.clone(), &order(&[&["b"], &["a"]])).is_err());
+        let wide = order(&[&["a"], &["x"], &["y"], &["b"]]);
+        assert!(join(wide, &order(&[&["a"], &["z"], &["b"]])).is_err());
+        assert_eq!(
+            join(ab.clone(), &order(&[&["a"], &["c"], &["b"]])),
+            Ok(order(&[&["a"], &["c"], &["b"]]))
+        );
+        assert!(join(ab, &order(&[&["c"]])).is_err());
+    }
 }

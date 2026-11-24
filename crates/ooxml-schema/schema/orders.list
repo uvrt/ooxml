@@ -10,6 +10,10 @@
 # - `ns <prefix> <uri>`: the prefix a namespace's names are written with (the first listed);
 # - `parent <name>`: a parent whose order is generated (widening this list changes where
 #   edits put children and what validation checks: Phase 5, not now);
+# - `local <NAME> = <parent>...`: an order by local name for the readers that find children so
+#   (charts, DrawingML), its parents' orders joined (`orders::local::NAME`; the views' `order =
+#   NAME`); a parent here need not be a `parent` above, so Word's edits and validation do not
+#   widen;
 # - `overlay <name> = <step> | <step>...` (names of one step separated by spaces), after a
 #   `cause <why>` line.
 
@@ -43,6 +47,7 @@ ns c http://schemas.openxmlformats.org/drawingml/2006/chart
 ns dgm http://schemas.openxmlformats.org/drawingml/2006/diagram
 ns dsp http://schemas.microsoft.com/office/drawing/2008/diagram
 ns x http://schemas.openxmlformats.org/spreadsheetml/2006/main
+ns p http://schemas.openxmlformats.org/presentationml/2006/main
 
 parent w:body
 parent w:p
@@ -124,6 +129,49 @@ parent dgm:t
 parent dsp:txBody
 parent dgm:dataModel
 
+# Charts (ooxml-chart's edits, the c.views orders).
+local CHART_SPACE = c:chartSpace
+local CHART = c:chart
+local TITLE = c:title
+local TX = c:tx
+local VIEW_3D = c:view3D
+local PLOT_AREA = c:plotArea
+local BAR_CHART = c:barChart
+local SER = c:ser
+local DATA_POINT = c:dPt
+local MARKER = c:marker
+local DATA_REFERENCE = c:numRef c:strRef c:multiLvlStrRef
+local CACHE = c:numCache c:strCache
+local DATA_CACHE = c:numCache c:strCache c:multiLvlStrCache
+local LEVELS = c:multiLvlStrCache
+local LEVEL = c:lvl
+local DATA_LABELS = c:dLbls
+local DATA_LABEL = c:dLbl
+local LEGEND = c:legend
+local CAT_AX = c:catAx
+local VAL_AX = c:valAx
+local DATE_AX = c:dateAx
+local SER_AX = c:serAx
+local SCALING = c:scaling
+
+# DrawingML (ooxml-chart's formatting, the a.views orders).
+local GRAD_FILL = a:gradFill
+local BLIP_FILL = a:blipFill
+local LINE = a:ln
+local XFRM = a:xfrm
+local SHAPE_PROPERTIES = a:spPr c:spPr
+local TEXT_BODY = c:rich c:txPr a:txBody
+local BODY_PROPERTIES = a:bodyPr
+local PARAGRAPH = a:p
+local PARAGRAPH_PROPERTIES = a:pPr a:defPPr a:lvl1pPr
+local RUN_PROPERTIES = a:rPr a:defRPr a:endParaRPr
+local TABLE = a:tbl
+local TABLE_PROPERTIES = a:tblPr
+local TABLE_ROW = a:tr
+local TABLE_CELL = a:tc
+local TABLE_CELL_PROPERTIES = a:tcPr
+local SHAPE = p:sp
+
 cause frozen Python, unmeasured: mc:AlternateContent (markup compatibility, ECMA-376 Part 3) is not in wml.xsd
 overlay w:r = w:rPr | w:br w:t w:contentPart w:delText w:instrText w:delInstrText w:noBreakHyphen w:softHyphen w:dayShort w:monthShort w:yearShort w:dayLong w:monthLong w:yearLong w:annotationRef w:footnoteRef w:endnoteRef w:separator w:continuationSeparator w:sym w:pgNum w:cr w:tab w:object w:pict w:fldChar w:ruby w:footnoteReference w:endnoteReference w:commentReference w:drawing w:ptab w:lastRenderedPageBreak mc:AlternateContent
 cause frozen Python, unmeasured: the 5th edition adds m:oMath and m:oMathPara among a table's children; the table leaves them unlisted (placed last)
@@ -154,3 +202,5 @@ cause frozen Python, unmeasured: one order for a title's CT_Tx (strRef or rich) 
 overlay c:tx = c:strRef | c:rich | c:v
 cause frozen Python, unmeasured: dsp: is Microsoft's diagram drawing ([MS-ODRAWXML]), not in ECMA-376
 overlay dsp:txBody = a:bodyPr | a:lstStyle | a:p
+cause frozen Python, unmeasured: Office's mc:AlternateContent (holding c14:style) goes after c:roundedCorners, as ooxml-edit's charts/create.py writes it; markup compatibility (ECMA-376 Part 3) is not in CT_ChartSpace
+overlay c:chartSpace = c:date1904 | c:lang | c:roundedCorners | mc:AlternateContent | c:style | c:clrMapOvr | c:pivotSource | c:protection | c:chart | c:spPr | c:txPr | c:externalData | c:printSettings | c:userShapes | c:extLst
