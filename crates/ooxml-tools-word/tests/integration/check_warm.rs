@@ -1,8 +1,8 @@
 //! `check`'s layout facts made warm equal those made cold (the caching policy's page tier,
 //! ADR-008): a made-up document of several pages (the Markdown constructs fixture's body,
 //! three times: headings, lists, tables, notes, a header and a footer) edited at random --
-//! a paragraph made longer, small text, empty paragraphs and keeps inserted, blocks deleted
-//! and copied -- and after every edit one engine's check, kept warm across the versions,
+//! a paragraph made longer, small text, empty paragraphs, keeps and tables whose columns fit
+//! badly inserted, blocks deleted and copied -- and after every edit one engine's check, kept warm across the versions,
 //! equals a fresh engine's, with and without minimum sizes and a range; and again with the
 //! warm engine's page tier held within a budget too small to keep most pages.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
@@ -121,7 +121,7 @@ fn unnamed(block: &str) -> String {
 /// One random edit of `blocks`.
 fn edit(blocks: &mut Vec<String>, random: &mut Random) {
     let at = random.below(blocks.len());
-    match random.below(6) {
+    match random.below(7) {
         0 => {
             let texts: Vec<usize> = (0..blocks.len()).filter(|k| blocks[*k].contains("</w:t>")).collect();
             let k = texts[random.below(texts.len())];
@@ -148,6 +148,23 @@ fn edit(blocks: &mut Vec<String>, random: &mut Random) {
         4 | 3 => {
             let copy = unnamed(&blocks[random.below(blocks.len())]);
             blocks.insert(at, copy);
+        }
+        6 => {
+            let words = "A cell that wraps over several lines beside a roomy one. ".repeat(2 + random.below(6));
+            let cell = |text: &str| {
+                format!(
+                    r#"<w:tc><w:tcPr><w:tcW w:w="4500" w:type="dxa"/></w:tcPr><w:p><w:r><w:t xml:space="preserve">{text}</w:t></w:r></w:p></w:tc>"#
+                )
+            };
+            let rows: String = (0..=random.below(3))
+                .map(|k| format!("<w:tr>{}{}</w:tr>", cell(&format!("Item {k}")), cell(&words)))
+                .collect();
+            blocks.insert(
+                at,
+                format!(
+                    r#"<w:tbl><w:tblPr><w:tblW w:w="9000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="4500"/><w:gridCol w:w="4500"/></w:tblGrid>{rows}</w:tbl>"#
+                ),
+            );
         }
         _ => {
             let kept = r#"<w:p><w:pPr><w:keepNext/></w:pPr><w:r><w:t>Kept with the next.</w:t></w:r></w:p>"#;
@@ -195,9 +212,9 @@ fn versions(seed: u64, rounds: usize) -> Vec<Package> {
 
 /// `rounds` random edits from `seed`, each version checked by `warm` (kept across them)
 /// and by a fresh engine: the same layout facts (and range). How many rounds found small
-/// text.
-fn warm_equals_cold(warm: &EnginePages, seed: u64, rounds: usize) -> usize {
-    let mut small = 0;
+/// text, and how many columns that fit badly.
+fn warm_equals_cold(warm: &EnginePages, seed: u64, rounds: usize) -> (usize, usize) {
+    let (mut small, mut fit) = (0, 0);
     for (round, version) in versions(seed, rounds).iter().enumerate() {
         let number = u64::try_from(round).unwrap() + 1;
         let asked = asked(round);
@@ -219,18 +236,26 @@ fn warm_equals_cold(warm: &EnginePages, seed: u64, rounds: usize) -> usize {
         {
             small += 1;
         }
+        if ours["data"]["layout"]["column_fit"]
+            .as_array()
+            .is_some_and(|s| !s.is_empty())
+        {
+            fit += 1;
+        }
     }
-    small
+    (small, fit)
 }
 
 #[test]
 fn a_check_kept_warm_across_random_edits_reports_as_a_cold_check() {
-    let mut small = 0;
+    let (mut small, mut fit) = (0, 0);
     for seed in [1, 2] {
         let warm = EnginePages::of(engine());
-        small += warm_equals_cold(&warm, seed, 8);
+        let (s, f) = warm_equals_cold(&warm, seed, 8);
+        (small, fit) = (small + s, fit + f);
     }
     assert!(small > 0, "the edits make small text");
+    assert!(fit > 0, "the edits make columns that fit badly");
 }
 
 #[test]
