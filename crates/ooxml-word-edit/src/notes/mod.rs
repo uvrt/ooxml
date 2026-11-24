@@ -298,6 +298,9 @@ fn place(doc: &WordDoc, docx: &Docx, at: &str) -> Result<(Found, usize)> {
         .into_iter()
         .last()
         .ok_or_else(|| EditError::Path(span.part.clone()))?;
+    if let Some(anchor) = crate::textbox::text_box_anchor(docx, &span.part, &last.path) {
+        return Err(in_text_box(docx, &span.part, &anchor, &last.path, &id));
+    }
     let work = Work::of(&last.element, Vec::new());
     let items = atoms(&work, work.root());
     if offset > items.len() {
@@ -310,6 +313,49 @@ fn place(doc: &WordDoc, docx: &Docx, at: &str) -> Result<(Found, usize)> {
         return Err(EditError::Refused(format!("{id} is inside a field's result")));
     }
     Ok((last, offset))
+}
+
+/// A reference refused in a text box, as Word 16.106 has none there (its Insert Footnote
+/// and Insert Endnote are off in a text box): the way out the places beside the text box
+/// in the paragraph anchoring it, before it and at the paragraph's end.
+fn in_text_box(docx: &Docx, part: &str, anchor: &[u32], inside: &[u32], id: &str) -> EditError {
+    let message = format!("{id} is in a text box: Word puts no note reference in a text box");
+    let found = docx
+        .part(part)
+        .and_then(|story| story.ids.paragraph_at(anchor).map(|p| (p.id.clone(), Arc::clone(&p.element))));
+    let Some((paragraph, element)) = found else {
+        return EditError::Refused(message);
+    };
+    let work = Work::of(&element, Vec::new());
+    let items = atoms(&work, work.root());
+    // the paragraph's child the text box stands in, and the first character from it
+    let child = inside
+        .get(anchor.len())
+        .and_then(|k| work.children(work.root()).get(*k as usize).copied());
+    let before = child.and_then(|child| {
+        items.iter().position(|a| {
+            let mut node = Some(a.node);
+            while let Some(n) = node {
+                if n == child {
+                    return true;
+                }
+                node = work.parent(n);
+            }
+            false
+        })
+    });
+    let mut options: Vec<String> = before.into_iter().map(|k| format!("{paragraph}@{k}")).collect();
+    let end = format!("{paragraph}@{}", items.len());
+    if !options.contains(&end) {
+        options.push(end);
+    }
+    EditError::Argument {
+        field: "at".to_owned(),
+        message: format!(
+            "{message}; put it in the paragraph anchoring the text box, {paragraph}: before the text box or at the paragraph's end"
+        ),
+        options,
+    }
 }
 
 /// The run holding only `reference` (split out of a run that holds more): docx-agent's
