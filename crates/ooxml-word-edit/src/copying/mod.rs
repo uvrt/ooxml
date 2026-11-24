@@ -245,7 +245,7 @@ fn destination(doc: &WordDoc, docx: &Docx, at: &str) -> Result<(Place, Vec<Strin
     };
     let tree = doc
         .tree(&place.part)?
-        .ok_or_else(|| EditError::NoPart(place.part.clone()))?;
+        .ok_or_else(|| EditError::no_part(place.part.clone()))?;
     if ["footnotes", "endnotes", "comments"]
         .iter()
         .any(|l| tree.root().name().is(Some(W), l))
@@ -433,7 +433,7 @@ fn top_blocks(
             .iter()
             .find(|c| c.part == place.part && c.path == *path)
             .map(|c| c.id.clone())
-            .ok_or_else(|| EditError::Path(place.part.clone()))?;
+            .ok_or_else(|| EditError::no_element(place.part.clone()))?;
         let original = selected
             .blocks
             .get(k)
@@ -455,7 +455,7 @@ fn copies(work: &mut Work, selected: &Selected) -> Result<Vec<Id>> {
     for (_, element) in &selected.blocks {
         let copy = work
             .adopt_copy(element)
-            .ok_or_else(|| EditError::Path(selected.part.clone()))?;
+            .ok_or_else(|| EditError::no_element(selected.part.clone()))?;
         view::current_view(work, copy);
         elements.push(copy);
     }

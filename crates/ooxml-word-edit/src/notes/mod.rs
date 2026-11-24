@@ -153,7 +153,7 @@ fn new_notes_part(sink: &mut EditSink<'_, '_>, kind: NoteKind) -> Result<String>
     for paragraph in work.iter(root, W, &["p"]) {
         stamp_paragraph(sink, &mut work, paragraph, &part)?;
     }
-    let root = work.build().ok_or_else(|| EditError::Path(part.clone()))?;
+    let root = work.build().ok_or_else(|| EditError::unbuilt(part.clone()))?;
     let content_type = format!("application/vnd.openxmlformats-officedocument.wordprocessingml.{plural}+xml");
     let made = crate::new_part::add_part(&package, &main, &part, (*root).clone(), &content_type, &kind.rel())?;
     let rels = ooxml_opc::name::rels_for(&main);
@@ -194,7 +194,7 @@ fn new_notes_part(sink: &mut EditSink<'_, '_>, kind: NoteKind) -> Result<String>
 fn stamp_paragraph(sink: &mut EditSink<'_, '_>, work: &mut Work, paragraph: Id, part: &str) -> Result<()> {
     let drawn = sink.draw(part, 2)?;
     let (Some(para), Some(text)) = (drawn.first(), drawn.get(1)) else {
-        return Err(EditError::Path(part.to_owned()));
+        return Err(EditError::no_element(part.to_owned()));
     };
     for (local, value) in [("paraId", para), ("textId", text)] {
         work.set(paragraph, Arc::new(QName::new(Some("w14"), local, Some(W14))), value);
@@ -297,7 +297,7 @@ fn place(doc: &WordDoc, docx: &Docx, at: &str) -> Result<(Found, usize)> {
         .paragraphs
         .into_iter()
         .last()
-        .ok_or_else(|| EditError::Path(span.part.clone()))?;
+        .ok_or_else(|| EditError::no_element(span.part.clone()))?;
     if let Some(anchor) = crate::textbox::text_box_anchor(docx, &span.part, &last.path) {
         return Err(in_text_box(docx, &span.part, &anchor, &last.path, at));
     }

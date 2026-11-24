@@ -122,8 +122,8 @@ pub(crate) fn set_style(sink: &mut EditSink<'_, '_>, target: &str, style: Option
     let tree = sink
         .doc()
         .tree(&found.part)?
-        .ok_or_else(|| EditError::NoPart(found.part.clone()))?;
-    let element = at_path(tree.root(), &found.path).ok_or_else(|| EditError::Path(found.part.clone()))?;
+        .ok_or_else(|| EditError::no_part(found.part.clone()))?;
+    let element = at_path(tree.root(), &found.path).ok_or_else(|| EditError::no_element(found.part.clone()))?;
     let mut work = Work::of(element, scope_above(tree.root(), &found.path));
     let paragraph = work.root();
     let properties = work.find(paragraph, W, "pPr");
@@ -131,7 +131,7 @@ pub(crate) fn set_style(sink: &mut EditSink<'_, '_>, target: &str, style: Option
     let shared = sink.doc().shared_handle();
     write_style(&mut work, paragraph, style.as_deref(), shared.facts.orders());
     let wrote = sink.paragraph_properties_changed(&mut work, paragraph, old)?;
-    let new = work.build().ok_or_else(|| EditError::Path(found.part.clone()))?;
+    let new = work.build().ok_or_else(|| EditError::unbuilt(found.part.clone()))?;
     // a paragraph that has that style already is not written (rule 3)
     if *new != **element {
         let draws = wrote

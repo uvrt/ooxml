@@ -177,7 +177,7 @@ fn plan_across(
     }
     let part = docx
         .part(&found.part)
-        .ok_or_else(|| EditError::NoPart(found.part.clone()))?;
+        .ok_or_else(|| EditError::no_part(found.part.clone()))?;
     let paths: Vec<Box<[u32]>> = (index..=last_index)
         .filter_map(|k| part.ids.paragraphs().get(k).map(|p| p.path))
         .collect();
@@ -192,7 +192,7 @@ fn plan_across(
     if start > lengths(&found) || end > lengths(&last) {
         return Err(EditError::Span(format!("{} is outside its paragraphs' text", span())));
     }
-    let (work, paragraphs) = stretch(part.root(), &paths).ok_or_else(|| EditError::Path(found.part.clone()))?;
+    let (work, paragraphs) = stretch(part.root(), &paths).ok_or_else(|| EditError::no_element(found.part.clone()))?;
     crate::across::check_across(&work, &paragraphs, start, end)
         .map_err(|e| EditError::Span(format!("{}: {e}", span())))?;
     Ok(Plan {
@@ -393,8 +393,11 @@ fn write_paragraph(
 ) -> Result<Option<Written>> {
     let Some(head) = group.first() else { return Ok(None) };
     let (part, path) = (head.found.part.clone(), head.found.path.clone());
-    let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
-    let element = at_path(tree.root(), &path).ok_or_else(|| EditError::Path(part.clone()))?;
+    let tree = sink
+        .doc()
+        .tree(&part)?
+        .ok_or_else(|| EditError::no_part(part.clone()))?;
+    let element = at_path(tree.root(), &path).ok_or_else(|| EditError::no_element(part.clone()))?;
     let mut work = Work::of(element, scope_above(tree.root(), &path));
     sink.load_written(&part, Some(&path), &mut work);
     let mut numbered: Option<Numbered> = None;
@@ -414,7 +417,7 @@ fn write_paragraph(
         }
     }
     sink.keep_written(&part, Some(&path), &work);
-    let new = work.build().ok_or_else(|| EditError::Path(part.clone()))?;
+    let new = work.build().ok_or_else(|| EditError::unbuilt(part.clone()))?;
     let mut draws = numbered.map(|n| annotation_draws(&new, n, 0)).unwrap_or_default();
     // docx-agent renews the text id of each range's paragraph, once per range
     if new.attribute(Some(W14), "paraId").is_some() {

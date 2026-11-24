@@ -42,8 +42,11 @@ pub(crate) fn delete(sink: &mut EditSink<'_, '_>, target: &str) -> Result<BlockD
     let RevisionPolicy::Tracked(tracking) = sink.policy().clone() else {
         return outright(sink, &docx, planned, None);
     };
-    let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
-    let element = at_path(tree.root(), &planned.block.path).ok_or_else(|| EditError::Path(part.clone()))?;
+    let tree = sink
+        .doc()
+        .tree(&part)?
+        .ok_or_else(|| EditError::no_part(part.clone()))?;
+    let element = at_path(tree.root(), &planned.block.path).ok_or_else(|| EditError::no_element(part.clone()))?;
     let work = Work::of(element, Vec::new());
     if planned.block.paragraph {
         if own_insertion(&work, work.root(), &tracking.author) {
@@ -104,10 +107,13 @@ fn outright(
     separator: Option<(Vec<u32>, String)>,
 ) -> Result<BlockDeleted> {
     let part = planned.block.part.clone();
-    let path_error = || EditError::Path(part.clone());
+    let path_error = || EditError::no_element(part.clone());
     let mut renamed = kept_renames(sink, docx, &planned.removed)?;
     let mut removed = planned.removed;
-    let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
+    let tree = sink
+        .doc()
+        .tree(&part)?
+        .ok_or_else(|| EditError::no_part(part.clone()))?;
     let path = planned.block.path.to_vec();
     let element = at_path(tree.root(), &path).ok_or_else(path_error)?;
     let mut paths = stretch_paths(tree.root(), element, &path, planned.moving);
@@ -206,9 +212,12 @@ fn below(work: &Work, node: Id, ancestor: Id) -> bool {
 fn tracked(sink: &mut EditSink<'_, '_>, docx: &Docx, planned: &Planned, tracking: &Tracking) -> Result<BlockDeleted> {
     let block = &planned.block;
     let part = block.part.clone();
-    let path_error = || EditError::Path(part.clone());
+    let path_error = || EditError::no_element(part.clone());
     let renamed = stamp_document(sink, docx)?;
-    let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
+    let tree = sink
+        .doc()
+        .tree(&part)?
+        .ok_or_else(|| EditError::no_part(part.clone()))?;
     let path = block.path.to_vec();
     let join = join_path(tree.root(), &path).filter(|p| {
         at_path(tree.root(), p).is_some_and(|e| e.name().is(Some(W), "p") && !crate::block_checks::ends_section(e))

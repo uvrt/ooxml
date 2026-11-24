@@ -33,10 +33,13 @@ pub(crate) fn tracked_table(
 ) -> Result<BlockDeleted> {
     let block = &planned.block;
     let part = block.part.clone();
-    let path_error = || EditError::Path(part.clone());
+    let path_error = || EditError::no_element(part.clone());
     let mut renamed = stamp_document(sink, docx)?;
     let stamped = sink.docx()?;
-    let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
+    let tree = sink
+        .doc()
+        .tree(&part)?
+        .ok_or_else(|| EditError::no_part(part.clone()))?;
     let path = block.path.to_vec();
     let ((mut work, parent, range, found), names) = stretch_of(
         &stamped,
@@ -105,12 +108,12 @@ pub(crate) fn tracked_row_across(
     index: usize,
     tracking: &Tracking,
 ) -> Result<bool> {
-    let path_error = || EditError::Path(part.to_owned());
+    let path_error = || EditError::no_element(part.to_owned());
     let stamped = sink.docx()?;
     let tree = sink
         .doc()
         .tree(part)?
-        .ok_or_else(|| EditError::NoPart(part.to_owned()))?;
+        .ok_or_else(|| EditError::no_part(part.to_owned()))?;
     let ((mut work, parent, range, found), _) =
         stretch_of(&stamped, tree.root(), (part, path), None).ok_or_else(path_error)?;
     let &table = found.first().ok_or_else(path_error)?;
@@ -137,7 +140,7 @@ fn splice_back(
 ) -> Result<()> {
     let nodes = work
         .build_content(work.root())
-        .ok_or_else(|| EditError::Path(part.to_owned()))?;
+        .ok_or_else(|| EditError::no_element(part.to_owned()))?;
     let draws = draws_of(&nodes, wrote.annotations);
     let mut keys = stretch_keys(stamped, part, parent, range);
     keys.push(Key::Annotations);
@@ -163,7 +166,7 @@ fn named_after_first_row(
         .part(part)
         .and_then(|s| s.ids.table_at(path))
         .map(|t| t.id)
-        .ok_or_else(|| EditError::Path(part.to_owned()))?;
+        .ok_or_else(|| EditError::no_element(part.to_owned()))?;
     if now == current {
         return Ok(current);
     }

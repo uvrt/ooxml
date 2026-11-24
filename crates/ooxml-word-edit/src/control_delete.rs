@@ -60,8 +60,8 @@ fn first_reference(element: &Element) -> Option<&'static str> {
 /// The control `target` names, checked as `_delete_control_block` checks it.
 fn plan(doc: &WordDoc, docx: &Docx, target: &str) -> Result<Planned> {
     let (part, block) = resolve_block(doc, docx, target)?;
-    let tree = doc.tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
-    let sdt = at_path(tree.root(), &block.path).ok_or_else(|| EditError::Path(part.clone()))?;
+    let tree = doc.tree(&part)?.ok_or_else(|| EditError::no_part(part.clone()))?;
+    let sdt = at_path(tree.root(), &block.path).ok_or_else(|| EditError::no_element(part.clone()))?;
     crate::moving::control_movable(sdt, target, "deleting")?;
     if let Some(local) = first_reference(sdt) {
         return Err(EditError::Refused(format!(
@@ -69,7 +69,7 @@ fn plan(doc: &WordDoc, docx: &Docx, target: &str) -> Result<Planned> {
         )));
     }
     crate::block_checks::check_container_survives(tree.root(), &block.path)?;
-    let story = docx.part(&part).ok_or_else(|| EditError::NoPart(part.clone()))?;
+    let story = docx.part(&part).ok_or_else(|| EditError::no_part(part.clone()))?;
     let inside = |p: &[u32]| p.len() > block.path.len() && p.starts_with(&block.path);
     let mut nested: Vec<String> = story
         .ids
@@ -130,10 +130,13 @@ pub(crate) fn delete(sink: &mut EditSink<'_, '_>, target: &str) -> Result<BlockD
     let docx = sink.docx()?;
     let planned = plan(sink.doc(), &docx, target)?;
     let part = planned.part.clone();
-    let path_error = || EditError::Path(part.clone());
+    let path_error = || EditError::no_element(part.clone());
     let renamed = stamp_document(sink, &docx)?;
     let stamped = sink.docx()?;
-    let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
+    let tree = sink
+        .doc()
+        .tree(&part)?
+        .ok_or_else(|| EditError::no_part(part.clone()))?;
     let element = at_path(tree.root(), &planned.path).ok_or_else(path_error)?;
     let paths = paths_around(tree.root(), element, &planned.path);
     let (mut work, parent, range, found) = editable(tree.root(), &paths, &[&planned.path]).ok_or_else(path_error)?;

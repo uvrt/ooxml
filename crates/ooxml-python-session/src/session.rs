@@ -673,7 +673,8 @@ impl PySession {
     }
 
     /// The session's counters: calls, failed, cancelled, open, panics (the calls
-    /// that panicked, of every tool: [`panics`](Self::panics)).
+    /// that panicked, of every tool: [`panics`](Self::panics)), internal (the calls answered
+    /// as an ``internal`` failure, a bug: [`internal`](Self::internal)).
     fn stats(&self, py: Python<'_>) -> Vec<(&'static str, u64)> {
         let s = py.detach(|| self.inner.stats());
         vec![
@@ -682,7 +683,14 @@ impl PySession {
             ("cancelled", s.cancelled),
             ("open", s.open),
             ("panics", s.panics.values().sum()),
+            ("internal", s.internal.values().sum()),
         ]
+    }
+
+    /// ``internal{tool}``: the calls of each tool answered as an ``internal`` failure -- the
+    /// core's own model and tree disagreeing, or a panic -- never the caller's input.
+    fn internal(&self, py: Python<'_>) -> Vec<(String, u64)> {
+        py.detach(|| self.inner.stats().internal.into_iter().collect())
     }
 
     /// ``panics{tool}``: the calls of each tool that panicked, each answered as an

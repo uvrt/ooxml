@@ -115,7 +115,7 @@ fn top_block(root: &Arc<Element>, path: &[u32]) -> Option<Vec<u32>> {
 /// # Errors
 /// An address naming nothing in the body, or not in the body.
 pub fn body_blocks(doc: &WordDoc, docx: &Docx, address: &str) -> Result<Vec<(String, Vec<u32>)>> {
-    let body = docx.body().ok_or_else(|| EditError::NoPart(docx.main.clone()))?;
+    let body = docx.body().ok_or_else(|| EditError::no_part(docx.main.clone()))?;
     let mut out = Vec::new();
     for place in block_places(doc, docx, address)? {
         let Some(element) = at_path(body.root(), &place) else {
@@ -169,7 +169,7 @@ pub(crate) fn keep_plan(doc: &WordDoc, docx: &Docx, address: &str, on: bool) -> 
             "{address} holds no paragraph or table to keep together"
         )));
     };
-    let body = docx.body().ok_or_else(|| EditError::NoPart(docx.main.clone()))?;
+    let body = docx.body().ok_or_else(|| EditError::no_part(docx.main.clone()))?;
     let formatting = Formatting::read(docx);
     let mut look = Keeps::new(&formatting, body);
     let mut plan = KeepPlan {
@@ -292,21 +292,21 @@ pub fn kept_package(doc: &WordDoc, docx: &Docx, address: &str, on: bool) -> Resu
         return Ok(None);
     }
     let main = docx.main.clone();
-    let mut tree = doc.tree(&main)?.ok_or_else(|| EditError::NoPart(main.clone()))?;
+    let mut tree = doc.tree(&main)?.ok_or_else(|| EditError::no_part(main.clone()))?;
     let shared = doc.shared_handle();
     let orders = shared.facts.orders();
     for (place, settings) in &plan.changes {
-        let (&last, above) = place.split_last().ok_or_else(|| EditError::Path(main.clone()))?;
-        let element = at_path(tree.root(), place).ok_or_else(|| EditError::Path(main.clone()))?;
+        let (&last, above) = place.split_last().ok_or_else(|| EditError::no_element(main.clone()))?;
+        let element = at_path(tree.root(), place).ok_or_else(|| EditError::no_element(main.clone()))?;
         let mut work = Work::of(element, scope_above(tree.root(), place));
         let root = work.root();
         write_paragraph(&mut work, root, settings, orders);
-        let new = work.build().ok_or_else(|| EditError::Path(main.clone()))?;
+        let new = work.build().ok_or_else(|| EditError::unbuilt(main.clone()))?;
         let old = Node::Element(Arc::clone(element));
         let mut parent = vec![0usize];
         parent.extend(above.iter().map(|k| *k as usize));
         let patch = Patch::splice(NodePath(parent), last as usize, vec![old], vec![Node::Element(new)]);
-        tree = patch.apply(&tree).map_err(|_| EditError::Path(main.clone()))?;
+        tree = patch.apply(&tree).map_err(|_| EditError::no_element(main.clone()))?;
     }
     Ok(Some(doc.package().with_new_tree(&main, tree)))
 }

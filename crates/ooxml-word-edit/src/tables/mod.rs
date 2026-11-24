@@ -400,8 +400,8 @@ impl FormatTable<'_> {
         let tree = sink
             .doc()
             .tree(&found.part)?
-            .ok_or_else(|| EditError::NoPart(found.part.clone()))?;
-        let element = at_path(tree.root(), &found.path).ok_or_else(|| EditError::Path(found.part.clone()))?;
+            .ok_or_else(|| EditError::no_part(found.part.clone()))?;
+        let element = at_path(tree.root(), &found.path).ok_or_else(|| EditError::no_element(found.part.clone()))?;
         let mut work = Work::of(element, scope_above(tree.root(), &found.path));
         let inputs = Inputs {
             style_ids: &style_ids,
@@ -412,7 +412,7 @@ impl FormatTable<'_> {
         };
         let (written, unchanged) = self.applied(sink, &mut work, &inputs)?;
         sink.keep_written(&found.part, None, &work);
-        let new = work.build().ok_or_else(|| EditError::Path(found.part.clone()))?;
+        let new = work.build().ok_or_else(|| EditError::unbuilt(found.part.clone()))?;
         let docx = sink.docx()?;
         let id = docx
             .part(&found.part)

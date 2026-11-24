@@ -136,11 +136,11 @@ pub(crate) fn edit_frame<R>(
     write: impl FnOnce(&mut EditSink<'_, '_>, &mut Work, Id) -> Result<R>,
 ) -> Result<R> {
     let docx = sink.docx()?;
-    let at =
-        InParagraph::above(&docx, &drawing.part, &drawing.path).ok_or_else(|| EditError::Path(drawing.part.clone()))?;
+    let at = InParagraph::above(&docx, &drawing.part, &drawing.path)
+        .ok_or_else(|| EditError::no_element(drawing.part.clone()))?;
     let inside = drawing.path.get(at.path.len()..).unwrap_or_default().to_vec();
     rewrite(sink, &at, how, |sink, work| {
-        let frame = at_place(work, &inside).ok_or_else(|| EditError::Path(at.part.clone()))?;
+        let frame = at_place(work, &inside).ok_or_else(|| EditError::no_element(at.part.clone()))?;
         let out = write(sink, work, frame)?;
         Ok((
             out,

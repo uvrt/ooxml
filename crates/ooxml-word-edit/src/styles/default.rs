@@ -65,7 +65,7 @@ pub(crate) fn set_default(sink: &mut EditSink<'_, '_>, space: &mut Space, name: 
     let orders = shared.facts.orders();
     let work = space
         .work(&held, &part)?
-        .ok_or_else(|| EditError::NoPart(part.clone()))?;
+        .ok_or_else(|| EditError::no_part(part.clone()))?;
     let root = work.root();
     for node in work.children(root).to_vec() {
         if work.is(node, W, "defaultTableStyle") {

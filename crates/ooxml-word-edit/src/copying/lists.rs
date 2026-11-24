@@ -163,7 +163,7 @@ impl Styles<'_> {
             let (work, copy) = detached_copy(over)?;
             overrides.push(
                 work.build_element(copy)
-                    .ok_or_else(|| EditError::Path("numbering".to_owned()))?,
+                    .ok_or_else(|| EditError::no_element("numbering".to_owned()))?,
             );
         }
         let new_num = numbering::add_num_copying(sink, &main, new_abstract, overrides)?;
@@ -238,7 +238,7 @@ impl Styles<'_> {
         }
         let built = work
             .build_element(node)
-            .ok_or_else(|| EditError::Path("numbering".to_owned()))?;
+            .ok_or_else(|| EditError::no_element("numbering".to_owned()))?;
         numbering::add_abstract(sink, &main, built)?;
         Ok(new_id)
     }

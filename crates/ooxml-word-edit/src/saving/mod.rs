@@ -150,7 +150,7 @@ fn written(package: &Package, part: &str) -> Result<Arc<[u8]>> {
     let tree = package
         .tree(part)
         .map_err(ModelError::from)?
-        .ok_or_else(|| EditError::NoPart(part.to_owned()))?;
+        .ok_or_else(|| EditError::no_part(part.to_owned()))?;
     let mut out = DECLARATION.to_vec();
     out.extend_from_slice(&tree.root().write());
     Ok(out.into())

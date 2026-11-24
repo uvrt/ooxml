@@ -117,7 +117,7 @@ fn fresh_paragraph(sink: &mut EditSink<'_, '_>, work: &mut Work, part: &str, pre
     let paragraph = make(work, "p", &[]);
     let drawn = sink.draw(part, 2)?;
     let (Some(para), Some(text)) = (drawn.first(), drawn.get(1)) else {
-        return Err(EditError::Path(part.to_owned()));
+        return Err(EditError::no_element(part.to_owned()));
     };
     for (local, value) in [("paraId", para), ("textId", text)] {
         work.set(paragraph, Arc::new(QName::new(Some(prefix), local, Some(W14))), value);
@@ -137,7 +137,7 @@ impl InsertSectionBreak {
                 "a section break goes between blocks of the body".to_owned(),
             ));
         }
-        let body = docx.body().ok_or_else(|| EditError::NoPart(part.clone()))?;
+        let body = docx.body().ok_or_else(|| EditError::no_part(part.clone()))?;
         let above = block.path.split_last().map(|(_, a)| a.to_vec()).unwrap_or_default();
         let parent = at_path(body.root(), &above);
         if !parent.is_some_and(|p| p.name().is(Some(W), "body")) {
@@ -174,13 +174,16 @@ impl InsertSectionBreak {
         let renamed = stamp_document(&mut *sink, &docx)?;
         let docx = sink.docx()?;
         let main = docx.main.clone();
-        let tree = sink.doc().tree(&main)?.ok_or_else(|| EditError::NoPart(main.clone()))?;
+        let tree = sink
+            .doc()
+            .tree(&main)?
+            .ok_or_else(|| EditError::no_part(main.clone()))?;
         let root = tree.root();
         let after = self.after.is_some();
         let sect_path = split_path(&docx, root, &anchor_path, after)?;
         let paths = [anchor_path.clone(), sect_path.clone()];
         let wanted: [&[u32]; 2] = [&anchor_path, &sect_path];
-        let path_error = || EditError::Path(main.clone());
+        let path_error = || EditError::no_element(main.clone());
         // the anchor, its neighbours and the section's end read whole; the body between sealed
         let (mut work, parent, stretch, found) =
             editable_opening(root, &paths, &wanted, Opening::Ends).ok_or_else(path_error)?;

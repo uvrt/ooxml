@@ -76,7 +76,7 @@ pub(crate) fn anchor(doc: &WordDoc, docx: &Docx, target: &str) -> Result<Anchor>
         let story = docx
             .part(&found.part)
             .map(|s| s.story.clone())
-            .ok_or_else(|| EditError::NoPart(found.part.clone()))?;
+            .ok_or_else(|| EditError::no_part(found.part.clone()))?;
         return Ok(Anchor {
             part: found.part,
             story,
@@ -193,8 +193,11 @@ pub(crate) fn insert_paragraph(
         Some(name) => Some(crate::builtin::ensure(sink, name, "paragraph")?),
         None => None,
     };
-    let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
-    let path_error = || EditError::Path(part.clone());
+    let tree = sink
+        .doc()
+        .tree(&part)?
+        .ok_or_else(|| EditError::no_part(part.clone()))?;
+    let path_error = || EditError::no_element(part.clone());
     let (&index, above) = anchor.path.split_last().ok_or_else(path_error)?;
     let parent = if above.is_empty() {
         tree.root()
@@ -315,8 +318,8 @@ fn already_lines(sink: &mut EditSink<'_, '_>, docx: &Docx, part: &str, path: &[u
     let tree = sink
         .doc()
         .tree(part)?
-        .ok_or_else(|| EditError::NoPart(part.to_owned()))?;
-    let path_error = || EditError::Path(part.to_owned());
+        .ok_or_else(|| EditError::no_part(part.to_owned()))?;
+    let path_error = || EditError::no_element(part.to_owned());
     let (&index, above) = path.split_last().ok_or_else(path_error)?;
     let parent = if above.is_empty() {
         tree.root()

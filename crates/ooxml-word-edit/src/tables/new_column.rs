@@ -122,7 +122,7 @@ pub(super) fn insert_column(
     let work = &mut held.work;
     let table = work.root();
     let boundary = index + usize::from(right);
-    let column = grid_column(work, table, index).ok_or_else(|| EditError::Path(held.found.part.clone()))?;
+    let column = grid_column(work, table, index).ok_or_else(|| EditError::no_element(held.found.part.clone()))?;
     let width = work.get(column, Some(W), "w").map(str::to_owned);
     let added = make(work, "gridCol", &[]);
     if let Some(width) = &width {

@@ -81,7 +81,7 @@ impl InsertControl {
         let docx = doc.docx()?;
         let found = range(doc, &docx, &self.at)?;
         let span = Span::of(doc, &docx, &found)?;
-        let first = span.first().ok_or_else(|| EditError::Path(span.part.clone()))?;
+        let first = span.first().ok_or_else(|| EditError::no_element(span.part.clone()))?;
         Ok((first.id.clone(), span.start))
     }
 }

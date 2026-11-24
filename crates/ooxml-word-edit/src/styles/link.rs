@@ -262,7 +262,7 @@ fn drop_numbering(work: &mut Work, node: Id, indent: bool) -> bool {
 fn numbers_work<'s>(space: &'s mut Space, numbers: &Numbers) -> Result<&'s mut Work> {
     space
         .get_mut(&numbers.part)
-        .ok_or_else(|| EditError::NoPart(numbers.part.clone()))
+        .ok_or_else(|| EditError::no_part(numbers.part.clone()))
 }
 
 /// Link style `id` to `level` of `num_id` (`link_style_level`); the ids of the styles
@@ -332,7 +332,7 @@ pub(crate) fn link(
     let work = sheet.work(space)?;
     let node = last_by_id(work, sheet.root, id).ok_or_else(|| EditError::Refused(format!("no style {id}")))?;
     let properties = crate::format::properties_of(work, node, "pPr", true, orders)
-        .ok_or_else(|| EditError::Path(sheet.part.clone()))?;
+        .ok_or_else(|| EditError::no_element(sheet.part.clone()))?;
     if let Some(old) = work.find(properties, W, "numPr") {
         work.remove(old);
     }
@@ -361,7 +361,7 @@ pub(crate) fn unlink(space: &mut Space, sheet: &Sheet, numbers: Option<&Numbers>
     if let Some(n) = numbers {
         let ties: Vec<Id> = {
             let styles = sheet.view(space)?;
-            let work = space.get(&n.part).ok_or_else(|| EditError::NoPart(n.part.clone()))?;
+            let work = space.get(&n.part).ok_or_else(|| EditError::no_part(n.part.clone()))?;
             let mut out = Vec::new();
             for (_, definition) in abstracts(work, n.root) {
                 for (_, lvl) in definition_levels(styles, sheet.root, work, n.root, definition) {
@@ -395,7 +395,7 @@ pub(crate) fn unlink(space: &mut Space, sheet: &Sheet, numbers: Option<&Numbers>
         if style_list(space, sheet, numbers, id).is_some() {
             let work = sheet.work(space)?;
             let properties = crate::format::properties_of(work, node, "pPr", true, orders)
-                .ok_or_else(|| EditError::Path(sheet.part.clone()))?;
+                .ok_or_else(|| EditError::no_element(sheet.part.clone()))?;
             let stop = make(work, "numPr", &[]);
             crate::marks::insert_in_order(work, properties, stop, orders);
             let zero = make(work, "numId", &[("val", "0")]);
