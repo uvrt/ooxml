@@ -10,7 +10,7 @@
 //! for is swept), or keep anything a paragraph's judgement does not read.
 
 use super::{Judged, Unjudged, Who};
-use ooxml_derive::{CacheBudget, Limit, Memo, MemoStats, Weigh};
+use ooxml_derive::{AddressHash, CacheBudget, Limit, Memo, MemoStats, Weigh};
 use ooxml_xml::Element;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 
@@ -129,7 +129,7 @@ pub const JUDGEMENT_BYTES: usize = 16 << 20;
 /// address (a weak reference keeps the address its own while it is kept), within a budget:
 /// the least recently used let go first, and those of paragraphs no version holds swept.
 pub struct Judgements {
-    memo: Mutex<Memo<usize, Kept>>,
+    memo: Mutex<Memo<usize, Kept, AddressHash>>,
 }
 
 impl std::fmt::Debug for Judgements {
@@ -149,7 +149,7 @@ impl Judgements {
     /// Judgements counted on `budget`.
     pub fn new(budget: Arc<dyn CacheBudget>) -> Judgements {
         Judgements {
-            memo: Mutex::new(Memo::new(budget)),
+            memo: Mutex::new(Memo::with_hasher(budget)),
         }
     }
 
