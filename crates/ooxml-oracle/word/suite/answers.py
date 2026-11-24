@@ -185,7 +185,7 @@ class Reader:
     def _call(self, session: Any, tool: str, **arguments: Any) -> Any:
         result = self.box.dispatch(session, tool, {"doc": "d1", **arguments})
         if not result.ok:
-            raise RuntimeError(f"{tool} {arguments}: {result.to_json().get('error')}")
+            raise ToolsRefused(f"{tool} {arguments}: {result.to_json().get('error')}")
         return result
 
     def _markdown(self, session: Any) -> str:
@@ -234,6 +234,20 @@ class Reader:
         out = self._call(session, "word_fields", action="list").data
         return [[f["keyword"], " ".join((f.get("result") or "").split())] for f in out
                 if f["keyword"] not in VOLATILE_FIELDS]
+
+
+class ToolsRefused(RuntimeError):
+    """The tools refused a call a check needs to read their output (``word_inspect``'s layout of
+    a text box it cannot lay out yet, say): their answer is not there to compare."""
+
+
+def answer(reader: Reader, data: bytes, check: str) -> Any:
+    """:func:`ours`, or the :class:`ToolsRefused` that stood in its way (a difference from
+    Word's answer, ``compare.judge``)."""
+    try:
+        return ours(reader, data, check)
+    except ToolsRefused as refused:
+        return refused
 
 
 #: The checks, cheapest first, each the tools' answer and Word's compared (``compare.judge``).

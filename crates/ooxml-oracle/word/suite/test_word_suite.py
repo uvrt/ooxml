@@ -143,7 +143,7 @@ def test_word_review_reads_as_ours(word, store, outputs, box, case, action):
     reader = answers.Reader(box)
     theirs = reader.markdown(reviewed)
     store.record(case.id, edit_sets.digest(data), action, theirs)
-    _verdict(case, action, answers.ours(reader, data, action), theirs)
+    _verdict(case, action, answers.answer(reader, data, action), theirs)
 
 
 @pytest.mark.parametrize("case", CASES, ids=IDS)
@@ -157,7 +157,7 @@ def test_word_pages_are_ours(word, store, outputs, box, case):
     text = WordSide.pdf_pages(outcome.path)
     theirs = {"count": len(text), "text": text}
     store.record(case.id, edit_sets.digest(data), "pages", theirs)
-    _verdict(case, "pages", answers.ours(reader, data, "pages"), theirs)
+    _verdict(case, "pages", answers.answer(reader, data, "pages"), theirs)
 
 
 @pytest.mark.parametrize("case", CASES, ids=IDS)
@@ -171,4 +171,4 @@ def test_word_field_results_are_ours(word, store, outputs, box, case):
     assert updated is not None, "Word's field update did not save"
     theirs = reader.fields(updated, update=False)
     store.record(case.id, edit_sets.digest(data), "fields", theirs)
-    _verdict(case, "fields", answers.ours(reader, data, "fields"), theirs)
+    _verdict(case, "fields", answers.answer(reader, data, "fields"), theirs)

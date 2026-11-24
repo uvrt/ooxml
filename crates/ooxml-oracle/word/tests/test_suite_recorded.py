@@ -82,7 +82,7 @@ def test_the_tools_answer_as_word_did(box, made, case, check):
         pytest.skip("the faces Word laid the output out in are not installed here")
     entry = OBSERVED[case]
     data = made(case)
-    differences = compare.judge(check, answers.ours(answers.Reader(box), data, check), entry[check])
+    differences = compare.judge(check, answers.answer(answers.Reader(box), data, check), entry[check])
     why = reason(case, check)
     if why:
         if differences:

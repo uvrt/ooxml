@@ -172,7 +172,10 @@ def fields(ours: list[list[str]], word: list[list[str]]) -> list[str]:
 
 
 def judge(check: str, ours: Any, word: Any) -> list[str]:
-    """The differences between the tools' answer to ``check`` and Word's."""
+    """The differences between the tools' answer to ``check`` and Word's; an answer the tools
+    could not give (``answers.answer``: an exception in its place) is one."""
+    if isinstance(ours, Exception):
+        return [f"the tools could not answer {check}: {ours}"]
     if check == "kept":
         return kept(ours, word)
     if check in ("accept", "reject"):
