@@ -78,6 +78,8 @@ struct Generation {
     digests: crate::digest_cache::DigestCache,
     /// What a check read of each page, across the generation's versions.
     reads: crate::page_reads::ReadMemo,
+    /// What a check made of each page's layout facts, across the generation's versions.
+    laid: crate::laid_entry::LaidMemo,
     /// Moved on where a part beside the main one changed: a page laid out the same may
     /// draw otherwise (its drawings, its stories).
     epoch: u64,
@@ -115,7 +117,7 @@ impl Generation {
     /// contexts no version of is held: how many memo entries went.
     fn sweep(&mut self) -> usize {
         self.contexts.sweep();
-        self.model.sweep() + self.layout.sweep() + self.reads.sweep()
+        self.model.sweep() + self.layout.sweep() + self.reads.sweep() + self.laid.sweep()
     }
 
     /// The last version laid out where `package` has its parts (the same version asked
@@ -617,6 +619,7 @@ impl PageEngine {
             ids: None,
             digests: crate::digest_cache::DigestCache::new(self.digest_limit),
             reads: crate::page_reads::ReadMemo::new(Arc::clone(&self.budgets.paint)),
+            laid: crate::laid_entry::LaidMemo::new(Arc::clone(&self.budgets.paint)),
             epoch: 0,
             context: 0,
             contexts: Contexts::new(),

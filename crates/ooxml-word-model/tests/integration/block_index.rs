@@ -280,6 +280,15 @@ fn placed_as_named(ids: &PartIds) {
         .map(|p| (p.index, Arc::as_ptr(&p.element), p.path.to_vec()))
         .collect();
     assert_eq!(placed, iterated);
+    // A table's head (named without its rows) and place are the named table's.
+    let tables = ids.tables();
+    for (n, table) in tables.iter().enumerate() {
+        let head = tables.head(n).unwrap();
+        assert_eq!((head.id, head.path.to_vec()), (table.id, table.path.to_vec()));
+        assert!(Arc::ptr_eq(&head.element, &table.element));
+        assert_eq!(tables.place(n).as_deref(), Some(&*table.path));
+    }
+    assert!(tables.head(tables.len()).is_none() && tables.place(tables.len()).is_none());
 }
 
 fn check(story: &str, ids: &PartIds, root: &Element, rng: &mut Rng) {

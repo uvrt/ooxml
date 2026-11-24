@@ -9,6 +9,7 @@
 
 use super::tree::resolve;
 use super::{story_kind, Facts};
+use crate::page_parts::Part;
 use crate::page_read::PageRead;
 use ooxml_word_model::docx::cells::PartCells;
 use ooxml_word_model::docx::StoryPart;
@@ -99,10 +100,9 @@ pub struct SizesPart {
     pub sized: Vec<Sized>,
 }
 
-impl SizesPart {
+impl Part<PageRead> for SizesPart {
     /// The contribution of a page read as `read`.
-    #[must_use]
-    pub fn of(read: &PageRead) -> SizesPart {
+    fn of(read: &PageRead) -> SizesPart {
         let mut out = SizesPart::default();
         let mut at: HashMap<(&str, Option<&str>, i64), usize> = HashMap::new();
         for (k, line) in read.texts.iter().chain(&read.box_texts).enumerate() {
@@ -135,8 +135,7 @@ impl SizesPart {
     }
 
     /// What the contribution of a page read as `read` holds at most, bytes.
-    #[must_use]
-    pub fn weight_of(read: &PageRead) -> usize {
+    fn weight_of(read: &PageRead) -> usize {
         let sizes: usize = read.texts.iter().chain(&read.box_texts).map(|l| l.sizes.len()).sum();
         std::mem::size_of::<SizesPart>() + sizes * std::mem::size_of::<Sized>()
     }

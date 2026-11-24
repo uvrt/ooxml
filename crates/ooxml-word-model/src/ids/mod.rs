@@ -16,7 +16,7 @@ mod sha256;
 pub use sha256::sha256;
 mod state;
 
-pub use index::{Entry, IdState, ParagraphId, PartIds, Path, PlacedTable, TableId};
+pub use index::{Entry, IdState, ParagraphId, PartIds, Path, PlacedTable, TableHead, TableId};
 pub use ledger::{
     block_and_drawing_ids, drawing_numbers, held_id, sequence_value, used_long_hex, HeldId, IdPool, Ledger, REACH,
 };
