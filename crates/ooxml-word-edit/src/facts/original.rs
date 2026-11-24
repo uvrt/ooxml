@@ -73,6 +73,11 @@ struct Unit {
 pub fn accept_loses_original(doc: &WordDoc, opened: Arc<Docx>) -> Result<Vec<LostOriginal>> {
     let docx = doc.docx()?;
     let body = docx.body().ok_or_else(|| EditError::no_part(docx.main.clone()))?;
+    // The part's facts, kept across versions, know whether it holds a deletion record at
+    // all: most versions hold none, and their tree is not walked.
+    if !body.facts().holds_deletions() {
+        return Ok(Vec::new());
+    }
     let mut originals = Originals::new(opened, doc);
     let mut records = Vec::new();
     deletions(body.root(), &mut Vec::new(), &mut Vec::new(), &mut records);

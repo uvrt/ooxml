@@ -12,8 +12,8 @@ use ooxml_base::Limits;
 use ooxml_derive::{CacheBudget, Limit};
 use ooxml_opc::Package;
 use ooxml_store::{Caller, StoreConfig};
-use ooxml_word_edit::facts::{accept_loses_text, LostCell};
-use ooxml_word_edit::{Editor, RevisionPolicy, SetText, WordDoc};
+use ooxml_word_edit::facts::{accept_loses_original, accept_loses_text, LostCell};
+use ooxml_word_edit::{Editor, RevisionPolicy, SetText, Tracking, WordDoc};
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::time::Instant;
@@ -99,4 +99,44 @@ fn lost_cells_let_go_for_the_budget_read_as_cold() {
     kept_and_cold(&editor);
     let (_, bytes) = editor.store().snapshot().doc().docx().unwrap().block_facts();
     assert!(bytes <= 512, "{bytes}");
+}
+
+/// `accept_loses_original` passes over a version that holds no deletion record without
+/// reading its tree: a file opened with its own tracked deletion reports nothing for it (the
+/// file's, not this session's), and reports the original text a tracked deletion of this
+/// session takes away -- in that file and in one opened with no deletion record.
+#[test]
+fn original_text_a_tracked_deletion_takes_is_reported_beside_the_files_own_deletions() {
+    let plain = Package::open(fixture("generated/markdown/constructs.docx"), &Limits::default()).unwrap();
+    for (package, of_its_own) in [(losing(), true), (plain, false)] {
+        let editor = Editor::open(
+            package,
+            StoreConfig::default(),
+            Arc::new(Monotonic(Instant::now())),
+            Arc::new(Limit::new(64 << 20)),
+        )
+        .unwrap();
+        let opened = editor.store().snapshot().doc().docx().unwrap();
+        let body = opened.body().unwrap();
+        assert_eq!(body.facts().holds_deletions(), of_its_own);
+        let at_open = editor.store().snapshot().doc().clone();
+        assert_eq!(accept_loses_original(&at_open, Arc::clone(&opened)).unwrap(), []);
+        let start = body.texts().iter().find(|t| t.len() > 12).unwrap().to_owned();
+        let command = SetText {
+            target: paragraph(&at_open, &start),
+            text: String::new(),
+            policy: RevisionPolicy::Tracked(Tracking {
+                author: "Session".to_owned(),
+                date: "2026-11-24T10:00:00Z".to_owned(),
+            }),
+        };
+        editor.run(&Caller::anonymous(), &command).unwrap();
+        let now = editor.store().snapshot().doc().clone();
+        assert!(now.docx().unwrap().body().unwrap().facts().holds_deletions());
+        let lost = accept_loses_original(&now, opened).unwrap();
+        assert_eq!(lost.len(), 1, "{lost:?}");
+        assert_eq!(lost[0].paragraphs, 1, "{lost:?}");
+        let words: Vec<&str> = start.split_whitespace().collect();
+        assert_eq!(lost[0].sample[0].1, words.join(" "), "{lost:?}");
+    }
 }

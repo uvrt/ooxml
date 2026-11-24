@@ -6,7 +6,7 @@
 //!
 //! Must not: lay out, cap a paragraph's marks or word an entry (the tool layer does).
 
-use super::proofing::{all_text, paragraphs, Placed, Proofing};
+use super::proofing::{any_text, paragraphs_where, Placed, Proofing};
 use super::py_space;
 use crate::names::W;
 use crate::styles::own_languages;
@@ -192,10 +192,9 @@ pub fn punctuation_spacing(doc: &WordDoc, locale: Option<&str>) -> Result<Vec<Sp
         own: None,
     };
     let mut out = Vec::new();
-    for placed in paragraphs(&docx) {
-        if !has_marks(&all_text(placed.element)) {
-            continue; // nothing to look at (cheaper than the paragraph's atoms)
-        }
+    // A paragraph with no mark has nothing to look at: passed over on its texts in place,
+    // before its place, its table or its atoms are read.
+    for placed in paragraphs_where(&docx, |p| any_text(p, &has_marks)) {
         reading.paragraph(&placed, &mut out);
     }
     Ok(out)

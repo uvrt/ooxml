@@ -9,7 +9,6 @@
 //! the session's call that made a table so (`made_by` is the session's record).
 
 use super::scratch::settled;
-use super::shapes::{Kept, KEPT};
 use crate::names::W;
 use crate::{EditError, Result, WordDoc};
 use ooxml_word_model::docx::block_facts::BlockFact;
@@ -21,7 +20,7 @@ use ooxml_word_model::ids::PlacedTable;
 use ooxml_word_model::xmlread::py_int;
 use ooxml_xml::Element;
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 /// Tracked cell and grid records: a table holding one may be off its grid by Word's design
 /// until they are accepted.
@@ -377,13 +376,22 @@ fn reshaped_on_accept(table: &Element) -> bool {
 }
 
 /// A table's shape ([`shape`]) as Accept All leaves it: read from a copy with its tracked
-/// changes accepted, kept by the table's content ([`Kept`]) -- a table no edit touched is
+/// changes accepted, kept by the table's content ([`AcceptedShapes`]) -- a table no edit touched is
 /// not settled again by every check (docx-agent's `ragged_rows`, round 57 R124).
 fn accepted_shape(doc: &WordDoc, table: &Arc<Element>) -> Option<Shape> {
-    static ACCEPTED: OnceLock<Kept<Option<Shape>>> = OnceLock::new();
-    ACCEPTED
-        .get_or_init(|| Kept::new(KEPT))
+    doc.shared()
+        .accepted
         .get_or(table, || settled(doc, table, true, None).and_then(|t| shape(&t)))
+}
+
+/// The tables' shapes as Accept All leaves them, kept for a document by their content.
+pub(crate) type AcceptedShapes = super::shapes::Kept<Option<Shape>>;
+
+/// What a kept accepted shape holds beside itself, bytes.
+pub(crate) fn accepted_weight(shape: &Option<Shape>) -> usize {
+    shape
+        .as_ref()
+        .map_or(0, |(_, rows)| rows.len() * std::mem::size_of::<RaggedRow>())
 }
 
 /// A table's columns covered by its widest rows and the rows that cover others, or `None`
