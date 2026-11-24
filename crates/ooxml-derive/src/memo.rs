@@ -89,6 +89,12 @@ impl<K: Hash + Eq + Clone, V: Clone + Weigh> Memo<K, V> {
     /// With [`Memo::insert`] this lets a caller compute its misses elsewhere -- in
     /// parallel, say -- and keep them afterwards.
     pub fn get(&mut self, key: &K) -> Option<V> {
+        self.touch(key).cloned()
+    }
+
+    /// The value held for `key`, borrowed, counted as a use as [`Memo::get`] counts it: for
+    /// a caller that reads a part of a value dear to clone.
+    pub fn touch(&mut self, key: &K) -> Option<&V> {
         self.clock += 1;
         let Some(entry) = self.entries.get_mut(key) else {
             self.stats.misses += 1;
@@ -98,7 +104,7 @@ impl<K: Hash + Eq + Clone, V: Clone + Weigh> Memo<K, V> {
         entry.age = self.clock;
         self.ages.insert(self.clock, key.clone());
         self.stats.hits += 1;
-        Some(entry.value.clone())
+        Some(&entry.value)
     }
 
     /// Keep `value` under `key` (replacing what was held), evicting the oldest entries

@@ -12,6 +12,8 @@ use super::scratch::settled;
 use super::shapes::{Kept, KEPT};
 use crate::names::W;
 use crate::{EditError, Result, WordDoc};
+use ooxml_word_model::docx::block_facts::BlockFact;
+use ooxml_word_model::docx::formatting::Formatting;
 use ooxml_word_model::docx::revisions::records;
 use ooxml_word_model::docx::tables::{cells_at, own_rows};
 use ooxml_word_model::docx::{at_path, find_path};
@@ -116,21 +118,22 @@ pub fn table_grid_mismatch(doc: &WordDoc, keep: Option<&dyn Fn(&str) -> bool>) -
         .placed()
         .filter(|t| keep.is_none_or(|k| k(&named(t))))
         .collect();
+    let formatting = Formatting::read(&docx);
+    let shapes: Vec<Arc<TableShape>> = tables
+        .iter()
+        .map(|table| {
+            body.block_fact::<Shapes>(&formatting, table.element, &table.path, || {
+                Arc::new(TableShape::of(doc, table))
+            })
+        })
+        .collect();
     let mut by_place: Option<HashMap<Box<[u32]>, String>> = None;
     let mut found = Vec::new();
-    // The tables said off their grid, by ordinal.
-    let mut off_grid: Vec<usize> = Vec::new();
-    for table in &tables {
-        let rows: Vec<Arc<Element>> = table
-            .rows
-            .iter()
-            .filter_map(|path| at_path(body.root(), path).cloned())
-            .collect();
-        let (grid, off) = off_grid_rows(table.element, &rows);
+    for (table, shape) in tables.iter().zip(&shapes) {
+        let (grid, off, tracked) = (shape.grid, shape.off.clone(), shape.tracked);
         if off.is_empty() {
             continue;
         }
-        let tracked = has_any(table.element, &TRACKED_CELLS);
         let (changes, fix) = if tracked {
             let named = by_place.get_or_insert_with(|| {
                 records(&docx)
@@ -143,7 +146,6 @@ pub fn table_grid_mismatch(doc: &WordDoc, keep: Option<&dyn Fn(&str) -> bool>) -
         } else {
             (Vec::new(), None)
         };
-        off_grid.push(table.ordinal);
         found.push(GridMismatch::OffGrid {
             table: named(table),
             grid,
@@ -154,21 +156,67 @@ pub fn table_grid_mismatch(doc: &WordDoc, keep: Option<&dyn Fn(&str) -> bool>) -
             fix,
         });
     }
-    for table in &tables {
-        let Some(ragged) = ragged_rows(doc, table.element) else {
+    for (table, shape) in tables.iter().zip(&shapes) {
+        let Some(ragged) = &shape.ragged else {
             continue;
         };
         // A row off the grid is said above; as it is now, that is the ragged shape too.
-        if ragged.after_accept || !off_grid.contains(&table.ordinal) {
+        if ragged.after_accept || shape.off.is_empty() {
             found.push(GridMismatch::Ragged {
                 table: named(table),
                 grid: ragged.grid,
-                rows: ragged.rows,
+                rows: ragged.rows.clone(),
                 after_accept: ragged.after_accept,
             });
         }
     }
     Ok(found)
+}
+
+/// A table's shape as `table_grid_mismatch` reads it: its grid columns, its rows off the
+/// grid, whether it holds tracked cell or grid records, and its ragged shape
+/// ([`ragged_rows`]). Read from the table alone; the block tier keeps it across versions
+/// ([`Shapes`]).
+struct TableShape {
+    grid: i64,
+    off: Vec<OffGridRow>,
+    tracked: bool,
+    ragged: Option<Ragged>,
+}
+
+impl TableShape {
+    /// `table`'s shape.
+    fn of(doc: &WordDoc, table: &PlacedTable<'_>) -> TableShape {
+        let rows: Vec<Arc<Element>> = table
+            .rows
+            .iter()
+            .filter_map(|path| at_path(table.element, path.get(table.path.len()..)?).cloned())
+            .collect();
+        let (grid, off) = off_grid_rows(table.element, &rows);
+        TableShape {
+            grid,
+            tracked: !off.is_empty() && has_any(table.element, &TRACKED_CELLS),
+            off,
+            ragged: ragged_rows(doc, table.element),
+        }
+    }
+}
+
+/// A table's [`TableShape`] as the block tier keeps it ([`BlockFact`]): by the table, the
+/// outermost table holding it and the formatting parts.
+struct Shapes;
+
+impl BlockFact for Shapes {
+    type Value = Arc<TableShape>;
+
+    fn weight(value: &Self::Value) -> usize {
+        std::mem::size_of::<TableShape>()
+            + value.off.len() * std::mem::size_of::<OffGridRow>()
+            + value
+                .ragged
+                .as_ref()
+                .map_or(0, |r| r.rows.len() * std::mem::size_of::<RaggedRow>())
+    }
 }
 
 /// A ragged table's shape as Accept All leaves it ([`ragged_rows`]).
