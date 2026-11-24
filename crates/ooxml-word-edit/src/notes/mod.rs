@@ -320,9 +320,12 @@ fn place(doc: &WordDoc, docx: &Docx, at: &str) -> Result<(Found, usize)> {
 /// in the paragraph anchoring it, before it and at the paragraph's end.
 fn in_text_box(docx: &Docx, part: &str, anchor: &[u32], inside: &[u32], id: &str) -> EditError {
     let message = format!("{id} is in a text box: Word puts no note reference in a text box");
-    let found = docx
-        .part(part)
-        .and_then(|story| story.ids.paragraph_at(anchor).map(|p| (p.id.clone(), Arc::clone(&p.element))));
+    let found = docx.part(part).and_then(|story| {
+        story
+            .ids
+            .paragraph_at(anchor)
+            .map(|p| (p.id.clone(), Arc::clone(&p.element)))
+    });
     let Some((paragraph, element)) = found else {
         return EditError::Refused(message);
     };

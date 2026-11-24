@@ -23,7 +23,11 @@ fn tracked() -> RevisionPolicy {
 
 fn options(error: EditError) -> Vec<String> {
     match error {
-        EditError::Argument { field, message, options } => {
+        EditError::Argument {
+            field,
+            message,
+            options,
+        } => {
             assert_eq!(field, "at");
             assert!(message.contains("text box"), "{message}");
             options
@@ -44,7 +48,10 @@ fn a_note_moved_into_a_text_box_is_refused_with_the_places_beside_it() {
         let error = editor.run(&Caller::anonymous(), &moved).unwrap_err();
         let options = options(error);
         assert_eq!(options.len(), 2, "{options:?}");
-        assert!(options[0].ends_with("@19") && options[1].ends_with("@20"), "{options:?}");
+        assert!(
+            options[0].ends_with("@19") && options[1].ends_with("@20"),
+            "{options:?}"
+        );
         // the way out works: the reference goes before the text box
         let again = MoveNote {
             note: "fn:1".to_owned(),
