@@ -1043,8 +1043,8 @@
 {"digest":"sha256:f446386a333d8322404e9fb12d583210","id":"structure:50873262658c4251","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:f446386a333d8322404e9fb12d583210","id":"structure:6fd13f71418e2d2d","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:87b892d3725b36baedec6f3460d5e470","id":"structure:a95d7c95b124370b","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:fdda42fdbceedc3ed7d9b34d1d6d2f36","id":"structure:a6f127b46daaef63","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:c1da3c9fda0775d82d872d27f64e6990","id":"structure:8f8d309a419b79a5","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:cf9f440c458269976be74206525275c0","id":"structure:a6f127b46daaef63","source":"Word 16.106: footnote cannot be created in a text box (fu-word3 measure b2-insert/b2-paste, #354)"}
+{"digest":"sha256:16e4eb7eeb2b796780964ba895b21ed4","id":"structure:8f8d309a419b79a5","source":"Word 16.106: footnote cannot be created in a text box (fu-word3 measure b2-insert/b2-paste, #354)"}
 {"digest":"sha256:c97fec930269a73c32d0ff14aaaf2acd","id":"structure:6baad0803e28c102","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:8cc12f89b3f98fe3c535b5b18ef0deb4","id":"structure:2e756a249dd82659","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:5bbaf9fc1ddf638b3712dfcb701b3b3b","id":"structure:35240109174b157b","source":"frozen Python a512c901, unmeasured"}
@@ -1056,9 +1056,9 @@
 {"digest":"sha256:5826a4b528d326736f6ca0758e877215","id":"structure:fb4970125bfa9a94","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:256eac9a256640ad120df43d95f68164","id":"structure:b3b4d9c72c7f73f2","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:9d3b73d7bfead33d7230cb2eae7216f3","id":"structure:373285aa2c25d643","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:fc39f352ef379a657da925fe792eb526","id":"structure:2059124caf17ded5","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:51bfd7409e9fcdb72d4e381998970365","id":"structure:3aa648a98a917a5d","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:8659bcd0aa6666f041caff71770a3dc1","id":"structure:58cd7c29adb732bc","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:05855011c2e580554d31bab270c811a7","id":"structure:2059124caf17ded5","source":"Word 16.106: footnote cannot be created in a text box (fu-word3 measure b2-insert/b2-paste, #354)"}
+{"digest":"sha256:cf9f440c458269976be74206525275c0","id":"structure:3aa648a98a917a5d","source":"Word 16.106: footnote cannot be created in a text box (fu-word3 measure b2-insert/b2-paste, #354)"}
+{"digest":"sha256:16e4eb7eeb2b796780964ba895b21ed4","id":"structure:58cd7c29adb732bc","source":"Word 16.106: footnote cannot be created in a text box (fu-word3 measure b2-insert/b2-paste, #354)"}
 {"digest":"sha256:c97fec930269a73c32d0ff14aaaf2acd","id":"structure:248a97326b5a65c8","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:3038e9090394623bf6fa3a527a40f4c7","id":"structure:95d161694b1ce0cb","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:86433d7f3ebe8a36f280c9945e42c3e2","id":"structure:88067b57921f6aa5","source":"frozen Python a512c901, unmeasured"}
@@ -1070,7 +1070,7 @@
 {"digest":"sha256:d12475ef54a8b3fbb26afcfcc9e8a013","id":"structure:20f06b6eecd2dcd9","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:50bb57ad13bd90206f3efff22ae0be4f","id":"structure:f7502ad9d44540aa","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:dbec805c8040b693d603186aa7c18072","id":"structure:e2f5369a0d8b8f03","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:0fee770134bb6aa5799d1dfee57aee0d","id":"structure:51e980c88c3ba60f","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:05855011c2e580554d31bab270c811a7","id":"structure:51e980c88c3ba60f","source":"Word 16.106: footnote cannot be created in a text box (fu-word3 measure b2-insert/b2-paste, #354)"}
 {"digest":"sha256:65dca5e365a0226ed8ccebd79316e6f6","id":"structure:b92a71a870f15ffe","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:8e94d10acd830ec99d6389037cf6bb1d","id":"structure:69a6cf16e7077f32","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:0d7d8b9cf69adc319a17a270b5857ebb","id":"structure:218eae47f222f3c6","source":"frozen Python a512c901, unmeasured"}
