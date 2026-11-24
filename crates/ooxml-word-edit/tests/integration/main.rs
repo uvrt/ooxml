@@ -11,6 +11,7 @@ mod history;
 mod interleave;
 mod kept_facts;
 mod kept_lost;
+mod kept_numbering;
 mod kept_reads;
 mod list_levels;
 mod notes_copied;
