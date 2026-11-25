@@ -16,7 +16,7 @@ pub struct StoreStats {
     pub conflicts: u64,
     /// Commits whose changes were rebased past others committed since their snapshot.
     pub rebased: u64,
-    /// Transactions run under the commit lock after too many conflicts.
+    /// Transactions run behind the gate after too many conflicts.
     pub exclusive: u64,
     /// Time inside the commit lock, summed over commits.
     pub held_total: Duration,

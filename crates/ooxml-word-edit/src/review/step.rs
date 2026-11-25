@@ -76,6 +76,7 @@ pub(crate) fn step(sink: &mut EditSink<'_, '_>, accept: bool, wanted: Option<&[S
     let mut run = Run {
         accept,
         held: sink.doc().clone(),
+        placeholder_texts: super::placeholders::placeholder_texts(sink.doc(), &docx.main)?,
         space: Space::default(),
         gathered: Gathered::default(),
     };
@@ -99,6 +100,8 @@ struct Run {
     accept: bool,
     /// The version the step reviews (holding the document's shared tables).
     held: crate::doc::WordDoc,
+    /// The glossary's placeholder texts, for the controls a review empties.
+    placeholder_texts: super::placeholders::PlaceholderTexts,
     space: Space,
     gathered: Gathered,
 }
@@ -129,6 +132,7 @@ impl Run {
     /// Review one part's records.
     fn review_part(&mut self, sink: &mut EditSink<'_, '_>, docx: &Docx, part: &str, mine: &[&Record]) -> Result<()> {
         let (space, gathered, accept) = (&mut self.space, &mut self.gathered, self.accept);
+        let texts = &self.placeholder_texts;
         let orders = self.held.shared().facts.orders();
         let Some(story) = docx.part(part) else {
             return Err(EditError::no_part(part.to_owned()));
@@ -150,7 +154,7 @@ impl Run {
             .filter_map(|p| Some((space.locate(part, &p.path)?, p.id)))
             .collect();
         let work = space.get_mut(part).ok_or_else(|| EditError::no_part(part.to_owned()))?;
-        let mut review = PartReview::new(work, accept, orders, group_of);
+        let mut review = PartReview::new(work, accept, (orders, texts), group_of);
         let group = review.expand(&elements);
         review.run(&group);
         for p in &review.removed_paragraphs {
