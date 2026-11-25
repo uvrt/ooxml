@@ -9,12 +9,12 @@
 use crate::batch::{MAX_READ_BATCH_CHARS, READ_BATCH};
 use crate::call::Call;
 use crate::context::{revision_date, CallCancel, LayoutCancel};
-use crate::document::{At, Document, Word};
+use crate::document::{Document, Word};
 use crate::session::Opened;
 use crate::undo::UNDO;
 use crate::{CallContext, DocId, DocKind, DocNames, Session, SessionError};
 use ooxml_base::Cancel;
-use ooxml_tools::{Accepted, Outcome, Refusal, ToolError, ToolResult, ToolSpec, WayOut};
+use ooxml_tools::{Accepted, CallEnv, Outcome, Refusal, ToolError, ToolResult, ToolSpec, WayOut};
 use ooxml_tools_word::{Made, Placer};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
@@ -23,7 +23,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, PoisonError};
 
 /// A call's tool and its arguments as meant.
-type Found = (Arc<dyn crate::Tool>, Map<String, Value>);
+type Found = (Arc<dyn ooxml_tools::Tool>, Map<String, Value>);
 
 /// The versions a batch reads, by document.
 pub(crate) type Pinned = BTreeMap<DocId, Opened>;
@@ -228,7 +228,7 @@ impl Session {
                     before: made.before.number(),
                     touched: one.then(|| made.touched.iter().map(crate::changes::touched_json).collect()),
                     validation: made.validation,
-                    last: Self::opened(&opened.id, document, At::Word(made.last)),
+                    last: Self::opened(&opened.id, document, Word::any(made.last)),
                 }
             });
             // (state numbers, as the tool layer numbers the document's states)
@@ -257,7 +257,7 @@ impl Session {
                     tool: Some(name),
                     history: false,
                 };
-                word.retired.note(&by, delta);
+                word.retired().note(&by, delta);
             }
         }
         if !made.batch {
@@ -312,13 +312,14 @@ impl Session {
             limits: context.limits,
             tracking: word.and_then(Word::tracking),
         };
-        let result = tool.run(arguments, &call);
+        let mut env = CallEnv { cancel, format: &call };
+        let result = tool.run(&arguments, &mut env);
         // An id a version removed, refused as one the document lacks: said as such.
         match (&result.outcome, call.word) {
             (Outcome::Failed(error), Some(word)) => {
                 let replaced = call.doc.word().map(|w| w.ids().replaced());
                 let none = BTreeMap::new();
-                crate::refused::removed(&word.retired, replaced.unwrap_or(&none), &given, error)
+                crate::refused::removed(word.retired(), replaced.unwrap_or(&none), &given, error)
                     .map_or(result, ToolResult::failed)
             }
             _ => result,

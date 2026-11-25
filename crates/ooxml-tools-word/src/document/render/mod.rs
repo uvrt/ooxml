@@ -421,6 +421,6 @@ fn render_pages(
 
 /// Registers `render` (the group's [`super::register`]); a call is drawn from the page
 /// engine its layout names.
-pub(crate) fn register(r: &mut impl crate::Registrar) {
+pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
     r.read::<Render>(render);
 }

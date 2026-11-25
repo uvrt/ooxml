@@ -24,7 +24,7 @@ use ooxml_xml::Tree;
 use std::sync::Arc;
 
 /// A document model parts given as bytes are committed into.
-pub(crate) trait PartsModel: DocModel {
+pub trait PartsModel: DocModel {
     /// The version's package.
     fn package(&self) -> &Package;
     /// The change that puts `tree` as `part`.

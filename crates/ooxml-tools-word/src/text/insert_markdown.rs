@@ -335,6 +335,6 @@ fn try_call(args: &WordInsertMarkdown) -> TryCall {
 }
 
 /// Registers `word_insert_markdown` (the crate's [`crate::register`]).
-pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.edit::<WordInsertMarkdown>(word_insert_markdown, crate::Hosting::PLAIN.keeps_written());
+pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
+    r.edit::<WordInsertMarkdown>(word_insert_markdown);
 }

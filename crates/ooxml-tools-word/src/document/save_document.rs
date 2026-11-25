@@ -301,7 +301,7 @@ fn thousands(n: usize) -> String {
 }
 
 /// Registers `save_document` (the group's [`super::register`]).
-pub(crate) fn register(r: &mut impl crate::Registrar) {
+pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
     r.read::<SaveDocument>(save_document);
 }
 

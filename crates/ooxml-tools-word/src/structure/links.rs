@@ -212,6 +212,6 @@ fn descendants<'e>(element: &'e Arc<ooxml_xml::Element>, local: &str) -> Vec<&'e
 }
 
 /// Registers `word_links` (the crate's [`crate::register`]).
-pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.edit::<WordLinks>(word_links, crate::Hosting::PLAIN);
+pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
+    r.edit::<WordLinks>(word_links);
 }

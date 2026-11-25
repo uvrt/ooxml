@@ -173,6 +173,6 @@ pub(crate) fn try_call(args: &WordComments) -> TryCall {
 }
 
 /// Registers `word_comments` (the crate's [`crate::register`]).
-pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.edit::<WordComments>(word_comments, crate::Hosting::PLAIN);
+pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
+    r.edit::<WordComments>(word_comments);
 }

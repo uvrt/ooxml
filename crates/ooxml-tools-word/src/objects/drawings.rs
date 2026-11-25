@@ -294,6 +294,6 @@ fn listed(editing: &Editing<'_>, list: &TryCall) -> Result<ToolResult<Value>, To
 }
 
 /// Registers `word_drawings` (the crate's [`crate::register`]).
-pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.edit::<WordDrawings>(word_drawings, crate::Hosting::PLAIN.blobs());
+pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
+    r.edit::<WordDrawings>(word_drawings);
 }

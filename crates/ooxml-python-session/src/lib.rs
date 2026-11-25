@@ -2,7 +2,7 @@
 //! sections 3 and 9; layer 6).
 //!
 //! Owns: the PyO3 handles -- [`PySession`] (`ooxml_core.Session`), [`PyCancelToken`]
-//! (`ooxml_core.CancelToken`), [`PyLimits`] (`ooxml_core.Limits`) and [`PyCallContext`] (`ooxml_core.CallContext`), [`PyCallOptions`] (`ooxml_core.CallOptions`, what one call runs with) [`PyCallDocuments`] (`ooxml_core.CallDocuments`, the open documents it names), [`PyCallLayout`] (`ooxml_core.CallLayout`, the layout it reads) and [`PyCallWriting`] (`ooxml_core.CallWriting`, how it writes) -- and `ooxml_core.tool_specs(kind)` and `tool_hosting(kind)` (`tools`);
+//! (`ooxml_core.CancelToken`), [`PyLimits`] (`ooxml_core.Limits`) and [`PyCallContext`] (`ooxml_core.CallContext`), [`PyCallOptions`] (`ooxml_core.CallOptions`, what one call runs with) [`PyCallDocuments`] (`ooxml_core.CallDocuments`, the open documents it names), [`PyCallLayout`] (`ooxml_core.CallLayout`, the layout it reads) and [`PyCallWriting`] (`ooxml_core.CallWriting`, how it writes) -- and `ooxml_core.tool_specs(kind)` (`tools`);
 //! the Word layout's handles (`layout`: `WordFonts`, `WordPages`, `LaidPages`, lane L4); the live view's
 //! (`view`: `Session.view`, `Session.page_svg`, `UnknownToken`, `ViewRefused`); the conversion of their
 //! arguments and results (bytes copied in while the interpreter lock is held, then every
@@ -54,7 +54,7 @@ pub use version::PyVersion;
 
 /// Add the session API to the module `m`: `Session`, `CancelToken`, `Limits`, `CallContext`, `CallOptions`, `CallDocuments`,
 /// `CallWriting`, `CallLayout`, `Version` and
-/// `tool_specs`, `tool_hosting`, `new_document`; and the Word layout's handles: `WordFonts`, `WordPages`, `LaidPages`,
+/// `tool_specs`, `new_document`; and the Word layout's handles: `WordFonts`, `WordPages`, `LaidPages`,
 /// `LayoutSummary`, `MemoryBudget` and `BudgetAccount`; `PageRaster`, `drawing_plan` and
 /// `element_path` (docx2svg's drawing and paths); the live view's `UnknownToken` and
 /// `ViewRefused`; and the refusals of an open, `StateRefused` and `NotWordPackage`.
@@ -74,7 +74,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<group::PyStepGroup>()?;
     m.add_class::<group::PyGroupMark>()?;
     m.add_function(wrap_pyfunction!(tools::tool_specs, m)?)?;
-    m.add_function(wrap_pyfunction!(tools::tool_hosting, m)?)?;
     m.add_function(wrap_pyfunction!(tools::new_document, m)?)?;
     m.add_class::<PyWordFonts>()?;
     m.add_class::<PyWordPages>()?;
