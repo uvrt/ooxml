@@ -32,6 +32,7 @@ mod window;
 
 pub(crate) use rows::placed;
 
+use body_lines::body_line_keys;
 pub use body_lines::{body_lines, body_width, BodyLines, BodyWidth};
 pub use keeps::{loose_paragraph_after, table_keeps, table_keeps_at, TableKeeps};
 pub use kept::KeepingRecord;
@@ -62,6 +63,7 @@ use ooxml_word_model::docx::formatting::Formatting;
 use ooxml_word_model::docx::{at_path, find_path, Docx};
 use ooxml_word_model::ids::Entry;
 use ooxml_xml::Element;
+use std::borrow::Cow;
 use std::sync::Arc;
 use tracker::TableTracker;
 
@@ -94,6 +96,20 @@ pub enum TableFormat {
         column: usize,
         /// What to set.
         values: CellValues,
+    },
+    /// The table put on the body's lines beside it (`width_of: "body"`, [`body_width`]):
+    /// `percent` of their width, placed by `alignment`; worked out in the edit's transaction
+    /// on the version it is applied to, the lines' keys read ([`body_line_keys`]), as the
+    /// grid columns shared again ([`TableFormat::ColumnWidth`] each) and then `values` with
+    /// the lines' width and indent, aligned left ([`TableFormat::Table`]). Refused where
+    /// that comes to under a point.
+    OnBody {
+        /// Percent of the lines' width.
+        percent: f64,
+        /// Where the table goes on them (`None`: its own alignment).
+        alignment: Option<String>,
+        /// The table's other properties, set with the width.
+        values: TableValues,
     },
     /// Word's AutoFit to Window at `percent` of the room (`fit_table_to_window`; [`window`]).
     Window {
@@ -252,7 +268,129 @@ fn room_for(doc: &WordDoc, docx: &Docx, found: &Found) -> i64 {
     }
 }
 
+impl TableFormat {
+    /// Whether the edit reads the room the table sits in ([`room_for`]): a width in percent
+    /// of it, the body's lines in it, the window.
+    fn uses_room(&self) -> bool {
+        matches!(
+            self,
+            TableFormat::Window { .. }
+                | TableFormat::OnBody { .. }
+                | TableFormat::Table(TableValues {
+                    width: Some(TableWidth::Percent(_)),
+                    ..
+                })
+        )
+    }
+}
+
+/// The keys the room a table sits in ([`room_for`], [`window::window_room`]) is read from:
+/// the tables around it, whose cell it sits in; else, in the main story, its section's
+/// properties (the paragraph that holds them, or the body's own: the whole part); and the
+/// styles the cells' margins come from.
+fn room_keys(doc: &WordDoc, docx: &Docx, found: &Found) -> Vec<Key> {
+    let mut keys = formatting_keys(doc, docx);
+    let Some(story) = docx.part(&found.part) else {
+        return keys;
+    };
+    let around: Vec<Key> = (1..found.path.len())
+        .filter_map(|n| story.ids.table_at(found.path.get(..n)?))
+        .map(|t| block_key(&found.part, &t.id))
+        .collect();
+    if !around.is_empty() {
+        keys.extend(around);
+        return keys;
+    }
+    if found.part == docx.main {
+        if let Ok(section) = crate::sections::find_section(doc, docx, &Address::parse(&found.id)) {
+            keys.push(
+                match section.paragraph_path().and_then(|p| docx.body()?.ids.paragraph_at(p)) {
+                    Some(p) => block_key(&docx.main, &p.id),
+                    None => Key::part(docx.main.as_str()),
+                },
+            );
+        }
+    }
+    keys
+}
+
+/// The keys of the parts a paragraph's or a table's effective formatting is read from: the
+/// styles part and the numbering part, where the document has them.
+pub(crate) fn formatting_keys(doc: &WordDoc, docx: &Docx) -> Vec<Key> {
+    [crate::styles::REL_STYLES, crate::lists::numbering::REL_NUMBERING]
+        .into_iter()
+        .filter_map(|rel| {
+            ooxml_word_model::parts::related(doc.package(), &docx.main, rel)
+                .ok()
+                .flatten()
+        })
+        .map(|part| Key::part(part.as_str()))
+        .collect()
+}
+
 impl FormatTable<'_> {
+    /// The command with its [`TableFormat::OnBody`] edits worked out on `doc` -- each as
+    /// the grid columns' widths and the table's properties that put the table on the
+    /// body's lines -- and the keys that reads ([`body_line_keys`]); itself, and no keys,
+    /// where it has none.
+    ///
+    /// # Errors
+    /// Lines that come to under a point ([`EditError::Argument`] on `width_of`).
+    fn on_body_lines(&self, doc: &WordDoc, docx: &Docx, found: &Found) -> Result<(Cow<'_, Self>, Vec<Key>)> {
+        if !self.formats.iter().any(|f| matches!(f, TableFormat::OnBody { .. })) {
+            return Ok((Cow::Borrowed(self), Vec::new()));
+        }
+        let table = self.table.as_str();
+        let mut formats = Vec::with_capacity(self.formats.len());
+        for format in &self.formats {
+            let TableFormat::OnBody {
+                percent,
+                alignment,
+                values,
+            } = format
+            else {
+                formats.push(format.clone());
+                continue;
+            };
+            let Some(body) = body_width(doc, table, *percent, alignment.as_deref())? else {
+                let lines = body_lines(doc, table)?;
+                return Err(EditError::Argument {
+                    field: "width_of".to_owned(),
+                    message: format!(
+                        "the body's lines beside {table} are {} pt wide",
+                        ooxml_base::pyfmt::g(lines.width)
+                    ),
+                    options: Vec::new(),
+                });
+            };
+            // the columns shared again first, the cells' widths with them: an autofit table
+            // is drawn at its cells' widths, which a table width alone leaves
+            formats.extend(
+                body.columns
+                    .iter()
+                    .enumerate()
+                    .map(|(column, &width)| TableFormat::ColumnWidth {
+                        column,
+                        width: crate::units::twips(width),
+                    }),
+            );
+            formats.push(TableFormat::Table(TableValues {
+                width: Some(TableWidth::Length(crate::units::twips(body.width))),
+                alignment: Some("left".to_owned()),
+                indent: Some(crate::units::twips(body.indent)),
+                ..values.clone()
+            }));
+        }
+        let keys = body_line_keys(doc, docx, found);
+        Ok((
+            Cow::Owned(FormatTable {
+                formats,
+                ..self.clone()
+            }),
+            keys,
+        ))
+    }
+
     /// Each edit's arguments against the table as it is (docx-agent's checks before an
     /// edit); `id` the table's id then.
     fn check(&self, docx: &Docx, found: &Found) -> Result<()> {
@@ -306,12 +444,24 @@ impl Command<WordDoc> for FormatTable<'_> {
     fn validate(&self, doc: &WordDoc) -> Result<()> {
         let docx = doc.docx()?;
         let found = find_table(doc, &docx, self.table.as_str())?;
-        self.check(&docx, &found)
+        let (on_body, _) = self.on_body_lines(doc, &docx, &found)?;
+        on_body.check(&docx, &found)
     }
 
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<TableFormatted> {
         let mut sink = EditSink::new(tx, self.policy.clone());
-        let mut out = self.edit(&mut sink)?;
+        // what the body's lines and the room come to is worked out here, on the version
+        // the edit is applied to, and read by key: a change to them meanwhile is a conflict
+        let docx = sink.docx()?;
+        let found = find_table(sink.doc(), &docx, self.table.as_str())?;
+        let (on_body, mut keys) = self.on_body_lines(sink.doc(), &docx, &found)?;
+        if on_body.formats.iter().any(TableFormat::uses_room) {
+            keys.extend(room_keys(sink.doc(), &docx, &found));
+        }
+        for key in keys {
+            sink.read(key);
+        }
+        let mut out = on_body.edit(&mut sink)?;
         crate::after::after_edit(&mut sink)?;
         let kept = self.formats.iter().any(|f| {
             matches!(
@@ -532,6 +682,8 @@ impl FormatTable<'_> {
                         tracker.record(work, stamp, false, true, orders);
                     }
                 }
+                // worked out before the edits ([`FormatTable::on_body_lines`]): none is left here
+                TableFormat::OnBody { .. } => {}
                 TableFormat::Window { percent } => {
                     if let Some(window) = &inputs.window {
                         let fits = fit_window(work, stamp.as_deref_mut(), window, *percent, orders);
