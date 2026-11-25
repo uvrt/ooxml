@@ -8,6 +8,7 @@
 
 use crate::editing::{as_caller, call, docx, session};
 use ooxml_session::{DocKind, Session};
+use ooxml_session_word::prelude::*;
 use ooxml_tools_word::new_document::Blank;
 use serde_json::{json, Value};
 use std::sync::Arc;
