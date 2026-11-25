@@ -8,6 +8,7 @@ use super::common::{call, outcome, policy, refused, Outcome};
 use crate::review::Editing;
 use ooxml_tools::{ArgEnum, ToolArgs, ToolResult};
 use ooxml_word_edit::{LinkToPrevious, SetStoryNumbered, SetStoryText, StoryNumber, UnlinkFromPrevious};
+use ooxml_word_model::docx::sections::{HeaderFooter, HeaderOrFooter, StoryKind};
 use serde_json::{json, Value};
 
 /// Which story.
@@ -86,10 +87,16 @@ impl StoryType {
     /// Its name.
     #[must_use]
     pub fn name(self) -> &'static str {
+        self.kind().as_str()
+    }
+
+    /// The kind it names.
+    #[must_use]
+    pub fn kind(self) -> StoryKind {
         match self {
-            StoryType::Default => "default",
-            StoryType::First => "first",
-            StoryType::Even => "even",
+            StoryType::Default => StoryKind::Default,
+            StoryType::First => StoryKind::First,
+            StoryType::Even => StoryKind::Even,
         }
     }
 }
@@ -102,16 +109,19 @@ pub fn word_headers_footers(args: &WordHeadersFooters, editing: &Editing<'_>) ->
         return ToolResult::failed(error);
     }
     let section = args.section.clone();
-    let which = match args.which {
-        Which::Header => "header",
-        Which::Footer => "footer",
+    let target = HeaderFooter {
+        part: match args.which {
+            Which::Header => HeaderOrFooter::Header,
+            Which::Footer => HeaderOrFooter::Footer,
+        },
+        kind: args.kind.unwrap_or(StoryType::Default).kind(),
     };
-    let kind = args.kind.unwrap_or(StoryType::Default).name();
     let way = call("word_sections", &[("doc", json!(args.doc)), ("action", json!("list"))]);
     let story = Story {
         section,
-        which,
-        kind,
+        which: target.part.as_str(),
+        kind: target.kind.as_str(),
+        target,
         way,
     };
     match args.action {
@@ -126,6 +136,7 @@ struct Story {
     section: String,
     which: &'static str,
     kind: &'static str,
+    target: HeaderFooter,
     way: ooxml_tools::TryCall,
 }
 
@@ -134,14 +145,14 @@ fn link(args: &WordHeadersFooters, editing: &Editing<'_>, story: &Story) -> Tool
         section,
         which,
         kind,
+        target,
         way,
     } = story;
     let (which, kind) = (*which, *kind);
     let editor = editing.editor;
     let command = LinkToPrevious {
         section: section.clone(),
-        which: which.to_owned(),
-        kind: kind.to_owned(),
+        story: *target,
     };
     match editor.run(editing.caller, &command) {
         Ok(done) if !done.out.changed => {
@@ -167,14 +178,14 @@ fn unlink(editing: &Editing<'_>, story: &Story) -> ToolResult<Value> {
         section,
         which,
         kind,
+        target,
         way,
     } = story;
     let (which, kind) = (*which, *kind);
     let editor = editing.editor;
     let command = UnlinkFromPrevious {
         section: section.clone(),
-        which: which.to_owned(),
-        kind: kind.to_owned(),
+        story: *target,
     };
     match editor.run(editing.caller, &command) {
         Ok(done) => {
@@ -203,14 +214,14 @@ fn set(args: &WordHeadersFooters, editing: &Editing<'_>, story: &Story) -> ToolR
         section,
         which,
         kind,
+        target,
         way,
     } = story;
     let (which, kind) = (*which, *kind);
     let editor = editing.editor;
     let command = SetStoryText {
         section: section.clone(),
-        which: which.to_owned(),
-        kind: kind.to_owned(),
+        story: *target,
         text: args.text.clone().unwrap_or_default(),
         policy: policy(editing),
     };

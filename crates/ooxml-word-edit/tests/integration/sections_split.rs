@@ -22,7 +22,7 @@ fn body_reviewed(policy: RevisionPolicy, accept: Option<bool>) -> String {
     let command = InsertSectionBreak {
         after: Some("p@body/0".to_owned()),
         before: None,
-        kind: "nextPage".to_owned(),
+        kind: ooxml_word_model::docx::sections::SectionBreakKind::NextPage,
         policy,
     };
     let done = editor.run(&Caller::anonymous(), &command).unwrap();
@@ -114,7 +114,7 @@ fn a_break_after_a_paragraph_touches_its_section_and_the_last_sections_propertie
         let command = InsertSectionBreak {
             after: Some("p@body/0".to_owned()),
             before: None,
-            kind: "nextPage".to_owned(),
+            kind: ooxml_word_model::docx::sections::SectionBreakKind::NextPage,
             policy: policy.clone(),
         };
         let done = editor.run(&Caller::anonymous(), &command).unwrap();

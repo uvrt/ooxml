@@ -47,13 +47,13 @@ fn next_calls(bytes: &Arc<[u8]>, (early, middle, late): (&str, &str, &str), repo
     let first = InsertSectionBreak {
         after: Some(middle.to_owned()),
         before: None,
-        kind: "nextPage".into(),
+        kind: ooxml_word_model::docx::sections::SectionBreakKind::NextPage,
         policy: untracked.clone(),
     };
     let section = InsertSectionBreak {
         after: Some(early.to_owned()),
         before: None,
-        kind: "nextPage".into(),
+        kind: ooxml_word_model::docx::sections::SectionBreakKind::NextPage,
         policy: untracked.clone(),
     };
     let moving = MoveBlocks {
@@ -121,7 +121,7 @@ fn sections_and_moves(bytes: &Arc<[u8]>, (early, late): (&str, &str), report: &d
             &InsertSectionBreak {
                 after: Some(early.to_owned()),
                 before: None,
-                kind: "nextPage".into(),
+                kind: ooxml_word_model::docx::sections::SectionBreakKind::NextPage,
                 policy: untracked.clone(),
             },
         ),
@@ -132,8 +132,10 @@ fn sections_and_moves(bytes: &Arc<[u8]>, (early, late): (&str, &str), report: &d
             bytes,
             &SetStoryText {
                 section: "s:body".into(),
-                which: "header".into(),
-                kind: "default".into(),
+                story: ooxml_word_model::docx::sections::HeaderFooter {
+                    part: ooxml_word_model::docx::sections::HeaderOrFooter::Header,
+                    kind: ooxml_word_model::docx::sections::StoryKind::Default,
+                },
                 text: "Bench".into(),
                 policy: untracked.clone(),
             },

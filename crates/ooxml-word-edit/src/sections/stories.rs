@@ -22,7 +22,7 @@ use crate::work::{scope_above, Id, Work};
 use crate::{EditError, Result, WordDoc};
 use ooxml_base::Limits;
 use ooxml_store::{Command, Txn};
-use ooxml_word_model::docx::sections::sections;
+use ooxml_word_model::docx::sections::{sections, HeaderFooter};
 use ooxml_word_model::docx::{at_path, Docx};
 use ooxml_word_model::parts::{related, REL_SETTINGS};
 use ooxml_xml::QName;
@@ -35,10 +35,8 @@ const REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relatio
 pub struct SetStoryText {
     /// The section.
     pub section: String,
-    /// `header` or `footer`.
-    pub which: String,
-    /// `default`, `first` or `even`.
-    pub kind: String,
+    /// The header or footer.
+    pub story: HeaderFooter,
     /// The text, `\n` between paragraphs.
     pub text: String,
     /// Untracked or tracked.
@@ -50,10 +48,8 @@ pub struct SetStoryText {
 pub struct LinkToPrevious {
     /// The section.
     pub section: String,
-    /// `header` or `footer`.
-    pub which: String,
-    /// `default`, `first` or `even`.
-    pub kind: String,
+    /// The header or footer.
+    pub story: HeaderFooter,
 }
 
 /// A section given a story of its own of `which` and `kind`: a copy of the one it showed.
@@ -61,10 +57,8 @@ pub struct LinkToPrevious {
 pub struct UnlinkFromPrevious {
     /// The section.
     pub section: String,
-    /// `header` or `footer`.
-    pub which: String,
-    /// `default`, `first` or `even`.
-    pub kind: String,
+    /// The header or footer.
+    pub story: HeaderFooter,
 }
 
 /// What a story edit did: each step's outcome, as docx-agent's edits report them, and the
@@ -353,7 +347,7 @@ impl SetStoryText {
         let docx = sink.docx()?;
         let found = find_section(sink.doc(), &docx, &self.section)?;
         let (_, probe) = sect_work(&*sink, &found)?;
-        let own = own_reference(&probe, probe.root(), &self.which, &self.kind)
+        let own = own_reference(&probe, probe.root(), self.story.part.as_str(), self.story.kind.as_str())
             .and_then(|n| probe.get(n, Some(R), "id").map(str::to_owned))
             .and_then(|rid| reference_part(sink.doc(), &docx, &rid));
         let mut steps = Vec::new();
@@ -390,7 +384,13 @@ impl SetStoryText {
                 name
             }
             None => {
-                let made = add_story(&mut *sink, &self.section, &self.which, &self.kind, first_line)?;
+                let made = add_story(
+                    &mut *sink,
+                    &self.section,
+                    self.story.part.as_str(),
+                    self.story.kind.as_str(),
+                    first_line,
+                )?;
                 let name = made.id.clone().unwrap_or_default();
                 steps.push(made);
                 name
@@ -439,7 +439,7 @@ impl LinkToPrevious {
         let docx = sink.docx()?;
         let found = find_section(sink.doc(), &docx, &self.section)?;
         let (_, probe) = sect_work(&*sink, &found)?;
-        let Some(rid) = own_reference(&probe, probe.root(), &self.which, &self.kind)
+        let Some(rid) = own_reference(&probe, probe.root(), self.story.part.as_str(), self.story.kind.as_str())
             .and_then(|n| probe.get(n, Some(R), "id").map(str::to_owned))
         else {
             return Ok(SectionEdited {
@@ -454,7 +454,7 @@ impl LinkToPrevious {
         let canonical = super::canonical(sink.doc(), &stamped, &self.section);
         let (main, mut work) = sect_work(&*sink, &found)?;
         let sect = work.root();
-        if let Some(node) = own_reference(&work, sect, &self.which, &self.kind) {
+        if let Some(node) = own_reference(&work, sect, self.story.part.as_str(), self.story.kind.as_str()) {
             work.remove(node);
         }
         write_sect(&mut *sink, &main, &found, &work)?;
@@ -496,7 +496,7 @@ impl UnlinkFromPrevious {
         let docx = sink.docx()?;
         let found = find_section(sink.doc(), &docx, &self.section)?;
         let (_, probe) = sect_work(&*sink, &found)?;
-        if let Some(rid) = own_reference(&probe, probe.root(), &self.which, &self.kind)
+        if let Some(rid) = own_reference(&probe, probe.root(), self.story.part.as_str(), self.story.kind.as_str())
             .and_then(|n| probe.get(n, Some(R), "id").map(str::to_owned))
         {
             let story = reference_part(sink.doc(), &docx, &rid)
@@ -507,11 +507,17 @@ impl UnlinkFromPrevious {
                 ..SectionEdited::default()
             });
         }
-        let source = inherited(&docx, found.index, &self.which, &self.kind)
+        let source = inherited(&docx, found.index, self.story.part.as_str(), self.story.kind.as_str())
             .and_then(|rid| reference_part(sink.doc(), &docx, &rid))
             .filter(|p| sink.doc().package().has_part(p));
         let Some(source) = source else {
-            return add_story(&mut *sink, &self.section, &self.which, &self.kind, "");
+            return add_story(
+                &mut *sink,
+                &self.section,
+                self.story.part.as_str(),
+                self.story.kind.as_str(),
+                "",
+            );
         };
         let renamed = stamp_document(&mut *sink, &docx)?;
         let tree = sink
@@ -519,14 +525,20 @@ impl UnlinkFromPrevious {
             .tree(&source)?
             .ok_or_else(|| EditError::no_part(source.clone()))?;
         let copy = Work::of(tree.root(), Vec::new());
-        let (part, rid) = new_story_part(&mut *sink, &self.which, copy)?;
+        let (part, rid) = new_story_part(&mut *sink, self.story.part.as_str(), copy)?;
         let source_rels = ooxml_opc::name::rels_for(&source);
         if let Some(rels) = sink.doc().package().tree(&source_rels)? {
             sink.put(&ooxml_opc::name::rels_for(&part), rels)?;
         }
         let (main, mut work) = sect_work(&*sink, &found)?;
         let sect = work.root();
-        add_reference(&mut work, sect, &self.which, &self.kind, &rid);
+        add_reference(
+            &mut work,
+            sect,
+            self.story.part.as_str(),
+            self.story.kind.as_str(),
+            &rid,
+        );
         write_sect(&mut *sink, &main, &found, &work)?;
         let docx = sink.docx()?;
         let story = docx.part(&part).ok_or_else(|| EditError::no_part(part.clone()))?;

@@ -1,7 +1,9 @@
 //! Owns: the body's sections as docx-agent reads them (`edit/sections.py`): each ended by
 //! a paragraph's `w:sectPr` (`s:<paraId>`, `s@body/<n>` for a paragraph without one) or the
 //! body's last (`s:body`); their start, page, margins and columns as declared; and the
-//! header and footer each shows, by kind, inherited from the sections before it.
+//! header and footer each shows, by kind, inherited from the sections before it; the
+//! names of a header or footer ([`HeaderFooter`]) and of a section's start
+//! ([`SectionBreakKind`]).
 //!
 //! Must not: change a section or lay out pages.
 
@@ -15,6 +17,87 @@ const R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relations
 
 /// The kinds of header and footer, in docx-agent's order.
 pub const KINDS: [&str; 3] = ["default", "first", "even"];
+
+/// A section's header or its footer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HeaderOrFooter {
+    /// `w:headerReference`, a `header*.xml` part.
+    Header,
+    /// `w:footerReference`, a `footer*.xml` part.
+    Footer,
+}
+
+/// Which pages a header or footer shows on (`w:type`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StoryKind {
+    /// Every page the others do not take.
+    Default,
+    /// The section's first page.
+    First,
+    /// Even pages.
+    Even,
+}
+
+/// One of a section's six headers and footers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct HeaderFooter {
+    /// Header or footer.
+    pub part: HeaderOrFooter,
+    /// Which pages.
+    pub kind: StoryKind,
+}
+
+impl HeaderOrFooter {
+    /// Its name (`header`, `footer`): the reference's and the part's stem.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HeaderOrFooter::Header => "header",
+            HeaderOrFooter::Footer => "footer",
+        }
+    }
+}
+
+impl StoryKind {
+    /// Its `w:type` value (`default`, `first`, `even`).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StoryKind::Default => "default",
+            StoryKind::First => "first",
+            StoryKind::Even => "even",
+        }
+    }
+}
+
+/// How a section starts (`w:type` of `w:sectPr`, ST_SectionMark).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SectionBreakKind {
+    /// On a new page.
+    NextPage,
+    /// On the same page.
+    Continuous,
+    /// On the next even page.
+    EvenPage,
+    /// On the next odd page.
+    OddPage,
+    /// In the next column.
+    NextColumn,
+}
+
+impl SectionBreakKind {
+    /// Its `w:type` value (`nextPage`...).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SectionBreakKind::NextPage => "nextPage",
+            SectionBreakKind::Continuous => "continuous",
+            SectionBreakKind::EvenPage => "evenPage",
+            SectionBreakKind::OddPage => "oddPage",
+            SectionBreakKind::NextColumn => "nextColumn",
+        }
+    }
+}
 
 /// A section's text columns as it states them (docx-agent's `Section.columns`).
 #[derive(Debug, Clone, PartialEq)]

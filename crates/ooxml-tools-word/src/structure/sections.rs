@@ -9,6 +9,7 @@ use crate::review::Editing;
 use ooxml_tools::{ArgEnum, Done, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::{InsertSectionBreak, RemoveSectionBreak, SectionEdited, SectionValues, SetSection};
 use ooxml_word_model::docx::sections::sections;
+use ooxml_word_model::docx::sections::SectionBreakKind;
 use serde_json::{json, Value};
 
 /// What `word_sections` does.
@@ -54,6 +55,18 @@ impl SectionStart {
             SectionStart::EvenPage => "evenPage",
             SectionStart::OddPage => "oddPage",
             SectionStart::NextColumn => "nextColumn",
+        }
+    }
+
+    /// The section start it names.
+    #[must_use]
+    pub fn kind(self) -> SectionBreakKind {
+        match self {
+            SectionStart::NextPage => SectionBreakKind::NextPage,
+            SectionStart::Continuous => SectionBreakKind::Continuous,
+            SectionStart::EvenPage => SectionBreakKind::EvenPage,
+            SectionStart::OddPage => SectionBreakKind::OddPage,
+            SectionStart::NextColumn => SectionBreakKind::NextColumn,
         }
     }
 }
@@ -168,7 +181,7 @@ fn run(args: &WordSections, editing: &Editing<'_>, list: &TryCall) -> Result<Too
             let command = InsertSectionBreak {
                 after,
                 before,
-                kind: args.start.unwrap_or(SectionStart::NextPage).name().to_owned(),
+                kind: args.start.unwrap_or(SectionStart::NextPage).kind(),
                 policy: policy(editing),
             };
             Ok(match editor.run(editing.caller, &command) {
