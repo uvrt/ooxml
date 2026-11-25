@@ -104,7 +104,7 @@ fn run(args: &WordComments, editing: &Editing<'_>) -> Result<ToolResult<Value>, 
 
 /// `list`: each thread's first comment.
 pub(super) fn list(args: &WordComments, editing: &Editing<'_>) -> Result<Done<Value>, ToolError> {
-    let snapshot = editing.editor.store().snapshot();
+    let snapshot = editing.editor.current();
     let docx = snapshot
         .doc()
         .docx()

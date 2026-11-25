@@ -72,7 +72,7 @@ pub fn word_template(args: &WordTemplate, editing: &Editing<'_>) -> ToolResult<V
         "word_template",
         &[("doc", json!(args.doc)), ("action", json!(args.action.as_str()))],
     );
-    let head = editing.editor.store().snapshot();
+    let head = editing.editor.current();
     let modern = match compatibility_mode(head.doc()) {
         Ok(mode) => mode >= MODERN_MODE,
         Err(error) => return ToolResult::failed(edit_refusal(error, "", again)),

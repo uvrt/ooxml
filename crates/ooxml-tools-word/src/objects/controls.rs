@@ -132,7 +132,7 @@ fn kind_of(editing: &Editing<'_>, id: &str, list: &TryCall) -> Result<&'static s
 }
 
 fn head_docx(editing: &Editing<'_>) -> Result<std::sync::Arc<Docx>, ToolError> {
-    let head = editing.editor.store().snapshot();
+    let head = editing.editor.current();
     head.doc()
         .docx()
         .map_err(|e| ToolError::internal(e.to_string(), "word:model"))

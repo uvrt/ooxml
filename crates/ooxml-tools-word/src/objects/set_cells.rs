@@ -358,7 +358,7 @@ fn reply(
     retry: &TryCall,
 ) -> ToolResult<Value> {
     let table = view.table.id.clone();
-    let head = editing.editor.store().snapshot();
+    let head = editing.editor.current();
     let now = head.doc().ids().follow(&table);
     let docx = head.doc().docx().ok();
     let mut data = docx

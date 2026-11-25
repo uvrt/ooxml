@@ -132,7 +132,7 @@ fn checked(
     });
     // docx-agent makes the paragraph first: its refusal comes before the others
     if let Some(command) = &paragraph {
-        if let Err(error) = command.validate(editing.editor.store().snapshot().doc()) {
+        if let Err(error) = command.validate(editing.editor.current().doc()) {
             return Ok(Err(refused(error, list.clone())));
         }
     }

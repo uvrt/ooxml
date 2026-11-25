@@ -251,7 +251,7 @@ pub(super) fn position(args: &WordDrawings, editing: &Editing<'_>, list: &TryCal
 
 /// The pictures, then the charts not among them, as docx-agent lists them.
 fn listed(editing: &Editing<'_>, list: &TryCall) -> Result<ToolResult<Value>, ToolError> {
-    let head = editing.editor.store().snapshot();
+    let head = editing.editor.current();
     let docx = head
         .doc()
         .docx()

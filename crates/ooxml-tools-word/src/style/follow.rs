@@ -59,7 +59,7 @@ fn run(args: &WordFollowSample, editing: &Editing<'_>, again: &TryCall) -> Resul
         policy: policy(editing),
     };
     let ran = if preview {
-        let head = editing.editor.store().snapshot();
+        let head = editing.editor.current();
         let store = Store::new(head.doc().clone(), StoreConfig::default(), Arc::new(Still));
         store
             .run(&Caller::anonymous(), &command)

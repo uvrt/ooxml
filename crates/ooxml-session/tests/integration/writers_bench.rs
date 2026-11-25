@@ -7,7 +7,10 @@
 //! - `mixed`: the same, plus whole-document edits -- every field updated (`word_fields`
 //!   update), the Normal style's spacing changed (`word_styles` modify), a paragraph put in a
 //!   list and out again (`word_lists`), a comment added (`word_comments`) -- and a reader
-//!   that checks the layout (`check`).
+//!   that checks the layout (`check`);
+//! - `batch` (not in the default): the small writers and the reader beside a host's batch of
+//!   [`BATCH_OPS`] text edits on one paragraph, run as one transaction that holds the
+//!   document's gate from its open to its close (`Session::open_group`).
 //!
 //! `SESSION_WRITERS_PHASES` (default `small,mixed`) names the phases; a phase named after one
 //! whole-document worker (`fields`, `styles`, `lists`, `comments`, `check`) runs the small
@@ -348,6 +351,37 @@ fn reader() -> Worker {
     }
 }
 
+/// How many ops the `batch` phase's batch holds.
+const BATCH_OPS: usize = 20;
+
+/// A host's batch: [`BATCH_OPS`] text edits of one paragraph in one step group, closed as
+/// one step; timed whole (open to close).
+fn batch_writer(target: (String, String)) -> Worker {
+    let caller = context("batch");
+    let (id, text) = target;
+    let other = swapped(&text);
+    let work: Work = Box::new(move |s, d, book, _| {
+        let started = Instant::now();
+        let group = s.open_group(d).unwrap();
+        let mut failed = 0;
+        for op in 0..BATCH_OPS {
+            let set = if op % 2 == 0 { &other } else { &text };
+            let arguments = json!({"doc": d.to_string(), "target": id, "text": set});
+            failed += usize::from(s.call("word_set_text", arguments, &caller).is_error());
+        }
+        s.close_group(d, &group, &caller, Some("batch")).unwrap();
+        let mut book = book.lock().unwrap();
+        let calls = book.entry(format!("batch of {BATCH_OPS}")).or_default();
+        calls.times.push(started.elapsed());
+        calls.failed += failed;
+    });
+    Worker {
+        label: "batch".to_owned(),
+        whole: true,
+        work,
+    }
+}
+
 fn whole_document(list: (String, String), comment: (String, String)) -> Vec<Worker> {
     let fields: Work = {
         let caller = context("fields");
@@ -440,6 +474,7 @@ fn mixed_writers_on_one_document() {
             match phase {
                 "small" => {}
                 "mixed" => workers.extend(whole),
+                "batch" => workers.push(batch_writer(list.clone())),
                 one => workers.extend(whole.into_iter().filter(|w| w.label == one)),
             }
             run_phase(phase, &bytes, workers, secs, targets.first());

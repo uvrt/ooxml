@@ -277,7 +277,7 @@ fn reply(
     placed_from: Map<String, Value>,
     retry: &TryCall,
 ) -> ToolResult<Value> {
-    let head = editing.editor.store().snapshot();
+    let head = editing.editor.current();
     let mut data = head
         .doc()
         .docx()

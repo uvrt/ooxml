@@ -1,6 +1,7 @@
 //! Owns: `ooxml_core.StepGroup` and `ooxml_core.GroupMark`, a document's step group as the
 //! host's batch holds it (`Session.open_group`): marks, reverts to a mark and the close,
-//! each made with the interpreter lock released.
+//! each made with the interpreter lock released; a group let go unclosed takes back what it
+//! did (its drop), so a batch the host lost never holds the document.
 //!
 //! Must not: close a group itself -- the host's guard does, on every path.
 
@@ -9,6 +10,7 @@ use crate::session::to_py;
 use crate::version::PyVersion;
 use ooxml_session::{DocId, GroupMark, Session};
 use pyo3::prelude::*;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 /// Where a step group was (`StepGroup.mark`), for `StepGroup.revert`.
@@ -23,12 +25,19 @@ pub struct PyStepGroup {
     session: Arc<Session>,
     doc: DocId,
     start: GroupMark,
+    /// Whether it was closed (else its drop takes its work back).
+    closed: AtomicBool,
 }
 
 impl PyStepGroup {
     pub(crate) fn open(py: Python<'_>, session: Arc<Session>, doc: DocId) -> PyResult<Self> {
         let start = py.detach(|| session.open_group(&doc)).map_err(|e| to_py(&e))?;
-        Ok(Self { session, doc, start })
+        Ok(Self {
+            session,
+            doc,
+            start,
+            closed: AtomicBool::new(false),
+        })
     }
 
     fn head(&self, py: Python<'_>, made: Option<u64>) -> PyResult<Option<PyVersion>> {
@@ -45,7 +54,7 @@ impl PyStepGroup {
     /// Where the group is now.
     fn mark(&self, py: Python<'_>) -> PyResult<PyGroupMark> {
         let inner = py
-            .detach(|| self.session.group_mark(&self.doc))
+            .detach(|| self.session.group_mark(&self.doc, &self.start))
             .map_err(|e| to_py(&e))?;
         Ok(PyGroupMark { inner })
     }
@@ -76,7 +85,7 @@ impl PyStepGroup {
     fn reflow(&self, py: Python<'_>, context: Option<PyRef<'_, PyCallContext>>) -> PyResult<Option<String>> {
         let context = caller_context(context.as_deref());
         let found = py
-            .detach(|| self.session.group_reflow(&self.doc, &context))
+            .detach(|| self.session.group_reflow(&self.doc, &self.start, &context))
             .map_err(|e| to_py(&e))?;
         Ok(found.map(|r| r.to_string()))
     }
@@ -91,9 +100,21 @@ impl PyStepGroup {
         tool: Option<&str>,
     ) -> PyResult<Option<PyVersion>> {
         let context = caller_context(context.as_deref());
+        self.closed.store(true, Ordering::Release);
         let made = py
-            .detach(|| self.session.close_group(&self.doc, &context, tool))
+            .detach(|| self.session.close_group(&self.doc, &self.start, &context, tool))
             .map_err(|e| to_py(&e))?;
         self.head(py, made)
+    }
+}
+
+impl Drop for PyStepGroup {
+    /// A group let go unclosed: what it did taken back, the document let go.
+    fn drop(&mut self) {
+        if !self.closed.load(Ordering::Acquire) {
+            let context = caller_context(None);
+            // (a document closed meanwhile has nothing left to let go)
+            let _ = self.session.abandon_group(&self.doc, &self.start, &context);
+        }
     }
 }

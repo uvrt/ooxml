@@ -183,7 +183,7 @@ fn from_rows<'e>(
         return Ok(None);
     };
     if let Some(refused) = editing.others.refused_source(given) {
-        let head = editing.editor.store().snapshot();
+        let head = editing.editor.current();
         let docx = head.doc().docx().ok();
         return Err(crate::sources::refused_source(refused, docx.as_deref(), retry));
     }
@@ -239,7 +239,7 @@ fn check_arguments(args: &WordEditTable, retry: &TryCall) -> Result<(), ToolErro
 
 fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<ToolResult<Value>, ToolError> {
     let source = from_rows(args, editing, retry)?;
-    let head = editing.editor.store().snapshot();
+    let head = editing.editor.current();
     let docx = head
         .doc()
         .docx()
@@ -446,7 +446,7 @@ fn finish(
 ) -> ToolResult<Value> {
     let table = view.table.id.clone();
     let off_before = view.off_grid();
-    let before = editing.editor.store().snapshot();
+    let before = editing.editor.current();
     let ragged_before = !matches!(change, TableChange::InsertRow { .. }) && ragged(before.doc(), &table).is_some();
     let mut watched = watch(editing, before.doc(), view, change);
     // a table placed from a source keeps its record true through the change (`_Kept`)
@@ -470,7 +470,7 @@ fn finish(
     let now = done.table.clone();
     // round 55 (R115, rule 3): a merge already made changes nothing
     let unchanged = done.unchanged && matches!(change, TableChange::Merge { .. });
-    let head = editing.editor.store().snapshot();
+    let head = editing.editor.current();
     let data = head
         .doc()
         .docx()

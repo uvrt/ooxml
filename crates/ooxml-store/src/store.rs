@@ -33,7 +33,7 @@ use crate::journal::{Journal, Since};
 use crate::stats::Counts;
 use crate::sync::{lock, wait, Condvar, HeadCell, Mutex, MutexGuard};
 use crate::times::LockTimes;
-use crate::txn::TxnParts;
+use crate::txn::{Ids, TxnParts};
 use crate::{
     Clock, Command, Counters, CountersError, DocModel, Error, HistoryOutcome, KeySet, ReadPredicate, Seq, Snapshot,
     StepInfo, StoreError, StoreStats, Txn, Version,
@@ -149,11 +149,11 @@ pub struct Listed<K: Ord> {
 }
 
 /// The state under the commit lock.
-struct State<D: DocModel> {
-    last: Seq,
+pub(crate) struct State<D: DocModel> {
+    pub(crate) last: Seq,
     /// The highest state number given ([`Version::number`]).
-    numbered: u64,
-    history: History<D>,
+    pub(crate) numbered: u64,
+    pub(crate) history: History<D>,
     /// The latest versions' change sets: within the rebase window, and back to the oldest
     /// version the history may still move a change set from.
     journal: Journal<D>,
@@ -161,7 +161,10 @@ struct State<D: DocModel> {
     times: LockTimes,
     /// Since when a command plans and commits behind the gate (`None`: open): another
     /// commit publishes only once it is open again ([`Store::enter_gate`]).
-    gated: Option<Duration>,
+    pub(crate) gated: Option<Duration>,
+    /// Whether an owner holds a transaction open ([`Store::open_txn`]): it holds the gate
+    /// too, and undo and redo are refused until it is committed or dropped.
+    pub(crate) held: bool,
 }
 
 /// The state, locked: when it is let go, how long it was held is counted (the wait is
@@ -200,13 +203,7 @@ struct Gate<'s, D: DocModel> {
 
 impl<D: DocModel> Drop for Gate<'_, D> {
     fn drop(&mut self) {
-        let mut guard = lock(&self.store.state);
-        if let Some(since) = guard.gated.take() {
-            let held = self.store.clock.monotonic().saturating_sub(since);
-            guard.times.gated.record(held);
-        }
-        drop(guard);
-        self.store.gate.notify_all();
+        self.store.open_gate(|_| ());
     }
 }
 
@@ -217,9 +214,13 @@ pub struct Store<D: DocModel> {
     state: Mutex<State<D>>,
     /// Signalled when the gate opens.
     gate: Condvar,
-    ids: IdAllocator,
+    ids: Arc<IdAllocator>,
+    /// The transaction an owner holds open across calls, if any ([`Store::open_txn`]).
+    pub(crate) holder: Mutex<Option<crate::held::HeldTxn<D>>>,
+    /// Signalled when a held transaction is let go.
+    pub(crate) released: Condvar,
     config: StoreConfig,
-    clock: Arc<dyn Clock>,
+    pub(crate) clock: Arc<dyn Clock>,
     counts: Counts,
 }
 
@@ -252,9 +253,12 @@ impl<D: DocModel> Store<D> {
                 journal: Journal::new(),
                 times: LockTimes::default(),
                 gated: None,
+                held: false,
             }),
             gate: Condvar::new(),
-            ids: IdAllocator::new(counters.cursors),
+            holder: Mutex::new(None),
+            released: Condvar::new(),
+            ids: Arc::new(IdAllocator::new(counters.cursors)),
             config,
             clock,
             counts: Counts::new(),
@@ -274,7 +278,11 @@ impl<D: DocModel> Store<D> {
         }
         let mut locked = self.lock_state();
         let head = self.head.load();
-        if locked.numbered != 0 || head.number() != 0 || locked.history.grouped() || !locked.history.steps().is_empty()
+        if locked.numbered != 0
+            || head.number() != 0
+            || locked.held
+            || locked.history.grouped()
+            || !locked.history.steps().is_empty()
         {
             return Err(CountersError::AlreadyNumbered);
         }
@@ -335,6 +343,13 @@ impl<D: DocModel> Store<D> {
     /// commit publishes (each waits in [`Store::lock_ungated`]); undo, redo and the reads of
     /// the history go on. The commit lock is not held meanwhile.
     fn enter_gate(&self) -> Gate<'_, D> {
+        drop(self.close_gate());
+        Gate { store: self }
+    }
+
+    /// Close the gate once it is open (waiting meanwhile, the commit lock let go), and the
+    /// commit lock, still held, for what the closer does as it closes it.
+    pub(crate) fn close_gate(&self) -> MutexGuard<'_, State<D>> {
         let asked = self.clock.monotonic();
         let mut guard = lock(&self.state);
         while guard.gated.is_some() {
@@ -343,8 +358,58 @@ impl<D: DocModel> Store<D> {
         let entered = self.clock.monotonic();
         guard.times.gate_waited.record(entered.saturating_sub(asked));
         guard.gated = Some(entered);
+        guard
+    }
+
+    /// Open the gate again, `also` done under the same hold of the commit lock; the commits
+    /// waiting for it go on.
+    pub(crate) fn open_gate(&self, also: impl FnOnce(&mut State<D>)) {
+        let mut guard = lock(&self.state);
+        if let Some(since) = guard.gated.take() {
+            let held = self.clock.monotonic().saturating_sub(since);
+            guard.times.gated.record(held);
+        }
+        also(&mut guard);
         drop(guard);
-        Gate { store: self }
+        self.gate.notify_all();
+    }
+
+    /// A version number never given before, for a version that is read but not published
+    /// (a held transaction's, [`Store::in_txn`]).
+    pub(crate) fn draw_seq(&self) -> Seq {
+        let mut state = lock(&self.state);
+        state.last = state.last.next();
+        state.last
+    }
+
+    /// A transaction on the head, to be committed later by [`Store::commit`]: it shares the
+    /// store's id allocator, so it may be kept past the call that began it.
+    pub fn begin(&self, setup: &D::Setup) -> Txn<'static, D> {
+        Txn::new(self.snapshot(), Ids::Shared(Arc::clone(&self.ids)), setup)
+    }
+
+    /// Commit `tx` as `caller`, as [`Store::run`] commits a prepared transaction: `None` on
+    /// a conflict (nothing changed; the caller prepares again on a newer head).
+    pub fn commit(&self, caller: &Caller, tx: Txn<'_, D>) -> Option<Committed<D, ()>> {
+        let start = self.clock.monotonic();
+        let done = self.try_commit(caller, tx.into_parts(), false, None);
+        if done.is_none() {
+            self.counts.conflict();
+        }
+        done.map(|done| self.committed(done, (), 1, false, start))
+    }
+
+    /// [`Store::commit`] by the holder of the gate (a held transaction's), published as
+    /// version `at` where given (a number drawn for the same content, never published).
+    pub(crate) fn commit_gated(
+        &self,
+        caller: &Caller,
+        tx: Txn<'_, D>,
+        at: Option<Seq>,
+        start: Duration,
+    ) -> Option<Committed<D, ()>> {
+        let done = self.try_commit(caller, tx.into_parts(), true, at)?;
+        Some(self.committed(done, (), 1, true, start))
     }
 
     /// The counters to save beside the bytes of `at`.
@@ -426,10 +491,10 @@ impl<D: DocModel> Store<D> {
             attempts += 1;
             let base = self.snapshot();
             command.validate(base.doc())?;
-            let mut tx = Txn::new(base, &self.ids, setup);
+            let mut tx = Txn::new(base, Ids::Borrowed(&self.ids), setup);
             let out = command.prepare(&mut tx)?;
             let whole = tx.reads().keys().is_none();
-            if let Some(done) = self.try_commit(caller, tx.into_parts(), false) {
+            if let Some(done) = self.try_commit(caller, tx.into_parts(), false, None) {
                 return Ok(self.committed(done, out, attempts, false, start));
             }
             self.counts.conflict();
@@ -459,9 +524,9 @@ impl<D: DocModel> Store<D> {
             attempts += 1;
             let base = self.snapshot();
             command.validate(base.doc())?;
-            let mut tx = Txn::new(base, &self.ids, setup);
+            let mut tx = Txn::new(base, Ids::Borrowed(&self.ids), setup);
             let out = command.prepare(&mut tx)?;
-            if let Some(done) = self.try_commit(caller, tx.into_parts(), true) {
+            if let Some(done) = self.try_commit(caller, tx.into_parts(), true, None) {
                 return Ok(self.committed(done, out, attempts, true, start));
             }
             self.counts.conflict();
@@ -472,8 +537,9 @@ impl<D: DocModel> Store<D> {
     /// is checked, and its changes rebased and replayed onto the head, outside the commit
     /// lock; under it, only that the head is still the one replayed onto, and the publish.
     /// Where the head moved meanwhile it is checked again from the newer head; after
-    /// [`MOVED_TRIES`] such moves, under the lock. `gated`: the caller holds the gate.
-    fn try_commit(&self, caller: &Caller, mut parts: TxnParts<D>, gated: bool) -> Option<Done<D>> {
+    /// [`MOVED_TRIES`] such moves, under the lock. `gated`: the caller holds the gate; `at`:
+    /// the number to publish under (drawn already, for this content), else the next.
+    fn try_commit(&self, caller: &Caller, mut parts: TxnParts<D>, gated: bool, at: Option<Seq>) -> Option<Done<D>> {
         if parts.changes.is_empty() {
             return Some(Done {
                 version: parts.base,
@@ -537,7 +603,7 @@ impl<D: DocModel> Store<D> {
                 writes: resolved_writes(&doc, parts.writes, &parts.created),
                 caller: caller.0.clone(),
             };
-            let (version, writes, garbage) = self.publish(&mut state, Arc::clone(&head), doc, body);
+            let (version, writes, garbage) = self.publish(&mut state, Arc::clone(&head), doc, body, at);
             let held = self.clock.monotonic().saturating_sub(entered);
             drop(state);
             drop(garbage);
@@ -589,16 +655,18 @@ impl<D: DocModel> Store<D> {
         Some((doc, rebased))
     }
 
-    /// Publish `doc` as the next version after `before` and record the step in the history.
+    /// Publish `doc` as the next version after `before` -- numbered `at` where given (drawn
+    /// for it already), else the next number -- and record the step in the history.
     fn publish(
         &self,
         state: &mut State<D>,
         before: Snapshot<D>,
         doc: D,
         body: Body<D>,
+        at: Option<Seq>,
     ) -> (Snapshot<D>, KeySet<D::Key>, Garbage<D>) {
-        let seq = state.last.next();
-        state.last = seq;
+        let seq = at.filter(|at| *at > before.seq()).unwrap_or_else(|| state.last.next());
+        state.last = state.last.max(seq);
         // within a group, the group's number: given for good when it closes
         let number = state.history.group_number().unwrap_or_else(|| {
             state.numbered += 1;
@@ -690,7 +758,7 @@ impl<D: DocModel> Store<D> {
         plan: impl FnOnce(&History<D>, &Snapshot<D>, &Journal<D>) -> Result<Planned<D>, Error<D>>,
     ) -> Result<HistoryOutcome<D>, Error<D>> {
         let mut state = self.lock_state();
-        if state.history.grouped() {
+        if state.held || state.history.grouped() {
             return Err(StoreError::GroupOpen);
         }
         let entered = self.clock.monotonic();
@@ -743,6 +811,9 @@ impl<D: DocModel> Store<D> {
     /// None today; the store's own, should a group refuse.
     pub fn open_group(&self) -> Result<GroupMark, Error<D>> {
         let mut state = self.lock_state();
+        if state.held {
+            return Err(StoreError::TxnHeld);
+        }
         let start = self.head.load().number();
         let number = state.numbered.saturating_add(1);
         state.history.open_group(start, number);
