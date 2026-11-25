@@ -306,7 +306,9 @@ impl FillControl {
             .cloned()
             .unwrap_or_default();
         for line in lines.iter().skip(ids.len()) {
-            last = crate::paragraphs::insert_paragraph(sink, &last, (true, line, None))?.id;
+            last = crate::paragraphs::insert_paragraph(sink, &last, (true, line, None))?
+                .id
+                .to_string();
         }
         for id in ids.iter().skip(lines.len()).rev() {
             crate::delete_write::delete(sink, id)?;

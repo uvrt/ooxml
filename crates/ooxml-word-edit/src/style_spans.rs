@@ -56,11 +56,11 @@ pub struct StyleSpans {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpansStyled {
     /// The paragraph's id after the edit.
-    pub id: String,
+    pub id: ooxml_word_model::ids::BlockId,
     /// Ids the edit's stamping renamed, old to new, in the order made.
-    pub renamed: Vec<(String, String)>,
+    pub renamed: ooxml_word_model::ids::Renames,
     /// The paragraph's part.
-    pub part: String,
+    pub part: ooxml_opc::PartName,
 }
 
 impl Command<WordDoc> for StyleSpans {
@@ -183,9 +183,9 @@ pub(crate) fn style_spans(sink: &mut EditSink<'_, '_>, target: &str, spans: &[Sp
         sink.people(gave.then_some(tracking.author.as_str()), Some(tracking.author.as_str()))?;
     }
     Ok(SpansStyled {
-        id,
+        id: id.into(),
         renamed,
-        part: found.part,
+        part: found.part.into(),
     })
 }
 

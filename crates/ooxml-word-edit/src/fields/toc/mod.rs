@@ -330,7 +330,7 @@ fn bookmark(
         value,
         offset,
     );
-    let keys = vec![Key::Part(Arc::from(part)), Key::Annotations];
+    let keys = vec![Key::part(part), Key::Annotations];
     sink.replace_drawing(part, path, new, keys, draws)?;
     Ok(name)
 }
@@ -486,7 +486,7 @@ impl Region {
         }
         out.extend(nodes);
         out.push(Node::Element(end_work.build().ok_or_else(path_error)?));
-        let keys = vec![Key::Part(Arc::from(part))];
+        let keys = vec![Key::part(part)];
         let count = (e - b) as usize + 1;
         sink.splice_children(part, (&self.container, b as usize, count), out, keys, draws)
     }

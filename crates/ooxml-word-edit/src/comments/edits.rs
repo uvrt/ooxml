@@ -24,7 +24,6 @@ use ooxml_word_model::address::AddressError;
 use ooxml_word_model::docx::comments::{comments, Comment};
 use ooxml_word_model::docx::Docx;
 use std::collections::BTreeSet;
-use std::sync::Arc;
 
 /// What to do to each comment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,7 +157,7 @@ impl CommentEdits {
             .chain(std::iter::once(rels_for(&docx.main)))
             .collect();
         for part in parts {
-            sink.read(Key::Part(Arc::from(part.as_str())));
+            sink.read(Key::part(part.as_str()));
         }
     }
 }

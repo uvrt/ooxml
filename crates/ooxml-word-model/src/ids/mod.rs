@@ -4,18 +4,21 @@
 //! the same whichever side reads a document, before and after it is saved and opened again.
 //!
 //! Owns: the part index ([`PartIds`]), the ledger and the value sequences ([`Ledger`],
-//! [`IdPool`]), the state string ([`export_state`], [`load_state`]), and the story names
+//! [`IdPool`]), the state string ([`export_state`], [`load_state`]), a block's id ([`BlockId`]) and the
+//! renames an edit made ([`Renames`]), and the story names
 //! ids are prefixed with ([`story_name`]).
 //!
 //! Must not: stamp or write a part (edits do, phase P2), resolve an address (the address
 //! module does), or hold global state: sequences are cached per pool.
 
+mod block_id;
 mod index;
 mod ledger;
 mod sha256;
 pub use sha256::sha256;
 mod state;
 
+pub use block_id::{renames_text, BlockId, Renames};
 pub use index::{Entry, IdState, ParagraphId, PartIds, Path, PlacedTable, TableHead, TableId};
 pub use ledger::{
     block_and_drawing_ids, drawing_numbers, held_id, sequence_value, used_long_hex, HeldId, IdPool, Ledger, REACH,

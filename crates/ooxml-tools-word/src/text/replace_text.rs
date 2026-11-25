@@ -164,7 +164,7 @@ fn replied(out: &RangesEdited, matches: &[Match]) -> ToolResult<Value> {
         }
     }
     let mut reply = Done::new(format!("Replaced {count} occurrence(s)"));
-    merge_renamed(&mut reply.renamed, &out.renamed);
+    merge_renamed(&mut reply.renamed, &ooxml_word_model::ids::renames_text(&out.renamed));
     // the paragraphs by the ids they have now (a match's paragraph may have been stamped)
     let now: Vec<String> = paragraphs
         .iter()

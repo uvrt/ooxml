@@ -20,11 +20,11 @@ const TALLER_THAN_PAGE: &str = "taller than a page: Word starts it on a new page
 impl From<TableEdit> for Outcome {
     fn from(edit: TableEdit) -> Self {
         Outcome {
-            id: Some(edit.id),
+            id: Some(edit.id.to_string()),
             changed: edit.changed,
             created: Vec::new(),
             removed: Vec::new(),
-            renamed: edit.renamed,
+            renamed: ooxml_word_model::ids::renames_text(&edit.renamed),
             warnings: edit.warnings,
         }
     }

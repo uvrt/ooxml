@@ -226,7 +226,7 @@ pub(crate) fn put_back(
     work: &Work,
     (place, renew): (&Place, bool),
     tracked: Option<(Numbered, bool)>,
-    renamed: &[(String, String)],
+    renamed: &[(ooxml_word_model::ids::BlockId, ooxml_word_model::ids::BlockId)],
 ) -> Result<()> {
     let part = place.part.clone();
     let tree = sink

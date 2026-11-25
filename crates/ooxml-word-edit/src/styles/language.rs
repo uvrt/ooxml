@@ -481,7 +481,7 @@ pub(crate) fn set_language(
     );
     if default {
         let part = super::default::settings_part(sink)?;
-        sink.read(Key::Part(Arc::from(part.as_str())));
+        sink.read(Key::part(part.as_str()));
         let held = sink.doc().clone();
         let work = space
             .work(&held, &part)?

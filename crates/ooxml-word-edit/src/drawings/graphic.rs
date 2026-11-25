@@ -129,7 +129,7 @@ impl<E: GraphicEdit> Command<WordDoc> for EditGraphic<E> {
         let made = self.edit.edit(&docx.package, &part)?;
         let mut sink = EditSink::new(tx, RevisionPolicy::Untracked);
         for read in std::iter::once(&part).chain(&made.read) {
-            sink.read(Key::Part(Arc::from(read.as_str())));
+            sink.read(Key::part(read.as_str()));
         }
         let changed = !made.writes.is_empty();
         for write in made.writes {

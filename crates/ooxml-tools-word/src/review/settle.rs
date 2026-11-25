@@ -119,7 +119,7 @@ pub(crate) fn settle(args: &WordChanges, editing: &Editing<'_>) -> Result<ToolRe
     let mut reply = Done::new(summary);
     reply.data = Some(Value::Object(data));
     reply.removed.clone_from(&out.removed);
-    reply.renamed.clone_from(&out.renamed);
+    reply.renamed = ooxml_word_model::ids::renames_text(&out.renamed);
     let mut result = ToolResult::done(reply);
     result.warnings.clone_from(&out.warnings);
     Ok(result)

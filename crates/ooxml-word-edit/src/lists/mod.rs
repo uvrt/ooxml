@@ -80,13 +80,13 @@ pub struct ListEdit {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ListStep {
     /// The paragraph's id after the step.
-    pub id: String,
+    pub id: ooxml_word_model::ids::BlockId,
     /// Whether it changed anything.
     pub changed: bool,
     /// The instances and definitions it removed (`num:3`, `abstractNum:2`).
     pub removed: Vec<String>,
     /// Ids its stamping renamed, old to new.
-    pub renamed: Vec<(String, String)>,
+    pub renamed: ooxml_word_model::ids::Renames,
     /// What it notes.
     pub warnings: Vec<String>,
 }
@@ -158,12 +158,12 @@ fn table_paragraphs(docx: &Docx, address: &str) -> Option<Vec<(String, usize)>> 
 
 /// Stamping done by the first step that edits: the renames it made.
 pub(crate) struct Stamped {
-    renamed: Option<Vec<(String, String)>>,
+    renamed: Option<ooxml_word_model::ids::Renames>,
 }
 
 impl Stamped {
     /// Stamp the document if no step did yet; this step's renames.
-    pub(crate) fn once(&mut self, sink: &mut crate::sink::EditSink<'_, '_>) -> Result<Vec<(String, String)>> {
+    pub(crate) fn once(&mut self, sink: &mut crate::sink::EditSink<'_, '_>) -> Result<ooxml_word_model::ids::Renames> {
         if self.renamed.is_some() {
             return Ok(Vec::new());
         }

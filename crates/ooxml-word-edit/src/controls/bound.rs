@@ -111,7 +111,7 @@ impl Binding {
     pub(crate) fn write(&self, sink: &mut EditSink<'_, '_>, value: &str) -> Result<()> {
         let docx = sink.docx()?;
         let (part, path) = self.node(sink.doc(), &docx)?;
-        sink.read(Key::Part(Arc::from(part.as_str())));
+        sink.read(Key::part(part.as_str()));
         if path.is_empty() {
             return Err(EditError::Unsupported(
                 "word_controls fill of a control bound to a part's root".into(),
@@ -138,7 +138,7 @@ impl Binding {
             node.attributes().to_vec(),
             vec![Node::Text(Atom::from(value))],
         ));
-        sink.replace(&part, &path, new, vec![Key::Part(Arc::from(part.as_str()))])
+        sink.replace(&part, &path, new, vec![Key::part(part.as_str())])
     }
 
     /// The node written with `value` where it holds no element (or other node but text)

@@ -48,7 +48,7 @@ impl From<CellEdit> for Outcome {
             changed: true,
             created: edit.created,
             removed: edit.removed,
-            renamed: edit.renamed,
+            renamed: ooxml_word_model::ids::renames_text(&edit.renamed),
             warnings: Vec::new(),
         }
     }

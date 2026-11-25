@@ -157,11 +157,11 @@ impl std::fmt::Debug for FormatTable<'_> {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TableEdit {
     /// The table's id after the edit.
-    pub id: String,
+    pub id: ooxml_word_model::ids::BlockId,
     /// Whether the edit changed the table (a keep already as asked does not).
     pub changed: bool,
     /// Ids renamed (stamping, by the first edit), old to new.
-    pub renamed: Vec<(String, String)>,
+    pub renamed: ooxml_word_model::ids::Renames,
     /// What it did that the caller did not ask for.
     pub warnings: Vec<String>,
 }
@@ -368,7 +368,7 @@ impl FormatTable<'_> {
         };
         if keeps_first && self.formats.len() == 1 && plans.iter().flatten().all(|p| p.write.changes.is_empty()) {
             let edits = plans.into_iter().flatten().map(|p| TableEdit {
-                id: found.id.clone(),
+                id: found.id.clone().into(),
                 changed: false,
                 renamed: Vec::new(),
                 warnings: p.write.warnings,
@@ -435,7 +435,7 @@ impl FormatTable<'_> {
         (warnings, unchanged): (Vec<Vec<String>>, &[bool]),
         plans: &[Option<KeepPlan>],
         id: &str,
-        renamed: &[(String, String)],
+        renamed: &[(ooxml_word_model::ids::BlockId, ooxml_word_model::ids::BlockId)],
     ) -> Vec<TableEdit> {
         warnings
             .into_iter()
@@ -452,7 +452,7 @@ impl FormatTable<'_> {
                     warnings.push(format!("{id} already fits the window: nothing changed"));
                 }
                 TableEdit {
-                    id: id.to_owned(),
+                    id: id.to_owned().into(),
                     changed: !fits && (!matches!(format, TableFormat::Keeps { .. }) || kept),
                     renamed: if k == 0 { renamed.to_vec() } else { Vec::new() },
                     warnings,

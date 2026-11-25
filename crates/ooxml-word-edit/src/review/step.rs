@@ -28,7 +28,7 @@ pub(crate) struct Step {
     /// How many records it was asked to settle.
     pub(crate) count: usize,
     /// Renames: the stamping's (old to new) and the tables a removed first row renamed.
-    pub(crate) renamed: Vec<(String, String)>,
+    pub(crate) renamed: ooxml_word_model::ids::Renames,
     /// Every id removed.
     pub(crate) removed: Vec<String>,
     /// What it says to look at (a row's last cell's text moved out).
@@ -109,7 +109,7 @@ struct Run {
 /// What the step read before it changed anything.
 struct Before {
     known: Vec<super::blocks::Known>,
-    renames: Vec<(String, String)>,
+    renames: ooxml_word_model::ids::Renames,
     nums: BTreeSet<i64>,
     authors: BTreeSet<String>,
     /// Every revision id's count as the step began (its renumbering of repeats after).
@@ -166,7 +166,7 @@ impl Run {
         let mut aliases = Vec::new();
         for (gone, survivor) in &review.joined {
             if let (Some(a), Some(b)) = (ids_before.get(gone), ids_before.get(survivor)) {
-                aliases.push((a.clone(), b.clone()));
+                aliases.push((a.as_str().into(), b.as_str().into()));
             }
         }
         gathered
@@ -239,13 +239,15 @@ impl Run {
                 blocks
                     .flat
                     .iter()
-                    .filter_map(|i| renames.iter().find(|(old, _)| old == i).map(|(_, new)| new.clone())),
+                    .filter_map(|i| renames.iter().find(|(old, _)| old == i).map(|(_, new)| new.to_string())),
             )
             .collect();
         let mut removed = blocks.flat.clone();
         removed.extend(gathered.removed_ids.iter().filter(|i| !named.contains(*i)).cloned());
-        let mut renamed: Vec<(String, String)> =
-            renames.into_iter().filter(|(old, _)| !removed.contains(old)).collect();
+        let mut renamed: ooxml_word_model::ids::Renames = renames
+            .into_iter()
+            .filter(|(old, _)| !removed.iter().any(|r| r == old))
+            .collect();
         for (old, new) in &blocks.tables_renamed {
             match renamed.iter_mut().find(|(o, _)| o == old) {
                 Some(slot) => slot.1 = new.clone(),

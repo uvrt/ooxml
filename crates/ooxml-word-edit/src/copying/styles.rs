@@ -164,10 +164,10 @@ impl<'s> Styles<'s> {
         let docx = sink.docx()?;
         let part = ooxml_word_model::parts::related(sink.doc().package(), &docx.main, REL_STYLES)?;
         if let Some(part) = &part {
-            sink.read(Key::Part(Arc::from(part.as_str())));
+            sink.read(Key::part(part.as_str()));
         }
         if let Some(theme) = theme_part(&docx)? {
-            sink.read(Key::Part(Arc::from(theme.as_str())));
+            sink.read(Key::part(theme.as_str()));
         }
         let themes = Themes::read(source, &docx)?
             .ok_or_else(|| EditError::Unsupported("a theme whose colours docx-agent cannot read".to_owned()))?;
@@ -371,7 +371,7 @@ impl<'s> Styles<'s> {
         }
         let docx = sink.docx()?;
         // which style the body's paragraphs use: what any of them shows (style, list, text)
-        sink.read(Key::StyleUse(Arc::from(docx.main.as_str())));
+        sink.read(Key::StyleUse(ooxml_opc::PartName::from(docx.main.as_str())));
         let best = body_style_of(sink, &docx)?;
         self.body = Some(best.clone());
         Ok(best)

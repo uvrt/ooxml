@@ -22,7 +22,6 @@ use crate::{EditError, Result};
 use ooxml_store::{Command, Txn};
 use ooxml_word_model::parts::{related, REL_SETTINGS};
 use std::collections::HashMap;
-use std::sync::Arc;
 
 /// The mode a document that names none is in (Word 2007's).
 pub const DEFAULT_COMPATIBILITY_MODE: i64 = 12;
@@ -184,7 +183,7 @@ impl Command<WordDoc> for UpgradeToModern {
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<Upgraded> {
         let mut sink = EditSink::new(tx, RevisionPolicy::Untracked);
         if let Some(part) = settings_of(sink.doc())? {
-            sink.read(Key::Part(Arc::from(part.as_str())));
+            sink.read(Key::part(part.as_str()));
         }
         if compatibility_mode(sink.doc())? >= MODERN_MODE {
             return Ok(Upgraded::default());

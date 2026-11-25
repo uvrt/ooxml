@@ -35,11 +35,11 @@ pub struct SetParagraphStyle {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StyleSet {
     /// The paragraph's id after the edit.
-    pub id: String,
+    pub id: ooxml_word_model::ids::BlockId,
     /// Ids the edit's stamping renamed, old to new, in the order made.
-    pub renamed: Vec<(String, String)>,
+    pub renamed: ooxml_word_model::ids::Renames,
     /// The paragraph's part.
-    pub part: String,
+    pub part: ooxml_opc::PartName,
 }
 
 /// Give the paragraph the `w:pStyle` `style` (none for `None`), as docx-agent's
@@ -152,8 +152,8 @@ pub(crate) fn set_style(sink: &mut EditSink<'_, '_>, target: &str, style: Option
         sink.people(gave.then_some(tracking.author.as_str()), Some(tracking.author.as_str()))?;
     }
     Ok(StyleSet {
-        id,
+        id: id.into(),
         renamed,
-        part: found.part,
+        part: found.part.into(),
     })
 }

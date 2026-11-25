@@ -11,6 +11,7 @@ publish.workspace = true
 ooxml-base.workspace = true
 ooxml-xml.workspace = true
 ooxml-zip.workspace = true
+serde.workspace = true
 thiserror.workspace = true
 
 [lints]

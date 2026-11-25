@@ -174,10 +174,13 @@ impl RemoveSectionBreak {
 /// named for the one that joined it (or the break's paragraph, kept).
 fn outcome(
     sink: &mut EditSink<'_, '_>,
-    (wanted_id, renamed, removed): (String, Vec<(String, String)>, Vec<String>),
+    (wanted_id, renamed, removed): (String, ooxml_word_model::ids::Renames, Vec<String>),
     (survivor, kept): (Option<String>, Option<String>),
 ) -> Result<SectionEdited> {
-    let renamed: Vec<(String, String)> = renamed.into_iter().filter(|(old, _)| !removed.contains(old)).collect();
+    let renamed: ooxml_word_model::ids::Renames = renamed
+        .into_iter()
+        .filter(|(old, _)| !removed.iter().any(|r| r == old))
+        .collect();
     let mut out = SectionEdited {
         id: None,
         changed: true,
@@ -188,7 +191,7 @@ fn outcome(
     };
     if let (Some(first), Some(survivor)) = (removed.first(), survivor) {
         // the paragraph after the break took its place
-        sink.rename(vec![(first.clone(), survivor.clone())])?;
+        sink.rename(vec![(first.into(), survivor.as_str().into())])?;
         out.id = Some(survivor);
     } else if removed.is_empty() {
         out.id = kept;

@@ -93,7 +93,7 @@ impl InsertNote {
         let text_id = crate::builtin::ensure(&mut *sink, text_style, "paragraph")?;
         let reference_id = crate::builtin::ensure(&mut *sink, reference_style, "character")?;
         let notes = ensure_notes_part(&mut *sink, self.kind)?;
-        sink.read(Key::Part(Arc::from(notes.as_str())));
+        sink.read(Key::part(notes.as_str()));
         let (mut space, paragraphs, number, ids) =
             self.new_note(&mut *sink, &docx, &notes, (&text_id, &reference_id))?;
         let name = self.kind.name();

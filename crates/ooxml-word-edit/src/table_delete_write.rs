@@ -72,12 +72,12 @@ pub(crate) fn tracked_table(
     }
     splice_back(sink, &stamped, (&part, &parent, range), &work, &wrote, tracking)?;
     if table_gone {
-        renamed.retain(|(old, _)| !removed_ids.contains(old));
+        renamed.retain(|(old, _)| !removed_ids.iter().any(|r| r == old));
         return Ok(BlockDeleted {
             id: None,
             renamed,
             removed: removed_ids,
-            part,
+            part: part.into(),
             warnings: Vec::new(),
         });
     }
@@ -90,7 +90,7 @@ pub(crate) fn tracked_table(
         id: Some(current),
         renamed,
         removed,
-        part,
+        part: part.into(),
         warnings: Vec::new(),
     })
 }
@@ -158,7 +158,7 @@ fn named_after_first_row(
     sink: &mut EditSink<'_, '_>,
     (part, path): (&str, &[u32]),
     old: &str,
-    renamed: &mut Vec<(String, String)>,
+    renamed: &mut ooxml_word_model::ids::Renames,
 ) -> Result<String> {
     let current = renamed_id(renamed, old);
     let now = sink
@@ -170,14 +170,14 @@ fn named_after_first_row(
     if now == current {
         return Ok(current);
     }
-    let mut renames = vec![(old.to_owned(), now.clone())];
+    let mut renames: ooxml_word_model::ids::Renames = vec![(old.into(), now.as_str().into())];
     if current != old {
-        renames.push((current, now.clone()));
+        renames.push((current.into(), now.as_str().into()));
     }
     sink.rename(renames)?;
     match renamed.iter_mut().find(|(o, _)| o == old) {
-        Some(slot) => slot.1 = now.clone(),
-        None => renamed.push((old.to_owned(), now.clone())),
+        Some(slot) => slot.1 = now.as_str().into(),
+        None => renamed.push((old.into(), now.as_str().into())),
     }
     Ok(now)
 }

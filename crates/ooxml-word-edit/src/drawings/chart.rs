@@ -73,7 +73,7 @@ pub struct ChartInserted {
     /// The drawing.
     pub drawing: DrawingEdited,
     /// The chart's part.
-    pub part: String,
+    pub part: ooxml_opc::PartName,
 }
 
 /// Where a story keeps its charts (ooxml-edit's `_charts_folder`).
@@ -149,8 +149,8 @@ impl<P: ChartParts> InsertChart<P> {
         };
         let book = unused(&package, &format!("{embeddings}/Microsoft_Excel_Worksheet{{n}}.xlsx"));
         // the names chosen stay free only while no other edit takes them
-        sink.read(Key::Part(Arc::from(chart.as_str())));
-        sink.read(Key::Part(Arc::from(book.as_str())));
+        sink.read(Key::part(chart.as_str()));
+        sink.read(Key::part(book.as_str()));
         let (related, workbook_rel) = crate::new_part::add_internal(&package, &chart, &book, REL_PACKAGE)?;
         let (tree, bytes) = self.chart.parts(&chart, &workbook_rel)?;
         sink.put_bytes(&book, bytes)?;
@@ -182,7 +182,7 @@ impl<P: ChartParts> InsertChart<P> {
             no_row_or_cell(&docx, &self.at)?;
             let style = continued_style(sink.doc(), &docx, &self.at);
             let inserted = insert_paragraph(sink, &self.at, (true, "", style))?;
-            created.push(inserted.id.clone());
+            created.push(inserted.id.to_string());
             renamed.extend(inserted.renamed);
             format!("{}@0", inserted.id)
         };
@@ -245,7 +245,7 @@ impl<P: ChartParts> InsertChart<P> {
                 renamed,
                 warnings: Vec::new(),
             },
-            part: chart,
+            part: chart.into(),
         })
     }
 }
