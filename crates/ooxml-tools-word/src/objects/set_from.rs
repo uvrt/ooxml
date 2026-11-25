@@ -18,7 +18,7 @@ use crate::sources::{first_rows, fits, placed, thousands, Placed, SourceRows};
 use crate::structure::common::{outcome, policy, refused, Outcome};
 use ooxml_tools::{ArgEnum, Refusal, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::{CellAxis, CellWrite, EditError, PlaceRows, PlacedRecord, RowsBeside, RowsPlaced, WordDoc};
-use ooxml_word_model::docx::tables::Accepted;
+use ooxml_word_model::docx::tables::{Accepted, TABLE_COLUMNS_MAX};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::time::Instant;
@@ -26,7 +26,7 @@ use std::time::Instant;
 /// Rows a table from data takes at most, the header included (Word's).
 const MAX_ROWS: usize = 4096;
 /// Columns a table takes at most (Word's).
-const MAX_COLUMNS: usize = 63;
+const MAX_COLUMNS: usize = TABLE_COLUMNS_MAX;
 
 /// A grid as accepted: per row, per column, the origin of the cell there (row, column, both
 /// as accepted).

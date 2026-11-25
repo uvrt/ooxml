@@ -10,6 +10,7 @@
 
 use super::cascade::{banded, Sources};
 use super::origin::{Holder, Level, Origin, Trace};
+use crate::docx::tables::past_widest;
 use crate::model::Table;
 use crate::styles::{Style, StyleKind};
 use crate::value::{joined, key, Border, Key, Props, Text, Value};
@@ -90,6 +91,10 @@ pub struct ResolvedTable {
     pub grid: Vec<i64>,
     /// `(row, columns it reaches)` of each row not reaching exactly across `w:tblGrid`.
     pub mismatched: Vec<(usize, i64)>,
+    /// `(row, columns it reaches)` of the first row reaching past the widest a table is
+    /// fitted to ([`past_widest`]): the grid is then `w:tblGrid` as written, not widened, and
+    /// the table is not laid out.
+    pub too_wide: Option<(usize, i64)>,
 }
 
 fn part(style: &Style, attribute: Attribute) -> &Props {
@@ -351,9 +356,22 @@ fn reach(row: &ResolvedRow) -> i64 {
     row.grid_before + row.cells.iter().map(|c| c.span).sum::<i64>() + row.grid_after
 }
 
+/// A table's grid as fitted to its rows ([`fitted_grid`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FittedGrid {
+    /// The grid laid out on, twips.
+    pub grid: Vec<i64>,
+    /// `(row, columns it reaches)` of each row not reaching exactly across `w:tblGrid`.
+    pub mismatched: Vec<(usize, i64)>,
+    /// `(row, columns it reaches)` of the first row reaching past the widest a table is
+    /// fitted to ([`past_widest`]); `grid` is then `w:tblGrid` as written.
+    pub too_wide: Option<(usize, i64)>,
+}
+
 /// The grid a table is laid out on (`w:tblGrid` widened to a row reaching past it), and
-/// the rows not reaching exactly across it.
-pub fn fitted_grid(grid: &[i64], rows: &[ResolvedRow]) -> (Vec<i64>, Vec<(usize, i64)>) {
+/// the rows not reaching exactly across it. A row reaching past the widest a table is
+/// fitted to ([`past_widest`]) leaves the grid as written, said in `too_wide`.
+pub fn fitted_grid(grid: &[i64], rows: &[ResolvedRow]) -> FittedGrid {
     let mut widths = grid.to_vec();
     let count = i64::try_from(widths.len()).unwrap_or(i64::MAX);
     let mismatched: Vec<(usize, i64)> = rows
@@ -361,8 +379,16 @@ pub fn fitted_grid(grid: &[i64], rows: &[ResolvedRow]) -> (Vec<i64>, Vec<(usize,
         .filter(|r| !r.cells.is_empty() && reach(r) != count)
         .map(|r| (r.index, reach(r)))
         .collect();
-    if !mismatched.iter().any(|(_, r)| *r > count) {
-        return (widths, mismatched);
+    let too_wide = mismatched
+        .iter()
+        .find(|(_, r)| past_widest(widths.len(), usize::try_from(*r).unwrap_or(usize::MAX)))
+        .copied();
+    if too_wide.is_some() || !mismatched.iter().any(|(_, r)| *r > count) {
+        return FittedGrid {
+            grid: widths,
+            mismatched,
+            too_wide,
+        };
     }
     let len = |w: &Vec<i64>| i64::try_from(w.len()).unwrap_or(i64::MAX);
     for row in rows {
@@ -391,7 +417,11 @@ pub fn fitted_grid(grid: &[i64], rows: &[ResolvedRow]) -> (Vec<i64>, Vec<(usize,
             ));
         }
     }
-    (widths, mismatched)
+    FittedGrid {
+        grid: widths,
+        mismatched,
+        too_wide: None,
+    }
 }
 
 fn cell_margins(props: &Props, table: &Props) -> [i64; 4] {
@@ -550,7 +580,11 @@ pub fn resolve_table_traced<T: Trace>(src: &Sources<'_>, table: &Table) -> (Reso
     let (mut rows, cell_traces): (Vec<ResolvedRow>, Vec<Vec<T>>) = (0..table.rows.len())
         .map(|r| resolve_row::<T>(&chain, table, r, &named, &properties))
         .unzip();
-    let (grid, mismatched) = fitted_grid(&table.grid, &rows);
+    let FittedGrid {
+        grid,
+        mismatched,
+        too_wide,
+    } = fitted_grid(&table.grid, &rows);
     let columns = if grid.is_empty() {
         rows.iter()
             .flat_map(|r| r.cells.iter().map(|c| c.column + c.span))
@@ -572,6 +606,7 @@ pub fn resolve_table_traced<T: Trace>(src: &Sources<'_>, table: &Table) -> (Reso
         indent_stated,
         grid,
         mismatched,
+        too_wide,
     };
     let origins = TableOrigins {
         table: table_trace,

@@ -210,13 +210,15 @@ fn moved_out(blocks: &[Block]) -> Vec<Block> {
 }
 
 /// The grid columns only cells with a pending deletion (or gone, `gone`) cover, in every
-/// row covering them.
+/// row covering them. Only the grid's `count` columns are answered, so only those are
+/// counted: a span past them stops there.
 fn vacated_columns(rows: &[&Element], count: usize, gone: &HashSet<*const Element>) -> HashSet<usize> {
     let mut covered: std::collections::BTreeMap<i64, bool> = std::collections::BTreeMap::new();
+    let end = i64::try_from(count).unwrap_or(i64::MAX);
     for row in rows {
         let props = child(row, "trPr").map(w::TrPr::new);
         let mut column = props.and_then(w::TrPr::grid_before).and_then(w::Val::int).unwrap_or(0);
-        let mut skipped: Vec<i64> = (0..column).collect();
+        let mut skipped: Vec<i64> = (0..column.min(end)).collect();
         let mut kept_before = false;
         for cell in level_of(row, "tc") {
             let span = child(cell, "tcPr")
@@ -228,14 +230,14 @@ fn vacated_columns(rows: &[&Element], count: usize, gone: &HashSet<*const Elemen
             let deleted = (cell_deleted(cell) && !(kept_before && content_kept(cell)))
                 || gone.contains(&std::ptr::from_ref(cell));
             kept_before = kept_before || !cell_deleted(cell);
-            for c in column..column + span {
+            for c in column..column.saturating_add(span).min(end) {
                 let was = covered.get(&c).copied().unwrap_or(true);
                 covered.insert(c, was && deleted);
             }
-            column += span;
+            column = column.saturating_add(span);
         }
         let after = props.and_then(w::TrPr::grid_after).and_then(w::Val::int).unwrap_or(0);
-        skipped.extend(column..column + after);
+        skipped.extend(column..column.saturating_add(after).min(end));
         for c in skipped {
             covered.insert(c, false);
         }

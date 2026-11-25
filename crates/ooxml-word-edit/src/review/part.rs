@@ -66,6 +66,8 @@ pub(crate) struct PartReview<'w, 'o> {
     pub(crate) edged_rows: HashSet<Id>,
     /// The record groups of the part as they are listed (its logical changes).
     pub(crate) groups: HashMap<Id, Vec<Id>>,
+    /// What the review says to look at (a table's grid it left as it is).
+    pub(crate) warnings: Vec<String>,
 }
 
 impl<'w, 'o> PartReview<'w, 'o> {
@@ -98,6 +100,7 @@ impl<'w, 'o> PartReview<'w, 'o> {
             moved_out: Vec::new(),
             edged_rows: HashSet::new(),
             groups,
+            warnings: Vec::new(),
         }
     }
 
