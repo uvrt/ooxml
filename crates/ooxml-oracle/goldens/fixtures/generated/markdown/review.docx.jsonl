@@ -2206,18 +2206,18 @@
 {"digest":"sha256:ab8d642917704072a6e7bc2de61437ca","id":"find:cd013e7b0dba468d","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:92eb229aad4c5f9f135ed747ff3e6961","id":"ids:aca66b739fcde148","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:df82e9dc0d87986808b9c8b0b83d6429","id":"ids:4c4aab7dfa556f4e","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:6ed65021f6eaedf79505623b9863f31e","id":"inspect:533ebe1ed2d50d27","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:a4d0c08a7f99bd9dfb94becbdf8daa08","id":"inspect:533ebe1ed2d50d27","source":"Word 16.106: Accept All removes a paragraph deleted with its mark before a table or a content control, the block keeping its text; word_inspect lists it as joins on that block (fix-r146 measure, #398)"}
 {"digest":"sha256:001c2ec509dc0b852c16607327ba605f","id":"inspect:90c4573143ff2ecd","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:ee838bffb86d6a2eb32f7614828de768","id":"inspect:6ce10282679939ec","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:c80f330849c4afc34ec0940ee5c77e05","id":"inspect:b7ad848ca39d83ed","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:caa2d58f13f671899b122f8062c15642","id":"inspect:20094d80164a311f","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ca95298f6a097ee8531dfd2aa12074e4","id":"inspect:0b9ce154569beb86","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:a69078e8df8e56d689cf2f74076bb643","id":"inspect:476291b158464718","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:0e6e24487c5a47df8cb8ef1dd7b47cf8","id":"inspect:0b9ce154569beb86","source":"Word 16.106: Accept All removes a paragraph deleted with its mark before a table or a content control, the block keeping its text; word_inspect lists it as joins on that block (fix-r146 measure, #398)"}
+{"digest":"sha256:8b6298b769f8b261dd661964c60862fe","id":"inspect:476291b158464718","source":"Word 16.106: Accept All removes a paragraph deleted with its mark before a table or a content control, the block keeping its text; word_inspect lists it as joins on that block (fix-r146 measure, #398)"}
 {"digest":"sha256:45b8b9d3ce17e2929d7f711808861ed0","id":"inspect:c76a15dfdb2447b4","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:7ca142e8752403194ccf4ae12d803af8","id":"inspect:64398d37c853c2f9","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:5de50ff27849adfe105dcd38843d4c28","id":"inspect:64398d37c853c2f9","source":"Word 16.106: Accept All removes a paragraph deleted with its mark before a table or a content control, the block keeping its text; word_inspect lists it as joins on that block (fix-r146 measure, #398)"}
 {"digest":"sha256:de32cde3aaa0b17bf7c45e85ed0a9a85","id":"inspect:f27494aad9cda6af","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:2bd9f5746734db018f75c1110196f318","id":"inspect:a2d70b7b77eaf21c","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:d59af0d424c27ccf58b897a7e0336610","id":"inspect:682a66c585c51d4d","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:d3260c20f33a9a9318493dcee4f43801","id":"inspect:a2d70b7b77eaf21c","source":"Word 16.106: Accept All removes a paragraph deleted with its mark before a table or a content control, the block keeping its text; word_inspect lists it as joins on that block (fix-r146 measure, #398)"}
+{"digest":"sha256:2f11d8132877462e56b82b3b0744385c","id":"inspect:682a66c585c51d4d","source":"Word 16.106: Accept All removes a paragraph deleted with its mark before a table or a content control, the block keeping its text; word_inspect lists it as joins on that block (fix-r146 measure, #398)"}
 {"digest":"sha256:e0d7caf485df3b8010c01ed5264f2bb4","id":"inspect:6dd960b1e45ad863","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:2725ee56ff1712798f4539f50fac7df4","id":"inspect:b2a54b5feabedd28","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:139b0ee289e55c30b8ee9e84921b756c","id":"ranges:efc85b99f9bbb53b","source":"frozen Python a512c901, unmeasured"}

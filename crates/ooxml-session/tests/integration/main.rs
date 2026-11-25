@@ -9,6 +9,7 @@ mod check_bench;
 mod editing;
 mod from_template;
 mod host_reads;
+mod inspect_joins;
 mod live_view;
 mod locale;
 mod pages;

@@ -342,7 +342,7 @@ fn same_group(a: &Item2, b: &Item2) -> bool {
     match (a, b) {
         (Item2::P(x), Item2::P(y)) => same_list(x, y),
         (Item2::Tbl(x), Item2::Tbl(y)) => same_placed(x, y),
-        (Item2::Marker(x), Item2::Marker(y)) => x.id == y.id && x.begin == y.begin,
+        (Item2::Marker(x), Item2::Marker(y)) => x.id == y.id && x.begin == y.begin && x.joins == y.joins,
         _ => false,
     }
 }

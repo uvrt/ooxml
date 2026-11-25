@@ -112,6 +112,9 @@ impl<'d> Writer<'d> {
                     control.insert("kind".into(), Value::from(m.kind));
                     control.insert("tag".into(), opt(m.tag.as_deref()));
                     control.insert("alias".into(), opt(m.alias.as_deref()));
+                    if !m.joins.is_empty() {
+                        control.insert("joins".into(), json!(m.joins));
+                    }
                     controls.push(control);
                     stack.push(Vec::new());
                 }
@@ -321,6 +324,9 @@ impl<'d> Writer<'d> {
         out.insert("id".into(), Value::from(record.id.as_str()));
         if record.volatile {
             out.insert("volatile".into(), Value::Bool(true));
+        }
+        if !record.joins.is_empty() {
+            out.insert("joins".into(), json!(record.joins));
         }
         out.insert("story".into(), Value::from(story_of(self.docx, &record.part)));
         out.insert("style".into(), opt(record.style_name.as_deref()));
