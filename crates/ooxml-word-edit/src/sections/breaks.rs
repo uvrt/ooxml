@@ -25,6 +25,7 @@ use crate::validate::Orders;
 use crate::work::{Id, Work};
 use crate::{EditError, Result, WordDoc};
 use ooxml_store::{Command, Txn};
+use ooxml_word_model::docx::sections::SectionBreakKind;
 use ooxml_word_model::docx::sections::{section_id, sections};
 use ooxml_word_model::docx::{at_path, Docx};
 use ooxml_xml::{Element, Node, QName};
@@ -37,8 +38,8 @@ pub struct InsertSectionBreak {
     pub after: Option<String>,
     /// the block after it.
     pub before: Option<String>,
-    /// How the section after it starts (`nextPage`...).
-    pub kind: String,
+    /// How the section after it starts.
+    pub kind: SectionBreakKind,
     /// Untracked or tracked.
     pub policy: RevisionPolicy,
 }
@@ -211,7 +212,7 @@ impl InsertSectionBreak {
             .map(|(k, id)| (k, work.deep_copy(id)))
             .collect();
         let values = SectionValues {
-            start: Some(self.kind.clone()),
+            start: Some(self.kind.as_str().to_owned()),
             ..SectionValues::default()
         };
         apply(&mut work, sect, &values, orders);

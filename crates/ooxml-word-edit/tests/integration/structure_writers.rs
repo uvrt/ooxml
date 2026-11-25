@@ -15,6 +15,7 @@ use ooxml_word_edit::{
     MoveNote, Moving, NoteKind, RemoveBookmark, RevisionPolicy, SectionValues, SetSection, SetStoryText, SetText,
     StylePolicy, Tracking, UnmappedPolicy, UpdateFields, WordDoc,
 };
+use ooxml_word_model::docx::sections::{HeaderFooter, HeaderOrFooter, SectionBreakKind, StoryKind};
 
 /// One edit of the mix.
 #[derive(Debug, Clone)]
@@ -142,13 +143,15 @@ fn edit(rng: &mut Rng, targets: &[String], writer: u64, n: usize) -> Edit {
         10 => Edit::Break(InsertSectionBreak {
             after: Some(target),
             before: None,
-            kind: "continuous".to_owned(),
+            kind: SectionBreakKind::Continuous,
             policy: policy(rng, writer),
         }),
         11 => Edit::Story(SetStoryText {
             section: "s:body".to_owned(),
-            which: if rng.below(2) == 0 { "header" } else { "footer" }.to_owned(),
-            kind: "default".to_owned(),
+            story: HeaderFooter {
+                part: [HeaderOrFooter::Header, HeaderOrFooter::Footer][rng.below(2)],
+                kind: StoryKind::Default,
+            },
             text: words.join(" "),
             policy: policy(rng, writer),
         }),
