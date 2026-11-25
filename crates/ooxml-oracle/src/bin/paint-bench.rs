@@ -57,6 +57,7 @@ fn run(args: &[String]) -> Result<Value, String> {
         names: &names,
         pictures: &NoPictures,
         glyph_size: GlyphSize::Device,
+        version: &laid.document.names,
     };
     let page = laid.page_count() / 2;
     let (mut facts_best, mut page_best, mut bytes_out) = (f64::MAX, f64::MAX, 0);

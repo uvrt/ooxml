@@ -10,7 +10,7 @@
 //!
 //! Must not: lay the cell out (`crate::tables` has), or paint a drawing.
 
-use super::drawings::{anchor_box, anchor_path, character_px, page_frames, DrawingSlot, Layer};
+use super::drawings::{anchor_box, anchor_path, character_px, page_frames, run_anchor, DrawingSlot, Layer};
 use super::spans::PageOut;
 use crate::geometry::PageFrame;
 use crate::tables::{grid_twips_px, in_cell, AnchoredLine, CellPage};
@@ -92,6 +92,7 @@ pub(super) fn cell_floats(job: &CellFloatJob<'_>, out: &mut PageOut) {
         out.drawings.push(DrawingSlot {
             path,
             paragraph_path: job.paragraph.path.to_string(),
+            anchor: run_anchor(job.paragraph, a.run),
             run: a.run,
             index: a.index,
             inline: false,

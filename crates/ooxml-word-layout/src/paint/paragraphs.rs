@@ -11,6 +11,7 @@ use super::Rule;
 use crate::borders::{border_of, drawn};
 use crate::px::Px;
 use ooxml_base::Q;
+use ooxml_word_model::ids::Anchor;
 use ooxml_word_model::value::{Border, Props, Value};
 
 /// How far outside the text a border box is drawn beyond its `w:space`, device px.
@@ -22,6 +23,8 @@ const OUTSET: i64 = 6;
 pub(super) struct ParagraphBox<'a> {
     pub(super) pp: &'a Props,
     pub(super) path: &'a str,
+    /// The paragraph, beside its path (`None`: one without a key).
+    pub(super) anchor: Option<Anchor>,
     pub(super) left: Px,
     pub(super) right: Px,
     pub(super) band: (i64, i64),
@@ -55,10 +58,11 @@ pub(super) fn text_edges(pp: &Props, column: (Px, Px)) -> (Px, Px) {
     )
 }
 
-fn line(kind: &'static str, b: &Border, path: &str, x: (i64, i64), y: i64) -> Rule {
+fn line(kind: &'static str, b: &Border, (path, anchor): (&str, Option<Anchor>), x: (i64, i64), y: i64) -> Rule {
     Rule {
         kind,
         path: path.to_owned(),
+        anchor,
         x: Px::int(x.0),
         y: Px::int(y),
         width: Px::int(x.1 - x.0),
@@ -101,12 +105,12 @@ pub(super) fn paragraph_rects(p: &ParagraphBox<'_>) -> (Vec<Rule>, Option<Rule>)
     match (&top, &between) {
         (Some(b), _) if p.top_side => {
             let inner = p.band.0 - space_px(Some(b));
-            out.push(line("border-top", b, p.path, span, inner - width_px(b)));
+            out.push(line("border-top", b, (p.path, p.anchor), span, inner - width_px(b)));
             box_top = inner;
         }
         (_, Some(b)) if p.between_above && !(p.top_side && top.is_some()) => {
             let start = p.y_gap.round_half_up();
-            out.push(line("border-between", b, p.path, span, start));
+            out.push(line("border-between", b, (p.path, p.anchor), span, start));
             box_top = start + width_px(b);
         }
         _ => {}
@@ -119,7 +123,7 @@ pub(super) fn paragraph_rects(p: &ParagraphBox<'_>) -> (Vec<Rule>, Option<Rule>)
     match &bottom {
         Some(b) if p.bottom_side => {
             let inner = p.band.1 + space_px(Some(b));
-            out.push(line("border-bottom", b, p.path, span, inner));
+            out.push(line("border-bottom", b, (p.path, p.anchor), span, inner));
             box_bottom = inner;
             outer_bottom = inner + width_px(b);
         }
@@ -133,10 +137,11 @@ pub(super) fn paragraph_rects(p: &ParagraphBox<'_>) -> (Vec<Rule>, Option<Rule>)
         ("border-left", &left, inner_left, true),
         ("border-right", &right, inner_right, false),
     ];
-    out.extend(side_rules(p.path, &sides, (outer_top, outer_bottom)));
+    out.extend(side_rules((p.path, p.anchor), &sides, (outer_top, outer_bottom)));
     let shaded = fill.map(|fill| Rule {
         kind: "paragraph-shading",
         path: p.path.to_owned(),
+        anchor: p.anchor,
         x: Px::int(inner_left.unwrap_or(text_left - OUTSET)),
         y: Px::int(box_top),
         width: Px::int(inner_right.unwrap_or(text_right + OUTSET) - inner_left.unwrap_or(text_left - OUTSET)),
@@ -150,7 +155,7 @@ pub(super) fn paragraph_rects(p: &ParagraphBox<'_>) -> (Vec<Rule>, Option<Rule>)
 /// The side borders: each `(kind, border, inner edge, drawn outward of it)` from the box's
 /// outer top to its outer bottom.
 fn side_rules(
-    path: &str,
+    (path, anchor): (&str, Option<Anchor>),
     sides: &[(&'static str, &Option<Border>, Option<i64>, bool)],
     (top, bottom): (i64, i64),
 ) -> Vec<Rule> {
@@ -162,6 +167,7 @@ fn side_rules(
             out.push(Rule {
                 kind,
                 path: path.to_owned(),
+                anchor,
                 x: Px::int(x0),
                 y: Px::int(top),
                 width: Px::int(w),
