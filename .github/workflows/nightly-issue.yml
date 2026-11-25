@@ -1,0 +1,53 @@
+name: Nightly failure issue
+
+# The owner of a failed nightly run (R4 #8): every scheduled workflow (ci.yml,
+# freethreading.yml, rust.yml, gates.yml) ends with a job that calls this one when a job of
+# the scheduled run failed:
+#
+#   nightly-issue:
+#     name: nightly failure issue
+#     needs: [<every job>]
+#     if: always() && github.event_name == 'schedule' && contains(needs.*.result, 'failure')
+#     permissions:
+#       issues: write
+#     uses: ./.github/workflows/nightly-issue.yml
+#     with:
+#       needs: ${{ toJSON(needs) }}
+#
+# It opens the issue "Nightly <workflow> failed", or comments on the one still open, so
+# each workflow's failures have one issue until it is closed.  GITHUB_TOKEN only, no other
+# secret.
+
+on:
+  workflow_call:
+    inputs:
+      needs:
+        description: "The calling job's `needs` context, as JSON: each job's result."
+        required: true
+        type: string
+
+jobs:
+  issue:
+    name: open or update
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the nightly failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          WORKFLOW: ${{ github.workflow }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          NEEDS: ${{ inputs.needs }}
+        run: |
+          results=$(jq -r 'to_entries | map("\(.key) \(.value.result)") | join(", ")' <<<"$NEEDS")
+          title="Nightly $WORKFLOW failed"
+          body="The nightly $WORKFLOW run of ${GITHUB_SHA::8} failed: $RUN"$'\n\n'"$results"$'\n\n'"Triage within a day: fix it, or name the owner here."
+          open=$(gh issue list --state open --search "in:title \"$title\"" --json number,title \
+                 --jq "map(select(.title == \"$title\"))[0].number // empty")
+          if [ -n "$open" ]; then
+            gh issue comment "$open" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi

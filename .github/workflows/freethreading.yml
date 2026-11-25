@@ -3,7 +3,7 @@ name: Free threading
 # The suites on the free-threaded build of Python (3.15t), with the GIL off.  A separate
 # workflow on purpose: ci.yml's `required` jobs are what branch protection requires, and
 # this one is not required (yet).  Each leg first checks that importing the package, its
-# modules and its extras' modules leaves the GIL off without PYTHON_GIL set (an extension
+# modules and the extension modules its leg installs leaves the GIL off without PYTHON_GIL set (an extension
 # that has not declared itself free-threading safe turns the GIL back on, with a
 # RuntimeWarning); the suite then runs with PYTHON_GIL=0 and RuntimeWarning an error.  The
 # packages on lxml take lxml 7 (a pre-release for now), which leaves the GIL off.
@@ -52,3 +52,14 @@ jobs:
     with:
       matrix: ${{ needs.plan.outputs.ft }}
       free-threading: true
+
+  # A failed nightly run opens an issue, or comments on the one still open (nightly-issue.yml).
+  nightly-issue:
+    name: nightly failure issue
+    needs: [plan, test]
+    if: always() && github.event_name == 'schedule' && contains(needs.*.result, 'failure')
+    permissions:
+      issues: write
+    uses: ./.github/workflows/nightly-issue.yml
+    with:
+      needs: ${{ toJSON(needs) }}
