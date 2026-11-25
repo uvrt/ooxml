@@ -95,15 +95,16 @@ fn new_positions(table: &Element, rows: &[&Element]) -> Vec<Vec<Option<(usize, u
 }
 
 /// Whether a table holds a value the new rule reads differently, each a listed fix: a grid
-/// value Python's `int()` reads but `ST_DecimalNumber` does not -- white space around it
-/// (` 2`), an underscore (`1_0`) -- which Word does not open at all (`span-space-2`,
-/// `span-1_0` in Word's probe); the new rule reads it as absent.
+/// value Python's `int()` reads otherwise than Word -- white space around it (` 2`) or an
+/// underscore (`1_0`), which Word does not open at all (`span-space-2`, `span-1_0` in Word's
+/// probe), and the new rule reads as absent; a fraction (`2.0`, Word's `span-2.0`), which Word
+/// drops; a number past 32 bits, which Word wraps (`span-overflow`, `span-4294967298`).
 fn fixed(rows: &[&Element]) -> bool {
     fn odd(e: &Element) -> bool {
         let value = |name: &str| {
             e.name().is(Some(W), name)
                 && e.attribute(Some(W), "val")
-                    .is_some_and(|v| v.contains('_') || v.trim() != v)
+                    .is_some_and(|v| py_int(v) != super::grid_value(v))
         };
         value("gridSpan") || value("gridBefore") || value("gridAfter") || e.child_elements().any(|c| odd(c))
     }
@@ -119,11 +120,36 @@ fn tables(element: &Arc<Element>, out: &mut Vec<Arc<Element>>) {
     }
 }
 
+/// A table holding a listed fix, placed by the value rule alone: each row's cells one after
+/// the other from its `w:gridBefore`, each over its `w:gridSpan` as [`super::grid_value`] reads it.
+fn placed_by_the_rule(table: &Element, rows: &[&Element]) -> Result<(), String> {
+    let grid = Grid::of(table, rows);
+    for (row, line) in rows.iter().zip(&grid.rows) {
+        let read = |e: Option<&Element>, least: i64| {
+            e.and_then(|n| n.attribute(Some(W), "val"))
+                .and_then(super::grid_value)
+                .map_or(least, |v| v.max(least))
+        };
+        let mut column = usize::try_from(read(find_path(row, &["trPr", "gridBefore"]), 0)).unwrap();
+        for ((tc, _), cell) in super::row_cells(row).iter().zip(&line.cells) {
+            let span = usize::try_from(read(find_path(tc, &["tcPr", "gridSpan"]), 1)).unwrap();
+            if (cell.first, cell.span) != (column, span) {
+                return Err(format!(
+                    "cell at {} of {}, the rule reads {column} of {span}",
+                    cell.first, cell.span
+                ));
+            }
+            column += span;
+        }
+    }
+    Ok(())
+}
+
 fn compare(table: &Element) -> Result<(), String> {
     let owned = own_rows(table);
     let rows: Vec<&Element> = owned.iter().map(|(r, _)| &**r).collect();
     if fixed(&rows) {
-        return Ok(());
+        return placed_by_the_rule(table, &rows);
     }
     for row in &rows {
         let new: Vec<(usize, usize)> = cells_at(row, &[]).iter().map(|c| (c.column, c.span)).collect();
@@ -186,7 +212,7 @@ fn the_grid_places_every_fixture_and_corpus_table_as_the_old_readers_did() {
     assert!(failures.is_empty(), "{failures:#?}");
 }
 
-const VALUES: [&str; 12] = [
+const VALUES: [&str; 18] = [
     "",
     "0",
     "1",
@@ -199,6 +225,12 @@ const VALUES: [&str; 12] = [
     "x",
     "-0",
     "99999999999999999999",
+    "2.0",
+    "2.5",
+    ".",
+    "-0.5",
+    "4294967298",
+    "1e1",
 ];
 
 fn generated(seed: u64) -> String {
@@ -217,7 +249,10 @@ fn generated(seed: u64) -> String {
         r#"<w:tbl xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:tblGrid><w:gridCol/><w:gridCol/><w:gridCol/></w:tblGrid>"#,
     );
     for _ in 0..1 + next(4) {
-        let (before, after) = (attr("gridBefore", next(12)), attr("gridAfter", next(12)));
+        let (before, after) = (
+            attr("gridBefore", next(VALUES.len())),
+            attr("gridAfter", next(VALUES.len())),
+        );
         xml.push_str(&format!("<w:tr><w:trPr>{before}{after}</w:trPr>"));
         for _ in 0..next(4) {
             let merge = [
@@ -228,7 +263,7 @@ fn generated(seed: u64) -> String {
             ][next(4)];
             let cell = format!(
                 "<w:tc><w:tcPr>{}{merge}</w:tcPr><w:p/></w:tc>",
-                attr("gridSpan", next(12))
+                attr("gridSpan", next(VALUES.len()))
             );
             xml.push_str(&match next(4) {
                 0 => format!("<w:sdt><w:sdtContent>{cell}</w:sdtContent></w:sdt>"),

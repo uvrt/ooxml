@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Measure how Word reads a table grid's odd values: ``w:gridSpan`` 0, -1, +2, " 2",
-"1_0", "x", "", "2.0" and one past 64 bits (lane ph2-types3); ``w:gridBefore``/``w:gridAfter`` of -1; cells inside ``w:sdt``/``w:sdtContent`` and
+"1_0", "x", "", "2.0" and one past 64 bits (lane ph2-types3); decimal forms, values wrapped
+past 32 and 64 bits, the largest span Word opens and spans past the grid (lane ph2-types4);
+``w:gridBefore``/``w:gridAfter`` of -1 and the same forms; cells inside ``w:sdt``/``w:sdtContent`` and
 ``w:customXml``; a ``w:vMerge`` continuation with no start (lane ph2-types2, the one table
 grid's value and cell-walk rules).
 
