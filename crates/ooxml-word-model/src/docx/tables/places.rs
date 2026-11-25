@@ -94,7 +94,6 @@ impl GridPlaces {
         self.ends.iter().copied().max().unwrap_or(0)
     }
 
-
     /// The grid column after row `row`'s last cell, its `w:gridBefore` where it has none (0
     /// past the last row).
     #[must_use]
@@ -128,7 +127,10 @@ mod tests {
         RowSpec::new(
             Some(before),
             None,
-            cells.iter().map(|(span, merge)| CellSpec::new(Some(span), *merge)).collect(),
+            cells
+                .iter()
+                .map(|(span, merge)| CellSpec::new(Some(span), *merge))
+                .collect(),
         )
     }
 
@@ -157,7 +159,10 @@ mod tests {
         assert_eq!(again.width(), 4);
         assert!((0..2).all(|r| (0..5).all(|c| again.get(r, c) == places.get(r, c))));
         let only_before = GridPlaces::of(&Grid::build(&[row("3", &[])], 0));
-        assert_eq!((only_before.width(), only_before.end(0), only_before.get(0, 1)), (3, 3, None));
+        assert_eq!(
+            (only_before.width(), only_before.end(0), only_before.get(0, 1)),
+            (3, 3, None)
+        );
     }
 
     #[test]

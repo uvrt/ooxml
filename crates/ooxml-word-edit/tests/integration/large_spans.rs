@@ -22,7 +22,9 @@ const HUGE: [usize; 2] = [2_147_483_645, 2_147_483_647];
 const QUICK: Duration = Duration::from_secs(5);
 
 fn cell(span: Option<usize>, text: &str) -> String {
-    let span = span.map_or_else(String::new, |s| format!(r#"<w:tcPr><w:gridSpan w:val="{s}"/></w:tcPr>"#));
+    let span = span.map_or_else(String::new, |s| {
+        format!(r#"<w:tcPr><w:gridSpan w:val="{s}"/></w:tcPr>"#)
+    });
     format!("<w:tc>{span}<w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>")
 }
 
@@ -145,10 +147,7 @@ fn a_split_in_a_table_of_billions_of_columns_is_quick() {
         let Err(EditError::Refused(message)) = split(&editor, 1, 3) else {
             panic!("{span}: (1, 3) is no cell");
         };
-        assert!(
-            message.contains(&format!("and {} column(s)", span + 1)),
-            "{message}"
-        );
+        assert!(message.contains(&format!("and {} column(s)", span + 1)), "{message}");
         assert!(message.contains(" more"), "{message}");
         split(&editor, 2, 0).unwrap();
         assert!(started.elapsed() < QUICK, "{span}: {:?}", started.elapsed());

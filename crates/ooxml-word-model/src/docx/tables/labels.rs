@@ -247,7 +247,9 @@ mod tests {
         let merges = [VMerge::None, VMerge::Restart, VMerge::Continue];
         let mut seed = 7u64;
         let mut next = |n: u64| {
-            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
             usize::try_from((seed >> 33) % n).unwrap_or(0)
         };
         for _ in 0..2000 {
@@ -255,7 +257,12 @@ mod tests {
                 .map(|_| {
                     let before = next(3).to_string();
                     let cells = (0..next(5))
-                        .map(|_| CellSpec::new(Some(&(1 + next(3)).to_string()), merges.get(next(3)).copied().unwrap_or(VMerge::None)))
+                        .map(|_| {
+                            CellSpec::new(
+                                Some(&(1 + next(3)).to_string()),
+                                merges.get(next(3)).copied().unwrap_or(VMerge::None),
+                            )
+                        })
                         .collect();
                     RowSpec::new(Some(&before), None, cells)
                 })

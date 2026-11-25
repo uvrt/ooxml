@@ -432,7 +432,10 @@ impl<'r> Reader<'r> {
                 .map(|(r, c)| format!("{table}/c{r},{c}"))
                 .take(50)
                 .collect();
-            AddressError::not_found(no_cell_text(&GridPlaces::from_positions(&view.grid), table, found.row, column), ids)
+            AddressError::not_found(
+                no_cell_text(&GridPlaces::from_positions(&view.grid), table, found.row, column),
+                ids,
+            )
         };
         let (r, c) = view.origin(found.row, column).ok_or_else(missing)?;
         self.cell_at(&view.part, &view.table.id, &view.table.rows, r, c)

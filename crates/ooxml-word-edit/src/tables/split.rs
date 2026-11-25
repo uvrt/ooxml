@@ -29,7 +29,6 @@ use crate::{EditError, Result};
 use ooxml_word_model::docx::tables::{no_cell_text, GridPlaces};
 use std::collections::HashMap;
 
-
 /// Where Word's even division would have added grid columns: the cell's span and each new
 /// cell's.
 type Uneven = Option<(usize, Vec<usize>)>;
