@@ -1,0 +1,16 @@
+# Known differences between the host goldens (today's Python host, recorded) and the host that
+# replays them (crates/ooxml-oracle/python/host_goldens.py; tests/test_host_goldens.py now, the
+# Rust host's replayer later).  A replayed case fails on any difference no entry here admits.
+#
+# An entry admits the differences in its `fields` -- paths into an event, as the replay names
+# them (`result.warnings`, `result.error`, `results[2].data`; a path admits everything below it)
+# -- of the events it matches:
+#   stream     a glob on the stream's name (`docx/tests/test_tool_errors`; any when left out);
+#   case       a glob on the case's id (`test_x::test_y#1`; any when left out);
+#   tool       the call's tool (any when left out);
+#   at         the event's number within its case (any when left out);
+#   arguments  a subset of the call's arguments.
+# Every entry gives its `rule` -- the tool design rule that makes the new answer the right one;
+# only rule 1 (accept intent: one acceptance, Rust's, decision D4 of the Phase 3 design) -- and
+# its `cause`, citing the pull request that changed the answer.  An entry without either is
+# refused.  Each entry is also a release-notes line.

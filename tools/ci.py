@@ -72,7 +72,7 @@ BINDINGS = "ooxml-core bindings"
 #: change to them or to what they read (ORACLE_TEST_PREFIXES) selects docx-agent's legs.
 ORACLE_TESTS = "ooxml-oracle tests"
 ORACLE_TEST_PREFIXES = ("crates/ooxml-oracle/python/", "crates/ooxml-oracle/word/", "crates/ooxml-oracle/pytest.ini",
-                        "crates/ooxml-oracle/reference.toml")
+                        "crates/ooxml-oracle/reference.toml", "crates/ooxml-oracle/host/")
 
 #: Each package: the monorepo packages its test run uses (itself included; a package's
 #: tests run when any of them changes), its siblings to install (pip requirement paths,
