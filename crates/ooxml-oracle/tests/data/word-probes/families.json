@@ -1,0 +1,37 @@
+{
+  "autofit-over": {
+    "autofit-over-14": [["over", 11]],
+    "autofit-over-15": [["over", 11]],
+    "autofit-over-none": [["over", 11]]
+  },
+  "autofit-width": {
+    "autofit-width-14": [["indent", 7], ["auto", 9], ["widen", 5], ["share", 7], ["tblW", 8], ["span", 9]],
+    "autofit-width-15": [["indent", 7], ["auto", 9], ["widen", 5], ["share", 7], ["tblW", 8], ["span", 9]],
+    "autofit-width-none": [["indent", 7], ["auto", 9], ["widen", 5], ["share", 7], ["tblW", 8], ["span", 9]]
+  },
+  "float-table": {
+    "float-table-14": [["h", 22], ["v", 21], ["dist", 9], ["edge", 10], ["room", 9], ["flow", 9], ["no case", 1], ["flow", 1], ["edge", 18], ["v", 5]],
+    "float-table-15": [["h", 22], ["v", 21], ["dist", 9], ["edge", 10], ["room", 9], ["flow", 9], ["no case", 1], ["flow", 1], ["edge", 18], ["v", 5], ["no case", 2]],
+    "float-table-none": [["h", 22], ["v", 21], ["dist", 9], ["edge", 10], ["room", 9], ["flow", 9], ["no case", 1], ["flow", 1], ["edge", 18], ["v", 5]]
+  },
+  "nested-table": {
+    "nested-table-14": [["place", 11], ["space", 5], ["width", 2], ["row", 6], ["sample", 6]],
+    "nested-table-15": [["place", 11], ["space", 5], ["width", 2], ["row", 6], ["sample", 6]],
+    "nested-table-none": [["place", 11], ["space", 5], ["width", 2], ["row", 6], ["sample", 6]]
+  },
+  "pct-table": {
+    "pct-table-14": [["width", 10], ["share", 3], ["grid", 3], ["margin", 3], ["place", 3], ["dxa", 6], ["share", 3], ["width", 4], ["grid", 3], ["content", 8], ["not modelled", 6]],
+    "pct-table-15": [["width", 10], ["share", 3], ["grid", 3], ["margin", 3], ["place", 3], ["dxa", 6], ["share", 3], ["width", 4], ["grid", 3], ["content", 8], ["not modelled", 6]],
+    "pct-table-none": [["width", 10], ["share", 3], ["grid", 3], ["margin", 3], ["place", 3], ["dxa", 6], ["share", 3], ["width", 4], ["grid", 3], ["content", 8], ["not modelled", 6]]
+  },
+  "wrap-table": {
+    "cell-anchor-14": [["h", 14], ["v", 15], ["cell", 4], ["size", 4], ["h", 14], ["v", 15], ["cell", 4], ["size", 4], ["wrap", 28]],
+    "cell-anchor-15": [["h", 14], ["v", 15], ["cell", 4], ["size", 4], ["h", 14], ["v", 15], ["cell", 4], ["size", 4], ["wrap", 28]],
+    "cell-anchor-none": [["h", 14], ["v", 15], ["cell", 4], ["size", 4], ["h", 14], ["v", 15], ["cell", 4], ["size", 4], ["wrap", 28]],
+    "cell-valign-14": [["align", 15], ["tall", 8], ["offset", 12], ["long", 4], ["merge", 9], ["template", 3], ["clamp", 18], ["room", 7], ["frame", 11]],
+    "cell-valign-15": [["align", 15], ["tall", 8], ["offset", 12], ["long", 4], ["merge", 9], ["template", 3], ["clamp", 18], ["room", 7], ["frame", 11]],
+    "wrap-table-14": [["width", 8], ["place", 16], ["kind", 4], ["wrap", 9], ["fit", 24], ["vertical", 14], ["fit", 30], ["place", 2], ["fit", 16], ["place", 6], ["jc", 18], ["floating", 3]],
+    "wrap-table-15": [["width", 8], ["place", 16], ["kind", 4], ["wrap", 9], ["fit", 24], ["vertical", 14], ["fit", 30], ["place", 2], ["fit", 16], ["place", 6], ["jc", 18], ["floating", 3]],
+    "wrap-table-none": [["width", 8], ["place", 16], ["kind", 4], ["wrap", 9], ["fit", 24], ["vertical", 14], ["fit", 30], ["place", 2], ["fit", 16], ["place", 6], ["jc", 18], ["floating", 3]]
+  }
+}
