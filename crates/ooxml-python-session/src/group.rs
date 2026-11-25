@@ -3,6 +3,10 @@
 //! each made with the interpreter lock released; a group let go unclosed takes back what it
 //! did (its drop), so a batch the host lost never holds the document.
 //!
+//! The group is held by the thread that opens it: the Python host opens, runs and closes a
+//! batch on one thread, and only that thread's calls run in it (`ooxml_session::group`; the
+//! Rust host of Phase 3 passes an explicit owner instead).
+//!
 //! Must not: close a group itself -- the host's guard does, on every path.
 
 use crate::context::{caller_context, PyCallContext};
@@ -112,9 +116,8 @@ impl Drop for PyStepGroup {
     /// A group let go unclosed: what it did taken back, the document let go.
     fn drop(&mut self) {
         if !self.closed.load(Ordering::Acquire) {
-            let context = caller_context(None);
             // (a document closed meanwhile has nothing left to let go)
-            let _ = self.session.abandon_group(&self.doc, &self.start, &context);
+            let _ = self.session.abandon_group(&self.doc, &self.start);
         }
     }
 }

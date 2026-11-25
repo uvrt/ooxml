@@ -8,8 +8,9 @@
 //! detection -- a change set disjoint from the commits since its snapshot is rebased past
 //! theirs ([`DocModel::rebase`]) outside that section -- and redo, then a run behind the
 //! document's gate after [`StoreConfig::optimistic_tries`] conflicts); batches as one transaction and one history
-//! step ([`Batch`]), also one an owner holds open across calls ([`Store::open_txn`]); history (undo, redo, scoped undo that refuses entangled steps); version
-//! numbers and id sequences that are never given twice, also across a reopen ([`Counters`]).
+//! step ([`Batch`]), also one an owner holds open across calls ([`Store::open_txn`]); history
+//! (undo, redo, scoped undo that refuses entangled steps); version numbers and id sequences
+//! that are never given twice, also across a reopen ([`Counters`]).
 //!
 //! Must not: know any format, do I/O, read the clock except through the [`Clock`] port, or
 //! hold global state. What a key, a change and a document are is the model's
@@ -44,7 +45,7 @@ pub use clock::Clock;
 pub use command::{Batch, Command};
 pub use error::{CountersError, Error, StoreError};
 pub use held::{InTxn, Reverted, TxnMark, TxnOwner};
-pub use history::{GroupMark, HistoryOutcome, StepInfo};
+pub use history::{HistoryOutcome, StepInfo};
 pub use ids::{Counters, IdSeq};
 pub use keys::KeySet;
 pub use model::DocModel;
