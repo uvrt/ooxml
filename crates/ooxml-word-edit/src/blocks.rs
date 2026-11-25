@@ -6,7 +6,7 @@
 //! Must not: change anything.
 
 use crate::{EditError, Result, WordDoc};
-use ooxml_word_model::address::{expand_heading, resolve, span_ends, AddressError, SPAN_SYNTAX};
+use ooxml_word_model::address::{expand_heading, resolve, Address, AddressError, SPAN_SYNTAX};
 use ooxml_word_model::docx::controls::controls;
 use ooxml_word_model::docx::{at_path, Docx};
 use ooxml_word_model::ids::{Entry, W};
@@ -122,7 +122,7 @@ pub(crate) fn resolve_block_with(ids: &crate::Ids, docx: &Docx, id: &str) -> Res
 ///
 /// # Errors
 /// The address's refusal; a span across containers or ending before it starts.
-pub(crate) fn blocks_of(doc: &WordDoc, docx: &Docx, address: &str) -> Result<(String, Vec<BlockAt>)> {
+pub(crate) fn blocks_of(doc: &WordDoc, docx: &Docx, address: &Address) -> Result<(String, Vec<BlockAt>)> {
     let address = expand_heading(docx, address).map_err(EditError::Address)?;
     span_or_block(doc, docx, &address)
 }
@@ -132,9 +132,9 @@ pub(crate) fn blocks_of(doc: &WordDoc, docx: &Docx, address: &str) -> Result<(St
 ///
 /// # Errors
 /// The address's refusal; a span across containers or ending before it starts.
-pub(crate) fn span_or_block(doc: &WordDoc, docx: &Docx, address: &str) -> Result<(String, Vec<BlockAt>)> {
-    let Some((first, last)) = span_ends(address).map_err(EditError::Address)? else {
-        let (part, block) = resolve_block(doc, docx, address)?;
+pub(crate) fn span_or_block(doc: &WordDoc, docx: &Docx, address: &Address) -> Result<(String, Vec<BlockAt>)> {
+    let Some((first, last)) = address.span_ends().map_err(EditError::Address)? else {
+        let (part, block) = resolve_block(doc, docx, address.as_str())?;
         return Ok((part, vec![block]));
     };
     let given = format!("{}..{}", first.unwrap_or(""), last.unwrap_or(""));

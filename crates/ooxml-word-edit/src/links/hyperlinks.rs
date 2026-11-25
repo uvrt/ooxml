@@ -29,6 +29,7 @@ use ooxml_base::pyfmt::repr_str;
 use ooxml_opc::name::rels_for;
 use ooxml_store::{Command, Txn};
 use ooxml_word_model::address::bookmark;
+use ooxml_word_model::address::Address;
 use ooxml_word_model::docx::{at_path, Docx};
 use std::sync::Arc;
 
@@ -39,7 +40,7 @@ const HYPERLINK: &str = "http://schemas.openxmlformats.org/officeDocument/2006/r
 #[derive(Debug, Clone)]
 pub struct AddHyperlink {
     /// The range (in one paragraph), or what holds it: a paragraph, a cell, a bookmark.
-    pub range: String,
+    pub range: Address,
     /// An external address; or
     pub url: Option<String>,
     /// a bookmark's name.

@@ -45,6 +45,7 @@ use ooxml_tools::{ArgEnum, ErrorCode, Refusal, ToolError, ToolResult, TryCall, W
 use ooxml_word_edit::facts::{ragged_rows, RaggedRow};
 use ooxml_word_edit::WordDoc;
 use ooxml_word_edit::{EditError, EditTable, KeepingRecord, Reshape, TableChange, TableChanged};
+use ooxml_word_model::address::Address;
 use ooxml_word_model::docx::tables::TableGrid;
 use ooxml_word_model::docx::{find_path, Docx};
 use ooxml_word_model::ids::{TableId, W};
@@ -630,7 +631,7 @@ pub(super) fn table_json(
     if markdown {
         data.insert(
             "markdown".into(),
-            json!(to_plain_markdown(docx, Some(&view.table.id)).ok()?),
+            json!(to_plain_markdown(docx, Some(&Address::parse(&view.table.id))).ok()?),
         );
     }
     Some(Value::Object(data))

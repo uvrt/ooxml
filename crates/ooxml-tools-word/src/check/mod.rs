@@ -61,6 +61,7 @@ use ooxml_base::Cancel;
 use ooxml_scene::python_g;
 use ooxml_tools::{ArgEnum, Done, ToolError};
 use ooxml_word_edit::validate::{problems, problems_in, Delta};
+use ooxml_word_model::address::Address;
 use ooxml_word_model::address::{expand_heading, AddressError};
 use ooxml_word_pages::layout_facts::sizes::Minimum;
 use ooxml_word_pages::layout_facts::{Facts, Scope};
@@ -425,7 +426,9 @@ fn ranges_of(
         if address.is_empty() {
             continue;
         }
-        let address = expand_heading(docx, &follow(address))?;
+        let address = expand_heading(docx, &Address::from(follow(address)))?
+            .as_str()
+            .to_owned();
         if !out.contains(&address) {
             out.push(address);
         }

@@ -9,6 +9,7 @@
 use crate::find::{matches, Literal};
 use crate::text_range::{range, range_id, Span};
 use crate::{EditError, Result, WordDoc};
+use ooxml_word_model::address::Address;
 use ooxml_word_model::address::{scope_paragraphs, RangeText};
 use std::collections::BTreeSet;
 
@@ -38,7 +39,7 @@ pub fn occurrences(
     let docx = doc.docx()?;
     let (part, scope) = match within {
         Some(address) => {
-            let (story, indexes) = scope_paragraphs(&docx, address).map_err(EditError::Address)?;
+            let (story, indexes) = scope_paragraphs(&docx, &Address::parse(address)).map_err(EditError::Address)?;
             let ids: BTreeSet<String> = indexes
                 .iter()
                 .filter_map(|k| story.ids.paragraphs().get(*k).map(|p| p.id))
@@ -89,6 +90,6 @@ fn body_ok(id: &str) -> bool {
 /// The address's refusal.
 pub fn range_text(doc: &WordDoc, address: &str) -> Result<String> {
     let docx = doc.docx()?;
-    let found = range(doc, &docx, address)?;
+    let found = range(doc, &docx, &ooxml_word_model::address::Address::parse(address))?;
     Ok(Span::of(doc, &docx, &found)?.text())
 }

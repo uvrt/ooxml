@@ -28,6 +28,7 @@ use crate::policy::RevisionPolicy;
 use crate::sink::EditSink;
 use crate::{EditError, Result};
 use ooxml_store::{Command, Txn};
+use ooxml_word_model::address::Address;
 use ooxml_word_model::address::{scope_paragraphs, span_ends, AddressError};
 use ooxml_word_model::docx::changes::{changes, LogicalChange};
 use ooxml_word_model::docx::revisions::records;
@@ -152,7 +153,7 @@ pub fn wanted_records(docx: &Docx, ids: &[String]) -> Result<Vec<String>> {
 pub fn place_of(docx: &Docx, within: &str) -> Result<Place> {
     // the records first, as docx-agent's _selection reads them first: a refusal is theirs
     let records = records_within(docx, within)?;
-    let (part, indexes) = scope_paragraphs(docx, within).map_err(EditError::Address)?;
+    let (part, indexes) = scope_paragraphs(docx, &Address::parse(within)).map_err(EditError::Address)?;
     let ids: BTreeSet<String> = indexes
         .iter()
         .filter_map(|k| part.ids.paragraphs().get(*k).map(|p| p.id))
@@ -184,7 +185,7 @@ pub fn records_within(docx: &Docx, within: &str) -> Result<BTreeSet<String>> {
         // one block here, not a span: the resolver refuses it with the span's ends
         ooxml_word_model::address::resolve(docx, within).map_err(EditError::Address)?;
     }
-    let (part, indexes) = scope_paragraphs(docx, within).map_err(EditError::Address)?;
+    let (part, indexes) = scope_paragraphs(docx, &Address::parse(within)).map_err(EditError::Address)?;
     let paths: Vec<Box<[u32]>> = indexes
         .iter()
         .filter_map(|k| part.ids.paragraphs().get(*k).map(|p| p.path))

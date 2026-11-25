@@ -95,7 +95,7 @@ fn edit(rng: &mut Rng, targets: &[String], writer: u64, n: usize) -> Edit {
             policy: policy(rng, writer),
         }),
         2 => Edit::Insert(InsertText {
-            at: format!("{target}@{}", rng.below(3)),
+            at: format!("{target}@{}", rng.below(3)).into(),
             text: format!("{} ", words.join(" ")),
             policy: policy(rng, writer),
         }),
@@ -107,7 +107,7 @@ fn edit(rng: &mut Rng, targets: &[String], writer: u64, n: usize) -> Edit {
             name: format!("W{}N{}", rng.below(4), rng.below(6)),
         }),
         5 => Edit::Link(AddHyperlink {
-            range: format!("{target}@0:1"),
+            range: format!("{target}@0:1").into(),
             url: Some(format!("https://example.com/{name}")),
             anchor: None,
             policy: RevisionPolicy::Untracked,
@@ -559,7 +559,7 @@ fn a_copied_list_item_starts_a_list_or_continues_the_one_before_it() {
         let command = CopyBlocks {
             source: CopySource::Own,
             range: CopyRange::Blocks("p:5A000003".to_owned()),
-            at: "after:p:5A000008".to_owned(),
+            at: "after:p:5A000008".into(),
             policy: RevisionPolicy::Untracked,
             styles: StylePolicy::UseDestination,
             style_map: Vec::new(),
@@ -594,7 +594,7 @@ fn a_copied_picture_reuses_its_part_and_takes_a_new_drawing_number() {
     let command = CopyBlocks {
         source: CopySource::Own,
         range: CopyRange::Blocks("p:5A00000D".to_owned()),
-        at: "end".to_owned(),
+        at: "end".into(),
         policy: RevisionPolicy::Untracked,
         styles: StylePolicy::UseDestination,
         style_map: Vec::new(),
@@ -641,7 +641,7 @@ fn copy_own(name: &str, block: &str) -> (Snapshot<WordDoc>, Snapshot<WordDoc>, o
     let command = CopyBlocks {
         source: CopySource::Own,
         range: CopyRange::Blocks(block.to_owned()),
-        at: "end".to_owned(),
+        at: "end".into(),
         policy: RevisionPolicy::Untracked,
         styles: StylePolicy::UseDestination,
         style_map: Vec::new(),

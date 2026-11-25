@@ -20,6 +20,7 @@ use ooxml_store::{Command, Txn};
 use ooxml_tools::{Done, Outcome, ToolResult};
 use ooxml_word_edit::{EditError, KeepText, TextKeep, WordDoc};
 use ooxml_word_model::address::resolve::{direct, in_table, scope_paragraphs};
+use ooxml_word_model::address::Address;
 use ooxml_word_model::docx::text::{paragraph_text, View};
 use ooxml_word_model::docx::Docx;
 use ooxml_word_model::ids::Entry;
@@ -428,7 +429,7 @@ fn touched(after: &After, done: &Done<Value>, targets: &[&str]) -> Vec<String> {
 pub(crate) fn paragraphs_of(after: &After, name: &str) -> Vec<String> {
     let (docx, followed) = (&*after.docx, after.follow(name));
     let ids = |address: &str| {
-        scope_paragraphs(docx, address).map_or_else(
+        scope_paragraphs(docx, &Address::parse(address)).map_or_else(
             |_| Vec::new(),
             |(part, found)| {
                 found

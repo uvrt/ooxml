@@ -54,6 +54,7 @@ use crate::stamping::stamp_document;
 use crate::work::{Id, Work};
 use crate::{EditError, Result, WordDoc};
 use ooxml_store::{Command, Txn};
+use ooxml_word_model::address::{Place as Where, PlaceKind};
 use ooxml_word_model::docx::controls::controls;
 use ooxml_word_model::docx::Docx;
 use source::Selected;
@@ -173,8 +174,9 @@ pub struct CopyBlocks {
     pub source: CopySource,
     /// Which blocks.
     pub range: CopyRange,
-    /// `end`, `end:<story>`, `after:<id>`, `before:<id>` or a bare id (after it).
-    pub at: String,
+    /// `end`, `end:<story>`, `after:<id>`, `before:<id>`, `replace:<blocks>` or a bare id
+    /// (after it).
+    pub at: Where,
     /// Untracked or tracked.
     pub policy: RevisionPolicy,
     /// Which styles the copies keep.
@@ -238,10 +240,10 @@ impl Command<WordDoc> for CopyBlocks {
 
 /// The place `at` names, in the body, a header or footer, or a cell, and the blocks it
 /// replaces (`replace:`).
-fn destination(doc: &WordDoc, docx: &Docx, at: &str) -> Result<(Place, Vec<String>)> {
-    let (place, replaced) = match at.strip_prefix("replace:") {
-        Some(blocks) => crate::placing::replacing(doc, docx, blocks)?,
-        None => (locate(doc, docx, at, "copy_from")?, Vec::new()),
+fn destination(doc: &WordDoc, docx: &Docx, at: &Where) -> Result<(Place, Vec<String>)> {
+    let (place, replaced) = match at.kind() {
+        PlaceKind::Replace(blocks) => crate::placing::replacing(doc, docx, blocks)?,
+        _ => (locate(doc, docx, at, "copy_from")?, Vec::new()),
     };
     let tree = doc
         .tree(&place.part)?

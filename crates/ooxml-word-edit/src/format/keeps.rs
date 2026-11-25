@@ -20,7 +20,8 @@ use crate::names::W;
 use crate::work::{scope_above, Work};
 use crate::{EditError, Result, WordDoc};
 use ooxml_opc::Package;
-use ooxml_word_model::address::{expand_heading, scope_paragraphs, span_ends};
+use ooxml_word_model::address::Address;
+use ooxml_word_model::address::{expand_heading, scope_paragraphs};
 use ooxml_word_model::docx::formatting::{EffectiveParagraph, Formatting};
 use ooxml_word_model::docx::keeps::{declared, row_leads, Keeps};
 use ooxml_word_model::docx::{at_path, Docx};
@@ -49,15 +50,16 @@ fn is_w(element: &Element, local: &str) -> bool {
 /// The places of the body's blocks `address` names, in order (docx-agent's
 /// `copies.blocks_of`), with the main part.
 fn block_places(doc: &WordDoc, docx: &Docx, address: &str) -> Result<Vec<Vec<u32>>> {
-    let expanded = expand_heading(docx, address).map_err(|e| refused(format!("{address}: {}", e.message)))?;
+    let expanded =
+        expand_heading(docx, &Address::parse(address)).map_err(|e| refused(format!("{address}: {}", e.message)))?;
     let mut places: Vec<Vec<u32>> = Vec::new();
     let part;
-    if span_ends(&expanded).map_err(EditError::Address)?.is_some() {
+    if expanded.span_ends().map_err(EditError::Address)?.is_some() {
         let (found, blocks) = blocks_of(doc, docx, &expanded)?;
         part = found;
         places.extend(blocks.into_iter().map(|b| b.path));
     } else {
-        let block = resolve_block(doc, docx, &expanded)
+        let block = resolve_block(doc, docx, expanded.as_str())
             .ok()
             .filter(|(_, b)| matches!(b.kind, BlockKind::Paragraph | BlockKind::Table | BlockKind::Control));
         if let Some((found, block)) = block {

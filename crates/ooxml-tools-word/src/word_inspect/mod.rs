@@ -30,6 +30,7 @@ use crate::version::Version;
 use blocks::Writer;
 use ooxml_base::Cancel;
 use ooxml_tools::{Done, Refusal, ToolArgs, ToolError, TryCall, WayOut};
+use ooxml_word_model::address::Address;
 use ooxml_word_model::markdown::read::Reader;
 use ooxml_word_model::markdown::select::{select, Selected};
 use ooxml_word_model::markdown::ViewName;
@@ -64,7 +65,7 @@ pub fn word_inspect(args: &WordInspect, version: &Version<'_>, cancel: &dyn Canc
     let mut first = args.clone();
     first.target = "body".to_owned();
     let refuse = |e| address_refusal(e, "target", try_call(&first));
-    let target = version.follow(&args.target);
+    let target = Address::from(version.follow(&args.target));
     let selected = select(&mut reader, Some(&target)).map_err(refuse)?;
     cancel.check().map_err(cancelled)?;
     let mut writer = Writer::new(&docx);
@@ -75,7 +76,7 @@ pub fn word_inspect(args: &WordInspect, version: &Version<'_>, cancel: &dyn Canc
     let mut all = Vec::new();
     let mut cell = false;
     // A cell's blocks are read in their table's style (today's model reads them so).
-    let style = ooxml_word_model::address::in_table(&docx, &target)
+    let style = ooxml_word_model::address::in_table(&docx, target.as_str())
         .ok()
         .flatten()
         .filter(|found| found.column.is_some())
@@ -104,7 +105,7 @@ pub fn word_inspect(args: &WordInspect, version: &Version<'_>, cancel: &dyn Canc
     cancel.check().map_err(cancelled)?;
     let mut data = Map::new();
     if cell {
-        if let Some(found) = extras::cell(&docx, &target) {
+        if let Some(found) = extras::cell(&docx, target.as_str()) {
             data.insert("cell".into(), found);
         }
     }

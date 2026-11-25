@@ -127,7 +127,7 @@ fn run(args: &WordLinks, editing: &Editing<'_>, list: &TryCall) -> Result<ToolRe
                     ));
                 }
                 let command = AddHyperlink {
-                    range: place,
+                    range: place.into(),
                     url: args.url.clone(),
                     anchor: args.bookmark.clone(),
                     policy: policy(editing),

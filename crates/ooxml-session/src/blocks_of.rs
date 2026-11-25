@@ -12,7 +12,7 @@
 use crate::{Opened, SessionError};
 use ooxml_word_edit::WordDoc;
 use ooxml_word_model::address::resolve::section_paragraphs;
-use ooxml_word_model::address::{scope_paragraphs, section, span_ends, AddressError};
+use ooxml_word_model::address::{scope_paragraphs, section, span_ends, Address, AddressError};
 use ooxml_word_model::docx::drawings::all_drawings;
 use ooxml_word_model::docx::{Docx, StoryPart};
 use ooxml_word_model::ids::W;
@@ -81,7 +81,7 @@ impl Opened {
             }
         }
         let span = ends.join("..");
-        Ok(scope_paragraphs(&docx, &span)
+        Ok(scope_paragraphs(&docx, &Address::from(span))
             .map_err(BlockRefused::from)
             .map(|(part, indexes)| top_blocks(&docx, part, &indexes)))
     }
@@ -137,7 +137,7 @@ fn block_in(word: &WordDoc, docx: &Docx, id: &str) -> BlockFound<Option<String>>
             return Ok(None);
         }
     }
-    let (part, indexes) = scope_paragraphs(docx, id)?;
+    let (part, indexes) = scope_paragraphs(docx, &Address::parse(id))?;
     if part.part != body.part {
         return Ok(None);
     }

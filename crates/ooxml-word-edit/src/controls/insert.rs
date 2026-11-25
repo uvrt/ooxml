@@ -79,7 +79,7 @@ impl InsertControl {
         }
         check_text(&self.content_text())?;
         let docx = doc.docx()?;
-        let found = range(doc, &docx, &self.at)?;
+        let found = range(doc, &docx, &ooxml_word_model::address::Address::parse(&self.at))?;
         let span = Span::of(doc, &docx, &found)?;
         let first = span.first().ok_or_else(|| EditError::no_element(span.part.clone()))?;
         Ok((first.id.clone(), span.start))

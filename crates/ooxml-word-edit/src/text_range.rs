@@ -13,7 +13,7 @@ use crate::{EditError, Result, WordDoc};
 use ooxml_base::pyfmt::repr_str;
 use ooxml_word_model::address::resolve::cell_at;
 use ooxml_word_model::address::{
-    bookmark, bookmark_range, in_table, parse_range, resolve, span_ends, unknown, AddressError, RangeText,
+    bookmark, bookmark_range, in_table, resolve, unknown, Address, AddressError, RangeText, Shape,
 };
 use ooxml_word_model::docx::{at_path, Docx};
 use ooxml_word_model::ids::Entry;
@@ -24,12 +24,13 @@ const WANTED: &str = "give a range (p:A@4:11), a position (p:A@5), a paragraph, 
 ///
 /// # Errors
 /// The address's refusal, coded as docx-agent's tools code it.
-pub(crate) fn range(doc: &WordDoc, docx: &Docx, address: &str) -> Result<RangeText> {
-    if let Some(found) = parse_range(address) {
+pub(crate) fn range(doc: &WordDoc, docx: &Docx, given: &Address) -> Result<RangeText> {
+    let address = given.as_str();
+    if let Some(found) = given.text_range() {
         find(doc, docx, &found.start_id)?;
         return Ok(found);
     }
-    if span_ends(address).map_err(EditError::Address)?.is_some() {
+    if given.span_ends().map_err(EditError::Address)?.is_some() {
         return Err(EditError::Address(AddressError::invalid(
             format!("{address} is a span of blocks, not text: {WANTED}, or a range across paragraphs (p:A@3..p:B@8)"),
             Vec::new(),
@@ -38,11 +39,11 @@ pub(crate) fn range(doc: &WordDoc, docx: &Docx, address: &str) -> Result<RangeTe
     if address.starts_with("hl:") {
         return hyperlink_range(doc, docx, address);
     }
-    if address.starts_with("bm:") || !address.contains([':', '@', '/', '#']) {
+    if given.has(Shape::Bookmark) || given.has(Shape::Bare) {
         let marked = bookmark(docx, address).map_err(EditError::Address)?;
         return bookmark_range(docx, &marked).map_err(EditError::Address);
     }
-    if (address.starts_with("cc:") || address.starts_with("cc@"))
+    if given.has(Shape::Control)
         && ooxml_word_model::docx::controls::controls(docx)
             .iter()
             .any(|c| c.id == address)

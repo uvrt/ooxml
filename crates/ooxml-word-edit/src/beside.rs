@@ -19,7 +19,7 @@ use crate::text_range::{anchor_range, range, range_id, Span};
 use crate::work::Work;
 use crate::{EditError, Result, WordDoc};
 use ooxml_store::{Command, Txn};
-use ooxml_word_model::address::{expand_heading, RangeText};
+use ooxml_word_model::address::{expand_heading, Address, RangeText};
 use ooxml_word_model::docx::Docx;
 use std::sync::Arc;
 
@@ -28,14 +28,14 @@ use std::sync::Arc;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TextPlace {
     /// An address.
-    Range(String),
+    Range(Address),
     /// Text occurring once in the document's stories, or in the paragraphs a block, span,
     /// heading's range or other scope holds (`Document.anchor(text, within=)`).
     Once {
         /// The text.
         text: String,
         /// Where to search it (every story when `None`).
-        within: Option<String>,
+        within: Option<Address>,
     },
 }
 
@@ -99,11 +99,11 @@ fn located(sink: &mut EditSink<'_, '_>, docx: &Docx, place: &TextPlace) -> Resul
             // a heading's range searched as the span it is, and named so (docx-agent
             // resolves `within` before the find)
             let within = within
-                .as_deref()
+                .as_ref()
                 .map(|w| expand_heading(docx, w))
                 .transpose()
                 .map_err(EditError::Address)?;
-            anchor_range(sink.doc(), docx, (&pattern, text), within.as_deref())
+            anchor_range(sink.doc(), docx, (&pattern, text), within.as_ref().map(Address::as_str))
         }
     }
 }

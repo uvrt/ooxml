@@ -9,6 +9,7 @@
 use super::xml::CONTAINERS;
 use crate::names::W;
 use crate::{EditError, Result};
+use ooxml_word_model::address::Address;
 use ooxml_word_model::address::{parse_range, scope_paragraphs};
 use ooxml_word_model::docx::revisions::Record;
 use ooxml_word_model::docx::text::{offset_before, paragraph_text, View};
@@ -44,7 +45,7 @@ pub(super) fn records_in_text(docx: &Docx, records: Vec<Record>, within: &str) -
 /// What `within` names as text (docx-agent's `parse_range`, or `_text_of`'s whole text of
 /// the paragraphs it covers).
 fn text_of<'d>(docx: &'d Docx, within: &str) -> Result<Text<'d>> {
-    let (part, paragraphs) = scope_paragraphs(docx, within).map_err(EditError::Address)?;
+    let (part, paragraphs) = scope_paragraphs(docx, &Address::parse(within)).map_err(EditError::Address)?;
     let (start, end) = match parse_range(within) {
         Some(range) => (range.start, Some(range.end)),
         None => (0, None),

@@ -7,16 +7,19 @@
 //! pure function of a version to what it names, or to a refusal carrying the ids that
 //! would do.
 //!
-//! Owns: the syntax ([`syntax`]), the resolution ([`mod@resolve`]) and [`AddressError`], the
+//! Owns: the syntax ([`syntax`]), an address read once at a tool's edge ([`Address`],
+//! [`Place`]), the resolution ([`mod@resolve`]) and [`AddressError`], the
 //! refusal every tool taking an address gives in the same words.
 //!
 //! Must not: change the document, read Markdown records, or follow renamed ids (the Rust
 //! session keeps no aliases until it owns the document, phase P2).
 
 pub mod marks;
+pub mod parsed;
 pub mod resolve;
 pub mod syntax;
 
+pub use parsed::{Address, Form, Place, PlaceKind, Shape};
 pub use resolve::{
     bookmark, bookmark_range, direct, expand_heading, heading, in_table, paragraph, resolve, scope_paragraphs, section,
     text_range, unknown,

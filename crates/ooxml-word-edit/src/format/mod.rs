@@ -195,7 +195,15 @@ fn places(run: &Run<'_, '_, '_>, address: &str) -> Result<Vec<(String, usize)>> 
     let docx = run.sink.docx()?;
     if is_text_range(address) {
         // a range's ends followed where stamping renamed them (`Document.range`)
-        let span = Span::of(run.sink.doc(), &docx, &range(run.sink.doc(), &docx, address)?)?;
+        let span = Span::of(
+            run.sink.doc(),
+            &docx,
+            &range(
+                run.sink.doc(),
+                &docx,
+                &ooxml_word_model::address::Address::parse(address),
+            )?,
+        )?;
         let story = docx
             .part(&span.part)
             .ok_or_else(|| EditError::no_part(span.part.clone()))?;
@@ -262,7 +270,11 @@ fn target(
     if is_range {
         // docx-agent reads the range here, whatever it then sets on it
         let docx = run.sink.docx()?;
-        range(run.sink.doc(), &docx, address)?;
+        range(
+            run.sink.doc(),
+            &docx,
+            &ooxml_word_model::address::Address::parse(address),
+        )?;
         if let Some(name) = &plan.character_style {
             let id = character_style(run, name)?;
             steps.push(on_range(run, address, &RangeOp::Style(id.as_deref()))?);
@@ -329,7 +341,11 @@ fn character_style(run: &mut Run<'_, '_, '_>, name: &str) -> Result<Option<Strin
 /// changes (docx-agent's `_format_range`); the step of its first paragraph.
 fn on_range(run: &mut Run<'_, '_, '_>, address: &str, op: &RangeOp<'_>) -> Result<FormatStep> {
     let docx = run.sink.docx()?;
-    let found = range(run.sink.doc(), &docx, address)?;
+    let found = range(
+        run.sink.doc(),
+        &docx,
+        &ooxml_word_model::address::Address::parse(address),
+    )?;
     let span = Span::of(run.sink.doc(), &docx, &found)?;
     let id = crate::text_range::range_id(&found);
     let story = docx

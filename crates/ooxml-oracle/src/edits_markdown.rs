@@ -28,7 +28,7 @@ pub fn insert_markdown(editor: &Editor, caller: &Caller, package: &Package, case
     let style_map = WriteMap::from_pairs(&pairs).map_err(EditError::Refused)?;
     let command = InsertMarkdown {
         markdown: text("markdown"),
-        at: text("target"),
+        at: ooxml_word_model::address::Place::parse(&text("target")),
         style_map,
         options: MarkdownOptions {
             html_as_text: text("html") == "text",

@@ -24,6 +24,7 @@ use crate::work::{Id, Work};
 use crate::{EditError, Result, WordDoc};
 use ooxml_store::{Command, Txn};
 use ooxml_word_model::address::resolve::body_headings;
+use ooxml_word_model::address::Address;
 use ooxml_word_model::docx::controls::controls;
 use ooxml_word_model::docx::outline::body_blocks;
 use ooxml_word_model::docx::Docx;
@@ -138,7 +139,7 @@ impl MoveBlocks {
             _ => return Err(EditError::Refused("give exactly one of after= or before=".to_owned())),
         };
         let (part, blocks) = match &self.blocks {
-            Moving::Blocks(address) => blocks_of(doc, docx, address)?,
+            Moving::Blocks(address) => blocks_of(doc, docx, &Address::parse(address))?,
             Moving::Ids(ids) => {
                 if ids.is_empty() {
                     return Err(EditError::Refused("no blocks to move".to_owned()));

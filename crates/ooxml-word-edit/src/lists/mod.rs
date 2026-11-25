@@ -24,6 +24,7 @@ use crate::stamping::stamp_document;
 use crate::{EditError, Result, WordDoc};
 use ooxml_store::{Command, Txn};
 use ooxml_word_model::address::scope_paragraphs;
+use ooxml_word_model::address::Address;
 use ooxml_word_model::docx::numbering::Membership;
 use ooxml_word_model::docx::Docx;
 use read::Place;
@@ -112,11 +113,11 @@ pub fn paragraphs_of(doc: &WordDoc, docx: &Docx, address: &str) -> Result<Vec<(S
     if let Some(found) = table_paragraphs(docx, &followed) {
         return Ok(found);
     }
-    let found = scope_paragraphs(docx, &followed).or_else(|e| {
+    let found = scope_paragraphs(docx, &Address::parse(&followed)).or_else(|e| {
         if followed == address {
             Err(e)
         } else {
-            scope_paragraphs(docx, address)
+            scope_paragraphs(docx, &Address::parse(address))
         }
     });
     let (part, indexes) = found.map_err(EditError::Address)?;
@@ -235,7 +236,7 @@ impl Command<WordDoc> for ListEdit {
 
 /// The first paragraph `address` holds (an id given by the caller).
 fn paragraphs_of_place(docx: &Docx, address: &str) -> Result<Place> {
-    let (part, indexes) = scope_paragraphs(docx, address).map_err(EditError::Address)?;
+    let (part, indexes) = scope_paragraphs(docx, &Address::parse(address)).map_err(EditError::Address)?;
     let index = indexes.first().copied().ok_or_else(|| {
         EditError::Address(ooxml_word_model::address::AddressError::invalid(
             format!("{address} holds no paragraphs"),

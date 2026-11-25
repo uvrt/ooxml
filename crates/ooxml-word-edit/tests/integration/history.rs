@@ -111,7 +111,7 @@ fn edit(rng: &mut Rng, targets: &[String], writer: usize) -> Edit {
             policy: policy(rng, writer),
         }),
         2 => Edit::Insert(InsertText {
-            at: format!("{target}@0"),
+            at: format!("{target}@0").into(),
             text: format!("{word} "),
             policy: policy(rng, writer),
         }),

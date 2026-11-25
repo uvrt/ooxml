@@ -283,7 +283,7 @@ fn find_first(
 /// Where a note's reference goes (docx-agent's `_place`): a position, or a range's end, in
 /// a body paragraph, not inside a field's result.
 fn place(doc: &WordDoc, docx: &Docx, at: &str) -> Result<(Found, usize)> {
-    let found = range(doc, docx, at)?;
+    let found = range(doc, docx, &ooxml_word_model::address::Address::parse(at))?;
     let id = range_id(&found);
     let span = Span::of(doc, docx, &found)?;
     if span.part != docx.main {

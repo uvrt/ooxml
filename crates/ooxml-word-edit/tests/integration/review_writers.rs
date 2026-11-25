@@ -64,7 +64,7 @@ fn edit(rng: &mut Rng, targets: &[String], threads: &[String], writer: u64) -> E
             policy: policy(rng, writer),
         }),
         3 | 4 => Edit::Insert(InsertText {
-            at: format!("{target}@{}", rng.below(3)),
+            at: format!("{target}@{}", rng.below(3)).into(),
             text: format!("{} ", words.join(" ")),
             policy: policy(rng, writer),
         }),

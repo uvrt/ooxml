@@ -14,6 +14,7 @@ use ooxml_base::pyfmt::repr_str;
 use ooxml_store::Batch;
 use ooxml_tools::{ArgEnum, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::{InsertBeside, Placed, Side, TextPlace};
+use ooxml_word_model::address::Address;
 use serde_json::{json, Map, Value};
 
 /// Which side of the place.
@@ -204,13 +205,20 @@ fn planned(
             side,
             TextPlace::Once {
                 text: item.find.clone().unwrap_or_default(),
-                within: args.items.is_none().then(|| args.within.clone()).flatten(),
+                within: args
+                    .items
+                    .is_none()
+                    .then(|| args.within.as_deref().map(Address::parse))
+                    .flatten(),
             },
         ),
-        "target" => (side, TextPlace::Range(item.target.clone().unwrap_or_default())),
+        "target" => (
+            side,
+            TextPlace::Range(Address::parse(item.target.as_deref().unwrap_or_default())),
+        ),
         _ => {
             let (side, address) = text_at(item.at.as_deref().unwrap_or_default(), item.side, call)?;
-            (side, TextPlace::Range(address))
+            (side, TextPlace::Range(Address::from(address)))
         }
     })
 }

@@ -16,6 +16,7 @@ use ooxml_word_edit::{
     section_blocks, section_blocks_in, BookmarkPolicy, CopyBlocks, CopyRange, CopySource, ListPolicy, StylePolicy,
     UnmappedPolicy,
 };
+use ooxml_word_model::address::Place;
 use serde_json::{json, Map, Value};
 
 /// How many of the source ids and their copies' the reply lists.
@@ -146,7 +147,7 @@ fn run(args: &WordCopyFrom, editing: &Editing<'_>, way: &TryCall) -> Result<Tool
     let command = CopyBlocks {
         source,
         range,
-        at: args.at.clone(),
+        at: Place::parse(&args.at),
         policy: policy(editing),
         styles: match args.styles {
             None | Some(CopyStyles::UseDestination) => StylePolicy::UseDestination,

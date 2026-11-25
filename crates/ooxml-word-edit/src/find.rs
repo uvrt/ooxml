@@ -14,6 +14,7 @@ use crate::text::diff::python_space;
 use crate::{EditError, Result};
 use ooxml_store::ReadPredicate;
 use ooxml_word_model::address::scope_paragraphs;
+use ooxml_word_model::address::Address;
 use ooxml_word_model::docx::text::{paragraph_text, View};
 use ooxml_word_model::docx::{Docx, StoryPart};
 use ooxml_word_model::ids::Entry;
@@ -267,7 +268,7 @@ fn paragraph_matches(
 /// # Errors
 /// `within`'s refusal, or the pattern's.
 pub(crate) fn matches_within(docx: &Docx, pattern: &dyn Pattern, within: &str) -> Result<Vec<Found>> {
-    let (story, places) = scope_paragraphs(docx, within).map_err(EditError::Address)?;
+    let (story, places) = scope_paragraphs(docx, &Address::parse(within)).map_err(EditError::Address)?;
     let mut out = Vec::new();
     paragraph_matches(story, pattern, places, &mut out)?;
     Ok(out)

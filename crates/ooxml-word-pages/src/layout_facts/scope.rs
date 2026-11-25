@@ -13,7 +13,7 @@
 
 use super::tree::{is_w, table_paths, top_block_path};
 use crate::LaidVersion;
-use ooxml_word_model::address::{scope_paragraphs, AddressError};
+use ooxml_word_model::address::{scope_paragraphs, Address, AddressError};
 use ooxml_word_model::docx::drawings::all_drawings;
 use ooxml_word_model::docx::Docx;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -91,11 +91,12 @@ impl Scope {
         let mut held: Vec<Box<[u32]>> = Vec::new();
         let mut tops: Vec<Box<[u32]>> = Vec::new();
         for (number, address) in addresses.iter().enumerate() {
-            let (part, indexes) = scope_paragraphs(docx, address).map_err(|error| ScopeError::Address {
-                number,
-                address: address.clone(),
-                error,
-            })?;
+            let (part, indexes) =
+                scope_paragraphs(docx, &Address::parse(address)).map_err(|error| ScopeError::Address {
+                    number,
+                    address: address.clone(),
+                    error,
+                })?;
             if part.part != body.part {
                 return Err(ScopeError::NotBody {
                     number,

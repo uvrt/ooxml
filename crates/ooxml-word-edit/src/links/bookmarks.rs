@@ -22,7 +22,8 @@ use crate::{EditError, Result, WordDoc};
 use ooxml_base::pyfmt::repr_str;
 use ooxml_store::{Command, ReadPredicate, Txn};
 use ooxml_word_model::address::marks::{bookmark_markers, bookmark_range};
-use ooxml_word_model::address::{expand_heading, is_text_range, span_ends, RangeText};
+use ooxml_word_model::address::{expand_heading, RangeText};
+use ooxml_word_model::address::{Address, Shape};
 use ooxml_word_model::docx::{at_path, casefold, Docx, StoryPart};
 use ooxml_word_model::ids::Entry;
 use ooxml_xml::{Element, Node};
@@ -49,11 +50,11 @@ struct Place {
 
 /// The text a bookmark over `address` marks (docx-agent's `_bookmark_place`).
 fn place(doc: &WordDoc, docx: &Docx, address: &str) -> Result<Place> {
-    let address = expand_heading(docx, address).map_err(EditError::Address)?;
-    let elements = if span_ends(&address).map_err(EditError::Address)?.is_some() {
+    let address = expand_heading(docx, &Address::parse(address)).map_err(EditError::Address)?;
+    let elements = if address.span_ends().map_err(EditError::Address)?.is_some() {
         Some(blocks_of(doc, docx, &address)?)
-    } else if !is_text_range(&address) {
-        match resolve_block(doc, docx, &address) {
+    } else if !address.has(Shape::Text) {
+        match resolve_block(doc, docx, address.as_str()) {
             Ok((part, block)) if block.kind != BlockKind::Paragraph => Some((part, vec![block])),
             _ => None,
         }
