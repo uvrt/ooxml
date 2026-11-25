@@ -248,8 +248,8 @@ pub fn ragged_rows(doc: &WordDoc, table: &Arc<Element>) -> Option<Ragged> {
 }
 
 /// A table's grid columns, and its rows (`rows`, its own, in order) whose cells -- with
-/// `w:gridBefore` and `w:gridAfter` -- do not reach exactly across them ([`Grid`]'s
-/// coverage).
+/// `w:gridBefore` -- reach past them ([`Grid`]'s coverage: a row's trailing columns are those
+/// it leaves, as Word fills them; `w:gridAfter`, which Word does not read, is not counted).
 pub(crate) fn off_grid_rows(table: &Element, rows: &[Arc<Element>]) -> (i64, Vec<OffGridRow>) {
     let rows: Vec<&Element> = rows.iter().map(|r| &**r).collect();
     let grid = Grid::of(table, &rows);
@@ -261,7 +261,7 @@ pub(crate) fn off_grid_rows(table: &Element, rows: &[Arc<Element>]) -> (i64, Vec
         .filter(|(_, line)| line.coverage != Coverage::Exact)
         .map(|(r, line)| OffGridRow {
             row: r,
-            reaches: signed(line.end.saturating_add(line.after)),
+            reaches: signed(line.end),
         })
         .collect();
     (signed(grid.columns), out)

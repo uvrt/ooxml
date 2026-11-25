@@ -26,7 +26,7 @@ use std::time::Instant;
 
 /// Paragraphs formatted directly (the paragraph, all its text, some of it), a table kept
 /// together whose rows keep with the next by direct formatting, paragraphs whose
-/// punctuation's spacing their language does not want, a table with a row off its grid, and
+/// punctuation's spacing their language does not want, a table with a row past its grid, and
 /// a table whose cell and nested table's cell hold blank lines used as space, before the
 /// body's end.
 const FORMATTED: &str = concat!(
@@ -41,7 +41,7 @@ const FORMATTED: &str = concat!(
     r#"<w:p><w:r><w:rPr><w:lang w:val="fr-FR"/></w:rPr><w:t xml:space="preserve">Vraiment ? Oui ! Bien sûr : toujours.</w:t></w:r></w:p>"#,
     r#"<w:p><w:r><w:rPr><w:lang w:val="en-US"/></w:rPr><w:t xml:space="preserve">Really ? Yes !</w:t></w:r></w:p>"#,
     r#"<w:tbl><w:tblGrid><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/></w:tblGrid>"#,
-    r#"<w:tr><w:tc><w:p><w:r><w:t>Off the grid</w:t></w:r></w:p></w:tc></w:tr>"#,
+    r#"<w:tr><w:tc><w:tcPr><w:gridSpan w:val="3"/></w:tcPr><w:p><w:r><w:t>Off the grid</w:t></w:r></w:p></w:tc></w:tr>"#,
     r#"<w:tr><w:tc><w:p><w:r><w:t>On it</w:t></w:r></w:p></w:tc><w:tc><w:p/></w:tc></w:tr>"#,
     r#"</w:tbl>"#,
     r#"<w:tbl><w:tblGrid><w:gridCol w:w="4500"/></w:tblGrid><w:tr><w:tc>"#,

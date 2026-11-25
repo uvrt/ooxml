@@ -571,8 +571,16 @@ fn validate(owned: Owned<'_>, scope: Option<&Scope>) -> Result<Value, ToolError>
         out.insert("new".into(), Value::from(delta.new));
         out.insert("fixed".into(), Value::from(delta.fixed));
         out.insert("baseline".into(), Value::from(delta.baseline));
-        let listed: Vec<String> = now.iter().take(LISTED).map(ToString::to_string).collect();
+        let listed: Vec<String> = now
+            .iter()
+            .filter(|p| !p.is_warning())
+            .take(LISTED)
+            .map(ToString::to_string)
+            .collect();
         out.insert("problems".into(), Value::from(listed));
+        if !delta.warnings.is_empty() {
+            out.insert("warnings".into(), Value::from(delta.warnings));
+        }
         return Ok(Value::Object(out));
     };
     let docx = owned.doc.docx().map_err(|e| internal(&e))?;
@@ -589,13 +597,21 @@ fn validate(owned: Owned<'_>, scope: Option<&Scope>) -> Result<Value, ToolError>
     let scoped = problems_in(owned.doc, &now, &docx.main, &roots);
     let inside: Vec<String> = scoped.inside.iter().map(ToString::to_string).collect();
     let new: Vec<String> = delta.new.into_iter().filter(|p| inside.contains(p)).collect();
+    let warnings: Vec<String> = delta.warnings.into_iter().filter(|p| inside.contains(p)).collect();
     out.insert("new".into(), Value::from(new));
+    if !warnings.is_empty() {
+        out.insert("warnings".into(), Value::from(warnings));
+    }
     out.insert("fixed".into(), Value::from(delta.fixed));
     out.insert("baseline".into(), Value::from(delta.baseline));
-    out.insert(
-        "problems".into(),
-        Value::from(inside.into_iter().take(LISTED).collect::<Vec<_>>()),
-    );
+    let listed: Vec<String> = scoped
+        .inside
+        .iter()
+        .filter(|p| !p.is_warning())
+        .take(LISTED)
+        .map(ToString::to_string)
+        .collect();
+    out.insert("problems".into(), Value::from(listed));
     out.insert("elsewhere".into(), Value::from(scoped.elsewhere));
     Ok(Value::Object(out))
 }

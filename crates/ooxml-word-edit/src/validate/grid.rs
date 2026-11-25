@@ -7,7 +7,10 @@
 //! not open the document with, or one it reads as 0 (`0`, `0.5`, empty), whose row it
 //! re-grids. A span Word reads as a number past 32 bits or with a fraction (`2.0`,
 //! `99999999999999999999`) is not reported; a row it takes past the grid is
-//! (`grid-row-mismatch`).
+//! (`grid-row-mismatch`). Word does not read `w:gridAfter`: it fills a row's trailing columns
+//! itself, so a row within the grid is on it whatever `w:gridAfter` says, and one written
+//! otherwise than the columns the row leaves is a warning (`grid-after-differs`, Word writes
+//! back the columns the row leaves).
 //!
 //! Must not: look outside the table.
 
@@ -104,11 +107,18 @@ pub(crate) fn grid_problems(table: &Element) -> Vec<(&'static str, String)> {
             }
             current.push((column, span));
         }
-        let reach = line.end + line.after;
         if line.coverage != Coverage::Exact {
             out.push((
                 "grid-row-mismatch",
-                format!("{label} row {k}: {reach} of {count} columns"),
+                format!("{label} row {k}: {} of {count} columns", line.end),
+            ));
+        } else if line.after_differs() {
+            out.push((
+                "grid-after-differs",
+                format!(
+                    "{label} row {k}: w:gridAfter {} where the row leaves {} of {count} columns",
+                    line.after, line.trailing
+                ),
             ));
         }
         previous = current;
@@ -142,8 +152,51 @@ mod tests {
         for refused in ["1e1", " 2", "-2.0", "4294967295", "2147483646"] {
             assert!(problems(refused).contains(&"grid-span-invalid"), "{refused:?}");
         }
+        // a span read as 0 is one column: the row leaves one, Word fills it (its gridAfter 1)
         for zero in ["0", ".", "-0.5", "0.9"] {
-            assert_eq!(problems(zero), ["grid-span-invalid", "grid-row-mismatch"], "{zero:?}");
+            assert_eq!(problems(zero), ["grid-span-invalid", "grid-after-differs"], "{zero:?}");
         }
+    }
+
+    /// A table of three grid columns whose one row is `cells` plain cells and `after`.
+    fn with_after(cells: usize, after: Option<&str>) -> Vec<(&'static str, String)> {
+        let after = after.map_or_else(String::new, |a| {
+            format!(r#"<w:trPr><w:gridAfter w:val="{a}"/></w:trPr>"#)
+        });
+        let xml = format!(
+            r#"<w:tbl xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:tblGrid><w:gridCol/><w:gridCol/><w:gridCol/></w:tblGrid><w:tr>{after}{}</w:tr></w:tbl>"#,
+            "<w:tc><w:p/></w:tc>".repeat(cells)
+        );
+        let tree = ooxml_xml::parse(xml.as_bytes(), &ooxml_xml::Limits::default()).unwrap_or_else(|e| panic!("{e}"));
+        grid_problems(tree.root())
+    }
+
+    #[test]
+    fn grid_after_is_not_read_for_the_grid_and_one_otherwise_is_a_warning() {
+        // Word does not read w:gridAfter and writes back the columns the row leaves
+        // (observations/grid-values-word.json, the `after-` cases)
+        assert!(with_after(2, Some("1")).is_empty());
+        assert!(with_after(3, None).is_empty());
+        for (cells, after, leaves) in [
+            (2, None, 1),
+            (3, Some("1"), 0),
+            (2, Some("2147483647"), 1),
+            (2, Some("x"), 1),
+        ] {
+            let found = with_after(cells, after);
+            assert_eq!(found.len(), 1, "{after:?}: {found:?}");
+            assert_eq!(found[0].0, "grid-after-differs", "{after:?}");
+            assert!(
+                found[0]
+                    .1
+                    .ends_with(&format!("where the row leaves {leaves} of 3 columns")),
+                "{found:?}"
+            );
+        }
+        // cells past the grid: Word re-grids the row, w:gridAfter aside
+        assert_eq!(
+            with_after(4, Some("1"))[0],
+            ("grid-row-mismatch", "'' row 0: 4 of 3 columns".to_owned())
+        );
     }
 }
