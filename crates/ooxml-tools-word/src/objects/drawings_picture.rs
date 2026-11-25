@@ -12,7 +12,8 @@
 
 use super::drawings_args::{WordDrawings, Wrap};
 use crate::blobs::blob;
-use crate::review::{needed, Editing};
+use crate::planned::run_planned;
+use crate::review::{edit_refusal, needed, Editing};
 use crate::structure::common::{outcome, policy, refused, Outcome};
 use ooxml_base::pyfmt::round2;
 use ooxml_store::{Command, Txn};
@@ -24,8 +25,8 @@ use ooxml_word_edit::{
 };
 use serde_json::{json, Value};
 
-fn not_supported(what: &str, retry: &TryCall) -> ToolResult<Value> {
-    refused(EditError::Unsupported(what.to_owned()), retry.clone())
+fn not_supported(what: &str, retry: &TryCall) -> ToolError {
+    edit_refusal(EditError::Unsupported(what.to_owned()), "", retry.clone())
 }
 
 fn invalid(message: &str, field: &str, way_out: WayOut) -> ToolError {
@@ -112,16 +113,18 @@ struct Plan {
     size: (f64, f64),
 }
 
-/// The call checked in docx-agent's order (`Ok(Err(reply))`: a reply ending the call before
-/// anything is changed).
+/// The call checked in docx-agent's order on the version the edit's transaction `tx` is
+/// applied to (a plan made there, [`crate::planned`]): what it makes, or the refusal ending
+/// the call before anything is changed.
 fn checked(
     args: &WordDrawings,
     editing: &Editing<'_>,
     list: &TryCall,
-) -> Result<Result<Plan, ToolResult<Value>>, ToolError> {
+    tx: &mut Txn<'_, WordDoc>,
+) -> Result<Plan, ToolError> {
     let not_supported_blobs = || not_supported("word_drawings insert_picture without the session's blobs", list);
     if args.reference.is_some() {
-        return Ok(Err(not_supported("word_drawings ref", list)));
+        return Err(not_supported("word_drawings ref", list));
     }
     let own = own_paragraph(args);
     let paragraph = own.as_ref().map(|(after, block)| InsertParagraph {
@@ -133,13 +136,13 @@ fn checked(
     });
     // docx-agent makes the paragraph first: its refusal comes before the others
     if let Some(command) = &paragraph {
-        if let Err(error) = command.validate(editing.editor.current().doc()) {
-            return Ok(Err(refused(error, list.clone())));
+        if let Err(error) = command.validate(tx.doc()) {
+            return Err(edit_refusal(error, "", list.clone()));
         }
     }
     let align_taken = own.is_some() && args.wrap.is_none() && args.align.is_some();
     let Some(data) = image_bytes(args, editing, list)? else {
-        return Ok(Err(not_supported_blobs()));
+        return Err(not_supported_blobs());
     };
     let alt_text = args
         .alt_text
@@ -152,7 +155,7 @@ fn checked(
     }
     let at = match &paragraph {
         Some(_) => None,
-        None => Some(super::drawings::position(args, editing, list)?),
+        None => Some(super::drawings::position(args, tx, list)?),
     };
     let svg = looks_like_svg(&data);
     if args.color.is_some() && !svg {
@@ -160,13 +163,10 @@ fn checked(
         return Err(invalid(message, "color", WayOut::call(list.clone())));
     }
     if svg {
-        return Ok(Err(not_supported("word_drawings insert_picture of an SVG", list)));
+        return Err(not_supported("word_drawings insert_picture of an SVG", list));
     }
-    let size = match picture_size(&data, args.width) {
-        Ok(size) => size,
-        Err(error) => return Ok(Err(refused(error, list.clone()))),
-    };
-    Ok(Ok(Plan {
+    let size = picture_size(&data, args.width).map_err(|error| edit_refusal(error, "", list.clone()))?;
+    Ok(Plan {
         paragraph,
         align_taken,
         at,
@@ -174,7 +174,7 @@ fn checked(
         alt_text,
         float,
         size,
-    }))
+    })
 }
 
 /// `insert_picture`: every check first, then the paragraph of its own (aligned), the
@@ -185,18 +185,9 @@ pub(super) fn insert_picture(
     editing: &Editing<'_>,
     list: &TryCall,
 ) -> Result<ToolResult<Value>, ToolError> {
-    let plan = match checked(args, editing, list)? {
-        Ok(plan) => plan,
-        Err(reply) => return Ok(reply),
-    };
-    let command = Picture {
-        args,
-        plan,
-        policy: policy(editing),
-    };
-    Ok(match editing.editor.run(editing.caller, &command) {
+    Ok(match run_planned(editing, picture_plan(args, editing, list))? {
         Ok(done) => {
-            let (edits, data) = done.out;
+            let ((edits, data), ()) = done.out;
             let summary = format!(
                 "Inserted picture {}",
                 data.get("id").and_then(Value::as_str).unwrap_or("")
@@ -207,9 +198,27 @@ pub(super) fn insert_picture(
     })
 }
 
+/// `insert_picture`'s plan, made in the edit's transaction ([`crate::planned`]): the call
+/// checked there, and its commands.
+pub(crate) fn picture_plan<'a>(
+    args: &'a WordDrawings,
+    editing: &'a Editing<'a>,
+    list: &'a TryCall,
+) -> impl Fn(&mut Txn<'_, WordDoc>) -> Result<(Picture<'a>, ()), ToolError> + 'a {
+    move |tx| {
+        let plan = checked(args, editing, list, tx)?;
+        let command = Picture {
+            args,
+            plan,
+            policy: policy(editing),
+        };
+        Ok((command, ()))
+    }
+}
+
 /// A checked call's commands, applied in order in one transaction: their outcomes and the
 /// reply's data.
-struct Picture<'a> {
+pub(crate) struct Picture<'a> {
     args: &'a WordDrawings,
     plan: Plan,
     policy: RevisionPolicy,

@@ -5,9 +5,11 @@
 
 use super::common::{call, find_once, need, one_of, outcome, policy, refused};
 use crate::describe::short;
+use crate::planned::run_planned;
 use crate::review::Editing;
+use ooxml_store::Txn;
 use ooxml_tools::{ArgEnum, Done, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
-use ooxml_word_edit::{hyperlink_span, AddBookmark, AddHyperlink, RemoveBookmark, RenameBookmark};
+use ooxml_word_edit::{hyperlink_span, AddBookmark, AddHyperlink, RemoveBookmark, RenameBookmark, WordDoc};
 use ooxml_word_model::address::marks::{bookmark_markers, bookmark_range, range_text};
 use ooxml_word_model::docx::text::{paragraph_text, View};
 use ooxml_word_model::ids::W;
@@ -95,51 +97,84 @@ fn run(args: &WordLinks, editing: &Editing<'_>, list: &TryCall) -> Result<ToolRe
                 &[("target", args.target.is_some()), ("find", args.find.is_some())],
                 list,
             )? == "find";
-            let place = match (&args.find, &args.target) {
-                (Some(text), _) if found => find_once(editing, text, list)?,
-                (_, Some(target)) => target.clone(),
-                _ => String::new(),
-            };
             if args.action == LinkAction::AddBookmark {
-                let name = need(args.bookmark.as_deref(), "bookmark", list)?;
-                let command = AddBookmark {
-                    place,
-                    name: name.to_owned(),
-                };
-                match editor.run(editing.caller, &command) {
+                match run_planned(editing, bookmark_plan(args, found, list))? {
                     Ok(done) => {
-                        let summary = if done.out.changed {
+                        let (out, name) = done.out;
+                        let summary = if out.changed {
                             format!("Bookmarked as {name}")
                         } else {
-                            format!("No change: {}", done.out.warnings.first().map_or("", String::as_str))
+                            format!("No change: {}", out.warnings.first().map_or("", String::as_str))
                         };
-                        outcome(&[done.out.into()], summary, None)
+                        outcome(&[out.into()], summary, None)
                     }
                     Err(error) => refused(error, list.clone()),
                 }
             } else {
-                if args.url.is_none() == args.bookmark.is_none() {
-                    let way_out = WayOut::names(["url", "bookmark"]).unwrap_or_else(|| WayOut::call(list.clone()));
-                    return Err(ToolError::refusal(
-                        Refusal::InvalidArguments,
-                        "give exactly one of url, bookmark",
-                        way_out,
-                    ));
-                }
-                let command = AddHyperlink {
-                    range: place.into(),
-                    url: args.url.clone(),
-                    anchor: args.bookmark.clone(),
-                    policy: policy(editing),
-                };
-                match editor.run(editing.caller, &command) {
-                    Ok(done) => outcome(&[done.out.into()], "Made a hyperlink".to_owned(), None),
+                match run_planned(editing, hyperlink_plan(args, found, editing, list))? {
+                    Ok(done) => outcome(&[done.out.0.into()], "Made a hyperlink".to_owned(), None),
                     Err(error) => refused(error, list.clone()),
                 }
             }
         }
     };
     Ok(done)
+}
+
+/// Where a bookmark or a hyperlink goes on the transaction's version: `target`, or the one
+/// place `find` occurs there (`found`: `find` given).
+fn place(args: &WordLinks, found: bool, tx: &mut Txn<'_, WordDoc>, list: &TryCall) -> Result<String, ToolError> {
+    Ok(match (&args.find, &args.target) {
+        (Some(text), _) if found => find_once(tx, text, list)?,
+        (_, Some(target)) => target.clone(),
+        _ => String::new(),
+    })
+}
+
+/// `add_bookmark`'s plan, made in the edit's transaction ([`crate::planned`]): its place
+/// there, then the bookmark's name (said in the reply).
+pub(crate) fn bookmark_plan<'a>(
+    args: &'a WordLinks,
+    found: bool,
+    list: &'a TryCall,
+) -> impl Fn(&mut Txn<'_, WordDoc>) -> Result<(AddBookmark, &'a str), ToolError> + 'a {
+    move |tx| {
+        let place = place(args, found, tx, list)?;
+        let name = need(args.bookmark.as_deref(), "bookmark", list)?;
+        let command = AddBookmark {
+            place,
+            name: name.to_owned(),
+        };
+        Ok((command, name))
+    }
+}
+
+/// `add_hyperlink`'s plan, made in the edit's transaction ([`crate::planned`]): its place
+/// there, then exactly one of `url` and `bookmark`.
+pub(crate) fn hyperlink_plan<'a>(
+    args: &'a WordLinks,
+    found: bool,
+    editing: &'a Editing<'a>,
+    list: &'a TryCall,
+) -> impl Fn(&mut Txn<'_, WordDoc>) -> Result<(AddHyperlink, ()), ToolError> + 'a {
+    move |tx| {
+        let place = place(args, found, tx, list)?;
+        if args.url.is_none() == args.bookmark.is_none() {
+            let way_out = WayOut::names(["url", "bookmark"]).unwrap_or_else(|| WayOut::call(list.clone()));
+            return Err(ToolError::refusal(
+                Refusal::InvalidArguments,
+                "give exactly one of url, bookmark",
+                way_out,
+            ));
+        }
+        let command = AddHyperlink {
+            range: place.into(),
+            url: args.url.clone(),
+            anchor: args.bookmark.clone(),
+            policy: policy(editing),
+        };
+        Ok((command, ()))
+    }
 }
 
 /// The bookmarks (Word's hidden ones left out) and hyperlinks, a hundred of each, as
@@ -214,4 +249,53 @@ fn descendants<'e>(element: &'e Arc<ooxml_xml::Element>, local: &str) -> Vec<&'e
 /// Registers `word_links` (the crate's [`crate::register`]).
 pub(crate) fn register(r: &mut impl crate::Registrar) {
     r.edit::<WordLinks>(word_links, crate::Hosting::PLAIN);
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
+
+    use super::*;
+    use crate::planned::held::{args, calling, compare, marked, raced, shifted};
+
+    #[test]
+    fn a_bookmark_on_found_text_covers_the_text_where_it_is_when_it_commits() {
+        let args: WordLinks = args(json!({"action": "add_bookmark", "find": "this year", "bookmark": "Year"}));
+        let list = call("word_links", &[]);
+        let compared = compare(
+            marked,
+            shifted,
+            |editor, between| calling(editor, |_| raced(editor, bookmark_plan(&args, true, &list), between)),
+            |editing| word_links(&args, editing),
+        );
+        compared.assert_same_edit();
+        assert!(
+            compared.serial.contains("14% [bookmarkStart]this year."),
+            "{}",
+            compared.serial
+        );
+    }
+
+    #[test]
+    fn a_link_on_found_text_covers_the_text_where_it_is_when_it_commits() {
+        let args: WordLinks =
+            args(json!({"action": "add_hyperlink", "find": "this year", "url": "https://example.com"}));
+        let list = call("word_links", &[]);
+        let compared = compare(
+            marked,
+            shifted,
+            |editor, between| {
+                calling(editor, |editing| {
+                    raced(editor, hyperlink_plan(&args, true, editing, &list), between)
+                })
+            },
+            |editing| word_links(&args, editing),
+        );
+        compared.assert_same_edit();
+        assert!(
+            compared.serial.contains("14% [hyperlink]this year."),
+            "{}",
+            compared.serial
+        );
+    }
 }

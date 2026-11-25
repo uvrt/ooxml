@@ -5,10 +5,14 @@
 
 use super::common::{call, need, outcome, policy, refused, Outcome};
 use crate::describe::sections_json;
+use crate::planned::run_planned;
 use crate::review::Editing;
+use ooxml_store::Txn;
 use ooxml_tools::{ArgEnum, Done, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::units::twips;
-use ooxml_word_edit::{InsertSectionBreak, RemoveSectionBreak, SectionEdited, SectionValues, SetSection};
+use ooxml_word_edit::{
+    last_block_in, InsertSectionBreak, RemoveSectionBreak, SectionEdited, SectionValues, SetSection, WordDoc,
+};
 use ooxml_word_model::docx::sections::sections;
 use ooxml_word_model::docx::sections::SectionBreakKind;
 use serde_json::{json, Value};
@@ -177,23 +181,15 @@ fn run(args: &WordSections, editing: &Editing<'_>, list: &TryCall) -> Result<Too
             done.data = Some(sections_json(&docx, &sections(&docx)));
             Ok(ToolResult::done(done))
         }
-        SectionAction::InsertBreak => {
-            let (after, before) = sides(args.after.as_deref(), args.before.as_deref(), editing, list)?;
-            let command = InsertSectionBreak {
-                after: after.map(ooxml_word_model::address::Address::from),
-                before: before.map(ooxml_word_model::address::Address::from),
-                kind: args.start.unwrap_or(SectionStart::NextPage).kind(),
-                policy: policy(editing),
-            };
-            Ok(match editor.run(editing.caller, &command) {
-                Ok(done) => {
-                    let id = done.out.id.clone().unwrap_or_default();
-                    let summary = format!("Inserted a section break; the section before it is {id}");
-                    outcome(&[done.out.into()], summary, Some(json!({"section": id})))
-                }
-                Err(error) => refused(error, list.clone()),
-            })
-        }
+        SectionAction::InsertBreak => Ok(match run_planned(editing, break_plan(args, editing, list))? {
+            Ok(done) => {
+                let (out, ()) = done.out;
+                let id = out.id.clone().unwrap_or_default();
+                let summary = format!("Inserted a section break; the section before it is {id}");
+                outcome(&[out.into()], summary, Some(json!({"section": id})))
+            }
+            Err(error) => refused(error, list.clone()),
+        }),
         SectionAction::RemoveBreak | SectionAction::Set => {
             let section = need(args.section.as_deref(), "section", list)?.to_owned();
             if args.action == SectionAction::RemoveBreak {
@@ -208,6 +204,25 @@ fn run(args: &WordSections, editing: &Editing<'_>, list: &TryCall) -> Result<Too
             }
             set(args, editing, list, section)
         }
+    }
+}
+
+/// `insert_break`'s plan, made in the edit's transaction ([`crate::planned`]): the break
+/// beside its block there (`end`: the body's last block there).
+pub(crate) fn break_plan<'a>(
+    args: &'a WordSections,
+    editing: &'a Editing<'a>,
+    list: &'a TryCall,
+) -> impl Fn(&mut Txn<'_, WordDoc>) -> Result<(InsertSectionBreak, ()), ToolError> + 'a {
+    move |tx| {
+        let (after, before) = sides(args.after.as_deref(), args.before.as_deref(), tx, list)?;
+        let command = InsertSectionBreak {
+            after: after.map(ooxml_word_model::address::Address::from),
+            before: before.map(ooxml_word_model::address::Address::from),
+            kind: args.start.unwrap_or(SectionStart::NextPage).kind(),
+            policy: policy(editing),
+        };
+        Ok((command, ()))
     }
 }
 
@@ -277,19 +292,15 @@ fn set(
 fn sides(
     after: Option<&str>,
     before: Option<&str>,
-    editing: &Editing<'_>,
+    tx: &mut Txn<'_, WordDoc>,
     list: &TryCall,
 ) -> Result<(Option<String>, Option<String>), ToolError> {
     match (after, before) {
         (Some(after), None) => {
             if after == "end" {
-                let head = editing.editor.current();
-                let docx = head
-                    .doc()
-                    .docx()
-                    .map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
-                let last = body_blocks(&docx).into_iter().last().unwrap_or_default();
-                return Ok((Some(last), None));
+                // the body's last block on the version the edit is applied to, read there
+                let last = last_block_in(tx).map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
+                return Ok((Some(last.unwrap_or_default()), None));
             }
             if let Some(anchor) = after.strip_prefix("before:") {
                 return Ok((None, Some(anchor.to_owned())));
@@ -309,16 +320,37 @@ fn sides(
     }
 }
 
-/// The ids of the body's top-level blocks (docx-agent's `blocks()` ids), in order.
-pub(crate) fn body_blocks(docx: &ooxml_word_model::docx::Docx) -> Vec<String> {
-    let found = ooxml_word_model::docx::controls::controls(docx);
-    ooxml_word_model::docx::outline::body_blocks(docx, &found)
-        .into_iter()
-        .filter_map(|b| b.id)
-        .collect()
-}
-
 /// Registers `word_sections` (the crate's [`crate::register`]).
 pub(crate) fn register(r: &mut impl crate::Registrar) {
     r.edit::<WordSections>(word_sections, crate::Hosting::PLAIN);
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
+
+    use super::*;
+    use crate::planned::held::{args, calling, compare, markdown, marked, raced};
+
+    #[test]
+    fn a_break_after_the_end_goes_after_a_block_put_at_the_end_meanwhile() {
+        let args: WordSections = args(json!({"action": "insert_break", "after": "end"}));
+        let list = call("word_sections", &[]);
+        let compared = compare(
+            marked,
+            |_| markdown("end", "Appended meanwhile."),
+            |editor, between| {
+                calling(editor, |editing| {
+                    raced(editor, break_plan(&args, editing, &list), between)
+                })
+            },
+            |editing| word_sections(&args, editing),
+        );
+        compared.assert_same_edit();
+        assert!(
+            compared.serial.contains("Appended meanwhile.\n[sectPr]"),
+            "{}",
+            compared.serial
+        );
+    }
 }

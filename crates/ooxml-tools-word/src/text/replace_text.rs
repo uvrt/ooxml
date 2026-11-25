@@ -9,12 +9,14 @@
 
 use super::{merge_renamed, not_supported, text_unported};
 use crate::find_text::{literal_matches, match_context, story_ok};
+use crate::planned::Planned;
 use crate::review::edit_refusal;
 use crate::{written, Editing};
+use ooxml_store::Txn;
 use ooxml_tools::pyfmt::repr;
 use ooxml_tools::{ArgEnum, Done, IntOrStr, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::find::Literal;
-use ooxml_word_edit::{Keep, RangesEdited, ReplaceText as Replace};
+use ooxml_word_edit::{read_matching, read_ranges, EditError, Keep, RangesEdited, ReplaceText as Replace, WordDoc};
 use ooxml_word_model::docx::Docx;
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
@@ -94,64 +96,80 @@ fn run(args: &ReplaceText, editing: &Editing<'_>) -> Result<ToolResult<Value>, T
     if let Some(unported) = text_unported(&args.replace) {
         return Err(unported.refusal(replace_call(args), &["replace"]));
     }
-    let head = editing.editor.current();
-    let docx = head
-        .doc()
-        .docx()
-        .map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
-    let (matches, all) = found(&docx, args);
-    let find = repr(&Value::from(args.find.as_str()));
-    if matches.is_empty() {
-        return Err(ToolError::refusal(
-            Refusal::NotFound,
-            format!("{find} occurs nowhere"),
-            WayOut::call(find_call(args)),
-        ));
-    }
-    if args.expect == Expect::One && matches.len() > 1 {
-        let options = matches
-            .iter()
-            .take(LISTED)
-            .map(|(_, address, context)| Value::from(format!("{address} {}", repr(&Value::from(context.as_str())))))
-            .collect();
-        let way = WayOut::options(options).unwrap_or_else(|| WayOut::call(find_call(args)));
-        return Err(ToolError::refusal(
-            Refusal::Ambiguous,
-            format!(
-                "{} places match {find}; narrow it with range or more words",
-                matches.len()
-            ),
-            way,
-        ));
-    }
-    if args.stories != Some(ReplaceStories::All) && matches.len() != all {
-        let mut call = replace_call(args);
-        call.arguments.insert("stories".into(), Value::from("all"));
-        return Err(not_supported(
-            "replace_text in the body only while other stories match",
-            call,
-            &[],
-        ));
-    }
-    let pattern =
-        Literal::new(&args.find, true, false, &args.replace).map_err(|e| edit_refusal(e, "", find_call(args)))?;
-    let command = Replace {
-        pattern: Arc::new(pattern),
-        across: false,
-        count: (args.expect == Expect::One).then_some(1),
-        keep: Keep::First,
-        policy: editing.policy(),
-    };
     let argument = |field: &str| (field == "replace").then(|| args.replace.clone());
     // the values written by reference kept in the same step
-    let finish = |out: &RangesEdited, after: &written::After| {
-        let result = replied(out, &matches);
-        let keeps = written::reply_keeps(after, editing, &result, &[], &argument);
-        (result, keeps)
+    let finish = |out: &Result<(RangesEdited, Vec<Match>), ToolError>, after: &written::After| match out {
+        Ok((out, matches)) => {
+            let result = replied(out, matches);
+            let keeps = written::reply_keeps(after, editing, &result, &[], &argument);
+            (result, keeps)
+        }
+        Err(refusal) => (ToolResult::failed(refusal.clone()), Vec::new()),
     };
-    let (_, result) =
-        written::run_keeping(editing, &command, finish).map_err(|e| edit_refusal(e, "", find_call(args)))?;
+    let (_, result) = written::run_keeping(editing, &Planned(replace_plan(args, editing)), finish)
+        .map_err(|e| edit_refusal(e, "", find_call(args)))?;
     Ok(result)
+}
+
+/// The replace's plan, made in the edit's transaction ([`crate::planned`]): the matches and
+/// the refusals they make (none, more than one where one is expected, others in stories the
+/// call leaves) found on the version the edit is applied to, the paragraphs that hold a
+/// match read there -- so a match made or taken away meanwhile is a conflict, and the plan
+/// is made again.
+fn replace_plan<'a>(
+    args: &'a ReplaceText,
+    editing: &'a Editing<'a>,
+) -> impl Fn(&mut Txn<'_, WordDoc>) -> Result<(Replace, Vec<Match>), ToolError> + 'a {
+    move |tx| {
+        let internal = |e: EditError| ToolError::internal(e.to_string(), "word:model");
+        let docx = tx.doc().docx().map_err(internal)?;
+        read_matching(tx, &args.find).map_err(internal)?;
+        let (matches, all) = found(&docx, args);
+        read_ranges(tx, matches.iter().map(|(_, address, _)| address.as_str())).map_err(internal)?;
+        let find = repr(&Value::from(args.find.as_str()));
+        if matches.is_empty() {
+            return Err(ToolError::refusal(
+                Refusal::NotFound,
+                format!("{find} occurs nowhere"),
+                WayOut::call(find_call(args)),
+            ));
+        }
+        if args.expect == Expect::One && matches.len() > 1 {
+            let options = matches
+                .iter()
+                .take(LISTED)
+                .map(|(_, address, context)| Value::from(format!("{address} {}", repr(&Value::from(context.as_str())))))
+                .collect();
+            let way = WayOut::options(options).unwrap_or_else(|| WayOut::call(find_call(args)));
+            return Err(ToolError::refusal(
+                Refusal::Ambiguous,
+                format!(
+                    "{} places match {find}; narrow it with range or more words",
+                    matches.len()
+                ),
+                way,
+            ));
+        }
+        if args.stories != Some(ReplaceStories::All) && matches.len() != all {
+            let mut call = replace_call(args);
+            call.arguments.insert("stories".into(), Value::from("all"));
+            return Err(not_supported(
+                "replace_text in the body only while other stories match",
+                call,
+                &[],
+            ));
+        }
+        let pattern =
+            Literal::new(&args.find, true, false, &args.replace).map_err(|e| edit_refusal(e, "", find_call(args)))?;
+        let command = Replace {
+            pattern: Arc::new(pattern),
+            across: false,
+            count: (args.expect == Expect::One).then_some(1),
+            keep: Keep::First,
+            policy: editing.policy(),
+        };
+        Ok((command, matches))
+    }
 }
 
 /// The reply of a replace that made `out` at `matches`.
@@ -269,4 +287,27 @@ fn find_call(args: &ReplaceText) -> TryCall {
 /// Registers `replace_text` (the crate's [`crate::register`]).
 pub(crate) fn register(r: &mut impl crate::Registrar) {
     r.edit::<ReplaceText>(replace_text, crate::Hosting::PLAIN.keeps_written());
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
+
+    use super::*;
+    use crate::planned::held::{args, calling, compare, markdown, marked, raced};
+
+    #[test]
+    fn exactly_one_match_is_checked_where_the_replace_commits() {
+        // a second match put meanwhile: the replace, prepared again, refuses as ambiguous,
+        // as it does called after it -- not the first of the two replaced
+        let args: ReplaceText = args(json!({"find": "this year", "replace": "last year"}));
+        let compared = compare(
+            marked,
+            |_| markdown("end", "Also this year."),
+            |editor, between| calling(editor, |editing| raced(editor, replace_plan(&args, editing), between)),
+            |editing| replace_text(&args, editing),
+        );
+        compared.assert_same_refusal();
+        assert!(compared.serial.contains("14% this year."), "{}", compared.serial);
+    }
 }

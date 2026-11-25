@@ -6,10 +6,13 @@
 
 use super::common::{call, find_once, need, one_of, outcome, policy, refused};
 use crate::describe::short;
+use crate::planned::run_planned;
 use crate::review::Editing;
+use ooxml_store::Txn;
 use ooxml_tools::{ArgEnum, Done, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::{
-    fields, Day, EditError, FieldEdited, InsertCaption, InsertCrossReference, InsertField, InsertToc, UpdateFields,
+    fields, last_block_in, Day, EditError, FieldEdited, InsertCaption, InsertCrossReference, InsertField, InsertToc,
+    UpdateFields, WordDoc,
 };
 use serde_json::{json, Value};
 
@@ -149,41 +152,32 @@ fn run(args: &WordFields, editing: &Editing<'_>, list: &TryCall) -> Result<ToolR
         }
         FieldAction::InsertToc => {
             let levels = levels(args.levels.as_deref())?;
-            let (after, before) = beside(args, editing)?;
-            let command = InsertToc {
-                after: after.map(ooxml_word_model::address::Address::from),
-                before: before.map(ooxml_word_model::address::Address::from),
-                levels,
-                policy: policy(editing),
-                today,
-                layout,
-                locale: editing.locale,
+            let plan = |tx: &mut Txn<'_, WordDoc>| {
+                let (after, before) = beside(args, tx)?;
+                let command = InsertToc {
+                    after: after.map(ooxml_word_model::address::Address::from),
+                    before: before.map(ooxml_word_model::address::Address::from),
+                    levels,
+                    policy: policy(editing),
+                    today,
+                    layout: editing.edit_layout(),
+                    locale: editing.locale,
+                };
+                Ok((command, ()))
             };
             respond(
-                editor.run(editing.caller, &command).map(|d| d.out),
+                run_planned(editing, plan)?.map(|d| d.out.0),
                 |out| format!("Inserted a table of contents {}", out.id.as_deref().unwrap_or("")),
                 |_| None,
                 list,
             )
         }
-        FieldAction::InsertCaption => {
-            let (after, before) = beside(args, editing)?;
-            let command = InsertCaption {
-                anchor: after.clone().or(before).unwrap_or_default(),
-                after: after.is_some(),
-                label: args.label.clone().unwrap_or_else(|| "Figure".to_owned()),
-                text: args.text.clone().unwrap_or_default(),
-                policy: policy(editing),
-                today,
-                layout,
-            };
-            respond(
-                editor.run(editing.caller, &command).map(|d| d.out),
-                |_| "Inserted a caption".to_owned(),
-                |_| None,
-                list,
-            )
-        }
+        FieldAction::InsertCaption => respond(
+            run_planned(editing, caption_plan(args, editing))?.map(|d| d.out.0),
+            |_| "Inserted a caption".to_owned(),
+            |_| None,
+            list,
+        ),
         FieldAction::InsertCrossReference | FieldAction::InsertDate | FieldAction::InsertField => {
             insert(args, editing, list)?
         }
@@ -192,49 +186,87 @@ fn run(args: &WordFields, editing: &Editing<'_>, list: &TryCall) -> Result<ToolR
 
 /// A cross-reference, a date or another field put at a position.
 fn insert(args: &WordFields, editing: &Editing<'_>, list: &TryCall) -> Result<ToolResult<Value>, ToolError> {
-    let (today, layout, editor) = (today(editing), editing.edit_layout(), editing.editor);
-    let at = position(args, editing, list)?;
+    let today = today(editing);
     let summary = |out: &FieldEdited| format!("Inserted field {}", out.id.as_deref().unwrap_or(""));
+    let at = |tx: &mut Txn<'_, WordDoc>| position(args, tx, list).map(ooxml_word_model::address::Address::from);
     let done = match args.action {
         FieldAction::InsertCrossReference => {
-            let command = InsertCrossReference {
-                at: ooxml_word_model::address::Address::from(at),
-                bookmark: need(args.bookmark.as_deref(), "bookmark", list)?.to_owned(),
-                page: args.kind == Some(ReferenceKind::Page),
-                policy: policy(editing),
-                layout,
+            let plan = |tx: &mut Txn<'_, WordDoc>| {
+                let command = InsertCrossReference {
+                    at: at(tx)?,
+                    bookmark: need(args.bookmark.as_deref(), "bookmark", list)?.to_owned(),
+                    page: args.kind == Some(ReferenceKind::Page),
+                    policy: policy(editing),
+                    layout: editing.edit_layout(),
+                };
+                Ok((command, ()))
             };
-            editor.run(editing.caller, &command).map(|d| d.out)
+            run_planned(editing, plan)?.map(|d| d.out.0)
         }
-        FieldAction::InsertDate => {
-            let picture = "d MMMM yyyy";
-            let command = InsertField {
-                at: ooxml_word_model::address::Address::from(at),
-                instruction: format!(" DATE \\@ \"{picture}\" "),
-                result: Some(ooxml_word_edit::format_date(picture, today)),
-                simple: false,
-                policy: policy(editing),
-                today,
-                layout,
-                locale: editing.locale,
-            };
-            editor.run(editing.caller, &command).map(|d| d.out)
-        }
+        FieldAction::InsertDate => run_planned(editing, date_plan(args, editing, list))?.map(|d| d.out.0),
         _ => {
-            let command = InsertField {
-                at: ooxml_word_model::address::Address::from(at),
-                instruction: need(args.instruction.as_deref(), "instruction", list)?.to_owned(),
-                result: None,
-                simple: false,
-                policy: policy(editing),
-                today,
-                layout,
-                locale: editing.locale,
+            let plan = |tx: &mut Txn<'_, WordDoc>| {
+                let command = InsertField {
+                    at: at(tx)?,
+                    instruction: need(args.instruction.as_deref(), "instruction", list)?.to_owned(),
+                    result: None,
+                    simple: false,
+                    policy: policy(editing),
+                    today,
+                    layout: editing.edit_layout(),
+                    locale: editing.locale,
+                };
+                Ok((command, ()))
             };
-            editor.run(editing.caller, &command).map(|d| d.out)
+            run_planned(editing, plan)?.map(|d| d.out.0)
         }
     };
     Ok(respond(done, summary, |_| None, list))
+}
+
+/// `insert_caption`'s plan, made in the edit's transaction ([`crate::planned`]): the
+/// caption beside its block there (`end`: the body's last block there).
+fn caption_plan<'a>(
+    args: &'a WordFields,
+    editing: &'a Editing<'a>,
+) -> impl Fn(&mut Txn<'_, WordDoc>) -> Result<(InsertCaption<'a>, ()), ToolError> + 'a {
+    move |tx| {
+        let (after, before) = beside(args, tx)?;
+        let command = InsertCaption {
+            anchor: after.clone().or(before).unwrap_or_default(),
+            after: after.is_some(),
+            label: args.label.clone().unwrap_or_else(|| "Figure".to_owned()),
+            text: args.text.clone().unwrap_or_default(),
+            policy: policy(editing),
+            today: today(editing),
+            layout: editing.edit_layout(),
+        };
+        Ok((command, ()))
+    }
+}
+
+/// `insert_date`'s plan, made in the edit's transaction ([`crate::planned`]): the date at
+/// its position there.
+fn date_plan<'a>(
+    args: &'a WordFields,
+    editing: &'a Editing<'a>,
+    list: &'a TryCall,
+) -> impl Fn(&mut Txn<'_, WordDoc>) -> Result<(InsertField<'a>, ()), ToolError> + 'a {
+    move |tx| {
+        let picture = "d MMMM yyyy";
+        let today = today(editing);
+        let command = InsertField {
+            at: position(args, tx, list).map(ooxml_word_model::address::Address::from)?,
+            instruction: format!(" DATE \\@ \"{picture}\" "),
+            result: Some(ooxml_word_edit::format_date(picture, today)),
+            simple: false,
+            policy: policy(editing),
+            today,
+            layout: editing.edit_layout(),
+            locale: editing.locale,
+        };
+        Ok((command, ()))
+    }
 }
 
 /// The fields as the list shows them, the first [`LISTED`].
@@ -274,7 +306,7 @@ fn levels(levels: Option<&str>) -> Result<(i64, i64), ToolError> {
 /// A table of contents' or caption's block (docx-agent's `_beside` and `_place`): `after`
 /// or `before` -- `at` read as `after` --, `after` saying its side as `at` does
 /// (`before:X`, `after:X`, `end`).
-fn beside(args: &WordFields, editing: &Editing<'_>) -> Result<(Option<String>, Option<String>), ToolError> {
+fn beside(args: &WordFields, tx: &mut Txn<'_, WordDoc>) -> Result<(Option<String>, Option<String>), ToolError> {
     let (after, before) = match (&args.at, &args.after, &args.before) {
         (Some(at), None, None) => (Some(at.clone()), None),
         _ => (args.after.clone(), args.before.clone()),
@@ -289,12 +321,9 @@ fn beside(args: &WordFields, editing: &Editing<'_>) -> Result<(Option<String>, O
     }
     let Some(after) = after else { return Ok((None, before)) };
     if after == "end" {
-        let head = editing.editor.current();
-        let docx = head
-            .doc()
-            .docx()
-            .map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
-        return Ok((super::sections::body_blocks(&docx).last().cloned(), None));
+        // the body's last block on the version the edit is applied to, read there
+        let last = last_block_in(tx).map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
+        return Ok((last, None));
     }
     if let Some(anchor) = after.strip_prefix("before:") {
         return Ok((None, Some(anchor.to_owned())));
@@ -304,7 +333,7 @@ fn beside(args: &WordFields, editing: &Editing<'_>) -> Result<(Option<String>, O
 
 /// The position another insert goes at (`_position`): `at`, `after`/`before` as a mark's
 /// place (a block's end, or its start), or the end of text found once.
-fn position(args: &WordFields, editing: &Editing<'_>, list: &TryCall) -> Result<String, ToolError> {
+fn position(args: &WordFields, tx: &mut Txn<'_, WordDoc>, list: &TryCall) -> Result<String, ToolError> {
     let mut at = args.at.clone();
     if at.is_none() && args.find.is_none() {
         if let Some((side, anchor)) = args
@@ -329,7 +358,7 @@ fn position(args: &WordFields, editing: &Editing<'_>, list: &TryCall) -> Result<
     }
     match one_of(&[("at", at.is_some()), ("find", args.find.is_some())], list)?.as_str() {
         "find" => {
-            let found = find_once(editing, args.find.as_deref().unwrap_or(""), list)?;
+            let found = find_once(tx, args.find.as_deref().unwrap_or(""), list)?;
             let (base, span) = found.rsplit_once('@').unwrap_or((&found, ""));
             Ok(format!("{base}@{}", span.rsplit(':').next().unwrap_or("")))
         }
@@ -357,4 +386,53 @@ fn mark_place(side: &str, anchor: &str) -> Option<String> {
 /// Registers `word_fields` (the crate's [`crate::register`]).
 pub(crate) fn register(r: &mut impl crate::Registrar) {
     r.edit::<WordFields>(word_fields, crate::Hosting::PLAIN.layout());
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
+
+    use super::*;
+    use crate::planned::held::{args, calling, compare, markdown, marked, raced, shifted};
+
+    #[test]
+    fn a_date_after_found_text_goes_where_the_text_is_when_it_commits() {
+        let args: WordFields = args(json!({"action": "insert_date", "find": "this year"}));
+        let list = call("word_fields", &[]);
+        let compared = compare(
+            marked,
+            shifted,
+            |editor, between| {
+                calling(editor, |editing| {
+                    raced(editor, date_plan(&args, editing, &list), between)
+                })
+            },
+            |editing| word_fields(&args, editing),
+        );
+        compared.assert_same_edit();
+        assert!(
+            compared.serial.contains("this year[fldChar] DATE"),
+            "{}",
+            compared.serial
+        );
+    }
+
+    #[test]
+    fn a_caption_after_the_end_goes_after_a_block_put_at_the_end_meanwhile() {
+        // `end` is the body's last block where the caption is applied: a block appended
+        // meanwhile is a conflict, and the caption goes after it, as in the serial order
+        let args: WordFields = args(json!({"action": "insert_caption", "after": "end", "text": "The end."}));
+        let compared = compare(
+            marked,
+            |_| markdown("end", "Appended meanwhile."),
+            |editor, between| calling(editor, |editing| raced(editor, caption_plan(&args, editing), between)),
+            |editing| word_fields(&args, editing),
+        );
+        compared.assert_same_edit();
+        assert!(
+            compared.serial.contains("Appended meanwhile.\n[pStyle=Caption]Figure "),
+            "{}",
+            compared.serial
+        );
+    }
 }

@@ -212,8 +212,8 @@ fn blocks(
     let mut result = outcome(&edits, summary, None);
     result.warnings.extend(out.headings);
     if let Some(watch) = watch.as_mut() {
-        let after = editing.editor.current();
-        add(&mut result, watch.report(after.doc(), editing.doc));
+        // the version this delete made: another caller's commit since is not this call's
+        add(&mut result, watch.report(done.version.doc(), editing.doc));
     }
     Ok(result)
 }

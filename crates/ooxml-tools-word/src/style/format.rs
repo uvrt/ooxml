@@ -11,13 +11,15 @@
 use super::find::found_ranges;
 use super::format_args::{Cleared, WordFormat};
 use super::moves::moves;
+use crate::planned::run_planned;
 use crate::review::{edit_refusal, Editing};
 use crate::structure::common::{call, outcome, policy, Outcome};
 use ooxml_base::pyfmt::repr_str;
+use ooxml_store::Txn;
 use ooxml_tools::{ArgEnum, Refusal, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::{
-    keeps_blocks, known_style, paragraphs_of, EditError, FormatEdit, FormatPlan, FormatStep, Formatted, Like,
-    ParagraphLook, Property, Setting, Value as Set, WordDoc, KEEPS_BLOCKS, NOT_TAKEN,
+    keeps_blocks, known_style, paragraphs_of, read_matching, read_ranges, EditError, FormatEdit, FormatPlan,
+    FormatStep, Formatted, Key, Like, ParagraphLook, Property, Setting, Value as Set, WordDoc, KEEPS_BLOCKS, NOT_TAKEN,
 };
 use ooxml_word_model::address::Address;
 use ooxml_word_model::docx::{style_kind, style_name, Docx};
@@ -107,42 +109,8 @@ fn run(args: &WordFormat, editing: &Editing<'_>, again: &TryCall) -> Result<Tool
     for name in &clear {
         cleared(*name, &mut run, &mut paragraph);
     }
-    let head = editing.editor.current();
-    let doc = head.doc();
-    let docx = doc
-        .docx()
-        .map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
-    let like = args.like.as_deref().filter(|l| !l.is_empty());
-    let look = like.map(|l| sample_look(doc, &docx, l, again)).transpose()?;
-    if !sets_anything(args, &run, &paragraph, look.is_some()) {
-        let message = "say what to set: a style, a run or a paragraph property".to_owned();
-        return Err(invalid(message, "", &SETTERS, again));
-    }
-    known_styles(args, &docx)?;
-    let found = found_ranges(doc, &finds, again)?;
-    let mut addresses = targets;
-    addresses.extend(found.iter().cloned());
-    let like_plan = look.clone().map(|look| Like {
-        look,
-        skip: explicit(args, &paragraph, &clear),
-    });
-    let plan = FormatPlan {
-        like: like_plan,
-        keep_together: args.keep_together,
-        taller: taller_before(editing, args.keep_together, (head.seq().0, doc, &docx), &addresses),
-        clear_direct: args.clear_direct.unwrap_or(false),
-        paragraph_style: args.paragraph_style.clone(),
-        character_style: args.character_style.clone(),
-        paragraph,
-        run,
-    };
-    let command = FormatEdit {
-        targets: addresses.iter().map(|a| Address::parse(a)).collect(),
-        plan,
-        cleared: !clear.is_empty(),
-        policy: policy(editing),
-    };
-    let done = editing.editor.run(editing.caller, &command).map_err(|e| {
+    let plan = format_plan(args, (run, paragraph, clear), editing, again);
+    let done = run_planned(editing, plan)?.map_err(|e| {
         // docx-agent names `targets` for a target holding no paragraphs or no blocks to keep
         let field = match &e {
             EditError::Address(a)
@@ -154,7 +122,76 @@ fn run(args: &WordFormat, editing: &Editing<'_>, again: &TryCall) -> Result<Tool
         };
         edit_refusal(e, field, again.clone())
     })?;
-    Ok(reply(addresses.len(), &found, look.as_ref(), like, done.out))
+    let (out, (count, found, look)) = done.out;
+    Ok(reply(count, &found, look.as_ref(), like_of(args), out))
+}
+
+/// `like`, where it names something.
+fn like_of(args: &WordFormat) -> Option<&str> {
+    args.like.as_deref().filter(|l| !l.is_empty())
+}
+
+/// What the reply says of a format's plan: how many targets, the ranges `find` found, the
+/// sample's look.
+type Said = (usize, Vec<String>, Option<ParagraphLook>);
+
+/// `word_format`'s plan, made in the edit's transaction ([`crate::planned`]) after the
+/// checks of the arguments alone: the `like` sample's look and the ranges `find` names,
+/// read on the version the edit is applied to -- the sample by key, each find by the
+/// paragraphs that hold a match and those of what it found -- then the edit.
+fn format_plan<'a>(
+    args: &'a WordFormat,
+    (run, paragraph, clear): (Vec<Setting>, Vec<Setting>, Vec<Cleared>),
+    editing: &'a Editing<'a>,
+    again: &'a TryCall,
+) -> impl Fn(&mut Txn<'_, WordDoc>) -> Result<(FormatEdit, Said), ToolError> + 'a {
+    move |tx| {
+        let internal = |e: EditError| ToolError::internal(e.to_string(), "word:model");
+        let docx = tx.doc().docx().map_err(internal)?;
+        let like = like_of(args);
+        let look = like.map(|l| sample_look(tx, &docx, l, again)).transpose()?;
+        if !sets_anything(args, &run, &paragraph, look.is_some()) {
+            let message = "say what to set: a style, a run or a paragraph property".to_owned();
+            return Err(invalid(message, "", &SETTERS, again));
+        }
+        known_styles(args, &docx)?;
+        let finds = args.find.clone().unwrap_or_default();
+        let found = found_ranges(tx.doc(), &finds, again)?;
+        for item in &finds {
+            read_matching(tx, &item.text).map_err(internal)?;
+        }
+        read_ranges(tx, found.iter().map(String::as_str)).map_err(internal)?;
+        let mut addresses = args.targets.clone().unwrap_or_default();
+        addresses.extend(found.iter().cloned());
+        let like_plan = look.clone().map(|look| Like {
+            look,
+            skip: explicit(args, &paragraph, &clear),
+        });
+        // the number of the version the edit is applied to: in a host's batch, the version
+        // its ops left (numbered as the batch numbers it), else the transaction's base
+        let version = if editing.editor.in_batch() {
+            editing.editor.current().seq().0
+        } else {
+            tx.base().seq().0
+        };
+        let plan = FormatPlan {
+            like: like_plan,
+            keep_together: args.keep_together,
+            taller: taller_before(editing, args.keep_together, (version, tx.doc(), &docx), &addresses),
+            clear_direct: args.clear_direct.unwrap_or(false),
+            paragraph_style: args.paragraph_style.clone(),
+            character_style: args.character_style.clone(),
+            paragraph: paragraph.clone(),
+            run: run.clone(),
+        };
+        let command = FormatEdit {
+            targets: addresses.iter().map(|a| Address::parse(a)).collect(),
+            plan,
+            cleared: !clear.is_empty(),
+            policy: policy(editing),
+        };
+        Ok((command, (addresses.len(), found, look)))
+    }
 }
 
 /// With `keep_together` on, the targets it keeps on one page that the version before the change
@@ -393,8 +430,13 @@ fn known(docx: &Docx, name: &str, kind: &str, field: &str) -> Result<(), ToolErr
 
 /// The look of the paragraph `like` names (docx-agent's `_sample_look`): one paragraph,
 /// or a range, cell or span of one; several refused with them (rule 2).
-fn sample_look(doc: &WordDoc, docx: &Docx, like: &str, again: &TryCall) -> Result<ParagraphLook, ToolError> {
-    let found = paragraphs_of(doc, docx, &Address::parse(like)).map_err(|e| {
+fn sample_look(
+    tx: &mut Txn<'_, WordDoc>,
+    docx: &Docx,
+    like: &str,
+    again: &TryCall,
+) -> Result<ParagraphLook, ToolError> {
+    let found = paragraphs_of(tx.doc(), docx, &Address::parse(like)).map_err(|e| {
         let message = match e {
             EditError::Address(a) if a.message.ends_with("holds no paragraphs") => {
                 format!("like: {}", a.message)
@@ -423,6 +465,10 @@ fn sample_look(doc: &WordDoc, docx: &Docx, like: &str, again: &TryCall) -> Resul
         let way = WayOut::names(shown).unwrap_or_else(|| WayOut::call(again.clone()));
         return Err(ToolError::refusal(Refusal::InvalidArguments, message, way).at("like"));
     };
+    // the look is the sample's own: a change to it meanwhile is a conflict
+    if let Some((part, _)) = found.first() {
+        tx.read(Key::block(part.as_str(), one.id.as_str()));
+    }
     Ok(ParagraphLook::of(&one.id, &one.element))
 }
 
@@ -484,4 +530,70 @@ fn reply(
 /// Registers `word_format` (the crate's [`crate::register`]).
 pub(crate) fn register(r: &mut impl crate::Registrar) {
     r.edit::<WordFormat>(word_format, crate::Hosting::PLAIN);
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
+
+    use super::*;
+    use crate::planned::held::{args, calling, compare, marked, paragraph, raced, shifted};
+
+    /// The plan of `args`, which clear nothing.
+    fn raced_format(
+        args: &WordFormat,
+        editor: &ooxml_word_edit::Editor,
+        between: &impl ooxml_store::Command<WordDoc, Error = EditError>,
+    ) -> (Option<ToolError>, u64) {
+        let again = call("word_format", &[]);
+        let (run, paragraph) = split(args);
+        calling(editor, |editing| {
+            raced(
+                editor,
+                format_plan(args, (run, paragraph, Vec::new()), editing, &again),
+                between,
+            )
+        })
+    }
+
+    #[test]
+    fn text_found_to_format_is_found_where_it_is_when_the_format_commits() {
+        let args: WordFormat = args(json!({"find": [{"text": "this year"}], "bold": true}));
+        let compared = compare(
+            marked,
+            shifted,
+            |editor, between| raced_format(&args, editor, between),
+            |editing| word_format(&args, editing),
+        );
+        compared.assert_same_edit();
+        assert!(compared.serial.contains("14% [b]this year."), "{}", compared.serial);
+    }
+
+    #[test]
+    fn the_like_sample_s_look_is_read_where_the_format_commits() {
+        // the sample kept with the next meanwhile: the target looks like it as it is then
+        // (italic too, so that the format writes on either version: an edit that writes
+        // nothing is no conflict)
+        let editor = marked();
+        let (target, sample) = (paragraph(&editor, "Plain bold"), paragraph(&editor, "Visit"));
+        let args: WordFormat = args(json!({"targets": [target], "like": sample, "italic": true}));
+        let kept = |_: &ooxml_word_edit::Editor| FormatEdit {
+            targets: vec![Address::parse(&sample)],
+            plan: FormatPlan {
+                paragraph: vec![set(Property::KeepWithNext, Set::Flag(true))],
+                ..FormatPlan::default()
+            },
+            cleared: false,
+            policy: ooxml_word_edit::RevisionPolicy::Untracked,
+        };
+        let compared = compare(
+            marked,
+            kept,
+            |editor, between| raced_format(&args, editor, between),
+            |editing| word_format(&args, editing),
+        );
+        compared.assert_same_edit();
+        let target = compared.serial.lines().find(|l| l.contains("Plain")).unwrap();
+        assert!(target.contains("[keepNext]"), "{}", compared.serial);
+    }
 }
