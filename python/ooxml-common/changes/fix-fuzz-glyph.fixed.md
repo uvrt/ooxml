@@ -4,5 +4,4 @@ groups claim more than the Unicode codespace (0x110000) in all, or a format 4 on
 0x10000, is refused before any code is read (`fonts.office`, and `fonts.sfnt`, whose count of distinct codes never
 stopped groups repeating the same ones); `fonts.office` skips a group wider than the codespace, as the Rust reader
 does. `read_legacy_kern` reads no more pairs than the table's bytes hold and stops at an Apple subtable shorter than
-its header. The raster font filter reads a subtable two records share once. Fonts within the spec read as before
-(1,415 macOS and Office faces compared).
+its header. Fonts within the spec read as before (1,415 macOS and Office faces compared).
