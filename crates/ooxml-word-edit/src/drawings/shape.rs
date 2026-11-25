@@ -85,7 +85,7 @@ impl InsertShape {
         }
         let found = range(doc, docx, &self.at)?;
         let span = Span::of(doc, docx, &found)?;
-        let paragraph = span.first().ok_or_else(|| EditError::Path(span.part.clone()))?;
+        let paragraph = span.first().ok_or_else(|| EditError::no_element(span.part.clone()))?;
         if crate::textbox::text_box_anchor(docx, &span.part, &paragraph.path).is_some() {
             return Err(EditError::Refused(
                 "a text box or shape is not anchored in a text box".to_owned(),
@@ -139,7 +139,10 @@ impl InsertShape {
         for _ in lines.iter().flatten() {
             boxes.push(sink.draw(&format!("{part}\0box"), 2)?);
         }
-        let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
+        let tree = sink
+            .doc()
+            .tree(&part)?
+            .ok_or_else(|| EditError::no_part(part.clone()))?;
         let mut scope = scope_above(tree.root(), &found.path);
         scope.extend_from_slice(found.element.namespaces());
         let label = if self.text_box {
@@ -171,7 +174,7 @@ impl InsertShape {
         let offset = place.offset;
         let lines = lines.unwrap_or_default();
         rewrite(sink, &at, how, |sink, work| {
-            let holder = work.adopt(&holder).ok_or_else(|| EditError::Path(part.clone()))?;
+            let holder = work.adopt(&holder).ok_or_else(|| EditError::no_element(part.clone()))?;
             let wrote = self.place(sink, work, (holder, offset), &lines, &boxes)?;
             Ok(((), wrote))
         })?;

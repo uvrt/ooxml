@@ -93,9 +93,40 @@ def _paragraph_differences(story: str, ours: list[dict], word: list[dict]) -> li
     return out
 
 
+# -- what Word's re-save adds as normalisation -----------------------------------------------------
+#
+# WORD_ADDED_TBLPRCHANGE: Word does not track a cell split as such; on its re-save it adds a
+# ``tblPrChange`` to a table that holds a ``tcPrChange`` or ``trPrChange``, by the same author and
+# with the same date, its old table properties the same as the new
+# (``gates/generated/controls.docx/objects:09dbf7b1f77502ee``: the tools' tracked split wrote
+# tcPrChange and trPrChange by Writer A; Word's re-save added a tblPrChange by Writer A on the same
+# date, its old tblPr equal to the new).  So Word's revisions may hold a tblPrChange the tools'
+# lack where the story holds a tcPrChange or trPrChange by that author on that date.
+# ``answers.kept_facts`` gives the revisions per story, not per table (and so does every recorded
+# answer), so the rule is held per story.  A tblPrChange the tools wrote that Word drops, or one
+# Word adds where the tools wrote no cell or row change of that author and date, is still a
+# difference.
+
+#: The revision Word's re-save adds to a table with a tracked cell or row change.
+WORD_ADDED_TBLPRCHANGE = "tblPrChange"
+#: The tracked changes that make Word's re-save add one.
+_CELL_OR_ROW_CHANGES = frozenset({"tcPrChange", "trPrChange"})
+
+
+def _without_word_s_tblprchange(ours: list[list[str]], word: list[list[str]]) -> list[list[str]]:
+    """Word's revisions less each tblPrChange its re-save added (:data:`WORD_ADDED_TBLPRCHANGE`):
+    one the tools' revisions lack, whose author and date a tcPrChange or trPrChange of the
+    tools' has."""
+    mine = {tuple(r) for r in ours}
+    changed = {(author, date) for kind, author, date in mine if kind in _CELL_OR_ROW_CHANGES}
+    return [r for r in word
+            if not (r[0] == WORD_ADDED_TBLPRCHANGE and tuple(r) not in mine and (r[1], r[2]) in changed)]
+
+
 def kept(ours: dict[str, Any], word: dict[str, Any]) -> list[str]:
     """Word's re-save keeps every paraId, every paragraph's text (:func:`masked_text`), every
-    revision's author and date and every comment (``answers.kept_facts`` on each side)."""
+    revision's author and date (less the tblPrChange it adds, :data:`WORD_ADDED_TBLPRCHANGE`) and
+    every comment (``answers.kept_facts`` on each side)."""
     mine, theirs = _grouped(ours), _grouped(word)
     out = []
     if sorted(mine) != sorted(theirs):
@@ -105,9 +136,10 @@ def kept(ours: dict[str, Any], word: dict[str, Any]) -> list[str]:
             out.append(f"{story}: {len(mine[story])} parts, Word's {len(theirs[story])}")
         for a, b in zip(mine[story], theirs[story]):
             out += _paragraph_differences(story, a["paragraphs"], b["paragraphs"])
-            for key in ("revisions", "comments"):
-                if a.get(key, []) != b.get(key, []):
-                    out.append(f"{story} {key}: {a.get(key, [])}, Word's {b.get(key, [])}")
+            if a.get("revisions", []) != _without_word_s_tblprchange(a.get("revisions", []), b.get("revisions", [])):
+                out.append(f"{story} revisions: {a.get('revisions', [])}, Word's {b.get('revisions', [])}")
+            if a.get("comments", []) != b.get("comments", []):
+                out.append(f"{story} comments: {a.get('comments', [])}, Word's {b.get('comments', [])}")
     return out
 
 

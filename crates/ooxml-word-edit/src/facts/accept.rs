@@ -7,6 +7,9 @@
 use super::py_space;
 use crate::names::W;
 use crate::{EditError, Result, WordDoc};
+use ooxml_word_model::docx::at_path;
+use ooxml_word_model::docx::block_facts::BlockFact;
+use ooxml_word_model::docx::formatting::Formatting;
 use ooxml_word_model::docx::revisions::records;
 use ooxml_word_model::docx::tables::cells_lost_on_accept;
 use ooxml_word_model::docx::text::leading_text;
@@ -47,16 +50,35 @@ impl LostCell {
 /// When the version cannot be read.
 pub fn accept_loses_text(doc: &WordDoc) -> Result<Vec<LostCell>> {
     let docx = doc.docx()?;
-    let body = docx.body().ok_or_else(|| EditError::NoPart(docx.main.clone()))?;
+    let body = docx.body().ok_or_else(|| EditError::no_part(docx.main.clone()))?;
     let mut changes: Option<HashMap<Box<[u32]>, String>> = None;
     let mut found = Vec::new();
     let tables = body.ids.tables();
+    let formatting = Formatting::read(&docx);
     for placed in tables.placed() {
-        let lost = cells_lost_on_accept(body, &placed.rows);
+        // Which cells, as the block tier keeps them by the table; read again only for those.
+        let lost = body.block_fact::<Lost>(&formatting, placed.element, &placed.path, || {
+            let base = placed.path.len();
+            Arc::new(
+                cells_lost_on_accept(body, &placed.rows)
+                    .into_iter()
+                    .map(|(row, cell)| LostAt {
+                        row,
+                        column: cell.column,
+                        place: cell.path.get(base..).unwrap_or_default().into(),
+                    })
+                    .collect(),
+            )
+        });
         let Some(table) = (!lost.is_empty()).then(|| tables.head(placed.ordinal)).flatten() else {
             continue;
         };
-        for (row, cell) in lost {
+        for at in lost.iter() {
+            let Some(element) = at_path(placed.element, &at.place) else {
+                continue;
+            };
+            let path: Vec<u32> = placed.path.iter().chain(at.place.iter()).copied().collect();
+            let (row, column) = (at.row, at.column);
             let by_record = changes.get_or_insert_with(|| {
                 records(&docx)
                     .into_iter()
@@ -65,7 +87,7 @@ pub fn accept_loses_text(doc: &WordDoc) -> Result<Vec<LostCell>> {
                     .collect()
             });
             let mut paragraphs = Vec::new();
-            paragraphs_below(&cell.element, &cell.path, &mut paragraphs);
+            paragraphs_below(element, &path, &mut paragraphs);
             let record = paragraphs.last().and_then(|(p, at)| mark_record(p, at));
             let texts: Vec<String> = paragraphs.iter().map(|(p, _)| kept_text(p, false)).collect();
             let text = texts
@@ -75,7 +97,7 @@ pub fn accept_loses_text(doc: &WordDoc) -> Result<Vec<LostCell>> {
                 .collect::<Vec<_>>()
                 .join(" ");
             found.push(LostCell {
-                cell: format!("{}/c{row},{}", table.id, cell.column),
+                cell: format!("{}/c{row},{column}", table.id),
                 text: shortened(&text),
                 change: record
                     .as_ref()
@@ -88,6 +110,30 @@ pub fn accept_loses_text(doc: &WordDoc) -> Result<Vec<LostCell>> {
         }
     }
     Ok(found)
+}
+
+/// A cell Accept All removes with its text: its row among its table's own rows, the grid
+/// column it starts at, and its place below the table.
+struct LostAt {
+    row: usize,
+    column: usize,
+    place: Box<[u32]>,
+}
+
+/// A table's cells Accept All removes with their text (`cells_lost_on_accept`), as the block
+/// tier keeps them ([`BlockFact`]): read from the table alone, by places below it.
+struct Lost;
+
+impl BlockFact for Lost {
+    type Value = Arc<Vec<LostAt>>;
+
+    fn weight(value: &Self::Value) -> usize {
+        std::mem::size_of::<Vec<LostAt>>()
+            + value
+                .iter()
+                .map(|at| std::mem::size_of::<LostAt>() + at.place.len() * 4)
+                .sum::<usize>()
+    }
 }
 
 /// Every paragraph below `element` (at `at`), with its place, in document order (nested

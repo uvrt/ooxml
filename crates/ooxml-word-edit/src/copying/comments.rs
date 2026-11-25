@@ -74,7 +74,9 @@ pub(super) fn bring(
     let mut made: Vec<(Id, String)> = Vec::new();
     let mut copied = Vec::new();
     for (old, new) in &mapping {
-        let comment = by_id.get(old).ok_or_else(|| EditError::Path(copier.parts.0.clone()))?;
+        let comment = by_id
+            .get(old)
+            .ok_or_else(|| EditError::no_element(copier.parts.0.clone()))?;
         made.push(copier.copy(sink, bringer, stories, comment, new)?);
         copied.push((format!("comment#{old}"), format!("comment#{new}")));
     }
@@ -147,10 +149,10 @@ impl Copier {
         let doc = sink.doc().clone();
         let into = stories
             .work(&doc, &part)?
-            .ok_or_else(|| EditError::NoPart(part.clone()))?;
+            .ok_or_else(|| EditError::no_part(part.clone()))?;
         let copy = into
             .adopt_copy(comment)
-            .ok_or_else(|| EditError::Path(source_part.clone()))?;
+            .ok_or_else(|| EditError::no_element(source_part.clone()))?;
         let attribute = into.qname(W, "id", "w");
         into.set(copy, attribute, new);
         let old_last = last_para(into, copy);
@@ -164,9 +166,9 @@ impl Copier {
         for paragraph in into.iter(copy, W, &["p"]) {
             let drawn = sink.draw(&self.seed, 2)?;
             let (Some(para), Some(text)) = (drawn.first(), drawn.get(1)) else {
-                return Err(EditError::Path(part.clone()));
+                return Err(EditError::no_element(part.clone()));
             };
-            let into = stories.get_mut(&part).ok_or_else(|| EditError::NoPart(part.clone()))?;
+            let into = stories.get_mut(&part).ok_or_else(|| EditError::no_part(part.clone()))?;
             if let Some(raw) = into.get(paragraph, Some(W14), "paraId").filter(|r| !r.is_empty()) {
                 self.paras.insert(raw.to_uppercase(), para.clone());
             }
@@ -175,7 +177,7 @@ impl Copier {
                 into.set(paragraph, attribute, value);
             }
         }
-        let into = stories.get_mut(&part).ok_or_else(|| EditError::NoPart(part.clone()))?;
+        let into = stories.get_mut(&part).ok_or_else(|| EditError::no_part(part.clone()))?;
         let root = into.root();
         into.append(root, copy);
         let author = into.get(copy, Some(W), "author").unwrap_or("").to_owned();
@@ -197,7 +199,7 @@ impl Copier {
     ) -> Result<Vec<(&'static str, String)>> {
         let into = stories
             .get(&self.parts.1)
-            .ok_or_else(|| EditError::NoPart(self.parts.1.clone()))?;
+            .ok_or_else(|| EditError::no_part(self.parts.1.clone()))?;
         let entry = extended.get(&old_last.to_uppercase());
         let mut attributes = vec![("paraId", last_para(into, copy))];
         let parent = entry

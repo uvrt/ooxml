@@ -469,8 +469,8 @@ fn resolve_row<T: Trace>(
         .map(|c| c.to_vec())
         .unwrap_or_default();
     let row_properties = merged(chain, Attribute::Row, row_direct, &row_conditions, None, true);
-    let grid_before = int(&row_properties, "gridBefore").unwrap_or(0);
-    let grid_after = int(&row_properties, "gridAfter").unwrap_or(0);
+    let grid_before = int(&row_properties, "gridBefore").unwrap_or(0).max(0);
+    let grid_after = int(&row_properties, "gridAfter").unwrap_or(0).max(0);
     let mut column = grid_before;
     let mut cells = Vec::new();
     let mut traces = Vec::new();

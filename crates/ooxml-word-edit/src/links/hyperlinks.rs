@@ -90,7 +90,7 @@ impl AddHyperlink {
                 "a hyperlink is made from a non-empty range in one paragraph, in the current view".to_owned(),
             ));
         }
-        let paragraph = span.first().ok_or_else(|| EditError::Path(span.part.clone()))?;
+        let paragraph = span.first().ok_or_else(|| EditError::no_element(span.part.clone()))?;
         let work = Work::of(&paragraph.element, Vec::new());
         let items = atoms(&work, work.root());
         crate::inline::check_span(&work, &items, span.start, span.end, false)
@@ -255,21 +255,24 @@ impl AddHyperlink {
             sink.read_everything(); // the bookmark it goes to, wherever it is
         }
         let span = self.check(sink.doc(), &docx)?;
-        let paragraph = span.first().ok_or_else(|| EditError::Path(span.part.clone()))?;
+        let paragraph = span.first().ok_or_else(|| EditError::no_element(span.part.clone()))?;
         let part = span.part.clone();
         sink.read(block_key(&part, &paragraph.id));
         let id = range_id(&crate::text_range::range(sink.doc(), &docx, &self.range)?);
         let renamed = stamp_document(&mut *sink, &docx)?;
         let new_id = crate::ranges::renamed_id(&renamed, &paragraph.id);
-        let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
-        let element = at_path(tree.root(), &paragraph.path).ok_or_else(|| EditError::Path(part.clone()))?;
+        let tree = sink
+            .doc()
+            .tree(&part)?
+            .ok_or_else(|| EditError::no_part(part.clone()))?;
+        let element = at_path(tree.root(), &paragraph.path).ok_or_else(|| EditError::no_element(part.clone()))?;
         let mut work = Work::of(element, scope_above(tree.root(), &paragraph.path));
         let root = work.root();
         let runs = crate::inline::isolate(&mut work, root, span.start, span.end)?;
         let Some(&first) = runs.first() else {
-            return Err(EditError::Path(part.clone()));
+            return Err(EditError::no_element(part.clone()));
         };
-        let parent = work.parent(first).ok_or_else(|| EditError::Path(part.clone()))?;
+        let parent = work.parent(first).ok_or_else(|| EditError::no_element(part.clone()))?;
         if runs.iter().any(|r| work.parent(*r) != Some(parent)) {
             return Err(EditError::Refused(format!(
                 "{id} spans runs in different containers (an insertion, a content control); a hyperlink cannot wrap them"
@@ -298,7 +301,7 @@ impl AddHyperlink {
             .position(|l| *l == link)
             .unwrap_or(0);
         sink.keep_written(&part, None, &work);
-        let new = work.build().ok_or_else(|| EditError::Path(part.clone()))?;
+        let new = work.build().ok_or_else(|| EditError::unbuilt(part.clone()))?;
         sink.replace(&part, &paragraph.path, new, vec![block_key(&part, &new_id)])?;
         Ok(made(&new_id, index, renamed))
     }

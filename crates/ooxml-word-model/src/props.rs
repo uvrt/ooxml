@@ -326,13 +326,9 @@ fn round_half_even(f: f64) -> i64 {
 
 const TABLE_WIDTHS: &[&str] = &["tblW", "tblInd", "tblCellSpacing", "tcW", "wBefore", "wAfter"];
 const TABLE_STRINGS: &[&str] = &["jc", "vAlign", "textDirection", "hMerge"];
-const TABLE_INTS: &[&str] = &[
-    "gridSpan",
-    "gridBefore",
-    "gridAfter",
-    "tblStyleRowBandSize",
-    "tblStyleColBandSize",
-];
+const TABLE_INTS: &[&str] = &["tblStyleRowBandSize", "tblStyleColBandSize"];
+/// The grid's values, read by its value rule ([`crate::docx::tables::grid_value`]).
+const TABLE_GRID: &[&str] = &["gridSpan", "gridBefore", "gridAfter"];
 const TABLE_BOOLS: &[&str] = &[
     "cantSplit",
     "tblHeader",
@@ -395,6 +391,11 @@ fn read_table_child(node: &Element, colours: &ThemeColours, out: &mut Props) {
         _ if TABLE_STRINGS.contains(&name) => {
             if let Some(v) = attr(node, "val") {
                 out.insert(known(name), Value::Str(text(v)));
+            }
+        }
+        _ if TABLE_GRID.contains(&name) => {
+            if let Some(v) = attr(node, "val").and_then(crate::docx::tables::grid_value) {
+                out.insert(known(name), Value::Int(v));
             }
         }
         _ if TABLE_INTS.contains(&name) => {

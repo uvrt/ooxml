@@ -174,6 +174,25 @@ impl Lists {
         self.nums.get(&num_id)
     }
 
+    /// Whether `level` of instance `num_id` is one its definition lacks and Word fills: Word
+    /// 16.106 gives a multi-level definition (not `w:multiLevelType="singleLevel"`) all nine
+    /// levels when it opens the file, a missing one a decimal level with no text, so no label
+    /// (measured: `style-document.docx`'s one-level bullet list, a paragraph set to level 1).
+    #[must_use]
+    pub fn fills(&self, docx: &Docx, num_id: i64, level: i64) -> bool {
+        (0..9).contains(&level) && self.definition_of(docx, num_id).is_some() && !self.single_level(docx, num_id)
+    }
+
+    /// Whether instance `num_id` numbers with a single-level definition
+    /// (`w:multiLevelType="singleLevel"`), whose paragraphs Word 16.106 sets to no level but
+    /// the first (measured).
+    #[must_use]
+    pub fn single_level(&self, docx: &Docx, num_id: i64) -> bool {
+        self.definition_of(docx, num_id)
+            .and_then(|definition| definition.find(Some(W), "multiLevelType"))
+            .is_some_and(|t| t.attribute(Some(W), "val") == Some("singleLevel"))
+    }
+
     /// Whether the part has instance `num_id`.
     #[must_use]
     pub fn has(&self, num_id: i64) -> bool {
@@ -264,12 +283,14 @@ pub fn membership(docx: &Docx, lists: &Lists, paragraph: &Element) -> Option<Mem
             .and_then(|n| n.attribute(Some(W), "val"))
             .map(str::to_owned)
     };
+    // a level the definition lacks reads as Word fills it: decimal, no text
+    let filled = lvl.is_none() && lists.fills(docx, num_id, level);
     Some(Membership {
         num_id,
         level,
         abstract_id: lists.abstract_of(num_id),
-        format: val("numFmt"),
-        text: val("lvlText"),
+        format: val("numFmt").or_else(|| filled.then(|| "decimal".to_owned())),
+        text: val("lvlText").or_else(|| filled.then(String::new)),
         from_style,
     })
 }

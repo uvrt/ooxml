@@ -33,6 +33,8 @@ struct BlockFacts {
     /// `w:bookmarkEnd`s: id, place.
     ends: Vec<(String, Box<[u32]>)>,
     cell_ends: bool,
+    /// A `w:del` or `w:cellDel` is in it, fallbacks included.
+    deletions: bool,
 }
 
 /// What the lookups read of one story part: the root's children's facts (a body left out)
@@ -181,6 +183,14 @@ impl PartFacts {
         self.blocks().any(|(_, f)| f.cell_ends)
     }
 
+    /// Whether a `w:del` or `w:cellDel` is anywhere in the part, `mc:Fallback` content
+    /// included (unlike [`PartFacts::revisions`]): where not, a walk for deletion records
+    /// finds none.
+    #[must_use]
+    pub fn holds_deletions(&self) -> bool {
+        self.blocks().any(|(_, f)| f.deletions)
+    }
+
     fn placed(&self, list: impl Fn(&BlockFacts) -> &Vec<Found>) -> Vec<Found> {
         let mut out = Vec::new();
         for (place, facts) in self.blocks() {
@@ -214,6 +224,9 @@ impl BlockFacts {
             row_gone: within.row_gone || (name.is(Some(W), "tr") && row_deleted(element)),
         };
         let fallback = within.fallback;
+        if name.is(Some(W), "del") || name.is(Some(W), "cellDel") {
+            self.deletions = true;
+        }
         if name.is(Some(W), "hyperlink") {
             if let Some(a) = element.attribute(Some(W), "anchor").filter(|a| !a.is_empty()) {
                 self.anchors.push(a.to_owned());
@@ -334,6 +347,30 @@ mod tests {
             .map(|(i, p)| (i, p.to_vec()))
             .collect();
         assert_eq!(ends, [("1".into(), vec![0, 1, 0]), ("2".into(), vec![0, 2, 0, 0, 0])]);
+    }
+
+    #[test]
+    fn deletions_are_found_in_any_block_fallbacks_included() {
+        let holds = |body: &str| {
+            let doc = format!(
+                r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><w:body>{body}</w:body></w:document>"#
+            );
+            let tree = ooxml_xml::parse(doc.as_bytes(), &XmlLimits::default()).unwrap_or_else(|e| panic!("{e}"));
+            PartFacts::read(tree.root(), None).holds_deletions()
+        };
+        assert!(!holds(
+            r#"<w:p><w:ins w:id="1"><w:r><w:t>a</w:t></w:r></w:ins></w:p><w:p/>"#
+        ));
+        assert!(holds(
+            r#"<w:p/><w:p><w:del w:id="1"><w:r><w:delText>a</w:delText></w:r></w:del></w:p>"#
+        ));
+        assert!(holds(
+            r#"<w:tbl><w:tr><w:tc><w:tcPr><w:cellDel w:id="1"/></w:tcPr><w:p/></w:tc></w:tr></w:tbl>"#
+        ));
+        assert!(holds(
+            r#"<w:p><mc:AlternateContent><mc:Fallback><w:del w:id="1"/></mc:Fallback></mc:AlternateContent></w:p>"#
+        ));
+        assert!(holds(r#"<w:p><w:pPr><w:rPr><w:del w:id="2"/></w:rPr></w:pPr></w:p>"#));
     }
 
     /// A body of one table: `rows`, each a `w:tr`'s inner XML.

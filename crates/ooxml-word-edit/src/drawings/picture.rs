@@ -222,7 +222,10 @@ impl InsertPicture {
         };
         let parsed = ooxml_xml::parse(self.xml(&frame).as_bytes(), &Limits::default().xml)
             .map_err(|e| EditError::Refused(e.to_string()))?;
-        let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
+        let tree = sink
+            .doc()
+            .tree(&part)?
+            .ok_or_else(|| EditError::no_part(part.clone()))?;
         let mut scope = scope_above(tree.root(), &found.path);
         scope.extend_from_slice(found.element.namespaces());
         let drawing = crate::namespaces::strip_redundant(parsed.root(), &mut scope);
@@ -236,7 +239,9 @@ impl InsertPicture {
             ensure_w14: false,
         };
         rewrite(sink, &at, how, |sink, work| {
-            let drawing = work.adopt(&drawing).ok_or_else(|| EditError::Path(part.clone()))?;
+            let drawing = work
+                .adopt(&drawing)
+                .ok_or_else(|| EditError::no_element(part.clone()))?;
             let run = crate::inline::new_run(work, work.root(), place.offset, &[drawing])?;
             let wrote = sink.track(work, |work, stamp, _| {
                 if let (Some(parent), Some(index)) = (work.parent(run), work.index(run)) {

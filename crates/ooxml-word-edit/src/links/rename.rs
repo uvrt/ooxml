@@ -134,7 +134,7 @@ impl Edit {
                     .iter()
                     .find(|a| a.name.is(Some(W), local))
                     .map(|a| Arc::clone(&a.name))
-                    .ok_or_else(|| EditError::Path(part.to_owned()))?;
+                    .ok_or_else(|| EditError::no_element(part.to_owned()))?;
                 let new = with_attribute(&head, &name, &value);
                 let mut node_path = vec![0usize];
                 node_path.extend(path.iter().map(|k| *k as usize));
@@ -212,7 +212,7 @@ impl RemoveBookmark {
         paths.extend(marked.end.as_deref().map(<[u32]>::to_vec));
         let wanted: Vec<&[u32]> = paths.iter().map(Vec::as_slice).collect();
         let root = Arc::clone(marked.part.root());
-        let path_error = || EditError::Path(part.clone());
+        let path_error = || EditError::no_element(part.clone());
         let (mut work, parent, stretch, found) = editable(&root, &paths, &wanted).ok_or_else(path_error)?;
         for node in found {
             work.remove(node);

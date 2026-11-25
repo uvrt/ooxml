@@ -2,11 +2,13 @@
 //! `grid_problems`): every row covers the grid exactly (`w:gridBefore`, its cells' spans,
 //! `w:gridAfter`), and a vertical merge goes on only under a cell of the same columns; a
 //! table holding cell or grid revisions is held to it once they are accepted or rejected.
+//! The rows are placed as [`Grid`] places them (Word's value rule and cell walk); a span
+//! Word does not read as one column or more is reported (`grid-span-invalid`).
 //!
 //! Must not: look outside the table.
 
 use crate::names::W;
-use crate::validate::facts::python_int;
+use ooxml_word_model::docx::tables::{row_cells, Coverage, Grid, RowSpec};
 use ooxml_xml::{Element, Node};
 
 const STRUCTURAL: &[&str] = &[
@@ -30,13 +32,6 @@ fn below<'e>(element: &'e Element, owner: &str, out: &mut Vec<(&'e Element, bool
         out.push((child, mine));
         below(child, owner, out, mine && !is_w(child, owner));
     }
-}
-
-fn number(element: Option<&Element>, default: i64) -> i64 {
-    element
-        .and_then(|e| e.attribute(Some(W), "val"))
-        .and_then(python_int)
-        .unwrap_or(default)
 }
 
 fn find_path<'e>(element: &'e Element, path: &[&str]) -> Option<&'e Element> {
@@ -83,23 +78,16 @@ pub(crate) fn grid_problems(table: &Element) -> Vec<(&'static str, String)> {
         .unwrap_or_default();
     let label = repr(&label);
     let mut out = Vec::new();
-    let mut previous: Vec<(i64, i64)> = Vec::new();
-    for (k, row) in rows.iter().enumerate() {
-        let properties = row.find(Some(W), "trPr");
-        let mut column = properties.map_or(0, |p| number(p.find(Some(W), "gridBefore").map(|e| &**e), 0));
-        let after = properties.map_or(0, |p| number(p.find(Some(W), "gridAfter").map(|e| &**e), 0));
+    let specs: Vec<RowSpec> = rows.iter().map(|row| RowSpec::of(row)).collect();
+    let grid = Grid::build(&specs, usize::try_from(count).unwrap_or(0));
+    let mut previous: Vec<(usize, usize)> = Vec::new();
+    for (k, ((row, spec), line)) in rows.iter().zip(&specs).zip(&grid.rows).enumerate() {
         let mut current = Vec::new();
-        let mut cells = Vec::new();
-        below(row, "tr", &mut cells, true);
-        for (cell, mine) in cells {
-            if !mine || !is_w(cell, "tc") {
-                continue;
-            }
-            let mut span = number(find_path(cell, &["tcPr", "gridSpan"]), 1);
-            if span < 1 {
+        for (((cell, _), value), placed) in row_cells(row).iter().zip(&spec.cells).zip(&line.cells) {
+            if !value.span_valid() {
                 out.push(("grid-span-invalid", format!("{label} row {k}")));
-                span = 1;
             }
+            let (column, span) = (placed.first, placed.span);
             if let Some(merge) = find_path(cell, &["tcPr", "vMerge"]) {
                 let value = merge
                     .attribute(Some(W), "val")
@@ -111,12 +99,12 @@ pub(crate) fn grid_problems(table: &Element) -> Vec<(&'static str, String)> {
                 }
             }
             current.push((column, span));
-            column += span;
         }
-        if column + after != count {
+        let reach = line.end + line.after;
+        if line.coverage != Coverage::Exact {
             out.push((
                 "grid-row-mismatch",
-                format!("{label} row {k}: {} of {count} columns", column + after),
+                format!("{label} row {k}: {reach} of {count} columns"),
             ));
         }
         previous = current;

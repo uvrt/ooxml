@@ -1,5 +1,10 @@
 //! Owns: [`EditError`], why a Word edit refused or could not be made (design section 10:
-//! the tool layer maps it to a `ToolError` with its code and way out).
+//! the tool layer maps it to a `ToolError` with its code and way out), and [`Internal`], the
+//! one class of what is never the caller's fault: the edit core's own model and tree
+//! disagreeing (a place that holds no element, a part the model names that the package
+//! lacks, an edit copy that does not build, XML the core wrote that does not read back).
+//! Refusals are for the caller's input; an [`Internal`] is a bug, answered as an `internal`
+//! failure and counted, never worded as a refusal.
 //!
 //! Must not: carry anything but what the refusal says.
 
@@ -51,12 +56,9 @@ pub enum EditError {
     /// duration, where it has one) passed, or it was cancelled. Nothing changed.
     #[error("laying the document out did not finish{}", .0.map_or_else(String::new, |t| format!(" within {} s", t.as_secs_f64())))]
     LayoutStopped(Option<std::time::Duration>),
-    /// A part the edit needs is missing.
-    #[error("no part {0}")]
-    NoPart(String),
-    /// A place in a part that holds no element.
-    #[error("no element at the place found in {0}")]
-    Path(String),
+    /// The core's model and tree disagree: a bug, not the caller's input.
+    #[error("{0}")]
+    Internal(Box<Internal>),
     /// The document could not be read as a Word document.
     #[error(transparent)]
     Word(#[from] WordError),
@@ -74,5 +76,109 @@ pub enum EditError {
     Model(#[from] ModelError),
 }
 
+/// What disagreed, in an [`Internal`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mismatch {
+    /// A place found in a part holds no element there.
+    NoElement,
+    /// A part the model names is not in the package.
+    NoPart,
+    /// An edit copy of a part did not build back into a tree.
+    Unbuilt,
+    /// XML the core made itself did not read back.
+    OwnXml,
+}
+
+/// The edit core's own model and tree disagreeing: never the caller's fault. Its message is
+/// the one the tools have always answered with; `at` is where in the core it was found.
+#[derive(Debug, Clone)]
+pub struct Internal {
+    /// What disagreed.
+    pub what: Mismatch,
+    /// The part it is about, or (for [`Mismatch::OwnXml`]) what the reader said.
+    pub about: String,
+    /// The place in the core's source that found it.
+    pub at: &'static std::panic::Location<'static>,
+}
+
+impl std::fmt::Display for Internal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.what {
+            Mismatch::NoElement | Mismatch::Unbuilt => write!(f, "no element at the place found in {}", self.about),
+            Mismatch::NoPart => write!(f, "no part {}", self.about),
+            Mismatch::OwnXml => f.write_str(&self.about),
+        }
+    }
+}
+
+impl EditError {
+    #[track_caller]
+    fn internal(what: Mismatch, about: impl Into<String>) -> EditError {
+        EditError::Internal(Box::new(Internal {
+            what,
+            about: about.into(),
+            at: std::panic::Location::caller(),
+        }))
+    }
+
+    /// A place found in `part` that holds no element.
+    #[track_caller]
+    pub fn no_element(part: impl Into<String>) -> EditError {
+        EditError::internal(Mismatch::NoElement, part)
+    }
+
+    /// A part the model names that the package lacks.
+    #[track_caller]
+    pub fn no_part(part: impl Into<String>) -> EditError {
+        EditError::internal(Mismatch::NoPart, part)
+    }
+
+    /// An edit copy of `part` that did not build.
+    #[track_caller]
+    pub fn unbuilt(part: impl Into<String>) -> EditError {
+        EditError::internal(Mismatch::Unbuilt, part)
+    }
+
+    /// XML the core made that did not read back, with what the reader said.
+    #[track_caller]
+    pub fn own_xml(said: impl std::fmt::Display) -> EditError {
+        EditError::internal(Mismatch::OwnXml, said.to_string())
+    }
+
+    /// The internal mismatch this is, if it is one.
+    #[must_use]
+    pub fn as_internal(&self) -> Option<&Internal> {
+        match self {
+            EditError::Internal(internal) => Some(internal),
+            _ => None,
+        }
+    }
+}
+
 /// A result of this crate.
 pub type Result<T> = std::result::Result<T, EditError>;
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    #[test]
+    fn an_internal_mismatch_keeps_the_words_the_tools_answered_with_and_its_place() {
+        let error = EditError::no_element("word/document.xml");
+        assert_eq!(error.to_string(), "no element at the place found in word/document.xml");
+        let internal = error.as_internal().unwrap();
+        assert_eq!(internal.what, Mismatch::NoElement);
+        assert!(internal.at.file().ends_with("error.rs"));
+        assert_eq!(
+            EditError::unbuilt("word/styles.xml").to_string(),
+            "no element at the place found in word/styles.xml"
+        );
+        assert_eq!(
+            EditError::no_part("word/numbering.xml").to_string(),
+            "no part word/numbering.xml"
+        );
+        assert_eq!(EditError::own_xml("unclosed tag").to_string(), "unclosed tag");
+        assert!(EditError::Refused("x".into()).as_internal().is_none());
+    }
+}

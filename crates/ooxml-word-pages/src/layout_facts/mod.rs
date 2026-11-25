@@ -132,27 +132,30 @@ impl<'a> Facts<'a> {
         let mut by_block: HashMap<&str, Vec<Drawn<'_>>> = HashMap::new();
         let mut by_table: HashMap<&str, BTreeSet<usize>> = HashMap::new();
         let facts = version.facts();
-        // A paragraph's lines stand together on a page: each run of them is mapped at once,
-        // and whether the version names the paragraph asked once (a run on the next page
-        // too).
-        let mut named: Option<(&str, bool)> = None;
-        for (index, page) in facts.pages.iter().enumerate() {
-            for run in page.lines.chunk_by(|a, b| a.path == b.path) {
-                let Some(first) = run.first() else {
-                    continue;
-                };
-                let path: &str = &first.path;
-                let is_named = match named {
-                    Some((last, known)) if last == path => known,
-                    _ => {
-                        let known = story_kind(path) == "body" && version.is_named(path);
-                        named = Some((path, known));
-                        known
-                    }
-                };
-                if !is_named {
-                    continue;
-                }
+        // A paragraph's lines stand together on a page: each run of them is mapped at once.
+        // Whether the version names a run's paragraph is asked once per paragraph (a run on
+        // the next page too), all of them together.
+        let runs: Vec<(usize, &[LineFact])> = facts
+            .pages
+            .iter()
+            .enumerate()
+            .flat_map(|(index, page)| {
+                page.lines
+                    .chunk_by(|a, b| a.path == b.path)
+                    .map(move |run| (index, run))
+            })
+            .filter(|(_, run)| !run.is_empty())
+            .collect();
+        // The runs of one paragraph in a row (across pages), each group asked once; a path
+        // of another story than the body's is named by none (it does not start `w:body`).
+        let groups: Vec<&[(usize, &[LineFact])]> = runs.chunk_by(|a, b| path_of(a.1) == path_of(b.1)).collect();
+        let named = version.are_named(groups.iter().filter_map(|g| g.first()).map(|(_, run)| path_of(run)));
+        for (group, named) in groups.into_iter().zip(named) {
+            if !named {
+                continue;
+            }
+            for &(index, run) in group {
+                let path = path_of(run);
                 let drawn = run.iter().map(|line| Drawn { page: index + 1, line });
                 by_path.entry(path).or_default().extend(drawn.clone());
                 if let Some(top) = tree::top_block_path(path) {
@@ -430,6 +433,11 @@ impl<'a> Facts<'a> {
 fn pages(drawn: &[Drawn<'_>]) -> Vec<usize> {
     let set: BTreeSet<usize> = drawn.iter().map(|d| d.page).collect();
     set.into_iter().collect()
+}
+
+/// The path of the paragraph a run of its lines draws.
+fn path_of(run: &[LineFact]) -> &str {
+    run.first().map_or("", |line| &line.path)
 }
 
 /// The story a layout path is in (docx-agent's `_story_kind`).

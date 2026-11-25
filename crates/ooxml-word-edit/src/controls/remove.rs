@@ -73,7 +73,7 @@ impl RemoveControl {
                 ensure_w14: false,
             };
             rewrite(sink, &at, how, |_, work| {
-                let sdt = super::at_place(work, &inside).ok_or_else(|| EditError::Path(at.part.clone()))?;
+                let sdt = super::at_place(work, &inside).ok_or_else(|| EditError::no_element(at.part.clone()))?;
                 unwrap(work, sdt);
                 Ok(((), TextWrite::default()))
             })?;
@@ -96,11 +96,11 @@ impl RemoveControl {
     /// A control around blocks, rows or cells taken out: the stretch of its neighbours
     /// rewritten.
     fn unwrap_block(&self, sink: &mut EditSink<'_, '_>, docx: &Docx, part: &str, path: &[u32]) -> Result<()> {
-        let path_error = || EditError::Path(part.to_owned());
+        let path_error = || EditError::no_element(part.to_owned());
         let tree = sink
             .doc()
             .tree(part)?
-            .ok_or_else(|| EditError::NoPart(part.to_owned()))?;
+            .ok_or_else(|| EditError::no_part(part.to_owned()))?;
         let (&k, above) = path.split_last().ok_or_else(path_error)?;
         let count = if above.is_empty() {
             tree.root().children().len()

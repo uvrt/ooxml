@@ -12,7 +12,7 @@
 use super::columns::skip;
 use super::new_row::{clean_cell_properties, empty_paragraph_like};
 use super::rows::{put, under_policy, Held};
-use super::shape::{own_rows, row_cells, Placed};
+use super::shape::{own_rows, row_cells, skips, Placed};
 use super::tracker::TableTracker;
 use super::TableChanged;
 use crate::marks::mark;
@@ -73,12 +73,6 @@ fn place(cells: &[Placed], (before, after): (usize, usize), index: usize, bounda
     }
 }
 
-/// A row's `w:gridBefore` and `w:gridAfter` (`_skips`).
-fn skips(work: &Work, row: Id) -> (usize, usize) {
-    let of = |local: &str| usize::try_from(int(work, find_path(work, row, &["trPr", local]), "val", 0)).unwrap_or(0);
-    (of("gridBefore"), of("gridAfter"))
-}
-
 /// The grid column `index`'s `w:gridCol`, and the grid's.
 fn grid_column(work: &Work, table: Id, index: usize) -> Option<Id> {
     let grid = work.find(table, W, "tblGrid")?;
@@ -122,7 +116,7 @@ pub(super) fn insert_column(
     let work = &mut held.work;
     let table = work.root();
     let boundary = index + usize::from(right);
-    let column = grid_column(work, table, index).ok_or_else(|| EditError::Path(held.found.part.clone()))?;
+    let column = grid_column(work, table, index).ok_or_else(|| EditError::no_element(held.found.part.clone()))?;
     let width = work.get(column, Some(W), "w").map(str::to_owned);
     let added = make(work, "gridCol", &[]);
     if let Some(width) = &width {

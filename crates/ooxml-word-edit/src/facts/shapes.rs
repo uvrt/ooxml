@@ -1,22 +1,17 @@
-//! Owns: what is kept of tables by their content alone, for the process ([`Kept`]): a
-//! table's shape as Accept All leaves it (docx-agent's `_RAGGED`, round 57 R124; the least
-//! recently used dropped first), so that a check after an edit settles again only the
-//! tables the edit changed -- and none at all when the document is checked again, reopened,
-//! or another document holds the same tables.
+//! Owns: what is kept of tables by their content alone, for a document ([`Kept`], on the
+//! document's budget): a table's shape as Accept All leaves it (docx-agent's `_RAGGED`,
+//! round 57 R124; the least recently used let go first), so that a check after an edit
+//! settles again only the tables the edit changed -- and none at all when the document is
+//! checked again, or holds the same table twice.
 //!
 //! Must not: keep anything a table's own content does not determine (a table's accepted
 //! copy is read from the table alone: no style, numbering or section changes its shape),
 //! or hold its lock while a value is made.
 
+use ooxml_derive::{CacheBudget, Memo, MemoStats, Weigh};
 use ooxml_xml::{Element, Node};
-use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{Arc, Mutex, PoisonError};
-
-/// Tables kept, at most. The memo shows in no result, so it need not keep docx-agent's 512
-/// (`_RAGGED_SIZE`): it holds every reshaped table of a 3,000-page document with 1,292 of
-/// them, so its second check settles none again.
-pub(super) const KEPT: usize = 4096;
 
 /// A table by its content: the hash of its content, and the table, compared by content
 /// where the hashes agree (a shared allocation first).
@@ -84,60 +79,65 @@ fn content_hash(element: &Element, state: &mut DefaultHasher) {
     state.write_usize(count);
 }
 
-/// Values made from tables, kept by the table's content: at most `size`, the least
-/// recently used dropped first.
-pub(super) struct Kept<V> {
-    entries: Mutex<Entries<V>>,
-    size: usize,
+/// Values made from tables, kept by the table's content within a budget (the document's
+/// account): the least recently used let go first where the budget asks for room.
+pub(crate) struct Kept<V> {
+    memo: Mutex<Memo<Key, Weighed<V>>>,
+    weight: fn(&V) -> usize,
 }
 
-struct Entries<V> {
-    by_table: HashMap<Key, (V, u64)>,
-    /// Ticks at each use; an entry keeps the tick of its last.
-    clock: u64,
+/// A value and what it holds, bytes.
+#[derive(Clone)]
+struct Weighed<V> {
+    value: V,
+    bytes: usize,
+}
+
+impl<V> Weigh for Weighed<V> {
+    fn weight(&self) -> usize {
+        // The key's table is not counted: the versions holding it share it.
+        std::mem::size_of::<Weighed<V>>() + self.bytes
+    }
+}
+
+impl<V: Clone> std::fmt::Debug for Kept<V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Kept").field("stats", &self.stats()).finish()
+    }
 }
 
 impl<V: Clone> Kept<V> {
-    /// An empty memo of at most `size` tables.
-    pub(super) fn new(size: usize) -> Kept<V> {
+    /// An empty memo counted on `budget`, each value holding what `weight` says beside
+    /// itself.
+    pub(crate) fn new(budget: Arc<dyn CacheBudget>, weight: fn(&V) -> usize) -> Kept<V> {
         Kept {
-            entries: Mutex::new(Entries {
-                by_table: HashMap::new(),
-                clock: 0,
-            }),
-            size,
+            memo: Mutex::new(Memo::new(budget)),
+            weight,
         }
     }
 
+    /// What it holds.
+    pub(crate) fn stats(&self) -> MemoStats {
+        self.memo.lock().unwrap_or_else(PoisonError::into_inner).stats()
+    }
+
     /// The value kept for a table with `table`'s content, else `make`'s (made without the
-    /// lock held, then kept).
-    pub(super) fn get_or(&self, table: &Arc<Element>, make: impl FnOnce() -> V) -> V {
+    /// lock held, then kept where the budget gives room).
+    pub(crate) fn get_or(&self, table: &Arc<Element>, make: impl FnOnce() -> V) -> V {
         let key = Key::of(table);
-        {
-            let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
-            entries.clock += 1;
-            let now = entries.clock;
-            if let Some((value, used)) = entries.by_table.get_mut(&key) {
-                *used = now;
-                return value.clone();
-            }
+        if let Some(found) = self.memo.lock().unwrap_or_else(PoisonError::into_inner).get(&key) {
+            return found.value;
         }
         let value = make();
-        let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
-        entries.clock += 1;
-        let now = entries.clock;
-        entries.by_table.insert(key, (value.clone(), now));
-        while entries.by_table.len() > self.size {
-            let oldest = entries
-                .by_table
-                .iter()
-                .min_by_key(|(_, (_, used))| *used)
-                .map(|(k, _)| k.clone());
-            match oldest {
-                Some(k) => entries.by_table.remove(&k),
-                None => break,
-            };
-        }
+        let bytes = (self.weight)(&value);
+        let kept = Weighed {
+            value: value.clone(),
+            bytes,
+        };
+        self.memo
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(key, kept);
         value
     }
 }
@@ -145,6 +145,7 @@ impl<V: Clone> Kept<V> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ooxml_derive::Limit;
     use ooxml_xml::{parse, Limits};
     use std::cell::Cell;
 
@@ -156,9 +157,15 @@ mod tests {
         Arc::clone(parse(xml.as_bytes(), &Limits::default()).expect("parses").root())
     }
 
+    fn kept(bytes: usize) -> (Arc<Limit>, Kept<u32>) {
+        let budget = Arc::new(Limit::new(bytes));
+        let kept = Kept::new(Arc::clone(&budget) as Arc<dyn CacheBudget>, |_| 0);
+        (budget, kept)
+    }
+
     #[test]
     fn a_table_with_equal_content_is_made_once() {
-        let kept = Kept::new(4);
+        let (budget, kept) = kept(1 << 20);
         let made = Cell::new(0);
         let make = |v: u32| {
             made.set(made.get() + 1);
@@ -169,16 +176,34 @@ mod tests {
         assert_eq!(kept.get_or(&table("a"), || make(2)), 1);
         assert_eq!(kept.get_or(&table("b"), || make(3)), 3);
         assert_eq!(made.get(), 2);
+        assert_eq!(budget.used(), kept.stats().bytes, "on the budget");
+        assert!(kept.stats().bytes > 0);
+        drop(kept);
+        assert_eq!(budget.used(), 0, "given back");
     }
 
     #[test]
-    fn the_least_recently_used_goes_first() {
-        let kept = Kept::new(2);
+    fn the_least_recently_used_goes_first_for_the_budget() {
+        let (_, one) = kept(1 << 20);
+        one.get_or(&table("a"), || 1);
+        let entry = one.stats().bytes;
+        let (budget, kept) = kept(2 * entry);
         kept.get_or(&table("a"), || 1);
         kept.get_or(&table("b"), || 2);
         kept.get_or(&table("a"), || 9);
         kept.get_or(&table("c"), || 3);
+        assert_eq!(kept.stats().evictions, 1);
+        assert!(budget.used() <= 2 * entry);
         assert_eq!(kept.get_or(&table("a"), || 9), 1, "used last, kept");
-        assert_eq!(kept.get_or(&table("b"), || 7), 7, "used least, dropped");
+        assert_eq!(kept.get_or(&table("b"), || 7), 7, "used least, let go");
+    }
+
+    #[test]
+    fn a_budget_with_no_room_keeps_nothing() {
+        let (budget, kept) = kept(8);
+        assert_eq!(kept.get_or(&table("a"), || 1), 1);
+        assert_eq!(kept.get_or(&table("a"), || 2), 2, "made again");
+        assert_eq!(kept.stats().entries, 0);
+        assert_eq!(budget.used(), 0);
     }
 }
