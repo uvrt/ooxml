@@ -458,6 +458,8 @@ What this shows about salsa:
 - a from-scratch oracle, used in property tests;
 - a statement of its kind: per block, aggregate, or whole document.
 
+**Rule: identity from the index; element pointers only for content memos.** The tree hash-conses equal subtrees, so two blocks (two empty paragraphs, say) can be one `Arc<Element>`. A block's identity therefore comes from its part's index: its paraId and its place (`BlockKey`, `BlockId`, `Anchor` in `ooxml-word-model::ids`). An element's address may key only a memo whose value is a pure function of that element's content (`BlockFacts`, `ElementDigests`, `TableMemo`); it never names, aligns or tracks a block. The other way round, `BlockKey` and `BlockId` are never memo keys: they serve alignment (old block to new block), dirtiness, the page-to-block maps and naming at the output edge (`VersionNames`). The round-trip property tests in `ooxml-word-model` (`block_keys`) hold the index to this over the corpus.
+
 ---
 
 ## 8. Layout and rendering engines
@@ -933,6 +935,7 @@ Each ADR below records its alternatives and the measurement behind it; the secti
 - **ADR-007: one global pool, a logical owner per document, no processes, cooperative deadlines.**
   - Alternatives: an OS thread per document; worker processes.
 - **ADR-008: hand-rolled incremental data (`ooxml-derive`), not salsa.** Spike 3.
+  - Identity comes from the index, never from element pointers; pointers key only content memos (§7, phase 3 identity design, 2026-11-25).
 - **ADR-009: one text engine.** Measured Office tables for layout, fontations for reading, harfrust and resvg for outlines.
   - Alternatives: keep three readers; take metrics from harfbuzz alone.
 - **ADR-010: a Scene display list with typed writers, and PNG via resvg in process.**

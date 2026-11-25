@@ -6,6 +6,7 @@ mod support;
 
 mod accepted;
 mod block_index;
+mod block_keys;
 mod changes;
 mod list_levels;
 mod marks;

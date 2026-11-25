@@ -331,6 +331,21 @@ pub fn story_model_path(root: &Arc<Element>, place: &[u32]) -> Option<String> {
     }
 }
 
+/// The layout model's path of the element at `below` under `start`, whose own path is
+/// `prefix` (the part's index names a container child's step; the steps below it are
+/// counted here, rows and cells as [`model_path`] counts them).
+pub(crate) fn path_below(start: &Arc<Element>, prefix: String, below: &[u32]) -> Option<String> {
+    path_from(start, prefix, below, &mut Levels::default())
+}
+
+/// The places below `parent` (child indexes) of its rows or cells (`level`), counted through
+/// row- and cell-level wrappers as [`model_path`] counts them, in order.
+pub(crate) fn level_places(parent: &Element, level: &str) -> Vec<Vec<u32>> {
+    let mut out = Vec::new();
+    level_paths(parent, level, &mut Vec::new(), &mut out);
+    out
+}
+
 /// The steps from `start` to the element at `below`, after `prefix`.
 fn path_from(start: &Arc<Element>, prefix: String, below: &[u32], levels: &mut Levels) -> Option<String> {
     let mut out = prefix;
