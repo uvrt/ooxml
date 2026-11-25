@@ -204,6 +204,7 @@ pub fn number_span(
     }
     Some(Span {
         path: format!("w:sectPr[{}]/w:lnNumType", number.section + 1),
+        anchor: None,
         chars: text,
         xs,
         y: number.baseline,

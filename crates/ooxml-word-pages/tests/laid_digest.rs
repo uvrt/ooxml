@@ -26,6 +26,7 @@ use ooxml_word_pages::{DiskFonts, EngineBudgets, EngineOptions, FontSetup, PageE
 use std::fmt::Write as _;
 use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 struct Unlimited;
@@ -39,6 +40,11 @@ impl CacheBudget for Unlimited {
         0
     }
 }
+
+/// The painted lines recorded, and those of them anchored (their paragraph's key beside
+/// their path: named at the edge through the version's names).
+static LINES: AtomicUsize = AtomicUsize::new(0);
+static ANCHORED: AtomicUsize = AtomicUsize::new(0);
 
 const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/laid-digest.txt.gz");
 
@@ -278,6 +284,10 @@ fn page(out: &mut String, k: usize, paint: &PagePaint, svg: &str) {
     let frame = format!("{}|{:?}|{:?}|{drawn:?}", g.page, g.info, g.frame);
     let _ = writeln!(out, "page {} {} svg {}", k + 1, hex(&frame, 8), hex(svg, 8));
     for l in &paint.lines {
+        LINES.fetch_add(1, Ordering::Relaxed);
+        if l.anchor.is_some() {
+            ANCHORED.fetch_add(1, Ordering::Relaxed);
+        }
         line(out, l);
     }
     for r in &paint.rules {
@@ -418,6 +428,11 @@ fn every_page_of_every_oracle_document_is_laid_out_box_by_box_as_recorded() {
         documents > 250 && pages > documents,
         "{documents} documents, {pages} pages"
     );
+    // the SVG names every anchored item through the version's names, asserting its old
+    // path in a debug build: nearly every line is anchored (a text box's are not)
+    let (lines, anchored) = (LINES.load(Ordering::Relaxed), ANCHORED.load(Ordering::Relaxed));
+    eprintln!("{anchored} of {lines} lines anchored");
+    assert!(anchored * 100 > lines * 95, "{anchored} of {lines} lines anchored");
     if std::env::var_os("LAID_DIGEST_BLESS").is_some() {
         bless(&records);
         return;

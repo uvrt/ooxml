@@ -62,6 +62,7 @@ pub(super) fn column_separators(layout: &DocumentLayout, laid: &LaidPage) -> Vec
             out.push(Rule {
                 kind: "column-separator",
                 path: format!("w:sectPr[{}]/w:cols", first.section + 1),
+                anchor: None,
                 x: Px::int(x0),
                 y: Px::int(top),
                 width: Px::int(x1 - x0),

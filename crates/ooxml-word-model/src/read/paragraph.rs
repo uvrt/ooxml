@@ -43,6 +43,7 @@ impl Reader<'_> {
             table_style_id: table.map(|(s, _)| s.clone()),
             table_conditions: table.map_or_else(|| Arc::from(Vec::new()), |(_, c)| Arc::clone(c)),
             path,
+            key: None,
             para_id: w::P::new(element).para_id().map(text),
             joins: Arc::from(Vec::new()),
             mark_deleted: mark_removed(element),

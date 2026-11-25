@@ -5,8 +5,11 @@
 //! the block's place in its segment -- so a block is named when it is written out, not
 //! carried by name through layout, paint and facts (phase 3 identity design, section 2).
 //!
-//! The paths are the ones the model writes today ([`super::cells::story_model_path`]); a
-//! run's or a drawing's need its paragraph's projection, and are named there.
+//! The paths are the ones the layout model writes today: [`super::cells::story_model_path`]'s,
+//! but a note's blocks named from their note by its id (`w:footnote[@w:id=2]/w:p[1]`, as the
+//! model reads a note as a story of its own) where `story_model_path` counts the notes
+//! (`w:footnotes/w:footnote[3]/w:p[1]`). A run's or a drawing's need its paragraph's
+//! projection, and are named there.
 //!
 //! Must not: key a memo, or keep a name past its version (a version's names are its own).
 
@@ -94,6 +97,9 @@ impl VersionNames {
 /// (below the root, beside the body) by a walk from the root.
 fn block_path(part: &StoryPart, place: &[u32]) -> Option<String> {
     let root = part.root();
+    if let Some(path) = note_path(root, place) {
+        return path;
+    }
     let container = part.ids.container();
     let c = container.len();
     if place.len() <= c || !place.starts_with(container) {
@@ -107,6 +113,24 @@ fn block_path(part: &StoryPart, place: &[u32]) -> Option<String> {
     };
     let child = parent.children().get(k as usize)?.as_element()?;
     path_below(child, format!("w:{head}/w:{local}[{count}]"), place.get(c + 1..)?)
+}
+
+/// The layout model's path of the element at `place` in a notes part whose root is `root`,
+/// from its note (`w:footnote[@w:id=2]/w:p[1]`: a note's id as written, `None` where it has
+/// none); `None` (not a note's) where `root` is not a notes part.
+fn note_path(root: &Arc<Element>, place: &[u32]) -> Option<Option<String>> {
+    let kind = match root.name().local() {
+        "footnotes" => "footnote",
+        "endnotes" => "endnote",
+        _ => return None,
+    };
+    let (first, below) = place.split_first()?;
+    let note = root.children().get(*first as usize)?.as_element()?;
+    if note.name().local() != kind {
+        return Some(None);
+    }
+    let id = crate::w::Note::new(note).id().unwrap_or("None");
+    Some(path_below(note, format!("w:{kind}[@w:id={id}]"), below))
 }
 
 /// The element at child indexes `place` below `from`.

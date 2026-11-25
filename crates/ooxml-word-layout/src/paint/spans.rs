@@ -16,6 +16,7 @@ use crate::px::{CompactPx, Px};
 use ooxml_base::Q;
 use ooxml_text::pieces::{LABEL_SHIFT, NOTE_CONTINUATION, NOTE_SEPARATOR, OBJECT_CHAR as PICTURE_BULLET};
 use ooxml_text::{FaceKey, Piece, PieceKind, Units, VerticalAlign};
+use ooxml_word_model::ids::{Anchor, Sub};
 use ooxml_word_model::model::{InlineObject, Paragraph};
 use ooxml_word_model::resolve::CharacterFormat;
 use ooxml_word_model::value::{Props, Value};
@@ -196,6 +197,21 @@ struct LinePainter<'a, 'c> {
 }
 
 impl LinePainter<'_, '_> {
+    /// Run `run` of the paragraph, as an anchor (`None`: a paragraph without a key).
+    fn run_anchor(&self, run: usize) -> Option<Anchor> {
+        let block = self.job.paragraph.key?;
+        Some(Anchor {
+            block,
+            sub: Sub::Run(u32::try_from(run).ok()?),
+        })
+    }
+
+    /// The paragraph's label, as an anchor.
+    fn label_anchor(&self) -> Option<Anchor> {
+        let block = self.job.paragraph.key?;
+        Some(Anchor { block, sub: Sub::Label })
+    }
+
     fn run_path(&self, run: usize) -> String {
         let paragraph = self.job.paragraph;
         match paragraph.runs.get(run).map(|r| &*r.path) {
@@ -233,11 +249,11 @@ impl LinePainter<'_, '_> {
         (props, kind, Some(k))
     }
 
-    /// The path a span of `run` (`None`: the label) is drawn for.
-    fn source_path(&self, run: Option<usize>) -> String {
+    /// The path a span of `run` (`None`: the label) is drawn for, and its anchor.
+    fn source_path(&self, run: Option<usize>) -> (String, Option<Anchor>) {
         match run {
-            Some(k) => self.run_path(k),
-            None => format!("{}/label", self.job.paragraph.path),
+            Some(k) => (self.run_path(k), self.run_anchor(k)),
+            None => (format!("{}/label", self.job.paragraph.path), self.label_anchor()),
         }
     }
 
@@ -256,9 +272,10 @@ impl LinePainter<'_, '_> {
     }
 
     /// A new span of `key` from `x`, in `props`' colours and decorations.
-    fn open_span(&mut self, key: SpanKey, props: &Props, path: String, x: Px) {
+    fn open_span(&mut self, key: SpanKey, props: &Props, (path, anchor): (String, Option<Anchor>), x: Px) {
         let span = Span {
             path,
+            anchor,
             chars: Vec::new(),
             xs: Vec::new(),
             y: key.y,
@@ -367,6 +384,7 @@ impl LinePainter<'_, '_> {
         let side = px_at(Px::ZERO, piece.width()).round_half_up();
         self.out.pictures.push(Drawn {
             path: format!("{}/label", self.job.paragraph.path),
+            anchor: self.label_anchor(),
             relationship: bullet.and_then(|b| b.relationship.clone()),
             part: bullet.and_then(|b| b.part.clone()),
             x: Px::int(x.round_half_up()),
@@ -420,6 +438,7 @@ impl LinePainter<'_, '_> {
                         path
                     },
                     paragraph_path: self.job.paragraph.path.to_string(),
+                    anchor: self.run_anchor(k),
                     run: k,
                     index: n,
                     inline: true,
@@ -438,6 +457,7 @@ impl LinePainter<'_, '_> {
             Some(InlineObject::None) | None => None,
         };
         self.out.pictures.push(Drawn {
+            anchor: (!path.is_empty()).then(|| self.run_anchor(k)).flatten(),
             path,
             relationship,
             part: None,
@@ -543,6 +563,8 @@ pub(super) fn paint_line(cx: &PaintContext<'_>, job: &LineJob<'_>, out: &mut Pag
     decorate(cx, &spans, job.line.band, out);
     Some(PaintedLine {
         path: job.paragraph.path.clone(),
+        anchor: job.paragraph.key.map(Anchor::whole),
+        runs: Arc::clone(&job.paragraph.runs),
         paragraph_id: job.paragraph.para_id.clone(),
         number: job.line.number,
         baseline: job.line.baseline,
@@ -615,6 +637,7 @@ impl LinePainter<'_, '_> {
         let format = RunFormatter::new(self.job.document, &props).format(' ').clone();
         let span = Span {
             path: self.run_path(k),
+            anchor: self.run_anchor(k),
             chars: vec![' '],
             xs: vec![start.into()],
             y: self.job.line.baseline - offset_px(format.position),
@@ -678,6 +701,7 @@ impl LinePainter<'_, '_> {
             Some((x, y, width, height)) => self.out.rules.push(Rule {
                 kind: "separator",
                 path: self.run_path(k),
+                anchor: self.run_anchor(k),
                 x,
                 y,
                 width,
@@ -756,6 +780,7 @@ impl LinePainter<'_, '_> {
             .collect();
         let span = Span {
             path: self.run_path(k),
+            anchor: self.run_anchor(k),
             chars: vec![ch; xs.len()],
             end: Px::from(step_q * Q::from_integer(last + 1) * lu),
             xs,

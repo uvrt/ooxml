@@ -130,6 +130,7 @@ fn band(out: &mut Vec<Rule>, path: &str, b: &Border, (x0, x1): (i64, i64), (y0, 
         out.push(Rule {
             kind: "table-border",
             path: path.to_owned(),
+            anchor: None,
             x: Px::int(x.0),
             y: Px::int(y.0),
             width: Px::int(x.1 - x.0),
@@ -347,6 +348,7 @@ fn cell_shading(
     let rule = |x: (i64, i64), y: (i64, i64)| Rule {
         kind: "cell-shading",
         path: c.path.to_string(),
+        anchor: None,
         x: Px::int(x.0),
         y: Px::int(y.0),
         width: Px::int(x.1 - x.0),
