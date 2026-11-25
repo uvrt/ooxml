@@ -420,10 +420,22 @@ fn old_grid_problems(table: &Element) -> Vec<(&'static str, String)> {
             current.push((column, span));
             column += span;
         }
-        if column + after != count {
+        // `w:gridAfter` as the grid now reads it (Word does not read it, branch
+        // grid-after-differs): a row within the grid is on it, a written count other than the
+        // columns it leaves a warning
+        if column > count {
             out.push((
                 "grid-row-mismatch",
-                format!("{label} row {k}: {} of {count} columns", column + after),
+                format!("{label} row {k}: {column} of {count} columns"),
+            ));
+        } else if after.max(0) != count - column {
+            out.push((
+                "grid-after-differs",
+                format!(
+                    "{label} row {k}: w:gridAfter {} where the row leaves {} of {count} columns",
+                    after.max(0),
+                    count - column
+                ),
             ));
         }
         previous = current;
@@ -439,12 +451,18 @@ fn old_off_grid_rows(table: &Element, rows: &[&Element]) -> (i64, Vec<(usize, i6
     let int_val = |raw: Option<&str>, default: i64| raw.and_then(py_int).unwrap_or(default);
     let mut out = Vec::new();
     for (r, row) in rows.iter().enumerate() {
-        let mut reach =
-            int_val(el_val(row, &["trPr", "gridBefore"]), 0) + int_val(el_val(row, &["trPr", "gridAfter"]), 0);
+        // `w:gridAfter` not counted, as the grid now reads it (Word does not read it): a row
+        // is off its grid only past it -- except in a table holding tracked structure
+        // records, read as written (R128)
+        let tracked = crate::facts::grid::tracked_structure(table);
+        let mut reach = int_val(el_val(row, &["trPr", "gridBefore"]), 0);
+        if tracked {
+            reach += int_val(el_val(row, &["trPr", "gridAfter"]), 0);
+        }
         for cell in ooxml_word_model::docx::tables::cells_at(row, &[]) {
             reach += int_val(el_val(&cell.element, &["tcPr", "gridSpan"]), 1).max(1);
         }
-        if reach != count {
+        if (tracked && reach != count) || (!tracked && reach > count) {
             out.push((r, reach));
         }
     }

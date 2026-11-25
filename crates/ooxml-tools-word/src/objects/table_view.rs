@@ -11,11 +11,10 @@
 use crate::refusal::address_refusal;
 use ooxml_base::pyfmt::repr_str;
 use ooxml_tools::{ToolError, TryCall};
+use ooxml_word_edit::facts::{row_off_grid, tracked_structure};
 use ooxml_word_edit::WordDoc;
 use ooxml_word_model::address::{resolve, AddressError};
-use ooxml_word_model::docx::tables::{
-    grid_columns, Accepted, Coverage, Grid, GridPlaces, Misplaced, RowSpec, TableGrid,
-};
+use ooxml_word_model::docx::tables::{grid_columns, Accepted, Grid, GridPlaces, Misplaced, RowSpec, TableGrid};
 use ooxml_word_model::docx::{find_path, style_name, Docx};
 use ooxml_word_model::ids::{Entry, TableId, W};
 use ooxml_xml::{Element, Node};
@@ -135,14 +134,16 @@ impl TableView {
         self.grid.get(row, column)
     }
 
-    /// Whether a row's cells, with `w:gridBefore` and `w:gridAfter`, do not reach exactly
-    /// across the grid (`_off_grid`: check's `table_grid_mismatch`).
+    /// Whether a row is off the grid as check's `table_grid_mismatch` says it
+    /// ([`row_off_grid`], `_off_grid`): past it, or -- in a table holding tracked structure
+    /// records -- not reaching exactly across it with its written `w:gridAfter`.
     pub(crate) fn off_grid(&self) -> bool {
+        let tracked = tracked_structure(&self.table.element);
         self.shape
             .rows
             .iter()
             .zip(&self.found)
-            .any(|(line, found)| *found && line.coverage != Coverage::Exact)
+            .any(|(line, found)| *found && row_off_grid(line, self.shape.columns, tracked).is_some())
     }
 
     /// Row `row`'s cells as (first grid column, span) (docx-agent's `_row_cells`); none
@@ -426,7 +427,8 @@ mod tests {
             assert_eq!(view.row_cells(0), [(0, span)], "{raw:?}");
             assert_eq!(view.origin(0, span - 1), Some((0, 0)), "{raw:?}");
             assert_eq!(view.origin(0, span), None, "{raw:?}");
-            assert_eq!(view.off_grid(), span != 2, "{raw:?}");
+            // off its grid only past it: a short row's trailing columns Word fills
+            assert_eq!(view.off_grid(), span > 2, "{raw:?}");
         }
     }
 
@@ -445,7 +447,9 @@ mod tests {
             PLAIN,
         ]);
         assert!(!after.off_grid());
-        assert!(view(&[r#"<w:tc><w:p/></w:tc>"#, PLAIN]).off_grid());
+        // a short row is on its grid (Word fills its trailing column), one past it is not
+        assert!(!view(&[r#"<w:tc><w:p/></w:tc>"#, PLAIN]).off_grid());
+        assert!(view(&[&cell(Some("3")), PLAIN]).off_grid());
     }
 
     #[test]

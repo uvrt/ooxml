@@ -56,15 +56,32 @@ impl fmt::Display for Problem {
     }
 }
 
-/// The problems of a version against a baseline (the save gate's comparison).
+/// The codes validation reports as warnings, not problems: what Word opens and repairs
+/// itself the same way each time (`grid-after-differs`: a `w:gridAfter` Word does not read,
+/// writing back the columns the row leaves). The save gate does not hold a new one against
+/// a version.
+pub const WARNINGS: &[&str] = &["grid-after-differs"];
+
+impl Problem {
+    /// Whether it is a warning ([`WARNINGS`]), not a problem.
+    #[must_use]
+    pub fn is_warning(&self) -> bool {
+        WARNINGS.contains(&self.code.as_str())
+    }
+}
+
+/// The problems of a version against a baseline (the save gate's comparison); warnings
+/// ([`Problem::is_warning`]) apart.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Delta {
-    /// Each problem now that the baseline lacks, in order.
+    /// Each problem now that the baseline lacks, in order (no warning).
     pub new: Vec<String>,
-    /// Each baseline problem gone now.
+    /// Each baseline problem gone now (no warning).
     pub fixed: Vec<String>,
-    /// How many problems the baseline has.
+    /// How many problems the baseline has (no warning).
     pub baseline: usize,
+    /// Each warning now that the baseline lacks, in order.
+    pub warnings: Vec<String>,
 }
 
 impl Delta {
@@ -73,18 +90,21 @@ impl Delta {
     pub fn of(baseline: &[Problem], now: &[Problem]) -> Delta {
         let before: std::collections::HashSet<&Problem> = baseline.iter().collect();
         let after: std::collections::HashSet<&Problem> = now.iter().collect();
-        Delta {
-            new: now
-                .iter()
-                .filter(|p| !before.contains(p))
+        let came = |warning: bool| -> Vec<String> {
+            now.iter()
+                .filter(|p| p.is_warning() == warning && !before.contains(p))
                 .map(ToString::to_string)
-                .collect(),
+                .collect()
+        };
+        Delta {
+            new: came(false),
             fixed: baseline
                 .iter()
-                .filter(|p| !after.contains(p))
+                .filter(|p| !p.is_warning() && !after.contains(p))
                 .map(ToString::to_string)
                 .collect(),
-            baseline: baseline.len(),
+            baseline: baseline.iter().filter(|p| !p.is_warning()).count(),
+            warnings: came(true),
         }
     }
 }
@@ -300,6 +320,26 @@ impl CacheBudget for Unlimited {
 #[cfg(test)]
 mod tests {
     use super::rules::bookmark_name_ok;
+    use super::{Delta, Problem};
+
+    fn problem(code: &str, detail: &str) -> Problem {
+        Problem {
+            code: code.to_owned(),
+            part: "word/document.xml".to_owned(),
+            detail: detail.to_owned(),
+        }
+    }
+
+    #[test]
+    fn a_warning_is_kept_apart_from_the_problems_the_save_gate_counts() {
+        let baseline = [problem("grid-row-mismatch", "a"), problem("grid-after-differs", "b")];
+        let now = [problem("grid-after-differs", "c"), problem("paraid-repeated", "d")];
+        let delta = Delta::of(&baseline, &now);
+        assert_eq!(delta.new, ["[paraid-repeated] word/document.xml: d"]);
+        assert_eq!(delta.warnings, ["[grid-after-differs] word/document.xml: c"]);
+        assert_eq!(delta.fixed, ["[grid-row-mismatch] word/document.xml: a"]);
+        assert_eq!(delta.baseline, 1);
+    }
 
     #[test]
     fn bookmark_names_as_pythons_re_reads_them() {

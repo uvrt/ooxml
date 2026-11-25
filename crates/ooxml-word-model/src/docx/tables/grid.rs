@@ -14,8 +14,10 @@
 //!   column); a count below 0 is 0. The raw span is kept ([`CellSpec::span_raw`]), so
 //!   validation still reports one that is not valid;
 //! - Word does not read `w:gridAfter` at all: it opens any value (`x`, `-5`, `1e0`) and writes
-//!   back the columns the row leaves. The grid reads it by the same rule, as the row's written
-//!   count, so a row's coverage of `w:tblGrid` is the file's, not Word's repair of it;
+//!   back the columns the row leaves. The grid does the same: a row's trailing columns are
+//!   those it leaves of `w:tblGrid` ([`GridRow::trailing`]), and its coverage does not read
+//!   `w:gridAfter`. The written count is kept ([`GridRow::after`], by the same rule), so a
+//!   value other than the columns the row leaves can be said ([`GridRow::after_differs`]);
 //! - a row whose cells reach past `w:tblGrid` (a span past the grid, a `w:gridBefore` of 3 in
 //!   three columns) Word re-grids: it writes a `w:tblGrid` of its own. The grid places such
 //!   cells as written and reports the row ([`Coverage::Over`]);
@@ -311,14 +313,13 @@ impl GridCell {
     }
 }
 
-/// How a row's grid columns (before, cells, after) meet `w:tblGrid`'s.
+/// How a row's grid columns (before and cells; the columns it leaves are its trailing ones,
+/// as Word fills them) meet `w:tblGrid`'s.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Coverage {
-    /// As many.
+    /// Within them.
     Exact,
-    /// This many fewer.
-    Short(usize),
-    /// This many more.
+    /// This many more: Word re-grids the row.
     Over(usize),
 }
 
@@ -327,14 +328,25 @@ pub enum Coverage {
 pub struct GridRow {
     /// Grid columns before its first cell.
     pub before: usize,
-    /// Grid columns after its last cell.
+    /// Grid columns after its last cell as written (`w:gridAfter`, which Word does not read).
     pub after: usize,
+    /// Grid columns after its last cell as Word fills them: those of `w:tblGrid` it leaves.
+    pub trailing: usize,
     /// Its cells, in order.
     pub cells: Vec<GridCell>,
     /// The grid column after its last cell.
     pub end: usize,
-    /// Its columns (before, cells, after) against `w:tblGrid`'s.
+    /// Its columns (before and cells) against `w:tblGrid`'s.
     pub coverage: Coverage,
+}
+
+impl GridRow {
+    /// Whether its written `w:gridAfter` is not the columns it leaves of the grid, in a row
+    /// within the grid (Word writes back the columns it leaves).
+    #[must_use]
+    pub fn after_differs(&self) -> bool {
+        self.coverage == Coverage::Exact && self.after != self.trailing
+    }
 }
 
 /// A table's grid.
@@ -342,7 +354,7 @@ pub struct GridRow {
 pub struct Grid {
     /// Its rows.
     pub rows: Vec<GridRow>,
-    /// The widest row's grid columns, `w:gridAfter` counted.
+    /// The widest row's grid columns, its trailing ones counted.
     pub width: usize,
     /// `w:tblGrid`'s columns.
     pub columns: usize,
@@ -373,21 +385,21 @@ impl Grid {
                 });
                 column = column.saturating_add(cell.span);
             }
-            let total = column.saturating_add(row.after);
-            let coverage = match total.cmp(&columns) {
-                std::cmp::Ordering::Equal => Coverage::Exact,
-                std::cmp::Ordering::Less => Coverage::Short(columns - total),
-                std::cmp::Ordering::Greater => Coverage::Over(total - columns),
+            let coverage = if column > columns {
+                Coverage::Over(column - columns)
+            } else {
+                Coverage::Exact
             };
             out.push(GridRow {
                 before: row.before,
                 after: row.after,
+                trailing: columns.saturating_sub(column),
                 cells,
                 end: column,
                 coverage,
             });
         }
-        let width = out.iter().map(|r| r.end.saturating_add(r.after)).max().unwrap_or(0);
+        let width = out.iter().map(|r| r.end.saturating_add(r.trailing)).max().unwrap_or(0);
         Grid {
             rows: out,
             width,
@@ -639,9 +651,21 @@ mod tests {
             "nothing merged starts at column 0"
         );
         assert_eq!(grid.rows[0].coverage, Coverage::Exact);
-        assert_eq!(grid.rows[1].coverage, Coverage::Over(1));
+        // `w:gridAfter` is not read for coverage (Word does not read it): the row's cells end
+        // at the grid's last column, and the written 1 is said to differ from the 0 it leaves
+        assert_eq!(grid.rows[1].coverage, Coverage::Exact);
+        assert_eq!((grid.rows[1].after, grid.rows[1].trailing), (1, 0));
+        assert!(grid.rows[1].after_differs() && !grid.rows[0].after_differs());
         assert_eq!(grid.rows[2].coverage, Coverage::Over(1));
+        assert!(!grid.rows[2].after_differs());
         assert_eq!(grid.width, 4);
+        // a short row: its trailing columns are those it leaves, written or not
+        let short = Grid::build(&[RowSpec::new(None, None, vec![cell("1", VMerge::None)])], 3);
+        assert_eq!(short.rows[0].coverage, Coverage::Exact);
+        assert_eq!(short.rows[0].trailing, 2);
+        assert!(short.rows[0].after_differs());
+        let filled = Grid::build(&[RowSpec::new(None, Some("2"), vec![cell("1", VMerge::None)])], 3);
+        assert!(!filled.rows[0].after_differs());
         assert_eq!(grid.origin_at(1, 2), Some((0, 0)));
         assert_eq!(grid.cell_at(1, 0), None);
     }

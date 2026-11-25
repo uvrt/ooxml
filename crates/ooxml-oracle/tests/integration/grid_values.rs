@@ -117,10 +117,16 @@ fn the_grid_places_each_cell_where_word_draws_it() {
         if regridded(entry) || read.grid.rows.iter().any(|r| r.end > read.grid.columns) {
             // Word repairs a table whose rows do not cover its grid -- a `w:tblGrid` of its own,
             // or (`before-2147483645`, `span-alone-99999999999999999999`) the row's values --
-            // each time its own way: the grid reports the row.
+            // each time its own way: the grid reports the row -- off its grid, or short of it
+            // with no `w:gridAfter` for the columns it leaves (Word does not read `w:gridAfter`:
+            // it fills them, `span-1.5`, and sizes the grid's columns anew;
+            // `grid-after-differs`).
             regridded_cases += 1;
             assert!(
-                read.grid.rows.iter().any(|r| r.coverage != Coverage::Exact),
+                read.grid
+                    .rows
+                    .iter()
+                    .any(|r| r.coverage != Coverage::Exact || r.after_differs()),
                 "{case}: Word re-gridded the table, the grid reads every row as covering it"
             );
             continue;

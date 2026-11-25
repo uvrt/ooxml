@@ -16,8 +16,8 @@ use ooxml_derive::{CacheBudget, Limit};
 use ooxml_opc::Package;
 use ooxml_store::{Caller, StoreConfig};
 use ooxml_word_edit::facts::{
-    direct_formatting, empty_paragraphs, punctuation_spacing, table_grid_mismatch, DirectFormatting, GridMismatch,
-    SpacingProblem,
+    direct_formatting, empty_paragraphs, punctuation_spacing, table_grid_mismatch, DirectFormatting, GridFix,
+    GridMismatch, OffGridRow, SpacingProblem,
 };
 use ooxml_word_edit::{Editor, RevisionPolicy, SetText, WordDoc};
 use std::sync::atomic::AtomicUsize;
@@ -26,7 +26,7 @@ use std::time::Instant;
 
 /// Paragraphs formatted directly (the paragraph, all its text, some of it), a table kept
 /// together whose rows keep with the next by direct formatting, paragraphs whose
-/// punctuation's spacing their language does not want, a table with a row off its grid, and
+/// punctuation's spacing their language does not want, a table with a row past its grid, and
 /// a table whose cell and nested table's cell hold blank lines used as space, before the
 /// body's end.
 const FORMATTED: &str = concat!(
@@ -41,7 +41,7 @@ const FORMATTED: &str = concat!(
     r#"<w:p><w:r><w:rPr><w:lang w:val="fr-FR"/></w:rPr><w:t xml:space="preserve">Vraiment ? Oui ! Bien sûr : toujours.</w:t></w:r></w:p>"#,
     r#"<w:p><w:r><w:rPr><w:lang w:val="en-US"/></w:rPr><w:t xml:space="preserve">Really ? Yes !</w:t></w:r></w:p>"#,
     r#"<w:tbl><w:tblGrid><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/></w:tblGrid>"#,
-    r#"<w:tr><w:tc><w:p><w:r><w:t>Off the grid</w:t></w:r></w:p></w:tc></w:tr>"#,
+    r#"<w:tr><w:tc><w:tcPr><w:gridSpan w:val="3"/></w:tcPr><w:p><w:r><w:t>Off the grid</w:t></w:r></w:p></w:tc></w:tr>"#,
     r#"<w:tr><w:tc><w:p><w:r><w:t>On it</w:t></w:r></w:p></w:tc><w:tc><w:p/></w:tc></w:tr>"#,
     r#"</w:tbl>"#,
     r#"<w:tbl><w:tblGrid><w:gridCol w:w="4500"/></w:tblGrid><w:tr><w:tc>"#,
@@ -175,4 +175,33 @@ fn direct_formatting_let_go_for_the_budget_reads_as_cold() {
     kept_and_cold(&editor);
     let (_, bytes) = editor.store().snapshot().doc().docx().unwrap().block_facts();
     assert!(bytes <= 512, "{bytes}");
+}
+
+#[test]
+fn a_tracked_grid_widening_that_leaves_the_rows_short_is_still_named() {
+    // the reads gate's made-up case facts:0a50d74cc60ec078: a w:tblGridChange (id 43) widens
+    // the grid from two columns to three, and both rows keep two cells. Word fills a short
+    // row's columns itself, but in a table holding tracked structure records the rows are
+    // read as written: R128 names the change that leaves them short and the reject that
+    // settles it
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../ooxml-oracle/cases/inputs/1ee9aec673c170821237b4c07476303e.docx");
+    let package = Package::open(Arc::from(std::fs::read(path).unwrap()), &Limits::default()).unwrap();
+    let doc = WordDoc::open(package, Arc::new(Limit::new(64 << 20))).unwrap();
+    let found = table_grid_mismatch(&doc, None).unwrap();
+    assert_eq!(
+        found,
+        [GridMismatch::OffGrid {
+            table: "t@body/0".to_owned(),
+            grid: 3,
+            rows: vec![OffGridRow { row: 0, reaches: 2 }, OffGridRow { row: 1, reaches: 2 }],
+            widened: false,
+            tracked: true,
+            changes: vec!["rev:43".to_owned()],
+            fix: Some(GridFix {
+                accept: false,
+                ids: vec!["rev:43".to_owned()],
+            }),
+        }]
+    );
 }
