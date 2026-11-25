@@ -5,15 +5,21 @@
 //! default paragraph style's) -- and the table's width, indent and columns that put it on
 //! those lines.
 //!
-//! Must not: write anything (the tool hands [`super::FormatTable`] the edits).
+//! What they are worked out from is read by key ([`body_line_keys`]): [`super::FormatTable`]
+//! works them out in its transaction ([`super::TableFormat::OnBody`]), so a block put
+//! between the paragraph and the table meanwhile, or the paragraph's indents changed, is a
+//! conflict and the edit is prepared again.
+//!
+//! Must not: write anything.
 
-use super::{find_table, room_for, shape};
+use super::{find_table, room_for, shape, Found};
+use crate::doc::Key;
 use crate::names::W;
 use crate::work::Work;
 use crate::{EditError, Result, WordDoc};
 use ooxml_word_model::docx::formatting::Formatting;
 use ooxml_word_model::docx::keeps::Keeps;
-use ooxml_word_model::docx::{at_path, find_path};
+use ooxml_word_model::docx::{at_path, find_path, Docx};
 use ooxml_xml::Element;
 use std::sync::Arc;
 
@@ -66,6 +72,54 @@ fn around(root: &Arc<Element>, path: &[u32]) -> Option<Vec<u32>> {
         .rev()
         .find_map(paragraph)
         .or_else(|| (at + 1..parent.children().len()).find_map(paragraph))
+}
+
+/// The keys the body's lines beside the table at `found` are read from (besides the room
+/// it sits in, [`super::room_keys`]): every block of its container from the paragraph whose
+/// indents they are to the table -- a block put between them is spliced in beside one of
+/// them, writing its key -- or the container's every block where none is a paragraph; and
+/// the styles and numbering parts the paragraph's effective indents come from. A block of
+/// the stretch without a durable id stands for its whole part.
+pub(crate) fn body_line_keys(doc: &WordDoc, docx: &Docx, found: &Found) -> Vec<Key> {
+    let mut keys = super::formatting_keys(doc, docx);
+    let Some(story) = docx.part(&found.part) else {
+        keys.push(Key::part(found.part.as_str()));
+        return keys;
+    };
+    let Some((&at, above)) = found.path.split_last() else {
+        return keys;
+    };
+    let Some(parent) = at_path(story.root(), above) else {
+        return keys;
+    };
+    let (from, to) = match around(story.root(), &found.path).and_then(|place| place.last().copied()) {
+        Some(k) => (k.min(at), k.max(at)),
+        None => (
+            0,
+            u32::try_from(parent.children().len().saturating_sub(1)).unwrap_or(u32::MAX),
+        ),
+    };
+    for k in from..=to {
+        let Some(node) = parent.children().get(k as usize).and_then(|n| n.as_element()) else {
+            continue;
+        };
+        let place = [above, &[k]].concat();
+        let id = if is_w(node, "p") {
+            story.ids.paragraph_at(&place).map(|p| p.id)
+        } else if is_w(node, "tbl") {
+            story.ids.table_at(&place).map(|t| t.id)
+        } else {
+            continue;
+        };
+        let key = id.map_or_else(
+            || Key::part(found.part.as_str()),
+            |id| Key::block(found.part.as_str(), id),
+        );
+        if !keys.contains(&key) {
+            keys.push(key);
+        }
+    }
+    keys
 }
 
 /// Where the body's lines run beside the table `table` names.

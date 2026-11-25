@@ -1,7 +1,9 @@
 //! Owns: [`Call`], what the session hands a tool it dispatches -- the document's version the
 //! call reads, who calls, the call's cancellation and, for a Word document, the session's
 //! editing state and the host's context (its layout, blobs, values written, the other
-//! documents the call names) -- and the [`Editing`] an editing tool is run with, made from it.
+//! documents the call names) -- and the [`Editing`] an editing tool is run with, made from it;
+//! it is a Word tool's [`FormatCall`]: it runs a Word handler ([`Run`] of
+//! [`ooxml_tools_word::Word`]) on the version the call reads or through the editor.
 //!
 //! A new kind of host context is a field here and a `with_*` setter in [`Call::edit`],
 //! not a change to the registry or to any tool.
@@ -12,9 +14,10 @@ use crate::document::Word;
 use crate::session::Opened;
 use ooxml_base::Cancel;
 use ooxml_store::Caller;
-use ooxml_tools::ToolResult;
+use ooxml_tools::{Failure, FormatCall, Run, ToolError, ToolResult};
 use ooxml_tools_word::{CallEditor, Editing, Made, Others, Version};
-use serde_json::Value;
+use serde_json::{Map, Value};
+use std::any::Any;
 use std::sync::Mutex;
 
 /// What a tool is handed: the document's version the call reads, who calls, the call's
@@ -93,7 +96,7 @@ impl Call<'_> {
         Some(ooxml_tools_word::Owned {
             doc,
             opened: word.opened.doc(),
-            baseline: word.editor.baseline(),
+            baseline: word.editor().baseline(),
             last_check: &word.last_check,
             layout: self.layout,
             layout_limit: self.layout_limit,
@@ -112,11 +115,6 @@ impl Call<'_> {
     #[must_use]
     pub fn others(&self) -> &[(String, Opened)] {
         self.others
-    }
-
-    /// The Word document the session owns, where the call's is one.
-    pub(crate) fn word(&self) -> Option<&Word> {
-        self.word
     }
 
     /// `run` with the editing state of the Word document `word` (the call's): the session's
@@ -177,7 +175,7 @@ impl Call<'_> {
         });
         let tracking = tracking.as_ref();
         // in this thread's batch on the document its edits run in the batch's transaction
-        let editor = CallEditor::new(&word.editor)
+        let editor = CallEditor::new(word.editor())
             .with_setup(self.setup)
             .with_owner(word.batch_owner());
         let others = self.other_versions();
@@ -239,4 +237,35 @@ impl Call<'_> {
             .map(|(id, o)| (id.as_str(), o.version_of()))
             .collect()
     }
+}
+
+impl FormatCall for Call<'_> {
+    fn run(&self, tool: &str, arguments: &Map<String, Value>, run: &dyn Any) -> ToolResult<Value> {
+        let Some(run) = run.downcast_ref::<Run<ooxml_tools_word::Word>>() else {
+            return internal(format!("{tool} is not a Word tool"));
+        };
+        let word = || {
+            self.word
+                .ok_or_else(|| format!("{tool} edits Word documents the session owns"))
+        };
+        match run {
+            Run::Read(read) => match self.read(|version| read(version, self.cancel)) {
+                Ok(done) => ToolResult::done(done),
+                Err(error) => ToolResult::failed(error),
+            },
+            Run::Edit(edit) => match word() {
+                Ok(word) => self.edit(word, Some(arguments), |editing| edit(editing)),
+                Err(message) => internal(message),
+            },
+            Run::Tracking(edit) => match word() {
+                Ok(word) => self.edit_tracking(word, Some(arguments), |editing| edit(editing)),
+                Err(message) => internal(message),
+            },
+        }
+    }
+}
+
+/// A call no Word tool can answer here: a fault in the wiring, never the caller's.
+fn internal(message: String) -> ToolResult<Value> {
+    ToolResult::failed(ToolError::failure(Failure::Internal, message))
 }

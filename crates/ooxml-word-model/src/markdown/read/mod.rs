@@ -240,6 +240,7 @@ impl<'a> Reader<'a> {
                         .find(Some(W), "sdtPr")
                         .and_then(|p| child_val(p, "alias"))
                         .map(str::to_owned),
+                    joins: Vec::new(),
                 };
                 out.push(Item::Begin(marker.clone()));
                 if let Some((j, content)) = child_at(child, "sdtContent") {
@@ -278,10 +279,29 @@ impl<'a> Reader<'a> {
         !paragraph_text(&p.element, self.view).is_empty() || find_path(&p.element, &["pPr", "sectPr"]).is_some()
     }
 
-    /// Paragraphs that are one in the view grouped (docx2svg's join, both ways).
+    /// The ids of `paragraphs` of `part` (those the part's ids know).
+    fn ids_of(&self, part: &str, paragraphs: &[Placed]) -> Vec<String> {
+        let Some(story) = self.docx.part(part) else {
+            return Vec::new();
+        };
+        paragraphs
+            .iter()
+            .filter_map(|p| story.ids.paragraph_at(&p.path).map(|e| e.id.clone()))
+            .collect()
+    }
+
+    /// Paragraphs that are one in the view grouped (docx2svg's join, both ways). The
+    /// paragraphs whose marks the view deletes join the next paragraph, whatever block holds
+    /// it: a table's first cell (the table records them, [`TableRecord::joins`]) or a
+    /// content control's first paragraph (its start records them, [`Marker::joins`]).
     fn groups(&mut self, part: &str, items: Vec<Item>) -> Vec<Item2> {
         let mut groups = Vec::new();
         let mut pending: Vec<Placed> = Vec::new();
+        // Paragraph runs ended so far, and for each control open its start's group with the
+        // count when it took the pending paragraphs as joins: a control that ends before any
+        // run ends holds no paragraph of them (they join what comes after it).
+        let mut ended = 0usize;
+        let mut open: Vec<Option<(usize, usize)>> = Vec::new();
         for item in items {
             match item {
                 Item::P(p) => {
@@ -289,9 +309,29 @@ impl<'a> Reader<'a> {
                     pending.push(p);
                     if !removed {
                         groups.push(Item2::P(std::mem::take(&mut pending)));
+                        ended += 1;
                     }
                 }
+                Item::Begin(mut m) => {
+                    let joined = (!pending.is_empty()).then_some((groups.len(), ended));
+                    if joined.is_some() {
+                        m.joins = self.ids_of(part, &pending);
+                    }
+                    open.push(joined);
+                    groups.push(Item2::Marker(m));
+                }
+                Item::End(m) => {
+                    if let Some(Some((k, at))) = open.pop() {
+                        if at == ended {
+                            if let Some(Item2::Marker(begin)) = groups.get_mut(k) {
+                                begin.joins.clear();
+                            }
+                        }
+                    }
+                    groups.push(Item2::Marker(m));
+                }
                 Item::Tbl(t) => {
+                    ended += usize::from(!pending.is_empty());
                     if !pending.is_empty() && self.view == View::Current {
                         let cut = pending
                             .iter()
@@ -315,7 +355,6 @@ impl<'a> Reader<'a> {
                     }
                     groups.push(Item2::Tbl(t));
                 }
-                Item::Begin(m) | Item::End(m) => groups.push(Item2::Marker(m)),
             }
         }
         if !pending.is_empty() && (self.view != View::Original || pending.iter().any(|p| self.shows_text(p))) {
@@ -368,11 +407,10 @@ impl<'a> Reader<'a> {
             number: None,
             inline: Vec::new(),
             text: String::new(),
-            joins: elements
-                .iter()
-                .take(elements.len().saturating_sub(1))
-                .filter_map(|p| entry(p).map(|e| e.id.clone()))
-                .collect(),
+            joins: self.ids_of(
+                part,
+                elements.get(..elements.len().saturating_sub(1)).unwrap_or_default(),
+            ),
             notes: Vec::new(),
             text_boxes: Vec::new(),
             section: None,

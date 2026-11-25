@@ -40,6 +40,13 @@ impl Block {
     pub(super) fn unstamped(&self) -> bool {
         self.kind != Kind::Tbl && !self.raw.as_deref().is_some_and(valid_long_hex)
     }
+
+    /// A paragraph or row whose valid paraId is written with fewer than eight digits.
+    pub(super) fn short(&self) -> bool {
+        self.raw
+            .as_deref()
+            .is_some_and(|raw| raw.len() < 8 && valid_long_hex(raw))
+    }
 }
 
 /// The blocks of one container child.
@@ -55,6 +62,9 @@ pub(super) struct Body {
     pub(super) tables: Box<[u32]>,
     /// How many of its paragraphs and rows are unstamped.
     pub(super) unstamped: u32,
+    /// How many of its paragraphs and rows have a valid paraId written with fewer than
+    /// eight digits (one value may then be written more than one way).
+    pub(super) short: u32,
 }
 
 impl Body {
@@ -97,7 +107,7 @@ impl Body {
 
     fn from_blocks(node: Option<Node>, mut blocks: Vec<Block>) -> Body {
         let (mut paragraphs, mut tables) = (Vec::new(), Vec::new());
-        let mut unstamped = 0;
+        let (mut unstamped, mut short) = (0, 0);
         for (k, block) in blocks.iter_mut().enumerate() {
             let k = u32::try_from(k).unwrap_or(u32::MAX);
             match block.kind {
@@ -112,6 +122,7 @@ impl Body {
                 Kind::Tr => {}
             }
             unstamped += u32::from(block.unstamped());
+            short += u32::from(block.short());
         }
         Body {
             node,
@@ -119,6 +130,7 @@ impl Body {
             paragraphs: paragraphs.into(),
             tables: tables.into(),
             unstamped,
+            short,
         }
     }
 
@@ -126,6 +138,20 @@ impl Body {
     pub(super) fn at(&self, rel: &[u32]) -> Option<(usize, &Block)> {
         let k = self.blocks.binary_search_by(|b| (*b.rel).cmp(rel)).ok()?;
         Some((k, self.blocks.get(k)?))
+    }
+
+    /// The local name of the segment's node (an element's, whatever its namespace).
+    pub(super) fn local(&self) -> Option<&str> {
+        match self.node.as_ref()? {
+            Node::Element(e) => Some(e.name().local()),
+            _ => None,
+        }
+    }
+
+    /// The place in [`super::TOP_NAMES`] of the segment's node's local name.
+    pub(super) fn top_name(&self) -> Option<usize> {
+        let local = self.local()?;
+        super::TOP_NAMES.iter().position(|n| *n == local)
     }
 
     /// Whether this segment was read from `node` (the same allocation).

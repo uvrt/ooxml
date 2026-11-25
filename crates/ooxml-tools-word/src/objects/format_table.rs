@@ -223,29 +223,22 @@ fn six_digits(value: f64) -> f64 {
     format!("{value:.5e}").parse().unwrap_or(value)
 }
 
-/// The table's own properties the call sets (`set_table`'s values): on the body's lines,
-/// `body`'s width and indent, aligned left.
-fn table_values(
-    args: &WordFormatTable,
-    body: Option<&ooxml_word_edit::BodyWidth>,
-    fill: Option<Option<String>>,
-    borders: Option<String>,
-) -> TableValues {
+/// The table's own properties the call sets (`set_table`'s values); on the body's lines
+/// (`width_of: "body"`) its width, indent and alignment are the command's to work out
+/// ([`TableFormat::OnBody`]).
+fn table_values(args: &WordFormatTable, fill: Option<Option<String>>, borders: Option<String>) -> TableValues {
+    let on_body = args.width_of == Some(WidthOf::Body);
     TableValues {
         style: args.style.clone(),
-        width: match (body, args.width_percent, args.width) {
-            (Some(body), _, _) => Some(TableWidth::Length(twips(body.width))),
-            // AutoFit to Window takes width_percent (after the rest)
-            _ if args.width_of == Some(WidthOf::Window) => None,
-            (None, Some(p), _) => Some(TableWidth::Percent(six_digits(p))),
-            (None, None, Some(w)) => Some(TableWidth::Length(twips(w))),
-            (None, None, None) => None,
+        width: match (args.width_percent, args.width) {
+            // width_percent is of the body's lines, or AutoFit to Window's (after the rest)
+            _ if on_body || args.width_of == Some(WidthOf::Window) => None,
+            (Some(p), _) => Some(TableWidth::Percent(six_digits(p))),
+            (None, Some(w)) => Some(TableWidth::Length(twips(w))),
+            (None, None) => None,
         },
-        alignment: match body {
-            Some(_) => Some("left".to_owned()),
-            None => args.alignment.map(|a| a.as_str().to_owned()),
-        },
-        indent: body.map(|b| twips(b.indent)),
+        alignment: args.alignment.filter(|_| !on_body).map(|a| a.as_str().to_owned()),
+        indent: None,
         header_rows: args.header_rows.map(|h| usize::try_from(h).unwrap_or(usize::MAX)),
         shading: fill,
         borders,
@@ -266,11 +259,8 @@ fn table_scope(
         let message = "width_of is what width_percent is of: give width_percent (or nothing, for 100), not width";
         return Err(invalid(message, Some("width_of"), None, retry));
     }
-    let body = match args.width_of {
-        Some(WidthOf::Body) => Some(on_body_lines(args, editing, retry)?),
-        _ => None,
-    };
-    let values = table_values(args, body.as_ref(), fill, borders);
+    let on_body = args.width_of == Some(WidthOf::Body);
+    let values = table_values(args, fill, borders);
     let mut formats: Vec<TableFormat> = Vec::new();
     if let Some(on) = args.cant_split {
         formats.extend((0..view.table.rows.len()).map(|row| TableFormat::Row {
@@ -290,18 +280,8 @@ fn table_scope(
             keep_with_next: args.keep_with_next,
         });
     }
-    if let Some(body) = &body {
-        // the columns shared again first, the cells' widths with them: an autofit table is
-        // drawn at its cells' widths, which a table width alone leaves
-        formats.extend(
-            body.columns
-                .iter()
-                .map(|&width| twips(width))
-                .enumerate()
-                .map(|(column, width)| TableFormat::ColumnWidth { column, width }),
-        );
-    }
-    let has_values = values != TableValues::default();
+    // on the body's lines the table's width is always set
+    let has_values = on_body || values != TableValues::default();
     if !has_values && formats.is_empty() && args.width_of != Some(WidthOf::Window) {
         let options = [
             "style",
@@ -318,7 +298,16 @@ fn table_scope(
         ];
         return Err(invalid("nothing to set for the table", None, Some(&options), retry));
     }
-    if has_values {
+    if on_body {
+        // the lines are read where the edit is applied, in its transaction: a block put
+        // between the table and the paragraph beside it meanwhile is a conflict, not a
+        // width worked out from the version before it
+        formats.push(TableFormat::OnBody {
+            percent: args.width_percent.unwrap_or(100.0),
+            alignment: args.alignment.map(|a| a.as_str().to_owned()),
+            values,
+        });
+    } else if has_values {
         formats.push(TableFormat::Table(values));
     }
     if args.width_of == Some(WidthOf::Window) {
@@ -346,30 +335,6 @@ fn table_scope(
         keep_notes(args, editing, pages, &mut result);
     }
     Ok(result)
-}
-
-/// `width_of: "body"` (round 21, T5): the table on the body's lines beside it
-/// ([`ooxml_word_edit::body_width`]), `width_percent` of them (100 unless given); refused
-/// where that is under a point.
-fn on_body_lines(
-    args: &WordFormatTable,
-    editing: &Editing<'_>,
-    retry: &TryCall,
-) -> Result<ooxml_word_edit::BodyWidth, ToolError> {
-    let head = editing.editor.current();
-    let percent = args.width_percent.unwrap_or(100.0);
-    let alignment = args.alignment.map(|a| a.as_str());
-    let refusal = |e| crate::review::edit_refusal(e, "", retry.clone());
-    if let Some(body) = ooxml_word_edit::body_width(head.doc(), &args.table, percent, alignment).map_err(refusal)? {
-        return Ok(body);
-    }
-    let lines = ooxml_word_edit::body_lines(head.doc(), &args.table).map_err(refusal)?;
-    let message = format!(
-        "the body's lines beside {} are {} pt wide",
-        args.table,
-        crate::table_read::python_g(lines.width)
-    );
-    Err(invalid(&message, Some("width_of"), None, retry))
 }
 
 /// What a call with `keep_together` or `keep_with_next` says after its edit (docx-agent's
@@ -494,6 +459,6 @@ fn finish(
 }
 
 /// Registers `word_format_table` (the crate's [`crate::register`]).
-pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.edit::<WordFormatTable>(word_format_table, crate::Hosting::PLAIN.layout());
+pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
+    r.edit::<WordFormatTable>(word_format_table);
 }

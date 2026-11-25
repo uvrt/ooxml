@@ -50,24 +50,3 @@ fn the_names_are_the_exports_sorted_each_once() {
     }
     assert!(registry.export(DocKind::Pptx).is_empty());
 }
-
-#[test]
-fn every_tool_has_its_hosting_exported() {
-    let registry = Registry::standard();
-    let hosting = registry.hosting(DocKind::Docx);
-    let mut names = registry.names();
-    // (the session runs these itself)
-    names.retain(|n| n != "read_batch" && n != "undo");
-    assert_eq!(hosting.keys().cloned().collect::<Vec<_>>(), names);
-    for facts in hosting.values() {
-        let mut keys: Vec<&str> = facts.as_object().unwrap().keys().map(String::as_str).collect();
-        keys.sort_unstable();
-        assert_eq!(keys, ["blobs", "keeps_written", "layout"], "{facts}");
-    }
-    // a reading tool reads nothing of the host's beside its arguments
-    let plain = serde_json::json!({"blobs": false, "keeps_written": false, "layout": false});
-    assert_eq!(hosting["describe"], plain);
-    assert_eq!(hosting["render"], plain);
-    assert_eq!(hosting["word_fields"]["layout"], true);
-    assert!(registry.hosting(DocKind::Pptx).is_empty());
-}

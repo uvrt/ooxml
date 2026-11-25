@@ -6,7 +6,8 @@
 //! lock is held only to find or change an entry), or implement a tool.
 
 use crate::context::CallCancel;
-use crate::document::{At, Document};
+use crate::document::Document;
+use crate::format::AnyVersion;
 use crate::update::{PartUpdate, Updated};
 use crate::{CallContext, DocId, DocKind, Registry, SessionError};
 use ooxml_base::Context;
@@ -43,7 +44,7 @@ pub struct Opened {
     pub(crate) id: DocId,
     pub(crate) kind: DocKind,
     name: Arc<str>,
-    version: At,
+    version: AnyVersion,
     versions: Arc<Versions>,
     /// Where the call reading it may ask where blocks are laid out (its context's).
     placer: Option<Arc<dyn Placer>>,
@@ -96,10 +97,7 @@ impl Opened {
     /// The Word document at this version, when the session owns it as one.
     #[must_use]
     pub fn word(&self) -> Option<&ooxml_word_edit::WordDoc> {
-        match &self.version {
-            At::Word(version) => Some(version.doc()),
-            At::Package(_) => None,
-        }
+        self.version.snapshot::<ooxml_word_edit::WordDoc>().map(|v| v.doc())
     }
 
     /// This version as a Word reading tool is handed it.
@@ -265,7 +263,7 @@ impl Session {
         Ok(Self::opened(id, &document, document.head()))
     }
 
-    pub(crate) fn opened(id: &DocId, document: &Document, version: At) -> Opened {
+    pub(crate) fn opened(id: &DocId, document: &Document, version: AnyVersion) -> Opened {
         Opened {
             id: id.clone(),
             kind: document.kind,
@@ -281,7 +279,8 @@ impl Session {
     /// # Errors
     /// [`SessionError::NotOpen`], or the package's error writing a part.
     pub fn save(&self, id: &DocId) -> Result<Vec<u8>, SessionError> {
-        Ok(self.snapshot(id)?.package().save()?)
+        let document = self.document(id)?;
+        document.doc.save(&document.head(), false)
     }
 
     /// The save gate (section 13, P2): the document's bytes at its head version, refused
@@ -291,14 +290,7 @@ impl Session {
     /// [`SessionError::NewProblems`], with every new problem; as [`Session::save`].
     pub fn save_checked(&self, id: &DocId) -> Result<Vec<u8>, SessionError> {
         let document = self.document(id)?;
-        let head = document.head();
-        if let (Some(word), At::Word(version)) = (document.word(), &head) {
-            let delta = word.validation(version)?;
-            if !delta.new.is_empty() {
-                return Err(SessionError::NewProblems { new: delta.new });
-            }
-        }
-        Ok(head.package().save()?)
+        document.doc.save(&document.head(), true)
     }
 
     /// What the save gate compares for a Word document at its head: its problems now
@@ -308,8 +300,9 @@ impl Session {
     /// [`SessionError::NotOpen`]; the edit core's when a version cannot be read.
     pub fn validation(&self, id: &DocId) -> Result<Option<ooxml_word_edit::validate::Delta>, SessionError> {
         let document = self.document(id)?;
-        match (document.word(), document.head()) {
-            (Some(word), At::Word(version)) => Ok(Some(word.validation(&version)?)),
+        let head = document.head();
+        match (document.word(), head.snapshot()) {
+            (Some(word), Some(version)) => Ok(Some(word.validation(version)?)),
             _ => Ok(None),
         }
     }
@@ -329,8 +322,8 @@ impl Session {
     /// [`SessionError::NotOpen`]; the edit core's when the version cannot be read.
     pub fn validation_at(&self, at: &Opened) -> Result<Option<ooxml_word_edit::validate::Delta>, SessionError> {
         let document = self.document(&at.id)?;
-        match (document.word(), &at.version) {
-            (Some(word), At::Word(version)) => Ok(Some(word.validation(version)?)),
+        match (document.word(), at.version.snapshot()) {
+            (Some(word), Some(version)) => Ok(Some(word.validation(version)?)),
             _ => Ok(None),
         }
     }
@@ -389,7 +382,7 @@ impl Session {
     /// # Errors
     /// [`SessionError::NotOpen`].
     pub fn store_stats(&self, id: &DocId) -> Result<StoreStats, SessionError> {
-        Ok(self.document(id)?.stats())
+        Ok(self.document(id)?.stored().stats())
     }
 
     /// How long the document's commit lock was held and waited for, each time it was taken.
@@ -397,7 +390,7 @@ impl Session {
     /// # Errors
     /// [`SessionError::NotOpen`].
     pub fn lock_times(&self, id: &DocId) -> Result<ooxml_store::LockTimes, SessionError> {
-        Ok(self.document(id)?.lock_times())
+        Ok(self.document(id)?.stored().lock_times())
     }
 
     /// The session's counters.

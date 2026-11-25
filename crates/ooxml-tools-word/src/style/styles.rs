@@ -571,6 +571,6 @@ fn region(item: &RegionItem) -> RegionValues {
 }
 
 /// Registers `word_styles` (the crate's [`crate::register`]).
-pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.edit::<WordStyles>(word_styles, crate::Hosting::PLAIN);
+pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
+    r.edit::<WordStyles>(word_styles);
 }

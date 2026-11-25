@@ -528,8 +528,8 @@ fn reply(
 }
 
 /// Registers `word_format` (the crate's [`crate::register`]).
-pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.edit::<WordFormat>(word_format, crate::Hosting::PLAIN);
+pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
+    r.edit::<WordFormat>(word_format);
 }
 
 #[cfg(test)]

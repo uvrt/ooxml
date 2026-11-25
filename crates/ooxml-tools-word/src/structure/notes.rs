@@ -256,8 +256,8 @@ fn listed(editing: &Editing<'_>) -> ToolResult<Value> {
 }
 
 /// Registers `word_notes` (the crate's [`crate::register`]).
-pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.edit::<WordNotes>(word_notes, crate::Hosting::PLAIN);
+pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
+    r.edit::<WordNotes>(word_notes);
 }
 
 #[cfg(test)]

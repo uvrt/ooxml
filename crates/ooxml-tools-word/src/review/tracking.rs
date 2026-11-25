@@ -109,6 +109,6 @@ fn try_call(args: &WordSetTracking) -> TryCall {
 }
 
 /// Registers `word_set_tracking` (the crate's [`crate::register`]).
-pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.tracking::<WordSetTracking>(word_set_tracking, crate::Hosting::PLAIN);
+pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
+    r.tracking::<WordSetTracking>(word_set_tracking);
 }

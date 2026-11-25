@@ -384,8 +384,8 @@ fn mark_place(side: &str, anchor: &str) -> Option<String> {
 }
 
 /// Registers `word_fields` (the crate's [`crate::register`]).
-pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.edit::<WordFields>(word_fields, crate::Hosting::PLAIN.layout());
+pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
+    r.edit::<WordFields>(word_fields);
 }
 
 #[cfg(test)]
