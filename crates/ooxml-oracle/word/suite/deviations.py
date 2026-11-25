@@ -12,10 +12,6 @@ DEVIATIONS: dict[str, dict[str, str]] = {
     "gates/generated/charts/chart-places.docx/objects:0ab11bf053a1ef1d": {
         "pages": "tools limitation: the layout refuses a text box it cannot lay out yet (not supported)",
     },
-    "gates/generated/controls.docx/structure:9c1e3b8d58c39cab": {
-        "fields": "known, fix to come: Word's update finds no bookmark 'around' (Error! Invalid bookmark "
-                  "reference); the tools resolve it",
-    },
 }
 
 

@@ -772,7 +772,7 @@
 {"digest":"sha256:9c1986a1167d2b1bc2bc308fdd71dbec","id":"structure:97a76ec7c62b4dd1","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:a7889ae6c8960b3c60dcbcabc94cdf96","id":"structure:a292fa8a4093b461","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:0aad2e33ee1551d607db67f768cad973","id":"structure:f02d521fd1349457","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:068736fb5021829a34d74bce19a004e2","id":"structure:97e48302f2db2023","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:bab6e4c393a00c3dd971122e3fb6238a","id":"structure:97e48302f2db2023","source":"Word 16.106: a REF inside its own bookmark is an invalid bookmark reference (fu-word4 measure, #360)"}
 {"digest":"sha256:6a00e46e45d0fba96c08f1f93ead8fc6","id":"structure:b069bfb3cd9be162","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:a3e7f16675ecf579a8eb30981db6de0e","id":"structure:09a5e63c39f2028b","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:44bbdd3b9ec19e9e587d537417d6a5ae","id":"structure:2392c18916f05828","source":"frozen Python a512c901, unmeasured"}
@@ -805,7 +805,7 @@
 {"digest":"sha256:c45ab24a2384f2b3853210f71dbea0c1","id":"structure:860dcc0d84d6fa9c","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:03d458e316361a89a82b836ba429bad2","id":"structure:031b2b04b58d383c","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:0aad2e33ee1551d607db67f768cad973","id":"structure:f256431cc3f450c3","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:3c8db3488928982f10be8fcca401adcf","id":"structure:c1dff3ada5bd69e8","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:bab6e4c393a00c3dd971122e3fb6238a","id":"structure:c1dff3ada5bd69e8","source":"Word 16.106: a REF inside its own bookmark is an invalid bookmark reference (fu-word4 measure, #360)"}
 {"digest":"sha256:7ac30aa221d33d35075ee44b588a5586","id":"structure:b0f54a1800756fb2","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:763fe9e637fc2e9e62977663d9b1a350","id":"structure:685b6e288de508d5","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:333f76f5c42d28806113d6c51fee1a96","id":"structure:4e8b20e1449a120c","source":"frozen Python a512c901, unmeasured"}
