@@ -58,29 +58,6 @@ impl GridPlaces {
         GridPlaces { rows, ends }
     }
 
-    /// The places of a grid kept as one place per position (`None` where no cell covers
-    /// it), each row's runs its positions of one origin in a row.
-    #[must_use]
-    pub fn from_positions(positions: &[Vec<Option<Spot>>]) -> GridPlaces {
-        let mut rows = Vec::with_capacity(positions.len());
-        for line in positions {
-            let mut runs: Vec<PlaceRun> = Vec::new();
-            for (c, origin) in line.iter().enumerate() {
-                let Some(origin) = *origin else { continue };
-                match runs.last_mut() {
-                    Some(run) if run.origin == origin && run.columns.end == c => run.columns.end = c + 1,
-                    _ => runs.push(PlaceRun {
-                        columns: c..c + 1,
-                        origin,
-                    }),
-                }
-            }
-            rows.push(runs);
-        }
-        let ends = positions.iter().map(Vec::len).collect();
-        GridPlaces { rows, ends }
-    }
-
     /// The number of rows.
     #[must_use]
     pub fn row_count(&self) -> usize {
@@ -105,6 +82,33 @@ impl GridPlaces {
     #[must_use]
     pub fn runs(&self, row: usize) -> &[PlaceRun] {
         self.rows.get(row).map_or(&[], Vec::as_slice)
+    }
+
+    /// How many rows and grid columns the positions whose cell is `origin` take: the rows
+    /// holding one, and the columns any of them covers (counted by runs).
+    #[must_use]
+    pub fn size_of(&self, origin: Spot) -> (usize, usize) {
+        let mut rows = 0;
+        let mut columns: Vec<Range<usize>> = Vec::new();
+        for runs in &self.rows {
+            let mut held = false;
+            for run in runs.iter().filter(|run| run.origin == origin) {
+                held = true;
+                columns.push(run.columns.clone());
+            }
+            rows += usize::from(held);
+        }
+        columns.sort_by_key(|c| c.start);
+        let mut count = 0usize;
+        let mut reached = 0usize;
+        for c in columns {
+            let start = c.start.max(reached);
+            if c.end > start {
+                count = count.saturating_add(c.end - start);
+                reached = c.end;
+            }
+        }
+        (rows, count)
     }
 
     /// The first place of the cell over grid position `(row, column)`, where one covers it.
@@ -153,11 +157,23 @@ mod tests {
         );
         assert_eq!(places.width(), 4);
         assert_eq!(places.get(2, 0), None);
-        let mut kept = dense.clone();
-        kept.iter_mut().for_each(|line| line.truncate(4));
-        let again = GridPlaces::from_positions(&kept);
-        assert_eq!(again.width(), 4);
-        assert!((0..2).all(|r| (0..5).all(|c| again.get(r, c) == places.get(r, c))));
+        for origin in [(0, 1), (0, 3), (1, 0), (9, 9)] {
+            let held: Vec<(usize, usize)> = (0..2)
+                .flat_map(|r| (0..5).map(move |c| (r, c)))
+                .filter(|&(r, c)| places.get(r, c) == Some(origin))
+                .collect();
+            let rows = held
+                .iter()
+                .map(|p| p.0)
+                .collect::<std::collections::BTreeSet<_>>()
+                .len();
+            let columns = held
+                .iter()
+                .map(|p| p.1)
+                .collect::<std::collections::BTreeSet<_>>()
+                .len();
+            assert_eq!(places.size_of(origin), (rows, columns), "{origin:?}");
+        }
         let only_before = GridPlaces::of(&Grid::build(&[row("3", &[])], 0));
         assert_eq!(
             (only_before.width(), only_before.end(0), only_before.get(0, 1)),

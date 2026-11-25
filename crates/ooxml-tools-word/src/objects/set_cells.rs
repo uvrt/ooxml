@@ -272,19 +272,7 @@ fn one_value_per_cell(
                 && hits.iter().map(|h| h.2).collect::<HashSet<_>>().len() > 1
         })
         .map(|(origin, hits)| {
-            let covered: Vec<(usize, usize)> = view
-                .grid
-                .iter()
-                .enumerate()
-                .flat_map(|(r, line)| {
-                    line.iter()
-                        .enumerate()
-                        .filter(|(_, o)| **o == Some(origin))
-                        .map(move |(c, _)| (r, c))
-                })
-                .collect();
-            let rows = covered.iter().map(|p| p.0).collect::<HashSet<_>>().len();
-            let columns = covered.iter().map(|p| p.1).collect::<HashSet<_>>().len();
+            let (rows, columns) = view.grid.size_of(origin);
             let first = hits.iter().map(|h| h.1).min().unwrap_or(origin);
             Clash {
                 origin,

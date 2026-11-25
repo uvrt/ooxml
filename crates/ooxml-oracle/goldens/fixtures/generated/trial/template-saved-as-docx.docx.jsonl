@@ -402,10 +402,10 @@
 {"digest":"sha256:77c0ee00a4e405e64d3c58663e3a3ba3","id":"structure:dd0937dcc5cc3d20","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:2167325456430b2a0d1dd5104ce371ef","id":"structure:58d3a686170c9041","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:e71e0c83e8e6a5dbf821410d8eb0cce8","id":"structure:3395f6cd1f1b93d5","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:b6e936fe3dff3c8a96d669a37d7b1885","id":"structure:546c795028072266","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:2108b8218ff4e898702c829370292720","id":"structure:079e57dba6bbf10c","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:781637f8eb74f04d68856c39b10eda46","id":"structure:67065c58e2b0940f","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:8845077f4ad4b0218621d42df6751077","id":"structure:03fc6c78cfbb7e37","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:15b8562cce9bfebeb6e244988d87a7a7","id":"structure:546c795028072266","source":"Word 16.106: a new section inherits headers; Reject All hands them back (fu-word3 measure b1-own-reject/b1-own-start, #353)"}
+{"digest":"sha256:af5129adc1bd7654732f8c0832b246fe","id":"structure:079e57dba6bbf10c","source":"Word 16.106: a new section inherits headers; Reject All hands them back (fu-word3 measure b1-own-reject/b1-own-start, #353)"}
+{"digest":"sha256:56d010500441284d969074af9d9a19c8","id":"structure:67065c58e2b0940f","source":"Word 16.106: a new section inherits headers; Reject All hands them back (fu-word3 measure b1-own-reject/b1-own-start, #353)"}
+{"digest":"sha256:5bd7bbed53b0facba3252360c51d345f","id":"structure:03fc6c78cfbb7e37","source":"Word 16.106: a new section inherits headers; Reject All hands them back (fu-word3 measure b1-own-reject/b1-own-start, #353)"}
 {"digest":"sha256:408d6940e7d228877cbb89dff1890872","id":"structure:48d65ebaabc184e1","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:38d7efd651c57f0a3d3fbbae001ace0b","id":"structure:ee5b9963d8a5d6f7","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:52fb1806970db84a042ff2b1d2b89477","id":"structure:5d1cf41558c16558","source":"frozen Python a512c901, unmeasured"}

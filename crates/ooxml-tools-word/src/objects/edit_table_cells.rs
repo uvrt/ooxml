@@ -78,10 +78,11 @@ fn no_merge_over_pending(
         return Ok(());
     }
     let over = (c1..=c2).any(|c| !table.kept.contains(&c));
+    // a run of positions taken in that meets the rectangle
     let taken = table
         .given
-        .keys()
-        .any(|(r, c)| (r1..=r2).contains(r) && (c1..=c2).contains(c));
+        .iter()
+        .any(|(r, columns, _)| (r1..=r2).contains(&r) && columns.start <= c2 && c1 < columns.end);
     if !over && !taken && !rows_over {
         return Ok(());
     }

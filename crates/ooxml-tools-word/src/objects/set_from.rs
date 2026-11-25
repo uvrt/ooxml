@@ -198,7 +198,7 @@ fn plan(
     let (need_rows, need_columns) = block.size();
     let room = height - top;
     let short_by = need_rows.saturating_sub(room);
-    let grid = accepted_grid(view, shape);
+    let grid = accepted_grid(view, shape, need_columns);
     let asked = asked(args);
     let checks = Checks {
         table,
@@ -380,17 +380,18 @@ pub(super) fn record(placed: &Map<String, Value>, document: Option<&str>) -> Map
 
 /// The table's grid as accepted (`_accepted_grid`, `_positioned`): a column a pending
 /// tracked deletion removes left out, a position a pending tracked merge takes in answering
-/// as the merged cell, a row whose deletion is pending not counted.
-fn accepted_grid(view: &TableView, shape: &Accepted) -> Grid {
+/// as the merged cell, a row whose deletion is pending not counted. Only its first `wide`
+/// columns, the block's: no check reads past them, and a row may reach billions of columns.
+fn accepted_grid(view: &TableView, shape: &Accepted, wide: usize) -> Grid {
     let rows: Vec<usize> = if shape.rows_active() {
         shape.rows.clone()
     } else {
-        (0..view.grid.len()).collect()
+        (0..view.grid.row_count()).collect()
     };
     let columns: Vec<usize> = if shape.active() {
-        shape.kept.clone()
+        shape.kept.iter().copied().take(wide).collect()
     } else {
-        (0..shape.columns.max(view.grid.iter().map(Vec::len).max().unwrap_or(0))).collect()
+        (0..shape.columns.max(view.grid.width())).take(wide).collect()
     };
     rows.iter()
         .map(|r| {
@@ -398,7 +399,7 @@ fn accepted_grid(view: &TableView, shape: &Accepted) -> Grid {
                 .iter()
                 .map(|c| {
                     let at = if shape.active() {
-                        shape.given.get(&(*r, *c)).copied().unwrap_or(*c)
+                        shape.given.get(*r, *c).unwrap_or(*c)
                     } else {
                         *c
                     };
