@@ -1,7 +1,8 @@
 """The tools held to Word's recorded answers about their outputs (``observations/suite-word.json``,
 written by the Word-oracle suite, ``word/suite``), on any machine: each case is run through the
 tools again and every check Word answered is compared as the suite compares it.  The layout's
-checks (pages, fields) need the faces Word laid the outputs out in; without them they skip.
+checks (pages, fields) need the faces Word laid the outputs out in; without them they skip, and
+``kept`` takes the page numbers the tools wrote (a table of contents') as any page number.
 
 An output that is no longer the one Word was asked about (its digest changed) still has to read
 as Word read the old one; where it does not, run the suite again (``pytest -m word``) to ask Word
@@ -9,6 +10,7 @@ about the new output."""
 
 from __future__ import annotations
 
+import functools
 import sys
 from pathlib import Path
 
@@ -35,6 +37,7 @@ _PARAMS = [(case, check) for case, entry in sorted(OBSERVED.items()) if isinstan
            for check in answers.CHECKS if check in entry]
 
 
+@functools.cache
 def _faces_installed() -> bool:
     try:
         import docx2svg
@@ -82,7 +85,8 @@ def test_the_tools_answer_as_word_did(box, made, case, check):
         pytest.skip("the faces Word laid the output out in are not installed here")
     entry = OBSERVED[case]
     data = made(case)
-    differences = compare.judge(check, answers.answer(answers.Reader(box), data, check), entry[check])
+    differences = compare.judge(check, answers.answer(answers.Reader(box), data, check), entry[check],
+                                faces=_faces_installed())
     why = reason(case, check)
     if why:
         if differences:
