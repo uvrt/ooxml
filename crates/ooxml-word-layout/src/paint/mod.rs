@@ -32,6 +32,7 @@ pub use body_paths::body_line_paths;
 pub use line_numbers::{LineNumber, LineNumbers};
 pub use page_stories::paint_stories;
 pub use positions::{line_positions, Positions, Setting, TabSpan};
+pub(crate) use separators::section_holders;
 
 use crate::engine::DocumentLayout;
 use crate::faces::Faces;

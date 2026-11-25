@@ -3,6 +3,10 @@
 //! text, centred on the space between them exactly, 0.75 pt wide, black, from the region's
 //! top to the foot of its longest column, its edges on whole pixels.
 //!
+//! A separator is anchored on the block that holds its section's `w:sectPr` -- Word's own
+//! identity for a section, which stays when text is inserted at the section's start
+//! ([`section_holders`]).
+//!
 //! Must not: place columns (the paginator has) or draw anything else.
 
 use super::Rule;
@@ -10,6 +14,9 @@ use crate::engine::DocumentLayout;
 use crate::paginate::{LaidPage, PageColumn};
 use crate::px::Px;
 use ooxml_base::Q;
+use ooxml_word_model::ids::{Anchor, BlockKey, Sub};
+use ooxml_word_model::model::Block;
+use std::sync::Arc;
 
 /// The page's columns grouped by region: consecutive columns of one section from one top.
 fn regions(columns: &[PageColumn]) -> Vec<Vec<&PageColumn>> {
@@ -47,6 +54,12 @@ pub(super) fn column_separators(layout: &DocumentLayout, laid: &LaidPage) -> Vec
         let Some(bottom) = filled.iter().map(|c| c.y).max() else {
             continue;
         };
+        let holder = layout
+            .section_holders()
+            .get(first.section)
+            .copied()
+            .flatten()
+            .zip(u32::try_from(first.section).ok());
         let top = first.region_top.round_half_up();
         let bottom = bottom.round_half_up();
         let boxes = section.column_boxes();
@@ -62,7 +75,10 @@ pub(super) fn column_separators(layout: &DocumentLayout, laid: &LaidPage) -> Vec
             out.push(Rule {
                 kind: "column-separator",
                 path: format!("w:sectPr[{}]/w:cols", first.section + 1),
-                anchor: None,
+                anchor: holder.map(|(block, section)| Anchor {
+                    block,
+                    sub: Sub::Cols(section),
+                }),
                 x: Px::int(x0),
                 y: Px::int(top),
                 width: Px::int(x1 - x0),
@@ -71,6 +87,45 @@ pub(super) fn column_separators(layout: &DocumentLayout, laid: &LaidPage) -> Vec
                 style: None,
             });
         }
+    }
+    out
+}
+
+/// Per section of `layout`, the key of the block holding its `w:sectPr`: the paragraph
+/// whose mark ends it; for the last section, whose `w:sectPr` is the body's own, the body's
+/// last block (the endnotes placed in the flow left out). `None` where that block has no
+/// key.
+pub(crate) fn section_holders(layout: &DocumentLayout) -> Vec<Option<BlockKey>> {
+    let sections = &layout.sections.list;
+    let mut out = vec![None; sections.len()];
+    let mut next = 0;
+    let mut last = None;
+    for (k, block) in layout.document.body.iter().enumerate() {
+        if layout.roles.get(k).is_some_and(Option::is_some) {
+            continue;
+        }
+        let key = match block {
+            Block::Paragraph(p) => {
+                let ends = p.section.as_ref().is_some_and(|own| {
+                    sections
+                        .get(next)
+                        .is_some_and(|s| Arc::ptr_eq(own, &s.props) || **own == *s.props)
+                });
+                if ends {
+                    if let Some(holder) = out.get_mut(next) {
+                        *holder = p.key;
+                    }
+                    next += 1;
+                }
+                p.key
+            }
+            Block::Table(t) => t.key,
+        };
+        last = Some(key);
+    }
+    // the sections left: the body's own `w:sectPr` (or the one made where none is written)
+    for holder in out.iter_mut().skip(next) {
+        *holder = last.flatten();
     }
     out
 }

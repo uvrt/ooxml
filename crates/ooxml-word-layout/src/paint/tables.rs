@@ -13,6 +13,7 @@ use crate::px::Px;
 use crate::table::{PlacedRow, TableRequest};
 use crate::tables::{CellFlow, Content, MeasuredTable};
 use ooxml_base::Q;
+use ooxml_word_model::ids::Anchor;
 use ooxml_word_model::resolve::{edge_winner, ResolvedCell};
 use ooxml_word_model::value::Border;
 use std::collections::HashSet;
@@ -120,8 +121,25 @@ impl Across<'_> {
     }
 }
 
+/// What a cell's rules are drawn for: its path, and its place in its table beside it.
+#[derive(Clone, Copy)]
+struct For<'c> {
+    path: &'c str,
+    anchor: Option<Anchor>,
+}
+
+impl Across<'_> {
+    /// What `cell`'s rules are drawn for.
+    fn of<'c>(&self, cell: &'c ResolvedCell) -> For<'c> {
+        For {
+            path: &cell.path,
+            anchor: self.table.cell_anchor(cell.row, cell.index),
+        }
+    }
+}
+
 /// A border line, or a double's two lines, filling `[x0, x1) x [y0, y1)`.
-fn band(out: &mut Vec<Rule>, path: &str, b: &Border, (x0, x1): (i64, i64), (y0, y1): (i64, i64), vertical: bool) {
+fn band(out: &mut Vec<Rule>, cell: For<'_>, b: &Border, (x0, x1): (i64, i64), (y0, y1): (i64, i64), vertical: bool) {
     if x1 <= x0 || y1 <= y0 {
         return;
     }
@@ -129,8 +147,8 @@ fn band(out: &mut Vec<Rule>, path: &str, b: &Border, (x0, x1): (i64, i64), (y0, 
     let mut push = |x: (i64, i64), y: (i64, i64)| {
         out.push(Rule {
             kind: "table-border",
-            path: path.to_owned(),
-            anchor: None,
+            path: cell.path.to_owned(),
+            anchor: cell.anchor,
             x: Px::int(x.0),
             y: Px::int(y.0),
             width: Px::int(x.1 - x.0),
@@ -181,12 +199,19 @@ fn horizontal_edge(
         } else {
             (y0, y0 + total_px(Some(w)))
         };
-        band(out, &cell.path, w, x, y, false);
+        band(out, across.of(cell), w, x, y, false);
     }
     for (k, cell) in cells.iter().enumerate() {
         for (b, index) in vertical_edges(across, cell, k + 1 == cells.len()) {
             if let (Some(b), true) = (b.filter(|b| drawn(Some(b))), y1 > y0) {
-                band(out, &cell.path, b, across.vertical_span(Some(b), index), (y0, y1), true);
+                band(
+                    out,
+                    across.of(cell),
+                    b,
+                    across.vertical_span(Some(b), index),
+                    (y0, y1),
+                    true,
+                );
             }
         }
     }
@@ -273,7 +298,7 @@ pub(super) fn row_rules(table: &MeasuredTable, piece: &PlacedRow, bottom: Px, la
             if let Some(b) = b.filter(|b| drawn(Some(b))) {
                 band(
                     &mut out.borders,
-                    &cell.resolved.path,
+                    across.of(&cell.resolved),
                     b,
                     across.vertical_span(Some(b), index),
                     (y0, y1),
@@ -316,7 +341,7 @@ fn past_ends(out: &mut Vec<Rule>, across: &Across<'_>, cells: &[&ResolvedCell], 
         };
         band(
             out,
-            &o.path,
+            across.of(o),
             b,
             (across.grid_px(*first), x1),
             (y0, y0 + total_px(Some(b))),
@@ -345,10 +370,11 @@ fn cell_shading(
         Some(h) if whole && !h.is_zero() => (content_top + h).round_half_up(),
         _ => y1,
     };
+    let anchor = across.of(c).anchor;
     let rule = |x: (i64, i64), y: (i64, i64)| Rule {
         kind: "cell-shading",
         path: c.path.to_string(),
-        anchor: None,
+        anchor,
         x: Px::int(x.0),
         y: Px::int(y.0),
         width: Px::int(x.1 - x.0),

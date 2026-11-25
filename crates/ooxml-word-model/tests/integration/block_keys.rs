@@ -41,6 +41,30 @@ fn layout_path(root: &Arc<Element>, place: &[u32]) -> Option<String> {
     })
 }
 
+/// The paths of the blocks the paragraph at layout path `path` is in, outermost first,
+/// ending with it (the reference for `VersionNames::blocks_of`): each prefix ending at a
+/// table, row, cell or the paragraph, past the container's step and through wrappers;
+/// `None` where anything else stands between (a text box's paragraph).
+fn enclosing(path: &str) -> Option<Vec<String>> {
+    let mut steps = path.split('/').peekable();
+    let mut prefix = steps.next()?.to_owned();
+    let mut out = Vec::new();
+    while let Some(step) = steps.next() {
+        prefix = format!("{prefix}/{step}");
+        let local = step.split('[').next()?.rsplit(':').next()?;
+        match local {
+            "tbl" | "tr" | "tc" => out.push(prefix.clone()),
+            "p" => {
+                out.push(prefix);
+                return steps.peek().is_none().then_some(out);
+            }
+            "sdt" | "sdtContent" | "customXml" => {}
+            _ => return None,
+        }
+    }
+    None
+}
+
 /// What the checks saw.
 #[derive(Default, Debug)]
 struct Tally {
@@ -183,7 +207,11 @@ fn check_paragraphs(story: &Story<'_>, keys: &mut HashSet<BlockKey>, tally: &mut
                 block: key,
                 sub: Sub::Label,
             };
-            assert_eq!(names.path(label), path.map(|b| format!("{b}/label")));
+            assert_eq!(names.path(label), path.clone().map(|b| format!("{b}/label")));
+            let chain = names
+                .blocks_of(key)
+                .map(|blocks| blocks.iter().map(|a| names.path(*a).unwrap()).collect::<Vec<_>>());
+            assert_eq!(chain, path.as_deref().and_then(enclosing), "{}", p.id);
             tally.paths += 1;
         }
         let durable = key.durable();

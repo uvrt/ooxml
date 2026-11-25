@@ -354,6 +354,8 @@ impl Laying<'_, '_, '_, '_> {
         let header_rows = rows.iter().take_while(|r| r.header).count();
         let mut table = MeasuredTable {
             path: self.table_path(),
+            key: self.input.table.key,
+            cell_places: Arc::clone(&self.input.table.cell_places),
             rows,
             bottom_border,
             grid: lines,

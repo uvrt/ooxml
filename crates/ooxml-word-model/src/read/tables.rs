@@ -347,6 +347,7 @@ struct Built {
     cell_properties: Vec<Arc<[Props]>>,
     conditions: Vec<Arc<[Arc<[Text]>]>>,
     cell_paths: Vec<Arc<[Text]>>,
+    cell_places: Vec<Arc<[(u32, u32)]>>,
     moved: Vec<(usize, Vec<Block>)>,
 }
 
@@ -419,6 +420,7 @@ impl Reader<'_> {
             .iter()
             .map(|(j, _)| text(&format!("{path}/w:tr[{}]/w:tc[{}]", plan.index + 1, j + 1)))
             .collect();
+        let places: Vec<(u32, u32)> = cells.iter().map(|(j, _)| (count(plan.index), count(*j))).collect();
         let mut row_blocks: Vec<Arc<[Block]>> = Vec::new();
         for (n, (_, cell)) in cells.iter().enumerate() {
             let (Some(conds), Some(cell_path)) = (row_conditions.get(n), paths.get(n)) else {
@@ -455,6 +457,7 @@ impl Reader<'_> {
         built.cell_properties.push(Arc::from(props_of));
         built.conditions.push(Arc::from(row_conditions));
         built.cell_paths.push(Arc::from(paths));
+        built.cell_places.push(Arc::from(places));
     }
 
     /// A `w:tbl`'s blocks in the final view: the table, or its parts with the blocks moved
@@ -531,10 +534,16 @@ impl Reader<'_> {
             look,
             conditions: Arc::from(std::mem::take(&mut built.conditions)),
             cell_paths: Arc::from(std::mem::take(&mut built.cell_paths)),
+            cell_places: Arc::from(std::mem::take(&mut built.cell_places)),
             joined: false,
         };
         split(table, built.moved, &grid_of)
     }
+}
+
+/// A row's or cell's place as a count (a table of more than `u32::MAX` rows is not read).
+fn count(k: usize) -> u32 {
+    u32::try_from(k).unwrap_or(u32::MAX)
 }
 
 fn part_of(table: &Table, start: usize, end: usize, grid: Arc<[i64]>) -> Table {
@@ -548,6 +557,7 @@ fn part_of(table: &Table, start: usize, end: usize, grid: Arc<[i64]>) -> Table {
         cell_properties: slice(&table.cell_properties, start, end),
         conditions: slice(&table.conditions, start, end),
         cell_paths: slice(&table.cell_paths, start, end),
+        cell_places: slice(&table.cell_places, start, end),
         joined: true,
         ..table.clone()
     }

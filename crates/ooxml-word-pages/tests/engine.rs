@@ -10,6 +10,7 @@
 
 use ooxml_derive::CacheBudget;
 use ooxml_fonts::{Folder, Location, WordFontOptions};
+use ooxml_word_model::ids::Sub;
 use ooxml_word_pages::{support, DiskFonts, EngineBudgets, EngineOptions, FontSetup, PageEngine};
 use ooxml_zip::{Method, NewEntry, Writer};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -433,6 +434,49 @@ fn columns_line_numbers_and_a_drop_cap_are_laid_out_and_painted_in_rust() {
         said.warnings.iter().any(|w| w.code == "line-numbers-not-drawn"),
         "{said:?}"
     );
+}
+
+#[test]
+fn line_numbers_and_column_separators_are_anchored_on_their_paragraph_and_their_section() {
+    // section 1 numbers its lines and ends in its last paragraph's mark; section 2 (the
+    // body's own `w:sectPr`) has two columns with a line between them
+    let numbered = r#"<w:p><w:pPr><w:sectPr><w:lnNumType w:countBy="1"/></w:sectPr></w:pPr><w:r><w:t>end of one</w:t></w:r></w:p>"#;
+    let body = format!(
+        r#"{}{numbered}{}<w:sectPr><w:cols w:num="2" w:space="720" w:sep="1"/></w:sectPr>"#,
+        paragraphs(3, None),
+        paragraphs(120, None)
+    );
+    let mut kept = engine();
+    let version = kept.lay_out_bytes(Arc::from(package(&body))).unwrap().unwrap();
+    let paint = kept.paint(&version, 0).unwrap();
+    let numbers: Vec<&ooxml_word_layout::paint::Span> = paint
+        .lines
+        .iter()
+        .flat_map(|l| &l.spans)
+        .filter(|s| s.path == "w:sectPr[1]/w:lnNumType")
+        .collect();
+    assert_eq!(numbers.len(), 4, "every line of section 1 numbered");
+    assert!(numbers
+        .iter()
+        .all(|s| s.anchor.is_some_and(|a| a.sub == Sub::LineNumbers(0))));
+    let mut separators = 0;
+    for k in 0..version.page_count() {
+        let page = kept.paint(&version, k).unwrap();
+        for rule in page.rules.iter().filter(|r| r.kind == "column-separator") {
+            assert_eq!(rule.path, "w:sectPr[2]/w:cols");
+            let anchor = rule.anchor.expect("anchored on the body's last block");
+            assert_eq!(anchor.sub, Sub::Cols(1));
+            assert_eq!(
+                version.layout().document.names.path(anchor).as_deref(),
+                Some(&*rule.path)
+            );
+            separators += 1;
+        }
+    }
+    assert!(separators > 0, "{} pages", version.page_count());
+    // the SVG writes them under the same names (asserted against their paths in debug)
+    let (svg, _) = kept.page_svg(&version, 0).unwrap();
+    assert!(svg.contains(r#"data-docx-path="w:sectPr[1]/w:lnNumType""#));
 }
 
 #[test]
