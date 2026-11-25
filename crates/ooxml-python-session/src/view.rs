@@ -12,7 +12,8 @@
 use crate::context::{caller_context, PyCallContext};
 use crate::options::PyCallLayout;
 use crate::session::{doc_id, to_py};
-use ooxml_session::{Session, TextMode, View, ViewError};
+use ooxml_session::Session;
+use ooxml_session_word::{LiveView, TextMode, View, ViewError};
 use ooxml_tools::{ErrorCode, Failure};
 use pyo3::exceptions::{PyIndexError, PyLookupError, PyRuntimeError, PyTimeoutError, PyValueError};
 use pyo3::prelude::*;

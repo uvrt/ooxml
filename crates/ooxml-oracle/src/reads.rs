@@ -121,14 +121,22 @@ fn through_session(
     let Ok(bytes) = std::fs::read(file) else {
         return json!({"error": {"code": "internal", "message": "unreadable"}});
     };
-    let session = Session::new(SessionConfig::default(), session_context());
+    let session = Session::new(
+        SessionConfig::default(),
+        session_context(),
+        ooxml_session_word::formats(None),
+    );
     if let Err(e) = session.open(Arc::from(bytes), DocKind::Docx, name) {
         return json!({"error": {"code": "internal", "message": e.to_string()}});
     }
-    let context = CallContext {
+    let host = ooxml_session_word::WordHost {
         layout: fonts.map(|fonts| {
             Arc::new(crate::structure_tools::engine_pages(fonts)) as Arc<dyn ooxml_tools_word::WordLayout>
         }),
+        ..ooxml_session_word::WordHost::default()
+    };
+    let context = CallContext {
+        host: host.into_host(),
         layout_timeout: layout_timeout.and_then(|s| std::time::Duration::try_from_secs_f64(s).ok()),
         ..CallContext::default()
     };

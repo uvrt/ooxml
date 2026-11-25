@@ -6,6 +6,7 @@
 //! Must not: read the document (`ooxml_session::Opened` does).
 
 use ooxml_session::Opened;
+use ooxml_session_word::ValuesOf;
 use ooxml_tools::ToolError;
 use ooxml_tools_word::{NumberTexts, ReadScale, ReadStep, ScaleValues, ValueHandle, WordLayout};
 use serde_json::{json, Map, Value};

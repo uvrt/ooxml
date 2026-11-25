@@ -1,7 +1,8 @@
 //! Sessions (docs/architecture/README.md, sections 3, 6 and 9; layer 5).
 //!
-//! Owns: a [`Session`] holding documents by [`DocId`], each one's versions in an
-//! `ooxml-store` [`ooxml_store::Store`] over its package ([`PackageDoc`]); opening, saving
+//! Owns: a [`Session`] holding documents by [`DocId`], each as its format keeps it
+//! ([`Format`], [`FormatDoc`]: Word's in `ooxml-session-word`, the kinds Rust does not own
+//! yet as packages, [`PackageFormat`]) over one generic history ([`Stored`]); opening, saving
 //! and closing; a commit of parts given as bytes for tests ([`Session::update`],
 //! section 13); the tool [`Registry`], each tool's spec made once and the kinds it serves;
 //! dispatch of a call ([`Session::call`]): arguments taken as meant, the document found,
@@ -9,11 +10,10 @@
 //! [`CallContext`]: who calls, its cancellation token and its deadline, read through the
 //! [`ooxml_base::Clock`] and [`ooxml_base::Cancel`] ports of the session's
 //! [`ooxml_base::Context`]; and the session's [`MemoryBudget`] (section 6, Memory): what
-//! its documents keep that can be made again, within one limit, counted per document; and
-//! an application's live view of a Word document ([`Session::view`], [`Session::page_svg`]):
-//! its pages, those changed since a token, one page's SVG of the version a token names.
+//! its documents keep that can be made again, within one limit, counted per document.
 //!
-//! Must not: hold process-wide state (a session is a value; the Python module holds the
+//! Must not: know any format (each format's crate does: `ooxml-session-word`), hold
+//! process-wide state (a session is a value; the Python module holds the
 //! sessions), know providers, implement a tool's logic (the `ooxml-tools-*` crates do),
 //! read the system clock or the environment (the host gives the ports), or depend on an
 //! interpreter lock: every type here is `Send + Sync` and safe from any number of threads.
@@ -25,63 +25,42 @@
 #![forbid(unsafe_code)]
 
 mod batch;
-mod block_pages;
-mod blocks_of;
-mod call;
 mod changes;
 mod context;
 mod dispatch;
 mod document;
 mod error;
 mod format;
-mod from_template;
 mod group;
 mod history;
-mod host_reads;
 mod ids;
-mod live_view;
 mod memory;
 mod model;
 mod names;
 mod owners;
-mod pages;
 mod panics;
-mod records;
-mod reflowed;
-mod refused;
 mod registry;
-mod retired;
-mod rows_written;
 mod session;
 mod stored;
 mod undo;
 mod update;
-mod values;
 
 pub use batch::{ReadBatch, ReadOp, BATCH_TIMEOUT, MAX_READ_BATCH_CHARS, READ_BATCH};
-pub use block_pages::{BlockAt, BlockPages};
-pub use blocks_of::{BlockFound, BlockRefused};
-pub use call::Call;
-pub use context::{CallContext, CancelToken};
+pub use context::{CallCancel, CallContext, CancelToken, LayoutCancel, StoreClock};
 pub use dispatch::CallMade;
-pub use document::WordFormat;
+pub use document::PackageFormat;
 pub use error::SessionError;
-pub use format::{AnyVersion, Format, FormatDoc};
+pub use format::{AnyVersion, Finished, Format, FormatDoc, FormatRun, OpenEnv};
 pub use group::GroupMark;
 pub use history::{Direction, NumberedStep, Numbers, Undone};
-pub use host_reads::IdStateOf;
 pub use ids::{DocId, DocKind};
-pub use live_view::{PageSvg, TextMode, View, ViewError, ViewPage, VIEW_TOKENS};
 pub use memory::{Account, MemoryBudget};
 pub use model::{ModelError, PackageDoc, PartChange, PartContent};
 pub use names::DocNames;
 pub use ooxml_store::Caller;
-pub use ooxml_word_model::ids::{HeldId, IdStateError};
 pub use owners::{Owners, StepOwner};
-pub use pages::SessionPages;
 pub use registry::{KindRegistrar, Registry};
-pub use retired::RetiredBy;
 pub use session::{Opened, Session, SessionConfig, SessionStats};
 pub use stored::{Holds, StepBy, Stored, StoredDoc};
 pub use undo::{Undo, UNDO};
-pub use update::{PartUpdate, PartsModel, Updated};
+pub use update::{PartUpdate, Updated};
