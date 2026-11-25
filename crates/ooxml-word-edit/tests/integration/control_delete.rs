@@ -44,7 +44,7 @@ fn body(editor: &Editor) -> String {
 fn untracked_the_control_goes_with_its_content() {
     let editor = editor();
     let command = DeleteBlock {
-        target: "cc:303".to_owned(),
+        target: ooxml_word_model::address::Address::from("cc:303".to_owned()),
         policy: RevisionPolicy::Untracked,
     };
     let done = editor.run(&Caller::anonymous(), &command).unwrap();
@@ -60,7 +60,7 @@ fn untracked_the_control_goes_with_its_content() {
 fn tracked_its_paragraphs_are_deleted_and_the_control_removed_untracked() {
     let editor = editor();
     let command = DeleteBlock {
-        target: "cc:303".to_owned(),
+        target: ooxml_word_model::address::Address::from("cc:303".to_owned()),
         policy: RevisionPolicy::Tracked(Tracking {
             author: "Writer 1".to_owned(),
             date: "2026-11-19T10:00:00Z".to_owned(),
@@ -82,7 +82,7 @@ fn tracked_its_paragraphs_are_deleted_and_the_control_removed_untracked() {
 fn a_control_in_a_line_is_refused() {
     let editor = editor();
     let command = DeleteBlock {
-        target: "cc:301".to_owned(),
+        target: ooxml_word_model::address::Address::from("cc:301".to_owned()),
         policy: RevisionPolicy::Untracked,
     };
     let Err(EditError::Refused(message)) = editor.run(&Caller::anonymous(), &command).map(|_| ()) else {

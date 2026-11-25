@@ -151,7 +151,7 @@ fn link(args: &WordHeadersFooters, editing: &Editing<'_>, story: &Story) -> Tool
     let (which, kind) = (*which, *kind);
     let editor = editing.editor;
     let command = LinkToPrevious {
-        section: section.clone(),
+        section: ooxml_word_model::address::Address::parse(section),
         story: *target,
     };
     match editor.run(editing.caller, &command) {
@@ -184,7 +184,7 @@ fn unlink(editing: &Editing<'_>, story: &Story) -> ToolResult<Value> {
     let (which, kind) = (*which, *kind);
     let editor = editing.editor;
     let command = UnlinkFromPrevious {
-        section: section.clone(),
+        section: ooxml_word_model::address::Address::parse(section),
         story: *target,
     };
     match editor.run(editing.caller, &command) {
@@ -220,7 +220,7 @@ fn set(args: &WordHeadersFooters, editing: &Editing<'_>, story: &Story) -> ToolR
     let (which, kind) = (*which, *kind);
     let editor = editing.editor;
     let command = SetStoryText {
-        section: section.clone(),
+        section: ooxml_word_model::address::Address::parse(section),
         story: *target,
         text: args.text.clone().unwrap_or_default(),
         policy: policy(editing),

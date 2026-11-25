@@ -140,7 +140,7 @@ pub fn body_width(doc: &WordDoc, table: &str, percent: f64, alignment: Option<&s
     let work = Work::of(&found.element, Vec::new());
     let grid = shape::grid_widths(&work, work.root());
     #[allow(clippy::cast_precision_loss)]
-    let columns = shape::share(super::props::twips(width), &grid)
+    let columns = shape::share(crate::units::twips(width).0, &grid)
         .into_iter()
         .map(|w| w as f64 / 20.0)
         .collect();

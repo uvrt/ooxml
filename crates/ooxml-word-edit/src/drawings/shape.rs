@@ -10,7 +10,7 @@
 //!
 //! Must not: write but through the sink.
 
-use super::{all_heights, emu, height_above, points_text, DrawingEdited, A, EMU, POLYGON, SIDE_DISTANCE, V, W10, WPS};
+use super::{all_heights, height_above, points_text, DrawingEdited, A, EMU, POLYGON, SIDE_DISTANCE, V, W10, WPS};
 use crate::controls::{rewrite, InParagraph, Rewrite};
 use crate::marks::{insert_in_order, insert_paragraph_content};
 use crate::names::{MC, W, W14, WP, WP14};
@@ -22,6 +22,7 @@ use crate::stamping::stamp_document;
 use crate::text::atoms;
 use crate::text::write::{check_text, make_run};
 use crate::text_range::{range, range_id, Span};
+use crate::units::Emu;
 use crate::work::{scope_above, Id, Work};
 use crate::{EditError, Result, WordDoc};
 use ooxml_base::Limits;
@@ -35,21 +36,21 @@ const O: &str = "urn:schemas-microsoft-com:office:office";
 #[derive(Debug, Clone)]
 pub struct InsertShape {
     /// Where: a position, or a range (at its start).
-    pub at: String,
+    pub at: ooxml_word_model::address::Address,
     /// A text box (`txBox`, Word's line and insets) rather than a shape.
     pub text_box: bool,
     /// The preset geometry (`rect` for a text box).
     pub preset: String,
     /// Its text, a paragraph a line (a text box always has one).
     pub text: Option<String>,
-    /// Points.
-    pub width: f64,
-    /// Points.
-    pub height: f64,
-    /// Across from the column, points.
-    pub x: f64,
-    /// Down from the paragraph, points.
-    pub y: f64,
+    /// Its width.
+    pub width: Emu,
+    /// Its height.
+    pub height: Emu,
+    /// Across from the column.
+    pub x: Emu,
+    /// Down from the paragraph.
+    pub y: Emu,
     /// `square`, `tight`, `through`, `top_and_bottom`, `front`, `none` or `behind`.
     pub wrap: String,
     /// Untracked or tracked.
@@ -83,7 +84,7 @@ impl InsertShape {
         for line in self.lines().unwrap_or_default() {
             check_text(line)?;
         }
-        let found = range(doc, docx, &ooxml_word_model::address::Address::parse(&self.at))?;
+        let found = range(doc, docx, &self.at)?;
         let span = Span::of(doc, docx, &found)?;
         let paragraph = span.first().ok_or_else(|| EditError::no_element(span.part.clone()))?;
         if crate::textbox::text_box_anchor(docx, &span.part, &paragraph.path).is_some() {
@@ -316,7 +317,7 @@ impl InsertShape {
     /// The `mc:AlternateContent` Word writes (docx-agent's `_shape_xml`), its text boxes
     /// empty.
     fn xml(&self, frame: &Frame<'_>) -> String {
-        let (cx, cy, x, y) = (emu(self.width), emu(self.height), emu(self.x), emu(self.y));
+        let (cx, cy, x, y) = (self.width.0, self.height.0, self.x.0, self.y.0);
         let tag = super::settings::wrap_tag(&self.wrap);
         let behind = if self.wrap == "behind" { "1" } else { "0" };
         let wrap = match tag {

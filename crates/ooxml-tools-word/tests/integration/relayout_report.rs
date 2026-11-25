@@ -126,7 +126,7 @@ fn local(bytes: &Arc<[u8]>, (target, text): (&str, &str)) {
     let opened = editor.store().snapshot().doc().package().clone();
     let (_, first) = check_of(&opened, 1, &pages);
     let command = SetText {
-        target: target.to_owned(),
+        target: ooxml_word_model::address::Address::from(target.to_owned()),
         text: text.to_owned(),
         policy: RevisionPolicy::Untracked,
     };

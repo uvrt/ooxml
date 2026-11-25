@@ -57,7 +57,7 @@ fn run(args: &WordControls, editing: &Editing<'_>, list: &TryCall) -> Result<Too
         ControlAction::List => listed(editing),
         ControlAction::Insert => {
             let command = InsertControl {
-                at: position(args, editing, list)?,
+                at: ooxml_word_model::address::Address::from(position(args, editing, list)?),
                 kind: kind(args.kind),
                 items: args.items.clone().unwrap_or_default(),
                 tag: args.tag.clone(),

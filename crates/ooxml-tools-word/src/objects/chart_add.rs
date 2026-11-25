@@ -198,7 +198,7 @@ pub(super) fn add(args: &EditChart, editing: &Editing<'_>, lang: String) -> Resu
     let plan = add_plan(args, lang.clone(), &read)?;
     let command = AddChart {
         insert: InsertChart {
-            at: args.target.clone(),
+            at: ooxml_word_model::address::Address::parse(&args.target),
             chart: NewParts(plan.chart),
             size: plan.size,
             policy: policy(editing),

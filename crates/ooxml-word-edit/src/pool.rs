@@ -285,6 +285,18 @@ impl Ids {
         self.follow(address)
     }
 
+    /// [`Self::follow_address`] for an address read where a tool took it: the same address
+    /// when nothing in it was renamed, else the address it names now, read.
+    #[must_use]
+    pub fn follow_read(&self, address: &ooxml_word_model::address::Address) -> ooxml_word_model::address::Address {
+        let followed = self.follow_address(address.as_str());
+        if followed == address.as_str() {
+            address.clone()
+        } else {
+            ooxml_word_model::address::Address::from(followed)
+        }
+    }
+
     /// The first annotation id of the edit being applied.
     #[must_use]
     pub fn annotations(&self) -> Option<i64> {

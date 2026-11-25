@@ -24,7 +24,7 @@ use ooxml_word_model::docx::at_path;
 #[derive(Debug, Clone)]
 pub struct SetParagraphStyle {
     /// The paragraph (an id, an alias, a cell's first paragraph).
-    pub target: String,
+    pub target: ooxml_word_model::address::Address,
     /// The paragraph style's name, alias or id; `None` for the default style.
     pub style: Option<String>,
     /// Untracked or tracked.
@@ -78,7 +78,7 @@ impl Command<WordDoc> for SetParagraphStyle {
 
     fn validate(&self, doc: &WordDoc) -> Result<()> {
         let docx = doc.docx()?;
-        find(doc, &docx, &self.target)?;
+        find(doc, &docx, self.target.as_str())?;
         if let Some(name) = &self.style {
             crate::builtin::resolve(&docx, name, "paragraph")?;
         }
@@ -87,7 +87,7 @@ impl Command<WordDoc> for SetParagraphStyle {
 
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<StyleSet> {
         let mut sink = EditSink::new(tx, self.policy.clone());
-        let out = set_style(&mut sink, &self.target, self.style.as_deref())?;
+        let out = set_style(&mut sink, self.target.as_str(), self.style.as_deref())?;
         crate::textbox::sync(&mut sink)?;
         crate::revision_ids::make_unique(&mut sink)?;
         Ok(out)

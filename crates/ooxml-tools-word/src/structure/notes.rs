@@ -114,7 +114,7 @@ fn run(args: &WordNotes, editing: &Editing<'_>, list: &TryCall) -> Result<ToolRe
                 Some(NoteKind::Endnote) => ooxml_word_edit::NoteKind::Endnote,
                 _ => ooxml_word_edit::NoteKind::Footnote,
             },
-            at,
+            at: ooxml_word_model::address::Address::from(at),
             text: args.text.clone().unwrap_or_default(),
             policy: policy(editing),
         };
@@ -155,7 +155,7 @@ fn run(args: &WordNotes, editing: &Editing<'_>, list: &TryCall) -> Result<ToolRe
             let to = position(args, editing, list)?;
             let command = MoveNote {
                 note: note.clone(),
-                to,
+                to: ooxml_word_model::address::Address::from(to),
                 policy: policy(editing),
             };
             reply(editor.run(editing.caller, &command), format!("Moved {note}"))

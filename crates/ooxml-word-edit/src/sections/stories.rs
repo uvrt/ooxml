@@ -34,7 +34,7 @@ const REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relatio
 #[derive(Debug, Clone)]
 pub struct SetStoryText {
     /// The section.
-    pub section: String,
+    pub section: ooxml_word_model::address::Address,
     /// The header or footer.
     pub story: HeaderFooter,
     /// The text, `\n` between paragraphs.
@@ -47,7 +47,7 @@ pub struct SetStoryText {
 #[derive(Debug, Clone)]
 pub struct LinkToPrevious {
     /// The section.
-    pub section: String,
+    pub section: ooxml_word_model::address::Address,
     /// The header or footer.
     pub story: HeaderFooter,
 }
@@ -56,7 +56,7 @@ pub struct LinkToPrevious {
 #[derive(Debug, Clone)]
 pub struct UnlinkFromPrevious {
     /// The section.
-    pub section: String,
+    pub section: ooxml_word_model::address::Address,
     /// The header or footer.
     pub story: HeaderFooter,
 }
@@ -268,7 +268,13 @@ fn story_root(which: &str, style: &str, text: &str) -> Result<Work> {
 }
 
 /// A story of its own for the section (docx-agent's `_add_story`).
-fn add_story(sink: &mut EditSink<'_, '_>, section: &str, which: &str, kind: &str, text: &str) -> Result<SectionEdited> {
+fn add_story(
+    sink: &mut EditSink<'_, '_>,
+    section: &ooxml_word_model::address::Address,
+    which: &str,
+    kind: &str,
+    text: &str,
+) -> Result<SectionEdited> {
     check_text(text)?;
     let docx = sink.docx()?;
     let found = find_section(sink.doc(), &docx, section)?;

@@ -103,7 +103,7 @@ pub enum TableChange {
 #[derive(Debug, Clone)]
 pub struct EditTable {
     /// The table (an id, an alias).
-    pub table: String,
+    pub table: ooxml_word_model::address::Address,
     /// What to do.
     pub change: TableChange,
     /// Untracked or tracked.
@@ -266,7 +266,7 @@ impl EditTable {
     /// The change's arguments checked against the table as `doc` has it, made `placing`.
     pub(super) fn validate_with(&self, doc: &WordDoc, placing: Placing) -> Result<()> {
         let docx = doc.docx()?;
-        self.check(doc, &find_table(doc, &docx, &self.table)?, placing)
+        self.check(doc, &find_table(doc, &docx, self.table.as_str())?, placing)
             .map(|_| ())
     }
 
@@ -356,7 +356,7 @@ impl EditTable {
 
     fn edit(&self, sink: &mut EditSink<'_, '_>, placing: Placing) -> Result<TableChanged> {
         let docx = sink.docx()?;
-        let found = find_table(sink.doc(), &docx, &self.table)?;
+        let found = find_table(sink.doc(), &docx, self.table.as_str())?;
         let index = self.check(sink.doc(), &found, placing)?;
         if let Some(unchanged) = self.unchanged(&found)? {
             return Ok(unchanged);

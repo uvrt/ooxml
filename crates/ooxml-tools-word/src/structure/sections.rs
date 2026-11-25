@@ -7,6 +7,7 @@ use super::common::{call, need, outcome, policy, refused, Outcome};
 use crate::describe::sections_json;
 use crate::review::Editing;
 use ooxml_tools::{ArgEnum, Done, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
+use ooxml_word_edit::units::twips;
 use ooxml_word_edit::{InsertSectionBreak, RemoveSectionBreak, SectionEdited, SectionValues, SetSection};
 use ooxml_word_model::docx::sections::sections;
 use ooxml_word_model::docx::sections::SectionBreakKind;
@@ -179,8 +180,8 @@ fn run(args: &WordSections, editing: &Editing<'_>, list: &TryCall) -> Result<Too
         SectionAction::InsertBreak => {
             let (after, before) = sides(args.after.as_deref(), args.before.as_deref(), editing, list)?;
             let command = InsertSectionBreak {
-                after,
-                before,
+                after: after.map(ooxml_word_model::address::Address::from),
+                before: before.map(ooxml_word_model::address::Address::from),
                 kind: args.start.unwrap_or(SectionStart::NextPage).kind(),
                 policy: policy(editing),
             };
@@ -197,7 +198,7 @@ fn run(args: &WordSections, editing: &Editing<'_>, list: &TryCall) -> Result<Too
             let section = need(args.section.as_deref(), "section", list)?.to_owned();
             if args.action == SectionAction::RemoveBreak {
                 let command = RemoveSectionBreak {
-                    section: section.clone(),
+                    section: ooxml_word_model::address::Address::parse(&section),
                     policy: policy(editing),
                 };
                 return Ok(match editor.run(editing.caller, &command) {
@@ -224,13 +225,13 @@ fn set(
             Orientation::Portrait => "portrait".to_owned(),
             Orientation::Landscape => "landscape".to_owned(),
         }),
-        page_width: args.page_width,
-        page_height: args.page_height,
+        page_width: args.page_width.map(twips),
+        page_height: args.page_height.map(twips),
         margins: [
-            margins.and_then(|m| m.top),
-            margins.and_then(|m| m.right),
-            margins.and_then(|m| m.bottom),
-            margins.and_then(|m| m.left),
+            margins.and_then(|m| m.top).map(twips),
+            margins.and_then(|m| m.right).map(twips),
+            margins.and_then(|m| m.bottom).map(twips),
+            margins.and_then(|m| m.left).map(twips),
         ],
         #[allow(clippy::cast_possible_truncation)]
         columns: args.columns.map(|c| c as i64),
@@ -253,7 +254,7 @@ fn set(
         ));
     }
     let command = SetSection {
-        section: section.clone(),
+        section: ooxml_word_model::address::Address::parse(&section),
         values,
         policy: policy(editing),
     };

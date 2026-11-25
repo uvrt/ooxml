@@ -68,7 +68,7 @@ fn kept_problems_equal_the_full_check_on_every_fixture() {
                 RevisionPolicy::Untracked
             };
             let command = SetText {
-                target: target.clone(),
+                target: ooxml_word_model::address::Address::from(target.clone()),
                 text: format!("Edited {k}: a sentence"),
                 policy,
             };

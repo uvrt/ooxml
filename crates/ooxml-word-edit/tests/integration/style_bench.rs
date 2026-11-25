@@ -38,7 +38,10 @@ fn style_edits_on_a_long_document() {
         date: "2026-11-18T10:00:00Z".into(),
     });
     let list = |targets: Vec<String>, action: ListAction, policy: &RevisionPolicy| ListEdit {
-        targets,
+        targets: targets
+            .iter()
+            .map(|t| ooxml_word_model::address::Address::parse(t))
+            .collect(),
         action,
         policy: policy.clone(),
     };
@@ -97,7 +100,10 @@ fn format_edits(bytes: &Arc<[u8]>, targets: &[String; 2], tracked: &RevisionPoli
     let [middle, span] = targets;
     let report = |name: &str, took: Duration| println!("{name}: {:.1} ms", took.as_secs_f64() * 1000.0);
     let bold = |targets: Vec<String>, policy: &RevisionPolicy| FormatEdit {
-        targets,
+        targets: targets
+            .iter()
+            .map(|t| ooxml_word_model::address::Address::parse(t))
+            .collect(),
         plan: FormatPlan {
             run: vec![Setting {
                 property: Property::Bold,
@@ -122,7 +128,10 @@ fn format_edits(bytes: &Arc<[u8]>, targets: &[String; 2], tracked: &RevisionPoli
         best(bytes, &bold(vec![span.clone()], &RevisionPolicy::Untracked)),
     );
     let heading = |targets: Vec<String>| FormatEdit {
-        targets,
+        targets: targets
+            .iter()
+            .map(|t| ooxml_word_model::address::Address::parse(t))
+            .collect(),
         plan: FormatPlan {
             paragraph_style: Some("Heading 2".into()),
             ..FormatPlan::default()
@@ -135,7 +144,7 @@ fn format_edits(bytes: &Arc<[u8]>, targets: &[String; 2], tracked: &RevisionPoli
         best(bytes, &heading(vec![middle.clone()])),
     );
     let styled = FormatEdit {
-        targets: vec![span.clone()],
+        targets: vec![ooxml_word_model::address::Address::parse(span)],
         plan: FormatPlan {
             paragraph_style: Some("Heading 2".into()),
             ..FormatPlan::default()
@@ -145,7 +154,7 @@ fn format_edits(bytes: &Arc<[u8]>, targets: &[String; 2], tracked: &RevisionPoli
     };
     report("format, 100 paragraphs to a heading style", best(bytes, &styled));
     let kept = FormatEdit {
-        targets: vec![span.clone()],
+        targets: vec![ooxml_word_model::address::Address::parse(span)],
         plan: FormatPlan {
             keep_together: Some(true),
             ..FormatPlan::default()

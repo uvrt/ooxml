@@ -26,7 +26,7 @@ fn editor(package: Package) -> Editor {
 fn edit(editor: &Editor, text: &str) -> Made {
     let call = CallEditor::new(editor);
     let command = SetText {
-        target: "p:4C32E1FB".to_owned(),
+        target: ooxml_word_model::address::Address::from("p:4C32E1FB".to_owned()),
         text: text.to_owned(),
         policy: RevisionPolicy::Untracked,
     };

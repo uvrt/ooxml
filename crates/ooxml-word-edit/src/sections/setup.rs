@@ -9,6 +9,7 @@
 use crate::names::W;
 use crate::policy::Stamp;
 use crate::review::xml::{insert_in_order, make};
+use crate::units::Twips;
 use crate::validate::Orders;
 use crate::work::{Id, Work};
 use crate::{EditError, Result};
@@ -20,12 +21,12 @@ pub struct SectionValues {
     pub start: Option<String>,
     /// `portrait` or `landscape`.
     pub orientation: Option<String>,
-    /// The page's width, in points.
-    pub page_width: Option<f64>,
-    /// The page's height, in points.
-    pub page_height: Option<f64>,
-    /// The margins, in points: top, right, bottom, left.
-    pub margins: [Option<f64>; 4],
+    /// The page's width.
+    pub page_width: Option<Twips>,
+    /// The page's height.
+    pub page_height: Option<Twips>,
+    /// The margins: top, right, bottom, left.
+    pub margins: [Option<Twips>; 4],
     /// Text columns.
     pub columns: Option<i64>,
 }
@@ -56,13 +57,6 @@ impl SectionValues {
         }
         out
     }
-}
-
-/// Points as twips, rounded as Python's `round` rounds (half to even).
-fn twips(points: f64) -> i64 {
-    #[allow(clippy::cast_possible_truncation)]
-    let value = (points * 20.0).round_ties_even() as i64;
-    value
 }
 
 const PGMAR_ORDER: [&str; 7] = ["top", "right", "bottom", "left", "header", "footer", "gutter"];
@@ -148,10 +142,10 @@ pub(crate) fn apply(work: &mut Work, sect: Id, values: &SectionValues, orders: &
         let mut width = int_attr(work, size, "w", 11906);
         let mut height = int_attr(work, size, "h", 16838);
         if let Some(w) = values.page_width {
-            width = twips(w);
+            width = w.0;
         }
         if let Some(h) = values.page_height {
-            height = twips(h);
+            height = h.0;
         }
         let mut orient = work.get(size, Some(W), "orient").map(str::to_owned);
         if let Some(orientation) = &values.orientation {
@@ -184,7 +178,7 @@ pub(crate) fn apply(work: &mut Work, sect: Id, values: &SectionValues, orders: &
             .collect();
         for (k, value) in values.margins.iter().enumerate() {
             if let (Some(value), Some(slot)) = (value, written.get_mut(k)) {
-                slot.1 = Some(twips(*value).to_string());
+                slot.1 = Some(value.0.to_string());
             }
         }
         set_attributes(work, node, &written, &PGMAR_ORDER);

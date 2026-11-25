@@ -174,7 +174,7 @@ fn a_copy_reads_the_body_style_a_paragraph_given_text_changes() {
         bookmarks: BookmarkPolicy::Rename,
     };
     let set = SetText {
-        target: "p:5A000102".to_owned(),
+        target: ooxml_word_model::address::Address::from("p:5A000102".to_owned()),
         text: "Given text".to_owned(),
         policy: RevisionPolicy::Untracked,
     };
@@ -232,7 +232,10 @@ fn a_copy_reads_the_list_before_the_place_an_edit_takes_away() {
         bookmarks: BookmarkPolicy::Rename,
     };
     let remove = ListEdit {
-        targets: ["p:5A000201", "p:5A000202"].map(str::to_owned).to_vec(),
+        targets: (["p:5A000201", "p:5A000202"].map(str::to_owned).to_vec())
+            .iter()
+            .map(|t| ooxml_word_model::address::Address::parse(t))
+            .collect(),
         action: ListAction::Remove,
         policy: RevisionPolicy::Untracked,
     };
@@ -283,7 +286,7 @@ fn two_writers_adding_uses_of_one_style_commit_without_a_conflict() {
         ))
     };
     let given = |id: &str| SetText {
-        target: format!("p:{id}"),
+        target: ooxml_word_model::address::Address::from(format!("p:{id}")),
         text: "Given text".to_owned(),
         policy: RevisionPolicy::Untracked,
     };
@@ -341,7 +344,7 @@ fn a_step_adding_a_style_use_undoes_past_another() {
         .concat(),
     ));
     let given = |id: &str| SetText {
-        target: format!("p:{id}"),
+        target: ooxml_word_model::address::Address::from(format!("p:{id}")),
         text: "Given text".to_owned(),
         policy: RevisionPolicy::Untracked,
     };

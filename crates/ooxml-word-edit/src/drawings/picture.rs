@@ -36,7 +36,7 @@ const DEFAULT_DPI: f64 = 96.0;
 #[derive(Debug, Clone)]
 pub struct InsertPicture {
     /// Where: a position, or a range (at its start).
-    pub at: String,
+    pub at: ooxml_word_model::address::Address,
     /// The picture's bytes: PNG, JPEG, GIF or BMP.
     pub image: Arc<[u8]>,
     /// Points; the height keeps the aspect ratio (the natural size without one).
@@ -154,11 +154,21 @@ fn is_cell(at: &str) -> bool {
 
 /// Where the picture goes: `at`'s paragraph and offset, a cell's first paragraph at its
 /// start.
-fn place(doc: &WordDoc, docx: &ooxml_word_model::docx::Docx, at: &str) -> Result<crate::fields::Place> {
-    if is_cell(at) {
+fn place(
+    doc: &WordDoc,
+    docx: &ooxml_word_model::docx::Docx,
+    at: &ooxml_word_model::address::Address,
+) -> Result<crate::fields::Place> {
+    let text = at.as_str();
+    if is_cell(text) {
         let found =
-            crate::set_text::cell_paragraph(docx, at).map_err(|error| no_cell(doc, docx, at).unwrap_or(error))?;
-        return crate::fields::place(doc, docx, &format!("{}@0", found.id), true);
+            crate::set_text::cell_paragraph(docx, text).map_err(|error| no_cell(doc, docx, text).unwrap_or(error))?;
+        return crate::fields::place(
+            doc,
+            docx,
+            &ooxml_word_model::address::Address::from(format!("{}@0", found.id)),
+            true,
+        );
     }
     crate::fields::place(doc, docx, at, true)
 }

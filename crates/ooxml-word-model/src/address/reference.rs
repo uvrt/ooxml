@@ -213,7 +213,7 @@ fn selected(
 
 #[test]
 fn every_address_of_the_cases_resolves_and_is_refused_as_before() {
-    use super::super::parsed::{Address, Place, PlaceKind};
+    use super::super::parsed::{Address, Place, PlaceKind, Shape};
     let mut compared = 0;
     let mut differences = Vec::new();
     for (document, addresses) in corpus_addresses() {
@@ -253,6 +253,24 @@ fn every_address_of_the_cases_resolves_and_is_refused_as_before() {
             };
             if !same {
                 differ("place");
+            }
+            // the forms step 8's commands ask of a typed address, as they sniffed the text
+            let sniffed = [
+                (Shape::Dots, raw.contains("..")),
+                (Shape::Text, is_text_range(raw)),
+                (Shape::Section, raw.starts_with("s:") || raw.starts_with("s@")),
+                (Shape::Control, raw.starts_with("cc:") || raw.starts_with("cc@")),
+            ];
+            for (shape, old) in sniffed {
+                if address.has(shape) != old {
+                    differ(&format!("{shape:?}"));
+                }
+            }
+            let ends = |e: Result<Option<super::super::syntax::Ends<'_>>, AddressError>| {
+                e.map(|o| o.map(|(a, b)| (a.map(str::to_owned), b.map(str::to_owned))))
+            };
+            if ends(span_ends(raw)) != ends(address.span_ends()) {
+                differ("span_ends");
             }
             compared += 1;
         }

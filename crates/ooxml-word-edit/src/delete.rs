@@ -37,7 +37,7 @@ use std::sync::Arc;
 #[derive(Debug, Clone)]
 pub struct DeleteBlock {
     /// The paragraph or table (an id, an alias).
-    pub target: String,
+    pub target: ooxml_word_model::address::Address,
     /// Untracked or tracked.
     pub policy: RevisionPolicy,
 }
@@ -181,11 +181,11 @@ impl Command<WordDoc> for DeleteBlock {
     type Error = EditError;
 
     fn validate(&self, doc: &WordDoc) -> Result<()> {
-        if crate::control_delete::is_control(&self.target) {
-            return crate::control_delete::check(doc, &self.target);
+        if self.target.has(ooxml_word_model::address::Shape::Control) {
+            return crate::control_delete::check(doc, self.target.as_str());
         }
         let docx = doc.docx()?;
-        let block = resolve(doc, &docx, &self.target)?;
+        let block = resolve(doc, &docx, self.target.as_str())?;
         let tree = doc
             .tree(&block.part)?
             .ok_or_else(|| EditError::no_part(block.part.clone()))?;
@@ -201,7 +201,7 @@ impl Command<WordDoc> for DeleteBlock {
 
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<BlockDeleted> {
         let mut sink = EditSink::new(tx, self.policy.clone());
-        let out = crate::delete_write::delete(&mut sink, &self.target)?;
+        let out = crate::delete_write::delete(&mut sink, self.target.as_str())?;
         crate::textbox::sync(&mut sink)?;
         crate::revision_ids::make_unique(&mut sink)?;
         Ok(out)

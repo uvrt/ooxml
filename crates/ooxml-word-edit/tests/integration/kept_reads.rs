@@ -74,7 +74,7 @@ fn cells_kept_and_cold(editor: &ooxml_word_edit::Editor) {
         .map(|p| p.id.clone())
         .unwrap();
     let command = SetText {
-        target: in_table,
+        target: ooxml_word_model::address::Address::from(in_table),
         text: "Other words in the cell".to_owned(),
         policy: RevisionPolicy::Untracked,
     };
@@ -129,7 +129,7 @@ fn rows_kept_and_cold(editor: &ooxml_word_edit::Editor) {
         .map(|p| p.id.clone())
         .unwrap();
     let command = SetText {
-        target: in_table,
+        target: ooxml_word_model::address::Address::from(in_table),
         text: "Other words in the cell".to_owned(),
         policy: RevisionPolicy::Untracked,
     };
@@ -242,7 +242,7 @@ fn languages_kept_and_cold(detections: &Detections) {
         .map(|p| p.id.clone())
         .unwrap();
     let command = SetText {
-        target,
+        target: ooxml_word_model::address::Address::from(target),
         text: "Le rapport annuel décrit les travaux de la société pendant toute l'année et les résultats obtenus."
             .to_owned(),
         policy: RevisionPolicy::Untracked,

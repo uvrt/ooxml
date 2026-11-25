@@ -98,9 +98,9 @@ fn blocks_holding_a_note_reference_moved_into_a_text_box_are_refused_with_the_an
     for policy in policies() {
         for after in [true, false] {
             let moved = |target: &str| MoveBlocks {
-                blocks: Moving::Blocks("p@body/0".to_owned()),
-                after: after.then(|| target.to_owned()),
-                before: (!after).then(|| target.to_owned()),
+                blocks: Moving::Blocks(ooxml_word_model::address::Address::from("p@body/0".to_owned())),
+                after: (after.then(|| target.to_owned())).map(ooxml_word_model::address::Address::from),
+                before: ((!after).then(|| target.to_owned())).map(ooxml_word_model::address::Address::from),
                 policy: policy.clone(),
             };
             let editor = editor(&fixture("generated/charts/chart-places.docx"));

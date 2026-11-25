@@ -20,7 +20,7 @@ fn tracked() -> RevisionPolicy {
 
 fn reference(at: &str, page: bool) -> InsertCrossReference<'static> {
     InsertCrossReference {
-        at: at.to_owned(),
+        at: ooxml_word_model::address::Address::from(at.to_owned()),
         bookmark: "around".to_owned(),
         page,
         policy: tracked(),

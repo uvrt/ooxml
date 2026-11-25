@@ -41,6 +41,8 @@
 
 mod across;
 mod address_keys;
+#[cfg(test)]
+mod address_reference_tests;
 mod after;
 mod beside;
 mod block_checks;
@@ -118,6 +120,7 @@ mod text_range;
 mod textbox;
 pub mod touched;
 mod track;
+pub mod units;
 pub mod validate;
 mod work;
 

@@ -8,6 +8,7 @@
 
 use crate::marks::insert_in_order;
 use crate::names::W;
+use crate::units::Twips;
 use crate::validate::Orders;
 use crate::work::{Id, Work};
 use ooxml_word_model::xmlread::py_int;
@@ -93,19 +94,13 @@ pub struct LevelFormat {
     /// `w:start`.
     pub start: Option<i64>,
     /// The number's position.
-    pub number_at: Option<f64>,
+    pub number_at: Option<Twips>,
     /// The text's position.
-    pub text_at: Option<f64>,
+    pub text_at: Option<Twips>,
     /// What follows the number: `tab`, `space` or `nothing`.
     pub follow: Option<String>,
     /// The level's tab stop.
-    pub tab_at: Option<f64>,
-}
-
-/// Points to twips, rounded half to even as Python's `round`.
-#[allow(clippy::cast_possible_truncation)]
-fn twips(points: f64) -> i64 {
-    (points * 20.0).round_ties_even() as i64
+    pub tab_at: Option<Twips>,
 }
 
 /// Write `format`'s fields into the level `lvl` (docx-agent's `set_list_format` change).
@@ -148,8 +143,8 @@ fn positions(work: &mut Work, lvl: Id, format: &LevelFormat, orders: &Orders) {
         };
         let left = read(work, &["left", "start"]);
         let number = left - read(work, &["hanging"]) + read(work, &["firstLine"]);
-        let left = format.text_at.map_or(left, twips);
-        let number = format.number_at.map_or(number, twips);
+        let left = format.text_at.map_or(left, |at| at.0);
+        let number = format.number_at.map_or(number, |at| at.0);
         for name in [
             "start",
             "hanging",
@@ -173,7 +168,7 @@ fn positions(work: &mut Work, lvl: Id, format: &LevelFormat, orders: &Orders) {
         }
     }
     if let Some(tab_at) = format.tab_at {
-        tab_stop(work, properties, twips(tab_at), orders);
+        tab_stop(work, properties, tab_at.0, orders);
     }
 }
 

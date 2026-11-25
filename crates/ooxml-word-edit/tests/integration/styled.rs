@@ -29,7 +29,7 @@ fn a_repeat_writes_nothing() {
     let docx = editor.store().snapshot().doc().docx().unwrap();
     let target = docx.body().unwrap().ids.paragraphs().iter().next().unwrap().id.clone();
     let command = SetStyledText {
-        target,
+        target: ooxml_word_model::address::Address::from(target),
         text: "Plain **strong** and *emphasis* [named]{Book Title}".to_owned(),
         paragraph_style: None,
         policy: RevisionPolicy::Untracked,
@@ -38,7 +38,7 @@ fn a_repeat_writes_nothing() {
     assert!(first.out.edits.iter().any(|e| e.changed));
     assert_eq!(first.out.styled.len(), 3);
     let command = SetStyledText {
-        target: first.out.written[0].clone(),
+        target: ooxml_word_model::address::Address::from(first.out.written[0].clone()),
         ..command
     };
     let again = editor.run(&Caller::anonymous(), &command).unwrap();

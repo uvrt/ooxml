@@ -39,7 +39,7 @@ pub struct MoveNote {
     /// The note (`fn:2`, `en:1`).
     pub note: String,
     /// Where its reference goes: a position, or a range (at its end).
-    pub to: String,
+    pub to: ooxml_word_model::address::Address,
     /// Untracked or tracked.
     pub policy: RevisionPolicy,
 }

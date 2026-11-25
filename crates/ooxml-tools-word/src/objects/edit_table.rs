@@ -452,7 +452,7 @@ fn finish(
     let mut watched = watch(editing, before.doc(), view, change);
     // a table placed from a source keeps its record true through the change (`_Kept`)
     let command = KeepingRecord(EditTable {
-        table: args.table.clone(),
+        table: ooxml_word_model::address::Address::parse(&args.table),
         change,
         policy: policy(editing),
     });

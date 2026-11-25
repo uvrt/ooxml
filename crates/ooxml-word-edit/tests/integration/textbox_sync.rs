@@ -131,7 +131,7 @@ fn an_edit_elsewhere_leaves_the_fallback() {
     let edits: [Box<Edit>; 4] = [
         Box::new(|editor, target| {
             let command = SetText {
-                target,
+                target: ooxml_word_model::address::Address::from(target),
                 text: "One".to_owned(),
                 policy: RevisionPolicy::Untracked,
             };
@@ -139,7 +139,7 @@ fn an_edit_elsewhere_leaves_the_fallback() {
         }),
         Box::new(|editor, target| {
             let command = SetText {
-                target,
+                target: ooxml_word_model::address::Address::from(target),
                 text: "First line\nSecond line".to_owned(),
                 policy: RevisionPolicy::Untracked,
             };
@@ -157,7 +157,7 @@ fn an_edit_elsewhere_leaves_the_fallback() {
         }),
         Box::new(|editor, target| {
             let command = SetStyledText {
-                target,
+                target: ooxml_word_model::address::Address::from(target),
                 text: "Plain **strong**".to_owned(),
                 paragraph_style: None,
                 policy: RevisionPolicy::Untracked,
@@ -177,7 +177,7 @@ fn an_edit_elsewhere_leaves_the_fallback() {
 fn a_text_change_syncs_the_fallback() {
     let editor = editor();
     let command = SetText {
-        target: box_paragraph(&editor),
+        target: ooxml_word_model::address::Address::from(box_paragraph(&editor)),
         text: "Changed".to_owned(),
         policy: RevisionPolicy::Untracked,
     };
@@ -190,7 +190,7 @@ fn a_text_change_syncs_the_fallback() {
 fn lines_in_the_box_sync_the_fallback() {
     let editor = editor();
     let command = SetText {
-        target: box_paragraph(&editor),
+        target: ooxml_word_model::address::Address::from(box_paragraph(&editor)),
         text: "First line\nSecond line".to_owned(),
         policy: RevisionPolicy::Untracked,
     };
@@ -216,7 +216,7 @@ fn a_new_paragraph_in_the_box_syncs_the_fallback() {
 fn styled_text_in_the_box_syncs_the_fallback() {
     let editor = editor();
     let command = SetStyledText {
-        target: box_paragraph(&editor),
+        target: ooxml_word_model::address::Address::from(box_paragraph(&editor)),
         text: "Plain **strong**".to_owned(),
         paragraph_style: None,
         policy: RevisionPolicy::Untracked,
@@ -240,9 +240,9 @@ fn a_text_box_moved_with_its_block_is_not_synced() {
     let editor = editor();
     let fallback = contents(&editor)[1].clone();
     let moved = MoveBlocks {
-        blocks: Moving::Blocks("p@body/4".to_owned()),
+        blocks: Moving::Blocks(ooxml_word_model::address::Address::from("p@body/4".to_owned())),
         after: None,
-        before: Some("p@body/0".to_owned()),
+        before: Some(ooxml_word_model::address::Address::from("p@body/0".to_owned())),
         policy: RevisionPolicy::Untracked,
     };
     assert!(editor.run(&Caller::anonymous(), &moved).unwrap().changed);

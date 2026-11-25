@@ -107,7 +107,7 @@ pub(super) fn set_from(
     timing.add("check", started);
     let placed_from = block.provenance(plan.top);
     let command = PlaceRows {
-        table: args.table.clone(),
+        table: ooxml_word_model::address::Address::parse(&args.table),
         beside: (plan.short_by > 0)
             .then_some(RowsBeside {
                 row: None,

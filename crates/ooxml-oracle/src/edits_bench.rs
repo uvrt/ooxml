@@ -49,7 +49,7 @@ fn command(k: usize, targets: &[String], writer: usize) -> SetText {
         })
     };
     SetText {
-        target,
+        target: ooxml_word_model::address::Address::from(target),
         text: format!("Edit {k} by writer {writer}: the quarterly figures, restated."),
         policy,
     }

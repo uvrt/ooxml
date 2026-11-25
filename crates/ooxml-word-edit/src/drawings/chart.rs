@@ -57,7 +57,7 @@ pub trait ChartParts {
 #[derive(Debug, Clone)]
 pub struct InsertChart<P> {
     /// A block the chart's paragraph follows, or a position inside a paragraph (`p:..@n`).
-    pub at: String,
+    pub at: ooxml_word_model::address::Address,
     /// Its parts.
     pub chart: P,
     /// Its size in points.
@@ -175,16 +175,16 @@ impl<P: ChartParts> InsertChart<P> {
         check_size(self.size)?;
         let mut created = Vec::new();
         let mut renamed = Vec::new();
-        let at = if self.at.contains('@') {
+        let at = if self.at.as_str().contains('@') {
             self.at.clone()
         } else {
             let docx = sink.docx()?;
-            no_row_or_cell(&docx, &self.at)?;
-            let style = continued_style(sink.doc(), &docx, &self.at);
-            let inserted = insert_paragraph(sink, &self.at, (true, "", style))?;
+            no_row_or_cell(&docx, self.at.as_str())?;
+            let style = continued_style(sink.doc(), &docx, self.at.as_str());
+            let inserted = insert_paragraph(sink, self.at.as_str(), (true, "", style))?;
             created.push(inserted.id.to_string());
             renamed.extend(inserted.renamed);
-            format!("{}@0", inserted.id)
+            ooxml_word_model::address::Address::from(format!("{}@0", inserted.id))
         };
         let docx = sink.docx()?;
         let place = crate::fields::place(sink.doc(), &docx, &at, true)?;
@@ -315,13 +315,13 @@ impl<P: ChartParts> Command<WordDoc> for InsertChart<P> {
 
     fn validate(&self, doc: &WordDoc) -> Result<()> {
         check_size(self.size)?;
-        if self.at.contains('@') {
+        if self.at.as_str().contains('@') {
             let docx = doc.docx()?;
             crate::fields::place(doc, &docx, &self.at, true).map(|_| ())
         } else {
             let docx = doc.docx()?;
-            no_row_or_cell(&docx, &self.at)?;
-            crate::paragraphs::anchor(doc, &docx, &self.at).map(|_| ())
+            no_row_or_cell(&docx, self.at.as_str())?;
+            crate::paragraphs::anchor(doc, &docx, self.at.as_str()).map(|_| ())
         }
     }
 

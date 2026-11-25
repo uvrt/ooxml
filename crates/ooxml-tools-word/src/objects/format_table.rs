@@ -10,6 +10,7 @@ use super::table_view::{regions_off, table_view, AcceptedView, TableView};
 use crate::review::{needed, Editing};
 use crate::structure::common::{call, outcome, policy, refused, Outcome};
 use ooxml_tools::{ArgEnum, Refusal, ToolError, ToolResult, TryCall, WayOut};
+use ooxml_word_edit::units::twips;
 use ooxml_word_edit::{CellValues, FormatTable, TableEdit, TableFormat, TableValues, TableWidth};
 use serde_json::{json, Value};
 
@@ -162,7 +163,9 @@ fn part_formats(
             if args.height.is_some() || args.header_rows.is_some() || args.cant_split.is_some() {
                 formats.push(TableFormat::Row {
                     row,
-                    height: args.height.map(|h| (h, args.height_rule == Some(HeightRule::Exact))),
+                    height: args
+                        .height
+                        .map(|h| (twips(h), args.height_rule == Some(HeightRule::Exact))),
                     cant_split: args.cant_split,
                 });
             }
@@ -171,7 +174,10 @@ fn part_formats(
         Scope::Column => {
             let column = accepted.column(given(args.column, "column")?, "column", retry)?;
             if let Some(width) = args.width {
-                formats.push(TableFormat::ColumnWidth { column, width });
+                formats.push(TableFormat::ColumnWidth {
+                    column,
+                    width: twips(width),
+                });
             }
             let rows: Vec<usize> = if accepted.table.rows_active() {
                 accepted.table.rows.clone()
@@ -192,7 +198,7 @@ fn part_formats(
             } else {
                 usize::try_from(column).unwrap_or(usize::MAX)
             };
-            values.width = args.width;
+            values.width = args.width.map(twips);
             vec![(row, column)]
         }
     };
@@ -228,18 +234,18 @@ fn table_values(
     TableValues {
         style: args.style.clone(),
         width: match (body, args.width_percent, args.width) {
-            (Some(body), _, _) => Some(TableWidth::Points(body.width)),
+            (Some(body), _, _) => Some(TableWidth::Length(twips(body.width))),
             // AutoFit to Window takes width_percent (after the rest)
             _ if args.width_of == Some(WidthOf::Window) => None,
             (None, Some(p), _) => Some(TableWidth::Percent(six_digits(p))),
-            (None, None, Some(w)) => Some(TableWidth::Points(w)),
+            (None, None, Some(w)) => Some(TableWidth::Length(twips(w))),
             (None, None, None) => None,
         },
         alignment: match body {
             Some(_) => Some("left".to_owned()),
             None => args.alignment.map(|a| a.as_str().to_owned()),
         },
-        indent: body.map(|b| b.indent),
+        indent: body.map(|b| twips(b.indent)),
         header_rows: args.header_rows.map(|h| usize::try_from(h).unwrap_or(usize::MAX)),
         shading: fill,
         borders,
@@ -290,8 +296,9 @@ fn table_scope(
         formats.extend(
             body.columns
                 .iter()
+                .map(|&width| twips(width))
                 .enumerate()
-                .map(|(column, &width)| TableFormat::ColumnWidth { column, width }),
+                .map(|(column, width)| TableFormat::ColumnWidth { column, width }),
         );
     }
     let has_values = values != TableValues::default();
@@ -447,7 +454,7 @@ fn finish(
     retry: &TryCall,
 ) -> Finished {
     let command = FormatTable {
-        table: args.table.clone(),
+        table: ooxml_word_model::address::Address::parse(&args.table),
         formats,
         policy: policy(editing),
         layout: editing.edit_layout(),

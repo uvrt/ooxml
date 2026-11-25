@@ -52,11 +52,12 @@ use crate::props::PropertyTracker;
 use crate::set_text::block_key;
 use crate::sink::{annotation_draws, EditSink};
 use crate::stamping::stamp_document;
+use crate::units::Twips;
 use crate::validate::Orders;
 use crate::work::{scope_above, Id, Work};
 use crate::{EditError, Result, WordDoc};
 use ooxml_store::{Command, Txn};
-use ooxml_word_model::address::direct;
+use ooxml_word_model::address::{direct, Address};
 use ooxml_word_model::docx::formatting::Formatting;
 use ooxml_word_model::docx::{at_path, find_path, Docx};
 use ooxml_word_model::ids::Entry;
@@ -69,19 +70,19 @@ use tracker::TableTracker;
 pub enum TableFormat {
     /// The table's properties (`set_table`).
     Table(TableValues),
-    /// A grid column's width, in points (`set_column_width`).
+    /// A grid column's width (`set_column_width`).
     ColumnWidth {
         /// The grid column.
         column: usize,
-        /// Points.
-        width: f64,
+        /// Its width.
+        width: Twips,
     },
-    /// A row's height (points, exactly or at least) and breaking (`set_row`).
+    /// A row's height (exactly or at least) and breaking (`set_row`).
     Row {
         /// The row.
         row: usize,
         /// The height and whether it is exact.
-        height: Option<(f64, bool)>,
+        height: Option<(Twips, bool)>,
         /// Whether the row may not break across pages.
         cant_split: Option<bool>,
     },
@@ -113,7 +114,7 @@ pub enum TableFormat {
 #[derive(Clone)]
 pub struct FormatTable<'l> {
     /// The table (an id, an alias).
-    pub table: String,
+    pub table: ooxml_word_model::address::Address,
     /// The edits.
     pub formats: Vec<TableFormat>,
     /// Untracked or tracked.
@@ -132,7 +133,7 @@ pub struct FormatTable<'l> {
 impl FormatTable<'_> {
     /// `formats` on `table`, with no layout and its keeps measured here.
     #[must_use]
-    pub fn new(table: String, formats: Vec<TableFormat>, policy: RevisionPolicy) -> Self {
+    pub fn new(table: Address, formats: Vec<TableFormat>, policy: RevisionPolicy) -> Self {
         Self {
             table,
             formats,
@@ -229,7 +230,7 @@ fn room_for(doc: &WordDoc, docx: &Docx, found: &Found) -> i64 {
     if found.part != docx.main {
         return 9026;
     }
-    let Ok(section) = crate::sections::find_section(doc, docx, &found.id) else {
+    let Ok(section) = crate::sections::find_section(doc, docx, &Address::parse(&found.id)) else {
         return 9026;
     };
     let properties = &section.section.properties;
@@ -304,7 +305,7 @@ impl Command<WordDoc> for FormatTable<'_> {
 
     fn validate(&self, doc: &WordDoc) -> Result<()> {
         let docx = doc.docx()?;
-        let found = find_table(doc, &docx, &self.table)?;
+        let found = find_table(doc, &docx, self.table.as_str())?;
         self.check(&docx, &found)
     }
 
@@ -322,7 +323,7 @@ impl Command<WordDoc> for FormatTable<'_> {
             )
         });
         if kept && !self.pages_later {
-            out.pages = keeps::table_pages(&sink, self.layout, &self.table)?;
+            out.pages = keeps::table_pages(&sink, self.layout, self.table.as_str())?;
         }
         Ok(out)
     }
@@ -353,7 +354,7 @@ impl FormatTable<'_> {
     /// The edits, through `sink`.
     fn edit(&self, sink: &mut EditSink<'_, '_>) -> Result<TableFormatted> {
         let docx = sink.docx()?;
-        let found = find_table(sink.doc(), &docx, &self.table)?;
+        let found = find_table(sink.doc(), &docx, self.table.as_str())?;
         self.check(&docx, &found)?;
         let room = room_for(sink.doc(), &docx, &found);
         sink.read(block_key(&found.part, &found.id));
@@ -383,7 +384,7 @@ impl FormatTable<'_> {
             (docx, found)
         } else {
             let docx = sink.docx()?;
-            let found = find_table(sink.doc(), &docx, &self.table)?;
+            let found = find_table(sink.doc(), &docx, self.table.as_str())?;
             (docx, found)
         };
         if !keeps_first {
@@ -503,7 +504,7 @@ impl FormatTable<'_> {
                 }
                 TableFormat::ColumnWidth { column, width } => {
                     let tracker = stamp.is_some().then(|| TableTracker::new(work, table, true));
-                    props::set_column_width(work, table, *column, props::twips(*width), orders);
+                    props::set_column_width(work, table, *column, width.0, orders);
                     if let (Some(tracker), Some(stamp)) = (tracker, stamp.as_deref_mut()) {
                         tracker.record(work, stamp, false, true, orders);
                     }

@@ -39,7 +39,7 @@ const REL_STYLES: &str = "http://schemas.openxmlformats.org/officeDocument/2006/
 #[derive(Debug, Clone)]
 pub struct DeleteBlocks {
     /// A block (an id, an alias), a span of blocks, or a heading's range.
-    pub target: String,
+    pub target: ooxml_word_model::address::Address,
     /// Delete a heading though blocks under it stay.
     pub force: bool,
     /// Untracked or tracked.
@@ -69,10 +69,10 @@ impl Command<WordDoc> for DeleteBlocks {
         let (ids, headings) = {
             let mut sink = EditSink::new(tx, self.policy.clone());
             let docx = sink.docx()?;
-            let ids = if self.target.contains("..") {
+            let ids = if self.target.has(ooxml_word_model::address::Shape::Dots) {
                 block_ids(sink.doc(), &docx, &self.target)?
             } else {
-                vec![self.target.clone()]
+                vec![self.target.as_str().to_owned()]
             };
             let headings = headings_kept(&mut sink, &docx, &ids, self.force)?;
             (ids, headings)
@@ -93,15 +93,15 @@ impl Command<WordDoc> for DeleteBlocks {
 ///
 /// # Errors
 /// The address's refusal.
-pub fn blocks_named(doc: &WordDoc, address: &str) -> Result<Vec<String>> {
+pub fn blocks_named(doc: &WordDoc, address: &Address) -> Result<Vec<String>> {
     let docx = doc.docx()?;
     block_ids(doc, &docx, address)
 }
 
 /// The ids of the blocks `address` names, in document order (docx-agent's `_blocks_of`
 /// and `_block_id`).
-fn block_ids(doc: &WordDoc, docx: &Docx, address: &str) -> Result<Vec<String>> {
-    let (part, blocks) = blocks_of(doc, docx, &Address::parse(address))?;
+fn block_ids(doc: &WordDoc, docx: &Docx, address: &Address) -> Result<Vec<String>> {
+    let (part, blocks) = blocks_of(doc, docx, address)?;
     let story = docx.part(&part).ok_or_else(|| EditError::no_part(part.clone()))?;
     let found = controls(docx);
     blocks

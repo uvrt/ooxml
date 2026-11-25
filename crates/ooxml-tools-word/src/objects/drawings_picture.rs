@@ -17,6 +17,7 @@ use crate::structure::common::{outcome, policy, refused, Outcome};
 use ooxml_base::pyfmt::round2;
 use ooxml_store::{Command, Txn};
 use ooxml_tools::{ArgEnum, Refusal, ToolError, ToolResult, TryCall, WayOut};
+use ooxml_word_edit::units::emu;
 use ooxml_word_edit::{
     picture_size, written_size, DrawingValues, EditError, FloatDrawing, FormatEdit, FormatPlan, InsertParagraph,
     InsertPicture, Property, RevisionPolicy, Setting, Value as SettingValue, WordDoc,
@@ -73,8 +74,8 @@ fn floating(args: &WordDrawings, align_taken: bool, list: &TryCall) -> Result<Op
         wrap: Some(wrap.as_str().to_owned()),
         horizontal_from: Some(args.against.map_or("column", |a| a.as_str()).to_owned()),
         x_align: align.map(|a| a.as_str().to_owned()),
-        x: if align.is_some() { None } else { args.x },
-        y: args.y,
+        x: if align.is_some() { None } else { args.x.map(emu) },
+        y: args.y.map(emu),
         ..DrawingValues::default()
     }))
 }
@@ -243,9 +244,10 @@ impl Command<WordDoc> for Picture<'_> {
             own = Some(id);
         }
         let command = InsertPicture {
-            at: own
-                .as_ref()
-                .map_or_else(|| plan.at.clone().unwrap_or_default(), |p| format!("{p}@0")),
+            at: ooxml_word_model::address::Address::from(
+                own.as_ref()
+                    .map_or_else(|| plan.at.clone().unwrap_or_default(), |p| format!("{p}@0")),
+            ),
             image: std::sync::Arc::clone(&plan.data),
             width: self.args.width,
             alt_text: Some(plan.alt_text.clone()),
@@ -278,7 +280,7 @@ impl Picture<'_> {
     fn align(&self, tx: &mut Txn<'_, WordDoc>, id: &str, edits: &mut Vec<Outcome>) -> Result<(), EditError> {
         let value = self.args.align.map_or("left", |a| a.as_str());
         let command = FormatEdit {
-            targets: vec![id.to_owned()],
+            targets: vec![ooxml_word_model::address::Address::parse(id)],
             plan: FormatPlan {
                 paragraph: vec![Setting {
                     property: Property::Alignment,

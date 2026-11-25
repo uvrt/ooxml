@@ -56,7 +56,7 @@ fn a_note_by_id_commits_past_an_edit_elsewhere() {
     let (shared, targets) = opened();
     let note = InsertNote {
         kind: NoteKind::Footnote,
-        at: format!("{}@0", targets[0]),
+        at: ooxml_word_model::address::Address::from(format!("{}@0", targets[0])),
         text: "A note".to_owned(),
         policy: RevisionPolicy::Untracked,
     };
@@ -66,8 +66,8 @@ fn a_note_by_id_commits_past_an_edit_elsewhere() {
 
 fn moved(first: &str, after: &str) -> MoveBlocks {
     MoveBlocks {
-        blocks: Moving::Blocks(first.to_owned()),
-        after: Some(after.to_owned()),
+        blocks: Moving::Blocks(ooxml_word_model::address::Address::from(first.to_owned())),
+        after: Some(ooxml_word_model::address::Address::from(after.to_owned())),
         before: None,
         policy: RevisionPolicy::Untracked,
     }
@@ -112,7 +112,7 @@ fn an_edit_commits_past_the_first_note_and_the_parts_it_makes() {
     let (shared, targets) = opened();
     let note = InsertNote {
         kind: NoteKind::Endnote,
-        at: format!("{}@0", targets[6]),
+        at: ooxml_word_model::address::Address::from(format!("{}@0", targets[6])),
         text: "The first note".to_owned(),
         policy: RevisionPolicy::Untracked,
     };
@@ -126,7 +126,7 @@ fn a_bookmark_commits_past_a_note_that_writes_its_notes_part_whole() {
     let (shared, targets) = opened();
     let note = |at: &str| InsertNote {
         kind: NoteKind::Footnote,
-        at: format!("{at}@0"),
+        at: ooxml_word_model::address::Address::from(format!("{at}@0")),
         text: "A note".to_owned(),
         policy: RevisionPolicy::Untracked,
     };

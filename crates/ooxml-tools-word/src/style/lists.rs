@@ -7,10 +7,12 @@
 use crate::review::{edit_refusal, Editing};
 use crate::structure::common::{call, need, outcome, policy, Outcome};
 use ooxml_tools::{python_dumps, ArgEnum, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
+use ooxml_word_edit::units::twips;
 use ooxml_word_edit::{
     numbered_by_style, paragraphs_of, unnumbered_styles_like, LevelFormat, ListAction, ListEdit, ListStep, ListsEdited,
     WordDoc,
 };
+use ooxml_word_model::address::Address;
 use ooxml_word_model::docx::numbering::{membership, Lists};
 use ooxml_word_model::docx::Docx;
 use ooxml_word_model::ids::W;
@@ -135,8 +137,9 @@ fn run(args: &WordLists, editing: &Editing<'_>, again: &TryCall) -> Result<ToolR
     let docx = doc
         .docx()
         .map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
+    let targets: Vec<Address> = args.targets.iter().map(|t| Address::parse(t)).collect();
     let mut paragraphs = Vec::new();
-    for target in &args.targets {
+    for target in &targets {
         let found = paragraphs_of(doc, &docx, target).map_err(|e| edit_refusal(e, "", again.clone()))?;
         paragraphs.extend(found);
     }
@@ -145,7 +148,7 @@ fn run(args: &WordLists, editing: &Editing<'_>, again: &TryCall) -> Result<ToolR
         refuse_style_numbered(&docx, &paragraphs, again)?;
     }
     let command = ListEdit {
-        targets: args.targets.clone(),
+        targets,
         action,
         policy: policy(editing),
     };
@@ -171,10 +174,10 @@ fn action(args: &WordLists, doc: &WordDoc, docx: &Docx, again: &TryCall) -> Resu
             format: args.number_format.clone(),
             text: args.label.clone(),
             start: args.start,
-            number_at: args.number_at,
-            text_at: args.text_at,
+            number_at: args.number_at.map(twips),
+            text_at: args.text_at.map(twips),
             follow: args.follow.map(|f| f.as_str().to_owned()),
-            tab_at: args.tab_at,
+            tab_at: args.tab_at.map(twips),
         }),
     })
 }
@@ -185,7 +188,7 @@ fn joined(doc: &WordDoc, docx: &Docx, join: Option<&str>, again: &TryCall) -> Re
     let Some(join) = join.map(str::trim).filter(|j| !j.is_empty()) else {
         return Ok(None);
     };
-    let found = paragraphs_of(doc, docx, join).map_err(|e| edit_refusal(e, "", again.clone()))?;
+    let found = paragraphs_of(doc, docx, &Address::parse(join)).map_err(|e| edit_refusal(e, "", again.clone()))?;
     let id = found.first().and_then(|(part, k)| {
         let story = docx.part(part)?;
         Some(story.ids.paragraphs().get(*k)?.id.clone())

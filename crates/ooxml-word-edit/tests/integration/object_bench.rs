@@ -58,7 +58,7 @@ fn object_edits_on_a_long_document() {
         ("format table, tracked", vec![whole], tracked.clone()),
         ("format column cells, tracked", column, tracked.clone()),
     ] {
-        let command = FormatTable::new(table.clone(), formats, policy);
+        let command = FormatTable::new(ooxml_word_model::address::Address::parse(&table), formats, policy);
         report(name, best(&bytes, &command));
     }
     for (name, change, policy) in [
@@ -84,7 +84,7 @@ fn object_edits_on_a_long_document() {
         ),
     ] {
         let command = EditTable {
-            table: table.clone(),
+            table: ooxml_word_model::address::Address::from(table.clone()),
             change,
             policy,
         };

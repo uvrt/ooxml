@@ -79,7 +79,7 @@ fn command(rng: &mut Rng, targets: &[String], writer: u64) -> SetText {
     let target = targets[rng.below(targets.len())].clone();
     let words: Vec<&str> = (0..1 + rng.below(6)).map(|_| WORDS[rng.below(WORDS.len())]).collect();
     SetText {
-        target,
+        target: ooxml_word_model::address::Address::from(target),
         text: words.join(" "),
         policy: policy(rng, writer),
     }
@@ -99,7 +99,7 @@ fn policy(rng: &mut Rng, writer: u64) -> RevisionPolicy {
 /// Two lines into a cell of the first table.
 fn cells(rng: &mut Rng, writer: u64) -> SetCells {
     SetCells {
-        table: "t@body/0".to_owned(),
+        table: ooxml_word_model::address::Address::from("t@body/0".to_owned()),
         writes: vec![CellWrite::at(
             rng.below(2),
             rng.below(2),
@@ -130,7 +130,7 @@ fn edit(rng: &mut Rng, (targets, controls): (&[String], &[String]), writer: u64)
     match rng.below(15) {
         0..=3 => Edit::Set(command(rng, targets, writer)),
         13 => Edit::Styled(SetStyledText {
-            target,
+            target: ooxml_word_model::address::Address::from(target),
             text: format!(
                 "{} **{}** *{}*",
                 WORDS[rng.below(WORDS.len())],
@@ -166,11 +166,11 @@ fn edit(rng: &mut Rng, (targets, controls): (&[String], &[String]), writer: u64)
         }),
         12 => Edit::Cells(cells(rng, writer)),
         11 => Edit::Block(DeleteBlock {
-            target: block_target(rng, target, controls),
+            target: ooxml_word_model::address::Address::from(block_target(rng, target, controls)),
             policy: policy(rng, writer),
         }),
         10 => Edit::Style(SetParagraphStyle {
-            target,
+            target: ooxml_word_model::address::Address::from(target),
             style: [Some("Heading 1"), Some("Quote"), Some("List Bullet 2"), None][rng.below(4)].map(str::to_owned),
             policy: policy(rng, writer),
         }),
@@ -321,7 +321,7 @@ fn a_batch_is_one_step_and_an_atomic_batch_refuses_whole() {
     let ops: Vec<SetText> = ids
         .iter()
         .map(|id| SetText {
-            target: id.clone(),
+            target: ooxml_word_model::address::Address::from(id.clone()),
             text: format!("Text of {id}"),
             policy: RevisionPolicy::Untracked,
         })
@@ -339,7 +339,7 @@ fn a_batch_is_one_step_and_an_atomic_batch_refuses_whole() {
     // an atomic batch with an op that refuses changes nothing
     let mut bad = ops.clone();
     bad.push(SetText {
-        target: "p:7FFFFFFE".to_owned(),
+        target: ooxml_word_model::address::Address::from("p:7FFFFFFE".to_owned()),
         text: "x".to_owned(),
         policy: RevisionPolicy::Untracked,
     });
