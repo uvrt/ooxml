@@ -14,16 +14,24 @@
 //! it opened, which is given for good only when it closes having made a step; a revert that
 //! takes all its commits back brings the number it opened on back.
 //!
-//! Must not: run anything inside the commit lock beyond the check, the rebase and replay of
-//! a change set on a moved head and the publish, except a transaction that conflicted
-//! [`StoreConfig::optimistic_tries`] times (design section 5); free old versions inside it.
+//! **The commit lock** is held for the publish only: a commit checks what was written since
+//! its snapshot, and rebases and replays its changes onto the head, outside it; under it,
+//! that the head is still the one it replayed onto, the numbers, the head, the history and
+//! the journal. A command that conflicted [`StoreConfig::optimistic_tries`] times (once, for
+//! one that read the whole document) closes the per-document **gate** and prepares again on
+//! the head: other commits wait for the gate before they publish -- not holding the lock --
+//! while readers, undo, redo and the reads of the history go on (design section 5).
+//!
+//! Must not: prepare a command, or replay a change set, inside the commit lock (but for a
+//! commit whose head moved [`MOVED_TRIES`] times, which replays under it); free old versions
+//! inside it; wait for the gate while holding it.
 
 use crate::changeset::ChangeSet;
 use crate::history::{Garbage, GroupMark, History, Planned, Step};
 use crate::ids::IdAllocator;
-use crate::journal::Journal;
+use crate::journal::{Journal, Since};
 use crate::stats::Counts;
-use crate::sync::{lock, HeadCell, Mutex, MutexGuard};
+use crate::sync::{lock, wait, Condvar, HeadCell, Mutex, MutexGuard};
 use crate::times::LockTimes;
 use crate::txn::TxnParts;
 use crate::{
@@ -55,6 +63,10 @@ impl Default for StoreConfig {
         }
     }
 }
+
+/// How many times a commit whose head moved between its check and its publish checks again
+/// outside the commit lock before it checks under it.
+const MOVED_TRIES: u32 = 3;
 
 /// Who runs a command; kept with its history step (scoped undo by writer).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -102,7 +114,7 @@ pub struct Committed<D: DocModel, O> {
     pub writes: KeySet<D::Key>,
     /// How many times it was prepared.
     pub attempts: u32,
-    /// Whether it ran under the commit lock after conflicts.
+    /// Whether it ran behind the gate after conflicts.
     pub exclusive: bool,
     /// Where its time went.
     pub timing: CommitTiming,
@@ -147,6 +159,9 @@ struct State<D: DocModel> {
     journal: Journal<D>,
     /// How long this lock was held and waited for.
     times: LockTimes,
+    /// Since when a command plans and commits behind the gate (`None`: open): another
+    /// commit publishes only once it is open again ([`Store::enter_gate`]).
+    gated: Option<Duration>,
 }
 
 /// The state, locked: when it is let go, how long it was held is counted (the wait is
@@ -177,11 +192,31 @@ impl<D: DocModel> Drop for Locked<'_, D> {
     }
 }
 
+/// The gate, closed by a command that plans and commits behind it ([`Store::enter_gate`]);
+/// opened again when dropped, on every path.
+struct Gate<'s, D: DocModel> {
+    store: &'s Store<D>,
+}
+
+impl<D: DocModel> Drop for Gate<'_, D> {
+    fn drop(&mut self) {
+        let mut guard = lock(&self.store.state);
+        if let Some(since) = guard.gated.take() {
+            let held = self.store.clock.monotonic().saturating_sub(since);
+            guard.times.gated.record(held);
+        }
+        drop(guard);
+        self.store.gate.notify_all();
+    }
+}
+
 /// One document's versions. Readers load the head without a lock; writers prepare in
 /// parallel and commit in a short critical section.
 pub struct Store<D: DocModel> {
     head: HeadCell<Version<D>>,
     state: Mutex<State<D>>,
+    /// Signalled when the gate opens.
+    gate: Condvar,
     ids: IdAllocator,
     config: StoreConfig,
     clock: Arc<dyn Clock>,
@@ -216,7 +251,9 @@ impl<D: DocModel> Store<D> {
                 history: History::new(config.history_depth),
                 journal: Journal::new(),
                 times: LockTimes::default(),
+                gated: None,
             }),
+            gate: Condvar::new(),
             ids: IdAllocator::new(counters.cursors),
             config,
             clock,
@@ -267,6 +304,47 @@ impl<D: DocModel> Store<D> {
             clock: &*self.clock,
             entered,
         }
+    }
+
+    /// The state under the commit lock with the gate open, or held by the caller
+    /// (`gated`): a commit waits here, the lock let go meanwhile, while a command plans
+    /// behind the gate.
+    fn lock_ungated(&self, gated: bool) -> Locked<'_, D> {
+        let locked = self.lock_state();
+        if gated || locked.gated.is_none() {
+            return locked;
+        }
+        drop(locked);
+        let asked = self.clock.monotonic();
+        let mut guard = lock(&self.state);
+        while guard.gated.is_some() {
+            guard = wait(&self.gate, guard);
+        }
+        let entered = self.clock.monotonic();
+        let waited = entered.saturating_sub(asked);
+        guard.times.waited.record(waited);
+        guard.times.gate_waited.record(waited);
+        Locked {
+            guard,
+            clock: &*self.clock,
+            entered,
+        }
+    }
+
+    /// Close the gate, once it is open: until the returned guard is dropped, no other
+    /// commit publishes (each waits in [`Store::lock_ungated`]); undo, redo and the reads of
+    /// the history go on. The commit lock is not held meanwhile.
+    fn enter_gate(&self) -> Gate<'_, D> {
+        let asked = self.clock.monotonic();
+        let mut guard = lock(&self.state);
+        while guard.gated.is_some() {
+            guard = wait(&self.gate, guard);
+        }
+        let entered = self.clock.monotonic();
+        guard.times.gate_waited.record(entered.saturating_sub(asked));
+        guard.gated = Some(entered);
+        drop(guard);
+        Gate { store: self }
     }
 
     /// The counters to save beside the bytes of `at`.
@@ -329,7 +407,7 @@ impl<D: DocModel> Store<D> {
     /// Run `command`: validate and prepare on the head's snapshot, commit if nothing it
     /// read or wrote was written since, otherwise prepare again on the new head; after
     /// [`StoreConfig::optimistic_tries`] conflicts (after one, for a command that read the
-    /// whole document), run it under the commit lock.
+    /// whole document), run it behind the gate.
     pub fn run<C: Command<D>>(&self, caller: &Caller, command: &C) -> Result<Committed<D, C::Out>, C::Error> {
         self.run_with(caller, command, &D::Setup::default())
     }
@@ -351,21 +429,51 @@ impl<D: DocModel> Store<D> {
             let mut tx = Txn::new(base, &self.ids, setup);
             let out = command.prepare(&mut tx)?;
             let whole = tx.reads().keys().is_none();
-            if let Some(done) = self.try_commit(caller, tx.into_parts()) {
+            if let Some(done) = self.try_commit(caller, tx.into_parts(), false) {
                 return Ok(self.committed(done, out, attempts, false, start));
             }
             self.counts.conflict();
             if whole {
                 // it read the whole document: any commit since conflicts with it again, so
-                // it is prepared again under the commit lock at once
+                // it is prepared again behind the gate at once
                 break;
             }
         }
-        self.run_exclusive(caller, command, setup, attempts + 1, start)
+        self.run_gated(caller, command, setup, attempts, start)
     }
 
-    /// The commit section: `None` on a conflict.
-    fn try_commit(&self, caller: &Caller, parts: TxnParts<D>) -> Option<Done<D>> {
+    /// Prepare and commit behind the gate, so that no other commit comes between: prepared
+    /// on the head outside the commit lock, as every command is (an undo meanwhile, which
+    /// the gate lets through, only has it prepared again).
+    fn run_gated<C: Command<D>>(
+        &self,
+        caller: &Caller,
+        command: &C,
+        setup: &D::Setup,
+        mut attempts: u32,
+        start: Duration,
+    ) -> Result<Committed<D, C::Out>, C::Error> {
+        self.counts.exclusive();
+        let _gate = self.enter_gate();
+        loop {
+            attempts += 1;
+            let base = self.snapshot();
+            command.validate(base.doc())?;
+            let mut tx = Txn::new(base, &self.ids, setup);
+            let out = command.prepare(&mut tx)?;
+            if let Some(done) = self.try_commit(caller, tx.into_parts(), true) {
+                return Ok(self.committed(done, out, attempts, true, start));
+            }
+            self.counts.conflict();
+        }
+    }
+
+    /// The commit: `None` on a conflict. What was written since the transaction's snapshot
+    /// is checked, and its changes rebased and replayed onto the head, outside the commit
+    /// lock; under it, only that the head is still the one replayed onto, and the publish.
+    /// Where the head moved meanwhile it is checked again from the newer head; after
+    /// [`MOVED_TRIES`] such moves, under the lock. `gated`: the caller holds the gate.
+    fn try_commit(&self, caller: &Caller, mut parts: TxnParts<D>, gated: bool) -> Option<Done<D>> {
         if parts.changes.is_empty() {
             return Some(Done {
                 version: parts.base,
@@ -381,15 +489,89 @@ impl<D: DocModel> Store<D> {
         // transaction can have read them, and its own reads of them are of its own work
         let mut depends = parts.reads.without(&parts.created);
         depends.extend(&parts.writes.without(&parts.merges).without_where(D::derived));
-        let mut state = self.lock_state();
-        let entered = self.clock.monotonic();
-        let head = self.head.load();
-        if head.written_since(parts.base.seq(), &depends) {
+        let reads = history_reads(parts.reads.without(&parts.created), &parts.predicates);
+        let changes: Arc<[D::Change]> = std::mem::take(&mut parts.changes).into();
+        let mut moved = 0;
+        loop {
+            let last = moved >= MOVED_TRIES;
+            let mut early = None;
+            if !last {
+                let head = self.head.load();
+                let since = if Arc::ptr_eq(&head, &parts.base) {
+                    Some((head, Since::none()))
+                } else {
+                    // the head and the entries that led to it, at once
+                    let state = self.lock_state();
+                    let head = self.head.load();
+                    state.journal.since_base(parts.base.seq()).map(|since| (head, since))
+                };
+                let (head, since) = since?;
+                early = Some((
+                    Arc::clone(&head),
+                    self.onto((&parts, &changes), &depends, &head, &since)?,
+                ));
+            }
+            let mut state = self.lock_ungated(gated);
+            let entered = self.clock.monotonic();
+            let head = self.head.load();
+            let (doc, changes) = match early {
+                Some((onto, planned)) if Arc::ptr_eq(&onto, &head) => planned,
+                Some(_) => {
+                    // published to meanwhile: checked again from the newer head
+                    drop(state);
+                    moved += 1;
+                    continue;
+                }
+                None => {
+                    let since = if Arc::ptr_eq(&head, &parts.base) {
+                        Since::none()
+                    } else {
+                        state.journal.since_base(parts.base.seq())?
+                    };
+                    self.onto((&parts, &changes), &depends, &head, &since)?
+                }
+            };
+            let body = Body {
+                changes,
+                reads,
+                writes: resolved_writes(&doc, parts.writes, &parts.created),
+                caller: caller.0.clone(),
+            };
+            let (version, writes, garbage) = self.publish(&mut state, Arc::clone(&head), doc, body);
+            let held = self.clock.monotonic().saturating_sub(entered);
+            drop(state);
+            drop(garbage);
+            return Some(Done {
+                version,
+                previous: Some(head),
+                changed: true,
+                writes,
+                held,
+            });
+        }
+    }
+
+    /// The transaction's work as it applies to `head`, `since` the entries published after
+    /// its snapshot up to `head`: its own when nothing was published since, else its changes
+    /// rebased past theirs and replayed onto `head`; `None` when it conflicts -- a key it
+    /// depends on written since, a key written since that meets a condition it read by, or
+    /// a change that cannot be rebased or applied.
+    fn onto(
+        &self,
+        (parts, changes): (&TxnParts<D>, &Arc<[D::Change]>),
+        depends: &KeySet<D::Key>,
+        head: &Snapshot<D>,
+        since: &Since<D>,
+    ) -> Option<(D, Arc<[D::Change]>)> {
+        if Arc::ptr_eq(head, &parts.base) {
+            return Some((parts.work.clone(), Arc::clone(changes)));
+        }
+        if head.written_since(parts.base.seq(), depends) {
             return None;
         }
-        if !parts.predicates.is_empty() && head.seq() > parts.base.seq() {
+        if !parts.predicates.is_empty() {
             // read by condition: a key written since that meets it on the head conflicts
-            let written = state.journal.written_since(parts.base.seq())?;
+            let written = since.written();
             let keys = written.keys()?;
             if keys
                 .iter()
@@ -398,96 +580,13 @@ impl<D: DocModel> Store<D> {
                 return None;
             }
         }
-        let (doc, changes) = if Arc::ptr_eq(&head, &parts.base) {
-            (parts.work, parts.changes.into())
-        } else {
-            // Disjoint from everything committed since: the changes, rebased past those
-            // commits' (positions moved past theirs), apply to the head. A change that
-            // cannot be rebased or applied after all is a conflict: prepared again.
-            let rebased: Arc<[D::Change]> = state.journal.rebase(parts.base.seq(), parts.changes)?.into();
-            let doc = replay(head.doc(), &rebased).ok()?;
-            self.counts.rebased();
-            (doc, rebased)
-        };
-        let body = Body {
-            changes,
-            reads: history_reads(parts.reads.without(&parts.created), &parts.predicates),
-            writes: resolved_writes(&doc, parts.writes, &parts.created),
-            caller: caller.0.clone(),
-        };
-        let (version, writes, garbage) = self.publish(&mut state, Arc::clone(&head), doc, body);
-        let held = self.clock.monotonic().saturating_sub(entered);
-        drop(state);
-        drop(garbage);
-        Some(Done {
-            version,
-            previous: Some(head),
-            changed: true,
-            writes,
-            held,
-        })
-    }
-
-    /// Prepare and commit under the commit lock, so nothing can come between.
-    fn run_exclusive<C: Command<D>>(
-        &self,
-        caller: &Caller,
-        command: &C,
-        setup: &D::Setup,
-        attempts: u32,
-        start: Duration,
-    ) -> Result<Committed<D, C::Out>, C::Error> {
-        self.counts.exclusive();
-        let mut state = self.lock_state();
-        let entered = self.clock.monotonic();
-        let base = self.head.load();
-        let mut tx = Txn::new(Arc::clone(&base), &self.ids, setup);
-        let out = match command.validate(base.doc()).and_then(|()| command.prepare(&mut tx)) {
-            Ok(out) => out,
-            Err(error) => {
-                let held = self.clock.monotonic().saturating_sub(entered);
-                state.times.exclusive.record(held);
-                return Err(error);
-            }
-        };
-        let parts = tx.into_parts();
-        if parts.changes.is_empty() {
-            let held = self.clock.monotonic().saturating_sub(entered);
-            state.times.exclusive.record(held);
-            drop(state);
-            let done = Done {
-                version: base,
-                previous: None,
-                changed: false,
-                writes: KeySet::new(),
-                held: Duration::ZERO,
-            };
-            return Ok(self.committed(done, out, attempts, true, start));
-        }
-        let body = Body {
-            changes: parts.changes.into(),
-            reads: history_reads(parts.reads.without(&parts.created), &parts.predicates),
-            writes: resolved_writes(&parts.work, parts.writes, &parts.created),
-            caller: caller.0.clone(),
-        };
-        let (version, writes, garbage) = self.publish(&mut state, Arc::clone(&base), parts.work, body);
-        let held = self.clock.monotonic().saturating_sub(entered);
-        state.times.exclusive.record(held);
-        drop(state);
-        drop(garbage);
-        Ok(self.committed(
-            Done {
-                version,
-                previous: Some(base),
-                changed: true,
-                writes,
-                held,
-            },
-            out,
-            attempts,
-            true,
-            start,
-        ))
+        // Disjoint from everything committed since: the changes, rebased past those
+        // commits' (positions moved past theirs), apply to the head. A change that cannot be
+        // rebased or applied after all is a conflict: prepared again.
+        let rebased: Arc<[D::Change]> = since.rebase(changes.to_vec())?.into();
+        let doc = replay(head.doc(), &rebased).ok()?;
+        self.counts.rebased();
+        Some((doc, rebased))
     }
 
     /// Publish `doc` as the next version after `before` and record the step in the history.

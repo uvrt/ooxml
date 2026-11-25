@@ -291,7 +291,8 @@ fn run_phase(name: &str, bytes: &Arc<[u8]>, workers: Vec<Worker>, secs: u64, sta
     );
     println!("  lock {}", histogram("held", &times.held));
     println!("  lock {}", histogram("waited", &times.waited));
-    println!("  lock {}", histogram("held by runs under it", &times.exclusive));
+    println!("  {}", histogram("gate held", &times.gated));
+    println!("  {}", histogram("gate waited", &times.gate_waited));
 }
 
 fn context(name: &str) -> CallContext {

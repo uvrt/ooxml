@@ -139,16 +139,19 @@ fn upper_of(index: usize) -> u64 {
 }
 
 /// How long the commit lock was held and waited for, each time it was taken (commits,
-/// conflicts found, runs under the lock, history operations, groups and the reads of the
-/// history that take it).
+/// history operations, groups and the reads of the history that take it), and how long the
+/// gate was held and waited for.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LockTimes {
     /// From taking the lock to letting it go.
     pub held: Histogram,
     /// From asking for the lock to taking it.
     pub waited: Histogram,
-    /// Of `held`, the runs of a command prepared under the lock after conflicts.
-    pub exclusive: Histogram,
+    /// How long a command that conflicted held the gate, preparing and committing behind it
+    /// (the commit lock is not held meanwhile).
+    pub gated: Histogram,
+    /// How long a commit waited for the gate to open, and a command for the gate to be its.
+    pub gate_waited: Histogram,
 }
 
 #[cfg(test)]

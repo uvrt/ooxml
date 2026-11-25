@@ -6,8 +6,8 @@
 //! [`ReadPredicate`]) and its change set; the commit
 //! (validate, prepare on a snapshot, commit in a short critical section with conflict
 //! detection -- a change set disjoint from the commits since its snapshot is rebased past
-//! theirs ([`DocModel::rebase`]) -- and redo, then a run under the commit lock after
-//! [`StoreConfig::optimistic_tries`] conflicts); batches as one transaction and one history
+//! theirs ([`DocModel::rebase`]) outside that section -- and redo, then a run behind the
+//! document's gate after [`StoreConfig::optimistic_tries`] conflicts); batches as one transaction and one history
 //! step ([`Batch`]); history (undo, redo, scoped undo that refuses entangled steps); version
 //! numbers and id sequences that are never given twice, also across a reopen ([`Counters`]).
 //!
