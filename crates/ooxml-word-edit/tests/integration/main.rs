@@ -18,6 +18,7 @@ mod notes_copied;
 mod notes_placed;
 mod object_bench;
 mod object_writers;
+mod review_controls;
 mod review_reads;
 mod review_writers;
 mod saving;
