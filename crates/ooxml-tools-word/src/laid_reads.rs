@@ -54,8 +54,8 @@ impl LaidRead<'_> {
             .unwrap_or_else(PoisonError::into_inner)
             .coverage(&self.laid)
             .ok_or_else(not_ours)?;
-        Ok(coverage_facts(&coverage, |path| {
-            self.laid.id_of(path).map(str::to_owned)
+        Ok(coverage_facts(&coverage, |key, path| {
+            self.laid.id_named(key, path).map(|id| id.to_string())
         }))
     }
 

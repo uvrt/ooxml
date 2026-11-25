@@ -39,7 +39,7 @@ use ooxml_base::Cancel;
 use ooxml_session::{CallCancel, CallContext, DocId, DocKind, Session, SessionError};
 use ooxml_tools::{Refusal, ToolError, WayOut};
 use ooxml_tools_word::{laid_to_draw, EnginePages, LayoutLimit, WordLayout};
-use ooxml_word_pages::LaidVersion;
+use ooxml_word_pages::{LaidVersion, PageEngine};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -301,12 +301,12 @@ impl LiveView for Session {
             let mut engine = lock(layout);
             let last = engine.last().is_some_and(|last| Arc::ptr_eq(last, laid));
             if last {
-                engine.page_svg(laid, page - 1)
+                drawn(&mut engine, laid, page - 1)
             } else {
                 None
             }
         });
-        let (svg, mut warnings) = match painted {
+        let (svg, mut warnings, ids) = match painted {
             Some(painted) => painted,
             None => {
                 let spare = match kept.spare() {
@@ -322,7 +322,7 @@ impl LiveView for Session {
                         spare
                     }
                 };
-                let painted = lock(&*spare.engine).page_svg(&spare.version, page - 1);
+                let painted = drawn(&mut lock(&*spare.engine), &spare.version, page - 1);
                 painted.ok_or_else(|| {
                     ViewError::NotDrawn(ToolError::internal(
                         format!("page {page} could not be drawn"),
@@ -336,10 +336,18 @@ impl LiveView for Session {
         Ok(PageSvg {
             page,
             token: token.to_owned(),
-            svg: tag::tagged(&svg, &docx),
+            svg: tag::tagged(&svg, &docx, &ids),
             warnings,
         })
     }
+}
+
+/// Page `page` (0-based) of `version` as SVG, what is not drawn beside it, and the tool's
+/// ids of its paragraphs as the version's names give them (what its groups are tagged with).
+fn drawn(engine: &mut PageEngine, version: &LaidVersion, page: usize) -> Option<(String, Vec<String>, tag::Ids)> {
+    let (svg, warnings) = engine.page_svg(version, page)?;
+    let ids = engine.paragraph_ids(version, page)?;
+    Some((svg, warnings, tag::Ids::from(ids)))
 }
 
 /// The Word document's state, or why there is none.

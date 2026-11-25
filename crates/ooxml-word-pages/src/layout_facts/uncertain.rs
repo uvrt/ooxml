@@ -42,7 +42,10 @@ pub fn uncertain(facts: &Facts<'_>, coverage: &Coverage) -> Vec<Uncertain> {
         let at = entry
             .path
             .as_deref()
-            .map(|path| facts.version().id_of(path).unwrap_or(path).to_owned());
+            .map(|path| match facts.version().id_named(entry.key, path) {
+                Some(id) => id.to_string(),
+                None => path.to_owned(),
+            });
         on(&mut pages, page).placeholders.push(Approximated {
             reason: entry.reason().to_owned(),
             at,

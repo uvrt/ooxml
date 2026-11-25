@@ -23,6 +23,7 @@ use crate::vertical::LineRule;
 use ooxml_base::Q;
 use ooxml_text::breaks::Line;
 use ooxml_text::measure::Measured;
+use ooxml_word_model::ids::BlockKey;
 use ooxml_word_model::model::Paragraph;
 use ooxml_word_model::value::{Text, Value};
 use ooxml_word_model::{Model, WordDocument};
@@ -38,6 +39,8 @@ pub struct Placeholder {
     pub message: &'static str,
     /// Its element's path (`w:body/w:p[2]`).
     pub path: Text,
+    /// Its paragraph's key, beside its path (`None`: one no story's index holds).
+    pub key: Option<BlockKey>,
     /// Its height is estimated from its text (not stated in the file).
     pub estimated: bool,
 }
@@ -62,6 +65,7 @@ impl Placeholder {
             reason: DRAWING,
             message: DRAWING_MESSAGE,
             path: paragraph.path.clone(),
+            key: paragraph.key,
             estimated: true,
         })
     }

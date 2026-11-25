@@ -479,6 +479,95 @@ fn line_numbers_and_column_separators_are_anchored_on_their_paragraph_and_their_
     assert!(svg.contains(r#"data-docx-path="w:sectPr[1]/w:lnNumType""#));
 }
 
+/// `n` paragraphs and a table of `rows` rows after them, each paragraph and row given a
+/// paraId where `stamped` (the paths the same either way).
+fn stampable(n: usize, rows: usize, stamped: bool) -> String {
+    const W14: &str = r#"xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml""#;
+    let id = |k: usize| {
+        if stamped {
+            format!(r#" {W14} w14:paraId="{:08X}""#, 0x1000_0000 + k)
+        } else {
+            String::new()
+        }
+    };
+    let mut out: String = (0..n)
+        .map(|k| {
+            format!(
+                "<w:p{}><w:r><w:t>{k} some words on a line of the body</w:t></w:r></w:p>",
+                id(k)
+            )
+        })
+        .collect();
+    out.push_str("<w:tbl><w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid>");
+    for r in 0..rows {
+        out.push_str(&format!(
+            "<w:tr{}><w:tc><w:tcPr><w:tcBorders><w:top w:val=\"single\" w:sz=\"4\"/></w:tcBorders></w:tcPr><w:p{}><w:r><w:t>row {r}</w:t></w:r></w:p></w:tc></w:tr>",
+            id(10_000 + r),
+            id(20_000 + r)
+        ));
+    }
+    out.push_str(&format!("</w:tbl><w:p{}/>", id(30_000)));
+    out
+}
+
+#[test]
+fn a_first_edit_that_stamps_an_unstamped_document_names_every_block_by_its_new_key() {
+    // the version before names its blocks by ordinal keys; the next, the same paths
+    // stamped, by durable ones: nothing kept from the version before may name a block by
+    // a key it no longer has (the paint's names are asserted against their paths in a
+    // debug build; a page tier carrying anchors must be keyed by them -- LK2)
+    let mut kept = engine();
+    let before = kept
+        .lay_out_bytes(Arc::from(package(&stampable(80, 30, false))))
+        .unwrap()
+        .unwrap();
+    for k in 0..before.page_count() {
+        kept.paint(&before, k).unwrap();
+        kept.page_svg(&before, k).unwrap();
+        kept.page_read(&before, k).unwrap();
+    }
+    let _ = before.facts();
+    let after = kept
+        .lay_out_bytes(Arc::from(package(&stampable(80, 30, true))))
+        .unwrap()
+        .unwrap();
+    assert_eq!(after.page_count(), before.page_count());
+    let names = &after.layout().document.names;
+    let (mut lines, mut rules) = (0, 0);
+    for k in 0..after.page_count() {
+        let paint = kept.paint(&after, k).unwrap();
+        for line in &paint.lines {
+            let anchor = line.anchor.expect("a body line is anchored");
+            assert!(anchor.block.durable(), "{}", line.path);
+            assert_eq!(names.path(anchor).as_deref(), Some(&*line.path));
+            assert_eq!(
+                names.id(anchor.block).map(|id| id.to_string()).as_deref(),
+                after.id_of(&line.path)
+            );
+            lines += 1;
+        }
+        for rule in paint.rules.iter().filter(|r| r.kind == "table-border") {
+            let anchor = rule.anchor.expect("a cell's rule is anchored");
+            assert!(anchor.block.durable());
+            assert_eq!(names.path(anchor).as_deref(), Some(&*rule.path));
+            rules += 1;
+        }
+        kept.page_svg(&after, k).unwrap();
+        kept.page_read(&after, k).unwrap();
+    }
+    assert!(lines > 100 && rules > 10, "{lines} lines, {rules} rules");
+    for page in &after.facts().pages {
+        for line in &page.lines {
+            assert!(line.anchor.is_some_and(|a| a.block.durable()), "{}", line.path);
+        }
+        assert_eq!(page.anchors.len(), page.blocks.len());
+        for (anchor, path) in page.anchors.iter().zip(&page.blocks) {
+            assert!(anchor.block.durable());
+            assert_eq!(names.path(*anchor).as_deref(), Some(&**path));
+        }
+    }
+}
+
 #[test]
 fn a_page_of_another_generation_is_not_painted() {
     let mut first = engine();

@@ -4,6 +4,11 @@
 //! story's part a header's or footer's group names, the notes part for a note's path, else
 //! the main part -- as docx-agent's `layout._tag` gives it.
 //!
+//! A group's id comes from the version's names where its lines are anchored ([`Ids`], the
+//! engine's `paragraph_ids`: the same names its `data-docx-path` is written from), and is
+//! found from its path only where they are not (a text box's paragraph); a named one is
+//! asserted equal to the path's in debug builds.
+//!
 //! Must not: change anything of the SVG but add the attribute, or tag a group that is not a
 //! paragraph's (a drawing's, a line's).
 
@@ -14,8 +19,23 @@ use std::collections::HashMap;
 /// What opens a paragraph's group.
 const GROUP: &str = "<g data-docx-path=\"";
 
-/// `svg` with `data-docx-agent-id` on every paragraph group whose paragraph `docx` names.
-pub(super) fn tagged(svg: &str, docx: &Docx) -> String {
+/// A page's paragraphs' ids as the version's names give them, by the group they are drawn
+/// in: its story part (a header's or footer's) and its path.
+#[derive(Debug, Default)]
+pub(super) struct Ids(HashMap<(Option<String>, String), String>);
+
+impl From<Vec<(Option<ooxml_word_model::value::Text>, String, String)>> for Ids {
+    fn from(named: Vec<(Option<ooxml_word_model::value::Text>, String, String)>) -> Ids {
+        Ids(named
+            .into_iter()
+            .map(|(part, path, id)| ((part.map(|p| p.to_string()), path), id))
+            .collect())
+    }
+}
+
+/// `svg` with `data-docx-agent-id` on every paragraph group whose paragraph `docx` names:
+/// its id from `named` where the page's names give it, else from its path.
+pub(super) fn tagged(svg: &str, docx: &Docx, named: &Ids) -> String {
     let mut out = String::with_capacity(svg.len() + svg.len() / 16);
     let mut ids: HashMap<(Option<String>, String), Option<String>> = HashMap::new();
     let mut rest = svg;
@@ -30,9 +50,19 @@ pub(super) fn tagged(svg: &str, docx: &Docx) -> String {
         let head = from.get(..end).unwrap_or_default();
         out.push_str(head);
         if let Some((path, part)) = paragraph_group(&attributes) {
-            let found = ids
-                .entry((part.clone(), path.clone()))
-                .or_insert_with(|| paragraph_id(docx, &path, part.as_deref()));
+            let found = ids.entry((part.clone(), path.clone())).or_insert_with(|| {
+                match named.0.get(&(part.clone(), path.clone())) {
+                    Some(id) => {
+                        debug_assert_eq!(
+                            paragraph_id(docx, &path, part.as_deref()).as_deref(),
+                            Some(id.as_str()),
+                            "{path} is tagged as its path names it"
+                        );
+                        Some(id.clone())
+                    }
+                    None => paragraph_id(docx, &path, part.as_deref()),
+                }
+            });
             if let Some(id) = found {
                 out.push_str(" data-docx-agent-id=\"");
                 out.push_str(&escape(id));
