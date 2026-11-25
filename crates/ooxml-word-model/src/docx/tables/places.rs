@@ -121,7 +121,7 @@ impl GridPlaces {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::docx::tables::{CellSpec, RowSpec, VMerge};
+    use crate::docx::tables::{CellSpec, RowSpec, VMerge, GRID_VALUE_MAX};
 
     fn row(before: &str, cells: &[(&str, VMerge)]) -> RowSpec {
         RowSpec::new(
@@ -167,7 +167,8 @@ mod tests {
 
     #[test]
     fn a_span_of_billions_of_columns_is_one_run() {
-        let specs = [row("2147483645", &[("2147483645", VMerge::None), ("1", VMerge::None)])];
+        let max = GRID_VALUE_MAX.to_string();
+        let specs = [row(&max, &[(&max, VMerge::None), ("1", VMerge::None)])];
         let places = GridPlaces::of(&Grid::build(&specs, 2));
         assert_eq!(places.runs(0).len(), 2);
         assert_eq!(places.get(0, 2_147_483_644), None);

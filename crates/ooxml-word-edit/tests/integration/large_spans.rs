@@ -8,6 +8,7 @@
 use crate::common::editor;
 use ooxml_store::Caller;
 use ooxml_word_edit::{CellWrite, EditError, EditTable, Editor, RevisionPolicy, SetCells, TableChange};
+use ooxml_word_model::docx::tables::{grid_span, GRID_VALUE_MAX};
 use ooxml_zip::{Method, NewEntry, Writer};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -15,22 +16,29 @@ use std::time::{Duration, Instant};
 const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 const REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument";
 
-/// The values tried: the largest span Word opens, and one past what it opens.
-const HUGE: [usize; 2] = [2_147_483_645, 2_147_483_647];
+/// The values tried, as written: the largest span Word opens, `2147483647` (refused by
+/// Word), and a value past 64 bits, which wraps to 1661992959 columns.
+fn huge() -> [String; 3] {
+    [
+        GRID_VALUE_MAX.to_string(),
+        (GRID_VALUE_MAX + 2).to_string(),
+        "99999999999999999999".to_owned(),
+    ]
+}
 
 /// Well under what one place per grid column would take (seconds and gigabytes).
 const QUICK: Duration = Duration::from_secs(5);
 
-fn cell(span: Option<usize>, text: &str) -> String {
+fn cell(span: Option<&str>, text: &str) -> String {
     let span = span.map_or_else(String::new, |s| {
         format!(r#"<w:tcPr><w:gridSpan w:val="{s}"/></w:tcPr>"#)
     });
     format!("<w:tc>{span}<w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>")
 }
 
-/// A document of one table on a grid of two columns: row 0 a cell of `span` columns and
-/// one cell after it, row 1 `w:gridBefore` `span` and one cell, row 2 two plain cells.
-fn document(span: usize) -> Editor {
+/// A document of one table on a grid of two columns: row 0 a cell of `w:gridSpan` `span`
+/// and one cell after it, row 1 `w:gridBefore` `span` and one cell, row 2 two plain cells.
+fn document(span: &str) -> Editor {
     let rows = [
         format!("<w:tr>{}{}</w:tr>", cell(Some(span), "wide"), cell(None, "after")),
         format!(
@@ -97,9 +105,11 @@ fn split(editor: &Editor, row: usize, column: usize) -> Result<(), EditError> {
 
 #[test]
 fn set_cells_writes_across_a_span_of_billions_of_columns() {
-    for span in HUGE {
+    for raw in huge() {
+        let span = grid_span(Some(&raw));
+        assert!(span > 1_000_000_000, "{raw}");
         let started = Instant::now();
-        let editor = document(span);
+        let editor = document(&raw);
         // anywhere in the wide cell is the wide cell; the cells after it, past the span
         assert_eq!(set(&editor, 0, 0).unwrap(), ["c0,0"], "{span}");
         assert_eq!(set(&editor, 0, span - 1).unwrap(), ["c0,0"], "{span}");
@@ -142,9 +152,11 @@ fn set_cells_writes_across_a_span_of_billions_of_columns() {
 
 #[test]
 fn a_split_in_a_table_of_billions_of_columns_is_quick() {
-    for span in HUGE {
+    for raw in huge() {
+        let span = grid_span(Some(&raw));
+        assert!(span > 1_000_000_000, "{raw}");
         let started = Instant::now();
-        let editor = document(span);
+        let editor = document(&raw);
         // no cell at the place: refused with the table's shape, counted by runs
         let Err(EditError::Refused(message)) = split(&editor, 1, 3) else {
             panic!("{span}: (1, 3) is no cell");
