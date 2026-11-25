@@ -722,6 +722,7 @@ version = "0.1.0"
 dependencies = [
  "fancy-regex",
  "ooxml-base",
+ "ooxml-numfmt",
  "ooxml-tools-derive",
  "serde_json",
  "thiserror",

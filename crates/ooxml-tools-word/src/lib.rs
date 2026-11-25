@@ -57,7 +57,7 @@ pub use spaced_reply::note_spaced;
 // each group whole, so a new tool in a group is named only there.
 pub use objects::*;
 pub use review::*;
-pub use sources::{Clock, Day, SourceRefused, SourceRows, SourceValue, Sources};
+pub use sources::{Cell, Clock, Day, SourceRefused, SourceRows, Sources};
 pub use structure::*;
 pub use style::*;
 pub use text::*;
