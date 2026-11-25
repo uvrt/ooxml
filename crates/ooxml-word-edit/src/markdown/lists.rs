@@ -109,7 +109,7 @@ impl Writer<'_> {
         let source = document_definition(&docx, &lists, ordered);
         let abstract_id = match source {
             Some(source) => {
-                let part = part_of(sink, &main)?.ok_or_else(|| crate::EditError::NoPart("numbering".to_owned()))?;
+                let part = part_of(sink, &main)?.ok_or_else(|| crate::EditError::no_part("numbering".to_owned()))?;
                 copy_abstract(sink, &main, &part, source)?
             }
             None => {

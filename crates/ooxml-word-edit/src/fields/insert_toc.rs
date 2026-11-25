@@ -120,14 +120,14 @@ impl InsertToc<'_> {
         let docx = sink.docx()?;
         let part = docx
             .part(&docx.main)
-            .ok_or_else(|| EditError::NoPart(docx.main.clone()))?;
+            .ok_or_else(|| EditError::no_part(docx.main.clone()))?;
         let path = part
             .ids
             .paragraphs()
             .iter()
             .find(|p| p.id == made.id)
             .map(|p| p.path.to_vec())
-            .ok_or_else(|| EditError::Path(docx.main.clone()))?;
+            .ok_or_else(|| EditError::no_element(docx.main.clone()))?;
         Ok((Holder { path, id: made.id, own }, made.renamed))
     }
 
@@ -143,7 +143,7 @@ impl InsertToc<'_> {
             .iter()
             .find(|l| l.part == main && l.found.begin == begin)
             .cloned()
-            .ok_or_else(|| EditError::Path(main.clone()))?;
+            .ok_or_else(|| EditError::no_element(main.clone()))?;
         let known = (main.clone(), position(sink.doc(), &docx, &toc));
         let inputs = Inputs {
             today: self.today,
@@ -164,7 +164,7 @@ impl InsertToc<'_> {
         let docx = sink.docx()?;
         let toc = find_toc(sink.doc(), &docx, &main, &holder)?;
         let id = toc.id();
-        let part = docx.part(&main).ok_or_else(|| EditError::NoPart(main.clone()))?;
+        let part = docx.part(&main).ok_or_else(|| EditError::no_part(main.clone()))?;
         let mut places = toc_paragraphs(part.root(), &toc);
         if !holder.own {
             places.pop();
@@ -199,7 +199,7 @@ fn position(doc: &WordDoc, docx: &ooxml_word_model::docx::Docx, toc: &Located) -
 /// The table of contents whose end is in the holder paragraph (its end is kept by every
 /// rebuild; for its own new paragraph, the last whose end is there).
 fn find_toc(doc: &WordDoc, docx: &ooxml_word_model::docx::Docx, main: &str, holder: &Holder) -> Result<Located> {
-    let part = docx.part(main).ok_or_else(|| EditError::NoPart(main.to_owned()))?;
+    let part = docx.part(main).ok_or_else(|| EditError::no_part(main.to_owned()))?;
     let id = &holder.id;
     let path = part
         .ids
@@ -207,14 +207,14 @@ fn find_toc(doc: &WordDoc, docx: &ooxml_word_model::docx::Docx, main: &str, hold
         .iter()
         .find(|p| p.id == *id)
         .map(|p| p.path.to_vec())
-        .ok_or_else(|| EditError::Path(main.to_owned()))?;
+        .ok_or_else(|| EditError::no_element(main.to_owned()))?;
     all_fields(doc, docx)
         .iter()
         .filter(|l| l.part == main && l.found.keyword() == "TOC")
         .filter(|l| l.found.end.as_ref().and_then(|e| paragraph_of(part.root(), e)).as_ref() == Some(&path))
         .last()
         .cloned()
-        .ok_or_else(|| EditError::Path(main.to_owned()))
+        .ok_or_else(|| EditError::no_element(main.to_owned()))
 }
 
 /// The field's begin, instruction, separator and end put first in the holder (after its
@@ -223,8 +223,8 @@ fn put_field(sink: &mut EditSink<'_, '_>, part: &str, holder: &Holder, instructi
     let tree = sink
         .doc()
         .tree(part)?
-        .ok_or_else(|| EditError::NoPart(part.to_owned()))?;
-    let element = at_path(tree.root(), &holder.path).ok_or_else(|| EditError::Path(part.to_owned()))?;
+        .ok_or_else(|| EditError::no_part(part.to_owned()))?;
+    let element = at_path(tree.root(), &holder.path).ok_or_else(|| EditError::no_element(part.to_owned()))?;
     let mut work = Work::of(element, scope_above(tree.root(), &holder.path));
     let paragraph = work.root();
     if holder.own {
@@ -245,8 +245,8 @@ fn put_field(sink: &mut EditSink<'_, '_>, part: &str, holder: &Holder, instructi
         .first()
         .and_then(|r| work.find(*r, W, "fldChar"))
         .and_then(|b| green_path(&work, b))
-        .ok_or_else(|| EditError::Path(part.to_owned()))?;
-    let new = work.build().ok_or_else(|| EditError::Path(part.to_owned()))?;
+        .ok_or_else(|| EditError::no_element(part.to_owned()))?;
+    let new = work.build().ok_or_else(|| EditError::unbuilt(part.to_owned()))?;
     sink.replace(part, &holder.path, new, vec![Key::Part(Arc::from(part))])?;
     let mut path = holder.path.clone();
     path.extend(begin);
@@ -298,18 +298,21 @@ fn followed(parent: &Element, k: u32) -> bool {
 fn track_toc(sink: &mut EditSink<'_, '_>, toc: &Located, tracking: crate::policy::Tracking, own: bool) -> Result<()> {
     let docx = sink.docx()?;
     let part = toc.part.clone();
-    let story = docx.part(&part).ok_or_else(|| EditError::NoPart(part.clone()))?;
+    let story = docx.part(&part).ok_or_else(|| EditError::no_part(part.clone()))?;
     let root = Arc::clone(story.root());
     let mut places = toc_paragraphs(&root, toc);
-    let holder = places.last().cloned().ok_or_else(|| EditError::Path(part.clone()))?;
+    let holder = places
+        .last()
+        .cloned()
+        .ok_or_else(|| EditError::no_element(part.clone()))?;
     if !own {
         places.pop();
     }
     let (Some(first), Some(last)) = (places.first().cloned(), holder.last().copied()) else {
         return Ok(());
     };
-    let (&b, container) = first.split_last().ok_or_else(|| EditError::Path(part.clone()))?;
-    let parent = at_path(&root, container).ok_or_else(|| EditError::Path(part.clone()))?;
+    let (&b, container) = first.split_last().ok_or_else(|| EditError::no_element(part.clone()))?;
+    let parent = at_path(&root, container).ok_or_else(|| EditError::no_element(part.clone()))?;
     let previous = (0..b).rev().find(|k| {
         parent
             .children()
@@ -324,7 +327,11 @@ fn track_toc(sink: &mut EditSink<'_, '_>, toc: &Located, tracking: crate::policy
         p
     };
     let ends = vec![span(from), span(last)];
-    let end_path = toc.found.end.clone().ok_or_else(|| EditError::Path(part.clone()))?;
+    let end_path = toc
+        .found
+        .end
+        .clone()
+        .ok_or_else(|| EditError::no_element(part.clone()))?;
     let wanted: Vec<Vec<u32>> = places
         .iter()
         .cloned()
@@ -333,7 +340,7 @@ fn track_toc(sink: &mut EditSink<'_, '_>, toc: &Located, tracking: crate::policy
         .collect();
     let wanted_refs: Vec<&[u32]> = wanted.iter().map(Vec::as_slice).collect();
     let (mut work, parent_path, stretch, found) =
-        editable(&root, &ends, &wanted_refs).ok_or_else(|| EditError::Path(part.clone()))?;
+        editable(&root, &ends, &wanted_refs).ok_or_else(|| EditError::no_element(part.clone()))?;
     let entries: Vec<Id> = found.iter().take(places.len()).copied().collect();
     let previous_node = previous.and(found.get(places.len()).copied());
     let end_node = found.last().copied();
@@ -371,7 +378,7 @@ fn put_stretch(
 ) -> Result<()> {
     let nodes = work
         .build_content(work.root())
-        .ok_or_else(|| EditError::Path(part.to_owned()))?;
+        .ok_or_else(|| EditError::no_element(part.to_owned()))?;
     let mut draws: Vec<Draw> = Vec::new();
     for (k, node) in nodes.iter().enumerate() {
         if let (Node::Element(e), Ok(k)) = (node, u32::try_from(k)) {
@@ -471,12 +478,12 @@ fn insert_content(work: &mut Work, paragraph: Id, stamp: &mut Stamp) {
 fn renew_text_id(sink: &mut EditSink<'_, '_>, toc: &Located) -> Result<()> {
     let docx = sink.docx()?;
     let part = &toc.part;
-    let story = docx.part(part).ok_or_else(|| EditError::NoPart(part.clone()))?;
+    let story = docx.part(part).ok_or_else(|| EditError::no_part(part.clone()))?;
     let root = story.root();
     let Some(path) = toc.found.end.as_ref().and_then(|e| paragraph_of(root, e)) else {
         return Ok(());
     };
-    let element = at_path(root, &path).ok_or_else(|| EditError::Path(part.clone()))?;
+    let element = at_path(root, &path).ok_or_else(|| EditError::no_element(part.clone()))?;
     if element.attribute(Some(W14), "paraId").is_none() {
         return Ok(());
     }

@@ -188,8 +188,8 @@ impl Command<WordDoc> for DeleteBlock {
         let block = resolve(doc, &docx, &self.target)?;
         let tree = doc
             .tree(&block.part)?
-            .ok_or_else(|| EditError::NoPart(block.part.clone()))?;
-        let element = at_path(tree.root(), &block.path).ok_or_else(|| EditError::Path(block.part.clone()))?;
+            .ok_or_else(|| EditError::no_part(block.part.clone()))?;
+        let element = at_path(tree.root(), &block.path).ok_or_else(|| EditError::no_element(block.part.clone()))?;
         check(
             tree.root(),
             &block,
@@ -231,8 +231,8 @@ pub(crate) fn plan(sink: &mut EditSink<'_, '_>, docx: &Docx, target: &str) -> Re
     let tree = sink
         .doc()
         .tree(&block.part)?
-        .ok_or_else(|| EditError::NoPart(block.part.clone()))?;
-    let element = at_path(tree.root(), &block.path).ok_or_else(|| EditError::Path(block.part.clone()))?;
+        .ok_or_else(|| EditError::no_part(block.part.clone()))?;
+    let element = at_path(tree.root(), &block.path).ok_or_else(|| EditError::no_element(block.part.clone()))?;
     let tracked = matches!(sink.policy(), RevisionPolicy::Tracked(_));
     let moving = check(tree.root(), &block, element, tracked)?;
     let mut removed = vec![block.id.clone()];

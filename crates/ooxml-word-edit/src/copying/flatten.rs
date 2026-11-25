@@ -139,7 +139,7 @@ impl Styles<'_> {
         };
         let numbering = work
             .adopt_copy(found)
-            .ok_or_else(|| EditError::Path("numPr".to_owned()))?;
+            .ok_or_else(|| EditError::no_element("numPr".to_owned()))?;
         if work.find(numbering, W, "ilvl").is_none() {
             let level = make(work, "ilvl", &[("val", "0")]);
             work.insert(numbering, 0, level);
@@ -233,7 +233,9 @@ impl Styles<'_> {
                 if base.paragraph.get(tag).is_some_and(|b| same_copy(b, node)) {
                     continue;
                 }
-                let adopted = work.adopt_copy(node).ok_or_else(|| EditError::Path("pPr".to_owned()))?;
+                let adopted = work
+                    .adopt_copy(node)
+                    .ok_or_else(|| EditError::no_element("pPr".to_owned()))?;
                 insert_in_order(work, new_properties, adopted, orders);
             }
         }
@@ -288,7 +290,7 @@ impl Styles<'_> {
             let value = self.themes.concrete(node);
             let adopted = work
                 .adopt_copy(&value)
-                .ok_or_else(|| EditError::Path("rPr".to_owned()))?;
+                .ok_or_else(|| EditError::no_element("rPr".to_owned()))?;
             insert_in_order(work, out, adopted, self.orders());
         }
         Ok(out)

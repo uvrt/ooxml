@@ -54,7 +54,7 @@ pub(crate) fn rebuild(
 ) -> Result<()> {
     let docx = sink.docx()?;
     let part = toc.part.clone();
-    let story = docx.part(&part).ok_or_else(|| EditError::NoPart(part.clone()))?;
+    let story = docx.part(&part).ok_or_else(|| EditError::no_part(part.clone()))?;
     let root = Arc::clone(story.root());
     let region = Region::of(&root, toc).ok_or_else(|| {
         EditError::Unsupported("a table of contents whose end is not in a paragraph beside its begin".to_owned())
@@ -126,9 +126,9 @@ pub(crate) fn rebuild(
         hidden: has(&instruction, 'z'),
         link_style: link_style.as_deref(),
     };
-    let story = docx.part(&part).ok_or_else(|| EditError::NoPart(part.clone()))?;
+    let story = docx.part(&part).ok_or_else(|| EditError::no_part(part.clone()))?;
     let root = Arc::clone(story.root());
-    let region = Region::of(&root, toc).ok_or_else(|| EditError::Path(part.clone()))?;
+    let region = Region::of(&root, toc).ok_or_else(|| EditError::no_element(part.clone()))?;
     region.replace(sink, (&part, &root), &looks, &entries)?;
     sink.ensure_w14(&part, false, &[])
 }
@@ -230,7 +230,7 @@ fn bookmarks(sink: &mut EditSink<'_, '_>, part: &str, headings: &[select::Headin
     let tree = sink
         .doc()
         .tree(part)?
-        .ok_or_else(|| EditError::NoPart(part.to_owned()))?;
+        .ok_or_else(|| EditError::no_part(part.to_owned()))?;
     let unmarked = headings
         .iter()
         .filter(|h| at_path(tree.root(), &h.paragraph.path).is_some_and(|e| toc_names(e).is_empty()))
@@ -288,15 +288,15 @@ fn bookmark(
     let tree = sink
         .doc()
         .tree(part)?
-        .ok_or_else(|| EditError::NoPart(part.to_owned()))?;
-    let element = at_path(tree.root(), path).ok_or_else(|| EditError::Path(part.to_owned()))?;
+        .ok_or_else(|| EditError::no_part(part.to_owned()))?;
+    let element = at_path(tree.root(), path).ok_or_else(|| EditError::no_element(part.to_owned()))?;
     if let Some(name) = toc_names(element).into_iter().next() {
         return Ok(name);
     }
     let name = format!("_Toc{}", numbers.take(sink)?);
     let (value, offset) = ids
         .next()
-        .ok_or_else(|| EditError::Path(format!("{part}: a heading unmarked when the ids were taken")))?;
+        .ok_or_else(|| EditError::no_element(format!("{part}: a heading unmarked when the ids were taken")))?;
     let mut work = Work::of(element, scope_above(tree.root(), path));
     let paragraph = work.root();
     let id = value.to_string();
@@ -323,7 +323,7 @@ fn bookmark(
         None => work.append(paragraph, start),
     }
     work.append(paragraph, end);
-    let new = work.build().ok_or_else(|| EditError::Path(part.to_owned()))?;
+    let new = work.build().ok_or_else(|| EditError::unbuilt(part.to_owned()))?;
     let draws = marker_draws(
         &[Node::Element(Arc::clone(&new))],
         &["bookmarkStart", "bookmarkEnd"],
@@ -409,7 +409,7 @@ impl Region {
         looks: &build::Looks<'_>,
         entries: &[build::Entry<'_>],
     ) -> Result<()> {
-        let path_error = || EditError::Path(part.to_owned());
+        let path_error = || EditError::no_element(part.to_owned());
         let parent = at_path(root, &self.container).ok_or_else(path_error)?;
         let (b, e) = self.span;
         let child = |k: u32| parent.children().get(k as usize).and_then(Node::as_element).cloned();

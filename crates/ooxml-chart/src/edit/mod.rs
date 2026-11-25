@@ -41,6 +41,7 @@ pub use text_style::{TextHost, TextStop, TEXT_PARTS};
 pub use title::{NeedsLanguage, TitleEdit, TitleLook};
 
 use crate::data::{Point, Source, Unreadable};
+use ooxml_schema::orders::local as schema;
 
 use ooxml_base::pyfmt::repr_str;
 use ooxml_xml::view::{attr, children, local, py_int, text};
@@ -70,12 +71,6 @@ const PLOTS: [&str; 16] = [
 
 /// The references a data source may hold (`_REF_TAGS`).
 const REFERENCES: [&str; 6] = ["strRef", "numRef", "multiLvlStrRef", "strLit", "numLit", "v"];
-
-/// `CT_NumData` / `CT_StrData`'s sequence: where a new point goes among a cache's children.
-const CACHE_ORDER: [&[&str]; 4] = [&["formatCode"], &["ptCount"], &["pt"], &["extLst"]];
-
-/// Where a series' `c:tx` goes: after `c:idx` and `c:order`, as every series type has them.
-const SERIES_HEAD: [&[&str]; 3] = [&["idx"], &["order"], &["tx"]];
 
 /// A series' data source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -269,7 +264,7 @@ impl ChartTree {
                 let later = indexed(parent).find(|(_, p)| local(p) == "pt" && point_index(p) > wanted);
                 match later {
                     Some((at, _)) => path::inserted(parent, at, pt),
-                    None => ooxml_xml::view::insert_ordered(parent, &CACHE_ORDER, pt),
+                    None => ooxml_xml::view::insert_ordered(parent, schema::CACHE, pt),
                 }
             }
         };
@@ -286,7 +281,7 @@ impl ChartTree {
             Some((at, tx)) => path::replaced(ser, at, tx.with_children(ooxml_xml::Children::from_vec(vec![value]))),
             None => {
                 let tx = Element::new(qualified(ser, "tx"), Vec::new(), Vec::new(), vec![value]);
-                ooxml_xml::view::insert_ordered(ser, &SERIES_HEAD, tx)
+                ooxml_xml::view::insert_ordered(ser, schema::SER, tx)
             }
         };
         self.root = Arc::new(update(&self.root, &path, |_| changed));
@@ -395,3 +390,6 @@ mod style_tests;
 
 #[cfg(test)]
 mod combine_tests;
+
+#[cfg(test)]
+mod order_tests;

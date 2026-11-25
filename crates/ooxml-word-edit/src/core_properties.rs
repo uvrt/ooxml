@@ -261,7 +261,7 @@ pub(crate) fn write_core(sink: &mut EditSink<'_, '_>, values: &[(CoreProperty, O
     let mut space = Space::default();
     let work = space
         .work(&held, &part)?
-        .ok_or_else(|| EditError::NoPart(part.clone()))?;
+        .ok_or_else(|| EditError::no_part(part.clone()))?;
     let root = work.root();
     let mut changed = false;
     for (property, value) in values {

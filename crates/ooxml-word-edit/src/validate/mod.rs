@@ -17,7 +17,7 @@
 mod counts;
 mod extension;
 mod facts;
-mod grid;
+pub(crate) mod grid;
 mod kept;
 mod order;
 mod rules;

@@ -53,7 +53,7 @@ impl<'p> Keeper<'p> {
             let root = self
                 .package
                 .tree(self.chart_part)?
-                .ok_or_else(|| EditError::NoPart(self.chart_part.to_owned()))?;
+                .ok_or_else(|| EditError::no_part(self.chart_part.to_owned()))?;
             let found = workbook_part(self.package, self.chart_part, root.root(), DOCUMENT)
                 .map_err(|why| not_supported(why.0))?;
             match found {
@@ -62,7 +62,7 @@ impl<'p> Keeper<'p> {
                     let bytes = self
                         .package
                         .read(&part)?
-                        .ok_or_else(|| EditError::NoPart(part.clone()))?;
+                        .ok_or_else(|| EditError::no_part(part.clone()))?;
                     // ooxml-edit words a workbook it cannot open with the exception's text
                     let writer = WorkbookWriter::open(bytes, &Limits::default())
                         .map_err(|_| not_supported("an embedded workbook that cannot be read"))?;

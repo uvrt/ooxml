@@ -27,7 +27,7 @@ pub fn row_text_format(
         return Ok(Vec::new());
     }
     let docx = doc.docx()?;
-    let body = docx.body().ok_or_else(|| EditError::NoPart(docx.main.clone()))?;
+    let body = docx.body().ok_or_else(|| EditError::no_part(docx.main.clone()))?;
     let mut found = Vec::new();
     let tables = body.ids.tables();
     // Kept ones only: a table's id is named without its rows, those of a table kept named.

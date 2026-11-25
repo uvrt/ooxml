@@ -72,8 +72,11 @@ pub(crate) fn write_across(
         return Ok(None);
     };
     let part = plan.found.part.clone();
-    let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
-    let path_error = || EditError::Path(part.clone());
+    let tree = sink
+        .doc()
+        .tree(&part)?
+        .ok_or_else(|| EditError::no_part(part.clone()))?;
+    let path_error = || EditError::no_element(part.clone());
     let (mut work, paragraphs) = stretch(tree.root(), &across.paths).ok_or_else(path_error)?;
     let (&first, &last) = paragraphs.first().zip(paragraphs.last()).ok_or_else(path_error)?;
     sink.load_written(&part, None, &mut work);

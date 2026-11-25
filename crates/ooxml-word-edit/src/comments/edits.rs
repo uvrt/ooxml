@@ -185,7 +185,7 @@ pub(super) fn set_done(
     let doc = sink.doc().clone();
     let work = space
         .work(&doc, &part)?
-        .ok_or_else(|| EditError::NoPart(part.clone()))?;
+        .ok_or_else(|| EditError::no_part(part.clone()))?;
     let value = if done { "1" } else { "0" };
     let found = work.children(work.root()).iter().copied().find(|e| {
         work.is(*e, W15, "commentEx")

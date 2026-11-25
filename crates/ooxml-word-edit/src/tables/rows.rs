@@ -378,8 +378,8 @@ impl EditTable {
         let tree = sink
             .doc()
             .tree(&found.part)?
-            .ok_or_else(|| EditError::NoPart(found.part.clone()))?;
-        let element = at_path(tree.root(), &found.path).ok_or_else(|| EditError::Path(found.part.clone()))?;
+            .ok_or_else(|| EditError::no_part(found.part.clone()))?;
+        let element = at_path(tree.root(), &found.path).ok_or_else(|| EditError::no_element(found.part.clone()))?;
         let work = Work::of(element, scope_above(tree.root(), &found.path));
         let mut held = Held {
             found,
@@ -410,7 +410,7 @@ impl EditTable {
                 columns,
             } => {
                 let columns = super::split::plan_split(&held.work, &held.id, (row, column), rows, columns)?
-                    .ok_or_else(|| EditError::Path(held.found.part.clone()))?;
+                    .ok_or_else(|| EditError::no_element(held.found.part.clone()))?;
                 let split = super::split::Split {
                     row,
                     column,
@@ -453,7 +453,7 @@ pub(super) fn put(
     let new = held
         .work
         .build()
-        .ok_or_else(|| EditError::Path(held.found.part.clone()))?;
+        .ok_or_else(|| EditError::unbuilt(held.found.part.clone()))?;
     write(sink, &held.found, &held.id, new, &Written::of(tracked))
 }
 
@@ -471,7 +471,7 @@ fn insert_row(
     let rows = own_rows(work, table);
     let reference = *rows
         .get(index)
-        .ok_or_else(|| EditError::Path(held.found.part.clone()))?;
+        .ok_or_else(|| EditError::no_element(held.found.part.clone()))?;
     let neighbour = if below {
         rows.get(index + 1).copied()
     } else {
@@ -579,7 +579,7 @@ fn delete_row(
     let rows = own_rows(work, table);
     let row = *rows
         .get(index)
-        .ok_or_else(|| EditError::Path(held.found.part.clone()))?;
+        .ok_or_else(|| EditError::no_element(held.found.part.clone()))?;
     let below = rows.get(index + 1).map(|r| row_cells(work, *r)).unwrap_or_default();
     let restarts: Vec<Id> = row_cells(work, row)
         .into_iter()

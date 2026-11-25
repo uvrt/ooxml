@@ -8,45 +8,18 @@
 //! Must not: write the workbook, or choose the title sizes or language (the caller gives
 //! the application's look).
 
+use super::axes::axis_order;
 use super::make::Make;
 use super::owned::{Order, Owned};
 use super::points::{insert_point, point_index};
 use super::rich::{paragraph_text, replace_body_text};
-use super::{encode, ChartTree, DataError, PointValue, SourceRef, CACHE_ORDER};
+use super::{encode, ChartTree, DataError, PointValue, SourceRef};
 use crate::data::{Point, Source};
+use ooxml_schema::orders::local as schema;
 use ooxml_xml::view::{attr, child, local};
 use ooxml_xml::Element;
 use std::sync::Arc;
 
-/// `c:chart`'s sequence (`CHILD_ORDER`).
-pub(crate) const CHART_ORDER: Order = &[
-    &["title"],
-    &["autoTitleDeleted"],
-    &["pivotFmts"],
-    &["view3D"],
-    &["floor"],
-    &["sideWall"],
-    &["backWall"],
-    &["plotArea"],
-    &["legend"],
-    &["plotVisOnly"],
-    &["dispBlanksAs"],
-    &["showDLblsOverMax"],
-    &["extLst"],
-];
-/// What comes before an axis' `c:title` in every axis' sequence (`c:catAx`, `c:valAx`,
-/// `c:dateAx`, `c:serAx`); all that follows ranks after it.
-const AXIS_ORDER: Order = &[
-    &["axId"],
-    &["scaling"],
-    &["delete"],
-    &["axPos"],
-    &["majorGridlines"],
-    &["minorGridlines"],
-    &["title"],
-];
-/// `c:title`'s sequence.
-const TITLE_ORDER: Order = &[&["tx"], &["layout"], &["overlay"], &["spPr"], &["txPr"], &["extLst"]];
 /// The axis elements (`AXIS_TAGS`).
 const AXES: [&str; 4] = ["catAx", "valAx", "dateAx", "serAx"];
 
@@ -179,11 +152,11 @@ impl ChartTree {
             let Some(chart) = root.child("chart") else {
                 return Ok(TitleEdit::default());
             };
-            let written = write_title(chart, &make, CHART_ORDER, text, false, look.title, look.lang)?;
+            let written = write_title(chart, &make, schema::CHART, text, false, look.title, look.lang)?;
             let c = Arc::clone(chart.name());
             let wanted = if text.is_none() { "1" } else { "0" };
             chart
-                .sub(&c, "autoTitleDeleted", Some(CHART_ORDER))
+                .sub(&c, "autoTitleDeleted", Some(schema::CHART))
                 .set_attr("val", wanted);
             Ok(TitleEdit { changed: true, written })
         }))
@@ -219,7 +192,8 @@ impl ChartTree {
             let Some(owner) = super::points::open_at(root, &path) else {
                 return Ok(TitleEdit::default());
             };
-            let written = write_title(owner, &make, AXIS_ORDER, text, vertical, look.axis_title, look.lang)?;
+            let order = axis_order(owner.local());
+            let written = write_title(owner, &make, order, text, vertical, look.axis_title, look.lang)?;
             Ok(TitleEdit { changed: true, written })
         })))
     }
@@ -244,7 +218,7 @@ fn write_title(
     };
     if owner.place("title").is_none() {
         let mut title = make.c("title");
-        title.insert_ordered(Some(TITLE_ORDER), make.c("overlay").with_attr("val", "0"));
+        title.insert_ordered(Some(schema::TITLE), make.c("overlay").with_attr("val", "0"));
         owner.insert_ordered(Some(order), title);
     }
     let Some(title) = owner.child("title") else {
@@ -268,7 +242,7 @@ fn write_title(
         }
     }
     if title.place("tx").is_none() {
-        title.insert_ordered(Some(TITLE_ORDER), new_title_text(make, size, vertical, lang));
+        title.insert_ordered(Some(schema::TITLE), new_title_text(make, size, vertical, lang));
     }
     if let Some(tx) = title.child("tx") {
         if let Some(at) = tx.place("rich") {
@@ -304,7 +278,7 @@ fn set_cached_text(tx: &mut Owned, text: &str) -> Result<(), DataError> {
                 }
             }
         }
-        None => insert_point(cache, &c, Some(&CACHE_ORDER), 0, &written),
+        None => insert_point(cache, &c, Some(schema::CACHE), 0, &written),
     }
     Ok(())
 }

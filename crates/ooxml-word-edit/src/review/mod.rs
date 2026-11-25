@@ -11,7 +11,7 @@ mod apply;
 mod blocks;
 mod cleanup;
 mod describing;
-mod edges;
+pub(crate) mod edges;
 pub(crate) mod grid;
 mod part;
 pub(crate) mod space;

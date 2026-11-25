@@ -131,7 +131,7 @@ impl Run {
         let (space, gathered, accept) = (&mut self.space, &mut self.gathered, self.accept);
         let orders = self.held.shared().facts.orders();
         let Some(story) = docx.part(part) else {
-            return Err(EditError::NoPart(part.to_owned()));
+            return Err(EditError::no_part(part.to_owned()));
         };
         let groups = record_groups(docx, part, mine);
         space.work(sink.doc(), part)?;
@@ -149,7 +149,7 @@ impl Run {
             .iter()
             .filter_map(|p| Some((space.locate(part, &p.path)?, p.id)))
             .collect();
-        let work = space.get_mut(part).ok_or_else(|| EditError::NoPart(part.to_owned()))?;
+        let work = space.get_mut(part).ok_or_else(|| EditError::no_part(part.to_owned()))?;
         let mut review = PartReview::new(work, accept, orders, group_of);
         let group = review.expand(&elements);
         review.run(&group);

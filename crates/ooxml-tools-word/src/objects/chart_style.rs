@@ -94,7 +94,7 @@ impl GraphicEdit for ChartStyleEdit {
     type Out = Warnings;
 
     fn edit(&self, package: &ooxml_opc::Package, part: &str) -> Result<GraphicParts<Warnings>, EditError> {
-        let tree = package.tree(part)?.ok_or_else(|| EditError::NoPart(part.to_owned()))?;
+        let tree = package.tree(part)?.ok_or_else(|| EditError::no_part(part.to_owned()))?;
         let mut chart = ChartTree::new(Arc::clone(tree.root()));
         let address = self.address.as_str();
         let refusal = |error: DataError| refused(&error.0);
