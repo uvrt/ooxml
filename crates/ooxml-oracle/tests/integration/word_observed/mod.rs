@@ -20,6 +20,8 @@
 
 mod glyphs;
 mod lines;
+mod notes;
+mod pagination;
 mod tables;
 mod wrap_side;
 mod wrap_table;
@@ -270,7 +272,8 @@ pub fn check_floors(document: &str, scored: &Scored, floors: Floors) -> Result<(
             out.push(format!("{document} {case}: {agree} of {total} agree, no floor"));
             continue;
         };
-        let words = case.starts_with("lines") || matches!(case.as_str(), "glyphs not drawn" | "warnings" | "pages");
+        let words =
+            case.starts_with("lines") || matches!(case.as_str(), "glyphs not drawn" | "warnings" | "pages" | "cases");
         let below = if words {
             *total != floor_total || agree < floor
         } else {
@@ -330,6 +333,14 @@ pub fn score_objects(recording: &Value, maker: &str, document: &str, families: O
         scored.add("pages".into(), usize::from(!same), 1, shown);
     }
     scored
+}
+
+/// The documents of a recording, in its order.
+pub fn documents_of(recording: &Value) -> Vec<String> {
+    recording["documents"]
+        .as_object()
+        .map(|documents| documents.keys().cloned().collect())
+        .unwrap_or_default()
 }
 
 /// Every document of a family scored and held to its floors; a failure lists every case
