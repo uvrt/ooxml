@@ -16,9 +16,10 @@ name: Release
 # Every run rebuilds from a clean checkout of the tagged commit, so what ships is exactly
 # what that source produces.
 #
-# The package index: after the release, the `pages` job publishes a PEP 503 simple index of
-# every release so far to GitHub Pages (https://uvrt.github.io/ooxml/simple/, for
-# `pip install --extra-index-url`; tools/simple_index.py).  Its links point at the release
+# The package index: after the release, the `pages-build` and `pages` jobs publish a PEP
+# 503 simple index of every release so far to GitHub Pages
+# (https://uvrt.github.io/ooxml/simple/, for `pip install --extra-index-url`;
+# tools/simple_index.py).  Its links point at the release
 # assets.  Every run (pull requests and manual runs too) builds the index of the run's own
 # files and installs from it on Python 3.15 as a check, without deploying.
 
@@ -157,21 +158,23 @@ jobs:
   # release exists (its assets and their digests come from the GitHub API).  Requires
   # Pages enabled with source "GitHub Actions", and the github-pages environment allowing
   # deployments from the release tags.
-  pages:
-    name: package index (GitHub Pages)
+  #
+  # Two jobs, as actions/deploy-pages documents: `pages-build` uploads the site, `pages`
+  # deploys it.  A finished job before the deploy gives GitHub's artifact listing time to
+  # show the upload (in one job, deploy-pages ran in the upload's second and found no
+  # artifact).  The artifact's name carries the attempt that uploaded it, and the deploy
+  # takes that name from the build job's output: a re-run of a failed deploy reuses the
+  # build's upload, a re-run of the build uploads under a new name, so the deploy never
+  # sees two artifacts of one name.
+  pages-build:
+    name: package index (build)
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: [release, index]
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}simple/
-    concurrency:
-      group: pages
-      cancel-in-progress: false
+    outputs:
+      artifact: ${{ steps.name.outputs.artifact }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -190,8 +193,31 @@ jobs:
           owner=${GITHUB_REPOSITORY_OWNER,,}
           python tools/simple_index.py releases site --repo "$GITHUB_REPOSITORY" --local dist \
             --previous "https://$owner.github.io/${GITHUB_REPOSITORY#*/}/files.json"
+      - id: name
+        name: Name the site artifact after this attempt
+        run: echo "artifact=github-pages-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-pages-artifact@v4
         with:
+          name: ${{ steps.name.outputs.artifact }}
           path: site
+
+  pages:
+    name: package index (GitHub Pages)
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [pages-build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}simple/
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
       - id: deploy
         uses: actions/deploy-pages@v4
+        with:
+          artifact_name: ${{ needs.pages-build.outputs.artifact }}
