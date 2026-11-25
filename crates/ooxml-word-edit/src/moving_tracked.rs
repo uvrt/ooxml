@@ -61,7 +61,7 @@ pub(crate) struct Planned<'a> {
 pub(crate) struct Done {
     pub(crate) moved: Vec<String>,
     pub(crate) created: Vec<String>,
-    pub(crate) renamed: Vec<(String, String)>,
+    pub(crate) renamed: ooxml_word_model::ids::Renames,
 }
 
 /// The revision records written so far: the ids, whether any is dated, and the
@@ -91,7 +91,7 @@ impl MoveBlocks {
         sink: &mut EditSink<'_, '_>,
         tracking: &Tracking,
         plan: &Planned<'_>,
-        renamed: Vec<(String, String)>,
+        renamed: ooxml_word_model::ids::Renames,
     ) -> Result<Done> {
         let part = plan.part;
         let path_error = || EditError::no_element(part.to_owned());
@@ -147,7 +147,7 @@ impl MoveBlocks {
                 moved.delete_and_insert(sink, tracking, &mut work, &mut records, plan.story)?;
             }
             let new = copy_id(&work, copy, plan.story).ok_or_else(path_error)?;
-            merge(&mut done.renamed, (id, new.clone()));
+            merge(&mut done.renamed, (id.into(), new.clone().into()));
             done.created.push(new.clone());
             done.moved.push(new);
             previous = Some(copy);
@@ -158,10 +158,10 @@ impl MoveBlocks {
         keys.push(Key::Annotations);
         let count = (stretch.1 - stretch.0) as usize + 1;
         sink.splice_children(part, (&parent, stretch.0 as usize, count), built, keys, draws)?;
-        let aliases: Vec<(String, String)> = done
+        let aliases: ooxml_word_model::ids::Renames = done
             .renamed
             .iter()
-            .filter(|(_, new)| done.created.contains(new))
+            .filter(|(_, new)| done.created.iter().any(|c| c == new))
             .cloned()
             .collect();
         sink.rename(aliases)?;
@@ -206,7 +206,10 @@ fn place(work: &mut Work, beside: Id, after: bool, node: Id) {
 }
 
 /// `renamed` updated as a dict is: a key already there keeps its place.
-fn merge(renamed: &mut Vec<(String, String)>, (old, new): (String, String)) {
+fn merge(
+    renamed: &mut ooxml_word_model::ids::Renames,
+    (old, new): (ooxml_word_model::ids::BlockId, ooxml_word_model::ids::BlockId),
+) {
     match renamed.iter_mut().find(|(o, _)| *o == old) {
         Some(found) => found.1 = new,
         None => renamed.push((old, new)),
@@ -401,11 +404,17 @@ impl Moved<'_> {
                     format!("{story}/")
                 };
                 if own_runs.iter().any(|r| crate::links::inside(work, *r, self.node)) {
-                    sink.rename(vec![(format!("{prefix}p:{joined}"), format!("{prefix}p:{mine}"))])?;
+                    sink.rename(vec![(
+                        format!("{prefix}p:{joined}").into(),
+                        format!("{prefix}p:{mine}").into(),
+                    )])?;
                 } else {
                     let name = work.qname(W14, "paraId", "w14");
                     work.set(self.node, name, &joined);
-                    sink.rename(vec![(format!("{prefix}p:{mine}"), format!("{prefix}p:{joined}"))])?;
+                    sink.rename(vec![(
+                        format!("{prefix}p:{mine}").into(),
+                        format!("{prefix}p:{joined}").into(),
+                    )])?;
                 }
             }
         }

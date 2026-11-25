@@ -58,7 +58,7 @@ pub struct ControlEdited {
     /// Ids it removed.
     pub removed: Vec<String>,
     /// Ids renamed, old to new, in the order made.
-    pub renamed: Vec<(String, String)>,
+    pub renamed: ooxml_word_model::ids::Renames,
     /// What the edit says.
     pub warnings: Vec<String>,
 }

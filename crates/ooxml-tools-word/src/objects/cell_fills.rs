@@ -58,7 +58,7 @@ pub(super) fn column_rows(
     let rows: Vec<usize> = if accepted.table.rows_active() {
         accepted.table.rows.clone()
     } else {
-        (0..view.grid.len()).collect()
+        (0..view.grid.row_count()).collect()
     };
     let height = rows.len();
     let header = header_rows(view);

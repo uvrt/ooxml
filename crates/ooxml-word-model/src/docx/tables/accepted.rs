@@ -19,13 +19,56 @@ use crate::ids::W;
 use ooxml_base::pyfmt::repr_str;
 use ooxml_xml::Element;
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
 use std::sync::Arc;
+
+/// Runs of grid columns of rows, each with a value: a cell's columns as one run, so a span
+/// of billions of columns is one entry. The runs of one row do not overlap (a row's cells
+/// do not).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ColumnRuns<V> {
+    /// `(row, first column)` to the run's end column and value.
+    runs: BTreeMap<(usize, usize), (usize, V)>,
+}
+
+impl<V> Default for ColumnRuns<V> {
+    fn default() -> Self {
+        ColumnRuns { runs: BTreeMap::new() }
+    }
+}
+
+impl<V: Copy> ColumnRuns<V> {
+    /// `value` over the columns `columns` of row `row` (nothing for no columns).
+    pub fn insert(&mut self, row: usize, columns: Range<usize>, value: V) {
+        if !columns.is_empty() {
+            self.runs.insert((row, columns.start), (columns.end, value));
+        }
+    }
+
+    /// The value over grid position `(row, column)`, where a run covers it.
+    #[must_use]
+    pub fn get(&self, row: usize, column: usize) -> Option<V> {
+        let (&(r, _), &(end, value)) = self.runs.range(..=(row, column)).next_back()?;
+        (r == row && column < end).then_some(value)
+    }
+
+    /// Whether no run is there.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.runs.is_empty()
+    }
+
+    /// Each run: its row, columns and value, by row then column.
+    pub fn iter(&self) -> impl Iterator<Item = (usize, Range<usize>, V)> + '_ {
+        self.runs.iter().map(|(&(r, start), &(end, v))| (r, start..end, v))
+    }
+}
 
 /// The rows, columns and cells as accepted ([`Accepted`] without its texts).
 #[derive(Debug, Default)]
 pub(super) struct Layout {
     pub(super) kept: Vec<usize>,
-    pub(super) given: BTreeMap<(usize, usize), usize>,
+    pub(super) given: ColumnRuns<usize>,
     pub(super) rows: Vec<usize>,
     pub(super) lost: BTreeSet<(usize, usize)>,
     pub(super) cell_ends: bool,
@@ -58,7 +101,7 @@ pub struct Accepted {
     pub kept: Vec<usize>,
     /// `(row, grid column)` of each position a cell taken into the one before it covers, to
     /// the grid column where that cell begins.
-    pub given: BTreeMap<(usize, usize), usize>,
+    pub given: ColumnRuns<usize>,
     /// The document rows kept, in order.
     pub rows: Vec<usize>,
     /// `(row, first grid column)` of each cell Accept All removes with its text.
@@ -75,7 +118,7 @@ pub struct Accepted {
     /// Each grid column not kept: its first row's text, deleted text included.
     headers: BTreeMap<usize, String>,
     /// The positions of `given` whose cell is a pending tracked merge's (`w:cellDel`).
-    merged: BTreeSet<(usize, usize)>,
+    merged: ColumnRuns<()>,
 }
 
 /// Python's `" ".join(text.split())`, shortened to `limit` characters with an ellipsis
@@ -146,14 +189,16 @@ impl TableGrid<'_> {
             .filter(|c| !kept.contains(c))
             .map(|c| (c, self.cell_all_text(0, c).unwrap_or_default()))
             .collect();
-        let merged = given
-            .keys()
-            .copied()
-            .filter(|(r, c)| {
-                self.cell_element(*r, *c)
-                    .is_none_or(|e| find_path(e, &["tcPr", "cellDel"]).is_some())
-            })
-            .collect();
+        // a run is one cell's columns, so one position of it answers for all
+        let mut merged = ColumnRuns::default();
+        for (r, columns, _) in given.iter() {
+            if self
+                .cell_element(r, columns.start)
+                .is_none_or(|e| find_path(e, &["tcPr", "cellDel"]).is_some())
+            {
+                merged.insert(r, columns, ());
+            }
+        }
         Accepted {
             table: id.to_owned(),
             kept,
@@ -173,6 +218,7 @@ impl TableGrid<'_> {
     pub(super) fn accepted_layout(&self) -> Layout {
         let mut out = Layout::default();
         let mut covered: BTreeMap<usize, bool> = BTreeMap::new();
+        let columns = self.column_count();
         for (r, row) in self.rows.iter().enumerate() {
             let deleted_row = find_path(row, &["trPr", "del"]).is_some();
             if !deleted_row {
@@ -212,9 +258,7 @@ impl TableGrid<'_> {
                     _ => None,
                 };
                 if let Some(first) = widens.or(into) {
-                    for column in *start..start + span {
-                        out.given.insert((r, column), first);
-                    }
+                    out.given.insert(r, *start..start.saturating_add(*span), first);
                     // a cell widening the one before it stays; one taken into it goes
                     deleted = widens.is_none();
                 } else if removed.contains(&me) {
@@ -228,13 +272,14 @@ impl TableGrid<'_> {
                 if deleted_row {
                     continue;
                 }
-                for column in *start..start + span {
+                // only the grid's columns are counted (`kept`), so a span past them stops there
+                for column in *start..start.saturating_add(*span).min(columns) {
                     let was = covered.get(&column).copied().unwrap_or(true);
                     covered.insert(column, was && deleted);
                 }
             }
         }
-        out.kept = (0..self.column_count())
+        out.kept = (0..columns)
             .filter(|c| !covered.get(c).copied().unwrap_or(false))
             .collect();
         out
@@ -305,7 +350,7 @@ impl Accepted {
         Accepted {
             table: table.to_owned(),
             kept: (0..columns).collect(),
-            given: BTreeMap::new(),
+            given: ColumnRuns::default(),
             rows: (0..rows).collect(),
             lost: BTreeSet::new(),
             cell_ends: false,
@@ -313,7 +358,7 @@ impl Accepted {
             total_rows: rows,
             row_texts: BTreeMap::new(),
             headers: BTreeMap::new(),
-            merged: BTreeSet::new(),
+            merged: ColumnRuns::default(),
         }
     }
 
@@ -463,10 +508,10 @@ impl Accepted {
                 field: "cells".to_owned(),
             });
         }
-        let Some(found) = self.given.get(&(row, grid)).copied() else {
+        let Some(found) = self.given.get(row, grid) else {
             return Ok(grid);
         };
-        let how = if self.merged.contains(&(row, grid)) {
+        let how = if self.merged.get(row, grid).is_some() {
             "a pending tracked merge"
         } else {
             "accepting a deleted paragraph mark"

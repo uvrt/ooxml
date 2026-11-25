@@ -18,7 +18,7 @@ use crate::sources::{first_rows, fits, placed, thousands, Placed, SourceRows};
 use crate::structure::common::{outcome, policy, refused, Outcome};
 use ooxml_tools::{ArgEnum, Refusal, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::{CellAxis, CellWrite, EditError, PlaceRows, PlacedRecord, RowsBeside, RowsPlaced, WordDoc};
-use ooxml_word_model::docx::tables::Accepted;
+use ooxml_word_model::docx::tables::{Accepted, TABLE_COLUMNS_MAX};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::time::Instant;
@@ -26,7 +26,7 @@ use std::time::Instant;
 /// Rows a table from data takes at most, the header included (Word's).
 const MAX_ROWS: usize = 4096;
 /// Columns a table takes at most (Word's).
-const MAX_COLUMNS: usize = 63;
+const MAX_COLUMNS: usize = TABLE_COLUMNS_MAX;
 
 /// A grid as accepted: per row, per column, the origin of the cell there (row, column, both
 /// as accepted).
@@ -198,7 +198,7 @@ fn plan(
     let (need_rows, need_columns) = block.size();
     let room = height - top;
     let short_by = need_rows.saturating_sub(room);
-    let grid = accepted_grid(view, shape);
+    let grid = accepted_grid(view, shape, need_columns);
     let asked = asked(args);
     let checks = Checks {
         table,
@@ -277,7 +277,7 @@ fn reply(
     placed_from: Map<String, Value>,
     retry: &TryCall,
 ) -> ToolResult<Value> {
-    let head = editing.editor.store().snapshot();
+    let head = editing.editor.current();
     let mut data = head
         .doc()
         .docx()
@@ -380,17 +380,18 @@ pub(super) fn record(placed: &Map<String, Value>, document: Option<&str>) -> Map
 
 /// The table's grid as accepted (`_accepted_grid`, `_positioned`): a column a pending
 /// tracked deletion removes left out, a position a pending tracked merge takes in answering
-/// as the merged cell, a row whose deletion is pending not counted.
-fn accepted_grid(view: &TableView, shape: &Accepted) -> Grid {
+/// as the merged cell, a row whose deletion is pending not counted. Only its first `wide`
+/// columns, the block's: no check reads past them, and a row may reach billions of columns.
+fn accepted_grid(view: &TableView, shape: &Accepted, wide: usize) -> Grid {
     let rows: Vec<usize> = if shape.rows_active() {
         shape.rows.clone()
     } else {
-        (0..view.grid.len()).collect()
+        (0..view.grid.row_count()).collect()
     };
     let columns: Vec<usize> = if shape.active() {
-        shape.kept.clone()
+        shape.kept.iter().copied().take(wide).collect()
     } else {
-        (0..shape.columns.max(view.grid.iter().map(Vec::len).max().unwrap_or(0))).collect()
+        (0..shape.columns.max(view.grid.width())).take(wide).collect()
     };
     rows.iter()
         .map(|r| {
@@ -398,7 +399,7 @@ fn accepted_grid(view: &TableView, shape: &Accepted) -> Grid {
                 .iter()
                 .map(|c| {
                     let at = if shape.active() {
-                        shape.given.get(&(*r, *c)).copied().unwrap_or(*c)
+                        shape.given.get(*r, *c).unwrap_or(*c)
                     } else {
                         *c
                     };

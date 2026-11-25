@@ -48,7 +48,7 @@ impl Session {
         let Some(layout) = context.layout.clone().or_else(|| self.own_pages(id)) else {
             return Ok(Err("no layout".to_owned()));
         };
-        let head = word.editor.store().snapshot();
+        let head = word.head();
         let cancel = CallCancel::new(context, &*self.context.cancel, &*self.context.clock);
         let layout_cancel = cancel.layout();
         let edit = EditLayout {

@@ -162,7 +162,7 @@ pub fn word_changes_read(
 fn run(args: &WordChanges, editing: &Editing<'_>) -> Result<ToolResult<Value>, ToolError> {
     super::stopped(editing.cancel)?;
     if args.reads() {
-        let head = editing.editor.store().snapshot();
+        let head = editing.editor.current();
         let reading = Reading {
             doc: head.doc(),
             opened: editing.opened,

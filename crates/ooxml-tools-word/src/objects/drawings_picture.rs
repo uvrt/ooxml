@@ -132,7 +132,7 @@ fn checked(
     });
     // docx-agent makes the paragraph first: its refusal comes before the others
     if let Some(command) = &paragraph {
-        if let Err(error) = command.validate(editing.editor.store().snapshot().doc()) {
+        if let Err(error) = command.validate(editing.editor.current().doc()) {
             return Ok(Err(refused(error, list.clone())));
         }
     }
@@ -230,11 +230,11 @@ impl Command<WordDoc> for Picture<'_> {
             let done = step(tx, command)?;
             let id = done.id.clone();
             edits.push(Outcome {
-                id: Some(id.clone()),
+                id: Some(id.to_string()),
                 changed: true,
-                created: vec![id.clone()],
+                created: vec![id.to_string()],
                 removed: Vec::new(),
-                renamed: done.renamed,
+                renamed: ooxml_word_model::ids::renames_text(&done.renamed),
                 warnings: Vec::new(),
             });
             if plan.align_taken {
@@ -267,7 +267,7 @@ impl Command<WordDoc> for Picture<'_> {
         data.insert("id".into(), json!(id));
         data.insert("size".into(), json!([round2(width), round2(height)]));
         if let Some(paragraph) = own {
-            data.insert("paragraph".into(), json!(paragraph));
+            data.insert("paragraph".into(), json!(paragraph.as_str()));
         }
         Ok((edits, Value::Object(data)))
     }
@@ -291,11 +291,11 @@ impl Picture<'_> {
         };
         for done in step(tx, &command)?.steps {
             edits.push(Outcome {
-                id: Some(done.id),
+                id: Some(done.id.to_string()),
                 changed: done.changed,
                 created: Vec::new(),
                 removed: done.removed,
-                renamed: done.renamed,
+                renamed: ooxml_word_model::ids::renames_text(&done.renamed),
                 warnings: done.warnings,
             });
         }

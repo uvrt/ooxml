@@ -3,7 +3,9 @@
 //! snapshot, commit (rebased past concurrent commits, prepared again on a conflict), then
 //! the result from the change and the version after it ([`Edited`]): what it touched and
 //! the validation delta (design section 5, "Results"); every command followed by the
-//! records of placed values kept in the document ([`crate::provenance`]).
+//! records of placed values kept in the document ([`crate::provenance`]). A command may also
+//! run in a transaction its owner holds open ([`Editor::run_held`], a host's batch): it then
+//! makes a version only the owner reads, published with the transaction's commit.
 //!
 //! Must not: hold anything but the store and the baseline; read the clock but through the
 //! store's port; run a command's effects outside its transaction.
@@ -16,7 +18,7 @@ use crate::validate::{problems, Delta, Problem};
 use crate::{EditError, Result};
 use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
-use ooxml_store::{Caller, Clock, Command, CommitTiming, Snapshot, Store, StoreConfig};
+use ooxml_store::{Caller, Clock, Command, CommitTiming, Snapshot, Store, StoreConfig, StoreError, TxnOwner};
 use ooxml_word_model::ids::LoadedState;
 use std::sync::Arc;
 use std::time::Duration;
@@ -165,40 +167,113 @@ impl Editor {
         let committed = self
             .store
             .run_with(caller, &crate::stamping::Stamped(&followed), setup)?;
+        let spaced = if committed.changed {
+            committed.version.doc().spaced()
+        } else {
+            0
+        };
+        let ran = Ran {
+            version: committed.version,
+            previous: committed.previous.filter(|_| committed.changed),
+            spaced,
+            attempts: committed.attempts,
+            exclusive: committed.exclusive,
+            timing: committed.timing,
+        };
+        self.edited(committed.out, ran)
+    }
+
+    /// Run `command` as [`Editor::run_with`] does, in the transaction `owner` holds open
+    /// ([`Store::open_txn`]): validated and prepared on the version the owner reads, its
+    /// changes taken back where it refuses. The version it makes is the owner's alone until
+    /// the transaction is committed; numbered as that commit will number it.
+    ///
+    /// # Errors
+    /// The command's refusal, nothing changed; the store's when `owner` holds none.
+    pub fn run_held<C>(&self, owner: TxnOwner, command: &C, setup: &Setup) -> Result<Edited<C::Out>>
+    where
+        C: Command<WordDoc, Error = EditError>,
+    {
         let started = self.clock.monotonic();
-        let (touched, ids) = match &committed.previous {
-            Some(previous) if committed.changed => (
-                touched(previous.doc(), committed.version.doc())?,
-                ids_delta(previous.doc(), committed.version.doc())?,
+        let followed = crate::provenance::Followed(command);
+        let stamped = crate::stamping::Stamped(&followed);
+        let ran = self.store.in_txn(owner, |tx| {
+            tx.set_up(setup);
+            let spaced = tx.doc().spaced();
+            let point = tx.savepoint();
+            match stamped.validate(tx.doc()).and_then(|()| stamped.prepare(tx)) {
+                Ok(out) => Ok((out, tx.doc().spaced().saturating_sub(spaced))),
+                Err(error) => {
+                    tx.rollback(point);
+                    Err(error)
+                }
+            }
+        });
+        let ran = ran.map_err(|error: StoreError<_, _>| EditError::from(error))?;
+        let (out, spaced) = ran.out?;
+        let total = self.clock.monotonic().saturating_sub(started);
+        let ran = Ran {
+            previous: ran.changed.then_some(ran.before),
+            version: ran.after,
+            spaced: if ran.changed { spaced } else { 0 },
+            attempts: 1,
+            exclusive: false,
+            timing: CommitTiming {
+                held: std::time::Duration::ZERO,
+                total,
+            },
+        };
+        self.edited(out, ran)
+    }
+
+    /// A run's result: what it touched, the ids it removed and brought and the validation
+    /// delta of the version it made.
+    fn edited<O>(&self, out: O, ran: Ran) -> Result<Edited<O>> {
+        let started = self.clock.monotonic();
+        let (touched, ids) = match &ran.previous {
+            Some(previous) => (
+                touched(previous.doc(), ran.version.doc())?,
+                ids_delta(previous.doc(), ran.version.doc())?,
             ),
-            _ => (Vec::new(), IdsDelta::default()),
+            None => (Vec::new(), IdsDelta::default()),
         };
         let found = self.clock.monotonic();
-        let validation = Delta::of(&self.baseline, &problems(committed.version.doc())?);
+        let validation = Delta::of(&self.baseline, &problems(ran.version.doc())?);
         let validated = self.clock.monotonic();
-        let (drawn, spaced) = if committed.changed {
-            let doc = committed.version.doc();
-            (doc.drawn().clone(), doc.spaced())
+        let changed = ran.previous.is_some();
+        let drawn = if changed {
+            ran.version.doc().drawn().clone()
         } else {
-            (crate::Drawn::default(), 0)
+            crate::Drawn::default()
         };
         Ok(Edited {
-            out: committed.out,
-            changed: committed.changed,
+            out,
+            changed,
             drawn,
-            spaced,
-            version: committed.version,
-            previous: committed.previous,
+            spaced: ran.spaced,
+            version: ran.version,
+            previous: ran.previous,
             touched,
             ids,
             validation,
-            attempts: committed.attempts,
-            exclusive: committed.exclusive,
+            attempts: ran.attempts,
+            exclusive: ran.exclusive,
             timing: EditTiming {
-                commit: committed.timing,
+                commit: ran.timing,
                 touched: found.saturating_sub(started),
                 validation: validated.saturating_sub(found),
             },
         })
     }
+}
+
+/// What a run made, before what it touched is worked out.
+struct Ran {
+    version: Snapshot<WordDoc>,
+    /// The version it was applied to, where it changed the document.
+    previous: Option<Snapshot<WordDoc>>,
+    spaced: usize,
+    attempts: u32,
+    exclusive: bool,
+    timing: CommitTiming,
 }

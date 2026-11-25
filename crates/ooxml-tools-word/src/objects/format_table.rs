@@ -20,11 +20,11 @@ const TALLER_THAN_PAGE: &str = "taller than a page: Word starts it on a new page
 impl From<TableEdit> for Outcome {
     fn from(edit: TableEdit) -> Self {
         Outcome {
-            id: Some(edit.id),
+            id: Some(edit.id.to_string()),
             changed: edit.changed,
             created: Vec::new(),
             removed: Vec::new(),
-            renamed: edit.renamed,
+            renamed: ooxml_word_model::ids::renames_text(&edit.renamed),
             warnings: edit.warnings,
         }
     }
@@ -63,7 +63,7 @@ fn invalid(message: &str, field: Option<&str>, options: Option<&[&str]>, call: &
 }
 
 fn run(args: &WordFormatTable, editing: &Editing<'_>, retry: &TryCall) -> Result<ToolResult<Value>, ToolError> {
-    let head = editing.editor.store().snapshot();
+    let head = editing.editor.current();
     let docx = head
         .doc()
         .docx()
@@ -349,7 +349,7 @@ fn on_body_lines(
     editing: &Editing<'_>,
     retry: &TryCall,
 ) -> Result<ooxml_word_edit::BodyWidth, ToolError> {
-    let head = editing.editor.store().snapshot();
+    let head = editing.editor.current();
     let percent = args.width_percent.unwrap_or(100.0);
     let alignment = args.alignment.map(|a| a.as_str());
     let refusal = |e| crate::review::edit_refusal(e, "", retry.clone());
@@ -394,7 +394,7 @@ fn keep_notes(
         )),
         _ => {}
     }
-    let head = editing.editor.store().snapshot();
+    let head = editing.editor.current();
     let loose = if args.keep_with_next == Some(true) {
         ooxml_word_edit::loose_paragraph_after(head.doc(), &table)
             .ok()
@@ -451,7 +451,8 @@ fn finish(
         formats,
         policy: policy(editing),
         layout: editing.edit_layout(),
-        pages_later: editing.in_group,
+        // inside a host's batch the pages are measured once, after its last op
+        pages_later: editing.editor.in_batch(),
     };
     let done = match editing.editor.run(editing.caller, &command) {
         Ok(done) => done,
@@ -475,7 +476,7 @@ fn finish(
         }
     }
     if let (true, Some(now)) = (regions, now) {
-        let head = editing.editor.store().snapshot();
+        let head = editing.editor.current();
         let note = head.doc().docx().ok().and_then(|docx| {
             let view = table_view(head.doc(), &docx, &now, retry).ok()?;
             regions_off(&docx, &view.table)

@@ -7,7 +7,8 @@
 //! through the sink).
 
 use crate::pool::IdsChange;
-use ooxml_opc::{OpcError, Package};
+use ooxml_opc::{OpcError, Package, PartName};
+use ooxml_word_model::ids::BlockId;
 use ooxml_xml::{HeadPatch, Patch, PatchError, Tree};
 use std::sync::Arc;
 
@@ -17,14 +18,14 @@ pub enum Key {
     /// A paragraph, table or row of a story part, by its durable id (`p:1A2B3C4D`).
     Block {
         /// The part.
-        part: Arc<str>,
+        part: PartName,
         /// The block's id.
-        id: Arc<str>,
+        id: BlockId,
     },
     /// A whole part (a part without durable ids, a part put or removed).
-    Part(Arc<str>),
+    Part(PartName),
     /// A part's root element's head: its namespace declarations and attributes.
-    Root(Arc<str>),
+    Root(PartName),
     /// An id sequence (a seed): drawing from it.
     Seq(Arc<str>),
     /// The annotation ids in use (revisions, bookmarks, comments): allocating one.
@@ -37,7 +38,24 @@ pub enum Key {
     /// where a change alters one (`sink::style_use`), and with the part put or removed. It is
     /// derived ([`ooxml_store::DocModel::derived`]): a reader of it conflicts with a writer,
     /// two writers of it do not (their blocks decide).
-    StyleUse(Arc<str>),
+    StyleUse(PartName),
+}
+
+impl Key {
+    /// The key of block `id` of `part`.
+    #[must_use]
+    pub fn block(part: impl Into<PartName>, id: impl Into<BlockId>) -> Self {
+        Key::Block {
+            part: part.into(),
+            id: id.into(),
+        }
+    }
+
+    /// The key of the whole part `part`.
+    #[must_use]
+    pub fn part(part: impl Into<PartName>) -> Self {
+        Key::Part(part.into())
+    }
 }
 
 /// One primitive of a change set.

@@ -143,7 +143,7 @@ pub(super) fn alters(tree: &Tree, change: &Change) -> bool {
 /// a style use there ([`alters`]); `tree` is the part's tree in the version it is made on.
 pub(super) fn keyed(tree: &Tree, change: Change) -> Change {
     let add = |keys: &Arc<[Key]>, part: &Arc<str>| -> Arc<[Key]> {
-        let key = Key::StyleUse(Arc::clone(part));
+        let key = Key::StyleUse(ooxml_opc::PartName::from(Arc::clone(part)));
         if keys.contains(&key) {
             return Arc::clone(keys);
         }

@@ -85,12 +85,12 @@ impl InsertCaption<'_> {
         if !self.text.is_empty() {
             self.append_text(sink, &inserted.part, &inserted.id)?;
         }
-        let mut created = vec![inserted.id.clone()];
+        let mut created = vec![inserted.id.to_string()];
         created.extend(made.created);
         let mut renamed = inserted.renamed;
         renamed.extend(made.renamed);
         Ok(FieldEdited {
-            id: Some(inserted.id),
+            id: Some(inserted.id.to_string()),
             changed: true,
             created,
             renamed,

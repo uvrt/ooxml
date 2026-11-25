@@ -207,7 +207,7 @@ pub(crate) fn ensure(sink: &mut EditSink<'_, '_>, name: &str, kind: &str) -> Res
     // the edit depends on the style being there (or not): a style removed meanwhile is
     // a conflict, not a reference to nothing
     if let Some(part) = &found {
-        sink.read(Key::Part(Arc::from(part.as_str())));
+        sink.read(Key::part(part.as_str()));
     }
     if let Some(found) = docx.find_style(name, kind) {
         return Ok(style_id(found).to_owned());
@@ -243,13 +243,7 @@ pub(crate) fn ensure(sink: &mut EditSink<'_, '_>, name: &str, kind: &str) -> Res
         .tree(&part)?
         .ok_or_else(|| EditError::no_part(part.clone()))?;
     let at = tree.root().children().len();
-    sink.splice_children(
-        &part,
-        (&[], at, 0),
-        nodes,
-        vec![Key::Part(Arc::from(part.as_str()))],
-        Vec::new(),
-    )?;
+    sink.splice_children(&part, (&[], at, 0), nodes, vec![Key::part(part.as_str())], Vec::new())?;
     Ok(planned.first().map(|(_, id, _)| id.clone()).unwrap_or_default())
 }
 

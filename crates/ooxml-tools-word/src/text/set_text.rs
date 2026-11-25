@@ -190,7 +190,7 @@ fn refusal(
     else {
         return edit_refusal(error, "", try_call(args));
     };
-    let head = editing.editor.store().snapshot();
+    let head = editing.editor.current();
     let k = head
         .doc()
         .docx()
@@ -256,7 +256,7 @@ fn table_named<'w>(
     editing: &Editing<'_>,
     work: &'w [(String, String, Option<String>, String)],
 ) -> Option<(&'w str, &'w str)> {
-    let head = editing.editor.store().snapshot();
+    let head = editing.editor.current();
     let docx = head.doc().docx().ok()?;
     work.iter().find_map(|(target, _, _, prefix)| {
         let followed = head.doc().ids().follow(target);
@@ -276,7 +276,7 @@ fn reply(paragraphs: usize, items: Vec<StyledTextSet>) -> ToolResult<Value> {
             changed: e.changed,
             created: e.created,
             removed: e.removed,
-            renamed: e.renamed,
+            renamed: ooxml_word_model::ids::renames_text(&e.renamed),
             warnings: Vec::new(),
         }));
         styled.extend(item.styled);

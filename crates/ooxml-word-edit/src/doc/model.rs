@@ -6,7 +6,7 @@
 
 use super::{Change, Key, ModelError, Setup, WordDoc};
 use crate::pool::IdsChange;
-use ooxml_opc::name::normalize;
+use ooxml_opc::PartName;
 use ooxml_store::{DocModel, KeySet};
 use ooxml_xml::PatchError;
 use std::sync::Arc;
@@ -161,14 +161,14 @@ impl DocModel for WordDoc {
                 }
             }
             Change::Put { part, .. } | Change::Bytes { part, .. } | Change::Remove { part } => {
-                let part: Arc<str> = Arc::from(normalize(part));
-                into.insert(Key::StyleUse(Arc::clone(&part)));
+                let part = PartName::normalize(part);
+                into.insert(Key::StyleUse(part.clone()));
                 into.insert(Key::Part(part));
             }
             Change::Restore { parts, .. } => {
                 for part in parts.iter() {
-                    let part: Arc<str> = Arc::from(normalize(part));
-                    into.insert(Key::StyleUse(Arc::clone(&part)));
+                    let part = PartName::normalize(part);
+                    into.insert(Key::StyleUse(part.clone()));
                     into.insert(Key::Part(part));
                 }
             }

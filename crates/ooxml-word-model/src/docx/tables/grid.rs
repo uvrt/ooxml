@@ -67,6 +67,21 @@ pub fn grid_value(raw: &str) -> Option<i64> {
 /// (`observations/grid-values-word.json`, `span-` and `before-` cases at the bound).
 pub const GRID_VALUE_MAX: i64 = 2_147_483_645;
 
+/// The most columns a Word table takes: Word's Insert Table and Split Cells stop at 63
+/// (docx-agent's tables from data refuse past it: `tools/README.md`, `word_edit_table`
+/// `set_from`, and `test_tables_from_data.py`'s 64-column case).
+pub const TABLE_COLUMNS_MAX: usize = 63;
+
+/// Whether a row reaching `reach` grid columns would widen a grid of `columns` past the
+/// widest a table is fitted to: [`TABLE_COLUMNS_MAX`], or the grid's own columns where it
+/// has more. Such a grid is not widened (layout refuses the table, a review leaves its
+/// `w:tblGrid`): Word re-grids such a row in a way of its own when it opens the document
+/// (`observations/grid-values-word.json`, the large-span cases).
+#[must_use]
+pub fn past_widest(columns: usize, reach: usize) -> bool {
+    reach > columns.max(TABLE_COLUMNS_MAX)
+}
+
 /// A count of grid columns (`w:gridBefore`, `w:gridAfter`) as written: absent or not valid
 /// is 0, below 0 is 0.
 #[must_use]

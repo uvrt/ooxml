@@ -175,7 +175,7 @@ impl EditSink<'_, '_> {
         let Some(part) = ooxml_word_model::parts::related(self.doc().package(), &docx.main, REL_STYLES)? else {
             return Ok(None);
         };
-        self.read(crate::doc::Key::Part(Arc::from(part.as_str())));
+        self.read(crate::doc::Key::part(part.as_str()));
         Ok(self.doc().tree(&part)?.and_then(|tree| {
             tree.root()
                 .find(Some(W), "docDefaults")
@@ -236,7 +236,7 @@ fn locate(story: &StoryPart, raw: &str) -> Option<Located> {
         .rev()
         .find_map(|k| story.ids.paragraph_at(path.get(..k)?))
         .map_or_else(
-            || crate::doc::Key::Part(Arc::from(story.part.as_str())),
+            || crate::doc::Key::part(story.part.as_str()),
             |p| block_key(&story.part, &p.id),
         );
     Some(Located { path, element, key })

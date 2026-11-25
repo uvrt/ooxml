@@ -69,7 +69,7 @@ pub struct RangesEdited {
     /// How many ranges were replaced.
     pub count: usize,
     /// Ids the edit's stamping renamed, old to new, in the order made.
-    pub renamed: Vec<(String, String)>,
+    pub renamed: ooxml_word_model::ids::Renames,
 }
 
 /// One range to replace: its paragraph (its first and last, across paragraphs), its
@@ -309,10 +309,7 @@ fn replace_ranges(sink: &mut EditSink<'_, '_>, mut plans: Vec<Plan>, keep: Keep)
     let count = plans.len();
     let docx = sink.docx()?;
     for plan in &plans {
-        sink.read(Key::Block {
-            part: Arc::from(plan.found.part.as_str()),
-            id: Arc::from(plan.found.id.as_str()),
-        });
+        sink.read(Key::block(plan.found.part.as_str(), plan.found.id.as_str()));
     }
     let renamed = stamp_document(sink, &docx)?;
     let first = plans.last().map(|p| {
@@ -389,7 +386,7 @@ fn write_paragraph(
     sink: &mut EditSink<'_, '_>,
     group: &[&Plan],
     keep: Keep,
-    renamed: &[(String, String)],
+    renamed: &[(ooxml_word_model::ids::BlockId, ooxml_word_model::ids::BlockId)],
 ) -> Result<Option<Written>> {
     let Some(head) = group.first() else { return Ok(None) };
     let (part, path) = (head.found.part.clone(), head.found.path.clone());
@@ -442,11 +439,14 @@ fn write_paragraph(
     Ok(Some(written))
 }
 
-pub(crate) fn renamed_id(renamed: &[(String, String)], id: &str) -> String {
+pub(crate) fn renamed_id(
+    renamed: &[(ooxml_word_model::ids::BlockId, ooxml_word_model::ids::BlockId)],
+    id: &str,
+) -> String {
     renamed
         .iter()
         .find(|(old, _)| old == id)
-        .map_or_else(|| id.to_owned(), |(_, new)| new.clone())
+        .map_or_else(|| id.to_owned(), |(_, new)| new.to_string())
 }
 
 /// docx-agent's `insert_text` inside an edit: `text` put at the position `at`.

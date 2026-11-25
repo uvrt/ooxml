@@ -113,7 +113,7 @@ fn sect_work(sink: &EditSink<'_, '_>, found: &Found) -> Result<(String, Work)> {
 /// The `w:sectPr` written back.
 fn write_sect(sink: &mut EditSink<'_, '_>, main: &str, found: &Found, work: &Work) -> Result<()> {
     let new = work.build().ok_or_else(|| EditError::unbuilt(main.to_owned()))?;
-    sink.replace(main, &found.section.path, new, vec![Key::Part(Arc::from(main))])
+    sink.replace(main, &found.section.path, new, vec![Key::part(main)])
 }
 
 /// A reference of `which`/`kind` to the relationship `rid`, first in the `w:sectPr` in
@@ -369,7 +369,7 @@ impl SetStoryText {
                     .ok_or_else(|| EditError::Refused(format!("{name} has no paragraph")))?;
                 let done = crate::set_text::write_text(&mut *sink, &first, first_line)?;
                 steps.push(SectionEdited {
-                    id: Some(done.id.clone()),
+                    id: Some(done.id.to_string()),
                     changed: done.changed,
                     renamed: done.renamed.clone(),
                     ..SectionEdited::default()
@@ -404,13 +404,13 @@ impl SetStoryText {
         for line in lines.iter().skip(1) {
             let done = crate::paragraphs::insert_paragraph(&mut *sink, &last, (true, line, None))?;
             steps.push(SectionEdited {
-                id: Some(done.id.clone()),
+                id: Some(done.id.to_string()),
                 changed: true,
-                created: vec![done.id.clone()],
+                created: vec![done.id.to_string()],
                 renamed: done.renamed,
                 ..SectionEdited::default()
             });
-            last = done.id;
+            last = done.id.to_string();
         }
         Ok(StoryEdited { story, steps })
     }

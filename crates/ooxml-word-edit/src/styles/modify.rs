@@ -20,7 +20,6 @@ use crate::review::space::Space;
 use crate::sink::EditSink;
 use crate::{EditError, Result};
 use ooxml_base::pyfmt::repr_str;
-use std::sync::Arc;
 
 /// What `modify` changes.
 pub(crate) struct Change<'a> {
@@ -47,7 +46,7 @@ pub(crate) fn open_numbers(sink: &mut EditSink<'_, '_>, space: &mut Space) -> Re
     let Some(part) = ooxml_word_model::parts::related(sink.doc().package(), &docx.main, REL_NUMBERING)? else {
         return Ok(None);
     };
-    sink.read(Key::Part(Arc::from(part.as_str())));
+    sink.read(Key::part(part.as_str()));
     let held = sink.doc().clone();
     let Some(work) = space.work(&held, &part)? else {
         return Ok(None);

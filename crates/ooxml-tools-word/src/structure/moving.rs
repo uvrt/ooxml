@@ -100,7 +100,7 @@ pub fn word_move(args: &WordMove, editing: &Editing<'_>) -> ToolResult<Value> {
 }
 
 fn run(args: &WordMove, editing: &Editing<'_>, way: &TryCall) -> Result<ToolResult<Value>, ToolError> {
-    let head = editing.editor.store().snapshot();
+    let head = editing.editor.current();
     let edit_refusal = |e| crate::review::edit_refusal(e, "", way.clone());
     let (moving, ids) = match (&args.section_heading, &args.blocks) {
         (Some(heading), _) => {
@@ -125,14 +125,14 @@ fn run(args: &WordMove, editing: &Editing<'_>, way: &TryCall) -> Result<ToolResu
                 changed: true,
                 created: out.created.clone(),
                 removed: Vec::new(),
-                renamed: out.renamed.clone(),
+                renamed: ooxml_word_model::ids::renames_text(&out.renamed),
                 warnings: out.warnings.clone(),
             };
             let renamed = |id: &String| {
                 out.renamed
                     .iter()
                     .find(|(old, _)| old == id)
-                    .map_or_else(|| id.clone(), |(_, new)| new.clone())
+                    .map_or_else(|| id.clone(), |(_, new)| new.to_string())
             };
             let mut result = outcome(
                 &[edit],

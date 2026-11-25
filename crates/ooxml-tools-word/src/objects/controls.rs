@@ -23,7 +23,7 @@ impl From<ControlEdited> for Outcome {
             id: out.id,
             created: out.created,
             removed: out.removed,
-            renamed: out.renamed,
+            renamed: ooxml_word_model::ids::renames_text(&out.renamed),
             warnings: out.warnings,
         }
     }
@@ -132,7 +132,7 @@ fn kind_of(editing: &Editing<'_>, id: &str, list: &TryCall) -> Result<&'static s
 }
 
 fn head_docx(editing: &Editing<'_>) -> Result<std::sync::Arc<Docx>, ToolError> {
-    let head = editing.editor.store().snapshot();
+    let head = editing.editor.current();
     head.doc()
         .docx()
         .map_err(|e| ToolError::internal(e.to_string(), "word:model"))

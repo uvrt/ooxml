@@ -71,7 +71,7 @@ pub struct CommentMade {
     /// The new comment (`c:<durableId>`).
     pub id: String,
     /// Ids the stamping before it renamed, old to new (an added comment's).
-    pub renamed: Vec<(String, String)>,
+    pub renamed: ooxml_word_model::ids::Renames,
     /// The thread resolved after a reply, when asked.
     pub resolved: Option<CommentEdited>,
 }

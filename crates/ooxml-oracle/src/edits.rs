@@ -228,7 +228,11 @@ fn selection(case: &Value) -> Selection {
 
 /// A review's result, as the harness writes docx-agent's.
 fn reviewed_result(out: &Reviewed) -> Value {
-    let renamed: Map<String, Value> = out.renamed.iter().map(|(old, new)| (old.clone(), json!(new))).collect();
+    let renamed: Map<String, Value> = out
+        .renamed
+        .iter()
+        .map(|(old, new)| (old.to_string(), json!(new)))
+        .collect();
     json!({"records": out.records, "removed": out.removed, "renamed": renamed, "warnings": out.warnings})
 }
 
@@ -314,8 +318,10 @@ fn set_cells(editor: &Editor, caller: &Caller, package: &Package, case: &Value) 
 }
 
 /// Renames as the harness writes them.
-pub(crate) fn renamed(renamed: &[(String, String)]) -> Map<String, Value> {
-    renamed.iter().map(|(old, new)| (old.clone(), json!(new))).collect()
+pub(crate) fn renamed(
+    renamed: &[(ooxml_word_model::ids::BlockId, ooxml_word_model::ids::BlockId)],
+) -> Map<String, Value> {
+    renamed.iter().map(|(old, new)| (old.to_string(), json!(new))).collect()
 }
 
 /// A replace's find: plain text (white space collapsed or not), or a Python regular
@@ -333,7 +339,11 @@ fn pattern(case: &Value, find: &str, with: &str) -> Result<Arc<dyn Pattern>, Str
 
 /// A set_text's result, as the harness writes docx-agent's.
 fn text_result(out: &TextEdited, lines: bool) -> Value {
-    let renamed: Map<String, Value> = out.renamed.iter().map(|(old, new)| (old.clone(), json!(new))).collect();
+    let renamed: Map<String, Value> = out
+        .renamed
+        .iter()
+        .map(|(old, new)| (old.to_string(), json!(new)))
+        .collect();
     if lines {
         return json!({"id": out.id, "changed": out.changed, "renamed": renamed, "created": out.created});
     }
@@ -342,7 +352,11 @@ fn text_result(out: &TextEdited, lines: bool) -> Value {
 
 /// A range edit's result.
 fn ranges_result(out: &RangesEdited) -> Value {
-    let renamed: Map<String, Value> = out.renamed.iter().map(|(old, new)| (old.clone(), json!(new))).collect();
+    let renamed: Map<String, Value> = out
+        .renamed
+        .iter()
+        .map(|(old, new)| (old.to_string(), json!(new)))
+        .collect();
     json!({"id": out.id, "count": out.count, "renamed": renamed})
 }
 

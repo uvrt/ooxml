@@ -68,10 +68,12 @@ impl EditNote {
         if items.get(start).is_some_and(|a| a.ch == ' ') {
             start += 1;
         }
-        let mut renamed: Vec<(String, String)> = Vec::new();
+        let mut renamed: ooxml_word_model::ids::Renames = Vec::new();
         let mut created = Vec::new();
         let mut removed = Vec::new();
-        let current = |renamed: &[(String, String)], id: &str| crate::ranges::renamed_id(renamed, id);
+        let current = |renamed: &[(ooxml_word_model::ids::BlockId, ooxml_word_model::ids::BlockId)], id: &str| {
+            crate::ranges::renamed_id(renamed, id)
+        };
         for entry in entries.iter().skip(1) {
             let target = current(&renamed, &entry.id);
             let done = crate::delete_write::delete(&mut *sink, &target)?;
@@ -91,9 +93,9 @@ impl EditNote {
         let mut previous = current(&renamed, &first_id);
         for line in lines.iter().skip(1) {
             let done = crate::paragraphs::insert_paragraph(&mut *sink, &previous, (true, line, None))?;
-            created.push(done.id.clone());
+            created.push(done.id.to_string());
             merge(&mut renamed, &done.renamed);
-            previous = done.id;
+            previous = done.id.to_string();
         }
         Ok(NoteEdited {
             id: Some(self.note.clone()),
@@ -105,7 +107,10 @@ impl EditNote {
 }
 
 /// `renamed` updated by `more` as a dict update: a key already there keeps its place.
-fn merge(renamed: &mut Vec<(String, String)>, more: &[(String, String)]) {
+fn merge(
+    renamed: &mut ooxml_word_model::ids::Renames,
+    more: &[(ooxml_word_model::ids::BlockId, ooxml_word_model::ids::BlockId)],
+) {
     for (old, new) in more {
         match renamed.iter_mut().find(|(o, _)| o == old) {
             Some(found) => found.1.clone_from(new),

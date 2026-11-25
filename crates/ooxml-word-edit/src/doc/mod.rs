@@ -17,7 +17,7 @@ use crate::EditError;
 use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
 use ooxml_word_model::docx::Docx;
-use ooxml_word_model::ids::{drawing_numbers, load_state, used_long_hex, LoadedState};
+use ooxml_word_model::ids::{drawing_numbers, load_state, used_long_hex, BlockId, LoadedState};
 use ooxml_xml::{Patch, PatchError, Tree};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -330,8 +330,8 @@ impl WordDoc {
                     key.clone()
                 } else {
                     Key::Block {
-                        part: Arc::clone(part),
-                        id: Arc::from(resolved),
+                        part: part.clone(),
+                        id: BlockId::from(resolved),
                     }
                 }
             }

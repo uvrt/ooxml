@@ -748,18 +748,91 @@ fn a_step_group_is_one_undo_step_and_a_revert_takes_its_edits_back() {
     put(&s, &d, &paragraph("11111111", "three"), &context);
     let reverted = s.revert_group(&d, &start, &context).unwrap();
     assert_eq!(reverted, Some(s.snapshot(&d).unwrap().version()));
-    assert_eq!(s.close_group(&d, &context, Some("batch")).unwrap(), None);
+    assert_eq!(s.close_group(&d, &start, &context, Some("batch")).unwrap(), None);
     assert!(body_of(&s, &d).contains(">two<"));
     assert!(!body_of(&s, &d).contains("w:ins"));
     // a batch that applies: one step, which one undo takes back
-    s.open_group(&d).unwrap();
+    let group = s.open_group(&d).unwrap();
     put(&s, &d, &paragraph("11111111", "four"), &context);
     put(&s, &d, &paragraph("11111111", "five"), &context);
-    let made = s.close_group(&d, &context, Some("batch")).unwrap();
+    let made = s.close_group(&d, &group, &context, Some("batch")).unwrap();
     assert_eq!(made, Some(s.snapshot(&d).unwrap().version()));
     assert!(body_of(&s, &d).contains(">five<"));
     assert_eq!(s.undo(&d, 1, &context).unwrap().count, 1);
     assert!(body_of(&s, &d).contains(">two<"));
+}
+
+#[test]
+fn a_batch_is_read_by_its_own_thread_alone_and_another_threads_batch_waits_for_it() {
+    let s = Arc::new(session());
+    let d = s
+        .open(docx(&paragraph("11111111", "one")), DocKind::Docx, "a.docx")
+        .unwrap();
+    let context = as_caller("w1");
+    let group = s.open_group(&d).unwrap();
+    assert!(s.open_group(&d).is_err(), "this thread's batch is open already");
+    let set = |text: &str| {
+        call(
+            &s,
+            "word_set_text",
+            json!({"doc": "d1", "target": "p:11111111", "text": text}),
+            &context,
+        )
+    };
+    let first = set("two");
+    let second = set("three");
+    // each op's version is the step the batch will make, read here alone
+    assert_eq!(first["ok"], json!(true), "{first}");
+    assert_eq!(
+        (first["version"].clone(), second["version"].clone()),
+        (json!(1), json!(1))
+    );
+    assert!(body_of(&s, &d).contains(">three<"));
+    let elsewhere = std::thread::scope(|scope| scope.spawn(|| body_of(&s, &d)).join().unwrap());
+    assert!(elsewhere.contains(">one<"), "another thread reads the head");
+    let waiting = {
+        let (s, d) = (Arc::clone(&s), d.clone());
+        std::thread::spawn(move || {
+            let theirs = s.open_group(&d).unwrap();
+            let seen = body_of(&s, &d);
+            s.close_group(&d, &theirs, &CallContext::default(), None).unwrap();
+            seen
+        })
+    };
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    assert!(!waiting.is_finished(), "another thread's batch waits");
+    let made = s.close_group(&d, &group, &context, Some("batch")).unwrap();
+    assert_eq!(made, Some(s.snapshot(&d).unwrap().version()));
+    assert!(waiting.join().unwrap().contains(">three<"));
+    assert_eq!(s.snapshot(&d).unwrap().number(), 1);
+    assert_eq!(s.numbers(&d).unwrap().steps.len(), 1, "one step");
+    // a batch let go unclosed publishes nothing
+    let dropped = s.open_group(&d).unwrap();
+    set("four");
+    assert!(s.abandon_group(&d, &dropped).unwrap());
+    assert!(body_of(&s, &d).contains(">three<"));
+    assert!(!s.abandon_group(&d, &dropped).unwrap());
+}
+
+#[test]
+fn a_package_batch_is_one_held_transaction_too() {
+    let s = session();
+    let d = s
+        .open(docx(&paragraph("11111111", "one")), DocKind::Pptx, "a.pptx")
+        .unwrap();
+    let context = as_caller("w1");
+    let group = s.open_group(&d).unwrap();
+    put(&s, &d, &paragraph("11111111", "two"), &context);
+    put(&s, &d, &paragraph("11111111", "three"), &context);
+    let elsewhere = std::thread::scope(|scope| scope.spawn(|| s.snapshot(&d).unwrap().number()).join().unwrap());
+    assert_eq!((s.snapshot(&d).unwrap().number(), elsewhere), (1, 0));
+    let made = s.close_group(&d, &group, &context, Some("batch")).unwrap();
+    assert_eq!(made, Some(s.snapshot(&d).unwrap().version()));
+    assert_eq!(s.numbers(&d).unwrap().steps.len(), 1, "one step");
+    let dropped = s.open_group(&d).unwrap();
+    put(&s, &d, &paragraph("11111111", "four"), &context);
+    assert!(s.abandon_group(&d, &dropped).unwrap());
+    assert!(body_of(&s, &d).contains(">three<"));
 }
 
 #[test]

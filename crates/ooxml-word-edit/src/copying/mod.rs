@@ -198,7 +198,7 @@ pub struct BlocksCopied {
     /// Every paragraph and table made, in document order.
     pub created: Vec<String>,
     /// Ids the edit's stamping renamed, old to new.
-    pub renamed: Vec<(String, String)>,
+    pub renamed: ooxml_word_model::ids::Renames,
     /// The ids of the blocks replaced that went (`replace:`).
     pub removed: Vec<String>,
     /// The styles imported, the bookmarks renamed.

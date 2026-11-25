@@ -97,11 +97,11 @@ pub struct WordLists {
 impl From<ListStep> for Outcome {
     fn from(step: ListStep) -> Self {
         Outcome {
-            id: Some(step.id),
+            id: Some(step.id.to_string()),
             changed: step.changed,
             created: Vec::new(),
             removed: step.removed,
-            renamed: step.renamed,
+            renamed: ooxml_word_model::ids::renames_text(&step.renamed),
             warnings: step.warnings,
         }
     }
@@ -130,7 +130,7 @@ pub fn word_lists(args: &WordLists, editing: &Editing<'_>) -> ToolResult<Value> 
 }
 
 fn run(args: &WordLists, editing: &Editing<'_>, again: &TryCall) -> Result<ToolResult<Value>, ToolError> {
-    let head = editing.editor.store().snapshot();
+    let head = editing.editor.current();
     let doc = head.doc();
     let docx = doc
         .docx()

@@ -308,7 +308,7 @@ impl AddHyperlink {
 }
 
 /// The reply of a link made: the `index`th of the paragraph `id`.
-fn made(id: &str, index: usize, renamed: Vec<(String, String)>) -> LinkEdited {
+fn made(id: &str, index: usize, renamed: ooxml_word_model::ids::Renames) -> LinkEdited {
     let made = format!("hl:{id}/{index}");
     LinkEdited {
         id: Some(made.clone()),
@@ -328,7 +328,7 @@ fn put_tracked(
     (runs, parent): (&[Id], Id),
     target: Target,
     (place, tracking): (&crate::fields::Place, crate::policy::Tracking),
-    renamed: Vec<(String, String)>,
+    renamed: ooxml_word_model::ids::Renames,
 ) -> Result<LinkEdited> {
     let style = crate::builtin::ensure(&mut *sink, "Hyperlink", "character")?;
     let shared = sink.doc().shared_handle();

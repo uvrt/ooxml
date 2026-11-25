@@ -91,8 +91,8 @@ impl Parts {
                     .collect();
                 for attribute in named {
                     if cache.is_empty() {
-                        sink.read(Key::Part(Arc::from(normalize(&rels_for(dest_part)))));
-                        sink.read(Key::Part(Arc::from(CONTENT_TYPES_PART)));
+                        sink.read(Key::part(normalize(&rels_for(dest_part))));
+                        sink.read(Key::part(CONTENT_TYPES_PART));
                     }
                     let value: &str = &attribute.value;
                     let new = match cache.get(value) {

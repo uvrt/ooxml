@@ -14,7 +14,6 @@ use crate::sink::EditSink;
 use crate::{EditError, Result};
 use ooxml_base::pyfmt::repr_str;
 use ooxml_word_model::parts::{related, REL_SETTINGS};
-use std::sync::Arc;
 
 const SETTINGS_TYPE: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml";
 
@@ -41,7 +40,7 @@ pub(crate) fn settings_part(sink: &mut EditSink<'_, '_>) -> Result<String> {
 pub(crate) fn set_default(sink: &mut EditSink<'_, '_>, space: &mut Space, name: &str) -> Result<StyleStep> {
     let docx = sink.docx()?;
     if let Some(part) = related(sink.doc().package(), &docx.main, REL_SETTINGS)? {
-        sink.read(Key::Part(Arc::from(part.as_str())));
+        sink.read(Key::part(part.as_str()));
     }
     let current = super::read::table_default(&docx);
     super::add::resolve(sink, name, "table")?;

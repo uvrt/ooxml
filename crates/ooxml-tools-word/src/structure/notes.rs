@@ -76,7 +76,7 @@ impl From<NoteEdited> for Outcome {
             id: out.id,
             created: out.created,
             removed: out.removed,
-            renamed: out.renamed,
+            renamed: ooxml_word_model::ids::renames_text(&out.renamed),
             warnings: Vec::new(),
         }
     }
@@ -188,7 +188,7 @@ pub(crate) fn end_of(range: &str) -> String {
 
 /// Every note (a hundred), with its kind and text, as docx-agent lists them.
 fn listed(editing: &Editing<'_>) -> ToolResult<Value> {
-    let head = editing.editor.store().snapshot();
+    let head = editing.editor.current();
     let docx = match head.doc().docx() {
         Ok(docx) => docx,
         Err(error) => return ToolResult::failed(ToolError::internal(error.to_string(), "word:model")),

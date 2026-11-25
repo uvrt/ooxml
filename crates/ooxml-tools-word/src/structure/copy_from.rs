@@ -132,7 +132,7 @@ fn run(args: &WordCopyFrom, editing: &Editing<'_>, way: &TryCall) -> Result<Tool
     let range = match (&args.section_heading, &args.range) {
         (Some(heading), _) => {
             let found = match &source {
-                CopySource::Own => section_blocks(editing.editor.store().snapshot().doc(), heading),
+                CopySource::Own => section_blocks(editing.editor.current().doc(), heading),
                 CopySource::Other(other) => other.docx().and_then(|d| section_blocks_in(other.ids(), &d, heading)),
             };
             match found {
@@ -192,7 +192,7 @@ fn reply(args: &WordCopyFrom, out: ooxml_word_edit::BlocksCopied) -> ToolResult<
         changed: true,
         created: out.created.clone(),
         removed: out.removed.clone(),
-        renamed: out.renamed.clone(),
+        renamed: ooxml_word_model::ids::renames_text(&out.renamed),
         warnings: out.warnings.clone(),
     };
     let mut result = outcome(

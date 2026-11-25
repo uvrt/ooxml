@@ -134,7 +134,7 @@ fn headings_kept(sink: &mut EditSink<'_, '_>, docx: &Docx, ids: &[String], force
     };
     // a paragraph's level is its own or its style chain's
     if let Some(part) = related(sink.doc().package(), &docx.main, REL_STYLES)? {
-        sink.read(Key::Part(Arc::from(part.as_str())));
+        sink.read(Key::part(part.as_str()));
     }
     let Some(walk) = BodyWalk::new(docx) else {
         return Ok(Vec::new());

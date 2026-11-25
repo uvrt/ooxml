@@ -28,7 +28,7 @@ impl From<DrawingEdited> for Outcome {
             changed: out.changed,
             created: out.created,
             removed: Vec::new(),
-            renamed: out.renamed,
+            renamed: ooxml_word_model::ids::renames_text(&out.renamed),
             warnings: out.warnings,
         }
     }
@@ -251,7 +251,7 @@ pub(super) fn position(args: &WordDrawings, editing: &Editing<'_>, list: &TryCal
 
 /// The pictures, then the charts not among them, as docx-agent lists them.
 fn listed(editing: &Editing<'_>, list: &TryCall) -> Result<ToolResult<Value>, ToolError> {
-    let head = editing.editor.store().snapshot();
+    let head = editing.editor.current();
     let docx = head
         .doc()
         .docx()

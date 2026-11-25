@@ -81,7 +81,7 @@ pub struct CellEdit {
     /// The paragraph written or made; `None` for a deletion.
     pub id: Option<String>,
     /// Ids renamed, old to new.
-    pub renamed: Vec<(String, String)>,
+    pub renamed: ooxml_word_model::ids::Renames,
     /// Paragraphs made.
     pub created: Vec<String>,
     /// Paragraphs removed.
@@ -366,7 +366,7 @@ fn write_cell(
         check_text(head)?;
         let wrote = crate::set_text::write_text_as(sink, first, head, stamping)?;
         edits.push(CellEdit {
-            id: Some(wrote.id),
+            id: Some(wrote.id.to_string()),
             renamed: wrote.renamed,
             created: Vec::new(),
             removed: Vec::new(),
@@ -390,12 +390,12 @@ fn write_cell(
         for line in lines.iter().skip(1) {
             let made = crate::paragraphs::insert_paragraph(sink, &last, (true, line, None))?;
             edits.push(CellEdit {
-                id: Some(made.id.clone()),
+                id: Some(made.id.to_string()),
                 renamed: made.renamed,
-                created: vec![made.id.clone()],
+                created: vec![made.id.to_string()],
                 removed: Vec::new(),
             });
-            last = made.id;
+            last = made.id.to_string();
         }
     }
     Ok(())

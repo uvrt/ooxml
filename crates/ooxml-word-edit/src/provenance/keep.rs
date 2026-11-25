@@ -22,7 +22,6 @@ use ooxml_word_model::docx::provenance::{dumps, kind_of, resolve_followed, Kind,
 use ooxml_word_model::docx::text::{paragraph_text, View};
 use ooxml_word_model::ids::Entry;
 use serde_json::Value;
-use std::sync::Arc;
 
 /// The kind of a paragraph's entry.
 const TEXT: &str = "text";
@@ -74,10 +73,7 @@ impl Command<WordDoc> for KeepText {
                 out.push(false);
                 continue;
             }
-            sink.read(Key::Block {
-                part: Arc::from(part.part.as_str()),
-                id: Arc::from(paragraph.id.as_str()),
-            });
+            sink.read(Key::block(part.part.as_str(), paragraph.id.as_str()));
             let now = paragraph_text(&paragraph.element, View::Current);
             let old = draft
                 .as_ref()

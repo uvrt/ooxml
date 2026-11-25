@@ -39,7 +39,7 @@ fn stretch_keys(
     part: &str,
     (paths, root): (&[Box<[u32]>], &Arc<Element>),
     nodes: &[Node],
-    renamed: &[(String, String)],
+    renamed: &[(ooxml_word_model::ids::BlockId, ooxml_word_model::ids::BlockId)],
 ) -> Vec<Key> {
     let mut keys: Vec<Key> = paths
         .iter()
@@ -66,7 +66,7 @@ pub(crate) fn write_across(
     sink: &mut EditSink<'_, '_>,
     plan: &Plan,
     keep: Keep,
-    renamed: &[(String, String)],
+    renamed: &[(ooxml_word_model::ids::BlockId, ooxml_word_model::ids::BlockId)],
 ) -> Result<Option<Written>> {
     let Some(across) = plan.across.as_ref() else {
         return Ok(None);

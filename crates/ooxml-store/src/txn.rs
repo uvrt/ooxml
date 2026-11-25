@@ -1,5 +1,7 @@
 //! Owns: [`Txn`], a transaction: a snapshot, a private working version made from it, the
-//! keys read, the keys written and the change set; savepoints for batches.
+//! keys read, the keys written and the change set; savepoints for batches. A transaction
+//! the store runs borrows the store's id allocator; one it hands out ([`crate::Store::begin`])
+//! shares it, so it may outlive the call that began it.
 //!
 //! Must not: publish anything; [`crate::Store`] commits a transaction.
 
@@ -21,11 +23,28 @@ pub struct Txn<'s, D: DocModel> {
     /// The keys its changes create under stand-ins ([`DocModel::created`]).
     created: KeySet<D::Key>,
     changes: Vec<D::Change>,
-    ids: &'s IdAllocator,
+    ids: Ids<'s>,
+}
+
+/// The id allocator a transaction draws from: the store's, borrowed by a run, or shared by
+/// a transaction handed out to be committed later.
+pub(crate) enum Ids<'s> {
+    Borrowed(&'s IdAllocator),
+    Shared(Arc<IdAllocator>),
+}
+
+impl Ids<'_> {
+    fn get(&self) -> &IdAllocator {
+        match self {
+            Ids::Borrowed(ids) => ids,
+            Ids::Shared(ids) => ids,
+        }
+    }
 }
 
 /// A point in a transaction to return to (a batch's failed op returns to the one taken
-/// before it). Reads recorded after it are kept: a conflict on them only redoes the work.
+/// before it). Reads and reads by condition recorded after it are kept, and so are the ids
+/// drawn after it: a conflict on them only redoes the work, and an id is never given twice.
 pub struct Savepoint<D: DocModel> {
     work: D,
     writes: KeySet<D::Key>,
@@ -34,8 +53,27 @@ pub struct Savepoint<D: DocModel> {
     changes: usize,
 }
 
+impl<D: DocModel> Clone for Savepoint<D> {
+    fn clone(&self) -> Self {
+        Self {
+            work: self.work.clone(),
+            writes: self.writes.clone(),
+            merges: self.merges.clone(),
+            created: self.created.clone(),
+            changes: self.changes,
+        }
+    }
+}
+
+impl<D: DocModel> Savepoint<D> {
+    /// How many changes the transaction held at this point.
+    pub(crate) fn len(&self) -> usize {
+        self.changes
+    }
+}
+
 impl<'s, D: DocModel> Txn<'s, D> {
-    pub(crate) fn new(base: Snapshot<D>, ids: &'s IdAllocator, setup: &D::Setup) -> Self {
+    pub(crate) fn new(base: Snapshot<D>, ids: Ids<'s>, setup: &D::Setup) -> Self {
         let mut work = base.doc().clone();
         work.begin();
         work.set_up(setup);
@@ -96,7 +134,23 @@ impl<'s, D: DocModel> Txn<'s, D> {
     /// The next position of id sequence `seq`, never given before (also when this
     /// transaction is redone or fails: the position is then left unused).
     pub fn allocate(&mut self, seq: IdSeq) -> Result<u64, Error<D>> {
-        Ok(self.ids.draw(seq)?)
+        Ok(self.ids.get().draw(seq)?)
+    }
+
+    /// Set the working version up for the next command with `setup` ([`DocModel::set_up`]):
+    /// a transaction that runs several commands, each its call's setting.
+    pub fn set_up(&mut self, setup: &D::Setup) {
+        self.work.set_up(setup);
+    }
+
+    /// How many changes it holds: one that grew made a change.
+    pub fn len(&self) -> usize {
+        self.changes.len()
+    }
+
+    /// Whether it holds no change.
+    pub fn is_empty(&self) -> bool {
+        self.changes.is_empty()
     }
 
     /// The keys read so far.

@@ -34,7 +34,7 @@ impl EditSink<'_, '_> {
         let target = match same {
             Some(name) => {
                 // the part reused must still hold those bytes where the edit commits
-                self.read(Key::Part(Arc::from(name.as_str())));
+                self.read(Key::part(name.as_str()));
                 name
             }
             None => {

@@ -97,7 +97,7 @@ impl InsertToc<'_> {
         &self,
         sink: &mut EditSink<'_, '_>,
         anchor: &crate::paragraphs::Anchor,
-    ) -> Result<(Holder, Vec<(String, String)>)> {
+    ) -> Result<(Holder, ooxml_word_model::ids::Renames)> {
         let docx = sink.docx()?;
         let own = !(self.before.is_some() && anchor.paragraph);
         if !own {
@@ -128,7 +128,14 @@ impl InsertToc<'_> {
             .find(|p| p.id == made.id)
             .map(|p| p.path.to_vec())
             .ok_or_else(|| EditError::no_element(docx.main.clone()))?;
-        Ok((Holder { path, id: made.id, own }, made.renamed))
+        Ok((
+            Holder {
+                path,
+                id: made.id.to_string(),
+                own,
+            },
+            made.renamed,
+        ))
     }
 
     fn edit(&self, sink: &mut EditSink<'_, '_>) -> Result<FieldEdited> {
@@ -247,7 +254,7 @@ fn put_field(sink: &mut EditSink<'_, '_>, part: &str, holder: &Holder, instructi
         .and_then(|b| green_path(&work, b))
         .ok_or_else(|| EditError::no_element(part.to_owned()))?;
     let new = work.build().ok_or_else(|| EditError::unbuilt(part.to_owned()))?;
-    sink.replace(part, &holder.path, new, vec![Key::Part(Arc::from(part))])?;
+    sink.replace(part, &holder.path, new, vec![Key::part(part)])?;
     let mut path = holder.path.clone();
     path.extend(begin);
     Ok(path)
@@ -386,7 +393,7 @@ fn put_stretch(
         }
     }
     let count = (stretch.1 - stretch.0) as usize + 1;
-    let keys = vec![Key::Part(Arc::from(part)), Key::Annotations];
+    let keys = vec![Key::part(part), Key::Annotations];
     sink.splice_children(part, (parent, stretch.0 as usize, count), nodes, keys, draws)?;
     if dated {
         sink.ensure_w14(part, false, &[("w16du", W16DU)])?;

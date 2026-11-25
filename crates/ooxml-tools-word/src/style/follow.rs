@@ -59,7 +59,7 @@ fn run(args: &WordFollowSample, editing: &Editing<'_>, again: &TryCall) -> Resul
         policy: policy(editing),
     };
     let ran = if preview {
-        let head = editing.editor.store().snapshot();
+        let head = editing.editor.current();
         let store = Store::new(head.doc().clone(), StoreConfig::default(), Arc::new(Still));
         store
             .run(&Caller::anonymous(), &command)
@@ -222,7 +222,7 @@ fn reply(
         changed: !changed.is_empty(),
         created: Vec::new(),
         removed: Vec::new(),
-        renamed: followed.renamed.clone(),
+        renamed: ooxml_word_model::ids::renames_text(&followed.renamed),
         warnings: followed.warnings.clone(),
     };
     let mut result = outcome(&[edit], summary, Some(Value::Object(data)));

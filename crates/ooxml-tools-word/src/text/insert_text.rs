@@ -222,7 +222,12 @@ fn reply(placed: Vec<Placed>, work: &[InsertItem], sides: &[Where]) -> ToolResul
     let mut made = Vec::with_capacity(placed.len());
     let mut refs = Vec::new();
     for ((placed, item), side) in placed.into_iter().zip(work).zip(sides) {
-        let inserted = inserted_range(&placed.range, *side, &item.text, &placed.edited.renamed);
+        let inserted = inserted_range(
+            &placed.range,
+            *side,
+            &item.text,
+            &ooxml_word_model::ids::renames_text(&placed.edited.renamed),
+        );
         if let Some(name) = item.ref_name.as_ref().filter(|n| !n.is_empty()) {
             refs.push((name.clone(), inserted.clone()));
         }
@@ -230,7 +235,7 @@ fn reply(placed: Vec<Placed>, work: &[InsertItem], sides: &[Where]) -> ToolResul
         edits.push(Outcome {
             id: placed.edited.id,
             changed: placed.edited.count > 0,
-            renamed: placed.edited.renamed,
+            renamed: ooxml_word_model::ids::renames_text(&placed.edited.renamed),
             ..Outcome::default()
         });
     }

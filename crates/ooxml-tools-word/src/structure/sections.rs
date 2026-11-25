@@ -130,7 +130,7 @@ impl From<SectionEdited> for Outcome {
             changed: out.changed,
             created: out.created,
             removed: out.removed,
-            renamed: out.renamed,
+            renamed: ooxml_word_model::ids::renames_text(&out.renamed),
             warnings: out.warnings,
         }
     }
@@ -154,7 +154,7 @@ fn run(args: &WordSections, editing: &Editing<'_>, list: &TryCall) -> Result<Too
     let editor = editing.editor;
     match args.action {
         SectionAction::List => {
-            let head = editor.store().snapshot();
+            let head = editor.current();
             let docx = head
                 .doc()
                 .docx()
@@ -269,7 +269,7 @@ fn sides(
     match (after, before) {
         (Some(after), None) => {
             if after == "end" {
-                let head = editing.editor.store().snapshot();
+                let head = editing.editor.current();
                 let docx = head
                     .doc()
                     .docx()

@@ -11,6 +11,7 @@ use super::widths::{table_widths, Extents};
 use crate::px::Px;
 use crate::table::Unsupported;
 use ooxml_base::Q;
+use ooxml_word_model::docx::tables::TABLE_COLUMNS_MAX;
 use ooxml_word_model::resolve::{border_twips, ResolvedCell, ResolvedRow, ResolvedTable};
 use ooxml_word_model::value::{Border, Props, Value};
 use std::sync::Arc;
@@ -39,8 +40,19 @@ pub struct TableSpec {
 
 impl TableSpec {
     /// The table `resolved` as stated.
-    pub fn new(resolved: Arc<ResolvedTable>, nested: bool, mode15: bool) -> TableSpec {
-        TableSpec {
+    ///
+    /// # Errors
+    /// [`Unsupported`] for a table a row of which reaches past the widest a table is
+    /// fitted to (`ResolvedTable::too_wide`): its grid is not widened to lay it out on.
+    pub fn new(resolved: Arc<ResolvedTable>, nested: bool, mode15: bool) -> Result<TableSpec, Unsupported> {
+        if let Some((row, reach)) = resolved.too_wide {
+            return Err(Unsupported(format!(
+                "row {row} reaches {reach} grid columns, past the {} a Word table takes and its w:tblGrid's {}",
+                TABLE_COLUMNS_MAX,
+                resolved.grid.len()
+            )));
+        }
+        Ok(TableSpec {
             properties: resolved.properties.clone(),
             indent_stated: resolved.indent_stated,
             resolved,
@@ -48,7 +60,7 @@ impl TableSpec {
             mode15,
             minimums: None,
             extents: None,
-        }
+        })
     }
 
     /// Its rows.

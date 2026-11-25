@@ -228,7 +228,7 @@ impl Command<WordDoc> for FollowSample {
             renamed
                 .iter()
                 .find(|(old, _)| old == id)
-                .map_or_else(|| id.to_owned(), |(_, new)| new.clone())
+                .map_or_else(|| id.to_owned(), |(_, new)| new.to_string())
         };
         let sample_now = if self.source.is_none() {
             renamed_to(&sample.id)

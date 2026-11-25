@@ -96,8 +96,8 @@ pub(crate) fn add_list(sink: &mut EditSink<'_, '_>, main: &str, style_id: &str, 
             REL_NUMBERING,
         )?,
     };
-    let key = || vec![Key::Part(Arc::from(part.as_str()))];
-    sink.read(Key::Part(Arc::from(part.as_str())));
+    let key = || vec![Key::part(part.as_str())];
+    sink.read(Key::part(part.as_str()));
     let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::no_part(&part))?;
     let root = tree.root();
     let abstract_id = numbers(root, "abstractNum", "abstractNumId")

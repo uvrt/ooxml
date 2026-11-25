@@ -145,7 +145,7 @@ fn run(args: &WordLinks, editing: &Editing<'_>, list: &TryCall) -> Result<ToolRe
 /// The bookmarks (Word's hidden ones left out) and hyperlinks, a hundred of each, as
 /// docx-agent lists them.
 fn listed(editing: &Editing<'_>) -> ToolResult<Value> {
-    let head = editing.editor.store().snapshot();
+    let head = editing.editor.current();
     let docx = match head.doc().docx() {
         Ok(docx) => docx,
         Err(error) => return ToolResult::failed(ToolError::internal(error.to_string(), "word:model")),

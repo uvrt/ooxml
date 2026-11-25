@@ -22,7 +22,7 @@ use std::sync::Arc;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Touched {
     /// The part.
-    pub part: String,
+    pub part: ooxml_opc::PartName,
     /// For a body section: its heading's id (`None` before the first heading), its level
     /// (0 there), and its first and last block.
     pub section: Option<Section>,
@@ -329,13 +329,16 @@ pub fn touched(before: &WordDoc, after: &WordDoc) -> Result<Vec<Touched>> {
         if part == docx.main {
             if let Some(sections) = body_sections(before, after, &docx)? {
                 out.extend(sections.into_iter().map(|section| Touched {
-                    part: part.clone(),
+                    part: part.clone().into(),
                     section,
                 }));
                 continue;
             }
         }
-        out.push(Touched { part, section: None });
+        out.push(Touched {
+            part: part.into(),
+            section: None,
+        });
     }
     Ok(out)
 }

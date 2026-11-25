@@ -15,6 +15,7 @@ ooxml-derive.workspace = true
 ooxml-colour.workspace = true
 ooxml-chart.workspace = true
 ooxml-drawingml.workspace = true
+serde.workspace = true
 thiserror.workspace = true
 serde_json.workspace = true
 flate2.workspace = true

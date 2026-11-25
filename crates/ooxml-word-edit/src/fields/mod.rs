@@ -44,7 +44,7 @@ pub struct FieldEdited {
     /// Ids it made.
     pub created: Vec<String>,
     /// Ids renamed by the stamping, old to new.
-    pub renamed: Vec<(String, String)>,
+    pub renamed: ooxml_word_model::ids::Renames,
     /// Results changed (an update's count).
     pub count: usize,
     /// The fields (and table of contents entries) whose result the layout cannot say.

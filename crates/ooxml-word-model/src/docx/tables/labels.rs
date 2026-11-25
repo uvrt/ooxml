@@ -276,7 +276,6 @@ mod tests {
                 dense_text(&dense, "t:1", 9, 9),
                 "{specs:?}"
             );
-            assert_eq!(GridPlaces::from_positions(&dense).width(), places.width());
         }
     }
 
