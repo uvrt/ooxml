@@ -67,7 +67,7 @@ fn a_note_by_id_commits_past_an_edit_elsewhere() {
 fn moved(first: &str, after: &str) -> MoveBlocks {
     MoveBlocks {
         blocks: Moving::Blocks(ooxml_word_model::address::Address::from(first.to_owned())),
-        after: Some(after.to_owned()).map(ooxml_word_model::address::Address::from),
+        after: Some(ooxml_word_model::address::Address::from(after.to_owned())),
         before: None,
         policy: RevisionPolicy::Untracked,
     }

@@ -242,7 +242,7 @@ fn a_text_box_moved_with_its_block_is_not_synced() {
     let moved = MoveBlocks {
         blocks: Moving::Blocks(ooxml_word_model::address::Address::from("p@body/4".to_owned())),
         after: None,
-        before: Some("p@body/0".to_owned()).map(ooxml_word_model::address::Address::from),
+        before: Some(ooxml_word_model::address::Address::from("p@body/0".to_owned())),
         policy: RevisionPolicy::Untracked,
     };
     assert!(editor.run(&Caller::anonymous(), &moved).unwrap().changed);

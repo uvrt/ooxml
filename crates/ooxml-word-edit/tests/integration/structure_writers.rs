@@ -141,7 +141,7 @@ fn edit(rng: &mut Rng, targets: &[String], writer: u64, n: usize) -> Edit {
             policy: policy(rng, writer),
         }),
         10 => Edit::Break(InsertSectionBreak {
-            after: Some(target).map(ooxml_word_model::address::Address::from),
+            after: Some(ooxml_word_model::address::Address::from(target)),
             before: None,
             kind: SectionBreakKind::Continuous,
             policy: policy(rng, writer),
@@ -158,7 +158,7 @@ fn edit(rng: &mut Rng, targets: &[String], writer: u64, n: usize) -> Edit {
         14..=16 => field_edit(rng, target, writer, &words),
         _ => Edit::Move(MoveBlocks {
             blocks: Moving::Blocks(ooxml_word_model::address::Address::from(target)),
-            after: Some(other).map(ooxml_word_model::address::Address::from),
+            after: Some(ooxml_word_model::address::Address::from(other)),
             before: None,
             policy: policy(rng, writer),
         }),
@@ -523,7 +523,7 @@ fn a_paragraph_moved_while_tracking_takes_words_move_form() {
     let editor = editor(&fixture("generated/ids-and-markup.docx"));
     let moved = MoveBlocks {
         blocks: Moving::Blocks(ooxml_word_model::address::Address::from("p:1A2B3C02".to_owned())),
-        after: Some("p:1A2B3C0D".to_owned()).map(ooxml_word_model::address::Address::from),
+        after: Some(ooxml_word_model::address::Address::from("p:1A2B3C0D".to_owned())),
         before: None,
         policy: tracked("Writer A"),
     };

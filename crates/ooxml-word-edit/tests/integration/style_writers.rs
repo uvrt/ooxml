@@ -372,10 +372,7 @@ fn a_renumbered_copy_and_a_concurrent_tracked_insertion() {
         })
     };
     let format = Edit::Format(FormatEdit {
-        targets: (vec!["p:5A000002".to_owned()])
-            .iter()
-            .map(|t| ooxml_word_model::address::Address::parse(t))
-            .collect(),
+        targets: vec![ooxml_word_model::address::Address::parse("p:5A000002")],
         plan: FormatPlan {
             run: vec![Setting {
                 property: Property::Italic,

@@ -144,10 +144,7 @@ fn format_edits(bytes: &Arc<[u8]>, targets: &[String; 2], tracked: &RevisionPoli
         best(bytes, &heading(vec![middle.clone()])),
     );
     let styled = FormatEdit {
-        targets: (vec![span.clone()])
-            .iter()
-            .map(|t| ooxml_word_model::address::Address::parse(t))
-            .collect(),
+        targets: vec![ooxml_word_model::address::Address::parse(span)],
         plan: FormatPlan {
             paragraph_style: Some("Heading 2".into()),
             ..FormatPlan::default()
@@ -157,10 +154,7 @@ fn format_edits(bytes: &Arc<[u8]>, targets: &[String; 2], tracked: &RevisionPoli
     };
     report("format, 100 paragraphs to a heading style", best(bytes, &styled));
     let kept = FormatEdit {
-        targets: (vec![span.clone()])
-            .iter()
-            .map(|t| ooxml_word_model::address::Address::parse(t))
-            .collect(),
+        targets: vec![ooxml_word_model::address::Address::parse(span)],
         plan: FormatPlan {
             keep_together: Some(true),
             ..FormatPlan::default()

@@ -45,20 +45,20 @@ fn structure_edits_on_a_long_document() {
 fn next_calls(bytes: &Arc<[u8]>, (early, middle, late): (&str, &str, &str), report: &dyn Fn(&str, Duration)) {
     let untracked = RevisionPolicy::Untracked;
     let first = InsertSectionBreak {
-        after: Some(middle.to_owned()).map(ooxml_word_model::address::Address::from),
+        after: Some(ooxml_word_model::address::Address::from(middle.to_owned())),
         before: None,
         kind: ooxml_word_model::docx::sections::SectionBreakKind::NextPage,
         policy: untracked.clone(),
     };
     let section = InsertSectionBreak {
-        after: Some(early.to_owned()).map(ooxml_word_model::address::Address::from),
+        after: Some(ooxml_word_model::address::Address::from(early.to_owned())),
         before: None,
         kind: ooxml_word_model::docx::sections::SectionBreakKind::NextPage,
         policy: untracked.clone(),
     };
     let moving = MoveBlocks {
         blocks: Moving::Blocks(ooxml_word_model::address::Address::from(early.to_owned())),
-        after: Some(late.to_owned()).map(ooxml_word_model::address::Address::from),
+        after: Some(ooxml_word_model::address::Address::from(late.to_owned())),
         before: None,
         policy: untracked,
     };
@@ -119,7 +119,7 @@ fn sections_and_moves(bytes: &Arc<[u8]>, (early, late): (&str, &str), report: &d
         best(
             bytes,
             &InsertSectionBreak {
-                after: Some(early.to_owned()).map(ooxml_word_model::address::Address::from),
+                after: Some(ooxml_word_model::address::Address::from(early.to_owned())),
                 before: None,
                 kind: ooxml_word_model::docx::sections::SectionBreakKind::NextPage,
                 policy: untracked.clone(),
@@ -147,7 +147,7 @@ fn sections_and_moves(bytes: &Arc<[u8]>, (early, late): (&str, &str), report: &d
             bytes,
             &MoveBlocks {
                 blocks: Moving::Blocks(ooxml_word_model::address::Address::from(early.to_owned())),
-                after: Some(late.to_owned()).map(ooxml_word_model::address::Address::from),
+                after: Some(ooxml_word_model::address::Address::from(late.to_owned())),
                 before: None,
                 policy: untracked,
             },
