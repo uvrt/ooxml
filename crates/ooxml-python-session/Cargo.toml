@@ -30,6 +30,7 @@ ooxml-word-pages.workspace = true
 ooxml-numfmt.workspace = true
 ooxml-raster.workspace = true
 ooxml-xml.workspace = true
+ooxml-zip.workspace = true
 serde_json.workspace = true
 pyo3.workspace = true
 

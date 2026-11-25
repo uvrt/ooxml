@@ -3,11 +3,14 @@
 //! Owns: reading an archive's entries within the zip-bomb limits ([`Archive`]), an entry's
 //! uncompressed bytes checked by size and CRC-32 ([`Archive::read_entry`]), and writing an
 //! archive ([`Writer`]): untouched entries copied raw, compressed bytes and all; new or
-//! changed ones deflated (zlib-rs) in the form Python's zipfile writes.
+//! changed ones deflated (zlib-rs) in the form Python's zipfile writes; and a file's
+//! MS-FSSHTTPD chunks for a co-authoring host, with the delta against a held version
+//! ([`chunks`]).
 //!
 //! Must not: parse XML or know what a part is.
 #![forbid(unsafe_code)]
 
+pub mod chunks;
 mod cp437;
 mod error;
 mod inflate;

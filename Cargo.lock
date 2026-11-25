@@ -603,6 +603,7 @@ dependencies = [
  "ooxml-word-model",
  "ooxml-word-pages",
  "ooxml-xml",
+ "ooxml-zip",
  "pyo3",
  "serde_json",
 ]
