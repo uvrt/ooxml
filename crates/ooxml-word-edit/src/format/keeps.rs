@@ -49,9 +49,8 @@ fn is_w(element: &Element, local: &str) -> bool {
 
 /// The places of the body's blocks `address` names, in order (docx-agent's
 /// `copies.blocks_of`), with the main part.
-fn block_places(doc: &WordDoc, docx: &Docx, address: &str) -> Result<Vec<Vec<u32>>> {
-    let expanded =
-        expand_heading(docx, &Address::parse(address)).map_err(|e| refused(format!("{address}: {}", e.message)))?;
+fn block_places(doc: &WordDoc, docx: &Docx, address: &Address) -> Result<Vec<Vec<u32>>> {
+    let expanded = expand_heading(docx, address).map_err(|e| refused(format!("{address}: {}", e.message)))?;
     let mut places: Vec<Vec<u32>> = Vec::new();
     let part;
     if expanded.span_ends().map_err(EditError::Address)?.is_some() {
@@ -116,7 +115,7 @@ fn top_block(root: &Arc<Element>, path: &[u32]) -> Option<Vec<u32>> {
 ///
 /// # Errors
 /// An address naming nothing in the body, or not in the body.
-pub fn body_blocks(doc: &WordDoc, docx: &Docx, address: &str) -> Result<Vec<(String, Vec<u32>)>> {
+pub fn body_blocks(doc: &WordDoc, docx: &Docx, address: &Address) -> Result<Vec<(String, Vec<u32>)>> {
     let body = docx.body().ok_or_else(|| EditError::no_part(docx.main.clone()))?;
     let mut out = Vec::new();
     for place in block_places(doc, docx, address)? {
@@ -164,7 +163,7 @@ fn child<'a>(parent: &'a Element, local: &str) -> Option<(u32, &'a Arc<Element>)
 ///
 /// # Errors
 /// docx-agent's refusals: an address naming nothing in the body, or no blocks.
-pub(crate) fn keep_plan(doc: &WordDoc, docx: &Docx, address: &str, on: bool) -> Result<KeepPlan> {
+pub(crate) fn keep_plan(doc: &WordDoc, docx: &Docx, address: &Address, on: bool) -> Result<KeepPlan> {
     let blocks = body_blocks(doc, docx, address)?;
     let Some((first, _)) = blocks.first() else {
         return Err(refused(format!(
@@ -268,7 +267,7 @@ fn keep_values(look: &mut Keeps<'_>, paragraph: &Element, place: &[u32], names: 
 ///
 /// # Errors
 /// An address naming nothing in the body.
-pub fn kept_blocks(doc: &WordDoc, docx: &Docx, address: &str) -> Result<Vec<String>> {
+pub fn kept_blocks(doc: &WordDoc, docx: &Docx, address: &Address) -> Result<Vec<String>> {
     Ok(body_blocks(doc, docx, address)?.into_iter().map(|(id, _)| id).collect())
 }
 
@@ -277,7 +276,7 @@ pub fn kept_blocks(doc: &WordDoc, docx: &Docx, address: &str) -> Result<Vec<Stri
 ///
 /// # Errors
 /// As [`keep_plan`]'s.
-pub fn keep_writes(doc: &WordDoc, docx: &Docx, address: &str, on: bool) -> Result<bool> {
+pub fn keep_writes(doc: &WordDoc, docx: &Docx, address: &Address, on: bool) -> Result<bool> {
     Ok(!keep_plan(doc, docx, address, on)?.changes.is_empty())
 }
 
@@ -288,7 +287,7 @@ pub fn keep_writes(doc: &WordDoc, docx: &Docx, address: &str, on: bool) -> Resul
 ///
 /// # Errors
 /// As [`keep_plan`]'s; the main part not XML.
-pub fn kept_package(doc: &WordDoc, docx: &Docx, address: &str, on: bool) -> Result<Option<Package>> {
+pub fn kept_package(doc: &WordDoc, docx: &Docx, address: &Address, on: bool) -> Result<Option<Package>> {
     let plan = keep_plan(doc, docx, address, on)?;
     if plan.changes.is_empty() {
         return Ok(None);

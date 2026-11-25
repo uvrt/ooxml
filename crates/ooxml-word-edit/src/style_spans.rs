@@ -45,7 +45,7 @@ pub struct Span {
 #[derive(Debug, Clone)]
 pub struct StyleSpans {
     /// The paragraph.
-    pub target: String,
+    pub target: ooxml_word_model::address::Address,
     /// The spans, in order.
     pub spans: Vec<Span>,
     /// Untracked or tracked.
@@ -68,12 +68,12 @@ impl Command<WordDoc> for StyleSpans {
     type Error = EditError;
 
     fn validate(&self, doc: &WordDoc) -> Result<()> {
-        check(doc, &self.target, &self.spans)
+        check(doc, self.target.as_str(), &self.spans)
     }
 
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<SpansStyled> {
         let mut sink = EditSink::new(tx, self.policy.clone());
-        let out = style_spans(&mut sink, &self.target, &self.spans)?;
+        let out = style_spans(&mut sink, self.target.as_str(), &self.spans)?;
         // docx-agent's edit, once it ends: text boxes synced, revision ids unique
         sink.space_written()?;
         crate::textbox::sync(&mut sink)?;

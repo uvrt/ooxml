@@ -244,9 +244,10 @@ impl Command<WordDoc> for Picture<'_> {
             own = Some(id);
         }
         let command = InsertPicture {
-            at: own
-                .as_ref()
-                .map_or_else(|| plan.at.clone().unwrap_or_default(), |p| format!("{p}@0")),
+            at: ooxml_word_model::address::Address::from(
+                own.as_ref()
+                    .map_or_else(|| plan.at.clone().unwrap_or_default(), |p| format!("{p}@0")),
+            ),
             image: std::sync::Arc::clone(&plan.data),
             width: self.args.width,
             alt_text: Some(plan.alt_text.clone()),
@@ -279,7 +280,7 @@ impl Picture<'_> {
     fn align(&self, tx: &mut Txn<'_, WordDoc>, id: &str, edits: &mut Vec<Outcome>) -> Result<(), EditError> {
         let value = self.args.align.map_or("left", |a| a.as_str());
         let command = FormatEdit {
-            targets: vec![id.to_owned()],
+            targets: vec![ooxml_word_model::address::Address::parse(id)],
             plan: FormatPlan {
                 paragraph: vec![Setting {
                     property: Property::Alignment,

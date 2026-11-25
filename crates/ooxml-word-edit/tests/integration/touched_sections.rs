@@ -45,7 +45,7 @@ fn many_changed_blocks_touch_the_sections_each_touches_alone() {
     for id in &chosen {
         let before = editor.store().snapshot().doc().clone();
         let command = SetText {
-            target: (*id).clone(),
+            target: ooxml_word_model::address::Address::from((*id).clone()),
             text: format!("Changed {id}"),
             policy: RevisionPolicy::Untracked,
         };

@@ -28,7 +28,7 @@ use std::sync::Arc;
 #[derive(Debug, Clone)]
 pub struct SetCells {
     /// The table (an id, an alias).
-    pub table: String,
+    pub table: ooxml_word_model::address::Address,
     /// Each cell's place and text (`\n` between its paragraphs), in order.
     pub writes: Vec<CellWrite>,
     /// Each cell written as `_set_cell` writes it, the document stamped first where it
@@ -171,7 +171,7 @@ impl Command<WordDoc> for SetCells {
     type Error = EditError;
 
     fn validate(&self, doc: &WordDoc) -> Result<()> {
-        table(doc, &*doc.docx()?, &self.table).map(|_| ())
+        table(doc, &*doc.docx()?, self.table.as_str()).map(|_| ())
     }
 
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<CellsSet> {
@@ -189,7 +189,7 @@ impl SetCells {
     fn write(&self, tx: &mut Txn<'_, WordDoc>, recorded: bool) -> Result<CellsSet> {
         let mut sink = EditSink::new(tx, self.policy.clone());
         let docx = sink.docx()?;
-        let found = table(sink.doc(), &docx, &self.table)?;
+        let found = table(sink.doc(), &docx, self.table.as_str())?;
         if !recorded && crate::tables::placed(sink.doc(), &found.id) {
             // docx-agent's `_Kept`: the cells written drop their columns from the record
             // ([`crate::KeepingRecord`] does)
@@ -211,12 +211,12 @@ impl SetCells {
         };
         for write in &self.writes {
             let (row, column) = match &self.accepted {
-                Some(accepted) => located(&sink, &self.table, write, accepted, &mut out.notes)?,
-                None => locate(&sink, &self.table, write)?,
+                Some(accepted) => located(&sink, self.table.as_str(), write, accepted, &mut out.notes)?,
+                None => locate(&sink, self.table.as_str(), write)?,
             };
             let Some((r, c)) = places.get(row, column) else {
                 let docx = sink.docx()?;
-                let (story, now) = found_table(sink.doc(), &docx, &self.table)?;
+                let (story, now) = found_table(sink.doc(), &docx, self.table.as_str())?;
                 return Err(EditError::Address(
                     TableGrid::new(story, &now).no_cell(&now.id, row, column),
                 ));

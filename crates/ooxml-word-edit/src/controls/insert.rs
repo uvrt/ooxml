@@ -50,7 +50,7 @@ pub enum ControlKind {
 #[derive(Debug, Clone)]
 pub struct InsertControl {
     /// Where: a position, or a range (at its start).
-    pub at: String,
+    pub at: ooxml_word_model::address::Address,
     /// Its kind.
     pub kind: ControlKind,
     /// A list's items (each its display text and value).
@@ -79,7 +79,7 @@ impl InsertControl {
         }
         check_text(&self.content_text())?;
         let docx = doc.docx()?;
-        let found = range(doc, &docx, &ooxml_word_model::address::Address::parse(&self.at))?;
+        let found = range(doc, &docx, &self.at)?;
         let span = Span::of(doc, &docx, &found)?;
         let first = span.first().ok_or_else(|| EditError::no_element(span.part.clone()))?;
         Ok((first.id.clone(), span.start))
@@ -107,7 +107,7 @@ impl InsertControl {
         let (paragraph, offset) = self.check(sink.doc())?;
         let docx = sink.docx()?;
         // a place named by condition, or a range's end, depends on the document around it
-        let by_id = names_by_id(&self.at) && !self.at.contains("..");
+        let by_id = names_by_id(self.at.as_str()) && !self.at.has(ooxml_word_model::address::Shape::Dots);
         if !by_id {
             sink.read_everything();
         }

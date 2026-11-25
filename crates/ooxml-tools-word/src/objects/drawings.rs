@@ -112,7 +112,7 @@ fn run(args: &WordDrawings, editing: &Editing<'_>, list: &TryCall) -> Result<Too
 fn insert_shape(args: &WordDrawings, editing: &Editing<'_>, list: &TryCall) -> Result<InsertShape, ToolError> {
     let text_box = args.action == DrawingAction::InsertTextBox;
     Ok(InsertShape {
-        at: position(args, editing, list)?,
+        at: ooxml_word_model::address::Address::from(position(args, editing, list)?),
         text_box,
         preset: match &args.preset {
             Some(preset) if !text_box => preset.clone(),

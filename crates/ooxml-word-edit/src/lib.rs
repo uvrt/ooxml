@@ -41,6 +41,8 @@
 
 mod across;
 mod address_keys;
+#[cfg(test)]
+mod address_reference_tests;
 mod after;
 mod beside;
 mod block_checks;

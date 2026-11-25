@@ -57,8 +57,22 @@ mod tests {
     fn every_length_of_the_cases_converts_as_before() {
         use std::path::{Path, PathBuf};
         const KEYS: [&str; 16] = [
-            "width", "height", "x", "y", "indent", "page_width", "page_height", "top", "right", "bottom", "left",
-            "number_at", "text_at", "tab_at", "size", "margins",
+            "width",
+            "height",
+            "x",
+            "y",
+            "indent",
+            "page_width",
+            "page_height",
+            "top",
+            "right",
+            "bottom",
+            "left",
+            "number_at",
+            "text_at",
+            "tab_at",
+            "size",
+            "margins",
         ];
         fn files(dir: &Path, out: &mut Vec<PathBuf>) {
             let Ok(entries) = std::fs::read_dir(dir) else { return };
@@ -82,7 +96,19 @@ mod tests {
         let cases = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../ooxml-oracle/cases");
         let mut paths = Vec::new();
         files(&cases, &mut paths);
-        let mut lengths = vec![0.0, -0.0, 0.025, 0.05, 0.075, 1.0 / 3.0, 12.345_67, -30.5, 1584.0, 1e12, -1e12];
+        let mut lengths = vec![
+            0.0,
+            -0.0,
+            0.025,
+            0.05,
+            0.075,
+            1.0 / 3.0,
+            12.345_67,
+            -30.5,
+            1584.0,
+            1e12,
+            -1e12,
+        ];
         for path in paths {
             for line in std::fs::read_to_string(&path).unwrap_or_default().lines() {
                 if let Ok(entry) = serde_json::from_str::<serde_json::Value>(line) {

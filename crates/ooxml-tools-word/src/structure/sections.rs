@@ -180,8 +180,8 @@ fn run(args: &WordSections, editing: &Editing<'_>, list: &TryCall) -> Result<Too
         SectionAction::InsertBreak => {
             let (after, before) = sides(args.after.as_deref(), args.before.as_deref(), editing, list)?;
             let command = InsertSectionBreak {
-                after,
-                before,
+                after: after.map(ooxml_word_model::address::Address::from),
+                before: before.map(ooxml_word_model::address::Address::from),
                 kind: args.start.unwrap_or(SectionStart::NextPage).kind(),
                 policy: policy(editing),
             };
@@ -198,7 +198,7 @@ fn run(args: &WordSections, editing: &Editing<'_>, list: &TryCall) -> Result<Too
             let section = need(args.section.as_deref(), "section", list)?.to_owned();
             if args.action == SectionAction::RemoveBreak {
                 let command = RemoveSectionBreak {
-                    section: section.clone(),
+                    section: ooxml_word_model::address::Address::parse(&section),
                     policy: policy(editing),
                 };
                 return Ok(match editor.run(editing.caller, &command) {
@@ -254,7 +254,7 @@ fn set(
         ));
     }
     let command = SetSection {
-        section: section.clone(),
+        section: ooxml_word_model::address::Address::parse(&section),
         values,
         policy: policy(editing),
     };

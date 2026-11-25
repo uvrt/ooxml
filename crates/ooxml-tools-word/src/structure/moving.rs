@@ -107,14 +107,17 @@ fn run(args: &WordMove, editing: &Editing<'_>, way: &TryCall) -> Result<ToolResu
             let ids = section_blocks(head.doc(), heading).map_err(edit_refusal)?;
             (Moving::Ids(ids.clone()), ids)
         }
-        (None, Some(blocks)) => (Moving::Blocks(blocks.clone()), vec![blocks.clone()]),
+        (None, Some(blocks)) => (
+            Moving::Blocks(ooxml_word_model::address::Address::parse(blocks)),
+            vec![blocks.clone()],
+        ),
         (None, None) => return Err(crate::review::needed("blocks", "", way.clone())),
     };
     let (after, before) = place(args, head.doc(), way)?;
     let command = MoveBlocks {
         blocks: moving,
-        after,
-        before,
+        after: after.map(ooxml_word_model::address::Address::from),
+        before: before.map(ooxml_word_model::address::Address::from),
         policy: policy(editing),
     };
     Ok(match editing.editor.run(editing.caller, &command) {

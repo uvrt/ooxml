@@ -183,7 +183,7 @@ fn blocks(
     let before = editing.editor.current();
     let mut watch = watch(editing, before.doc(), target);
     let command = DeleteBlocks {
-        target: target.to_owned(),
+        target: ooxml_word_model::address::Address::parse(target),
         force: args.force.unwrap_or(false),
         policy: editing.policy(),
     };
@@ -223,7 +223,7 @@ fn watch<'a>(editing: &Editing<'_>, now: &'a ooxml_word_edit::WordDoc, target: &
     let opened = editing.opened.docx().ok()?;
     let docx = now.docx().ok()?;
     let ids = if target.contains("..") {
-        blocks_named(now, target).ok()?
+        blocks_named(now, &ooxml_word_model::address::Address::parse(target)).ok()?
     } else {
         vec![target.to_owned()]
     };

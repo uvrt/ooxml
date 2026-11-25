@@ -36,7 +36,7 @@ fn role_style(construct: &str) -> String {
 #[derive(Debug, Clone)]
 pub struct SetStyledText {
     /// The paragraph, or a cell `t:X/c<row>,<col>`.
-    pub target: String,
+    pub target: ooxml_word_model::address::Address,
     /// The whole text: `\n` starts a paragraph; `**strong**`, `*emphasis*`,
     /// `[text]{Character style}`.
     pub text: String,
@@ -164,9 +164,9 @@ impl Command<WordDoc> for SetStyledText {
 /// `_plan`: the target, the lines read, the styles checked and the roles' styles.
 fn plan(doc: &WordDoc, docx: &Docx, item: &SetStyledText) -> Result<Plan> {
     let split = crate::paragraphs::is_lines(&item.text);
-    let cell = cell_of(docx, &item.target)?.filter(|_| split);
+    let cell = cell_of(docx, item.target.as_str())?.filter(|_| split);
     if cell.is_none() {
-        find(doc, docx, &item.target)?;
+        find(doc, docx, item.target.as_str())?;
     }
     let lines: Vec<Styled> = crate::paragraphs::lines(&item.text).into_iter().map(parse).collect();
     for line in &lines {
@@ -304,13 +304,13 @@ fn set_one(sink: &mut EditSink<'_, '_>, item: &SetStyledText, plan: &Plan) -> Re
         written: Vec::new(),
     };
     let text = plan.plain();
-    let mut target = item.target.clone();
+    let mut target = item.target.as_str().to_owned();
     if let Some(style) = &item.paragraph_style {
         target = paragraph_style(sink, item, plan, style, &mut out)?.unwrap_or(target);
     }
     if let Some((table, row, column)) = &plan.cell {
         let lines: Vec<&str> = text.split('\n').collect();
-        if cell_texts(sink, &item.target)? != lines {
+        if cell_texts(sink, item.target.as_str())? != lines {
             for e in crate::set_cells::set_cell(sink, table, (*row, *column), &text)? {
                 out.edits.push(ItemEdit {
                     changed: true,
@@ -321,7 +321,7 @@ fn set_one(sink: &mut EditSink<'_, '_>, item: &SetStyledText, plan: &Plan) -> Re
                 });
             }
         }
-        out.written = cell_paragraph_ids(sink, &item.target)?;
+        out.written = cell_paragraph_ids(sink, item.target.as_str())?;
         if out.edits.is_empty() {
             out.edits
                 .push(edit(out.written.first().cloned(), false, Vec::new(), Vec::new()));
@@ -383,8 +383,8 @@ fn paragraph_style(
 ) -> Result<Option<String>> {
     let docx = sink.docx()?;
     let targets = match plan.cell {
-        Some(_) => cell_paragraph_ids(sink, &item.target)?,
-        None => vec![find(sink.doc(), &docx, &item.target)?.id],
+        Some(_) => cell_paragraph_ids(sink, item.target.as_str())?,
+        None => vec![find(sink.doc(), &docx, item.target.as_str())?.id],
     };
     let wanted = crate::builtin::resolve(&docx, style, "paragraph")?;
     let default = docx

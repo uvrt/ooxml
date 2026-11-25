@@ -35,7 +35,7 @@ use std::sync::Arc;
 #[derive(Debug, Clone)]
 pub enum Moving {
     /// A block, or a span of blocks of one container (`p:A..t:B`).
-    Blocks(String),
+    Blocks(ooxml_word_model::address::Address),
     /// Blocks by id, in order (a heading's section).
     Ids(Vec<String>),
 }
@@ -46,9 +46,9 @@ pub struct MoveBlocks {
     /// The blocks.
     pub blocks: Moving,
     /// The block they go after; or
-    pub after: Option<String>,
+    pub after: Option<ooxml_word_model::address::Address>,
     /// the block they go before.
-    pub before: Option<String>,
+    pub before: Option<ooxml_word_model::address::Address>,
     /// Untracked or tracked.
     pub policy: RevisionPolicy,
 }
@@ -139,7 +139,7 @@ impl MoveBlocks {
             _ => return Err(EditError::Refused("give exactly one of after= or before=".to_owned())),
         };
         let (part, blocks) = match &self.blocks {
-            Moving::Blocks(address) => blocks_of(doc, docx, &Address::parse(address))?,
+            Moving::Blocks(address) => blocks_of(doc, docx, address)?,
             Moving::Ids(ids) => {
                 if ids.is_empty() {
                     return Err(EditError::Refused("no blocks to move".to_owned()));
@@ -160,7 +160,7 @@ impl MoveBlocks {
                 (part.unwrap_or_default(), found)
             }
         };
-        let (target_part, anchor) = resolve_block(doc, docx, target)?;
+        let (target_part, anchor) = resolve_block(doc, docx, target.as_str())?;
         if target_part != part {
             return Err(EditError::Refused(
                 "blocks move within their story; between documents is copy_blocks".to_owned(),
@@ -510,8 +510,8 @@ impl MoveBlocks {
     /// on the stretch it rewrites (its keys written); a heading's section, or a block or
     /// anchor named by condition, depends on the document around it.
     fn named_by_id(&self) -> bool {
-        let target = self.after.as_deref().or(self.before.as_deref()).unwrap_or_default();
-        matches!(&self.blocks, Moving::Blocks(a) if names_by_id(a)) && names_by_id(target)
+        let target = self.after.as_ref().or(self.before.as_ref()).map_or("", Address::as_str);
+        matches!(&self.blocks, Moving::Blocks(a) if names_by_id(a.as_str())) && names_by_id(target)
     }
 
     /// The reads of a planned move: the blocks and the anchor (named by id); tracked, the

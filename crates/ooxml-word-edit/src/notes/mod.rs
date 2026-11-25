@@ -282,8 +282,8 @@ fn find_first(
 
 /// Where a note's reference goes (docx-agent's `_place`): a position, or a range's end, in
 /// a body paragraph, not inside a field's result.
-fn place(doc: &WordDoc, docx: &Docx, at: &str) -> Result<(Found, usize)> {
-    let found = range(doc, docx, &ooxml_word_model::address::Address::parse(at))?;
+fn place(doc: &WordDoc, docx: &Docx, at: &ooxml_word_model::address::Address) -> Result<(Found, usize)> {
+    let found = range(doc, docx, at)?;
     let id = range_id(&found);
     let span = Span::of(doc, docx, &found)?;
     if span.part != docx.main {
@@ -299,7 +299,7 @@ fn place(doc: &WordDoc, docx: &Docx, at: &str) -> Result<(Found, usize)> {
         .last()
         .ok_or_else(|| EditError::no_element(span.part.clone()))?;
     if let Some(anchor) = crate::textbox::text_box_anchor(docx, &span.part, &last.path) {
-        return Err(in_text_box(docx, &span.part, &anchor, &last.path, at));
+        return Err(in_text_box(docx, &span.part, &anchor, &last.path, at.as_str()));
     }
     let work = Work::of(&last.element, Vec::new());
     let items = atoms(&work, work.root());

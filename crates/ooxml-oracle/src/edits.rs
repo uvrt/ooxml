@@ -187,7 +187,7 @@ fn edit(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
         op => {
             let lines = op == "set_text_paragraphs";
             let command = SetText {
-                target: text("target"),
+                target: ooxml_word_model::address::Address::from(text("target")),
                 text: text("text"),
                 policy: policy(case),
             };
@@ -256,7 +256,9 @@ fn insert_paragraph(editor: &Editor, caller: &Caller, package: &Package, case: &
 /// A set_paragraph_style case.
 fn set_paragraph_style(editor: &Editor, caller: &Caller, package: &Package, case: &Value) -> Result<Value, EditError> {
     let command = SetParagraphStyle {
-        target: case.get("target").and_then(Value::as_str).unwrap_or("").to_owned(),
+        target: ooxml_word_model::address::Address::from(
+            case.get("target").and_then(Value::as_str).unwrap_or("").to_owned(),
+        ),
         style: case.get("style").and_then(Value::as_str).map(str::to_owned),
         policy: policy(case),
     };
@@ -269,7 +271,9 @@ fn set_paragraph_style(editor: &Editor, caller: &Caller, package: &Package, case
 /// A delete case.
 fn delete(editor: &Editor, caller: &Caller, package: &Package, case: &Value) -> Result<Value, EditError> {
     let command = DeleteBlock {
-        target: case.get("target").and_then(Value::as_str).unwrap_or("").to_owned(),
+        target: ooxml_word_model::address::Address::from(
+            case.get("target").and_then(Value::as_str).unwrap_or("").to_owned(),
+        ),
         policy: policy(case),
     };
     editor.run(caller, &command).map(|done| {
@@ -300,7 +304,9 @@ fn set_cells(editor: &Editor, caller: &Caller, package: &Package, case: &Value) 
         .unwrap_or_default();
     // as word_edit_table writes cells: a table placed from a source keeps its record true
     let command = KeepingRecord(SetCells {
-        table: case.get("target").and_then(Value::as_str).unwrap_or("").to_owned(),
+        table: ooxml_word_model::address::Address::from(
+            case.get("target").and_then(Value::as_str).unwrap_or("").to_owned(),
+        ),
         writes,
         stamping: false,
         policy: policy(case),

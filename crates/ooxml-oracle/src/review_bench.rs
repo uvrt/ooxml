@@ -104,7 +104,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let mut made = 0;
     for (k, target) in targets.iter().step_by(step).take(wanted).enumerate() {
         let command = SetText {
-            target: target.clone(),
+            target: ooxml_word_model::address::Address::from(target.clone()),
             text: format!("Tracked change number {k} written by a reviewer"),
             policy: RevisionPolicy::Tracked(Tracking {
                 author: format!("Writer {}", k % 2),

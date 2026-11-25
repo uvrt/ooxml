@@ -79,7 +79,7 @@ fn table_document(rows: &str) -> Editor {
 
 fn set(editor: &Editor, row: usize, column: usize) -> Result<Vec<String>, EditError> {
     let command = SetCells {
-        table: "t@body/0".to_owned(),
+        table: ooxml_word_model::address::Address::from("t@body/0".to_owned()),
         writes: vec![CellWrite::at(row, column, "new".to_owned())],
         stamping: false,
         policy: RevisionPolicy::Untracked,
@@ -97,7 +97,7 @@ fn set(editor: &Editor, row: usize, column: usize) -> Result<Vec<String>, EditEr
 
 fn split(editor: &Editor, row: usize, column: usize) -> Result<(), EditError> {
     let command = EditTable {
-        table: "t@body/0".to_owned(),
+        table: ooxml_word_model::address::Address::from("t@body/0".to_owned()),
         change: TableChange::Split {
             row,
             column,

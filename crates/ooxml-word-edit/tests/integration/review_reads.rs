@@ -32,7 +32,7 @@ fn comment(place: &str) -> AddComments {
 
 fn control(at: &str) -> InsertControl {
     InsertControl {
-        at: at.to_owned(),
+        at: ooxml_word_model::address::Address::from(at.to_owned()),
         kind: ControlKind::Text,
         items: Vec::new(),
         tag: Some("tag".to_owned()),

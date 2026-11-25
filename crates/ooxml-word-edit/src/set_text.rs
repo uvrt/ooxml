@@ -29,7 +29,7 @@ use std::sync::Arc;
 pub struct SetText {
     /// The paragraph (`p:...`, `p@body/3`, a renamed id) or a cell (`t:X/c1,1`: its first
     /// paragraph).
-    pub target: String,
+    pub target: ooxml_word_model::address::Address,
     /// The whole new text (`\v` is a line break, `\t` a tab). With `\n` (`\r\n` and `\r`
     /// read as one) each later line is a new paragraph after it, in order, as docx-agent's
     /// `set_text_paragraphs` writes them.
@@ -146,15 +146,15 @@ impl Command<WordDoc> for SetText {
         for line in crate::paragraphs::lines(&self.text) {
             check_text(line)?;
         }
-        find(doc, &*doc.docx()?, &self.target).map(|_| ())
+        find(doc, &*doc.docx()?, self.target.as_str()).map(|_| ())
     }
 
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<TextEdited> {
         let mut sink = EditSink::new(tx, self.policy.clone());
         if crate::paragraphs::is_lines(&self.text) {
-            return crate::paragraphs::set_lines(&mut sink, &self.target, &self.text);
+            return crate::paragraphs::set_lines(&mut sink, self.target.as_str(), &self.text);
         }
-        let out = write_text(&mut sink, &self.target, &self.text)?;
+        let out = write_text(&mut sink, self.target.as_str(), &self.text)?;
         if out.changed {
             // docx-agent's edit, once it ends: text spaced, text boxes synced, revision ids unique
             crate::after::after_edit(&mut sink)?;

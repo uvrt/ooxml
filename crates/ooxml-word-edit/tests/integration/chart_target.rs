@@ -23,7 +23,7 @@ impl ChartParts for Unmade {
 fn a_cell_is_refused_with_its_table_and_paragraphs() {
     let editor = editor(&fixture("generated/markdown/constructs.docx"));
     let command = InsertChart {
-        at: "t:6B000029/c0,0".to_owned(),
+        at: ooxml_word_model::address::Address::from("t:6B000029/c0,0".to_owned()),
         chart: Unmade,
         size: (432.0, 252.0),
         policy: RevisionPolicy::Untracked,

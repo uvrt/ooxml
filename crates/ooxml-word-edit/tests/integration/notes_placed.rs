@@ -42,7 +42,7 @@ fn a_note_moved_into_a_text_box_is_refused_with_the_places_beside_it() {
         let editor = editor(&fixture("generated/charts/chart-places.docx"));
         let moved = MoveNote {
             note: "fn:1".to_owned(),
-            to: IN_BOX.to_owned(),
+            to: ooxml_word_model::address::Address::from(IN_BOX.to_owned()),
             policy: policy.clone(),
         };
         let error = editor.run(&Caller::anonymous(), &moved).unwrap_err();
@@ -55,7 +55,7 @@ fn a_note_moved_into_a_text_box_is_refused_with_the_places_beside_it() {
         // the way out works: the reference goes before the text box
         let again = MoveNote {
             note: "fn:1".to_owned(),
-            to: options[0].clone(),
+            to: ooxml_word_model::address::Address::from(options[0].clone()),
             policy,
         };
         editor.run(&Caller::anonymous(), &again).unwrap();
@@ -73,7 +73,7 @@ fn a_note_inserted_in_a_text_box_is_refused_with_the_places_beside_it() {
     let editor = editor(&fixture("generated/charts/chart-places.docx"));
     let inserted = InsertNote {
         kind: NoteKind::Endnote,
-        at: IN_BOX.to_owned(),
+        at: ooxml_word_model::address::Address::from(IN_BOX.to_owned()),
         text: "A note.".to_owned(),
         policy: tracked(),
     };

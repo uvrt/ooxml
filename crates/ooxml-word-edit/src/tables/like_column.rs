@@ -43,7 +43,7 @@ pub struct ColumnCopy {
 #[derive(Debug, Clone)]
 pub struct LikeTheColumn {
     /// The table (an id, an alias).
-    pub table: String,
+    pub table: ooxml_word_model::address::Address,
     /// The cells.
     pub cells: Vec<ColumnCopy>,
 }
@@ -55,13 +55,13 @@ impl Command<WordDoc> for LikeTheColumn {
 
     fn validate(&self, doc: &WordDoc) -> Result<()> {
         let docx = doc.docx()?;
-        find_table(doc, &docx, &self.table).map(|_| ())
+        find_table(doc, &docx, self.table.as_str()).map(|_| ())
     }
 
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<Vec<bool>> {
         let mut sink = EditSink::new(tx, RevisionPolicy::Untracked);
         let docx = sink.docx()?;
-        let found = find_table(sink.doc(), &docx, &self.table)?;
+        let found = find_table(sink.doc(), &docx, self.table.as_str())?;
         sink.read(block_key(&found.part, &found.id));
         let shared = sink.doc().shared_handle();
         let orders = shared.facts.orders();

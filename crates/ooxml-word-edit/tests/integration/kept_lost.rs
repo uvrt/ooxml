@@ -74,7 +74,10 @@ fn kept_and_cold(editor: &Editor) {
         ("Kept cell", "Kept cell, again"),
     ] {
         let command = SetText {
-            target: paragraph(&editor.store().snapshot().doc().clone(), start),
+            target: ooxml_word_model::address::Address::from(paragraph(
+                &editor.store().snapshot().doc().clone(),
+                start,
+            )),
             text: text.to_owned(),
             policy: RevisionPolicy::Untracked,
         };
@@ -123,7 +126,7 @@ fn original_text_a_tracked_deletion_takes_is_reported_beside_the_files_own_delet
         assert_eq!(accept_loses_original(&at_open, Arc::clone(&opened)).unwrap(), []);
         let start = body.texts().iter().find(|t| t.len() > 12).unwrap().to_owned();
         let command = SetText {
-            target: paragraph(&at_open, &start),
+            target: ooxml_word_model::address::Address::from(paragraph(&at_open, &start)),
             text: String::new(),
             policy: RevisionPolicy::Tracked(Tracking {
                 author: "Session".to_owned(),

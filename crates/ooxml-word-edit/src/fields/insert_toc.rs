@@ -36,9 +36,9 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct InsertToc<'l> {
     /// The block it goes after; or
-    pub after: Option<String>,
+    pub after: Option<ooxml_word_model::address::Address>,
     /// the block it goes before.
-    pub before: Option<String>,
+    pub before: Option<ooxml_word_model::address::Address>,
     /// The heading levels listed, 1-9.
     pub levels: (i64, i64),
     /// Untracked or tracked.
@@ -80,7 +80,7 @@ impl InsertToc<'_> {
             return Err(EditError::Refused("levels are (first, last), 1 to 9".to_owned()));
         }
         let docx = doc.docx()?;
-        let found = crate::paragraphs::anchor(doc, &docx, anchor)?;
+        let found = crate::paragraphs::anchor(doc, &docx, anchor.as_str())?;
         if found.part != docx.main {
             return Err(EditError::Refused("a table of contents goes in the body".to_owned()));
         }
@@ -112,10 +112,10 @@ impl InsertToc<'_> {
                 renamed,
             ));
         }
-        let target = self.after.clone().or_else(|| self.before.clone()).unwrap_or_default();
+        let target = self.after.as_ref().or(self.before.as_ref()).map_or("", |a| a.as_str());
         let after = self.after.is_some();
         let made = sink.with_policy(RevisionPolicy::Untracked, |sink| {
-            insert_paragraph(sink, &target, (after, "", None))
+            insert_paragraph(sink, target, (after, "", None))
         })?;
         let docx = sink.docx()?;
         let part = docx

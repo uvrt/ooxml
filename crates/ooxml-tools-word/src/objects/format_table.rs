@@ -454,7 +454,7 @@ fn finish(
     retry: &TryCall,
 ) -> Finished {
     let command = FormatTable {
-        table: args.table.clone(),
+        table: ooxml_word_model::address::Address::parse(&args.table),
         formats,
         policy: policy(editing),
         layout: editing.edit_layout(),

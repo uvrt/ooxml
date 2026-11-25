@@ -233,7 +233,7 @@ impl Command<WordDoc> for KeepingRecord<EditTable> {
 
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<TableChanged> {
         let mut sink = EditSink::new(tx, self.0.policy.clone());
-        let before = Before::read(&mut sink, &self.0.table)?;
+        let before = Before::read(&mut sink, self.0.table.as_str())?;
         let out = self.0.edit_with(&mut sink, Placing::recorded())?;
         crate::after::after_edit(&mut sink)?;
         if let Some(before) = before {
@@ -254,12 +254,12 @@ impl Command<WordDoc> for KeepingRecord<SetCells> {
     }
 
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<CellsSet> {
-        let before = Before::read(&mut EditSink::new(tx, RevisionPolicy::Untracked), &self.0.table)?;
+        let before = Before::read(&mut EditSink::new(tx, RevisionPolicy::Untracked), self.0.table.as_str())?;
         let out = self.0.prepare_placing(tx)?;
         if let Some(before) = before {
             let mut sink = EditSink::new(tx, RevisionPolicy::Untracked);
             let docx = sink.docx()?;
-            let now = find_table(sink.doc(), &docx, &self.0.table)?.id;
+            let now = find_table(sink.doc(), &docx, self.0.table.as_str())?.id;
             let after = before.after_cells(&out.at);
             before.keep(&mut sink, &now, after.as_ref())?;
         }

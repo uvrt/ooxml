@@ -41,7 +41,7 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct InsertField<'l> {
     /// The position (a range: at its end).
-    pub at: String,
+    pub at: ooxml_word_model::address::Address,
     /// The instruction (`PAGE`, `SEQ Figure \* ARABIC`), padded with a space each side.
     pub instruction: String,
     /// The cached result; `None`: computed where an update can, else left empty and listed.
@@ -80,8 +80,8 @@ pub(crate) struct Place {
 /// The paragraph and offset `at` names (`_field_place`: a range's end; `start`: its
 /// start, as a cross-reference takes it), refused outside the paragraph's text or inside
 /// a field's result.
-pub(crate) fn place(doc: &WordDoc, docx: &Docx, at: &str, start: bool) -> Result<Place> {
-    let found = range(doc, docx, &ooxml_word_model::address::Address::parse(at))?;
+pub(crate) fn place(doc: &WordDoc, docx: &Docx, at: &ooxml_word_model::address::Address, start: bool) -> Result<Place> {
+    let found = range(doc, docx, at)?;
     let span = Span::of(doc, docx, &found)?;
     let id = range_id(&found);
     let paragraph = if start { span.first() } else { span.last() };
@@ -425,7 +425,7 @@ impl Command<WordDoc> for InsertField<'_> {
 #[derive(Clone)]
 pub struct InsertCrossReference<'l> {
     /// The position (a range: at its start).
-    pub at: String,
+    pub at: ooxml_word_model::address::Address,
     /// The bookmark.
     pub bookmark: String,
     /// Its page rather than its text.
@@ -452,7 +452,7 @@ impl InsertCrossReference<'_> {
         let name = ooxml_word_model::address::bookmark(docx, &self.bookmark).map_err(EditError::Address)?;
         let here = place(doc, docx, &self.at, true)?;
         if !self.page {
-            if let Some(refused) = inside_own_bookmark(docx, &name, &here, &self.at) {
+            if let Some(refused) = inside_own_bookmark(docx, &name, &here, self.at.as_str()) {
                 return Err(refused);
             }
         }

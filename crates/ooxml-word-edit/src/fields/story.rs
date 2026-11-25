@@ -85,7 +85,7 @@ impl SetStoryNumbered<'_> {
 
     fn field(&self, at: String, kind: &str) -> InsertField<'_> {
         InsertField {
-            at,
+            at: ooxml_word_model::address::Address::from(at),
             instruction: format!(" {kind}  \\* MERGEFORMAT "),
             result: None,
             simple: kind != "PAGE",

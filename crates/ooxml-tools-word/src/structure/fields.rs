@@ -151,8 +151,8 @@ fn run(args: &WordFields, editing: &Editing<'_>, list: &TryCall) -> Result<ToolR
             let levels = levels(args.levels.as_deref())?;
             let (after, before) = beside(args, editing)?;
             let command = InsertToc {
-                after,
-                before,
+                after: after.map(ooxml_word_model::address::Address::from),
+                before: before.map(ooxml_word_model::address::Address::from),
                 levels,
                 policy: policy(editing),
                 today,
@@ -198,7 +198,7 @@ fn insert(args: &WordFields, editing: &Editing<'_>, list: &TryCall) -> Result<To
     let done = match args.action {
         FieldAction::InsertCrossReference => {
             let command = InsertCrossReference {
-                at,
+                at: ooxml_word_model::address::Address::from(at),
                 bookmark: need(args.bookmark.as_deref(), "bookmark", list)?.to_owned(),
                 page: args.kind == Some(ReferenceKind::Page),
                 policy: policy(editing),
@@ -209,7 +209,7 @@ fn insert(args: &WordFields, editing: &Editing<'_>, list: &TryCall) -> Result<To
         FieldAction::InsertDate => {
             let picture = "d MMMM yyyy";
             let command = InsertField {
-                at,
+                at: ooxml_word_model::address::Address::from(at),
                 instruction: format!(" DATE \\@ \"{picture}\" "),
                 result: Some(ooxml_word_edit::format_date(picture, today)),
                 simple: false,
@@ -222,7 +222,7 @@ fn insert(args: &WordFields, editing: &Editing<'_>, list: &TryCall) -> Result<To
         }
         _ => {
             let command = InsertField {
-                at,
+                at: ooxml_word_model::address::Address::from(at),
                 instruction: need(args.instruction.as_deref(), "instruction", list)?.to_owned(),
                 result: None,
                 simple: false,

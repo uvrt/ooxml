@@ -35,9 +35,9 @@ use std::sync::Arc;
 #[derive(Debug, Clone)]
 pub struct InsertSectionBreak {
     /// The block before it; or
-    pub after: Option<String>,
+    pub after: Option<ooxml_word_model::address::Address>,
     /// the block after it.
-    pub before: Option<String>,
+    pub before: Option<ooxml_word_model::address::Address>,
     /// How the section after it starts.
     pub kind: SectionBreakKind,
     /// Untracked or tracked.
@@ -48,7 +48,7 @@ pub struct InsertSectionBreak {
 #[derive(Debug, Clone)]
 pub struct RemoveSectionBreak {
     /// The section.
-    pub section: String,
+    pub section: ooxml_word_model::address::Address,
     /// Untracked or tracked.
     pub policy: RevisionPolicy,
 }
@@ -134,7 +134,7 @@ impl InsertSectionBreak {
             (Some(a), None) | (None, Some(a)) => a,
             _ => return Err(EditError::Refused("give exactly one of after= or before=".to_owned())),
         };
-        let (part, block) = resolve_block(doc, docx, anchor)?;
+        let (part, block) = resolve_block(doc, docx, anchor.as_str())?;
         if part != docx.main {
             return Err(EditError::Refused(
                 "a section break goes between blocks of the body".to_owned(),

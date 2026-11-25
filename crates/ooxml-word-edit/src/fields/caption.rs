@@ -72,7 +72,7 @@ impl InsertCaption<'_> {
         let inserted = insert_paragraph(&mut *sink, &self.anchor, (self.after, &label, Some("caption")))?;
         let length = label.chars().count();
         let field = InsertField {
-            at: format!("{}@{length}", inserted.id),
+            at: ooxml_word_model::address::Address::from(format!("{}@{length}", inserted.id)),
             instruction: format!(" SEQ {} \\* ARABIC ", self.label),
             result: None,
             simple: true,

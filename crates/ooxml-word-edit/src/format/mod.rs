@@ -34,7 +34,7 @@ use crate::{EditError, Result, WordDoc};
 use edit::{ParagraphOp, RangeOp, Run};
 use ooxml_base::pyfmt::repr_float;
 use ooxml_store::{Command, Txn};
-use ooxml_word_model::address::{is_text_range, resolve, span_ends};
+use ooxml_word_model::address::{resolve, Address, Shape};
 use ooxml_word_model::docx::numbering::{membership, Lists};
 use ooxml_word_model::docx::outline::Heading;
 use ooxml_word_model::docx::Docx;
@@ -84,7 +84,7 @@ impl FormatPlan {
 #[derive(Debug, Clone)]
 pub struct FormatEdit {
     /// The targets: paragraphs, ranges, spans, tables, cells, sections.
-    pub targets: Vec<String>,
+    pub targets: Vec<ooxml_word_model::address::Address>,
     /// What to set.
     pub plan: FormatPlan,
     /// Whether `clear` was given (docx-agent reads the outline then).
@@ -131,14 +131,14 @@ pub struct Formatted {
 /// Whether `keep_together` keeps `address`'s blocks on one page rather than one
 /// paragraph's lines (docx-agent's `_keeps_blocks`).
 #[must_use]
-pub fn keeps_blocks(doc: &WordDoc, docx: &Docx, address: &str) -> bool {
-    if is_text_range(address) || address.contains('/') {
+pub fn keeps_blocks(doc: &WordDoc, docx: &Docx, address: &Address) -> bool {
+    if address.has(Shape::Text) || address.as_str().contains('/') {
         return false;
     }
-    if !matches!(span_ends(address), Ok(None)) {
+    if !matches!(address.span_ends(), Ok(None)) {
         return true;
     }
-    let followed = doc.ids().follow(address);
+    let followed = doc.ids().follow(address.as_str());
     !matches!(resolve(docx, &followed), Ok((_, Entry::Paragraph(_))))
 }
 
@@ -191,19 +191,11 @@ pub fn known_style(docx: &Docx, name: &str, kind: &str) -> Result<String> {
 }
 
 /// The paragraphs `address` holds now, as `(part, index)`.
-fn places(run: &Run<'_, '_, '_>, address: &str) -> Result<Vec<(String, usize)>> {
+fn places(run: &Run<'_, '_, '_>, address: &Address) -> Result<Vec<(String, usize)>> {
     let docx = run.sink.docx()?;
-    if is_text_range(address) {
+    if address.has(Shape::Text) {
         // a range's ends followed where stamping renamed them (`Document.range`)
-        let span = Span::of(
-            run.sink.doc(),
-            &docx,
-            &range(
-                run.sink.doc(),
-                &docx,
-                &ooxml_word_model::address::Address::parse(address),
-            )?,
-        )?;
+        let span = Span::of(run.sink.doc(), &docx, &range(run.sink.doc(), &docx, address)?)?;
         let story = docx
             .part(&span.part)
             .ok_or_else(|| EditError::no_part(span.part.clone()))?;
@@ -220,16 +212,16 @@ fn places(run: &Run<'_, '_, '_>, address: &str) -> Result<Vec<(String, usize)>> 
 fn target(
     run: &mut Run<'_, '_, '_>,
     plan: &FormatPlan,
-    address: &str,
+    address: &Address,
     kept: bool,
     steps: &mut Vec<FormatStep>,
 ) -> Result<()> {
-    let is_range = address.contains('@') && !address.starts_with("p@");
+    let is_range = address.as_str().contains('@') && !address.as_str().starts_with("p@");
     let paragraphs = places(run, address)?;
     if let Some(on) = plan.keep_together {
         if kept {
             let mut step = keep_blocks(run, address, on)?;
-            if let (true, Some((height, room))) = (on, plan.taller.get(address)) {
+            if let (true, Some((height, room))) = (on, plan.taller.get(address.as_str())) {
                 step.warnings.push(format!(
                     "{address} is {} pt tall and a page holds {} pt: it cannot be kept on one page (Word starts \
                      it on a new page and breaks it where the page is full); keep shorter spans together",
@@ -270,11 +262,7 @@ fn target(
     if is_range {
         // docx-agent reads the range here, whatever it then sets on it
         let docx = run.sink.docx()?;
-        range(
-            run.sink.doc(),
-            &docx,
-            &ooxml_word_model::address::Address::parse(address),
-        )?;
+        range(run.sink.doc(), &docx, address)?;
         if let Some(name) = &plan.character_style {
             let id = character_style(run, name)?;
             steps.push(on_range(run, address, &RangeOp::Style(id.as_deref()))?);
@@ -339,13 +327,9 @@ fn character_style(run: &mut Run<'_, '_, '_>, name: &str) -> Result<Option<Strin
 
 /// `op` on the range `address` names: each paragraph's part of it, checked before any
 /// changes (docx-agent's `_format_range`); the step of its first paragraph.
-fn on_range(run: &mut Run<'_, '_, '_>, address: &str, op: &RangeOp<'_>) -> Result<FormatStep> {
+fn on_range(run: &mut Run<'_, '_, '_>, address: &Address, op: &RangeOp<'_>) -> Result<FormatStep> {
     let docx = run.sink.docx()?;
-    let found = range(
-        run.sink.doc(),
-        &docx,
-        &ooxml_word_model::address::Address::parse(address),
-    )?;
+    let found = range(run.sink.doc(), &docx, address)?;
     let span = Span::of(run.sink.doc(), &docx, &found)?;
     let id = crate::text_range::range_id(&found);
     let story = docx
@@ -384,7 +368,7 @@ pub const KEEPS_BLOCKS: &str = "keep_together keeps the body's blocks: give a sp
 
 /// Keep `address`'s blocks on one page, or release them (docx-agent's
 /// `keep_blocks_together`): one step, a no-op said in its warnings.
-fn keep_blocks(run: &mut Run<'_, '_, '_>, address: &str, on: bool) -> Result<FormatStep> {
+fn keep_blocks(run: &mut Run<'_, '_, '_>, address: &Address, on: bool) -> Result<FormatStep> {
     let docx = run.sink.docx()?;
     let plan = keeps::keep_plan(run.sink.doc(), &docx, address, on).map_err(|e| {
         let said = match e {
@@ -434,7 +418,7 @@ fn keep_blocks(run: &mut Run<'_, '_, '_>, address: &str, on: bool) -> Result<For
 /// and paragraphs already alike listed, not changed.
 fn like_targets(
     run: &mut Run<'_, '_, '_>,
-    targets: &[String],
+    targets: &[Address],
     like: &Like,
     steps: &mut Vec<FormatStep>,
 ) -> Result<LikeDone> {

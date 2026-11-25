@@ -59,7 +59,7 @@ fn edit(rng: &mut Rng, targets: &[String], threads: &[String], writer: u64) -> E
     let words: Vec<&str> = (0..1 + rng.below(4)).map(|_| WORDS[rng.below(WORDS.len())]).collect();
     match rng.below(12) {
         0..=2 => Edit::Set(SetText {
-            target,
+            target: ooxml_word_model::address::Address::from(target),
             text: words.join(" "),
             policy: policy(rng, writer),
         }),
@@ -104,7 +104,7 @@ fn edit(rng: &mut Rng, targets: &[String], threads: &[String], writer: u64) -> E
             },
         }),
         11 => Edit::Control(InsertControl {
-            at: format!("{target}@{}", rng.below(2)),
+            at: ooxml_word_model::address::Address::from(format!("{target}@{}", rng.below(2))),
             kind: ControlKind::Text,
             items: Vec::new(),
             tag: Some(format!("w{writer}")),

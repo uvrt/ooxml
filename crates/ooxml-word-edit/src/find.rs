@@ -379,7 +379,7 @@ mod tests {
                     RevisionPolicy::Untracked
                 };
                 let command = SetText {
-                    target: target.clone(),
+                    target: ooxml_word_model::address::Address::from(target.clone()),
                     text: format!("Edited {k}: a sentence"),
                     policy,
                 };
@@ -437,7 +437,7 @@ mod tests {
                     .run(
                         &caller,
                         &DeleteBlock {
-                            target,
+                            target: ooxml_word_model::address::Address::from(target),
                             policy: RevisionPolicy::Untracked,
                         },
                     )
@@ -446,7 +446,7 @@ mod tests {
                     .run(
                         &caller,
                         &SetText {
-                            target,
+                            target: ooxml_word_model::address::Address::from(target),
                             text: format!("Rewritten {k}"),
                             policy: RevisionPolicy::Untracked,
                         },

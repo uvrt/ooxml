@@ -17,6 +17,7 @@ use crate::set_cells::{CellWrite, CellsSet, SetCells};
 use crate::sink::EditSink;
 use crate::{EditError, Result, WordDoc};
 use ooxml_store::{Command, Txn};
+use ooxml_word_model::address::Address;
 use ooxml_word_model::docx::provenance::{dumps, kind_of, Kind};
 use serde_json::{Map, Value};
 use std::time::Instant;
@@ -50,7 +51,7 @@ pub enum PlacedRecord {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlaceRows {
     /// The table (an id, an alias).
-    pub table: String,
+    pub table: ooxml_word_model::address::Address,
     /// The rows added, in order (from the bottom, so the rows above keep their places).
     pub beside: Vec<RowsBeside>,
     /// The cells, by document row and grid column as the rows added leave the table, in
@@ -87,7 +88,7 @@ impl PlaceRows {
     fn rows(
         &self,
         sink: &mut EditSink<'_, '_>,
-        table: &mut String,
+        table: &mut Address,
         changes: impl IntoIterator<Item = TableChange>,
     ) -> Result<Vec<TableChanged>> {
         let mut out = Vec::new();
@@ -98,7 +99,7 @@ impl PlaceRows {
                 policy: self.policy.clone(),
             }
             .edit_placing(sink)?;
-            table.clone_from(&made.table);
+            *table = Address::from(made.table.as_str());
             out.push(made);
         }
         Ok(out)
@@ -128,13 +129,13 @@ impl Command<WordDoc> for PlaceRows {
     type Error = EditError;
 
     fn validate(&self, doc: &WordDoc) -> Result<()> {
-        find_table(doc, &*doc.docx()?, &self.table).map(|_| ())
+        find_table(doc, &*doc.docx()?, self.table.as_str()).map(|_| ())
     }
 
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<RowsPlaced> {
         let before = {
             let docx = tx.doc().docx()?;
-            find_table(tx.doc(), &docx, &self.table)?.id
+            find_table(tx.doc(), &docx, self.table.as_str())?.id
         };
         let mut table = self.table.clone();
         let mut parts = Vec::new();
@@ -168,7 +169,7 @@ impl Command<WordDoc> for PlaceRows {
         let started = Instant::now();
         let mut sink = EditSink::new(tx, RevisionPolicy::Untracked);
         let docx = sink.docx()?;
-        let Found { id, .. } = find_table(sink.doc(), &docx, &table)?;
+        let Found { id, .. } = find_table(sink.doc(), &docx, table.as_str())?;
         let durable = |key: &str| kind_of(key) == Some(Kind::Table);
         match &self.record {
             PlacedRecord::Store(record) => {

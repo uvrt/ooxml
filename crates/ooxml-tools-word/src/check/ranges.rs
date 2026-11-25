@@ -106,13 +106,18 @@ fn extent_json(facts: &Facts<'_>, range: &Range, pages: &[usize], entry: &mut Ma
 /// `one_page`, `kept`, `breaks`, `breaks_more`, `fix`, `taller_than_page` (`range_keeps`):
 /// nothing for a range that is not whole blocks or not drawn whole.
 fn keeps_json(facts: &Facts<'_>, doc: &WordDoc, docx: &Docx, range: &Range, entry: &mut Map<String, Value>) {
-    let Ok(blocks) = kept_blocks(doc, docx, &range.address) else {
+    let Ok(blocks) = kept_blocks(doc, docx, &ooxml_word_model::address::Address::parse(&range.address)) else {
         return;
     };
     let Some(laid) = facts.range_layout(range, &blocks) else {
         return;
     };
-    let Ok(writes) = keep_writes(doc, docx, &range.address, true) else {
+    let Ok(writes) = keep_writes(
+        doc,
+        docx,
+        &ooxml_word_model::address::Address::parse(&range.address),
+        true,
+    ) else {
         return;
     };
     entry.insert("one_page".into(), Value::from(laid.one_page));
@@ -238,13 +243,18 @@ fn trial(
     trials: &Trials<'_>,
     on: bool,
 ) -> Result<Option<KeepEffect>, &'static str> {
-    let Ok(blocks) = kept_blocks(doc, docx, &range.address) else {
+    let Ok(blocks) = kept_blocks(doc, docx, &ooxml_word_model::address::Address::parse(&range.address)) else {
         return Ok(None);
     };
     let Some(placed) = facts.trial_blocks(&blocks) else {
         return Ok(None);
     };
-    let Ok(Some(package)) = kept_package(doc, docx, &range.address, on) else {
+    let Ok(Some(package)) = kept_package(
+        doc,
+        docx,
+        &ooxml_word_model::address::Address::parse(&range.address),
+        on,
+    ) else {
         return Ok(None);
     };
     let version = facts.version();

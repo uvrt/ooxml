@@ -45,7 +45,7 @@ pub(super) fn blocks(
         ));
     }
     let given = repr_str(address);
-    let found = match body_blocks(doc, docx, address) {
+    let found = match body_blocks(doc, docx, &ooxml_word_model::address::Address::parse(address)) {
         Ok(found) => found,
         Err(EditError::Address(error)) => {
             let options = if error.options.is_empty() {

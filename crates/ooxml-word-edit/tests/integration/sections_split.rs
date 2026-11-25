@@ -20,7 +20,7 @@ fn body_after(policy: RevisionPolicy) -> String {
 fn body_reviewed(policy: RevisionPolicy, accept: Option<bool>) -> String {
     let editor = editor(&fixture("generated/charts/chart-places.docx"));
     let command = InsertSectionBreak {
-        after: Some("p@body/0".to_owned()),
+        after: Some("p@body/0".to_owned()).map(ooxml_word_model::address::Address::from),
         before: None,
         kind: ooxml_word_model::docx::sections::SectionBreakKind::NextPage,
         policy,
@@ -112,7 +112,7 @@ fn a_break_after_a_paragraph_touches_its_section_and_the_last_sections_propertie
     for policy in [RevisionPolicy::Untracked, tracked()] {
         let editor = editor(&fixture("generated/charts/chart-places.docx"));
         let command = InsertSectionBreak {
-            after: Some("p@body/0".to_owned()),
+            after: Some("p@body/0".to_owned()).map(ooxml_word_model::address::Address::from),
             before: None,
             kind: ooxml_word_model::docx::sections::SectionBreakKind::NextPage,
             policy: policy.clone(),

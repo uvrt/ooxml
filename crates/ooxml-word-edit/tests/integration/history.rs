@@ -106,7 +106,7 @@ fn edit(rng: &mut Rng, targets: &[String], writer: usize) -> Edit {
     let word = ["alpha", "beta", "gamma", "delta"][rng.below(4)];
     match rng.below(6) {
         0 | 1 => Edit::Set(SetText {
-            target,
+            target: ooxml_word_model::address::Address::from(target),
             text: format!("{word} {writer}"),
             policy: policy(rng, writer),
         }),
@@ -123,7 +123,7 @@ fn edit(rng: &mut Rng, targets: &[String], writer: usize) -> Edit {
             policy: policy(rng, writer),
         }),
         _ => Edit::Block(DeleteBlock {
-            target,
+            target: ooxml_word_model::address::Address::from(target),
             policy: policy(rng, writer),
         }),
     }
@@ -187,13 +187,13 @@ fn a_scoped_undo_takes_back_a_step_later_steps_moved() {
     // the first edit stamps the document's blocks with ids (the whole part): made by
     // another writer, so the steps below are splices of single blocks
     let stamp = Edit::Set(SetText {
-        target: targets[20].clone(),
+        target: ooxml_word_model::address::Address::from(targets[20].clone()),
         text: "Stamped".to_owned(),
         policy: RevisionPolicy::Untracked,
     });
     editor.run(&Caller::named("zero"), &stamp).unwrap();
     let set = Edit::Set(SetText {
-        target: targets[10].clone(),
+        target: ooxml_word_model::address::Address::from(targets[10].clone()),
         text: "Written by one".to_owned(),
         policy: RevisionPolicy::Untracked,
     });
@@ -221,7 +221,7 @@ fn a_scoped_undo_takes_back_a_step_later_steps_moved() {
     assert_eq!(written(redone.version.doc()), written(theirs.doc()));
     // a step a later one read is entangled: refused, nothing changed
     let over = Edit::Set(SetText {
-        target: targets[10].clone(),
+        target: ooxml_word_model::address::Address::from(targets[10].clone()),
         text: "Written over".to_owned(),
         policy: RevisionPolicy::Untracked,
     });

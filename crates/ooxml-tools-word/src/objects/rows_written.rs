@@ -285,7 +285,7 @@ fn like_the_column(
         return Vec::new();
     }
     let command = LikeTheColumn {
-        table: table.to_owned(),
+        table: ooxml_word_model::address::Address::parse(table),
         cells: cells.iter().map(|(c, _)| c.clone()).collect(),
     };
     let point = tx.savepoint();

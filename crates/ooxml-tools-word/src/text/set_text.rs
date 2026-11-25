@@ -142,7 +142,7 @@ fn write(
     let ops: Vec<SetStyledText> = work
         .iter()
         .map(|(target, text, style, _)| SetStyledText {
-            target: target.clone(),
+            target: ooxml_word_model::address::Address::parse(target),
             text: text.clone(),
             paragraph_style: style.clone(),
             policy: policy.clone(),

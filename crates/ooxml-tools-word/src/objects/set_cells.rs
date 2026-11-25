@@ -103,7 +103,7 @@ pub(super) fn set_cells(
     // a table placed from a source keeps its record true: the columns written in its block
     // taken out (`_Kept`)
     let command = KeepingRecord(SetCells {
-        table: args.table.clone(),
+        table: ooxml_word_model::address::Address::parse(&args.table),
         writes,
         stamping: true,
         policy: policy(editing),

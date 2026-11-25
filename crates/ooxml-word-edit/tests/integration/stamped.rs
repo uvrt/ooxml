@@ -48,7 +48,7 @@ fn unstamped(doc: &WordDoc) -> (usize, usize) {
 
 fn fill(table: &str) -> SetCells {
     SetCells {
-        table: table.to_owned(),
+        table: ooxml_word_model::address::Address::from(table.to_owned()),
         writes: vec![CellWrite {
             row: CellAxis::At(0),
             column: CellAxis::At(0),
@@ -105,7 +105,7 @@ fn the_commit_time_stamping_on_a_long_document() {
             .collect()
     };
     let set = |k: usize| SetText {
-        target: ids[ids.len() * k / 13 + 5].clone(),
+        target: ooxml_word_model::address::Address::from(ids[ids.len() * k / 13 + 5].clone()),
         text: format!("Written by edit {k}."),
         policy: RevisionPolicy::Untracked,
     };

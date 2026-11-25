@@ -91,7 +91,7 @@ fn edit(rng: &mut Rng, targets: &[String], writer: u64, n: usize) -> Edit {
     let note = format!("fn:{}", 1 + rng.below(3));
     match rng.below(17) {
         0 | 1 => Edit::Set(SetText {
-            target,
+            target: ooxml_word_model::address::Address::from(target),
             text: words.join(" "),
             policy: policy(rng, writer),
         }),
@@ -119,7 +119,7 @@ fn edit(rng: &mut Rng, targets: &[String], writer: u64, n: usize) -> Edit {
             } else {
                 NoteKind::Endnote
             },
-            at: format!("{target}@{}", rng.below(2)),
+            at: ooxml_word_model::address::Address::from(format!("{target}@{}", rng.below(2))),
             text: words.join(" "),
             policy: policy(rng, writer),
         }),
@@ -133,7 +133,7 @@ fn edit(rng: &mut Rng, targets: &[String], writer: u64, n: usize) -> Edit {
             policy: policy(rng, writer),
         }),
         9 => Edit::Setup(SetSection {
-            section: "s:body".to_owned(),
+            section: ooxml_word_model::address::Address::from("s:body".to_owned()),
             values: SectionValues {
                 columns: Some(1 + i64::try_from(rng.below(3)).unwrap()),
                 ..SectionValues::default()
@@ -141,13 +141,13 @@ fn edit(rng: &mut Rng, targets: &[String], writer: u64, n: usize) -> Edit {
             policy: policy(rng, writer),
         }),
         10 => Edit::Break(InsertSectionBreak {
-            after: Some(target),
+            after: Some(target).map(ooxml_word_model::address::Address::from),
             before: None,
             kind: SectionBreakKind::Continuous,
             policy: policy(rng, writer),
         }),
         11 => Edit::Story(SetStoryText {
-            section: "s:body".to_owned(),
+            section: ooxml_word_model::address::Address::from("s:body".to_owned()),
             story: HeaderFooter {
                 part: [HeaderOrFooter::Header, HeaderOrFooter::Footer][rng.below(2)],
                 kind: StoryKind::Default,
@@ -157,8 +157,8 @@ fn edit(rng: &mut Rng, targets: &[String], writer: u64, n: usize) -> Edit {
         }),
         14..=16 => field_edit(rng, target, writer, &words),
         _ => Edit::Move(MoveBlocks {
-            blocks: Moving::Blocks(target),
-            after: Some(other),
+            blocks: Moving::Blocks(ooxml_word_model::address::Address::from(target)),
+            after: Some(other).map(ooxml_word_model::address::Address::from),
             before: None,
             policy: policy(rng, writer),
         }),
@@ -175,7 +175,7 @@ fn field_edit(rng: &mut Rng, target: String, writer: u64, words: &[&str]) -> Edi
     };
     match 14 + rng.below(3) {
         14 => Edit::Field(InsertField {
-            at: format!("{target}@{}", rng.below(2)),
+            at: ooxml_word_model::address::Address::from(format!("{target}@{}", rng.below(2))),
             instruction: if rng.below(2) == 0 {
                 "SEQ Figure \\* ARABIC"
             } else {
@@ -388,7 +388,7 @@ fn tracked(author: &str) -> RevisionPolicy {
 fn a_tracked_edit_rebased_past_another_keeps_the_ids_drawn_where_it_lands() {
     // an untracked edit stamps the document first, as the seeds' earlier edits did
     let stamp = Edit::Set(SetText {
-        target: "p:1A2B3C0B".to_owned(),
+        target: ooxml_word_model::address::Address::from("p:1A2B3C0B".to_owned()),
         text: "Quarter and".to_owned(),
         policy: RevisionPolicy::Untracked,
     });
@@ -398,7 +398,7 @@ fn a_tracked_edit_rebased_past_another_keeps_the_ids_drawn_where_it_lands() {
         policy: tracked("Writer 3"),
     });
     let set = Edit::Set(SetText {
-        target: "p:1A2B3C01".to_owned(),
+        target: ooxml_word_model::address::Address::from("p:1A2B3C01".to_owned()),
         text: "and alpha".to_owned(),
         policy: tracked("Writer 0"),
     });
@@ -418,17 +418,17 @@ fn a_tracked_edit_rebased_past_another_keeps_the_ids_drawn_where_it_lands() {
 fn a_tracked_edit_reads_the_root_declarations_it_relies_on() {
     // an untracked edit stamps the document first, as the seed's earlier edits did
     let stamp = Edit::Set(SetText {
-        target: "p@body/29".to_owned(),
+        target: ooxml_word_model::address::Address::from("p@body/29".to_owned()),
         text: "gamma 0".to_owned(),
         policy: RevisionPolicy::Untracked,
     });
     let first = Edit::Set(SetText {
-        target: "p@body/0".to_owned(),
+        target: ooxml_word_model::address::Address::from("p@body/0".to_owned()),
         text: "alpha 3".to_owned(),
         policy: tracked("Writer 3"),
     });
     let set = Edit::Set(SetText {
-        target: "p@body/5".to_owned(),
+        target: ooxml_word_model::address::Address::from("p@body/5".to_owned()),
         text: "alpha 5".to_owned(),
         policy: tracked("Writer 5"),
     });
@@ -451,7 +451,7 @@ fn a_tracked_edit_reads_the_root_declarations_it_relies_on() {
 fn a_tracked_field_writes_the_annotation_ids() {
     let shared = editor(&fixture("generated/ids-and-markup.docx"));
     let field = Edit::Field(InsertField {
-        at: "p:1A2B3C0E@0".to_owned(),
+        at: ooxml_word_model::address::Address::from("p:1A2B3C0E@0".to_owned()),
         instruction: "DATE".to_owned(),
         result: None,
         simple: false,
@@ -485,7 +485,7 @@ fn a_note_moved_while_tracking_deletes_the_reference_and_inserts_a_copy() {
     let editor = editor(&fixture("generated/ids-and-markup.docx"));
     let moved = MoveNote {
         note: "fn:1".to_owned(),
-        to: "p:1A2B3C02@1".to_owned(),
+        to: ooxml_word_model::address::Address::from("p:1A2B3C02@1".to_owned()),
         policy: tracked("Writer A"),
     };
     let done = editor.run(&Caller::anonymous(), &moved).unwrap();
@@ -504,7 +504,7 @@ fn a_note_moved_while_tracking_deletes_the_reference_and_inserts_a_copy() {
     // moved again by its own author: the inserted reference goes outright, with its note
     let again = MoveNote {
         note: "fn:2".to_owned(),
-        to: "p:1A2B3C02@3".to_owned(),
+        to: ooxml_word_model::address::Address::from("p:1A2B3C02@3".to_owned()),
         policy: tracked("Writer A"),
     };
     let done = editor.run(&Caller::anonymous(), &again).unwrap();
@@ -522,8 +522,8 @@ fn a_note_moved_while_tracking_deletes_the_reference_and_inserts_a_copy() {
 fn a_paragraph_moved_while_tracking_takes_words_move_form() {
     let editor = editor(&fixture("generated/ids-and-markup.docx"));
     let moved = MoveBlocks {
-        blocks: Moving::Blocks("p:1A2B3C02".to_owned()),
-        after: Some("p:1A2B3C0D".to_owned()),
+        blocks: Moving::Blocks(ooxml_word_model::address::Address::from("p:1A2B3C02".to_owned())),
+        after: Some("p:1A2B3C0D".to_owned()).map(ooxml_word_model::address::Address::from),
         before: None,
         policy: tracked("Writer A"),
     };

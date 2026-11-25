@@ -24,7 +24,7 @@ use crate::stamping::stamp_document;
 use crate::{EditError, Result, WordDoc};
 use ooxml_store::{Command, Txn};
 use ooxml_word_model::address::scope_paragraphs;
-use ooxml_word_model::address::Address;
+use ooxml_word_model::address::{Address, Shape};
 use ooxml_word_model::docx::numbering::Membership;
 use ooxml_word_model::docx::Docx;
 use read::Place;
@@ -70,7 +70,7 @@ impl ListAction {
 #[derive(Debug, Clone)]
 pub struct ListEdit {
     /// Paragraphs, spans, tables, cells, sections: every paragraph they hold.
-    pub targets: Vec<String>,
+    pub targets: Vec<ooxml_word_model::address::Address>,
     /// What to do.
     pub action: ListAction,
     /// Untracked or tracked.
@@ -108,16 +108,16 @@ pub struct ListsEdited {
 ///
 /// # Errors
 /// [`EditError::Address`] when it names nothing, or nothing with paragraphs.
-pub fn paragraphs_of(doc: &WordDoc, docx: &Docx, address: &str) -> Result<Vec<(String, usize)>> {
-    let followed = doc.ids().follow_address(address);
+pub fn paragraphs_of(doc: &WordDoc, docx: &Docx, address: &Address) -> Result<Vec<(String, usize)>> {
+    let followed = doc.ids().follow_read(address);
     if let Some(found) = table_paragraphs(docx, &followed) {
         return Ok(found);
     }
-    let found = scope_paragraphs(docx, &Address::parse(&followed)).or_else(|e| {
-        if followed == address {
+    let found = scope_paragraphs(docx, &followed).or_else(|e| {
+        if followed == *address {
             Err(e)
         } else {
-            scope_paragraphs(docx, &Address::parse(address))
+            scope_paragraphs(docx, address)
         }
     });
     let (part, indexes) = found.map_err(EditError::Address)?;
@@ -133,12 +133,11 @@ pub fn paragraphs_of(doc: &WordDoc, docx: &Docx, address: &str) -> Result<Vec<(S
 /// A table's paragraphs as docx-agent's `paragraphs_of` takes them: each grid position's
 /// cell's, row by row (a merged cell's at each position it covers); `None` when `address`
 /// is not a table's id.
-fn table_paragraphs(docx: &Docx, address: &str) -> Option<Vec<(String, usize)>> {
-    use ooxml_word_model::address::{is_text_range, resolve, span_ends};
-    if is_text_range(address) || !matches!(span_ends(address), Ok(None)) {
+fn table_paragraphs(docx: &Docx, address: &Address) -> Option<Vec<(String, usize)>> {
+    if address.has(Shape::Text) || !matches!(address.span_ends(), Ok(None)) {
         return None;
     }
-    let (story, entry) = resolve(docx, address).ok()?;
+    let (story, entry) = ooxml_word_model::address::resolve(docx, address.as_str()).ok()?;
     let ooxml_word_model::ids::Entry::Table(t) = entry else {
         return None;
     };

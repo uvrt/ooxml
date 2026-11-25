@@ -67,7 +67,7 @@ impl Session {
         };
         let docx = head.doc().docx()?;
         let outside = |id: &str| {
-            paragraphs_of(head.doc(), &docx, id)
+            paragraphs_of(head.doc(), &docx, &ooxml_word_model::address::Address::parse(id))
                 .ok()
                 .and_then(|found| found.first().map(|(part, _)| *part != docx.main))
                 .unwrap_or(false)

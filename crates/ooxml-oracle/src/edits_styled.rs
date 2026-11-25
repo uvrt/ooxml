@@ -17,7 +17,7 @@ use serde_json::{json, Map, Value};
 pub fn set_text_styled(editor: &Editor, caller: &Caller, package: &Package, case: &Value) -> Result<Value, EditError> {
     let text = |key: &str| case.get(key).and_then(Value::as_str).unwrap_or("").to_owned();
     let command = SetStyledText {
-        target: text("target"),
+        target: ooxml_word_model::address::Address::from(text("target")),
         text: text("text"),
         paragraph_style: case.get("style").and_then(Value::as_str).map(str::to_owned),
         policy: crate::edits::policy(case),

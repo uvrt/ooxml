@@ -19,6 +19,7 @@ use ooxml_word_edit::{
     keeps_blocks, known_style, paragraphs_of, EditError, FormatEdit, FormatPlan, FormatStep, Formatted, Like,
     ParagraphLook, Property, Setting, Value as Set, WordDoc, KEEPS_BLOCKS, NOT_TAKEN,
 };
+use ooxml_word_model::address::Address;
 use ooxml_word_model::docx::{style_kind, style_name, Docx};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
@@ -136,7 +137,7 @@ fn run(args: &WordFormat, editing: &Editing<'_>, again: &TryCall) -> Result<Tool
         run,
     };
     let command = FormatEdit {
-        targets: addresses.clone(),
+        targets: addresses.iter().map(|a| Address::parse(a)).collect(),
         plan,
         cleared: !clear.is_empty(),
         policy: policy(editing),
@@ -171,9 +172,10 @@ fn taller_before(
     };
     let kept: Vec<(String, Vec<String>)> = addresses
         .iter()
-        .filter(|a| keeps_blocks(doc, docx, a))
-        .filter_map(|a| {
-            let ids = paragraphs_of(doc, docx, a)
+        .map(|a| (a, Address::parse(a)))
+        .filter(|(_, read)| keeps_blocks(doc, docx, read))
+        .filter_map(|(a, read)| {
+            let ids = paragraphs_of(doc, docx, &read)
                 .ok()?
                 .iter()
                 .filter_map(|(part, k)| Some(docx.part(part)?.ids.paragraphs().get(*k)?.id.clone()))
@@ -392,7 +394,7 @@ fn known(docx: &Docx, name: &str, kind: &str, field: &str) -> Result<(), ToolErr
 /// The look of the paragraph `like` names (docx-agent's `_sample_look`): one paragraph,
 /// or a range, cell or span of one; several refused with them (rule 2).
 fn sample_look(doc: &WordDoc, docx: &Docx, like: &str, again: &TryCall) -> Result<ParagraphLook, ToolError> {
-    let found = paragraphs_of(doc, docx, like).map_err(|e| {
+    let found = paragraphs_of(doc, docx, &Address::parse(like)).map_err(|e| {
         let message = match e {
             EditError::Address(a) if a.message.ends_with("holds no paragraphs") => {
                 format!("like: {}", a.message)

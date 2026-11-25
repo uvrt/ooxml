@@ -92,7 +92,10 @@ fn kept_and_cold(editor: &Editor) {
         ("First section", "First section, again"),
     ] {
         let command = SetText {
-            target: paragraph(&editor.store().snapshot().doc().clone(), start),
+            target: ooxml_word_model::address::Address::from(paragraph(
+                &editor.store().snapshot().doc().clone(),
+                start,
+            )),
             text: text.to_owned(),
             policy: RevisionPolicy::Untracked,
         };

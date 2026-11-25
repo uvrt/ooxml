@@ -133,7 +133,7 @@ pub(crate) fn window_room(doc: &WordDoc, docx: &Docx, found: &Found, room: i64) 
 
 /// The text width of the section `id` is in, or one column's in a section of columns.
 fn section_column(doc: &WordDoc, docx: &Docx, id: &str) -> Option<i64> {
-    let section = crate::sections::find_section(doc, docx, id).ok()?;
+    let section = crate::sections::find_section(doc, docx, &ooxml_word_model::address::Address::parse(id)).ok()?;
     let properties = &section.section.properties;
     let int = |node: Option<&Element>, local: &str| {
         node.and_then(|n| n.attribute(Some(W), local)?.trim().parse::<i64>().ok())

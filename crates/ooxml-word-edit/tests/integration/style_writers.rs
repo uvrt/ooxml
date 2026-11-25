@@ -131,7 +131,7 @@ fn edit(rng: &mut Rng, targets: &[String], writer: u64, n: usize) -> Edit {
             action: style_action(rng, writer, n),
         }),
         0 => Edit::Set(SetText {
-            target,
+            target: ooxml_word_model::address::Address::from(target),
             text: words.join(" "),
             policy: policy(rng, writer),
         }),
@@ -141,20 +141,23 @@ fn edit(rng: &mut Rng, targets: &[String], writer: u64, n: usize) -> Edit {
             policy: policy(rng, writer),
         }),
         5 | 6 => Edit::Format(FormatEdit {
-            targets: vec![if rng.below(2) == 0 {
+            targets: vec![ooxml_word_model::address::Address::from(if rng.below(2) == 0 {
                 target
             } else {
                 format!("{target}@0:2")
-            }],
+            })],
             plan: plan(rng),
             cleared: false,
             policy: policy(rng, writer),
         }),
         _ => Edit::List(ListEdit {
             targets: if rng.below(3) == 0 {
-                vec![target, other.clone()]
+                vec![
+                    ooxml_word_model::address::Address::from(target),
+                    ooxml_word_model::address::Address::parse(&other),
+                ]
             } else {
-                vec![target]
+                vec![ooxml_word_model::address::Address::from(target)]
             },
             action: action(rng, &other),
             policy: policy(rng, writer),
@@ -369,7 +372,10 @@ fn a_renumbered_copy_and_a_concurrent_tracked_insertion() {
         })
     };
     let format = Edit::Format(FormatEdit {
-        targets: vec!["p:5A000002".to_owned()],
+        targets: (vec!["p:5A000002".to_owned()])
+            .iter()
+            .map(|t| ooxml_word_model::address::Address::parse(t))
+            .collect(),
         plan: FormatPlan {
             run: vec![Setting {
                 property: Property::Italic,
@@ -381,7 +387,7 @@ fn a_renumbered_copy_and_a_concurrent_tracked_insertion() {
         policy: tracked(7),
     });
     let set = Edit::Set(SetText {
-        target: "p:5A000002".to_owned(),
+        target: ooxml_word_model::address::Address::from("p:5A000002".to_owned()),
         text: "Quarter".to_owned(),
         policy: tracked(7),
     });

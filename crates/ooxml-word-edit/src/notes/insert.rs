@@ -32,7 +32,7 @@ pub struct InsertNote {
     /// A footnote or an endnote.
     pub kind: NoteKind,
     /// Where its reference goes: a position, or a range (at its end).
-    pub at: String,
+    pub at: ooxml_word_model::address::Address,
     /// Its text, a line per paragraph.
     pub text: String,
     /// Untracked or tracked.
@@ -77,7 +77,7 @@ impl InsertNote {
         // notes part, written whole (and made with the first note), its number one above the
         // largest there (read below); a place named by condition, or a range's end, depends
         // on the document around it.
-        if names_by_id(&self.at) && !self.at.contains("..") {
+        if names_by_id(self.at.as_str()) && !self.at.has(ooxml_word_model::address::Shape::Dots) {
             sink.read(block_key(&paragraph.part, &paragraph.id));
         } else {
             sink.read_everything();

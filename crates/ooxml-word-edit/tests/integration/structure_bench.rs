@@ -45,20 +45,20 @@ fn structure_edits_on_a_long_document() {
 fn next_calls(bytes: &Arc<[u8]>, (early, middle, late): (&str, &str, &str), report: &dyn Fn(&str, Duration)) {
     let untracked = RevisionPolicy::Untracked;
     let first = InsertSectionBreak {
-        after: Some(middle.to_owned()),
+        after: Some(middle.to_owned()).map(ooxml_word_model::address::Address::from),
         before: None,
         kind: ooxml_word_model::docx::sections::SectionBreakKind::NextPage,
         policy: untracked.clone(),
     };
     let section = InsertSectionBreak {
-        after: Some(early.to_owned()),
+        after: Some(early.to_owned()).map(ooxml_word_model::address::Address::from),
         before: None,
         kind: ooxml_word_model::docx::sections::SectionBreakKind::NextPage,
         policy: untracked.clone(),
     };
     let moving = MoveBlocks {
-        blocks: Moving::Blocks(early.to_owned()),
-        after: Some(late.to_owned()),
+        blocks: Moving::Blocks(ooxml_word_model::address::Address::from(early.to_owned())),
+        after: Some(late.to_owned()).map(ooxml_word_model::address::Address::from),
         before: None,
         policy: untracked,
     };
@@ -90,7 +90,7 @@ fn links_and_notes(bytes: &Arc<[u8]>, middle: &str, report: &dyn Fn(&str, Durati
             bytes,
             &InsertNote {
                 kind: NoteKind::Footnote,
-                at: format!("{middle}@2"),
+                at: ooxml_word_model::address::Address::from(format!("{middle}@2")),
                 text: "A note.".into(),
                 policy: untracked.clone(),
             },
@@ -119,7 +119,7 @@ fn sections_and_moves(bytes: &Arc<[u8]>, (early, late): (&str, &str), report: &d
         best(
             bytes,
             &InsertSectionBreak {
-                after: Some(early.to_owned()),
+                after: Some(early.to_owned()).map(ooxml_word_model::address::Address::from),
                 before: None,
                 kind: ooxml_word_model::docx::sections::SectionBreakKind::NextPage,
                 policy: untracked.clone(),
@@ -146,8 +146,8 @@ fn sections_and_moves(bytes: &Arc<[u8]>, (early, late): (&str, &str), report: &d
         best(
             bytes,
             &MoveBlocks {
-                blocks: Moving::Blocks(early.to_owned()),
-                after: Some(late.to_owned()),
+                blocks: Moving::Blocks(ooxml_word_model::address::Address::from(early.to_owned())),
+                after: Some(late.to_owned()).map(ooxml_word_model::address::Address::from),
                 before: None,
                 policy: untracked,
             },

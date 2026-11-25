@@ -219,7 +219,7 @@ fn changes(
         accepted_columns,
     );
     let command = PlaceRows {
-        table: args.table.clone(),
+        table: ooxml_word_model::address::Address::parse(&args.table),
         beside: slots
             .iter()
             .rev()

@@ -26,7 +26,7 @@ use crate::work::{scope_above, Work};
 use crate::{EditError, Result, WordDoc};
 use ooxml_base::pyfmt::repr_str;
 use ooxml_store::{Command, Txn};
-use ooxml_word_model::address::{in_table, is_text_range, section, span_ends, AddressError};
+use ooxml_word_model::address::{in_table, is_text_range, section, span_ends, Address, AddressError, Shape};
 use ooxml_word_model::docx::sections::{section_id, sections, Section};
 use ooxml_word_model::docx::{at_path, Docx};
 
@@ -48,9 +48,10 @@ impl Found {
 
 /// The section `identifier` names (docx-agent's `_section_record`): `s:<n>`, `s:<paraId>`
 /// (its paragraph's id followed), `s:body`, or the section a body block is in.
-pub(crate) fn find_section(doc: &WordDoc, docx: &Docx, identifier: &str) -> Result<Found> {
+pub(crate) fn find_section(doc: &WordDoc, docx: &Docx, given: &Address) -> Result<Found> {
+    let identifier = given.as_str();
     let all = sections(docx);
-    let wanted = if identifier.starts_with("s:") || identifier.starts_with("s@") {
+    let wanted = if given.has(Shape::Section) {
         let followed = if identifier == "s:body"
             || identifier
                 .get(2..)
@@ -81,14 +82,15 @@ pub(crate) fn find_section(doc: &WordDoc, docx: &Docx, identifier: &str) -> Resu
 
 /// The id docx-agent's `_canonical_section` gives `identifier`: `s:<n>` the section's own,
 /// `s:<paraId>` its paragraph's alias followed, anything else as given.
-pub(crate) fn canonical(doc: &WordDoc, found: &Found, identifier: &str) -> String {
+pub(crate) fn canonical(doc: &WordDoc, found: &Found, given: &Address) -> String {
+    let identifier = given.as_str();
     let number = identifier
         .strip_prefix("s:")
         .is_some_and(|n| !n.is_empty() && n.len() <= 4 && n.bytes().all(|b| b.is_ascii_digit()) && !n.starts_with('0'));
     if number {
         return found.section.id.clone();
     }
-    if (identifier.starts_with("s:") || identifier.starts_with("s@")) && identifier != "s:body" {
+    if given.has(Shape::Section) && identifier != "s:body" {
         return section_id(&doc.ids().follow(&format!("p{}", identifier.get(1..).unwrap_or(""))));
     }
     identifier.to_owned()
@@ -162,7 +164,7 @@ fn section_of(doc: &WordDoc, docx: &Docx, identifier: &str, all: &[Section]) -> 
 #[derive(Debug, Clone)]
 pub struct SetSection {
     /// The section.
-    pub section: String,
+    pub section: ooxml_word_model::address::Address,
     /// What to set.
     pub values: SectionValues,
     /// Untracked or tracked.

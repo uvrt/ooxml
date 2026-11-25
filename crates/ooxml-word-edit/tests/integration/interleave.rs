@@ -86,7 +86,7 @@ where
 
 pub fn set_text(target: &str) -> SetText {
     SetText {
-        target: target.to_owned(),
+        target: ooxml_word_model::address::Address::from(target.to_owned()),
         text: "Written meanwhile".to_owned(),
         policy: RevisionPolicy::Untracked,
     }

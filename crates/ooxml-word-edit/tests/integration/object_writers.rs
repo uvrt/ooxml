@@ -101,7 +101,7 @@ fn edit(rng: &mut Rng, targets: &[String], tables: &[String], writer: u64) -> Ed
     let words: Vec<&str> = (0..1 + rng.below(4)).map(|_| WORDS[rng.below(WORDS.len())]).collect();
     match rng.below(10) {
         0 | 1 => Edit::Set(SetText {
-            target,
+            target: ooxml_word_model::address::Address::from(target),
             text: words.join(" "),
             policy: policy(rng, writer),
         }),
@@ -111,14 +111,14 @@ fn edit(rng: &mut Rng, targets: &[String], tables: &[String], writer: u64) -> Ed
             policy: policy(rng, writer),
         }),
         3 => Edit::Cells(SetCells {
-            table,
+            table: ooxml_word_model::address::Address::from(table),
             writes: vec![CellWrite::at(rng.below(3), rng.below(3), words.join(" "))],
             stamping: false,
             policy: policy(rng, writer),
             accepted: None,
         }),
         8 | 9 => Edit::Rows(EditTable {
-            table,
+            table: ooxml_word_model::address::Address::from(table),
             change: match rng.below(8) {
                 0 => TableChange::DeleteRow { index: rng.below(3) },
                 1 => TableChange::DeleteColumn { index: rng.below(2) },
@@ -149,7 +149,7 @@ fn edit(rng: &mut Rng, targets: &[String], tables: &[String], writer: u64) -> Ed
             policy: policy(rng, writer),
         }),
         _ => Edit::Format(FormatTable::new(
-            table,
+            ooxml_word_model::address::Address::from(table),
             (0..1 + rng.below(3)).map(|_| format(rng)).collect(),
             policy(rng, writer),
         )),
