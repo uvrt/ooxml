@@ -136,7 +136,7 @@ pub(crate) fn find_once_within(
     within: Option<&str>,
     call: &TryCall,
 ) -> Result<String, ToolError> {
-    let head = editing.editor.store().snapshot();
+    let head = editing.editor.current();
     ooxml_word_edit::anchor(head.doc(), find, within).map_err(|e| edit_refusal(e, "", call.clone()))
 }
 

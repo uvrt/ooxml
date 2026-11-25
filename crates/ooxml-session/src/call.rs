@@ -176,7 +176,10 @@ impl Call<'_> {
             date: self.date.clone(),
         });
         let tracking = tracking.as_ref();
-        let editor = CallEditor::new(&word.editor).with_setup(self.setup);
+        // in this thread's batch on the document its edits run in the batch's transaction
+        let editor = CallEditor::new(&word.editor)
+            .with_setup(self.setup)
+            .with_owner(word.batch_owner());
         let others = self.other_versions();
         let editing = Editing::new(
             &editor,
@@ -197,8 +200,7 @@ impl Call<'_> {
         .with_arguments(arguments)
         .with_limits(self.limits)
         .with_locale(self.locale)
-        .with_last_check(Some(&*word.last_check))
-        .with_in_group(word.editor.store().group_mark().is_some());
+        .with_last_check(Some(&*word.last_check));
         // what its edits made is the call's even where the handler panics after them: the
         // panic goes on to the session's edge (crate::panics), which says they stay
         let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&editing)));
@@ -210,12 +212,6 @@ impl Call<'_> {
                 std::panic::resume_unwind(panic)
             }
         };
-        // a call is one history step and one state number: a handler with several commands
-        // runs them as one transaction, never as a second commit
-        debug_assert!(
-            made.as_ref().is_none_or(|m| m.ids.len() <= 1),
-            "a call committed more than once: run its commands as one transaction"
-        );
         ooxml_tools_word::note_spaced(&mut result, made.as_ref().map_or(0, |m| m.spaced));
         *self.made.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = made;
         ooxml_tools_word::resolve_drawn(&mut result, &editor.moved());

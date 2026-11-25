@@ -132,7 +132,7 @@ fn run(args: &WordCopyFrom, editing: &Editing<'_>, way: &TryCall) -> Result<Tool
     let range = match (&args.section_heading, &args.range) {
         (Some(heading), _) => {
             let found = match &source {
-                CopySource::Own => section_blocks(editing.editor.store().snapshot().doc(), heading),
+                CopySource::Own => section_blocks(editing.editor.current().doc(), heading),
                 CopySource::Other(other) => other.docx().and_then(|d| section_blocks_in(other.ids(), &d, heading)),
             };
             match found {

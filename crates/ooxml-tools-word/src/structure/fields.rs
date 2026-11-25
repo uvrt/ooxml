@@ -239,7 +239,7 @@ fn insert(args: &WordFields, editing: &Editing<'_>, list: &TryCall) -> Result<To
 
 /// The fields as the list shows them, the first [`LISTED`].
 fn listed(editing: &Editing<'_>) -> Result<ToolResult<Value>, ToolError> {
-    let head = editing.editor.store().snapshot();
+    let head = editing.editor.current();
     let found = fields(head.doc()).map_err(|e| ToolError::internal(e.to_string(), "word:fields"))?;
     let data: Vec<Value> = found
         .into_iter()
@@ -289,7 +289,7 @@ fn beside(args: &WordFields, editing: &Editing<'_>) -> Result<(Option<String>, O
     }
     let Some(after) = after else { return Ok((None, before)) };
     if after == "end" {
-        let head = editing.editor.store().snapshot();
+        let head = editing.editor.current();
         let docx = head
             .doc()
             .docx()

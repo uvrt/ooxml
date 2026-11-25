@@ -100,7 +100,7 @@ pub fn word_move(args: &WordMove, editing: &Editing<'_>) -> ToolResult<Value> {
 }
 
 fn run(args: &WordMove, editing: &Editing<'_>, way: &TryCall) -> Result<ToolResult<Value>, ToolError> {
-    let head = editing.editor.store().snapshot();
+    let head = editing.editor.current();
     let edit_refusal = |e| crate::review::edit_refusal(e, "", way.clone());
     let (moving, ids) = match (&args.section_heading, &args.blocks) {
         (Some(heading), _) => {

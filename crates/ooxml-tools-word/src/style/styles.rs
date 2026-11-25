@@ -109,7 +109,7 @@ fn refusal(error: EditError, docx: &Docx, kind: Option<&str>, again: &TryCall) -
 }
 
 fn head(editing: &Editing<'_>) -> Result<std::sync::Arc<Docx>, ToolError> {
-    let snapshot = editing.editor.store().snapshot();
+    let snapshot = editing.editor.current();
     snapshot
         .doc()
         .docx()

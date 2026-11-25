@@ -425,7 +425,7 @@ fn run(
     retry: &TryCall,
 ) -> Result<ToolResult<Value>, ToolError> {
     let table = view.table.id.as_str();
-    let before = editing.editor.store().snapshot();
+    let before = editing.editor.current();
     let keeping = super::table_sync_said::Keeping {
         command,
         cells: &kept.cells,
@@ -457,7 +457,7 @@ fn run(
     let watched = super::table_sync_said::watch(editing, before.doc(), view, removed, &named);
     let mut result = reply(editing, view, placed, (kept.note.clone(), done), retry);
     if let Some(mut watched) = watched {
-        let head = editing.editor.store().snapshot();
+        let head = editing.editor.current();
         crate::originals::add(&mut result, watched.report(head.doc(), editing.doc));
     }
     result.warnings.extend(rows_said);

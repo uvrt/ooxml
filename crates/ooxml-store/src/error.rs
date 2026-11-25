@@ -48,6 +48,21 @@ pub enum StoreError<K: Ord + Debug, E: std::error::Error + 'static> {
     /// A step group is open: it closes before an undo or redo runs.
     #[error("a step group is open")]
     GroupOpen,
+    /// The owner holds a transaction open already ([`crate::Store::open_txn`]): one at a
+    /// time per owner, which commits or drops it before it opens another.
+    #[error("this owner holds a transaction on the document open already")]
+    TxnHeld,
+    /// The owner holds no transaction open (never opened, committed or dropped), or the mark
+    /// is not one of the open one's.
+    #[error("no transaction is held open by this owner")]
+    NotHeld,
+    /// A command runs in the held transaction already: one at a time.
+    #[error("a command runs in the held transaction already")]
+    TxnBusy,
+    /// The held transaction could not be committed: what it was prepared on moved, which the
+    /// gate it holds rules out (a bug, never the caller's); nothing changed.
+    #[error("the held transaction's snapshot moved before its commit")]
+    HeldMoved,
     /// An id sequence or the reopen state was refused.
     #[error(transparent)]
     Counters(#[from] CountersError),

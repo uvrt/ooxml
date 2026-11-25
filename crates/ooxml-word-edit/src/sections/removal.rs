@@ -6,16 +6,14 @@
 //! Must not: write but through the sink.
 
 use super::breaks::RemoveSectionBreak;
-use super::breaks::{next_block, next_sibling_path, order_references, own_reference, REFERENCES};
+use super::breaks::{hand_on, next_block, next_sibling_path, REFERENCES};
 use super::{find_section, SectionEdited};
 use crate::delete::{editable, stretch_keys};
 use crate::doc::Key;
 use crate::names::{W, W14, W16DU};
 use crate::policy::RevisionPolicy;
-use crate::review::xml::insert_in_order;
 use crate::sink::EditSink;
 use crate::stamping::stamp_document;
-use crate::validate::Orders;
 use crate::work::{Id, Work};
 use crate::{EditError, Result, WordDoc};
 use ooxml_store::{Command, Txn};
@@ -196,26 +194,6 @@ fn outcome(
         out.id = kept;
     }
     Ok(out)
-}
-
-/// Hand on what the section stated that the next does not (the next showed it).
-fn hand_on(work: &mut Work, sect: Id, next_sect: Id, orders: &Orders) {
-    for node in work.children(sect).to_vec() {
-        if !work.is_any(node, W, &REFERENCES) {
-            continue;
-        }
-        let which = if work.is(node, W, "headerReference") {
-            "header"
-        } else {
-            "footer"
-        };
-        let kind = work.get(node, Some(W), "type").unwrap_or("default").to_owned();
-        if own_reference(work, next_sect, which, &kind).is_none() {
-            let copy = work.deep_copy(node);
-            insert_in_order(work, next_sect, copy, orders);
-            order_references(work, next_sect);
-        }
-    }
 }
 
 /// The break taken out untracked: an empty break paragraph goes (`goes`), else it joins the

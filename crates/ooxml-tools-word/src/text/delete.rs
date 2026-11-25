@@ -164,7 +164,7 @@ fn same_scope(editing: &Editing<'_>, within: &str, target: &str, call: &TryCall)
     if within == target {
         return Ok(true);
     }
-    let head = editing.editor.store().snapshot();
+    let head = editing.editor.current();
     let refuse = |e| edit_refusal(e, "", call.clone());
     let docx = head.doc().docx().map_err(refuse)?;
     let expand = |address: &str| expand_heading(&docx, address).map_err(|e| refuse(EditError::Address(e)));
@@ -178,7 +178,7 @@ fn blocks(
     target: &str,
     call: &TryCall,
 ) -> Result<ToolResult<Value>, ToolError> {
-    let before = editing.editor.store().snapshot();
+    let before = editing.editor.current();
     let mut watch = watch(editing, before.doc(), target);
     let command = DeleteBlocks {
         target: target.to_owned(),
@@ -210,7 +210,7 @@ fn blocks(
     let mut result = outcome(&edits, summary, None);
     result.warnings.extend(out.headings);
     if let Some(watch) = watch.as_mut() {
-        let after = editing.editor.store().snapshot();
+        let after = editing.editor.current();
         add(&mut result, watch.report(after.doc(), editing.doc));
     }
     Ok(result)
