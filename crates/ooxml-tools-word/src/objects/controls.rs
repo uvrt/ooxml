@@ -47,11 +47,11 @@ pub fn word_controls(args: &WordControls, editing: &Editing<'_>) -> ToolResult<V
 
 fn run(args: &WordControls, editing: &Editing<'_>, list: &TryCall) -> Result<ToolResult<Value>, ToolError> {
     let editor = editing.editor;
-    let reply = |result: Result<ooxml_word_edit::Edited<ControlEdited>, ooxml_word_edit::EditError>,
+    let reply = |result: Result<ControlEdited, ooxml_word_edit::EditError>,
                  what: &dyn Fn(&ControlEdited) -> (String, Option<Value>)| match result {
-        Ok(done) => {
-            let (summary, data) = what(&done.out);
-            outcome(&[done.out.into()], summary, data)
+        Ok(out) => {
+            let (summary, data) = what(&out);
+            outcome(&[out.into()], summary, data)
         }
         Err(error) => refused(error, list.clone()),
     };
@@ -59,7 +59,7 @@ fn run(args: &WordControls, editing: &Editing<'_>, list: &TryCall) -> Result<Too
         ControlAction::List => listed(editing),
         ControlAction::Insert => {
             let done = run_planned(editing, insert_plan(args, editing, list))?;
-            Ok(reply(done.map(|d| d.map(|(out, ())| out)), &|out| {
+            Ok(reply(done.map(|d| d.out.0), &|out| {
                 let id = out.id.clone().unwrap_or_default();
                 (format!("Inserted {id}"), Some(json!({"id": id})))
             }))
@@ -70,29 +70,45 @@ fn run(args: &WordControls, editing: &Editing<'_>, list: &TryCall) -> Result<Too
                 control: target.clone(),
                 policy: policy(editing),
             };
-            Ok(reply(editor.run(editing.caller, &command), &|_| {
-                (format!("Removed {target}"), None)
-            }))
+            Ok(reply(
+                editor.run(editing.caller, &command).map(|done| done.out),
+                &|_| (format!("Removed {target}"), None),
+            ))
         }
         ControlAction::Fill => {
             let target = need(args.control.as_deref(), "control", list)?.to_owned();
             let raw = need(args.value.as_deref(), "value", list)?;
-            let value = if kind_of(editing, &target, list)? == "checkbox" {
-                let said = raw.trim().to_lowercase();
-                Filling::Checked(matches!(said.as_str(), "true" | "yes" | "1" | "checked"))
-            } else {
-                Filling::Text(raw.to_owned())
-            };
-            let command = FillControl {
-                control: target.clone(),
-                value,
-                policy: policy(editing),
-            };
-            Ok(reply(editor.run(editing.caller, &command), &|_| {
-                (format!("Filled {target}"), None)
-            }))
+            // the control's kind is read where the fill is applied, in its transaction
+            let done = run_planned(editing, |tx: &mut Txn<'_, WordDoc>| {
+                fill(editing, tx, (&target, raw), list)
+            })?;
+            Ok(reply(done.map(|d| d.out.0), &|_| (format!("Filled {target}"), None)))
         }
     }
+}
+
+/// The fill of `target` with `raw` (`value`) as its kind on the transaction's version takes
+/// it: a check box checked or not, any other control's text. The kind is read off the
+/// control, which the fill rewrites: an edit of it meanwhile is a conflict, and the kind is
+/// read again.
+pub(super) fn fill(
+    editing: &Editing<'_>,
+    tx: &mut Txn<'_, WordDoc>,
+    (target, raw): (&str, &str),
+    list: &TryCall,
+) -> Result<(FillControl, ()), ToolError> {
+    let value = if kind_of(tx.doc(), target, list)? == "checkbox" {
+        let said = raw.trim().to_lowercase();
+        Filling::Checked(matches!(said.as_str(), "true" | "yes" | "1" | "checked"))
+    } else {
+        Filling::Text(raw.to_owned())
+    };
+    let command = FillControl {
+        control: target.to_owned(),
+        value,
+        policy: policy(editing),
+    };
+    Ok((command, ()))
 }
 
 /// The edit core's kind of control `given` (text when none is).
@@ -139,8 +155,10 @@ fn position(args: &WordControls, tx: &mut Txn<'_, WordDoc>, list: &TryCall) -> R
 }
 
 /// The kind of the control `id` names (`content_control(...).kind`); `not_found` for none.
-fn kind_of(editing: &Editing<'_>, id: &str, list: &TryCall) -> Result<&'static str, ToolError> {
-    let docx = head_docx(editing)?;
+fn kind_of(doc: &WordDoc, id: &str, list: &TryCall) -> Result<&'static str, ToolError> {
+    let docx = doc
+        .docx()
+        .map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
     let found = control(&controls(&docx), id)
         .map_err(|e| ToolError::refusal(Refusal::NotFound, e.to_string(), WayOut::call(list.clone())))?;
     Ok(found.kind())
