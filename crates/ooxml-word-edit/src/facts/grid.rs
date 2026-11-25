@@ -193,7 +193,7 @@ impl TableShape {
         let (grid, off) = off_grid_rows(table.element, &rows);
         TableShape {
             grid,
-            tracked: !off.is_empty() && has_any(table.element, &TRACKED_CELLS),
+            tracked: !off.is_empty() && tracked_structure(table.element),
             off,
             ragged: ragged_rows(doc, table.element),
         }
@@ -247,24 +247,48 @@ pub fn ragged_rows(doc: &WordDoc, table: &Arc<Element>) -> Option<Ragged> {
     })
 }
 
-/// A table's grid columns, and its rows (`rows`, its own, in order) whose cells -- with
-/// `w:gridBefore` -- reach past them ([`Grid`]'s coverage: a row's trailing columns are those
-/// it leaves, as Word fills them; `w:gridAfter`, which Word does not read, is not counted).
+/// A table's grid columns, and its rows (`rows`, its own, in order) off the grid:
+/// - in a table without tracked structure records ([`tracked_structure`]), the rows whose
+///   cells -- with `w:gridBefore` -- reach past it ([`Grid`]'s coverage: a row's trailing
+///   columns are those it leaves, as Word fills them; `w:gridAfter`, which Word does not
+///   read, is not counted);
+/// - in a table holding one, every row whose cells and written `w:gridAfter` do not reach
+///   exactly across it (R128): a tracked change, such as a grid widened by a
+///   `w:tblGridChange`, leaves its rows so until it is settled, and the entry names it and
+///   the review that settles it.
 pub(crate) fn off_grid_rows(table: &Element, rows: &[Arc<Element>]) -> (i64, Vec<OffGridRow>) {
     let rows: Vec<&Element> = rows.iter().map(|r| &**r).collect();
     let grid = Grid::of(table, &rows);
     let signed = |n: usize| i64::try_from(n).unwrap_or(i64::MAX);
+    let tracked = tracked_structure(table);
     let out = grid
         .rows
         .iter()
         .enumerate()
-        .filter(|(_, line)| line.coverage != Coverage::Exact)
-        .map(|(r, line)| OffGridRow {
-            row: r,
-            reaches: signed(line.end),
+        .filter_map(|(r, line)| {
+            let reaches = if tracked {
+                line.end.saturating_add(line.after)
+            } else {
+                line.end
+            };
+            let off = if tracked {
+                reaches != grid.columns
+            } else {
+                line.coverage != Coverage::Exact
+            };
+            off.then(|| OffGridRow {
+                row: r,
+                reaches: signed(reaches),
+            })
         })
         .collect();
     (signed(grid.columns), out)
+}
+
+/// Whether `table` holds a tracked cell or grid record ([`TRACKED_CELLS`]): its rows may be
+/// off its grid by Word's design until those are settled.
+pub(crate) fn tracked_structure(table: &Element) -> bool {
+    has_any(table, &TRACKED_CELLS)
 }
 
 /// Whether any element below `element` is a `w:` element named in `locals`.

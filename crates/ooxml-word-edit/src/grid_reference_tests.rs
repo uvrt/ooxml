@@ -452,12 +452,17 @@ fn old_off_grid_rows(table: &Element, rows: &[&Element]) -> (i64, Vec<(usize, i6
     let mut out = Vec::new();
     for (r, row) in rows.iter().enumerate() {
         // `w:gridAfter` not counted, as the grid now reads it (Word does not read it): a row
-        // is off its grid only past it
+        // is off its grid only past it -- except in a table holding tracked structure
+        // records, read as written (R128)
+        let tracked = crate::facts::grid::tracked_structure(table);
         let mut reach = int_val(el_val(row, &["trPr", "gridBefore"]), 0);
+        if tracked {
+            reach += int_val(el_val(row, &["trPr", "gridAfter"]), 0);
+        }
         for cell in ooxml_word_model::docx::tables::cells_at(row, &[]) {
             reach += int_val(el_val(&cell.element, &["tcPr", "gridSpan"]), 1).max(1);
         }
-        if reach > count {
+        if (tracked && reach != count) || (!tracked && reach > count) {
             out.push((r, reach));
         }
     }
