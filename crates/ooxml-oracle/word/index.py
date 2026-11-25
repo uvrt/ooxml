@@ -80,6 +80,10 @@ OBSERVATIONS: dict[str, dict] = {
         "readers": ["crates/ooxml-oracle/word/tests/test_followups_recorded.py"],
         "unread": {},
     },
+    "grid-values-word.json": {
+        "probe": "crates/ooxml-oracle/word/probes/grid_values_probe.py",
+        "readers": ["crates/ooxml-oracle/tests/integration/grid_values.rs"],
+    },
     "language-word.json": {
         "probe": "crates/ooxml-oracle/word/probes/language_probe.py",
         "readers": ["python/docx-agent/tests/test_language.py"],

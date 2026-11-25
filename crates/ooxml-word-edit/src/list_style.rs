@@ -98,7 +98,7 @@ pub(crate) fn add_list(sink: &mut EditSink<'_, '_>, main: &str, style_id: &str, 
     };
     let key = || vec![Key::Part(Arc::from(part.as_str()))];
     sink.read(Key::Part(Arc::from(part.as_str())));
-    let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
+    let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::no_part(&part))?;
     let root = tree.root();
     let abstract_id = numbers(root, "abstractNum", "abstractNumId")
         .into_iter()
@@ -125,7 +125,7 @@ pub(crate) fn add_list(sink: &mut EditSink<'_, '_>, main: &str, style_id: &str, 
         key(),
         Vec::new(),
     )?;
-    let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
+    let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::no_part(&part))?;
     let root = tree.root();
     let num_id = numbers(root, "num", "numId").into_iter().max().unwrap_or(0) + 1;
     let prefix = root.name().prefix().map(str::to_owned);

@@ -162,7 +162,7 @@ impl<'a> ChartSpace<'a> {
     }
 
     /// The schema's sequence of children, by local name (a step lists a choice).
-    pub const ORDER: &'static [&'static [&'static str]] = &[&["date1904"], &["lang"], &["roundedCorners"], &["AlternateContent"], &["style"], &["clrMapOvr"], &["pivotSource"], &["protection"], &["chart"], &["spPr"], &["txPr"], &["externalData"], &["printSettings"], &["userShapes"], &["extLst"]];
+    pub const ORDER: &'static [&'static [&'static str]] = crate::orders::local::CHART_SPACE;
 
     /// The element with `child` added where [`Self::ORDER`] puts it.
     pub fn insert(self, child: Element) -> Element {
@@ -279,7 +279,7 @@ impl<'a> Chart<'a> {
     }
 
     /// The schema's sequence of children, by local name (a step lists a choice).
-    pub const ORDER: &'static [&'static [&'static str]] = &[&["title"], &["autoTitleDeleted"], &["pivotFmts"], &["view3D"], &["floor"], &["sideWall"], &["backWall"], &["plotArea"], &["legend"], &["plotVisOnly"], &["dispBlanksAs"], &["showDLblsOverMax"], &["extLst"]];
+    pub const ORDER: &'static [&'static [&'static str]] = crate::orders::local::CHART;
 
     /// The element with `child` added where [`Self::ORDER`] puts it.
     pub fn insert(self, child: Element) -> Element {
@@ -339,7 +339,7 @@ impl<'a> Title<'a> {
     }
 
     /// The schema's sequence of children, by local name (a step lists a choice).
-    pub const ORDER: &'static [&'static [&'static str]] = &[&["tx"], &["layout"], &["overlay"], &["spPr"], &["txPr"], &["extLst"]];
+    pub const ORDER: &'static [&'static [&'static str]] = crate::orders::local::TITLE;
 
     /// The element with `child` added where [`Self::ORDER`] puts it.
     pub fn insert(self, child: Element) -> Element {
@@ -394,7 +394,7 @@ impl<'a> Tx<'a> {
     }
 
     /// The schema's sequence of children, by local name (a step lists a choice).
-    pub const ORDER: &'static [&'static [&'static str]] = &[&["strRef"], &["rich"], &["v"]];
+    pub const ORDER: &'static [&'static [&'static str]] = crate::orders::local::TX;
 
     /// The element with `child` added where [`Self::ORDER`] puts it.
     pub fn insert(self, child: Element) -> Element {
@@ -464,7 +464,7 @@ impl<'a> View3D<'a> {
     }
 
     /// The schema's sequence of children, by local name (a step lists a choice).
-    pub const ORDER: &'static [&'static [&'static str]] = &[&["rotX"], &["hPercent"], &["rotY"], &["depthPercent"], &["rAngAx"], &["perspective"], &["extLst"]];
+    pub const ORDER: &'static [&'static [&'static str]] = crate::orders::local::VIEW_3D;
 
     /// The element with `child` added where [`Self::ORDER`] puts it.
     pub fn insert(self, child: Element) -> Element {
@@ -514,7 +514,7 @@ impl<'a> PlotArea<'a> {
     }
 
     /// The schema's sequence of children, by local name (a step lists a choice).
-    pub const ORDER: &'static [&'static [&'static str]] = &[&["layout"], &["areaChart", "area3DChart", "lineChart", "line3DChart", "stockChart", "radarChart", "scatterChart", "pieChart", "pie3DChart", "doughnutChart", "barChart", "bar3DChart", "ofPieChart", "surfaceChart", "surface3DChart", "bubbleChart"], &["valAx", "catAx", "dateAx", "serAx"], &["dTable"], &["spPr"], &["extLst"]];
+    pub const ORDER: &'static [&'static [&'static str]] = crate::orders::local::PLOT_AREA;
 
     /// The element with `child` added where [`Self::ORDER`] puts it.
     pub fn insert(self, child: Element) -> Element {
@@ -968,7 +968,7 @@ impl<'a> Series<'a> {
     }
 
     /// The schema's sequence of children, by local name (a step lists a choice).
-    pub const ORDER: &'static [&'static [&'static str]] = &[&["idx"], &["order"], &["tx"], &["spPr"], &["invertIfNegative"], &["pictureOptions"], &["marker"], &["explosion"], &["dPt"], &["dLbls"], &["trendline"], &["errBars"], &["cat"], &["xVal"], &["val"], &["yVal"], &["bubbleSize"], &["bubble3D"], &["shape"], &["smooth"], &["extLst"]];
+    pub const ORDER: &'static [&'static [&'static str]] = crate::orders::local::SER;
 
     /// The element with `child` added where [`Self::ORDER`] puts it.
     pub fn insert(self, child: Element) -> Element {
@@ -1058,7 +1058,7 @@ impl<'a> DataReference<'a> {
     }
 
     /// The schema's sequence of children, by local name (a step lists a choice).
-    pub const ORDER: &'static [&'static [&'static str]] = &[&["f"], &["numCache", "strCache", "multiLvlStrCache"], &["extLst"]];
+    pub const ORDER: &'static [&'static [&'static str]] = crate::orders::local::DATA_REFERENCE;
 
     /// The element with `child` added where [`Self::ORDER`] puts it.
     pub fn insert(self, child: Element) -> Element {
@@ -1102,7 +1102,7 @@ impl<'a> DataCache<'a> {
     }
 
     /// The schema's sequence of children, by local name (a step lists a choice).
-    pub const ORDER: &'static [&'static [&'static str]] = &[&["formatCode"], &["ptCount"], &["pt", "lvl"], &["extLst"]];
+    pub const ORDER: &'static [&'static [&'static str]] = crate::orders::local::DATA_CACHE;
 
     /// The element with `child` added where [`Self::ORDER`] puts it.
     pub fn insert(self, child: Element) -> Element {
@@ -1213,7 +1213,7 @@ impl<'a> Marker<'a> {
     }
 
     /// The schema's sequence of children, by local name (a step lists a choice).
-    pub const ORDER: &'static [&'static [&'static str]] = &[&["symbol"], &["size"], &["spPr"], &["extLst"]];
+    pub const ORDER: &'static [&'static [&'static str]] = crate::orders::local::MARKER;
 
     /// The element with `child` added where [`Self::ORDER`] puts it.
     pub fn insert(self, child: Element) -> Element {
@@ -1318,7 +1318,7 @@ impl<'a> DataLabels<'a> {
     }
 
     /// The schema's sequence of children, by local name (a step lists a choice).
-    pub const ORDER: &'static [&'static [&'static str]] = &[&["dLbl"], &["delete"], &["numFmt"], &["spPr"], &["txPr"], &["dLblPos"], &["showLegendKey"], &["showVal"], &["showCatName"], &["showSerName"], &["showPercent"], &["showBubbleSize"], &["separator"], &["showLeaderLines"], &["leaderLines"], &["extLst"]];
+    pub const ORDER: &'static [&'static [&'static str]] = crate::orders::local::DATA_LABELS;
 
     /// The element with `child` added where [`Self::ORDER`] puts it.
     pub fn insert(self, child: Element) -> Element {
@@ -1393,7 +1393,7 @@ impl<'a> DataLabel<'a> {
     }
 
     /// The schema's sequence of children, by local name (a step lists a choice).
-    pub const ORDER: &'static [&'static [&'static str]] = &[&["idx"], &["delete"], &["layout"], &["tx"], &["numFmt"], &["spPr"], &["txPr"], &["dLblPos"], &["showLegendKey"], &["showVal"], &["showCatName"], &["showSerName"], &["showPercent"], &["showBubbleSize"], &["separator"], &["extLst"]];
+    pub const ORDER: &'static [&'static [&'static str]] = crate::orders::local::DATA_LABEL;
 
     /// The element with `child` added where [`Self::ORDER`] puts it.
     pub fn insert(self, child: Element) -> Element {
@@ -1626,7 +1626,7 @@ impl<'a> Scaling<'a> {
     }
 
     /// The schema's sequence of children, by local name (a step lists a choice).
-    pub const ORDER: &'static [&'static [&'static str]] = &[&["logBase"], &["orientation"], &["max"], &["min"], &["extLst"]];
+    pub const ORDER: &'static [&'static [&'static str]] = crate::orders::local::SCALING;
 
     /// The element with `child` added where [`Self::ORDER`] puts it.
     pub fn insert(self, child: Element) -> Element {
@@ -1691,7 +1691,7 @@ impl<'a> Legend<'a> {
     }
 
     /// The schema's sequence of children, by local name (a step lists a choice).
-    pub const ORDER: &'static [&'static [&'static str]] = &[&["legendPos"], &["legendEntry"], &["layout"], &["overlay"], &["spPr"], &["txPr"], &["extLst"]];
+    pub const ORDER: &'static [&'static [&'static str]] = crate::orders::local::LEGEND;
 
     /// The element with `child` added where [`Self::ORDER`] puts it.
     pub fn insert(self, child: Element) -> Element {

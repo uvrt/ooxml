@@ -298,9 +298,9 @@ fn write_paragraph(
     (part, path): (&str, &[u32]),
     group: &[&(Located, String)],
 ) -> Result<()> {
-    let story = docx.part(part).ok_or_else(|| EditError::NoPart(part.to_owned()))?;
+    let story = docx.part(part).ok_or_else(|| EditError::no_part(part.to_owned()))?;
     let root = story.root();
-    let element = at_path(root, path).ok_or_else(|| EditError::Path(part.to_owned()))?;
+    let element = at_path(root, path).ok_or_else(|| EditError::no_element(part.to_owned()))?;
     let mut work = Work::of(element, scope_above(root, path));
     let below = |p: &[u32]| p.get(path.len()..).map(<[u32]>::to_vec);
     let mut changed = false;
@@ -359,7 +359,7 @@ fn write_paragraph(
     if !changed {
         return Ok(());
     }
-    let new = work.build().ok_or_else(|| EditError::Path(part.to_owned()))?;
+    let new = work.build().ok_or_else(|| EditError::unbuilt(part.to_owned()))?;
     let id = story.ids.paragraph_at(path).map(|p| p.id).unwrap_or_default();
     sink.replace(part, path, new, vec![block_key(part, &id)])
 }

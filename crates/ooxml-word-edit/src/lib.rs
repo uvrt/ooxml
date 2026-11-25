@@ -66,6 +66,8 @@ pub mod find;
 mod follow;
 mod format;
 mod from_template;
+#[cfg(test)]
+mod grid_reference_tests;
 mod ids_delta;
 mod imported;
 mod inline;
@@ -138,7 +140,7 @@ pub use drawings::{
 };
 pub use drawn::Drawn;
 pub use editor::{EditTiming, Edited, Editor};
-pub use error::{EditError, Result};
+pub use error::{EditError, Internal, Mismatch, Result};
 pub use fields::{
     field_facts, fields, format_date, toc_paragraphs, CharAdvance, Day, EditLayout, FieldEdited, FieldFacts, FieldInfo,
     FieldLayout, FieldPlace, FieldRun, InsertCaption, InsertCrossReference, InsertField, InsertToc, LaidFields,

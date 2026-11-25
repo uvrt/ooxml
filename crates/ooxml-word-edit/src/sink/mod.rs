@@ -500,12 +500,12 @@ impl<'t, 's> EditSink<'t, 's> {
             .tx
             .doc()
             .tree(part)?
-            .ok_or_else(|| EditError::NoPart(part.to_owned()))?;
-        let element =
-            ooxml_word_model::docx::at_path(tree.root(), parent).ok_or_else(|| EditError::Path(part.to_owned()))?;
+            .ok_or_else(|| EditError::no_part(part.to_owned()))?;
+        let element = ooxml_word_model::docx::at_path(tree.root(), parent)
+            .ok_or_else(|| EditError::no_element(part.to_owned()))?;
         let removed: Vec<Node> = element.children().iter().skip(start).take(count).cloned().collect();
         if removed.len() != count {
-            return Err(EditError::Path(part.to_owned()));
+            return Err(EditError::no_element(part.to_owned()));
         }
         let mut parent_path = vec![0usize];
         parent_path.extend(parent.iter().map(|i| *i as usize));
@@ -628,15 +628,17 @@ impl<'t, 's> EditSink<'t, 's> {
             .tx
             .doc()
             .tree(part)?
-            .ok_or_else(|| EditError::NoPart(part.to_owned()))?;
-        let (&last, above) = path.split_last().ok_or_else(|| EditError::Path(part.to_owned()))?;
-        let parent =
-            ooxml_word_model::docx::at_path(tree.root(), above).ok_or_else(|| EditError::Path(part.to_owned()))?;
+            .ok_or_else(|| EditError::no_part(part.to_owned()))?;
+        let (&last, above) = path
+            .split_last()
+            .ok_or_else(|| EditError::no_element(part.to_owned()))?;
+        let parent = ooxml_word_model::docx::at_path(tree.root(), above)
+            .ok_or_else(|| EditError::no_element(part.to_owned()))?;
         let old = parent
             .children()
             .get(last as usize)
             .cloned()
-            .ok_or_else(|| EditError::Path(part.to_owned()))?;
+            .ok_or_else(|| EditError::no_element(part.to_owned()))?;
         let mut parent_path = vec![0usize];
         parent_path.extend(above.iter().map(|i| *i as usize));
         let patch = Patch::splice(

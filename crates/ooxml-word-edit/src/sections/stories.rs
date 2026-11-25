@@ -102,14 +102,17 @@ fn inherited(docx: &Docx, index: usize, which: &str, kind: &str) -> Option<Strin
 fn sect_work(sink: &EditSink<'_, '_>, found: &Found) -> Result<(String, Work)> {
     let docx = sink.docx()?;
     let main = docx.main.clone();
-    let tree = sink.doc().tree(&main)?.ok_or_else(|| EditError::NoPart(main.clone()))?;
-    let element = at_path(tree.root(), &found.section.path).ok_or_else(|| EditError::Path(main.clone()))?;
+    let tree = sink
+        .doc()
+        .tree(&main)?
+        .ok_or_else(|| EditError::no_part(main.clone()))?;
+    let element = at_path(tree.root(), &found.section.path).ok_or_else(|| EditError::no_element(main.clone()))?;
     Ok((main, Work::of(element, scope_above(tree.root(), &found.section.path))))
 }
 
 /// The `w:sectPr` written back.
 fn write_sect(sink: &mut EditSink<'_, '_>, main: &str, found: &Found, work: &Work) -> Result<()> {
-    let new = work.build().ok_or_else(|| EditError::Path(main.to_owned()))?;
+    let new = work.build().ok_or_else(|| EditError::unbuilt(main.to_owned()))?;
     sink.replace(main, &found.section.path, new, vec![Key::Part(Arc::from(main))])
 }
 
@@ -199,14 +202,14 @@ fn new_story_part(sink: &mut EditSink<'_, '_>, which: &str, mut work: Work) -> R
     for node in work.iter(root, W, &["p", "tr"]) {
         let drawn = sink.draw(&part, 2)?;
         let (Some(para), Some(text)) = (drawn.first(), drawn.get(1)) else {
-            return Err(EditError::Path(part));
+            return Err(EditError::no_element(part));
         };
         for (local, value) in [("paraId", para), ("textId", text)] {
             work.set(node, Arc::new(QName::new(Some("w14"), local, Some(W14))), value);
         }
     }
     sink.keep_written(&part, None, &work);
-    let built = work.build().ok_or_else(|| EditError::Path(part.clone()))?;
+    let built = work.build().ok_or_else(|| EditError::unbuilt(part.clone()))?;
     let head = crate::sink::ensured_head(&built, false, &[]);
     let built = match head {
         Some((head, _)) => Arc::new(ooxml_xml::Element::from_head(Arc::new(head), built.children().clone())),
@@ -232,7 +235,7 @@ fn new_story_part(sink: &mut EditSink<'_, '_>, which: &str, mut work: Work) -> R
         .iter()
         .find(|r| r.target_part.as_deref() == Some(part.as_str()))
         .map(|r| r.id.clone())
-        .ok_or_else(|| EditError::Path(part.clone()))?;
+        .ok_or_else(|| EditError::no_element(part.clone()))?;
     Ok((part, rid))
 }
 
@@ -243,8 +246,7 @@ fn story_root(which: &str, style: &str, text: &str) -> Result<Work> {
     let data = format!(
         r#"<w:{tag} xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>"#
     );
-    let tree =
-        ooxml_xml::parse(data.as_bytes(), &Limits::default().xml).map_err(|e| EditError::Refused(e.to_string()))?;
+    let tree = ooxml_xml::parse(data.as_bytes(), &Limits::default().xml).map_err(|e| EditError::own_xml(e))?;
     let mut work = Work::of(tree.root(), Vec::new());
     let root = work.root();
     let mut paragraph = make(&mut work, "p", &[]);
@@ -358,7 +360,7 @@ impl SetStoryText {
         let first_line = lines.first().copied().unwrap_or("");
         let story = match own {
             Some(part) => {
-                let story = docx.part(&part).ok_or_else(|| EditError::NoPart(part.clone()))?;
+                let story = docx.part(&part).ok_or_else(|| EditError::no_part(part.clone()))?;
                 let name = story.story.clone();
                 let ids: Vec<String> = story.ids.paragraphs().iter().map(|p| p.id.clone()).collect();
                 let first = ids
@@ -515,7 +517,7 @@ impl UnlinkFromPrevious {
         let tree = sink
             .doc()
             .tree(&source)?
-            .ok_or_else(|| EditError::NoPart(source.clone()))?;
+            .ok_or_else(|| EditError::no_part(source.clone()))?;
         let copy = Work::of(tree.root(), Vec::new());
         let (part, rid) = new_story_part(&mut *sink, &self.which, copy)?;
         let source_rels = ooxml_opc::name::rels_for(&source);
@@ -527,7 +529,7 @@ impl UnlinkFromPrevious {
         add_reference(&mut work, sect, &self.which, &self.kind, &rid);
         write_sect(&mut *sink, &main, &found, &work)?;
         let docx = sink.docx()?;
-        let story = docx.part(&part).ok_or_else(|| EditError::NoPart(part.clone()))?;
+        let story = docx.part(&part).ok_or_else(|| EditError::no_part(part.clone()))?;
         let mut created = vec![story.story.clone()];
         created.extend(story.ids.paragraphs().iter().map(|p| p.id.clone()));
         Ok(SectionEdited {

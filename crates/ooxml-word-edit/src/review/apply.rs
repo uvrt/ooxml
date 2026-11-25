@@ -12,8 +12,10 @@ use super::xml::{
     CELL, CONTAINERS, DELETED, INSERTED,
 };
 use crate::names::W;
+use crate::tables::shape::span_of;
 use crate::validate::Orders;
 use crate::work::{Id, Work};
+use ooxml_word_model::docx::tables::grid_value;
 
 /// How each section kind that was absent before a tracked change is recorded: the
 /// element in its "off" form (`w:<local> w:<attribute>="<value>"`), which rejecting removes.
@@ -103,7 +105,7 @@ impl PartReview<'_, '_> {
             let mut skips = find_all(self.work, owner, "gridAfter");
             skips.extend(find_all(self.work, owner, "gridBefore"));
             for node in skips {
-                if attr(self.work, node, "val").unwrap_or("0") == "0" {
+                if attr(self.work, node, "val").is_none_or(|v| grid_value(v) == Some(0)) {
                     self.work.remove(node);
                 }
             }
@@ -118,18 +120,9 @@ impl PartReview<'_, '_> {
     /// A rejected cell change whose span differs from the cell's: its table's grid is
     /// rebuilt from the cells afterwards.
     fn respan(&mut self, owner: Id, old: Option<Id>) {
-        let span = |work: &Work, of: Option<Id>, default: Option<&'static str>| -> Option<String> {
-            match of.and_then(|o| work.find(o, W, "gridSpan")) {
-                Some(node) => attr(work, node, "val").map(str::to_owned),
-                None => default.map(str::to_owned),
-            }
-        };
-        let current = span(self.work, Some(owner), Some("1"));
-        let before = if old.is_some() {
-            span(self.work, old, Some("1"))
-        } else {
-            Some("1".to_owned())
-        };
+        let span = |work: &Work, of: Option<Id>| span_of(work, of.and_then(|o| work.find(o, W, "gridSpan")));
+        let current = span(self.work, Some(owner));
+        let before = span(self.work, old);
         if current != before {
             if let Some(table) = ancestor(self.work, owner, "tbl") {
                 if !self.respanned.contains(&table) {

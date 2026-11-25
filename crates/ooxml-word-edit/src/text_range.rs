@@ -171,7 +171,7 @@ impl Span {
         }
         let part = docx
             .part(&first.part)
-            .ok_or_else(|| EditError::NoPart(first.part.clone()))?;
+            .ok_or_else(|| EditError::no_part(first.part.clone()))?;
         let index = |f: &Found| part.ids.paragraph_at(&f.path).map(|p| p.index);
         let (Some(a), Some(b)) = (index(&first), index(&last)) else {
             return Err(no_paragraphs(&id));

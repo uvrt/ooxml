@@ -199,12 +199,21 @@ impl Command<WordDoc> for ListEdit {
                 firsts.push(k == 0);
             }
         }
+        // every stepped paragraph checked before the first step: "not in a list" anywhere in the
+        // target comes before a step's own refusal, whose way out would not work for the target
+        let stepped: Vec<&Place> = places
+            .iter()
+            .zip(&firsts)
+            .enumerate()
+            .filter(|(k, (_, first))| self.action.steps(*k, **first))
+            .map(|(_, (place, _))| place)
+            .collect();
+        for place in &stepped {
+            steps::precheck(&docx, place, &self.action)?;
+        }
         let mut stamped = Stamped { renamed: None };
         let mut out = ListsEdited::default();
-        for (k, (place, first)) in places.iter().zip(&firsts).enumerate() {
-            if !self.action.steps(k, *first) {
-                continue;
-            }
+        for place in stepped {
             match steps::step(&mut sink, &mut stamped, place, &self.action)? {
                 steps::Stepped::Done(step) => out.steps.push(step),
                 steps::Stepped::Listless(id) => out.listless.push(id),

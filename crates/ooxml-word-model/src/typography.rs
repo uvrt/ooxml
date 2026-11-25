@@ -452,7 +452,15 @@ fn guillemet_spot(
 /// Whether `text` holds a character the rule looks at (cheaper than reading its runs).
 #[must_use]
 pub fn has_marks(text: &str) -> bool {
-    text.chars().any(|c| MARKS.contains(&c) || c == OPEN || c == CLOSE)
+    // On bytes: the marks are ASCII, and `«` and `»` are U+00AB and U+00BB, C2 AB and C2 BB
+    // in UTF-8 (a C2 byte only ever leads a character).
+    const _: () = assert!(matches!(MARKS, [':', ';', '!', '?']) && OPEN as u32 == 0xAB && CLOSE as u32 == 0xBB);
+    let bytes = text.as_bytes();
+    bytes.iter().enumerate().any(|(k, b)| match b {
+        b':' | b';' | b'!' | b'?' => true,
+        0xC2 => matches!(bytes.get(k + 1), Some(0xAB | 0xBB)),
+        _ => false,
+    })
 }
 
 #[cfg(test)]
@@ -465,6 +473,31 @@ mod tests {
             .into_iter()
             .map(|s| (s.kind, s.at))
             .collect()
+    }
+
+    #[test]
+    fn marks_are_found_on_bytes_as_on_characters() {
+        let by_chars = |text: &str| text.chars().any(|c| MARKS.contains(&c) || c == OPEN || c == CLOSE);
+        for text in [
+            "",
+            "plain",
+            "a:b",
+            "x;",
+            "!",
+            "why?",
+            "«",
+            "»",
+            "a « b",
+            "\u{ab}\u{bb}",
+            "\u{4ab}\u{2bb}\u{c2}",
+            "\u{fbab}",
+            "É",
+            "日本語",
+            "ﾟ",
+            "\u{1f600}",
+        ] {
+            assert_eq!(has_marks(text), by_chars(text), "{text:?}");
+        }
     }
 
     #[test]

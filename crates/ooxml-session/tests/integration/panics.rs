@@ -67,7 +67,43 @@ fn a_read_that_panics_is_an_internal_failure_and_counted() {
     );
     let stats = s.stats();
     assert_eq!(stats.panics.get("describe"), Some(&2));
+    assert_eq!(stats.internal.get("describe"), Some(&2));
     assert_eq!((stats.calls, stats.failed), (2, 2));
+}
+
+/// An edit whose core finds its own model and tree disagreeing.
+fn mismatched(_: &WordSetText, _: &Editing<'_>) -> ToolResult<Value> {
+    let error = ooxml_word_edit::EditError::no_element("word/document.xml");
+    ToolResult::failed(ToolError::internal(error.to_string(), "word:edit"))
+}
+
+#[test]
+fn an_internal_failure_is_counted_and_a_refusal_is_not() {
+    let s = with(|r| {
+        r.register(Arc::new(EditHandler::<WordSetText>::new(&[DocKind::Docx], mismatched)));
+    });
+    let body = r#"<w:p w14:paraId="11111111" w14:textId="77777777"><w:r><w:t>one</w:t></w:r></w:p>"#;
+    s.open(docx(body), DocKind::Docx, "a.docx").unwrap();
+    let asked = json!({"doc": "d1", "target": "p:11111111", "text": "two"});
+    let done = s.call("word_set_text", asked, &CallContext::default());
+    let reply = Value::Object(done.to_json());
+    assert_eq!(reply["error"]["code"], "internal");
+    assert_eq!(
+        reply["error"]["message"],
+        "no element at the place found in word/document.xml"
+    );
+    let stats = s.stats();
+    assert_eq!(stats.internal.get("word_set_text"), Some(&1));
+    assert!(stats.panics.is_empty());
+    // a refusal is the caller's: failed, not internal
+    let refused = s.call(
+        "word_set_text",
+        json!({"doc": "nope", "target": "p:11111111", "text": "x"}),
+        &CallContext::default(),
+    );
+    assert_eq!(Value::Object(refused.to_json())["error"]["code"], "not_found");
+    let stats = s.stats();
+    assert_eq!((stats.failed, stats.internal.get("word_set_text")), (2, Some(&1)));
 }
 
 #[test]

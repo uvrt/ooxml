@@ -103,19 +103,19 @@ impl InsertCaption<'_> {
     /// insertion).
     fn append_text(&self, sink: &mut EditSink<'_, '_>, part: &str, id: &str) -> Result<()> {
         let docx = sink.docx()?;
-        let story = docx.part(part).ok_or_else(|| EditError::NoPart(part.to_owned()))?;
+        let story = docx.part(part).ok_or_else(|| EditError::no_part(part.to_owned()))?;
         let paragraph = story
             .ids
             .paragraphs()
             .iter()
             .find(|p| p.id == id)
-            .ok_or_else(|| EditError::Path(part.to_owned()))?;
+            .ok_or_else(|| EditError::no_element(part.to_owned()))?;
         let path = paragraph.path.to_vec();
         let tree = sink
             .doc()
             .tree(part)?
-            .ok_or_else(|| EditError::NoPart(part.to_owned()))?;
-        let element = at_path(tree.root(), &path).ok_or_else(|| EditError::Path(part.to_owned()))?;
+            .ok_or_else(|| EditError::no_part(part.to_owned()))?;
+        let element = at_path(tree.root(), &path).ok_or_else(|| EditError::no_element(part.to_owned()))?;
         let mut work = Work::of(element, scope_above(tree.root(), &path));
         let root = work.root();
         let run = make_run(&mut work, &self.text, None);

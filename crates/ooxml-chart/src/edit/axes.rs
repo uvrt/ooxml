@@ -14,6 +14,7 @@ use super::path::indexed;
 use super::{number_text, ChartTree, DataError};
 use crate::data::{axis_named, axis_scale, Point};
 use ooxml_base::pyfmt::PyNumber;
+use ooxml_schema::orders::local as schema;
 use ooxml_xml::view::{attr, child, local};
 use ooxml_xml::Element;
 
@@ -22,108 +23,13 @@ const AXIS_NAMES: [&str; 4] = ["category", "value", "x", "y"];
 /// The axis elements (`AXIS_TAGS`).
 const AXES: [&str; 4] = ["valAx", "catAx", "dateAx", "serAx"];
 
-/// The head every axis' sequence shares, then each kind's own tail (`CHILD_ORDER`).
-const VAL_AX: Order = &[
-    &["axId"],
-    &["scaling"],
-    &["delete"],
-    &["axPos"],
-    &["majorGridlines"],
-    &["minorGridlines"],
-    &["title"],
-    &["numFmt"],
-    &["majorTickMark"],
-    &["minorTickMark"],
-    &["tickLblPos"],
-    &["spPr"],
-    &["txPr"],
-    &["crossAx"],
-    &["crosses", "crossesAt"],
-    &["crossBetween"],
-    &["majorUnit"],
-    &["minorUnit"],
-    &["dispUnits"],
-    &["extLst"],
-];
-const CAT_AX: Order = &[
-    &["axId"],
-    &["scaling"],
-    &["delete"],
-    &["axPos"],
-    &["majorGridlines"],
-    &["minorGridlines"],
-    &["title"],
-    &["numFmt"],
-    &["majorTickMark"],
-    &["minorTickMark"],
-    &["tickLblPos"],
-    &["spPr"],
-    &["txPr"],
-    &["crossAx"],
-    &["crosses", "crossesAt"],
-    &["auto"],
-    &["lblAlgn"],
-    &["lblOffset"],
-    &["tickLblSkip"],
-    &["tickMarkSkip"],
-    &["noMultiLvlLbl"],
-    &["extLst"],
-];
-const DATE_AX: Order = &[
-    &["axId"],
-    &["scaling"],
-    &["delete"],
-    &["axPos"],
-    &["majorGridlines"],
-    &["minorGridlines"],
-    &["title"],
-    &["numFmt"],
-    &["majorTickMark"],
-    &["minorTickMark"],
-    &["tickLblPos"],
-    &["spPr"],
-    &["txPr"],
-    &["crossAx"],
-    &["crosses", "crossesAt"],
-    &["auto"],
-    &["lblOffset"],
-    &["baseTimeUnit"],
-    &["majorUnit"],
-    &["majorTimeUnit"],
-    &["minorUnit"],
-    &["minorTimeUnit"],
-    &["extLst"],
-];
-const SER_AX: Order = &[
-    &["axId"],
-    &["scaling"],
-    &["delete"],
-    &["axPos"],
-    &["majorGridlines"],
-    &["minorGridlines"],
-    &["title"],
-    &["numFmt"],
-    &["majorTickMark"],
-    &["minorTickMark"],
-    &["tickLblPos"],
-    &["spPr"],
-    &["txPr"],
-    &["crossAx"],
-    &["crosses", "crossesAt"],
-    &["tickLblSkip"],
-    &["tickMarkSkip"],
-    &["extLst"],
-];
-/// `c:scaling`'s sequence.
-const SCALING: Order = &[&["logBase"], &["orientation"], &["max"], &["min"], &["extLst"]];
-
 /// An axis kind's sequence.
 pub(crate) fn axis_order(kind: &str) -> Order {
     match kind {
-        "catAx" => CAT_AX,
-        "dateAx" => DATE_AX,
-        "serAx" => SER_AX,
-        _ => VAL_AX,
+        "catAx" => schema::CAT_AX,
+        "dateAx" => schema::DATE_AX,
+        "serAx" => schema::SER_AX,
+        _ => schema::VAL_AX,
     }
 }
 
@@ -346,11 +252,11 @@ fn write_scale(node: &mut Owned, make: &Make, order: Order, change: &ScaleChange
     let c = std::sync::Arc::clone(node.name());
     let scaling = node.sub(&c, "scaling", Some(order));
     if scaling.place("orientation").is_none() {
-        scaling.insert_ordered(Some(SCALING), make.c("orientation").with_attr("val", "minMax"));
+        scaling.insert_ordered(Some(schema::SCALING), make.c("orientation").with_attr("val", "minMax"));
     }
     for (given, name) in [(change.maximum, "max"), (change.minimum, "min")] {
         if let Some(given) = given {
-            set_value(scaling, make, name, given, SCALING);
+            set_value(scaling, make, name, given, schema::SCALING);
         }
     }
     if let Some(reverse) = change.reverse {

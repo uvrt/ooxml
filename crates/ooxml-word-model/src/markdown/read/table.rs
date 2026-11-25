@@ -14,48 +14,25 @@
 //!
 //! Must not: render.
 
-use super::{child_at, index, CellRecord, Item2, Placed, Reader, Record, TableRecord};
+use super::{CellRecord, Item2, Placed, Reader, Record, TableRecord};
 use crate::docx::find_path;
-use crate::docx::tables::{cell_merge, merge_heads, VMerge};
+use crate::docx::tables::{cell_merge, merge_heads, row_cells, RowSpec, VMerge};
 use crate::docx::text::View;
 use crate::ids::W;
-use crate::xmlread::py_int;
-use ooxml_xml::{Element, Node};
+use ooxml_xml::Element;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-fn int_val(node: Option<&Element>, default: i64) -> i64 {
-    node.and_then(|n| n.attribute(Some(W), "val"))
-        .and_then(py_int)
-        .unwrap_or(default)
-}
-
-/// A row's `w:tc`, also inside row-level `w:sdt` and `w:customXml`.
+/// A row's `w:tc`, also inside row-level `w:sdt` and `w:customXml` (the grid's walk,
+/// [`row_cells`]).
 fn cells(row: &Placed) -> Vec<Placed> {
-    let mut out = Vec::new();
-    for (k, node) in row.element.children().iter().enumerate() {
-        let Node::Element(child) = node else { continue };
-        let path = [&row.path[..], &[index(k)]].concat().into_boxed_slice();
-        if child.name().is(Some(W), "tc") {
-            out.push(Placed {
-                element: Arc::clone(child),
-                path,
-            });
-        } else if child.name().is(Some(W), "sdt") {
-            if let Some((j, content)) = child_at(child, "sdtContent") {
-                out.extend(cells(&Placed {
-                    element: content,
-                    path: [&path[..], &[j]].concat().into_boxed_slice(),
-                }));
-            }
-        } else if child.name().is(Some(W), "customXml") {
-            out.extend(cells(&Placed {
-                element: Arc::clone(child),
-                path,
-            }));
-        }
-    }
-    out
+    row_cells(&row.element)
+        .into_iter()
+        .map(|(element, place)| Placed {
+            element,
+            path: [&row.path[..], &place[..]].concat().into_boxed_slice(),
+        })
+        .collect()
 }
 
 impl Reader<'_> {
@@ -207,10 +184,11 @@ impl Reader<'_> {
         }
         let mut line: Vec<CellRecord> = Vec::new();
         let mut gone_here = HashSet::new();
-        let mut column = usize::try_from(int_val(find_path(&row.element, &["trPr", "gridBefore"]), 0)).unwrap_or(0);
+        let spec = RowSpec::of(&row.element);
+        let mut column = spec.before;
         let all = cells(row);
         for (n, tc) in all.iter().enumerate() {
-            let span = usize::try_from(int_val(find_path(&tc.element, &["tcPr", "gridSpan"]), 1).max(1)).unwrap_or(1);
+            let span = spec.cells.get(n).map_or(1, |c| c.span);
             if self.cell_hidden(&tc.element) {
                 // one whose content is not deleted widens the cell before it, as Word's
                 // Accept All does (round 54, R110)
@@ -251,8 +229,7 @@ impl Reader<'_> {
             }
             column += span;
         }
-        let after = usize::try_from(int_val(find_path(&row.element, &["trPr", "gridAfter"]), 0)).unwrap_or(0);
-        grid.columns = grid.columns.max(column + after);
+        grid.columns = grid.columns.max(column + spec.after);
         if !line.is_empty() || all.is_empty() {
             grid.rows.push(line);
             grid.hidden.push(gone_here);

@@ -61,11 +61,11 @@ pub(crate) fn select(ids: &Ids, docx: &Docx, range: &CopyRange) -> Result<Select
         }
     }
     let part = part.unwrap_or_default();
-    let story = docx.part(&part).ok_or_else(|| EditError::NoPart(part.clone()))?;
+    let story = docx.part(&part).ok_or_else(|| EditError::no_part(part.clone()))?;
     let blocks = paths
         .into_iter()
         .map(|path| {
-            let element = at_path(story.root(), &path).ok_or_else(|| EditError::Path(part.clone()))?;
+            let element = at_path(story.root(), &path).ok_or_else(|| EditError::no_element(part.clone()))?;
             Ok((path, Arc::clone(element)))
         })
         .collect::<Result<Vec<_>>>()?;
@@ -83,11 +83,11 @@ fn span(ids: &Ids, docx: &Docx, item: &str, (part, first): (&str, &BlockAt), las
         )));
     }
     let above = parent(first).unwrap_or_default();
-    let story = docx.part(part).ok_or_else(|| EditError::NoPart(part.to_owned()))?;
+    let story = docx.part(part).ok_or_else(|| EditError::no_part(part.to_owned()))?;
     let container = if above.is_empty() {
         story.root()
     } else {
-        at_path(story.root(), &above).ok_or_else(|| EditError::Path(part.to_owned()))?
+        at_path(story.root(), &above).ok_or_else(|| EditError::no_element(part.to_owned()))?
     };
     let siblings: Vec<Vec<u32>> = container
         .children()
@@ -102,7 +102,7 @@ fn span(ids: &Ids, docx: &Docx, item: &str, (part, first): (&str, &BlockAt), las
         .collect();
     let index = |b: &BlockAt| siblings.iter().position(|s| *s == b.path);
     let (Some(mut a), Some(mut b)) = (index(first), index(&other)) else {
-        return Err(EditError::Path(part.to_owned()));
+        return Err(EditError::no_element(part.to_owned()));
     };
     if b < a {
         std::mem::swap(&mut a, &mut b);

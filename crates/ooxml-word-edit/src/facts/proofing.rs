@@ -12,7 +12,7 @@ use crate::Result;
 use ooxml_word_model::docx::text::leading_text;
 use ooxml_word_model::docx::{Docx, StoryPart};
 use ooxml_word_model::typography::{Cascade, RunContext, RunLanguage, StyleKey};
-use ooxml_xml::{Element, Tree};
+use ooxml_xml::{Element, Node, Tree};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -137,10 +137,18 @@ fn name(part: &StoryPart, ordinal: usize) -> String {
 /// Every story's paragraphs in document order (docx-agent's `_parts()`, each part's index's
 /// paragraphs), none named.
 pub(super) fn paragraphs(docx: &Docx) -> impl Iterator<Item = Placed<'_>> + '_ {
-    docx.parts.iter().enumerate().flat_map(|(k, part)| {
+    paragraphs_where(docx, |_| true)
+}
+
+/// [`paragraphs`] whose element `keep` takes: the others' places and tables are not read.
+pub(super) fn paragraphs_where<F>(docx: &Docx, keep: F) -> impl Iterator<Item = Placed<'_>> + '_
+where
+    F: Fn(&Element) -> bool + Copy + 'static,
+{
+    docx.parts.iter().enumerate().flat_map(move |(k, part)| {
         part.ids
             .paragraphs()
-            .placed()
+            .placed_where(keep)
             .map(move |(ordinal, element, path)| Placed {
                 part: (k, &**part),
                 ordinal,
@@ -164,6 +172,19 @@ pub(super) fn all_text(element: &Element) -> String {
     let mut out = String::new();
     walk(element, &mut out);
     out
+}
+
+/// Whether the text of some `w:t` below `element` (what [`all_text`] joins) passes
+/// `test`, read in place: for a test of single characters, the same as testing the joined
+/// text.
+pub(super) fn any_text(element: &Element, test: &impl Fn(&str) -> bool) -> bool {
+    element.child_elements().any(|child| {
+        if child.name().is(Some(W), "t") {
+            child.children().iter().map_while(Node::as_text).any(test)
+        } else {
+            any_text(child, test)
+        }
+    })
 }
 
 /// A tag's language subtag, lower case (`fr` of `fr-BE` or `fr_BE`).

@@ -2,11 +2,17 @@
 //! `grid_problems`): every row covers the grid exactly (`w:gridBefore`, its cells' spans,
 //! `w:gridAfter`), and a vertical merge goes on only under a cell of the same columns; a
 //! table holding cell or grid revisions is held to it once they are accepted or rejected.
+//! The rows are placed as [`Grid`] places them (Word's value rule and cell walk); a span
+//! Word does not read as one column or more is reported (`grid-span-invalid`): one Word does
+//! not open the document with, or one it reads as 0 (`0`, `0.5`, empty), whose row it
+//! re-grids. A span Word reads as a number past 32 bits or with a fraction (`2.0`,
+//! `99999999999999999999`) is not reported; a row it takes past the grid is
+//! (`grid-row-mismatch`).
 //!
 //! Must not: look outside the table.
 
 use crate::names::W;
-use crate::validate::facts::python_int;
+use ooxml_word_model::docx::tables::{row_cells, Coverage, Grid, RowSpec};
 use ooxml_xml::{Element, Node};
 
 const STRUCTURAL: &[&str] = &[
@@ -30,13 +36,6 @@ fn below<'e>(element: &'e Element, owner: &str, out: &mut Vec<(&'e Element, bool
         out.push((child, mine));
         below(child, owner, out, mine && !is_w(child, owner));
     }
-}
-
-fn number(element: Option<&Element>, default: i64) -> i64 {
-    element
-        .and_then(|e| e.attribute(Some(W), "val"))
-        .and_then(python_int)
-        .unwrap_or(default)
 }
 
 fn find_path<'e>(element: &'e Element, path: &[&str]) -> Option<&'e Element> {
@@ -83,23 +82,16 @@ pub(crate) fn grid_problems(table: &Element) -> Vec<(&'static str, String)> {
         .unwrap_or_default();
     let label = repr(&label);
     let mut out = Vec::new();
-    let mut previous: Vec<(i64, i64)> = Vec::new();
-    for (k, row) in rows.iter().enumerate() {
-        let properties = row.find(Some(W), "trPr");
-        let mut column = properties.map_or(0, |p| number(p.find(Some(W), "gridBefore").map(|e| &**e), 0));
-        let after = properties.map_or(0, |p| number(p.find(Some(W), "gridAfter").map(|e| &**e), 0));
+    let specs: Vec<RowSpec> = rows.iter().map(|row| RowSpec::of(row)).collect();
+    let grid = Grid::build(&specs, usize::try_from(count).unwrap_or(0));
+    let mut previous: Vec<(usize, usize)> = Vec::new();
+    for (k, ((row, spec), line)) in rows.iter().zip(&specs).zip(&grid.rows).enumerate() {
         let mut current = Vec::new();
-        let mut cells = Vec::new();
-        below(row, "tr", &mut cells, true);
-        for (cell, mine) in cells {
-            if !mine || !is_w(cell, "tc") {
-                continue;
-            }
-            let mut span = number(find_path(cell, &["tcPr", "gridSpan"]), 1);
-            if span < 1 {
+        for (((cell, _), value), placed) in row_cells(row).iter().zip(&spec.cells).zip(&line.cells) {
+            if !value.span_valid() {
                 out.push(("grid-span-invalid", format!("{label} row {k}")));
-                span = 1;
             }
+            let (column, span) = (placed.first, placed.span);
             if let Some(merge) = find_path(cell, &["tcPr", "vMerge"]) {
                 let value = merge
                     .attribute(Some(W), "val")
@@ -111,15 +103,47 @@ pub(crate) fn grid_problems(table: &Element) -> Vec<(&'static str, String)> {
                 }
             }
             current.push((column, span));
-            column += span;
         }
-        if column + after != count {
+        let reach = line.end + line.after;
+        if line.coverage != Coverage::Exact {
             out.push((
                 "grid-row-mismatch",
-                format!("{label} row {k}: {} of {count} columns", column + after),
+                format!("{label} row {k}: {reach} of {count} columns"),
             ));
         }
         previous = current;
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::grid_problems;
+
+    /// A table of three grid columns whose one row is a cell of `span` and a plain cell.
+    fn problems(span: &str) -> Vec<&'static str> {
+        let xml = format!(
+            r#"<w:tbl xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:tblGrid><w:gridCol/><w:gridCol/><w:gridCol/></w:tblGrid><w:tr><w:tc><w:tcPr><w:gridSpan w:val="{span}"/></w:tcPr><w:p/></w:tc><w:tc><w:p/></w:tc></w:tr></w:tbl>"#
+        );
+        let tree = ooxml_xml::parse(xml.as_bytes(), &ooxml_xml::Limits::default()).unwrap_or_else(|e| panic!("{e}"));
+        grid_problems(tree.root()).into_iter().map(|(code, _)| code).collect()
+    }
+
+    #[test]
+    fn spans_word_opens_are_not_reported_and_those_it_refuses_are() {
+        // Word 16.106, observations/grid-values-word.json
+        for opened in ["2", "2.0", "2.5", "+2.0", "4294967298"] {
+            assert_eq!(problems(opened), Vec::<&str>::new(), "{opened:?}");
+        }
+        // opened, past the grid (Word re-grids the table)
+        assert_eq!(problems("99999999999999999999"), ["grid-row-mismatch"]);
+        assert_eq!(problems("2147483645"), ["grid-row-mismatch"]);
+        // refused by Word, or read as 0 (Word re-grids the short row)
+        for refused in ["1e1", " 2", "-2.0", "4294967295", "2147483646"] {
+            assert!(problems(refused).contains(&"grid-span-invalid"), "{refused:?}");
+        }
+        for zero in ["0", ".", "-0.5", "0.9"] {
+            assert_eq!(problems(zero), ["grid-span-invalid", "grid-row-mismatch"], "{zero:?}");
+        }
+    }
 }

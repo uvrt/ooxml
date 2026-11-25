@@ -99,8 +99,11 @@ impl InsertNote {
         let name = self.kind.name();
         // the reference, in the body paragraph
         let main = paragraph.part.clone();
-        let tree = sink.doc().tree(&main)?.ok_or_else(|| EditError::NoPart(main.clone()))?;
-        let element = at_path(tree.root(), &paragraph.path).ok_or_else(|| EditError::Path(main.clone()))?;
+        let tree = sink
+            .doc()
+            .tree(&main)?
+            .ok_or_else(|| EditError::no_part(main.clone()))?;
+        let element = at_path(tree.root(), &paragraph.path).ok_or_else(|| EditError::no_element(main.clone()))?;
         let mut body = Work::of(element, scope_above(tree.root(), &paragraph.path));
         let body_root = body.root();
         let reference = make(&mut body, &format!("{name}Reference"), &[("id", &number.to_string())]);
@@ -116,7 +119,7 @@ impl InsertNote {
         )?;
         space.finish(&mut *sink)?;
         sink.ensure_w14(&notes, false, &[])?;
-        let new = body.build().ok_or_else(|| EditError::Path(main.clone()))?;
+        let new = body.build().ok_or_else(|| EditError::unbuilt(main.clone()))?;
         let prefix = w14_prefix(tree.root(), &paragraph.path);
         let mut draws = numbered.map(|n| annotation_draws(&new, n, 0)).unwrap_or_default();
         draws.push(Draw {
@@ -163,10 +166,10 @@ impl InsertNote {
         let mut space = Space::default();
         let work = space
             .work(&held, &notes)?
-            .ok_or_else(|| EditError::NoPart(notes.clone()))?;
+            .ok_or_else(|| EditError::no_part(notes.clone()))?;
         let root = work.root();
         let number = {
-            let tree = held.tree(&notes)?.ok_or_else(|| EditError::NoPart(notes.clone()))?;
+            let tree = held.tree(&notes)?.ok_or_else(|| EditError::no_part(notes.clone()))?;
             next_number(tree.root(), self.kind)
         };
         let name = self.kind.name();
@@ -234,7 +237,7 @@ fn track(
 
 /// The copy of `part` in `space`.
 fn work_of<'s>(space: &'s mut Space, part: &str) -> Result<&'s mut Work> {
-    space.get_mut(part).ok_or_else(|| EditError::NoPart(part.to_owned()))
+    space.get_mut(part).ok_or_else(|| EditError::no_part(part.to_owned()))
 }
 
 /// A note's paragraphs as Word writes them (docx-agent's `_note_paragraphs`): each in the

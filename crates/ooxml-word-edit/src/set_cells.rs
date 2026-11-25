@@ -11,7 +11,6 @@
 //! what they record reading.
 
 use crate::doc::WordDoc;
-use crate::names::W;
 use crate::policy::RevisionPolicy;
 use crate::set_text::block_key;
 use crate::sink::EditSink;
@@ -19,11 +18,10 @@ use crate::text::write::check_text;
 use crate::{EditError, Result};
 use ooxml_store::{Command, Txn};
 use ooxml_word_model::address::direct;
-use ooxml_word_model::docx::tables::{Accepted, Axis, TableGrid};
+use ooxml_word_model::docx::tables::{placed_row_cells, Accepted, Axis, Grid, RowSpec, TableGrid};
 use ooxml_word_model::docx::{at_path, Docx, StoryPart};
 use ooxml_word_model::ids::{Entry, TableId};
-use ooxml_xml::{Element, Node};
-use std::collections::HashMap;
+use ooxml_xml::Element;
 use std::sync::Arc;
 
 /// Write a table's cells.
@@ -138,94 +136,46 @@ fn table(doc: &WordDoc, docx: &Docx, target: &str) -> Result<Table> {
     })
 }
 
-/// A whole-number property (`w:val` of the child at `steps`), or `default`.
-fn number(element: &Element, steps: &[&str], default: usize) -> usize {
-    ooxml_word_model::docx::find_path(element, steps)
-        .and_then(|e| e.attribute(Some(W), "val"))
-        .and_then(|v| v.trim().parse::<usize>().ok())
-        .unwrap_or(default)
-}
-
-/// A row's `w:tc`, also inside row-level `w:sdt` and `w:customXml`, each with its place
-/// below the row (docx-agent's `_cells`).
-fn cells<'e>(element: &'e Element, at: &mut Vec<u32>, out: &mut Vec<(Vec<u32>, &'e Arc<Element>)>) {
-    for (k, node) in element.children().iter().enumerate() {
-        let (Node::Element(child), Ok(k)) = (node, u32::try_from(k)) else {
-            continue;
-        };
-        at.push(k);
-        if child.name().is(Some(W), "tc") {
-            out.push((at.clone(), child));
-        } else if child.name().is(Some(W), "sdt") {
-            if let Some((c, content)) = child.children().iter().enumerate().find_map(|(c, n)| {
-                n.as_element()
-                    .filter(|e| e.name().is(Some(W), "sdtContent"))
-                    .map(|e| (c, e))
-            }) {
-                at.push(u32::try_from(c).unwrap_or(u32::MAX));
-                cells(content, at, out);
-                at.pop();
-            }
-        } else if child.name().is(Some(W), "customXml") {
-            cells(child, at, out);
-        }
-        at.pop();
-    }
-}
-
 /// Every grid place's cell, as its first place `(row, column)` (docx-agent's
-/// `Table.grid`); `None` where a row has no cell.
-fn grid(root: &Arc<Element>, rows: &[Box<[u32]>]) -> Vec<Vec<Option<(usize, usize)>>> {
-    let mut origins: HashMap<usize, (usize, usize)> = HashMap::new();
-    let mut out = Vec::new();
-    for (r, path) in rows.iter().enumerate() {
-        let mut line: Vec<Option<(usize, usize)>> = Vec::new();
-        let Some(row) = at_path(root, path) else {
-            out.push(line);
-            continue;
-        };
-        let before = number(row, &["trPr", "gridBefore"], 0);
-        line.extend(std::iter::repeat_n(None, before));
-        let mut column = before;
-        let mut found = Vec::new();
-        cells(row, &mut Vec::new(), &mut found);
-        for (_, tc) in found {
-            let span = number(tc, &["tcPr", "gridSpan"], 1).max(1);
-            let merge = ooxml_word_model::docx::find_path(tc, &["tcPr", "vMerge"]);
-            let continues = merge.is_some_and(|m| matches!(m.attribute(Some(W), "val"), None | Some("continue")));
-            let origin = match continues.then(|| origins.get(&column).copied()).flatten() {
-                Some(origin) => origin,
-                None => {
-                    for c in column..column + span {
-                        origins.insert(c, (r, column));
-                    }
-                    (r, column)
-                }
-            };
-            line.extend(std::iter::repeat_n(Some(origin), span));
-            column += span;
-        }
-        out.push(line);
-    }
-    out
+/// `Table.grid`, by [`Grid`]); `None` where a row has no cell.
+pub(crate) fn grid(root: &Arc<Element>, rows: &[Box<[u32]>]) -> Vec<Vec<Option<(usize, usize)>>> {
+    let specs: Vec<RowSpec> = rows
+        .iter()
+        .map(|path| at_path(root, path).map_or_else(|| RowSpec::new(None, None, Vec::new()), |row| RowSpec::of(row)))
+        .collect();
+    let grid = Grid::build(&specs, 0);
+    grid.rows
+        .iter()
+        .zip(rows)
+        .map(|(line, path)| {
+            if at_path(root, path).is_none() {
+                return Vec::new();
+            }
+            let mut out = vec![None; line.before];
+            for cell in &line.cells {
+                let (r, k) = cell.origin;
+                let first = grid
+                    .rows
+                    .get(r)
+                    .and_then(|o| o.cells.get(k))
+                    .map_or(cell.first, |o| o.first);
+                out.extend(std::iter::repeat_n(Some((r, first)), cell.span));
+            }
+            out
+        })
+        .collect()
 }
 
 /// The place of the `w:tc` of the row at `row` whose grid column is `column`
 /// (docx-agent's `cell_element`).
-fn cell_path(root: &Arc<Element>, row: &[u32], column: usize) -> Option<Vec<u32>> {
+pub(crate) fn cell_path(root: &Arc<Element>, row: &[u32], column: usize) -> Option<Vec<u32>> {
     let element = at_path(root, row)?;
-    let mut at = number(element, &["trPr", "gridBefore"], 0);
-    let mut found = Vec::new();
-    cells(element, &mut Vec::new(), &mut found);
-    for (below, tc) in found {
-        if at == column {
-            let mut path = row.to_vec();
-            path.extend(below);
-            return Some(path);
-        }
-        at += number(tc, &["tcPr", "gridSpan"], 1).max(1);
-    }
-    None
+    let (_, below, _) = placed_row_cells(element)
+        .into_iter()
+        .find(|(_, _, p)| p.first == column)?;
+    let mut path = row.to_vec();
+    path.extend_from_slice(&below);
+    Some(path)
 }
 
 /// The ids of the paragraphs of the cell at `path`, in document order.
@@ -270,7 +220,7 @@ impl SetCells {
         let tree = sink
             .doc()
             .tree(&found.part)?
-            .ok_or_else(|| EditError::NoPart(found.part.clone()))?;
+            .ok_or_else(|| EditError::no_part(found.part.clone()))?;
         let places = grid(tree.root(), &found.rows);
         let mut out = CellsSet {
             edits: Vec::new(),
@@ -393,7 +343,7 @@ pub(crate) fn set_cell(
     let tree = sink
         .doc()
         .tree(&found.part)?
-        .ok_or_else(|| EditError::NoPart(found.part.clone()))?;
+        .ok_or_else(|| EditError::no_part(found.part.clone()))?;
     let places = grid(tree.root(), &found.rows);
     let mut edits = Vec::new();
     write_cell(sink, &found, &places, (row, column), (text, true), &mut edits)?;
@@ -420,7 +370,7 @@ fn write_cell(
     let tree = sink
         .doc()
         .tree(&table.part)?
-        .ok_or_else(|| EditError::NoPart(table.part.clone()))?;
+        .ok_or_else(|| EditError::no_part(table.part.clone()))?;
     let row_path = table.rows.get(r).ok_or_else(missing)?;
     let path = cell_path(tree.root(), row_path, c).ok_or_else(missing)?;
     let docx = sink.docx()?;

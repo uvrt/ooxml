@@ -107,7 +107,7 @@ impl Sheet {
     pub(crate) fn work<'s>(&self, space: &'s mut Space) -> Result<&'s mut Work> {
         space
             .get_mut(&self.part)
-            .ok_or_else(|| EditError::NoPart(self.part.clone()))
+            .ok_or_else(|| EditError::no_part(self.part.clone()))
     }
 
     /// The copy, read only.
@@ -117,7 +117,7 @@ impl Sheet {
     pub(crate) fn view<'s>(&self, space: &'s Space) -> Result<&'s Work> {
         space
             .get(&self.part)
-            .ok_or_else(|| EditError::NoPart(self.part.clone()))
+            .ok_or_else(|| EditError::no_part(self.part.clone()))
     }
 }
 

@@ -27395,11 +27395,6 @@
    ]
   }
  },
- "gates/generated/charts/chart-places.docx/structure:2059124caf17ded5": {
-  "output": "6d098191b0a83af9",
-  "word": "16.106",
-  "opens": "rejected"
- },
  "gates/generated/charts/chart-places.docx/structure:20f06b6eecd2dcd9": {
   "output": "f44c0a9d784e368e",
   "word": "16.106",
@@ -28774,7 +28769,7 @@
   }
  },
  "gates/generated/controls.docx/structure:529dd11414bc4591": {
-  "output": "7af23660276e7f3e",
+  "output": "d058b7a70bd059aa",
   "word": "16.106",
   "opens": "done",
   "kept": {
@@ -28814,7 +28809,7 @@
      },
      {
       "id": "7A000009",
-      "text": "Reviewed: "
+      "text": "Reviewed:      "
      },
      {
       "id": "7A00000A",

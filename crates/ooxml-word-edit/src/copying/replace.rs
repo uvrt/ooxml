@@ -57,7 +57,7 @@ impl Replaced {
         out.delete(sink)?;
         let len = container_len(sink, place)?;
         place.before = from_end
-            .map(|n| u32::try_from(len.saturating_sub(n)).map_err(|_| EditError::Path(place.part.clone())))
+            .map(|n| u32::try_from(len.saturating_sub(n)).map_err(|_| EditError::no_element(place.part.clone())))
             .transpose()?;
         Ok(out)
     }
@@ -106,13 +106,13 @@ fn container(sink: &EditSink<'_, '_>, place: &Place) -> Result<Arc<Element>> {
     let tree = sink
         .doc()
         .tree(&place.part)?
-        .ok_or_else(|| EditError::NoPart(place.part.clone()))?;
+        .ok_or_else(|| EditError::no_part(place.part.clone()))?;
     if place.container.is_empty() {
         return Ok(Arc::clone(tree.root()));
     }
     at_path(tree.root(), &place.container)
         .map(Arc::clone)
-        .ok_or_else(|| EditError::Path(place.part.clone()))
+        .ok_or_else(|| EditError::no_element(place.part.clone()))
 }
 
 /// How many children `place`'s container has now.

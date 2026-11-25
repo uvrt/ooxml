@@ -34,10 +34,10 @@ pub(crate) fn row_keeps(docx: &Docx, found: &Found) -> Result<Vec<RowKeep>> {
 
 /// Per row of the table at `path` in `part`, its keep.
 fn rows_at(docx: &Docx, part: &str, path: &[u32]) -> Result<Vec<RowKeep>> {
-    let story = docx.part(part).ok_or_else(|| EditError::NoPart(part.to_owned()))?;
+    let story = docx.part(part).ok_or_else(|| EditError::no_part(part.to_owned()))?;
     row_keeps_in(&Formatting::read(docx), story, path)
         .map(|rows| rows.to_vec())
-        .ok_or_else(|| EditError::Path(part.to_owned()))
+        .ok_or_else(|| EditError::no_element(part.to_owned()))
 }
 
 /// What `keep_together` / `keep_with_next` write on a table: each row's direct keep
@@ -243,7 +243,7 @@ pub fn loose_paragraph_after(doc: &WordDoc, table: &str) -> Result<Option<(Strin
     let found = find_table(doc, &docx, table)?;
     let story = docx
         .part(&found.part)
-        .ok_or_else(|| EditError::NoPart(found.part.clone()))?;
+        .ok_or_else(|| EditError::no_part(found.part.clone()))?;
     let Some((&at, above)) = found.path.split_last() else {
         return Ok(None);
     };

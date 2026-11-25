@@ -10,8 +10,9 @@ use crate::table_read::{border, points, width};
 use ooxml_word_model::address::resolve::{in_table, marker_range, range_text};
 use ooxml_word_model::docx::comments::comments as comment_records;
 use ooxml_word_model::docx::revisions::{records as revision_records, Record as Revision, KINDS};
+use ooxml_word_model::docx::tables::{placed_row_cells, CellSpec};
 use ooxml_word_model::docx::text::View;
-use ooxml_word_model::docx::{at_path, child_val, find_path, style_id, style_kind, style_name, Docx};
+use ooxml_word_model::docx::{at_path, child_val, style_id, style_kind, style_name, Docx};
 use ooxml_word_model::ids::W;
 use ooxml_word_model::markdown::read::{note_elements, Reader, Record};
 use ooxml_xml::{Element, Node};
@@ -369,10 +370,7 @@ pub(super) fn cell(docx: &Docx, address: &str) -> Option<Value> {
                 .collect(),
         )
     });
-    let span = find("gridSpan")
-        .and_then(|g| g.attribute(Some(W), "val"))
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(1);
+    let span = CellSpec::of(&tc).span;
     let merge = find("vMerge").map(|m| {
         m.attribute(Some(W), "val")
             .filter(|v| !v.is_empty())
@@ -402,21 +400,10 @@ pub(super) fn cell(docx: &Docx, address: &str) -> Option<Value> {
 
 /// A row's own cells with the grid column each starts at and its span.
 fn cells_of(row: &Arc<Element>) -> Vec<(Arc<Element>, usize, usize)> {
-    let before = find_path(row, &["trPr", "gridBefore"])
-        .and_then(|g| g.attribute(Some(W), "val"))
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(0);
-    let mut at = before;
-    let mut out = Vec::new();
-    for cell in row.child_elements().filter(|c| c.name().is(Some(W), "tc")) {
-        let span = find_path(cell, &["tcPr", "gridSpan"])
-            .and_then(|g| g.attribute(Some(W), "val"))
-            .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(1);
-        out.push((Arc::clone(cell), at, span));
-        at += span;
-    }
-    out
+    placed_row_cells(row)
+        .into_iter()
+        .map(|(tc, _, cell)| (tc, cell.first, cell.span))
+        .collect()
 }
 
 /// The grid column the cell covering `column` starts at.

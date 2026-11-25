@@ -76,7 +76,7 @@ pub(crate) fn find_section(doc: &WordDoc, docx: &Docx, identifier: &str) -> Resu
     let section = all
         .into_iter()
         .nth(index)
-        .ok_or_else(|| EditError::Path(docx.main.clone()))?;
+        .ok_or_else(|| EditError::no_element(docx.main.clone()))?;
     Ok(Found { index, section })
 }
 
@@ -129,7 +129,7 @@ fn section_of(doc: &WordDoc, docx: &Docx, identifier: &str, all: &[Section]) -> 
         )));
     }
     let (part, block) = resolve_block(doc, docx, &held(docx, identifier)?)?;
-    let body = docx.body().ok_or_else(|| EditError::NoPart(docx.main.clone()))?;
+    let body = docx.body().ok_or_else(|| EditError::no_part(docx.main.clone()))?;
     if part != docx.main {
         return Err(EditError::Address(AddressError::not_found(
             format!("{identifier} is not in the body"),
@@ -227,9 +227,12 @@ impl SetSection {
         };
         sink.read(key);
         let renamed = stamp_document(&mut *sink, &docx)?;
-        let tree = sink.doc().tree(&main)?.ok_or_else(|| EditError::NoPart(main.clone()))?;
+        let tree = sink
+            .doc()
+            .tree(&main)?
+            .ok_or_else(|| EditError::no_part(main.clone()))?;
         let path = found.section.path.to_vec();
-        let element = at_path(tree.root(), &path).ok_or_else(|| EditError::Path(main.clone()))?;
+        let element = at_path(tree.root(), &path).ok_or_else(|| EditError::no_element(main.clone()))?;
         let mut work = Work::of(element, scope_above(tree.root(), &path));
         let sect = work.root();
         let before: Vec<(String, crate::work::Id)> = setup::kinds(&work, sect)
@@ -246,7 +249,7 @@ impl SetSection {
             numbered = Some(n);
             dated = d;
         }
-        let new = work.build().ok_or_else(|| EditError::Path(main.clone()))?;
+        let new = work.build().ok_or_else(|| EditError::unbuilt(main.clone()))?;
         let draws = numbered.map(|n| annotation_draws(&new, n, 0)).unwrap_or_default();
         let docx = sink.docx()?;
         let mut keys = vec![

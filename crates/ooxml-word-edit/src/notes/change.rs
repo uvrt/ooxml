@@ -96,8 +96,8 @@ pub(super) fn editable(sink: &EditSink<'_, '_>, part: &str, reference: &[u32]) -
     let tree = sink
         .doc()
         .tree(part)?
-        .ok_or_else(|| EditError::NoPart(part.to_owned()))?;
-    let path_error = || EditError::Path(part.to_owned());
+        .ok_or_else(|| EditError::no_part(part.to_owned()))?;
+    let path_error = || EditError::no_element(part.to_owned());
     let (path, below) = paragraph_of(tree.root(), reference).ok_or_else(path_error)?;
     let element = at_path(tree.root(), &path).ok_or_else(path_error)?;
     let work = Work::of(element, scope_above(tree.root(), &path));
@@ -120,11 +120,11 @@ pub(super) fn write_back(
     let tree = sink
         .doc()
         .tree(&edited.part)?
-        .ok_or_else(|| EditError::NoPart(edited.part.clone()))?;
+        .ok_or_else(|| EditError::no_part(edited.part.clone()))?;
     let new = edited
         .work
         .build()
-        .ok_or_else(|| EditError::Path(edited.part.clone()))?;
+        .ok_or_else(|| EditError::unbuilt(edited.part.clone()))?;
     let mut draws = numbered.map(|n| annotation_draws(&new, n, 0)).unwrap_or_default();
     if renew && new.attribute(Some(W14), "paraId").is_some() {
         let prefix = w14_prefix(tree.root(), &edited.path);
@@ -152,7 +152,7 @@ fn remove_note(sink: &mut EditSink<'_, '_>, id: &str) -> Result<()> {
     space.work(&held, &part)?;
     let node = space
         .locate(&part, &path)
-        .ok_or_else(|| EditError::Path(part.clone()))?;
+        .ok_or_else(|| EditError::no_element(part.clone()))?;
     if let Some(work) = space.get_mut(&part) {
         work.remove(node);
     }
@@ -188,7 +188,7 @@ impl DeleteNote {
             let reference_node = edited.node;
             let (released, numbered, dated) = sink.stamped(tracking.clone(), |stamp| {
                 let run = isolate_reference(&mut edited.work, reference_node)
-                    .ok_or_else(|| EditError::Path(edited.part.clone()))?;
+                    .ok_or_else(|| EditError::no_element(edited.part.clone()))?;
                 Ok(crate::track::delete_runs(&mut edited.work, &[run], stamp))
             })?;
             let gone = !attached(&edited.work, reference_node);
@@ -299,7 +299,7 @@ impl MoveNote {
                 put_reference(&mut old.work, root, offset, reference_copy, properties)?;
             }
             Some(target) => {
-                let path_error = || EditError::Path(old.part.clone());
+                let path_error = || EditError::no_element(old.part.clone());
                 let copied = import(&mut target.work, &old.work, reference_copy).ok_or_else(path_error)?;
                 let properties = match properties {
                     Some(p) => Some(import(&mut target.work, &old.work, p).ok_or_else(path_error)?),
@@ -329,8 +329,8 @@ pub(super) fn paragraph_editable(sink: &EditSink<'_, '_>, part: &str, path: &[u3
     let tree = sink
         .doc()
         .tree(part)?
-        .ok_or_else(|| EditError::NoPart(part.to_owned()))?;
-    let element = at_path(tree.root(), path).ok_or_else(|| EditError::Path(part.to_owned()))?;
+        .ok_or_else(|| EditError::no_part(part.to_owned()))?;
+    let element = at_path(tree.root(), path).ok_or_else(|| EditError::no_element(part.to_owned()))?;
     let work = Work::of(element, scope_above(tree.root(), path));
     let root = work.root();
     Ok(Editable {

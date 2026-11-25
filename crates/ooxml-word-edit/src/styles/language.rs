@@ -467,7 +467,7 @@ pub(crate) fn set_language(
     let styles_tree = sink
         .doc()
         .tree(&sheet.part)?
-        .ok_or_else(|| EditError::NoPart(sheet.part.clone()))?;
+        .ok_or_else(|| EditError::no_part(sheet.part.clone()))?;
     let own_set = own_languages(styles_tree.root(), slot);
     let old: Vec<String> = own_set.iter().map(|(t, _)| t.clone()).collect();
     let mut warnings: Vec<String> = note.into_iter().collect();
@@ -485,7 +485,7 @@ pub(crate) fn set_language(
         let held = sink.doc().clone();
         let work = space
             .work(&held, &part)?
-            .ok_or_else(|| EditError::NoPart(part.clone()))?;
+            .ok_or_else(|| EditError::no_part(part.clone()))?;
         let root = work.root();
         let theme = child_or_made(work, root, "themeFontLang", true, sheet.orders());
         if work.get(theme, Some(W), slot) != Some(tag) {

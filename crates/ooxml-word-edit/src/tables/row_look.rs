@@ -17,6 +17,7 @@
 
 use ooxml_word_model::docx::cells::{model_path, TableFacts};
 use ooxml_word_model::docx::formatting::Formatting;
+use ooxml_word_model::docx::tables::placed_row_cells;
 use ooxml_word_model::docx::{at_path, find_path, Docx};
 use ooxml_word_model::ids::{TableId, W};
 use ooxml_word_model::markdown::read::Shared;
@@ -147,40 +148,18 @@ fn texts(element: &Element, out: &mut String) {
 }
 
 /// A row's own cells as `(cell, its place, first grid column, span)`: those inside
-/// row-level content controls and custom XML too, not a nested table's.
+/// row-level content controls and custom XML too, not a nested table's
+/// ([`placed_row_cells`]).
 #[must_use]
 pub fn row_cells(row: &Arc<Element>, path: &[u32]) -> Vec<(Arc<Element>, Vec<u32>, usize, usize)> {
-    let mut column = int_val(find_path(row, &["trPr", "gridBefore"]), 0);
-    let mut found = Vec::new();
-    cells_in(row, path, &mut found);
-    found
+    placed_row_cells(row)
         .into_iter()
-        .map(|(cell, place)| {
-            let span = int_val(find_path(&cell, &["tcPr", "gridSpan"]), 1).max(1);
-            let start = column;
-            column += span;
-            (cell, place, start, span)
+        .map(|(cell, below, placed)| {
+            let mut place = path.to_vec();
+            place.extend_from_slice(&below);
+            (cell, place, placed.first, placed.span)
         })
         .collect()
-}
-
-fn cells_in(element: &Arc<Element>, path: &[u32], out: &mut Vec<(Arc<Element>, Vec<u32>)>) {
-    for (k, node) in element.children().iter().enumerate() {
-        let Some(child) = node.as_element() else { continue };
-        let mut place = path.to_vec();
-        place.push(u32::try_from(k).unwrap_or(u32::MAX));
-        if child.name().is(Some(W), "tc") {
-            out.push((Arc::clone(child), place));
-        } else if !child.name().is(Some(W), "tbl") && !child.name().is(Some(W), "tr") {
-            cells_in(child, &place, out);
-        }
-    }
-}
-
-fn int_val(node: Option<&Element>, default: usize) -> usize {
-    node.and_then(|n| n.attribute(Some(W), "val"))
-        .and_then(|v| v.trim().parse::<i64>().ok())
-        .map_or(default, |v| usize::try_from(v).unwrap_or(0))
 }
 
 /// Whether the table's look turns its total row on (docx-agent's `read_look`: an attribute

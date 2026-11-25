@@ -16,6 +16,7 @@ use ooxml_word_edit::WordDoc;
 use ooxml_word_model::address::resolve::resolve;
 use ooxml_word_model::docx::changes::changes_holding;
 use ooxml_word_model::docx::controls::controls;
+use ooxml_word_model::docx::tables::placed_row_cells;
 use ooxml_word_model::docx::{at_path, find_path, Docx, StoryPart};
 use ooxml_word_model::ids::{Entry, TableId, W};
 use ooxml_xml::{Element, Node};
@@ -221,35 +222,16 @@ fn found_again(after: &WordDoc, docx: &Docx, unit: &Unit) -> Option<Vec<u32>> {
 }
 
 /// A row's cells (also inside row-level `w:sdt` and `w:customXml`), each with its place,
-/// first grid column (after `w:gridBefore`) and span (docx-agent's `_cells`).
+/// first grid column (after `w:gridBefore`) and span (docx-agent's `_cells`), by the table
+/// grid's rules (`ooxml_word_model::docx::tables::Grid`).
 fn placed_cells(story: &StoryPart, row: &[u32]) -> Vec<(Vec<u32>, usize, usize)> {
-    fn walk(element: &Element, at: &mut Vec<u32>, column: &mut usize, out: &mut Vec<(Vec<u32>, usize, usize)>) {
-        for (k, node) in element.children().iter().enumerate() {
-            let Node::Element(child) = node else { continue };
-            let name = child.name();
-            at.push(u32::try_from(k).unwrap_or(u32::MAX));
-            if name.is(Some(W), "tc") {
-                let span = number(child, &["tcPr", "gridSpan"]).unwrap_or(1).max(1);
-                let span = usize::try_from(span).unwrap_or(1);
-                out.push((at.clone(), *column, span));
-                *column += span;
-            } else if name.is(Some(W), "sdt") || name.is(Some(W), "sdtContent") || name.is(Some(W), "customXml") {
-                walk(child, at, column, out);
-            }
-            at.pop();
-        }
-    }
     let Some(element) = at_path(story.root(), row) else {
         return Vec::new();
     };
-    let mut column = usize::try_from(number(element, &["trPr", "gridBefore"]).unwrap_or(0)).unwrap_or(0);
-    let mut out = Vec::new();
-    walk(element, &mut row.to_vec(), &mut column, &mut out);
-    out
-}
-
-fn number(element: &Element, path: &[&str]) -> Option<i64> {
-    find_path(element, path)?.attribute(Some(W), "val")?.trim().parse().ok()
+    placed_row_cells(element)
+        .into_iter()
+        .map(|(_, place, cell)| ([row, &place[..]].concat(), cell.first, cell.span))
+        .collect()
 }
 
 /// The listed changes (`word_changes` list's ids), in document order, holding the deletion

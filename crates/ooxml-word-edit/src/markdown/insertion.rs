@@ -257,7 +257,7 @@ fn stamp(
     let skip = if continued.is_some() { 2 } else { 0 };
     paragraph_ids.extend(sink.draw(part, (2 * paragraphs).saturating_sub(skip))?);
     let (mut rows, mut paragraphs) = (row_ids.into_iter(), paragraph_ids.into_iter());
-    let tree = sink.doc().tree(part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
+    let tree = sink.doc().tree(part)?.ok_or_else(|| EditError::no_part(part.clone()))?;
     let w14 = w14_prefix(tree.root(), &place.container);
     let prefix = if place.story == "body" {
         String::new()
@@ -271,7 +271,7 @@ fn stamp(
         Some(para)
     };
     let (mut out, mut top) = (Vec::new(), Vec::new());
-    let missing = || EditError::Path(part.clone());
+    let missing = || EditError::no_element(part.clone());
     for &element in elements {
         if work.is(element, W, "p") {
             let id = format!("{prefix}p:{}", set(work, element, &mut paragraphs).ok_or_else(missing)?);

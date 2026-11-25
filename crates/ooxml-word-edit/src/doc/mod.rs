@@ -83,6 +83,8 @@ pub struct Shared {
     pub(crate) facts: Facts,
     /// Per-block fields, memoised by content.
     pub(crate) fields: crate::fields::scan::FieldScans,
+    /// Tables' shapes as Accept All leaves them, memoised by content.
+    pub(crate) accepted: crate::facts::AcceptedShapes,
 }
 
 /// A Word document at one version.
@@ -170,6 +172,7 @@ impl WordDoc {
             shared: Arc::new(Shared {
                 sequences: Sequences::default(),
                 fields: crate::fields::scan::FieldScans::new(Arc::clone(&budget)),
+                accepted: crate::facts::AcceptedShapes::new(Arc::clone(&budget), crate::facts::accepted_weight),
                 facts: Facts::new(budget),
             }),
         }
