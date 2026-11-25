@@ -5,12 +5,20 @@
 //! a row element ([`RowSpec::of`]).
 //!
 //! The rules (Word 16.106, `observations/grid-values-word.json`):
-//! - a `w:gridSpan`, `w:gridBefore` or `w:gridAfter` value is an `ST_DecimalNumber`: an
-//!   optional sign and decimal digits, nothing else (Word does not open a document with a
-//!   span of ` 2`, `1_0` or `-1`, or a `w:gridBefore` of `-1`); anything else is absent. A span
-//!   below 1 is 1 (Word places a span of `0` as one column); a count below 0 is 0 (a
-//!   `w:gridAfter` of `-1`). The raw span is kept ([`CellSpec::span_raw`]), so validation still
-//!   reports one that is not valid;
+//! - a `w:gridSpan` or `w:gridBefore` value is read as Word reads it ([`grid_value`]): an
+//!   optional sign, decimal digits and an optional fraction, which Word drops (`2.0` and `2.9`
+//!   are 2), the whole part wrapped to 32 bits (`99999999999999999999` is 1661992959); anything
+//!   else is absent. Word does not open a document with a span or `w:gridBefore` that is so
+//!   read below 0 (`-1`, `-2.0`, `4294967295`) or above [`GRID_VALUE_MAX`], or that is no such
+//!   number (` 2`, `1_0`, `1e1`). A span below 1 is 1 (Word places a span of `0` as one
+//!   column); a count below 0 is 0. The raw span is kept ([`CellSpec::span_raw`]), so
+//!   validation still reports one that is not valid;
+//! - Word does not read `w:gridAfter` at all: it opens any value (`x`, `-5`, `1e0`) and writes
+//!   back the columns the row leaves. The grid reads it by the same rule, as the row's written
+//!   count, so a row's coverage of `w:tblGrid` is the file's, not Word's repair of it;
+//! - a row whose cells reach past `w:tblGrid` (a span past the grid, a `w:gridBefore` of 3 in
+//!   three columns) Word re-grids: it writes a `w:tblGrid` of its own. The grid places such
+//!   cells as written and reports the row ([`Coverage::Over`]);
 //! - a row's cells are its `w:tc`, also inside `w:sdt`/`w:sdtContent` and `w:customXml`, at
 //!   any depth, never inside a cell or a nested table;
 //! - a cell continuing a vertical merge (`w:vMerge` without `restart`) belongs to the cell
@@ -23,21 +31,39 @@
 use super::merge_heads::VMerge;
 use crate::ids::W;
 use ooxml_xml::Element;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-/// A grid value (`w:gridSpan`, `w:gridBefore`, `w:gridAfter`) as Word reads it: an
-/// `ST_DecimalNumber` -- an optional `+` or `-` and decimal digits, no white space -- else
-/// `None`.
+/// A grid value (`w:gridSpan`, `w:gridBefore`, `w:gridAfter`) as Word 16.106 reads it
+/// (`observations/grid-values-word.json`): an optional `+` or `-`, decimal digits, and an
+/// optional `.` with more decimal digits, and nothing else (no white space, `_` or exponent).
+/// Word drops the fraction (`2.9` is 2, `.5` and `-0.5` are 0), reads no digits as 0 (``, `+`,
+/// `.`), and keeps the whole part modulo 2^32 as a signed 32-bit number (`4294967298` is 2,
+/// `99999999999999999999` is 1661992959, `4294967295` is -1); anything else is `None`.
 #[must_use]
 pub fn grid_value(raw: &str) -> Option<i64> {
-    let digits = raw.strip_prefix(['+', '-']).unwrap_or(raw);
-    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+    let (negative, body) = match raw.as_bytes().first() {
+        Some(b'-') => (true, raw.get(1..)?),
+        Some(b'+') => (false, raw.get(1..)?),
+        _ => (false, raw),
+    };
+    let (whole, fraction) = body.split_once('.').unwrap_or((body, ""));
+    let digits = |part: &str| part.bytes().all(|b| b.is_ascii_digit());
+    if !digits(whole) || !digits(fraction) {
         return None;
     }
-    raw.parse::<i64>().ok()
+    let low = whole
+        .bytes()
+        .fold(0u32, |v, b| v.wrapping_mul(10).wrapping_add(u32::from(b - b'0')));
+    let low = if negative { low.wrapping_neg() } else { low };
+    Some(i64::from(i32::from_ne_bytes(low.to_ne_bytes())))
 }
+
+/// The largest `w:gridSpan` or `w:gridBefore` Word 16.106 opens a document with (as
+/// [`grid_value`] reads it): it does not open one of `GRID_VALUE_MAX + 1`
+/// (`observations/grid-values-word.json`, `span-` and `before-` cases at the bound).
+pub const GRID_VALUE_MAX: i64 = 2_147_483_645;
 
 /// A count of grid columns (`w:gridBefore`, `w:gridAfter`) as written: absent or not valid
 /// is 0, below 0 is 0.
@@ -76,12 +102,13 @@ impl CellSpec {
         }
     }
 
-    /// Whether its span is valid: absent, or an [`grid_value`] of at least 1.
+    /// Whether its span is valid: absent, or a [`grid_value`] of at least 1 and at most
+    /// [`GRID_VALUE_MAX`] (Word opens a span of 0 and re-grids its row, so it is reported too).
     #[must_use]
     pub fn span_valid(&self) -> bool {
         self.span_raw
             .as_deref()
-            .is_none_or(|raw| grid_value(raw).is_some_and(|v| v >= 1))
+            .is_none_or(|raw| grid_value(raw).is_some_and(|v| (1..=GRID_VALUE_MAX).contains(&v)))
     }
 
     /// The values of the cell `tc`.
@@ -310,20 +337,18 @@ impl Grid {
     /// The grid of `rows` in a table whose `w:tblGrid` has `columns` columns.
     #[must_use]
     pub fn build(rows: &[RowSpec], columns: usize) -> Grid {
-        let mut origins: HashMap<usize, (usize, usize)> = HashMap::new();
+        let mut origins = Origins::default();
         let mut out = Vec::with_capacity(rows.len());
         for (r, row) in rows.iter().enumerate() {
             let mut column = row.before;
             let mut cells = Vec::with_capacity(row.cells.len());
             for (k, cell) in row.cells.iter().enumerate() {
                 let continued = match cell.vmerge {
-                    VMerge::Continue => origins.get(&column).copied(),
+                    VMerge::Continue => origins.at(column),
                     VMerge::None | VMerge::Restart => None,
                 };
                 let origin = continued.unwrap_or_else(|| {
-                    for c in column..column.saturating_add(cell.span) {
-                        origins.insert(c, (r, k));
-                    }
+                    origins.set(column, column.saturating_add(cell.span), (r, k));
                     (r, k)
                 });
                 cells.push(GridCell {
@@ -378,6 +403,47 @@ impl Grid {
     }
 }
 
+/// Which cell `(row, cell)` a vertical merge starting at each grid column goes on from: the
+/// last cell placed over that column. Kept as column ranges, so a span of millions of columns
+/// (a value Word wraps to 32 bits, [`grid_value`]) costs one entry, not one per column.
+#[derive(Debug, Default)]
+struct Origins(BTreeMap<usize, (usize, (usize, usize))>);
+
+impl Origins {
+    /// The origin over grid column `column`.
+    fn at(&self, column: usize) -> Option<(usize, usize)> {
+        self.0
+            .range(..=column)
+            .next_back()
+            .filter(|(_, (end, _))| column < *end)
+            .map(|(_, (_, origin))| *origin)
+    }
+
+    /// `origin` over the grid columns `start..end`, in place of what was there.
+    fn set(&mut self, start: usize, end: usize, origin: (usize, usize)) {
+        if start >= end {
+            return;
+        }
+        let over: Vec<(usize, usize, (usize, usize))> = self
+            .0
+            .range(..end)
+            .rev()
+            .take_while(|(_, (e, _))| *e > start)
+            .map(|(s, (e, o))| (*s, *e, *o))
+            .collect();
+        for (s, e, o) in over {
+            self.0.remove(&s);
+            if s < start {
+                self.0.insert(s, (start, o));
+            }
+            if e > end {
+                self.0.insert(end, (e, o));
+            }
+        }
+        self.0.insert(start, (end, origin));
+    }
+}
+
 /// The number of `w:gridCol` in `table`'s `w:tblGrid`.
 #[must_use]
 pub fn grid_columns(table: &Element) -> usize {
@@ -391,21 +457,147 @@ mod tests {
     use super::*;
 
     #[test]
-    fn grid_values_are_decimal_numbers_as_word_opens_them() {
-        assert_eq!(grid_value("2"), Some(2));
-        assert_eq!(grid_value("+2"), Some(2));
-        assert_eq!(grid_value("-1"), Some(-1));
-        for refused in [" 2", "2 ", "1_0", "", "+", "x", "2.0"] {
+    fn grid_values_are_read_as_word_opens_them() {
+        // Word 16.106, observations/grid-values-word.json: each value and what Word read
+        for (raw, read) in [
+            ("2", 2),
+            ("+2", 2),
+            ("-1", -1),
+            ("2.0", 2),
+            ("2.", 2),
+            ("2.5", 2),
+            ("2.9", 2),
+            ("+2.0", 2),
+            ("2.00", 2),
+            ("1.5", 1),
+            ("0.5", 0),
+            (".5", 0),
+            ("+.5", 0),
+            ("-0", 0),
+            ("-0.5", 0),
+            ("-.5", 0),
+            ("-2.0", -2),
+            ("", 0),
+            ("+", 0),
+            ("-", 0),
+            (".", 0),
+            ("4294967298", 2),
+            ("8589934594", 2),
+            ("4294967296", 0),
+            ("4294967295", -1),
+            ("2147483648", -2_147_483_648),
+            ("9223372036854775807", -1),
+            ("9223372036854775808", 0),
+            ("99999999999999999999", 1_661_992_959),
+            ("7766279631452241919", 1_661_992_959),
+            ("6442450943", 2_147_483_647),
+        ] {
+            assert_eq!(grid_value(raw), Some(read), "{raw:?}");
+        }
+        for refused in [" 2", "2 ", "1_0", "x", "1e1", "2e0", "2.0.0", "--2", "+-2", "2,0"] {
             assert_eq!(grid_value(refused), None, "{refused:?}");
         }
+        let valid = |raw: &str| CellSpec::new(Some(raw), VMerge::None).span_valid();
         assert_eq!(CellSpec::new(Some("0"), VMerge::None).span, 1);
-        assert!(!CellSpec::new(Some("0"), VMerge::None).span_valid());
-        assert!(!CellSpec::new(Some(" 2"), VMerge::None).span_valid());
+        assert_eq!(CellSpec::new(Some("2.0"), VMerge::None).span, 2);
+        assert_eq!(
+            CellSpec::new(Some("99999999999999999999"), VMerge::None).span,
+            1_661_992_959
+        );
+        for opened in ["2", "+2", "2.0", "2.9", "99999999999999999999", "2147483000", "1000"] {
+            assert!(valid(opened), "{opened:?}");
+        }
+        // below 1 (Word opens 0 and re-grids the row), or refused by Word
+        for not_valid in ["0", "0.5", "", "-1", "-2.0", " 2", "1e1", "2147483647", "4294967295"] {
+            assert!(!valid(not_valid), "{not_valid:?}");
+        }
         assert!(CellSpec::new(None, VMerge::None).span_valid());
         assert_eq!(
             RowSpec::new(Some("-1"), Some("-1"), Vec::new()),
             RowSpec::new(None, None, Vec::new())
         );
+        assert_eq!(RowSpec::new(Some("1.9"), Some("2.0"), Vec::new()).before, 1);
+        assert_eq!(RowSpec::new(Some("1.9"), Some("2.0"), Vec::new()).after, 2);
+    }
+
+    /// Word's reading spelled out otherwise: the grammar by hand, the whole part as a number
+    /// of any size reduced modulo 2^32 (u128 digit by digit), then the sign.
+    fn reference(raw: &str) -> Option<i64> {
+        let mut chars = raw.chars().peekable();
+        let negative = match chars.peek() {
+            Some('-') => {
+                chars.next();
+                true
+            }
+            Some('+') => {
+                chars.next();
+                false
+            }
+            _ => false,
+        };
+        let mut whole: u128 = 0;
+        let mut dot = false;
+        for c in chars {
+            match c {
+                '.' if !dot => dot = true,
+                '0'..='9' if dot => {}
+                '0'..='9' => whole = (whole * 10 + u128::from(c as u8 - b'0')) % (1 << 32),
+                _ => return None,
+            }
+        }
+        let signed = if negative { (1u128 << 32) - whole } else { whole } % (1 << 32);
+        let signed = i64::try_from(signed).ok()?;
+        Some(if signed >= 1 << 31 { signed - (1 << 32) } else { signed })
+    }
+
+    #[test]
+    fn generated_values_are_read_as_the_reference_reads_them() {
+        let mut state = 7u64;
+        let mut next = |n: usize| {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((state >> 33) as usize) % n
+        };
+        const ALPHABET: &[u8] = b"0123456789999+-.. e_x";
+        for _ in 0..50_000 {
+            let len = next(26);
+            let raw: String = (0..len).map(|_| char::from(ALPHABET[next(ALPHABET.len())])).collect();
+            assert_eq!(grid_value(&raw), reference(&raw), "{raw:?}");
+            let span = CellSpec::new(Some(&raw), VMerge::None);
+            assert_eq!(
+                span.span_valid(),
+                reference(&raw).is_some_and(|v| (1..=GRID_VALUE_MAX).contains(&v)),
+                "{raw:?}"
+            );
+            assert!(span.span >= 1);
+        }
+    }
+
+    #[test]
+    fn a_span_of_millions_of_columns_is_placed_without_a_column_each() {
+        let cell = |span: &str, vmerge| CellSpec::new(Some(span), vmerge);
+        let rows = [
+            RowSpec::new(None, None, vec![cell("99999999999999999999", VMerge::Restart)]),
+            RowSpec::new(Some("1000000000"), None, vec![cell("1", VMerge::Continue)]),
+            RowSpec::new(Some("1"), None, vec![cell("2", VMerge::Restart)]),
+            RowSpec::new(
+                None,
+                None,
+                vec![cell("2", VMerge::Continue), cell("3", VMerge::Continue)],
+            ),
+            RowSpec::new(Some("3"), None, vec![cell("1", VMerge::Continue)]),
+        ];
+        let grid = Grid::build(&rows, 3);
+        assert_eq!(grid.rows[1].cells[0].origin, (0, 0), "inside the wide cell");
+        assert_eq!(grid.rows[3].cells[0].origin, (0, 0), "column 0 is the wide cell's");
+        assert_eq!(grid.rows[3].cells[1].origin, (2, 0), "column 2 is row 2's cell's");
+        assert_eq!(
+            grid.rows[4].cells[0].origin,
+            (0, 0),
+            "column 3 is the wide cell's again"
+        );
+        assert_eq!(grid.rows[0].coverage, Coverage::Over(1_661_992_956));
     }
 
     #[test]

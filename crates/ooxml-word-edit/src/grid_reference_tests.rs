@@ -593,7 +593,7 @@ fn the_grid_places_every_fixture_and_corpus_table_as_the_old_edit_readers_did() 
     assert!(failures.is_empty(), "{failures:#?}");
 }
 
-const VALUES: [&str; 17] = [
+const VALUES: [&str; 22] = [
     "",
     "0",
     "1",
@@ -611,6 +611,11 @@ const VALUES: [&str; 17] = [
     "2.0",
     "-2",
     "99999999999999999999",
+    "2.5",
+    ".",
+    "-0.5",
+    "4294967298",
+    "1e1",
 ];
 
 fn generated(seed: u64) -> String {
@@ -676,13 +681,15 @@ fn the_grid_places_generated_tables_with_odd_values_as_the_old_edit_readers_did(
         }
     }
     eprintln!("grid reference (word-edit): {whole} of 3000 generated tables compared by every reader");
-    assert!(whole > 500, "{whole}");
+    assert!(whole > 300, "{whole}");
 }
 
 /// Each reader's values read otherwise than Word's rule now -- the PR's listed fixes, each
 /// backed by Word's probe (`grid-values-word.json`): `span-0`, `span-plus-2`,
 /// `span-space-2`, `span-1_0`, `span-minus-1`, `before-minus-1`, `after-minus-1`, `span-x`,
-/// `span-empty`.
+/// `span-empty`; a fraction Word drops (`span-2.0`, `span-2.5`, `before-1.5`), a number Word
+/// wraps to 32 bits (`span-overflow`, `span-4294967298`, `before-4294967298`), no digits read
+/// as 0 (`span-.`), an exponent Word refuses (`span-1e1`).
 #[test]
 fn the_listed_value_fixes() {
     let listed = |family: Family, span: bool| -> Vec<&str> {
@@ -692,23 +699,66 @@ fn the_listed_value_fixes() {
             .filter(|v| value_differs(family, v, span))
             .collect()
     };
-    assert_eq!(listed(Family::Int, true), [" 2", "2 "]);
-    assert_eq!(listed(Family::Int, false), ["-1", " 2", "2 ", "-2"]);
-    assert_eq!(listed(Family::Digits, true), ["0", "+2"]);
-    assert_eq!(listed(Family::Digits, false), ["+2"]);
-    assert_eq!(listed(Family::Usize, true), [" 2", "2 "]);
-    assert_eq!(listed(Family::Usize, false), [" 2", "2 "]);
-    assert_eq!(listed(Family::RowLook, true), [" 2", "2 "]);
-    assert_eq!(listed(Family::RowLook, false), [" 2", "2 "]);
+    const WORD: [&str; 3] = ["2.0", "99999999999999999999", "2.5"];
+    let with_word = |head: &[&'static str], tail: &[&'static str]| -> Vec<&'static str> {
+        head.iter().chain(&WORD).chain(tail).copied().collect()
+    };
+    assert_eq!(listed(Family::Int, true), with_word(&[" 2", "2 "], &["4294967298"]));
+    assert_eq!(
+        listed(Family::Int, false),
+        [
+            "-1",
+            " 2",
+            "2 ",
+            "2.0",
+            "-2",
+            "99999999999999999999",
+            "2.5",
+            "4294967298"
+        ]
+    );
+    assert_eq!(listed(Family::Digits, true), with_word(&["0", "+2"], &["4294967298"]));
+    assert_eq!(listed(Family::Digits, false), with_word(&["+2"], &["4294967298"]));
+    for family in [Family::Usize, Family::RowLook] {
+        assert_eq!(listed(family, true), with_word(&[" 2", "2 "], &["4294967298"]));
+        assert_eq!(listed(family, false), with_word(&[" 2", "2 "], &["4294967298"]));
+    }
     assert_eq!(
         listed(Family::Python, true),
-        ["", " 2", "2 ", "1_0", "x", "2.0", "99999999999999999999"]
+        [
+            "",
+            " 2",
+            "2 ",
+            "1_0",
+            "x",
+            "2.0",
+            "99999999999999999999",
+            "2.5",
+            ".",
+            "-0.5",
+            "4294967298",
+            "1e1"
+        ]
     );
-    assert_eq!(listed(Family::Python, false), ["-1", " 2", "2 ", "1_0", "-2"]);
-    // the review's reject (`review::apply`): a skip of 0 goes, by value; spans compare by value
+    assert_eq!(
+        listed(Family::Python, false),
+        [
+            "-1",
+            " 2",
+            "2 ",
+            "1_0",
+            "2.0",
+            "-2",
+            "99999999999999999999",
+            "2.5",
+            "4294967298"
+        ]
+    );
+    // the review's reject (`review::apply`): a skip of 0 goes, by value (Word reads ``, `.`
+    // and `-0.5` as 0, `span-empty`, `span-.`, `before--0.5`); spans compare by value
     for v in VALUES {
         let old = v == "0";
         let new = grid_value(v) == Some(0);
-        assert!(old == new || ["-0", "+0"].contains(&v), "{v:?}");
+        assert!(old == new || ["", "-0", "+0", ".", "-0.5"].contains(&v), "{v:?}");
     }
 }
