@@ -41,6 +41,18 @@ impl DocModel for Cells {
     type Change = Change;
     type Error = Refused;
     type Setup = ();
+    /// The cells that differ: each one's value before and after.
+    type Delta = BTreeMap<u32, (i64, i64)>;
+
+    fn delta(before: &Cells, after: &Cells) -> BTreeMap<u32, (i64, i64)> {
+        before
+            .0
+            .keys()
+            .chain(after.0.keys())
+            .filter(|cell| before.get(**cell) != after.get(**cell))
+            .map(|cell| (*cell, (before.get(*cell), after.get(*cell))))
+            .collect()
+    }
 
     fn apply(&mut self, change: &Change) -> Result<(), Refused> {
         match change {

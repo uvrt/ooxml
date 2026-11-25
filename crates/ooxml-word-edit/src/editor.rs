@@ -11,15 +11,15 @@
 //! store's port; run a command's effects outside its transaction.
 
 use crate::doc::{Setup, WordDoc};
-use crate::ids_delta::{ids_delta, IdsDelta};
+use crate::ids_delta::{ids_delta_of, IdsDelta};
 use crate::pool::EarlierIds;
-use crate::touched::{touched, Touched};
+use crate::touched::{touched_of, Touched};
 use crate::validate::{problems, Delta, Problem};
 use crate::{EditError, Result};
 use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, Command, CommitTiming, Snapshot, Store, StoreConfig, StoreError, TxnOwner};
-use ooxml_word_model::ids::LoadedState;
+use ooxml_word_model::ids::{LoadedState, VersionDelta};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -60,6 +60,10 @@ pub struct Edited<O> {
     /// How many spaces its language spacing wrote or made U+00A0 ([`crate::Change::Spaced`]);
     /// 0 when it changed nothing.
     pub spaced: usize,
+    /// What its version changed against the one before ([`Edited::previous`]), by block
+    /// identity: the store's change set of the version, which `touched` and `ids` are
+    /// derived from. Empty when it changed nothing.
+    pub changes: Arc<VersionDelta>,
     /// What it touched, per part.
     pub touched: Vec<Touched>,
     /// The block ids and drawing numbers it removed and brought.
@@ -90,6 +94,7 @@ impl<O> Edited<O> {
             changed: self.changed,
             drawn: self.drawn,
             spaced: self.spaced,
+            changes: self.changes,
             touched: self.touched,
             ids: self.ids,
             validation: self.validation,
@@ -111,6 +116,7 @@ impl Edited<()> {
             changed: self.changed,
             drawn: self.drawn,
             spaced: self.spaced,
+            changes: self.changes,
             touched: self.touched,
             ids: self.ids,
             validation: self.validation,
@@ -289,12 +295,20 @@ impl Editor {
     /// delta of the version it made.
     fn edited<O>(&self, out: O, ran: Ran) -> Result<Edited<O>> {
         let started = self.clock.monotonic();
-        let (touched, ids) = match &ran.previous {
-            Some(previous) => (
-                touched(previous.doc(), ran.version.doc())?,
-                ids_delta(previous.doc(), ran.version.doc())?,
-            ),
-            None => (Vec::new(), IdsDelta::default()),
+        let (changes, touched, ids) = match &ran.previous {
+            Some(previous) => {
+                // the store's change set of the version: made against the version it was
+                // published after, which is `previous`
+                let changes = ran
+                    .version
+                    .changes()
+                    .unwrap_or_else(|| Arc::new(ran.version.doc().delta_from(previous.doc())));
+                let (before, after) = (previous.doc(), ran.version.doc());
+                let touched = touched_of(before, after, &changes)?;
+                let ids = ids_delta_of(before, after, &changes)?;
+                (changes, touched, ids)
+            }
+            None => (Arc::default(), Vec::new(), IdsDelta::default()),
         };
         let found = self.clock.monotonic();
         let validation = Delta::of(&self.baseline, &problems(ran.version.doc())?);
@@ -312,6 +326,7 @@ impl Editor {
             spaced: ran.spaced,
             version: ran.version,
             previous: ran.previous,
+            changes,
             touched,
             ids,
             validation,

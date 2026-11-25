@@ -19,7 +19,7 @@ const GAP: u64 = 1 << 20;
 
 /// The block container below `root`: its place (the body's, for a main part) and the
 /// element, `None` for the root itself.
-fn container(root: &Element) -> Option<(usize, &Arc<Element>)> {
+pub(super) fn container(root: &Element) -> Option<(usize, &Arc<Element>)> {
     root.children()
         .iter()
         .enumerate()
@@ -27,7 +27,7 @@ fn container(root: &Element) -> Option<(usize, &Arc<Element>)> {
 }
 
 /// The container's children.
-fn container_children(root: &Element, at: Option<usize>) -> Option<&Children> {
+pub(super) fn container_children(root: &Element, at: Option<usize>) -> Option<&Children> {
     match at {
         None => Some(root.children()),
         Some(k) => root.children().get(k)?.as_element().map(|e| e.children()),

@@ -129,9 +129,6 @@ pub(crate) struct ElementFacts {
     /// Live drawings (`wp:inline`, `wp:anchor`) without a valid anchorId and editId: what
     /// stamping gives ids to.
     pub(crate) unstamped_drawings: usize,
-    /// The element's content without the ids stamping writes, hashed (what `touched`
-    /// compares blocks by).
-    pub(crate) stampless: u64,
     /// The authors of revision records and comments, hidden ones too (docx-agent's
     /// `_authors_in_use`, which `_tidy_people` keeps listed).
     pub(crate) authors: Vec<String>,
@@ -144,7 +141,6 @@ impl ElementFacts {
         let mut facts = ElementFacts::default();
         let mut ancestors: Vec<&Element> = Vec::new();
         visit(element, &mut ancestors, false, orders, &mut facts);
-        facts.stampless = crate::touched::stampless(element);
         facts
     }
 

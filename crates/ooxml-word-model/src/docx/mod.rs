@@ -19,6 +19,7 @@ pub mod cells;
 pub mod changes;
 pub mod comments;
 pub mod controls;
+mod delta;
 mod derived;
 pub mod drawings;
 pub mod facts;

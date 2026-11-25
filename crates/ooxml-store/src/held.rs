@@ -153,7 +153,9 @@ impl<D: DocModel> Store<D> {
                 .map_or(before.number(), |held| held.number);
             let doc = tx.doc().clone();
             doc.settle();
-            Arc::new(tx.base().succeed(seq, number, doc, tx.writes()))
+            // its changes against the version the owner read before it, not the base
+            let version = tx.base().succeed(seq, number, doc, tx.writes());
+            Arc::new(version.changed_from(before.doc().clone()))
         } else {
             Arc::clone(&before)
         };
@@ -250,10 +252,12 @@ impl<D: DocModel> Store<D> {
             return Ok(None);
         }
         let (point, at) = (point.clone(), Arc::clone(version));
+        let current = held.current.doc().clone();
         tx.rollback(point);
         held.marks.truncate(mark.0 + 1);
         drop(holder);
-        let version = Arc::new(at.succeed(self.draw_seq(), at.number(), at.doc().clone(), &KeySet::new()));
+        let version = at.succeed(self.draw_seq(), at.number(), at.doc().clone(), &KeySet::new());
+        let version = Arc::new(version.changed_from(current));
         let mut holder = lock(&self.holder);
         let held = holder
             .as_mut()
