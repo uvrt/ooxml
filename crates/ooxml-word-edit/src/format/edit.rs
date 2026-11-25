@@ -74,7 +74,7 @@ impl<'s, 't, 'x> Run<'s, 't, 'x> {
     }
 
     /// Stamp the document if no edit did yet; the renames.
-    pub(crate) fn stamp(&mut self) -> Result<Vec<(String, String)>> {
+    pub(crate) fn stamp(&mut self) -> Result<ooxml_word_model::ids::Renames> {
         if self.stamped {
             return Ok(Vec::new());
         }
@@ -132,7 +132,7 @@ impl<'s, 't, 'x> Run<'s, 't, 'x> {
                 .people(gave.then_some(tracking.author.as_str()), Some(tracking.author.as_str()))?;
         }
         Ok(FormatStep {
-            id: renamed_id(&renamed, &paragraph.id),
+            id: renamed_id(&renamed, &paragraph.id).into(),
             changed: true,
             renamed,
             ..FormatStep::default()

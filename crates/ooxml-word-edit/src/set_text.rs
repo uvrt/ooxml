@@ -42,13 +42,13 @@ pub struct SetText {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextEdited {
     /// The paragraph's id after the edit.
-    pub id: String,
+    pub id: ooxml_word_model::ids::BlockId,
     /// Whether anything changed.
     pub changed: bool,
     /// Ids the edit's stamping renamed, old to new, in the order made.
-    pub renamed: Vec<(String, String)>,
+    pub renamed: ooxml_word_model::ids::Renames,
     /// The paragraph's part.
-    pub part: String,
+    pub part: ooxml_opc::PartName,
     /// The paragraphs made for the text's later lines, in order.
     pub created: Vec<String>,
 }
@@ -135,10 +135,7 @@ pub(crate) fn paragraph_has_annotations(paragraph: &ooxml_xml::Element) -> bool 
 
 /// The key a block is read and written under: its durable id.
 pub(crate) fn block_key(part: &str, id: &str) -> Key {
-    Key::Block {
-        part: Arc::from(part),
-        id: Arc::from(id),
-    }
+    Key::block(part, id)
 }
 
 impl Command<WordDoc> for SetText {
@@ -194,10 +191,10 @@ pub(crate) fn write_text_as(
     let mut work = Work::of(&found.element, Vec::new());
     if paragraph_text(&work, work.root()) == text {
         return Ok(TextEdited {
-            id: found.id,
+            id: found.id.into(),
             changed: false,
             renamed: Vec::new(),
-            part: found.part,
+            part: found.part.into(),
             created: Vec::new(),
         });
     }
@@ -209,7 +206,7 @@ pub(crate) fn write_text_as(
     let id = renamed
         .iter()
         .find(|(old, _)| *old == found.id)
-        .map_or_else(|| found.id.clone(), |(_, new)| new.clone());
+        .map_or_else(|| found.id.clone(), |(_, new)| new.to_string());
     let tree = sink
         .doc()
         .tree(&found.part)?
@@ -253,10 +250,10 @@ pub(crate) fn write_text_as(
         sink.release(&found.part, &wrote.released)?;
     }
     Ok(TextEdited {
-        id,
+        id: id.into(),
         changed: true,
         renamed,
-        part: found.part,
+        part: found.part.into(),
         created: Vec::new(),
     })
 }

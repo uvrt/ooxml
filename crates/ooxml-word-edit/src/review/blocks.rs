@@ -122,7 +122,7 @@ pub struct RemovedBlocks {
     /// Every id removed, tables first, then rows, paragraphs and controls.
     pub flat: Vec<String>,
     /// Tables a removed first row renamed: old id, new id.
-    pub tables_renamed: Vec<(String, String)>,
+    pub tables_renamed: ooxml_word_model::ids::Renames,
 }
 
 /// A known block's node in the step's copies, and whether it is still in its tree.
@@ -174,7 +174,7 @@ impl Naming<'_> {
     }
 
     /// The tables still there that lost their first row's name.
-    fn tables_renamed(&self, known: &[Known], states: &[(Option<Id>, bool)]) -> Vec<(String, String)> {
+    fn tables_renamed(&self, known: &[Known], states: &[(Option<Id>, bool)]) -> ooxml_word_model::ids::Renames {
         let shortened: Vec<(String, Id)> = known
             .iter()
             .zip(states)
@@ -188,7 +188,7 @@ impl Naming<'_> {
             };
             if shortened.iter().any(|(p, t)| *p == k.part && *t == node) {
                 if let Some(new) = self.now_id(&k.part, node).filter(|n| *n != k.id) {
-                    out.push((k.id.clone(), new));
+                    out.push((k.id.as_str().into(), new.into()));
                 }
             }
         }

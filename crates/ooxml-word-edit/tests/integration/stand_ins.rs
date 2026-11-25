@@ -118,10 +118,7 @@ fn two_insertions(policy: RevisionPolicy) {
     let steps = shared.store().steps();
     let made = steps.last().unwrap();
     for id in reported(&last).iter().filter(|id| id.starts_with("p:")) {
-        let key = Key::Block {
-            part: Arc::from("word/document.xml"),
-            id: Arc::from(id.as_str()),
-        };
+        let key = Key::block("word/document.xml", id.as_str());
         assert!(made.writes.contains(&key), "{id} kept as drawn in {:?}", made.writes);
     }
 }
@@ -177,10 +174,7 @@ impl Command<WordDoc> for Written {
             attributes: attributes.into(),
         };
         let new = Arc::new(Element::from_head(Arc::new(head), old.children().clone()));
-        let key = Key::Block {
-            part: Arc::from(docx.main.as_str()),
-            id: Arc::from(paragraph.id.as_str()),
-        };
+        let key = Key::block(docx.main.as_str(), paragraph.id.as_str());
         sink.replace(&docx.main, &path, new, vec![key])?;
         Ok(tx.reads().contains(&Key::Seq(Arc::from("probe"))))
     }

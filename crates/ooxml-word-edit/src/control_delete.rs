@@ -155,7 +155,7 @@ pub(crate) fn delete(sink: &mut EditSink<'_, '_>, target: &str) -> Result<BlockD
             id: None,
             renamed,
             removed,
-            part,
+            part: part.into(),
             warnings: Vec::new(),
         });
     };
@@ -202,7 +202,7 @@ pub(crate) fn delete(sink: &mut EditSink<'_, '_>, target: &str) -> Result<BlockD
         id: None,
         renamed,
         removed: vec![target.to_owned()],
-        part,
+        part: part.into(),
         warnings: vec![UNTRACKED.to_owned()],
     })
 }

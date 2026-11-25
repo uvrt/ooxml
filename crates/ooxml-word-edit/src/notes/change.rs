@@ -239,7 +239,10 @@ impl DeleteNote {
         remove_note(&mut *sink, &self.note)?;
         Ok(NoteEdited {
             id: None,
-            renamed: renamed.into_iter().filter(|(old, _)| !removed.contains(old)).collect(),
+            renamed: renamed
+                .into_iter()
+                .filter(|(old, _)| !removed.iter().any(|r| r == old))
+                .collect(),
             removed,
             created: Vec::new(),
         })

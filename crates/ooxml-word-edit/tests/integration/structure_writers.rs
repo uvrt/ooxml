@@ -527,7 +527,7 @@ fn a_paragraph_moved_while_tracking_takes_words_move_form() {
     let done = editor.run(&Caller::anonymous(), &moved).unwrap();
     let copy = done.out.created.first().cloned().unwrap();
     assert_eq!(done.out.moved, std::slice::from_ref(&copy));
-    assert!(done.out.renamed.contains(&("p:1A2B3C02".to_owned(), copy.clone())));
+    assert!(done.out.renamed.contains(&("p:1A2B3C02".into(), copy.as_str().into())));
     let (_, body) = notes_and_body(&editor);
     let from = body.find("<w:moveFromRangeStart ").unwrap();
     let to = body.find("<w:moveToRangeStart ").unwrap();

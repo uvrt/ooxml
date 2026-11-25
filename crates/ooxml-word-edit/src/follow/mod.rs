@@ -104,7 +104,7 @@ pub struct Followed {
     /// Each copy, in the order asked.
     pub copies: Vec<CopyFollowed>,
     /// Ids stamping renamed, old to new.
-    pub renamed: Vec<(String, String)>,
+    pub renamed: ooxml_word_model::ids::Renames,
     /// The notes and warnings.
     pub warnings: Vec<String>,
 }

@@ -16,7 +16,6 @@ use crate::{EditError, Result};
 use ooxml_store::{Command, Txn};
 use ooxml_word_model::parts::{related, REL_SETTINGS};
 use ooxml_xml::Element;
-use std::sync::Arc;
 
 /// Turn Word's Track Changes switch on or off.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,7 +77,7 @@ impl Command<WordDoc> for SetWordTracking {
         let mut sink = EditSink::new(tx, RevisionPolicy::Untracked);
         let part = settings_part(sink.doc())?
             .ok_or_else(|| EditError::Refused("the document has no settings part".to_owned()))?;
-        sink.read(Key::Part(Arc::from(part.as_str())));
+        sink.read(Key::part(part.as_str()));
         if word_tracks_changes(sink.doc())? == self.on {
             return Ok(WordTracking {
                 changed: false,

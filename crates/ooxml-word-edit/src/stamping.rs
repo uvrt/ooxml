@@ -18,6 +18,7 @@ use crate::{EditError, Result};
 use ooxml_store::{Command, Txn};
 use ooxml_word_model::docx::{live_paths, Docx, StoryPart};
 use ooxml_word_model::ids::{valid_long_hex, IdState, ParagraphId, TableId};
+use ooxml_word_model::ids::{BlockId, Renames};
 use ooxml_xml::{Attribute, Element, Head, Name, Node, QName};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -59,15 +60,19 @@ impl<C: Command<WordDoc, Error = EditError>> Command<WordDoc> for Stamped<'_, C>
 ///
 /// # Errors
 /// When a part is not XML.
-pub(crate) fn stamp_document(sink: &mut EditSink<'_, '_>, docx: &Docx) -> Result<Vec<(String, String)>> {
-    let mut renames: Vec<(String, String)> = Vec::new();
+pub(crate) fn stamp_document(sink: &mut EditSink<'_, '_>, docx: &Docx) -> Result<Renames> {
+    let mut renames = Renames::new();
     for story in &docx.parts {
         let made = stamp_part(sink, story)?;
         if made.is_empty() {
             continue;
         }
         let known = sink.doc().ids().aliases().clone();
-        let fresh: Vec<(String, String)> = made.iter().filter(|(k, _)| !known.contains_key(k)).cloned().collect();
+        let fresh: Renames = made
+            .iter()
+            .filter(|(k, _)| !known.contains_key(k.as_str()))
+            .cloned()
+            .collect();
         sink.rename(fresh)?;
         renames.extend(made);
     }
@@ -124,7 +129,7 @@ const BLOCK_IDS: (&str, &str, [&str; 2]) = (W14, "w14", ["paraId", "textId"]);
 const DRAWING_IDS: (&str, &str, [&str; 2]) = (WP14, "wp14", ["anchorId", "editId"]);
 
 /// Stamp one story part; its renames.
-fn stamp_part(sink: &mut EditSink<'_, '_>, story: &StoryPart) -> Result<Vec<(String, String)>> {
+fn stamp_part(sink: &mut EditSink<'_, '_>, story: &StoryPart) -> Result<Renames> {
     let part = story.part.as_str();
     let prefix = if story.story == "body" {
         String::new()
@@ -156,14 +161,14 @@ fn stamp_part(sink: &mut EditSink<'_, '_>, story: &StoryPart) -> Result<Vec<(Str
     if paragraphs.is_empty() && rows.is_empty() && drawings.is_empty() {
         return Ok(Vec::new());
     }
-    sink.read(Key::Part(Arc::from(part)));
+    sink.read(Key::part(part));
     let root = story.root();
     let mut sets: Vec<(Box<[u32]>, Attrs)> = Vec::new();
-    let mut renames = Vec::new();
+    let mut renames = Renames::new();
     for paragraph in &paragraphs {
         let (attrs, para) = draw_pair(sink, part, root, &paragraph.path, BLOCK_IDS)?;
         sets.push((paragraph.path.clone(), attrs));
-        renames.push((paragraph.id.clone(), format!("{prefix}p:{para}")));
+        renames.push((BlockId::from(&paragraph.id), BlockId::from(format!("{prefix}p:{para}"))));
     }
     let mut table_renames = Vec::new();
     for (table, k) in rows
@@ -175,9 +180,9 @@ fn stamp_part(sink: &mut EditSink<'_, '_>, story: &StoryPart) -> Result<Vec<(Str
         };
         let (attrs, para) = draw_pair(sink, &format!("{part}\0row"), root, path, BLOCK_IDS)?;
         sets.push((path.clone(), attrs));
-        renames.push((row_id.clone(), format!("{prefix}tr:{para}")));
+        renames.push((BlockId::from(row_id), BlockId::from(format!("{prefix}tr:{para}"))));
         if *k == 0 {
-            table_renames.push((table.id.clone(), format!("{prefix}t:{para}")));
+            table_renames.push((BlockId::from(&table.id), BlockId::from(format!("{prefix}t:{para}"))));
         }
     }
     renames.extend(table_renames);

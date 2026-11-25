@@ -296,7 +296,7 @@ fn two_writers_adding_uses_of_one_style_commit_without_a_conflict() {
         (0, 0),
         "a style use added is no conflict"
     );
-    let uses = Key::StyleUse(Arc::from("word/document.xml"));
+    let uses = Key::StyleUse(ooxml_opc::PartName::from("word/document.xml"));
     let steps = shared.store().steps();
     assert_eq!(steps.len(), 2);
     assert!(

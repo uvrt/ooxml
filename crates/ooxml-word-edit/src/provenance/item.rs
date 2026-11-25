@@ -25,7 +25,7 @@ use std::sync::Arc;
 #[derive(Debug)]
 pub(super) struct ItemNamed {
     /// The main part's relationships part.
-    rels: Arc<str>,
+    rels: ooxml_opc::PartName,
     /// The item they named where the edit read them.
     item: Option<String>,
 }
@@ -42,7 +42,7 @@ impl ReadPredicate<WordDoc> for ItemNamed {
     }
 
     fn history_keys(&self) -> Option<Vec<Key>> {
-        Some(vec![Key::Part(Arc::clone(&self.rels))])
+        Some(vec![Key::Part(self.rels.clone())])
     }
 }
 
@@ -72,13 +72,13 @@ impl Draft {
     pub(super) fn open(sink: &mut EditSink<'_, '_>, now: &Docx) -> Result<Option<Draft>> {
         let found = records::item(now)?;
         sink.read_where(Arc::new(ItemNamed {
-            rels: Arc::from(rels_for(&now.main)),
+            rels: ooxml_opc::PartName::from(rels_for(&now.main)),
             item: found.clone(),
         }));
         let Some(name) = found else {
             return Ok(None);
         };
-        sink.read(Key::Part(Arc::from(name.as_str())));
+        sink.read(Key::part(name.as_str()));
         let Some(tree) = sink.doc().package().tree(&name)? else {
             return Ok(None);
         };

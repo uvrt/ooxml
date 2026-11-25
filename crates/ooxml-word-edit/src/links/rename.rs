@@ -107,7 +107,8 @@ impl RenameBookmark {
                 edit.write(&mut *sink, &story.part)?;
             }
         }
-        let mut renamed = vec![(format!("bm:{old}"), format!("bm:{}", self.new))];
+        let mut renamed: ooxml_word_model::ids::Renames =
+            vec![(format!("bm:{old}").into(), format!("bm:{}", self.new).into())];
         renamed.extend(stamped);
         let id = format!("bm:{}", self.new);
         Ok(LinkEdited {
@@ -142,7 +143,7 @@ impl Edit {
             }
             Edit::Text(path, head, text) => {
                 let element = Element::from_head(head, Children::from_vec(vec![Node::Text(Arc::from(text.as_str()))]));
-                sink.replace(part, &path, Arc::new(element), vec![Key::Part(Arc::from(part))])
+                sink.replace(part, &path, Arc::new(element), vec![Key::part(part)])
             }
         }
     }

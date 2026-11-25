@@ -47,11 +47,11 @@ pub struct InsertParagraph {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParagraphInserted {
     /// The new paragraph's id.
-    pub id: String,
+    pub id: ooxml_word_model::ids::BlockId,
     /// Ids the edit's stamping renamed, old to new, in the order made.
-    pub renamed: Vec<(String, String)>,
+    pub renamed: ooxml_word_model::ids::Renames,
     /// Its part.
-    pub part: String,
+    pub part: ooxml_opc::PartName,
 }
 
 /// A block a paragraph goes beside.
@@ -253,9 +253,9 @@ pub(crate) fn insert_paragraph(
         sink.people(gave.then_some(tracking.author.as_str()), Some(tracking.author.as_str()))?;
     }
     Ok(ParagraphInserted {
-        id: new_id,
+        id: new_id.into(),
         renamed,
-        part,
+        part: part.into(),
     })
 }
 
@@ -416,10 +416,10 @@ pub(crate) fn set_lines_in(sink: &mut EditSink<'_, '_>, target: &str, text: &str
     }
     if already_lines(sink, &docx, &found.part, &found.path, &lines)? {
         return Ok(TextEdited {
-            id: found.id,
+            id: found.id.into(),
             changed: false,
             renamed: Vec::new(),
-            part: found.part,
+            part: found.part.into(),
             created: Vec::new(),
         });
     }
@@ -435,17 +435,17 @@ pub(crate) fn set_lines_in(sink: &mut EditSink<'_, '_>, target: &str, text: &str
                 None => renamed.push((old, new)),
             }
         }
-        created.push(made.id.clone());
+        created.push(made.id.to_string());
         current = made.id;
     }
     Ok(TextEdited {
         id: renamed
             .iter()
             .find(|(old, _)| *old == found.id)
-            .map_or_else(|| first.id.clone(), |(_, new)| new.clone()),
+            .map_or_else(|| first.id.clone(), |(_, new)| new.to_string().into()),
         changed: true,
         renamed,
-        part: found.part,
+        part: found.part.into(),
         created,
     })
 }

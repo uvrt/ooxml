@@ -29,7 +29,6 @@ use ooxml_store::{Command, Txn};
 use ooxml_word_model::address::{in_table, is_text_range, section, span_ends, AddressError};
 use ooxml_word_model::docx::sections::{section_id, sections, Section};
 use ooxml_word_model::docx::{at_path, Docx};
-use std::sync::Arc;
 
 /// A section found: its place among the sections and the section.
 pub(crate) struct Found {
@@ -182,7 +181,7 @@ pub struct SectionEdited {
     /// Ids it removed.
     pub removed: Vec<String>,
     /// Ids renamed, old to new, in the order made.
-    pub renamed: Vec<(String, String)>,
+    pub renamed: ooxml_word_model::ids::Renames,
     /// What it turned on that the caller did not ask for.
     pub warnings: Vec<String>,
 }
@@ -223,7 +222,7 @@ impl SetSection {
         }
         let key = match found.paragraph_path().and_then(|p| docx.body()?.ids.paragraph_at(p)) {
             Some(p) => crate::set_text::block_key(&main, &p.id),
-            None => Key::Part(Arc::from(main.as_str())),
+            None => Key::part(main.as_str()),
         };
         sink.read(key);
         let renamed = stamp_document(&mut *sink, &docx)?;
@@ -255,7 +254,7 @@ impl SetSection {
         let mut keys = vec![
             match found.paragraph_path().and_then(|p| docx.body()?.ids.paragraph_at(p)) {
                 Some(p) => crate::set_text::block_key(&main, &p.id),
-                None => Key::Part(Arc::from(main.as_str())),
+                None => Key::part(main.as_str()),
             },
         ];
         if numbered.is_some() {

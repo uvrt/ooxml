@@ -192,7 +192,7 @@ fn reply(args: &WordCopyFrom, out: ooxml_word_edit::BlocksCopied) -> ToolResult<
         changed: true,
         created: out.created.clone(),
         removed: out.removed.clone(),
-        renamed: out.renamed.clone(),
+        renamed: ooxml_word_model::ids::renames_text(&out.renamed),
         warnings: out.warnings.clone(),
     };
     let mut result = outcome(

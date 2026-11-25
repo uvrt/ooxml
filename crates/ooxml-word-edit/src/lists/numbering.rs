@@ -121,7 +121,7 @@ fn ensure_part(sink: &mut EditSink<'_, '_>, main: &str) -> Result<String> {
 
 /// The key a numbering write reads and writes: the whole part.
 pub(crate) fn part_key(part: &str) -> Key {
-    Key::Part(Arc::from(part))
+    Key::part(part)
 }
 
 /// docx-agent's `_nsid`: SHA-256(`seed\0counter`)'s eight leading hex digits, in upper

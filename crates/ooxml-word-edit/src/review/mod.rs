@@ -74,7 +74,7 @@ pub struct Reviewed {
     /// The records settled, each with how many such there were.
     pub settled: BTreeMap<Mark, usize>,
     /// Ids renamed (old, new), in order.
-    pub renamed: Vec<(String, String)>,
+    pub renamed: ooxml_word_model::ids::Renames,
     /// Ids removed, in order.
     pub removed: Vec<String>,
     /// What it says to look at.

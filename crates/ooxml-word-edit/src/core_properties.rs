@@ -205,11 +205,11 @@ impl Command<WordDoc> for SetCoreProperties {
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<CoreSet> {
         let mut sink = EditSink::new(tx, RevisionPolicy::Untracked);
         for part in [CORE_PART, CONTENT_TYPES_PART, rels_for("").as_str()] {
-            sink.read(Key::Part(Arc::from(part)));
+            sink.read(Key::part(part));
         }
         let found = core_part(sink.doc().package())?;
         if let Some(part) = &found {
-            sink.read(Key::Part(Arc::from(part.as_str())));
+            sink.read(Key::part(part.as_str()));
         }
         if self.already(sink.doc())? {
             return Ok(CoreSet { changed: false });
@@ -235,11 +235,11 @@ impl Command<WordDoc> for SetCoreProperties {
 /// When the core part, the content types or the package's relationships are not XML.
 pub(crate) fn write_core(sink: &mut EditSink<'_, '_>, values: &[(CoreProperty, Option<&str>)]) -> Result<bool> {
     for part in [CORE_PART, CONTENT_TYPES_PART, rels_for("").as_str()] {
-        sink.read(Key::Part(Arc::from(part)));
+        sink.read(Key::part(part));
     }
     let found = core_part(sink.doc().package())?;
     if let Some(part) = &found {
-        sink.read(Key::Part(Arc::from(part.as_str())));
+        sink.read(Key::part(part.as_str()));
     }
     let part = match found {
         Some(part) => part,

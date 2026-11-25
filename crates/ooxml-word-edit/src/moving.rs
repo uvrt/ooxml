@@ -64,7 +64,7 @@ pub struct BlocksMoved {
     /// The copies a tracked move made (each the moved block's id from then on).
     pub created: Vec<String>,
     /// Ids renamed, old to new.
-    pub renamed: Vec<(String, String)>,
+    pub renamed: ooxml_word_model::ids::Renames,
     /// What moved otherwise than asked.
     pub warnings: Vec<String>,
 }
@@ -620,7 +620,11 @@ impl MoveBlocks {
 
 /// Each block's warning, named by the block's id: docx-agent moves the blocks one by one,
 /// the first stamping the document, so a later block's warning names it by its stamped id.
-fn named_warnings(warnings: Vec<(usize, String)>, ids: &[String], renamed: &[(String, String)]) -> Vec<String> {
+fn named_warnings(
+    warnings: Vec<(usize, String)>,
+    ids: &[String],
+    renamed: &[(ooxml_word_model::ids::BlockId, ooxml_word_model::ids::BlockId)],
+) -> Vec<String> {
     warnings
         .into_iter()
         .map(|(k, said)| {

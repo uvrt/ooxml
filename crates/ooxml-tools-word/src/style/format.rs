@@ -26,11 +26,11 @@ use std::collections::BTreeMap;
 impl From<FormatStep> for Outcome {
     fn from(step: FormatStep) -> Self {
         Outcome {
-            id: Some(step.id),
+            id: Some(step.id.to_string()),
             changed: step.changed,
             created: Vec::new(),
             removed: step.removed,
-            renamed: step.renamed,
+            renamed: ooxml_word_model::ids::renames_text(&step.renamed),
             warnings: step.warnings,
         }
     }

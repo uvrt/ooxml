@@ -97,11 +97,11 @@ pub struct FormatEdit {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct FormatStep {
     /// The block's id after the edit.
-    pub id: String,
+    pub id: ooxml_word_model::ids::BlockId,
     /// Whether it changed anything.
     pub changed: bool,
     /// Ids its stamping renamed, old to new.
-    pub renamed: Vec<(String, String)>,
+    pub renamed: ooxml_word_model::ids::Renames,
     /// What it removed (`num:3`).
     pub removed: Vec<String>,
     /// What it notes.
@@ -389,7 +389,7 @@ fn keep_blocks(run: &mut Run<'_, '_, '_>, address: &str, on: bool) -> Result<For
             format!("{address} was not kept together")
         });
         return Ok(FormatStep {
-            id: plan.first,
+            id: plan.first.into(),
             warnings,
             ..FormatStep::default()
         });
@@ -406,7 +406,7 @@ fn keep_blocks(run: &mut Run<'_, '_, '_>, address: &str, on: bool) -> Result<For
         run.paragraph(&main, index, &ParagraphOp::Settings(settings, &[]))?;
     }
     Ok(FormatStep {
-        id: crate::ranges::renamed_id(&renamed, &plan.first),
+        id: crate::ranges::renamed_id(&renamed, &plan.first).into(),
         changed: true,
         renamed,
         warnings,
@@ -453,7 +453,7 @@ fn like_targets(
             if parts.is_empty() {
                 done.alike.push(paragraph.id.clone());
                 steps.push(FormatStep {
-                    id: paragraph.id,
+                    id: paragraph.id.into(),
                     ..FormatStep::default()
                 });
                 continue;
@@ -465,7 +465,7 @@ fn like_targets(
                 step.removed = crate::lists::reap(run.sink, &main, &BTreeSet::from([before.num_id]))?;
             }
             done.set
-                .push((step.id.clone(), parts.iter().map(|p| (*p).to_owned()).collect()));
+                .push((step.id.to_string(), parts.iter().map(|p| (*p).to_owned()).collect()));
             steps.push(step);
         }
     }

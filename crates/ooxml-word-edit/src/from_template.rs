@@ -287,7 +287,7 @@ fn app_template(sink: &mut EditSink<'_, '_>, name: &str) -> Result<()> {
     let Some(part) = found else {
         return new_app(sink, &package);
     };
-    sink.read(Key::Part(Arc::from(part.as_str())));
+    sink.read(Key::part(part.as_str()));
     let held = sink.doc().clone();
     let mut space = Space::default();
     let Some(work) = space.work(&held, &part)? else {
@@ -327,7 +327,7 @@ const APP_TYPE: &str = "application/vnd.openxmlformats-officedocument.extended-p
 fn new_app(sink: &mut EditSink<'_, '_>, package: &ooxml_opc::Package) -> Result<()> {
     let part = "docProps/app.xml";
     for name in [part, CONTENT_TYPES_PART, ooxml_opc::name::rels_for("").as_str()] {
-        sink.read(Key::Part(Arc::from(name)));
+        sink.read(Key::part(name));
     }
     let tree =
         ooxml_xml::parse(NEW_APP.as_bytes(), &ooxml_base::Limits::default().xml).map_err(|e| EditError::own_xml(e))?;

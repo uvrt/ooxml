@@ -190,7 +190,7 @@ fn list_edit(
     let docx = sink.docx()?;
     let read::At { id, .. } = read::at(&docx, place).ok_or_else(|| EditError::no_element(place.part.clone()))?;
     Ok(ListStep {
-        id,
+        id: id.into(),
         changed: true,
         removed,
         renamed,

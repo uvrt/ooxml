@@ -162,7 +162,7 @@ fn outright(
         id: None,
         renamed,
         removed,
-        part,
+        part: part.into(),
         warnings: Vec::new(),
     })
 }
@@ -241,11 +241,17 @@ fn tracked(sink: &mut EditSink<'_, '_>, docx: &Docx, planned: &Planned, tracking
                 format!("{}/", block.story)
             };
             if own_runs.iter().any(|r| below(&work, *r, paragraph)) {
-                sink.rename(vec![(format!("{prefix}p:{joined}"), format!("{prefix}p:{mine}"))])?;
+                sink.rename(vec![(
+                    format!("{prefix}p:{joined}").into(),
+                    format!("{prefix}p:{mine}").into(),
+                )])?;
             } else {
                 let name = work.qname(W14, "paraId", "w14");
                 work.set(paragraph, name, &joined);
-                sink.rename(vec![(format!("{prefix}p:{mine}"), format!("{prefix}p:{joined}"))])?;
+                sink.rename(vec![(
+                    format!("{prefix}p:{mine}").into(),
+                    format!("{prefix}p:{joined}").into(),
+                )])?;
             }
         }
     }
@@ -264,7 +270,7 @@ fn tracked(sink: &mut EditSink<'_, '_>, docx: &Docx, planned: &Planned, tracking
         id: Some(renamed_id(&renamed, &block.id)),
         renamed,
         removed: Vec::new(),
-        part,
+        part: part.into(),
         warnings: Vec::new(),
     })
 }

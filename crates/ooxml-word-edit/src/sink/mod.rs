@@ -212,12 +212,12 @@ impl<'t, 's> EditSink<'t, 's> {
     ///
     /// # Errors
     /// When the change cannot be applied.
-    pub fn rename(&mut self, renames: Vec<(String, String)>) -> Result<()> {
+    pub fn rename(&mut self, renames: ooxml_word_model::ids::Renames) -> Result<()> {
         if renames.is_empty() {
             return Ok(());
         }
         self.write(Change::Ids(crate::pool::IdsChange {
-            aliases: renames,
+            aliases: ooxml_word_model::ids::renames_text(&renames),
             ..Default::default()
         }))
     }
@@ -566,7 +566,7 @@ impl<'t, 's> EditSink<'t, 's> {
         if ids.is_empty() {
             return Ok(());
         }
-        self.tx.read(Key::Part(Arc::from(part)));
+        self.tx.read(Key::part(part));
         let released = crate::release::release(self.doc().package(), part, ids)?;
         for name in &released.changed {
             if let Some(tree) = released.package.tree(name)? {
@@ -593,7 +593,7 @@ impl<'t, 's> EditSink<'t, 's> {
         let mut keys: Vec<Key> = crate::people::parts_written(self.doc().package(), &main)
             .map_err(EditError::from)?
             .into_iter()
-            .map(Key::Part)
+            .map(Key::part)
             .collect();
         keys.push(Key::People);
         self.write(Change::People {
@@ -661,7 +661,7 @@ impl<'t, 's> EditSink<'t, 's> {
     /// # Errors
     /// When the change cannot be applied.
     pub fn set_head(&mut self, part: &str, patch: HeadPatch) -> Result<()> {
-        self.set_head_keyed(part, patch, vec![Key::Part(Arc::from(part))])
+        self.set_head_keyed(part, patch, vec![Key::part(part)])
     }
 
     /// Change one element's head in place, writing `keys`.
@@ -708,7 +708,7 @@ impl<'t, 's> EditSink<'t, 's> {
             return Ok(());
         };
         // what the root declares decides what is written (nothing, when it declares them)
-        self.tx.read(Key::Root(Arc::from(part)));
+        self.tx.read(Key::Root(ooxml_opc::PartName::from(part)));
         let root = tree.root();
         let Some((head, declared)) = ensured_head(root, drawings, extra) else {
             return Ok(());
@@ -727,7 +727,7 @@ impl<'t, 's> EditSink<'t, 's> {
         self.write(Change::Head {
             part: Arc::from(part),
             patch,
-            keys: vec![Key::Root(Arc::from(part))].into(),
+            keys: vec![Key::Root(ooxml_opc::PartName::from(part))].into(),
         })
     }
 

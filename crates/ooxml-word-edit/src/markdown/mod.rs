@@ -64,7 +64,7 @@ pub struct MarkdownInserted {
     /// Every block made, in document order (a table, then its cells' paragraphs).
     pub created: Vec<String>,
     /// Ids the edit's stamping renamed, old to new.
-    pub renamed: Vec<(String, String)>,
+    pub renamed: ooxml_word_model::ids::Renames,
     /// Blocks removed (the empty paragraph typed into).
     pub removed: Vec<String>,
     /// Styles added, alignment written directly.

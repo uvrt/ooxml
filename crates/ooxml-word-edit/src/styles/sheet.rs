@@ -80,7 +80,7 @@ impl Sheet {
         let Some(part) = ooxml_word_model::parts::related(sink.doc().package(), &docx.main, REL_STYLES)? else {
             return Ok(None);
         };
-        sink.read(Key::Part(Arc::from(part.as_str())));
+        sink.read(Key::part(part.as_str()));
         let colours = ThemeColours::read(sink.doc(), &docx)?;
         let held = sink.doc().clone();
         let Some(work) = space.work(&held, &part)? else {

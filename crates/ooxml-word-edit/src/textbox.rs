@@ -261,7 +261,7 @@ pub(crate) fn sync_holder(
         work.append(into, copy);
     }
     let synced = work.build().ok_or_else(|| EditError::unbuilt(part.to_owned()))?;
-    sink.replace(part, path, synced, vec![crate::doc::Key::Part(Arc::from(part))])?;
+    sink.replace(part, path, synced, vec![crate::doc::Key::part(part)])?;
     Ok(true)
 }
 

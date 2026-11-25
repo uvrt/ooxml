@@ -222,7 +222,7 @@ fn reply(
         changed: !changed.is_empty(),
         created: Vec::new(),
         removed: Vec::new(),
-        renamed: followed.renamed.clone(),
+        renamed: ooxml_word_model::ids::renames_text(&followed.renamed),
         warnings: followed.warnings.clone(),
     };
     let mut result = outcome(&[edit], summary, Some(Value::Object(data)));

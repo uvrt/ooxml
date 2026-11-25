@@ -122,7 +122,7 @@ pub struct TableChanged {
     /// Ids removed.
     pub removed: Vec<String>,
     /// Ids renamed (stamping), old to new.
-    pub renamed: Vec<(String, String)>,
+    pub renamed: ooxml_word_model::ids::Renames,
     /// What it did that the caller did not ask for.
     pub warnings: Vec<String>,
     /// Nothing changed (the cells merged already, a split into one cell).

@@ -48,11 +48,11 @@ pub struct BlockDeleted {
     /// The block's id when it stays (a tracked deletion), `None` when it went.
     pub id: Option<String>,
     /// Ids the edit's stamping renamed, old to new, in the order made (but the removed).
-    pub renamed: Vec<(String, String)>,
+    pub renamed: ooxml_word_model::ids::Renames,
     /// The ids of the blocks that went: the block's, a table's paragraphs'.
     pub removed: Vec<String>,
     /// The block's part.
-    pub part: String,
+    pub part: ooxml_opc::PartName,
     /// What the caller should know: a content control deleted tracked is removed
     /// untracked (Word has no revision for a control).
     pub warnings: Vec<String>,
@@ -370,11 +370,14 @@ pub(crate) fn kept_renames(
     sink: &mut EditSink<'_, '_>,
     docx: &Docx,
     removed: &[String],
-) -> Result<Vec<(String, String)>> {
+) -> Result<ooxml_word_model::ids::Renames> {
     let renamed = stamp_document(sink, docx)?;
     // docx-agent: the aliases of the blocks that go go with them
     sink.forget_aliases(removed)?;
-    Ok(renamed.into_iter().filter(|(old, _)| !removed.contains(old)).collect())
+    Ok(renamed
+        .into_iter()
+        .filter(|(old, _)| !removed.iter().any(|r| r == old))
+        .collect())
 }
 
 /// The draws a rewritten stretch's revision records need.
