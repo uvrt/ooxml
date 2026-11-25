@@ -71,7 +71,14 @@ fn set(editor: &Editor, row: usize, column: usize) -> Result<Vec<String>, EditEr
         policy: RevisionPolicy::Untracked,
         accepted: None,
     };
-    editor.run(&Caller::anonymous(), &command).map(|done| done.out.ids)
+    // each id's place in the table (`<table>/cR,C`), the table's own id aside
+    editor.run(&Caller::anonymous(), &command).map(|done| {
+        done.out
+            .ids
+            .iter()
+            .filter_map(|id| id.rsplit('/').next().map(str::to_owned))
+            .collect()
+    })
 }
 
 fn split(editor: &Editor, row: usize, column: usize) -> Result<(), EditError> {
@@ -94,11 +101,11 @@ fn set_cells_writes_across_a_span_of_billions_of_columns() {
         let started = Instant::now();
         let editor = document(span);
         // anywhere in the wide cell is the wide cell; the cells after it, past the span
-        assert_eq!(set(&editor, 0, 0).unwrap(), ["t:1/c0,0"], "{span}");
-        assert_eq!(set(&editor, 0, span - 1).unwrap(), ["t:1/c0,0"], "{span}");
-        assert_eq!(set(&editor, 0, span).unwrap(), [format!("t:1/c0,{span}")], "{span}");
-        assert_eq!(set(&editor, 1, span).unwrap(), [format!("t:1/c1,{span}")], "{span}");
-        assert_eq!(set(&editor, 2, 1).unwrap(), ["t:1/c2,1"], "{span}");
+        assert_eq!(set(&editor, 0, 0).unwrap(), ["c0,0"], "{span}");
+        assert_eq!(set(&editor, 0, span - 1).unwrap(), ["c0,0"], "{span}");
+        assert_eq!(set(&editor, 0, span).unwrap(), [format!("c0,{span}")], "{span}");
+        assert_eq!(set(&editor, 1, span).unwrap(), [format!("c1,{span}")], "{span}");
+        assert_eq!(set(&editor, 2, 1).unwrap(), ["c2,1"], "{span}");
         // no cell before the late row's cell: refused, the table's shape counted, not listed
         let Err(EditError::Address(refused)) = set(&editor, 1, 7) else {
             panic!("{span}: (1, 7) is no cell");
@@ -138,18 +145,15 @@ fn a_split_in_a_table_of_billions_of_columns_is_quick() {
     for span in HUGE {
         let started = Instant::now();
         let editor = document(span);
-        // the plain rows' cells: past the grid, refused as a split this edit cannot place
-        assert!(
-            matches!(split(&editor, 0, span), Err(EditError::Unsupported(_))),
-            "{span}"
-        );
         // no cell at the place: refused with the table's shape, counted by runs
         let Err(EditError::Refused(message)) = split(&editor, 1, 3) else {
             panic!("{span}: (1, 3) is no cell");
         };
         assert!(message.contains(&format!("and {} column(s)", span + 1)), "{message}");
         assert!(message.contains(" more"), "{message}");
-        split(&editor, 2, 0).unwrap();
+        // the cell after the wide one, and the wide one, each split into two rows
+        split(&editor, 0, span).unwrap();
+        split(&editor, 0, 0).unwrap();
         assert!(started.elapsed() < QUICK, "{span}: {:?}", started.elapsed());
     }
 }
