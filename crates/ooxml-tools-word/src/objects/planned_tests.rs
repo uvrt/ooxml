@@ -10,7 +10,7 @@
 use crate::planned::held::{calling as editing, markdown, opened, raced};
 use crate::planned::run_planned;
 use crate::review::Editing;
-use crate::sources::{SourceRows, SourceValue};
+use crate::sources::{Cell, SourceRows};
 use ooxml_store::{Caller, Command, Txn};
 use ooxml_tools::{ToolError, TryCall};
 use ooxml_word_edit::{EditError, EditTable, Editor, RevisionPolicy, Setup, TableChange, WordDoc};
@@ -143,7 +143,7 @@ pub(super) fn source(rows: &[(&str, &str)]) -> SourceRows {
         types: None,
         rows: rows
             .iter()
-            .map(|(n, v)| vec![SourceValue::Text((*n).to_owned()), SourceValue::Text((*v).to_owned())])
+            .map(|(n, v)| vec![Cell::Text((*n).to_owned()), Cell::Text((*v).to_owned())])
             .collect(),
         sources: None,
         doc: None,
