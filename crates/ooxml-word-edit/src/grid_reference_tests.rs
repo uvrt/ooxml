@@ -17,7 +17,7 @@
 use crate::names::W;
 use crate::review::xml::{ancestor, find_path};
 use crate::work::{Id, Work};
-use ooxml_word_model::docx::tables::{grid_count, grid_span, grid_value, CellSpec, VMerge};
+use ooxml_word_model::docx::tables::{grid_count, grid_span, grid_value, CellSpec, GridPlaces, VMerge};
 use ooxml_word_model::xmlread::py_int;
 use ooxml_xml::{Element, Node};
 use std::collections::HashMap;
@@ -233,6 +233,14 @@ fn old_spots(work: &Work, rows: &[Id]) -> Vec<Vec<Option<(usize, usize)>>> {
         grid.push(line);
     }
     grid
+}
+
+/// The places of `places`, one per grid position up to each row's last cell (the old
+/// readers' shape).
+fn positions(places: &GridPlaces) -> Vec<Vec<Option<(usize, usize)>>> {
+    (0..places.row_count())
+        .map(|r| (0..places.end(r)).map(|c| places.get(r, c)).collect())
+        .collect()
 }
 
 // ---- the old readers on elements ----
@@ -478,7 +486,7 @@ fn compare(table: &Arc<Element>) -> Vec<String> {
         let (new, old) = (crate::review::grid::reaches(&work, root), old_reaches(&work, root));
         check("fit_grid reaches", new == old, &|| format!("{new:?} != {old:?}"));
         let (new, old) = (
-            crate::tables::split::spots(&work, &work_rows),
+            positions(&crate::tables::split::spots(&work, &work_rows)),
             old_spots(&work, &work_rows),
         );
         check("split spots", new == old, &|| format!("{new:?} != {old:?}"));
@@ -493,7 +501,7 @@ fn compare(table: &Arc<Element>) -> Vec<String> {
     // on elements
     if same(Family::Usize) {
         let paths: Vec<Box<[u32]>> = owned.iter().map(|(_, p)| p.clone().into_boxed_slice()).collect();
-        let new_grid = crate::set_cells::grid(table, &paths);
+        let new_grid = positions(&crate::set_cells::grid(table, &paths));
         let (old_grid, old_paths) = old_set_cells(&rows);
         check("set_cells grid", new_grid == old_grid, &|| {
             format!("{new_grid:?} != {old_grid:?}")

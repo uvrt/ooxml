@@ -21,6 +21,7 @@ mod grid;
 mod grid_reference_tests;
 mod labels;
 mod merge_heads;
+mod places;
 pub use accepted::{Accepted, Axis, Misplaced};
 pub use grid::{
     grid_columns, grid_count, grid_span, grid_value, placed_row_cells, row_cells, source_cells, CellSpec, Coverage,
@@ -28,6 +29,7 @@ pub use grid::{
 };
 pub use labels::{collapse_space, no_cell_text};
 pub use merge_heads::{cell_merge, merge_heads, VMerge};
+pub use places::{GridPlaces, PlaceRun, Spot};
 
 /// A cell element with its place in its part.
 type Placed = (Arc<Element>, Box<[u32]>);
@@ -38,7 +40,7 @@ pub struct TableGrid<'a> {
     table: Arc<Element>,
     rows: Vec<Arc<Element>>,
     /// Per row, per grid position: the origin `(row, column)` of the cell there.
-    grid: Vec<Vec<Option<(usize, usize)>>>,
+    grid: GridPlaces,
     /// The cell element at each origin, with its place.
     cells: HashMap<(usize, usize), Placed>,
 }
@@ -59,7 +61,7 @@ impl<'a> TableGrid<'a> {
             part,
             table: Arc::clone(&table.element),
             rows: Vec::new(),
-            grid: Vec::new(),
+            grid: GridPlaces::default(),
             cells: HashMap::new(),
         };
         let mut paths = Vec::new();
@@ -72,21 +74,13 @@ impl<'a> TableGrid<'a> {
         let specs: Vec<RowSpec> = out.rows.iter().map(|row| RowSpec::of(row)).collect();
         let grid = Grid::build(&specs, grid_columns(&table.element));
         for (r, ((row, path), line)) in out.rows.iter().zip(&paths).zip(&grid.rows).enumerate() {
-            let mut positions = vec![None; line.before];
             for (k, ((tc, place), cell)) in cells_of(row, path).into_iter().zip(&line.cells).enumerate() {
-                let (or, ok) = cell.origin;
-                let first = grid
-                    .rows
-                    .get(or)
-                    .and_then(|l| l.cells.get(ok))
-                    .map_or(cell.first, |c| c.first);
                 if cell.origin == (r, k) {
                     out.cells.insert((r, cell.first), (tc, place));
                 }
-                positions.extend(std::iter::repeat_n(Some((or, first)), cell.span));
             }
-            out.grid.push(positions);
         }
+        out.grid = GridPlaces::of(&grid);
         out
     }
 
@@ -122,7 +116,7 @@ impl<'a> TableGrid<'a> {
     /// The number of rows.
     #[must_use]
     pub fn row_count(&self) -> usize {
-        self.grid.len()
+        self.grid.row_count()
     }
 
     /// The paragraphs (indexes among the part's) of the cell over grid position `(row,
@@ -130,7 +124,7 @@ impl<'a> TableGrid<'a> {
     /// cell is there (docx-agent's `Table.cell(row, column).paragraphs`).
     #[must_use]
     pub fn cell_paragraphs(&self, row: usize, column: usize) -> Vec<usize> {
-        let Some(origin) = self.grid.get(row).and_then(|r| r.get(column)).copied().flatten() else {
+        let Some(origin) = self.grid.get(row, column) else {
             return Vec::new();
         };
         let Some((_, path)) = self.cells.get(&origin) else {
@@ -143,7 +137,7 @@ impl<'a> TableGrid<'a> {
     /// current view, one line each; `None` where no cell is there.
     #[must_use]
     pub fn cell_text(&self, row: usize, column: usize) -> Option<String> {
-        let origin = (*self.grid.get(row)?.get(column)?)?;
+        let origin = self.grid.get(row, column)?;
         let (_, path) = self.cells.get(&origin)?;
         let paragraphs: Vec<String> = self
             .part

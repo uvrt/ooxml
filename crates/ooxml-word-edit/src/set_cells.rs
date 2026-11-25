@@ -18,7 +18,7 @@ use crate::text::write::check_text;
 use crate::{EditError, Result};
 use ooxml_store::{Command, Txn};
 use ooxml_word_model::address::direct;
-use ooxml_word_model::docx::tables::{placed_row_cells, Accepted, Axis, Grid, RowSpec, TableGrid};
+use ooxml_word_model::docx::tables::{placed_row_cells, Accepted, Axis, Grid, GridPlaces, RowSpec, TableGrid};
 use ooxml_word_model::docx::{at_path, Docx, StoryPart};
 use ooxml_word_model::ids::{Entry, TableId};
 use ooxml_xml::Element;
@@ -137,33 +137,14 @@ fn table(doc: &WordDoc, docx: &Docx, target: &str) -> Result<Table> {
 }
 
 /// Every grid place's cell, as its first place `(row, column)` (docx-agent's
-/// `Table.grid`, by [`Grid`]); `None` where a row has no cell.
-pub(crate) fn grid(root: &Arc<Element>, rows: &[Box<[u32]>]) -> Vec<Vec<Option<(usize, usize)>>> {
+/// `Table.grid`, by [`Grid`]), as runs of columns ([`GridPlaces`]); none in a row that is
+/// not there.
+pub(crate) fn grid(root: &Arc<Element>, rows: &[Box<[u32]>]) -> GridPlaces {
     let specs: Vec<RowSpec> = rows
         .iter()
         .map(|path| at_path(root, path).map_or_else(|| RowSpec::new(None, None, Vec::new()), |row| RowSpec::of(row)))
         .collect();
-    let grid = Grid::build(&specs, 0);
-    grid.rows
-        .iter()
-        .zip(rows)
-        .map(|(line, path)| {
-            if at_path(root, path).is_none() {
-                return Vec::new();
-            }
-            let mut out = vec![None; line.before];
-            for cell in &line.cells {
-                let (r, k) = cell.origin;
-                let first = grid
-                    .rows
-                    .get(r)
-                    .and_then(|o| o.cells.get(k))
-                    .map_or(cell.first, |o| o.first);
-                out.extend(std::iter::repeat_n(Some((r, first)), cell.span));
-            }
-            out
-        })
-        .collect()
+    GridPlaces::of(&Grid::build(&specs, 0))
 }
 
 /// The place of the `w:tc` of the row at `row` whose grid column is `column`
@@ -233,7 +214,7 @@ impl SetCells {
                 Some(accepted) => located(&sink, &self.table, write, accepted, &mut out.notes)?,
                 None => locate(&sink, &self.table, write)?,
             };
-            let Some((r, c)) = places.get(row).and_then(|l| l.get(column)).copied().flatten() else {
+            let Some((r, c)) = places.get(row, column) else {
                 let docx = sink.docx()?;
                 let (story, now) = found_table(sink.doc(), &docx, &self.table)?;
                 return Err(EditError::Address(
@@ -355,18 +336,13 @@ pub(crate) fn set_cell(
 fn write_cell(
     sink: &mut EditSink<'_, '_>,
     table: &Table,
-    places: &[Vec<Option<(usize, usize)>>],
+    places: &GridPlaces,
     (row, column): (usize, usize),
     (text, stamping): (&str, bool),
     edits: &mut Vec<CellEdit>,
 ) -> Result<()> {
     let missing = || EditError::Refused(format!("{} has no cell at row {row}, column {column}", table.id));
-    let (r, c) = places
-        .get(row)
-        .and_then(|l| l.get(column))
-        .copied()
-        .flatten()
-        .ok_or_else(missing)?;
+    let (r, c) = places.get(row, column).ok_or_else(missing)?;
     let tree = sink
         .doc()
         .tree(&table.part)?
