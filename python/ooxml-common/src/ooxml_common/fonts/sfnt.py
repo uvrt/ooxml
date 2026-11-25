@@ -196,6 +196,9 @@ def _cmap(data: bytes) -> dict[int, int]:
 #: meaningful advance widths to lose.
 _MAX_MAPPED = 0x110000
 
+#: The most codes a format 4 subtable maps: its codes are 16-bit.
+_MAX_MAPPED_16 = 0x10000
+
 
 def _cmap_subtable(data: bytes, offset: int) -> dict[int, int]:
     if offset + 4 > len(data):
@@ -236,6 +239,17 @@ def _cmap_format4(data: bytes, offset: int) -> dict[int, int]:
     ranges = deltas + seg_x2
     if ranges + seg_x2 > len(data):
         return {}
+    # Segments claiming more than the 16-bit codespace in all are laid over each other
+    # (the format states them sorted and apart): refused before any is read, since
+    # ``_MAX_MAPPED`` counts distinct codes and never stops segments repeating the same ones.
+    claimed = 0
+    for i in range(segments):
+        end = struct.unpack_from(">H", data, ends + 2 * i)[0]
+        start = struct.unpack_from(">H", data, starts + 2 * i)[0]
+        if start <= end and not (start == 0xFFFF and end == 0xFFFF):
+            claimed += end - start + 1
+    if claimed > _MAX_MAPPED_16:
+        return {}
     out: dict[int, int] = {}
     for i in range(segments):
         end = struct.unpack_from(">H", data, ends + 2 * i)[0]
@@ -265,6 +279,14 @@ def _cmap_format12(data: bytes, offset: int) -> dict[int, int]:
     if offset + 16 > len(data):
         return {}
     groups = struct.unpack_from(">I", data, offset + 12)[0]
+    # As format 4: groups claiming more than the codespace in all are refused first.
+    claimed = 0
+    for i in range(min(groups, max(0, (len(data) - offset - 16) // 12))):
+        start, end, _ = struct.unpack_from(">III", data, offset + 16 + 12 * i)
+        if start <= end <= 0x10FFFF:
+            claimed += end - start + 1
+    if claimed > _MAX_MAPPED:
+        return {}
     out: dict[int, int] = {}
     for i in range(groups):
         at = offset + 16 + 12 * i

@@ -300,6 +300,7 @@ def _coverage(table: bytes) -> "tuple[frozenset, frozenset | None]":
     count = struct.unpack_from(">H", table, 2)[0]
     strict: "set[int] | None" = None
     loose: "set[int] | None" = set()
+    subtables: dict[int, frozenset] = {}
     for i in range(count):
         platform, encoding, at = struct.unpack_from(">HHI", table, 4 + 8 * i)
         fmt = struct.unpack_from(">H", table, at)[0]
@@ -311,7 +312,10 @@ def _coverage(table: bytes) -> "tuple[frozenset, frozenset | None]":
             if unicode:
                 strict = set()               # cannot say what it maps: assume nothing
             continue
-        mapped = set(_cmap_subtable(table, at))
+        # Records of one subtable (a font's (0, 3) and (3, 1) often are) read it once.
+        if at not in subtables:
+            subtables[at] = frozenset(_cmap_subtable(table, at))
+        mapped = set(subtables[at])
         if unicode:
             strict = mapped if strict is None else strict & mapped
         if loose is not None:
