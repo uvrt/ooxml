@@ -47,6 +47,11 @@ pub(crate) fn read_legacy_kern(table: &[u8]) -> KernPairs {
             if coverage & 0xFF == 0 && !pairs(table, at + 8, at + 16, &mut budget, &mut out) {
                 break;
             }
+            // A subtable holds at least its 8-byte header: a shorter length lays the next
+            // one over it (the count is 32-bit: billions of the same subtable).
+            if length < 8 {
+                break;
+            }
             at += length as usize;
         }
     }
@@ -126,5 +131,15 @@ mod tests {
         let read = read_legacy_kern(&table);
         assert!(started.elapsed() < std::time::Duration::from_secs(1));
         assert_eq!(read.len(), 10_000);
+    }
+
+    #[test]
+    fn an_apple_table_of_billions_of_empty_subtables_stops_at_the_first() {
+        // Version 1.0, 2^32 - 1 subtables, the first of length 0 and not format 0.
+        let mut table = vec![0, 1, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF];
+        table.extend([0, 0, 0, 0, 0, 2, 0, 0]);
+        let started = std::time::Instant::now();
+        assert!(read_legacy_kern(&table).is_empty());
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
     }
 }
