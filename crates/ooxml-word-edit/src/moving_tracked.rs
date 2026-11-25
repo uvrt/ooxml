@@ -94,12 +94,12 @@ impl MoveBlocks {
         renamed: Vec<(String, String)>,
     ) -> Result<Done> {
         let part = plan.part;
-        let path_error = || EditError::Path(part.to_owned());
+        let path_error = || EditError::no_element(part.to_owned());
         let before = crate::revision_ids::document_counts(&*sink.docx()?);
         let tree = sink
             .doc()
             .tree(part)?
-            .ok_or_else(|| EditError::NoPart(part.to_owned()))?;
+            .ok_or_else(|| EditError::no_part(part.to_owned()))?;
         let root = tree.root();
         let (mut work, parent, stretch, nodes) = stretch_of(root, plan).ok_or_else(path_error)?;
         let outside = outside_blocks(root, &parent, stretch);
@@ -222,7 +222,7 @@ fn copy_of(sink: &mut EditSink<'_, '_>, work: &mut Work, node: Id, part: &str) -
     for target in work.iter(copy, W, &["p", "tr"]) {
         let drawn = sink.draw(&seed, 2)?;
         let (Some(para), Some(text)) = (drawn.first(), drawn.get(1)) else {
-            return Err(EditError::Path(part.to_owned()));
+            return Err(EditError::no_element(part.to_owned()));
         };
         for (local, value) in [("paraId", para), ("textId", text)] {
             let name = work.qname(W14, local, "w14");

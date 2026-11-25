@@ -7,8 +7,9 @@
 //! Must not: tidy the grids it leaves (`super::grid` does, after every record).
 
 use super::part::PartReview;
-use super::xml::{ancestor, find_path, has_content, int, make, next_block, BLOCKS};
+use super::xml::{ancestor, find_path, has_content, make, next_block, BLOCKS};
 use crate::names::W;
+use crate::tables::shape::row_cells;
 use crate::work::{Id, Work};
 use std::collections::HashSet;
 
@@ -18,20 +19,13 @@ pub(crate) fn cell_deleted(work: &Work, cell: Id) -> bool {
 }
 
 /// A row's cells (row-level controls seen through) with their first grid column and span
-/// (`edit/tables.py`'s `_cells`).
+/// (`edit/tables.py`'s `_cells`, placed by [`row_cells`]).
 pub(crate) fn cells_of(work: &Work, row: Id) -> Vec<(Id, i64, i64)> {
-    let properties = work.find(row, W, "trPr");
-    let mut column = int(work, properties.and_then(|p| work.find(p, W, "gridBefore")), "val", 0);
-    let mut out = Vec::new();
-    for cell in work.iter(row, W, &["tc"]) {
-        if ancestor(work, cell, "tr") != Some(row) {
-            continue;
-        }
-        let span = int(work, find_path(work, cell, &["tcPr", "gridSpan"]), "val", 1).max(1);
-        out.push((cell, column, span));
-        column += span;
-    }
-    out
+    let signed = |n: usize| i64::try_from(n).unwrap_or(i64::MAX);
+    row_cells(work, row)
+        .into_iter()
+        .map(|p| (p.cell, signed(p.start), signed(p.span)))
+        .collect()
 }
 
 /// The first paragraph among `nodes` as accepting leaves them (`_first_in`).

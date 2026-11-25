@@ -31,7 +31,7 @@ pub(crate) fn sync_bound_controls(sink: &mut EditSink<'_, '_>) -> Result<()> {
         };
         let value = value_of(&control, part);
         match binding.sync(sink, &docx, &value) {
-            Ok(()) | Err(EditError::Refused(_) | EditError::NoPart(_)) => {}
+            Ok(()) | Err(EditError::Refused(_)) => {}
             Err(other) => return Err(other),
         }
     }

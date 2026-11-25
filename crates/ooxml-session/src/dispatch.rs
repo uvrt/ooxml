@@ -96,8 +96,8 @@ impl Session {
             let retry = arguments.clone();
             let result = catch_unwind(AssertUnwindSafe(|| self.call_undo(arguments, context)))
                 .unwrap_or_else(|panic| self.panicked(name, retry, &*panic, false));
-            if result.is_error() {
-                self.counts.failed.fetch_add(1, Ordering::Relaxed);
+            if let ooxml_tools::Outcome::Failed(error) = &result.outcome {
+                self.counts.failed(name, error);
             }
             return result;
         }
@@ -120,7 +120,7 @@ impl Session {
                 result
             }
             Err(error) => {
-                self.counts.failed.fetch_add(1, Ordering::Relaxed);
+                self.counts.failed(READ_BATCH, &error);
                 ToolResult::failed(error)
             }
         };
@@ -190,10 +190,7 @@ impl Session {
             self.panicked(name, retry, &*panic, changed)
         });
         if let ooxml_tools::Outcome::Failed(error) = &result.outcome {
-            self.counts.failed.fetch_add(1, Ordering::Relaxed);
-            if error.code().as_str() == "timeout" {
-                self.counts.cancelled.fetch_add(1, Ordering::Relaxed);
-            }
+            self.counts.failed(name, error);
         }
         let CallState {
             opened,

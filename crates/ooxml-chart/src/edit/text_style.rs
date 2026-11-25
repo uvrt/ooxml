@@ -13,6 +13,7 @@ use super::make::Make;
 use super::owned::{Order, Owned};
 use super::title::NeedsLanguage;
 use super::{ChartTree, DataError};
+use ooxml_schema::orders::local as schema;
 use ooxml_xml::view::{attr, child, local};
 use ooxml_xml::Element;
 
@@ -22,34 +23,6 @@ pub const TEXT_PARTS: [&str; 5] = ["title", "axis_titles", "axis_labels", "data_
 const AXES: [&str; 4] = ["valAx", "catAx", "dateAx", "serAx"];
 /// What a chart space's `c:txPr` goes before, in this order of preference.
 const SPACE_AFTER: [&str; 4] = ["externalData", "printSettings", "userShapes", "extLst"];
-/// `c:dLbls`' and `c:legend`'s sequences, as far as `c:txPr`.
-pub(crate) const DLBLS_ORDER: Order = &[
-    &["dLbl"],
-    &["delete"],
-    &["numFmt"],
-    &["spPr"],
-    &["txPr"],
-    &["dLblPos"],
-    &["showLegendKey"],
-    &["showVal"],
-    &["showCatName"],
-    &["showSerName"],
-    &["showPercent"],
-    &["showBubbleSize"],
-    &["separator"],
-    &["showLeaderLines"],
-    &["leaderLines"],
-    &["extLst"],
-];
-const LEGEND_ORDER: Order = &[
-    &["legendPos"],
-    &["legendEntry"],
-    &["layout"],
-    &["overlay"],
-    &["spPr"],
-    &["txPr"],
-    &["extLst"],
-];
 
 /// The application's sizes for text properties made new (`ChartLook.labels`,
 /// `.data_labels`, hundredths of a point; none: the theme's) and the language their text
@@ -112,7 +85,7 @@ impl ChartTree {
         }
         if wants("legend") {
             if let Some(legend) = root.child("chart").and_then(|c| c.child("legend")) {
-                styler.txpr(legend, LEGEND_ORDER, host.labels)?;
+                styler.txpr(legend, schema::LEGEND, host.labels)?;
                 count += 1;
             }
         }
@@ -211,7 +184,7 @@ impl Styler<'_> {
 
     /// One `c:dLbls`' holders: its `c:txPr`'s, then each label's of its own.
     fn labels(&self, labels: &mut Owned) -> Result<usize, DataError> {
-        self.txpr(labels, DLBLS_ORDER, self.host.data_labels)?;
+        self.txpr(labels, schema::DATA_LABELS, self.host.data_labels)?;
         let mut found = 1;
         let mut style = |p: &mut Owned| self.style(p);
         for at in labels.places("dLbl") {

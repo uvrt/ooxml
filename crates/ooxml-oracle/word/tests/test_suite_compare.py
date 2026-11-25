@@ -125,3 +125,49 @@ def test_kept_facts_takes_the_innermost_field():
               '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
     data = _docx(f"<w:p>{nested}</w:p>")
     assert answers.kept_facts(data)["document"]["paragraphs"][0]["fields"] == [["DATE", "17 November 2026"]]
+
+
+# -- kept: the tblPrChange Word's re-save adds to a table with a tracked cell or row change ---------
+
+_A = "2026-11-17T10:00:00Z"
+_B = "2026-11-18T10:00:00Z"
+
+
+def _revisions(ours, word):
+    def facts(revisions):
+        return {"document": {"paragraphs": [{"id": "1A2B3C4D", "text": "In a cell"}], "revisions": revisions}}
+
+    return compare.kept(facts(ours), facts(word))
+
+
+def test_kept_takes_word_s_tblprchange_beside_a_cell_change_by_the_same_author():
+    ours = [["ins", "Writer A", _A], ["tcPrChange", "Writer A", _A]]
+    word = [["ins", "Writer A", _A], ["tblPrChange", "Writer A", _A], ["tcPrChange", "Writer A", _A]]
+    assert _revisions(ours, word) == []
+
+
+def test_kept_takes_word_s_tblprchange_beside_a_row_change_by_the_same_author():
+    ours = [["trPrChange", "Writer A", _A]]
+    assert _revisions(ours, [["tblPrChange", "Writer A", _A], ["trPrChange", "Writer A", _A]]) == []
+
+
+def test_kept_still_finds_a_tblprchange_on_a_table_without_cell_or_row_changes():
+    """The negative: Word's tblPrChange where the tools tracked no cell or row change."""
+    ours = [["ins", "Writer A", _A]]
+    assert _revisions(ours, [["ins", "Writer A", _A], ["tblPrChange", "Writer A", _A]])
+
+
+def test_kept_still_finds_word_s_tblprchange_by_another_author_or_date():
+    ours = [["tcPrChange", "Writer A", _A]]
+    assert _revisions(ours, [["tblPrChange", "Writer B", _A], ["tcPrChange", "Writer A", _A]])
+    assert _revisions(ours, [["tblPrChange", "Writer A", _B], ["tcPrChange", "Writer A", _A]])
+
+
+def test_kept_still_finds_a_tblprchange_word_drops():
+    ours = [["tblPrChange", "Writer A", _A], ["tcPrChange", "Writer A", _A]]
+    assert _revisions(ours, [["tcPrChange", "Writer A", _A]])
+
+
+def test_kept_still_finds_a_cell_change_word_drops():
+    ours = [["tcPrChange", "Writer A", _A]]
+    assert _revisions(ours, [["tblPrChange", "Writer A", _A]])

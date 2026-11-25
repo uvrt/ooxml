@@ -3,12 +3,16 @@
 //! each row's cells with their first grid column and span (`w:gridBefore`, `w:gridSpan`),
 //! the cells sharing a cell's edges, the grid's widths, and a width shared in proportion.
 //!
+//! The grid is read as [`Grid`] reads one ([`GridSource`] over the copy): Word's value rule
+//! and cell walk.
+//!
 //! Must not: change anything but the grid it is asked to write.
 
 use crate::names::W;
-use crate::review::xml::{ancestor, find_path, insert_in_order, int, make};
+use crate::review::xml::{ancestor, insert_in_order, int, make};
 use crate::validate::Orders;
 use crate::work::{Id, Work};
+use ooxml_word_model::docx::tables::{grid_count, grid_span, source_cells, Grid, GridSource, RowSpec};
 
 /// A cell of a row: the cell, its first grid column and its span.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,28 +30,77 @@ pub(crate) fn own_rows(work: &Work, table: Id) -> Vec<Id> {
         .collect()
 }
 
-/// A whole number `w:val` of the child at `path`, `default` where none or no number.
-fn val(work: &Work, id: Id, path: &[&str], default: i64) -> i64 {
-    int(work, find_path(work, id, path), "val", default)
+impl GridSource for Work {
+    type Node = Id;
+    fn element_children(&self, node: Id) -> Vec<(u32, Id)> {
+        self.children(node)
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| self.is_element(**c))
+            .map(|(k, c)| (u32::try_from(k).unwrap_or(u32::MAX), *c))
+            .collect()
+    }
+    fn is_w(&self, node: Id, local: &str) -> bool {
+        self.is(node, W, local)
+    }
+    fn w_val(&self, node: Id) -> Option<&str> {
+        self.get(node, Some(W), "val")
+    }
 }
 
-/// `row`'s own cells, placed (docx-agent's `row_cells`).
+/// The count of grid columns (`w:gridBefore`, `w:gridAfter`) `node` holds, Word's value
+/// rule ([`grid_count`]): 0 where none.
+pub(crate) fn count_of(work: &Work, node: Option<Id>) -> i64 {
+    signed(grid_count(node.and_then(|n| work.w_val(n))))
+}
+
+/// The span (`w:gridSpan`) `node` holds, Word's value rule ([`grid_span`]): 1 where none.
+pub(crate) fn span_of(work: &Work, node: Option<Id>) -> i64 {
+    signed(grid_span(node.and_then(|n| work.w_val(n))))
+}
+
+fn signed(n: usize) -> i64 {
+    i64::try_from(n).unwrap_or(i64::MAX)
+}
+
+/// `row`'s values ([`RowSpec::read`]).
+pub(crate) fn row_spec(work: &Work, row: Id) -> RowSpec {
+    RowSpec::read(work, row)
+}
+
+/// A row's `w:gridBefore` and `w:gridAfter` (`_skips`, [`RowSpec::read`]).
+pub(crate) fn skips(work: &Work, row: Id) -> (usize, usize) {
+    let spec = row_spec(work, row);
+    (spec.before, spec.after)
+}
+
+/// `row`'s own cells, in order ([`source_cells`]).
+pub(crate) fn cells(work: &Work, row: Id) -> Vec<Id> {
+    source_cells(work, row).into_iter().map(|(cell, _)| cell).collect()
+}
+
+/// The grid of `rows` (a table's own, in order) in `table` ([`Grid::build`]).
+pub(crate) fn grid_of(work: &Work, table: Id, rows: &[Id]) -> Grid {
+    let columns = work.find(table, W, "tblGrid").map_or(0, |g| {
+        work.children(g).iter().filter(|c| work.is(**c, W, "gridCol")).count()
+    });
+    let specs: Vec<RowSpec> = rows.iter().map(|r| row_spec(work, *r)).collect();
+    Grid::build(&specs, columns)
+}
+
+/// `row`'s own cells, placed by the row alone (docx-agent's `row_cells`).
 pub(crate) fn row_cells(work: &Work, row: Id) -> Vec<Placed> {
-    let mut column = usize::try_from(val(work, row, &["trPr", "gridBefore"], 0)).unwrap_or(0);
-    let mut out = Vec::new();
-    for cell in work.iter(row, W, &["tc"]) {
-        if ancestor(work, cell, "tr") != Some(row) {
-            continue;
-        }
-        let span = usize::try_from(val(work, cell, &["tcPr", "gridSpan"], 1).max(1)).unwrap_or(1);
-        out.push(Placed {
+    let grid = Grid::build(std::slice::from_ref(&row_spec(work, row)), 0);
+    let placed = grid.rows.into_iter().next().map(|r| r.cells).unwrap_or_default();
+    cells(work, row)
+        .into_iter()
+        .zip(placed)
+        .map(|(cell, p)| Placed {
             cell,
-            start: column,
-            span,
-        });
-        column += span;
-    }
-    out
+            start: p.first,
+            span: p.span,
+        })
+        .collect()
 }
 
 /// The physical cell of row `row` over grid column `column` (docx-agent's `_cell_element`).

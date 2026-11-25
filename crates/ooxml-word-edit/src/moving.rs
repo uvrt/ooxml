@@ -170,6 +170,7 @@ impl MoveBlocks {
                 "{target} is one of the blocks moved, or inside one"
             )));
         }
+        notes_stay_out_of_text_boxes(docx, &part, &blocks, (&anchor, self.after.is_some()))?;
         let mut ids = Vec::new();
         for block in &blocks {
             if block.kind == BlockKind::Custom {
@@ -179,7 +180,7 @@ impl MoveBlocks {
                 ));
             }
             let id = block_id(docx, &part, block).unwrap_or_default();
-            let element = element_at(docx, &part, block).ok_or_else(|| EditError::Path(part.clone()))?;
+            let element = element_at(docx, &part, block).ok_or_else(|| EditError::no_element(part.clone()))?;
             if block.kind == BlockKind::Paragraph
                 && ooxml_word_model::docx::find_path(&element, &["pPr", "sectPr"]).is_some()
             {
@@ -337,6 +338,46 @@ fn direct_blocks(work: &Work, container: Id, out: &mut Vec<Id>) {
     }
 }
 
+/// Blocks holding a note's reference refused beside a block in a text box, as Word 16.106 has
+/// no note reference there (`word_notes`' and the copy's refusal): moved there, the reference
+/// landed in the text box's drawing and its VML fallback both. The way out: beside the
+/// paragraph anchoring the text box.
+fn notes_stay_out_of_text_boxes(
+    docx: &Docx,
+    part: &str,
+    blocks: &[BlockAt],
+    (target, after): (&BlockAt, bool),
+) -> Result<()> {
+    let Some(anchor) = crate::textbox::text_box_anchor(docx, part, &target.path) else {
+        return Ok(());
+    };
+    let noted = |b: &BlockAt| element_at(docx, part, b).is_some_and(|e| holds_note_reference(&e));
+    if !blocks.iter().any(noted) {
+        return Ok(());
+    }
+    let message = "the blocks hold a note's reference and the place is in a text box: Word puts no note \
+                   reference in a text box";
+    let Some(paragraph) = docx.part(part).and_then(|story| story.ids.paragraph_at(&anchor)) else {
+        return Err(EditError::Refused(message.to_owned()));
+    };
+    Err(EditError::Argument {
+        field: if after { "after" } else { "before" }.to_owned(),
+        message: format!(
+            "{message}; move them before or after the paragraph anchoring the text box, {}",
+            paragraph.id
+        ),
+        options: vec![paragraph.id],
+    })
+}
+
+/// Whether a block holds a note's reference.
+fn holds_note_reference(element: &Element) -> bool {
+    element.child_elements().any(|c| {
+        (c.name().namespace() == Some(W) && matches!(c.name().local(), "footnoteReference" | "endnoteReference"))
+            || holds_note_reference(c)
+    })
+}
+
 /// Whether a block holds a note or comment reference.
 fn holds_reference(element: &Element) -> bool {
     element.child_elements().any(|c| {
@@ -365,7 +406,7 @@ impl MoveBlocks {
             return Ok((tracked, warnings));
         };
         for (k, block) in blocks.iter().enumerate() {
-            let element = element_at(docx, part, block).ok_or_else(|| EditError::Path(part.to_owned()))?;
+            let element = element_at(docx, part, block).ok_or_else(|| EditError::no_element(part.to_owned()))?;
             if block.kind == BlockKind::Control {
                 warnings.push((
                     k,
@@ -407,7 +448,7 @@ impl MoveBlocks {
         let mut paths: Vec<Vec<u32>> = blocks.iter().map(|b| b.path.clone()).collect();
         paths.push(anchor.path.clone());
         let wanted: Vec<&[u32]> = paths.iter().map(Vec::as_slice).collect();
-        let path_error = || EditError::Path(part.to_owned());
+        let path_error = || EditError::no_element(part.to_owned());
         // the blocks and the target are read whole, the stretch between passed sealed
         let (mut work, parent, stretch, nodes) =
             editable_opening(root, &paths, &wanted, Opening::Ends).ok_or_else(path_error)?;
@@ -503,7 +544,10 @@ impl MoveBlocks {
         let docx = sink.docx()?;
         let (part, blocks, ids, anchor) = self.plan(sink.doc(), &docx)?;
         self.read_planned(sink, by_id, &docx, (&part, &ids, &anchor));
-        let before = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
+        let before = sink
+            .doc()
+            .tree(&part)?
+            .ok_or_else(|| EditError::no_part(part.clone()))?;
         let Some(arranged) = self.arrange(before.root(), &part, (&blocks, &ids, &anchor))? else {
             return Ok(BlocksMoved {
                 id: ids.first().cloned(),
@@ -539,17 +583,20 @@ impl MoveBlocks {
             });
         }
         let docx = sink.docx()?;
-        let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
+        let tree = sink
+            .doc()
+            .tree(&part)?
+            .ok_or_else(|| EditError::no_part(part.clone()))?;
         // arranged again only where the stamping changed the part (its tree is another)
         let (work, parent, stretch) = if Arc::ptr_eq(tree.root(), before.root()) {
             arranged
         } else {
             self.arrange(tree.root(), &part, (&blocks, &ids, &anchor))?
-                .ok_or_else(|| EditError::Path(part.clone()))?
+                .ok_or_else(|| EditError::no_element(part.clone()))?
         };
         let built = work
             .build_content(work.root())
-            .ok_or_else(|| EditError::Path(part.clone()))?;
+            .ok_or_else(|| EditError::no_element(part.clone()))?;
         let count = (stretch.1 - stretch.0) as usize + 1;
         sink.splice_stretch(
             &docx,

@@ -130,8 +130,8 @@ pub(crate) fn style_spans(sink: &mut EditSink<'_, '_>, target: &str, spans: &[Sp
     let tree = sink
         .doc()
         .tree(&found.part)?
-        .ok_or_else(|| EditError::NoPart(found.part.clone()))?;
-    let element = at_path(tree.root(), &found.path).ok_or_else(|| EditError::Path(found.part.clone()))?;
+        .ok_or_else(|| EditError::no_part(found.part.clone()))?;
+    let element = at_path(tree.root(), &found.path).ok_or_else(|| EditError::no_element(found.part.clone()))?;
     let mut work = Work::of(element, scope_above(tree.root(), &found.path));
     sink.load_written(&found.part, Some(&found.path), &mut work);
     let paragraph = work.root();
@@ -163,7 +163,7 @@ pub(crate) fn style_spans(sink: &mut EditSink<'_, '_>, target: &str, spans: &[Sp
     prune(&mut work, paragraph);
     let wrote = sink.properties_changed(&mut work, tracker)?;
     sink.keep_written(&found.part, Some(&found.path), &work);
-    let new = work.build().ok_or_else(|| EditError::Path(found.part.clone()))?;
+    let new = work.build().ok_or_else(|| EditError::unbuilt(found.part.clone()))?;
     if *new != **element {
         let draws = wrote
             .annotations

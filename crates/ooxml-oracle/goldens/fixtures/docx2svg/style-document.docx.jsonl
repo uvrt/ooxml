@@ -957,7 +957,7 @@
 {"digest":"sha256:939c0d290b81f721be8baecdd4a21e27","id":"style:9d4c6514f39646cf","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:5a34995bf72e926b10fed5cd39243bd2","id":"style:6314fda98a6e026a","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:f6dc3d32e5518bf89c910c1a8a9c0e1a","id":"style:bb775e2e2ee88de0","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ec7146825181cd82e486222d322e8b02","id":"style:948211583b219608","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:b0a9cb9284f9be4ce638c23c91e4d4ae","id":"style:948211583b219608","source":"Word 16.106: a single-level list takes no level past 0 (fu-word4 measure, #364)"}
 {"digest":"sha256:b97c8365205fa4e76f0932311ce622a6","id":"style:094ca9ba6e556779","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:720c06fe71d6b8611d0ae541bf80755b","id":"style:f544086cf1a650fe","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:43f3c5950a1a70b8ded032f8ead0b78e","id":"style:2c7c8861121b2032","source":"frozen Python a512c901, unmeasured"}
@@ -1011,7 +1011,7 @@
 {"digest":"sha256:939c0d290b81f721be8baecdd4a21e27","id":"style:f244bcfcf79b981a","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:5a34995bf72e926b10fed5cd39243bd2","id":"style:189b6e3d177b41cc","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:f6dc3d32e5518bf89c910c1a8a9c0e1a","id":"style:8aa6fc405684cb62","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ec7146825181cd82e486222d322e8b02","id":"style:a52d8860e77a90e3","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:b0a9cb9284f9be4ce638c23c91e4d4ae","id":"style:a52d8860e77a90e3","source":"Word 16.106: a single-level list takes no level past 0 (fu-word4 measure, #364)"}
 {"digest":"sha256:a8ae6aeb47c37193e7ee841a599a4043","id":"style:b8c010a9edbc2b0d","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:720c06fe71d6b8611d0ae541bf80755b","id":"style:f653464a989b42d1","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:b56aa8213406c89bb859fcbc7859b80a","id":"style:1f888a5dcb80858d","source":"frozen Python a512c901, unmeasured"}

@@ -60,7 +60,10 @@ pub(crate) fn locate(doc: &WordDoc, docx: &Docx, at: &str, doing: &str) -> Resul
         _ => {
             let (part, found) = crate::blocks::resolve_block(doc, docx, rest)?;
             let story = docx.part(&part).map(|p| p.story.clone()).unwrap_or_default();
-            let (&index, container) = found.path.split_last().ok_or_else(|| EditError::Path(part.clone()))?;
+            let (&index, container) = found
+                .path
+                .split_last()
+                .ok_or_else(|| EditError::no_element(part.clone()))?;
             Ok(Place {
                 part,
                 story,
@@ -78,7 +81,7 @@ pub(crate) fn locate(doc: &WordDoc, docx: &Docx, at: &str, doing: &str) -> Resul
 /// The address's refusal; a block neither a paragraph, a table nor a content control.
 pub(crate) fn replacing(doc: &WordDoc, docx: &Docx, blocks: &str) -> Result<(Place, Vec<String>)> {
     let (part, found) = crate::blocks::span_or_block(doc, docx, blocks)?;
-    let story = docx.part(&part).ok_or_else(|| EditError::NoPart(part.clone()))?;
+    let story = docx.part(&part).ok_or_else(|| EditError::no_part(part.clone()))?;
     let mut ids = Vec::with_capacity(found.len());
     let mut listed = None;
     for block in &found {
@@ -102,8 +105,11 @@ pub(crate) fn replacing(doc: &WordDoc, docx: &Docx, blocks: &str) -> Result<(Pla
             EditError::Refused("a block replaced must be a paragraph, a table or a content control".to_owned())
         })?);
     }
-    let first = found.first().ok_or_else(|| EditError::Path(part.clone()))?;
-    let (&index, container) = first.path.split_last().ok_or_else(|| EditError::Path(part.clone()))?;
+    let first = found.first().ok_or_else(|| EditError::no_element(part.clone()))?;
+    let (&index, container) = first
+        .path
+        .split_last()
+        .ok_or_else(|| EditError::no_element(part.clone()))?;
     let place = Place {
         story: story.story.clone(),
         container: container.to_vec(),
@@ -188,8 +194,8 @@ impl Stretch {
     /// No such part or path; an empty container (not ported).
     pub(crate) fn open(sink: &EditSink<'_, '_>, place: &Place, empty: &str) -> Result<Stretch> {
         let part = &place.part;
-        let tree = sink.doc().tree(part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
-        let path_error = || EditError::Path(part.clone());
+        let tree = sink.doc().tree(part)?.ok_or_else(|| EditError::no_part(part.clone()))?;
+        let path_error = || EditError::no_element(part.clone());
         let container = if place.container.is_empty() {
             Arc::clone(tree.root())
         } else {
@@ -229,7 +235,7 @@ pub(crate) fn commit(
 ) -> Result<()> {
     let (work, from, to) = (&stretch.work, stretch.from, stretch.to);
     let part = place.part.clone();
-    let path_error = || EditError::Path(part.clone());
+    let path_error = || EditError::no_element(part.clone());
     sink.keep_written(&part, None, work);
     let nodes = work.build_content(work.root()).ok_or_else(path_error)?;
     let mut draws = Vec::new();

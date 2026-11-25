@@ -10,6 +10,7 @@ use super::owned::{Order, Owned};
 use super::DataError;
 use crate::pyfmt::round_half_even;
 use ooxml_base::pyfmt::{repr_str, PyNumber};
+use ooxml_schema::orders::local as schema;
 use ooxml_xml::view::{py_flat, py_int};
 
 /// The theme colours a chart may name (`SCHEME_COLORS`), sorted as Python sorts them.
@@ -39,46 +40,8 @@ const FLAGS: [&str; 5] = ["comp", "inv", "gray", "gamma", "invGamma"];
 
 /// The fills (`_FILL_TAGS`).
 pub(crate) const FILLS: &[&str] = &["noFill", "solidFill", "gradFill", "blipFill", "pattFill", "grpFill"];
-/// `c:spPr`'s sequence (`_SHAPE_ORDER`).
-pub(crate) const SHAPE_ORDER: Order = &[
-    &["xfrm"],
-    &["custGeom", "prstGeom"],
-    FILLS,
-    &["ln"],
-    &["effectLst", "effectDag"],
-    &["scene3d"],
-    &["sp3d"],
-    &["extLst"],
-];
-/// `a:ln`'s fills, and its sequence (`_LINE_ORDER`).
+/// `a:ln`'s fills.
 const LINE_FILLS: &[&str] = &["noFill", "solidFill", "gradFill", "pattFill"];
-const LINE_ORDER: Order = &[
-    LINE_FILLS,
-    &["prstDash", "custDash"],
-    &["round", "bevel", "miter"],
-    &["headEnd"],
-    &["tailEnd"],
-    &["extLst"],
-];
-/// A text run's character properties' sequence (`_CHARACTER_ORDER`).
-const CHARACTER_ORDER: Order = &[
-    &["ln"],
-    FILLS,
-    &["effectLst", "effectDag"],
-    &["highlight"],
-    &["uLnTx", "uLn"],
-    &["uFillTx", "uFill"],
-    &["latin"],
-    &["ea"],
-    &["cs"],
-    &["sym"],
-    &["hlinkClick"],
-    &["hlinkMouseOver"],
-    &["rtl"],
-    &["extLst"],
-];
-/// `c:marker`'s sequence (`MARKER_ORDER`).
-const MARKER_ORDER: Order = &[&["symbol"], &["size"], &["spPr"], &["extLst"]];
 /// EMU in a point.
 const EMU_PER_POINT: f64 = 12700.0;
 
@@ -268,7 +231,7 @@ pub(crate) fn made<'a>(parent: &'a mut Owned, name: &str, order: Order, new: imp
 /// A solid fill of `colour`, or none (`set_fill`).
 pub(crate) fn set_fill(shape: &mut Owned, make: &Make, colour: Option<&Colour>) {
     let new = colour.map_or_else(|| make.a("noFill"), |c| c.solid(make));
-    replace(shape, FILLS, Some(make.top(new)), SHAPE_ORDER);
+    replace(shape, FILLS, Some(make.top(new)), schema::SHAPE_PROPERTIES);
 }
 
 /// The line (`set_line`): its colour (`keep_colour`: as it is; `None`: none), its width in
@@ -281,24 +244,24 @@ pub(crate) fn set_line(
     width: Option<i64>,
     dash: Option<&str>,
 ) {
-    let line = made(shape, "ln", SHAPE_ORDER, || make.top(make.a("ln")));
+    let line = made(shape, "ln", schema::SHAPE_PROPERTIES, || make.top(make.a("ln")));
     if !keep_colour {
         let new = colour.map_or_else(|| make.a("noFill"), |c| c.solid(make));
-        replace(line, LINE_FILLS, Some(new), LINE_ORDER);
+        replace(line, LINE_FILLS, Some(new), schema::LINE);
     }
     if let Some(width) = width {
         line.set_attr("w", &width.to_string());
     }
     if let Some(dash) = dash {
         let new = make.a("prstDash").with_attr("val", dash);
-        replace(line, &["prstDash", "custDash"], Some(new), LINE_ORDER);
+        replace(line, &["prstDash", "custDash"], Some(new), schema::LINE);
     }
 }
 
 /// An empty `a:effectLst` where the shape has none (as Office writes one).
 pub(crate) fn effects(shape: &mut Owned, make: &Make) {
     if shape.place("effectLst").is_none() {
-        shape.insert_ordered(Some(SHAPE_ORDER), make.top(make.a("effectLst")));
+        shape.insert_ordered(Some(schema::SHAPE_PROPERTIES), make.top(make.a("effectLst")));
     }
 }
 
@@ -321,17 +284,17 @@ pub(crate) fn set_marker(owner: &mut Owned, order: Order, make: &Make, look: &Ma
             marker,
             &["symbol"],
             Some(make.c("symbol").with_attr("val", symbol)),
-            MARKER_ORDER,
+            schema::MARKER,
         );
     }
     if let Some(size) = look.size {
         let new = make.c("size").with_attr("val", &size.to_string());
-        replace(marker, &["size"], Some(new), MARKER_ORDER);
+        replace(marker, &["size"], Some(new), schema::MARKER);
     }
     if look.fill.is_none() && look.line.is_none() {
         return;
     }
-    let shape = made(marker, "spPr", MARKER_ORDER, || make.c("spPr"));
+    let shape = made(marker, "spPr", schema::MARKER, || make.c("spPr"));
     if let Some(fill) = look.fill {
         set_fill(shape, make, fill);
     }
@@ -396,7 +359,7 @@ pub(crate) fn style_characters(properties: &mut Owned, make: &Make, look: &TextL
         properties.set_attr("b", if bold { "1" } else { "0" });
     }
     if let Some(colour) = &look.colour {
-        replace(properties, FILLS, Some(colour.solid(make)), CHARACTER_ORDER);
+        replace(properties, FILLS, Some(colour.solid(make)), schema::RUN_PROPERTIES);
     }
     if let Some(font) = &look.font {
         let name = py_flat(font);
@@ -407,7 +370,7 @@ pub(crate) fn style_characters(properties: &mut Owned, make: &Make, look: &TextL
             ));
         }
         let new = make.a("latin").with_attr("typeface", trimmed);
-        replace(properties, &["latin"], Some(new), CHARACTER_ORDER);
+        replace(properties, &["latin"], Some(new), schema::RUN_PROPERTIES);
         let theme = match trimmed {
             "+mn-lt" => Some("mn"),
             "+mj-lt" => Some("mj"),
@@ -417,7 +380,7 @@ pub(crate) fn style_characters(properties: &mut Owned, make: &Make, look: &TextL
             for script in ["ea", "cs"] {
                 let face = format!("+{theme}-{script}");
                 let new = make.a(script).with_attr("typeface", &face);
-                replace(properties, &[script], Some(new), CHARACTER_ORDER);
+                replace(properties, &[script], Some(new), schema::RUN_PROPERTIES);
             }
         }
     }

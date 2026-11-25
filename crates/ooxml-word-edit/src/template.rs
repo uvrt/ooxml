@@ -195,7 +195,7 @@ impl Command<WordDoc> for UpgradeToModern {
         let mut space = Space::default();
         let work = space
             .work(&held, &part)?
-            .ok_or_else(|| EditError::NoPart(part.clone()))?;
+            .ok_or_else(|| EditError::no_part(part.clone()))?;
         let root = work.root();
         let compat = match work.find(root, W, "compat") {
             Some(found) => found,

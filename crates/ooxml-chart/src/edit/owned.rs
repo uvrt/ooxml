@@ -13,8 +13,9 @@ use ooxml_xml::view::local;
 use ooxml_xml::{Atom, Attribute, Element, NamespaceDecl, Node, QName};
 use std::sync::Arc;
 
-/// A schema sequence: the local names of each step (a choice lists several).
-pub(crate) type Order = &'static [&'static [&'static str]];
+/// A schema sequence: the local names of each step (a choice lists several); the generated
+/// ones are `ooxml_schema::orders::local`'s.
+pub(crate) type Order = ooxml_schema::orders::Steps;
 
 /// One child of an [`Owned`] element: the node as it was (`kept`) until it is opened,
 /// then the element opened (`open`, the one read and closed); made only by

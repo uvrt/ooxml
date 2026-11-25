@@ -84,7 +84,7 @@ impl FillControl {
         }
         let part = docx
             .part(&found.part)
-            .ok_or_else(|| EditError::NoPart(found.part.clone()))?;
+            .ok_or_else(|| EditError::no_part(found.part.clone()))?;
         let level = found.level(part);
         if lines.len() > 1 && level != "block" {
             return Err(EditError::Refused(format!("{id} sits in a line: one line of text")));
@@ -251,15 +251,15 @@ impl FillControl {
         let found = located(&docx, &self.control)?;
         let part = docx
             .part(&found.part)
-            .ok_or_else(|| EditError::NoPart(found.part.clone()))?;
+            .ok_or_else(|| EditError::no_part(found.part.clone()))?;
         if found.level(part) == "block" {
             self.fill_block(sink, &found, &planned)?;
         } else {
             let at = InParagraph::above(&docx, &found.part, &found.path)
-                .ok_or_else(|| EditError::Path(found.part.clone()))?;
+                .ok_or_else(|| EditError::no_element(found.part.clone()))?;
             let inside = found.path.get(at.path.len()..).unwrap_or_default().to_vec();
             rewrite(sink, &at, Rewrite::default(), |sink, work| {
-                let sdt = super::at_place(work, &inside).ok_or_else(|| EditError::Path(at.part.clone()))?;
+                let sdt = super::at_place(work, &inside).ok_or_else(|| EditError::no_element(at.part.clone()))?;
                 let wrote = fill_inline(sink, work, sdt, &planned.text)?;
                 set_properties(work, sdt, &planned);
                 Ok(((), wrote))
@@ -283,8 +283,8 @@ impl FillControl {
         let docx = sink.docx()?;
         let part = docx
             .part(&found.part)
-            .ok_or_else(|| EditError::NoPart(found.part.clone()))?;
-        let content = content_path(found).ok_or_else(|| EditError::Path(found.part.clone()))?;
+            .ok_or_else(|| EditError::no_part(found.part.clone()))?;
+        let content = content_path(found).ok_or_else(|| EditError::no_element(found.part.clone()))?;
         let ids: Vec<String> = part
             .ids
             .paragraphs()
@@ -317,21 +317,21 @@ impl FillControl {
         let tree = sink
             .doc()
             .tree(&found.part)?
-            .ok_or_else(|| EditError::NoPart(found.part.clone()))?;
+            .ok_or_else(|| EditError::no_part(found.part.clone()))?;
         let at = |p: &[u32]| at_path(tree.root(), p).cloned();
-        let k = sdt_properties(&found.element).ok_or_else(|| EditError::Path(found.part.clone()))?;
+        let k = sdt_properties(&found.element).ok_or_else(|| EditError::no_element(found.part.clone()))?;
         let mut path = found.path.to_vec();
         path.push(k);
-        let element = at(&path).ok_or_else(|| EditError::Path(found.part.clone()))?;
+        let element = at(&path).ok_or_else(|| EditError::no_element(found.part.clone()))?;
         let mut work = Work::of(&element, crate::work::scope_above(tree.root(), &path));
         let root = work.root();
         properties_of(&mut work, root, planned);
         if work.changed() {
-            let new = work.build().ok_or_else(|| EditError::Path(found.part.clone()))?;
+            let new = work.build().ok_or_else(|| EditError::unbuilt(found.part.clone()))?;
             let (&index, parent) = found
                 .path
                 .split_last()
-                .ok_or_else(|| EditError::Path(found.part.clone()))?;
+                .ok_or_else(|| EditError::no_element(found.part.clone()))?;
             let keys = stretch_keys(&docx, &found.part, parent, (index, index));
             sink.replace(&found.part, &path, new, keys)?;
         }

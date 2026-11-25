@@ -1,7 +1,7 @@
 # Charts (`c:`): the source of src/c.rs (`cargo xtask codegen`; the grammar is in
 # xtask/src/codegen.rs). What a chart reader asks of a chart part -- the chart, its plot
 # area and plots, series and their data, each axis, the legend, titles, labels and 3-D view -- with
-# the schema's child sequences as the repository's insertion tables state them. A chart's
+# the child sequences generated from the XML schemas (`order = NAME`, schema/orders.list). A chart's
 # shape and text properties (`c:spPr`, `c:txPr`, `c:rich`) are DrawingML, read through
 # `crate::a`.
 #
@@ -28,7 +28,7 @@ view ChartSpace chartSpace c | `c:chartSpace`, a chart part's root.
   child shape_properties Any spPr
   child text_properties Any txPr
   child external_data ExternalData externalData
-  order date1904 lang roundedCorners AlternateContent style clrMapOvr pivotSource protection chart spPr txPr externalData printSettings userShapes extLst
+  order = CHART_SPACE
 view ExternalData externalData c | `c:externalData`: the embedded workbook's relationship.
   nsattr id r id
   child auto_update Val autoUpdate
@@ -40,18 +40,18 @@ view Chart chart c | `c:chart`: title, 3-D view, plot area, legend and how blank
   child legend Legend legend
   child plot_visible_only Val plotVisOnly
   child display_blanks_as Val dispBlanksAs
-  order title autoTitleDeleted pivotFmts view3D floor sideWall backWall plotArea legend plotVisOnly dispBlanksAs showDLblsOverMax extLst
+  order = CHART
 view Title title c | `c:title`: text, overlay, and shape and text properties.
   child text Tx tx
   child overlay Val overlay
   child shape_properties Any spPr
   child text_properties Any txPr
-  order tx layout overlay spPr txPr extLst
+  order = TITLE
 view Tx tx c | `c:tx`: a reference, rich text or a value.
   child reference DataReference strRef
   child rich Any rich
   child value Any v
-  order strRef rich v
+  order = TX
 view View3D view3D c | `c:view3D`: rotations, depth, height and perspective.
   child rot_x Val rotX
   child rot_y Val rotY
@@ -59,11 +59,11 @@ view View3D view3D c | `c:view3D`: rotations, depth, height and perspective.
   child h_percent Val hPercent
   child right_angle Val rAngAx
   child perspective Val perspective
-  order rotX hPercent rotY depthPercent rAngAx perspective extLst
+  order = VIEW_3D
 view PlotArea plotArea c | `c:plotArea`: plots (one per chart kind) and each axis, in order.
   all members Any
   child shape_properties Any spPr
-  order layout areaChart/area3DChart/lineChart/line3DChart/stockChart/radarChart/scatterChart/pieChart/pie3DChart/doughnutChart/barChart/bar3DChart/ofPieChart/surfaceChart/surface3DChart/bubbleChart valAx/catAx/dateAx/serAx dTable spPr extLst
+  order = PLOT_AREA
 view Plot * | A plot (`c:barChart`, `c:lineChart`, `c:pieChart`...): its settings, series and axis ids.
   children series Series ser
   children axis_ids Val axId
@@ -124,7 +124,7 @@ view Series ser c | `c:ser`: index, order, name, formatting, points and data.
   child shape Val shape
   child smooth Val smooth
   child extensions Any extLst
-  order idx order tx spPr invertIfNegative pictureOptions marker explosion dPt dLbls trendline errBars cat xVal val yVal bubbleSize bubble3D shape smooth extLst
+  order = SER
 view DataSource * | `c:cat`, `c:val`, `c:xVal`, `c:yVal`, `c:bubbleSize`: a reference or a literal.
   child number_reference DataReference numRef
   child string_reference DataReference strRef
@@ -137,13 +137,13 @@ view DataReference * | `c:numRef`, `c:strRef`, `c:multiLvlStrRef`: a formula and
   child number_cache DataCache numCache
   child string_cache DataCache strCache
   child multi_level_cache DataCache multiLvlStrCache
-  order f numCache/strCache/multiLvlStrCache extLst
+  order = DATA_REFERENCE
 view DataCache * | `c:numCache`, `c:strCache`, a literal, or a level: points and their count.
   child format_code Any formatCode
   child point_count Val ptCount
   children points DataPoint pt
   children levels DataCache lvl
-  order formatCode ptCount pt/lvl extLst
+  order = DATA_CACHE
 view DataPoint * | `c:pt` (a cached value) or `c:dPt` (a point's own formatting).
   attr idx num idx
   attr format_code str formatCode
@@ -157,7 +157,7 @@ view Marker marker c | `c:marker`: symbol, size and formatting.
   child symbol Val symbol
   child size Val size
   child shape_properties Any spPr
-  order symbol size spPr extLst
+  order = MARKER
 view DataLabels dLbls c | `c:dLbls`: what each label shows, where, and as what format.
   children labels DataLabel dLbl
   child delete Val delete
@@ -172,7 +172,7 @@ view DataLabels dLbls c | `c:dLbls`: what each label shows, where, and as what f
   child show_percent Val showPercent
   child show_bubble_size Val showBubbleSize
   child show_leader_lines Val showLeaderLines
-  order dLbl delete numFmt spPr txPr dLblPos showLegendKey showVal showCatName showSerName showPercent showBubbleSize separator showLeaderLines leaderLines extLst
+  order = DATA_LABELS
 view DataLabel dLbl c | `c:dLbl`: one point's label.
   child idx Val idx
   child delete Val delete
@@ -181,7 +181,7 @@ view DataLabel dLbl c | `c:dLbl`: one point's label.
   child shape_properties Any spPr
   child text_properties Any txPr
   child position Val dLblPos
-  order idx delete layout tx numFmt spPr txPr dLblPos showLegendKey showVal showCatName showSerName showPercent showBubbleSize separator extLst
+  order = DATA_LABEL
 view NumberFormat numFmt c | `c:numFmt`: a format code, and whether it follows the source.
   attr format_code str formatCode
   attr source_linked str sourceLinked
@@ -214,14 +214,14 @@ view Scaling scaling c | `c:scaling`: orientation, bounds and logarithmic base.
   child orientation Val orientation
   child max Val max
   child min Val min
-  order logBase orientation max min extLst
+  order = SCALING
 view Legend legend c | `c:legend`: position, entries and overlay.
   child position Val legendPos
   children entries LegendEntry legendEntry
   child overlay Val overlay
   child shape_properties Any spPr
   child text_properties Any txPr
-  order legendPos legendEntry layout overlay spPr txPr extLst
+  order = LEGEND
 view LegendEntry legendEntry c | `c:legendEntry`: one entry, deleted or formatted.
   child idx Val idx
   child delete Val delete

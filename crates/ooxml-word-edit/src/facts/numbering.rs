@@ -11,11 +11,14 @@ use super::{style_name, style_names};
 use crate::lists::style_list_of;
 use crate::names::W;
 use crate::{EditError, Result, WordDoc};
-use ooxml_word_model::docx::numbering::{membership, style_numbering, Lists};
+use ooxml_word_model::docx::block_facts::BlockFact;
+use ooxml_word_model::docx::formatting::Formatting;
+use ooxml_word_model::docx::numbering::{membership, style_numbering, Lists, Membership};
 use ooxml_word_model::docx::Docx;
 use ooxml_word_model::xmlread::py_int;
 use ooxml_xml::Element;
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::sync::Arc;
 
 /// Paragraphs numbered at a level whose label shows a level nothing uses.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,7 +52,7 @@ pub struct SkippedLevel {
 pub fn numbering_skips_level(doc: &WordDoc) -> Result<Vec<SkippedLevel>> {
     let docx = doc.docx()?;
     let lists = Lists::read(&docx);
-    let body = docx.body().ok_or_else(|| EditError::NoPart(docx.main.clone()))?;
+    let body = docx.body().ok_or_else(|| EditError::no_part(docx.main.clone()))?;
     let names = style_names(&docx);
     let default = docx.default_style("paragraph").map(|s| style_name(s));
     let mut used: HashMap<*const Element, HashSet<i64>> = HashMap::new();
@@ -60,8 +63,11 @@ pub fn numbering_skips_level(doc: &WordDoc) -> Result<Vec<SkippedLevel>> {
     // document), without asking `membership`.
     let mut style_numbers: HashMap<Option<String>, bool> = HashMap::new();
     let mut style_lists: HashMap<Option<String>, bool> = HashMap::new();
+    // Each instance's definition, once per `w:numId`.
+    let mut definitions: HashMap<i64, Option<*const Element>> = HashMap::new();
+    let formatting = Formatting::read(&docx);
     // Each paragraph found by its element; its id named only for a group's first.
-    for (ordinal, element, _) in body.ids.paragraphs().placed() {
+    for (ordinal, element, at) in body.ids.paragraphs().placed() {
         let properties = element.find(Some(W), "pPr");
         let style_id = properties
             .and_then(|p| p.find(Some(W), "pStyle"))
@@ -77,7 +83,11 @@ pub fn numbering_skips_level(doc: &WordDoc) -> Result<Vec<SkippedLevel>> {
                 continue;
             }
         }
-        let Some(found) = membership(&docx, &lists, element) else {
+        // Its list, as the block tier keeps it by the paragraph.
+        let found = body.block_fact::<Member>(&formatting, element, &at, || {
+            membership(&docx, &lists, element).map(Arc::new)
+        });
+        let Some(found) = found else {
             continue;
         };
         let mut tied = || {
@@ -88,10 +98,12 @@ pub fn numbering_skips_level(doc: &WordDoc) -> Result<Vec<SkippedLevel>> {
         if found.from_style && tied() {
             continue;
         }
-        let Some(definition) = lists.definition_of(&docx, found.num_id) else {
+        let definition = *definitions
+            .entry(found.num_id)
+            .or_insert_with(|| lists.definition_of(&docx, found.num_id).map(Arc::as_ptr));
+        let Some(definition) = definition else {
             continue;
         };
-        let definition = std::sync::Arc::as_ptr(definition);
         used.entry(definition).or_default().insert(found.level);
         let name = match style_id.filter(|s| !s.is_empty()) {
             Some(id) => Some(names.get(id).cloned().unwrap_or_else(|| id.to_owned())),
@@ -121,6 +133,23 @@ pub fn numbering_skips_level(doc: &WordDoc) -> Result<Vec<SkippedLevel>> {
         .into_iter()
         .filter_map(|(definition, group)| skipping(&docx, &lists, group, used.get(&definition)))
         .collect())
+}
+
+/// The list a paragraph is in (`membership`), as the block tier keeps it ([`BlockFact`]): read
+/// from the paragraph, the styles and the numbering alone.
+struct Member;
+
+impl BlockFact for Member {
+    type Value = Option<Arc<Membership>>;
+
+    fn weight(value: &Self::Value) -> usize {
+        std::mem::size_of::<Self::Value>()
+            + value.as_ref().map_or(0, |m| {
+                std::mem::size_of::<Membership>()
+                    + m.format.as_ref().map_or(0, String::len)
+                    + m.text.as_ref().map_or(0, String::len)
+            })
+    }
 }
 
 /// `group` with the levels above it its label shows that no paragraph of its definition

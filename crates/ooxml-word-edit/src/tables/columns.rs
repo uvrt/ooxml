@@ -14,7 +14,7 @@
 
 use super::pending::{column_deleted, drop_copies, merge_origins, merged_away, no_reshape_over_merge, Reshape};
 use super::rows::{put, under_policy, Held};
-use super::shape::{grid_widths, own_rows, row_cells, set_grid};
+use super::shape::{count_of, grid_widths, own_rows, row_cells, row_spec, set_grid, span_of};
 use super::tracker::TableTracker;
 use super::TableChanged;
 use crate::across::rehome_markers;
@@ -50,7 +50,7 @@ fn plan(work: &Work, table: Id, index: usize) -> Plan {
         skipped: Vec::new(),
     };
     for row in own_rows(work, table) {
-        let before = usize::try_from(int(work, find_path(work, row, &["trPr", "gridBefore"]), "val", 0)).unwrap_or(0);
+        let before = row_spec(work, row).before;
         match row_cells(work, row)
             .into_iter()
             .find(|p| p.start <= index && index < p.start + p.span)
@@ -268,7 +268,7 @@ fn narrow(work: &mut Work, cell: Id, width: i64) {
         return;
     };
     let span = work.find(properties, W, "gridSpan");
-    let value = int(work, span, "val", 1) - 1;
+    let value = span_of(work, span) - 1;
     if let Some(span) = span {
         if value > 1 {
             set_attr(work, span, "val", &value.to_string());
@@ -304,7 +304,7 @@ pub(super) fn skip(
         }
     };
     let node = work.find(properties, W, grid);
-    let value = (int(work, node, "val", 0) + delta).max(0);
+    let value = (count_of(work, node) + delta).max(0);
     if let Some(node) = node {
         work.remove(node);
     }

@@ -9,19 +9,17 @@
 //! the session's call that made a table so (`made_by` is the session's record).
 
 use super::scratch::settled;
-use super::shapes::{Kept, KEPT};
 use crate::names::W;
 use crate::{EditError, Result, WordDoc};
 use ooxml_word_model::docx::block_facts::BlockFact;
 use ooxml_word_model::docx::formatting::Formatting;
 use ooxml_word_model::docx::revisions::records;
-use ooxml_word_model::docx::tables::{cells_at, own_rows};
+use ooxml_word_model::docx::tables::{cells_at, own_rows, Coverage, Grid};
 use ooxml_word_model::docx::{at_path, find_path};
 use ooxml_word_model::ids::PlacedTable;
-use ooxml_word_model::xmlread::py_int;
 use ooxml_xml::Element;
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 /// Tracked cell and grid records: a table holding one may be off its grid by Word's design
 /// until they are accepted.
@@ -109,7 +107,7 @@ pub enum GridMismatch {
 /// When the version cannot be read.
 pub fn table_grid_mismatch(doc: &WordDoc, keep: Option<&dyn Fn(&str) -> bool>) -> Result<Vec<GridMismatch>> {
     let docx = doc.docx()?;
-    let body = docx.body().ok_or_else(|| EditError::NoPart(docx.main.clone()))?;
+    let body = docx.body().ok_or_else(|| EditError::no_part(docx.main.clone()))?;
     // Each table found by its element and place; its id named only for an entry (or `keep`).
     let named = |table: &PlacedTable<'_>| body.ids.tables().head(table.ordinal).map(|t| t.id).unwrap_or_default();
     let tables: Vec<PlacedTable<'_>> = body
@@ -249,31 +247,24 @@ pub fn ragged_rows(doc: &WordDoc, table: &Arc<Element>) -> Option<Ragged> {
     })
 }
 
-fn int_val(node: Option<&Element>, default: i64) -> i64 {
-    node.and_then(|n| n.attribute(Some(W), "val"))
-        .and_then(py_int)
-        .unwrap_or(default)
-}
-
 /// A table's grid columns, and its rows (`rows`, its own, in order) whose cells -- with
-/// `w:gridBefore` and `w:gridAfter` -- do not reach exactly across them.
-fn off_grid_rows(table: &Element, rows: &[Arc<Element>]) -> (i64, Vec<OffGridRow>) {
-    let count = table.find(Some(W), "tblGrid").map_or(0, |g| {
-        g.child_elements().filter(|c| c.name().is(Some(W), "gridCol")).count()
-    });
-    let count = i64::try_from(count).unwrap_or(i64::MAX);
-    let mut out = Vec::new();
-    for (r, row) in rows.iter().enumerate() {
-        let mut reach =
-            int_val(find_path(row, &["trPr", "gridBefore"]), 0) + int_val(find_path(row, &["trPr", "gridAfter"]), 0);
-        for cell in cells_at(row, &[]) {
-            reach += int_val(find_path(&cell.element, &["tcPr", "gridSpan"]), 1).max(1);
-        }
-        if reach != count {
-            out.push(OffGridRow { row: r, reaches: reach });
-        }
-    }
-    (count, out)
+/// `w:gridBefore` and `w:gridAfter` -- do not reach exactly across them ([`Grid`]'s
+/// coverage).
+pub(crate) fn off_grid_rows(table: &Element, rows: &[Arc<Element>]) -> (i64, Vec<OffGridRow>) {
+    let rows: Vec<&Element> = rows.iter().map(|r| &**r).collect();
+    let grid = Grid::of(table, &rows);
+    let signed = |n: usize| i64::try_from(n).unwrap_or(i64::MAX);
+    let out = grid
+        .rows
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| line.coverage != Coverage::Exact)
+        .map(|(r, line)| OffGridRow {
+            row: r,
+            reaches: signed(line.end.saturating_add(line.after)),
+        })
+        .collect();
+    (signed(grid.columns), out)
 }
 
 /// Whether any element below `element` is a `w:` element named in `locals`.
@@ -377,13 +368,22 @@ fn reshaped_on_accept(table: &Element) -> bool {
 }
 
 /// A table's shape ([`shape`]) as Accept All leaves it: read from a copy with its tracked
-/// changes accepted, kept by the table's content ([`Kept`]) -- a table no edit touched is
+/// changes accepted, kept by the table's content ([`AcceptedShapes`]) -- a table no edit touched is
 /// not settled again by every check (docx-agent's `ragged_rows`, round 57 R124).
 fn accepted_shape(doc: &WordDoc, table: &Arc<Element>) -> Option<Shape> {
-    static ACCEPTED: OnceLock<Kept<Option<Shape>>> = OnceLock::new();
-    ACCEPTED
-        .get_or_init(|| Kept::new(KEPT))
+    doc.shared()
+        .accepted
         .get_or(table, || settled(doc, table, true, None).and_then(|t| shape(&t)))
+}
+
+/// The tables' shapes as Accept All leaves them, kept for a document by their content.
+pub(crate) type AcceptedShapes = super::shapes::Kept<Option<Shape>>;
+
+/// What a kept accepted shape holds beside itself, bytes.
+pub(crate) fn accepted_weight(shape: &Option<Shape>) -> usize {
+    shape
+        .as_ref()
+        .map_or(0, |(_, rows)| rows.len() * std::mem::size_of::<RaggedRow>())
 }
 
 /// A table's columns covered by its widest rows and the rows that cover others, or `None`

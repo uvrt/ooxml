@@ -26,7 +26,7 @@ use crate::work::{scope_above, Id, Work};
 use crate::{EditError, Result, WordDoc};
 use ooxml_base::Limits;
 use ooxml_store::{Command, Txn};
-use ooxml_word_model::docx::{at_path, Docx};
+use ooxml_word_model::docx::Docx;
 
 /// VML's Office extensions.
 const O: &str = "urn:schemas-microsoft-com:office:office";
@@ -85,8 +85,8 @@ impl InsertShape {
         }
         let found = range(doc, docx, &self.at)?;
         let span = Span::of(doc, docx, &found)?;
-        let paragraph = span.first().ok_or_else(|| EditError::Path(span.part.clone()))?;
-        if in_text_box(docx, &span.part, &paragraph.path) {
+        let paragraph = span.first().ok_or_else(|| EditError::no_element(span.part.clone()))?;
+        if crate::textbox::text_box_anchor(docx, &span.part, &paragraph.path).is_some() {
             return Err(EditError::Refused(
                 "a text box or shape is not anchored in a text box".to_owned(),
             ));
@@ -103,16 +103,6 @@ impl InsertShape {
             offset: span.start,
         })
     }
-}
-
-/// Whether the paragraph at `path` of `part` stands in a text box.
-fn in_text_box(docx: &Docx, part: &str, path: &[u32]) -> bool {
-    let Some(story) = docx.part(part) else { return false };
-    (1..path.len()).any(|n| {
-        path.get(..n)
-            .and_then(|p| at_path(story.root(), p))
-            .is_some_and(|e| e.name().is(Some(W), "txbxContent"))
-    })
 }
 
 impl Command<WordDoc> for InsertShape {
@@ -149,7 +139,10 @@ impl InsertShape {
         for _ in lines.iter().flatten() {
             boxes.push(sink.draw(&format!("{part}\0box"), 2)?);
         }
-        let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
+        let tree = sink
+            .doc()
+            .tree(&part)?
+            .ok_or_else(|| EditError::no_part(part.clone()))?;
         let mut scope = scope_above(tree.root(), &found.path);
         scope.extend_from_slice(found.element.namespaces());
         let label = if self.text_box {
@@ -181,7 +174,7 @@ impl InsertShape {
         let offset = place.offset;
         let lines = lines.unwrap_or_default();
         rewrite(sink, &at, how, |sink, work| {
-            let holder = work.adopt(&holder).ok_or_else(|| EditError::Path(part.clone()))?;
+            let holder = work.adopt(&holder).ok_or_else(|| EditError::no_element(part.clone()))?;
             let wrote = self.place(sink, work, (holder, offset), &lines, &boxes)?;
             Ok(((), wrote))
         })?;

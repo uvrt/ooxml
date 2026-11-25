@@ -57,7 +57,7 @@ fn root(sink: &EditSink<'_, '_>, part: &str) -> Result<Arc<Element>> {
     let tree = sink
         .doc()
         .tree(part)?
-        .ok_or_else(|| EditError::NoPart(part.to_owned()))?;
+        .ok_or_else(|| EditError::no_part(part.to_owned()))?;
     Ok(Arc::clone(tree.root()))
 }
 
@@ -325,12 +325,12 @@ fn insert_num(
 /// Replace the root's child at `k` by what `edit` makes of it in a [`Work`].
 fn edit_child(sink: &mut EditSink<'_, '_>, part: &str, k: usize, edit: impl FnOnce(&mut Work, Id)) -> Result<()> {
     let root = root(sink, part)?;
-    let element = child(&root, k).ok_or_else(|| EditError::Path(part.to_owned()))?;
-    let path = [u32::try_from(k).map_err(|_| EditError::Path(part.to_owned()))?];
+    let element = child(&root, k).ok_or_else(|| EditError::no_element(part.to_owned()))?;
+    let path = [u32::try_from(k).map_err(|_| EditError::no_element(part.to_owned()))?];
     let mut work = Work::of(element, scope_above(&root, &path));
     let top = work.root();
     edit(&mut work, top);
-    let new = work.build().ok_or_else(|| EditError::Path(part.to_owned()))?;
+    let new = work.build().ok_or_else(|| EditError::unbuilt(part.to_owned()))?;
     if *new != **element {
         sink.replace(part, &path, new, vec![part_key(part)])?;
     }
@@ -357,7 +357,7 @@ pub(crate) fn edit_level(
     edit: impl FnOnce(&mut Work, Id),
 ) -> Result<bool> {
     let root = root(sink, part)?;
-    let k = abstract_place(&root, abstract_id).ok_or_else(|| EditError::Path(part.to_owned()))?;
+    let k = abstract_place(&root, abstract_id).ok_or_else(|| EditError::no_element(part.to_owned()))?;
     let has = child(&root, k).is_some_and(|a| {
         a.child_elements()
             .any(|l| l.name().is(Some(W), "lvl") && l.attribute(Some(W), "ilvl").and_then(py_int) == Some(level))
@@ -403,8 +403,8 @@ pub(crate) fn set_abstract_of(sink: &mut EditSink<'_, '_>, part: &str, num_id: i
 pub(crate) fn copy_abstract(sink: &mut EditSink<'_, '_>, main: &str, part: &str, abstract_id: i64) -> Result<i64> {
     let root = root(sink, part)?;
     let abstracts = listed(&root, "abstractNum", "abstractNumId");
-    let k = abstract_place(&root, abstract_id).ok_or_else(|| EditError::Path(part.to_owned()))?;
-    let original = child(&root, k).ok_or_else(|| EditError::Path(part.to_owned()))?;
+    let k = abstract_place(&root, abstract_id).ok_or_else(|| EditError::no_element(part.to_owned()))?;
+    let original = child(&root, k).ok_or_else(|| EditError::no_element(part.to_owned()))?;
     let new_id = abstracts.iter().map(|(n, _)| *n).max().unwrap_or(0) + 1;
     let value = nsid(
         &format!("copy\0{abstract_id}\0{new_id}"),
@@ -422,7 +422,7 @@ pub(crate) fn copy_abstract(sink: &mut EditSink<'_, '_>, main: &str, part: &str,
         made
     });
     work.set(node, val, &value);
-    let copy = work.build().ok_or_else(|| EditError::Path(part.to_owned()))?;
+    let copy = work.build().ok_or_else(|| EditError::unbuilt(part.to_owned()))?;
     add_abstract(sink, main, copy)?;
     Ok(new_id)
 }
@@ -571,7 +571,7 @@ pub(crate) fn add_restart(
     if let Some(ind) = work.adopt(&style_ind) {
         crate::marks::insert_in_order(&mut work, properties, ind, orders);
     }
-    let copied = work.build().ok_or_else(|| EditError::Path(part.clone()))?;
+    let copied = work.build().ok_or_else(|| EditError::unbuilt(part.clone()))?;
     let Some((_, k)) = listed(&root, "num", "numId").into_iter().find(|(n, _)| *n == new_id) else {
         return Ok(new_id);
     };

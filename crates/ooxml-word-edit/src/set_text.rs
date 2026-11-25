@@ -213,8 +213,8 @@ pub(crate) fn write_text_as(
     let tree = sink
         .doc()
         .tree(&found.part)?
-        .ok_or_else(|| EditError::NoPart(found.part.clone()))?;
-    let element = at_path(tree.root(), &found.path).ok_or_else(|| EditError::Path(found.part.clone()))?;
+        .ok_or_else(|| EditError::no_part(found.part.clone()))?;
+    let element = at_path(tree.root(), &found.path).ok_or_else(|| EditError::no_element(found.part.clone()))?;
     work = Work::of(element, scope_above(tree.root(), &found.path));
     sink.load_written(&found.part, Some(&found.path), &mut work);
     let wrote = sink.set_paragraph_text(&mut work, text)?;
@@ -230,7 +230,7 @@ pub(crate) fn write_text_as(
         });
     }
     sink.keep_written(&found.part, Some(&found.path), &work);
-    let new = work.build().ok_or_else(|| EditError::Path(found.part.clone()))?;
+    let new = work.build().ok_or_else(|| EditError::unbuilt(found.part.clone()))?;
     if let Some(numbered) = wrote.annotations {
         draws.extend(crate::sink::annotation_draws(&new, numbered, 0));
     }

@@ -164,7 +164,7 @@ fn drop_body(sink: &mut EditSink<'_, '_>, main: &str) -> Result<()> {
     let mut space = Space::default();
     let work = space
         .work(&held, main)?
-        .ok_or_else(|| EditError::NoPart(main.to_owned()))?;
+        .ok_or_else(|| EditError::no_part(main.to_owned()))?;
     let root = work.root();
     let body = work
         .find(root, W, "body")
@@ -329,8 +329,8 @@ fn new_app(sink: &mut EditSink<'_, '_>, package: &ooxml_opc::Package) -> Result<
     for name in [part, CONTENT_TYPES_PART, ooxml_opc::name::rels_for("").as_str()] {
         sink.read(Key::Part(Arc::from(name)));
     }
-    let tree = ooxml_xml::parse(NEW_APP.as_bytes(), &ooxml_base::Limits::default().xml)
-        .map_err(|e| EditError::Refused(e.to_string()))?;
+    let tree =
+        ooxml_xml::parse(NEW_APP.as_bytes(), &ooxml_base::Limits::default().xml).map_err(|e| EditError::own_xml(e))?;
     let root = Arc::unwrap_or_clone(Arc::clone(tree.root()));
     let made = crate::new_part::add_part(package, "", part, root, APP_TYPE, REL_APP)?;
     for name in [part, CONTENT_TYPES_PART, ooxml_opc::name::rels_for("").as_str()] {
@@ -349,7 +349,7 @@ fn restyle_page(sink: &mut EditSink<'_, '_>, (width, height): (u32, u32)) -> Res
     let mut space = Space::default();
     let work = space
         .work(&held, &main)?
-        .ok_or_else(|| EditError::NoPart(main.clone()))?;
+        .ok_or_else(|| EditError::no_part(main.clone()))?;
     let root = work.root();
     for section in work.iter(root, W, &["sectPr"]) {
         let Some(size) = work.find(section, W, "pgSz") else {

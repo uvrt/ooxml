@@ -203,6 +203,26 @@ fn paragraphs_judgements_let_go_for_the_budget_are_judged_as_cold() {
     let detections = Detections::new(std::sync::Arc::new(Tight(std::sync::atomic::AtomicUsize::new(0))));
     languages_kept_and_cold(&detections);
     assert!(detections.judgements().bytes <= 512, "{:?}", detections.judgements());
+    // The texts' detections do not fit: none is kept.
+    assert_eq!(detections.texts().entries, 0, "{:?}", detections.texts());
+    assert_eq!(detections.texts().bytes, 0, "{:?}", detections.texts());
+}
+
+/// The texts' detections are counted on the account they are given, beside the
+/// paragraphs' judgements, and given back with them.
+#[test]
+fn texts_detections_are_on_the_documents_account() {
+    let budget = std::sync::Arc::new(ooxml_derive::Limit::new(64 << 20));
+    let detections = Detections::new(std::sync::Arc::clone(&budget) as std::sync::Arc<dyn ooxml_derive::CacheBudget>);
+    let editor = editor(&fixture("samplelib/sample-long.docx"));
+    let doc = editor.store().snapshot().doc().clone();
+    assert_eq!(language(&doc, Some(&detections)), language(&doc, None));
+    let texts = detections.texts();
+    assert!(texts.entries > 0 && texts.bytes > 0, "{texts:?}");
+    use ooxml_derive::CacheBudget;
+    assert_eq!(budget.used(), texts.bytes + detections.judgements().bytes);
+    drop(detections);
+    assert_eq!(budget.used(), 0);
 }
 
 /// A check with `detections` equals a cold one, before and after a paragraph's text is

@@ -85,7 +85,7 @@ pub(crate) fn place(doc: &WordDoc, docx: &Docx, at: &str, start: bool) -> Result
     let span = Span::of(doc, docx, &found)?;
     let id = range_id(&found);
     let paragraph = if start { span.first() } else { span.last() };
-    let paragraph = paragraph.ok_or_else(|| EditError::Path(span.part.clone()))?;
+    let paragraph = paragraph.ok_or_else(|| EditError::no_element(span.part.clone()))?;
     let offset = if start { span.start } else { span.end };
     let work = Work::of(&paragraph.element, Vec::new());
     let items = atoms(&work, work.root());
@@ -229,8 +229,11 @@ pub(crate) fn put_back(
     renamed: &[(String, String)],
 ) -> Result<()> {
     let part = place.part.clone();
-    let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
-    let new = work.build().ok_or_else(|| EditError::Path(part.clone()))?;
+    let tree = sink
+        .doc()
+        .tree(&part)?
+        .ok_or_else(|| EditError::no_part(part.clone()))?;
+    let new = work.build().ok_or_else(|| EditError::unbuilt(part.clone()))?;
     let mut draws = tracked.map(|(n, _)| annotation_draws(&new, n, 0)).unwrap_or_default();
     if renew && new.attribute(Some(W14), "paraId").is_some() {
         let prefix = w14_prefix(tree.root(), &place.path);
@@ -286,7 +289,10 @@ impl InsertField<'_> {
         let docx = sink.docx()?;
         let here = place(sink.doc(), &docx, &self.at, false)?;
         let inserted = crate::ranges::insert_text(&mut *sink, &format!("{}@{}", here.id, here.offset), &text)?;
-        let paragraph = inserted.id.clone().ok_or_else(|| EditError::Path(here.part.clone()))?;
+        let paragraph = inserted
+            .id
+            .clone()
+            .ok_or_else(|| EditError::no_element(here.part.clone()))?;
         let end = here.offset + text.chars().count();
         let anchor = super::switches::switch(&self.instruction, 'l');
         let link = crate::links::AddHyperlink {
@@ -337,8 +343,8 @@ impl InsertField<'_> {
         let tree = sink
             .doc()
             .tree(&here.part)?
-            .ok_or_else(|| EditError::NoPart(here.part.clone()))?;
-        let element = at_path(tree.root(), &here.path).ok_or_else(|| EditError::Path(here.part.clone()))?;
+            .ok_or_else(|| EditError::no_part(here.part.clone()))?;
+        let element = at_path(tree.root(), &here.path).ok_or_else(|| EditError::no_element(here.part.clone()))?;
         let mut work = Work::of(element, scope_above(tree.root(), &here.path));
         let shared = sink.doc().shared_handle();
         let instruction = padded(&self.instruction);
@@ -363,7 +369,7 @@ impl InsertField<'_> {
         };
         let below = begin
             .and_then(|b| green_path(&work, b))
-            .ok_or_else(|| EditError::Path(here.part.clone()))?;
+            .ok_or_else(|| EditError::no_element(here.part.clone()))?;
         put_back(&mut *sink, &work, (&here, true), tracked, &renamed)?;
         let mut path = here.path.clone();
         path.extend(below);
@@ -372,7 +378,7 @@ impl InsertField<'_> {
             .iter()
             .find(|l| l.part == here.part && l.found.begin == path)
             .cloned()
-            .ok_or_else(|| EditError::Path(here.part.clone()))?;
+            .ok_or_else(|| EditError::no_element(here.part.clone()))?;
         let id = located.id();
         let unknown = if self.result.is_none() {
             pass_on(
@@ -486,8 +492,8 @@ impl InsertCrossReference<'_> {
         let tree = sink
             .doc()
             .tree(&here.part)?
-            .ok_or_else(|| EditError::NoPart(here.part.clone()))?;
-        let element = at_path(tree.root(), &here.path).ok_or_else(|| EditError::Path(here.part.clone()))?;
+            .ok_or_else(|| EditError::no_part(here.part.clone()))?;
+        let element = at_path(tree.root(), &here.path).ok_or_else(|| EditError::no_element(here.part.clone()))?;
         let mut work = Work::of(element, scope_above(tree.root(), &here.path));
         let paragraph = work.root();
         let begin = new_w(&mut work, paragraph, "fldChar", &[("fldCharType", "begin")]);

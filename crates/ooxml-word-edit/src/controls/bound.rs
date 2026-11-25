@@ -68,7 +68,13 @@ impl Binding {
         let steps = steps(&self.xpath, &self.prefixes).ok_or_else(|| {
             EditError::Unsupported("word_controls fill of a control bound by an XPath other than child steps".into())
         })?;
-        let tree = doc.tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
+        // the store's relationship names a part the package lacks: the document's, not ours
+        let tree = doc.tree(&part)?.ok_or_else(|| {
+            EditError::Refused(format!(
+                "the custom XML part {} the control is bound to is missing",
+                self.store.as_deref().unwrap_or("None")
+            ))
+        })?;
         find(tree.root(), &steps).map(|path| (part, path)).ok_or_else(|| {
             EditError::Refused(format!(
                 "the bound node {} is not in the custom XML part (docx-agent writes a binding's node, it does not make one)",
@@ -84,8 +90,9 @@ impl Binding {
     /// As [`Binding::node`].
     pub(crate) fn text(&self, doc: &WordDoc, docx: &Docx) -> Result<Option<String>> {
         let (part, path) = self.node(doc, docx)?;
-        let tree = doc.tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
-        let node = ooxml_word_model::docx::at_path(tree.root(), &path).ok_or_else(|| EditError::Path(part.clone()))?;
+        let tree = doc.tree(&part)?.ok_or_else(|| EditError::no_part(part.clone()))?;
+        let node =
+            ooxml_word_model::docx::at_path(tree.root(), &path).ok_or_else(|| EditError::no_element(part.clone()))?;
         let mut text = String::new();
         for child in node.children().iter() {
             match child {
@@ -110,8 +117,12 @@ impl Binding {
                 "word_controls fill of a control bound to a part's root".into(),
             ));
         }
-        let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
-        let node = ooxml_word_model::docx::at_path(tree.root(), &path).ok_or_else(|| EditError::Path(part.clone()))?;
+        let tree = sink
+            .doc()
+            .tree(&part)?
+            .ok_or_else(|| EditError::no_part(part.clone()))?;
+        let node =
+            ooxml_word_model::docx::at_path(tree.root(), &path).ok_or_else(|| EditError::no_element(part.clone()))?;
         // lxml's `.text`: `None` where the node does not open with text (`<a/>` is written
         // `<a></a>` once given "")
         let text = match node.children().iter().next() {
@@ -137,8 +148,12 @@ impl Binding {
     /// As [`Binding::node`] (the caller leaves a control whose part or node is missing).
     pub(crate) fn sync(&self, sink: &mut EditSink<'_, '_>, docx: &Docx, value: &str) -> Result<()> {
         let (part, path) = self.node(sink.doc(), docx)?;
-        let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
-        let node = ooxml_word_model::docx::at_path(tree.root(), &path).ok_or_else(|| EditError::Path(part.clone()))?;
+        let tree = sink
+            .doc()
+            .tree(&part)?
+            .ok_or_else(|| EditError::no_part(part.clone()))?;
+        let node =
+            ooxml_word_model::docx::at_path(tree.root(), &path).ok_or_else(|| EditError::no_element(part.clone()))?;
         if node.children().iter().any(|n| !matches!(n, Node::Text(_))) {
             return Ok(());
         }
