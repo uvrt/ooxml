@@ -260,7 +260,25 @@ fn run_phase(name: &str, bytes: &Arc<[u8]>, workers: Vec<Worker>, secs: u64, sta
         ms(open),
         ms(warm)
     );
-    let mut book = book.lock().unwrap();
+    print_calls(&mut book.lock().unwrap());
+    #[allow(clippy::cast_precision_loss)]
+    let rate = stats.commits as f64 / wall.as_secs_f64();
+    println!(
+        "  store: {} commits in {:.1} s ({rate:.1}/s), {} conflicts, {} rebased, {} exclusive",
+        stats.commits,
+        wall.as_secs_f64(),
+        stats.conflicts,
+        stats.rebased,
+        stats.exclusive
+    );
+    println!("  lock {}", histogram("held", &times.held));
+    println!("  lock {}", histogram("waited", &times.waited));
+    println!("  {}", histogram("gate held", &times.gated));
+    println!("  {}", histogram("gate waited", &times.gate_waited));
+}
+
+/// Each tool's calls, failures and wall times.
+fn print_calls(book: &mut BTreeMap<String, Calls>) {
     for (label, calls) in book.iter_mut() {
         let n = calls.times.len();
         let (p50, p99, max) = (
@@ -279,20 +297,6 @@ fn run_phase(name: &str, bytes: &Arc<[u8]>, workers: Vec<Worker>, secs: u64, sta
             println!("    first error: {error}");
         }
     }
-    #[allow(clippy::cast_precision_loss)]
-    let rate = stats.commits as f64 / wall.as_secs_f64();
-    println!(
-        "  store: {} commits in {:.1} s ({rate:.1}/s), {} conflicts, {} rebased, {} exclusive",
-        stats.commits,
-        wall.as_secs_f64(),
-        stats.conflicts,
-        stats.rebased,
-        stats.exclusive
-    );
-    println!("  lock {}", histogram("held", &times.held));
-    println!("  lock {}", histogram("waited", &times.waited));
-    println!("  {}", histogram("gate held", &times.gated));
-    println!("  {}", histogram("gate waited", &times.gate_waited));
 }
 
 fn context(name: &str) -> CallContext {
