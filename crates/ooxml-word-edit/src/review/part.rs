@@ -7,6 +7,7 @@
 //! Must not: read or write outside its part's tree, or decide which records a call
 //! selects (the command does).
 
+use super::placeholders::{emptied_control, show, PlaceholderTexts};
 use super::xml::{
     ancestor, attr, find_all, find_path, insert_in_order, is_record, kind_of, made_with, make, set_attr, RecordKind,
     CELL, DELETED, INSERTED,
@@ -66,13 +67,23 @@ pub(crate) struct PartReview<'w, 'o> {
     pub(crate) edged_rows: HashSet<Id>,
     /// The record groups of the part as they are listed (its logical changes).
     pub(crate) groups: HashMap<Id, Vec<Id>>,
+    /// Content controls the review took content out of, each with where its placeholder
+    /// run would go, in the order met.
+    pub(crate) emptied_controls: Vec<(Id, Id)>,
+    /// The glossary's placeholder texts, by building block name.
+    pub(crate) placeholder_texts: &'o PlaceholderTexts,
     /// What the review says to look at (a table's grid it left as it is).
     pub(crate) warnings: Vec<String>,
 }
 
 impl<'w, 'o> PartReview<'w, 'o> {
     /// A review of `work` (a story part's root), the part's record groups `groups`.
-    pub(crate) fn new(work: &'w mut Work, accept: bool, orders: &'o Orders, groups: HashMap<Id, Vec<Id>>) -> Self {
+    pub(crate) fn new(
+        work: &'w mut Work,
+        accept: bool,
+        (orders, placeholder_texts): (&'o Orders, &'o PlaceholderTexts),
+        groups: HashMap<Id, Vec<Id>>,
+    ) -> Self {
         let mut maps = HashMap::new();
         for table in work.iter(work.root(), W, &["tbl"]) {
             maps.insert(table, super::grid::grid_map(work, table));
@@ -100,6 +111,8 @@ impl<'w, 'o> PartReview<'w, 'o> {
             moved_out: Vec::new(),
             edged_rows: HashSet::new(),
             groups,
+            emptied_controls: Vec::new(),
+            placeholder_texts,
             warnings: Vec::new(),
         }
     }
@@ -367,7 +380,15 @@ impl<'w, 'o> PartReview<'w, 'o> {
         for element in marks {
             self.mark(element);
         }
+        self.show_placeholders();
         self.tidy();
+    }
+
+    /// Every control the review emptied shows its placeholder (`super::placeholders`).
+    fn show_placeholders(&mut self) {
+        for control in std::mem::take(&mut self.emptied_controls) {
+            show(self.work, self.orders, control, self.placeholder_texts);
+        }
     }
 
     /// Remove a record, and the property element it leaves empty.
@@ -502,6 +523,9 @@ impl<'w, 'o> PartReview<'w, 'o> {
         } else {
             self.released.extend(crate::inline::relationship_ids(self.work, record));
             self.removing(record);
+            if let Some(control) = emptied_control(self.work, record) {
+                self.emptied_controls.push(control);
+            }
             self.work.remove(record);
         }
     }

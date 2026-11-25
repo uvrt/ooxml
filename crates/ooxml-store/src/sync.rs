@@ -10,17 +10,23 @@ use std::sync::Arc;
 #[cfg(loom)]
 pub(crate) use loom::sync::atomic::{AtomicU64, Ordering};
 #[cfg(loom)]
-pub(crate) use loom::sync::{Mutex, MutexGuard};
+pub(crate) use loom::sync::{Condvar, Mutex, MutexGuard};
 #[cfg(not(loom))]
 pub(crate) use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(not(loom))]
-pub(crate) use std::sync::{Mutex, MutexGuard};
+pub(crate) use std::sync::{Condvar, Mutex, MutexGuard};
 
 /// Lock `mutex`, taking the state as it is when an earlier holder panicked: every critical
 /// section in this crate computes all that can fail before it changes anything, so a panic
 /// leaves the state as it was.
 pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Wait on `condvar` with `guard`'s lock let go meanwhile (a panic elsewhere ignored, as
+/// [`lock`]).
+pub(crate) fn wait<'m, T>(condvar: &Condvar, guard: MutexGuard<'m, T>) -> MutexGuard<'m, T> {
+    condvar.wait(guard).unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// The published head: loads never wait for a writer.

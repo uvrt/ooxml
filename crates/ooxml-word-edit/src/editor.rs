@@ -66,7 +66,7 @@ pub struct Edited<O> {
     pub validation: Delta,
     /// How many times it was prepared.
     pub attempts: u32,
-    /// Whether it ran under the commit lock after conflicts.
+    /// Whether it ran behind the document's gate after conflicts.
     pub exclusive: bool,
     /// Where its time went.
     pub timing: EditTiming,
