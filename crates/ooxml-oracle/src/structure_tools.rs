@@ -70,11 +70,14 @@ fn registered(tool: &str, arguments: &Value, editing: &Editing<'_>) -> Option<To
         editing,
         version: &version,
     };
+    let mut effects = ooxml_tools::OpEffects::default();
     let mut env = CallEnv {
         cancel: editing.cancel,
         format: &outside,
+        effects: &mut effects,
     };
     let mut reply = tool.run(&arguments, &mut env);
+    effects.give_to(&mut reply);
     // the notes on what was read as what first among the reply's warnings
     notes.append(&mut reply.warnings);
     reply.warnings = notes;
