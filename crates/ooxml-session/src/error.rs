@@ -3,7 +3,6 @@
 //!
 //! Must not: lose which document or part an error is about.
 
-use crate::model::ModelError;
 use ooxml_base::BaseError;
 use ooxml_opc::OpcError;
 use ooxml_store::StoreError;
@@ -29,15 +28,13 @@ pub enum SessionError {
     /// The package refused it.
     #[error(transparent)]
     Package(#[from] OpcError),
-    /// The store refused it.
-    #[error(transparent)]
-    Store(#[from] StoreError<String, ModelError>),
-    /// A Word document's store refused it.
-    #[error(transparent)]
-    WordStore(#[from] StoreError<ooxml_word_edit::Key, ooxml_word_edit::ModelError>),
-    /// A Word document could not be read or edited.
-    #[error(transparent)]
-    Word(#[from] ooxml_word_edit::EditError),
+    /// A document's store refused it (any format's).
+    #[error("{0}")]
+    Store(Box<dyn std::error::Error + Send + Sync>),
+    /// The document's format could not read or change it (a Word document that cannot be
+    /// read or edited: the format's own error, which its code reads back by downcast).
+    #[error("{0}")]
+    Format(Box<dyn std::error::Error + Send + Sync>),
     /// A caller's own latest change is not the document's latest: others changed it since.
     #[error("the change that made state {step} is not the latest: {} later change(s)", later.len())]
     Entangled {
@@ -93,21 +90,20 @@ impl SessionError {
 }
 
 impl SessionError {
-    /// Whether it is the refusal of an id state given with a document's bytes (they open
-    /// alone, or with the state saved beside them).
+    /// A format's error.
     #[must_use]
-    pub fn refuses_state(&self) -> bool {
-        matches!(self, SessionError::Word(ooxml_word_edit::EditError::IdState(_)))
+    pub fn format(error: impl std::error::Error + Send + Sync + 'static) -> Self {
+        SessionError::Format(Box::new(error))
     }
+}
 
-    /// Whether the bytes are a package without a Word document's main part.
-    #[must_use]
-    pub fn not_word(&self) -> bool {
-        matches!(
-            self,
-            SessionError::Word(ooxml_word_edit::EditError::Word(
-                ooxml_word_model::WordError::NoMainPart(_)
-            ))
-        )
+/// Any model's store refusal: a format's store errors convert with `?` too.
+impl<K, E> From<StoreError<K, E>> for SessionError
+where
+    K: Ord + std::fmt::Debug + Send + Sync + 'static,
+    E: std::error::Error + Send + Sync + 'static,
+{
+    fn from(error: StoreError<K, E>) -> Self {
+        SessionError::Store(Box::new(error))
     }
 }

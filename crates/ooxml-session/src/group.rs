@@ -20,21 +20,40 @@
 //! Must not: run a tool, or let a group outlive the batch that opened it: the host closes
 //! it on every path (its guard; a dropped Python group takes its work back).
 
-use crate::document::Word;
 use crate::{CallContext, DocId, Session, SessionError};
 use ooxml_store::{TxnMark, TxnOwner};
+use std::any::Any;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 /// Where a document's step group was, for [`Session::revert_group`]; the mark
 /// [`Session::open_group`] gives names the group itself.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct GroupMark {
     /// Who holds the group's transaction.
     owner: TxnOwner,
     /// Where in it.
     mark: TxnMark,
-    /// A Word document's tracking author then (`None` inside: untracked).
-    tracking: Option<Option<String>>,
+    /// The format's own state then ([`crate::FormatDoc::group_state`]: a Word document's
+    /// tracking mode).
+    state: Option<Arc<dyn Any + Send + Sync>>,
+}
+
+impl std::fmt::Debug for GroupMark {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GroupMark")
+            .field("owner", &self.owner)
+            .field("mark", &self.mark)
+            .finish_non_exhaustive()
+    }
+}
+
+impl GroupMark {
+    /// Who holds the group's transaction.
+    #[must_use]
+    pub fn owner(&self) -> TxnOwner {
+        self.owner
+    }
 }
 
 /// The owner a thread's batches hold their transactions as: its own, never another's (the
@@ -61,7 +80,7 @@ impl Session {
         Ok(GroupMark {
             owner,
             mark,
-            tracking: document.word().map(Word::tracking),
+            state: document.doc.group_state(),
         })
     }
 
@@ -75,7 +94,7 @@ impl Session {
         Ok(GroupMark {
             owner: group.owner,
             mark,
-            tracking: document.word().map(Word::tracking),
+            state: document.doc.group_state(),
         })
     }
 
@@ -94,8 +113,8 @@ impl Session {
         let reverted = document
             .stored()
             .revert_group(mark.owner, mark.mark, context.caller.name())?;
-        if let (Some(word), Some(tracking)) = (document.word(), &mark.tracking) {
-            word.restore_tracking(tracking.clone());
+        if let Some(state) = &mark.state {
+            document.doc.restore_group(&**state);
         }
         Ok(reverted)
     }
@@ -129,57 +148,9 @@ impl Session {
     pub fn abandon_group(&self, id: &DocId, group: &GroupMark) -> Result<bool, SessionError> {
         let document = self.document(id)?;
         let dropped = document.stored().drop_group(group.owner);
-        if let (true, Some(word), Some(tracking)) = (dropped, document.word(), &group.tracking) {
-            word.restore_tracking(tracking.clone());
+        if let (true, Some(state)) = (dropped, &group.state) {
+            document.doc.restore_group(&**state);
         }
         Ok(dropped)
-    }
-}
-
-impl Session {
-    /// The reflow of what `id`'s open step group `group` did, measured once (a batch's
-    /// checks, after its last op): from the version the group started from to the version
-    /// its ops left, laid out by the call's layout, else the document's own engine -- only
-    /// where that engine laid out the version the group started from (`reflow_after_edit`);
-    /// `None` where nothing is measured (not a Word document, no change, no layout of the
-    /// start).
-    ///
-    /// # Errors
-    /// [`SessionError::NotOpen`].
-    pub fn group_reflow(
-        &self,
-        id: &DocId,
-        group: &GroupMark,
-        context: &CallContext,
-    ) -> Result<Option<serde_json::Value>, SessionError> {
-        let document = self.document(id)?;
-        let Some(word) = document.word() else {
-            return Ok(None);
-        };
-        let store = word.editor().store();
-        let (Some(start), Some(head)) = (store.txn_base(group.owner), store.txn_current(group.owner)) else {
-            return Ok(None);
-        };
-        if head.seq() == start.seq() {
-            return Ok(None);
-        }
-        let Some(layout) = context.layout.clone().or_else(|| self.own_pages(id)) else {
-            return Ok(None);
-        };
-        let cancel = crate::context::CallCancel::new(context, &*self.context.cancel, &*self.context.clock);
-        let layout_cancel = cancel.layout();
-        let limit = layout_cancel.as_ref().map(crate::context::LayoutCancel::limit);
-        let from = ooxml_tools_word::EditedFrom {
-            version: start.seq().0,
-            package: start.doc().package(),
-        };
-        Ok(ooxml_tools_word::reflow_after_edit(
-            &*layout,
-            &word.last_check,
-            from,
-            head.doc().package(),
-            head.doc().ids().aliases(),
-            (limit, &cancel),
-        ))
     }
 }

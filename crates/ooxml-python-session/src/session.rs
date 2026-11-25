@@ -13,7 +13,9 @@ use crate::options::{context_of, PyCallLayout, PyCallOptions};
 use crate::pages::PyPageSetup;
 use crate::version::PyVersion;
 use ooxml_base::Locale;
-use ooxml_session::{BlockAt, DocId, DocKind, HeldId, IdStateError, RetiredBy, Session, SessionConfig, SessionError};
+use ooxml_session::{DocId, DocKind, Session, SessionConfig, SessionError};
+use ooxml_session_word::prelude::*;
+use ooxml_session_word::{BlockAt, HeldId, IdStateError, RetiredBy, WordMade};
 use ooxml_store::StoreConfig;
 use ooxml_tools::compact;
 use ooxml_word_edit::EarlierIds;
@@ -61,21 +63,21 @@ pyo3::create_exception!(
 
 pub(crate) fn to_py(error: &SessionError) -> PyErr {
     let message = error.to_string();
-    if error.refuses_state() {
+    if ooxml_session_word::refuses_state(error) {
         return StateRefused::new_err(message);
     }
-    if error.not_word() {
+    if ooxml_session_word::not_word(error) {
         return NotWordPackage::new_err(message);
     }
     match error {
         SessionError::NotOpen { .. } => PyKeyError::new_err(message),
         SessionError::Kind(_) | SessionError::PartName(_) | SessionError::Package(_) => PyValueError::new_err(message),
         SessionError::Base(ooxml_base::BaseError::Cancelled) => PyTimeoutError::new_err(message),
-        SessionError::Word(_) => PyValueError::new_err(message),
+        SessionError::Format(_) => PyValueError::new_err(message),
         SessionError::Entangled { .. } | SessionError::RedoNotNext { .. } | SessionError::NewProblems { .. } => {
             PyValueError::new_err(message)
         }
-        SessionError::Store(_) | SessionError::WordStore(_) | SessionError::Base(_) => PyRuntimeError::new_err(message),
+        SessionError::Store(_) | SessionError::Base(_) => PyRuntimeError::new_err(message),
     }
 }
 
@@ -179,9 +181,9 @@ impl PySession {
                 ..StoreConfig::default()
             },
             locale,
-            pages: pages.map(|p| p.inner.clone()),
         };
-        let inner = Session::new(config, context(Arc::clone(&stop), tag));
+        let formats = ooxml_session_word::formats(pages.map(|p| p.inner.clone()));
+        let inner = Session::new(config, context(Arc::clone(&stop), tag), formats);
         Ok(Self {
             inner: Arc::new(inner),
             stop,
@@ -306,9 +308,16 @@ impl PySession {
             (compact(&Value::Object(result.to_json())), compact(&app), made)
         });
         let made = made.map(|m| {
-            let touched = m.touched.map(|t| Value::Array(t).to_string());
-            let validation = (m.validation.new, m.validation.fixed, m.validation.baseline);
-            let reflow = m.reflow.map(|r| r.to_string());
+            let word = WordMade::of(&m).cloned();
+            let touched = word
+                .as_ref()
+                .and_then(|w| w.touched.clone())
+                .map(|t| Value::Array(t).to_string());
+            let validation = word.as_ref().map_or_else(Default::default, |w| {
+                let v = w.validation.clone();
+                (v.new, v.fixed, v.baseline)
+            });
+            let reflow = word.and_then(|w| w.reflow).map(|r| r.to_string());
             (
                 m.first,
                 PyVersion { inner: m.last },

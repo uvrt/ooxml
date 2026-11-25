@@ -1,0 +1,31 @@
+[package]
+name = "ooxml-session-word"
+version = "0.1.0"
+description = "Word's format of the session: Word documents opened, their state, tool calls, checks, save gate, live view, pages"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ooxml-base.workspace = true
+ooxml-derive.workspace = true
+ooxml-xml.workspace = true
+ooxml-opc.workspace = true
+ooxml-store.workspace = true
+ooxml-tools.workspace = true
+ooxml-tools-word.workspace = true
+ooxml-session.workspace = true
+ooxml-word-edit.workspace = true
+ooxml-word-model.workspace = true
+ooxml-word-pages.workspace = true
+ooxml-numfmt.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+ooxml-zip.workspace = true
+ooxml-fonts.workspace = true
+
+[lints]
+workspace = true

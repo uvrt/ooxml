@@ -8,7 +8,8 @@
 use crate::budget::{PyMemoryBudget, OWN_BUDGET};
 use crate::fonts::PyWordFonts;
 use ooxml_base::Locale;
-use ooxml_session::{MemoryBudget, SessionPages};
+use ooxml_session::MemoryBudget;
+use ooxml_session_word::SessionPages;
 use ooxml_tools_word::PageSetup;
 use ooxml_word_layout::paint::GlyphSize;
 use ooxml_word_pages::EngineOptions;

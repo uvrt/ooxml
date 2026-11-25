@@ -17,6 +17,7 @@ use crate::locale::locale_of;
 use crate::raster::PyPageRaster;
 use crate::version::PyVersion;
 use ooxml_session::{CallContext, DocId, DocNames, Opened};
+use ooxml_session_word::WordHost;
 use ooxml_tools::{BudgetSpan, ImageBudget};
 use ooxml_tools_word::{Blobs, HostTable, HostTables, LayoutCounts, Placer, Sources, Written};
 use pyo3::exceptions::PyValueError;
@@ -240,26 +241,29 @@ impl PyCallOptions {
         written: Option<&str>,
     ) -> PyResult<Self> {
         let mut built = context.map(|c| c.inner.clone()).unwrap_or_default();
+        // what a Word call's host hands it beside (the writing's counts and spacing first)
+        let mut host = WordHost::of(&built).cloned().unwrap_or_default();
         if let Some(documents) = documents {
             built.at.clone_from(&documents.at);
             built.names = documents.names.clone();
-            built.tables.clone_from(&documents.tables);
-            built.sources.clone_from(&documents.sources);
+            host.tables.clone_from(&documents.tables);
+            host.sources.clone_from(&documents.sources);
         }
         if let Some(layout) = layout {
-            built.placer.clone_from(&layout.placer);
-            built.layout.clone_from(&layout.pages);
-            built.raster.clone_from(&layout.raster);
+            host.placer.clone_from(&layout.placer);
+            host.layout.clone_from(&layout.pages);
+            host.raster.clone_from(&layout.raster);
             built.image_budgets.clone_from(&layout.image_budgets);
         }
-        built.blobs = blobs.map(|b| Arc::new(PyBlobs(b)) as Arc<dyn Blobs>);
+        host.blobs = blobs.map(|b| Arc::new(PyBlobs(b)) as Arc<dyn Blobs>);
         if let Some(written) = written {
-            built.written = serde_json::from_str::<Value>(written)
+            host.written = serde_json::from_str::<Value>(written)
                 .ok()
                 .as_ref()
                 .and_then(Written::list_from_json)
                 .ok_or_else(|| PyValueError::new_err("written is a JSON list of the values written by reference"))?;
         }
+        built.host = host.into_host();
         Ok(Self { context: built, limit })
     }
 }

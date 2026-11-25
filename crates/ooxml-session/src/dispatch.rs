@@ -7,16 +7,15 @@
 //! Must not: hold a lock while a handler runs, or implement a tool.
 
 use crate::batch::{MAX_READ_BATCH_CHARS, READ_BATCH};
-use crate::call::Call;
-use crate::context::{revision_date, CallCancel, LayoutCancel};
-use crate::document::{Document, Word};
+use crate::context::{revision_date, CallCancel};
+use crate::format::{Finished, FormatRun};
 use crate::session::Opened;
 use crate::undo::UNDO;
 use crate::{CallContext, DocId, DocKind, DocNames, Session, SessionError};
 use ooxml_base::Cancel;
-use ooxml_tools::{Accepted, CallEnv, Outcome, Refusal, ToolError, ToolResult, ToolSpec, WayOut};
-use ooxml_tools_word::{Made, Placer};
+use ooxml_tools::{Accepted, Refusal, ToolError, ToolResult, ToolSpec, WayOut};
 use serde_json::{Map, Value};
+use std::any::Any;
 use std::collections::BTreeMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::Ordering;
@@ -41,14 +40,10 @@ pub(crate) struct CallState<'p> {
     names: DocNames,
     /// The name the call gives its own document.
     named: String,
-    placer: Option<Arc<dyn Placer>>,
-    /// The layout of the call's document: the host's where it gives one, else the
-    /// session's own engine of the document (set once the document is known).
-    layout: Option<Arc<dyn ooxml_tools_word::WordLayout>>,
-    /// The versions an editing tool's edits made.
-    made: Mutex<Option<Made>>,
-    /// The call's limit on laying a document out.
-    layout_limit: Option<ooxml_tools_word::LayoutLimit<'p>>,
+    /// What the call's edits made, as its document's format keeps it.
+    made: Mutex<Option<Box<dyn Any + Send>>>,
+    /// The date the call's writes carry.
+    date: String,
 }
 
 /// The versions one changing call made ([`Session::edit`]): its first edit's number and its
@@ -62,16 +57,9 @@ pub struct CallMade {
     pub before: u64,
     /// The version its last edit made.
     pub last: Opened,
-    /// What the call's edit touched (`touched` entries), where it made one version (else
-    /// `None`: [`Opened::touched_since`] the version before `first` says).
-    pub touched: Option<Vec<Value>>,
-    /// The validation delta of `last` against the problems the document opened with.
-    pub validation: ooxml_word_edit::validate::Delta,
-    /// The reflow its checks report (docx-agent's `reflow_json` form, or `"stale: call
-    /// check"`, or a `"timeout: …"` where laying `last` out passed the call's limit), where
-    /// the call had the host's layout and the version its first edit was applied to was laid
-    /// out (a check saw it, or the engine laid it out last); else `None`.
-    pub reflow: Option<Value>,
+    /// What its format says of the call beside ([`Finished::format`]: a Word call's touched,
+    /// validation and reflow, `ooxml-session-word`'s `WordMade`).
+    pub format: Option<Arc<dyn Any + Send + Sync>>,
 }
 
 /// The versions `context` names, by document.
@@ -163,7 +151,6 @@ impl Session {
     ) -> (ToolResult<Value>, Option<CallMade>) {
         self.counts.calls.fetch_add(1, Ordering::Relaxed);
         let cancel = CallCancel::new(context, &*self.context.cancel, &*self.context.clock);
-        let layout_cancel = cancel.layout();
         let mut state = CallState {
             opened: None,
             warnings: Vec::new(),
@@ -171,10 +158,11 @@ impl Session {
             others: Vec::new(),
             names: context.names.clone(),
             named: String::new(),
-            placer: context.placer.clone(),
-            layout: context.layout.clone(),
             made: Mutex::new(None),
-            layout_limit: layout_cancel.as_ref().map(LayoutCancel::limit),
+            date: context
+                .date
+                .clone()
+                .unwrap_or_else(|| revision_date(self.context.clock.now())),
         };
         // a panic in the handler is the call's internal failure (crate::panics), never the host's
         let retry = arguments.clone();
@@ -192,43 +180,37 @@ impl Session {
         if let ooxml_tools::Outcome::Failed(error) = &result.outcome {
             self.counts.failed(name, error);
         }
-        let CallState {
-            opened,
-            mut warnings,
-            made,
-            named,
-            layout,
-            layout_limit,
-            ..
-        } = state;
-        let made = made.into_inner().unwrap_or_else(PoisonError::into_inner);
+        let made = state.made.get_mut().unwrap_or_else(PoisonError::into_inner).take();
         let mut call_made = None;
-        if let Some(opened) = opened {
-            result.doc = Some(named);
+        if let Some(opened) = state.opened.take() {
+            result.doc = Some(state.named.clone());
             // a changing call's version is the last it made (else the head it left); a
             // reading call's, the one read
             let mutates = self.registry.named(name).is_some_and(|t| t.spec().flags.mutates);
             let document = self.document(&opened.id).ok();
-            if let (Some(made), Some(document)) = (&made, &document) {
-                Self::noted(made, document, name, context);
-            }
-            call_made = made.zip(document.as_ref()).map(|(made, document)| {
-                let one = made.first.seq() == made.last.seq();
-                // the host's layout, else the session's own engine of the document: measured
-                // only where it laid out the version before (`reflow_after_edit`: a document
-                // never laid out is not laid out for it), and never inside a batch (its checks
-                // measure once, after its last op)
-                let reflow = layout
-                    .as_deref()
-                    .filter(|_| !made.batch)
-                    .and_then(|layout| crate::reflowed::after_edit(layout, document, &made, (layout_limit, &cancel)));
+            let finished = made.zip(document.as_ref()).and_then(|(made, document)| {
+                let none = Map::new();
+                let run = self.format_run(name, &none, &opened, &state, context, &cancel);
+                let finished = document.doc.finish(made, &run)?;
+                // its step and who made it, unless it ran in a batch (whose close makes the step)
+                if !finished.batch {
+                    document.stepped(finished.last.seq(), finished.last.number(), Some(name), context);
+                }
+                Some(finished)
+            });
+            call_made = finished.zip(document.as_ref()).map(|(finished, document)| {
+                let Finished {
+                    first,
+                    before,
+                    last,
+                    format,
+                    ..
+                } = finished;
                 CallMade {
-                    reflow,
-                    first: made.first.seq().0,
-                    before: made.before.number(),
-                    touched: one.then(|| made.touched.iter().map(crate::changes::touched_json).collect()),
-                    validation: made.validation,
-                    last: Self::opened(&opened.id, document, Word::any(made.last)),
+                    first,
+                    before,
+                    last: Self::opened(&opened.id, document, last),
+                    format,
                 }
             });
             // (state numbers, as the tool layer numbers the document's states)
@@ -239,29 +221,34 @@ impl Session {
                     .unwrap_or_else(|| opened.number()),
             );
         }
+        let mut warnings = state.warnings;
         warnings.append(&mut result.warnings);
         result.warnings = warnings;
         result.app.tool = name.to_owned();
         (result, call_made)
     }
 
-    /// What `name`'s edits `made` to `document` noted: the ids each version retired, by
-    /// whom, and the call's step and who made it (unless it ran in a batch, whose close
-    /// makes the step).
-    fn noted(made: &Made, document: &Document, name: &str, context: &CallContext) {
-        if let Some(word) = document.word() {
-            for (seq, delta) in &made.ids {
-                let by = crate::retired::Made {
-                    seq: seq.0,
-                    caller: context.caller.name(),
-                    tool: Some(name),
-                    history: false,
-                };
-                word.retired().note(&by, delta);
-            }
-        }
-        if !made.batch {
-            document.stepped(made.last.seq().0, made.last.number(), Some(name), context);
+    /// The run of `name` with `arguments` on `opened`, as its format is handed it.
+    fn format_run<'a>(
+        &'a self,
+        name: &'a str,
+        arguments: &'a Map<String, Value>,
+        opened: &'a Opened,
+        state: &'a CallState<'_>,
+        context: &'a CallContext,
+        cancel: &'a CallCancel<'a>,
+    ) -> FormatRun<'a> {
+        FormatRun {
+            tool: name,
+            arguments,
+            doc: opened,
+            named: &state.named,
+            others: &state.others,
+            context,
+            cancel,
+            date: &state.date,
+            locale: context.locale.as_ref().or(self.config.locale.as_ref()),
+            made: &state.made,
         }
     }
 
@@ -270,7 +257,7 @@ impl Session {
         name: &str,
         arguments: Value,
         context: &CallContext,
-        cancel: &dyn Cancel,
+        cancel: &CallCancel<'_>,
         state: &mut CallState<'_>,
     ) -> ToolResult<Value> {
         let found = self.found(name, arguments, cancel, state);
@@ -278,52 +265,15 @@ impl Session {
             Ok(found) => found,
             Err(error) => return ToolResult::failed(error),
         };
-        let given = arguments.clone();
         let Some(doc) = state.opened.as_ref() else {
             return ToolResult::failed(ToolError::internal("no document", "session:dispatch"));
         };
-        let document = self.document(&doc.id).ok();
-        let word = document.as_deref().and_then(Document::word);
-        let call = Call {
-            doc,
-            name: &state.named,
-            word,
-            caller: &context.caller,
-            cancel,
-            date: context
-                .date
-                .clone()
-                .unwrap_or_else(|| revision_date(self.context.clock.now())),
-            setup: ooxml_word_edit::Setup {
-                as_given: context.as_given,
-            },
-            locale: context.locale.as_ref().or(self.config.locale.as_ref()),
-            made: &state.made,
-            layout: state.layout.as_deref(),
-            layout_limit: state.layout_limit,
-            raster: context.raster.as_deref(),
-            image_budgets: &context.image_budgets,
-            blobs: context.blobs.as_deref(),
-            written: &context.written,
-            others: &state.others,
-            tables: context.tables.as_deref(),
-            sources: &context.sources,
-            counts: context.counts,
-            limits: context.limits,
-            tracking: word.and_then(Word::tracking),
+        let document = match self.document(&doc.id) {
+            Ok(document) => document,
+            Err(error) => return ToolResult::failed(error.to_tool_error()),
         };
-        let mut env = CallEnv { cancel, format: &call };
-        let result = tool.run(&arguments, &mut env);
-        // An id a version removed, refused as one the document lacks: said as such.
-        match (&result.outcome, call.word) {
-            (Outcome::Failed(error), Some(word)) => {
-                let replaced = call.doc.word().map(|w| w.ids().replaced());
-                let none = BTreeMap::new();
-                crate::refused::removed(word.retired(), replaced.unwrap_or(&none), &given, error)
-                    .map_or(result, ToolResult::failed)
-            }
-            _ => result,
-        }
+        let run = self.format_run(name, &arguments, doc, state, context, cancel);
+        document.doc.run(&*tool, &run)
     }
 
     /// The tool a call names, its arguments as meant, and the document it reads (kept in
@@ -349,10 +299,7 @@ impl Session {
         state
             .warnings
             .extend(spec.ignored_for(Some(doc.kind.as_str()), &mut arguments));
-        if state.layout.is_none() {
-            state.layout = self.own_pages(&doc.id);
-        }
-        state.opened = Some(doc.with_placer(state.placer.clone()));
+        state.opened = Some(doc);
         Ok((Arc::clone(tool), arguments))
     }
 
@@ -363,7 +310,7 @@ impl Session {
         name: &str,
         arguments: Value,
         context: &CallContext,
-        cancel: &dyn Cancel,
+        cancel: &CallCancel<'_>,
         state: &mut CallState<'_>,
         within: &str,
     ) -> ToolResult<Value> {

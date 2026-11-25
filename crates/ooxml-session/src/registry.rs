@@ -4,8 +4,8 @@
 //!
 //! The tools register themselves where they are defined: each format registers its tools
 //! for its kind ([`crate::Format::register`]) through a [`Registrar`] of its types the
-//! registry hands it ([`Registry::registrar`]), and [`Registry::standard`] holds the
-//! formats' tools. To add a tool, touch: its own files in its `ooxml-tools-*` crate (its
+//! registry hands it ([`Registry::registrar`]), and [`Registry::of`] holds the formats'
+//! tools. To add a tool, touch: its own files in its `ooxml-tools-*` crate (its
 //! module with its `register` function, named in its group's `mod.rs`; its arguments,
 //! description, tests and `tests/golden/<name>.json`) and its oracle cases (a function of
 //! its own marked `@CASES` in `ooxml-oracle/python/word_*_cases.py`) -- not this file.
@@ -58,17 +58,9 @@ impl Registry {
         Self::default()
     }
 
-    /// The tools of the formats Rust holds (Word's, [`crate::WordFormat`]), each registered
-    /// where it is defined, then `undo` over the documents' histories and `read_batch` over
-    /// the reading tools. The order is the export's: the registration's, `describe` first.
-    #[must_use]
-    pub fn standard() -> Self {
-        Self::of(&[&crate::WordFormat])
-    }
-
     /// The tools `formats` register, in their order.
     #[must_use]
-    pub fn of(formats: &[&dyn Format]) -> Self {
+    pub fn of(formats: &[Arc<dyn Format>]) -> Self {
         let mut registry = Self::empty();
         for format in formats {
             format.register(&mut registry);

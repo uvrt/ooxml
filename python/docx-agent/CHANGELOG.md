@@ -5,6 +5,54 @@ docx-agent has not been released to PyPI. Each version that reaches `main` is ta
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) has the detail of every phase.
 
+## 0.2.2 -- v2026.11.25.1
+
+### Fixed
+
+- `word_format_table`, `word_edit_table` (row and column actions, merge and split, `set_cells` with its fills, `set_cells`
+  from rows and `sync`), `edit_chart`'s data and style actions and `word_controls` `fill` work out their plan in their
+  own edit, on the version it is applied to, and read what it comes from: the table's rows, cells, merges and pending
+  changes; the chart's series and categories (and the styles part its new text's language comes from); the control's
+  kind. A row, column, series or control another caller changes at the same time is now a conflict, and the call is
+  planned again on the newer version, as if the two had run one at a time. Before, the plan was read from the head
+  before the edit began, so a call could apply row indices, a fill's range, a sync's matches or a series index worked
+  out from the version before the other caller's change. The reply after such a call now reads the version the call
+  made, not a later caller's. No reply or refusal changes otherwise.
+
+- The tools that plan an edit from what the document holds now make that plan in the edit's own transaction, on the
+  version the edit is applied to, and read what it depends on there: the place a `find` names in `word_controls`,
+  `word_drawings`, `word_links`, `word_notes`, `word_fields` and `word_comments`; `word_format`'s `find` ranges
+  and its `like` sample's look; `replace_text`'s "exactly one match" check; `word_lists`' check of paragraphs
+  their style numbers; a heading's section in `word_move` and `word_copy_from`, and `word_move`'s
+  `after_section`; and `after: "end"` in `word_move`, `word_sections` and `word_fields`. An edit by another caller
+  at the same time that moves the found text, makes a second match, changes the sample, puts a block into the
+  section or at the end is now a conflict, and the call is planned again on the newer version, with the result
+  of the two calls made one after the other. Before, the plan was made on the head before the edit began, so the
+  edit could apply offsets, ids or a last block from the version before the other edit. `word_delete`'s report
+  on the file's original text now reads the version the delete made, not a later one. No reply or refusal
+  changes.
+
+- `word_inspect` lists a paragraph whose mark is a pending deletion as `joins` on the next block, whatever
+  that block is. Before, `joins` was only on a following paragraph. When the next block was a table or a
+  content control, the paragraph was listed only inside it, on the first cell's or the control's first
+  paragraph, and not among the body's blocks. A host that maps the body's blocks to sections could not
+  place it. Now:
+  - a table lists it in `joins` (Accept All joins it into the first cell);
+  - a content control lists it in `joins` (Accept All joins it into the control's first paragraph);
+  - an empty control passes it on to the block after the control.
+
+  The paragraph that takes the text in keeps its own `joins`. The final view is unchanged: as in Word's Accept
+  All (Word 16.106, measured), a deleted paragraph before a table or a control goes, and the next block keeps
+  its text.
+
+- `word_format_table` with `width_of: "body"` works the body's lines out in its own edit, on the version it is
+  applied to, and reads what they come from: the blocks from the paragraph beside the table to the table, the
+  styles and numbering parts, and the section or the cell the table sits in. A paragraph put between the table and
+  the paragraph before it by another caller at the same time is now a conflict, and the format is prepared again
+  with the new paragraph's indents. Before, the lines were read from the head before the edit began, so the edit
+  could commit a width worked out from the version before the insert. The room a width in percent or AutoFit to
+  Window reads is now read by key too. No reply or refusal changes.
+
 ## 0.2.1 -- v2026.11.25
 
 ### Changed
