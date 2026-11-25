@@ -18,3 +18,4 @@ mod row_deletions;
 mod rows_written;
 mod session;
 mod values;
+mod writers_bench;
