@@ -1,0 +1,3602 @@
+[
+ {
+  "stream": "docx/tests/_import",
+  "case": "#1",
+  "why": "replays differently: raised",
+  "calls": null
+ },
+ {
+  "stream": "docx/tests/_import",
+  "case": "#3",
+  "why": "replays differently: raised",
+  "calls": null
+ },
+ {
+  "stream": "docx/tests/_import",
+  "case": "#4",
+  "why": "replays differently: raised",
+  "calls": null
+ },
+ {
+  "stream": "docx/tests/test_addresses",
+  "case": "test_addresses::test_a_span_takes_refs_at_both_ends#1",
+  "why": "replays differently: result.changed, result.checks, result.created",
+  "calls": null
+ },
+ {
+  "stream": "docx/tests/test_check_speed_r57",
+  "case": "test_check_speed_r57::test_numbers_name_their_pages_and_a_range_keeps_its_own#2",
+  "why": "the application's own tools (ds_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_check_speed_r57",
+  "case": "test_check_speed_r57::test_numbers_on_pages_keep_only_the_texts_drawn_there#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_dataset_markdown",
+  "case": "test_dataset_markdown::test_a_reference_in_a_sentence_writes_the_text_on_one_line#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_dataset_markdown",
+  "case": "test_dataset_markdown::test_a_reference_standing_alone_writes_its_markdown#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_dataset_markdown",
+  "case": "test_dataset_markdown::test_a_table_cell_takes_the_value_itself#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_dataset_markdown",
+  "case": "test_dataset_markdown::test_a_value_without_markdown_is_written_as_before#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_dataset_markdown",
+  "case": "test_dataset_markdown::test_from_writes_the_fields_markdown_as_list_items_nested#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_dataset_markdown",
+  "case": "test_dataset_markdown::test_from_writes_the_fields_markdown_as_list_items_nested#2",
+  "why": "a document adopted from Python objects",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_a_cell_or_paragraph_target_is_text_as_before#1",
+  "why": "the application's own tools (ds_notes)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_a_cells_from_is_one_value_with_a_number_format#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_a_cells_own_from_or_text_wins_and_the_top_level_value_fills_the_rest#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_a_cells_value_refusals_name_the_way_out[both]#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_a_cells_value_refusals_name_the_way_out[neither]#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_a_cells_value_refusals_name_the_way_out[row]#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_a_comment_on_a_table_or_row_is_anchored_as_word_anchors_one#1",
+  "why": "the application's own tools (ds_notes)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_a_comment_on_a_tables_last_row_ends_after_the_table#1",
+  "why": "the application's own tools (ds_notes)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_a_field_is_the_same_markdown_as_typing_it#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_a_field_is_the_same_markdown_as_typing_it#2",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_a_figure_in_a_sentence_is_reported_as_before#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_a_strict_placeholder_beside_a_cells_from_is_no_text#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_a_tables_options_with_one_field_are_refused#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_a_top_level_from_of_rows_beside_cells_names_what_to_drop_for_each_intent[d:notes/#1:#2]#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_a_top_level_from_of_rows_beside_cells_names_what_to_drop_for_each_intent[d:notes]#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_a_top_level_one_value_from_alone_gives_the_call_that_works#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_a_top_level_one_value_from_with_places_is_each_cells#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_a_value_that_is_not_text_is_refused_with_the_way_out#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_an_unknown_dataset_row_or_field_names_what_there_is[column]#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_an_unknown_dataset_row_or_field_names_what_there_is[dataset]#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_an_unknown_dataset_row_or_field_names_what_there_is[key]#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_an_unknown_dataset_row_or_field_names_what_there_is[row]#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_deleting_around_a_commented_table_keeps_the_document_whole[paragraph after the table]#1",
+  "why": "the application's own tools (ds_notes)",
+  "calls": 9
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_deleting_around_a_commented_table_keeps_the_document_whole[row after the row]#1",
+  "why": "the application's own tools (ds_notes)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_deleting_around_a_commented_table_keeps_the_document_whole[the commented row]#1",
+  "why": "the application's own tools (ds_notes)",
+  "calls": 8
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_deleting_around_a_commented_table_keeps_the_document_whole[the commented table]#1",
+  "why": "the application's own tools (ds_notes)",
+  "calls": 8
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_each_paragraph_keeps_the_field_as_its_source#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_every_cell_with_its_own_value_leaves_the_top_level_one_unused_said#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_from_writes_the_fields_markdown#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_markdown_from_is_refused_as_an_unknown_argument_naming_from#1",
+  "why": "a document adopted from Python objects",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_one_field_of_another_documents_table#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_rows_are_still_a_table#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_set_cells_text_without_references_is_unchanged#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_set_text_writes_a_field_and_says_where#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_several_fields_in_one_call_each_with_its_blocks#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_tables_in_fields_line_up_with_their_separator#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_dataset_text",
+  "case": "test_dataset_text::test_the_top_level_value_fills_a_column_entry_with_rows#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_grid_mismatch",
+  "case": "test_grid_mismatch::test_rows_a_sync_adds_beside_a_tracked_column_deletion_go_with_it#1",
+  "why": "the application's own tools (shelf_rows)",
+  "calls": 9
+ },
+ {
+  "stream": "docx/tests/test_icons_minsizes",
+  "case": "test_icons_minsizes::test_writers_and_check_report_text_below_its_kinds_minimum#1",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_id_state",
+  "case": "test_id_state::test_writers_on_threads_after_a_reopen_never_take_a_retired_id#3",
+  "why": "calls from several threads at once",
+  "calls": 64
+ },
+ {
+  "stream": "docx/tests/test_keep_trials",
+  "case": "test_keep_trials::test_checks_with_trials_and_edits_at_once_all_finish#1",
+  "why": "calls from several threads at once",
+  "calls": 9
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_a_bare_language_lists_its_own_country_first#1",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_a_document_without_a_theme_language_gets_one#1",
+  "why": "the application's own formats",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_a_style_alone#1",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_a_tag_word_does_not_know_is_refused_with_the_ones_that_would_do[-fr-FR]#1",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_a_tag_word_does_not_know_is_refused_with_the_ones_that_would_do[fr-XX-fr-FR]#1",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_a_tag_word_does_not_know_is_refused_with_the_ones_that_would_do[fr-be-x-test-fr-BE]#1",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_a_tag_word_does_not_know_is_refused_with_the_ones_that_would_do[fr-fr-BE]#1",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_a_tag_word_does_not_know_is_refused_with_the_ones_that_would_do[xx-YY-en-US]#1",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_an_english_template_set_to_belgian_french_is_written_with_french_spacing#1",
+  "why": "the application's own formats",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_belgian_dutch_gets_no_french_rules#1",
+  "why": "the application's own formats",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_east_asian_and_complex_script_languages_go_where_word_writes_them#1",
+  "why": "the application's own formats",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_it_writes_what_a_new_document_in_the_language_has#1",
+  "why": "the application's own formats",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_one_undo_step_and_a_no_op_is_not_an_error#1",
+  "why": "the application's own formats",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_runs_in_the_template_s_own_language_say_they_stay#1",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_runs_keep_their_own_tags#1",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_styles_stating_the_old_default_follow_and_others_keep_theirs#1",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_tags_are_read_as_word_reads_them#1",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_tags_are_read_as_word_reads_them#2",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_tags_are_read_as_word_reads_them#3",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_tags_are_read_as_word_reads_them#4",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_tags_are_read_as_word_reads_them#5",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_tags_are_read_as_word_reads_them#6",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_the_rule_reads_only_the_attribute_the_language_is_written_in#1",
+  "why": "the application's own formats",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_the_template_s_own_language_follows_and_other_languages_stay_named[None]#1",
+  "why": "the application's own formats",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_the_template_s_own_language_follows_and_other_languages_stay_named[en-US]#1",
+  "why": "the application's own formats",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_the_template_s_own_language_follows_and_other_languages_stay_named[nl-BE]#1",
+  "why": "the application's own formats",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_the_tool_refuses_with_the_way_out#1",
+  "why": "the application's own formats",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_undo_through_the_session#1",
+  "why": "the application's own formats",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_without_a_default_or_normal_the_language_most_styles_state[languages0-own0]#1",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_without_a_default_or_normal_the_language_most_styles_state[languages1-own1]#1",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_without_a_default_or_normal_the_language_most_styles_state[languages2-own2]#1",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_without_a_default_or_normal_the_language_most_styles_state[languages3-own3]#1",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_language",
+  "case": "test_language::test_without_a_default_or_normal_the_language_most_styles_state[languages4-own4]#1",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_liveview",
+  "case": "test_liveview::test_an_edit_changes_the_pages_it_draws_on#1",
+  "why": "replays differently: result.checks.reflow, result.checks.reflow.changed[0], result.checks.reflow.pages[0]",
+  "calls": null
+ },
+ {
+  "stream": "docx/tests/test_liveview",
+  "case": "test_liveview::test_an_older_tokens_page_is_that_versions#1",
+  "why": "replays differently: result.checks.reflow, result.checks.reflow.changed[0], result.checks.reflow.pages[0]",
+  "calls": null
+ },
+ {
+  "stream": "docx/tests/test_liveview",
+  "case": "test_liveview::test_views_are_read_while_another_thread_edits#1",
+  "why": "replays differently: result.checks.reflow, result.checks.reflow.changed[0], result.checks.reflow.pages[0]",
+  "calls": null
+ },
+ {
+  "stream": "docx/tests/test_numbers",
+  "case": "test_numbers::test_a_table_placed_from_a_source_and_a_range_narrow_what_is_read#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_numbers",
+  "case": "test_numbers::test_deleted_text_a_header_and_a_table_of_contents_are_not_read#1",
+  "why": "a document adopted from Python objects",
+  "calls": 8
+ },
+ {
+  "stream": "docx/tests/test_numbers",
+  "case": "test_numbers::test_markdown_written_by_reference_is_kept_too#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_numbers",
+  "case": "test_numbers::test_numbers_alone_runs_no_other_check_and_a_bad_range_says_the_way_out#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_numbers",
+  "case": "test_numbers::test_paragraphs_and_cells_are_read_with_their_page#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_numbers",
+  "case": "test_numbers::test_replace_everywhere_keeps_each_place#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_numbers",
+  "case": "test_numbers::test_the_fix_writes_by_reference_and_the_number_is_left_out_after#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_numbers",
+  "case": "test_numbers::test_written_values_follow_their_text_and_go_when_it_changes#1",
+  "why": "a document adopted from Python objects",
+  "calls": 7
+ },
+ {
+  "stream": "docx/tests/test_original_loss_r57",
+  "case": "test_original_loss_r57::test_a_column_deleted_names_the_files_text_it_removed[no_paraids-tracked]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_original_loss_r57",
+  "case": "test_original_loss_r57::test_a_column_deleted_names_the_files_text_it_removed[no_paraids-untracked]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_original_loss_r57",
+  "case": "test_original_loss_r57::test_a_column_deleted_names_the_files_text_it_removed[paraids-tracked]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_original_loss_r57",
+  "case": "test_original_loss_r57::test_a_column_deleted_names_the_files_text_it_removed[paraids-untracked]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_original_loss_r57",
+  "case": "test_original_loss_r57::test_a_column_deleted_names_the_files_text_it_removed[paraids-untracked]#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_original_loss_r57",
+  "case": "test_original_loss_r57::test_a_paragraph_made_this_session_deleted_says_nothing#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_original_loss_r57",
+  "case": "test_original_loss_r57::test_a_row_deleted_names_its_cells_and_undo_takes_it_back[tracked]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_original_loss_r57",
+  "case": "test_original_loss_r57::test_a_row_deleted_names_its_cells_and_undo_takes_it_back[untracked]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_original_loss_r57",
+  "case": "test_original_loss_r57::test_an_old_describing_comment_goes_when_its_table_is_settled#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_original_loss_r57",
+  "case": "test_original_loss_r57::test_an_old_describing_comment_goes_when_its_table_is_settled#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_original_loss_r57",
+  "case": "test_original_loss_r57::test_an_old_describing_comment_is_kept_and_its_refusal_names_the_way_out[delete_column-2]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_original_loss_r57",
+  "case": "test_original_loss_r57::test_an_old_describing_comment_is_kept_and_its_refusal_names_the_way_out[delete_column-2]#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_original_loss_r57",
+  "case": "test_original_loss_r57::test_an_old_describing_comment_is_kept_and_its_refusal_names_the_way_out[delete_row-0]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_original_loss_r57",
+  "case": "test_original_loss_r57::test_an_old_describing_comment_is_kept_and_its_refusal_names_the_way_out[delete_row-0]#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_original_loss_r57",
+  "case": "test_original_loss_r57::test_check_lists_the_files_text_a_pending_deletion_removes#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_original_loss_r57",
+  "case": "test_original_loss_r57::test_check_says_nothing_of_untracked_deletions_or_an_earlier_sessions#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_original_loss_r57",
+  "case": "test_original_loss_r57::test_removing_only_this_sessions_own_says_nothing[tracked]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_original_loss_r57",
+  "case": "test_original_loss_r57::test_removing_only_this_sessions_own_says_nothing[tracked]#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 7
+ },
+ {
+  "stream": "docx/tests/test_original_loss_r57",
+  "case": "test_original_loss_r57::test_removing_only_this_sessions_own_says_nothing[untracked]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_original_loss_r57",
+  "case": "test_original_loss_r57::test_removing_only_this_sessions_own_says_nothing[untracked]#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_original_loss_r57",
+  "case": "test_original_loss_r57::test_sync_remove_names_the_rows_text#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_original_loss_r57",
+  "case": "test_original_loss_r57::test_tracked_structure_changes_write_no_comment#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 8
+ },
+ {
+  "stream": "docx/tests/test_original_loss_r57",
+  "case": "test_original_loss_r57::test_word_delete_of_a_table_a_paragraph_and_a_span[tracked]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_original_loss_r57",
+  "case": "test_original_loss_r57::test_word_delete_of_a_table_a_paragraph_and_a_span[tracked]#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_original_loss_r57",
+  "case": "test_original_loss_r57::test_word_delete_of_a_table_a_paragraph_and_a_span[tracked]#3",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_original_loss_r57",
+  "case": "test_original_loss_r57::test_word_delete_of_a_table_a_paragraph_and_a_span[tracked]#4",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_original_loss_r57",
+  "case": "test_original_loss_r57::test_word_delete_of_a_table_a_paragraph_and_a_span[untracked]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_original_loss_r57",
+  "case": "test_original_loss_r57::test_word_delete_of_a_table_a_paragraph_and_a_span[untracked]#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_original_loss_r57",
+  "case": "test_original_loss_r57::test_word_delete_of_a_table_a_paragraph_and_a_span[untracked]#3",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_original_loss_r57",
+  "case": "test_original_loss_r57::test_word_delete_of_a_table_a_paragraph_and_a_span[untracked]#4",
+  "why": "the application's own tools (rows_put)",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_own_rows",
+  "case": "test_own_rows::test_a_control_deleted_with_its_table_deletes_the_table_tracked#1",
+  "why": "the application's own tools (rows_keep)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_own_rows",
+  "case": "test_own_rows::test_a_paragraph_still_keeping_two_tables_apart_stays#1",
+  "why": "the application's own tools (rows_keep)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_own_rows",
+  "case": "test_own_rows::test_a_row_inserted_then_deleted_leaves_no_change#1",
+  "why": "the application's own tools (rows_keep)",
+  "calls": 7
+ },
+ {
+  "stream": "docx/tests/test_own_rows",
+  "case": "test_own_rows::test_a_row_with_text_typed_into_it_goes_too#1",
+  "why": "the application's own tools (rows_keep)",
+  "calls": 7
+ },
+ {
+  "stream": "docx/tests/test_own_rows",
+  "case": "test_own_rows::test_a_table_one_inserted_beside_a_table_goes_with_the_paragraph_it_came_with[between]#1",
+  "why": "the application's own tools (rows_keep)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_own_rows",
+  "case": "test_own_rows::test_a_table_one_inserted_beside_a_table_goes_with_the_paragraph_it_came_with[end]#1",
+  "why": "the application's own tools (rows_keep)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_own_rows",
+  "case": "test_own_rows::test_a_table_with_another_authors_row_keeps_that_row_marked#1",
+  "why": "the application's own tools (rows_keep)",
+  "calls": 10
+ },
+ {
+  "stream": "docx/tests/test_own_rows",
+  "case": "test_own_rows::test_a_whole_table_one_inserted_goes_with_its_rows#1",
+  "why": "the application's own tools (rows_keep)",
+  "calls": 8
+ },
+ {
+  "stream": "docx/tests/test_own_rows",
+  "case": "test_own_rows::test_accepting_or_rejecting_gives_words_review[accept]#1",
+  "why": "the application's own tools (rows_keep)",
+  "calls": 26
+ },
+ {
+  "stream": "docx/tests/test_own_rows",
+  "case": "test_own_rows::test_accepting_or_rejecting_gives_words_review[reject]#1",
+  "why": "the application's own tools (rows_keep)",
+  "calls": 26
+ },
+ {
+  "stream": "docx/tests/test_own_rows",
+  "case": "test_own_rows::test_another_authors_pending_row_is_marked_deleted_beside_their_insertion#1",
+  "why": "the application's own tools (rows_keep)",
+  "calls": 8
+ },
+ {
+  "stream": "docx/tests/test_own_rows",
+  "case": "test_own_rows::test_sync_removing_rows_it_added_earlier_leaves_final_rows#1",
+  "why": "the application's own tools (rows_keep)",
+  "calls": 10
+ },
+ {
+  "stream": "docx/tests/test_own_rows",
+  "case": "test_own_rows::test_the_probes_edits_made_here_give_words_result#1",
+  "why": "the application's own tools (rows_keep)",
+  "calls": 26
+ },
+ {
+  "stream": "docx/tests/test_owned_sources",
+  "case": "test_owned_sources::test_the_records_of_an_owned_document_are_the_session_s#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_provenance",
+  "case": "test_provenance::test_a_chart_from_a_source_is_keyed_by_its_drawing_id#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_provenance",
+  "case": "test_provenance::test_a_copied_table_gets_no_record#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_provenance",
+  "case": "test_provenance::test_a_deleted_table_drops_its_entry_in_the_same_undo_step#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_provenance",
+  "case": "test_provenance::test_a_table_from_a_source_is_kept_in_one_custom_xml_item#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_provenance",
+  "case": "test_provenance::test_a_tracked_table_from_a_source_is_kept_and_rejecting_it_drops_it#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_provenance",
+  "case": "test_provenance::test_an_entry_whose_table_is_gone_is_ignored_on_read_and_pruned_by_the_next_edit#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_provenance",
+  "case": "test_provenance::test_another_custom_xml_item_is_left_as_it_is#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_provenance",
+  "case": "test_provenance::test_columns_shift_and_a_deleted_one_drops_its_entry#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_provenance",
+  "case": "test_provenance::test_deleting_a_row_inside_the_block_drops_the_record#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_provenance",
+  "case": "test_provenance::test_merge_and_split_drop_the_record#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_provenance",
+  "case": "test_provenance::test_rejecting_a_change_in_a_recorded_table_drops_its_record#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_provenance",
+  "case": "test_provenance::test_rows_above_shift_the_block_below_keep_it_inside_drop_it#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_provenance",
+  "case": "test_provenance::test_set_cells_from_keeps_its_own_record#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_provenance",
+  "case": "test_provenance::test_set_cells_without_from_drops_only_the_columns_it_overwrites#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_provenance",
+  "case": "test_provenance::test_the_document_validates_renders_and_the_definitions_are_unchanged#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_provenance",
+  "case": "test_provenance::test_the_table_key_is_its_first_rows_para_id_and_every_paragraph_is_stamped#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_provenance",
+  "case": "test_provenance::test_tracked_the_record_describes_the_document_with_changes_accepted#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_provenance",
+  "case": "test_provenance::test_undo_takes_the_item_away_with_the_table#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_document_the_layout_cannot_lay_out_is_refused_with_a_way_out_that_works[0]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_document_the_layout_cannot_lay_out_is_refused_with_a_way_out_that_works[0]#2",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_document_the_layout_cannot_lay_out_is_refused_with_a_way_out_that_works[1]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_document_the_layout_cannot_lay_out_is_refused_with_a_way_out_that_works[1]#2",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_document_the_layout_cannot_lay_out_is_refused_with_a_way_out_that_works[2]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_document_the_layout_cannot_lay_out_is_refused_with_a_way_out_that_works[2]#2",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_document_the_layout_cannot_lay_out_is_refused_with_a_way_out_that_works[3]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_document_the_layout_cannot_lay_out_is_refused_with_a_way_out_that_works[3]#2",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_document_the_layout_cannot_lay_out_is_refused_with_a_way_out_that_works[4]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_document_the_layout_cannot_lay_out_is_refused_with_a_way_out_that_works[5]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_document_the_layout_cannot_lay_out_is_refused_with_a_way_out_that_works[5]#2",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_document_the_layout_cannot_lay_out_is_refused_with_a_way_out_that_works[6]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_document_the_layout_cannot_lay_out_is_refused_with_a_way_out_that_works[6]#2",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[* at replace:-0]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[* the layout cannot lay out-0]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[* the layout cannot lay out-0]#2",
+  "why": "the application's own tools (ds_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[* the layout cannot lay out-1]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[* the layout cannot lay out-1]#2",
+  "why": "the application's own tools (ds_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[* the layout cannot lay out-2]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[* the layout cannot lay out-2]#2",
+  "why": "the application's own tools (ds_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[* the layout cannot lay out-3]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[* the layout cannot lay out-3]#2",
+  "why": "the application's own tools (ds_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[* the layout cannot lay out-4]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[* the layout cannot lay out-5]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[* the layout cannot lay out-5]#2",
+  "why": "the application's own tools (ds_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[* the layout cannot lay out-6]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[* the layout cannot lay out-6]#2",
+  "why": "the application's own tools (ds_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[a document without a settings part-0]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[a footnote in Markdown-0]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[a picture in Markdown-0]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[check: *-0]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[check: *-0]#2",
+  "why": "the application's own tools (ds_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[edit_chart*-0]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[replace_text *-0]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[replace_text *-1]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[replace_text *-2]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[replace_text *-3]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[the section of *: a section given by what a block holds-0]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[word_delete a *-0]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[word_delete a *-1]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[word_drawings *-0]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[word_drawings *-1]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[word_edit_table *-0]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[word_edit_table *-1]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[word_insert_markdown *-0]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[word_insert_markdown *-1]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[word_inspect of Accept All's cell ends-0]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_release_refusals",
+  "case": "test_release_refusals::test_a_listed_form_is_refused_through_the_toolbox[word_read final view of Accept All's cell ends-0]#1",
+  "why": "the application's own tools (ds_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_retired_ids",
+  "case": "test_retired_ids::test_writers_on_threads_deleting_and_adding_never_share_an_id#1",
+  "why": "calls from several threads at once",
+  "calls": 144
+ },
+ {
+  "stream": "docx/tests/test_rows_joins_r54r",
+  "case": "test_rows_joins_r54r::test_a_from_block_fills_the_rows_as_accepted#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_rows_joins_r54r",
+  "case": "test_rows_joins_r54r::test_a_merge_over_a_pending_deleted_row_is_refused_with_the_accept#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_rows_joins_r54r",
+  "case": "test_rows_joins_r54r::test_a_row_past_the_end_is_refused_with_the_accepted_shape#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_rows_joins_r54r",
+  "case": "test_rows_joins_r54r::test_a_table_read_alone_takes_the_paragraph_joined_into_it#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_rows_joins_r54r",
+  "case": "test_rows_joins_r54r::test_an_edit_of_the_table_says_what_accept_all_loses#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_rows_joins_r54r",
+  "case": "test_rows_joins_r54r::test_an_insert_beside_a_pending_deleted_row_goes_beside_the_row_named[after the row before]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_rows_joins_r54r",
+  "case": "test_rows_joins_r54r::test_an_insert_beside_a_pending_deleted_row_goes_beside_the_row_named[before the row after]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_rows_joins_r54r",
+  "case": "test_rows_joins_r54r::test_an_insert_beside_a_pending_deleted_row_goes_beside_the_row_named[default last]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_rows_joins_r54r",
+  "case": "test_rows_joins_r54r::test_delete_row_and_format_row_count_the_rows_as_accepted#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_rows_joins_r54r",
+  "case": "test_rows_joins_r54r::test_positions_follow_the_cells_accept_all_takes_in_and_removes#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_rows_joins_r54r",
+  "case": "test_rows_joins_r54r::test_row_label_and_a_column_fill_count_the_rows_as_accepted#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_rows_joins_r54r",
+  "case": "test_rows_joins_r54r::test_row_positions_skip_a_row_whose_deletion_is_pending#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_rows_joins_r54r",
+  "case": "test_rows_joins_r54r::test_sync_and_describe_count_the_rows_as_accepted#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_rows_joins_r54r",
+  "case": "test_rows_joins_r54r::test_the_joins_read_as_accept_all_leaves_them#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_rows_joins_r54r",
+  "case": "test_rows_joins_r54r::test_the_joins_read_as_accept_all_leaves_them#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_rows_r58",
+  "case": "test_rows_r58::test_rows_grow_and_sync_add_look_like_the_last_row#1",
+  "why": "the application's own tools (shelf_rows)",
+  "calls": 8
+ },
+ {
+  "stream": "docx/tests/test_rows_r58",
+  "case": "test_rows_r58::test_rows_grow_and_sync_add_look_like_the_last_row#2",
+  "why": "the application's own tools (shelf_rows)",
+  "calls": 8
+ },
+ {
+  "stream": "docx/tests/test_rust_save",
+  "case": "test_rust_save::test_a_served_save_still_refuses_a_new_validation_problem#1",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_scale_styles",
+  "case": "test_scale_styles::test_a_target_of_another_kind_is_told_the_kinds_as_targets_are_written#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_scale_styles",
+  "case": "test_scale_styles::test_check_with_scale_alone_is_only_its_fact_and_range_scopes_it#1",
+  "why": "a document adopted from Python objects",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_scale_styles",
+  "case": "test_scale_styles::test_check_with_scale_and_pages_scopes_by_page#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_served_batch",
+  "case": "test_served_batch::test_a_writer_arriving_mid_batch_waits_and_loses_nothing#1",
+  "why": "calls from several threads at once",
+  "calls": 7
+ },
+ {
+  "stream": "docx/tests/test_served_drafts",
+  "case": "test_served_drafts::test_an_owned_documents_edits_are_served_never_on_drafts[always]#1",
+  "why": "calls from several threads at once",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_served_drafts",
+  "case": "test_served_drafts::test_an_owned_documents_edits_are_served_never_on_drafts[auto]#1",
+  "why": "calls from several threads at once",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_served_side_by_side",
+  "case": "test_served_side_by_side::test_served_edits_side_by_side_are_one_step_each#1",
+  "why": "calls from several threads at once",
+  "calls": 48
+ },
+ {
+  "stream": "docx/tests/test_session_checks",
+  "case": "test_session_checks::test_concurrent_field_updates_and_edits_stay_consistent#1",
+  "why": "calls from several threads at once",
+  "calls": 8
+ },
+ {
+  "stream": "docx/tests/test_session_concurrency",
+  "case": "test_session_concurrency::test_lone_checks_and_a_batch_with_a_check_between_changes_all_finish#1",
+  "why": "calls from several threads at once",
+  "calls": 15
+ },
+ {
+  "stream": "docx/tests/test_session_concurrency",
+  "case": "test_session_concurrency::test_lone_checks_and_a_fields_update_all_finish#1",
+  "why": "calls from several threads at once",
+  "calls": 18
+ },
+ {
+  "stream": "docx/tests/test_session_concurrency",
+  "case": "test_session_concurrency::test_lone_checks_and_a_lone_inspect_all_finish#1",
+  "why": "calls from several threads at once",
+  "calls": 19
+ },
+ {
+  "stream": "docx/tests/test_session_concurrency",
+  "case": "test_session_concurrency::test_lone_checks_and_a_read_batch_of_check_and_inspect_all_finish#2",
+  "why": "calls from several threads at once",
+  "calls": 19
+ },
+ {
+  "stream": "docx/tests/test_session_concurrency",
+  "case": "test_session_concurrency::test_many_rounds_of_checks_reads_and_edits_all_finish#1",
+  "why": "calls from several threads at once",
+  "calls": 27
+ },
+ {
+  "stream": "docx/tests/test_side_by_side_edits",
+  "case": "test_side_by_side_edits::test_a_batch_s_read_is_of_the_version_its_change_made#1",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_side_by_side_edits",
+  "case": "test_side_by_side_edits::test_a_bookmark_name_taken_side_by_side_is_refused_to_the_later#1",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_side_by_side_edits",
+  "case": "test_side_by_side_edits::test_a_bookmark_name_taken_side_by_side_is_refused_to_the_later#2",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_side_by_side_edits",
+  "case": "test_side_by_side_edits::test_a_cells_empty_from_is_no_source#1",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_side_by_side_edits",
+  "case": "test_side_by_side_edits::test_a_dataset_table_put_alone_after_edits_side_by_side#1",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 12
+ },
+ {
+  "stream": "docx/tests/test_side_by_side_edits",
+  "case": "test_side_by_side_edits::test_a_fill_from_a_dataset_grows_the_table#1",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_side_by_side_edits",
+  "case": "test_side_by_side_edits::test_a_retry_key_used_again_answers_as_done#1",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_side_by_side_edits",
+  "case": "test_side_by_side_edits::test_a_tables_width_of_the_body_beside_an_insert_before_it#1",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_side_by_side_edits",
+  "case": "test_side_by_side_edits::test_a_tables_width_of_the_body_beside_an_insert_before_it#2",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_side_by_side_edits",
+  "case": "test_side_by_side_edits::test_a_tracked_batch_and_a_tracked_format_side_by_side#1",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_side_by_side_edits",
+  "case": "test_side_by_side_edits::test_a_tracked_batch_and_a_tracked_format_side_by_side#2",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_side_by_side_edits",
+  "case": "test_side_by_side_edits::test_bookmarks_side_by_side_draw_ids_of_their_own#1",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_side_by_side_edits",
+  "case": "test_side_by_side_edits::test_bookmarks_side_by_side_draw_ids_of_their_own#2",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_side_by_side_edits",
+  "case": "test_side_by_side_edits::test_each_commit_is_one_version_and_one_step_of_its_callers#1",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_side_by_side_edits",
+  "case": "test_side_by_side_edits::test_edits_of_known_blocks_each_answer_and_keep_the_document_valid#1",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 15
+ },
+ {
+  "stream": "docx/tests/test_side_by_side_edits",
+  "case": "test_side_by_side_edits::test_inserts_into_one_gap_apply_once_each_as_in_commit_order[after:{last}-before:{end}]#1",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_side_by_side_edits",
+  "case": "test_side_by_side_edits::test_inserts_into_one_gap_apply_once_each_as_in_commit_order[after:{last}-before:{end}]#2",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_side_by_side_edits",
+  "case": "test_side_by_side_edits::test_inserts_into_one_gap_apply_once_each_as_in_commit_order[before:{end}-after:{last}]#1",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_side_by_side_edits",
+  "case": "test_side_by_side_edits::test_inserts_into_one_gap_apply_once_each_as_in_commit_order[before:{end}-after:{last}]#2",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_side_by_side_edits",
+  "case": "test_side_by_side_edits::test_inserts_into_one_gap_apply_once_each_as_in_commit_order[before:{end}-before:{end}]#1",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_side_by_side_edits",
+  "case": "test_side_by_side_edits::test_inserts_into_one_gap_apply_once_each_as_in_commit_order[before:{end}-before:{end}]#2",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_side_by_side_edits",
+  "case": "test_side_by_side_edits::test_links_side_by_side_merge_or_share_their_relationship[https://example.com/x]#1",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_side_by_side_edits",
+  "case": "test_side_by_side_edits::test_links_side_by_side_merge_or_share_their_relationship[https://example.com/x]#2",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_side_by_side_edits",
+  "case": "test_side_by_side_edits::test_links_side_by_side_merge_or_share_their_relationship[https://example.com/y]#1",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_side_by_side_edits",
+  "case": "test_side_by_side_edits::test_links_side_by_side_merge_or_share_their_relationship[https://example.com/y]#2",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_side_by_side_edits",
+  "case": "test_side_by_side_edits::test_one_caller_alone_answers_with_no_block#1",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_side_by_side_edits",
+  "case": "test_side_by_side_edits::test_one_caller_alone_answers_with_no_block#2",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_side_by_side_edits",
+  "case": "test_side_by_side_edits::test_tracked_edits_made_side_by_side_are_accepted_and_rejected_by_id#1",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 12
+ },
+ {
+  "stream": "docx/tests/test_side_by_side_edits",
+  "case": "test_side_by_side_edits::test_tracked_links_to_one_address_side_by_side_share_its_relationship[False]#1",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_side_by_side_edits",
+  "case": "test_side_by_side_edits::test_tracked_links_to_one_address_side_by_side_share_its_relationship[False]#2",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_side_by_side_edits",
+  "case": "test_side_by_side_edits::test_tracked_links_to_one_address_side_by_side_share_its_relationship[True]#1",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_side_by_side_edits",
+  "case": "test_side_by_side_edits::test_tracked_links_to_one_address_side_by_side_share_its_relationship[True]#2",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_source_refs",
+  "case": "test_source_refs::test_a_documents_own_braces_and_escaped_ones_stay_text#1",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_source_refs",
+  "case": "test_source_refs::test_a_name_another_agent_gave_is_refused_before_anything_is_made#1",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_source_refs",
+  "case": "test_source_refs::test_a_reference_without_its_prefix_is_refused_naming_the_one_meant#1",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_source_refs",
+  "case": "test_source_refs::test_replace_text_in_a_batch_without_expect_replaces_one_as_alone#1",
+  "why": "the application's own tools (ds_rows)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_span_rows_r57",
+  "case": "test_span_rows_r57::test_a_block_over_a_merged_row_offers_rows_above_it_first[False]#1",
+  "why": "the application's own tools (plan_rows)",
+  "calls": 10
+ },
+ {
+  "stream": "docx/tests/test_span_rows_r57",
+  "case": "test_span_rows_r57::test_a_block_over_a_merged_row_offers_rows_above_it_first[True]#1",
+  "why": "the application's own tools (plan_rows)",
+  "calls": 10
+ },
+ {
+  "stream": "docx/tests/test_span_rows_r57",
+  "case": "test_span_rows_r57::test_a_new_row_beside_a_column_deleted_pending_is_deleted_there_too#1",
+  "why": "the application's own tools (plan_rows)",
+  "calls": 7
+ },
+ {
+  "stream": "docx/tests/test_span_rows_r57",
+  "case": "test_span_rows_r57::test_a_new_row_inside_a_vertical_merge_carries_it_on#1",
+  "why": "the application's own tools (plan_rows)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_span_rows_r57",
+  "case": "test_span_rows_r57::test_a_plain_cell_still_splits_in_two_by_default#1",
+  "why": "the application's own tools (plan_rows)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_span_rows_r57",
+  "case": "test_span_rows_r57::test_a_ragged_table_from_the_file_is_named_with_no_made_by#2",
+  "why": "the application's own tools (plan_rows)",
+  "calls": 7
+ },
+ {
+  "stream": "docx/tests/test_span_rows_r57",
+  "case": "test_span_rows_r57::test_accept_all_after_a_column_deleted_through_a_split_leaves_rows_of_one_width#1",
+  "why": "the application's own tools (plan_rows)",
+  "calls": 7
+ },
+ {
+  "stream": "docx/tests/test_span_rows_r57",
+  "case": "test_span_rows_r57::test_an_own_inserted_column_deleted_goes_outright_and_rows_still_delete#1",
+  "why": "the application's own tools (plan_rows)",
+  "calls": 10
+ },
+ {
+  "stream": "docx/tests/test_span_rows_r57",
+  "case": "test_span_rows_r57::test_grow_after_a_spanned_last_row_adds_rows_with_a_cell_per_column#1",
+  "why": "the application's own tools (plan_rows)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_span_rows_r57",
+  "case": "test_span_rows_r57::test_insert_row_beside_a_spanned_row_takes_the_nearest_rows_cells[after-False]#1",
+  "why": "the application's own tools (plan_rows)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_span_rows_r57",
+  "case": "test_span_rows_r57::test_insert_row_beside_a_spanned_row_takes_the_nearest_rows_cells[after-True]#1",
+  "why": "the application's own tools (plan_rows)",
+  "calls": 7
+ },
+ {
+  "stream": "docx/tests/test_span_rows_r57",
+  "case": "test_span_rows_r57::test_insert_row_beside_a_spanned_row_takes_the_nearest_rows_cells[before-False]#1",
+  "why": "the application's own tools (plan_rows)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_span_rows_r57",
+  "case": "test_span_rows_r57::test_insert_row_beside_a_spanned_row_takes_the_nearest_rows_cells[before-True]#1",
+  "why": "the application's own tools (plan_rows)",
+  "calls": 7
+ },
+ {
+  "stream": "docx/tests/test_span_rows_r57",
+  "case": "test_span_rows_r57::test_insert_row_beside_an_unspanned_row_is_as_before#1",
+  "why": "the application's own tools (plan_rows)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_span_rows_r57",
+  "case": "test_span_rows_r57::test_insert_row_where_every_row_has_a_span_gets_a_cell_per_column#1",
+  "why": "the application's own tools (plan_rows)",
+  "calls": 9
+ },
+ {
+  "stream": "docx/tests/test_span_rows_r57",
+  "case": "test_span_rows_r57::test_one_value_down_a_merged_cell_is_written#1",
+  "why": "the application's own tools (plan_rows)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_span_rows_r57",
+  "case": "test_span_rows_r57::test_reject_all_after_a_column_deleted_through_a_split_gives_the_table_back#1",
+  "why": "the application's own tools (plan_rows)",
+  "calls": 8
+ },
+ {
+  "stream": "docx/tests/test_span_rows_r57",
+  "case": "test_span_rows_r57::test_rows_of_one_width_are_not_listed#1",
+  "why": "the application's own tools (plan_rows)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_span_rows_r57",
+  "case": "test_span_rows_r57::test_several_values_into_one_merged_cell_are_refused[False]#1",
+  "why": "the application's own tools (plan_rows)",
+  "calls": 7
+ },
+ {
+  "stream": "docx/tests/test_span_rows_r57",
+  "case": "test_span_rows_r57::test_several_values_into_one_merged_cell_are_refused[True]#1",
+  "why": "the application's own tools (plan_rows)",
+  "calls": 8
+ },
+ {
+  "stream": "docx/tests/test_span_rows_r57",
+  "case": "test_span_rows_r57::test_split_by_default_gives_a_spanned_cell_its_own_columns[False]#1",
+  "why": "the application's own tools (plan_rows)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_span_rows_r57",
+  "case": "test_span_rows_r57::test_split_by_default_gives_a_spanned_cell_its_own_columns[True]#1",
+  "why": "the application's own tools (plan_rows)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_span_rows_r57",
+  "case": "test_span_rows_r57::test_split_into_fewer_follows_the_grid_and_says_so#1",
+  "why": "the application's own tools (plan_rows)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_span_rows_r57",
+  "case": "test_span_rows_r57::test_split_into_more_than_its_span_is_refused_with_the_counts_that_keep_the_grid#1",
+  "why": "the application's own tools (plan_rows)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_stamped_writes",
+  "case": "test_stamped_writes::test_every_writing_tool_leaves_every_block_stamped[generated/lists-and-styles.docx]#7",
+  "why": "replays differently: result.error.field, result.error.message",
+  "calls": null
+ },
+ {
+  "stream": "docx/tests/test_stamped_writes",
+  "case": "test_stamped_writes::test_every_writing_tool_leaves_every_block_stamped[generated/review-follow.docx]#7",
+  "why": "replays differently: result.error.field, result.error.message",
+  "calls": null
+ },
+ {
+  "stream": "docx/tests/test_stamped_writes",
+  "case": "test_stamped_writes::test_every_writing_tool_leaves_every_block_stamped[generated/table-keeps.docx]#7",
+  "why": "replays differently: result.error.field, result.error.message",
+  "calls": null
+ },
+ {
+  "stream": "docx/tests/test_stamped_writes",
+  "case": "test_stamped_writes::test_every_writing_tool_leaves_every_block_stamped[generated/toc-numbered.docx]#7",
+  "why": "replays differently: result.error.field, result.error.message",
+  "calls": null
+ },
+ {
+  "stream": "docx/tests/test_styled_text",
+  "case": "test_styled_text::test_a_value_written_by_reference_inside_markup_is_kept_on_its_paragraph#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_a_paragraph_is_named_as_one#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_a_reference_to_the_own_table_is_told_what_a_reference_names#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_a_table_not_in_the_document_offers_its_tables[d2/t:stock]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_a_table_not_in_the_document_offers_its_tables[t:nope]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_a_table_not_in_the_document_offers_its_tables[t:stock]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[OWN-1]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[OWN-1]#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[OWN-1]#3",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[OWN-2]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[OWN-2]#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[OWN-2]#3",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[OWN-2]#4",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[PARAGRAPH-1]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[PARAGRAPH-1]#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[PARAGRAPH-1]#3",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[PARAGRAPH-2]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[PARAGRAPH-2]#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[PARAGRAPH-2]#3",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[PARAGRAPH-2]#4",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d1/OWN-1]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d1/OWN-1]#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d1/OWN-1]#3",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d1/OWN-2]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d1/OWN-2]#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d1/OWN-2]#3",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d1/OWN-2]#4",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d1/t:nope-1]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d1/t:nope-1]#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d1/t:nope-1]#3",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d1/t:nope-2]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d1/t:nope-2]#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d1/t:nope-2]#3",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d1/t:nope-2]#4",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d1/t:stock-1]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d1/t:stock-1]#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d1/t:stock-2]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d1/t:stock-2]#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d1/t:stock-2]#3",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d2/OWN-1]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d2/OWN-1]#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d2/OWN-1]#3",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d2/OWN-2]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d2/OWN-2]#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d2/OWN-2]#3",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d2/OWN-2]#4",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d9/t:stock-1]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d9/t:stock-1]#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d9/t:stock-1]#3",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d9/t:stock-2]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d9/t:stock-2]#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d9/t:stock-2]#3",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[d9/t:stock-2]#4",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[t:nope-1]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[t:nope-1]#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[t:nope-1]#3",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[t:nope-2]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[t:nope-2]#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[t:nope-2]#3",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[t:nope-2]#4",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[x:1-1]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[x:1-1]#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[x:1-1]#3",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[x:1-2]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[x:1-2]#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[x:1-2]#3",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_from_suggestion_resolves[x:1-2]#4",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_key_suggestion_resolves#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_key_suggestion_resolves#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_key_suggestion_resolves#3",
+  "why": "the application's own tools (rows_put)",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_every_key_suggestion_resolves#4",
+  "why": "the application's own tools (rows_put)",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_nothing_to_take_rows_from_says_how_to_get_some#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_one_source_alone_gives_the_call_that_works[]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_one_source_alone_gives_the_call_that_works[d1/]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_other_froms_of_the_document_say_the_same[word_edit_table-arguments1]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_other_froms_of_the_document_say_the_same[word_insert_markdown-arguments0]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_own_source_names_the_blocks#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_the_own_table_is_named_as_the_documents_and_the_rows_are_listed[]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_the_own_table_is_named_as_the_documents_and_the_rows_are_listed[d1/]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_sync_from_r56",
+  "case": "test_sync_from_r56::test_with_two_workbooks_each_table_is_named_with_its_document#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_table_column_fill",
+  "case": "test_table_column_fill::test_a_column_below_its_header_takes_one_text#1",
+  "why": "the application's own tools (parts_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_column_fill",
+  "case": "test_table_column_fill::test_a_column_by_its_header_text_and_beside_single_cells#1",
+  "why": "the application's own tools (parts_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_column_fill",
+  "case": "test_table_column_fill::test_a_column_of_431_rows_keeps_its_values_in_one_edit#1",
+  "why": "the application's own tools (parts_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_column_fill",
+  "case": "test_table_column_fill::test_a_merged_cell_is_written_once_and_a_missing_one_is_said#1",
+  "why": "the application's own tools (parts_put)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_table_column_fill",
+  "case": "test_table_column_fill::test_a_range_naming_the_header_writes_it_and_says_so#1",
+  "why": "the application's own tools (parts_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_column_fill",
+  "case": "test_table_column_fill::test_a_reference_in_the_text_kept_in_every_cell#1",
+  "why": "the application's own tools (parts_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_column_fill",
+  "case": "test_table_column_fill::test_a_refusal_says_the_table_and_the_rows_that_work[cell0-no row 40-1..6]#1",
+  "why": "the application's own tools (parts_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_column_fill",
+  "case": "test_table_column_fill::test_a_refusal_says_the_table_and_the_rows_that_work[cell1-grid columns 0 to 2-2]#1",
+  "why": "the application's own tools (parts_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_column_fill",
+  "case": "test_table_column_fill::test_a_refusal_says_the_table_and_the_rows_that_work[cell2-no column-col]#1",
+  "why": "the application's own tools (parts_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_column_fill",
+  "case": "test_table_column_fill::test_a_refusal_says_the_table_and_the_rows_that_work[cell3-gives rows and row-row]#1",
+  "why": "the application's own tools (parts_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_column_fill",
+  "case": "test_table_column_fill::test_a_refusal_says_the_table_and_the_rows_that_work[cell4-runs backwards-2..5]#1",
+  "why": "the application's own tools (parts_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_column_fill",
+  "case": "test_table_column_fill::test_a_refusal_says_the_table_and_the_rows_that_work[cell5-is not rows-*]#1",
+  "why": "the application's own tools (parts_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_column_fill",
+  "case": "test_table_column_fill::test_a_top_level_one_value_fills_the_column#1",
+  "why": "the application's own tools (parts_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_column_fill",
+  "case": "test_table_column_fill::test_a_value_by_reference_once_kept_in_every_cell#1",
+  "why": "the application's own tools (parts_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_column_fill",
+  "case": "test_table_column_fill::test_already_holding_the_text_is_not_an_error#1",
+  "why": "the application's own tools (parts_put)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_table_column_fill",
+  "case": "test_table_column_fill::test_header_rows_marked_to_repeat_or_none#1",
+  "why": "the application's own tools (parts_put)",
+  "calls": 7
+ },
+ {
+  "stream": "docx/tests/test_table_column_fill",
+  "case": "test_table_column_fill::test_one_undo_step#1",
+  "why": "the application's own tools (parts_put)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_table_column_fill",
+  "case": "test_table_column_fill::test_placeholders_are_none#1",
+  "why": "the application's own tools (parts_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_column_fill",
+  "case": "test_table_column_fill::test_rows_forms#1",
+  "why": "the application's own tools (parts_put)",
+  "calls": 10
+ },
+ {
+  "stream": "docx/tests/test_table_column_fill",
+  "case": "test_table_column_fill::test_rows_without_a_cell_are_said_not_failed#1",
+  "why": "the application's own tools (parts_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_table_column_fill",
+  "case": "test_table_column_fill::test_rows_without_a_cell_are_said_not_failed#2",
+  "why": "the application's own tools (parts_put)",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_table_column_fill",
+  "case": "test_table_column_fill::test_the_same_bytes_as_one_entry_per_cell#1",
+  "why": "the application's own tools (parts_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_column_fill",
+  "case": "test_table_column_fill::test_the_same_bytes_as_one_entry_per_cell#2",
+  "why": "the application's own tools (parts_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_column_fill",
+  "case": "test_table_column_fill::test_the_same_bytes_as_one_entry_per_cell#3",
+  "why": "the application's own tools (parts_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_column_fill",
+  "case": "test_table_column_fill::test_the_same_bytes_as_one_entry_per_cell#4",
+  "why": "the application's own tools (parts_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_column_fill",
+  "case": "test_table_column_fill::test_the_same_bytes_as_one_entry_per_cell#5",
+  "why": "the application's own tools (parts_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_column_fill",
+  "case": "test_table_column_fill::test_the_same_bytes_as_one_entry_per_cell#6",
+  "why": "the application's own tools (parts_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_column_fill",
+  "case": "test_table_column_fill::test_tracked_changes_too#1",
+  "why": "the application's own tools (parts_put)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_table_column_fill",
+  "case": "test_table_column_fill::test_tracked_changes_too#2",
+  "why": "the application's own tools (parts_put)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_block_of_many_rows_is_one_fill#1",
+  "why": "the application's own tools (stock_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_cell_the_table_lacks_is_refused_as_before#1",
+  "why": "the application's own tools (stock_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_fill_writes_the_same_each_time_and_its_undo_gives_the_table_back[below-the-header]#1",
+  "why": "the application's own tools (stock_put)",
+  "calls": 7
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_fill_writes_the_same_each_time_and_its_undo_gives_the_table_back[below-the-header]#2",
+  "why": "the application's own tools (stock_put)",
+  "calls": 7
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_fill_writes_the_same_each_time_and_its_undo_gives_the_table_back[cells-of-paragraphs]#1",
+  "why": "the application's own tools (stock_put)",
+  "calls": 8
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_fill_writes_the_same_each_time_and_its_undo_gives_the_table_back[cells-of-paragraphs]#2",
+  "why": "the application's own tools (stock_put)",
+  "calls": 8
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_fill_writes_the_same_each_time_and_its_undo_gives_the_table_back[filled-again]#1",
+  "why": "the application's own tools (stock_put)",
+  "calls": 8
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_fill_writes_the_same_each_time_and_its_undo_gives_the_table_back[filled-again]#2",
+  "why": "the application's own tools (stock_put)",
+  "calls": 8
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_fill_writes_the_same_each_time_and_its_undo_gives_the_table_back[french]#1",
+  "why": "the application's own tools (stock_put)",
+  "calls": 8
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_fill_writes_the_same_each_time_and_its_undo_gives_the_table_back[french]#2",
+  "why": "the application's own tools (stock_put)",
+  "calls": 8
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_fill_writes_the_same_each_time_and_its_undo_gives_the_table_back[grow]#1",
+  "why": "the application's own tools (stock_put)",
+  "calls": 7
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_fill_writes_the_same_each_time_and_its_undo_gives_the_table_back[grow]#2",
+  "why": "the application's own tools (stock_put)",
+  "calls": 7
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_fill_writes_the_same_each_time_and_its_undo_gives_the_table_back[header-repeated]#1",
+  "why": "the application's own tools (stock_put)",
+  "calls": 8
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_fill_writes_the_same_each_time_and_its_undo_gives_the_table_back[header-repeated]#2",
+  "why": "the application's own tools (stock_put)",
+  "calls": 8
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_fill_writes_the_same_each_time_and_its_undo_gives_the_table_back[header-row-only]#1",
+  "why": "the application's own tools (stock_put)",
+  "calls": 9
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_fill_writes_the_same_each_time_and_its_undo_gives_the_table_back[header-row-only]#2",
+  "why": "the application's own tools (stock_put)",
+  "calls": 9
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_fill_writes_the_same_each_time_and_its_undo_gives_the_table_back[long-text]#1",
+  "why": "the application's own tools (stock_put)",
+  "calls": 7
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_fill_writes_the_same_each_time_and_its_undo_gives_the_table_back[long-text]#2",
+  "why": "the application's own tools (stock_put)",
+  "calls": 7
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_fill_writes_the_same_each_time_and_its_undo_gives_the_table_back[merged-down-above]#1",
+  "why": "the application's own tools (stock_put)",
+  "calls": 8
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_fill_writes_the_same_each_time_and_its_undo_gives_the_table_back[merged-down-above]#2",
+  "why": "the application's own tools (stock_put)",
+  "calls": 8
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_fill_writes_the_same_each_time_and_its_undo_gives_the_table_back[merged-header]#1",
+  "why": "the application's own tools (stock_put)",
+  "calls": 8
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_fill_writes_the_same_each_time_and_its_undo_gives_the_table_back[merged-header]#2",
+  "why": "the application's own tools (stock_put)",
+  "calls": 8
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_fill_writes_the_same_each_time_and_its_undo_gives_the_table_back[number-formats]#1",
+  "why": "the application's own tools (stock_put)",
+  "calls": 7
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_fill_writes_the_same_each_time_and_its_undo_gives_the_table_back[number-formats]#2",
+  "why": "the application's own tools (stock_put)",
+  "calls": 7
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_fill_writes_the_same_each_time_and_its_undo_gives_the_table_back[rows-left-below]#1",
+  "why": "the application's own tools (stock_put)",
+  "calls": 7
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_fill_writes_the_same_each_time_and_its_undo_gives_the_table_back[rows-left-below]#2",
+  "why": "the application's own tools (stock_put)",
+  "calls": 7
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_fill_writes_the_same_each_time_and_its_undo_gives_the_table_back[shaded-rows]#1",
+  "why": "the application's own tools (stock_put)",
+  "calls": 8
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_fill_writes_the_same_each_time_and_its_undo_gives_the_table_back[shaded-rows]#2",
+  "why": "the application's own tools (stock_put)",
+  "calls": 8
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_fill_writes_the_same_each_time_and_its_undo_gives_the_table_back[some-columns]#1",
+  "why": "the application's own tools (stock_put)",
+  "calls": 7
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_fill_writes_the_same_each_time_and_its_undo_gives_the_table_back[some-columns]#2",
+  "why": "the application's own tools (stock_put)",
+  "calls": 7
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_fill_writes_the_same_each_time_and_its_undo_gives_the_table_back[tracked-header]#1",
+  "why": "the application's own tools (stock_put)",
+  "calls": 9
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_fill_writes_the_same_each_time_and_its_undo_gives_the_table_back[tracked-header]#2",
+  "why": "the application's own tools (stock_put)",
+  "calls": 9
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_fill_writes_the_same_each_time_and_its_undo_gives_the_table_back[tracked]#1",
+  "why": "the application's own tools (stock_put)",
+  "calls": 8
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_a_fill_writes_the_same_each_time_and_its_undo_gives_the_table_back[tracked]#2",
+  "why": "the application's own tools (stock_put)",
+  "calls": 8
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_cells_by_position_write_what_they_wrote_one_by_one[False]#1",
+  "why": "the application's own tools (stock_put)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_cells_by_position_write_what_they_wrote_one_by_one[False]#2",
+  "why": "the application's own tools (stock_put)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_cells_by_position_write_what_they_wrote_one_by_one[True]#1",
+  "why": "the application's own tools (stock_put)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_the_result_says_where_the_time_went#1",
+  "why": "the application's own tools (stock_put)",
+  "calls": 7
+ },
+ {
+  "stream": "docx/tests/test_table_fill_speed",
+  "case": "test_table_fill_speed::test_the_update_says_where_its_time_went#1",
+  "why": "the application's own tools (stock_put)",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_table_grow",
+  "case": "test_table_grow::test_a_header_row_last_is_copied_as_a_body_row#1",
+  "why": "a document adopted from Python objects",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_grow",
+  "case": "test_table_grow::test_fewer_rows_than_the_table_says_which_rows_keep_their_text#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_table_grow",
+  "case": "test_table_grow::test_grow_adds_the_rows_the_data_needs_each_like_the_last#1",
+  "why": "a document adopted from Python objects",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_grow",
+  "case": "test_table_grow::test_grow_from_the_row_after_the_last_appends#1",
+  "why": "a document adopted from Python objects",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_grow",
+  "case": "test_table_grow::test_grow_is_one_undo_step#1",
+  "why": "a document adopted from Python objects",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_grow",
+  "case": "test_table_grow::test_grow_needs_from_and_false_asks_nothing#1",
+  "why": "a document adopted from Python objects",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_table_grow",
+  "case": "test_table_grow::test_grow_over_a_merged_last_row_is_refused_before_anything_changes#1",
+  "why": "a document adopted from Python objects",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_grow",
+  "case": "test_table_grow::test_grow_tracks_the_rows_it_adds#1",
+  "why": "a document adopted from Python objects",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_grow",
+  "case": "test_table_grow::test_in_a_batch[False]#1",
+  "why": "a document adopted from Python objects",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_table_grow",
+  "case": "test_table_grow::test_in_a_batch[True]#1",
+  "why": "a document adopted from Python objects",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_table_grow",
+  "case": "test_table_grow::test_more_columns_than_the_table_are_refused_with_grow_too#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_table_grow",
+  "case": "test_table_grow::test_without_grow_the_refusal_is_the_call_that_works#1",
+  "why": "a document adopted from Python objects",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_sync",
+  "case": "test_table_sync::test_a_headerless_table_renamed_by_a_row_above_its_first#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_table_sync",
+  "case": "test_table_sync::test_a_new_row_is_formatted_as_a_body_row#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_table_sync",
+  "case": "test_table_sync::test_a_record_the_sync_makes_untrue_is_dropped#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 7
+ },
+ {
+  "stream": "docx/tests/test_table_sync",
+  "case": "test_table_sync::test_a_row_with_a_formula_field_is_a_total_row#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_table_sync",
+  "case": "test_table_sync::test_a_source_row_with_a_blank_key_is_said#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_sync",
+  "case": "test_table_sync::test_a_sync_repeated_with_the_same_key_column_runs_again#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_table_sync",
+  "case": "test_table_sync::test_arguments_read_as_meant#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 7
+ },
+ {
+  "stream": "docx/tests/test_table_sync",
+  "case": "test_table_sync::test_columns_by_label_or_given#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_sync",
+  "case": "test_table_sync::test_columns_by_label_or_given#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_table_sync",
+  "case": "test_table_sync::test_dates_in_a_pattern#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_sync",
+  "case": "test_table_sync::test_duplicate_keys_refused_naming_them#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_sync",
+  "case": "test_table_sync::test_duplicate_keys_refused_naming_them#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_sync",
+  "case": "test_table_sync::test_gone_keys_removed_on_request#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_sync",
+  "case": "test_table_sync::test_header_rows_and_the_total_row_are_kept#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_table_sync",
+  "case": "test_table_sync::test_keys_that_would_match_loosely_are_said#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_sync",
+  "case": "test_table_sync::test_lists_capped_with_counts#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_sync",
+  "case": "test_table_sync::test_nothing_to_change_is_no_change#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_table_sync",
+  "case": "test_table_sync::test_one_added_one_gone_some_changed#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_sync",
+  "case": "test_table_sync::test_placed_in_key_order_where_the_table_is#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_sync",
+  "case": "test_table_sync::test_placed_in_the_source_order_where_the_table_is_not_in_key_order#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_sync",
+  "case": "test_table_sync::test_rows_like_a_row_merged_across_columns_taken_are_refused_first#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_table_sync",
+  "case": "test_table_sync::test_rows_like_a_row_merged_across_columns_taken_are_refused_first#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_table_sync",
+  "case": "test_table_sync::test_rows_with_no_key_are_left_and_counted#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_sync",
+  "case": "test_table_sync::test_the_key_column_by_label_index_or_field#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 7
+ },
+ {
+  "stream": "docx/tests/test_table_sync",
+  "case": "test_table_sync::test_tracked_when_tracking_is_on#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_table_sync",
+  "case": "test_table_sync::test_values_keep_their_source#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_sync",
+  "case": "test_table_sync::test_values_keep_their_source#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_sync_loose",
+  "case": "test_table_sync_loose::test_a_key_matching_two_is_refused_before_any_change#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_sync_loose",
+  "case": "test_table_sync_loose::test_a_key_matching_two_is_refused_before_any_change#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_table_sync_loose",
+  "case": "test_table_sync_loose::test_exact_keys_only_by_default#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_sync_loose",
+  "case": "test_table_sync_loose::test_exact_wins_over_loose#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_sync_loose",
+  "case": "test_table_sync_loose::test_loose_and_match_are_for_sync#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_sync_loose",
+  "case": "test_table_sync_loose::test_loose_data_takes_the_sources_spelling_tracked#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_table_sync_loose",
+  "case": "test_table_sync_loose::test_loose_keeps_the_tables_spelling#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_sync_loose",
+  "case": "test_table_sync_loose::test_loose_matches_capped_with_a_count#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_sync_loose",
+  "case": "test_table_sync_loose::test_match_naming_no_key_is_refused_with_the_keys#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_table_sync_loose",
+  "case": "test_table_sync_loose::test_match_pairs_keys_no_rule_would#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_sync_loose",
+  "case": "test_table_sync_loose::test_match_written_the_other_way_round_is_read_as_meant#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_sync_loose",
+  "case": "test_table_sync_loose::test_nothing_to_change_is_no_change_and_says_the_matches#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_table_sync_loose",
+  "case": "test_table_sync_loose::test_values_keep_their_source_on_loosely_matched_rows#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_a_chart_from_a_date_column_and_set_values_matched_either_way[None-en-US]#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_a_chart_from_a_date_column_and_set_values_matched_either_way[locale1-nl-BE]#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_a_charts_dates_are_kept_in_the_locales_code#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_a_dataset_named_like_nothing_drawn_gets_no_drawing_hint#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_a_date_columns_iso_text_is_written_in_the_sessions_locale[None-due0]#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_a_date_columns_iso_text_is_written_in_the_sessions_locale[locale1-due1]#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_a_date_format_is_checked_for_a_table#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_a_drawings_id_as_from_is_named_a_drawing_not_a_dataset#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_a_drawings_id_in_a_batch_is_named_a_drawing#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_a_drawings_id_still_names_the_drawing_where_drawings_are_taken#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_a_header_given_or_none#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_a_new_table_from_a_source_is_one_undo_step_and_tracks#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_a_row_range_of_a_source_is_a_table_whose_header_repeats#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_a_source_too_big_is_refused_never_cut#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_a_table_from_a_dataset_header_rows_and_provenance#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_a_table_from_another_documents_table_merges_its_sources#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_a_tables_dates_in_a_date_format[en-GB-due0]#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_a_tables_dates_in_a_date_format[es-ES-due2]#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_a_tables_dates_in_a_date_format[it-IT-due3]#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_a_tables_dates_in_a_date_format[nl-NL-due1]#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_a_value_a_cell_cannot_take_is_refused_naming_it#1",
+  "why": "the application's own tools (ds_odd)",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_a_values_lines_are_line_breaks_in_one_paragraph#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_an_unlabelled_iso_column_is_written_as_it_is#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_column_names_given_as_columns_are_read_as_from_columns#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_columns_are_picked_and_ordered_by_name_and_default_to_all#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_from_with_markdown_or_without_a_source_is_refused#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_numbers_are_written_in_the_sessions_locale#1",
+  "why": "a document adopted from Python objects",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_set_cells_from_a_source_is_one_undo_step#1",
+  "why": "a document adopted from Python objects",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_set_cells_from_a_source_over_a_merged_cell_is_refused#1",
+  "why": "a document adopted from Python objects",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_set_cells_from_a_source_rewrites_the_block#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_set_cells_from_a_source_too_big_for_the_table_is_refused#1",
+  "why": "a document adopted from Python objects",
+  "calls": 8
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_set_cells_from_one_keyed_row_with_no_room_offers_no_row_range#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_set_cells_from_row_index_under_a_kept_header#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_text_goes_in_literally_not_as_markdown#1",
+  "why": "a document adopted from Python objects",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_text_goes_in_literally_not_as_markdown#2",
+  "why": "the application's own tools (ds_marks)",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_tables_from_data",
+  "case": "test_tables_from_data::test_too_many_rows_from_a_source_without_a_row_range_is_refused_not_internal#1",
+  "why": "a document adopted from Python objects",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_text_facts",
+  "case": "test_text_facts::test_an_escape_writes_the_reference_and_a_bad_one_changes_nothing#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_text_facts",
+  "case": "test_text_facts::test_markdown_insert_and_replace_take_references_too#1",
+  "why": "a document adopted from Python objects",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_text_facts",
+  "case": "test_text_facts::test_set_text_writes_the_value_in_the_locale_and_reports_it#1",
+  "why": "a document adopted from Python objects",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_tools_word",
+  "case": "test_tools_word::test_a_batch_runs_a_tool_the_application_registered#1",
+  "why": "the application's own tools (app_keep)",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_tools_word",
+  "case": "test_tools_word::test_a_check_lays_out_with_the_lock_let_go#1",
+  "why": "calls from several threads at once",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_tools_word",
+  "case": "test_tools_word::test_describe_lists_the_sessions_datasets_without_their_values#1",
+  "why": "datasets kept by the application",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_tools_word",
+  "case": "test_tools_word::test_save_refuses_a_new_validation_problem#1",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_tracked_merge_r54m",
+  "case": "test_tracked_merge_r54m::test_a_block_from_a_source_fills_the_columns_as_accepted#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_tracked_merge_r54m",
+  "case": "test_tracked_merge_r54m::test_a_column_fill_counts_the_columns_as_accepted#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_tracked_merge_r54m",
+  "case": "test_tracked_merge_r54m::test_a_column_inserted_beside_a_pending_deletion_lands_where_accept_all_has_it[0-after-| Area | New | Phase | Remark |]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_tracked_merge_r54m",
+  "case": "test_tracked_merge_r54m::test_a_column_inserted_beside_a_pending_deletion_lands_where_accept_all_has_it[1-before-| Area | New | Phase | Remark |]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_tracked_merge_r54m",
+  "case": "test_tracked_merge_r54m::test_a_column_inserted_beside_a_pending_deletion_lands_where_accept_all_has_it[None-None-| Area | Phase | Remark | New |]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_tracked_merge_r54m",
+  "case": "test_tracked_merge_r54m::test_a_comment_in_the_cell_merged_away_is_written_once_and_settles_as_word_does#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_tracked_merge_r54m",
+  "case": "test_tracked_merge_r54m::test_a_comment_in_the_cell_merged_away_is_written_once_and_settles_as_word_does#2",
+  "why": "the application's own tools (rows_put)",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_tracked_merge_r54m",
+  "case": "test_tracked_merge_r54m::test_a_comment_in_the_cell_merged_away_is_written_once_and_settles_as_word_does#3",
+  "why": "the application's own tools (rows_put)",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_tracked_merge_r54m",
+  "case": "test_tracked_merge_r54m::test_a_comment_in_the_cell_merged_away_is_written_once_and_settles_as_word_does#4",
+  "why": "the application's own tools (rows_put)",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_tracked_merge_r54m",
+  "case": "test_tracked_merge_r54m::test_a_comment_in_the_cell_merged_away_is_written_once_and_settles_as_word_does#5",
+  "why": "the application's own tools (rows_put)",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_tracked_merge_r54m",
+  "case": "test_tracked_merge_r54m::test_a_merge_already_made_is_a_no_op#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_tracked_merge_r54m",
+  "case": "test_tracked_merge_r54m::test_a_position_a_pending_merge_takes_in_is_the_merged_cell#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_tracked_merge_r54m",
+  "case": "test_tracked_merge_r54m::test_a_position_before_the_deleted_column_says_nothing#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_tracked_merge_r54m",
+  "case": "test_tracked_merge_r54m::test_a_tracked_merge_keeps_the_table_on_its_grid_and_accepts_as_the_untracked_merge[across]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_tracked_merge_r54m",
+  "case": "test_tracked_merge_r54m::test_a_tracked_merge_keeps_the_table_on_its_grid_and_accepts_as_the_untracked_merge[down]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_tracked_merge_r54m",
+  "case": "test_tracked_merge_r54m::test_a_tracked_merge_keeps_the_table_on_its_grid_and_accepts_as_the_untracked_merge[empty cell]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_tracked_merge_r54m",
+  "case": "test_tracked_merge_r54m::test_a_tracked_merge_keeps_the_table_on_its_grid_and_accepts_as_the_untracked_merge[header]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_tracked_merge_r54m",
+  "case": "test_tracked_merge_r54m::test_a_tracked_merge_keeps_the_table_on_its_grid_and_accepts_as_the_untracked_merge[last two]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_tracked_merge_r54m",
+  "case": "test_tracked_merge_r54m::test_a_tracked_merge_keeps_the_table_on_its_grid_and_accepts_as_the_untracked_merge[rectangle]#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_tracked_merge_r54m",
+  "case": "test_tracked_merge_r54m::test_col_label_finds_the_columns_as_accepted#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_tracked_merge_r54m",
+  "case": "test_tracked_merge_r54m::test_col_past_the_accepted_columns_is_refused_with_the_shape#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_tracked_merge_r54m",
+  "case": "test_tracked_merge_r54m::test_delete_column_index_counts_the_columns_as_accepted#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_tracked_merge_r54m",
+  "case": "test_tracked_merge_r54m::test_set_cells_col_skips_a_column_whose_deletion_is_pending#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_tracked_merge_r54m",
+  "case": "test_tracked_merge_r54m::test_sync_counts_the_columns_as_accepted#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_tracked_merge_r54m",
+  "case": "test_tracked_merge_r54m::test_the_cell_merged_away_keeps_its_text_and_marks#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_tracked_merge_r54m",
+  "case": "test_tracked_merge_r54m::test_the_deletion_says_positions_now_count_the_table_as_accepted#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_tracked_merge_r54m",
+  "case": "test_tracked_merge_r54m::test_the_final_view_reads_the_pending_merge_as_accepted#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_tracked_merge_r54m",
+  "case": "test_tracked_merge_r54m::test_untracked_a_merge_over_a_pending_deletion_is_refused_with_the_way_out#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 6
+ },
+ {
+  "stream": "docx/tests/test_tracked_merge_r54m",
+  "case": "test_tracked_merge_r54m::test_without_a_pending_change_positions_are_the_grid_columns#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 3
+ },
+ {
+  "stream": "docx/tests/test_tracked_merge_r54m",
+  "case": "test_tracked_merge_r54m::test_word_format_table_column_counts_the_columns_as_accepted#1",
+  "why": "the application's own tools (rows_put)",
+  "calls": 4
+ },
+ {
+  "stream": "docx/tests/test_typography",
+  "case": "test_typography::test_a_control_filled_is_spaced#1",
+  "why": "the application's own formats",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_typography",
+  "case": "test_typography::test_a_space_already_there_is_not_changed_by_a_later_edit#1",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_typography",
+  "case": "test_typography::test_belgian_french_takes_frenchs_rule#1",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_typography",
+  "case": "test_typography::test_canadian_french_gets_the_guillemets_only#1",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_typography",
+  "case": "test_typography::test_every_writing_tool_spaces_what_it_writes#1",
+  "why": "the application's own formats",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_typography",
+  "case": "test_typography::test_french_text_gets_no_break_spaces_where_written#1",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_typography",
+  "case": "test_typography::test_marks_between_words_are_left_alone_as_their_fix_is_not_a_space#1",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_typography",
+  "case": "test_typography::test_off_writes_the_text_as_given#1",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_typography",
+  "case": "test_typography::test_other_languages_are_written_as_given#1",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_typography",
+  "case": "test_typography::test_the_language_is_the_runs_through_its_styles#1",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_typography",
+  "case": "test_typography::test_the_rules_are_the_measured_ones#1",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_typography",
+  "case": "test_typography::test_the_rules_are_the_measured_ones#10",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_typography",
+  "case": "test_typography::test_the_rules_are_the_measured_ones#11",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_typography",
+  "case": "test_typography::test_the_rules_are_the_measured_ones#2",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_typography",
+  "case": "test_typography::test_the_rules_are_the_measured_ones#3",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_typography",
+  "case": "test_typography::test_the_rules_are_the_measured_ones#4",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_typography",
+  "case": "test_typography::test_the_rules_are_the_measured_ones#5",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_typography",
+  "case": "test_typography::test_the_rules_are_the_measured_ones#6",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_typography",
+  "case": "test_typography::test_the_rules_are_the_measured_ones#7",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_typography",
+  "case": "test_typography::test_the_rules_are_the_measured_ones#8",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_typography",
+  "case": "test_typography::test_the_rules_are_the_measured_ones#9",
+  "why": "the application's own formats",
+  "calls": 1
+ },
+ {
+  "stream": "docx/tests/test_typography",
+  "case": "test_typography::test_tracked_writing_is_spaced_inside_the_insertion#1",
+  "why": "the application's own formats",
+  "calls": 5
+ },
+ {
+  "stream": "docx/tests/test_typography",
+  "case": "test_typography::test_undo_takes_the_text_and_its_spacing_together#1",
+  "why": "the application's own formats",
+  "calls": 2
+ },
+ {
+  "stream": "docx/tests/test_typography",
+  "case": "test_typography::test_writing_what_is_there_already_is_a_no_op#1",
+  "why": "the application's own formats",
+  "calls": 1
+ }
+]
