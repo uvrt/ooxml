@@ -18,7 +18,7 @@ use crate::update::PartUpdate;
 use crate::{DocKind, SessionError};
 use ooxml_base::Context;
 use ooxml_opc::Package;
-use ooxml_store::{Caller, Committed, Snapshot, Store, StoreConfig, StoreStats};
+use ooxml_store::{Caller, Command, Snapshot, Store, StoreConfig, StoreStats};
 use ooxml_tools_word::{MadeBy, RowsWritten};
 use ooxml_word_edit::validate::Delta;
 use ooxml_word_edit::{EarlierIds, Editor, WordDoc};
@@ -65,9 +65,6 @@ pub(crate) struct Word {
     /// The calls of this session that left a table ragged or off its grid (rounds 57 and
     /// 58): `check`'s `table_grid_mismatch` names them (`made_by`).
     pub(crate) made_by: MadeBy,
-    /// The version the open step group started from (its number and package), for the
-    /// reflow a batch's checks measure once after its last op ([`crate::Session::group_reflow`]).
-    pub(crate) group_start: std::sync::Mutex<Option<(u64, Package)>>,
     /// Its page engine, where the session lays it out itself, and what its host set it to
     /// be laid out with (`crate::pages`).
     pub(crate) pages: crate::pages::DocPages,
@@ -91,6 +88,21 @@ impl Word {
     /// The tracking mode, held alone (`word_set_tracking`'s whole call).
     pub(crate) fn tracking_write(&self) -> RwLockWriteGuard<'_, Option<String>> {
         self.tracking.write().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The head, or for the thread whose batch holds the document the version its ops left.
+    pub(crate) fn head(&self) -> Snapshot<WordDoc> {
+        let store = self.editor.store();
+        store
+            .txn_current(crate::group::this_thread())
+            .unwrap_or_else(|| store.snapshot())
+    }
+
+    /// The owner of the batch this thread holds on the document, if it holds one: its
+    /// calls' edits run in the batch's transaction.
+    pub(crate) fn batch_owner(&self) -> Option<ooxml_store::TxnOwner> {
+        let owner = crate::group::this_thread();
+        self.editor.store().holds(owner).then_some(owner)
     }
 
     /// The tracking author a step group's revert goes back to (`None`: untracked).
@@ -237,17 +249,17 @@ impl Document {
             images: ooxml_tools_word::PageImages::new(Some(Arc::clone(&context.budget))),
             rows_written: RowsWritten::default(),
             made_by: MadeBy::default(),
-            group_start: std::sync::Mutex::default(),
             pages: crate::pages::DocPages::default(),
             views: crate::live_view::LiveViews::new(Arc::clone(&context.budget)),
         })))
     }
 
-    /// The head version.
+    /// The head version; for the thread whose batch holds a Word document, the version its
+    /// ops left ([`crate::group`]).
     pub(crate) fn head(&self) -> At {
         match &self.held {
             Held::Package(store) => At::Package(store.snapshot()),
-            Held::Word(word) => At::Word(word.editor.store().snapshot()),
+            Held::Word(word) => At::Word(word.head()),
         }
     }
 
@@ -259,11 +271,11 @@ impl Document {
         }
     }
 
-    /// Whether a step group is open on it (its commits are numbered as the group closes).
+    /// Whether a step group is open on it (its work is numbered as the group closes).
     pub(crate) fn grouped(&self) -> bool {
         match &self.held {
             Held::Package(store) => store.group_mark().is_some(),
-            Held::Word(word) => word.editor.store().group_mark().is_some(),
+            Held::Word(word) => word.editor.store().txn_held(),
         }
     }
 
@@ -306,32 +318,52 @@ impl Document {
     }
 
     /// Commit a test's update of parts as `caller`, made by `tool`: the version it leaves,
-    /// whether it changed anything, and how many times it was prepared. A Word document's
-    /// retired ids note what it removed.
+    /// whether it changed anything, how many times it was prepared, and whether a step group
+    /// holds it (a package's open group, or this thread's batch on a Word document, in whose
+    /// transaction it then runs). A Word document's retired ids note what it removed.
     pub(crate) fn update(
         &self,
         caller: &Caller,
         tool: Option<&str>,
         update: &PartUpdate<'_>,
-    ) -> Result<(At, bool, u32), SessionError> {
-        fn out<D: ooxml_store::DocModel>(done: Committed<D, ()>, at: fn(Snapshot<D>) -> At) -> (At, bool, u32) {
-            (at(done.version), done.changed, done.attempts)
-        }
+    ) -> Result<(At, bool, u32, bool), SessionError> {
         Ok(match &self.held {
-            Held::Package(store) => out(store.run(caller, update)?, At::Package),
+            Held::Package(store) => {
+                let done = store.run(caller, update)?;
+                (At::Package(done.version), done.changed, done.attempts, self.grouped())
+            }
             Held::Word(word) => {
-                let done = word.editor.store().run(caller, update)?;
-                if let Some(previous) = done.previous.as_ref().filter(|_| done.changed) {
-                    let delta = ooxml_word_edit::ids_delta(previous.doc(), done.version.doc())?;
+                let store = word.editor.store();
+                let (version, previous, attempts, batch) = match word.batch_owner() {
+                    Some(owner) => {
+                        let ran = store.in_txn(owner, |tx| {
+                            let point = tx.savepoint();
+                            let done = update.validate(tx.doc()).and_then(|()| update.prepare(tx));
+                            if done.is_err() {
+                                tx.rollback(point);
+                            }
+                            done
+                        })?;
+                        ran.out?;
+                        (ran.after, ran.changed.then_some(ran.before), 1, true)
+                    }
+                    None => {
+                        let done = store.run(caller, update)?;
+                        let previous = done.previous.filter(|_| done.changed);
+                        (done.version, previous, done.attempts, false)
+                    }
+                };
+                if let Some(previous) = &previous {
+                    let delta = ooxml_word_edit::ids_delta(previous.doc(), version.doc())?;
                     let made = Made {
-                        seq: done.version.seq().0,
+                        seq: version.seq().0,
                         caller: caller.name(),
                         tool,
                         history: false,
                     };
                     word.retired.note(&made, &delta);
                 }
-                out(done, At::Word)
+                (At::Word(version), previous.is_some(), attempts, batch)
             }
         })
     }

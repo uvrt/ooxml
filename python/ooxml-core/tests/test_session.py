@@ -276,3 +276,27 @@ def test_a_field_update_lays_out_with_the_hosts_engine():
     assert reply["ok"], reply
     assert call(session, "word_fields", {"doc": doc, "action": "list"})["data"][0]["result"] == "1"
 
+
+
+def test_a_batch_is_one_step_read_by_its_thread_and_a_dropped_group_lets_go():
+    session = ooxml_core.Session()
+    doc = session.open(docx(), name="a.docx")
+    group = session.open_group(doc)
+    with pytest.raises(RuntimeError, match="open already"):
+        session.open_group(doc)                   # this thread's batch is open already
+    insert(session, doc, "One.")
+    insert(session, doc, "Two.")
+    seen: list[int] = []
+    other = threading.Thread(target=lambda: seen.append(session.head(doc).state))
+    other.start()
+    other.join()
+    assert seen == [0] and session.head(doc).state == 1   # the ops' version: this thread's alone
+    head = group.close()
+    assert head is not None and head.state == 1 and session.version(doc) == head.number
+    assert len(session.numbers(doc)[1]) == 1     # one step
+    dropped = session.open_group(doc)
+    insert(session, doc, "Three.")
+    del dropped                                   # unclosed: its work taken back, the document let go
+    again = session.open_group(doc)
+    assert "Three." not in body(session.save(doc))
+    assert again.close() is None

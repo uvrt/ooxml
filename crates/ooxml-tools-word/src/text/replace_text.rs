@@ -94,7 +94,7 @@ fn run(args: &ReplaceText, editing: &Editing<'_>) -> Result<ToolResult<Value>, T
     if let Some(unported) = text_unported(&args.replace) {
         return Err(unported.refusal(replace_call(args), &["replace"]));
     }
-    let head = editing.editor.store().snapshot();
+    let head = editing.editor.current();
     let docx = head
         .doc()
         .docx()

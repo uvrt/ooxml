@@ -128,7 +128,16 @@ impl Session {
         let document = self.document(id)?;
         let at = match &document.held {
             crate::document::Held::Package(store) => store.numbered(number).map(crate::document::At::Package),
-            crate::document::Held::Word(word) => word.editor.store().numbered(number).map(crate::document::At::Word),
+            crate::document::Held::Word(word) => {
+                // this thread's batch's version first: its ops' state, numbered as it will be
+                let head = word.head();
+                let found = if head.number() == number {
+                    Some(head)
+                } else {
+                    word.editor.store().numbered(number)
+                };
+                found.map(crate::document::At::Word)
+            }
         };
         Ok(at.map(|at| Self::opened(id, &document, at)))
     }

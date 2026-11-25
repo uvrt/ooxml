@@ -79,8 +79,7 @@ pub fn edit_chart(args: &EditChart, editing: &Editing<'_>) -> ToolResult<Value> 
     let ran = if args.action == ChartAction::Add {
         let lang = editing
             .editor
-            .store()
-            .snapshot()
+            .current()
             .doc()
             .docx()
             .map(|docx| chart_language(&docx, editing));
@@ -130,7 +129,7 @@ fn chart_action(args: &EditChart, editing: &Editing<'_>, summary: String) -> Res
             ("action", json!("read")),
         ],
     );
-    let head = editing.editor.store().snapshot();
+    let head = editing.editor.current();
     let docx = head
         .doc()
         .docx()

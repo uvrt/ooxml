@@ -130,7 +130,7 @@ pub fn word_lists(args: &WordLists, editing: &Editing<'_>) -> ToolResult<Value> 
 }
 
 fn run(args: &WordLists, editing: &Editing<'_>, again: &TryCall) -> Result<ToolResult<Value>, ToolError> {
-    let head = editing.editor.store().snapshot();
+    let head = editing.editor.current();
     let doc = head.doc();
     let docx = doc
         .docx()

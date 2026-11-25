@@ -123,7 +123,7 @@ pub(super) fn said(
 
 /// The table's id and size as accepted (`data`'s first keys).
 fn size(editing: &Editing<'_>, table: &str, retry: &TryCall) -> Map<String, Value> {
-    let head = editing.editor.store().snapshot();
+    let head = editing.editor.current();
     let found = head
         .doc()
         .docx()
@@ -298,7 +298,7 @@ impl Deleted {
                 counted: Vec::new(),
             };
         };
-        let head = editing.editor.store().snapshot();
+        let head = editing.editor.current();
         let fates = tracked_row_fates(head.doc(), &view.table.id, &tracking.author).unwrap_or_default();
         let mut out = Deleted {
             rows,
@@ -349,7 +349,7 @@ pub(super) fn record(
     (height, deleted): (usize, &Deleted),
     accepted_columns: Option<Vec<usize>>,
 ) -> Kept {
-    let head = editing.editor.store().snapshot();
+    let head = editing.editor.current();
     let had = head.doc().docx().ok().and_then(|docx| record_of(&docx, &view.table.id));
     let after = After {
         layout,

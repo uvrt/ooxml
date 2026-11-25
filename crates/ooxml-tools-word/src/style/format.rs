@@ -106,7 +106,7 @@ fn run(args: &WordFormat, editing: &Editing<'_>, again: &TryCall) -> Result<Tool
     for name in &clear {
         cleared(*name, &mut run, &mut paragraph);
     }
-    let head = editing.editor.store().snapshot();
+    let head = editing.editor.current();
     let doc = head.doc();
     let docx = doc
         .docx()

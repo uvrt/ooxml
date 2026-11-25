@@ -1,7 +1,9 @@
 //! loom explores every interleaving of the commit path: two writers whose reads and writes
 //! cross, a reader beside them, and an undo racing a commit; commits whose head moves between
 //! their replay (outside the commit lock) and their publish; a command behind the gate beside
-//! a writer and a reader, and beside an undo. Every run equals a serial run in commit order. Run with
+//! a writer and a reader, and beside an undo; a transaction one owner holds open beside
+//! another owner and beside a writer (the second owner waits, the same owner is refused,
+//! dropping it lets the waiter go). Every run equals a serial run in commit order. Run with
 //! `RUSTFLAGS="--cfg loom" cargo test -p ooxml-store --test loom --release`.
 // Tests may unwrap, panic and index (docs/architecture/README.md, section 2.5).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
@@ -11,7 +13,7 @@
 mod common;
 
 use common::{still, Cells, Fail, Mix, Put};
-use ooxml_store::{Caller, Seq, Store, StoreConfig};
+use ooxml_store::{Caller, Seq, Store, StoreConfig, StoreError, TxnOwner};
 use ooxml_store::{Command, Txn};
 use std::sync::Arc;
 
@@ -221,5 +223,67 @@ fn an_undo_racing_a_command_behind_the_gate_equals_a_serial_order() {
             assert_eq!(cells, (10, 0));
         }
         assert_eq!(store.steps().len(), 1);
+    });
+}
+
+/// `cells` put in `owner`'s held transaction.
+fn held_put(store: &Store<Cells>, owner: TxnOwner, cells: &[(u32, i64)]) {
+    let put = Put(cells.to_vec());
+    store.in_txn(owner, |tx| put.prepare(tx).unwrap()).unwrap();
+}
+
+#[test]
+fn a_second_owner_waits_the_same_is_refused_and_a_drop_lets_it_go() {
+    loom::model(|| {
+        let (a, b) = (TxnOwner::new(1), TxnOwner::new(2));
+        let store = Arc::new(Store::new(Cells::default(), StoreConfig::default(), still()));
+        store.open_txn(a, &()).unwrap();
+        let other = {
+            let store = Arc::clone(&store);
+            loom::thread::spawn(move || {
+                let base = store.open_txn(b, &()).unwrap();
+                held_put(&store, b, &[(1, 5)]);
+                store.commit_txn(b, &Caller::named("b")).unwrap();
+                base.doc().get(1)
+            })
+        };
+        assert!(matches!(store.open_txn(a, &()), Err(StoreError::TxnHeld)));
+        held_put(&store, a, &[(1, 1)]);
+        assert!(store.drop_txn(a));
+        // b opened only once a let go, on a head without a's work
+        assert_eq!(other.join().unwrap(), 0);
+        assert_eq!(store.snapshot().doc().get(1), 5);
+        assert_eq!(store.steps().len(), 1);
+        assert!(!store.txn_held());
+    });
+}
+
+#[test]
+fn a_writer_beside_a_held_transaction_publishes_after_it() {
+    loom::model(|| {
+        let a = TxnOwner::new(1);
+        let store = Arc::new(Store::new(Cells::default(), StoreConfig::default(), still()));
+        store.open_txn(a, &()).unwrap();
+        let writer = {
+            let store = Arc::clone(&store);
+            loom::thread::spawn(move || {
+                let reads = Mix {
+                    reads: vec![1],
+                    write: 2,
+                    add: 0,
+                    dawdle: false,
+                };
+                let done = store.run(&Caller::anonymous(), &reads).unwrap();
+                (done.version.seq(), done.out.0)
+            })
+        };
+        held_put(&store, a, &[(1, 3)]);
+        let held = store.commit_txn(a, &Caller::named("a")).unwrap().version.seq();
+        let (written, summed) = writer.join().unwrap();
+        assert!(written > held, "the gate held it until the commit");
+        // it read the held commit's value: prepared again after it, or prepared after it
+        assert_eq!(summed, 3);
+        assert_eq!(store.snapshot().doc().get(2), 93);
+        assert_eq!(store.steps().len(), 2);
     });
 }

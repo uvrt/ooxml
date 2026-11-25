@@ -56,7 +56,7 @@ fn set(args: &WordSetTracking, editing: &Editing<'_>) -> Result<(Done<Value>, Tr
         (true, Some(author)) => Tracked::On(author.clone()),
         (false, _) => Tracked::Off,
     };
-    let mut head = editing.editor.store().snapshot().doc().clone();
+    let mut head = editing.editor.current().doc().clone();
     if let Some(switch) = args.word_switch {
         let done = editing
             .editor

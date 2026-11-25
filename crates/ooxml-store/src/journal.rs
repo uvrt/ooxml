@@ -20,6 +20,10 @@ use std::sync::Arc;
 /// applied ([`DocModel::resolve`]).
 pub(crate) struct Journal<D: DocModel> {
     entries: VecDeque<Arc<Entry<D>>>,
+    /// The newest entry let go (`None`: none yet). Numbers need not follow one another (a
+    /// reopen, or a held transaction's versions that were read but never published), so
+    /// whether the versions right after one are kept is told by it.
+    trimmed: Option<Seq>,
 }
 
 /// One version's entry: its number, the change set that made it, the keys that wrote.
@@ -62,6 +66,7 @@ impl<D: DocModel> Journal<D> {
     pub(crate) fn new() -> Self {
         Self {
             entries: VecDeque::new(),
+            trimmed: None,
         }
     }
 
@@ -76,7 +81,9 @@ impl<D: DocModel> Journal<D> {
         while self.entries.len() > window {
             match (self.entries.front(), needed) {
                 (Some(entry), Some(needed)) if entry.0 > needed => break,
-                (Some(_), _) => drop(self.entries.pop_front()),
+                (Some(_), _) => {
+                    self.trimmed = self.entries.pop_front().map(|entry| entry.0);
+                }
                 (None, _) => break,
             }
         }
@@ -92,7 +99,7 @@ impl<D: DocModel> Journal<D> {
     /// right after `base` are no longer kept. Asked only when something was published since.
     fn since_entries(&self, base: Seq) -> Option<impl Iterator<Item = &Arc<Entry<D>>>> {
         let since = self.entries.iter().position(|entry| entry.0 > base)?;
-        if since == 0 && self.entries.front().is_some_and(|entry| entry.0 .0 != base.0 + 1) {
+        if since == 0 && self.trimmed.is_some_and(|trimmed| trimmed > base) {
             return None; // the versions right after `base` are no longer kept
         }
         Some(self.entries.iter().skip(since))
