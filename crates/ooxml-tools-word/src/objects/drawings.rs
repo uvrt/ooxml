@@ -14,6 +14,7 @@ use crate::structure::common::{call, find_once, need, one_of, outcome, policy, r
 use crate::structure::notes::end_of;
 use ooxml_base::pyfmt::round2;
 use ooxml_tools::{ArgEnum, Done, Refusal, ToolError, ToolResult, TryCall, WayOut};
+use ooxml_word_edit::units::emu;
 use ooxml_word_edit::{
     DrawingEdited, DrawingValues, EditError, Edited, FloatDrawing, InlineDrawing, InsertShape, SetDrawing,
 };
@@ -122,10 +123,10 @@ fn insert_shape(args: &WordDrawings, editing: &Editing<'_>, list: &TryCall) -> R
         } else {
             args.text.clone()
         },
-        width: args.width.unwrap_or(if text_box { 144.0 } else { 72.0 }),
-        height: args.height.unwrap_or(72.0),
-        x: args.x.unwrap_or(0.0),
-        y: args.y.unwrap_or(0.0),
+        width: emu(args.width.unwrap_or(if text_box { 144.0 } else { 72.0 })),
+        height: emu(args.height.unwrap_or(72.0)),
+        x: emu(args.x.unwrap_or(0.0)),
+        y: emu(args.y.unwrap_or(0.0)),
         wrap: wrap_name(args.wrap).unwrap_or_else(|| (if text_box { "square" } else { "front" }).to_owned()),
         policy: policy(editing),
     })
@@ -158,8 +159,8 @@ fn frame_action(args: &WordDrawings, editing: &Editing<'_>, list: &TryCall) -> R
             editor.run(
                 caller,
                 &set(DrawingValues {
-                    x: Some(x),
-                    y: Some(y),
+                    x: Some(emu(x)),
+                    y: Some(emu(y)),
                     ..DrawingValues::default()
                 }),
             )
@@ -167,8 +168,8 @@ fn frame_action(args: &WordDrawings, editing: &Editing<'_>, list: &TryCall) -> R
         DrawingAction::Resize => editor.run(
             caller,
             &set(DrawingValues {
-                width: args.width,
-                height: args.height,
+                width: args.width.map(emu),
+                height: args.height.map(emu),
                 ..DrawingValues::default()
             }),
         ),
@@ -177,8 +178,8 @@ fn frame_action(args: &WordDrawings, editing: &Editing<'_>, list: &TryCall) -> R
                 wrap: wrap_name(args.wrap),
                 horizontal_from: args.against.map(|a| a.as_str().to_owned()),
                 x_align: args.align.map(|a| a.as_str().to_owned()),
-                x: if args.align.is_some() { None } else { args.x },
-                y: args.y,
+                x: if args.align.is_some() { None } else { args.x.map(emu) },
+                y: args.y.map(emu),
                 ..DrawingValues::default()
             };
             let command = FloatDrawing {
@@ -210,8 +211,8 @@ fn set_action(args: &WordDrawings, editing: &Editing<'_>, list: &TryCall) -> Res
             ZOrder::Forward => ooxml_word_edit::ZOrder::Forward,
             ZOrder::Backward => ooxml_word_edit::ZOrder::Backward,
         }),
-        x: args.x,
-        y: args.y,
+        x: args.x.map(emu),
+        y: args.y.map(emu),
         ..DrawingValues::default()
     };
     let given = !values.is_empty();

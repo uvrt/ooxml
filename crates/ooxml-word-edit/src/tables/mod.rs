@@ -52,6 +52,7 @@ use crate::props::PropertyTracker;
 use crate::set_text::block_key;
 use crate::sink::{annotation_draws, EditSink};
 use crate::stamping::stamp_document;
+use crate::units::Twips;
 use crate::validate::Orders;
 use crate::work::{scope_above, Id, Work};
 use crate::{EditError, Result, WordDoc};
@@ -69,19 +70,19 @@ use tracker::TableTracker;
 pub enum TableFormat {
     /// The table's properties (`set_table`).
     Table(TableValues),
-    /// A grid column's width, in points (`set_column_width`).
+    /// A grid column's width (`set_column_width`).
     ColumnWidth {
         /// The grid column.
         column: usize,
-        /// Points.
-        width: f64,
+        /// Its width.
+        width: Twips,
     },
-    /// A row's height (points, exactly or at least) and breaking (`set_row`).
+    /// A row's height (exactly or at least) and breaking (`set_row`).
     Row {
         /// The row.
         row: usize,
         /// The height and whether it is exact.
-        height: Option<(f64, bool)>,
+        height: Option<(Twips, bool)>,
         /// Whether the row may not break across pages.
         cant_split: Option<bool>,
     },
@@ -503,7 +504,7 @@ impl FormatTable<'_> {
                 }
                 TableFormat::ColumnWidth { column, width } => {
                     let tracker = stamp.is_some().then(|| TableTracker::new(work, table, true));
-                    props::set_column_width(work, table, *column, props::twips(*width), orders);
+                    props::set_column_width(work, table, *column, width.0, orders);
                     if let (Some(tracker), Some(stamp)) = (tracker, stamp.as_deref_mut()) {
                         tracker.record(work, stamp, false, true, orders);
                     }

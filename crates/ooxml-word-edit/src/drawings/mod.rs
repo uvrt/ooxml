@@ -70,11 +70,9 @@ pub struct DrawingEdited {
     pub warnings: Vec<String>,
 }
 
-/// A length in points as EMU (docx-agent's `emu`: rounded half to even).
+/// A length in points as whole EMU, for a size the command still holds in points.
 pub(crate) fn emu(points: f64) -> i64 {
-    #[allow(clippy::cast_possible_truncation)]
-    let value = (points * EMU).round_ties_even() as i64;
-    value
+    crate::units::emu(points).0
 }
 
 /// A VML length as Word writes one (docx-agent's `_points_text`): whole inches in inches
@@ -165,11 +163,5 @@ mod tests {
         assert_eq!(points_text(9.0), "9pt");
         assert_eq!(points_text(-30.5), "-30.5pt");
         assert_eq!(points_text(12.345_67), "12.35pt");
-    }
-
-    #[test]
-    fn emu_rounds_half_to_even() {
-        assert_eq!(emu(1.0), 12700);
-        assert_eq!(emu(-30.5), -387_350);
     }
 }

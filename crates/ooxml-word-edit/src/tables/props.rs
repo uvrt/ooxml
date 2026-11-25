@@ -12,14 +12,15 @@
 use super::shape::{grid_widths, neighbours, own_rows, row_cells, set_grid, share};
 use crate::names::W;
 use crate::review::xml::{find_path, insert_in_order, int, make};
+use crate::units::Twips;
 use crate::validate::Orders;
 use crate::work::{Id, Work};
 
-/// A table's width as set: points, or a percent of the room it sits in.
+/// A table's width as set: a length, or a percent of the room it sits in.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TableWidth {
-    /// Points.
-    Points(f64),
+    /// A length.
+    Length(Twips),
     /// A percent.
     Percent(f64),
 }
@@ -47,13 +48,6 @@ const CELL_SIDES: [(&str, &str); 4] = [
     ("left", "right"),
     ("right", "left"),
 ];
-
-/// Points as twips, rounded as Python's `round` rounds (half to even).
-pub(crate) fn twips(points: f64) -> i64 {
-    #[allow(clippy::cast_possible_truncation)]
-    let value = (points * 20.0).round_ties_even() as i64;
-    value
-}
 
 /// The child `w:{local}` of `parent`, made in schema order where missing.
 pub(crate) fn ensure(work: &mut Work, parent: Id, local: &str, orders: &Orders) -> Id {
@@ -105,8 +99,8 @@ pub struct TableValues {
     pub width: Option<TableWidth>,
     /// `left`, `center` or `right`.
     pub alignment: Option<String>,
-    /// Its indent from the margin, points (`w:tblInd`).
-    pub indent: Option<f64>,
+    /// Its indent from the margin (`w:tblInd`).
+    pub indent: Option<Twips>,
     /// How many rows from the top repeat on each page.
     pub header_rows: Option<usize>,
     /// A fill (`Some(None)`: none).
@@ -141,7 +135,7 @@ pub(crate) fn apply_table(
     }
     if let Some(indent) = values.indent {
         drop_all(work, properties, "tblInd");
-        let twips = twips(indent).to_string();
+        let twips = indent.0.to_string();
         let node = make(work, "tblInd", &[("w", twips.as_str()), ("type", "dxa")]);
         insert_in_order(work, properties, node, orders);
     }
@@ -176,7 +170,7 @@ fn set_width(work: &mut Work, table: Id, properties: Id, width: TableWidth, room
     let (value, kind) = match width {
         #[allow(clippy::cast_possible_truncation)]
         TableWidth::Percent(p) => ((p * 50.0).round_ties_even() as i64, "pct"),
-        TableWidth::Points(p) => (twips(p), "dxa"),
+        TableWidth::Length(length) => (length.0, "dxa"),
     };
     drop_all(work, properties, "tblW");
     let node = make(work, "tblW", &[("w", &value.to_string()), ("type", kind)]);
@@ -257,14 +251,14 @@ pub(crate) fn set_header_rows(work: &mut Work, table: Id, count: usize, orders: 
 pub(crate) fn set_row(
     work: &mut Work,
     row: Id,
-    height: Option<(f64, bool)>,
+    height: Option<(Twips, bool)>,
     cant_split: Option<bool>,
     orders: &Orders,
 ) {
     let properties = ensure(work, row, "trPr", orders);
     if let Some((height, exact)) = height {
         drop_all(work, properties, "trHeight");
-        let value = twips(height).to_string();
+        let value = height.0.to_string();
         let mut attributes = Vec::new();
         if exact {
             attributes.push(("hRule", "exact"));
@@ -337,8 +331,8 @@ pub(crate) fn set_column_width(work: &mut Work, table: Id, column: usize, new: i
 pub struct CellValues {
     /// A fill (`Some(None)`: none).
     pub shading: Option<Option<String>>,
-    /// Points.
-    pub width: Option<f64>,
+    /// Its width.
+    pub width: Option<Twips>,
     /// `top`, `center` or `bottom`.
     pub vertical_alignment: Option<String>,
     /// Every side's border style (`none`: no border), on both cells of each edge.
@@ -364,7 +358,7 @@ pub(crate) fn set_cell(work: &mut Work, table: Id, cell: Id, values: &CellValues
     }
     if let Some(width) = values.width {
         drop_all(work, properties, "tcW");
-        let node = make(work, "tcW", &[("w", &twips(width).to_string()), ("type", "dxa")]);
+        let node = make(work, "tcW", &[("w", &width.0.to_string()), ("type", "dxa")]);
         insert_in_order(work, properties, node, orders);
     }
     if let Some(alignment) = &values.vertical_alignment {

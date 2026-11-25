@@ -17,6 +17,7 @@ use crate::structure::common::{outcome, policy, refused, Outcome};
 use ooxml_base::pyfmt::round2;
 use ooxml_store::{Command, Txn};
 use ooxml_tools::{ArgEnum, Refusal, ToolError, ToolResult, TryCall, WayOut};
+use ooxml_word_edit::units::emu;
 use ooxml_word_edit::{
     picture_size, written_size, DrawingValues, EditError, FloatDrawing, FormatEdit, FormatPlan, InsertParagraph,
     InsertPicture, Property, RevisionPolicy, Setting, Value as SettingValue, WordDoc,
@@ -73,8 +74,8 @@ fn floating(args: &WordDrawings, align_taken: bool, list: &TryCall) -> Result<Op
         wrap: Some(wrap.as_str().to_owned()),
         horizontal_from: Some(args.against.map_or("column", |a| a.as_str()).to_owned()),
         x_align: align.map(|a| a.as_str().to_owned()),
-        x: if align.is_some() { None } else { args.x },
-        y: args.y,
+        x: if align.is_some() { None } else { args.x.map(emu) },
+        y: args.y.map(emu),
         ..DrawingValues::default()
     }))
 }

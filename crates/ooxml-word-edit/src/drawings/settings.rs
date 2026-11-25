@@ -7,9 +7,10 @@
 //! Must not: read the document (the heights it orders against are given), or write
 //! outside the frame and its fallback.
 
-use super::{emu, points_text, python_int, A, FIRST_HEIGHT, HEIGHT_STEP, POLYGON, V, W10, WPS};
+use super::{points_text, python_int, A, FIRST_HEIGHT, HEIGHT_STEP, POLYGON, V, W10, WPS};
 use crate::marks::insert_in_order;
 use crate::names::{MC, W, WP, WP14};
+use crate::units::Emu;
 use crate::validate::Orders;
 use crate::work::{Id, Work};
 use ooxml_xml::QName;
@@ -39,20 +40,20 @@ pub enum ZOrder {
 pub struct DrawingValues {
     /// `square`, `tight`, `through`, `top_and_bottom`, `front`, `none` or `behind`.
     pub wrap: Option<String>,
-    /// Across, points.
-    pub x: Option<f64>,
-    /// Down, points.
-    pub y: Option<f64>,
+    /// Across.
+    pub x: Option<Emu>,
+    /// Down.
+    pub y: Option<Emu>,
     /// Across, an alignment instead of `x`.
     pub x_align: Option<String>,
     /// What `x` and `x_align` measure from.
     pub horizontal_from: Option<String>,
     /// The z-order.
     pub z_order: Option<ZOrder>,
-    /// Points (one alone keeps the aspect ratio).
-    pub width: Option<f64>,
-    /// Points.
-    pub height: Option<f64>,
+    /// One alone keeps the aspect ratio.
+    pub width: Option<Emu>,
+    /// The height.
+    pub height: Option<Emu>,
 }
 
 impl DrawingValues {
@@ -208,12 +209,12 @@ fn set_wrap(work: &mut Work, frame: Id, kind: &str, orders: &Orders) {
     sync_fallback_wrap(work, frame, kind, side);
 }
 
-/// One axis's place: an offset (points) or an alignment, against `origin` when given.
+/// One axis's place: an offset or an alignment, against `origin` when given.
 fn set_position(
     work: &mut Work,
     frame: Id,
     (axis, tag): (&str, &str),
-    (offset, align, origin): (Option<f64>, Option<&str>, Option<&str>),
+    (offset, align, origin): (Option<Emu>, Option<&str>, Option<&str>),
     orders: &Orders,
 ) {
     let node = match work.find(frame, WP, tag) {
@@ -242,7 +243,7 @@ fn set_position(
         }
         None => {
             let child = make_wp(work, frame, "posOffset", &[]);
-            work.set_text(child, &emu(offset.unwrap_or_default()).to_string());
+            work.set_text(child, &offset.unwrap_or_default().0.to_string());
             child
         }
     };
@@ -271,8 +272,8 @@ fn resize(work: &mut Work, frame: Id, values: &DrawingValues, orders: &Orders) {
     };
     let read = |k: &str| work.get(extent, None, k).and_then(python_int).unwrap_or(0);
     let (cx, cy) = (read("cx"), read("cy"));
-    let mut width = values.width.map(emu);
-    let mut height = values.height.map(emu);
+    let mut width = values.width.map(|w| w.0);
+    let mut height = values.height.map(|h| h.0);
     #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
     let scaled = |a: i64, b: i64, c: i64| ((a as f64) * (b as f64) / (c as f64)).round_ties_even() as i64;
     if width.is_none() {

@@ -106,7 +106,9 @@ fn action(rng: &mut Rng, other: &str) -> ListAction {
         }),
         _ => ListAction::Format(LevelFormat {
             format: Some(if rng.below(2) == 0 { "lowerRoman" } else { "decimal" }.to_owned()),
-            text_at: Some(18.0 * f64::from(u8::try_from(rng.below(3)).unwrap())),
+            text_at: Some(ooxml_word_edit::units::twips(
+                18.0 * f64::from(u8::try_from(rng.below(3)).unwrap()),
+            )),
             ..LevelFormat::default()
         }),
     }

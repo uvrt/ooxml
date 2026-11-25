@@ -7,6 +7,7 @@ use super::common::{call, need, outcome, policy, refused, Outcome};
 use crate::describe::sections_json;
 use crate::review::Editing;
 use ooxml_tools::{ArgEnum, Done, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
+use ooxml_word_edit::units::twips;
 use ooxml_word_edit::{InsertSectionBreak, RemoveSectionBreak, SectionEdited, SectionValues, SetSection};
 use ooxml_word_model::docx::sections::sections;
 use ooxml_word_model::docx::sections::SectionBreakKind;
@@ -224,13 +225,13 @@ fn set(
             Orientation::Portrait => "portrait".to_owned(),
             Orientation::Landscape => "landscape".to_owned(),
         }),
-        page_width: args.page_width,
-        page_height: args.page_height,
+        page_width: args.page_width.map(twips),
+        page_height: args.page_height.map(twips),
         margins: [
-            margins.and_then(|m| m.top),
-            margins.and_then(|m| m.right),
-            margins.and_then(|m| m.bottom),
-            margins.and_then(|m| m.left),
+            margins.and_then(|m| m.top).map(twips),
+            margins.and_then(|m| m.right).map(twips),
+            margins.and_then(|m| m.bottom).map(twips),
+            margins.and_then(|m| m.left).map(twips),
         ],
         #[allow(clippy::cast_possible_truncation)]
         columns: args.columns.map(|c| c as i64),

@@ -7,6 +7,7 @@
 use crate::review::{edit_refusal, Editing};
 use crate::structure::common::{call, need, outcome, policy, Outcome};
 use ooxml_tools::{python_dumps, ArgEnum, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
+use ooxml_word_edit::units::twips;
 use ooxml_word_edit::{
     numbered_by_style, paragraphs_of, unnumbered_styles_like, LevelFormat, ListAction, ListEdit, ListStep, ListsEdited,
     WordDoc,
@@ -171,10 +172,10 @@ fn action(args: &WordLists, doc: &WordDoc, docx: &Docx, again: &TryCall) -> Resu
             format: args.number_format.clone(),
             text: args.label.clone(),
             start: args.start,
-            number_at: args.number_at,
-            text_at: args.text_at,
+            number_at: args.number_at.map(twips),
+            text_at: args.text_at.map(twips),
             follow: args.follow.map(|f| f.as_str().to_owned()),
-            tab_at: args.tab_at,
+            tab_at: args.tab_at.map(twips),
         }),
     })
 }

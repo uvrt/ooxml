@@ -61,18 +61,23 @@ fn format(rng: &mut Rng) -> TableFormat {
     match rng.below(5) {
         0 => TableFormat::Table(TableValues {
             style: (rng.below(2) == 0).then(|| "Table Grid".to_owned()),
-            width: Some(TableWidth::Points(200.0 + 50.0 * rng.below(4) as f64)),
+            width: Some(TableWidth::Length(ooxml_word_edit::units::twips(
+                200.0 + 50.0 * rng.below(4) as f64,
+            ))),
             alignment: Some(["left", "center", "right"][rng.below(3)].to_owned()),
             borders: Some(["single", "none", "double"][rng.below(3)].to_owned()),
             ..TableValues::default()
         }),
         1 => TableFormat::ColumnWidth {
             column,
-            width: 40.0 + 10.0 * rng.below(5) as f64,
+            width: ooxml_word_edit::units::twips(40.0 + 10.0 * rng.below(5) as f64),
         },
         2 => TableFormat::Row {
             row,
-            height: Some((12.0 + rng.below(10) as f64, rng.below(2) == 0)),
+            height: Some((
+                ooxml_word_edit::units::twips(12.0 + rng.below(10) as f64),
+                rng.below(2) == 0,
+            )),
             cant_split: Some(rng.below(2) == 0),
         },
         _ => TableFormat::Cell {
