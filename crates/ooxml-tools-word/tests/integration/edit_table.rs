@@ -288,3 +288,43 @@ fn a_row_with_a_drawing_and_a_control_copied_takes_new_numbers() {
     assert_eq!(body.matches(r#"wp14:anchorId="1A2B3C4D""#).count(), 1, "{body}");
     assert_eq!(body.matches(r#"wp14:editId="1A2B3C4D""#).count(), 1, "{body}");
 }
+
+/// A made-up document: a table on a grid of two columns whose first row is one cell of
+/// `w:gridSpan` `span` (as written) and whose second row is two cells.
+fn spanned_package(span: &str) -> Package {
+    let body = format!(
+        concat!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid>"#,
+            r#"<w:tr w14:paraId="00000A00" w14:textId="70000A00"><w:tc><w:tcPr><w:gridSpan w:val="{}"/></w:tcPr><w:p w14:paraId="00000A01" w14:textId="70000A01"><w:r><w:t>A</w:t></w:r></w:p></w:tc></w:tr>"#,
+            r#"<w:tr w14:paraId="00000B00" w14:textId="70000B00">{}{}</w:tr>"#,
+            r#"</w:tbl><w:p w14:paraId="00000D01" w14:textId="70000D01"/>"#
+        ),
+        span,
+        cell("b", 0xB01),
+        cell("c", 0xB02)
+    );
+    let parts = [
+        ("[Content_Types].xml".to_owned(), r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#.to_owned()),
+        ("_rels/.rels".to_owned(), format!(r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{R}officeDocument" Target="word/document.xml"/></Relationships>"#)),
+        ("word/document.xml".to_owned(), format!("<w:document {W}><w:body>{body}</w:body></w:document>")),
+    ];
+    package_of(parts)
+}
+
+#[test]
+fn a_span_of_two_point_zero_is_one_cell_over_two_columns_as_word_reads_it() {
+    // Word reads `2.0` as 2 (grid values probe, `span-2.0`): two values for its two
+    // positions are one merged cell's, refused with the split (the view read it as one
+    // column before, so it found no second position of the cell to refuse)
+    let values = json!({"action": "set_cells", "cells": [
+        {"row": 0, "col": 0, "text": "x"}, {"row": 0, "col": 1, "text": "y"},
+    ]});
+    let (reply, _) = edits_on(spanned_package("2.0"), &[values]);
+    assert_eq!(reply["error"]["code"], "refused", "{reply}");
+    let split = &reply["error"]["details"]["merged"][0]["split"]["arguments"];
+    assert_eq!(
+        (split["rows"].clone(), split["columns"].clone()),
+        (json!(1), json!(2)),
+        "{reply}"
+    );
+}

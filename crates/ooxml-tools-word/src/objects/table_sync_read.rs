@@ -34,13 +34,13 @@ pub(super) fn sync_grid(docx: &Docx, view: &TableView, accepted: &AcceptedView) 
     } else {
         (0..shape.width()).collect()
     };
-    (0..view.grid.len())
+    (0..view.grid.row_count())
         .map(|r| {
             columns
                 .iter()
                 .map(|c| {
                     let at = if shape.active() {
-                        shape.given.get(&(r, *c)).copied().unwrap_or(*c)
+                        shape.given.get(r, *c).unwrap_or(*c)
                     } else {
                         *c
                     };

@@ -31,7 +31,7 @@ use ooxml_word_model::address::resolve::InTable;
 use ooxml_word_model::address::syntax::parse_range;
 use ooxml_word_model::address::{in_table, paragraph, resolve, text_range, AddressError};
 use ooxml_word_model::docx::provenance::text_records;
-use ooxml_word_model::docx::tables::{cells_at, no_cell_text, own_rows, GridPlaces};
+use ooxml_word_model::docx::tables::{cells_at, no_cell_text, own_rows};
 use ooxml_word_model::docx::text::{char_runs, View, OBJECT};
 use ooxml_word_model::docx::{at_path, find_path, style_id, style_kind, style_name, Docx, StoryPart};
 use ooxml_word_model::ids::{Entry, W};
@@ -426,16 +426,13 @@ impl<'r> Reader<'r> {
         let view = table_view(self.doc, self.docx, &id, &call)
             .map_err(|e| AddressError::not_found(e.message().to_owned(), Vec::new()))?;
         let missing = || {
-            let ids: Vec<String> = (0..view.grid.len())
+            let ids: Vec<String> = (0..view.grid.row_count())
                 .flat_map(|r| view.row_cells(r).into_iter().map(move |(c, _)| (r, c)))
                 .filter(|&(r, c)| view.origin(r, c) == Some((r, c)))
                 .map(|(r, c)| format!("{table}/c{r},{c}"))
                 .take(50)
                 .collect();
-            AddressError::not_found(
-                no_cell_text(&GridPlaces::from_positions(&view.grid), table, found.row, column),
-                ids,
-            )
+            AddressError::not_found(no_cell_text(&view.grid, table, found.row, column), ids)
         };
         let (r, c) = view.origin(found.row, column).ok_or_else(missing)?;
         self.cell_at(&view.part, &view.table.id, &view.table.rows, r, c)
