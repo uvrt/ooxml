@@ -197,7 +197,7 @@ pub fn column_minimums(cx: &mut TableContext<'_, '_>, spec: &TableSpec, table: &
 /// of its outer borders (`table_minimum`).
 fn table_minimum(cx: &mut TableContext<'_, '_>, table: &Table) -> Result<Q, Unsupported> {
     let resolved = cx.model.resolve_table(cx.document, table);
-    let spec = TableSpec::new(resolved, false, false);
+    let spec = TableSpec::new(resolved, false, false)?;
     let minimums = column_minimums(cx, &spec, table)?;
     let (first, last) = spec.outer_cells();
     let edges = first.map_or(Q::from_integer(0), |c| {

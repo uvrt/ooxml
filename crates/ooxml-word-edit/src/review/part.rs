@@ -72,6 +72,8 @@ pub(crate) struct PartReview<'w, 'o> {
     pub(crate) emptied_controls: Vec<(Id, Id)>,
     /// The glossary's placeholder texts, by building block name.
     pub(crate) placeholder_texts: &'o PlaceholderTexts,
+    /// What the review says to look at (a table's grid it left as it is).
+    pub(crate) warnings: Vec<String>,
 }
 
 impl<'w, 'o> PartReview<'w, 'o> {
@@ -111,6 +113,7 @@ impl<'w, 'o> PartReview<'w, 'o> {
             groups,
             emptied_controls: Vec::new(),
             placeholder_texts,
+            warnings: Vec::new(),
         }
     }
 

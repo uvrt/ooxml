@@ -126,6 +126,7 @@ struct Gathered {
     dropped_comments: BTreeSet<String>,
     dropped_notes: BTreeSet<(String, String)>,
     moved_out: Vec<(String, String, Vec<Id>)>,
+    warnings: Vec<String>,
 }
 
 impl Run {
@@ -189,6 +190,7 @@ impl Run {
             .dropped_comments
             .extend(review.dropped_comments.iter().cloned());
         gathered.dropped_notes.extend(review.dropped_notes.iter().cloned());
+        gathered.warnings.extend(review.warnings.iter().cloned());
         space.mark_dirty(part);
         for alias in aliases {
             sink.rename(vec![alias])?;
@@ -227,6 +229,7 @@ impl Run {
                     .collect();
                 moved_out_warning(text, &said)
             })
+            .chain(gathered.warnings.iter().cloned())
             .collect();
         let named: BTreeSet<String> = blocks
             .flat
