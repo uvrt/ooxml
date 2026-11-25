@@ -4,10 +4,9 @@
 //! it), and one commit at the end ([`Store::commit_txn`]) -- or none ([`Store::drop_txn`]).
 //!
 //! The holder keeps the gate closed from open to commit or drop: other writers prepare on
-//! the head meanwhile and publish after it; undo and redo are refused (as within a step
-//! group). Its commit therefore lands on the snapshot it was begun on. One transaction is
-//! held at a time: another owner's open waits until it is let go; the same owner's is
-//! refused.
+//! the head meanwhile and publish after it; undo and redo are refused. Its commit therefore
+//! lands on the snapshot it was begun on. One transaction is held at a time: another owner's
+//! open waits until it is let go; the same owner's is refused.
 //!
 //! Must not: publish a version before the commit, or let the version the owner reads be seen
 //! by anyone else (a reader that is not the owner reads the head); hold the holder's lock while
@@ -69,8 +68,7 @@ impl<D: DocModel> Store<D> {
     /// owner holds one (and for the gate); the version begun on.
     ///
     /// # Errors
-    /// [`StoreError::TxnHeld`] when `owner` holds one already; [`StoreError::GroupOpen`]
-    /// while a step group is open.
+    /// [`StoreError::TxnHeld`] when `owner` holds one already.
     pub fn open_txn(&self, owner: TxnOwner, setup: &D::Setup) -> Result<Snapshot<D>, Error<D>> {
         let mut holder = lock(&self.holder);
         loop {
@@ -91,12 +89,6 @@ impl<D: DocModel> Store<D> {
         });
         drop(holder);
         let mut state = self.close_gate();
-        if state.history.grouped() {
-            drop(state);
-            self.open_gate(|_| ());
-            self.let_go(owner);
-            return Err(StoreError::GroupOpen);
-        }
         // under the commit lock with the gate closed: nothing publishes after this head
         state.held = true;
         let number = state.numbered.saturating_add(1);
