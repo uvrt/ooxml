@@ -6,11 +6,13 @@
 //! Must not: change the document but through a command.
 
 use super::drawings_args::{ControlAction, ControlType, WordControls};
+use crate::planned::run_planned;
 use crate::review::Editing;
 use crate::structure::common::{call, find_once, need, one_of, outcome, policy, refused, Outcome};
 use crate::structure::notes::end_of;
+use ooxml_store::Txn;
 use ooxml_tools::{Done, Failure, Refusal, ToolError, ToolResult, TryCall, WayOut};
-use ooxml_word_edit::{ControlEdited, ControlKind, FillControl, Filling, InsertControl, RemoveControl};
+use ooxml_word_edit::{ControlEdited, ControlKind, FillControl, Filling, InsertControl, RemoveControl, WordDoc};
 use ooxml_word_model::address::resolve::control;
 use ooxml_word_model::docx::controls::{controls, Control};
 use ooxml_word_model::docx::Docx;
@@ -56,15 +58,8 @@ fn run(args: &WordControls, editing: &Editing<'_>, list: &TryCall) -> Result<Too
     match args.action {
         ControlAction::List => listed(editing),
         ControlAction::Insert => {
-            let command = InsertControl {
-                at: ooxml_word_model::address::Address::from(position(args, editing, list)?),
-                kind: kind(args.kind),
-                items: args.items.clone().unwrap_or_default(),
-                tag: args.tag.clone(),
-                alias: args.title.clone(),
-                policy: policy(editing),
-            };
-            Ok(reply(editor.run(editing.caller, &command), &|out| {
+            let done = run_planned(editing, insert_plan(args, editing, list))?;
+            Ok(reply(done.map(|d| d.map(|(out, ())| out)), &|out| {
                 let id = out.id.clone().unwrap_or_default();
                 (format!("Inserted {id}"), Some(json!({"id": id})))
             }))
@@ -112,12 +107,32 @@ fn kind(given: Option<ControlType>) -> ControlKind {
     }
 }
 
+/// `insert`'s plan, made in the edit's transaction ([`crate::planned`]): the control at its
+/// position there.
+pub(crate) fn insert_plan<'a>(
+    args: &'a WordControls,
+    editing: &'a Editing<'a>,
+    list: &'a TryCall,
+) -> impl Fn(&mut Txn<'_, WordDoc>) -> Result<(InsertControl, ()), ToolError> + 'a {
+    move |tx| {
+        let command = InsertControl {
+            at: ooxml_word_model::address::Address::from(position(args, tx, list)?),
+            kind: kind(args.kind),
+            items: args.items.clone().unwrap_or_default(),
+            tag: args.tag.clone(),
+            alias: args.title.clone(),
+            policy: policy(editing),
+        };
+        Ok((command, ()))
+    }
+}
+
 /// Where a control goes (docx-agent's `_position`): `at` as given, or the end of the text
-/// `find` names once.
-fn position(args: &WordControls, editing: &Editing<'_>, list: &TryCall) -> Result<String, ToolError> {
+/// `find` names once on the transaction's version.
+fn position(args: &WordControls, tx: &mut Txn<'_, WordDoc>, list: &TryCall) -> Result<String, ToolError> {
     let key = one_of(&[("at", args.at.is_some()), ("find", args.find.is_some())], list)?;
     if key == "find" {
-        let range = find_once(editing, args.find.as_deref().unwrap_or(""), list)?;
+        let range = find_once(tx, args.find.as_deref().unwrap_or(""), list)?;
         return Ok(end_of(&range));
     }
     Ok(args.at.clone().unwrap_or_default())
@@ -200,4 +215,36 @@ fn value_of(docx: &Docx, found: &Control) -> Result<Value, ToolError> {
 /// Registers `word_controls` (the crate's [`crate::register`]).
 pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
     r.edit::<WordControls>(word_controls);
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
+
+    use super::*;
+    use crate::planned::held::{args, calling, compare, marked, raced, shifted};
+
+    #[test]
+    fn a_control_after_found_text_goes_where_the_text_is_when_it_commits() {
+        // text put before the found text meanwhile moves it on: the control goes at its end
+        // there, as one call after the other puts it, not at its old offset
+        let args: WordControls = args(json!({"action": "insert", "find": "this year"}));
+        let list = call("word_controls", &[]);
+        let compared = compare(
+            marked,
+            shifted,
+            |editor, between| {
+                calling(editor, |editing| {
+                    raced(editor, insert_plan(&args, editing, &list), between)
+                })
+            },
+            |editing| word_controls(&args, editing),
+        );
+        compared.assert_same_edit();
+        assert!(
+            compared.serial.contains("So far, Revenue grew 1214% this year[sdt]."),
+            "{}",
+            compared.serial
+        );
+    }
 }
