@@ -296,11 +296,9 @@ fn table_scope(
         formats.extend(
             body.columns
                 .iter()
+                .map(|&width| twips(width))
                 .enumerate()
-                .map(|(column, &width)| TableFormat::ColumnWidth {
-                    column,
-                    width: twips(width),
-                }),
+                .map(|(column, width)| TableFormat::ColumnWidth { column, width }),
         );
     }
     let has_values = values != TableValues::default();
