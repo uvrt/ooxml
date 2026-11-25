@@ -396,12 +396,12 @@ jobs:
         with:
           key: gates-seeds
       # The multi-writer runs each lane gates on (ooxml-word-edit's *_writers.rs and the
-      # undo history's), the relayout's sixty seeds, and ooxml-store's and ooxml-session's
+      # undo history's), the relayout's sixty seeds, and ooxml-store's and the session's
       # tests ignored ones included.
       - name: Seeds
         run: |
           start=$(date +%s)
-          cargo test --locked --release -p ooxml-word-edit -p ooxml-word-layout -p ooxml-store -p ooxml-session -p ooxml-tools-word --no-run
+          cargo test --locked --release -p ooxml-word-edit -p ooxml-word-layout -p ooxml-store -p ooxml-session -p ooxml-session-word -p ooxml-tools-word --no-run
           status=0
           echo "| run | result | wall (s) |" > "$RUNNER_TEMP/seeds.md"
           echo "|---|---|---:|" >> "$RUNNER_TEMP/seeds.md"
@@ -421,7 +421,7 @@ jobs:
           run "ooxml-word-layout relayout sixty_seeds" cargo test --locked --release -p ooxml-word-layout --test integration -- --ignored --nocapture --exact relayout::sixty_seeds
           # A warm check equals a cold one after random edits (61 seeds x 10 versions; found #329).
           run "ooxml-tools-word check_warm many_seeds" cargo test --locked --release -p ooxml-tools-word --test integration -- --ignored --nocapture --exact check_warm::many_seeds
-          run "ooxml-store, ooxml-session" cargo test --locked --release -p ooxml-store -p ooxml-session -- --include-ignored --nocapture
+          run "ooxml-store, ooxml-session" cargo test --locked --release -p ooxml-store -p ooxml-session -p ooxml-session-word -- --include-ignored --nocapture
           {
             echo "### seeds ($(( $(date +%s) - start )) s with the build)"
             echo

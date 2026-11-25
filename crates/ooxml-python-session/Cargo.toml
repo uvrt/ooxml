@@ -18,6 +18,7 @@ doctest = false
 ooxml-base.workspace = true
 ooxml-store.workspace = true
 ooxml-session.workspace = true
+ooxml-session-word.workspace = true
 ooxml-tools.workspace = true
 ooxml-tools-word.workspace = true
 ooxml-word-edit.workspace = true

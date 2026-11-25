@@ -5,7 +5,6 @@
 //! Must not: dispatch a call.
 
 use crate::session::kind_of;
-use ooxml_session::Registry;
 use ooxml_tools::compact;
 use ooxml_tools_word::new_document::Blank;
 use pyo3::exceptions::PyValueError;
@@ -18,7 +17,7 @@ use serde_json::Value;
 #[pyfunction]
 pub fn tool_specs(py: Python<'_>, kind: &str) -> PyResult<String> {
     let kind = kind_of(kind)?;
-    Ok(py.detach(|| compact(&Value::Array(Registry::standard().export(kind)))))
+    Ok(py.detach(|| compact(&Value::Array(ooxml_session_word::registry().export(kind)))))
 }
 
 /// A new blank document's package (`ooxml_tools_word::new_document::Blank`), as bytes:

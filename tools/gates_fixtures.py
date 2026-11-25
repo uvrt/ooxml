@@ -80,7 +80,8 @@ FEATURE_WORDS: dict[str, tuple[str, ...]] = {
 
 #: Paths every fixture goes through: a change to one runs them all.
 FOUNDATIONS = ("crates/ooxml-base/", "crates/ooxml-xml/", "crates/ooxml-zip/", "crates/ooxml-opc/",
-               "crates/ooxml-store/", "crates/ooxml-session/", "crates/ooxml-derive/", "crates/ooxml-tools/",
+               "crates/ooxml-store/", "crates/ooxml-session/", "crates/ooxml-session-word/",
+               "crates/ooxml-derive/", "crates/ooxml-tools/",
                "crates/ooxml-tools-derive/", "crates/ooxml-word-model/", "crates/ooxml-word-layout/",
                "crates/ooxml-word-pages/", "crates/ooxml-text/", "crates/ooxml-fonts/", "crates/ooxml-schema/",
                "crates/ooxml-oracle/python/", "crates/ooxml-oracle/known-differences.toml",

@@ -6,6 +6,7 @@
 
 use crate::options::PyCallWriting;
 use ooxml_session::{CallContext, CancelToken};
+use ooxml_session_word::WordHost;
 use ooxml_store::Caller;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -153,9 +154,13 @@ impl PyCallContext {
                 layout_timeout: seconds(layout_timeout, "layout_timeout")?,
                 limits: limits.map_or(ooxml_tools::Limits::DEFAULT, |l| l.inner),
                 date: writing.as_ref().and_then(|w| w.date.clone()),
-                counts: writing.as_ref().and_then(|w| w.counts),
                 locale: writing.as_ref().and_then(|w| w.locale.clone()),
-                as_given: writing.is_some_and(|w| w.as_given),
+                host: WordHost {
+                    counts: writing.as_ref().and_then(|w| w.counts),
+                    as_given: writing.is_some_and(|w| w.as_given),
+                    ..WordHost::default()
+                }
+                .into_host(),
                 ..CallContext::default()
             },
         })

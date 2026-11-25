@@ -55,7 +55,7 @@ INDEX = "https://uvrt.github.io/ooxml/simple/"  # GitHub Pages, tools/simple_ind
 #: release.yml's tags: `v<YYYY>.<MM>.<DD>`, `.<N>` for a second release the same day.
 TAG_PATTERN = re.compile(r"v\d{4}\.\d\d\.\d\d(\.\d+)?")
 #: Each package's committed tool definitions, one ``<tool>.json`` each: the Word tools' Rust
-#: exports (ooxml-session's tests/integration/registry.rs), the others' Claude definitions
+#: exports (ooxml-session-word's tests/integration/registry.rs), the others' Claude definitions
 #: (their tests/test_tool_specs.py).
 SPECS = {"docx-agent": "crates/ooxml-tools-word/tests/golden",
          "pptx-agent": "python/pptx-agent/tests/specs",

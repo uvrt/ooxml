@@ -8,15 +8,13 @@
 use crate::context::CallCancel;
 use crate::document::Document;
 use crate::format::AnyVersion;
+use crate::format::{Format, FormatDoc, OpenEnv};
 use crate::update::{PartUpdate, Updated};
 use crate::{CallContext, DocId, DocKind, Registry, SessionError};
 use ooxml_base::Context;
 use ooxml_opc::Package;
 use ooxml_store::{StoreConfig, StoreStats};
-use ooxml_tools_word::{Placer, Version};
-use ooxml_word_edit::EarlierIds;
-use ooxml_word_model::docx::Versions;
-use ooxml_word_model::ids::{HeldId, LoadedState};
+use std::any::Any;
 use std::collections::hash_map::RandomState;
 use std::collections::BTreeMap;
 use std::hash::{BuildHasher, Hash, Hasher};
@@ -32,9 +30,6 @@ pub struct SessionConfig {
     /// [`CallContext::locale`], comes first); `None`: the host set none, and a call that names
     /// none reads each document in its own language.
     pub locale: Option<ooxml_numfmt::Locale>,
-    /// What the session lays its Word documents out with, each document's engine its own
-    /// (fonts and memory budget); `None`: only with the layout a call's host gives.
-    pub pages: Option<crate::SessionPages>,
 }
 
 /// A document at one version, as a call reads it: it stays readable, unchanged, while
@@ -45,18 +40,11 @@ pub struct Opened {
     pub(crate) kind: DocKind,
     name: Arc<str>,
     version: AnyVersion,
-    versions: Arc<Versions>,
-    /// Where the call reading it may ask where blocks are laid out (its context's).
-    placer: Option<Arc<dyn Placer>>,
+    /// What its format keeps for reading its versions ([`FormatDoc::readings`]).
+    readings: Arc<dyn Any + Send + Sync>,
 }
 
 impl Opened {
-    /// This version, read by a call that may ask `placer` where blocks are laid out.
-    #[must_use]
-    pub(crate) fn with_placer(self, placer: Option<Arc<dyn Placer>>) -> Self {
-        Self { placer, ..self }
-    }
-
     /// The document's id.
     #[must_use]
     pub fn id(&self) -> &DocId {
@@ -94,18 +82,16 @@ impl Opened {
         self.version.package()
     }
 
-    /// The Word document at this version, when the session owns it as one.
+    /// The version itself, erased: its format's code reads it as its model.
     #[must_use]
-    pub fn word(&self) -> Option<&ooxml_word_edit::WordDoc> {
-        self.version.snapshot::<ooxml_word_edit::WordDoc>().map(|v| v.doc())
+    pub fn any(&self) -> &AnyVersion {
+        &self.version
     }
 
-    /// This version as a Word reading tool is handed it.
+    /// What the document's format keeps for reading its versions.
     #[must_use]
-    pub fn version_of(&self) -> Version<'_> {
-        Version::new(&self.name, self.package(), self.version(), &self.versions)
-            .with_placer(self.placer.as_deref())
-            .with_word(self.word())
+    pub fn readings(&self) -> &(dyn Any + Send + Sync) {
+        &*self.readings
     }
 }
 
@@ -163,6 +149,8 @@ pub struct Session {
     pub(crate) config: SessionConfig,
     pub(crate) context: Context,
     pub(crate) registry: Registry,
+    /// The kinds it opens, each its format.
+    formats: Vec<Arc<dyn Format>>,
     documents: RwLock<BTreeMap<DocId, Arc<Document>>>,
     last_id: AtomicU64,
     pub(crate) counts: Counts,
@@ -172,18 +160,26 @@ pub struct Session {
 }
 
 impl Session {
-    /// A session with `context`'s ports and configuration and the standard tools.
+    /// A session with `context`'s ports and configuration opening the kinds `formats` hold,
+    /// with their tools.
     #[must_use]
-    pub fn new(config: SessionConfig, context: Context) -> Self {
-        Self::with_registry(config, context, Registry::standard())
+    pub fn new(config: SessionConfig, context: Context, formats: Vec<Arc<dyn Format>>) -> Self {
+        let registry = Registry::of(&formats);
+        Self::with_registry(config, context, formats, registry)
     }
 
-    /// A session dispatching `registry`'s tools.
+    /// A session opening the kinds `formats` hold and dispatching `registry`'s tools.
     #[must_use]
-    pub fn with_registry(config: SessionConfig, context: Context, registry: Registry) -> Self {
+    pub fn with_registry(
+        config: SessionConfig,
+        context: Context,
+        formats: Vec<Arc<dyn Format>>,
+        registry: Registry,
+    ) -> Self {
         Self {
             config,
             registry,
+            formats,
             documents: RwLock::new(BTreeMap::new()),
             last_id: AtomicU64::new(0),
             counts: Counts::default(),
@@ -198,60 +194,84 @@ impl Session {
         &self.registry
     }
 
-    /// Open a package of `kind` from its bytes, as `name`. A Word document is read (the
-    /// session owns it: its ids, the problems it opened with); another kind's parts are not
-    /// inflated or parsed until read.
-    ///
-    /// # Errors
-    /// [`SessionError::Package`] when the bytes are not a package within the limits;
-    /// [`SessionError::Word`] when a Word document cannot be read.
-    pub fn open(&self, bytes: Arc<[u8]>, kind: DocKind, name: &str) -> Result<DocId, SessionError> {
-        self.open_with(bytes, kind, name, &EarlierIds::default())
+    /// The formats it opens, each a kind.
+    #[must_use]
+    pub fn formats(&self) -> &[Arc<dyn Format>] {
+        &self.formats
     }
 
-    /// [`Session::open`], a Word document opened again with the ids it had before it was
-    /// saved (the host's state of it, [`EarlierIds`]): it never gives a retired id again.
+    /// The session's configuration.
+    #[must_use]
+    pub fn config(&self) -> &SessionConfig {
+        &self.config
+    }
+
+    /// The session's ports.
+    #[must_use]
+    pub fn context(&self) -> &Context {
+        &self.context
+    }
+
+    /// What tells this session's live-view tokens from another's: sixteen hex digits, its own.
+    #[must_use]
+    pub fn nonce(&self) -> &str {
+        &self.nonce
+    }
+
+    /// What a document of `kind` opens with in this session.
+    #[must_use]
+    pub fn open_env(&self) -> OpenEnv<'_> {
+        OpenEnv {
+            store: self.config.store,
+            context: &self.context,
+        }
+    }
+
+    /// Open a package of `kind` from its bytes, as `name`, as its format opens it (a Word
+    /// document is read: the session owns it, its ids, the problems it opened with; another
+    /// kind's parts are not inflated or parsed until read).
     ///
     /// # Errors
-    /// As [`Session::open`].
-    pub fn open_with(
-        &self,
-        bytes: Arc<[u8]>,
-        kind: DocKind,
-        name: &str,
-        earlier: &EarlierIds,
-    ) -> Result<DocId, SessionError> {
+    /// [`SessionError::Kind`] for a kind the session holds no format of;
+    /// [`SessionError::Package`] when the bytes are not a package within the limits;
+    /// [`SessionError::Format`] when the format cannot read it.
+    pub fn open(&self, bytes: Arc<[u8]>, kind: DocKind, name: &str) -> Result<DocId, SessionError> {
+        let format = self
+            .formats
+            .iter()
+            .find(|f| f.kind() == kind)
+            .ok_or_else(|| SessionError::Kind(kind.as_str().to_owned()))?;
         let package = Package::open(bytes, &self.context.limits)?;
-        let document = Arc::new(Document::open(
-            package,
+        let doc = format.open(package, &self.open_env())?;
+        Ok(self.insert(kind, name, doc))
+    }
+
+    /// Hold `doc`, a document of `kind` its format opened, as `name`: its new id.
+    pub fn insert(&self, kind: DocKind, name: &str, doc: Arc<dyn FormatDoc>) -> DocId {
+        let document = Arc::new(Document {
             kind,
-            name,
-            self.config.store,
-            &self.context,
-            earlier,
-        )?);
+            name: name.to_owned(),
+            doc,
+        });
         let id = DocId::nth(self.last_id.fetch_add(1, Ordering::Relaxed) + 1);
         self.write_table().insert(id.clone(), document);
-        Ok(id)
+        id
     }
 
-    /// A Word document opened from its bytes as `name`, with the id state saved beside them
-    /// (`docx-ids.1.`, docx-agent's `Document.id_state`): its ids are read against its parts
-    /// as they are parsed, so it never gives an id it had before it was saved again, and each
-    /// id the state retired is the session's record (who retired it, in the host's words).
-    /// Returns its id and the state's `(version, last)`: the version saved and the highest
-    /// its history gave, for the host's numbers to go on from.
+    /// The kind of the open document `id`.
     ///
     /// # Errors
-    /// As [`Session::open`]; [`SessionError::Word`] with
-    /// [`ooxml_word_edit::EditError::IdState`] when the state is not these bytes'.
-    pub fn open_state(&self, bytes: Arc<[u8]>, name: &str, state: &str) -> Result<(DocId, (i64, i64)), SessionError> {
-        let package = Package::open(bytes, &self.context.limits)?;
-        let (document, loaded) = Document::open_word_state(package, name, self.config.store, &self.context, state)?;
-        let id = DocId::nth(self.last_id.fetch_add(1, Ordering::Relaxed) + 1);
-        self.write_table().insert(id.clone(), Arc::new(document));
-        self.seed_retired(&id, retired_rows(&loaded))?;
-        Ok((id, (loaded.versions.version, loaded.versions.last)))
+    /// [`SessionError::NotOpen`].
+    pub fn kind_of(&self, id: &DocId) -> Result<DocKind, SessionError> {
+        Ok(self.document(id)?.kind)
+    }
+
+    /// The format's state of the open document `id`.
+    ///
+    /// # Errors
+    /// [`SessionError::NotOpen`].
+    pub fn format_doc(&self, id: &DocId) -> Result<Arc<dyn FormatDoc>, SessionError> {
+        Ok(Arc::clone(&self.document(id)?.doc))
     }
 
     /// The document `id` at its head version. Never waits for a writer.
@@ -269,8 +289,7 @@ impl Session {
             kind: document.kind,
             name: Arc::from(document.name.as_str()),
             version,
-            versions: Arc::clone(&document.versions),
-            placer: None,
+            readings: document.doc.readings(),
         }
     }
 
@@ -291,41 +310,6 @@ impl Session {
     pub fn save_checked(&self, id: &DocId) -> Result<Vec<u8>, SessionError> {
         let document = self.document(id)?;
         document.doc.save(&document.head(), true)
-    }
-
-    /// What the save gate compares for a Word document at its head: its problems now
-    /// against those it opened with (`None` for another kind).
-    ///
-    /// # Errors
-    /// [`SessionError::NotOpen`]; the edit core's when a version cannot be read.
-    pub fn validation(&self, id: &DocId) -> Result<Option<ooxml_word_edit::validate::Delta>, SessionError> {
-        let document = self.document(id)?;
-        let head = document.head();
-        match (document.word(), head.snapshot()) {
-            (Some(word), Some(version)) => Ok(Some(word.validation(version)?)),
-            _ => Ok(None),
-        }
-    }
-
-    /// What the Word document's last check with `reflow` saw (`since_last_check` is
-    /// measured from it), read and kept by a host's own checks too; `None` for another kind.
-    ///
-    /// # Errors
-    /// [`SessionError::NotOpen`].
-    pub fn last_check(&self, id: &DocId) -> Result<Option<Arc<ooxml_tools_word::LastCheck>>, SessionError> {
-        Ok(self.document(id)?.word().map(|word| Arc::clone(&word.last_check)))
-    }
-
-    /// [`Session::validation`] of the version `at` (one a call made, say) instead of the head.
-    ///
-    /// # Errors
-    /// [`SessionError::NotOpen`]; the edit core's when the version cannot be read.
-    pub fn validation_at(&self, at: &Opened) -> Result<Option<ooxml_word_edit::validate::Delta>, SessionError> {
-        let document = self.document(&at.id)?;
-        match (document.word(), at.version.snapshot()) {
-            (Some(word), Some(version)) => Ok(Some(word.validation(version)?)),
-            _ => Ok(None),
-        }
     }
 
     /// Close the document: the session lets go of it and its history at once; a snapshot
@@ -362,11 +346,12 @@ impl Session {
         let document = self.document(id)?;
         let cancel = CallCancel::new(context, &*self.context.cancel, &*self.context.clock);
         let update = PartUpdate::new(parts, self.context.limits, &cancel);
-        let (version, changed, attempts, batch) = document.update(&context.caller, None, &update).inspect_err(|e| {
-            if matches!(e, SessionError::Base(ooxml_base::BaseError::Cancelled)) {
-                self.counts.cancelled.fetch_add(1, Ordering::Relaxed);
-            }
-        })?;
+        let (version, changed, attempts, batch) =
+            document.doc.update(&context.caller, None, &update).inspect_err(|e| {
+                if matches!(e, SessionError::Base(ooxml_base::BaseError::Cancelled)) {
+                    self.counts.cancelled.fetch_add(1, Ordering::Relaxed);
+                }
+            })?;
         if changed && !batch {
             document.stepped(version.seq(), version.number(), None, context);
         }
@@ -450,20 +435,4 @@ fn nonce(context: &Context) -> String {
     now.seconds.hash(&mut hasher);
     now.nanos.hash(&mut hasher);
     format!("{:016x}", hasher.finish())
-}
-
-/// What a loaded state retired, as the session's record takes it: each block id and drawing
-/// number with the version that retired it (the host's number) and who made that version.
-fn retired_rows(loaded: &LoadedState) -> Vec<(HeldId, u64, Option<String>)> {
-    let said = |step: i64| loaded.steps.get(&step).cloned().flatten();
-    let version = |step: i64| u64::try_from(step).unwrap_or_default();
-    let blocks = loaded
-        .gone
-        .iter()
-        .map(|(v, s)| (HeldId::Block(*v), version(*s), said(*s)));
-    let drawings = loaded
-        .drawings_gone
-        .iter()
-        .map(|(n, s)| (HeldId::Drawing(*n), version(*s), said(*s)));
-    blocks.chain(drawings).collect()
 }

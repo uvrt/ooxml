@@ -189,7 +189,11 @@ fn through_session(
     let insert = json!({"doc": "d1", "target": first, "text": " more"});
     let mut best = [f64::MAX; 4];
     for _ in 0..rounds {
-        let session = Session::new(SessionConfig::default(), crate::reads::session_context());
+        let session = Session::new(
+            SessionConfig::default(),
+            crate::reads::session_context(),
+            ooxml_session_word::formats(None),
+        );
         session
             .open(Arc::from(bytes), DocKind::Docx, "a.docx")
             .map_err(|e| e.to_string())?;
