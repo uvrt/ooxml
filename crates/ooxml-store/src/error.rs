@@ -42,10 +42,8 @@ pub enum StoreError<K: Ord + Debug, E: std::error::Error + 'static> {
         /// The step's version.
         step: Seq,
     },
-    /// No step group is open (or the mark is not the open group's).
-    #[error("no step group is open")]
-    NoGroup,
-    /// A step group is open: it closes before an undo or redo runs.
+    /// A transaction is held open (a host's batch, [`crate::Store::open_txn`]): it is
+    /// committed or dropped before an undo or redo runs. (Said as a host's step group.)
     #[error("a step group is open")]
     GroupOpen,
     /// The owner holds a transaction open already ([`crate::Store::open_txn`]): one at a

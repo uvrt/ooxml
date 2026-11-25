@@ -3,7 +3,8 @@
 //! their replay (outside the commit lock) and their publish; a command behind the gate beside
 //! a writer and a reader, and beside an undo; a transaction one owner holds open beside
 //! another owner and beside a writer (the second owner waits, the same owner is refused,
-//! dropping it lets the waiter go). Every run equals a serial run in commit order. Run with
+//! dropping it lets the waiter go), and a writer that waited for one batch publishing before
+//! the next batch's open closes the gate again. Every run equals a serial run in commit order. Run with
 //! `RUSTFLAGS="--cfg loom" cargo test -p ooxml-store --test loom --release`.
 // Tests may unwrap, panic and index (docs/architecture/README.md, section 2.5).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
@@ -284,6 +285,33 @@ fn a_writer_beside_a_held_transaction_publishes_after_it() {
         // it read the held commit's value: prepared again after it, or prepared after it
         assert_eq!(summed, 3);
         assert_eq!(store.snapshot().doc().get(2), 93);
+        assert_eq!(store.steps().len(), 2);
+    });
+}
+
+#[test]
+fn a_writer_that_waited_for_a_batch_publishes_before_the_next_batch() {
+    loom::model(|| {
+        let a = TxnOwner::new(1);
+        let store = Arc::new(Store::new(Cells::default(), StoreConfig::default(), still()));
+        store.open_txn(a, &()).unwrap();
+        let writer = {
+            let store = Arc::clone(&store);
+            loom::thread::spawn(move || {
+                store.run(&Caller::anonymous(), &Put(vec![(2, 2)])).unwrap();
+            })
+        };
+        held_put(&store, a, &[(1, 1)]);
+        // the writer waits for the gate before the batch ends
+        while store.gate_queue() == 0 {
+            loom::thread::yield_now();
+        }
+        store.commit_txn(a, &Caller::named("a")).unwrap();
+        // the same owner's next batch at once: handed the gate only after the writer
+        let next = store.open_txn(a, &()).unwrap();
+        assert_eq!(next.doc().get(2), 2, "the writer published first");
+        store.drop_txn(a);
+        writer.join().unwrap();
         assert_eq!(store.steps().len(), 2);
     });
 }

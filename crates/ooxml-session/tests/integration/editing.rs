@@ -809,9 +809,30 @@ fn a_batch_is_read_by_its_own_thread_alone_and_another_threads_batch_waits_for_i
     // a batch let go unclosed publishes nothing
     let dropped = s.open_group(&d).unwrap();
     set("four");
-    assert!(s.abandon_group(&d, &dropped, &context).unwrap());
+    assert!(s.abandon_group(&d, &dropped).unwrap());
     assert!(body_of(&s, &d).contains(">three<"));
-    assert!(!s.abandon_group(&d, &dropped, &context).unwrap());
+    assert!(!s.abandon_group(&d, &dropped).unwrap());
+}
+
+#[test]
+fn a_package_batch_is_one_held_transaction_too() {
+    let s = session();
+    let d = s
+        .open(docx(&paragraph("11111111", "one")), DocKind::Pptx, "a.pptx")
+        .unwrap();
+    let context = as_caller("w1");
+    let group = s.open_group(&d).unwrap();
+    put(&s, &d, &paragraph("11111111", "two"), &context);
+    put(&s, &d, &paragraph("11111111", "three"), &context);
+    let elsewhere = std::thread::scope(|scope| scope.spawn(|| s.snapshot(&d).unwrap().number()).join().unwrap());
+    assert_eq!((s.snapshot(&d).unwrap().number(), elsewhere), (1, 0));
+    let made = s.close_group(&d, &group, &context, Some("batch")).unwrap();
+    assert_eq!(made, Some(s.snapshot(&d).unwrap().version()));
+    assert_eq!(s.numbers(&d).unwrap().steps.len(), 1, "one step");
+    let dropped = s.open_group(&d).unwrap();
+    put(&s, &d, &paragraph("11111111", "four"), &context);
+    assert!(s.abandon_group(&d, &dropped).unwrap());
+    assert!(body_of(&s, &d).contains(">three<"));
 }
 
 #[test]
