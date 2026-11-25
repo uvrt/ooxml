@@ -153,14 +153,14 @@
 {"digest":"sha256:d486552d2d8f17c2cdfc8d7aad5bf13a","id":"structure:da63f01623068e94","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:4a2e555079f453c2715431b4d33bf969","id":"structure:bc97bec86aa19141","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:4418ad72eede9de93ccacae966b0e03b","id":"structure:0b84f39e4b26e158","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:2eed1376b84a45a1ba4b0cf8843a0c9f","id":"structure:3fce2b7f6b3fa065","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:bd0df20318d9c999532ce4a2efb95201","id":"structure:054cc290ad9f304b","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ef9a5be185069df79eb7a3f18190eb3c","id":"structure:201d6022367a52b2","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:543b232aac5b886ffb820422c0271af0","id":"structure:1fe2f403d1be6b5e","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:d7b3b1175dd8ab44705b914ff0e1c51c","id":"structure:15e7657301abe79b","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:9d23dd6ff8f9e355b9d2462e852637d7","id":"structure:bdf987f1748c7181","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:f66b44d31a43e7556e0d418a35ad57d7","id":"structure:67065c58e2b0940f","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:4b993718635df5c04fad188d3df814ed","id":"structure:0e93e11122740dcc","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:9cdcd468871ebd1529984b67984e2ee8","id":"structure:3fce2b7f6b3fa065","source":"Word 16.106: a new section inherits headers; Reject All hands them back (fu-word3 measure b1-own-reject/b1-own-start, #353)"}
+{"digest":"sha256:99ea57a2666a6b7dd6bf70919822f32a","id":"structure:054cc290ad9f304b","source":"Word 16.106: a new section inherits headers; Reject All hands them back (fu-word3 measure b1-own-reject/b1-own-start, #353)"}
+{"digest":"sha256:8e79c30bb2ff97cd143d270a58bb941f","id":"structure:201d6022367a52b2","source":"Word 16.106: a new section inherits headers; Reject All hands them back (fu-word3 measure b1-own-reject/b1-own-start, #353)"}
+{"digest":"sha256:19023a1092b7ecb387ef4a6e98d24e1d","id":"structure:1fe2f403d1be6b5e","source":"Word 16.106: a new section inherits headers; Reject All hands them back (fu-word3 measure b1-own-reject/b1-own-start, #353)"}
+{"digest":"sha256:40612f8375bd32c77f5d3644d1157880","id":"structure:15e7657301abe79b","source":"Word 16.106: a new section inherits headers; Reject All hands them back (fu-word3 measure b1-own-reject/b1-own-start, #353)"}
+{"digest":"sha256:f5413d90eb52cbed1cc92ce4411c1311","id":"structure:bdf987f1748c7181","source":"Word 16.106: a new section inherits headers; Reject All hands them back (fu-word3 measure b1-own-reject/b1-own-start, #353)"}
+{"digest":"sha256:95c2f04a486975d78b3191b1eac9907c","id":"structure:67065c58e2b0940f","source":"Word 16.106: a new section inherits headers; Reject All hands them back (fu-word3 measure b1-own-reject/b1-own-start, #353)"}
+{"digest":"sha256:d2d705ef568f667181542f5fde1844c4","id":"structure:0e93e11122740dcc","source":"Word 16.106: a new section inherits headers; Reject All hands them back (fu-word3 measure b1-own-reject/b1-own-start, #353)"}
 {"digest":"sha256:4418ad72eede9de93ccacae966b0e03b","id":"structure:b0ef5c8835159faa","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:279a8ba795ed43eb5f7d2b6988e0f574","id":"structure:b1112b90fe97922a","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:1c6d5cc91f4128727868f172d94a3f36","id":"structure:955f9d80cd5fde44","source":"frozen Python a512c901, unmeasured"}
