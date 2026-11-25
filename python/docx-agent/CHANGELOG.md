@@ -5,6 +5,402 @@ docx-agent has not been released to PyPI. Each version that reaches `main` is ta
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) has the detail of every phase.
 
+## 0.2.1 -- v2026.11.25
+
+### Changed
+
+- `check` with the layout is faster on long documents: the coverage reads pages only until every substituted
+  face has been drawn, and a drawn line's paragraph is found by its path at once (each long parent's children
+  counted once per version, not once per paragraph). On a 2,814-page report (a slow Mac): 68 s -> 21 s.
+  Results are unchanged.
+
+- **Saves and results for a co-authoring client** (the design page's requests 1, 2, 3, 6;
+  ooxml-edit, ooxml-common). A save without an edit is the bytes opened; a save after one
+  rewrites only the parts that changed, each other entry keeping its local header, data and
+  central directory record (its MS-FSSHTTPD chunk); entries keep their order, with no data
+  descriptors and no needless ZIP64 (tests/test_saved_zip_layout.py checks every fixture
+  with ooxml-common's tests/support/zipchunks.py). Every result lists the zip parts the call
+  changed in `changed_parts`, beside `touched`.
+
+- An edit that adds or removes blocks near the start of a long document (a paragraph inserted on page 1, a
+  table of contents inserted or grown by `word_fields`) no longer has every later paragraph and table
+  measured again: a paragraph the edit only moved keeps its measure, and the pages are laid out again only
+  where the content changed or flows otherwise. On a 2,814-page report (a slow Mac): `word_fields update`
+  20.7 s -> 9.3 s, `insert_toc` 28.3 s -> 8.8 s, the layout after a paragraph inserted on page 1 8.9 s ->
+  1.5 s. Results are unchanged (each equal to a whole layout).
+
+- `word_fields update` and `insert_toc` on a long document are faster: after an edit that moves every page, the
+  layout finds each paragraph's first page in one pass over the pages instead of one pass per paragraph (on a
+  2,814-page report, 71 s -> 21 s for an update of every field on a slow Mac). Results are unchanged.
+
+- A document the Word layout cannot lay out yet is refused as not supported yet, with a way out, by `render`,
+  the live view, `check` (with `reflow` or `layout`, or numbers or a scale on `pages`: the way out is the
+  check without `pages`) and `word_inspect` with `layout`, naming what it holds:
+  `<tool>: a footnote or endnote | a header or footer | a text box | a drop cap | a block the layout cannot lay
+  out` (`details.not_supported`). Before, only a footnote or endnote had such a form; the rest were plain
+  refusals ("render does not draw this document yet", "check: the layout falls back"). A layout that stops at
+  a footnote is now the footnote form too.
+
+- `word_comments add` and `reply` write no comment into a header or footer: Word drops such comments when it
+  saves (Word 16.106, trial `w2-review-comments`). The item is refused (`refused`) with the body as the way
+  out; a reply to a comment anchored in a header or footer is refused likewise. Comments already there are
+  read as before and never deleted.
+- A call of several items no longer fails whole when one item is refused where it is planned (its place,
+  its comment, a header or footer): the others are written as one step, the refused item is `null` in
+  `data.comments` and listed in `data.refused` (`item`, code, message, way out), a warning names it, and the
+  summary says `N of M comment(s), K refused` (tool rule 5). With no item written the call is refused as its
+  first item was.
+
+- The table grid works out a row's trailing columns itself, the columns it leaves of `w:tblGrid`, and no
+  longer reads `w:gridAfter` for coverage. Word does not read `w:gridAfter` either: it fills those columns
+  and writes back the count (grid values probe, the `after-` cases). As a result:
+  - a row that ends within its grid is on the grid whatever its `w:gridAfter` says, so `grid-row-mismatch`
+    and check's `table_grid_mismatch` "off grid" entries are now only for rows whose cells reach past the
+    grid. A short row is now listed as ragged where its cells do not line up.
+    A table holding tracked cell or grid records (such as a `w:tblGridChange` widening the grid) is still
+    read as written, so check keeps naming the change that leaves its rows short, and the reject that
+    settles it (R128).
+  - validate reports a written `w:gridAfter` that differs from the columns the row leaves, including a
+    short row with none, as the new warning `grid-after-differs`.
+  - Warnings are listed apart from problems: check's `validate` gives new ones under `warnings`, and they
+    are not in `new`, `fixed`, `baseline` or `problems`. The save gate does not refuse a document for a
+    new warning.
+- `word_edit_table`'s "is off its grid now" warning, and the call it records for check's `made_by`, use the
+  same rule as check's `table_grid_mismatch`. An edit that leaves a row short of its grid, in a table with
+  no tracked cell or grid records, no longer warns: Word fills that row's trailing columns. A row reaching
+  past the grid still warns, and tables holding tracked cell or grid records are read as before.
+
+- A `check` after an edit reads less again: each table's cells are kept across the document's versions by the
+  table element (a version that shares the table reads it as before), each paragraph text's detected language
+  is kept across the document's checks, and the layout facts find a table by its path at once. On a
+  2,814-page report (a slow Mac), a check through the session after a one-letter edit: 6.7 s -> 4.1 s.
+  Results are unchanged.
+
+- A `check` with the layout after a local edit reads again only the pages the edit changed: each page's read is
+  kept across versions (within the session's memory budget) by what it depends on -- the page as laid out,
+  its number, counts, section and header texts, and the places of the blocks it draws. On a 2,814-page report
+  (a slow Mac), a check after one paragraph's text changed in place: 30 s -> 7.5 s. Results are unchanged.
+
+- **Word's recorded answers and the probes that measured them have one home again** (lane
+  ph1-evidence): the 21 Word probes the cut deleted are back, under
+  `crates/ooxml-oracle/word/probes`, their documents built from committed files and the tools'
+  calls (no Python document API); the observations moved from `tests/observations` to
+  `crates/ooxml-oracle/word/observations`, and the probes' made-up documents (`rows_cases`,
+  `probe_package`, ...) to `crates/ooxml-oracle/word/cases`. A recorded-Word tier
+  (`crates/ooxml-oracle/word/tests`, run with docx-agent's suite) makes each probe's edit through
+  the tools on the probe's document and compares the result with what Word wrote;
+  `crates/ooxml-oracle/word/index.py` names every observation's readers, or why a case has none.
+  Nothing the package does changes.
+
+Architecture review phase 1 (lane ph1-seams, R2 #6): the tracking mode is the Rust session's
+alone. docx-agent no longer keeps a copy (`entry.tracking`, the mirror's) nor makes an
+extra `word_set_tracking` edit before a call to bring the session to it; a step group's
+revert leaves the mode to the session, which restores it. `describe`'s `tracking` is the
+session's answer (`{"author": ...}` or `null`, as before).
+
+Architecture review phase 1 (lane ph1-seams): the owner of Word documents drops the view
+protocol's refusing stubs (`open`, `follow`, `bridge`, `reader`) and the "not served by the
+Rust session" check: every Word tool is the session's. `docx_agent.rust.served.Hosting`
+lists every exported tool (`tools`) instead of the served ones, and `laid` no longer holds
+`render` (its page engine is handed to it by `reads.serve_render`).
+`docx_agent.rust.reads.last_check` is gone (nothing read it).
+
+- Laying out a version no longer makes its layout facts (every page's line geometry): they are made when a
+  check first asks, from the last version whose facts were made. A field update reads the page each
+  paragraph is first drawn on without placing a line. On a 2,814-page report (a shared Mac), with the other
+  ph1-speed changes: `word_fields update` 9.9-10.5 s -> 7.0-7.9 s, `insert_toc` 9.0-9.6 s -> 6.7-6.9 s.
+  Results are unchanged.
+
+- `check` with the layout no longer names every block of the body for each version: a block's id is found
+  from its path when a fact reports it. Results are unchanged.
+
+- The page engine finds the parts an edit changed by comparing the trees, not the bytes they would write:
+  on long documents every layout after an edit no longer writes the edited part twice (two 20 MB
+  serialisations on a 2,814-page report). Results are unchanged.
+
+- An EMF or WMF picture is drawn once while its part is unchanged, not again for every page that shows it
+  (a logo in a header) or every version laid out. Results are unchanged.
+
+- A part's relationships are read once per version and found by id at once: Markdown reads of documents
+  with many hyperlinks, diagrams or sections no longer read them again (and scan them) for each one.
+  Results are unchanged.
+
+`edit_smartart`, `style_by_value` and `word_find_asset`, out of the tools since 0.2.0, are
+refused as withdrawn with what to call instead (`word_drawings`; `check` with `scale` and
+`word_format_table` or `word_format`; an image blob to `word_drawings` `insert_picture`), no
+longer as unknown tools.
+
+- Laying out a version after an edit takes the pages each paragraph is first drawn on (what the page-number
+  fields' warnings read) from the version before for the pages it kept, instead of walking every page again
+  (lane ph2-cache). Results unchanged.
+
+- `check`'s `text_language` keeps each paragraph's judgement across a document's checks, by the paragraph,
+  its table's properties and the styles part (lane ph2-cache): a check after a local edit judges only the
+  paragraphs it changed. Results unchanged.
+
+- `check`'s layout facts after a local edit read the text sizes from each page's kept contribution
+  (architecture review Phase 2 #7, lane ph2-cache): a page laid out as before is no longer read again
+  for them, and a paragraph is named only where its text is below the minimum. Results unchanged.
+
+- What a document keeps of its tables' readings across versions is counted on its memory account and held
+  within it, the least recently used let go first (lane ph2-cache). Results unchanged.
+
+- `check`'s table facts (`column_fit`, `past_margins`, header rows) take each table as the layout resolved it,
+  from the page engine's kept tables, instead of resolving every table again on every check; a table's
+  paragraphs find their cells without counting its rows again for each (lane ph2-cache). Results unchanged.
+
+- `check`'s layout facts name a top-level block's id only when an entry reports it (architecture review Phase 2 #7,
+  lane ph2-cache2): reading the body's blocks no longer names every block. Results unchanged.
+
+- `check`'s `direct_formatting` keeps each paragraph's finding across the document's versions in the block tier
+  (architecture review Phase 2 #7, lane ph2-cache2): a paragraph no edit touched, in a table no edit touched, is
+  not read again; the rows kept together come from the tables' kept rows' keeps. Results unchanged.
+
+- `check`'s layout facts ask whether the version names a line's paragraph without naming it (architecture
+  review Phase 2 #7, lane ph2-cache2): ids are named only for the entries a check reports. Results unchanged.
+
+- `check`'s keep facts (`keep_with_next_at_foot`, `table_parted`, `settings.keep_together`) and the table keep
+  tools read each table's rows' keeps from what the document keeps across its versions (architecture review
+  Phase 2 #7, lane ph2-cache2): a table no edit touched is not read again. Results unchanged.
+
+- `check`'s `column_fit` after a local edit reads each page's body cells from that page's kept contribution
+  (architecture review Phase 2 #7, lane ph2-cache2): a page laid out as before is not measured again, and a
+  table none of whose paragraphs wraps onto three lines is not resolved or named. Results unchanged.
+
+- `check`'s `table_grid_mismatch` keeps each table's shape across a document's versions (the block tier), so a check
+  after an edit reads again only the tables the edit changed; the block tier reads a kept fact without copying its
+  entry (architecture review Phase 2 #7, lane ph2-cache3). Results unchanged.
+
+- A relayout's layout facts share each page they keep with the version before instead of copying it, and `check`'s
+  facts map a paragraph's lines on a page at once (architecture review Phase 2 #7, lane ph2-cache3). Results unchanged.
+
+- `check`'s `text_language`, `punctuation_spacing`, `numbering_skips_level`, `table_grid_mismatch` and
+  `empty_paragraphs` name a paragraph's or table's id only when an entry reports it, and find a table's rows among
+  the blocks below it only (architecture review Phase 2 #7, lane ph2-cache3). Results unchanged.
+
+- A memo hit costs a hash lookup and a clock stamp: the least recently used order is kept lazily, and the memos keyed
+  by an element's address (block facts, table cells, rows' keeps, language judgements) hash it without SipHash
+  (architecture review Phase 2 #7, lane ph2-cache4). Results unchanged.
+
+- `check`'s `spacers`, `keep_with_next_at_foot`, `split_rows`, `header_not_repeated` and `past_margins` are folds over
+  each page's contribution, kept in the page tier across a document's versions (the page's read, or its layout facts
+  for what needs no paint), so a check after an edit makes them again only for the pages the edit changed
+  (architecture review Phase 2 #7, lane ph2-cache4). Results unchanged.
+
+- `check` names a table without naming its rows where it needs only the table's id, place or element (its keeps,
+  `accept_loses_text`, the facts' keep filter, the id of a path), and names only the tables kept together when it
+  looks for them (architecture review Phase 2 #7, lane ph2-cache4). Results unchanged.
+
+- `check`'s `empty_paragraphs` reads a table's cells once across versions: the block tier keeps each table's runs of
+  blank lines (by places below the table) while the table, the outermost table holding it and the formatting parts
+  are unchanged, and names their ids per check (architecture review Phase 2, lane ph2-cache5). Results unchanged.
+
+- An unscoped `check` of every page no longer names each paragraph's id to ask whether `text_language` keeps it: it
+  keeps every paragraph (architecture review Phase 2, lane ph2-cache5). Results unchanged.
+
+- `check`'s `accept_loses_text` finds a table's cells Accept All removes once across versions: the block tier keeps
+  them (by places below the table) while the table is unchanged (architecture review Phase 2, lane ph2-cache5).
+  Results unchanged.
+
+- A check asks which of a version's paragraphs the tool names all at once: the long parents' index is locked once,
+  one place is reused, and nothing is remembered per path (architecture review Phase 2, lane ph2-cache5). Results
+  unchanged.
+
+- `check`'s `numbering_skips_level` reads which list a numbered paragraph is in once across versions: the block tier
+  keeps it while the paragraph, the styles and the numbering are unchanged; each instance's definition is found once
+  per check (architecture review Phase 2, lane ph2-cache5). Results unchanged.
+
+- A warm `check` does less per version (architecture review Phase 2, lane ph2-close1s): each page's context is
+  digested field by field instead of through its debug text; `punctuation_spacing` passes over a paragraph without
+  marks on its texts in place, before its place or table is read; `accept_loses_original` does not walk a body that
+  holds no deletion record (the part's kept facts say so). The texts' detected languages and the tables' shapes as
+  Accept All leaves them are now kept on the document's budget (the shapes per document, no longer for the
+  process). Results unchanged.
+
+- Chart edits and the DrawingML/chart views insert children by the child orders generated from the ECMA-376 XML
+  schemas (`ooxml_schema::orders::local`), no longer by ooxml-chart's hand-kept copies (lane ph2-types2,
+  architecture review R1 #3). The orders are the same; an axis title is now placed by its axis' whole sequence
+  rather than its first seven steps, which puts it in the same place. The 5th edition Transitional `pml.xsd` is
+  vendored for `p:sp`. No reply changes.
+
+- One table grid in the Rust core (`ooxml_word_model::docx::tables::Grid`, lane ph2-types2): the model, Markdown
+  reading, addresses, tracked-change joins, `word_inspect`, the table reads, the originals watch and the layout's
+  column facts place cells by one value rule and one cell walk instead of seven. Word 16.106 measured the rule
+  (`grid-values-word.json`): `w:gridSpan`/`w:gridBefore`/`w:gridAfter` are decimal numbers with no white space
+  (Word does not open a span of ` 2`, `1_0` or `-1`), a span of `0` is one column, a negative `w:gridAfter` none,
+  and cells inside row-level content controls and custom XML take their grid columns. Documents Word opens read as
+  before, except where a reader skipped wrapped cells or took a span of `0` as no column; see the PR.
+
+- The editing core's table readers use the one table grid too (`GridSource`, lane ph2-types3): setting cells,
+  a table's shape, deleting, adding and splitting columns, the row look, `validate`'s grid check, the
+  `table_grid_mismatch` fact and Accept All / Reject All's grid tidying place cells by Word's value rule and cell
+  walk. Documents Word opens read as before, except: a review's grid tidying takes a span of `0` as one column and
+  `+2` as two, as Word does; and `validate` reports `grid-span-invalid` for every span that is not a decimal number of 1 or more
+  (Word does not open `x` or ` 2`, and reads an empty one as `0`), not only for those below 1. See the PR.
+
+- The child orders edits insert by and validation checks are generated from the published ECMA-376 XML schemas
+  (1st edition, completed by the 5th edition Transitional; `crates/ooxml-schema/xsd`), no longer from the frozen
+  Python's table (lane ph2-types, architecture review R1 #3). The orders are the same, step for step: the 15
+  parents the schemas do not give as the table has them keep the table's order as an overlay, each marked
+  "frozen Python, unmeasured" with its cause, until Word measures them. No reply changes.
+
+- The editing core names parts and block ids by their own types (lane ph2-types6, architecture review R1 #3,
+  step 6): a store key's part is a `PartName` (ooxml-opc) and its block a `BlockId` (word-model), and an edit's
+  outcome gives its block, its part and the ids it renamed (`Renames`) typed, turned into text only where a
+  reply is written. No reply changes.
+
+- An address is read once where a tool takes it (lane ph2-types6, architecture review R1 #3, step 7): an
+  `Address` keeps the text as given, the form it is written in and every form its text could also be read as,
+  and a `Place` reads `end`, `end:<story>`, `after:`, `before:`, `replace:` or a bare address. `insert_markdown`
+  and `copy_from` take their place as a `Place`; inserting and deleting text, placed edits and hyperlinks take
+  their range as an `Address`; the reads (`word_read`, `word_inspect`, `find_text`, review listings, `check`)
+  resolve an `Address`, and a heading's range expands to the `Address` of its span. Refusals keep their wording
+  and order: a test resolves every address of the gates' cases both ways and finds them the same. No reply
+  changes.
+
+- The rest of the editing commands take addresses read at the tool's edge (lane ph2-types8b, architecture review
+  R1 #3, step 8): `word_set_text`, `word_delete` blocks, `word_format`, `word_lists`, styled text and paragraph
+  styles, the table tools' `table`, `word_sections` and `word_headers_footers`' `section`, `word_move` and the
+  table of contents' and section breaks' `after`/`before`, and the place of a picture, chart, shape, text box,
+  content control, field, cross-reference or note (and a note moved). The core asks a read address what form it
+  has rather than checking its text for `..`, `s:` or `cc:`. No reply or refusal changes.
+
+- A header's or footer's name and a section's start are typed from the tool to the editing core (lane
+  ph2-types6, architecture review R1 #3, step 8, first part): `word_headers_footers` hands the core a
+  `HeaderFooter` (header or footer, default, first or even page), `word_sections`' `insert_break` a
+  `SectionBreakKind`, no longer their names as text. No reply changes.
+
+- Lengths reach the editing core in the units it writes (lane ph2-types8b, architecture review R1 #3, step 8):
+  the tools turn the points they are given into EMU (`word_drawings` sizes and offsets, shapes and text boxes)
+  or twips (`word_format_table` widths, indents and row heights, `word_lists` positions, section page setup)
+  where they read them, rounded as before. A chart's size and a picture's width stay in points, since the core
+  still checks or scales them in points. No reply or refusal changes.
+
+- `tools/SUPPORTED.md` no longer lists as supported what the tools refuse at this release:
+  `word_insert_markdown`'s table from a dataset's or another document's rows (`from`), `like`,
+  and `at` a `replace:` place are named under what is not supported yet.
+
+- A `check` with the layout after an edit that changes the page count (a page added or removed) no longer
+  paints every page again: each page whose body is laid out as before keeps its read and has only its header,
+  footer and notes painted again (they show the new count). Results are unchanged.
+
+The `png` extra no longer installs resvg-py through docx2svg's (lane svg-thin): PNG is drawn by ooxml-core,
+a dependency. The extra installs nothing extra and is removed in the next release.
+
+### Fixed
+
+- A table whose `w:gridSpan` or `w:gridBefore` holds billions of columns (up to 2147483645, the largest Word
+  opens, and larger) no longer takes tens of gigabytes in `set_cells`, a cell split or their "no cell at"
+  refusal: a table's grid places are kept as one run of columns per cell, not one place per grid column.
+  The refusal counts the places no cell covers instead of listing each, so it names the first ten and the
+  rest's count as before. Normal tables read and refuse as before.
+
+- `word_controls fill` of a date control takes the date as the control shows one, typed in its own picture
+  (`5-10-2026` in `d-M-yyyy`), as Word takes it, besides ISO 8601; the reply's warning says how it was read.
+  Text neither form reads is refused with both forms named.
+- A data-bound plain text control whose cached text is not its custom XML node's opens showing the node, as
+  Word opens it: `word_controls list`, the reads and the saved document show the node's text (no history
+  step). Measured in Word 16.106 (`e5-word.json`, `controls-saved`); only a content of plain text runs is
+  refreshed (a revision, mark or other object in it leaves it as it is).
+
+- `word_changes` accept or reject that empties a content control leaves it showing its placeholder, as Word
+  16.106's Accept All and Reject All do: `w:showingPlcHdr` set and one run in the control's own run
+  formatting, holding the text of the glossary placeholder the control names, else five spaces. A
+  block-level control gets the run in the paragraph the review emptied. Before, the control was left
+  empty, and the reject view differed from Word's on every edit of `controls.docx` (Word suite, control 309).
+
+- `word_notes insert` and `move` refuse a place in a text box, as Word 16.106 puts no note reference there;
+  the refusal's options are the places beside the text box in the paragraph anchoring it (before the text
+  box, the paragraph's end). Before, a reference moved there went into the text box's drawing and its VML
+  fallback both, and Word did not open the file (Word suite, `chart-places.docx`).
+
+- `word_sections insert_break` with tracking on gives the split section's header and footer references to
+  the new section, as it already did untracked and as Word 16.106 writes a tracked break: the section after
+  the break names none and inherits them. Before, both sections named the same header and footer; where
+  that header held a chart, Word showed an alert and did not open the file (Word suite, `chart-places.docx`).
+- `word_changes` reject of a tracked section break (and accept of a tracked removal) hands the gone section's
+  header and footer references on to the section after it where that names none of its own, as Word 16.106's
+  Reject All does: the section left shows its header again. Before, the references went with the break.
+  The tracked break's result now also lists `{"part": "word/document.xml"}` without a section next to the
+  break's heading section, as the untracked one always has: the last section's properties changed (a change
+  in no block, round 16 F12).
+
+- `word_copy_from` and `word_move` refuse to put blocks holding a footnote or endnote reference in a text
+  box, as Word 16.106 has no note reference there (its Insert Footnote is off in a text box, and its paste
+  there loses the reference): the refusal's options are the places before and after the paragraph
+  anchoring the text box, as `word_notes` refuses a reference there. Before, the reference went into the
+  text box (`word_move`: into its drawing and its VML fallback both, as `word_notes move` did before #354).
+  Blocks without a note reference still go into a text box.
+
+- A list paragraph at a level its list's definition lacks reads as Word shows it: Word 16.106 fills a
+  multi-level definition's missing levels when it opens the file, each a decimal level with no text (no
+  label), so `word_read` reads such a paragraph as Word's numbered level rather than a bullet from its
+  style. `word_lists level` writes what Word's own tracked level change writes (the paragraph's `w:numPr`
+  and a `w:pPrChange`, nothing in the numbering part), as it did (Word suite, `style-document.docx`).
+
+- `word_lists level` refuses a level past 0 for a paragraph whose list has a single-level definition
+  (`w:multiLevelType="singleLevel"`), as Word 16.106 refuses to set one (measured); the refusal's option is
+  level 0. Before, the tools wrote a level the definition does not have.
+  A target holding a paragraph in no list still gets the "not in a list" refusal first, since level 0 would not
+  get past that paragraph.
+
+- `word_fields insert_cross_reference` refuses a text cross-reference inside the bookmark it shows, as Word
+  16.106's update of a `REF` inside its own bookmark gives an error result ("Invalid bookmark reference"),
+  whether the bookmark stands around a content control or in a plain paragraph. The refusal's options are
+  the end of the last paragraph before the bookmark and the start of the first after it; a page
+  cross-reference (`kind: page`) there is not refused, as Word resolves it. Before, the tools wrote the
+  bookmark's first line as the result (Word suite, `controls.docx`).
+
+- The table tools (`word_edit_table`, `word_format_table`, `set_cells`, table sync and fills) read
+  `w:gridSpan`, `w:gridBefore` and `w:gridAfter` by the one grid value rule, as Word reads them. Before,
+  they parsed the value on their own. Replies change for odd values only, and now match Word:
+  - `2.0` and `2.5` are two columns (they were one), so two values for both positions of such a cell are
+    refused as one merged cell, with the split.
+  - `" 2"` is one column (it was two).
+  - `99999999999999999999` wraps to 1661992959 columns (it was one), and `4294967298` is two.
+  - A `w:gridBefore` or `w:gridAfter` of `1.0` is one column (it was none), so such a row is no longer
+    counted as off its grid.
+- A table whose cell spans billions of columns no longer takes gigabytes in these tools or in a table's
+  accepted view: the positions a cell taken into the one before it covers are kept as one run per cell.
+
+- A table whose row reaches past both its `w:tblGrid` and the 63 columns a Word table takes, such as a
+  `w:gridSpan` of 2147483645, is no longer widened to one grid column per column. That widening took tens of
+  gigabytes:
+  - Layout and render now report the table as not laid out: "row N reaches M grid columns, past the 63 a
+    Word table takes".
+  - Accepting or rejecting a change in such a table leaves its `w:tblGrid` as it is and warns about it.
+  - Reading such a table's pending column deletions also no longer counts one entry per column.
+  - Rows that reach past their grid by less are widened as before.
+
+- Three replies that copied docx-agent's wording now follow the tool rules (lane ph1-quirks, architecture
+  review R4 #5): `word_edit_table` given a workbook's table (`t:stock`) where a table of the document is
+  meant offers the call that keeps a table here in step with it as the way out's `try_call`
+  (`action: sync`, `from`), no longer as a Python dict in the message; `check`'s `scale` tells a target of
+  another kind that values by reference are written `{{d:...}}`, as a target naming nothing is told; and
+  `word_format_table` on a table addressed by position names it once in `changed`, by the id its stamping
+  gave it (the rename in `renamed`), as the toolbox's result already did.
+
+- A check or render after an edit that both changed a paragraph and removed another, in a document whose
+  content repeats, could keep stale blank pages at the end (the page count then counted them): the
+  relayout now lines a new page up with an old one by the shift of the last change it is past.
+
+- An edit whose core finds its own model and tree disagreeing is answered as an `internal` failure, a bug,
+  never as a refusal of the call's input (lane ph2-types, architecture review R1 #7): XML the edit core makes
+  itself that does not read back (a header or footer part, a chart's frame, a template's `docProps/app.xml`)
+  was answered as `refused`. A control bound to a custom XML part whose relationship names a part the
+  package lacks is refused as the missing part it is ("the custom XML part ... the control is bound to is
+  missing"), no longer as an `internal` "no part". The session counts the calls of each tool answered as
+  `internal` (`Session.internal()`, and `internal` in `stats()`).
+
+- Table grid values are read as Word 16.106 reads them (lane ph2-types4, measured by the grid probe): a
+  `w:gridSpan` or `w:gridBefore` with a fraction counts its whole part (`2.0`, `2.9` and `2.` are 2, `.5` is 0), a
+  number past 32 bits wraps as it does in Word (`99999999999999999999` is 1661992959, `4294967298` is 2), and an
+  empty value, `+`, `-` or `.` is 0. `validate` no longer reports `grid-span-invalid` for spans Word opens (`2.0`,
+  `99999999999999999999`); it does report spans Word refuses that it used to pass (`1e1`, `2147483646` and up, or a
+  wrapped value below 0 such as `4294967295`), and `.` or `-0.5`, which Word reads as 0, like `0`. A row a wrapped
+  span takes past the grid is reported as `grid-row-mismatch`. Rejecting a row-property revision now also drops a
+  `w:gridBefore`/`w:gridAfter` of ``, `.` or `-0.5`, which Word reads as 0.
+
 ## 0.2.0 -- v2026.11.23
 
 ### Added

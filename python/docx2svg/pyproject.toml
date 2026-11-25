@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "docx2svg"
-version = "0.14.0"
+version = "0.15.0"
 description = "Render Word (.docx) documents to SVG and PNG, laid out and drawn by the Rust core (ooxml-core)"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -31,7 +31,7 @@ classifiers = [
 # The Rust core lays documents out and draws them (ooxml-core); ooxml-common reads the font
 # folders and writes text as outlines.  Why each, and at its version: CONTRIBUTING.md,
 # "Dependencies".
-dependencies = ["ooxml-common>=0.38.0", "ooxml-core>=0.10.0"]
+dependencies = ["ooxml-common>=0.45.1", "ooxml-core>=0.11.0"]
 
 [project.optional-dependencies]
 # PNG is drawn by ooxml-core now: the extra needs nothing.  Kept for one release, so that

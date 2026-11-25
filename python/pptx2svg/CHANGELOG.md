@@ -4,6 +4,20 @@ pptx2svg is not on PyPI yet. Each version that reaches `main` is tagged `v<versi
 from 0.2.0, the first tagged; 0.1.0 was never tagged, and its changes are 0.2.0's.
 The full history is the [merged pull requests](https://github.com/uvrt/pptx2svg/pulls?q=is%3Apr+is%3Amerged).
 
+## 0.3.9 -- v2026.11.25
+
+### Fixed
+
+- **What a slide shows from its layout and master** (pptx-agent round 60, R144; measured in
+  PowerPoint 16 for Mac, slide show captures, `tests/test_template_shapes.py`). A slide
+  that hides background graphics (`showMasterSp="0"`) no longer draws its layout's shapes:
+  PowerPoint hides them with the master's (a layout's `showMasterSp="0"` still hides only
+  the master's). A slide placeholder that states no fill or outline is drawn with its
+  layout placeholder's, else that one's master placeholder's -- a layout title's fill and
+  line, a master body's fill through a layout body that states none; its own `a:noFill`
+  hides it. A picture fill so inherited is read in the layout's or master's relationships.
+  None of the 88 fixture slides changes.
+
 ## 0.3.8 -- unreleased
 
 - `tools/extract_font_metrics.py` measures Aptos Narrow too (round 44, for xlsx-agent's

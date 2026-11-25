@@ -5,6 +5,60 @@ docx2svg has not been released to PyPI. Each version that reaches `main` is tagg
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) records every measurement in detail.
 
+## 0.15.0 -- v2026.11.25
+
+### Changed
+
+docx2svg draws with the Rust core (lane svg-thin): `convert_docx_to_svg`, `convert_docx`,
+`convert_docx_to_png` and the command line lay a document out with `ooxml_core.WordPages` and draw it as
+docx-agent's `render` does: the same page SVG, and PNG drawn by the same raster with the same faces (at 300
+dpi unless a size is given). Pages differ from docx2svg 0.14's where
+the Rust layout follows Word more closely; Word is the reference. `Conversion.layout` is now the
+`ooxml_core.LaidPages` (it was docx2svg's Python `Layout`). A document the layout does not lay out yet
+raises `LayoutError`, now a subclass of `NotImplementedError` that says why and what to do instead. A page
+drawn but not yet as Word draws it is a `drawn-not-as-word` warning. `resolve_path` resolves a path with
+the Rust Word model's rules (`ooxml_core.element_path`). docx2svg now depends on ooxml-core and no longer
+on resvg-py; the `png` extra installs nothing extra and is removed in the next release.
+
+### Removed
+
+- `docx2svg.rust` no longer lays documents out: `Engine`, `RustLayout`, `RustPage`, `svgs`, `page_png`,
+  `fallbacks` and `count_fallback` are gone, and with them the dual path where a version the Rust layout did
+  not lay out was laid out by docx2svg's Python layout instead. The module keeps what a Rust session lays its
+  documents out with (`page_setup`, `engine_key`, `memory_budget`, `word_fonts`); `page_setup` now raises
+  `ValueError` for options the Rust layout does not take instead of answering `None`. docx2svg's own layout
+  (`lay_out_docx`, `convert_docx_to_svg`) is unchanged.
+
+  Instead: a Rust session's own page engine (`ooxml_core.Session.pages`, set with `page_setup`) lays a
+  document out and renders it; a version it does not lay out yet is refused by the tools as not supported,
+  with a way out.
+
+docx2svg's Python layout modules are gone (lane svg-thin, PR 2): `layout`, `paginate`, `relayout`, `linebreak`,
+`lines`, `measure`, `fonts`, `hyphenate`, `model`, `parse`, `resolve`, `table`, `svg`, `drawing`, `chart`,
+`diagram`, `fields`, `notes`, `floating`, `wrap`, `vertical`, `outlines`, `scope`, `recorded`, `opc`, `units`,
+`xmlutil`. They were never public; the thin layer did not use them since the previous release. The
+hyphenation patterns moved to the Rust core (ooxml-text). `docx2svg.coverage` keeps only `Coverage`, `StopInfo`
+and `coverage_from`; `docx2svg.paths` only `resolve_path`; `docx2svg.errors.failure` is gone.
+Instead: the public functions (`convert_docx_to_svg`, `convert_docx`, `convert_docx_to_png`, `svg_to_png`,
+`resolve_path`), and `docx2svg.rust.word_pages(options).lay_out(data)` for the laid-out document
+(`ooxml_core.LaidPages`).
+
+docx2svg's Python layout is gone (lane svg-thin, cut-python-from-start): docx2svg is a thin layer over the
+Rust core's layout and drawing (ooxml-core), the engine docx-agent's `render` draws with. Withdrawn, each
+answering with what to use instead when asked for (`docx2svg.WITHDRAWN`, for one release): `lay_out_docx`,
+`convert_docx_to_layout`, `page_svgs`, `parsed_document`, `drawn_faces`, `warm`, `scan_fonts`, and the
+Python model and parser's names `Document`, `Paragraph`, `Run`, `Section`, `PageMargins`, `PageSize`,
+`PageInfo`, `Package`, `parse_document`, `parse_package`. `ConvertOptions.advances`, `metrics`,
+`decorations` and `names` are refused (`ValueError`) for one release, then removed. `svg_to_png` and
+`convert_docx_to_png` take `backend="auto"` or `"resvg"` only (cairosvg is refused). docx2svg's submodules
+(`layout`, `paginate`, `fonts`, `model`, `parse`, ...) were never public and go in the next release.
+Instead: `convert_docx_to_svg`, `convert_docx_to_png` and `convert_docx` as before; for a layout to keep,
+`docx2svg.rust.word_pages(options).lay_out(data)` (an `ooxml_core.LaidPages`: `.svg(page)`,
+`.pngs(pages, raster)`, `.pages()`, `.page(n)`, `.coverage_summary()`; `WordPages.update(parts)` lays a
+changed version out from the last one); for the model, docx-agent's `word_read` and `word_inspect`; for
+measuring, `font_dirs` and `font_substitutes`; for cairosvg, rasterise `convert_docx_to_svg`'s pages
+yourself.
+
 ## 0.14.0 -- v2026.11.23
 
 - **`docx2svg.rust` keeps less again (lane L4f):** lines' heights, cells' stacked lines,

@@ -39,7 +39,7 @@ from .png import RasterizerNotAvailable, available_backends, svg_to_png
 if TYPE_CHECKING:
     from .coverage import Coverage
 
-__version__ = "0.14.0"
+__version__ = "0.15.0"
 
 __all__ = [
     "Conversion",

@@ -3,6 +3,102 @@
 ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python module
 `ooxml_core`. Its version is the `crates/python` crate's.
 
+## 0.11.0 -- v2026.11.25
+
+### Added
+
+docx2svg's thin layer (lane svg-thin): `LaidPages.svg(page, width=None, height=None)` sizes a page;
+`LaidPages.pngs(pages, raster, width=None, height=None, system=None)` draws pages as PNG with the faces
+they draw, as the `render` tool draws them; `LaidPages.raster_files(pages)` gives the files a rasteriser is
+handed for them; `LaidPages.coverage_summary()` gives the version's coverage. `WordFonts.face(family)`
+says which installed file a face is laid out with, and `WordFonts.default_substitutes()` gives Word's
+measured substitutes. `drawing_plan(svg, font_files, font_dirs)` gives the passes a text is drawn in where
+two faces answer to one name, and `element_path(xml, path)` gives where a layout path's element is in a
+part. A `PageRaster`'s own files are now handed over, after a document's faces, to the raster made for
+its pages.
+
+### Changed
+
+- **A part saved with the bytes it was read with keeps its entry** (co-authoring request 1).
+  The Rust package's save copied untouched entries raw already; a part touched but written
+  again unchanged (a tree that writes the bytes read, bytes put back) was written with a
+  new local header and central record ("version needed" 2.0, "version made by" 2.0, the
+  external attributes `rw-------` where none), so its MS-FSSHTTPD chunk changed. Now its
+  entry is copied as read wherever the header holds its sizes (no data descriptor, no
+  needless ZIP64: `ooxml_zip::Archive::header_copyable`), as ooxml-edit's save does.
+
+- A document's commit lock is now held only to publish (architecture review Phase 2, lane ph2-commit, PR 1). A
+  commit checks what was written since its snapshot, and rebases and replays its changes onto the head, outside the
+  lock. A command that keeps conflicting (a field update, a TOC, a list or comment edit that reads the whole
+  document) now prepares behind a per-document gate instead of under the lock: other writers prepare meanwhile and
+  publish after it, and reads, undo, redo and the history never wait for it. Results unchanged. The Rust session's `lock_times`
+  reports how long the lock and the gate were held and waited for.
+
+- A Word document's batch is now one transaction (architecture review Phase 2, lane ph2-commit, PR 3). Its ops run in
+  it, each at a savepoint, and it commits once when `StepGroup.close` runs; until then only the thread that opened
+  the group reads the ops' versions, and every other caller reads the head. The batch holds the document's gate from
+  `Session.open_group` to its close, so other writers publish after it (as before). A second group opened by the same
+  thread is refused; one from another thread waits. A `StepGroup` dropped unclosed takes back what it did and lets the
+  document go. Handlers read the version their edits run on. Tool results unchanged.
+
+- Step groups are gone from the store (architecture review Phase 2, lane ph2-commit, PR 4): every document's batch,
+  of any kind, is one transaction its thread holds open (`Session.open_group`), as a Word document's has been since
+  PR 3. Writers that waited for a batch's gate now publish before the next batch (or a command behind the gate) closes
+  it again, so a host's batches sent back to back no longer delay the other writers past more than one batch. Tool
+  results unchanged.
+
+### Fixed
+
+- Every version a writing tool makes has a valid, unique `w14:paraId` and textId on every paragraph and
+  table row of every story, and its ids on every drawing, however the tool wrote it: stamped at commit
+  after the command, from the id pool (never a retired id). Before, tools that do not stamp first
+  (`word_fields` update among them) could leave a fixture's unstamped row, and Word then dropped every
+  paraId of the document on saving it (paraid-durability.json, factors "row"; the new "tools" group
+  measures the tools' outputs kept whole).
+
+Architecture review phase 1 (lane ph1-seams, R2 #11): a document's page engine that a panic
+left mid-layout is no longer reused. The next call that takes the engine finds it made
+again from its seed (the same fonts, options and budgets; nothing laid out, so the next
+version is laid out whole), instead of an engine whose memos may be half made.
+
+Architecture review phase 1 (lane ph1-seams, R2 #6): an edit reads the document's tracking
+mode for its whole call, so a `word_set_tracking` that commits beside it waits for it: an
+edit is never written under one mode and committed after the mode changed. `describe`
+answers `tracking` (`{"author": ...}`, or `null` when untracked) from the session's mode.
+Undo leaves the mode as it is (as before; Word's Undo does not switch Track Changes).
+
+- **A pending tracked row deletion no longer blocks the reads (round 60, R137).** Deleting a
+  table row with tracking on, where the row held text the file had when opened, left its
+  cells' paragraph marks deleted, and `word_inspect` of any target and `word_read`'s final
+  view were refused ("Accept All's cell ends") from then on, after a save and reopen too and
+  for files arriving with a reviewer's pending row deletion; `word_edit_table` refused the
+  table's next edit the same way. Word 16.106's Accept All removes such a row whole (the
+  last row, every row: then the table goes, the paragraphs around it stay), so its cells'
+  ends take nothing in: the reads answer, and the final view is Accept All's. Where the row
+  holding a vertical merge's first cell goes, the merge starts at its first kept cell (empty:
+  the text went with its row), or that cell stands alone where nothing continues it; a row
+  going inside a merge whose cell there is no part of it (as a tracked merge across a
+  pending row deletion writes it) leaves the merge whole -- in
+  `word_read`'s final view and the render model alike (`ooxml_word_model::docx::tables::
+  merge_heads`). Measured: `crates/ooxml-session/tests/integration/row-deletions-word.json`.
+
+### Removed
+
+- `ooxml_core.LayoutFallback` is gone: nothing lays a version out another way. `WordPages.lay_out` and
+  `update` raise `NotImplementedError` (naming why and where) for a version the layout does not lay out yet.
+
+  Instead: catch `NotImplementedError`; the tools refuse such a version as not supported yet, with a way out.
+
+Architecture review phase 1 (lane ph1-seams): the host seams the port left are gone.
+`Session.set_last_check` (a check the host made itself: every check is the session's),
+`Version.ids_since` and `Version.changed_since` (what a Python view of the document followed) and the `updates` count in
+`Session.stats()` (commits of parts through the bridge). `Session.last_check` and
+`Session.last_laid` give the version they saw as a number, never `None`. `tool_hosting(kind)`
+no longer says `served` for each tool: every Word tool is the session's; it says what a tool's
+calls read from the host (`blobs`, `layout`, `keeps_written`).
+Instead: nothing replaces `set_last_check`, `ids_since` and `changed_since` (`parts_changed_since` names the parts) (no host check or view is left to
+use them); read `served` as true for every tool `tool_specs` lists.
+
 ## 0.10.0 -- v2026.11.23
 
 - **A call names documents as its host does (lane P2c17).** `Session.call` and

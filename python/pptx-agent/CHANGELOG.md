@@ -5,6 +5,39 @@ pptx-agent has not been released to PyPI. Each version that reaches `main` is ta
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) has the detail.
 
+## 0.1.25 -- v2026.11.25
+
+### Changed
+
+- **Saves and results for a co-authoring client** (the design page's requests 1, 2, 3, 6;
+  ooxml-edit, ooxml-common). A save without an edit is the bytes opened; a save after one
+  rewrites only the parts that changed, each other entry keeping its local header, data and
+  central directory record (its MS-FSSHTTPD chunk); entries keep their order, with no data
+  descriptors and no needless ZIP64 (tests/test_saved_zip_layout.py checks every fixture
+  with ooxml-common's tests/support/zipchunks.py). Every result lists the zip parts the call
+  changed in `changed_parts`, beside `touched`.
+
+### Fixed
+
+- **Contrast sees what the layout and master draw** (round 60, R144). `Slide.contrast` (and
+  `check`'s `contrast`) measured text against the slide's own shapes and then the
+  background, so white text on a band drawn by the layout read as white on white (ratio
+  1.0, `over: background`). The shapes a slide shows from its layout and master now count,
+  under the slide's (master lowest) and addressed `L<n>.<id>` / `M<n>.<id>` in `over`; none
+  from the master under a layout with `showMasterSp="0"`, none from either under a slide
+  with it ("Hide background graphics"). Measured first in PowerPoint 16 for Mac (slide
+  show captures).
+- **A placeholder's inherited fill** (R144). A slide placeholder that states no fill is
+  drawn with its layout placeholder's, else that one's master placeholder's (measured);
+  `Shape.effective_fill` says so now (it returned `None`), a picture fill naming the
+  layout's or master's picture, and `contrast` measures the text against it through
+  pptx2svg 0.3.9 (the floor of the `render`, `png` and `dev` extras).
+- **A Slide object kept across a new slide** (R144). After a second `add_slide`, an older
+  `Slide` object's `add_shape(text=...)` raised `KeyError: 'no shape 256.3'`: the deck
+  handed out a second object for the slide with a stale shape index. A listing after a
+  change now hands out the same `Slide` (and layout or master) objects, their indexes
+  rebuilt.
+
 ## 0.1.24 -- unreleased
 - **Rows fitted to their text from a tool** (round 54, R114). `ppt_edit_table` `fit_rows`
   sets every row -- or those `rows` names -- to its text's height and the frame to the
