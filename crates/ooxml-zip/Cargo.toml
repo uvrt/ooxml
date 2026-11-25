@@ -1,7 +1,7 @@
 [package]
 name = "ooxml-zip"
 version = "0.1.0"
-description = "ZIP archives for OOXML packages: reading within limits, raw copy of untouched entries, deflate"
+description = "ZIP archives for OOXML packages: reading within limits, raw copy of untouched entries, deflate, MS-FSSHTTPD chunks"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true

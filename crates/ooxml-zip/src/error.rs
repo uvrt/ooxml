@@ -29,4 +29,10 @@ pub enum ZipError {
     /// stored and deflate, an archive that needs ZIP64 to be written).
     #[error("not supported: {0}")]
     Unsupported(String),
+    /// A chunk signature longer than 20 bytes (MS-FSSHTTPD's longest, a SHA-1).
+    #[error("a chunk signature is at most 20 bytes, not {len}")]
+    Signature {
+        /// The length given.
+        len: usize,
+    },
 }

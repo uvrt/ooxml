@@ -193,8 +193,9 @@ What each crate owns, the outline of its API, and what it must not do:
   - API: `parse(&[u8], &Limits) -> Result<Tree>`, `Tree::write()`, `Cursor`, `Patch`.
   - Must not: know any OOXML name.
 - **`ooxml-zip`**
-  - Owns: entries, raw copy, deflate, zip-bomb limits.
-  - Must not: parse XML.
+  - Owns: entries, raw copy, deflate, zip-bomb limits; a file's MS-FSSHTTPD chunks for a co-authoring host and the delta against a held version (`chunks`).
+  - API: `Archive`, `Writer`, `chunks::Chunking::of(&[u8], &mut dyn RandomSource)` (`chunks()`, `leaves()`, `root()`, `delta(&[Leaf])`). Python: `ooxml_core.chunk_file(data)` gives `FileChunks` (`chunks`, `leaves()`, `root`, `delta(previous)`, a `ChunkDelta` of `new`, `held`, `repeated` and `new_bytes`).
+  - Must not: parse XML, know what a part is, or encode the FSSHTTPB wire format (the FSSHTTP client's).
 - **`ooxml-opc`**
   - Owns: package, parts, relationships, content types, lazy part trees.
   - API: a persistent `Package`, a map from part to `PartVersion`.
@@ -858,7 +859,7 @@ No parser contains unsafe code.
   - green tree with interned names and values, and a B-tree child rope;
   - parser for UTF-8 and UTF-16, with end-of-line and attribute normalisation, CDATA as text, opaque DTD references, and limits;
   - the libxml2-form writer, cursors, and patches by path and node pointer.
-- **`ooxml-zip`:** read, raw copy, deflate (zlib-rs), limits.
+- **`ooxml-zip`:** read, raw copy, deflate (zlib-rs), limits; MS-FSSHTTPD 2.4.1 chunks (Office's ZIP chunking, signatures, subchunks over 1 MiB) and the save delta (lane coauth-2, written from the probe side's clean-room description and its test vectors).
 - **`ooxml-opc`:** a persistent package with lazy part trees, relationships, content types, save.
 - **`ooxml-store`:** `Txn` with typed read and write sets, commit and redo, `History` (undo, redo, scoped undo), `ArcSwap` snapshots.
 - **`ooxml-derive`:** `Memo` and `MonoidTree`, with spike 3's list-label fact as the reference test.
