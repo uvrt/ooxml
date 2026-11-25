@@ -9,6 +9,7 @@
 //! Must not: write but through the sink, or know a tool's JSON. Every step reads the whole
 //! document: an instance is removed when no paragraph of any story names it.
 
+mod depends;
 pub(crate) mod numbering;
 mod paragraph;
 mod read;
@@ -27,6 +28,7 @@ use ooxml_word_model::address::scope_paragraphs;
 use ooxml_word_model::docx::numbering::Membership;
 use ooxml_word_model::docx::Docx;
 use read::Place;
+use std::sync::Arc;
 
 /// What a [`ListEdit`] does to its paragraphs.
 #[derive(Debug, Clone, PartialEq)]
@@ -188,7 +190,6 @@ impl Command<WordDoc> for ListEdit {
 
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<ListsEdited> {
         let mut sink = crate::sink::EditSink::new(tx, self.policy.clone());
-        sink.read_everything();
         let docx = sink.docx()?;
         let mut places = Vec::new();
         // each paragraph, and whether it is the first its target holds
@@ -199,6 +200,15 @@ impl Command<WordDoc> for ListEdit {
                 firsts.push(k == 0);
             }
         }
+        // the paragraphs in a list, those named, text boxes and every key not a block: an
+        // edit of another paragraph meanwhile is no conflict (`depends`)
+        let named: Vec<(Arc<str>, Arc<str>)> = places
+            .iter()
+            .filter_map(|place| {
+                read::at(&docx, place).map(|at| (Arc::from(place.part.as_str()), Arc::from(at.id.as_str())))
+            })
+            .collect();
+        sink.read_where(Arc::new(depends::ListsDepend::of(&docx, named)));
         // every stepped paragraph checked before the first step: "not in a list" anywhere in the
         // target comes before a step's own refusal, whose way out would not work for the target
         let stepped: Vec<&Place> = places
