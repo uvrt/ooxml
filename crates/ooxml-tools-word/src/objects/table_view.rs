@@ -124,6 +124,12 @@ fn shape(table: &TableId) -> (Grid, Vec<bool>) {
 }
 
 impl TableView {
+    /// The key the table is read and written under (its block's): a plan worked out from its
+    /// rows and cells reads it ([`crate::planned::Plan::reads`]).
+    pub(crate) fn key(&self) -> ooxml_word_edit::Key {
+        ooxml_word_edit::Key::block(self.part.as_str(), self.table.id.as_str())
+    }
+
     /// The grid's column count (`w:gridCol` in `w:tblGrid`).
     pub(crate) fn column_count(&self) -> usize {
         self.shape.columns

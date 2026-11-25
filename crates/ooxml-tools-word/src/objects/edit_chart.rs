@@ -20,16 +20,18 @@ use super::chart_data::{ChartDataEdit, DataAction};
 use super::chart_names::{category_names, position, series_names, Stop};
 use super::chart_read::{chart_json, chart_read_json, style_json};
 use super::chart_style;
-use super::chart_style::{ChartStyleEdit, StyleAction};
+use super::chart_style::ChartStyleEdit;
 use super::{ChartAction, ChartAxis, ChartPosition, EditChart};
+use crate::planned::run_planned;
 use crate::structure::common::{call, policy, refused};
 use crate::{Editing, Version};
 use ooxml_base::pyfmt::repr_str;
 use ooxml_base::Cancel;
 use ooxml_chart::data::{chart_data, ChartData};
+use ooxml_store::Txn;
 use ooxml_tools::TryCall;
 use ooxml_tools::{ArgEnum, Done, Refusal, ToolError, ToolResult, WayOut};
-use ooxml_word_edit::EditGraphic;
+use ooxml_word_edit::{EditGraphic, GraphicEdit, Key, WordDoc};
 use ooxml_word_model::docx::drawings::graphics;
 use ooxml_word_model::docx::graphics::chart_part;
 use ooxml_word_model::docx::Docx;
@@ -112,14 +114,8 @@ const WORD_LABEL_SIZE: u32 = 900;
 /// Word's look for titles: a chart's and an axis' (`WORD_LOOK.title`, `.axis_title`).
 const WORD_TITLE_SIZES: (u32, u32) = (1400, 1000);
 
-/// A data or style action, planned.
-enum Planned {
-    Data(DataAction),
-    Style(StyleAction),
-}
-
-/// A data or style action: the chart found and read on the head, its series and category
-/// resolved, then one command.
+/// A data or style action: the chart found and read where the edit is applied, its series
+/// and category resolved there, as one command.
 fn chart_action(args: &EditChart, editing: &Editing<'_>, summary: String) -> Result<ToolResult<Value>, ToolError> {
     let read = call(
         "edit_chart",
@@ -129,62 +125,38 @@ fn chart_action(args: &EditChart, editing: &Editing<'_>, summary: String) -> Res
             ("action", json!("read")),
         ],
     );
-    let head = editing.editor.current();
-    let docx = head
-        .doc()
-        .docx()
-        .map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
-    let read_data = |found: Result<(String, Arc<Element>), String>| {
-        found.and_then(|(_, root)| {
-            chart_data(&root)
-                .map(|data| (data, root))
-                .map_err(|_| "edit_chart: a chart whose data the model cannot read".to_owned())
-        })
-    };
-    let data = match read_data(chart_of(args, &docx, args.action.as_str())?) {
-        Ok(data) => data,
-        Err(why) => return Err(not_supported(args, &why)),
-    };
     let style = STYLE_ACTIONS.contains(&args.action);
-    let action = if style {
-        chart_style::planned(args, &data.0, &data.1, &read, chart_language(&docx, editing)).map(Planned::Style)
+    // the series and categories are named as indices in the edit's transaction, on the
+    // version it is applied to: a series added or removed meanwhile is a conflict, and the
+    // names are resolved again
+    let ran = if style {
+        let edit = |data: &ChartData, root: &Element, lang: String| {
+            chart_style::planned(args, data, root, &read, lang).map(|action| ChartStyleEdit {
+                address: args.target.clone(),
+                action,
+            })
+        };
+        let plan = |tx: &mut Txn<'_, WordDoc>| chart_plan(args, editing, tx, &edit);
+        run_planned(editing, plan)?.map(|done| (done.out.0, done.version))
     } else {
-        planned(args, &data.0, &read, &chart_language(&docx, editing)).map(Planned::Data)
+        let edit = |data: &ChartData, _: &Element, lang: String| {
+            planned(args, data, &read, &lang).map(|action| ChartDataEdit {
+                address: args.target.clone(),
+                action,
+            })
+        };
+        let plan = |tx: &mut Txn<'_, WordDoc>| chart_plan(args, editing, tx, &edit);
+        run_planned(editing, plan)?.map(|done| (done.out.0, done.version))
     };
-    let action = match action {
-        Ok(action) => action,
-        Err(Stop::Refused(error)) => return Err(error),
-        Err(Stop::NotSupported(why)) => return Err(not_supported(args, why)),
-    };
-    let (drawing, address) = (args.target.clone(), args.target.clone());
-    let ran = match action {
-        Planned::Data(action) => editing.editor.run(
-            editing.caller,
-            &EditGraphic {
-                drawing,
-                edit: ChartDataEdit { address, action },
-                policy: policy(editing),
-            },
-        ),
-        Planned::Style(action) => editing.editor.run(
-            editing.caller,
-            &EditGraphic {
-                drawing,
-                edit: ChartStyleEdit { address, action },
-                policy: policy(editing),
-            },
-        ),
-    };
-    let done = match ran {
+    let (edited, version) = match ran {
         Ok(done) => done,
         Err(error) => return Ok(refused(error, read)),
     };
-    let after = done
-        .version
+    let after = version
         .doc()
         .docx()
         .map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
-    let data = match read_data(chart_of(args, &after, args.action.as_str())?) {
+    let data = match chart_data_of(chart_of(args, &after, args.action.as_str())?) {
         Ok((data, root)) => {
             let mut out = chart_json(&args.target, &root, &data);
             // (the look's point labels unreadable: no data, as for a chart the model cannot read)
@@ -200,8 +172,52 @@ fn chart_action(args: &EditChart, editing: &Editing<'_>, summary: String) -> Res
     out.changed.push(args.target.clone());
     out.data = Some(data);
     let mut result = ToolResult::done(out);
-    result.warnings = done.out.warnings.into_iter().chain(done.out.out).collect();
+    result.warnings = edited.warnings.into_iter().chain(edited.out).collect();
     Ok(result)
+}
+
+/// The chart found (`chart_of`) with its data read; why the call is left to the host where
+/// the model cannot read it.
+fn chart_data_of(found: Result<(String, Arc<Element>), String>) -> Result<(ChartData, Arc<Element>), String> {
+    found.and_then(|(_, root)| {
+        chart_data(&root)
+            .map(|data| (data, root))
+            .map_err(|_| "edit_chart: a chart whose data the model cannot read".to_owned())
+    })
+}
+
+/// The command a data or style action is on the transaction's version: the chart the
+/// target names read, `edit` working out the action from its data and its root in the
+/// language new text is written in; the styles part read for that language (the chart's
+/// part the command reads itself).
+pub(super) fn chart_plan<E: GraphicEdit>(
+    args: &EditChart,
+    editing: &Editing<'_>,
+    tx: &mut Txn<'_, WordDoc>,
+    edit: &dyn Fn(&ChartData, &Element, String) -> Result<E, Stop>,
+) -> Result<(EditGraphic<E>, ()), ToolError> {
+    let docx = tx
+        .doc()
+        .docx()
+        .map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
+    let (data, root) = match chart_data_of(chart_of(args, &docx, args.action.as_str())?) {
+        Ok(data) => data,
+        Err(why) => return Err(not_supported(args, &why)),
+    };
+    let edit = match edit(&data, &root, chart_language(&docx, editing)) {
+        Ok(edit) => edit,
+        Err(Stop::Refused(error)) => return Err(error),
+        Err(Stop::NotSupported(why)) => return Err(not_supported(args, why)),
+    };
+    let command = EditGraphic {
+        drawing: args.target.clone(),
+        edit,
+        policy: policy(editing),
+    };
+    if let Some(part) = styles_part(&docx) {
+        tx.read(Key::part(part.as_str()));
+    }
+    Ok((command, ()))
 }
 
 /// The chart the target names (the first drawing or group member with that id): its part
@@ -236,7 +252,7 @@ fn chart_of(args: &EditChart, docx: &Docx, what: &str) -> Result<Result<(String,
 
 /// The action with its series and category resolved (`apply_data_action`, in its order:
 /// the series, the category, then what the action needs).
-fn planned(args: &EditChart, data: &ChartData, read: &TryCall, lang: &str) -> Result<DataAction, Stop> {
+pub(super) fn planned(args: &EditChart, data: &ChartData, read: &TryCall, lang: &str) -> Result<DataAction, Stop> {
     let action = args.action.as_str();
     let named = |names: Vec<String>, which: Option<&String>, what: &str, hint: &str| {
         position(&names, which, (what, action, hint), read)
@@ -428,9 +444,8 @@ pub(super) fn chart_language(docx: &Docx, editing: &Editing<'_>) -> String {
 /// The document's default run language (`w:docDefaults/w:rPrDefault/w:rPr/w:lang`);
 /// `None` where it names none.
 fn default_language(docx: &Docx) -> Option<String> {
-    const STYLES: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles";
     const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
-    let part = ooxml_word_model::parts::related(&docx.package, &docx.main, STYLES).ok()??;
+    let part = styles_part(docx)?;
     let tree = docx.package.tree(&part).ok()??;
     let mut node: &Element = tree.root();
     for name in ["docDefaults", "rPrDefault", "rPr", "lang"] {
@@ -439,6 +454,12 @@ fn default_language(docx: &Docx) -> Option<String> {
     node.attribute(Some(W), "val")
         .filter(|v| !v.is_empty())
         .map(str::to_owned)
+}
+
+/// The document's styles part, where it has one: what [`default_language`] reads.
+fn styles_part(docx: &Docx) -> Option<String> {
+    const STYLES: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles";
+    ooxml_word_model::parts::related(&docx.package, &docx.main, STYLES).ok()?
 }
 
 /// `what` refused as not supported yet, reading the chart as the way out.

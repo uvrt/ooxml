@@ -5,9 +5,11 @@
 
 use super::common::{call, find_once, need, one_of, outcome, policy, refused, Outcome};
 use crate::describe::short;
+use crate::planned::run_planned;
 use crate::review::Editing;
+use ooxml_store::Txn;
 use ooxml_tools::{ArgEnum, ToolArgs, ToolError, ToolResult, TryCall};
-use ooxml_word_edit::{DeleteNote, EditNote, InsertNote, MoveNote, NoteEdited};
+use ooxml_word_edit::{DeleteNote, EditNote, InsertNote, MoveNote, NoteEdited, WordDoc};
 use ooxml_word_model::docx::text::{paragraph_text, View};
 use ooxml_word_model::ids::W;
 use serde_json::{json, Value};
@@ -108,21 +110,12 @@ fn run(args: &WordNotes, editing: &Editing<'_>, list: &TryCall) -> Result<ToolRe
         return Ok(listed(editing));
     }
     if args.action == NoteAction::Insert {
-        let at = position(args, editing, list)?;
-        let command = InsertNote {
-            kind: match args.kind {
-                Some(NoteKind::Endnote) => ooxml_word_edit::NoteKind::Endnote,
-                _ => ooxml_word_edit::NoteKind::Footnote,
-            },
-            at: ooxml_word_model::address::Address::from(at),
-            text: args.text.clone().unwrap_or_default(),
-            policy: policy(editing),
-        };
-        return Ok(match editor.run(editing.caller, &command) {
+        return Ok(match run_planned(editing, insert_plan(args, editing, list))? {
             Ok(done) => {
-                let text = summary(&done.out, "Inserted");
-                let id = done.out.id.clone();
-                let mut result = outcome(&[done.out.into()], text, None);
+                let (out, ()) = done.out;
+                let text = summary(&out, "Inserted");
+                let id = out.id.clone();
+                let mut result = outcome(&[out.into()], text, None);
                 if let (Some(name), Some(id), ooxml_tools::Outcome::Done(made)) =
                     (&args.ref_name, id, &mut result.outcome)
                 {
@@ -152,23 +145,57 @@ fn run(args: &WordNotes, editing: &Editing<'_>, list: &TryCall) -> Result<ToolRe
             reply(editor.run(editing.caller, &command), format!("Deleted {note}"))
         }
         _ => {
-            let to = position(args, editing, list)?;
-            let command = MoveNote {
-                note: note.clone(),
-                to: ooxml_word_model::address::Address::from(to),
-                policy: policy(editing),
-            };
-            reply(editor.run(editing.caller, &command), format!("Moved {note}"))
+            let done = run_planned(editing, move_plan(args, &note, editing, list))?;
+            reply(done.map(|d| d.map(|(out, ())| out)), format!("Moved {note}"))
         }
     })
 }
 
+/// `insert`'s plan, made in the edit's transaction ([`crate::planned`]): the note at its
+/// position there.
+pub(crate) fn insert_plan<'a>(
+    args: &'a WordNotes,
+    editing: &'a Editing<'a>,
+    list: &'a TryCall,
+) -> impl Fn(&mut Txn<'_, WordDoc>) -> Result<(InsertNote, ()), ToolError> + 'a {
+    move |tx| {
+        let command = InsertNote {
+            kind: match args.kind {
+                Some(NoteKind::Endnote) => ooxml_word_edit::NoteKind::Endnote,
+                _ => ooxml_word_edit::NoteKind::Footnote,
+            },
+            at: ooxml_word_model::address::Address::from(position(args, tx, list)?),
+            text: args.text.clone().unwrap_or_default(),
+            policy: policy(editing),
+        };
+        Ok((command, ()))
+    }
+}
+
+/// `move`'s plan, made in the edit's transaction ([`crate::planned`]): `note` to its
+/// position there.
+pub(crate) fn move_plan<'a>(
+    args: &'a WordNotes,
+    note: &'a str,
+    editing: &'a Editing<'a>,
+    list: &'a TryCall,
+) -> impl Fn(&mut Txn<'_, WordDoc>) -> Result<(MoveNote, ()), ToolError> + 'a {
+    move |tx| {
+        let command = MoveNote {
+            note: note.to_owned(),
+            to: ooxml_word_model::address::Address::from(position(args, tx, list)?),
+            policy: policy(editing),
+        };
+        Ok((command, ()))
+    }
+}
+
 /// Where a mark goes (docx-agent's `_position`): `at` as given, or the end of the text
-/// `find` names once.
-fn position(args: &WordNotes, editing: &Editing<'_>, list: &TryCall) -> Result<String, ToolError> {
+/// `find` names once on the transaction's version.
+fn position(args: &WordNotes, tx: &mut Txn<'_, WordDoc>, list: &TryCall) -> Result<String, ToolError> {
     let key = one_of(&[("at", args.at.is_some()), ("find", args.find.is_some())], list)?;
     if key == "find" {
-        let range = find_once(editing, args.find.as_deref().unwrap_or(""), list)?;
+        let range = find_once(tx, args.find.as_deref().unwrap_or(""), list)?;
         return Ok(end_of(&range));
     }
     Ok(args.at.clone().unwrap_or_default())
@@ -231,4 +258,34 @@ fn listed(editing: &Editing<'_>) -> ToolResult<Value> {
 /// Registers `word_notes` (the crate's [`crate::register`]).
 pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
     r.edit::<WordNotes>(word_notes);
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
+
+    use super::*;
+    use crate::planned::held::{args, calling, compare, marked, raced, shifted};
+
+    #[test]
+    fn a_note_after_found_text_goes_where_the_text_is_when_it_commits() {
+        let args: WordNotes = args(json!({"action": "insert", "find": "this year", "text": "A note."}));
+        let list = call("word_notes", &[]);
+        let compared = compare(
+            marked,
+            shifted,
+            |editor, between| {
+                calling(editor, |editing| {
+                    raced(editor, insert_plan(&args, editing, &list), between)
+                })
+            },
+            |editing| word_notes(&args, editing),
+        );
+        compared.assert_same_edit();
+        assert!(
+            compared.serial.contains("this year[footnoteReference]."),
+            "{}",
+            compared.serial
+        );
+    }
 }

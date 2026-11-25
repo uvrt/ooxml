@@ -91,6 +91,7 @@ mod paragraph_style;
 mod paragraphs;
 mod people;
 mod placing;
+mod planning;
 mod policy;
 mod pool;
 mod props;
@@ -167,6 +168,7 @@ pub use notes::{DeleteNote, EditNote, InsertNote, MoveNote, NoteEdited, NoteKind
 pub use ooxml_base::difflib::ratio as text_ratio;
 pub use paragraph_style::{SetParagraphStyle, StyleSet};
 pub use paragraphs::{InsertParagraph, ParagraphInserted};
+pub use planning::{anchor_in, last_block_in, read_matching, read_ranges, section_in};
 pub use policy::{RevisionPolicy, Tracking};
 pub use pool::{EarlierIds, Ids, IdsChange, Sequences};
 pub use provenance::{KeepText, TextKeep};

@@ -12,10 +12,12 @@
 //! of a table it did not write.
 
 use super::edit_table::table_json;
-use super::table_view::{AcceptedView, TableView};
+use super::table_view::TableView;
+use crate::planned::Planned;
 use crate::review::Editing;
 use crate::sources::{first_rows, fits, placed, thousands, Placed, SourceRows};
 use crate::structure::common::{outcome, policy, refused, Outcome};
+use ooxml_store::{Snapshot, Txn};
 use ooxml_tools::{ArgEnum, Refusal, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::{CellAxis, CellWrite, EditError, PlaceRows, PlacedRecord, RowsBeside, RowsPlaced, WordDoc};
 use ooxml_word_model::docx::tables::{Accepted, TABLE_COLUMNS_MAX};
@@ -80,15 +82,78 @@ fn asked(args: &super::edit_table_args::WordEditTable) -> Map<String, Value> {
     out
 }
 
-/// `set_cells` from `rows` into the table `view` (found on the version before).
+/// `set_cells` from `rows`: where the block goes worked out on the version it is written
+/// to, in the edit's transaction ([`placing`]).
 pub(super) fn set_from(
     args: &super::edit_table_args::WordEditTable,
     editing: &Editing<'_>,
-    view: &TableView,
-    accepted: &AcceptedView,
     rows: &SourceRows,
     retry: &TryCall,
 ) -> Result<ToolResult<Value>, ToolError> {
+    let planned = Planned(|tx: &mut Txn<'_, WordDoc>| placing(args, editing, tx, rows, retry));
+    let look = |out: &Result<(RowsPlaced, Placing), ToolError>, _: &WordDoc| {
+        let (out, _) = out.as_ref().ok()?;
+        Some((
+            out.table.clone(),
+            out.added.iter().filter_map(|r| r.id.clone()).collect::<Vec<_>>(),
+        ))
+    };
+    let ran = super::rows_written::run_writing_rows(editing, &planned, &args.table, look, retry);
+    let ((done, said), rows_said, version) = match ran {
+        Ok((Ok(done), rows_said, version)) => (done, rows_said, version),
+        Ok((Err(refusal), _, _)) => return Err(refusal),
+        Err(error @ (EditError::Address(_) | EditError::Argument { .. } | EditError::Position(_))) => {
+            return Ok(ToolResult::failed(crate::review::edit_refusal(
+                error,
+                "",
+                retry.clone(),
+            )));
+        }
+        Err(error) => return Ok(refused(error, retry.clone())),
+    };
+    let Placing {
+        table,
+        shape,
+        plan,
+        placed_from,
+        mut timing,
+    } = said;
+    for (name, seconds) in &done.parts {
+        timing.seconds(name, *seconds);
+    }
+    let started = Instant::now();
+    let mut result = reply(&version, (&table, rows), &plan, done, placed_from, retry);
+    notes(&mut result, &shape, &plan);
+    result.warnings.extend(rows_said);
+    timing.add("result", started);
+    if let ooxml_tools::Outcome::Done(found) = &mut result.outcome {
+        if let Some(Value::Object(map)) = &mut found.data {
+            map.insert("timing".into(), timing.json());
+        }
+    }
+    Ok(result)
+}
+
+/// What the reply needs of the plan: the table's id where it was written, its shape as
+/// accepted, where the block went, where its values came from, and where the time went.
+pub(super) struct Placing {
+    table: String,
+    shape: Accepted,
+    plan: Plan,
+    placed_from: Map<String, Value>,
+    timing: Timing,
+}
+
+/// The block from `rows` placed in the table on `doc` (the version it is written to): the
+/// table as accepted there, the block checked against it, the command that writes it.
+pub(super) fn placing<'e>(
+    args: &super::edit_table_args::WordEditTable,
+    editing: &Editing<'e>,
+    tx: &mut Txn<'_, WordDoc>,
+    rows: &SourceRows,
+    retry: &TryCall,
+) -> Result<(PlaceRows, Placing), ToolError> {
+    let (_, view, accepted) = super::edit_table::accepted_on(args, editing, tx.doc(), retry)?;
     let mut timing = Timing::default();
     let started = Instant::now();
     let locale = editing.locale.cloned().unwrap_or_default();
@@ -102,7 +167,7 @@ pub(super) fn set_from(
     )?;
     timing.add("resolve", started);
     let started = Instant::now();
-    let plan = plan(args, view, &accepted.table, &block, retry)?;
+    let plan = plan(args, &view, &accepted.table, &block, retry)?;
     let lines = block.lines(retry)?;
     timing.add("check", started);
     let placed_from = block.provenance(plan.top);
@@ -121,38 +186,15 @@ pub(super) fn set_from(
         record: PlacedRecord::Store(record(&placed_from, rows.name.as_deref())),
         policy: policy(editing),
     };
-    let look = |out: &RowsPlaced, _: &WordDoc| {
-        Some((
-            out.table.clone(),
-            out.added.iter().filter_map(|r| r.id.clone()).collect::<Vec<_>>(),
-        ))
+    tx.read(view.key());
+    let said = Placing {
+        table: view.table.id.clone(),
+        shape: accepted.table,
+        plan,
+        placed_from,
+        timing,
     };
-    let table = &view.table.id;
-    let (done, rows_said) = match super::rows_written::run_writing_rows(editing, &command, table, look, retry) {
-        Ok(done) => done,
-        Err(error @ (EditError::Address(_) | EditError::Argument { .. } | EditError::Position(_))) => {
-            return Ok(ToolResult::failed(crate::review::edit_refusal(
-                error,
-                "",
-                retry.clone(),
-            )));
-        }
-        Err(error) => return Ok(refused(error, retry.clone())),
-    };
-    for (name, seconds) in &done.parts {
-        timing.seconds(name, *seconds);
-    }
-    let started = Instant::now();
-    let mut result = reply(editing, (table, rows), &plan, done, placed_from, retry);
-    notes(&mut result, &accepted.table, &plan);
-    result.warnings.extend(rows_said);
-    timing.add("result", started);
-    if let ooxml_tools::Outcome::Done(found) = &mut result.outcome {
-        if let Some(Value::Object(map)) = &mut found.data {
-            map.insert("timing".into(), timing.json());
-        }
-    }
-    Ok(result)
+    Ok((command, said))
 }
 
 /// Where the block goes and how far the table falls short.
@@ -270,14 +312,15 @@ fn writes(lines: &[Vec<Vec<String>>], shape: &Accepted, plan: &Plan) -> Vec<Cell
 /// The reply (`_set_from`'s): the table as `table_json` gives it with `data.from`, the
 /// edits' ids, the table and its cells changed.
 fn reply(
-    editing: &Editing<'_>,
+    version: &Snapshot<WordDoc>,
     (table, rows): (&str, &SourceRows),
     plan: &Plan,
     done: RowsPlaced,
     placed_from: Map<String, Value>,
     retry: &TryCall,
 ) -> ToolResult<Value> {
-    let head = editing.editor.current();
+    // the version the call made: another caller's commit since is not this call's
+    let head = version;
     let mut data = head
         .doc()
         .docx()

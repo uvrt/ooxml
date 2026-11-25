@@ -9,14 +9,16 @@
 
 use super::drawings_args::{DrawingAction, WordDrawings, Wrap, ZOrder};
 use crate::describe::short;
+use crate::planned::run_planned;
 use crate::review::Editing;
 use crate::structure::common::{call, find_once, need, one_of, outcome, policy, refused, Outcome};
 use crate::structure::notes::end_of;
 use ooxml_base::pyfmt::round2;
+use ooxml_store::Txn;
 use ooxml_tools::{ArgEnum, Done, Refusal, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::units::emu;
 use ooxml_word_edit::{
-    DrawingEdited, DrawingValues, EditError, Edited, FloatDrawing, InlineDrawing, InsertShape, SetDrawing,
+    DrawingEdited, DrawingValues, EditError, Edited, FloatDrawing, InlineDrawing, InsertShape, SetDrawing, WordDoc,
 };
 use ooxml_word_model::docx::drawings::{drawing_kind, graphics, pictures, Drawing};
 use ooxml_word_model::ids::WP;
@@ -93,13 +95,13 @@ fn run(args: &WordDrawings, editing: &Editing<'_>, list: &TryCall) -> Result<Too
             if args.reference.is_some() {
                 return Ok(not_supported("word_drawings ref", list));
             }
-            let command = insert_shape(args, editing, list)?;
             let said = |out: &DrawingEdited| Said {
                 summary: format!("Inserted {}", out.id),
                 data: Some(json!({"id": out.id})),
                 renames: true,
             };
-            Ok(reply(editing.editor.run(editing.caller, &command), &said, list))
+            let done = run_planned(editing, shape_plan(args, editing, list))?;
+            Ok(reply(done.map(|d| d.map(|(out, ())| out)), &said, list))
         }
         DrawingAction::Set => set_action(args, editing, list),
         DrawingAction::Move | DrawingAction::Resize | DrawingAction::Float | DrawingAction::Inline => {
@@ -108,11 +110,27 @@ fn run(args: &WordDrawings, editing: &Editing<'_>, list: &TryCall) -> Result<Too
     }
 }
 
-/// `insert_text_box` and `insert_shape` with docx-agent's defaults.
-fn insert_shape(args: &WordDrawings, editing: &Editing<'_>, list: &TryCall) -> Result<InsertShape, ToolError> {
+/// `insert_text_box`'s and `insert_shape`'s plan, made in the edit's transaction
+/// ([`crate::planned`]).
+pub(crate) fn shape_plan<'a>(
+    args: &'a WordDrawings,
+    editing: &'a Editing<'a>,
+    list: &'a TryCall,
+) -> impl Fn(&mut Txn<'_, WordDoc>) -> Result<(InsertShape, ()), ToolError> + 'a {
+    move |tx| Ok((insert_shape(args, editing, list, tx)?, ()))
+}
+
+/// `insert_text_box` and `insert_shape` with docx-agent's defaults, at their position on
+/// the transaction's version.
+fn insert_shape(
+    args: &WordDrawings,
+    editing: &Editing<'_>,
+    list: &TryCall,
+    tx: &mut Txn<'_, WordDoc>,
+) -> Result<InsertShape, ToolError> {
     let text_box = args.action == DrawingAction::InsertTextBox;
     Ok(InsertShape {
-        at: ooxml_word_model::address::Address::from(position(args, editing, list)?),
+        at: ooxml_word_model::address::Address::from(position(args, tx, list)?),
         text_box,
         preset: match &args.preset {
             Some(preset) if !text_box => preset.clone(),
@@ -240,11 +258,11 @@ fn set_action(args: &WordDrawings, editing: &Editing<'_>, list: &TryCall) -> Res
 }
 
 /// Where a text box or shape goes (docx-agent's `_position`): `at` as given, or the end
-/// of the text `find` names once.
-pub(super) fn position(args: &WordDrawings, editing: &Editing<'_>, list: &TryCall) -> Result<String, ToolError> {
+/// of the text `find` names once on the transaction's version.
+pub(super) fn position(args: &WordDrawings, tx: &mut Txn<'_, WordDoc>, list: &TryCall) -> Result<String, ToolError> {
     let key = one_of(&[("at", args.at.is_some()), ("find", args.find.is_some())], list)?;
     if key == "find" {
-        let range = find_once(editing, args.find.as_deref().unwrap_or(""), list)?;
+        let range = find_once(tx, args.find.as_deref().unwrap_or(""), list)?;
         return Ok(end_of(&range));
     }
     Ok(args.at.clone().unwrap_or_default())
@@ -296,4 +314,30 @@ fn listed(editing: &Editing<'_>, list: &TryCall) -> Result<ToolResult<Value>, To
 /// Registers `word_drawings` (the crate's [`crate::register`]).
 pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
     r.edit::<WordDrawings>(word_drawings);
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
+
+    use super::*;
+    use crate::planned::held::{args, calling, compare, marked, raced, shifted};
+
+    #[test]
+    fn a_text_box_after_found_text_goes_where_the_text_is_when_it_commits() {
+        let args: WordDrawings = args(json!({"action": "insert_text_box", "find": "this year", "text": "Boxed."}));
+        let list = call("word_drawings", &[]);
+        let compared = compare(
+            marked,
+            shifted,
+            |editor, between| {
+                calling(editor, |editing| {
+                    raced(editor, shape_plan(&args, editing, &list), between)
+                })
+            },
+            |editing| word_drawings(&args, editing),
+        );
+        compared.assert_same_edit();
+        assert!(compared.serial.contains("this year[drawing]"), "{}", compared.serial);
+    }
 }
