@@ -28,24 +28,7 @@ pub fn py_strip(text: &str) -> &str {
     text.trim_matches(is_py_space)
 }
 
-/// Whether `text` is `d` and digits (`re.fullmatch(r"d[0-9]+", text)`).
-#[must_use]
-pub fn is_handle(text: &str) -> bool {
-    text.strip_prefix('d')
-        .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
-}
-
-/// `d2/t:x` as `("d2", "t:x")` (`QUALIFIED`, `^(d[0-9]+)/(.+)$`); `None` without a handle.
-#[must_use]
-pub fn qualified(text: &str) -> Option<(&str, &str)> {
-    let (handle, rest) = text.split_once('/')?;
-    if !is_handle(handle) {
-        return None;
-    }
-    // `.+$`: no newline, but one final one after it
-    let kept = rest.strip_suffix('\n').unwrap_or(rest);
-    (!kept.is_empty() && !kept.contains('\n')).then_some((handle, kept))
-}
+pub use ooxml_tools::sources::{is_handle, qualified};
 
 /// The address a reference names after its handle, where it has one.
 #[must_use]

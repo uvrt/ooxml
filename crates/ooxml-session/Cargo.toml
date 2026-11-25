@@ -15,6 +15,7 @@ ooxml-opc.workspace = true
 ooxml-store.workspace = true
 ooxml-tools.workspace = true
 ooxml-numfmt.workspace = true
+ooxml-zip.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 

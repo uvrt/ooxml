@@ -25,8 +25,10 @@
 #![forbid(unsafe_code)]
 
 mod batch;
+pub mod blobs;
 mod changes;
 mod context;
+pub mod datasets;
 mod dispatch;
 mod document;
 mod error;
@@ -38,11 +40,13 @@ mod ids;
 mod memory;
 mod model;
 mod names;
+pub mod outputs;
 mod owners;
 mod panics;
 mod refs;
 mod registry;
 mod session;
+pub mod sources;
 mod stored;
 mod undo;
 mod update;
@@ -52,7 +56,7 @@ pub use context::{CallCancel, CallContext, CancelToken, LayoutCancel, StoreClock
 pub use dispatch::CallMade;
 pub use document::PackageFormat;
 pub use error::SessionError;
-pub use format::{AnyVersion, Finished, Format, FormatDoc, FormatRun, OpenEnv};
+pub use format::{no_source, AnyVersion, Finished, Format, FormatDoc, FormatRun, OpenEnv};
 pub use group::GroupMark;
 pub use history::{Direction, NumberedStep, Numbers, Undone};
 pub use ids::{DocId, DocKind};

@@ -45,6 +45,7 @@
 
 mod check;
 pub mod cost;
+pub mod datasets;
 mod dates;
 mod difflib;
 pub mod documents;
