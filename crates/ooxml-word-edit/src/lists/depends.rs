@@ -10,13 +10,13 @@
 //! commit that checks it); name keys for the history (an undo or redo treats it as a read of
 //! everything, as before).
 
-use super::read::numbered_by_style;
+use super::read::{numbered_by_style, paragraph_style_id};
 use crate::doc::{Key, WordDoc};
 use ooxml_store::ReadPredicate;
 use ooxml_word_model::docx::{at_path, find_path, Docx, StoryPart};
 use ooxml_word_model::ids::Entry;
 use ooxml_xml::Element;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// A list edit's read by condition. Holds, by part and id, the paragraphs that were in a
@@ -31,10 +31,19 @@ impl ListsDepend {
     /// The paragraphs of `docx` (the edit's snapshot) in a list, and `named`.
     pub(crate) fn of(docx: &Docx, named: impl IntoIterator<Item = (Arc<str>, Arc<str>)>) -> Self {
         let mut held: HashSet<(Arc<str>, Arc<str>)> = named.into_iter().collect();
+        // whether a style numbers its paragraphs, by the style a paragraph names: worked out
+        // once per style, not once per paragraph
+        let mut numbers: HashMap<Option<String>, bool> = HashMap::new();
         for story in &docx.parts {
             let part: Arc<str> = Arc::from(story.part.as_str());
             for paragraph in story.ids.paragraphs().iter() {
-                if in_list(docx, &paragraph.element) {
+                let element = &paragraph.element;
+                let direct = find_path(element, &["pPr", "numPr"]).is_some();
+                let listed = direct
+                    || *numbers
+                        .entry(paragraph_style_id(element))
+                        .or_insert_with(|| numbered_by_style(docx, element).is_some());
+                if listed {
                     held.insert((Arc::clone(&part), Arc::from(paragraph.id.as_str())));
                 }
             }
