@@ -148,7 +148,8 @@ GATE_FILES = ("tools/gates.py", ".github/workflows/gates.yml", ".github/actions/
 #: Paths no gate reads: notes and the other workflows, tools and documentation.
 NOT_GATES = (".github/", "tools/", "docs/")
 #: The host goldens (crates/ooxml-oracle/python/host_goldens.py): no gate reads them.
-HOST_GOLDENS = ("crates/ooxml-oracle/host/", "crates/ooxml-oracle/python/host_goldens.py")
+HOST_GOLDENS = ("crates/ooxml-oracle/host/", "crates/ooxml-oracle/python/host_goldens.py",
+                "crates/ooxml-oracle/python/host_features.py")
 #: A crate's folders not built into its library or binaries.
 CRATE_TEST_FOLDERS = ("tests", "benches", "examples")
 

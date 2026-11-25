@@ -29,6 +29,14 @@ def pytest_runtest_setup(item) -> None:
     _FILE_OF[_current["test"]] = Path(item.path).stem
 
 
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_call(item):  # noqa: ARG001 -- pytest's hook
+    """A concurrent case's final state, once the test's calls have ended (its fixtures not yet
+    torn down)."""
+    yield
+    RECORDER.settle()
+
+
 def pytest_sessionfinish(session) -> None:  # noqa: ARG001 -- pytest's hook
     RECORDER.uninstall()
     worker = os.environ.get("PYTEST_XDIST_WORKER", "main")

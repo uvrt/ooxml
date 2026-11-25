@@ -417,7 +417,9 @@ fn batch_call_writer(target: (String, String)) -> Worker {
         calls.times.push(took);
         if done.is_error() {
             calls.failed += 1;
-            calls.first_error.get_or_insert_with(|| done.to_json().to_string());
+            calls
+                .first_error
+                .get_or_insert_with(|| Value::Object(done.to_json()).to_string().chars().take(300).collect());
         }
         calls.met[0] += after.conflicts.saturating_sub(before.conflicts);
         calls.met[1] += after.rebased.saturating_sub(before.rebased);

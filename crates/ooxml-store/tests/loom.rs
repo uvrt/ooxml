@@ -17,8 +17,8 @@
 mod common;
 
 use common::{still, Cells, Fail, Mix, Put};
-use ooxml_store::{Caller, Seq, Store, StoreConfig, StoreError, TxnOwner};
 use ooxml_store::{Batch, Command, Txn};
+use ooxml_store::{Caller, Seq, Store, StoreConfig, StoreError, TxnOwner};
 use std::sync::Arc;
 
 fn serial(order: &[&Mix]) -> Cells {

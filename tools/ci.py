@@ -73,6 +73,12 @@ BINDINGS = "ooxml-core bindings"
 ORACLE_TESTS = "ooxml-oracle tests"
 ORACLE_TEST_PREFIXES = ("crates/ooxml-oracle/python/", "crates/ooxml-oracle/word/", "crates/ooxml-oracle/pytest.ini",
                         "crates/ooxml-oracle/reference.toml", "crates/ooxml-oracle/host/")
+#: The host goldens (crates/ooxml-oracle/python/host_goldens.py): the oracle's tests replay their
+#: docx streams, xlsx-agent's suite their mixed ones (a workbook xlsx-agent holds), so a change to
+#: them or to what records and replays them selects xlsx-agent's legs too.
+HOST_GOLDENS = "host goldens"
+HOST_GOLDENS_PREFIXES = ("crates/ooxml-oracle/host/", "crates/ooxml-oracle/python/host_goldens.py",
+                         "crates/ooxml-oracle/python/host_features.py")
 
 #: Each package: the monorepo packages its test run uses (itself included; a package's
 #: tests run when any of them changes), its siblings to install (pip requirement paths,
@@ -189,13 +195,13 @@ PACKAGES: dict[str, dict] = {
         "gil_imports": "import lxml.etree, lxml.html, pptx2svg, resvg_py, PIL.Image",
     },
     "xlsx-agent": {
-        # ORACLE_TESTS: its suite replays the host goldens' mixed streams (a workbook beside a
+        # HOST_GOLDENS: its suite replays the host goldens' mixed streams (a workbook beside a
         # Word document, tests/test_host_goldens_mixed.py).
         "uses": ["ooxml-common", "ooxml-edit", "pptx2svg", "pptx-agent", "docx2svg", "ooxml-core", "docx-agent",
-                 "xlsx-agent", ORACLE_TESTS],
+                 "xlsx-agent", HOST_GOLDENS],
         # On a pull request: its dependencies and the Python bindings of ooxml-core, not the
         # Rust core's other crates nor the test-only siblings (main runs those).
-        "pr_uses": ["ooxml-common", "ooxml-edit", BINDINGS, "xlsx-agent", ORACLE_TESTS],
+        "pr_uses": ["ooxml-common", "ooxml-edit", BINDINGS, "xlsx-agent", HOST_GOLDENS],
         # Test only: pptx2svg and pptx-agent (a deck filled from a workbook's table),
         # docx2svg and docx-agent (a workbook's rich-text cell in a Word document), and
         # docx-agent's ooxml-core.
@@ -279,6 +285,8 @@ def _units(path: str) -> set[str]:
             units.add(BINDINGS)
     if path.startswith(ORACLE_TEST_PREFIXES):
         units.add(ORACLE_TESTS)
+    if path.startswith(HOST_GOLDENS_PREFIXES):
+        units.add(HOST_GOLDENS)
     parts = path.split("/")
     if len(parts) > 2 and parts[0] == "python" and parts[1] in PACKAGES and not _is_notes(path):
         units.add(parts[1])
