@@ -93,40 +93,7 @@ pub fn str(value: f64) -> String {
     repr(value)
 }
 
-/// `f"{value:.{precision}g}"` (`precision` 0 is taken as 1); `"{value:g}"` is precision 6.
-pub fn general(value: f64, precision: usize) -> String {
-    if value.is_nan() {
-        return "nan".into();
-    }
-    if value.is_infinite() {
-        return if value > 0.0 { "inf".into() } else { "-inf".into() };
-    }
-    let precision = precision.max(1);
-    let sign = if value.is_sign_negative() { "-" } else { "" };
-    if value == 0.0 {
-        return format!("{sign}0");
-    }
-    let scientific = format!("{:.*e}", precision - 1, value.abs());
-    let (mantissa, exponent) = scientific.split_once('e').unwrap_or((&scientific, "0"));
-    let exponent: i32 = exponent.parse().unwrap_or(0);
-    let limit = i32::try_from(precision).unwrap_or(i32::MAX);
-    if exponent < -4 || exponent >= limit {
-        let mantissa = trim_fraction(mantissa);
-        let mark = if exponent < 0 { '-' } else { '+' };
-        return format!("{sign}{mantissa}e{mark}{:02}", exponent.abs());
-    }
-    let decimals = usize::try_from(limit - 1 - exponent).unwrap_or(0);
-    format!("{sign}{}", trim_fraction(&format!("{:.decimals$}", value.abs())))
-}
-
-/// A number's trailing fractional zeros (and a bare point) removed.
-fn trim_fraction(text: &str) -> &str {
-    if text.contains('.') {
-        text.trim_end_matches('0').trim_end_matches('.')
-    } else {
-        text
-    }
-}
+pub use ooxml_base::pyfmt::general;
 
 #[cfg(test)]
 mod tests {

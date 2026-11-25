@@ -56,8 +56,10 @@ mod not_supported;
 mod places;
 pub mod pyfmt;
 pub mod pyre;
+pub mod refs;
 mod result;
 pub mod schema;
+pub mod sources;
 mod spec;
 #[doc(hidden)]
 pub mod support;

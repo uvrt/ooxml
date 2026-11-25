@@ -7,7 +7,7 @@
 //!
 //! Must not: write a value's own text into a message (it may be private).
 
-use super::{Clock, DatePattern, Day, SourceValue};
+use super::{Cell, Clock, DatePattern, Day};
 use ooxml_numfmt::Locale;
 
 /// The column type labels whose ISO 8601 text is written as a date or a time.
@@ -23,19 +23,15 @@ enum Moment {
 
 /// The value as a category label or a cell's text (`label`); `None` for a blank, or a
 /// value no cell takes.
-pub(crate) fn label(
-    value: &SourceValue,
-    locale: &Locale,
-    kind: Option<&str>,
-    pattern: Option<&DatePattern>,
-) -> Option<String> {
+#[must_use]
+pub fn label(value: &Cell, locale: &Locale, kind: Option<&str>, pattern: Option<&DatePattern>) -> Option<String> {
     if let Some(pattern) = pattern {
         if let Some(day) = date_value(value, kind) {
             return Some(pattern.format(day));
         }
     }
     match value {
-        SourceValue::Text(text) => {
+        Cell::Text(text) => {
             if kind.is_some_and(|k| MOMENT_TYPES.contains(&k)) {
                 if let Some(found) = moment_of(text) {
                     return Some(moment_text(found, locale));
@@ -43,13 +39,13 @@ pub(crate) fn label(
             }
             (!text.is_empty()).then(|| text.clone())
         }
-        SourceValue::Bool(b) => Some(if *b { "TRUE" } else { "FALSE" }.to_owned()),
-        SourceValue::Date(day) => Some(moment_text(Moment::Date(*day), locale)),
-        SourceValue::DateTime(day, clock) => Some(moment_text(Moment::DateTime(*day, *clock), locale)),
-        SourceValue::Time(clock) => Some(moment_text(Moment::Time(*clock), locale)),
-        SourceValue::Int(digits) => Some(digits.clone()),
-        SourceValue::Float(value) => Some(number_text(*value, locale)),
-        SourceValue::Blank | SourceValue::Other(_) => None,
+        Cell::Bool(b) => Some(if *b { "TRUE" } else { "FALSE" }.to_owned()),
+        Cell::Date(day) => Some(moment_text(Moment::Date(*day), locale)),
+        Cell::DateTime(day, clock) => Some(moment_text(Moment::DateTime(*day, *clock), locale)),
+        Cell::Time(clock) => Some(moment_text(Moment::Time(*clock), locale)),
+        Cell::Int(digits) => Some(digits.clone()),
+        Cell::Float(value) => Some(number_text(*value, locale)),
+        Cell::Blank | Cell::Other(_) => None,
     }
 }
 
@@ -60,7 +56,7 @@ fn number_text(value: f64, locale: &Locale) -> String {
     let text = if value.fract() == 0.0 && value.abs() < 1e15 {
         format!("{}", value as i64)
     } else {
-        ooxml_chart::pyfmt::general(value, 15)
+        ooxml_base::pyfmt::general(value, 15)
     };
     if locale.decimal_separator == '.' {
         text
@@ -71,10 +67,11 @@ fn number_text(value: f64, locale: &Locale) -> String {
 
 /// The value when it is a date, for a date pattern (`date_value`): a date or a datetime's
 /// day, or the ISO 8601 text of a `date` or `datetime` column's value.
-pub(crate) fn date_value(value: &SourceValue, kind: Option<&str>) -> Option<Day> {
+#[must_use]
+pub fn date_value(value: &Cell, kind: Option<&str>) -> Option<Day> {
     match value {
-        SourceValue::Date(day) | SourceValue::DateTime(day, _) => Some(*day),
-        SourceValue::Text(text) if matches!(kind, Some("date" | "datetime")) => match moment_of(text)? {
+        Cell::Date(day) | Cell::DateTime(day, _) => Some(*day),
+        Cell::Text(text) if matches!(kind, Some("date" | "datetime")) => match moment_of(text)? {
             Moment::Date(day) | Moment::DateTime(day, _) => Some(day),
             Moment::Time(_) => None,
         },
@@ -83,18 +80,19 @@ pub(crate) fn date_value(value: &SourceValue, kind: Option<&str>) -> Option<Day>
 }
 
 /// A value's kind for a message (`what`), never the value itself.
-pub(crate) fn what(value: &SourceValue) -> String {
+#[must_use]
+pub fn what(value: &Cell) -> String {
     match value {
-        SourceValue::Blank => "blank".to_owned(),
-        SourceValue::Bool(_) => "a logical value".to_owned(),
-        SourceValue::Text(t) if t.trim().is_empty() => "empty text".to_owned(),
-        SourceValue::Text(_) => "text".to_owned(),
-        SourceValue::Int(_) => "a int".to_owned(),
-        SourceValue::Float(_) => "a float".to_owned(),
-        SourceValue::Date(_) => "a date".to_owned(),
-        SourceValue::DateTime(..) => "a datetime".to_owned(),
-        SourceValue::Time(_) => "a time".to_owned(),
-        SourceValue::Other(kind) => kind.clone(),
+        Cell::Blank => "blank".to_owned(),
+        Cell::Bool(_) => "a logical value".to_owned(),
+        Cell::Text(t) if t.trim().is_empty() => "empty text".to_owned(),
+        Cell::Text(_) => "text".to_owned(),
+        Cell::Int(_) => "a int".to_owned(),
+        Cell::Float(_) => "a float".to_owned(),
+        Cell::Date(_) => "a date".to_owned(),
+        Cell::DateTime(..) => "a datetime".to_owned(),
+        Cell::Time(_) => "a time".to_owned(),
+        Cell::Other(kind) => kind.clone(),
     }
 }
 

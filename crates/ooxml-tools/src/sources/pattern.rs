@@ -8,18 +8,18 @@
 //! Must not: read the machine's locale, or guess a name.
 
 use super::Day;
+use crate::{Refusal, ToolError, WayOut};
 use ooxml_base::pyfmt::repr_str;
 use ooxml_numfmt::{measured_names, DateNames, Locale};
-use ooxml_tools::{Refusal, ToolError, WayOut};
 
 /// The tokens a pattern takes, as a refusal lists them.
-const TOKENS: [&str; 11] = [
+pub const TOKENS: [&str; 11] = [
     "d", "dd", "ddd", "dddd", "m", "mm", "mmm", "mmmm", "mmmmm", "yy", "yyyy",
 ];
 /// The tokens that write a name.
 const NAME_TOKENS: [&str; 5] = ["ddd", "dddd", "mmm", "mmmm", "mmmmm"];
 /// What the tokens are, in words.
-const TOKENS_TEXT: &str = "d dd (day), ddd dddd (weekday name), m mm (month), mmm mmmm (month name), mmmmm (its \
+pub const TOKENS_TEXT: &str = "d dd (day), ddd dddd (weekday name), m mm (month), mmm mmmm (month name), mmmmm (its \
                            first letter), yy yyyy (year)";
 
 /// A pattern's part.
@@ -31,14 +31,15 @@ enum Part {
 
 /// A date pattern checked for a locale: what a date is written in.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct DatePattern {
+pub struct DatePattern {
     parts: Vec<Part>,
     names: Option<DateNames>,
 }
 
 impl DatePattern {
     /// `day` written in the pattern (`format_date`).
-    pub(crate) fn format(&self, day: Day) -> String {
+    #[must_use]
+    pub fn format(&self, day: Day) -> String {
         let month = usize::try_from(day.month).unwrap_or(1).saturating_sub(1);
         let weekday = day.weekday();
         let mut out = String::new();
@@ -73,7 +74,9 @@ impl DatePattern {
 /// `pattern` checked as a date pattern for `locale` (`sources.date_pattern`): a pattern
 /// that is none, or a name token where the locale's names are not measured, refused as
 /// `invalid_arguments` at `field`, the tokens its options.
-pub(crate) fn date_pattern(pattern: &str, locale: &Locale, field: &str) -> Result<DatePattern, ToolError> {
+/// # Errors
+/// A pattern that is none; a name token where no names are measured.
+pub fn date_pattern(pattern: &str, locale: &Locale, field: &str) -> Result<DatePattern, ToolError> {
     let refuse = |message: String| {
         ToolError::refusal(
             Refusal::InvalidArguments,
@@ -99,6 +102,12 @@ pub(crate) fn date_pattern(pattern: &str, locale: &Locale, field: &str) -> Resul
         }
     }
     Ok(DatePattern { parts, names })
+}
+
+/// Why `pattern` is no date pattern (`dates.parse`'s message); `None` for one.
+#[must_use]
+pub fn pattern_problem(pattern: &str) -> Option<String> {
+    parse(pattern).err()
 }
 
 /// `pattern` as its parts (`dates.parse`); the message of a pattern that is none.
