@@ -6,19 +6,35 @@
 //! qualified and held, the declared datasets checked, the handler, then the change applied
 //! and the datasets kept -- or nothing kept when it failed.
 //!
+//! Its documents are the session's own kind of thing: each a `FormatDoc` (a package's
+//! versions, `Stored<PackageDoc>`, with the toy format's source hooks: a grid's tables, a
+//! deck's own table and hint) of a `Format` that says its kind's prefixes and merges its
+//! addresses; the session reads its sources through `FormatSources`, as the host does. Their
+//! content and version numbers (undo, redo, scoped undo) are `TestFormat`'s.
+//!
 //! Every name and figure here is made up.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
 use crate::test_format::{Content, TestFormat};
+use ooxml_opc::Package;
 use ooxml_session::datasets::{CallDatasets, DatasetLimits, DatasetStore, DocMeta};
-use ooxml_session::sources::{CallSources, OpenDoc, SourceHost};
+use ooxml_session::sources::{CallSources, FormatOpen, FormatSources, OpenDoc, SourceHost};
+use ooxml_session::{
+    AnyVersion, DocKind, Finished, Format, FormatDoc, FormatRun, OpenEnv, PackageDoc, PartUpdate, Registry,
+    SessionError, Stored, StoredDoc,
+};
+use ooxml_store::{Caller, Store, StoreConfig};
 use ooxml_tools::datasets::{Cache, Dataset};
 use ooxml_tools::sources::{Cell, Prefixes};
-use ooxml_tools::{Refusal, ToolError, TryCall, WayOut};
+use ooxml_tools::{Refusal, Tool as ToolSpec, ToolError, ToolResult, TryCall, WayOut};
+use ooxml_zip::{Method, NewEntry, Writer};
 use serde_json::{json, Map, Value};
-use std::cell::{Cell as Counter, RefCell};
+use std::any::Any;
+use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 /// A grid's table: its header and rows.
 pub type Table = (Vec<String>, Vec<Vec<Cell>>);
@@ -28,8 +44,11 @@ pub type Table = (Vec<String>, Vec<Vec<Cell>>);
 pub struct Grid {
     pub tables: BTreeMap<String, Table>,
     pub caches: BTreeMap<String, Vec<(&'static str, i64)>>,
-    pub reads: Counter<usize>,
+    pub reads: usize,
 }
+
+/// A grid shared between the session's tests and its document.
+pub type SharedGrid = Arc<Mutex<Grid>>;
 
 /// The made-up sales table.
 pub fn sales() -> Table {
@@ -67,7 +86,7 @@ pub fn grid_sources(columns: usize, rows: usize) -> Vec<Vec<Vec<String>>> {
 }
 
 /// The grid format's resolver (`_table`).
-fn table(grid: &Grid, address: &str) -> Result<Dataset, ToolError> {
+fn table(grid: &mut Grid, address: &str) -> Result<Dataset, ToolError> {
     let name = address.strip_prefix("t:").unwrap_or(address);
     let Some((header, rows)) = grid.tables.get(name) else {
         return Err(ToolError::refusal(
@@ -76,7 +95,7 @@ fn table(grid: &Grid, address: &str) -> Result<Dataset, ToolError> {
             WayOut::names(grid.tables.keys().map(|n| format!("t:{n}"))).unwrap_or_else(|| WayOut::one(Value::Null)),
         ));
     };
-    grid.reads.set(grid.reads.get() + 1);
+    grid.reads += 1;
     let cache = grid
         .caches
         .get(name)
@@ -127,16 +146,23 @@ pub struct DeckHooks {
 pub struct Sess {
     pub format: TestFormat,
     pub docs: Vec<OpenDoc>,
-    pub grids: BTreeMap<String, Grid>,
+    pub grids: BTreeMap<String, SharedGrid>,
+    /// Each open document as its format keeps it.
+    pub held: BTreeMap<String, Arc<ToyDoc>>,
     pub store: DatasetStore,
     pub deck: DeckHooks,
     /// Whether the grid format lists its tables (`value_sources`).
     pub listing: bool,
     /// The deck's hint asked: what it was asked.
-    pub asked: RefCell<Vec<String>>,
+    pub asked: Arc<Mutex<Vec<String>>>,
+    formats: Vec<ToyFormat>,
+    /// The formats' prefixes, as `FormatSources` reads them.
     prefixes: Prefixes,
     given: u64,
 }
+
+/// The toy kinds.
+const KINDS: [DocKind; 3] = [DocKind::Docx, DocKind::Pptx, DocKind::Xlsx];
 
 /// What the session clock says.
 pub const NOW: &str = "2026-10-13T12:00:00+00:00";
@@ -147,11 +173,13 @@ impl Sess {
             format: TestFormat::default(),
             docs: Vec::new(),
             grids: BTreeMap::new(),
+            held: BTreeMap::new(),
             store: DatasetStore::new(limits),
             deck: DeckHooks::default(),
             listing: false,
-            asked: RefCell::new(Vec::new()),
-            prefixes: Prefixes::new([("xlsx", vec!["t:"]), ("pptx", vec![]), ("docx", vec![])]),
+            asked: Arc::new(Mutex::new(Vec::new())),
+            formats: KINDS.map(ToyFormat).to_vec(),
+            prefixes: Prefixes::new(KINDS.map(|k| (k.as_str(), ToyFormat(k).source_prefixes()))),
             given: 0,
         }
     }
@@ -161,6 +189,18 @@ impl Sess {
         self.given += 1;
         let handle = format!("d{}", self.given);
         self.format.open(&handle);
+        let toy = ToyDoc {
+            stored: package_store(),
+            grid: (kind == "xlsx").then(|| {
+                let grid: SharedGrid = Arc::default();
+                self.grids.insert(handle.clone(), Arc::clone(&grid));
+                grid
+            }),
+            deck: (kind == "pptx").then_some(self.deck),
+            listing: self.listing,
+            asked: Arc::clone(&self.asked),
+        };
+        self.held.insert(handle.clone(), Arc::new(toy));
         self.docs.push(OpenDoc {
             handle: handle.clone(),
             kind: kind.into(),
@@ -172,11 +212,7 @@ impl Sess {
     /// Open a grid of `tables`.
     pub fn adopt(&mut self, tables: &[(&str, Table)], name: &str) -> String {
         let handle = self.open("xlsx", name);
-        let grid = Grid {
-            tables: tables.iter().map(|(n, t)| ((*n).to_owned(), t.clone())).collect(),
-            ..Grid::default()
-        };
-        self.grids.insert(handle.clone(), grid);
+        self.grids[&handle].lock().unwrap().tables = tables.iter().map(|(n, t)| ((*n).to_owned(), t.clone())).collect();
         handle
     }
 
@@ -219,9 +255,39 @@ impl Sess {
     }
 }
 
+impl Sess {
+    /// The session's sources as its formats give them, each open document at its head.
+    fn sources(&self) -> FormatSources<'_> {
+        let formats: Vec<&dyn Format> = self.formats.iter().map(|f| f as &dyn Format).collect();
+        let docs = self
+            .docs
+            .iter()
+            .map(|d| {
+                let doc = &self.held[&d.handle];
+                FormatOpen {
+                    handle: d.handle.clone(),
+                    name: d.name.clone(),
+                    format: self.formats.iter().find(|f| f.0.as_str() == d.kind).unwrap(),
+                    doc: doc.as_ref(),
+                    at: Some(doc.stored().head()),
+                }
+            })
+            .collect();
+        FormatSources::new(formats, docs, &retry_of("host"))
+    }
+}
+
+fn retry_of(tool: &str) -> TryCall {
+    TryCall {
+        tool: tool.into(),
+        arguments: Map::new(),
+        fill: Vec::new(),
+    }
+}
+
 impl SourceHost for Sess {
     fn documents(&self) -> Vec<OpenDoc> {
-        self.docs.clone()
+        self.sources().documents()
     }
 
     fn prefixes(&self) -> &Prefixes {
@@ -229,34 +295,161 @@ impl SourceHost for Sess {
     }
 
     fn resolve(&self, doc: &str, address: &str) -> Result<Dataset, ToolError> {
-        table(&self.grids[doc], address)
+        self.sources().resolve(doc, address)
     }
 
     fn value_sources(&self, doc: &str) -> Option<Vec<String>> {
-        let grid = self.grids.get(doc).filter(|_| self.listing)?;
-        Some(grid.tables.keys().map(|n| format!("t:{n}")).collect())
+        self.sources().value_sources(doc)
     }
 
     fn own_source(&self, doc: &str, address: &str) -> Option<String> {
-        let deck = self.docs.iter().any(|d| d.handle == doc && d.kind == "pptx");
-        let own = self.deck.own.filter(|_| deck)?;
-        self.asked.borrow_mut().push(address.to_owned());
-        own(address)
+        self.sources().own_source(doc, address)
     }
 
     fn source_hint(&self, doc: &str, value: &str) -> Option<String> {
-        let deck = self.docs.iter().any(|d| d.handle == doc && d.kind == "pptx");
-        let hint = self.deck.hint.filter(|_| deck)?;
-        self.asked.borrow_mut().push(value.to_owned());
-        hint(value)
+        self.sources().source_hint(doc, value)
     }
 
     fn merge_sources(&self, kind: &str, sources: Vec<String>) -> Vec<String> {
-        if kind == "xlsx" {
+        self.sources().merge_sources(kind, sources)
+    }
+}
+
+/// The toy formats: their kind, the prefixes a grid resolves, a grid's addresses merged.
+#[derive(Clone, Copy)]
+pub struct ToyFormat(pub DocKind);
+
+impl Format for ToyFormat {
+    fn kind(&self) -> DocKind {
+        self.0
+    }
+
+    fn source_prefixes(&self) -> Vec<String> {
+        if self.0 == DocKind::Xlsx {
+            vec!["t:".into()]
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn merge_sources(&self, sources: Vec<String>) -> Vec<String> {
+        if self.0 == DocKind::Xlsx {
             merge(sources)
         } else {
             sources
         }
+    }
+
+    fn register(&self, _tools: &mut Registry) {}
+
+    fn open(&self, _package: Package, _env: &OpenEnv<'_>) -> Result<Arc<dyn FormatDoc>, SessionError> {
+        Ok(Arc::new(ToyDoc {
+            stored: package_store(),
+            grid: (self.0 == DocKind::Xlsx).then(SharedGrid::default),
+            deck: (self.0 == DocKind::Pptx).then(DeckHooks::default),
+            listing: false,
+            asked: Arc::default(),
+        }))
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// A clock that never moves.
+struct Still;
+
+impl ooxml_store::Clock for Still {
+    fn monotonic(&self) -> Duration {
+        Duration::ZERO
+    }
+}
+
+/// An empty package's versions.
+fn package_store() -> Stored<PackageDoc> {
+    let mut writer = Writer::new();
+    let entry = NewEntry {
+        name: "[Content_Types].xml".into(),
+        method: Method::Deflated,
+        dos_time: 0,
+        dos_date: 33,
+        external_attr: 0,
+        create_system: 3,
+    };
+    writer.add(&entry, b"<Types/>").unwrap();
+    let bytes: Arc<[u8]> = writer.finish(b"").unwrap().into();
+    let package = Package::open(bytes, &ooxml_base::Limits::default()).unwrap();
+    Stored::new(Store::new(
+        PackageDoc::new(package),
+        StoreConfig::default(),
+        Arc::new(Still),
+    ))
+}
+
+/// A toy document as its format keeps it: a package's versions, and a grid's tables or a
+/// deck's hooks.
+pub struct ToyDoc {
+    stored: Stored<PackageDoc>,
+    grid: Option<SharedGrid>,
+    deck: Option<DeckHooks>,
+    listing: bool,
+    asked: Arc<Mutex<Vec<String>>>,
+}
+
+impl FormatDoc for ToyDoc {
+    fn stored(&self) -> &dyn StoredDoc {
+        &self.stored
+    }
+
+    fn source(&self, _at: &AnyVersion, address: &str) -> Option<Result<Dataset, ToolError>> {
+        Some(table(&mut self.grid.as_ref()?.lock().unwrap(), address))
+    }
+
+    fn value_sources(&self, _at: &AnyVersion) -> Option<Vec<String>> {
+        let grid = self.grid.as_ref().filter(|_| self.listing)?.lock().unwrap();
+        Some(grid.tables.keys().map(|n| format!("t:{n}")).collect())
+    }
+
+    fn own_source(&self, _at: &AnyVersion, address: &str) -> Option<String> {
+        let own = self.deck?.own?;
+        self.asked.lock().unwrap().push(address.to_owned());
+        own(address)
+    }
+
+    fn source_hint(&self, _at: &AnyVersion, value: &str) -> Option<String> {
+        let hint = self.deck?.hint?;
+        self.asked.lock().unwrap().push(value.to_owned());
+        hint(value)
+    }
+
+    fn save(&self, at: &AnyVersion, checked: bool) -> Result<Vec<u8>, SessionError> {
+        FormatDoc::save(&self.stored, at, checked)
+    }
+
+    fn update(
+        &self,
+        caller: &Caller,
+        tool: Option<&str>,
+        update: &PartUpdate<'_>,
+    ) -> Result<(AnyVersion, bool, u32, bool), SessionError> {
+        FormatDoc::update(&self.stored, caller, tool, update)
+    }
+
+    fn readings(&self) -> Arc<dyn Any + Send + Sync> {
+        FormatDoc::readings(&self.stored)
+    }
+
+    fn run(&self, tool: &dyn ToolSpec, run: &FormatRun<'_>) -> ToolResult<Value> {
+        FormatDoc::run(&self.stored, tool, run)
+    }
+
+    fn finish(&self, made: Box<dyn Any + Send>, run: &FormatRun<'_>) -> Option<Finished> {
+        FormatDoc::finish(&self.stored, made, run)
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

@@ -7,12 +7,16 @@
 //! what resolves (round 56, R120: [`refusal`], [`CallSources::refine`]); and what a text's
 //! references read ([`CallSources`] is the facts' [`FactSources`]).
 //!
+//! [`FormatSources`] is the [`SourceHost`] of the session's formats: prefixes from each
+//! [`Format`], rows and words from each [`FormatDoc`] at the version the call reads.
+//!
 //! Must not: hold a document or its lock (the host says which documents a call holds and
 //! which it can read now), or know a format: each format's hooks come through
 //! [`SourceHost`].
 
 use crate::datasets::{CallDatasets, DatasetStore, Heads};
 use crate::facts::FactSources;
+use crate::{no_source, AnyVersion, Format, FormatDoc};
 use ooxml_tools::datasets::{dataset_id, Dataset, DATASET_PREFIX};
 use ooxml_tools::sources::{doc_order, qualified, qualify, Prefixes, SourceRows};
 use ooxml_tools::{ErrorCode, Failure, Refusal, ToolError, TryCall, WayOut};
@@ -76,6 +80,103 @@ pub trait SourceHost {
     fn merge_sources(&self, kind: &str, sources: Vec<String>) -> Vec<String> {
         let _ = kind;
         sources
+    }
+}
+
+/// An open document as its format keeps it, for [`FormatSources`]: its handle and name, its
+/// format, the document, and the version the call may read (`None`: it cannot be read now,
+/// so it gives a refusal no words).
+pub struct FormatOpen<'a> {
+    /// Its handle (`d2`).
+    pub handle: String,
+    /// Its name.
+    pub name: String,
+    /// Its format.
+    pub format: &'a dyn Format,
+    /// The document.
+    pub doc: &'a dyn FormatDoc,
+    /// The version the call reads.
+    pub at: Option<AnyVersion>,
+}
+
+/// The sources of a call as the session's formats give them (design section 5): each
+/// kind's prefixes from its [`Format`], each document's rows and words from its
+/// [`FormatDoc`] at the version the call reads.
+pub struct FormatSources<'a> {
+    docs: Vec<FormatOpen<'a>>,
+    formats: Vec<&'a dyn Format>,
+    prefixes: Prefixes,
+    retry: TryCall,
+}
+
+impl<'a> FormatSources<'a> {
+    /// The sources of `docs`, the formats loaded being `formats`; `retry`: the call as
+    /// given, the way out of [`no_source`].
+    #[must_use]
+    pub fn new(formats: Vec<&'a dyn Format>, docs: Vec<FormatOpen<'a>>, retry: &TryCall) -> Self {
+        let prefixes = Prefixes::new(formats.iter().map(|f| (f.kind().as_str(), f.source_prefixes())));
+        Self {
+            docs,
+            formats,
+            prefixes,
+            retry: retry.clone(),
+        }
+    }
+
+    fn open(&self, doc: &str) -> Option<&FormatOpen<'a>> {
+        self.docs.iter().find(|d| d.handle == doc)
+    }
+}
+
+impl SourceHost for FormatSources<'_> {
+    fn documents(&self) -> Vec<OpenDoc> {
+        self.docs
+            .iter()
+            .map(|d| OpenDoc {
+                handle: d.handle.clone(),
+                kind: d.format.kind().as_str().to_owned(),
+                name: d.name.clone(),
+            })
+            .collect()
+    }
+
+    fn prefixes(&self) -> &Prefixes {
+        &self.prefixes
+    }
+
+    fn resolve(&self, doc: &str, address: &str) -> Result<Dataset, ToolError> {
+        let Some(open) = self.open(doc) else {
+            return Err(ToolError::refusal(
+                Refusal::NotFound,
+                format!("no open document {}", ooxml_base::pyfmt::repr_str(doc)),
+                WayOut::call(self.retry.clone()),
+            ));
+        };
+        let kind = open.format.kind();
+        let found = open.at.as_ref().and_then(|at| open.doc.source(at, address));
+        found.unwrap_or_else(|| Err(no_source(kind, address, &self.retry)))
+    }
+
+    fn value_sources(&self, doc: &str) -> Option<Vec<String>> {
+        let open = self.open(doc)?;
+        open.doc.value_sources(open.at.as_ref()?)
+    }
+
+    fn own_source(&self, doc: &str, address: &str) -> Option<String> {
+        let open = self.open(doc)?;
+        open.doc.own_source(open.at.as_ref()?, address)
+    }
+
+    fn source_hint(&self, doc: &str, value: &str) -> Option<String> {
+        let open = self.open(doc)?;
+        open.doc.source_hint(open.at.as_ref()?, value)
+    }
+
+    fn merge_sources(&self, kind: &str, sources: Vec<String>) -> Vec<String> {
+        match self.formats.iter().find(|f| f.kind().as_str() == kind) {
+            Some(format) => format.merge_sources(sources),
+            None => sources,
+        }
     }
 }
 

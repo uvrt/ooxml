@@ -650,6 +650,7 @@ dependencies = [
  "ooxml-store",
  "ooxml-tools",
  "ooxml-xml",
+ "ooxml-zip",
  "serde_json",
  "thiserror",
 ]

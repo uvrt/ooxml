@@ -179,7 +179,7 @@ fn add_from_a_table_of_the_one_open_grid() {
 fn a_table_read_from_invalidated_formula_caches_is_placed_stale() {
     let mut sess = session();
     let caches = |sess: &mut Sess, counts: Vec<(&'static str, i64)>| {
-        sess.grids.get_mut("d2").unwrap().caches.insert("sales".into(), counts);
+        sess.grids["d2"].lock().unwrap().caches.insert("sales".into(), counts);
     };
     caches(&mut sess, vec![("cached_unverified", 1), ("external", 1)]);
     let from = &placed(&mut sess, "t:sales")["from"];
@@ -204,10 +204,16 @@ fn a_qualified_table_names_its_document() {
     assert_eq!(error["field"], "from");
     // Round 56 (R120): the refusal read both to offer only tables that are there.
     for doc in ["d2", "d3"] {
-        sess.grids[doc].reads.set(0);
+        sess.grids[doc].lock().unwrap().reads = 0;
     }
     placed(&mut sess, "d3/t:sales");
-    assert_eq!((sess.grids["d3"].reads.get(), sess.grids["d2"].reads.get()), (1, 0));
+    assert_eq!(
+        (
+            sess.grids["d3"].lock().unwrap().reads,
+            sess.grids["d2"].lock().unwrap().reads
+        ),
+        (1, 0)
+    );
 }
 
 /// `test_a_source_that_names_nothing_is_refused`.
@@ -397,7 +403,7 @@ fn the_call_documents_format_adds_its_hint_to_a_missing_dataset() {
         (&error["field"], &error["valid_options"]),
         (&json!("from"), &json!(["d:sales"]))
     );
-    assert_eq!(*sess.asked.borrow(), ["d:3"]);
+    assert_eq!(*sess.asked.lock().unwrap(), ["d:3"]);
 }
 
 /// `test_the_hint_reaches_a_t_address_no_document_takes`.
@@ -410,7 +416,7 @@ fn the_hint_reaches_a_t_address_no_document_takes() {
         .as_str()
         .unwrap()
         .starts_with("no open document takes t: addresses: open one first"));
-    assert_eq!(*sess.asked.borrow(), ["t:sales"]);
+    assert_eq!(*sess.asked.lock().unwrap(), ["t:sales"]);
     let reply = set_from(&mut sess, "t:blank"); // nothing to say: as it was
     let error = reply.failed("not_found");
     assert_eq!(error["message"], "no open document takes t: addresses: open one first");
@@ -426,7 +432,7 @@ fn a_hint_never_changes_what_resolves() {
     }
     set_from(&mut sess, "d2/t:none").failed("not_found");
     set_from(&mut sess, "x:1").failed("invalid_arguments");
-    assert!(sess.asked.borrow().is_empty()); // asked only when the dispatcher finds nothing to resolve
+    assert!(sess.asked.lock().unwrap().is_empty()); // asked only when the dispatcher finds nothing to resolve
 }
 
 const OWN: DeckHooks = DeckHooks {
@@ -590,7 +596,7 @@ fn a_hook_that_says_nothing_is_ignored() {
     let mut sess = r56(1);
     let reply = add(&mut sess, "t:raise");
     assert_eq!(reply.failed("not_found")["message"], "no table 'raise'");
-    assert!(sess.asked.borrow().iter().any(|a| a == "t:raise"));
+    assert!(sess.asked.lock().unwrap().iter().any(|a| a == "t:raise"));
 }
 
 /// `test_limit_and_other_codes_stand`.
@@ -605,4 +611,17 @@ fn limit_and_other_codes_stand() {
     };
     let found = refusal(error.clone(), "t:x", &sess, &[], &Refusing::default(), &retry);
     assert_eq!(found, error);
+}
+
+/// A document whose format takes no rows (`FormatDoc::source`'s default, as docx's) is
+/// refused as `sources.resolve` words it, through the formats' `FormatSources`.
+#[test]
+fn a_format_taking_no_rows_is_refused_by_its_kind() {
+    use ooxml_session::sources::SourceHost;
+    let sess = session();
+    let error = sess.resolve("d1", "t:sales").unwrap_err().to_json();
+    assert_eq!(error["code"], "invalid_arguments");
+    assert_eq!(error["message"], "pptx documents take no such address: 't:sales'");
+    assert_eq!(sess.documents()[1].kind, "xlsx");
+    assert_eq!(sess.prefixes().of("xlsx"), ["t:".to_owned()]);
 }
