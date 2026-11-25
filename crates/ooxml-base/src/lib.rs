@@ -21,6 +21,7 @@ pub mod locale;
 pub mod pyfmt;
 pub mod pystr;
 pub mod sha1;
+pub mod sha256;
 pub mod units;
 pub mod uuid;
 

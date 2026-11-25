@@ -240,6 +240,14 @@ impl ToolError {
         self
     }
 
+    /// The error said in other words (a host's, where it knows more than the tool: the
+    /// action a name meant), its code, field, way out and details kept.
+    #[must_use]
+    pub fn with_message(mut self, message: impl Into<String>) -> Self {
+        self.0.message = message.into();
+        self
+    }
+
     /// The error with one more detail.
     #[must_use]
     pub fn with_detail(mut self, key: &str, value: Value) -> Self {

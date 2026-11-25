@@ -12,8 +12,10 @@
 
 use ooxml_base::pyfmt::repr_str;
 use ooxml_base::ZipLimits;
+pub use ooxml_tools::blobs::Blob;
+use ooxml_tools::blobs::Blobs;
 use ooxml_tools::{Refusal, ToolError, TryCall, WayOut};
-use serde_json::{Map, Value};
+use serde_json::Value;
 use std::sync::Arc;
 
 const MB: u64 = 1024 * 1024;
@@ -304,32 +306,6 @@ pub fn check_package(data: &Arc<[u8]>, limits: &BlobLimits, name: &str) -> Resul
     Ok(())
 }
 
-/// An input the application registered, under a handle (`b1`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Blob {
-    /// Its handle.
-    pub handle: String,
-    /// The name it was registered with.
-    pub name: String,
-    /// Its media type, as checked against the bytes.
-    pub mime: String,
-    /// Its bytes.
-    pub data: Arc<[u8]>,
-}
-
-impl Blob {
-    /// What the session's `describe` says of it: never its bytes.
-    #[must_use]
-    pub fn describe(&self) -> Map<String, Value> {
-        let mut out = Map::new();
-        out.insert("handle".into(), Value::from(self.handle.as_str()));
-        out.insert("name".into(), Value::from(self.name.as_str()));
-        out.insert("mime".into(), Value::from(self.mime.as_str()));
-        out.insert("size".into(), Value::from(self.data.len()));
-        out
-    }
-}
-
 /// The session's blobs, in the order registered.
 #[derive(Debug, Clone, Default)]
 pub struct BlobStore {
@@ -421,5 +397,15 @@ impl BlobStore {
     #[must_use]
     pub fn describe(&self) -> Vec<Value> {
         self.blobs.iter().map(|b| Value::Object(b.describe())).collect()
+    }
+}
+
+impl Blobs for BlobStore {
+    fn blob(&self, handle: &str) -> Option<Blob> {
+        self.blobs.iter().find(|b| b.handle == handle).cloned()
+    }
+
+    fn listed(&self) -> Vec<(String, String)> {
+        self.blobs.iter().map(|b| (b.handle.clone(), b.name.clone())).collect()
     }
 }

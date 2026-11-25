@@ -43,6 +43,7 @@ mod names;
 pub mod outputs;
 mod owners;
 mod panics;
+pub mod problems;
 mod refs;
 mod registry;
 mod session;
