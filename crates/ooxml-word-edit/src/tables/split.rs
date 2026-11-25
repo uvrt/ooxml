@@ -26,11 +26,9 @@ use crate::sink::EditSink;
 use crate::validate::Orders;
 use crate::work::{Id, Work};
 use crate::{EditError, Result};
-use ooxml_word_model::docx::tables::no_cell_text;
+use ooxml_word_model::docx::tables::{no_cell_text, GridPlaces};
 use std::collections::HashMap;
 
-/// A grid position: (row, grid column).
-type Spot = (usize, usize);
 
 /// Where Word's even division would have added grid columns: the cell's span and each new
 /// cell's.
@@ -87,25 +85,9 @@ fn no_cell_message(work: &Work, rows: &[Id], id: &str, row: usize, column: usize
 }
 
 /// Every grid place's cell of `rows` (the table's own), as its first place `(row, column)`
-/// (`Table.grid`, by [`grid_of`]); `None` where a row has no cell.
-pub(crate) fn spots(work: &Work, rows: &[Id]) -> Vec<Vec<Option<Spot>>> {
-    let grid = grid_of(work, work.root(), rows);
-    grid.rows
-        .iter()
-        .map(|line| {
-            let mut out = vec![None; line.before];
-            for cell in &line.cells {
-                let (r, k) = cell.origin;
-                let first = grid
-                    .rows
-                    .get(r)
-                    .and_then(|o| o.cells.get(k))
-                    .map_or(cell.first, |o| o.first);
-                out.extend(std::iter::repeat_n(Some((r, first)), cell.span));
-            }
-            out
-        })
-        .collect()
+/// (`Table.grid`, by [`grid_of`]), as runs of columns ([`GridPlaces`]).
+pub(crate) fn spots(work: &Work, rows: &[Id]) -> GridPlaces {
+    GridPlaces::of(&grid_of(work, work.root(), rows))
 }
 
 /// A cell's span set to `span` grid columns and its width to `width` twips
