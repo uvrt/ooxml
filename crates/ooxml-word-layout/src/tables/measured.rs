@@ -15,6 +15,7 @@ use crate::table::{
     CellLine, FloatingTable, PlacedRow, StackedBlock, StackedEnd, TableFlow, TablePage, TableRequest, Unsupported,
 };
 use ooxml_base::Q;
+use ooxml_word_model::ids::{Anchor, BlockKey, Sub};
 use ooxml_word_model::value::Text;
 use std::sync::Arc;
 
@@ -64,6 +65,12 @@ fn white_text(props: &ooxml_word_model::value::Props) -> bool {
 pub struct MeasuredTable {
     /// Its path.
     pub path: Text,
+    /// Its block's key, beside its path (`None`: a table no story's index holds).
+    pub key: Option<BlockKey>,
+    /// Each cell's place in the table as written (the model's [`Table::cell_places`]).
+    ///
+    /// [`Table::cell_places`]: ooxml_word_model::model::Table::cell_places
+    pub cell_places: ooxml_word_model::model::CellPlaces,
     /// Its rows.
     pub rows: Vec<RowFlow>,
     /// The border below its last row.
@@ -99,6 +106,16 @@ pub struct MeasuredTable {
 }
 
 impl MeasuredTable {
+    /// What the cell `cell` of row `row` (the final view's) is drawn for: the table's cell
+    /// at its place as written; `None` for a table no story's index holds.
+    pub fn cell_anchor(&self, row: usize, cell: usize) -> Option<Anchor> {
+        let &(r, c) = self.cell_places.get(row)?.get(cell)?;
+        Some(Anchor {
+            block: self.key?,
+            sub: Sub::Cell(u16::try_from(r).ok()?, u16::try_from(c).ok()?),
+        })
+    }
+
     /// Row `row`'s cell `cell`.
     pub fn cell(&self, row: usize, cell: usize) -> Option<&CellFlow> {
         self.rows.get(row).and_then(|r| r.cells.get(cell))

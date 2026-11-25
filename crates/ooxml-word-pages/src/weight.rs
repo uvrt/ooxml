@@ -126,7 +126,7 @@ fn blocks_weight(body: &Arc<[Block]>) -> usize {
 }
 
 /// What a layout's facts hold, bytes, roughly: each page's lines and the keys of the
-/// blocks it draws (each key its own string), and each block's keeps.
+/// blocks it draws (each key its own string, and its anchor), and each block's keeps.
 pub fn facts_weight(facts: &LayoutFacts) -> usize {
     let pages: usize = facts
         .pages
@@ -138,6 +138,7 @@ pub fn facts_weight(facts: &LayoutFacts) -> usize {
                     .iter()
                     .map(|b| size_of::<Text>() + 2 * size_of::<usize>() + b.len())
                     .sum::<usize>()
+                + p.anchors.capacity() * size_of::<ooxml_word_model::ids::Anchor>()
         })
         .sum();
     pages + facts.keeps.len() * (size_of::<usize>() + size_of::<BlockKeeps>() + 32)

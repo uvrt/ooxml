@@ -283,6 +283,10 @@ pub struct Look {
     pub no_v_band: bool,
 }
 
+/// Each cell's place in its table as written, by the final view's rows and cells: its
+/// row's place among the table's rows and its own among the row's cells.
+pub type CellPlaces = Arc<[Arc<[(u32, u32)]>]>;
+
 /// A table: rows of cells of blocks, and what its geometry is read from, unresolved.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Table {
@@ -309,6 +313,11 @@ pub struct Table {
     pub conditions: Arc<[RowConditions]>,
     /// Each cell's path.
     pub cell_paths: Arc<[Arc<[Text]>]>,
+    /// Each cell's place in the table as written, beside its path: its row among the
+    /// table's rows and its place among the row's cells, each counted through row- and
+    /// cell-level wrappers (what [`crate::ids::Sub::Cell`] names; the final view's rows and
+    /// cells, deleted ones dropped, lose it).
+    pub cell_places: CellPlaces,
     /// The final view moved content across its edge.
     pub joined: bool,
 }

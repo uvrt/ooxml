@@ -9,7 +9,7 @@
 //! Must not: lay out or paint anything (the paint has), or read a picture part.
 
 use super::drawings::{DrawingSlot, Layer};
-use super::names::PageNames;
+use super::names::{Namer, PageNames};
 use super::text_box::TextBoxPaint;
 use super::{DrawingName, Drawn, FaceNames, GlyphSize, PagePaint, PaintedLine, Rule, Span, SpanKind, TextEffects};
 use crate::px::Px;
@@ -164,7 +164,7 @@ fn font(span: &Span, name: Option<DrawingName>) -> Vec<(&'static str, Value)> {
     out
 }
 
-fn text(span: &Span, cx: &SvgContext<'_>, defs: &mut PageDefs, names: &PageNames<'_>) -> Element {
+fn text(span: &Span, cx: &SvgContext<'_>, defs: &mut PageDefs, names: &dyn Namer) -> Element {
     let chars: String = span.chars.iter().collect();
     let attrs = font(span, cx.names.drawing_name(&span.face, span.bold, span.italic));
     let mut e = Element::new("text")
@@ -215,7 +215,7 @@ fn effects_paint(span: &Span, effects: &TextEffects, cx: &SvgContext<'_>, defs: 
     cx.drawings.text_paint(effects, bounds, span.color.as_deref(), defs)
 }
 
-fn rect(rule: &Rule, names: &PageNames<'_>) -> Element {
+fn rect(rule: &Rule, names: &dyn Namer) -> Element {
     Element::new("rect")
         .attr("x", px(rule.x))
         .attr("y", px(rule.y))
@@ -238,7 +238,7 @@ fn under_rank(kind: &str) -> Option<u8> {
 }
 
 /// Lines of text, grouped by paragraph.
-fn lines(painted: &[PaintedLine], cx: &SvgContext<'_>, defs: &mut PageDefs, names: &PageNames<'_>) -> Vec<Element> {
+fn lines(painted: &[PaintedLine], cx: &SvgContext<'_>, defs: &mut PageDefs, names: &dyn Namer) -> Vec<Element> {
     let mut out: Vec<Element> = Vec::new();
     let mut current: Option<(&str, Option<&(&'static str, ooxml_word_model::value::Text)>)> = None;
     for line in painted {
@@ -276,7 +276,7 @@ fn lines(painted: &[PaintedLine], cx: &SvgContext<'_>, defs: &mut PageDefs, name
 }
 
 /// A stand-in box of a drawing's extent.
-fn stand_in(d: &Drawn, what: &str, names: &PageNames<'_>) -> Element {
+fn stand_in(d: &Drawn, what: &str, names: &dyn Namer) -> Element {
     Element::new("g")
         .inline()
         .attr("data-docx-unsupported", Value::Plain(what.into()))
@@ -297,7 +297,7 @@ fn stand_in(d: &Drawn, what: &str, names: &PageNames<'_>) -> Element {
 const IMAGE_TYPES: [&str; 4] = ["image/png", "image/jpeg", "image/gif", "image/svg+xml"];
 
 /// A picture in its box, or a stand-in box where it cannot be carried.
-fn picture(d: &Drawn, cx: &SvgContext<'_>, names: &PageNames<'_>) -> Element {
+fn picture(d: &Drawn, cx: &SvgContext<'_>, names: &dyn Namer) -> Element {
     let found = d
         .relationship
         .as_deref()
@@ -420,10 +420,11 @@ fn painted_slots<'p>(
             // it lays the box out), their resources' ids minted in that order.
             let drawn = cx.drawings.drawing(&names.named_slot(slot), defs);
             let text: Vec<&TextBoxPaint> = paint.text_boxes.iter().filter(|t| t.slot == k).collect();
+            let boxed = names.boxed(slot);
             let inner = text
                 .iter()
                 .flat_map(|t| t.drawings.iter())
-                .map(|inner| cx.drawings.drawing(inner, defs))
+                .map(|inner| cx.drawings.drawing(&boxed.named_slot(inner), defs))
                 .collect();
             Painted {
                 slot,
@@ -436,14 +437,14 @@ fn painted_slots<'p>(
 }
 
 /// The rules drawn under the text, in their kinds' order (`_rules`).
-fn under_rules(rules: &[Rule], names: &PageNames<'_>) -> Vec<Element> {
+fn under_rules(rules: &[Rule], names: &dyn Namer) -> Vec<Element> {
     let mut under: Vec<&Rule> = rules.iter().filter(|r| under_rank(r.kind).is_some()).collect();
     under.sort_by_key(|r| under_rank(r.kind));
     under.into_iter().map(|r| rect(r, names)).collect()
 }
 
 /// The rules drawn over the text, in the order made.
-fn over_rules(rules: &[Rule], names: &PageNames<'_>) -> Vec<Element> {
+fn over_rules(rules: &[Rule], names: &dyn Namer) -> Vec<Element> {
     rules
         .iter()
         .filter(|r| under_rank(r.kind).is_none())
@@ -479,17 +480,20 @@ fn floats(slots: &[&Painted<'_>], cx: &SvgContext<'_>, defs: &mut PageDefs, name
                 .attr("data-docx-part", Value::Text(part.to_string()));
         }
         g.children = paint.iter().cloned().map(Element::raw).collect();
+        // a text box's items are named below its drawing's name
+        let boxed = names.boxed(slot);
+        let boxed: &dyn Namer = &boxed;
         for text in &painted.text {
-            g.children.extend(text.pictures.iter().map(|d| picture(d, cx, names)));
+            g.children.extend(text.pictures.iter().map(|d| picture(d, cx, boxed)));
         }
         for inner in painted.inner.iter().flatten() {
             g.children.extend(inner.iter().cloned().map(Element::raw));
         }
         let rules: Vec<Rule> = painted.text.iter().flat_map(|t| t.rules.iter().cloned()).collect();
         let text_lines: Vec<PaintedLine> = painted.text.iter().flat_map(|t| t.lines.iter().cloned()).collect();
-        g.children.extend(under_rules(&rules, names));
-        g.children.extend(lines(&text_lines, cx, defs, names));
-        g.children.extend(over_rules(&rules, names));
+        g.children.extend(under_rules(&rules, boxed));
+        g.children.extend(lines(&text_lines, cx, defs, boxed));
+        g.children.extend(over_rules(&rules, boxed));
         out.push(g);
     }
     out

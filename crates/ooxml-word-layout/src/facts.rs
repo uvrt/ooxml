@@ -21,10 +21,11 @@ use crate::geometry::{DrawnLine, LineOf, LineSource, PageFrame};
 use crate::notes::{separator, NotesPart};
 use crate::paginate::PageInfo;
 use crate::px::Px;
-use ooxml_word_model::ids::{Anchor, BlockKey};
+use ooxml_word_model::docx::VersionNames;
+use ooxml_word_model::ids::{Anchor, BlockKey, StoryIx};
 use ooxml_word_model::model::Block;
 use ooxml_word_model::value::Text;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 /// One line a page draws, as a check reads it.
@@ -63,6 +64,10 @@ pub struct PageFacts {
     /// The keys of the body's blocks it draws something of (`Page.blocks`): each
     /// paragraph, table, row and cell, once each, in drawing order.
     pub blocks: Vec<Text>,
+    /// The same blocks by anchor, beside their paths (a cell its table's
+    /// [`ooxml_word_model::ids::Sub::Cell`]): those of its lines' paragraphs that are
+    /// anchored, in drawing order, each named as its path in `blocks`.
+    pub anchors: Vec<Anchor>,
 }
 
 /// A header's or footer's line a page draws, as a check reads it: its story's kind and
@@ -257,14 +262,43 @@ impl PageFacts {
                 }
             }
         }
+        let anchors = page_anchors(&layout.document.names, &lines);
         Some(PageFacts {
             page,
             info: geometry.info,
             frame: geometry.frame,
             lines,
             blocks,
+            anchors,
         })
     }
+}
+
+/// The body blocks `lines` draw something of, by anchor, once each in drawing order: each
+/// anchored body line's paragraph and the tables, rows and cells it is in, named through
+/// the version's `names` (each the path [`block_keys`] gives it, asserted in debug builds).
+fn page_anchors(names: &VersionNames, lines: &[LineFact]) -> Vec<Anchor> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    let mut done = HashSet::new();
+    for line in lines {
+        let Some(anchor) = line.anchor.filter(|a| a.block.story() == StoryIx::BODY) else {
+            continue;
+        };
+        if !done.insert(anchor.block) {
+            continue;
+        }
+        let Some(chain) = names.blocks_of(anchor.block) else {
+            continue;
+        };
+        debug_assert_eq!(
+            chain.iter().map(|a| names.path(*a)).collect::<Vec<_>>(),
+            block_keys(&line.path).into_iter().map(Some).collect::<Vec<_>>(),
+            "{anchor:?}'s blocks are named as their paths"
+        );
+        out.extend(chain.into_iter().filter(|a| seen.insert(*a)));
+    }
+    out
 }
 
 impl LayoutFacts {
