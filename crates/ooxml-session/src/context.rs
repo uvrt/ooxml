@@ -10,8 +10,8 @@
 use crate::{DocNames, Opened};
 use ooxml_base::{Cancel, Clock};
 use ooxml_store::Caller;
-use ooxml_tools_word::Placer;
 use serde_json::{Map, Value};
+use std::any::Any;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -61,44 +61,14 @@ pub struct CallContext {
     /// version, any other at its head. The host that owns the documents names the version
     /// its caller reads, so a reader never reads a version newer than its own.
     pub at: Vec<Opened>,
-    /// Where the call may ask where blocks are laid out: the host's layout of the version
-    /// it reads (`word_inspect`'s `layout`).
-    pub placer: Option<Arc<dyn Placer>>,
-    /// The host's layout of the documents' versions, which an edit whose results come from
-    /// the pages reads (`word_fields`), and `check` reads the pages of; `None`: the
-    /// session's own page engine for the document, where it has one; else a call that needs
-    /// the pages is refused as not supported, with the way out.
-    pub layout: Option<Arc<dyn ooxml_tools_word::WordLayout>>,
-    /// The faces the host draws pages with (the system's fonts and its font folders),
-    /// which `render` draws a document's pages from; `None`: `render` is refused as not
-    /// supported (`render: no layout`), with the way out.
-    pub raster: Option<Arc<ooxml_tools_word::PageRaster>>,
     /// The host's budgets of images kept across calls (the session's, the round's) as they
     /// stand when the call starts, which `render` refuses past; empty: none. The call's own
     /// limit is in [`Self::limits`].
     pub image_budgets: Vec<ooxml_tools::ImageBudget>,
-    /// The session's blobs as the host keeps them (an inserted picture's bytes); `None`: a
-    /// call that reads one is refused as not supported, with the way out.
-    pub blobs: Option<Arc<dyn ooxml_tools_word::Blobs>>,
     /// The host's names for the documents the call names (`d1` in the host's own session),
     /// each the session's id of one: the call names its documents by these, and its reply
     /// names them so. Empty: by the session's ids.
     pub names: DocNames,
-    /// The values the host wrote into the call's arguments for references (`{{d:...}}`,
-    /// resolved against its datasets), which an editing call keeps on the paragraphs they
-    /// went into; empty: none.
-    pub written: Vec<ooxml_tools_word::Written>,
-    /// The tables of the open documents the host holds itself (a workbook's `t:stock`), as a
-    /// `from` names them: a call refused for a table not in its document says it is one of
-    /// those (asked only then); `None`: none.
-    pub tables: Option<Arc<dyn ooxml_tools_word::HostTables>>,
-    /// The rows of the sources the call names (a `from`'s dataset `d:sales`, a workbook's
-    /// table `t:stock`), as the host resolved them before the call, each keyed by the value
-    /// as the call gives it; empty: none.
-    pub sources: ooxml_tools_word::Sources,
-    /// The pages and lines of the host's layout of the version the call reads, where it
-    /// has laid it out (`save_document`'s `app.xml` statistics); `None`: not laid out.
-    pub counts: Option<ooxml_tools_word::LayoutCounts>,
     /// The host's limits on the call's reply: a page's characters, a listing's items
     /// (docx-agent's `Limits.max_result_chars`, `Limits.max_list_items`).
     pub limits: ooxml_tools::Limits,
@@ -106,14 +76,15 @@ pub struct CallContext {
     /// `2026-11-20T09:30:15Z`): the host's clock, to the second, as docx-agent dates them;
     /// `None`: the session's clock.
     pub date: Option<String>,
-    /// The text the call writes is written as given, none of the spacing its language wants
-    /// (docx-agent's `docx_format(typography=False)`); `false`: spaced by its language.
-    pub as_given: bool,
     /// The locale the call reads its documents under (docx-agent's document locale: a table
     /// of contents' style names and the separator between them); `None`: the session's,
     /// where the host set one ([`crate::SessionConfig::locale`]), else each document's own
     /// language (`w:themeFontLang`, then the default run language).
     pub locale: Option<ooxml_numfmt::Locale>,
+    /// What the host hands the call for its document's format beside the rest (a Word
+    /// call's layout, blobs, values written by reference: `ooxml-session-word`'s
+    /// `WordHost`), read by that format alone; `None`: nothing.
+    pub host: Option<Arc<dyn Any + Send + Sync>>,
 }
 
 impl std::fmt::Debug for CallContext {
@@ -139,7 +110,7 @@ impl std::fmt::Debug for CallContext {
 
 /// The cancellation a call runs under.
 #[derive(Clone, Copy)]
-pub(crate) struct CallCancel<'a> {
+pub struct CallCancel<'a> {
     token: Option<&'a CancelToken>,
     session: &'a dyn Cancel,
     clock: &'a dyn Clock,
@@ -149,7 +120,9 @@ pub(crate) struct CallCancel<'a> {
 }
 
 impl<'a> CallCancel<'a> {
-    pub(crate) fn new(context: &'a CallContext, session: &'a dyn Cancel, clock: &'a dyn Clock) -> Self {
+    /// What `context` runs under in a session with `session`'s cancellation and `clock`.
+    #[must_use]
+    pub fn new(context: &'a CallContext, session: &'a dyn Cancel, clock: &'a dyn Clock) -> Self {
         let now = clock.monotonic();
         Self {
             token: context.cancel.as_deref(),
@@ -161,7 +134,8 @@ impl<'a> CallCancel<'a> {
     }
 
     /// What stops laying a document out in the call, where it has a limit on that.
-    pub(crate) fn layout(&self) -> Option<LayoutCancel<'a>> {
+    #[must_use]
+    pub fn layout(&self) -> Option<LayoutCancel<'a>> {
         self.layout.map(|(timeout, until)| LayoutCancel {
             call: *self,
             timeout,
@@ -172,19 +146,17 @@ impl<'a> CallCancel<'a> {
 
 /// What stops laying a document out in a call: the call's cancellation, or its limit on
 /// laying out passed.
-pub(crate) struct LayoutCancel<'a> {
+pub struct LayoutCancel<'a> {
     call: CallCancel<'a>,
     timeout: Duration,
     until: Duration,
 }
 
 impl LayoutCancel<'_> {
-    /// As a tool is handed it.
-    pub(crate) fn limit(&self) -> ooxml_tools_word::LayoutLimit<'_> {
-        ooxml_tools_word::LayoutLimit {
-            cancel: self,
-            timeout: self.timeout,
-        }
+    /// The call's limit on laying out, as said where it passed.
+    #[must_use]
+    pub fn timeout(&self) -> Duration {
+        self.timeout
     }
 }
 
@@ -203,7 +175,7 @@ impl Cancel for CallCancel<'_> {
 }
 
 /// The session's clock as the store reads it.
-pub(crate) struct StoreClock(pub(crate) Arc<dyn Clock>);
+pub struct StoreClock(pub Arc<dyn Clock>);
 
 impl ooxml_store::Clock for StoreClock {
     fn monotonic(&self) -> Duration {
@@ -273,10 +245,10 @@ mod tests {
         let Some(layout) = call.layout() else {
             panic!("a limit on laying out")
         };
-        assert_eq!(layout.limit().timeout, Duration::from_secs(30));
+        assert_eq!(layout.timeout(), Duration::from_secs(30));
         assert!(!layout.is_cancelled());
         *clock.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Duration::from_secs(130);
-        assert!(layout.limit().cancel.is_cancelled(), "past the limit");
+        assert!(layout.is_cancelled(), "past the limit");
         assert!(!call.is_cancelled(), "the call goes on");
         *clock.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Duration::from_secs(100);
         token.cancel();

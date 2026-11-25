@@ -53,7 +53,7 @@ pub fn case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
 /// hands it over.
 fn registered(tool: &str, arguments: &Value, editing: &Editing<'_>) -> Option<ToolResult<Value>> {
     static REGISTRY: OnceLock<Registry> = OnceLock::new();
-    let tool = REGISTRY.get_or_init(Registry::standard).named(tool)?;
+    let tool = REGISTRY.get_or_init(ooxml_session_word::registry).named(tool)?;
     let versions = Versions::new();
     let last_check = LastCheck::default();
     let version = opened_version(editing, &versions, &last_check);

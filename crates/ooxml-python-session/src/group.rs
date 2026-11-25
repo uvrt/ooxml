@@ -13,6 +13,7 @@ use crate::context::{caller_context, PyCallContext};
 use crate::session::to_py;
 use crate::version::PyVersion;
 use ooxml_session::{DocId, GroupMark, Session};
+use ooxml_session_word::WordSession;
 use pyo3::prelude::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

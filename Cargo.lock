@@ -561,6 +561,7 @@ dependencies = [
  "ooxml-scene",
  "ooxml-schema",
  "ooxml-session",
+ "ooxml-session-word",
  "ooxml-store",
  "ooxml-text",
  "ooxml-tools",
@@ -577,7 +578,7 @@ dependencies = [
 
 [[package]]
 name = "ooxml-python"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "ooxml-python-session",
  "pyo3",
@@ -593,6 +594,7 @@ dependencies = [
  "ooxml-numfmt",
  "ooxml-raster",
  "ooxml-session",
+ "ooxml-session-word",
  "ooxml-store",
  "ooxml-tools",
  "ooxml-tools-word",
@@ -643,9 +645,25 @@ version = "0.1.0"
 dependencies = [
  "ooxml-base",
  "ooxml-derive",
+ "ooxml-numfmt",
+ "ooxml-opc",
+ "ooxml-store",
+ "ooxml-tools",
+ "ooxml-xml",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "ooxml-session-word"
+version = "0.1.0"
+dependencies = [
+ "ooxml-base",
+ "ooxml-derive",
  "ooxml-fonts",
  "ooxml-numfmt",
  "ooxml-opc",
+ "ooxml-session",
  "ooxml-store",
  "ooxml-tools",
  "ooxml-tools-word",

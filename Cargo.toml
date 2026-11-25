@@ -25,6 +25,7 @@ members = [
     "crates/ooxml-tools",
     "crates/ooxml-tools-word",
     "crates/ooxml-session",
+    "crates/ooxml-session-word",
     "crates/ooxml-python-session",
     "crates/ooxml-scene",
     "crates/ooxml-metafile",
@@ -86,6 +87,7 @@ ooxml-tools = { path = "crates/ooxml-tools" }
 ooxml-tools-word = { path = "crates/ooxml-tools-word" }
 ooxml-store = { path = "crates/ooxml-store" }
 ooxml-session = { path = "crates/ooxml-session" }
+ooxml-session-word = { path = "crates/ooxml-session-word" }
 ooxml-python-session = { path = "crates/ooxml-python-session" }
 read-fonts = { version = "0.47", default-features = false, features = ["std"] }
 # The versions resvg-py 0.5.0 links (its Cargo.lock), exactly, so a PNG drawn here is the

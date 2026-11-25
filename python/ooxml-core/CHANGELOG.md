@@ -3,6 +3,30 @@
 ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python module
 `ooxml_core`. Its version is the `crates/python` crate's.
 
+## 0.12.0 -- v2026.11.25.1
+
+### Changed
+
+The session is format-generic underneath (architecture review Phase 3, lane ph3-format, PR A1): each open document
+is a format's `FormatDoc` over one generic history (`Stored`: undo and redo, a caller's own undo, step owners, state
+numbers, step groups), and a version is held erased (`AnyVersion`). The tools register through
+`ooxml_tools::Registrar` of their format's types and run as `ooxml_tools::Tool` in a `CallEnv`. Tool results
+unchanged.
+
+- Block identity, typed (phase 3, ID1): a block id is read into its story, kind (paragraph, table, row) and
+  name (a durable paraId, a repeat `#k`, an invalid paraId, an ordinal `@n`, a table's row `/rK`), and written
+  back exactly as before. Inside a document a block now also has a compact key (12 bytes) that the part's
+  index makes and resolves in O(log n), and a version names a key's `data-docx-path` and id from the index.
+  Nothing uses them yet: tool output is unchanged.
+
+### Removed
+
+`ooxml_core.tool_hosting` is gone (lane ph3-format, PR A1), with the Rust tools' `Hosting` flags (`blobs`,
+`layout`, `keeps_written`): the Rust host hands every call what it reads, so no tool declares it. docx-agent lists
+the few tools that read blobs, pages or values written by reference itself until its Python host goes.
+Instead: nothing replaces it; every Word tool is the session's (read `served` as true for every tool
+`ooxml_core.tool_specs("docx")` lists).
+
 ## 0.11.0 -- v2026.11.25
 
 ### Added

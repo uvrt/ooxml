@@ -13,14 +13,16 @@
 
 use crate::format::AnyVersion;
 use crate::history::{numbers_of, Direction, Numbers};
+use crate::model::{PackageDoc, PartChange, PartContent};
 use crate::owners::{OwnUndo, Owners, StepOwner};
-use crate::update::{PartUpdate, PartsModel};
+use crate::update::{PartUpdate, Parts};
 use crate::SessionError;
 use ooxml_opc::Package;
 use ooxml_store::{
     Caller, Command, DocModel, Error, HistoryOutcome, LockTimes, Seq, Snapshot, Store, StoreError, StoreStats, TxnMark,
     TxnOwner,
 };
+use ooxml_xml::Tree;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -43,6 +45,18 @@ pub trait Holds<D: DocModel>: Send + Sync + 'static {
     /// The package of a version of the model.
     fn package(doc: &D) -> &Package;
 
+    /// The change that puts `tree` as `part` (a test's update of parts).
+    fn put_tree(part: String, tree: Tree) -> D::Change;
+
+    /// The change that puts `bytes` as `part`.
+    fn put_bytes(part: String, bytes: Arc<[u8]>) -> D::Change;
+
+    /// The change that removes `part`.
+    fn remove(part: String) -> D::Change;
+
+    /// What the put trees add to the version's ledger, if anything.
+    fn ledger(doc: &D, trees: &[&Tree]) -> Option<D::Change>;
+
     /// The version `version` was made from `previous` by `by` (a test's update, an undo or
     /// redo, a step group's revert), changing the document. Nothing by default.
     ///
@@ -59,13 +73,35 @@ pub trait Holds<D: DocModel>: Send + Sync + 'static {
     }
 }
 
-impl Holds<crate::PackageDoc> for Store<crate::PackageDoc> {
-    fn store(&self) -> &Store<crate::PackageDoc> {
+impl Holds<PackageDoc> for Store<PackageDoc> {
+    fn store(&self) -> &Store<PackageDoc> {
         self
     }
 
-    fn package(doc: &crate::PackageDoc) -> &Package {
+    fn package(doc: &PackageDoc) -> &Package {
         doc.package()
+    }
+
+    fn put_tree(part: String, tree: Tree) -> PartChange {
+        PartChange::Put {
+            part,
+            content: PartContent::Tree(tree),
+        }
+    }
+
+    fn put_bytes(part: String, bytes: Arc<[u8]>) -> PartChange {
+        PartChange::Put {
+            part,
+            content: PartContent::Bytes(bytes),
+        }
+    }
+
+    fn remove(part: String) -> PartChange {
+        PartChange::Remove { part }
+    }
+
+    fn ledger(_doc: &PackageDoc, _trees: &[&Tree]) -> Option<PartChange> {
+        None
     }
 }
 
@@ -76,10 +112,7 @@ pub struct Stored<D: DocModel, H: Holds<D> = Store<D>> {
     model: PhantomData<fn() -> D>,
 }
 
-impl<D: DocModel, H: Holds<D>> Stored<D, H>
-where
-    SessionError: From<Error<D>>,
-{
+impl<D: DocModel, H: Holds<D>> Stored<D, H> {
     /// The versions `held` holds, no step owned yet.
     #[must_use]
     pub fn new(held: H) -> Self {
@@ -137,11 +170,12 @@ where
         caller: &Caller,
         tool: Option<&str>,
         update: &PartUpdate<'_>,
-    ) -> Result<(Snapshot<D>, bool, u32, bool), SessionError>
-    where
-        D: PartsModel,
-    {
+    ) -> Result<(Snapshot<D>, bool, u32, bool), SessionError> {
         let store = self.store();
+        let update = &Parts::<D, H> {
+            update,
+            model: PhantomData,
+        };
         let (version, previous, attempts, batch) = match self.batch_owner() {
             Some(owner) => {
                 let ran = store.in_txn(owner, |tx| {
@@ -278,10 +312,7 @@ where
 }
 
 /// A plain undo's or redo's outcome; `None` when there was none to take.
-fn plain<D: DocModel>(outcome: Result<HistoryOutcome<D>, Error<D>>) -> Result<Option<HistoryOutcome<D>>, SessionError>
-where
-    SessionError: From<Error<D>>,
-{
+fn plain<D: DocModel>(outcome: Result<HistoryOutcome<D>, Error<D>>) -> Result<Option<HistoryOutcome<D>>, SessionError> {
     match outcome {
         Ok(outcome) => Ok(Some(outcome)),
         Err(StoreError::NothingToUndo | StoreError::NothingToRedo) => Ok(None),
@@ -365,10 +396,7 @@ pub trait StoredDoc: Send + Sync {
     fn lock_times(&self) -> LockTimes;
 }
 
-impl<D: DocModel, H: Holds<D>> StoredDoc for Stored<D, H>
-where
-    SessionError: From<Error<D>>,
-{
+impl<D: DocModel, H: Holds<D>> StoredDoc for Stored<D, H> {
     fn head(&self) -> AnyVersion {
         Self::any(Stored::head(self))
     }
@@ -395,7 +423,7 @@ where
     fn continue_numbers(&self, state: u64, highest: u64) -> Result<(), SessionError> {
         self.store()
             .continue_numbers(state, highest)
-            .map_err(|e| SessionError::Store(StoreError::Counters(e)))
+            .map_err(|e| StoreError::<String, crate::ModelError>::Counters(e).into())
     }
 
     fn owners(&self) -> &Owners {

@@ -7,117 +7,21 @@
 //! an edit made here.
 //!
 //! The update reads the whole document (section 13, step 5): it commits only on the version
-//! it was prepared on. Into a Word document it also adds to the id ledger every id value the
-//! parts hold that the ledger lacks, so an id the parts brought is never given again.
+//! it was prepared on. The changes are the document's holder's ([`Holds`]): into a Word
+//! document it also adds to the id ledger every id value the parts hold that the ledger
+//! lacks, so an id the parts brought is never given again.
 //!
 //! Must not: interpret a part's content beyond parsing its XML and reading its ids, or run
 //! anything with effects outside its transaction (a conflict prepares it again).
 
-use crate::model::{PackageDoc, PartChange, PartContent};
+use crate::stored::Holds;
 use crate::SessionError;
 use ooxml_base::{Cancel, Limits};
 use ooxml_opc::name::normalize;
-use ooxml_opc::Package;
-use ooxml_store::{Command, DocModel, Error, Txn};
-use ooxml_word_edit::{Change, IdsChange, WordDoc};
+use ooxml_store::{Command, DocModel, Txn};
 use ooxml_xml::Tree;
+use std::marker::PhantomData;
 use std::sync::Arc;
-
-/// A document model parts given as bytes are committed into.
-pub trait PartsModel: DocModel {
-    /// The version's package.
-    fn package(&self) -> &Package;
-    /// The change that puts `tree` as `part`.
-    fn put_tree(part: String, tree: Tree) -> Self::Change;
-    /// The change that puts `bytes` as `part`.
-    fn put_bytes(part: String, bytes: Arc<[u8]>) -> Self::Change;
-    /// The change that removes `part`.
-    fn remove(part: String) -> Self::Change;
-    /// What the put trees add to the version's ledger, if anything.
-    fn ledger(&self, trees: &[&Tree]) -> Option<Self::Change>;
-}
-
-impl PartsModel for PackageDoc {
-    fn package(&self) -> &Package {
-        PackageDoc::package(self)
-    }
-
-    fn put_tree(part: String, tree: Tree) -> PartChange {
-        PartChange::Put {
-            part,
-            content: PartContent::Tree(tree),
-        }
-    }
-
-    fn put_bytes(part: String, bytes: Arc<[u8]>) -> PartChange {
-        PartChange::Put {
-            part,
-            content: PartContent::Bytes(bytes),
-        }
-    }
-
-    fn remove(part: String) -> PartChange {
-        PartChange::Remove { part }
-    }
-
-    fn ledger(&self, _trees: &[&Tree]) -> Option<PartChange> {
-        None
-    }
-}
-
-impl PartsModel for WordDoc {
-    fn package(&self) -> &Package {
-        WordDoc::package(self)
-    }
-
-    fn put_tree(part: String, tree: Tree) -> Change {
-        Change::Put {
-            part: Arc::from(part),
-            tree,
-        }
-    }
-
-    fn put_bytes(part: String, bytes: Arc<[u8]>) -> Change {
-        Change::Bytes {
-            part: Arc::from(part),
-            bytes,
-        }
-    }
-
-    fn remove(part: String) -> Change {
-        Change::Remove { part: Arc::from(part) }
-    }
-
-    fn ledger(&self, trees: &[&Tree]) -> Option<Change> {
-        let roots: Vec<&ooxml_xml::Element> = trees.iter().map(|t| &**t.root()).collect();
-        let mut values: Vec<u32> = ooxml_word_model::ids::used_long_hex(&roots)
-            .into_iter()
-            .filter(|v| !self.ids().contains(*v))
-            .collect();
-        values.sort_unstable();
-        // a drawing the parts bring is one the document had (a copy keeps no number it had),
-        // and raises the highest number given (never given again)
-        let mut drawings: Vec<u64> = ooxml_word_model::ids::drawing_numbers(&roots)
-            .into_iter()
-            .filter(|n| !self.ids().had_drawing(*n))
-            .collect();
-        drawings.sort_unstable();
-        let highest = drawings
-            .last()
-            .copied()
-            .filter(|n| *n > self.ids().highest_drawing())
-            .unwrap_or(0);
-        let adds = !values.is_empty() || !drawings.is_empty();
-        adds.then(|| {
-            Change::Ids(IdsChange {
-                values,
-                highest_drawing: highest,
-                drawings,
-                ..IdsChange::default()
-            })
-        })
-    }
-}
 
 /// Parts to put (`Some(bytes)`) or remove (`None`), by name, in one step.
 pub struct PartUpdate<'a> {
@@ -166,20 +70,23 @@ fn is_xml(part: &str) -> bool {
     [".xml", ".rels", ".vml"].iter().any(|e| lower.ends_with(e))
 }
 
-impl<D: PartsModel> Command<D> for PartUpdate<'_>
-where
-    SessionError: From<Error<D>>,
-{
+/// `update` as a command on the model `D` its holder `H` keeps: the changes `H` writes.
+pub(crate) struct Parts<'u, 'a, D, H> {
+    pub(crate) update: &'u PartUpdate<'a>,
+    pub(crate) model: PhantomData<fn() -> (D, H)>,
+}
+
+impl<D: DocModel, H: Holds<D>> Command<D> for Parts<'_, '_, D, H> {
     type Out = ();
     type Error = SessionError;
 
     fn validate(&self, doc: &D) -> Result<(), SessionError> {
-        for (part, bytes) in &self.parts {
+        for (part, bytes) in &self.update.parts {
             let name = normalize(part);
             if name.is_empty() || name.ends_with('/') {
                 return Err(SessionError::PartName(part.clone()));
             }
-            if bytes.is_none() && !doc.package().has_part(&name) {
+            if bytes.is_none() && !H::package(doc).has_part(&name) {
                 return Err(SessionError::Package(ooxml_opc::OpcError::NoPart(name)));
             }
         }
@@ -190,28 +97,28 @@ where
         // a commit of parts is exclusive: it holds only on the version it was made on
         tx.read_everything();
         let mut trees = Vec::new();
-        for (part, bytes) in &self.parts {
-            self.cancel.check()?;
+        for (part, bytes) in &self.update.parts {
+            self.update.cancel.check()?;
             let name = normalize(part);
             let change = match bytes {
-                None => D::remove(name),
+                None => H::remove(name),
                 Some(bytes) if is_xml(&name) => {
-                    let tree = ooxml_xml::parse(bytes, &self.limits.xml).map_err(|error| {
+                    let tree = ooxml_xml::parse(bytes, &self.update.limits.xml).map_err(|error| {
                         SessionError::Package(ooxml_opc::OpcError::Xml {
                             part: name.clone(),
                             error,
                         })
                     })?;
-                    let tree = shared_with(tx.doc().package().tree(&name).ok().flatten(), tree);
+                    let tree = shared_with(H::package(tx.doc()).tree(&name).ok().flatten(), tree);
                     trees.push(tree.clone());
-                    D::put_tree(name, tree)
+                    H::put_tree(name, tree)
                 }
-                Some(bytes) => D::put_bytes(name, Arc::clone(bytes)),
+                Some(bytes) => H::put_bytes(name, Arc::clone(bytes)),
             };
             tx.write(change)?;
         }
         let trees: Vec<&Tree> = trees.iter().collect();
-        if let Some(ledger) = tx.doc().ledger(&trees) {
+        if let Some(ledger) = H::ledger(tx.doc(), &trees) {
             tx.write(ledger)?;
         }
         Ok(())
