@@ -14,7 +14,7 @@ import re
 import zipfile
 from typing import Any
 
-from compare import KEYWORD_ONLY_FIELDS
+from compare import KEYWORD_ONLY_FIELDS, PAGE_NUMBER_FIELDS
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 W14 = "http://schemas.microsoft.com/office/word/2010/wordml"
@@ -97,6 +97,22 @@ def _paragraph_fields(paragraph: Any, results: dict[Any, tuple[int, str]]) -> li
     return [found[k] for k in sorted(found)]
 
 
+def _page_numbers_masked(paragraph: Any, results: dict[Any, tuple[int, str]]) -> str | None:
+    """The paragraph's text with the result of each page-number field (of :func:`_field_results`)
+    written as ``{KEYWORD}``, once per field; ``None`` where it holds none."""
+    pieces: list[str] = []
+    last, masked = None, False
+    for text in paragraph.iter(_W + "t"):
+        hit = results.get(text)
+        if hit is None:
+            pieces.append(text.text or "")
+            last = None
+        elif hit[0] != last:
+            pieces.append("{%s}" % hit[1])
+            last, masked = hit[0], True
+    return "".join(pieces) if masked else None
+
+
 def has_markup(data: bytes) -> bool:
     """Whether the document has tracked changes or comments (Word exports its final view)."""
     for body in _parts(data).values():
@@ -108,7 +124,9 @@ def has_markup(data: bytes) -> bool:
 def kept_facts(data: bytes) -> dict[str, Any]:
     """What a re-save must keep, story by story: every paragraph's paraId and text (deleted text
     apart; the results of the fields ``compare`` takes by keyword only listed with it, as
-    ``fields``, for ``compare.masked_text``), the kind, author and date of the revisions, every
+    ``fields``, for ``compare.masked_text``; where it holds a page number, its text with each
+    page number's result written ``{KEYWORD}`` as ``page_numbers``, for ``compare.kept`` where the
+    faces are not installed), the kind, author and date of the revisions, every
     comment's author, initials, date and text.  Paragraphs without a paraId are listed by text alone (Word gives them one).
 
     Three allowances for how Word saves, each measured by the suite (Word 16.106 for Mac; the
@@ -143,6 +161,7 @@ def kept_facts(data: bytes) -> dict[str, Any]:
                 comment.getparent().remove(comment)
         story = name.removeprefix("word/").removesuffix(".xml")
         results = _field_results(root, KEYWORD_ONLY_FIELDS)
+        page_numbers = _field_results(root, PAGE_NUMBER_FIELDS)
         paragraphs = []
         for paragraph in root.iter(_W + "p"):
             note = next((a for a in paragraph.iterancestors(_W + "footnote", _W + "endnote")), None)
@@ -153,6 +172,9 @@ def kept_facts(data: bytes) -> dict[str, Any]:
             fields = _paragraph_fields(paragraph, results)
             if fields:
                 entry["fields"] = fields
+            masked = _page_numbers_masked(paragraph, page_numbers)
+            if masked is not None:
+                entry["page_numbers"] = masked
             deleted = _text(paragraph, ("delText",))
             if deleted:
                 entry["deleted"] = deleted
