@@ -6,11 +6,8 @@ from __future__ import annotations
 
 import struct
 import time
-from pathlib import Path
 
 from ooxml_common.fonts import office, rasterdb, sfnt
-
-FONT = Path(__file__).parent / "fixtures" / "fonts" / "cmap-groups-laid-over.ttf"
 
 
 def _cmap(fmt_body: bytes, key: tuple[int, int] = (3, 1)) -> bytes:
@@ -30,6 +27,22 @@ def _format4(segments: list[tuple[int, int]]) -> bytes:
     return body + struct.pack(f">{n}h", *([1] * n)) + struct.pack(f">{n}H", *([0] * n))
 
 
+def _made_up_font() -> bytes:
+    """The Rust reader's regression font (``crates/ooxml-fonts/tests/data/
+    cmap-groups-laid-over.ttf``, byte for byte; ``*.ttf`` is not committed here): ``head``
+    and a ``cmap`` whose one (3, 0) format 12 subtable states 200 groups, each claiming
+    every code point."""
+    head = bytearray(54)
+    head[18:20] = struct.pack(">H", 1000)
+    tables = sorted([(b"cmap", _cmap(_format12([(0, 0x10FFFF, 1)] * 200), (3, 0))), (b"head", bytes(head))])
+    out = struct.pack(">IHHHH", 0x00010000, len(tables), 32, 1, 0)
+    body = b""
+    for tag, data in tables:
+        out += tag + struct.pack(">III", 0, 12 + 16 * len(tables) + len(body), len(data))
+        body += data + b"\0" * (-len(data) % 4)
+    return out + body
+
+
 def _quick(read, *args):
     started = time.perf_counter()
     out = read(*args)
@@ -38,7 +51,7 @@ def _quick(read, *args):
 
 
 def test_the_made_up_font_maps_nothing_and_is_read_in_a_moment():
-    data = FONT.read_bytes()
+    data = _made_up_font()
     face = office.Face(data)
     assert _quick(lambda: face.glyph("A")) is None
     tables = sfnt.read_tables(data)
