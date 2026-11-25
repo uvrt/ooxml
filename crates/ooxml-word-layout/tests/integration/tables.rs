@@ -176,3 +176,43 @@ fn a_nested_table_is_one_line_as_tall_as_itself() {
     // The nested table's three lines, then the other cell's one.
     assert_eq!(drawn.iter().map(|l| l.block).collect::<Vec<_>>(), vec![0, 1, 1, 3]);
 }
+
+#[test]
+fn a_row_reaching_billions_of_columns_is_not_laid_out() {
+    // a span of 2147483645 (the largest Word opens) or 2147483647 widens no grid past the
+    // 63 columns a Word table takes: the table is refused through the not-laid-out path,
+    // quickly and without a column each
+    for span in ["2147483645", "2147483647"] {
+        let started = std::time::Instant::now();
+        let wide = text_cell(&format!(r#"<w:gridSpan w:val="{span}"/>"#), 1);
+        let body = table(
+            2,
+            &[
+                row("", &[wide, text_cell("", 1)]),
+                row("", &[text_cell("", 1), text_cell("", 1)]),
+            ],
+        );
+        let layout = lay_out(&body);
+        let stopped = layout.pagination.stopped.as_ref().expect("the table is not laid out");
+        let reach = span.parse::<i64>().unwrap() + 1;
+        assert!(
+            stopped
+                .reason
+                .contains(&format!("row 0 reaches {reach} grid columns, past the 63")),
+            "{stopped:?}"
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+}
+
+#[test]
+fn a_row_reaching_past_its_grid_within_63_columns_is_laid_out_as_before() {
+    // three columns on a grid of two: widened as before, not refused
+    let wide = text_cell(r#"<w:gridSpan w:val="2"/>"#, 1);
+    let layout = lay_out(&table(2, &[row("", &[wide, text_cell("", 1)])]));
+    assert!(layout.pagination.stopped.is_none(), "{:?}", layout.pagination.stopped);
+}
