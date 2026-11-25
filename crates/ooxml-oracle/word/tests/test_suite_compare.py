@@ -81,6 +81,33 @@ def test_kept_text_is_compared_whole_without_the_field_on_both_sides():
     assert _kept("Date: 17 November 2026", [["DATE", "17 November 2026"]], "Date: 24 November 2026", [])
 
 
+# -- kept: page numbers without the faces Word laid the output out in -----------------------------
+
+
+def _toc_entry(ours, word, faces):
+    mine = {"id": "1A2B3C4D", "text": f"Results{ours}", "page_numbers": "Results{PAGEREF}"}
+    return compare.kept({"document": {"paragraphs": [mine]}},
+                        {"document": {"paragraphs": [{"id": "1A2B3C4D", "text": f"Results{word}"}]}}, faces)
+
+
+def test_kept_compares_a_page_number_where_the_faces_are_installed():
+    assert _toc_entry("1", "2", faces=True)
+    assert _toc_entry("2", "2", faces=True) == []
+
+
+def test_kept_takes_any_page_number_without_the_faces():
+    assert _toc_entry("1", "2", faces=False) == []
+    assert _toc_entry("1", "12", faces=False) == []
+
+
+def test_kept_without_the_faces_still_compares_the_text_around_a_page_number():
+    mine = {"id": "1A2B3C4D", "text": "Results1", "page_numbers": "Results{PAGEREF}"}
+    word = {"id": "1A2B3C4D", "text": "Result 2"}
+    assert compare.kept({"document": {"paragraphs": [mine]}}, {"document": {"paragraphs": [word]}}, False)
+    word = {"id": "1A2B3C4D", "text": "ResultsError! Bookmark not defined."}
+    assert compare.kept({"document": {"paragraphs": [mine]}}, {"document": {"paragraphs": [word]}}, False)
+
+
 # -- kept_facts: the field results it lists ---------------------------------------------------------
 
 _HEAD = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -101,7 +128,8 @@ def _complex(instr: str, result: str) -> str:
 
 
 def test_kept_facts_lists_a_complex_clock_field_s_result():
-    data = _docx(f'<w:p><w:r><w:t>Date: </w:t></w:r>{_complex("DATE \\@ &quot;d MMMM yyyy&quot;", "17 November 2026")}</w:p>')
+    date = _complex("DATE \\@ &quot;d MMMM yyyy&quot;", "17 November 2026")
+    data = _docx(f'<w:p><w:r><w:t>Date: </w:t></w:r>{date}</w:p>')
     paragraph = answers.kept_facts(data)["document"]["paragraphs"][0]
     assert paragraph["text"] == "Date: 17 November 2026"
     assert paragraph["fields"] == [["DATE", "17 November 2026"]]
@@ -116,6 +144,20 @@ def test_kept_facts_lists_a_simple_user_field_s_result():
 def test_kept_facts_lists_no_other_field():
     data = _docx(f'<w:p><w:r><w:t>Page </w:t></w:r>{_complex("PAGE", "1")}</w:p>')
     assert "fields" not in answers.kept_facts(data)["document"]["paragraphs"][0]
+
+
+def test_kept_facts_writes_a_toc_entry_s_page_number_as_its_keyword():
+    entry = ('<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> TOC \\o "1-2" </w:instrText></w:r>'
+             '<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Results 2025</w:t></w:r>'
+             + _complex("PAGEREF _Toc1 \\h", "2") + '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+    paragraph = answers.kept_facts(_docx(f"<w:p>{entry}</w:p>"))["document"]["paragraphs"][0]
+    assert paragraph["text"] == "Results 20252"
+    assert paragraph["page_numbers"] == "Results 2025{PAGEREF}"
+
+
+def test_kept_facts_writes_no_page_numbers_where_there_are_none():
+    paragraph = answers.kept_facts(_docx("<w:p><w:r><w:t>Results 2025</w:t></w:r></w:p>"))["document"]["paragraphs"][0]
+    assert "page_numbers" not in paragraph
 
 
 def test_kept_facts_takes_the_innermost_field():

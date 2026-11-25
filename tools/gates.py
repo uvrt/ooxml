@@ -147,6 +147,8 @@ GATE_FILES = ("tools/gates.py", ".github/workflows/gates.yml", ".github/actions/
               ".cargo/", "rust-toolchain", "crates/ooxml-oracle/known-differences.toml")
 #: Paths no gate reads: notes and the other workflows, tools and documentation.
 NOT_GATES = (".github/", "tools/", "docs/")
+#: The host goldens (crates/ooxml-oracle/python/host_goldens.py): no gate reads them.
+HOST_GOLDENS = ("crates/ooxml-oracle/host/", "crates/ooxml-oracle/python/host_goldens.py")
 #: A crate's folders not built into its library or binaries.
 CRATE_TEST_FOLDERS = ("tests", "benches", "examples")
 
@@ -526,6 +528,8 @@ def gate_effects(path: str, crates: set[str]) -> set[str]:
     parts = path.split("/")
     if path.startswith(GATE_FILES):
         return set(ALL)
+    if path.startswith(HOST_GOLDENS):
+        return set()        # the host goldens: a pytest replay of the Toolbox, no gate reads them
     if path.startswith("crates/ooxml-oracle/python/"):
         if parts[-1] in CASE_MAKERS:
             return set(CASE_MAKERS[parts[-1]])

@@ -28,6 +28,16 @@ _KEY_CHARS = 30
 # * An empty table of contents: Word's update writes its placeholder in the language of Word's
 #   interface (``gates/docx2svg/layout-sweep.docx/structure:0b868ed3a73f3fea``: Dutch), the tools
 #   theirs in English.  Word's placeholder in each language measured counts as the tools'.
+#
+# And one that depends on the machine running the tools, not Word:
+#
+# * PAGE_NUMBER_FIELDS: a page number's result is the page the tools laid its target out on, in
+#   the faces installed where they run.  Word's re-save keeps the result the tools wrote, and the
+#   recorded answers were made where Word's faces are installed; where they are not, the tools
+#   lay the output out in substitutes and may write another page (``trial/w1-template-report``:
+#   its table of contents puts "Results" on page 2 with Word's faces, on page 1 with Georgia and
+#   Liberation Sans for Aptos on macOS without Office).  There, ``kept`` takes a page number's
+#   result as any page number; where the faces are installed it is compared as it is.
 
 #: Fields whose result is Word's clock at its update.
 CLOCK_FIELDS = frozenset({"DATE", "TIME", "PRINTDATE", "SAVEDATE", "CREATEDATE"})
@@ -35,6 +45,10 @@ CLOCK_FIELDS = frozenset({"DATE", "TIME", "PRINTDATE", "SAVEDATE", "CREATEDATE"}
 USER_FIELDS = frozenset({"AUTHOR", "USERNAME", "USERINITIALS"})
 #: The fields compared by their keyword only (the results depend on the machine running Word).
 KEYWORD_ONLY_FIELDS = CLOCK_FIELDS | USER_FIELDS
+#: Fields whose result is a page number: where the tools laid a page out.
+PAGE_NUMBER_FIELDS = frozenset({"PAGE", "NUMPAGES", "SECTIONPAGES", "PAGEREF"})
+#: A page number's result where the faces are not installed: any page number.
+_ANY_PAGE_NUMBER = r"\w+"
 #: The tools' result of a table of contents with no entries.
 TOOLS_EMPTY_TOC = "No table of contents entries found."
 #: Word's, by the language of its interface (measured: Word 16.106 for Mac).
@@ -66,6 +80,17 @@ def masked_text(paragraph: dict[str, Any]) -> str:
     return text
 
 
+def _same_text(mine: dict[str, Any], theirs: dict[str, Any], faces: bool) -> bool:
+    """Word kept the paragraph's text (:func:`masked_text`); without the faces (``faces``
+    false), with each page number's result any page number (:data:`PAGE_NUMBER_FIELDS`)."""
+    if faces or "page_numbers" not in mine:
+        return masked_text(mine) == masked_text(theirs)
+    template = masked_text({**mine, "text": mine["page_numbers"]})
+    placeholders = "|".join(sorted(PAGE_NUMBER_FIELDS))
+    pieces = re.split(r"\{(?:%s)\}" % placeholders, template)
+    return re.fullmatch(_ANY_PAGE_NUMBER.join(re.escape(p) for p in pieces), masked_text(theirs)) is not None
+
+
 def _group(story: str) -> str:
     """Word numbers header and footer parts as it saves them: they are compared as a set."""
     return re.sub(r"\d+$", "", story) if story.startswith(("header", "footer")) else story
@@ -78,14 +103,14 @@ def _grouped(facts: dict[str, Any]) -> dict[str, list[Any]]:
     return {k: sorted(v, key=lambda e: json.dumps(e, sort_keys=True)) if len(v) > 1 else v for k, v in out.items()}
 
 
-def _paragraph_differences(story: str, ours: list[dict], word: list[dict]) -> list[str]:
+def _paragraph_differences(story: str, ours: list[dict], word: list[dict], faces: bool) -> list[str]:
     out = []
     if len(ours) != len(word):
         out.append(f"{story}: {len(ours)} paragraphs, Word kept {len(word)}")
     for k, (mine, theirs) in enumerate(zip(ours, word)):
         if mine.get("id") and mine["id"] != theirs.get("id"):
             out.append(f"{story} paragraph {k + 1}: paraId {mine['id']}, Word's {theirs.get('id')}")
-        if masked_text(mine) != masked_text(theirs):
+        if not _same_text(mine, theirs, faces):
             out.append(f"{story} paragraph {k + 1}: text {mine.get('text', '')!r}, Word's {theirs.get('text', '')!r}")
         if mine.get("deleted", "") != theirs.get("deleted", ""):
             out.append(f"{story} paragraph {k + 1}: deleted {mine.get('deleted', '')!r}, "
@@ -123,10 +148,11 @@ def _without_word_s_tblprchange(ours: list[list[str]], word: list[list[str]]) ->
             if not (r[0] == WORD_ADDED_TBLPRCHANGE and tuple(r) not in mine and (r[1], r[2]) in changed)]
 
 
-def kept(ours: dict[str, Any], word: dict[str, Any]) -> list[str]:
-    """Word's re-save keeps every paraId, every paragraph's text (:func:`masked_text`), every
-    revision's author and date (less the tblPrChange it adds, :data:`WORD_ADDED_TBLPRCHANGE`) and
-    every comment (``answers.kept_facts`` on each side)."""
+def kept(ours: dict[str, Any], word: dict[str, Any], faces: bool = True) -> list[str]:
+    """Word's re-save keeps every paraId, every paragraph's text (:func:`masked_text`; without
+    the faces Word's were laid out in, ``faces`` false, its page numbers any,
+    :data:`PAGE_NUMBER_FIELDS`), every revision's author and date (less the tblPrChange it adds,
+    :data:`WORD_ADDED_TBLPRCHANGE`) and every comment (``answers.kept_facts`` on each side)."""
     mine, theirs = _grouped(ours), _grouped(word)
     out = []
     if sorted(mine) != sorted(theirs):
@@ -135,7 +161,7 @@ def kept(ours: dict[str, Any], word: dict[str, Any]) -> list[str]:
         if len(mine[story]) != len(theirs[story]):
             out.append(f"{story}: {len(mine[story])} parts, Word's {len(theirs[story])}")
         for a, b in zip(mine[story], theirs[story]):
-            out += _paragraph_differences(story, a["paragraphs"], b["paragraphs"])
+            out += _paragraph_differences(story, a["paragraphs"], b["paragraphs"], faces)
             if a.get("revisions", []) != _without_word_s_tblprchange(a.get("revisions", []), b.get("revisions", [])):
                 out.append(f"{story} revisions: {a.get('revisions', [])}, Word's {b.get('revisions', [])}")
             if a.get("comments", []) != b.get("comments", []):
@@ -203,13 +229,14 @@ def fields(ours: list[list[str]], word: list[list[str]]) -> list[str]:
     return out
 
 
-def judge(check: str, ours: Any, word: Any) -> list[str]:
+def judge(check: str, ours: Any, word: Any, faces: bool = True) -> list[str]:
     """The differences between the tools' answer to ``check`` and Word's; an answer the tools
-    could not give (``answers.answer``: an exception in its place) is one."""
+    could not give (``answers.answer``: an exception in its place) is one.  ``faces``: whether
+    the faces Word laid the output out in are installed where the tools ran (:func:`kept`)."""
     if isinstance(ours, Exception):
         return [f"the tools could not answer {check}: {ours}"]
     if check == "kept":
-        return kept(ours, word)
+        return kept(ours, word, faces)
     if check in ("accept", "reject"):
         return markdown(check, ours, word)
     if check == "pages":
