@@ -6,6 +6,7 @@
 //! Must not: resolve styles or numbering (`crate::resolve`), or hold anything a layout
 //! computes (lines, pages).
 
+use crate::ids::BlockKey;
 use crate::value::{Props, Text};
 use std::sync::Arc;
 
@@ -213,6 +214,9 @@ pub struct Paragraph {
     pub table_conditions: Arc<[Text]>,
     /// Its structural path in its part.
     pub path: Text,
+    /// Its block's key in its story, beside its path (`None`: a paragraph no story's index
+    /// holds -- a text box's, one the layout makes); a joined paragraph's is its first's.
+    pub key: Option<BlockKey>,
     /// `w14:paraId`.
     pub para_id: Option<Text>,
     /// Where each joined paragraph's runs begin (the final view of a deleted mark).
@@ -232,7 +236,7 @@ impl Paragraph {
     }
 
     /// Whether `other` lays out as this paragraph does wherever it stands: everything the
-    /// same but its path and its bookmarks. A layout names a paragraph's lines by its block
+    /// same but its path, its key and its bookmarks. A layout names a paragraph's lines by its block
     /// and reads its path from the version's body; its bookmarks are read from the body by
     /// the fields that look them up. The model gives a paragraph it kept by its content and
     /// moved the same parts (`Arc`s), so there this is a few pointer compares.
@@ -244,6 +248,7 @@ impl Paragraph {
             table_style_id,
             table_conditions,
             path: _,
+            key: _,
             para_id,
             joins,
             mark_deleted,
@@ -287,6 +292,9 @@ pub struct Table {
     pub rows: Arc<[Cells]>,
     /// Its path.
     pub path: Text,
+    /// Its block's key in its story, beside its path (`None`: a table no story's index
+    /// holds); each part of a table the final view parts has the table's.
+    pub key: Option<BlockKey>,
     /// `w:tblGrid`'s widths, twips.
     pub grid: Arc<[i64]>,
     /// `w:tblPr` as declared.

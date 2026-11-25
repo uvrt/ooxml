@@ -384,6 +384,6 @@ fn not_open(id: &str, doc: &str) -> ToolError {
 }
 
 /// Registers `word_compare_blocks` (the crate's [`crate::register`]).
-pub(crate) fn register(r: &mut impl crate::Registrar) {
+pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
     r.read::<WordCompareBlocks>(word_compare_blocks);
 }

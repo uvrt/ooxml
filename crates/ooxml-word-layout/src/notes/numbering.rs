@@ -61,6 +61,7 @@ pub fn default_separator(kind: &str, part: NotesPart) -> Paragraph {
     declared.insert(Cow::Borrowed("spacing.line"), Value::Int(240));
     declared.insert(Cow::Borrowed("spacing.lineRule"), Value::Str(text("auto")));
     Paragraph {
+        key: None,
         runs: Arc::from(vec![Run {
             text: text(""),
             breaks: Arc::from(vec![(0, text(kind))]),

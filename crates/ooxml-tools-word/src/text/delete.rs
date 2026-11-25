@@ -212,8 +212,8 @@ fn blocks(
     let mut result = outcome(&edits, summary, None);
     result.warnings.extend(out.headings);
     if let Some(watch) = watch.as_mut() {
-        let after = editing.editor.current();
-        add(&mut result, watch.report(after.doc(), editing.doc));
+        // the version this delete made: another caller's commit since is not this call's
+        add(&mut result, watch.report(done.version.doc(), editing.doc));
     }
     Ok(result)
 }
@@ -266,6 +266,6 @@ fn try_call(args: &WordDelete) -> TryCall {
 }
 
 /// Registers `word_delete` (the crate's [`crate::register`]).
-pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.edit::<WordDelete>(word_delete, crate::Hosting::PLAIN);
+pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
+    r.edit::<WordDelete>(word_delete);
 }

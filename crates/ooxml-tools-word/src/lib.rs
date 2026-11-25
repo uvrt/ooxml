@@ -5,7 +5,7 @@
 //! typed arguments and a version of the document; an editing tool's, of the typed
 //! arguments and the document's editor ([`Editing`]).
 //!
-//! Each tool registers itself in its own module ([`Registrar`], [`register`]).
+//! Each tool registers itself in its own module ([`ooxml_tools::Registrar`] of [`Word`], [`register`]).
 //!
 //! Must not: hold sessions, documents by id, locks or dispatch (`ooxml-session` does, and
 //! hands a handler the version it reads), know providers, or keep state between calls.
@@ -26,6 +26,7 @@ mod originals;
 mod pages;
 mod paging;
 mod placements;
+mod planned;
 mod refusal;
 mod registrar;
 mod review;
@@ -50,13 +51,13 @@ pub use find_text::{find_text, FindStories, FindText};
 pub use ooxml_word_pages::EngineBudgets;
 pub use pages::{EnginePages, LayoutLimit, NotLaid, PageSetup, WordLayout};
 pub use placements::Placer;
-pub use registrar::{register, EditFn, Hosting, ReadFn, Registrar, TrackingFn};
+pub use registrar::{register, Word};
 pub use spaced_reply::note_spaced;
 // A tool group's module exports its tools (`pub use` in its `mod.rs`); the crate exports
 // each group whole, so a new tool in a group is named only there.
 pub use objects::*;
 pub use review::*;
-pub use sources::{Clock, Day, SourceRefused, SourceRows, SourceValue, Sources};
+pub use sources::{Cell, Clock, Day, SourceRefused, SourceRows, Sources};
 pub use structure::*;
 pub use style::*;
 pub use text::*;

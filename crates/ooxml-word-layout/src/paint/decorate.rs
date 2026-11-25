@@ -70,6 +70,7 @@ fn rule(kind: &'static str, span: &Span, at: (i64, i64), size: (i64, i64)) -> Ru
     Rule {
         kind,
         path: span.path.clone(),
+        anchor: span.anchor,
         x: whole(at.0),
         y: whole(at.1),
         width: whole(size.0),

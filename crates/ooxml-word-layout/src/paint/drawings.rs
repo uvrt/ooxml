@@ -36,6 +36,8 @@ pub struct DrawingSlot {
     pub path: String,
     /// Its paragraph's path.
     pub paragraph_path: String,
+    /// Its run, beside its path (`None`: a paragraph no story's index holds).
+    pub anchor: Option<ooxml_word_model::ids::Anchor>,
     /// Its run's index in the paragraph.
     pub run: usize,
     /// Its index among the run's anchors (or inline drawings).
@@ -118,9 +120,24 @@ pub(crate) fn character_px(
 /// A floating drawing's path (`anchor_path`): its `wp:anchor[n]` among the run's DrawingML
 /// ones, or a VML shape's own path.
 pub fn anchor_path(paragraph: &Paragraph, run: usize, k: usize) -> String {
-    let Some(r) = paragraph.runs.get(run).filter(|r| !r.path.is_empty()) else {
-        return paragraph.path.to_string();
-    };
+    match anchor_below(&paragraph.runs, run, k) {
+        Some(below) => format!("{}/{below}", paragraph.path),
+        None => paragraph.path.to_string(),
+    }
+}
+
+/// Run `run` of `paragraph`, as an anchor (`None`: a paragraph without a key).
+pub(crate) fn run_anchor(paragraph: &Paragraph, run: usize) -> Option<ooxml_word_model::ids::Anchor> {
+    Some(ooxml_word_model::ids::Anchor {
+        block: paragraph.key?,
+        sub: ooxml_word_model::ids::Sub::Run(u32::try_from(run).ok()?),
+    })
+}
+
+/// The path of floating drawing `k` of run `run` below its paragraph (`w:r[2]/wp:anchor[1]`,
+/// a VML shape's own), `None` where the run has no path (the paragraph's is the drawing's).
+pub fn anchor_below(runs: &[ooxml_word_model::model::Run], run: usize, k: usize) -> Option<String> {
+    let r = runs.get(run).filter(|r| !r.path.is_empty())?;
     let vml = r
         .anchors
         .get(k)
@@ -128,10 +145,10 @@ pub fn anchor_path(paragraph: &Paragraph, run: usize, k: usize) -> String {
         .and_then(|a| a.graphic.as_deref())
         .filter(|g| !g.path.is_empty());
     if let Some(graphic) = vml {
-        return format!("{}/{}", paragraph.path, graphic.path);
+        return Some(graphic.path.to_string());
     }
     let n = r.anchors.iter().take(k).filter(|a| !a.vml).count();
-    format!("{}/{}/wp:anchor[{}]", paragraph.path, r.path, n + 1)
+    Some(format!("{}/wp:anchor[{}]", r.path, n + 1))
 }
 
 /// The drawing's box, px: where `floating` puts it, at the size Word draws it.
@@ -233,6 +250,7 @@ pub(super) fn line_floats(job: &FloatJob<'_>, count: &mut usize) -> (Vec<Drawing
         out.push(DrawingSlot {
             path,
             paragraph_path: job.paragraph.path.to_string(),
+            anchor: run_anchor(job.paragraph, a.run),
             run: a.run,
             index: a.index,
             inline: false,

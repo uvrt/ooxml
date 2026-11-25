@@ -570,6 +570,7 @@ fn page_svg_of(engine: &mut WordLayout, model: &mut Model, laid: &DocumentLayout
         names: &names,
         pictures: &NoPictures,
         glyph_size: GlyphSize::Device,
+        version: &laid.document.names,
     };
     let parts = engine.page_parts(model, laid, page);
     paint_page(laid, model, page, &parts, &cx).map(|p| page_svg(&p, &svg))

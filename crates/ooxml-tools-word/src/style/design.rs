@@ -237,6 +237,6 @@ fn first_page(args: &WordDesignFacts) -> TryCall {
 }
 
 /// Registers `word_design_facts` (the crate's [`crate::register`]).
-pub(crate) fn register(r: &mut impl crate::Registrar) {
+pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
     r.read::<WordDesignFacts>(word_design_facts);
 }

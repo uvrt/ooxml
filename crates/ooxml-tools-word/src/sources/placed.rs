@@ -159,8 +159,9 @@ pub(crate) fn placed<'r>(
         Some(given) => {
             let pattern = date_pattern(given, locale, "date_format")?;
             let dated = at.iter().any(|column| {
-                (0..rows.rows.len())
-                    .any(|row| super::label::date_value(rows.value(row, *column), rows.type_of(*column)).is_some())
+                (0..rows.rows.len()).any(|row| {
+                    ooxml_tools::sources::date_value(rows.value(row, *column), rows.type_of(*column)).is_some()
+                })
             });
             if !dated {
                 return Err(no_dates(rows, &at, retry));
@@ -224,28 +225,6 @@ fn lines(text: &str) -> Vec<String> {
             }
         }
     }
-}
-
-/// Row positions from 0 as text from 1, consecutive ones as runs (`runs`): `1-4,7`.
-pub(crate) fn runs(rows: &[usize]) -> String {
-    let mut spans: Vec<(usize, usize)> = Vec::new();
-    for row in rows {
-        match spans.last_mut() {
-            Some((_, end)) if *row == *end + 1 => *end = *row,
-            _ => spans.push((*row, *row)),
-        }
-    }
-    spans
-        .iter()
-        .map(|(start, end)| {
-            if start == end {
-                (start + 1).to_string()
-            } else {
-                format!("{}-{}", start + 1, end + 1)
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(",")
 }
 
 /// The first `count` rows of a source as a row range (`first_rows`): `t:sales/#1:#9` of

@@ -24,7 +24,7 @@ pub use set_properties::{set_properties, SetProperties};
 
 /// Registers the group's tools, in the order a model is shown them (the crate's
 /// [`crate::register`]).
-pub(crate) fn register(r: &mut impl crate::Registrar) {
+pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
     set_properties::register(r);
     save_document::register(r);
     render::register(r);

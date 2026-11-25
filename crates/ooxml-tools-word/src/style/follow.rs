@@ -237,6 +237,6 @@ fn reply(
 }
 
 /// Registers `word_follow_sample` (the crate's [`crate::register`]).
-pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.edit::<WordFollowSample>(word_follow_sample, crate::Hosting::PLAIN);
+pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
+    r.edit::<WordFollowSample>(word_follow_sample);
 }

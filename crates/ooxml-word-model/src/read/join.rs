@@ -37,6 +37,7 @@ pub(crate) fn joined(first: &Paragraph, following: &Paragraph) -> Paragraph {
     Paragraph {
         runs: Arc::from(runs),
         path: first.path.clone(),
+        key: first.key,
         para_id: first.para_id.clone(),
         joins: Arc::from(joins),
         bookmarks: Arc::from(bookmarks),
@@ -54,6 +55,7 @@ pub(crate) fn joined_into(first: &Paragraph, table: &Table) -> Option<Table> {
             let made = joined(first, p);
             Block::Paragraph(Arc::new(Paragraph {
                 path: p.path.clone(),
+                key: p.key,
                 para_id: p.para_id.clone(),
                 ..made
             }))

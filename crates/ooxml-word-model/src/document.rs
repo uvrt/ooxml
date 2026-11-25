@@ -72,6 +72,9 @@ pub struct WordDocument {
     pub warnings: Arc<[Text]>,
     /// The body's list items per block, with their composed counts.
     pub(crate) labels: MonoidTree<BlockItems>,
+    /// Its story parts' indexes: what its blocks' keys are named by at the edge
+    /// (`data-docx-path`, ids).
+    pub names: Arc<crate::docx::VersionNames>,
 }
 
 /// A paragraph's resolved formats.

@@ -523,6 +523,7 @@ impl Reader<'_> {
             style_id: (!style.is_empty()).then(|| style.clone()),
             rows: Arc::from(std::mem::take(&mut built.rows)),
             path: path.clone(),
+            key: None,
             grid: grid_of(0, plans.len()),
             properties: table_properties(props_element, self.colours()),
             row_properties: Arc::from(std::mem::take(&mut built.row_properties)),

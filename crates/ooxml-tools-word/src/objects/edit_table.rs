@@ -37,10 +37,12 @@ use super::edit_table_args::{Side, TableAction, WordEditTable};
 use super::edit_table_pending::no_reshape_over_merge;
 use super::table_view::{table_view, AcceptedView, TableView};
 use crate::originals::{add, Watch};
+use crate::planned::Planned;
 use crate::review::{needed, Editing};
 use crate::structure::common::{call, outcome, policy, refused, Outcome};
 use crate::TableShape;
 use ooxml_base::pyfmt::repr_str;
+use ooxml_store::Txn;
 use ooxml_tools::{ArgEnum, ErrorCode, Refusal, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::facts::{ragged_rows, RaggedRow};
 use ooxml_word_edit::WordDoc;
@@ -51,6 +53,7 @@ use ooxml_word_model::docx::{find_path, Docx};
 use ooxml_word_model::ids::{TableId, W};
 use ooxml_word_model::markdown::to_plain_markdown;
 use serde_json::{json, Map, Value};
+use std::sync::Arc;
 
 impl From<TableChanged> for Outcome {
     fn from(edit: TableChanged) -> Self {
@@ -93,7 +96,53 @@ fn invalid(message: String, field: &str, options: &[&str], retry: &TryCall) -> T
 }
 
 pub(super) fn not_supported(what: &str, retry: &TryCall) -> ToolResult<Value> {
-    refused(EditError::Unsupported(what.to_owned()), retry.clone())
+    ToolResult::failed(unsupported(what, retry))
+}
+
+/// `what` refused as not supported yet.
+pub(super) fn unsupported(what: &str, retry: &TryCall) -> ToolError {
+    crate::review::edit_refusal(EditError::Unsupported(what.to_owned()), "", retry.clone())
+}
+
+/// The table on `doc` the call names: refused naming the document's tables where there is
+/// none ([`no_table`]).
+pub(super) fn table_on(
+    args: &WordEditTable,
+    editing: &Editing<'_>,
+    doc: &WordDoc,
+    retry: &TryCall,
+) -> Result<(Arc<Docx>, TableView), ToolError> {
+    let docx = doc
+        .docx()
+        .map_err(|e| crate::review::edit_refusal(e, "", retry.clone()))?;
+    match table_view(doc, &docx, &args.table, retry) {
+        Ok(view) => Ok((docx, view)),
+        Err(error) if error.code() == ErrorCode::Refusal(Refusal::NotFound) => {
+            Err(no_table(&docx, &args.doc, &args.table, editing.others, retry))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// The table on `doc` the call names ([`table_on`]) and its positions as accepted: what
+/// an action's plan counts its positions on, where its edit is applied. A table with
+/// Accept All's cell ends is refused as not supported yet (the reply's Markdown joins cells
+/// across them, and says the cells Accept All loses).
+pub(super) fn accepted_on(
+    args: &WordEditTable,
+    editing: &Editing<'_>,
+    doc: &WordDoc,
+    retry: &TryCall,
+) -> Result<(Arc<Docx>, TableView, AcceptedView), ToolError> {
+    let (docx, view) = table_on(args, editing, doc, retry)?;
+    let accepted = view.accepted(&docx);
+    if accepted.table.cell_ends {
+        return Err(unsupported(
+            &format!("word_edit_table on a table with {}", crate::CELL_ENDS),
+            retry,
+        ));
+    }
+    Ok((docx, view, accepted))
 }
 
 /// No table `table` in the document (docx-agent's `_no_table`): its body's tables are the
@@ -240,20 +289,12 @@ fn check_arguments(args: &WordEditTable, retry: &TryCall) -> Result<(), ToolErro
 
 fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<ToolResult<Value>, ToolError> {
     let source = from_rows(args, editing, retry)?;
-    let head = editing.editor.current();
-    let docx = head
-        .doc()
-        .docx()
-        .map_err(|e| crate::review::edit_refusal(e, "", retry.clone()))?;
-    let view = match table_view(head.doc(), &docx, &args.table, retry) {
-        Ok(view) => view,
-        Err(error) if error.code() == ErrorCode::Refusal(Refusal::NotFound) => {
-            return Err(no_table(&docx, &args.doc, &args.table, editing.others, retry))
-        }
-        Err(error) => return Err(error),
-    };
+    // a table that is not there refused before the arguments are read, as docx-agent finds
+    // it first: on the head, a refusal said on one version; each action's plan finds the
+    // table again where its edit is applied, in its transaction
+    table_on(args, editing, editing.editor.current().doc(), retry)?;
     if args.action == TableAction::Sync {
-        return sync(args, editing, &docx, &view, source, retry);
+        return sync(args, editing, source, retry);
     }
     check_sync_fields(args, retry)?;
     let given = args.from.as_deref().filter(|f| !f.is_empty());
@@ -277,26 +318,13 @@ fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<T
     } else {
         check_arguments(args, retry)?;
     }
-    let mut accepted = view.accepted(&docx);
-    if accepted.table.cell_ends {
-        // the reply's Markdown joins cells across them, and says the cells Accept All loses
-        return Ok(not_supported(
-            &format!("word_edit_table on a table with {}", crate::CELL_ENDS),
-            retry,
-        ));
-    }
     if let Some(rows) = source {
-        return super::set_from::set_from(args, editing, &view, &accepted, rows, retry);
+        return super::set_from::set_from(args, editing, rows, retry);
     }
     if args.action == TableAction::SetCells {
-        return super::set_cells::set_cells(args, cells, editing, (&docx, &view), &mut accepted, retry);
+        return super::set_cells::set_cells(args, cells, editing, retry);
     }
-    let tracked = editing.tracking.is_some();
-    let change = match change(args, (tracked, &docx), &view, &mut accepted, retry)? {
-        Ok(change) => change,
-        Err(what) => return Ok(not_supported(&what, retry)),
-    };
-    Ok(finish(args, editing, &view, change, accepted.notes, retry))
+    Ok(finish(args, editing, retry))
 }
 
 /// `sync` (docx-agent's `_sync`): a table kept in step with the rows `source` gives
@@ -304,8 +332,6 @@ fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<T
 fn sync(
     args: &WordEditTable,
     editing: &Editing<'_>,
-    docx: &Docx,
-    view: &TableView,
     source: Option<&crate::SourceRows>,
     retry: &TryCall,
 ) -> Result<ToolResult<Value>, ToolError> {
@@ -322,14 +348,7 @@ fn sync(
             retry,
         ));
     };
-    let accepted = view.accepted(docx);
-    if accepted.table.cell_ends {
-        return Ok(not_supported(
-            &format!("word_edit_table on a table with {}", crate::CELL_ENDS),
-            retry,
-        ));
-    }
-    super::table_sync::sync(args, editing, docx, view, &accepted, rows, retry)
+    super::table_sync::sync(args, editing, rows, retry)
 }
 
 /// A `from` naming rows beside `cells`: two forms of `set_cells` at once, refused naming
@@ -436,42 +455,101 @@ fn watch<'a>(editing: &Editing<'_>, now: &'a WordDoc, view: &TableView, change: 
     Some(watch)
 }
 
-/// Run the change as one command and reply as `_edit_table` does.
-fn finish(
-    args: &WordEditTable,
-    editing: &Editing<'_>,
-    view: &TableView,
+/// What the reply of a row, column, merge or split action needs of its plan: the table as
+/// it found it, the change, the notes its positions made, the version it was worked out on
+/// (the one the change was applied to) and whether the table was ragged or off its grid
+/// there.
+pub(super) struct Changing {
+    view: TableView,
     change: TableChange,
     notes: Vec<String>,
+    before: WordDoc,
+    ragged_before: bool,
+    off_before: bool,
+}
+
+/// The change a row, column, merge or split action names, worked out on `doc` (the version
+/// it is applied to), positions as the table is accepted there.
+pub(super) fn change_plan(
+    args: &WordEditTable,
+    editing: &Editing<'_>,
+    tx: &mut Txn<'_, WordDoc>,
     retry: &TryCall,
-) -> ToolResult<Value> {
-    let table = view.table.id.clone();
-    let off_before = view.off_grid();
-    let before = editing.editor.current();
-    let ragged_before = !matches!(change, TableChange::InsertRow { .. }) && ragged(before.doc(), &table).is_some();
-    let mut watched = watch(editing, before.doc(), view, change);
+) -> Result<(KeepingRecord<EditTable>, Changing), ToolError> {
+    let (command, said) = changing(args, editing, tx.doc(), retry)?;
+    tx.read(said.view.key());
+    Ok((command, said))
+}
+
+/// The change and what the reply needs of it, worked out on `doc` ([`change_plan`]).
+fn changing(
+    args: &WordEditTable,
+    editing: &Editing<'_>,
+    doc: &WordDoc,
+    retry: &TryCall,
+) -> Result<(KeepingRecord<EditTable>, Changing), ToolError> {
+    let (docx, view, mut accepted) = accepted_on(args, editing, doc, retry)?;
+    let tracked = editing.tracking.is_some();
+    let change =
+        change(args, (tracked, &docx), &view, &mut accepted, retry)?.map_err(|what| unsupported(&what, retry))?;
+    let ragged_before = !matches!(change, TableChange::InsertRow { .. }) && ragged(doc, &view.table.id).is_some();
     // a table placed from a source keeps its record true through the change (`_Kept`)
     let command = KeepingRecord(EditTable {
         table: ooxml_word_model::address::Address::parse(&args.table),
         change,
         policy: policy(editing),
     });
+    let said = Changing {
+        off_before: view.off_grid(),
+        view,
+        change,
+        notes: accepted.notes,
+        before: doc.clone(),
+        ragged_before,
+    };
+    Ok((command, said))
+}
+
+/// Run the change as one command, planned where it is applied, and reply as `_edit_table`
+/// does.
+fn finish(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> ToolResult<Value> {
+    let planned = Planned(|tx: &mut Txn<'_, WordDoc>| change_plan(args, editing, tx, retry));
     // round 58 (R126): a row added looked at against the rows around it, in the call's
     // transaction
-    let adds_row = matches!(change, TableChange::InsertRow { .. } | TableChange::CopyRow { .. });
-    let look =
-        |out: &TableChanged, _: &WordDoc| adds_row.then(|| (out.table.clone(), out.id.iter().cloned().collect()));
-    let (done, rows) = match super::rows_written::run_writing_rows(editing, &command, &table, look, retry) {
-        Ok(done) => done,
-        Err(EditError::Refused(message)) if matches!(change, TableChange::CopyRow { .. }) => {
-            return ToolResult::failed(uncopied(args, view, message, change));
+    let adds_row = matches!(args.action, TableAction::InsertRow | TableAction::CopyRow);
+    let look = |out: &Result<(TableChanged, Changing), ToolError>, _: &WordDoc| {
+        let (out, _) = out.as_ref().ok()?;
+        adds_row.then(|| (out.table.clone(), out.id.iter().cloned().collect()))
+    };
+    let ran = super::rows_written::run_writing_rows(editing, &planned, &args.table, look, retry);
+    let ((done, said), rows, version) = match ran {
+        Ok((Ok(done), rows, version)) => (done, rows, version),
+        Ok((Err(refusal), _, _)) => return ToolResult::failed(refusal),
+        Err(EditError::Refused(message)) if args.action == TableAction::CopyRow => {
+            // the refusal said with the row as the head counts it (a version of its own)
+            let head = editing.editor.current();
+            return match changing(args, editing, head.doc(), retry) {
+                Ok((_, said)) => ToolResult::failed(uncopied(args, &said.view, message, said.change)),
+                Err(refusal) => ToolResult::failed(refusal),
+            };
         }
         Err(error) => return refused(error, retry.clone()),
     };
+    let Changing {
+        view,
+        change,
+        notes,
+        before,
+        ragged_before,
+        off_before,
+    } = said;
+    let table = view.table.id.clone();
+    let mut watched = watch(editing, &before, &view, change);
     let now = done.table.clone();
     // round 55 (R115, rule 3): a merge already made changes nothing
     let unchanged = done.unchanged && matches!(change, TableChange::Merge { .. });
-    let head = editing.editor.current();
+    // the version the call made: another caller's commit since is not this call's
+    let head = version;
     let data = head
         .doc()
         .docx()
@@ -494,27 +572,13 @@ fn finish(
             made_by.renamed(&table, &now);
         }
     }
-    if !ragged_before && !matches!(change, TableChange::InsertRow { .. }) {
-        if let Some(said) = made_ragged(head.doc(), &now) {
-            // round 57 (R125): the call kept for check's `made_by`
-            editing.note_made(TableShape::Ragged, &now, "word_edit_table");
-            result.warnings.push(said);
-        }
-    }
-    let off_now = head
-        .doc()
-        .docx()
-        .ok()
-        .and_then(|docx| table_view(head.doc(), &docx, &now, retry).ok())
-        .is_some_and(|v| v.off_grid());
-    if !off_before && off_now {
-        // round 58 (R128): the call kept for check's `made_by`
-        editing.note_made(TableShape::OffGrid, &now, "word_edit_table");
-        result.warnings.push(format!(
-            "{now} is off its grid now (a row's cells do not reach across its columns: check's \
-             table_grid_mismatch); this call made it so (undo reverses it)"
-        ));
-    }
+    let shaped = (
+        !ragged_before && !matches!(change, TableChange::InsertRow { .. }),
+        !off_before,
+    );
+    result
+        .warnings
+        .extend(made_shapes(editing, head.doc(), &now, shaped, retry));
     if let ooxml_tools::Outcome::Done(found) = &mut result.outcome {
         if !unchanged && !found.changed.contains(&now) {
             found.changed.push(now.clone());
@@ -528,6 +592,40 @@ fn finish(
     }
     result.warnings.extend(rows);
     result
+}
+
+/// The warnings of a change that left the table `now` ragged (`ragged`: where it was not)
+/// or off its grid (`off`: where it was not), on `doc` (the version the call made), each
+/// call kept for check's `made_by`.
+fn made_shapes(
+    editing: &Editing<'_>,
+    doc: &WordDoc,
+    now: &str,
+    (ragged, off): (bool, bool),
+    retry: &TryCall,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    if ragged {
+        if let Some(said) = made_ragged(doc, now) {
+            // round 57 (R125): the call kept for check's `made_by`
+            editing.note_made(TableShape::Ragged, now, "word_edit_table");
+            out.push(said);
+        }
+    }
+    let off_now = doc
+        .docx()
+        .ok()
+        .and_then(|docx| table_view(doc, &docx, now, retry).ok())
+        .is_some_and(|v| v.off_grid());
+    if off && off_now {
+        // round 58 (R128): the call kept for check's `made_by`
+        editing.note_made(TableShape::OffGrid, now, "word_edit_table");
+        out.push(format!(
+            "{now} is off its grid now (a row's cells do not reach across its columns: check's \
+             table_grid_mismatch); this call made it so (undo reverses it)"
+        ));
+    }
+    out
 }
 
 /// The table `id` ragged (docx-agent's `_ragged`, `layout_facts.ragged_rows`: its rows'
@@ -660,7 +758,7 @@ pub(super) fn deleted_rows(table: &TableId) -> Vec<usize> {
 }
 
 /// Registers `word_edit_table` (the crate's [`crate::register`]).
-pub(crate) fn register(r: &mut impl crate::Registrar) {
+pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
     // a cell's value by reference is kept where it went (set_cells, `super::cell_values`)
-    r.edit::<WordEditTable>(word_edit_table, crate::Hosting::PLAIN.keeps_written());
+    r.edit::<WordEditTable>(word_edit_table);
 }

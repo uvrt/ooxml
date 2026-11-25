@@ -273,6 +273,6 @@ fn set(args: &WordHeadersFooters, editing: &Editing<'_>, story: &Story) -> ToolR
 }
 
 /// Registers `word_headers_footers` (the crate's [`crate::register`]).
-pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.edit::<WordHeadersFooters>(word_headers_footers, crate::Hosting::PLAIN.layout());
+pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
+    r.edit::<WordHeadersFooters>(word_headers_footers);
 }

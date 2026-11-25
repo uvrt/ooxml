@@ -561,6 +561,7 @@ dependencies = [
  "ooxml-scene",
  "ooxml-schema",
  "ooxml-session",
+ "ooxml-session-word",
  "ooxml-store",
  "ooxml-text",
  "ooxml-tools",
@@ -577,7 +578,7 @@ dependencies = [
 
 [[package]]
 name = "ooxml-python"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "ooxml-python-session",
  "pyo3",
@@ -593,6 +594,7 @@ dependencies = [
  "ooxml-numfmt",
  "ooxml-raster",
  "ooxml-session",
+ "ooxml-session-word",
  "ooxml-store",
  "ooxml-tools",
  "ooxml-tools-word",
@@ -601,6 +603,7 @@ dependencies = [
  "ooxml-word-model",
  "ooxml-word-pages",
  "ooxml-xml",
+ "ooxml-zip",
  "pyo3",
  "serde_json",
 ]
@@ -643,9 +646,26 @@ version = "0.1.0"
 dependencies = [
  "ooxml-base",
  "ooxml-derive",
+ "ooxml-numfmt",
+ "ooxml-opc",
+ "ooxml-store",
+ "ooxml-tools",
+ "ooxml-xml",
+ "ooxml-zip",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "ooxml-session-word"
+version = "0.1.0"
+dependencies = [
+ "ooxml-base",
+ "ooxml-derive",
  "ooxml-fonts",
  "ooxml-numfmt",
  "ooxml-opc",
+ "ooxml-session",
  "ooxml-store",
  "ooxml-tools",
  "ooxml-tools-word",
@@ -704,6 +724,7 @@ version = "0.1.0"
 dependencies = [
  "fancy-regex",
  "ooxml-base",
+ "ooxml-numfmt",
  "ooxml-tools-derive",
  "serde_json",
  "thiserror",
@@ -801,6 +822,7 @@ dependencies = [
 name = "ooxml-word-pages"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "ooxml-base",
  "ooxml-chart",
  "ooxml-colour",

@@ -760,6 +760,7 @@ impl PageEngine {
                 .as_ref()
                 .map_or(&none as &dyn Pictures, |p| p as &dyn Pictures),
             glyph_size: self.glyph_size,
+            version: &version.layout.document.names,
         };
         Some((page_svg(&paint, &cx), missing))
     }

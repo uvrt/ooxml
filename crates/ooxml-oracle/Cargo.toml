@@ -20,6 +20,7 @@ ooxml-store.workspace = true
 ooxml-tools.workspace = true
 ooxml-tools-word.workspace = true
 ooxml-session.workspace = true
+ooxml-session-word.workspace = true
 ooxml-word-layout.workspace = true
 ooxml-colour.workspace = true
 ooxml-drawingml.workspace = true

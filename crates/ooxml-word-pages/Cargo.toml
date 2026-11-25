@@ -32,3 +32,4 @@ thiserror.workspace = true
 workspace = true
 
 [dev-dependencies]
+flate2.workspace = true

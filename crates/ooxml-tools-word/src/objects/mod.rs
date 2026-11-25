@@ -35,6 +35,8 @@ mod edit_table_pending;
 mod format_table;
 mod format_table_args;
 mod made_by;
+#[cfg(test)]
+mod planned_tests;
 mod rows_written;
 mod set_cells;
 mod set_from;
@@ -63,7 +65,7 @@ pub(crate) use table_view::{read_look, LOOK_NAMES};
 
 /// Registers the group's tools, in the order a model is shown them (the crate's
 /// [`crate::register`]).
-pub(crate) fn register(r: &mut impl crate::Registrar) {
+pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
     format_table::register(r);
     edit_table::register(r);
     drawings::register(r);

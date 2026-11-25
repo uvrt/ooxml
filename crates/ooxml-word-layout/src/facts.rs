@@ -21,6 +21,7 @@ use crate::geometry::{DrawnLine, LineOf, LineSource, PageFrame};
 use crate::notes::{separator, NotesPart};
 use crate::paginate::PageInfo;
 use crate::px::Px;
+use ooxml_word_model::ids::{Anchor, BlockKey};
 use ooxml_word_model::model::Block;
 use ooxml_word_model::value::Text;
 use std::collections::BTreeMap;
@@ -33,6 +34,9 @@ pub struct LineFact {
     pub source: LineSource,
     /// Its paragraph's path.
     pub path: Text,
+    /// Its paragraph's key, beside its path (`None`: a paragraph no story's index holds,
+    /// such as the endnotes' continuation separator the layout makes).
+    pub anchor: Option<Anchor>,
     /// Its number in the paragraph.
     pub number: usize,
     /// The exact top of its pitch, px from the page's top.
@@ -80,15 +84,17 @@ pub fn story_line_facts(parts: &crate::geometry::stories::PageParts) -> Vec<Stor
     for story in &parts.stories {
         let (paragraphs, _) = body_paragraphs(&story.blocks);
         for line in &story.walked.lines {
-            let Some(path) = line.block.and_then(|b| paragraphs.get(b)).map(|p| p.path.clone()) else {
+            let Some(paragraph) = line.block.and_then(|b| paragraphs.get(b)) else {
                 continue;
             };
+            let (path, anchor) = (paragraph.path.clone(), paragraph.key.map(Anchor::whole));
             out.push(StoryLineFact {
                 kind: story.kind,
                 part: story.part.clone(),
                 line: LineFact {
                     source: line.source,
                     path,
+                    anchor,
                     number: line.number,
                     top: line.top,
                     pitch: line.pitch,
@@ -180,7 +186,7 @@ pub fn block_keys(path: &str) -> Vec<String> {
 /// top-level blocks, and the endnotes' continuation separator (made once per layout).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LinePaths {
-    paragraphs: Vec<Text>,
+    paragraphs: Vec<(Text, Option<BlockKey>)>,
     opening: Option<Text>,
 }
 
@@ -195,17 +201,22 @@ impl LinePaths {
                 Block::Table(_) => None,
             });
         LinePaths {
-            paragraphs: paragraphs.iter().map(|p| p.path.clone()).collect(),
+            paragraphs: paragraphs.iter().map(|p| (p.path.clone(), p.key)).collect(),
             opening,
         }
     }
 
     fn path(&self, line: LineOf, body: &[Block]) -> Option<Text> {
+        self.named(line, body).map(|(path, _)| path)
+    }
+
+    /// The path of what `line` is of, and its key.
+    fn named(&self, line: LineOf, body: &[Block]) -> Option<(Text, Option<BlockKey>)> {
         match (line.source, line.block, line.body) {
-            (LineSource::Opening { .. }, ..) => self.opening.clone(),
+            (LineSource::Opening { .. }, ..) => self.opening.clone().map(|p| (p, None)),
             (_, Some(block), _) => self.paragraphs.get(block).cloned(),
             (_, None, Some(index)) => match body.get(index) {
-                Some(Block::Paragraph(p)) => Some(p.path.clone()),
+                Some(Block::Paragraph(p)) => Some((p.path.clone(), p.key)),
                 _ => None,
             },
             (_, None, None) => None,
@@ -214,10 +225,11 @@ impl LinePaths {
 }
 
 fn line_fact(line: &DrawnLine, paths: &LinePaths, body: &[Block]) -> Option<LineFact> {
-    let path = paths.path(LineOf::from(line), body)?;
+    let (path, key) = paths.named(LineOf::from(line), body)?;
     Some(LineFact {
         source: line.source,
         path,
+        anchor: key.map(Anchor::whole),
         number: line.number,
         top: line.top,
         pitch: line.pitch,

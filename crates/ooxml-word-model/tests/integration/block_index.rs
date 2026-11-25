@@ -10,16 +10,16 @@ use ooxml_xml::{Attribute, Element, Node, QName};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-struct Rng(u64);
+pub(crate) struct Rng(pub(crate) u64);
 
 impl Rng {
-    fn next(&mut self) -> u64 {
+    pub(crate) fn next(&mut self) -> u64 {
         self.0 ^= self.0 << 13;
         self.0 ^= self.0 >> 7;
         self.0 ^= self.0 << 17;
         self.0
     }
-    fn below(&mut self, n: usize) -> usize {
+    pub(crate) fn below(&mut self, n: usize) -> usize {
         (self.next() % n as u64) as usize
     }
 }
@@ -47,7 +47,7 @@ fn para_id(rng: &mut Rng, pool: &[&str]) -> Vec<Attribute> {
 }
 
 const POOL: &[&str] = &[
-    "1A2B3C4D", "1a2b3c4d", "0BADF00D", "ZZ", "00000000", "7FFFFFFF", "80000000", "5E5E5E5E",
+    "1A2B3C4D", "1a2b3c4d", "0BADF00D", "ZZ", "00000000", "7FFFFFFF", "80000000", "5E5E5E5E", "1A", "0000001a",
 ];
 
 fn paragraph(rng: &mut Rng) -> Node {
@@ -97,7 +97,7 @@ fn block(rng: &mut Rng) -> Node {
     }
 }
 
-fn document(rng: &mut Rng, blocks: usize, story: bool) -> Arc<Element> {
+pub(crate) fn document(rng: &mut Rng, blocks: usize, story: bool) -> Arc<Element> {
     let children: Vec<Node> = (0..blocks).map(|_| block(rng)).collect();
     if story {
         return el(W, "w", "hdr", Vec::new(), children);
@@ -372,7 +372,7 @@ fn check(story: &str, ids: &PartIds, root: &Element, rng: &mut Rng) {
     }
 }
 
-fn edited(rng: &mut Rng, root: &Arc<Element>, story: bool) -> Arc<Element> {
+pub(crate) fn edited(rng: &mut Rng, root: &Arc<Element>, story: bool) -> Arc<Element> {
     let holder_at = if story {
         None
     } else {

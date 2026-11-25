@@ -193,8 +193,9 @@ What each crate owns, the outline of its API, and what it must not do:
   - API: `parse(&[u8], &Limits) -> Result<Tree>`, `Tree::write()`, `Cursor`, `Patch`.
   - Must not: know any OOXML name.
 - **`ooxml-zip`**
-  - Owns: entries, raw copy, deflate, zip-bomb limits.
-  - Must not: parse XML.
+  - Owns: entries, raw copy, deflate, zip-bomb limits; a file's MS-FSSHTTPD chunks for a co-authoring host and the delta against a held version (`chunks`).
+  - API: `Archive`, `Writer`, `chunks::Chunking::of(&[u8], &mut dyn RandomSource)` (`chunks()`, `leaves()`, `root()`, `delta(&[Leaf])`). Python: `ooxml_core.chunk_file(data)` gives `FileChunks` (`chunks`, `leaves()`, `root`, `delta(previous)`, a `ChunkDelta` of `new`, `held`, `repeated` and `new_bytes`).
+  - Must not: parse XML, know what a part is, or encode the FSSHTTPB wire format (the FSSHTTP client's).
 - **`ooxml-opc`**
   - Owns: package, parts, relationships, content types, lazy part trees.
   - API: a persistent `Package`, a map from part to `PartVersion`.
@@ -457,6 +458,8 @@ What this shows about salsa:
 **Decision:** a small in-house `ooxml-derive` with two primitives (a content-keyed memo with budgets, and a monoid tree). Each fact declares its dependencies and ships two things:
 - a from-scratch oracle, used in property tests;
 - a statement of its kind: per block, aggregate, or whole document.
+
+**Rule: identity from the index; element pointers only for content memos.** The tree hash-conses equal subtrees, so two blocks (two empty paragraphs, say) can be one `Arc<Element>`. A block's identity therefore comes from its part's index: its paraId and its place (`BlockKey`, `BlockId`, `Anchor` in `ooxml-word-model::ids`). An element's address may key only a memo whose value is a pure function of that element's content (`BlockFacts`, `ElementDigests`, `TableMemo`); it never names, aligns or tracks a block. The other way round, `BlockKey` and `BlockId` are never memo keys: they serve alignment (old block to new block), dirtiness, the page-to-block maps and naming at the output edge (`VersionNames`). The round-trip property tests in `ooxml-word-model` (`block_keys`) hold the index to this over the corpus.
 
 ---
 
@@ -856,7 +859,7 @@ No parser contains unsafe code.
   - green tree with interned names and values, and a B-tree child rope;
   - parser for UTF-8 and UTF-16, with end-of-line and attribute normalisation, CDATA as text, opaque DTD references, and limits;
   - the libxml2-form writer, cursors, and patches by path and node pointer.
-- **`ooxml-zip`:** read, raw copy, deflate (zlib-rs), limits.
+- **`ooxml-zip`:** read, raw copy, deflate (zlib-rs), limits; MS-FSSHTTPD 2.4.1 chunks (Office's ZIP chunking, signatures, subchunks over 1 MiB) and the save delta (lane coauth-2, written from the probe side's clean-room description and its test vectors).
 - **`ooxml-opc`:** a persistent package with lazy part trees, relationships, content types, save.
 - **`ooxml-store`:** `Txn` with typed read and write sets, commit and redo, `History` (undo, redo, scoped undo), `ArcSwap` snapshots.
 - **`ooxml-derive`:** `Memo` and `MonoidTree`, with spike 3's list-label fact as the reference test.
@@ -933,6 +936,7 @@ Each ADR below records its alternatives and the measurement behind it; the secti
 - **ADR-007: one global pool, a logical owner per document, no processes, cooperative deadlines.**
   - Alternatives: an OS thread per document; worker processes.
 - **ADR-008: hand-rolled incremental data (`ooxml-derive`), not salsa.** Spike 3.
+  - Identity comes from the index, never from element pointers; pointers key only content memos (§7, phase 3 identity design, 2026-11-25).
 - **ADR-009: one text engine.** Measured Office tables for layout, fontations for reading, harfrust and resvg for outlines.
   - Alternatives: keep three readers; take metrics from harfbuzz alone.
 - **ADR-010: a Scene display list with typed writers, and PNG via resvg in process.**

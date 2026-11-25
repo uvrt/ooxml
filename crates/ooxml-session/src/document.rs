@@ -1,160 +1,85 @@
-//! Owns: one open document as the session holds it ([`Document`]): its kind and name, its
-//! versions in a store over the model its kind is kept as -- a Word document's in its
-//! editor over `ooxml-word-edit`'s [`WordDoc`] (phase P2: Rust owns it), any other kind's
-//! as its package ([`PackageDoc`]) --, a version of either as a call reads it ([`At`]), and
-//! what the host keeps of a Word document beside its versions: the version it was opened as
-//! (what a session's own edits are told from) and its tracking mode (each later edit's
-//! revision policy), the ids its versions retired, the rows its table calls wrote and its
-//! page engine where the session lays it out.
+//! Owns: one open document as the session holds it ([`Document`]): its kind and name, and
+//! its format's [`FormatDoc`] (a Word document's in `ooxml-session-word`); and the format of
+//! the kinds Rust does not own yet ([`PackageFormat`]): their versions kept as packages
+//! ([`PackageDoc`]) in a [`Stored`], with no tools.
 //!
 //! Must not: dispatch calls or hold the session's table; parse or write a package beyond
 //! opening it; read the clock but through the store's port.
 
 use crate::context::StoreClock;
+use crate::format::{AnyVersion, Finished, Format, FormatDoc, FormatRun, OpenEnv};
 use crate::model::PackageDoc;
 use crate::owners::{Owners, StepOwner};
-use crate::retired::{Made, Retired};
+use crate::stored::{Stored, StoredDoc};
 use crate::update::PartUpdate;
-use crate::{DocKind, SessionError};
-use ooxml_base::Context;
+use crate::{DocKind, Registry, SessionError};
 use ooxml_opc::Package;
-use ooxml_store::{Caller, Command, DocModel, Snapshot, Store, StoreConfig, StoreStats};
-use ooxml_tools_word::{MadeBy, RowsWritten};
-use ooxml_word_edit::validate::Delta;
-use ooxml_word_edit::{EarlierIds, Editor, WordDoc};
-use ooxml_word_model::docx::Versions;
-use ooxml_word_model::ids::LoadedState;
-use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use ooxml_store::{Caller, Store};
+use ooxml_tools::{Tool, ToolError, ToolResult};
+use serde_json::Value;
+use std::any::Any;
+use std::sync::Arc;
 
-/// The context's cache budget, as the edit core's caches reserve from it.
-pub(crate) struct Budget(pub(crate) Arc<dyn ooxml_base::CacheBudget>);
+/// A kind Rust does not own yet (`pptx`, `xlsx`): its versions kept as packages, no tools.
+#[derive(Debug, Clone, Copy)]
+pub struct PackageFormat(pub DocKind);
 
-impl ooxml_derive::CacheBudget for Budget {
-    fn reserve(&self, bytes: usize) -> bool {
-        self.0.reserve(bytes)
+impl Format for PackageFormat {
+    fn kind(&self) -> DocKind {
+        self.0
     }
 
-    fn release(&self, bytes: usize) {
-        self.0.release(bytes);
+    fn register(&self, _tools: &mut Registry) {}
+
+    fn open(&self, package: Package, env: &OpenEnv<'_>) -> Result<Arc<dyn FormatDoc>, SessionError> {
+        let clock = Arc::new(StoreClock(Arc::clone(&env.context.clock)));
+        Ok(Arc::new(Stored::new(Store::new(
+            PackageDoc::new(package),
+            env.store,
+            clock,
+        ))))
     }
 
-    fn used(&self) -> usize {
-        self.0.used()
-    }
-}
-
-/// A Word document's versions and what the host keeps of it.
-pub(crate) struct Word {
-    /// Its versions, and the problems it opened with.
-    pub(crate) editor: Editor,
-    /// The version it was opened as.
-    pub(crate) opened: Snapshot<WordDoc>,
-    /// Who its edits are tracked as (`None`: untracked), as `word_set_tracking` left it: the
-    /// session's alone (no host keeps a copy). An edit reads it for its whole call, so a
-    /// change of it never falls between an edit's prepare and its commit.
-    tracking: RwLock<Option<String>>,
-    /// The ids its versions removed, and who removed each.
-    pub(crate) retired: Retired,
-    /// What its last check with `reflow` saw.
-    pub(crate) last_check: Arc<ooxml_tools_word::LastCheck>,
-    /// Its pages drawn by `render`, kept within the session's memory budget.
-    pub(crate) images: ooxml_tools_word::PageImages,
-    /// The rows this session's `word_edit_table` calls added or wrote into (round 58,
-    /// R126): `check`'s `row_text_format` reads them.
-    pub(crate) rows_written: RowsWritten,
-    /// The calls of this session that left a table ragged or off its grid (rounds 57 and
-    /// 58): `check`'s `table_grid_mismatch` names them (`made_by`).
-    pub(crate) made_by: MadeBy,
-    /// Its page engine, where the session lays it out itself, and what its host set it to
-    /// be laid out with (`crate::pages`).
-    pub(crate) pages: crate::pages::DocPages,
-    /// The versions its live views were given, kept within the session's memory budget.
-    pub(crate) views: crate::live_view::LiveViews,
-}
-
-impl Word {
-    /// The author edits are tracked as now, if any.
-    pub(crate) fn tracking(&self) -> Option<String> {
-        self.tracking_read().clone()
-    }
-
-    /// The tracking mode, held for an edit's whole call: `word_set_tracking` and a step
-    /// group's revert wait until the edits holding it have committed. (A panic while it is
-    /// held leaves the plain value whole: the poison is ignored.)
-    pub(crate) fn tracking_read(&self) -> RwLockReadGuard<'_, Option<String>> {
-        self.tracking.read().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// The tracking mode, held alone (`word_set_tracking`'s whole call).
-    pub(crate) fn tracking_write(&self) -> RwLockWriteGuard<'_, Option<String>> {
-        self.tracking.write().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// The head, or for the thread whose batch holds the document the version its ops left.
-    pub(crate) fn head(&self) -> Snapshot<WordDoc> {
-        head_of(self.editor.store())
-    }
-
-    /// The owner of the batch this thread holds on the document, if it holds one: its
-    /// calls' edits run in the batch's transaction.
-    pub(crate) fn batch_owner(&self) -> Option<ooxml_store::TxnOwner> {
-        batch_owner(self.editor.store())
-    }
-
-    /// The tracking author a step group's revert goes back to (`None`: untracked).
-    pub(crate) fn restore_tracking(&self, author: Option<String>) {
-        *self.tracking_write() = author;
-    }
-
-    /// `version`'s problems against those the document opened with: what the save gate
-    /// compares.
-    pub(crate) fn validation(&self, version: &Snapshot<WordDoc>) -> Result<Delta, SessionError> {
-        let now = ooxml_word_edit::validate::problems(version.doc())?;
-        Ok(Delta::of(self.editor.baseline(), &now))
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
-/// A document's versions, by the model its kind is kept as.
-pub(crate) enum Held {
-    /// A package (kinds Rust does not own yet).
-    Package(Box<Store<PackageDoc>>),
-    /// A Word document.
-    Word(Box<Word>),
-}
-
-/// One version of a document, as a call reads it.
-#[derive(Clone)]
-pub(crate) enum At {
-    /// A package's.
-    Package(Snapshot<PackageDoc>),
-    /// A Word document's.
-    Word(Snapshot<WordDoc>),
-}
-
-impl At {
-    /// The version's number.
-    pub(crate) fn seq(&self) -> u64 {
-        match self {
-            At::Package(v) => v.seq().0,
-            At::Word(v) => v.seq().0,
-        }
+/// A package's versions (kinds Rust does not own yet).
+impl FormatDoc for Stored<PackageDoc> {
+    fn stored(&self) -> &dyn StoredDoc {
+        self
     }
 
-    /// The state's number, as the tool layer numbers the document's states
-    /// ([`ooxml_store::Version::number`]).
-    pub(crate) fn number(&self) -> u64 {
-        match self {
-            At::Package(v) => v.number(),
-            At::Word(v) => v.number(),
-        }
+    fn save(&self, at: &AnyVersion, _checked: bool) -> Result<Vec<u8>, SessionError> {
+        Ok(at.package().save()?)
     }
 
-    /// The package at this version.
-    pub(crate) fn package(&self) -> &Package {
-        match self {
-            At::Package(v) => v.doc().package(),
-            At::Word(v) => v.doc().package(),
-        }
+    fn update(
+        &self,
+        caller: &Caller,
+        tool: Option<&str>,
+        update: &PartUpdate<'_>,
+    ) -> Result<(AnyVersion, bool, u32, bool), SessionError> {
+        let (version, changed, attempts, batch) = Stored::update(self, caller, tool, update)?;
+        Ok((Self::any(version), changed, attempts, batch))
+    }
+
+    fn readings(&self) -> Arc<dyn Any + Send + Sync> {
+        Arc::new(())
+    }
+
+    fn run(&self, _tool: &dyn Tool, run: &FormatRun<'_>) -> ToolResult<Value> {
+        let message = format!("{} has no tools for {} documents", run.tool, run.doc.kind());
+        ToolResult::failed(ToolError::internal(message, "session:package"))
+    }
+
+    fn finish(&self, _made: Box<dyn Any + Send>, _run: &FormatRun<'_>) -> Option<Finished> {
+        None
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
@@ -162,249 +87,32 @@ impl At {
 pub(crate) struct Document {
     pub(crate) kind: DocKind,
     pub(crate) name: String,
-    pub(crate) held: Held,
-    /// Its readings as a Word document, kept for its latest versions (design section 7:
-    /// caches belong to a document).
-    pub(crate) versions: Arc<Versions>,
-    /// Who made each of its steps, and its callers' own undos.
-    pub(crate) owners: Owners,
+    /// Its versions and its format's state of it.
+    pub(crate) doc: Arc<dyn FormatDoc>,
 }
 
 impl Document {
-    /// `package` opened as `kind`: a Word document read, its ids (with those it had before
-    /// it was saved, `earlier`) and the problems it opened with found, its caches within the
-    /// context's budget.
-    pub(crate) fn open(
-        package: Package,
-        kind: DocKind,
-        name: &str,
-        config: StoreConfig,
-        context: &Context,
-        earlier: &EarlierIds,
-    ) -> Result<Document, SessionError> {
-        let clock = Arc::new(StoreClock(Arc::clone(&context.clock)));
-        let held = match kind {
-            DocKind::Docx => {
-                let budget = Arc::new(Budget(Arc::clone(&context.budget)));
-                let editor = Editor::open_with(package, config, clock, budget, earlier)?;
-                Self::word_held(editor, context)?
-            }
-            DocKind::Pptx | DocKind::Xlsx => {
-                Held::Package(Box::new(Store::new(PackageDoc::new(package), config, clock)))
-            }
-        };
-        Ok(Self::of_held(kind, name, held))
+    /// Its versions and history.
+    pub(crate) fn stored(&self) -> &dyn StoredDoc {
+        self.doc.stored()
     }
 
-    /// `package` opened as a Word document with the id state saved beside its bytes
-    /// (`docx-ids.1.`), read against its parts as they are parsed: its ids those it had
-    /// before it was saved; and what the state recorded (its versions, the ids it retired).
-    pub(crate) fn open_word_state(
-        package: Package,
-        name: &str,
-        config: StoreConfig,
-        context: &Context,
-        state: &str,
-    ) -> Result<(Document, LoadedState), SessionError> {
-        let clock = Arc::new(StoreClock(Arc::clone(&context.clock)));
-        let budget = Arc::new(Budget(Arc::clone(&context.budget)));
-        let (editor, loaded) = Editor::open_with_state(package, config, clock, budget, state)?;
-        let held = Self::word_held(editor, context)?;
-        Ok((Self::of_held(DocKind::Docx, name, held), loaded))
-    }
-
-    fn of_held(kind: DocKind, name: &str, held: Held) -> Document {
-        Document {
-            kind,
-            name: name.to_owned(),
-            held,
-            versions: Arc::new(Versions::new()),
-            owners: Owners::default(),
-        }
-    }
-
-    /// A Word document's state as the session holds it, from its editor.
-    fn word_held(editor: Editor, context: &Context) -> Result<Held, SessionError> {
-        let opened = editor.store().snapshot();
-        // the paragraph texts every find reads and the facts the document-wide
-        // lookups read (bookmarks, controls, revisions, frames), read once as the
-        // document opens: each later version reads only the blocks it changed, and
-        // no edit call pays for the first reading of a long part
-        for part in &opened.doc().docx()?.parts {
-            part.texts();
-            part.facts();
-        }
-        Ok(Held::Word(Box::new(Word {
-            editor,
-            opened,
-            tracking: RwLock::new(None),
-            retired: Retired::default(),
-            last_check: Arc::new(ooxml_tools_word::LastCheck::with_languages(
-                ooxml_word_edit::facts::Detections::new(Arc::new(Budget(Arc::clone(&context.budget)))),
-            )),
-            images: ooxml_tools_word::PageImages::new(Some(Arc::clone(&context.budget))),
-            rows_written: RowsWritten::default(),
-            made_by: MadeBy::default(),
-            pages: crate::pages::DocPages::default(),
-            views: crate::live_view::LiveViews::new(Arc::clone(&context.budget)),
-        })))
-    }
-
-    /// The head version; for the thread whose batch holds a Word document, the version its
+    /// The head version; for the thread whose batch holds the document, the version its
     /// ops left ([`crate::group`]).
-    pub(crate) fn head(&self) -> At {
-        match &self.held {
-            Held::Package(store) => At::Package(head_of(store)),
-            Held::Word(word) => At::Word(word.head()),
-        }
+    pub(crate) fn head(&self) -> AnyVersion {
+        self.stored().head()
     }
 
-    /// The Word document's state, if it is one.
-    pub(crate) fn word(&self) -> Option<&Word> {
-        match &self.held {
-            Held::Word(word) => Some(word),
-            Held::Package(_) => None,
-        }
-    }
-
-    /// The state numbers of the steps its history holds (undo's and plain redo's).
-    fn held_numbers(&self) -> Vec<u64> {
-        fn of<K: Ord>(listed: ooxml_store::Listed<K>) -> Vec<u64> {
-            listed.steps.iter().chain(&listed.redo).map(|s| s.number).collect()
-        }
-        match &self.held {
-            Held::Package(store) => of(store.listed()),
-            Held::Word(word) => of(word.editor.store().listed()),
-        }
+    /// Who made each of its steps, and its callers' own undos.
+    pub(crate) fn owners(&self) -> &Owners {
+        self.stored().owners()
     }
 
     /// A step numbered `number`, ended by the version `seq`, was made by `tool` (`None`:
     /// none, a change from outside the tools) as `context`'s caller: kept as its owner, and
-    /// its number as a refusal of an id it retired names it.
+    /// its number told to the format.
     pub(crate) fn stepped(&self, seq: u64, number: u64, tool: Option<&str>, context: &crate::CallContext) {
-        if let Some(word) = self.word() {
-            word.retired.number(seq, number);
-        }
         let owner = tool.map(|tool| StepOwner::of(tool, context));
-        self.owners.stepped(number, owner, || self.held_numbers());
+        self.stored().stepped(seq, number, owner);
     }
-
-    /// The store's counters.
-    pub(crate) fn stats(&self) -> StoreStats {
-        match &self.held {
-            Held::Package(store) => store.stats(),
-            Held::Word(word) => word.editor.store().stats(),
-        }
-    }
-
-    /// How long the store's commit lock was held and waited for.
-    pub(crate) fn lock_times(&self) -> ooxml_store::LockTimes {
-        match &self.held {
-            Held::Package(store) => store.lock_times(),
-            Held::Word(word) => word.editor.store().lock_times(),
-        }
-    }
-
-    /// Commit a test's update of parts as `caller`, made by `tool`: the version it leaves,
-    /// whether it changed anything, how many times it was prepared, and whether a step group
-    /// holds it (a package's open group, or this thread's batch on a Word document, in whose
-    /// transaction it then runs). A Word document's retired ids note what it removed.
-    pub(crate) fn update(
-        &self,
-        caller: &Caller,
-        tool: Option<&str>,
-        update: &PartUpdate<'_>,
-    ) -> Result<(At, bool, u32, bool), SessionError> {
-        Ok(match &self.held {
-            Held::Package(store) => {
-                let ran = run_update(store, caller, update)?;
-                (
-                    At::Package(ran.version),
-                    ran.previous.is_some(),
-                    ran.attempts,
-                    ran.batch,
-                )
-            }
-            Held::Word(word) => {
-                let Ran {
-                    version,
-                    previous,
-                    attempts,
-                    batch,
-                } = run_update(word.editor.store(), caller, update)?;
-                if let Some(previous) = &previous {
-                    let delta = ooxml_word_edit::ids_delta(previous.doc(), version.doc())?;
-                    let made = Made {
-                        seq: version.seq().0,
-                        caller: caller.name(),
-                        tool,
-                        history: false,
-                    };
-                    word.retired.note(&made, &delta);
-                }
-                (At::Word(version), previous.is_some(), attempts, batch)
-            }
-        })
-    }
-}
-
-/// `store`'s head, or for the thread whose batch holds the document the version its ops
-/// left ([`crate::group`]).
-fn head_of<D: DocModel>(store: &Store<D>) -> Snapshot<D> {
-    store
-        .txn_current(crate::group::this_thread())
-        .unwrap_or_else(|| store.snapshot())
-}
-
-/// The owner of the batch this thread holds on `store`, if it holds one.
-fn batch_owner<D: DocModel>(store: &Store<D>) -> Option<ooxml_store::TxnOwner> {
-    let owner = crate::group::this_thread();
-    store.holds(owner).then_some(owner)
-}
-
-/// What a test's part update made.
-struct Ran<D: DocModel> {
-    version: Snapshot<D>,
-    /// The version it was applied to, where it changed the document.
-    previous: Option<Snapshot<D>>,
-    attempts: u32,
-    /// Whether it ran in this thread's batch (whose close makes the step).
-    batch: bool,
-}
-
-/// `update` run on `store` as `caller`: in this thread's batch where it holds one, at a
-/// savepoint (a commit of its own would wait for the gate the batch holds), else committed.
-fn run_update<D>(store: &Store<D>, caller: &Caller, update: &PartUpdate<'_>) -> Result<Ran<D>, SessionError>
-where
-    D: crate::update::PartsModel,
-    SessionError: From<ooxml_store::Error<D>>,
-{
-    Ok(match batch_owner(store) {
-        Some(owner) => {
-            let ran = store.in_txn(owner, |tx| {
-                let point = tx.savepoint();
-                let done = update.validate(tx.doc()).and_then(|()| update.prepare(tx));
-                if done.is_err() {
-                    tx.rollback(point);
-                }
-                done
-            })?;
-            ran.out?;
-            Ran {
-                previous: ran.changed.then_some(ran.before),
-                version: ran.after,
-                attempts: 1,
-                batch: true,
-            }
-        }
-        None => {
-            let done = store.run(caller, update)?;
-            Ran {
-                previous: done.previous.filter(|_| done.changed),
-                version: done.version,
-                attempts: done.attempts,
-                batch: false,
-            }
-        }
-    })
 }

@@ -1,12 +1,10 @@
-//! Owns: `ooxml_core.tool_specs` and `ooxml_core.tool_hosting`, the registry's exports for a
-//! document kind as a session made now would serve them: the tools' definitions, and what
-//! each tool's calls read from the host (each Rust tool's `Hosting`); and
+//! Owns: `ooxml_core.tool_specs`, the registry's export for a document kind as a session
+//! made now would serve it: the tools' definitions; and
 //! `ooxml_core.new_document`, a new blank document's bytes, which the host opens.
 //!
 //! Must not: dispatch a call.
 
 use crate::session::kind_of;
-use ooxml_session::Registry;
 use ooxml_tools::compact;
 use ooxml_tools_word::new_document::Blank;
 use pyo3::exceptions::PyValueError;
@@ -19,15 +17,7 @@ use serde_json::Value;
 #[pyfunction]
 pub fn tool_specs(py: Python<'_>, kind: &str) -> PyResult<String> {
     let kind = kind_of(kind)?;
-    Ok(py.detach(|| compact(&Value::Array(Registry::standard().export(kind)))))
-}
-
-/// What each tool for `kind` reads from the host, as JSON text: `{name: {"blobs",
-/// "layout", "keeps_written"}}`, each a boolean (`ooxml_tools_word::Hosting`).
-#[pyfunction]
-pub fn tool_hosting(py: Python<'_>, kind: &str) -> PyResult<String> {
-    let kind = kind_of(kind)?;
-    Ok(py.detach(|| compact(&Value::Object(Registry::standard().hosting(kind)))))
+    Ok(py.detach(|| compact(&Value::Array(ooxml_session_word::registry().export(kind)))))
 }
 
 /// A new blank document's package (`ooxml_tools_word::new_document::Blank`), as bytes:

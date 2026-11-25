@@ -233,6 +233,10 @@ pub struct TableRecord {
     pub part: String,
     /// Its place there.
     pub path: Box<[u32]>,
+    /// The ids of the paragraphs before it whose marks the view deletes, joined into its
+    /// first cell (as a paragraph's [`ParagraphRecord::joins`]: Accept All takes them into
+    /// the table).
+    pub joins: Vec<String>,
 }
 
 /// A content control's start or end.
@@ -248,6 +252,10 @@ pub struct Marker {
     pub tag: Option<String>,
     /// Its title.
     pub alias: Option<String>,
+    /// A start's: the ids of the paragraphs before the control whose marks the view
+    /// deletes, joined into its first paragraph (as a paragraph's
+    /// [`ParagraphRecord::joins`]).
+    pub joins: Vec<String>,
 }
 
 /// A record.

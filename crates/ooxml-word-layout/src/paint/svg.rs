@@ -9,11 +9,13 @@
 //! Must not: lay out or paint anything (the paint has), or read a picture part.
 
 use super::drawings::{DrawingSlot, Layer};
+use super::names::PageNames;
 use super::text_box::TextBoxPaint;
 use super::{DrawingName, Drawn, FaceNames, GlyphSize, PagePaint, PaintedLine, Rule, Span, SpanKind, TextEffects};
 use crate::px::Px;
 use ooxml_base::Q;
 use ooxml_scene::exact::{Decimal4, Element, Value};
+use ooxml_word_model::docx::VersionNames;
 use std::sync::Arc;
 
 /// Where the SVG reads a picture's bytes: the port to the document's parts. It answers
@@ -90,6 +92,8 @@ pub struct SvgContext<'a> {
     pub pictures: &'a dyn Pictures,
     /// The glyph size.
     pub glyph_size: GlyphSize,
+    /// The version's names: what its items are written under (`data-docx-path`).
+    pub version: &'a VersionNames,
 }
 
 /// An exact length to four decimals, half up (`svg.number`).
@@ -160,11 +164,11 @@ fn font(span: &Span, name: Option<DrawingName>) -> Vec<(&'static str, Value)> {
     out
 }
 
-fn text(span: &Span, cx: &SvgContext<'_>, defs: &mut PageDefs) -> Element {
+fn text(span: &Span, cx: &SvgContext<'_>, defs: &mut PageDefs, names: &PageNames<'_>) -> Element {
     let chars: String = span.chars.iter().collect();
     let attrs = font(span, cx.names.drawing_name(&span.face, span.bold, span.italic));
     let mut e = Element::new("text")
-        .attr("data-docx-path", Value::Text(span.path.clone()))
+        .attr("data-docx-path", Value::Text(names.written(span.anchor, &span.path)))
         .attr("x", Value::Numbers(span.pens().map(|x| number(x.value())).collect()))
         .attr("y", Value::Int(span.y));
     let mut attrs = attrs.into_iter();
@@ -211,14 +215,14 @@ fn effects_paint(span: &Span, effects: &TextEffects, cx: &SvgContext<'_>, defs: 
     cx.drawings.text_paint(effects, bounds, span.color.as_deref(), defs)
 }
 
-fn rect(rule: &Rule) -> Element {
+fn rect(rule: &Rule, names: &PageNames<'_>) -> Element {
     Element::new("rect")
         .attr("x", px(rule.x))
         .attr("y", px(rule.y))
         .attr("width", px(rule.width))
         .attr("height", px(rule.height))
         .attr("fill", colour(rule.color.as_deref()))
-        .attr("data-docx-path", Value::Text(rule.path.clone()))
+        .attr("data-docx-path", Value::Text(names.written(rule.anchor, &rule.path)))
         .attr("data-docx-kind", Value::Plain(rule.kind.into()))
 }
 
@@ -234,7 +238,7 @@ fn under_rank(kind: &str) -> Option<u8> {
 }
 
 /// Lines of text, grouped by paragraph.
-fn lines(painted: &[PaintedLine], cx: &SvgContext<'_>, defs: &mut PageDefs) -> Vec<Element> {
+fn lines(painted: &[PaintedLine], cx: &SvgContext<'_>, defs: &mut PageDefs, names: &PageNames<'_>) -> Vec<Element> {
     let mut out: Vec<Element> = Vec::new();
     let mut current: Option<(&str, Option<&(&'static str, ooxml_word_model::value::Text)>)> = None;
     for line in painted {
@@ -242,7 +246,7 @@ fn lines(painted: &[PaintedLine], cx: &SvgContext<'_>, defs: &mut PageDefs) -> V
         if current != Some(key) {
             let mut group = Element::new("g")
                 .paired()
-                .attr("data-docx-path", Value::Text(line.path.to_string()));
+                .attr("data-docx-path", Value::Text(names.written(line.anchor, &line.path)));
             if let Some(id) = line.paragraph_id.as_deref().filter(|i| !i.is_empty()) {
                 group = group.attr("data-docx-id", Value::Text(id.to_owned()));
             }
@@ -262,7 +266,7 @@ fn lines(painted: &[PaintedLine], cx: &SvgContext<'_>, defs: &mut PageDefs) -> V
             .spans
             .iter()
             .filter(|s| !s.chars.is_empty())
-            .map(|s| text(s, cx, defs))
+            .map(|s| text(s, cx, defs, names))
             .collect();
         if let Some(group) = out.last_mut() {
             group.children.push(g);
@@ -272,11 +276,11 @@ fn lines(painted: &[PaintedLine], cx: &SvgContext<'_>, defs: &mut PageDefs) -> V
 }
 
 /// A stand-in box of a drawing's extent.
-fn stand_in(d: &Drawn, what: &str) -> Element {
+fn stand_in(d: &Drawn, what: &str, names: &PageNames<'_>) -> Element {
     Element::new("g")
         .inline()
         .attr("data-docx-unsupported", Value::Plain(what.into()))
-        .attr("data-docx-path", Value::Text(d.path.clone()))
+        .attr("data-docx-path", Value::Text(names.written(d.anchor, &d.path)))
         .with_child(
             Element::new("rect")
                 .attr("x", px(d.x))
@@ -293,7 +297,7 @@ fn stand_in(d: &Drawn, what: &str) -> Element {
 const IMAGE_TYPES: [&str; 4] = ["image/png", "image/jpeg", "image/gif", "image/svg+xml"];
 
 /// A picture in its box, or a stand-in box where it cannot be carried.
-fn picture(d: &Drawn, cx: &SvgContext<'_>) -> Element {
+fn picture(d: &Drawn, cx: &SvgContext<'_>, names: &PageNames<'_>) -> Element {
     let found = d
         .relationship
         .as_deref()
@@ -305,10 +309,10 @@ fn picture(d: &Drawn, cx: &SvgContext<'_>) -> Element {
         } else {
             "drawing"
         };
-        return stand_in(d, what);
+        return stand_in(d, what, names);
     };
     Element::new("image")
-        .attr("data-docx-path", Value::Text(d.path.clone()))
+        .attr("data-docx-path", Value::Text(names.written(d.anchor, &d.path)))
         .attr("x", px(d.x))
         .attr("y", px(d.y))
         .attr("width", px(d.width))
@@ -350,31 +354,13 @@ pub fn page_element(paint: &PagePaint, cx: &SvgContext<'_>) -> Element {
             .attr("height", Value::Int(frame.height_px))
             .attr("fill", Value::Plain("#FFFFFF".into())),
     );
+    let text_lines = paint.text_boxes.iter().flat_map(|t| t.lines.iter());
+    let names = PageNames::new(cx.version, paint.lines.iter().chain(text_lines));
+    let names = &names;
     // Painted in the order they were placed, which is the order their resources' ids are
     // minted in; written by layer.
     let mut defs = PageDefs::default();
-    let painted: Vec<Painted<'_>> = paint
-        .drawings
-        .iter()
-        .enumerate()
-        .map(|(k, slot)| {
-            // A text box's inline drawings are painted after its own (docx2svg draws them as
-            // it lays the box out), their resources' ids minted in that order.
-            let drawn = cx.drawings.drawing(slot, &mut defs);
-            let text: Vec<&TextBoxPaint> = paint.text_boxes.iter().filter(|t| t.slot == k).collect();
-            let inner = text
-                .iter()
-                .flat_map(|t| t.drawings.iter())
-                .map(|inner| cx.drawings.drawing(inner, &mut defs))
-                .collect();
-            Painted {
-                slot,
-                paint: drawn,
-                text,
-                inner,
-            }
-        })
-        .collect();
+    let painted = painted_slots(paint, cx, names, &mut defs);
     let mut slots: Vec<&Painted<'_>> = painted.iter().collect();
     slots.sort_by_key(|p| p.slot.order);
     let layer = |l: Layer, story: bool| -> Vec<&Painted<'_>> {
@@ -387,27 +373,27 @@ pub fn page_element(paint: &PagePaint, cx: &SvgContext<'_>) -> Element {
     let (story_behind, story_front) = (layer(Layer::Behind, true), layer(Layer::Front, true));
     let (body_behind, body_front) = (layer(Layer::Behind, false), layer(Layer::Front, false));
     let story_lines = paint.lines.iter().any(|l| l.story.is_some());
-    let pictures = paint.pictures.iter().map(|d| picture(d, cx));
+    let pictures = paint.pictures.iter().map(|d| picture(d, cx, names));
     let d = &mut defs;
     if story_behind.is_empty() && story_front.is_empty() && !(story_lines && !body_behind.is_empty()) {
-        root.children.extend(floats(&body_behind, cx, d));
-        root.children.extend(under_rules(&paint.rules));
-        root.children.extend(lines(&paint.lines, cx, d));
-        root.children.extend(over_rules(&paint.rules));
+        root.children.extend(floats(&body_behind, cx, d, names));
+        root.children.extend(under_rules(&paint.rules, names));
+        root.children.extend(lines(&paint.lines, cx, d, names));
+        root.children.extend(over_rules(&paint.rules, names));
         root.children.extend(pictures);
-        root.children.extend(floats(&body_front, cx, d));
+        root.children.extend(floats(&body_front, cx, d, names));
     } else {
         let (stories, body): (Vec<PaintedLine>, Vec<PaintedLine>) =
             paint.lines.iter().cloned().partition(|l| l.story.is_some());
-        root.children.extend(floats(&story_behind, cx, d));
-        root.children.extend(lines(&stories, cx, d));
-        root.children.extend(floats(&story_front, cx, d));
-        root.children.extend(floats(&body_behind, cx, d));
-        root.children.extend(under_rules(&paint.rules));
-        root.children.extend(lines(&body, cx, d));
-        root.children.extend(over_rules(&paint.rules));
+        root.children.extend(floats(&story_behind, cx, d, names));
+        root.children.extend(lines(&stories, cx, d, names));
+        root.children.extend(floats(&story_front, cx, d, names));
+        root.children.extend(floats(&body_behind, cx, d, names));
+        root.children.extend(under_rules(&paint.rules, names));
+        root.children.extend(lines(&body, cx, d, names));
+        root.children.extend(over_rules(&paint.rules, names));
         root.children.extend(pictures);
-        root.children.extend(floats(&body_front, cx, d));
+        root.children.extend(floats(&body_front, cx, d, names));
     }
     if !defs.defs.is_empty() {
         // After the page's white ground, as docx2svg puts them once everything is drawn.
@@ -417,19 +403,51 @@ pub fn page_element(paint: &PagePaint, cx: &SvgContext<'_>) -> Element {
     root
 }
 
+/// The page's drawings painted in the order they were placed, which is the order their
+/// resources' ids are minted in; each handed its painter named at the edge.
+fn painted_slots<'p>(
+    paint: &'p PagePaint,
+    cx: &SvgContext<'_>,
+    names: &PageNames<'_>,
+    defs: &mut PageDefs,
+) -> Vec<Painted<'p>> {
+    paint
+        .drawings
+        .iter()
+        .enumerate()
+        .map(|(k, slot)| {
+            // A text box's inline drawings are painted after its own (docx2svg draws them as
+            // it lays the box out), their resources' ids minted in that order.
+            let drawn = cx.drawings.drawing(&names.named_slot(slot), defs);
+            let text: Vec<&TextBoxPaint> = paint.text_boxes.iter().filter(|t| t.slot == k).collect();
+            let inner = text
+                .iter()
+                .flat_map(|t| t.drawings.iter())
+                .map(|inner| cx.drawings.drawing(inner, defs))
+                .collect();
+            Painted {
+                slot,
+                paint: drawn,
+                text,
+                inner,
+            }
+        })
+        .collect()
+}
+
 /// The rules drawn under the text, in their kinds' order (`_rules`).
-fn under_rules(rules: &[Rule]) -> Vec<Element> {
+fn under_rules(rules: &[Rule], names: &PageNames<'_>) -> Vec<Element> {
     let mut under: Vec<&Rule> = rules.iter().filter(|r| under_rank(r.kind).is_some()).collect();
     under.sort_by_key(|r| under_rank(r.kind));
-    under.into_iter().map(rect).collect()
+    under.into_iter().map(|r| rect(r, names)).collect()
 }
 
 /// The rules drawn over the text, in the order made.
-fn over_rules(rules: &[Rule]) -> Vec<Element> {
+fn over_rules(rules: &[Rule], names: &PageNames<'_>) -> Vec<Element> {
     rules
         .iter()
         .filter(|r| under_rank(r.kind).is_none())
-        .map(rect)
+        .map(|r| rect(r, names))
         .collect()
 }
 
@@ -444,7 +462,7 @@ struct Painted<'a> {
 
 /// Drawings as groups of their painters' paint, then their text boxes' pictures, their
 /// inline drawings' paint, rules and lines (`_float`); one with no painter is not written.
-fn floats(slots: &[&Painted<'_>], cx: &SvgContext<'_>, defs: &mut PageDefs) -> Vec<Element> {
+fn floats(slots: &[&Painted<'_>], cx: &SvgContext<'_>, defs: &mut PageDefs, names: &PageNames<'_>) -> Vec<Element> {
     let mut out = Vec::new();
     for painted in slots {
         let (slot, Some(paint)) = (painted.slot, &painted.paint) else {
@@ -453,7 +471,7 @@ fn floats(slots: &[&Painted<'_>], cx: &SvgContext<'_>, defs: &mut PageDefs) -> V
         let side = if slot.layer == Layer::Behind { "behind" } else { "front" };
         let mut g = Element::new("g")
             .paired()
-            .attr("data-docx-path", Value::Text(slot.path.clone()))
+            .attr("data-docx-path", Value::Text(names.slot(slot)))
             .attr("data-docx-float", Value::Plain(side.to_owned()));
         if let Some((kind, part)) = &slot.story {
             g = g
@@ -462,16 +480,16 @@ fn floats(slots: &[&Painted<'_>], cx: &SvgContext<'_>, defs: &mut PageDefs) -> V
         }
         g.children = paint.iter().cloned().map(Element::raw).collect();
         for text in &painted.text {
-            g.children.extend(text.pictures.iter().map(|d| picture(d, cx)));
+            g.children.extend(text.pictures.iter().map(|d| picture(d, cx, names)));
         }
         for inner in painted.inner.iter().flatten() {
             g.children.extend(inner.iter().cloned().map(Element::raw));
         }
         let rules: Vec<Rule> = painted.text.iter().flat_map(|t| t.rules.iter().cloned()).collect();
         let text_lines: Vec<PaintedLine> = painted.text.iter().flat_map(|t| t.lines.iter().cloned()).collect();
-        g.children.extend(under_rules(&rules));
-        g.children.extend(lines(&text_lines, cx, defs));
-        g.children.extend(over_rules(&rules));
+        g.children.extend(under_rules(&rules, names));
+        g.children.extend(lines(&text_lines, cx, defs, names));
+        g.children.extend(over_rules(&rules, names));
         out.push(g);
     }
     out

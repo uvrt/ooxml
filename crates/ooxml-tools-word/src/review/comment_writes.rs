@@ -11,9 +11,11 @@
 
 use super::comments::{try_call, CommentAction, CommentItem, WordComments};
 use super::{edit_refusal, Editing};
+use crate::planned::run_planned;
 use crate::structure::common::{find_once_within, one_of, outcome, Outcome};
+use ooxml_store::Txn;
 use ooxml_tools::{ToolError, ToolResult};
-use ooxml_word_edit::{AddComments, CommentWrite, ItemMade, Who};
+use ooxml_word_edit::{AddComments, CommentWrite, ItemMade, Who, WordDoc};
 use serde_json::{json, Value};
 
 /// `add` or `reply` of `items`.
@@ -25,28 +27,40 @@ pub(crate) fn write(
     let mut list = args.clone();
     list.action = CommentAction::List;
     list.items = None;
-    let writes = planned(args, editing, items, &list)?;
-    // docx-agent's `author_of`: the one given, else the tracking author
-    let author = args
-        .author
-        .as_deref()
-        .filter(|a| !a.is_empty())
-        .or_else(|| editing.tracking.map(|t| t.author.as_str()));
-    let command = AddComments {
-        items: writes,
-        who: Who::new(author, editing.date),
-    };
-    let done = editing
-        .editor
-        .run(editing.caller, &command)
+    let done = run_planned(editing, write_plan(args, editing, items, &list))?
         .map_err(|e| edit_refusal(e, "", try_call(&list)))?;
-    Ok(reply(args, items, done.out, &list))
+    Ok(reply(args, items, done.out.0, &list))
 }
 
-/// Each item's write, its arguments checked as docx-agent checks them.
+/// `add`'s and `reply`'s plan, made in the edit's transaction ([`crate::planned`]): each
+/// item's write, its text found there.
+pub(crate) fn write_plan<'a>(
+    args: &'a WordComments,
+    editing: &'a Editing<'a>,
+    items: &'a [CommentItem],
+    list: &'a WordComments,
+) -> impl Fn(&mut Txn<'_, WordDoc>) -> Result<(AddComments, ()), ToolError> + 'a {
+    move |tx| {
+        let writes = planned(args, tx, items, list)?;
+        // docx-agent's `author_of`: the one given, else the tracking author
+        let author = args
+            .author
+            .as_deref()
+            .filter(|a| !a.is_empty())
+            .or_else(|| editing.tracking.map(|t| t.author.as_str()));
+        let command = AddComments {
+            items: writes,
+            who: Who::new(author, editing.date),
+        };
+        Ok((command, ()))
+    }
+}
+
+/// Each item's write, its arguments checked as docx-agent checks them, its text found on
+/// the transaction's version.
 fn planned(
     args: &WordComments,
-    editing: &Editing<'_>,
+    tx: &mut Txn<'_, WordDoc>,
     items: &[CommentItem],
     list: &WordComments,
 ) -> Result<Vec<CommentWrite>, ToolError> {
@@ -63,7 +77,7 @@ fn planned(
                 &call,
             )? == "find";
             let place = match (&item.find, &item.target) {
-                (Some(text), _) if found => find_once_within(editing, text, item.within.as_deref(), &call)?,
+                (Some(text), _) if found => find_once_within(tx, text, item.within.as_deref(), &call)?,
                 (_, Some(target)) => target.clone(),
                 _ => String::new(),
             };
@@ -154,4 +168,37 @@ fn reply(args: &WordComments, items: &[CommentItem], out: Vec<ItemMade>, list: &
         reply.refs = refs;
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
+
+    use super::*;
+    use crate::planned::held::{args, calling, compare, marked, raced, shifted};
+
+    #[test]
+    fn a_comment_on_found_text_covers_the_text_where_it_is_when_it_commits() {
+        let args: WordComments = args(json!({"action": "add", "items": [{"find": "this year", "text": "Which?"}]}));
+        let items = args.items.clone().unwrap();
+        let mut list = args.clone();
+        list.action = CommentAction::List;
+        list.items = None;
+        let compared = compare(
+            marked,
+            shifted,
+            |editor, between| {
+                calling(editor, |editing| {
+                    raced(editor, write_plan(&args, editing, &items, &list), between)
+                })
+            },
+            |editing| super::super::word_comments(&args, editing),
+        );
+        compared.assert_same_edit();
+        assert!(
+            compared.serial.contains("14% [commentRangeStart]this year"),
+            "{}",
+            compared.serial
+        );
+    }
 }

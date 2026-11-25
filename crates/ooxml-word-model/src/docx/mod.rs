@@ -2,7 +2,8 @@
 //! parts with their trees and block ids ([`Docx`]), and what `describe` and `word_read`
 //! read of them -- paragraphs' text in a view of their revisions ([`text`]), content
 //! controls ([`controls`]), drawings ([`drawings`]), the outline ([`outline`]), sections
-//! ([`sections`]), fields ([`fields`]) and revision records ([`revisions`]).
+//! ([`sections`]), fields ([`fields`]) and revision records ([`revisions`]); and what a
+//! layout's anchors are named at the edge ([`VersionNames`]).
 //!
 //! Owns: docx-agent's rules for these (`docx_agent/edit/*.py`), which in places differ
 //! from the layout model's (docx2svg's): names are matched with their namespaces, as lxml
@@ -27,6 +28,7 @@ pub mod graphics;
 pub mod keeps;
 mod kept;
 mod kept_rows;
+pub mod names;
 pub mod numbering;
 pub mod outline;
 pub mod provenance;
@@ -41,6 +43,7 @@ mod walk;
 
 pub use derived::Derived;
 pub use kept::Kept;
+pub use names::VersionNames;
 pub use texts::PartTexts;
 pub use versions::Versions;
 
