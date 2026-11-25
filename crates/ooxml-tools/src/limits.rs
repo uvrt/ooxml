@@ -114,8 +114,9 @@ impl ImageBudget {
         self.limit.saturating_sub(self.used)
     }
 
-    /// The refusal of images past it.
-    fn refusal(&self) -> ToolError {
+    /// The refusal of images past it (`limit`, with its `budget`, `limit` and `remaining`).
+    #[must_use]
+    pub fn refusal(&self) -> ToolError {
         let message = match self.span {
             BudgetSpan::Session => format!(
                 "the session's image budget is {} and {} are used; work from text (describe, check) from here",

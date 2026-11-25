@@ -1,17 +1,21 @@
-//! Text facts, on `TestFormat`'s made-up sources: ooxml-edit's `test_tools_textfacts.py`
-//! ported, each test named after the one it ports. The host's part -- a dataset by its id,
-//! a table of another open document by its address -- is a toy here (`Toy`), as the
-//! Python tests' `ds_keep` and grid format are; every figure is made up.
+//! Text facts, on made-up sources: ooxml-edit's `test_tools_textfacts.py` ported, each test
+//! named after the one it ports. The host's part -- a dataset by its id, a table of another
+//! open document by its address -- is the session's: its dataset store and a call's sources
+//! (`CallSources`) over a toy grid, as the Python tests' `ds_keep` and grid format are;
+//! every figure is made up.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
 use ooxml_numfmt::{Locale, EN_US};
-use ooxml_session::facts::{
-    bad_format, expand_arguments, known_prefixes, quote, segments, Fact, FactEnv, FactSources, FORMS,
-};
-use ooxml_tools::sources::{Cell, Day, SourceRows};
+use ooxml_session::datasets::{CallDatasets, DatasetStore, DocMeta, Of};
+use ooxml_session::facts::{bad_format, expand_arguments, known_prefixes, quote, segments, Fact, FactEnv, FORMS};
+use ooxml_session::sources::{CallSources, OpenDoc, SourceHost};
+use ooxml_tools::datasets::Dataset;
+use ooxml_tools::sources::{Cell, Day, Prefixes};
 use ooxml_tools::{Refusal, ToolError, TryCall, WayOut};
 use serde_json::{json, Map, Value};
+use std::cell::RefCell;
+use std::sync::Arc;
 
 /// The made-up table: item, rating, share, when.
 fn checks() -> (Vec<&'static str>, Vec<Vec<Cell>>) {
@@ -33,13 +37,14 @@ fn checks() -> (Vec<&'static str>, Vec<Vec<Cell>>) {
     )
 }
 
-/// The host's part: dataset `by_item` (and `odd`), the table `checks` of `d2`.
+/// The host's part: dataset `by_item` (and `odd`) in the session's store, the table
+/// `checks` of the grid `d2` when it is open.
 struct Toy {
     with_table: bool,
     odd: bool,
 }
 
-const VERSION: i64 = 4;
+const VERSION: u64 = 4;
 const NAME: &str = "checks-made-up.xlsx";
 
 fn refuse(code: Refusal, message: String, options: Vec<String>) -> ToolError {
@@ -50,57 +55,117 @@ fn refuse(code: Refusal, message: String, options: Vec<String>) -> ToolError {
     )
 }
 
+/// The open documents and the grid format's resolver.
+struct Host {
+    docs: Vec<OpenDoc>,
+    prefixes: Prefixes,
+}
+
+fn heads(doc: &str) -> Option<u64> {
+    (doc == "d2").then_some(VERSION)
+}
+
+fn columns() -> Vec<String> {
+    checks().0.iter().map(|c| (*c).to_owned()).collect()
+}
+
 impl Toy {
-    fn dataset(&self, id: &str) -> Result<SourceRows, ToolError> {
-        let (columns, rows) = checks();
-        let base = SourceRows {
-            given: format!("d:{id}"),
-            address: format!("d:{id}"),
-            columns: columns.iter().map(|c| (*c).to_owned()).collect(),
-            types: Some(vec![
+    /// The session's datasets: `by_item` derived from `d2`, and `odd` (no document).
+    fn store(&self) -> DatasetStore {
+        let (names, rows) = checks();
+        let sources = rows
+            .iter()
+            .map(|row| {
+                let Cell::Text(item) = &row[0] else { unreachable!() };
+                names.iter().map(|c| vec![format!("t:checks/{item}/{c}")]).collect()
+            })
+            .collect();
+        let by_item = Dataset::new(columns(), rows)
+            .unwrap()
+            .with_types(vec![
                 None,
                 Some("number".into()),
                 Some("percent".into()),
                 Some("date".into()),
-            ]),
-            sources: Some(
-                rows.iter()
-                    .map(|row| {
-                        let Cell::Text(item) = &row[0] else { unreachable!() };
-                        columns.iter().map(|c| vec![format!("t:checks/{item}/{c}")]).collect()
-                    })
-                    .collect(),
-            ),
-            rows,
-            doc: Some("d2".into()),
-            name: Some(NAME.into()),
-            version: Some(VERSION),
-            stale: false,
-            cache: None,
+            ])
+            .unwrap()
+            .with_sources(sources)
+            .unwrap();
+        let mut store = DatasetStore::default();
+        let mut call = CallDatasets::new();
+        let meta = DocMeta {
+            doc: "d2".into(),
+            kind: "xlsx".into(),
+            name: NAME.into(),
         };
-        match id {
-            "by_item" => Ok(base),
-            "odd" if self.odd => Ok(SourceRows {
-                columns: vec!["item".into(), "avg:0.20".into()],
-                types: None,
-                sources: None,
-                rows: vec![vec![Cell::Text("N-1".into()), Cell::Int("7".into())]],
-                doc: None,
-                name: None,
-                version: None,
-                ..base
-            }),
-            _ => Err(refuse(
-                Refusal::NotFound,
-                format!("no dataset d:{id}"),
-                vec!["d:by_item".into()],
-            )),
+        let retry = retry();
+        call.define(
+            "by_item",
+            Arc::new(by_item),
+            Of::Doc(&meta),
+            None,
+            &[],
+            &store,
+            "now",
+            "id",
+            &retry,
+        )
+        .unwrap();
+        if self.odd {
+            let odd = Dataset::new(
+                vec!["item".into(), "avg:0.20".into()],
+                vec![vec![Cell::Text("N-1".into()), Cell::Int("7".into())]],
+            )
+            .unwrap();
+            call.define(
+                "odd",
+                Arc::new(odd),
+                Of::Nothing,
+                None,
+                &[],
+                &store,
+                "now",
+                "id",
+                &retry,
+            )
+            .unwrap();
         }
+        call.finish(&mut store, &heads).unwrap();
+        store
+    }
+
+    fn host(&self) -> Host {
+        let mut docs = vec![OpenDoc {
+            handle: "d1".into(),
+            kind: "docx".into(),
+            name: "brief.docx".into(),
+        }];
+        if self.with_table {
+            docs.push(OpenDoc {
+                handle: "d2".into(),
+                kind: "xlsx".into(),
+                name: NAME.into(),
+            });
+        }
+        Host {
+            docs,
+            prefixes: Prefixes::new([("xlsx", vec!["t:"]), ("docx", vec![])]),
+        }
+    }
+}
+
+impl SourceHost for Host {
+    fn documents(&self) -> Vec<OpenDoc> {
+        self.docs.clone()
+    }
+
+    fn prefixes(&self) -> &Prefixes {
+        &self.prefixes
     }
 
     /// `t:checks/<key>` of `d2`, as the grid format resolves it (`_table`).
-    fn table(&self, address: &str) -> Result<SourceRows, ToolError> {
-        let (columns, rows) = checks();
+    fn resolve(&self, _doc: &str, address: &str) -> Result<Dataset, ToolError> {
+        let (names, rows) = checks();
         let body = address.strip_prefix("t:").unwrap_or(address);
         let (name, key) = body.split_once('/').unwrap_or((body, ""));
         if name != "checks" {
@@ -134,44 +199,25 @@ impl Toy {
         let sources = numbered
             .iter()
             .map(|(i, _)| {
-                (0..columns.len())
+                (0..names.len())
                     .map(|c| vec![format!("G!{}{}", letter(c), i + 2)])
                     .collect()
             })
             .collect();
-        Ok(SourceRows {
-            given: address.into(),
-            address: format!("d2/{address}"),
-            columns: columns.iter().map(|c| (*c).to_owned()).collect(),
-            types: None,
-            rows: numbered.into_iter().map(|(_, row)| row).collect(),
-            sources: Some(sources),
-            doc: Some("d2".into()),
-            name: Some(NAME.into()),
-            version: Some(VERSION),
-            stale: false,
-            cache: None,
-        })
+        Ok(
+            Dataset::new(columns(), numbered.into_iter().map(|(_, row)| row).collect())
+                .unwrap()
+                .with_sources(sources)
+                .unwrap(),
+        )
     }
 }
 
-impl FactSources for Toy {
-    fn rows(&self, source: &str, _field: &str) -> Result<SourceRows, ToolError> {
-        if let Some(id) = source.strip_prefix("d:") {
-            return self.dataset(id);
-        }
-        if !self.with_table {
-            let message = "no open document takes t: addresses: open one first".to_owned();
-            return Err(refuse(Refusal::NotFound, message, vec![]));
-        }
-        self.table(source.strip_prefix("d2/").unwrap_or(source))
-    }
-
-    fn own(&self, _prefix: &str, _name: &str, _field: &str) -> Result<(String, Map<String, Value>), ToolError> {
-        Err(ToolError::failure(
-            ooxml_tools::Failure::Internal,
-            "no own references here",
-        ))
+fn retry() -> TryCall {
+    TryCall {
+        tool: "toy_say".into(),
+        arguments: Map::new(),
+        fill: Vec::new(),
     }
 }
 
@@ -185,19 +231,18 @@ fn language(tag: &str) -> Locale {
 
 type Said = Result<(Value, Vec<Fact>), ToolError>;
 
-/// `toy_say`: the texts as written, and what was written where.
+/// `toy_say`: the texts as written, and what was written where; its references read by
+/// the host's sources (the session's datasets, the grid the call holds).
 fn say_in(locale: &Locale, toy: &Toy, texts: &[&str], rows: Option<Value>) -> Said {
     let mut arguments = json!({"doc": "d1", "items": texts.iter().map(|t| json!({"text": t})).collect::<Vec<_>>()});
     if let Some(rows) = rows {
         arguments["rows"] = rows;
     }
     let known = known_prefixes(&["t:"], &[]);
-    let datasets = vec!["by_item".to_owned()];
-    let retry = TryCall {
-        tool: "toy_say".into(),
-        arguments: Map::new(),
-        fill: Vec::new(),
-    };
+    let store = toy.store();
+    let host = toy.host();
+    let datasets: Vec<String> = store.entries().iter().map(|e| e.id.clone()).collect();
+    let retry = retry();
     let env = FactEnv {
         known: &known,
         own: &[],
@@ -205,7 +250,22 @@ fn say_in(locale: &Locale, toy: &Toy, texts: &[&str], rows: Option<Value>) -> Sa
         locale,
         retry: &retry,
     };
-    expand_arguments(&arguments, &["items[].text".into(), "rows[]".into()], &env, toy)
+    let mut call = CallDatasets::new();
+    let given = arguments.as_object().unwrap().clone();
+    let held = vec!["d2".to_owned()];
+    let sources = CallSources {
+        host: &host,
+        store: &store,
+        datasets: RefCell::new(&mut call),
+        heads: &heads,
+        tool: "toy_say",
+        arguments: &given,
+        primary: Some("d1"),
+        held: &held,
+        retry: &retry,
+        own: None,
+    };
+    expand_arguments(&arguments, &["items[].text".into(), "rows[]".into()], &env, &sources)
 }
 
 const TOY: Toy = Toy {

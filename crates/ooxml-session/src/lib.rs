@@ -25,11 +25,13 @@
 #![forbid(unsafe_code)]
 
 mod batch;
+pub mod blobs;
 mod block_pages;
 mod blocks_of;
 mod call;
 mod changes;
 mod context;
+pub mod datasets;
 mod dispatch;
 mod document;
 mod error;
@@ -44,6 +46,7 @@ mod live_view;
 mod memory;
 mod model;
 mod names;
+pub mod outputs;
 mod owners;
 mod pages;
 mod panics;
@@ -55,6 +58,7 @@ mod registry;
 mod retired;
 mod rows_written;
 mod session;
+pub mod sources;
 mod stored;
 mod undo;
 mod update;
@@ -68,7 +72,7 @@ pub use context::{CallContext, CancelToken};
 pub use dispatch::CallMade;
 pub use document::WordFormat;
 pub use error::SessionError;
-pub use format::{AnyVersion, Format, FormatDoc};
+pub use format::{no_source, AnyVersion, Format, FormatDoc};
 pub use group::GroupMark;
 pub use history::{Direction, NumberedStep, Numbers, Undone};
 pub use host_reads::IdStateOf;

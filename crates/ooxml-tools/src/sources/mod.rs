@@ -16,9 +16,11 @@
 
 mod label;
 mod pattern;
+mod qualify;
 
 pub use label::{date_value, label, what};
 pub use pattern::{date_pattern, pattern_problem, DatePattern, TOKENS, TOKENS_TEXT};
+pub use qualify::{doc_order, is_handle, qualified, qualify, Prefixes};
 
 use crate::{ErrorCode, Refusal, ToolError, TryCall, WayOut};
 use ooxml_base::pyfmt::repr_str;
@@ -162,6 +164,36 @@ impl Cell {
             }
             Value::Array(_) => return None,
         })
+    }
+
+    /// The value as the host writes one in JSON ([`Cell::from_json`] reads it back).
+    #[must_use]
+    pub fn to_json(&self) -> Value {
+        let day = |d: &Day| vec![Value::from(d.year), Value::from(d.month), Value::from(d.day)];
+        let clock = |c: &Clock| {
+            vec![
+                Value::from(c.hour),
+                Value::from(c.minute),
+                Value::from(c.second),
+                Value::from(c.micro),
+            ]
+        };
+        let one = |kind: &str, value: Value| Value::Object(std::iter::once((kind.to_owned(), value)).collect());
+        match self {
+            Cell::Blank => Value::Null,
+            Cell::Text(t) => Value::from(t.as_str()),
+            Cell::Bool(b) => Value::Bool(*b),
+            Cell::Int(digits) => digits
+                .parse::<i64>()
+                .map(Value::from)
+                .or_else(|_| digits.parse::<u64>().map(Value::from))
+                .unwrap_or_else(|_| one("int", Value::from(digits.as_str()))),
+            Cell::Float(f) => serde_json::Number::from_f64(*f).map_or(Value::Null, Value::Number),
+            Cell::Date(d) => one("date", Value::from(day(d))),
+            Cell::DateTime(d, c) => one("datetime", Value::from([day(d), clock(c)].concat())),
+            Cell::Time(c) => one("time", Value::from(clock(c))),
+            Cell::Other(kind) => one("other", Value::from(kind.as_str())),
+        }
     }
 
     /// Whether the value is a blank or empty text (`value is None or value == ""`).

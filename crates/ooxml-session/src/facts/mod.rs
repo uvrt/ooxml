@@ -39,8 +39,7 @@ use serde_json::{Map, Value};
 /// How many values one argument may reference.
 pub const MAX_FACTS: usize = 50;
 
-/// The dataset prefix.
-pub const DATASET_PREFIX: &str = "d:";
+pub use ooxml_tools::datasets::DATASET_PREFIX;
 
 /// One reference written (`textfacts.Fact`).
 #[derive(Debug, Clone, PartialEq)]
