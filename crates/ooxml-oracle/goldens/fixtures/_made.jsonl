@@ -210,12 +210,12 @@
 {"digest":"sha256:76f40891a80166fd71062e90ce43160c","id":"facts:518422a1cee703af","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:c69e897e324f6c54827cb4a814f9c1bd","id":"facts:2e1582fd630306a1","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:c69e897e324f6c54827cb4a814f9c1bd","id":"facts:75fc85112f59fa7d","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:3b86168af639693e5cdfc78716697448","id":"facts:9b3aa27dd2116863","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:32e5bbac05fd7402b1340463f51d0acc","id":"facts:9b3aa27dd2116863","source":"Word 16.106: gridAfter is not read; Word writes back the columns a row leaves (ph2-types4 probe, #378)"}
 {"digest":"sha256:c69e897e324f6c54827cb4a814f9c1bd","id":"facts:e638f8ac508df4b6","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:c69e897e324f6c54827cb4a814f9c1bd","id":"facts:dc4125605ed97f98","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:80d9a3bcf306dfff5424d09ab064dd90","id":"facts:5aea5c976c262ce3","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:c69e897e324f6c54827cb4a814f9c1bd","id":"facts:01fa135bb9a3399c","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:a1c8db8660d0c8e770c4662e5cad745f","id":"facts:febc8fcad17f19f1","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:fedebc89a48f4884098ddad8e30fc4bc","id":"facts:febc8fcad17f19f1","source":"Word 16.106: gridAfter is not read; Word writes back the columns a row leaves (ph2-types4 probe, #378)"}
 {"digest":"sha256:0b60d2f1ede8c9025d1672ba1a552b1e","id":"facts:eb88eaf22cd177ee","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:c69e897e324f6c54827cb4a814f9c1bd","id":"facts:b6b6c93edf4bf3ed","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:c69e897e324f6c54827cb4a814f9c1bd","id":"facts:f2cdb32bb3561685","source":"frozen Python a512c901, unmeasured"}
@@ -308,12 +308,12 @@
 {"digest":"sha256:76f40891a80166fd71062e90ce43160c","id":"facts:d244054e84352dc1","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:c69e897e324f6c54827cb4a814f9c1bd","id":"facts:989c94294658a360","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:c69e897e324f6c54827cb4a814f9c1bd","id":"facts:ccd88d3e9719d91e","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:81f3556571b25e4855cc7dece9a3adaa","id":"facts:abe8610079ea2c9c","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:de3c299199bfc9970abcefd763aeec5a","id":"facts:abe8610079ea2c9c","source":"Word 16.106: gridAfter is not read; Word writes back the columns a row leaves (ph2-types4 probe, #378)"}
 {"digest":"sha256:c69e897e324f6c54827cb4a814f9c1bd","id":"facts:333f1387f28c6354","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:c69e897e324f6c54827cb4a814f9c1bd","id":"facts:f4ef675e0fff67a7","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:1d81de14f456123718d008bb0b83141f","id":"facts:ef5ebf577cbc535c","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:c69e897e324f6c54827cb4a814f9c1bd","id":"facts:c313e28474965c66","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:fa66347e11c5b1698c6aee047c2e758b","id":"facts:e9f8fe3d0e7b1028","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:ce822f499fbf196f3d42335680460b3c","id":"facts:e9f8fe3d0e7b1028","source":"Word 16.106: gridAfter is not read; Word writes back the columns a row leaves (ph2-types4 probe, #378)"}
 {"digest":"sha256:0b60d2f1ede8c9025d1672ba1a552b1e","id":"facts:55020fa807b53e33","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:c69e897e324f6c54827cb4a814f9c1bd","id":"facts:14f367df3f341ddb","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:c69e897e324f6c54827cb4a814f9c1bd","id":"facts:02473b5348078b1a","source":"frozen Python a512c901, unmeasured"}
