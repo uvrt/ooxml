@@ -20,13 +20,14 @@ use super::set_from::Timing;
 use super::table_sync_keys::{matches, merged_refusal, note_loose, slots, sorted, Matched, Slot};
 use super::table_sync_read::refusal;
 use super::table_sync_read::{body, key_column, mapping, source_keys, sync_grid, table_keys};
-use super::table_sync_said::{record, reply, said, unchanged, Deleted, Done, Kept};
+use super::table_sync_said::{record, reply, said, unchanged, Deleted, Done, Kept, Syncs};
 use super::table_view::{AcceptedView, TableView};
-use crate::planned::{Plan as Plan_, Planned};
+use crate::planned::Planned;
 use crate::review::Editing;
 use crate::sources::{placed, SourceRows};
 use crate::structure::common::{policy, refused};
 use ooxml_base::pyfmt::repr_str;
+use ooxml_store::Txn;
 use ooxml_tools::{Refusal, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::{CellAxis, CellWrite, EditError, PlaceRows, RowsBeside, RowsPlaced, WordDoc};
 use ooxml_word_model::docx::Docx;
@@ -129,19 +130,18 @@ pub(super) fn sync(
     rows: &SourceRows,
     retry: &TryCall,
 ) -> Result<ToolResult<Value>, ToolError> {
-    let planned = Planned::new(|doc: &WordDoc| syncing(args, editing, doc, rows, retry));
-    let look = |out: &Result<(RowsPlaced, bool), Stop>, _: &WordDoc| {
-        let out = out.as_ref().ok()?;
+    let planned = Planned(|tx: &mut Txn<'_, WordDoc>| syncing(args, editing, tx, rows, retry));
+    let look = |out: &Synced<'_>, _: &WordDoc| {
+        let out = out.as_ref().ok()?.0.as_ref()?;
         Some((
             out.0.table.clone(),
             out.0.added.iter().filter_map(|r| r.id.clone()).collect::<Vec<_>>(),
         ))
     };
     let ran = super::rows_written::run_writing_rows(editing, &planned, &args.table, look, retry);
-    let ((placed, _), rows_said, version) = match ran {
+    let ((placed, said), rows_said, version) = match ran {
         Ok((Ok(done), rows_said, version)) => (done, rows_said, version),
-        Ok((Err(Stop::Refused(refusal)), _, _)) => return Err(refusal),
-        Ok((Err(Stop::Unchanged(reply)), _, _)) => return Ok(*reply),
+        Ok((Err(refusal), _, _)) => return Err(refusal),
         Err(error @ (EditError::Address(_) | EditError::Argument { .. } | EditError::Position(_))) => {
             return Ok(ToolResult::failed(crate::review::edit_refusal(
                 error,
@@ -151,17 +151,22 @@ pub(super) fn sync(
         }
         Err(error) => return Ok(refused(error, retry.clone())),
     };
-    let Some(Syncing {
+    let (placed, said) = match (placed, said) {
+        (Some((placed, _)), Said::Changed(said)) => (placed, said),
+        // nothing to change: the plan's read-only answer of its version (rule 3)
+        (_, Said::Unchanged(reply)) => return Ok(*reply),
+        (None, Said::Changed(_)) => {
+            return Err(ToolError::internal("no change made".to_owned(), "word:edit_table"));
+        }
+    };
+    let Syncing {
         view,
         removed,
         note,
         done,
         before,
         mut timing,
-    }) = planned.said()
-    else {
-        return Err(ToolError::internal("no plan".to_owned(), "word:edit_table"));
-    };
+    } = *said;
     for (name, seconds) in &placed.parts {
         timing.seconds(name, *seconds);
     }
@@ -183,16 +188,15 @@ pub(super) fn sync(
     Ok(result)
 }
 
-/// Why a sync's plan writes nothing: refused, or nothing to change (its reply, rule 3).
-pub(super) enum Stop {
-    Refused(ToolError),
-    Unchanged(Box<ToolResult<Value>>),
-}
+/// What a sync's planned edit gives: its command's out (none where nothing differs) and
+/// what its plan says, or the plan's refusal.
+type Synced<'d> = Result<(Option<(RowsPlaced, bool)>, Said<'d>), ToolError>;
 
-impl From<ToolError> for Stop {
-    fn from(error: ToolError) -> Self {
-        Stop::Refused(error)
-    }
+/// What a sync's plan says: the changes it makes (what their reply needs), or that there is
+/// nothing to change (the reply, rule 3), its command none.
+pub(super) enum Said<'d> {
+    Changed(Box<Syncing<'d>>),
+    Unchanged(Box<ToolResult<Value>>),
 }
 
 /// What the reply of a sync that changes the table needs of its plan: the table as it found
@@ -207,15 +211,18 @@ pub(super) struct Syncing<'d> {
     timing: Timing,
 }
 
-/// The sync weighed on `doc` (the version it is applied to): the table as accepted there,
-/// the columns, keys and rows read, every refusal weighed, then the one command.
+/// The sync weighed on the transaction's version (the one it is applied to): the table as
+/// accepted there, read by its key, the columns, keys and rows read, every refusal weighed,
+/// then the one command -- none where nothing differs.
 pub(super) fn syncing<'a, 'r>(
     args: &WordEditTable,
     editing: &Editing<'_>,
-    doc: &WordDoc,
+    tx: &mut Txn<'_, WordDoc>,
     rows: &'r SourceRows,
     retry: &'a TryCall,
-) -> Result<Plan_<super::table_sync_said::Keeping<'a>, Syncing<'r>>, Stop> {
+) -> Result<(Syncs<'a>, Said<'r>), ToolError> {
+    let doc = tx.doc().clone();
+    let doc = &doc;
     let (docx, view, accepted) = super::edit_table::accepted_on(args, editing, doc, retry)?;
     let notes = arguments(args, retry)?;
     let mut timing = Timing::default();
@@ -250,7 +257,8 @@ pub(super) fn syncing<'a, 'r>(
     if compared.writes.is_empty() && compared.added.is_empty() && !(remove && !gone.is_empty()) {
         let said = (summary_of, notes.clone());
         let reply = unchanged(doc, &view, &rows.address, plan, gone, said, timing, retry);
-        return Err(Stop::Unchanged(Box::new(reply)));
+        tx.read(view.key());
+        return Ok((Syncs(None), Said::Unchanged(Box::new(reply))));
     }
     let (command, kept, removed) = changes(args, editing, doc, &view, &accepted, &weighed);
     let done = Done {
@@ -269,18 +277,16 @@ pub(super) fn syncing<'a, 'r>(
         accepted: kept.accepted_columns,
         retry,
     };
-    Ok(Plan_ {
-        command: keeping,
-        reads: vec![view.key()],
-        said: Syncing {
-            view,
-            removed,
-            note: kept.note,
-            done,
-            before: doc.clone(),
-            timing,
-        },
-    })
+    tx.read(view.key());
+    let said = Syncing {
+        view,
+        removed,
+        note: kept.note,
+        done,
+        before: doc.clone(),
+        timing,
+    };
+    Ok((Syncs(Some(keeping)), Said::Changed(Box::new(said))))
 }
 
 /// The one command a sync's changes are (rows added beside the data rows from the bottom,

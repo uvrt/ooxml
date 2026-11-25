@@ -37,11 +37,12 @@ use super::edit_table_args::{Side, TableAction, WordEditTable};
 use super::edit_table_pending::no_reshape_over_merge;
 use super::table_view::{table_view, AcceptedView, TableView};
 use crate::originals::{add, Watch};
-use crate::planned::{Plan, Planned};
+use crate::planned::Planned;
 use crate::review::{needed, Editing};
 use crate::structure::common::{call, outcome, policy, refused, Outcome};
 use crate::TableShape;
 use ooxml_base::pyfmt::repr_str;
+use ooxml_store::Txn;
 use ooxml_tools::{ArgEnum, ErrorCode, Refusal, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::facts::{ragged_rows, RaggedRow};
 use ooxml_word_edit::WordDoc;
@@ -472,9 +473,21 @@ pub(super) struct Changing {
 pub(super) fn change_plan(
     args: &WordEditTable,
     editing: &Editing<'_>,
+    tx: &mut Txn<'_, WordDoc>,
+    retry: &TryCall,
+) -> Result<(KeepingRecord<EditTable>, Changing), ToolError> {
+    let (command, said) = changing(args, editing, tx.doc(), retry)?;
+    tx.read(said.view.key());
+    Ok((command, said))
+}
+
+/// The change and what the reply needs of it, worked out on `doc` ([`change_plan`]).
+fn changing(
+    args: &WordEditTable,
+    editing: &Editing<'_>,
     doc: &WordDoc,
     retry: &TryCall,
-) -> Result<Plan<KeepingRecord<EditTable>, Changing>, ToolError> {
+) -> Result<(KeepingRecord<EditTable>, Changing), ToolError> {
     let (docx, view, mut accepted) = accepted_on(args, editing, doc, retry)?;
     let tracked = editing.tracking.is_some();
     let change =
@@ -486,53 +499,50 @@ pub(super) fn change_plan(
         change,
         policy: policy(editing),
     });
-    Ok(Plan {
-        command,
-        reads: vec![view.key()],
-        said: Changing {
-            off_before: view.off_grid(),
-            view,
-            change,
-            notes: accepted.notes,
-            before: doc.clone(),
-            ragged_before,
-        },
-    })
+    let said = Changing {
+        off_before: view.off_grid(),
+        view,
+        change,
+        notes: accepted.notes,
+        before: doc.clone(),
+        ragged_before,
+    };
+    Ok((command, said))
 }
 
 /// Run the change as one command, planned where it is applied, and reply as `_edit_table`
 /// does.
 fn finish(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> ToolResult<Value> {
-    let planned = Planned::new(|doc: &WordDoc| change_plan(args, editing, doc, retry));
+    let planned = Planned(|tx: &mut Txn<'_, WordDoc>| change_plan(args, editing, tx, retry));
     // round 58 (R126): a row added looked at against the rows around it, in the call's
     // transaction
     let adds_row = matches!(args.action, TableAction::InsertRow | TableAction::CopyRow);
-    let look = |out: &Result<TableChanged, ToolError>, _: &WordDoc| {
-        let out = out.as_ref().ok()?;
+    let look = |out: &Result<(TableChanged, Changing), ToolError>, _: &WordDoc| {
+        let (out, _) = out.as_ref().ok()?;
         adds_row.then(|| (out.table.clone(), out.id.iter().cloned().collect()))
     };
     let ran = super::rows_written::run_writing_rows(editing, &planned, &args.table, look, retry);
-    let said = planned.said();
-    let (done, rows, version) = match (ran, said.as_ref()) {
-        (Ok((Ok(done), rows, version)), Some(_)) => (done, rows, version),
-        (Ok((Err(refusal), _, _)), _) => return ToolResult::failed(refusal),
-        (Err(EditError::Refused(message)), Some(said)) if matches!(said.change, TableChange::CopyRow { .. }) => {
-            return ToolResult::failed(uncopied(args, &said.view, message, said.change));
+    let ((done, said), rows, version) = match ran {
+        Ok((Ok(done), rows, version)) => (done, rows, version),
+        Ok((Err(refusal), _, _)) => return ToolResult::failed(refusal),
+        Err(EditError::Refused(message)) if args.action == TableAction::CopyRow => {
+            // the refusal said with the row as the head counts it (a version of its own)
+            let head = editing.editor.current();
+            return match changing(args, editing, head.doc(), retry) {
+                Ok((_, said)) => ToolResult::failed(uncopied(args, &said.view, message, said.change)),
+                Err(refusal) => ToolResult::failed(refusal),
+            };
         }
-        (Err(error), _) => return refused(error, retry.clone()),
-        (Ok(_), None) => return ToolResult::failed(ToolError::internal("no plan".to_owned(), "word:edit_table")),
+        Err(error) => return refused(error, retry.clone()),
     };
-    let Some(Changing {
+    let Changing {
         view,
         change,
         notes,
         before,
         ragged_before,
         off_before,
-    }) = said
-    else {
-        return ToolResult::failed(ToolError::internal("no plan".to_owned(), "word:edit_table"));
-    };
+    } = said;
     let table = view.table.id.clone();
     let mut watched = watch(editing, &before, &view, change);
     let now = done.table.clone();

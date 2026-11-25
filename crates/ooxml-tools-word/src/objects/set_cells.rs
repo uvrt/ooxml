@@ -25,7 +25,7 @@ use super::edit_table::table_json;
 use super::edit_table_args::{CellArg, WordEditTable};
 use super::table_view::{table_view, AcceptedView, TableView};
 use crate::describe::short;
-use crate::planned::{Plan, Planned};
+use crate::planned::Planned;
 use crate::review::{needed, Editing};
 use crate::structure::common::{outcome, policy, refused, Outcome};
 use crate::written;
@@ -69,11 +69,10 @@ pub(super) fn set_cells(
         .cells
         .as_deref()
         .ok_or_else(|| needed("cells", "", retry.clone()))?;
-    let planned = Planned::new(|doc: &WordDoc| plan(args, cells, editing, doc, retry));
+    let planned = Planned(|tx: &mut Txn<'_, WordDoc>| plan(args, cells, editing, tx, retry));
     let look = |_: &_, doc: &WordDoc| Some((doc.ids().follow(&args.table), Vec::new()));
     let ran = super::rows_written::run_writing_rows(editing, &planned, &args.table, look, retry);
-    let said = planned.said();
-    let ((done, facts), rows, version) = match ran {
+    let (((done, facts), said), rows, version) = match ran {
         Ok((Ok(done), rows, version)) => (done, rows, version),
         Ok((Err(refusal), _, _)) => return Err(refusal),
         Err(error @ (EditError::Address(_) | EditError::Argument { .. } | EditError::Position(_))) => {
@@ -85,16 +84,13 @@ pub(super) fn set_cells(
         }
         Err(error) => return Ok(refused(error, retry.clone())),
     };
-    let Some(Placing {
+    let Placing {
         view,
         mut fills,
         held,
         mut notes,
         texts,
-    }) = said
-    else {
-        return Err(ToolError::internal("no plan".to_owned(), "word:edit_table"));
-    };
+    } = said;
     count_fills(&mut fills, &texts);
     for note in done.notes {
         if !notes.contains(&note) {
@@ -119,16 +115,17 @@ pub(super) struct Placing {
     texts: Vec<String>,
 }
 
-/// The cells' writes worked out on `doc` (the version they are written to): the places as
-/// the table is accepted there, fills by its rows, each entry's value; refused as before
-/// anything changes.
+/// The cells' writes worked out on the transaction's version (the one they are written
+/// to): the places as the table is accepted there, fills by its rows, each entry's value;
+/// refused as before anything changes. The table is read by its key.
 pub(super) fn plan<'a, 'e>(
     args: &'a WordEditTable,
     cells: &'a [CellArg],
     editing: &'a Editing<'e>,
-    doc: &WordDoc,
+    tx: &mut Txn<'_, WordDoc>,
     retry: &'a TryCall,
-) -> Result<Plan<Writing<'a, 'e>, Placing>, ToolError> {
+) -> Result<(Writing<'a, 'e>, Placing), ToolError> {
+    let doc = tx.doc();
     let (docx, view, mut accepted) = super::edit_table::accepted_on(args, editing, doc, retry)?;
     let part = docx
         .part(&view.part)
@@ -191,11 +188,8 @@ pub(super) fn plan<'a, 'e>(
         editing,
         retry,
     };
-    Ok(Plan {
-        reads: vec![said.view.key()],
-        command: writing,
-        said,
-    })
+    tx.read(said.view.key());
+    Ok((writing, said))
 }
 
 /// The cells written, and the values written by reference said and kept where they went,

@@ -525,6 +525,23 @@ impl Command<WordDoc> for Keeping<'_> {
     }
 }
 
+/// A sync's one command, or none where nothing differs: what it planned on its version.
+pub(super) struct Syncs<'a>(pub(super) Option<Keeping<'a>>);
+
+impl Command<WordDoc> for Syncs<'_> {
+    /// The command's out; `None` where there was none.
+    type Out = Option<(RowsPlaced, bool)>;
+    type Error = EditError;
+
+    fn validate(&self, doc: &WordDoc) -> Result<(), EditError> {
+        self.0.as_ref().map_or(Ok(()), |keeping| keeping.validate(doc))
+    }
+
+    fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<Self::Out, EditError> {
+        self.0.as_ref().map(|keeping| keeping.prepare(tx)).transpose()
+    }
+}
+
 /// The keeps of the cells written, each on the cell's paragraphs with a durable id and text.
 pub(super) fn keeps(
     docx: &Docx,

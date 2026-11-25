@@ -17,7 +17,7 @@ use crate::planned::Planned;
 use crate::review::Editing;
 use crate::sources::{first_rows, fits, placed, thousands, Placed, SourceRows};
 use crate::structure::common::{outcome, policy, refused, Outcome};
-use ooxml_store::Snapshot;
+use ooxml_store::{Snapshot, Txn};
 use ooxml_tools::{ArgEnum, Refusal, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::{CellAxis, CellWrite, EditError, PlaceRows, PlacedRecord, RowsBeside, RowsPlaced, WordDoc};
 use ooxml_word_model::docx::tables::{Accepted, TABLE_COLUMNS_MAX};
@@ -90,16 +90,16 @@ pub(super) fn set_from(
     rows: &SourceRows,
     retry: &TryCall,
 ) -> Result<ToolResult<Value>, ToolError> {
-    let planned = Planned::new(|doc: &WordDoc| placing(args, editing, doc, rows, retry));
-    let look = |out: &Result<RowsPlaced, ToolError>, _: &WordDoc| {
-        let out = out.as_ref().ok()?;
+    let planned = Planned(|tx: &mut Txn<'_, WordDoc>| placing(args, editing, tx, rows, retry));
+    let look = |out: &Result<(RowsPlaced, Placing), ToolError>, _: &WordDoc| {
+        let (out, _) = out.as_ref().ok()?;
         Some((
             out.table.clone(),
             out.added.iter().filter_map(|r| r.id.clone()).collect::<Vec<_>>(),
         ))
     };
     let ran = super::rows_written::run_writing_rows(editing, &planned, &args.table, look, retry);
-    let (done, rows_said, version) = match ran {
+    let ((done, said), rows_said, version) = match ran {
         Ok((Ok(done), rows_said, version)) => (done, rows_said, version),
         Ok((Err(refusal), _, _)) => return Err(refusal),
         Err(error @ (EditError::Address(_) | EditError::Argument { .. } | EditError::Position(_))) => {
@@ -111,16 +111,13 @@ pub(super) fn set_from(
         }
         Err(error) => return Ok(refused(error, retry.clone())),
     };
-    let Some(Placing {
+    let Placing {
         table,
         shape,
         plan,
         placed_from,
         mut timing,
-    }) = planned.said()
-    else {
-        return Err(ToolError::internal("no plan".to_owned(), "word:edit_table"));
-    };
+    } = said;
     for (name, seconds) in &done.parts {
         timing.seconds(name, *seconds);
     }
@@ -152,11 +149,11 @@ pub(super) struct Placing {
 pub(super) fn placing<'e>(
     args: &super::edit_table_args::WordEditTable,
     editing: &Editing<'e>,
-    doc: &WordDoc,
+    tx: &mut Txn<'_, WordDoc>,
     rows: &SourceRows,
     retry: &TryCall,
-) -> Result<crate::planned::Plan<PlaceRows, Placing>, ToolError> {
-    let (_, view, accepted) = super::edit_table::accepted_on(args, editing, doc, retry)?;
+) -> Result<(PlaceRows, Placing), ToolError> {
+    let (_, view, accepted) = super::edit_table::accepted_on(args, editing, tx.doc(), retry)?;
     let mut timing = Timing::default();
     let started = Instant::now();
     let locale = editing.locale.cloned().unwrap_or_default();
@@ -189,17 +186,15 @@ pub(super) fn placing<'e>(
         record: PlacedRecord::Store(record(&placed_from, rows.name.as_deref())),
         policy: policy(editing),
     };
-    Ok(crate::planned::Plan {
-        command,
-        reads: vec![view.key()],
-        said: Placing {
-            table: view.table.id.clone(),
-            shape: accepted.table,
-            plan,
-            placed_from,
-            timing,
-        },
-    })
+    tx.read(view.key());
+    let said = Placing {
+        table: view.table.id.clone(),
+        shape: accepted.table,
+        plan,
+        placed_from,
+        timing,
+    };
+    Ok((command, said))
 }
 
 /// Where the block goes and how far the table falls short.

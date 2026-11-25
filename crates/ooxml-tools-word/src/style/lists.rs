@@ -4,8 +4,10 @@
 //!
 //! Must not: change the document but through a command.
 
+use crate::planned::run_planned;
 use crate::review::{edit_refusal, Editing};
 use crate::structure::common::{call, need, outcome, policy, Outcome};
+use ooxml_store::Txn;
 use ooxml_tools::{python_dumps, ArgEnum, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::units::twips;
 use ooxml_word_edit::{
@@ -132,30 +134,42 @@ pub fn word_lists(args: &WordLists, editing: &Editing<'_>) -> ToolResult<Value> 
 }
 
 fn run(args: &WordLists, editing: &Editing<'_>, again: &TryCall) -> Result<ToolResult<Value>, ToolError> {
-    let head = editing.editor.current();
-    let doc = head.doc();
-    let docx = doc
-        .docx()
-        .map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
-    let targets: Vec<Address> = args.targets.iter().map(|t| Address::parse(t)).collect();
-    let mut paragraphs = Vec::new();
-    for target in &targets {
-        let found = paragraphs_of(doc, &docx, target).map_err(|e| edit_refusal(e, "", again.clone()))?;
-        paragraphs.extend(found);
-    }
-    let action = action(args, doc, &docx, again)?;
-    if args.action == ListsAction::Remove && !args.force.unwrap_or(false) {
-        refuse_style_numbered(&docx, &paragraphs, again)?;
-    }
-    let command = ListEdit {
-        targets,
-        action,
-        policy: policy(editing),
-    };
-    Ok(match editing.editor.run(editing.caller, &command) {
-        Ok(done) => reply(args, done.out),
+    Ok(match run_planned(editing, lists_plan(args, editing, again))? {
+        Ok(done) => reply(args, done.out.0),
         Err(error) => ToolResult::failed(edit_refusal(error, "", again.clone())),
     })
+}
+
+/// `word_lists`' plan, made in the edit's transaction ([`crate::planned`]): the targets'
+/// paragraphs, the action (`continue`'s list) and `remove`'s refusal of paragraphs their
+/// style numbers, on the version the edit is applied to ([`ListEdit`] reads all of it).
+fn lists_plan<'a>(
+    args: &'a WordLists,
+    editing: &'a Editing<'a>,
+    again: &'a TryCall,
+) -> impl Fn(&mut Txn<'_, WordDoc>) -> Result<(ListEdit, ()), ToolError> + 'a {
+    move |tx| {
+        let doc = tx.doc();
+        let docx = doc
+            .docx()
+            .map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
+        let targets: Vec<Address> = args.targets.iter().map(|t| Address::parse(t)).collect();
+        let mut paragraphs = Vec::new();
+        for target in &targets {
+            let found = paragraphs_of(doc, &docx, target).map_err(|e| edit_refusal(e, "", again.clone()))?;
+            paragraphs.extend(found);
+        }
+        let action = action(args, doc, &docx, again)?;
+        if args.action == ListsAction::Remove && !args.force.unwrap_or(false) {
+            refuse_style_numbered(&docx, &paragraphs, again)?;
+        }
+        let command = ListEdit {
+            targets,
+            action,
+            policy: policy(editing),
+        };
+        Ok((command, ()))
+    }
 }
 
 /// The edit core's action for the call (docx-agent's arguments read as it reads them).
@@ -400,4 +414,38 @@ fn earlier_item(
 /// Registers `word_lists` (the crate's [`crate::register`]).
 pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
     r.edit::<WordLists>(word_lists);
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
+
+    use super::*;
+    use crate::planned::held::{args, calling, compare, opened, paragraph, raced};
+    use ooxml_word_edit::{RevisionPolicy, SetParagraphStyle};
+
+    #[test]
+    fn the_numbered_style_check_is_made_where_the_remove_commits() {
+        // the item given a style that numbers it meanwhile: the remove, prepared again,
+        // refuses as it does called after it -- not the list taken off and the style left
+        let open = || opened("lists-and-styles.docx");
+        let item = paragraph(&open(), "First item");
+        let args: WordLists = args(json!({"targets": [item], "action": "remove"}));
+        let again = call("word_lists", &[]);
+        let compared = compare(
+            open,
+            |editor| SetParagraphStyle {
+                target: Address::parse(&paragraph(editor, "First item")),
+                style: Some("List Bullet".to_owned()),
+                policy: RevisionPolicy::Untracked,
+            },
+            |editor, between| {
+                calling(editor, |editing| {
+                    raced(editor, lists_plan(&args, editing, &again), between)
+                })
+            },
+            |editing| word_lists(&args, editing),
+        );
+        compared.assert_same_refusal();
+    }
 }

@@ -9,12 +9,14 @@
 //! Must not: change the document but through a command.
 
 use super::common::{blocks_ref_as_place, call, is_place, name_blocks, outcome, policy, refused, Outcome};
+use crate::planned::run_planned;
 use crate::review::Editing;
+use ooxml_store::Txn;
 use ooxml_tools::pyfmt::repr_str;
 use ooxml_tools::{ArgEnum, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::{
-    section_blocks, section_blocks_in, BookmarkPolicy, CopyBlocks, CopyRange, CopySource, ListPolicy, StylePolicy,
-    UnmappedPolicy,
+    section_blocks_in, section_in, BookmarkPolicy, CopyBlocks, CopyRange, CopySource, ListPolicy, StylePolicy,
+    UnmappedPolicy, WordDoc,
 };
 use ooxml_word_model::address::Place;
 use serde_json::{json, Map, Value};
@@ -129,50 +131,63 @@ fn run(args: &WordCopyFrom, editing: &Editing<'_>, way: &TryCall) -> Result<Tool
             }
         }
     };
-    let edit_refusal = |e| crate::review::edit_refusal(e, "", way.clone());
-    let range = match (&args.section_heading, &args.range) {
-        (Some(heading), _) => {
-            let found = match &source {
-                CopySource::Own => section_blocks(editing.editor.current().doc(), heading),
-                CopySource::Other(other) => other.docx().and_then(|d| section_blocks_in(other.ids(), &d, heading)),
-            };
-            match found {
-                Ok(ids) => CopyRange::Ids(ids),
-                Err(error) => return Err(edit_refusal(error)),
-            }
-        }
-        (None, Some(range)) => CopyRange::Blocks(range.clone()),
-        (None, None) => return Err(crate::review::needed("range", "", way.clone())),
-    };
-    let command = CopyBlocks {
-        source,
-        range,
-        at: Place::parse(&args.at),
-        policy: policy(editing),
-        styles: match args.styles {
-            None | Some(CopyStyles::UseDestination) => StylePolicy::UseDestination,
-            Some(CopyStyles::KeepSource) => StylePolicy::KeepSource,
-            Some(CopyStyles::Merge) => StylePolicy::Merge,
-        },
-        style_map: args
-            .style_map
-            .iter()
-            .flatten()
-            .map(|m| (m.source.clone(), m.destination.clone()))
-            .collect(),
-        unmapped: match args.unmapped {
-            Some(Unmapped::Body) => UnmappedPolicy::Body,
-            None | Some(Unmapped::Import) => UnmappedPolicy::Import,
-        },
-        // the tool copies lists as Word's paste does: each a new list
-        lists: ListPolicy::Separate,
-        // and renames a bookmark whose name this document has
-        bookmarks: BookmarkPolicy::Rename,
-    };
-    Ok(match editing.editor.run(editing.caller, &command) {
-        Ok(done) => reply(args, done.out),
+    Ok(match run_planned(editing, copy_plan(args, source, editing, way))? {
+        Ok(done) => reply(args, done.out.0),
         Err(error) => refused(error, way.clone()),
     })
+}
+
+/// `word_copy_from`'s plan, made in the edit's transaction ([`crate::planned`]): a heading's
+/// section of this document read there.
+pub(crate) fn copy_plan<'a>(
+    args: &'a WordCopyFrom,
+    source: CopySource,
+    editing: &'a Editing<'a>,
+    way: &'a TryCall,
+) -> impl Fn(&mut Txn<'_, WordDoc>) -> Result<(CopyBlocks, ()), ToolError> + 'a {
+    move |tx| {
+        let edit_refusal = |e| crate::review::edit_refusal(e, "", way.clone());
+        let range = match (&args.section_heading, &args.range) {
+            (Some(heading), _) => {
+                let found = match &source {
+                    CopySource::Own => section_in(tx, heading),
+                    CopySource::Other(other) => other.docx().and_then(|d| section_blocks_in(other.ids(), &d, heading)),
+                };
+                match found {
+                    Ok(ids) => CopyRange::Ids(ids),
+                    Err(error) => return Err(edit_refusal(error)),
+                }
+            }
+            (None, Some(range)) => CopyRange::Blocks(range.clone()),
+            (None, None) => return Err(crate::review::needed("range", "", way.clone())),
+        };
+        let command = CopyBlocks {
+            source: source.clone(),
+            range,
+            at: Place::parse(&args.at),
+            policy: policy(editing),
+            styles: match args.styles {
+                None | Some(CopyStyles::UseDestination) => StylePolicy::UseDestination,
+                Some(CopyStyles::KeepSource) => StylePolicy::KeepSource,
+                Some(CopyStyles::Merge) => StylePolicy::Merge,
+            },
+            style_map: args
+                .style_map
+                .iter()
+                .flatten()
+                .map(|m| (m.source.clone(), m.destination.clone()))
+                .collect(),
+            unmapped: match args.unmapped {
+                Some(Unmapped::Body) => UnmappedPolicy::Body,
+                None | Some(Unmapped::Import) => UnmappedPolicy::Import,
+            },
+            // the tool copies lists as Word's paste does: each a new list
+            lists: ListPolicy::Separate,
+            // and renames a bookmark whose name this document has
+            bookmarks: BookmarkPolicy::Rename,
+        };
+        Ok((command, ()))
+    }
 }
 
 /// The reply, as docx-agent's `outcome` and `name_blocks` make it of the copy.
@@ -217,4 +232,51 @@ fn not_open(id: &str, doc: &str) -> ToolError {
 /// Registers `word_copy_from` (the crate's [`crate::register`]).
 pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
     r.edit::<WordCopyFrom>(word_copy_from);
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
+
+    use super::*;
+    use crate::planned::held::{args, calling, compare, markdown, marked, paragraph, raced};
+    use ooxml_word_edit::Editor;
+
+    fn two() -> Editor {
+        let editor = marked();
+        editor
+            .run(
+                &ooxml_store::Caller::anonymous(),
+                &markdown("end", "# Two\n\nTwo's text."),
+            )
+            .unwrap();
+        editor
+    }
+
+    #[test]
+    fn a_section_copied_from_this_document_is_read_where_the_copy_commits() {
+        let editor = two();
+        let (two_id, first) = (paragraph(&editor, "Two"), paragraph(&editor, "Identifiers"));
+        let args: WordCopyFrom =
+            args(json!({"source_doc": "d1", "section_heading": two_id, "at": format!("before:{first}")}));
+        let way = call("word_read", &[]);
+        let compared = compare(
+            two,
+            |_| markdown("end", "Added to two."),
+            |editor, between| {
+                calling(editor, |editing| {
+                    raced(editor, copy_plan(&args, CopySource::Own, editing, &way), between)
+                })
+            },
+            |editing| word_copy_from(&args, editing),
+        );
+        compared.assert_same_edit();
+        assert!(
+            compared
+                .serial
+                .starts_with("\n[pStyle=Heading1]Two\nTwo's text.\nAdded to two.\n"),
+            "{}",
+            compared.serial
+        );
+    }
 }

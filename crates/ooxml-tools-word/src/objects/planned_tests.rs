@@ -1,92 +1,35 @@
-//! Forced interleavings of the object tools' planned commands ([`crate::planned::Planned`]):
-//! a handler's command prepared and held, another writer's edit committed meanwhile, then
-//! the command committed. Each plan reads what it works out its edits from in the command's
-//! transaction, so the edit meanwhile is a conflict and the command, planned again on the
-//! newer version, does what running the two one at a time does. A plan worked out on the
-//! head before the command runs (as the handlers did) is shown stale there.
+//! Forced interleavings of the object tools' planned edits ([`crate::planned::Planned`]): a
+//! handler's plan held after its first prepare while another writer's edit commits
+//! ([`held::raced`]), then committed. Each plan reads what it works out its edits from in
+//! the edit's transaction, so the edit meanwhile is a conflict and the plan, made again on
+//! the newer version, does what running the two one at a time does. A plan worked out on
+//! the head before the command runs (as the handlers did) is shown stale there.
 // Tests may unwrap, panic and index (docs/architecture/README.md, section 2.5).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
-use crate::planned::{Plan, Planned};
-use crate::review::{CallEditor, Editing};
+use crate::planned::held::{calling as editing, markdown, opened, raced};
+use crate::planned::run_planned;
+use crate::review::Editing;
 use crate::sources::{SourceRows, SourceValue};
-use ooxml_base::{Cancel, Limits};
-use ooxml_derive::CacheBudget;
-use ooxml_opc::Package;
-use ooxml_store::{Caller, Clock, Command, StoreConfig, Txn};
-use ooxml_tools::{ToolArgs, ToolError, TryCall};
-use ooxml_word_edit::{
-    EditError, EditTable, Edited, Editor, InsertMarkdown, MarkdownOptions, RevisionPolicy, TableChange, WordDoc,
-    WriteMap,
-};
+use ooxml_store::{Caller, Command, Txn};
+use ooxml_tools::{ToolError, TryCall};
+use ooxml_word_edit::{EditError, EditTable, Editor, RevisionPolicy, Setup, TableChange, WordDoc};
 use ooxml_word_model::address::Address;
 use ooxml_word_model::docx::{at_path, find_path};
 use ooxml_word_model::ids::W;
-use serde_json::{json, Value};
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use serde_json::json;
 
-struct Still;
-
-impl Clock for Still {
-    fn monotonic(&self) -> Duration {
-        Duration::ZERO
-    }
-}
-
-struct Unlimited;
-
-impl CacheBudget for Unlimited {
-    fn reserve(&self, _bytes: usize) -> bool {
-        true
-    }
-    fn release(&self, _bytes: usize) {}
-    fn used(&self) -> usize {
-        0
-    }
-}
-
-struct Never;
-
-impl Cancel for Never {
-    fn is_cancelled(&self) -> bool {
-        false
-    }
-}
-
-/// An editor of the fixture `name` (under the oracle's fixtures).
-pub(super) fn editor_of(name: &str) -> Editor {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../crates/ooxml-oracle/fixtures")
-        .join(name);
-    let bytes: Arc<[u8]> = Arc::from(std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display())));
-    let package = Package::open(bytes, &Limits::default()).unwrap();
-    Editor::open(package, StoreConfig::default(), Arc::new(Still), Arc::new(Unlimited)).unwrap()
-}
-
-/// Markdown put at `at`, untracked.
-pub(super) fn insert(at: &str, markdown: &str) -> InsertMarkdown {
-    InsertMarkdown {
-        markdown: markdown.to_owned(),
-        at: at.into(),
-        style_map: WriteMap::default(),
-        options: MarkdownOptions::default(),
-        policy: RevisionPolicy::Untracked,
-    }
-}
+pub(super) use crate::planned::held::args;
 
 /// An editor of a document whose body ends with a table of a header row and the rows
 /// `r1` to `r4` (two columns: the row's name, then `x`), its every block stamped; the
 /// table's id.
 pub(super) fn with_table() -> (Editor, String) {
-    let editor = editor_of("generated/ids-and-markup.docx");
-    let markdown = "| name | value |\n|---|---|\n| r1 | x |\n| r2 | x |\n| r3 | x |\n| r4 | x |\n";
+    let editor = opened("ids-and-markup.docx");
+    let table = "| name | value |\n|---|---|\n| r1 | x |\n| r2 | x |\n| r3 | x |\n| r4 | x |\n";
     editor
         .store()
-        .run(&Caller::anonymous(), &insert("end", markdown))
+        .run(&Caller::anonymous(), &markdown("end", table))
         .unwrap();
     let docx = editor.store().snapshot().doc().docx().unwrap();
     let table = docx.body().unwrap().ids.tables().iter().last().unwrap().id;
@@ -145,108 +88,37 @@ fn texts(element: &ooxml_xml::Element) -> String {
     element.child_elements().map(|c| texts(c)).collect()
 }
 
-/// One call's [`Editing`] on `editor`, handed to `body`.
-pub(super) fn editing<R>(editor: &Editor, body: impl FnOnce(&Editing<'_>) -> R) -> R {
-    let caller = Caller::named("last");
-    let call_editor = CallEditor::new(editor);
-    let opened = editor.store().snapshot().doc().clone();
-    let editing = Editing::new(&call_editor, &caller, &opened, "d1", &Never, "2026-11-25T10:00:00Z");
-    body(&editing)
-}
-
-/// `command`, held after its first prepare until told to go on.
-struct Paused<'c, C> {
-    command: &'c C,
-    prepared: Sender<()>,
-    go: Mutex<Receiver<()>>,
-    first: AtomicBool,
-}
-
-impl<C: Command<WordDoc, Error = EditError>> Command<WordDoc> for Paused<'_, C> {
-    type Out = C::Out;
-    type Error = EditError;
-
-    fn validate(&self, doc: &WordDoc) -> Result<(), EditError> {
-        self.command.validate(doc)
-    }
-
-    fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<C::Out, EditError> {
-        let out = self.command.prepare(tx)?;
-        if self.first.swap(false, Ordering::SeqCst) {
-            self.prepared.send(()).unwrap();
-            self.go.lock().unwrap().recv_timeout(Duration::from_secs(60)).unwrap();
-        }
-        Ok(out)
-    }
-}
-
-/// `last` run through the call's editor, prepared and held while `between` commits on
-/// another thread, then committed: its run, and the store's conflicts.
-pub(super) fn interleaved<C, B>(
-    editing: &Editing<'_>,
-    last: &C,
-    between: &B,
-) -> (Result<Edited<C::Out>, EditError>, u64)
-where
-    C: Command<WordDoc, Error = EditError>,
-    B: Command<WordDoc, Error = EditError> + Sync,
-{
-    let (prepared, wait) = channel();
-    let (release, go) = channel();
-    let paused = Paused {
-        command: last,
-        prepared,
-        go: Mutex::new(go),
-        first: AtomicBool::new(true),
-    };
-    let store = editing.editor.store();
-    let done = std::thread::scope(|scope| {
-        scope.spawn(move || {
-            wait.recv_timeout(Duration::from_secs(60)).unwrap();
-            store.run(&Caller::named("between"), between).unwrap();
-            release.send(()).unwrap();
-        });
-        editing.editor.run(editing.caller, &paused)
-    });
-    (done, store.stats().conflicts)
-}
-
 /// `plan` worked out on the head and then run after `between` committed -- the handlers'
 /// way before the plans moved into the command: whether it ran.
-pub(super) fn planned_before<C, S, R, B>(
+pub(super) fn planned_before<C, P, B>(
     editing: &Editing<'_>,
-    plan: impl Fn(&WordDoc) -> Result<Plan<C, S>, R>,
+    plan: impl Fn(&mut Txn<'_, WordDoc>) -> Result<(C, P), ToolError>,
     between: &B,
 ) -> bool
 where
     C: Command<WordDoc, Error = EditError>,
     B: Command<WordDoc, Error = EditError>,
 {
-    let head = editing.editor.current();
-    let Ok(baked) = plan(head.doc()) else {
+    let mut head = editing.editor.store().begin(&Setup::default());
+    let Ok((baked, _)) = plan(&mut head) else {
         panic!("the plan refused on the head")
     };
     editing.editor.store().run(&Caller::named("between"), between).unwrap();
-    editing.editor.run(editing.caller, &baked.command).is_ok()
+    editing.editor.run(editing.caller, &baked).is_ok()
 }
 
 /// `plan` run alone through the call's editor: what a call does one at a time.
-pub(super) fn alone<C, S, R>(editing: &Editing<'_>, plan: impl Fn(&WordDoc) -> Result<Plan<C, S>, R>)
+pub(super) fn alone<C, P>(editing: &Editing<'_>, plan: impl Fn(&mut Txn<'_, WordDoc>) -> Result<(C, P), ToolError>)
 where
     C: Command<WordDoc, Error = EditError>,
 {
-    let command = Planned::new(plan);
-    assert!(editing.editor.run(editing.caller, &command).unwrap().out.is_ok());
+    let done = run_planned(editing, plan);
+    assert!(matches!(done, Ok(Ok(_))), "the call alone made its edit");
 }
 
 /// The try_call the handlers' refusals offer (unused by a plan that does not refuse).
 pub(super) fn retry() -> TryCall {
     crate::structure::common::call("test", &[("doc", json!("d1"))])
-}
-
-/// The typed arguments of `tool`'s `arguments`.
-pub(super) fn args<A: ToolArgs>(arguments: Value) -> A {
-    A::accept(arguments, Some("docx")).unwrap().0
 }
 
 /// A row put in after the table's last.
@@ -302,7 +174,7 @@ mod format_table {
         let call = kept_whole(&table);
         editing(&alone_editor, |editing| {
             let retry = retry();
-            alone(editing, |doc| plan(&call, editing, doc, &retry));
+            alone(editing, |tx| plan(&call, editing, tx, &retry));
         });
         rows_of(&alone_editor, &table)
     }
@@ -311,12 +183,15 @@ mod format_table {
     fn the_rows_counted_in_the_transaction_conflict_with_a_row_put_in() {
         let (shared, table) = with_table();
         let call = kept_whole(&table);
-        let (done, conflicts) = editing(&shared, |editing| {
+        let (refused, conflicts) = editing(&shared, |editing| {
             let retry = retry();
-            let command = Planned::new(|doc: &WordDoc| plan(&call, editing, doc, &retry));
-            interleaved(editing, &command, &row_at_end(&table))
+            raced(
+                &shared,
+                |tx: &mut Txn<'_, WordDoc>| plan(&call, editing, tx, &retry),
+                &row_at_end(&table),
+            )
         });
-        assert!(done.unwrap().out.is_ok());
+        assert!(refused.is_none(), "{refused:?}");
         assert!(conflicts >= 1, "the row put in is a conflict");
         let rows = rows_of(&shared, &table);
         assert_eq!(rows, serial());
@@ -332,7 +207,7 @@ mod format_table {
             let retry = retry();
             assert!(planned_before(
                 editing,
-                |doc| plan(&call, editing, doc, &retry),
+                |tx| plan(&call, editing, tx, &retry),
                 &row_at_end(&table)
             ));
         });
@@ -370,7 +245,7 @@ mod edit_table {
         let call = column_after_last(&table);
         editing(&alone_editor, |editing| {
             let retry = retry();
-            alone(editing, |doc| change_plan(&call, editing, doc, &retry));
+            alone(editing, |tx| change_plan(&call, editing, tx, &retry));
         });
         rows_of(&alone_editor, &table)
     }
@@ -379,12 +254,15 @@ mod edit_table {
     fn the_last_column_read_in_the_transaction_conflicts_with_a_column_deleted() {
         let (shared, table) = with_table();
         let call = column_after_last(&table);
-        let (done, conflicts) = editing(&shared, |editing| {
+        let (refused, conflicts) = editing(&shared, |editing| {
             let retry = retry();
-            let command = Planned::new(|doc: &WordDoc| change_plan(&call, editing, doc, &retry));
-            interleaved(editing, &command, &names_gone(&table))
+            raced(
+                &shared,
+                |tx: &mut Txn<'_, WordDoc>| change_plan(&call, editing, tx, &retry),
+                &names_gone(&table),
+            )
         });
-        assert!(done.unwrap().out.is_ok());
+        assert!(refused.is_none(), "{refused:?}");
         assert!(conflicts >= 1, "the column deleted is a conflict");
         let rows = rows_of(&shared, &table);
         assert_eq!(rows, serial());
@@ -400,7 +278,7 @@ mod edit_table {
             let retry = retry();
             planned_before(
                 editing,
-                |doc| change_plan(&call, editing, doc, &retry),
+                |tx| change_plan(&call, editing, tx, &retry),
                 &names_gone(&table),
             )
         });
@@ -431,7 +309,7 @@ mod set_cells {
         let cells = call.cells.clone().unwrap();
         editing(&alone_editor, |editing| {
             let retry = retry();
-            alone(editing, |doc| plan(&call, &cells, editing, doc, &retry));
+            alone(editing, |tx| plan(&call, &cells, editing, tx, &retry));
         });
         rows_of(&alone_editor, &table)
     }
@@ -441,12 +319,15 @@ mod set_cells {
         let (shared, table) = with_table();
         let call = column_filled(&table);
         let cells = call.cells.clone().unwrap();
-        let (done, conflicts) = editing(&shared, |editing| {
+        let (refused, conflicts) = editing(&shared, |editing| {
             let retry = retry();
-            let command = Planned::new(|doc: &WordDoc| plan(&call, &cells, editing, doc, &retry));
-            interleaved(editing, &command, &row_at_end(&table))
+            raced(
+                &shared,
+                |tx: &mut Txn<'_, WordDoc>| plan(&call, &cells, editing, tx, &retry),
+                &row_at_end(&table),
+            )
         });
-        assert!(done.unwrap().out.is_ok());
+        assert!(refused.is_none(), "{refused:?}");
         assert!(conflicts >= 1, "the row put in is a conflict");
         let rows = rows_of(&shared, &table);
         assert_eq!(rows, serial());
@@ -460,7 +341,7 @@ mod set_cells {
         let cells = call.cells.clone().unwrap();
         editing(&shared, |editing| {
             let retry = retry();
-            let plan = |doc: &WordDoc| plan(&call, &cells, editing, doc, &retry);
+            let plan = |tx: &mut Txn<'_, WordDoc>| plan(&call, &cells, editing, tx, &retry);
             assert!(planned_before(editing, plan, &row_at_end(&table)));
         });
         assert_ne!(rows_of(&shared, &table), serial());
@@ -495,7 +376,7 @@ mod set_from {
         let (call, rows) = (placed_from_row_2(&table), block());
         editing(&alone_editor, |editing| {
             let retry = retry();
-            alone(editing, |doc| placing(&call, editing, doc, &rows, &retry));
+            alone(editing, |tx| placing(&call, editing, tx, &rows, &retry));
         });
         rows_of(&alone_editor, &table)
     }
@@ -504,12 +385,15 @@ mod set_from {
     fn the_room_read_in_the_transaction_conflicts_with_a_row_put_on_top() {
         let (shared, table) = with_table();
         let (call, rows) = (placed_from_row_2(&table), block());
-        let (done, conflicts) = editing(&shared, |editing| {
+        let (refused, conflicts) = editing(&shared, |editing| {
             let retry = retry();
-            let command = Planned::new(|doc: &WordDoc| placing(&call, editing, doc, &rows, &retry));
-            interleaved(editing, &command, &row_on_top(&table))
+            raced(
+                &shared,
+                |tx: &mut Txn<'_, WordDoc>| placing(&call, editing, tx, &rows, &retry),
+                &row_on_top(&table),
+            )
         });
-        assert!(done.unwrap().out.is_ok());
+        assert!(refused.is_none(), "{refused:?}");
         assert!(conflicts >= 1, "the row put on top is a conflict");
         assert_eq!(rows_of(&shared, &table), serial());
     }
@@ -520,7 +404,7 @@ mod set_from {
         let (call, rows) = (placed_from_row_2(&table), block());
         editing(&shared, |editing| {
             let retry = retry();
-            let plan = |doc: &WordDoc| placing(&call, editing, doc, &rows, &retry);
+            let plan = |tx: &mut Txn<'_, WordDoc>| placing(&call, editing, tx, &rows, &retry);
             assert!(planned_before(editing, plan, &row_on_top(&table)));
         });
         // the rows grown for the room before the row was put on top: one too many
@@ -556,7 +440,7 @@ mod sync {
         let (call, rows) = (synced(&table), values());
         editing(&alone_editor, |editing| {
             let retry = retry();
-            alone(editing, |doc| syncing(&call, editing, doc, &rows, &retry));
+            alone(editing, |tx| syncing(&call, editing, tx, &rows, &retry));
         });
         rows_of(&alone_editor, &table)
     }
@@ -565,16 +449,15 @@ mod sync {
     fn the_keys_rows_read_in_the_transaction_conflict_with_a_row_put_on_top() {
         let (shared, table) = with_table();
         let (call, rows) = (synced(&table), values());
-        let (done, conflicts) = editing(&shared, |editing| {
+        let (refused, conflicts) = editing(&shared, |editing| {
             let retry = retry();
-            let command = Planned::new(|doc: &WordDoc| syncing(&call, editing, doc, &rows, &retry));
-            interleaved(editing, &command, &row_on_top(&table))
+            raced(
+                &shared,
+                |tx: &mut Txn<'_, WordDoc>| syncing(&call, editing, tx, &rows, &retry),
+                &row_on_top(&table),
+            )
         });
-        match done.unwrap().out {
-            Ok(_) => {}
-            Err(crate::objects::table_sync::Stop::Refused(e)) => panic!("{}", e.message()),
-            Err(crate::objects::table_sync::Stop::Unchanged(_)) => panic!("unchanged"),
-        }
+        assert!(refused.is_none(), "{refused:?}");
         assert!(conflicts >= 1, "the row put on top is a conflict");
         let synced_rows = rows_of(&shared, &table);
         assert_eq!(synced_rows, serial());
@@ -588,7 +471,7 @@ mod sync {
         let (call, rows) = (synced(&table), values());
         editing(&shared, |editing| {
             let retry = retry();
-            let plan = |doc: &WordDoc| syncing(&call, editing, doc, &rows, &retry);
+            let plan = |tx: &mut Txn<'_, WordDoc>| syncing(&call, editing, tx, &rows, &retry);
             assert!(planned_before(editing, plan, &row_on_top(&table)));
         });
         assert_ne!(rows_of(&shared, &table), serial());
@@ -646,8 +529,8 @@ mod edit_chart {
     fn plan<'e>(
         call: &EditChart,
         editing: &Editing<'e>,
-        doc: &WordDoc,
-    ) -> Result<Plan<EditGraphic<ChartDataEdit>, ()>, ToolError> {
+        tx: &mut Txn<'_, WordDoc>,
+    ) -> Result<(EditGraphic<ChartDataEdit>, ()), ToolError> {
         let read = retry();
         let edit = |data: &ooxml_chart::data::ChartData, _: &ooxml_xml::Element, lang: String| {
             planned(call, data, &read, &lang).map(|action| ChartDataEdit {
@@ -655,7 +538,7 @@ mod edit_chart {
                 action,
             })
         };
-        chart_plan(call, editing, doc, &edit)
+        chart_plan(call, editing, tx, &edit)
     }
 
     fn part_of(editor: &Editor, part: &str) -> Vec<u8> {
@@ -672,38 +555,41 @@ mod edit_chart {
 
     /// The first series removed, then the value set, one at a time.
     fn serial() -> Vec<u8> {
-        let alone_editor = editor_of("generated/charts/charts.docx");
+        let alone_editor = opened("charts/charts.docx");
         let (id, part, series, category) = chart(&alone_editor);
         alone_editor
             .store()
             .run(&Caller::anonymous(), &first_series_gone(&id))
             .unwrap();
         let call = set_value(&id, &series, &category);
-        editing(&alone_editor, |editing| alone(editing, |doc| plan(&call, editing, doc)));
+        editing(&alone_editor, |editing| alone(editing, |tx| plan(&call, editing, tx)));
         part_of(&alone_editor, &part)
     }
 
     #[test]
     fn a_series_resolved_in_the_transaction_conflicts_with_a_series_removed_before_it() {
-        let shared = editor_of("generated/charts/charts.docx");
+        let shared = opened("charts/charts.docx");
         let (id, part, series, category) = chart(&shared);
         let call = set_value(&id, &series, &category);
-        let (done, conflicts) = editing(&shared, |editing| {
-            let command = Planned::new(|doc: &WordDoc| plan(&call, editing, doc));
-            interleaved(editing, &command, &first_series_gone(&id))
+        let (refused, conflicts) = editing(&shared, |editing| {
+            raced(
+                &shared,
+                |tx: &mut Txn<'_, WordDoc>| plan(&call, editing, tx),
+                &first_series_gone(&id),
+            )
         });
-        assert!(done.unwrap().out.is_ok());
+        assert!(refused.is_none(), "{refused:?}");
         assert!(conflicts >= 1, "the series removed is a conflict");
         assert_eq!(part_of(&shared, &part), serial());
     }
 
     #[test]
     fn a_series_resolved_on_the_head_before_the_edit_is_stale_after_a_series_removed_before_it() {
-        let shared = editor_of("generated/charts/charts.docx");
+        let shared = opened("charts/charts.docx");
         let (id, part, series, category) = chart(&shared);
         let call = set_value(&id, &series, &category);
         let ran = editing(&shared, |editing| {
-            planned_before(editing, |doc| plan(&call, editing, doc), &first_series_gone(&id))
+            planned_before(editing, |tx| plan(&call, editing, tx), &first_series_gone(&id))
         });
         // the index names another series now, or none
         assert!(!ran || part_of(&shared, &part) != serial());
@@ -749,26 +635,29 @@ mod controls {
 
     /// The other fill, then this one, one at a time.
     fn serial() -> Vec<u8> {
-        let alone_editor = editor_of("generated/controls.docx");
+        let alone_editor = opened("controls.docx");
         let id = text_control(&alone_editor);
         alone_editor.store().run(&Caller::anonymous(), &filled(&id)).unwrap();
         editing(&alone_editor, |editing| {
             let list = retry();
-            alone(editing, |doc| fill(editing, doc, (&id, "last"), &list));
+            alone(editing, |tx| fill(editing, tx, (&id, "last"), &list));
         });
         main_part(&alone_editor)
     }
 
     #[test]
     fn the_kind_read_in_the_transaction_conflicts_with_the_control_written() {
-        let shared = editor_of("generated/controls.docx");
+        let shared = opened("controls.docx");
         let id = text_control(&shared);
-        let (done, conflicts) = editing(&shared, |editing| {
+        let (refused, conflicts) = editing(&shared, |editing| {
             let list = retry();
-            let command = Planned::new(|doc: &WordDoc| fill(editing, doc, (&id, "last"), &list));
-            interleaved(editing, &command, &filled(&id))
+            raced(
+                &shared,
+                |tx: &mut Txn<'_, WordDoc>| fill(editing, tx, (&id, "last"), &list),
+                &filled(&id),
+            )
         });
-        assert!(done.unwrap().out.is_ok());
+        assert!(refused.is_none(), "{refused:?}");
         assert!(conflicts >= 1, "the control written meanwhile is a conflict");
         assert_eq!(main_part(&shared), serial());
     }

@@ -22,12 +22,13 @@ use super::chart_read::{chart_json, chart_read_json, style_json};
 use super::chart_style;
 use super::chart_style::ChartStyleEdit;
 use super::{ChartAction, ChartAxis, ChartPosition, EditChart};
-use crate::planned::{Plan, Planned};
+use crate::planned::run_planned;
 use crate::structure::common::{call, policy, refused};
 use crate::{Editing, Version};
 use ooxml_base::pyfmt::repr_str;
 use ooxml_base::Cancel;
 use ooxml_chart::data::{chart_data, ChartData};
+use ooxml_store::Txn;
 use ooxml_tools::TryCall;
 use ooxml_tools::{ArgEnum, Done, Refusal, ToolError, ToolResult, WayOut};
 use ooxml_word_edit::{EditGraphic, GraphicEdit, Key, WordDoc};
@@ -135,11 +136,8 @@ fn chart_action(args: &EditChart, editing: &Editing<'_>, summary: String) -> Res
                 action,
             })
         };
-        let command = Planned::new(|doc: &WordDoc| chart_plan(args, editing, doc, &edit));
-        editing
-            .editor
-            .run(editing.caller, &command)
-            .map(|done| (done.out, done.version))
+        let plan = |tx: &mut Txn<'_, WordDoc>| chart_plan(args, editing, tx, &edit);
+        run_planned(editing, plan)?.map(|done| (done.out.0, done.version))
     } else {
         let edit = |data: &ChartData, _: &Element, lang: String| {
             planned(args, data, &read, &lang).map(|action| ChartDataEdit {
@@ -147,17 +145,13 @@ fn chart_action(args: &EditChart, editing: &Editing<'_>, summary: String) -> Res
                 action,
             })
         };
-        let command = Planned::new(|doc: &WordDoc| chart_plan(args, editing, doc, &edit));
-        editing
-            .editor
-            .run(editing.caller, &command)
-            .map(|done| (done.out, done.version))
+        let plan = |tx: &mut Txn<'_, WordDoc>| chart_plan(args, editing, tx, &edit);
+        run_planned(editing, plan)?.map(|done| (done.out.0, done.version))
     };
     let (edited, version) = match ran {
         Ok(done) => done,
         Err(error) => return Ok(refused(error, read)),
     };
-    let edited = edited?;
     let after = version
         .doc()
         .docx()
@@ -192,16 +186,18 @@ fn chart_data_of(found: Result<(String, Arc<Element>), String>) -> Result<(Chart
     })
 }
 
-/// The command a data or style action is on `doc`: the chart the target names read, `edit`
-/// working out the action from its data and its root in the language new text is written
-/// in; the styles part read for that language (the chart's part the command reads itself).
+/// The command a data or style action is on the transaction's version: the chart the
+/// target names read, `edit` working out the action from its data and its root in the
+/// language new text is written in; the styles part read for that language (the chart's
+/// part the command reads itself).
 pub(super) fn chart_plan<E: GraphicEdit>(
     args: &EditChart,
     editing: &Editing<'_>,
-    doc: &WordDoc,
+    tx: &mut Txn<'_, WordDoc>,
     edit: &dyn Fn(&ChartData, &Element, String) -> Result<E, Stop>,
-) -> Result<Plan<EditGraphic<E>, ()>, ToolError> {
-    let docx = doc
+) -> Result<(EditGraphic<E>, ()), ToolError> {
+    let docx = tx
+        .doc()
         .docx()
         .map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
     let (data, root) = match chart_data_of(chart_of(args, &docx, args.action.as_str())?) {
@@ -218,11 +214,10 @@ pub(super) fn chart_plan<E: GraphicEdit>(
         edit,
         policy: policy(editing),
     };
-    let reads = styles_part(&docx)
-        .map(|part| Key::part(part.as_str()))
-        .into_iter()
-        .collect();
-    Ok(Plan::of(command, reads))
+    if let Some(part) = styles_part(&docx) {
+        tx.read(Key::part(part.as_str()));
+    }
+    Ok((command, ()))
 }
 
 /// The chart the target names (the first drawing or group member with that id): its part

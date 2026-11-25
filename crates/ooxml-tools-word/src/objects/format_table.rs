@@ -7,10 +7,10 @@
 
 use super::format_table_args::{BorderStyle, HeightRule, Look, Scope, WidthOf, WordFormatTable};
 use super::table_view::{regions_off, table_view, AcceptedView, TableView};
-use crate::planned::{Plan, Planned};
+use crate::planned::run_planned;
 use crate::review::{needed, Editing};
 use crate::structure::common::{call, outcome, policy, refused, Outcome};
-use ooxml_store::Snapshot;
+use ooxml_store::{Snapshot, Txn};
 use ooxml_tools::{ArgEnum, Refusal, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::units::twips;
 use ooxml_word_edit::{
@@ -71,14 +71,11 @@ fn invalid(message: &str, field: Option<&str>, options: Option<&[&str]>, call: &
 fn run(args: &WordFormatTable, editing: &Editing<'_>, retry: &TryCall) -> Result<ToolResult<Value>, ToolError> {
     // the rows, cells and merges are read where the edit is applied, in its transaction: a
     // row put in meanwhile is a conflict, and the positions are counted again on it
-    let command = Planned::new(|doc: &WordDoc| plan(args, editing, doc, retry));
-    let done = match editing.editor.run(editing.caller, &command) {
+    let done = match run_planned(editing, |tx: &mut Txn<'_, WordDoc>| plan(args, editing, tx, retry))? {
         Ok(done) => done,
         Err(error) => return Ok(refused(error, retry.clone())),
     };
-    let said = command.said().unwrap_or_default();
-    let formatted = done.out?;
-    let version = done.version;
+    let ((formatted, said), version) = (done.out, done.version);
     if args.scope == Scope::Table {
         return Ok(table_reply(args, &version, formatted, &said, retry));
     }
@@ -92,20 +89,20 @@ fn run(args: &WordFormatTable, editing: &Editing<'_>, retry: &TryCall) -> Result
 
 /// What the reply needs of the plan: the notes its positions made (a row or column whose
 /// deletion is pending stepped over), and whether it sets the table's own properties.
-#[derive(Default)]
 pub(super) struct Said {
     notes: Vec<String>,
     has_values: bool,
 }
 
-/// The edits the call makes, worked out on `doc` (the version the command is applied to),
-/// and the table's key, which they are read from.
+/// The edits the call makes, worked out on the transaction's version (the one the command
+/// is applied to), the table they are read from read by its key.
 pub(super) fn plan<'e>(
     args: &WordFormatTable,
     editing: &Editing<'e>,
-    doc: &WordDoc,
+    tx: &mut Txn<'_, WordDoc>,
     retry: &TryCall,
-) -> Result<Plan<FormatTable<'e>, Said>, ToolError> {
+) -> Result<(FormatTable<'e>, Said), ToolError> {
+    let doc = tx.doc();
     let docx = doc
         .docx()
         .map_err(|e| crate::review::edit_refusal(e, "", retry.clone()))?;
@@ -125,11 +122,8 @@ pub(super) fn plan<'e>(
         // inside a host's batch the pages are measured once, after its last op
         pages_later: editing.editor.in_batch(),
     };
-    Ok(Plan {
-        command,
-        reads: vec![view.key()],
-        said,
-    })
+    tx.read(view.key());
+    Ok((command, said))
 }
 
 /// A row's, column's or cell's edits (scope other than the table), positions counted on

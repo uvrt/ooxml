@@ -74,6 +74,65 @@ pub struct Edited<O> {
     pub timing: EditTiming,
 }
 
+impl<O> Edited<O> {
+    /// The same result with what the command returned turned into `f`'s.
+    pub fn map<U>(self, f: impl FnOnce(O) -> U) -> Edited<U> {
+        let (out, rest) = self.split();
+        rest.with(f(out))
+    }
+
+    /// What the command returned, and the rest.
+    fn split(self) -> (O, Edited<()>) {
+        let rest = Edited {
+            out: (),
+            version: self.version,
+            previous: self.previous,
+            changed: self.changed,
+            drawn: self.drawn,
+            spaced: self.spaced,
+            touched: self.touched,
+            ids: self.ids,
+            validation: self.validation,
+            attempts: self.attempts,
+            exclusive: self.exclusive,
+            timing: self.timing,
+        };
+        (self.out, rest)
+    }
+}
+
+impl Edited<()> {
+    /// The result with `out` as what the command returned.
+    fn with<U>(self, out: U) -> Edited<U> {
+        Edited {
+            out,
+            version: self.version,
+            previous: self.previous,
+            changed: self.changed,
+            drawn: self.drawn,
+            spaced: self.spaced,
+            touched: self.touched,
+            ids: self.ids,
+            validation: self.validation,
+            attempts: self.attempts,
+            exclusive: self.exclusive,
+            timing: self.timing,
+        }
+    }
+}
+
+impl<O, E> Edited<std::result::Result<O, E>> {
+    /// The command's own refusal, returned as its out (nothing changed); else the result
+    /// with what it returned.
+    ///
+    /// # Errors
+    /// The refusal the command returned.
+    pub fn transpose(self) -> std::result::Result<Edited<O>, E> {
+        let (out, rest) = self.split();
+        out.map(|out| rest.with(out))
+    }
+}
+
 impl Editor {
     /// The document whose first version is `package`, its caches within `budget`.
     ///

@@ -7,9 +7,10 @@
 //! Must not: change the document but through a command.
 
 use crate::review::{edit_refusal, Editing};
+use ooxml_store::Txn;
 use ooxml_tools::pyfmt::repr_str;
 use ooxml_tools::{Done, Refusal, ToolError, ToolResult, TryCall, WayOut};
-use ooxml_word_edit::{EditError, RevisionPolicy, Tracking};
+use ooxml_word_edit::{EditError, RevisionPolicy, Tracking, WordDoc};
 use serde_json::{Map, Value};
 
 /// What docx-agent's `EditResult` says of one edit.
@@ -123,21 +124,21 @@ pub(crate) fn one_of(given: &[(&str, bool)], call: &TryCall) -> Result<String, T
     Err(ToolError::refusal(Refusal::InvalidArguments, message, way_out).at(field))
 }
 
-/// The range id of the one place `find` occurs in the document now (docx-agent's
-/// `find_range` without `within`).
-pub(crate) fn find_once(editing: &Editing<'_>, find: &str, call: &TryCall) -> Result<String, ToolError> {
-    find_once_within(editing, find, None, call)
+/// The range id of the one place `find` occurs on the version an edit's transaction `tx`
+/// is applied to, its reads recorded there (docx-agent's `find_range` without `within`;
+/// [`ooxml_word_edit::anchor_in`]): a plan made in the transaction ([`crate::planned`]).
+pub(crate) fn find_once(tx: &mut Txn<'_, WordDoc>, find: &str, call: &TryCall) -> Result<String, ToolError> {
+    find_once_within(tx, find, None, call)
 }
 
 /// [`find_once`] in the paragraphs `within` holds, when given (docx-agent's `find_range`).
 pub(crate) fn find_once_within(
-    editing: &Editing<'_>,
+    tx: &mut Txn<'_, WordDoc>,
     find: &str,
     within: Option<&str>,
     call: &TryCall,
 ) -> Result<String, ToolError> {
-    let head = editing.editor.current();
-    ooxml_word_edit::anchor(head.doc(), find, within).map_err(|e| edit_refusal(e, "", call.clone()))
+    ooxml_word_edit::anchor_in(tx, find, within).map_err(|e| edit_refusal(e, "", call.clone()))
 }
 
 /// The policy an edit runs by: tracked as the host's author, or untracked.
