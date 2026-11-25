@@ -12,3 +12,7 @@
   - Warnings are listed apart from problems: check's `validate` gives new ones under `warnings`, and they
     are not in `new`, `fixed`, `baseline` or `problems`. The save gate does not refuse a document for a
     new warning.
+- `word_edit_table`'s "is off its grid now" warning, and the call it records for check's `made_by`, use the
+  same rule as check's `table_grid_mismatch`. An edit that leaves a row short of its grid, in a table with
+  no tracked cell or grid records, no longer warns: Word fills that row's trailing columns. A row reaching
+  past the grid still warns, and tables holding tracked cell or grid records are read as before.

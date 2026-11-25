@@ -14,7 +14,7 @@ use crate::{EditError, Result, WordDoc};
 use ooxml_word_model::docx::block_facts::BlockFact;
 use ooxml_word_model::docx::formatting::Formatting;
 use ooxml_word_model::docx::revisions::records;
-use ooxml_word_model::docx::tables::{cells_at, own_rows, Coverage, Grid};
+use ooxml_word_model::docx::tables::{cells_at, own_rows, Coverage, Grid, GridRow};
 use ooxml_word_model::docx::{at_path, find_path};
 use ooxml_word_model::ids::PlacedTable;
 use ooxml_xml::Element;
@@ -266,17 +266,7 @@ pub(crate) fn off_grid_rows(table: &Element, rows: &[Arc<Element>]) -> (i64, Vec
         .iter()
         .enumerate()
         .filter_map(|(r, line)| {
-            let reaches = if tracked {
-                line.end.saturating_add(line.after)
-            } else {
-                line.end
-            };
-            let off = if tracked {
-                reaches != grid.columns
-            } else {
-                line.coverage != Coverage::Exact
-            };
-            off.then(|| OffGridRow {
+            row_off_grid(line, grid.columns, tracked).map(|reaches| OffGridRow {
                 row: r,
                 reaches: signed(reaches),
             })
@@ -285,9 +275,23 @@ pub(crate) fn off_grid_rows(table: &Element, rows: &[Arc<Element>]) -> (i64, Vec
     (signed(grid.columns), out)
 }
 
+/// The grid columns `line` reaches where it is off a grid of `columns` (`None` where it is on
+/// it), in a table holding tracked structure records (`tracked`) or not: the one rule of
+/// check's `table_grid_mismatch` and the tools' "off its grid now" ([`off_grid_rows`]).
+#[must_use]
+pub fn row_off_grid(line: &GridRow, columns: usize, tracked: bool) -> Option<usize> {
+    if tracked {
+        let reaches = line.end.saturating_add(line.after);
+        (reaches != columns).then_some(reaches)
+    } else {
+        (line.coverage != Coverage::Exact).then_some(line.end)
+    }
+}
+
 /// Whether `table` holds a tracked cell or grid record ([`TRACKED_CELLS`]): its rows may be
 /// off its grid by Word's design until those are settled.
-pub(crate) fn tracked_structure(table: &Element) -> bool {
+#[must_use]
+pub fn tracked_structure(table: &Element) -> bool {
     has_any(table, &TRACKED_CELLS)
 }
 
