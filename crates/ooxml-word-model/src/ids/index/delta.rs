@@ -5,11 +5,13 @@
 //! writes) -- the rest of the story being the same blocks under the same keys. Where either
 //! version's keys do not follow from content alone (a block without a paraId of its own, a
 //! repeat, a short spelling: an unstamped version), every block is compared, since a key
-//! there names a place.
+//! there names a place: the blocks of the children both versions share are then paired by
+//! place first.
 //!
-//! Renames pair a gone block with a came one: a table with the table sharing one of its
-//! rows (its first row changed), and a block whose key named its place with the block of
-//! the same content but stamps (stamping gave it a paraId).
+//! Renames pair blocks both versions hold under other keys: by place (above), a table with
+//! the table sharing one of its rows (its first row changed), and a block keyed by its place
+//! in one version with the block of the same content but stamps in the other (stamping gave
+//! it a paraId, or an undo of stamping took it away).
 //!
 //! Must not: key identity by an element's address (a pointer only says content is the same,
 //! ADR-008), or name a block by text.
@@ -39,8 +41,8 @@ struct Item<'a> {
     owner: Option<usize>,
 }
 
-/// One side's blocks compared, in document order, with each stretch's first item and the
-/// block before the stretch (outside the compared blocks, or `None`).
+/// One side's blocks compared, in document order, by key and by container child, with the
+/// block before each stretch (`None`: none).
 struct Side<'a> {
     items: Vec<Item<'a>>,
     by_key: HashMap<BlockKey, usize>,

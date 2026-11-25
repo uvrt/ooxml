@@ -1,8 +1,8 @@
-//! The frozen reference for the change set's differential (phase 3, ID2): `touched` and
-//! `ids_delta` as main computed them at 7db5b7b5, before they were derived from the
-//! version's change set -- each body block compared by its content without stamps, each
-//! story part's changed subtrees walked for ids. Kept only to hold the derived ones to them
-//! (`delta_differential`); not a library path.
+//! FROZEN from main 7db5b7b5 (crates/ooxml-word-edit/src/touched.rs and ids_delta.rs, before
+//! phase 3 ID2): `touched` and `ids_delta` as they were computed then -- each body block
+//! compared by its content without stamps, each story part's changed subtrees walked for ids.
+//! The change set's differential (`delta_differential`, design section 5.3) holds the derived
+//! ones to it. Not a library path; do not edit. Deleted in LK2, with the old touched/ids code.
 // Tests may unwrap, panic and index (docs/architecture/README.md, section 2.5).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
