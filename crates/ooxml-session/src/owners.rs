@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 /// Who made a step: the tool, and the caller (`None`: the session's own, no caller).
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct StepOwner {
+pub struct StepOwner {
     /// The tool that made it (`library` for a host's step of no tool of its own).
     pub(crate) tool: Arc<str>,
     /// The caller's key, as the store keeps it with the step (`None`: no caller).
@@ -87,7 +87,7 @@ struct Kept {
 
 /// Who made each of a document's steps, and its callers' own undos.
 #[derive(Debug, Default)]
-pub(crate) struct Owners(Mutex<Kept>);
+pub struct Owners(Mutex<Kept>);
 
 /// Owners kept before the record is thinned to the steps the history still holds.
 const KEEP: usize = 256;

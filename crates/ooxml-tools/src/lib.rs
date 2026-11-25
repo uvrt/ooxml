@@ -8,7 +8,9 @@
 //! ([`ToolSpec::accept`], [`ToolSpec::ignored_for`]); validation with today's messages; the
 //! result envelope within its reply budget ([`ToolResult`]); errors whose refusals cannot
 //! be made without a way out ([`ToolError`], [`WayOut`]); and the cost of the descriptions
-//! against budgets ([`cost`]).
+//! against budgets ([`cost`]); and the handler side (design phase 3, section 3): how a
+//! format's tools register ([`Registrar`] over its [`FormatTypes`]), the handler shapes, and
+//! their erasure to a [`Tool`] run in a [`CallEnv`].
 //!
 //! Must not: know providers (the Python adapters read the exported specs), document
 //! formats (the `ooxml-tools-*` crates hold the tools), sessions or dispatch (lane P0d),
@@ -47,6 +49,7 @@ mod dates;
 mod difflib;
 pub mod documents;
 mod error;
+mod handlers;
 mod intent;
 mod limits;
 mod not_supported;
@@ -63,6 +66,10 @@ mod types;
 mod validate;
 
 pub use error::{ErrorCode, Failure, Refusal, ToolError, TryCall, WayOut};
+pub use handlers::{
+    CallEnv, EditFn, EditHandler, EditRun, FormatCall, FormatTypes, ReadFn, ReadHandler, ReadRun, ReadingEditHandler,
+    Registrar, Run, Tool, TrackingFn, TrackingRun,
+};
 pub use intent::Accepted;
 pub use limits::{BudgetSpan, ImageBudget, Limits};
 pub use not_supported::NOT_SUPPORTED;

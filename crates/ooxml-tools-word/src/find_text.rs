@@ -230,6 +230,6 @@ fn try_call(args: &FindText) -> TryCall {
 }
 
 /// Registers `find_text` (the crate's [`crate::register`]).
-pub(crate) fn register(r: &mut impl crate::Registrar) {
+pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
     r.read::<FindText>(find_text);
 }

@@ -6,7 +6,8 @@
 //! --structure`, `--objects` and `--style` to compare with docx-agent's toolbox.
 //!
 //! A tool the session registers runs as [`Registry::standard`] holds it
-//! ([`ooxml_session::Tool::run_outside`]), so a newly registered tool needs nothing here;
+//! (its [`ooxml_tools::Tool`] run in a context of the document as opened), so a newly
+//! registered tool needs nothing here;
 //! [`unregistered`] runs the ported tools the session does not serve yet.
 //!
 //! Must not: be used by any library; it is a test instrument.
@@ -16,10 +17,11 @@ use ooxml_base::{Cancel, Limits};
 use ooxml_opc::Package;
 use ooxml_session::Registry;
 use ooxml_store::{Caller, StoreConfig};
-use ooxml_tools::{ToolArgs, ToolResult};
+use ooxml_tools::{Accepted, CallEnv, FormatCall, Run, ToolArgs, ToolResult};
 use ooxml_tools_word::{
     word_headers_footers, word_links, word_move, word_notes, word_sections, Blob, BlobList, CallEditor, Editing,
-    EnginePages, LastCheck, Others, Owned, Version, WordHeadersFooters, WordLinks, WordMove, WordNotes, WordSections,
+    EnginePages, LastCheck, Others, Owned, Version, Word, WordHeadersFooters, WordLinks, WordMove, WordNotes,
+    WordSections,
 };
 use ooxml_word_edit::touched::{touched, Touched};
 use ooxml_word_edit::validate::{problems, Delta};
@@ -55,7 +57,53 @@ fn registered(tool: &str, arguments: &Value, editing: &Editing<'_>) -> Option<To
     let versions = Versions::new();
     let last_check = LastCheck::default();
     let version = opened_version(editing, &versions, &last_check);
-    Some(tool.run_outside(arguments, editing, &version))
+    let spec = tool.spec();
+    let Accepted {
+        mut arguments,
+        mut notes,
+    } = match spec.accept(arguments.clone()) {
+        Ok(accepted) => accepted,
+        Err(error) => return Some(ToolResult::failed(error)),
+    };
+    notes.extend(spec.ignored_for(Some("docx"), &mut arguments));
+    let outside = Outside {
+        editing,
+        version: &version,
+    };
+    let mut env = CallEnv {
+        cancel: editing.cancel,
+        format: &outside,
+    };
+    let mut reply = tool.run(&arguments, &mut env);
+    // the notes on what was read as what first among the reply's warnings
+    notes.append(&mut reply.warnings);
+    reply.warnings = notes;
+    Some(reply)
+}
+
+/// A Word document a test instrument opened outside a session, as a tool's call runs on
+/// it: a reading tool reads `version`, an editing tool edits through `editing` (a tracking
+/// mode it sets is not kept).
+struct Outside<'a> {
+    editing: &'a Editing<'a>,
+    version: &'a Version<'a>,
+}
+
+impl FormatCall for Outside<'_> {
+    fn run(&self, tool: &str, _: &Map<String, Value>, run: &dyn std::any::Any) -> ToolResult<Value> {
+        match run.downcast_ref::<Run<Word>>() {
+            Some(Run::Read(read)) => match read(self.version, self.editing.cancel) {
+                Ok(done) => ToolResult::done(done),
+                Err(error) => ToolResult::failed(error),
+            },
+            Some(Run::Edit(edit)) => edit(self.editing),
+            Some(Run::Tracking(edit)) => edit(self.editing).0,
+            None => ToolResult::failed(ooxml_tools::ToolError::internal(
+                format!("{tool} is not a Word tool"),
+                "oracle:outside",
+            )),
+        }
+    }
 }
 
 /// The document as opened, version 1, as a reading tool is handed it by a session that

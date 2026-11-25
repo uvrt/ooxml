@@ -406,6 +406,6 @@ fn try_call(args: &WordInsertText) -> TryCall {
 }
 
 /// Registers `word_insert_text` (the crate's [`crate::register`]).
-pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.edit::<WordInsertText>(word_insert_text, crate::Hosting::PLAIN.keeps_written());
+pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
+    r.edit::<WordInsertText>(word_insert_text);
 }

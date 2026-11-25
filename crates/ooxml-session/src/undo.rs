@@ -78,11 +78,11 @@ impl Session {
                 result
             }
             Ok(_) => ToolResult::failed(match (self.numbers(&id), self.document(&id)) {
-                (Ok(numbers), Ok(document)) => asked.nothing(&numbers, &document.owners, document.head().number()),
+                (Ok(numbers), Ok(document)) => asked.nothing(&numbers, document.owners(), document.head().number()),
                 (Err(gone), _) | (_, Err(gone)) => gone.to_tool_error(),
             }),
             Err(error) => ToolResult::failed(match self.document(&id) {
-                Ok(document) => asked.refused(&error, &document.owners),
+                Ok(document) => asked.refused(&error, document.owners()),
                 Err(gone) => gone.to_tool_error(),
             }),
         };

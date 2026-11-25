@@ -267,6 +267,6 @@ fn find_call(args: &ReplaceText) -> TryCall {
 }
 
 /// Registers `replace_text` (the crate's [`crate::register`]).
-pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.edit::<ReplaceText>(replace_text, crate::Hosting::PLAIN.keeps_written());
+pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
+    r.edit::<ReplaceText>(replace_text);
 }

@@ -1,6 +1,6 @@
-"""What the tools read from the host comes from the registry's export (``ooxml_core.tool_hosting``,
-each Rust tool's ``Hosting``), not a list in docx-agent (lane G8): the sets are the ones
-docx-agent listed by hand before, and an adapter of a tool not exported is refused."""
+"""What the tools read from the host is listed in ``served`` (the Rust session's ``Hosting`` went
+with phase 3's format-generic tools, lane ph3-format): the sets are the ones the registry
+exported, and an adapter or listed tool the registry does not export is refused."""
 
 from __future__ import annotations
 
@@ -41,20 +41,17 @@ def test_the_exported_sets_are_the_lists_they_replace():
     assert hosting.keeps_written == KEEPS_WRITTEN
 
 
-def test_every_tool_is_exported_with_its_hosting():
-    exported = json.loads(ooxml_core.tool_hosting("docx"))
+def test_the_tools_are_the_registry_export():
     names = {s["name"] for s in json.loads(ooxml_core.tool_specs("docx"))} - {"read_batch", "undo"}
-    assert set(exported) == names
-    assert all(set(facts) == {"blobs", "layout", "keeps_written"} for facts in exported.values())
-    assert json.loads(ooxml_core.tool_hosting("pptx")) == {}
+    assert served.hosting().tools == names
+    assert not hasattr(ooxml_core, "tool_hosting")
 
 
 def test_only_served_tools_have_adapters():
     assert set(served.ADAPTERS) <= SERVED
     # word_styles and word_template take their arguments as given: no adapter.
     assert {"word_styles", "word_template"}.isdisjoint(served.ADAPTERS)
-    exported = json.loads(ooxml_core.tool_hosting("docx"))
-    del exported["word_set_text"]
+    exported = served.hosting().tools - {"word_set_text"}
     with pytest.raises(ValueError, match="word_set_text"):
         served.Hosting.of(exported)
 

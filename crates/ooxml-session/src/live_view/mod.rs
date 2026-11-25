@@ -33,7 +33,7 @@ mod tag;
 pub use kept::VIEW_TOKENS;
 
 use crate::context::{CallCancel, LayoutCancel};
-use crate::document::{At, Word};
+use crate::document::Word;
 use crate::{CallContext, DocId, DocKind, Session, SessionError};
 pub(crate) use kept::LiveViews;
 use kept::{Kept, Spare};
@@ -177,9 +177,7 @@ impl Session {
     ) -> Result<View, ViewError> {
         let document = self.document(doc)?;
         let word = word_of(doc, document.kind, document.word())?;
-        let At::Word(head) = document.head() else {
-            return Err(not_word(doc, document.kind));
-        };
+        let head = word.head();
         let number = head.number();
         let token = format!("{}-{doc}-{number}", self.nonce);
         // `since` first: made the most recently used before this version is kept; one whose

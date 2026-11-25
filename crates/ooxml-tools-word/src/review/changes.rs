@@ -255,6 +255,6 @@ pub(crate) fn try_call(args: &WordChanges) -> TryCall {
 }
 
 /// Registers `word_changes` (the crate's [`crate::register`]).
-pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.reading_edit::<WordChanges>(word_changes_read, word_changes, crate::Hosting::PLAIN);
+pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
+    r.reading_edit::<WordChanges>(word_changes_read, word_changes);
 }

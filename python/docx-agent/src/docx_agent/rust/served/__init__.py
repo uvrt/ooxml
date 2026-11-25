@@ -1,10 +1,11 @@
 """The host's side of the tools the Rust session serves (:mod:`docx_agent.rust.edits`): what
 their calls read from the host, and each call's arguments as the session takes them.
 
-What a tool's edits read from the host (its blobs, its page engine, the values it wrote for
-references) is declared by each Rust tool where it is defined (``ooxml_tools_word::Hosting``)
-and exported with the registry (``ooxml_core.tool_hosting``): :func:`hosting`.  Nothing here
-lists the tools: every Word tool is the session's.
+What a tool's edits read from this host (its blobs, its page engine, the values it wrote for
+references) is listed here (:data:`BLOBS`, :data:`LAID`, :data:`KEEPS_WRITTEN`): the Rust host
+(phase 3) hands every call what it reads and these lists go with this module.  The tools
+themselves are the registry's export (``ooxml_core.tool_specs``): :func:`hosting`.  Every Word
+tool is the session's.
 
 A served call's arguments go to the session as given, its document left out (the session's
 id goes in its place: :func:`own`).  A tool whose arguments need the host first -- ``$name``
@@ -193,19 +194,25 @@ class Hosting:
     keeps_written: frozenset[str]
 
     @classmethod
-    def of(cls, exported: dict[str, dict[str, bool]]) -> "Hosting":
-        """From ``ooxml_core.tool_hosting``'s export; refuses an adapter of a tool it does not
-        export."""
-        tools = frozenset(exported)
-        stray = sorted(set(ADAPTERS) - tools)
+    def of(cls, tools: frozenset[str]) -> "Hosting":
+        """For the tools the registry exports (``tools``); refuses an adapter of a tool it does
+        not export, or a listed tool it does not."""
+        stray = sorted((set(ADAPTERS) | BLOBS | LAID | KEEPS_WRITTEN) - tools)
         if stray:
-            raise ValueError(f"adapters of tools the Rust session does not export: {', '.join(stray)}")
+            raise ValueError(f"adapters or lists of tools the Rust session does not export: {', '.join(stray)}")
+        return cls(tools, BLOBS, LAID, KEEPS_WRITTEN)
 
-        def having(fact: str) -> frozenset[str]:
-            return frozenset(name for name in tools if exported[name][fact])
 
-        return cls(tools, having("blobs"), having("layout"), having("keeps_written"))
-
+#: The tools whose edits read the session's blobs (an inserted picture's bytes).
+BLOBS = frozenset({"word_drawings"})
+#: The tools whose calls read the document's pages: the session lays the versions out with
+#: the document's page engine (``render``'s is handed to it by ``reads.serve_render``).
+LAID = frozenset({"word_fields", "word_headers_footers", "word_template", "word_format_table"})
+#: The tools that keep the values written by reference on the paragraphs they went into.
+KEEPS_WRITTEN = frozenset({"word_set_text", "word_insert_text", "replace_text", "word_insert_markdown",
+                           "word_edit_table"})
+#: The tools the session runs itself, beside the registered ones.
+_OWN = frozenset({"read_batch", "undo"})
 
 NONE = Hosting(frozenset(), frozenset(), frozenset(), frozenset())
 _HOSTING: list[Hosting] = []
@@ -213,8 +220,8 @@ _HOSTING_LOCK = threading.Lock()
 
 
 def hosting() -> Hosting:
-    """What the tools' calls read from the host, from the registry's export (read once);
-    nothing where ``ooxml_core`` is not installed."""
+    """What the tools' calls read from the host, for the tools the registry exports (read
+    once); nothing where ``ooxml_core`` is not installed."""
     with _HOSTING_LOCK:
         if not _HOSTING:
             try:
@@ -222,7 +229,8 @@ def hosting() -> Hosting:
             except ImportError:
                 _HOSTING.append(NONE)
             else:
-                _HOSTING.append(Hosting.of(json.loads(ooxml_core.tool_hosting("docx"))))
+                exported = {spec["name"] for spec in json.loads(ooxml_core.tool_specs("docx"))}
+                _HOSTING.append(Hosting.of(frozenset(exported - _OWN)))
         return _HOSTING[0]
 
 

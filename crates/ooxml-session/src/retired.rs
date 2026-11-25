@@ -170,7 +170,7 @@ impl Session {
     /// [`SessionError::NotOpen`].
     pub fn retired(&self, id: &DocId) -> Result<Vec<(HeldId, RetiredBy)>, SessionError> {
         let document = self.document(id)?;
-        Ok(document.word().map(|w| w.retired.list()).unwrap_or_default())
+        Ok(document.word().map(|w| w.retired().list()).unwrap_or_default())
     }
 
     /// Give the Word document the ids a state saved beside its bytes says were retired
@@ -187,7 +187,7 @@ impl Session {
     ) -> Result<(), SessionError> {
         let document = self.document(id)?;
         if let Some(word) = document.word() {
-            word.retired.seed(given);
+            word.retired().seed(given);
         }
         Ok(())
     }

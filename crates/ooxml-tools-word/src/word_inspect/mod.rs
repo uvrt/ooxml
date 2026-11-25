@@ -261,6 +261,6 @@ fn try_call(args: &WordInspect) -> TryCall {
 }
 
 /// Registers `word_inspect` (the crate's [`crate::register`]).
-pub(crate) fn register(r: &mut impl crate::Registrar) {
+pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
     r.read::<WordInspect>(word_inspect);
 }

@@ -28,7 +28,7 @@ pub use sections::{word_sections, Margins, Orientation, SectionAction, SectionSt
 
 /// Registers the group's tools, in the order a model is shown them (the crate's
 /// [`crate::register`]).
-pub(crate) fn register(r: &mut impl crate::Registrar) {
+pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
     fields::register(r);
     headers_footers::register(r);
     copy_from::register(r);

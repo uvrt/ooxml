@@ -641,6 +641,6 @@ fn fields(owned: Owned<'_>) -> Result<Value, ToolError> {
 }
 
 /// Registers `check` (the crate's [`crate::register`]).
-pub(crate) fn register(r: &mut impl crate::Registrar) {
+pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
     r.read::<Check>(check);
 }
