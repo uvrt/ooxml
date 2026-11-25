@@ -19,7 +19,7 @@ fn copy(block: &str, at: &str, policy: RevisionPolicy) -> CopyBlocks {
     CopyBlocks {
         source: CopySource::Own,
         range: CopyRange::Blocks(block.to_owned()),
-        at: at.to_owned(),
+        at: at.into(),
         policy,
         styles: StylePolicy::default(),
         style_map: Vec::new(),

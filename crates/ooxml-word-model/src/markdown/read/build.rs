@@ -7,6 +7,7 @@
 
 use super::inline::one_line;
 use super::{comment, comment_text, note_elements, Kind, ParagraphRecord, Reader, Record, TableRecord};
+use crate::address::Address;
 use crate::docx::Docx;
 use crate::ids::W;
 use crate::markdown::model::{has_content, Block, Inline, ListBlock, Table};
@@ -20,7 +21,7 @@ use crate::markdown::{Stories, ViewName};
 /// A [`RangeError`] when `range` names nothing.
 pub fn project(
     docx: &Docx,
-    range: Option<&str>,
+    range: Option<&Address>,
     view: ViewName,
     stories: Stories,
     ids: bool,

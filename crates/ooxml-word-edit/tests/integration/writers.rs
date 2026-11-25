@@ -150,7 +150,9 @@ fn edit(rng: &mut Rng, (targets, controls): (&[String], &[String]), writer: u64)
                 WORDS[rng.below(4)],
                 WORDS[rng.below(WORDS.len())]
             ),
-            at: [format!("after:{target}"), format!("before:{target}"), "end".to_owned()][rng.below(3)].clone(),
+            at: ooxml_word_model::address::Place::parse(
+                &[format!("after:{target}"), format!("before:{target}"), "end".to_owned()][rng.below(3)],
+            ),
             style_map: WriteMap::default(),
             options: MarkdownOptions::default(),
             policy: policy(rng, writer),
@@ -178,12 +180,12 @@ fn edit(rng: &mut Rng, (targets, controls): (&[String], &[String]), writer: u64)
             Edit::Set(lines)
         }
         4 | 5 => Edit::Insert(InsertText {
-            at: format!("{target}@{}", rng.below(3)),
+            at: format!("{target}@{}", rng.below(3)).into(),
             text: format!("{} ", WORDS[rng.below(WORDS.len())]),
             policy: policy(rng, writer),
         }),
         6 => Edit::Delete(DeleteText {
-            range: format!("{target}@0:{}", 1 + rng.below(2)),
+            range: format!("{target}@0:{}", 1 + rng.below(2)).into(),
             policy: policy(rng, writer),
         }),
         _ => Edit::Replace(ReplaceText {

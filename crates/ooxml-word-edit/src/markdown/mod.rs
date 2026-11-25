@@ -45,7 +45,7 @@ pub struct InsertMarkdown {
     /// The Markdown.
     pub markdown: String,
     /// `end`, `end:<story>`, `after:<id>`, `before:<id>` or a bare id (after it).
-    pub at: String,
+    pub at: ooxml_word_model::address::Place,
     /// The style each construct is written in.
     pub style_map: WriteMap,
     /// How it is written.

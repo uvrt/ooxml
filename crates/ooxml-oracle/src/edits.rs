@@ -139,7 +139,7 @@ fn edit(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
             .run(
                 &caller,
                 &InsertText {
-                    at: text("target"),
+                    at: text("target").into(),
                     text: text("text"),
                     policy: policy(case),
                 },
@@ -149,7 +149,7 @@ fn edit(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
             .run(
                 &caller,
                 &DeleteText {
-                    range: text("target"),
+                    range: text("target").into(),
                     policy: policy(case),
                 },
             )

@@ -16,6 +16,7 @@ pub mod render;
 pub mod select;
 pub mod stylemap;
 
+use crate::address::Address;
 use crate::docx::Docx;
 pub use select::RangeError;
 use std::sync::Arc;
@@ -46,7 +47,7 @@ pub enum Stories {
 ///
 /// # Errors
 /// A [`RangeError`] when `range` names nothing or is malformed.
-pub fn to_plain_markdown(docx: &Docx, range: Option<&str>) -> Result<String, RangeError> {
+pub fn to_plain_markdown(docx: &Docx, range: Option<&Address>) -> Result<String, RangeError> {
     let blocks = read::project(docx, range, ViewName::Final, Stories::Body, false)?;
     Ok(render::render(&blocks))
 }
@@ -57,11 +58,11 @@ pub fn to_plain_markdown(docx: &Docx, range: Option<&str>) -> Result<String, Ran
 /// A [`RangeError`] when `range` names nothing or is malformed.
 pub fn to_markdown(
     docx: &Docx,
-    range: Option<&str>,
+    range: Option<&Address>,
     view: ViewName,
     stories: Stories,
 ) -> Result<Arc<String>, RangeError> {
-    let key = (range.map(str::to_owned), view, stories);
+    let key = (range.map(|r| r.as_str().to_owned()), view, stories);
     docx.memo().markdown(key, || {
         let blocks = read::project(docx, range, view, stories, true)?;
         Ok(render::render(&blocks))

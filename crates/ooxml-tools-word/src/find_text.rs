@@ -20,6 +20,7 @@ use ooxml_base::Cancel;
 use ooxml_tools::pyre::PyRegex;
 use ooxml_tools::{ArgEnum, Done, Failure, IntOrStr, Refusal, ToolArgs, ToolError, TryCall, WayOut};
 use ooxml_word_model::address::scope_paragraphs;
+use ooxml_word_model::address::Address;
 use serde_json::{json, Map, Value};
 
 /// Which stories a search covers.
@@ -98,7 +99,7 @@ pub fn find_text(args: &FindText, version: &Version<'_>, cancel: &dyn Cancel) ->
             let mut call = args.clone();
             call.range = None;
             // the range read through the session's renames, as docx-agent's view reads it
-            let range = version.follow(range);
+            let range = Address::from(version.follow(range));
             vec![scope_paragraphs(docx, &range).map_err(|e| address_refusal(e, "range", try_call(&call)))?]
         }
     };

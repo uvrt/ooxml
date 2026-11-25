@@ -134,7 +134,7 @@ fn edit(rng: &mut Rng, targets: &[String], writer: u64, n: usize) -> Edit {
             policy: policy(rng, writer),
         }),
         1 => Edit::Insert(InsertText {
-            at: format!("{target}@{}", rng.below(3)),
+            at: format!("{target}@{}", rng.below(3)).into(),
             text: format!("{} ", words.join(" ")),
             policy: policy(rng, writer),
         }),
@@ -384,7 +384,7 @@ fn a_renumbered_copy_and_a_concurrent_tracked_insertion() {
         policy: tracked(7),
     });
     let insert = Edit::Insert(InsertText {
-        at: "p:5A00000E@1".to_owned(),
+        at: "p:5A00000E@1".into(),
         text: "and gamma ".to_owned(),
         policy: tracked(1),
     });

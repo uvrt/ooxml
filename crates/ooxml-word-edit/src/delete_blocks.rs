@@ -21,6 +21,7 @@ use crate::{EditError, Result};
 use ooxml_base::pyfmt::repr_str;
 use ooxml_store::{Command, Txn};
 use ooxml_word_model::address::resolve::resolve;
+use ooxml_word_model::address::Address;
 use ooxml_word_model::docx::controls::controls;
 use ooxml_word_model::docx::outline::{BodyWalk, Step};
 use ooxml_word_model::docx::Docx;
@@ -100,7 +101,7 @@ pub fn blocks_named(doc: &WordDoc, address: &str) -> Result<Vec<String>> {
 /// The ids of the blocks `address` names, in document order (docx-agent's `_blocks_of`
 /// and `_block_id`).
 fn block_ids(doc: &WordDoc, docx: &Docx, address: &str) -> Result<Vec<String>> {
-    let (part, blocks) = blocks_of(doc, docx, address)?;
+    let (part, blocks) = blocks_of(doc, docx, &Address::parse(address))?;
     let story = docx.part(&part).ok_or_else(|| EditError::no_part(part.clone()))?;
     let found = controls(docx);
     blocks

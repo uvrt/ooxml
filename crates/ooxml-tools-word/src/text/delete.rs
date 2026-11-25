@@ -17,6 +17,7 @@ use ooxml_base::pyfmt::repr_str;
 use ooxml_tools::{Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::{blocks_named, DeleteBlocks, DeleteNote, DeletePlaced, EditError, TextPlace};
 use ooxml_word_model::address::expand_heading;
+use ooxml_word_model::address::Address;
 use serde_json::{Map, Value};
 
 /// `word_delete`'s arguments.
@@ -79,7 +80,7 @@ fn run(args: &WordDelete, editing: &Editing<'_>) -> Result<ToolResult<Value>, To
         let command = DeletePlaced {
             place: TextPlace::Once {
                 text: find.clone(),
-                within,
+                within: within.map(Address::from),
             },
             collapse_space,
             policy,
@@ -93,7 +94,7 @@ fn run(args: &WordDelete, editing: &Editing<'_>) -> Result<ToolResult<Value>, To
     let target = args.target.clone().unwrap_or_default();
     if target.contains('@') && !target.starts_with("p@") && !target.starts_with("cc@") {
         let command = DeletePlaced {
-            place: TextPlace::Range(target.clone()),
+            place: TextPlace::Range(Address::parse(&target)),
             collapse_space,
             policy,
         };
@@ -167,7 +168,8 @@ fn same_scope(editing: &Editing<'_>, within: &str, target: &str, call: &TryCall)
     let head = editing.editor.current();
     let refuse = |e| edit_refusal(e, "", call.clone());
     let docx = head.doc().docx().map_err(refuse)?;
-    let expand = |address: &str| expand_heading(&docx, address).map_err(|e| refuse(EditError::Address(e)));
+    let expand =
+        |address: &str| expand_heading(&docx, &Address::parse(address)).map_err(|e| refuse(EditError::Address(e)));
     Ok(expand(within)? == expand(target)?)
 }
 

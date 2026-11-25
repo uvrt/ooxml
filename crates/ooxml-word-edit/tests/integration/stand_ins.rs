@@ -23,7 +23,7 @@ const FIXTURE: &str = "generated/ids-and-markup.docx";
 fn markdown(at: &str, text: &str, policy: RevisionPolicy) -> InsertMarkdown {
     InsertMarkdown {
         markdown: format!("## {text}\n\n- one {text}\n- two\n\n| a | b |\n|---|---|\n| {text} | c |\n"),
-        at: at.to_owned(),
+        at: at.into(),
         style_map: WriteMap::default(),
         options: MarkdownOptions::default(),
         policy,

@@ -65,7 +65,7 @@ pub(super) fn anchor(doc: &WordDoc, docx: &Docx, place: &str) -> Result<Anchor> 
     if let Some(block) = block(doc, docx, place)? {
         return Ok(block);
     }
-    let found = range(doc, docx, place)?;
+    let found = range(doc, docx, &ooxml_word_model::address::Address::parse(place))?;
     let span = Span::of(doc, docx, &found)?;
     let (Some(first), Some(last)) = (span.first(), span.last()) else {
         return Err(EditError::no_element(span.part.clone()));

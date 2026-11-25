@@ -16,6 +16,7 @@ use crate::sink::{annotation_draws, EditSink, TextWrite};
 use crate::work::{Id, Work};
 use crate::{EditError, Result, WordDoc};
 use ooxml_base::pyfmt::repr_str;
+use ooxml_word_model::address::{Address, Place as Where, PlaceKind};
 use ooxml_word_model::docx::controls::controls;
 use ooxml_word_model::docx::Docx;
 use ooxml_xml::{Element, Node};
@@ -48,17 +49,16 @@ pub(crate) fn is_block(e: &Element) -> bool {
 ///
 /// # Errors
 /// A place that does not exist, `replace:` (not ported yet), a story of notes or comments.
-pub(crate) fn locate(doc: &WordDoc, docx: &Docx, at: &str, doing: &str) -> Result<Place> {
-    let (kind, rest) = match at.split_once(':') {
-        Some((k, r)) if matches!(k, "after" | "before" | "replace" | "end") => (k, r),
-        _ if at == "end" => ("end", ""),
-        _ => ("after", at),
+pub(crate) fn locate(doc: &WordDoc, docx: &Docx, at: &Where, doing: &str) -> Result<Place> {
+    let (block, after) = match at.kind() {
+        PlaceKind::End(story) => return end_of(docx, story.as_deref().unwrap_or("body")),
+        PlaceKind::Replace(_) => return Err(EditError::Unsupported(format!("{doing} at replace:"))),
+        PlaceKind::After(block) | PlaceKind::At(block) => (block, true),
+        PlaceKind::Before(block) => (block, false),
     };
-    match kind {
-        "end" => end_of(docx, if rest.is_empty() { "body" } else { rest }),
-        "replace" => Err(EditError::Unsupported(format!("{doing} at replace:"))),
-        _ => {
-            let (part, found) = crate::blocks::resolve_block(doc, docx, rest)?;
+    {
+        {
+            let (part, found) = crate::blocks::resolve_block(doc, docx, block.as_str())?;
             let story = docx.part(&part).map(|p| p.story.clone()).unwrap_or_default();
             let (&index, container) = found
                 .path
@@ -68,7 +68,7 @@ pub(crate) fn locate(doc: &WordDoc, docx: &Docx, at: &str, doing: &str) -> Resul
                 part,
                 story,
                 container: container.to_vec(),
-                before: Some(if kind == "after" { index + 1 } else { index }),
+                before: Some(if after { index + 1 } else { index }),
             })
         }
     }
@@ -79,7 +79,7 @@ pub(crate) fn locate(doc: &WordDoc, docx: &Docx, at: &str, doing: &str) -> Resul
 ///
 /// # Errors
 /// The address's refusal; a block neither a paragraph, a table nor a content control.
-pub(crate) fn replacing(doc: &WordDoc, docx: &Docx, blocks: &str) -> Result<(Place, Vec<String>)> {
+pub(crate) fn replacing(doc: &WordDoc, docx: &Docx, blocks: &Address) -> Result<(Place, Vec<String>)> {
     let (part, found) = crate::blocks::span_or_block(doc, docx, blocks)?;
     let story = docx.part(&part).ok_or_else(|| EditError::no_part(part.clone()))?;
     let mut ids = Vec::with_capacity(found.len());

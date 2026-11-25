@@ -20,7 +20,8 @@ use crate::text::{atoms, write::check_text};
 use crate::work::{scope_above, Work};
 use crate::{EditError, Result};
 use ooxml_store::{Command, Txn};
-use ooxml_word_model::address::parse_range;
+use ooxml_word_model::address::Address;
+
 use ooxml_word_model::docx::{at_path, Docx};
 use ooxml_xml::QName;
 use std::sync::Arc;
@@ -29,7 +30,7 @@ use std::sync::Arc;
 #[derive(Debug, Clone)]
 pub struct InsertText {
     /// The position.
-    pub at: String,
+    pub at: Address,
     /// The text (no `\n`).
     pub text: String,
     /// Untracked or tracked.
@@ -40,7 +41,7 @@ pub struct InsertText {
 #[derive(Debug, Clone)]
 pub struct DeleteText {
     /// The range.
-    pub range: String,
+    pub range: Address,
     /// Untracked or tracked.
     pub policy: RevisionPolicy,
 }
@@ -101,8 +102,9 @@ pub(crate) struct Across {
 type Range = (Found, Option<Found>, usize, usize);
 
 /// A range as docx-agent's `parse_range` reads one.
-fn range_of(doc: &WordDoc, docx: &Docx, address: &str, position: bool) -> Result<Range> {
-    if let Some(range) = parse_range(address) {
+fn range_of(doc: &WordDoc, docx: &Docx, given: &Address, position: bool) -> Result<Range> {
+    let address = given.as_str();
+    if let Some(range) = given.text_range() {
         let found = find(doc, docx, &range.start_id)?;
         if position {
             return Ok((found, None, range.start, range.start));
@@ -456,7 +458,7 @@ pub(crate) fn renamed_id(
 pub(crate) fn insert_text(sink: &mut EditSink<'_, '_>, at: &str, text: &str) -> Result<RangesEdited> {
     check_text(text)?;
     let docx = sink.docx()?;
-    let found = range_of(sink.doc(), &docx, at, true)?;
+    let found = range_of(sink.doc(), &docx, &Address::parse(at), true)?;
     let plan = plan(sink.doc(), &docx, found, text)?;
     replace_ranges(sink, vec![plan], Keep::First)
 }
@@ -535,7 +537,7 @@ impl Command<WordDoc> for ReplaceText {
 /// The range's refusal.
 pub(crate) fn replace_range(sink: &mut EditSink<'_, '_>, address: &str, text: &str) -> Result<RangesEdited> {
     let docx = sink.docx()?;
-    let found = range_of(sink.doc(), &docx, address, false)?;
+    let found = range_of(sink.doc(), &docx, &Address::parse(address), false)?;
     let plan = plan(sink.doc(), &docx, found, text)?;
     replace_ranges(sink, vec![plan], Keep::First)
 }

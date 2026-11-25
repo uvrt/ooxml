@@ -13,6 +13,7 @@ use crate::version::Version;
 use ooxml_base::Cancel;
 use ooxml_tools::{ArgEnum, Done, Refusal, ToolArgs, ToolError, TryCall, WayOut};
 use ooxml_word_model::address::expand_heading;
+use ooxml_word_model::address::Address;
 use ooxml_word_model::markdown::{to_markdown, RangeError, Stories, ViewName};
 use serde_json::{json, Value};
 
@@ -88,10 +89,10 @@ pub fn word_read(args: &WordRead, version: &Version<'_>, cancel: &dyn Cancel) ->
     let range = args
         .range
         .as_deref()
-        .map(|r| expand_heading(&docx, &version.follow(r)))
+        .map(|r| expand_heading(&docx, &Address::from(version.follow(r))))
         .transpose()
         .map_err(|e| range_refusal(e, &args.doc))?;
-    let markdown = to_markdown(&docx, range.as_deref(), view, stories).map_err(|e| range_refusal(e, &args.doc))?;
+    let markdown = to_markdown(&docx, range.as_ref(), view, stories).map_err(|e| range_refusal(e, &args.doc))?;
     if let Some(refusal) = not_supported(&docx, view, args) {
         return Err(refusal);
     }
@@ -103,7 +104,7 @@ pub fn word_read(args: &WordRead, version: &Version<'_>, cancel: &dyn Cancel) ->
         version.limits.result_chars.saturating_sub(MARGIN).max(2000),
         first_page,
     )?;
-    let shown = range.unwrap_or_else(|| "the document".to_owned());
+    let shown = range.map_or_else(|| "the document".to_owned(), |r| r.as_str().to_owned());
     let view_name = match view {
         ViewName::Final => "final",
         ViewName::Markup => "markup",

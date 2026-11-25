@@ -83,7 +83,7 @@ impl InsertShape {
         for line in self.lines().unwrap_or_default() {
             check_text(line)?;
         }
-        let found = range(doc, docx, &self.at)?;
+        let found = range(doc, docx, &ooxml_word_model::address::Address::parse(&self.at))?;
         let span = Span::of(doc, docx, &found)?;
         let paragraph = span.first().ok_or_else(|| EditError::no_element(span.part.clone()))?;
         if crate::textbox::text_box_anchor(docx, &span.part, &paragraph.path).is_some() {

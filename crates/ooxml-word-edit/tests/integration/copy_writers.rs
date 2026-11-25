@@ -165,7 +165,7 @@ fn a_copy_reads_the_body_style_a_paragraph_given_text_changes() {
     let copy = CopyBlocks {
         source: CopySource::Other(Box::new(source.store().snapshot().doc().clone())),
         range: CopyRange::Blocks("p:5B000001".to_owned()),
-        at: "end".to_owned(),
+        at: "end".into(),
         policy: RevisionPolicy::Untracked,
         styles: StylePolicy::UseDestination,
         style_map: Vec::new(),
@@ -223,7 +223,7 @@ fn a_copy_reads_the_list_before_the_place_an_edit_takes_away() {
     let copy = CopyBlocks {
         source: CopySource::Own,
         range: CopyRange::Blocks("p:5A000204".to_owned()),
-        at: "after:p:5A000203".to_owned(),
+        at: "after:p:5A000203".into(),
         policy: RevisionPolicy::Untracked,
         styles: StylePolicy::UseDestination,
         style_map: Vec::new(),
@@ -310,7 +310,7 @@ fn two_writers_adding_uses_of_one_style_commit_without_a_conflict() {
     let copy = CopyBlocks {
         source: CopySource::Other(Box::new(source.store().snapshot().doc().clone())),
         range: CopyRange::Blocks("p:5B000301".to_owned()),
-        at: "end".to_owned(),
+        at: "end".into(),
         policy: RevisionPolicy::Untracked,
         styles: StylePolicy::UseDestination,
         style_map: Vec::new(),

@@ -12,7 +12,7 @@
 //! Must not: render, or change the document.
 
 use crate::address::resolve::{in_table, InTable};
-use crate::address::{self, span_ends, AddressError};
+use crate::address::{self, Address, AddressError, Shape};
 use crate::docx::controls::controls;
 use crate::docx::tables::TableGrid;
 use crate::docx::StoryPart;
@@ -61,25 +61,25 @@ enum Cut {
     Block,
 }
 
-/// The records `range` selects.
+/// The records `range` selects, its forms tried in docx-agent's `select` order.
 ///
 /// # Errors
 /// A [`RangeError`] when it names nothing or is malformed.
-pub fn select(reader: &mut Reader<'_>, range: Option<&str>) -> Result<Vec<Selected>, RangeError> {
+pub fn select(reader: &mut Reader<'_>, range: Option<&Address>) -> Result<Vec<Selected>, RangeError> {
     let docx = reader.docx;
     let Some(body) = docx.body() else { return Ok(Vec::new()) };
     let Some(range) = range else {
         return Ok(vec![records(None, reader.story(body))]);
     };
-    let range = address::expand_heading(docx, range)?;
-    let range = range.as_str();
-    if range.trim().is_empty() {
+    let address = address::expand_heading(docx, range)?;
+    let range = address.as_str();
+    if address.has(Shape::Empty) {
         return Err(AddressError::invalid(
             format!("a range is empty: give a block id, a span ({SPAN_SYNTAX}), a section or a story"),
             Vec::new(),
         ));
     }
-    if let Some((first, last)) = span_ends(range)? {
+    if let Some((first, last)) = address.span_ends()? {
         let anchor = first.or(last).unwrap_or_default();
         let part = part_of(reader, anchor)?;
         if let (Some(_), Some(last)) = (first, last) {
@@ -92,27 +92,28 @@ pub fn select(reader: &mut Reader<'_>, range: Option<&str>) -> Result<Vec<Select
         }
         return cut(reader, part, first, last, Cut::Span, range).map(|r| vec![records(None, r)]);
     }
-    if address::is_text_range(range) {
+    if address.has(Shape::Text) {
         let found = address::text_range(docx, range)?;
         return between(reader, &found.start_id, &found.end_id);
     }
-    if range.starts_with("bm:") || !range.contains([':', '@', '/', '#']) && docx.story(range).is_none() {
+    let bookmark = address.has(Shape::Bookmark);
+    if bookmark || address.has(Shape::Bare) && docx.story(range).is_none() {
         match address::bookmark(docx, range) {
             Ok(found) => {
                 let found = address::bookmark_range(docx, &found)?;
                 return between(reader, &found.start_id, &found.end_id);
             }
-            Err(error) if range.starts_with("bm:") => return Err(error),
+            Err(error) if bookmark => return Err(error),
             Err(_) => {}
         }
     }
     if let Some(found) = inside_table(reader, range)? {
         return Ok(vec![found]);
     }
-    if range.starts_with("s:") || range.starts_with("s@") {
+    if address.has(Shape::Section) {
         return section(reader, body, range).map(|r| vec![r]);
     }
-    if !range.contains([':', '@', '/']) {
+    if address.has(Shape::Story) {
         let Some(story) = docx.story(range) else {
             return Err(AddressError::not_found(
                 format!("no story {}", repr_str(range)),
@@ -374,3 +375,7 @@ fn section(reader: &mut Reader<'_>, body: &StoryPart, range: &str) -> Result<Sel
         Vec::new(),
     ))
 }
+
+#[cfg(test)]
+#[path = "select_reference.rs"]
+pub(crate) mod reference;

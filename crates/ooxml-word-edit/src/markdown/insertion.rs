@@ -17,6 +17,7 @@ use crate::stamping::{stamp_document, w14_prefix};
 use crate::validate::Orders;
 use crate::work::{Id, Work};
 use crate::{EditError, Result, WordDoc};
+use ooxml_word_model::address::Place as Where;
 use ooxml_word_model::docx::formatting::Formatting;
 use ooxml_word_model::docx::Docx;
 use ooxml_word_model::ids::valid_long_hex;
@@ -62,8 +63,8 @@ fn lone_empty_paragraph(docx: &Docx) -> Option<(String, Vec<u32>)> {
 ///
 /// # Errors
 /// A place that does not exist, `replace:` (not ported yet), a story of notes or comments.
-pub(crate) fn locate(doc: &WordDoc, docx: &Docx, at: &str, blocks: &[Block]) -> Result<Located> {
-    let lone = if matches!(at, "end" | "end:body") && !matches!(blocks.first(), Some(Block::Table(_))) {
+pub(crate) fn locate(doc: &WordDoc, docx: &Docx, at: &Where, blocks: &[Block]) -> Result<Located> {
+    let lone = if at.is_body_end() && !matches!(blocks.first(), Some(Block::Table(_))) {
         lone_empty_paragraph(docx)
     } else {
         None

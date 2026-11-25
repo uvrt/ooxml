@@ -101,7 +101,7 @@ fn edit(rng: &mut Rng, targets: &[String], tables: &[String], writer: u64) -> Ed
             policy: policy(rng, writer),
         }),
         2 => Edit::Insert(InsertText {
-            at: format!("{target}@{}", rng.below(3)),
+            at: format!("{target}@{}", rng.below(3)).into(),
             text: format!("{} ", words.join(" ")),
             policy: policy(rng, writer),
         }),

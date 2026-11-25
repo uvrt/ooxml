@@ -8,6 +8,7 @@ use super::changes::{try_call, ChangeDetail, Reading, WordChanges};
 use crate::describe::short;
 use crate::paging::page_list;
 use ooxml_tools::{Done, ToolError};
+use ooxml_word_model::address::Address;
 use ooxml_word_model::docx::changes::{changes, LogicalChange};
 use ooxml_word_model::docx::revisions::{describe_record, records};
 use ooxml_word_model::docx::Docx;
@@ -43,7 +44,7 @@ pub(crate) fn change_json(change: &LogicalChange) -> Value {
 fn paragraphs_within(docx: &Docx, within: &str, args: &WordChanges) -> Result<BTreeSet<String>, ToolError> {
     let mut call = args.clone();
     call.within = None;
-    ooxml_word_model::address::scope_paragraphs(docx, within)
+    ooxml_word_model::address::scope_paragraphs(docx, &Address::parse(within))
         .map(|(part, indexes)| {
             indexes
                 .iter()

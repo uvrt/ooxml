@@ -81,7 +81,7 @@ pub(crate) struct Place {
 /// start, as a cross-reference takes it), refused outside the paragraph's text or inside
 /// a field's result.
 pub(crate) fn place(doc: &WordDoc, docx: &Docx, at: &str, start: bool) -> Result<Place> {
-    let found = range(doc, docx, at)?;
+    let found = range(doc, docx, &ooxml_word_model::address::Address::parse(at))?;
     let span = Span::of(doc, docx, &found)?;
     let id = range_id(&found);
     let paragraph = if start { span.first() } else { span.last() };
@@ -296,7 +296,7 @@ impl InsertField<'_> {
         let end = here.offset + text.chars().count();
         let anchor = super::switches::switch(&self.instruction, 'l');
         let link = crate::links::AddHyperlink {
-            range: format!("{paragraph}@{}:{end}", here.offset),
+            range: format!("{paragraph}@{}:{end}", here.offset).into(),
             url: if anchor.is_some() {
                 None
             } else {
@@ -462,7 +462,11 @@ impl InsertCrossReference<'_> {
     /// The result: the bookmark's text's first line, or the number of the page it starts
     /// on (`1` and listed where the layout cannot say).
     fn result(&self, sink: &EditSink<'_, '_>, docx: &Docx, name: &str) -> Result<(String, bool)> {
-        let marked = range(sink.doc(), docx, &format!("bm:{name}"))?;
+        let marked = range(
+            sink.doc(),
+            docx,
+            &ooxml_word_model::address::Address::from(format!("bm:{name}")),
+        )?;
         let span = Span::of(sink.doc(), docx, &marked)?;
         let (text, unknown) = if self.page {
             let layout = self

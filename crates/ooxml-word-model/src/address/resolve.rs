@@ -10,6 +10,7 @@
 //! Must not: read Markdown records, or change the document.
 
 pub use super::marks::{bookmark, bookmark_range, marker_range, range_text, Bookmark};
+use super::parsed::{Address, Form, Shape};
 use super::syntax::{inside_table, is_text_range, parse_range, span_ends, Inside, RangeText, SPAN_SYNTAX};
 use super::AddressError;
 use crate::docx::controls::Control;
@@ -101,9 +102,10 @@ pub fn unknown(docx: &Docx, id: &str) -> AddressError {
         return error;
     }
     if id.starts_with(HEADING) {
-        return match expand_heading(docx, id) {
+        return match expand_heading(docx, &Address::parse(id)) {
             Err(error) => error,
             Ok(span) => {
+                let span = span.as_str();
                 let ends = span.split("..").map(str::to_owned).collect();
                 AddressError::invalid(format!("{id} is a heading's range ({span}); give one block here"), ends)
             }
@@ -407,29 +409,24 @@ pub fn heading(docx: &Docx, given: &str) -> Result<Heading, AddressError> {
 }
 
 /// `address` with a heading's range (`h:p:A`, or `h:` at a span's end) as the span of
-/// blocks it is; any other address unchanged.
+/// blocks it is ([`Form::Span`]; a heading with no blocks under it, its own id); any other
+/// address as it is.
 ///
 /// # Errors
 /// [`heading`]'s.
-pub fn expand_heading(docx: &Docx, address: &str) -> Result<String, AddressError> {
-    if !address.contains(HEADING) {
-        return Ok(address.to_owned());
+pub fn expand_heading(docx: &Docx, address: &Address) -> Result<Address, AddressError> {
+    if !address.has(Shape::Heading) {
+        return Ok(address.clone());
     }
-    let Some((first, last)) = address.split_once("..") else {
-        if address.starts_with(HEADING) {
-            let h = heading(docx, address)?;
-            return Ok(if h.last == h.id {
-                h.id
-            } else {
-                format!("{}..{}", h.id, h.last)
-            });
-        }
-        return Ok(address.to_owned());
+    let Some((first, last)) = address.as_str().split_once("..") else {
+        let h = heading(docx, address.as_str())?;
+        return Ok(if h.last == h.id {
+            Address::parse(&h.id)
+        } else {
+            Address::span(&h.id, &h.last)
+        });
     };
     let (first, last) = (first.trim(), last.trim());
-    if !(first.starts_with(HEADING) || last.starts_with(HEADING)) {
-        return Ok(address.to_owned());
-    }
     let first = if first.starts_with(HEADING) {
         heading(docx, first)?.id
     } else {
@@ -440,7 +437,7 @@ pub fn expand_heading(docx: &Docx, address: &str) -> Result<String, AddressError
     } else {
         last.to_owned()
     };
-    Ok(format!("{first}..{last}"))
+    Ok(Address::span(&first, &last))
 }
 
 /// The paragraphs (indexes in their part's index, in document order, tables' cells
@@ -471,65 +468,70 @@ fn range_paragraphs<'d>(docx: &'d Docx, range: &RangeText) -> Result<Paragraphs<
 
 /// The part and paragraphs (document order, tables' cells included) that `address` holds
 /// -- any form: a story, a block or span, a row, a cell, a section, a bookmark, a text
-/// range, a content control (docx-agent's `_scope_paragraphs`).
+/// range, a content control (docx-agent's `_scope_paragraphs`), tried in the order of
+/// [`Form`].
 ///
 /// # Errors
 /// What names nothing, or is malformed.
-pub fn scope_paragraphs<'d>(docx: &'d Docx, address: &str) -> Result<Paragraphs<'d>, AddressError> {
-    if address.trim().is_empty() {
+pub fn scope_paragraphs<'d>(docx: &'d Docx, address: &Address) -> Result<Paragraphs<'d>, AddressError> {
+    if address.has(Shape::Empty) {
         return Err(AddressError::invalid(
             format!("an address is empty: give a block id (p:..., t:...), a cell (t:X/c1,1), a section (s:1), a bookmark or a span ({SPAN_SYNTAX})"),
             Vec::new(),
         ));
     }
     let address = expand_heading(docx, address)?;
-    let address = address.as_str();
-    if let Some(part) = docx.story(address) {
+    let raw = address.as_str();
+    if let Some(part) = docx.story(raw) {
         return Ok((part, (0..part.ids.paragraphs().len()).collect()));
     }
-    if let Some((first, last)) = span_ends(address)? {
-        return span_paragraphs(docx, first, last);
-    }
-    if is_text_range(address) {
-        let range = text_range(docx, address)?;
-        return range_paragraphs(docx, &range);
-    }
-    if address.starts_with("s:") || address.starts_with("s@") {
-        let id = section(docx, address)?;
-        let body = docx
-            .body()
-            .ok_or_else(|| AddressError::not_found("no body".to_owned(), Vec::new()))?;
-        return Ok((body, section_paragraphs(docx, &id)));
-    }
-    if address.starts_with("bm:") || !address.contains([':', '@', '/', '#']) {
-        let found = bookmark(docx, address)?;
-        let range = bookmark_range(docx, &found)?;
-        return range_paragraphs(docx, &range);
-    }
-    if address.starts_with("cc:") || address.starts_with("cc@") {
-        let controls = crate::docx::controls::controls(docx);
-        let found = control(&controls, address)?;
-        let part = docx
-            .part(&found.part)
-            .ok_or_else(|| AddressError::not_found(format!("no part {}", found.part), Vec::new()))?;
-        let inner = paragraphs_in(part, &[&found.path]);
-        if !inner.is_empty() {
-            return Ok((part, inner));
+    match address.form() {
+        Form::Malformed(error) => Err(error.clone()),
+        Form::Span { first, last } => span_paragraphs(docx, first.as_deref(), last.as_deref()),
+        Form::Text => {
+            let range = text_range(docx, raw)?;
+            range_paragraphs(docx, &range)
         }
-        let holder = (1..found.path.len())
-            .rev()
-            .find_map(|n| found.path.get(..n).and_then(|p| part.ids.paragraph_at(p)));
-        return Ok((part, holder.map(|p| vec![p.index]).unwrap_or_default()));
-    }
-    if let Some(found) = in_table(docx, address)? {
-        return Ok((found.part, cell_paragraphs(&found)));
-    }
-    let (part, entry) = resolve(docx, address)?;
-    match entry {
-        Entry::Paragraph(k) => Ok((part, vec![k])),
-        Entry::Table(t) => {
-            let path = part.ids.tables().get(t).map(|t| t.path.clone()).unwrap_or_default();
-            Ok((part, paragraphs_in(part, &[&path])))
+        Form::Section => {
+            let id = section(docx, raw)?;
+            let body = docx
+                .body()
+                .ok_or_else(|| AddressError::not_found("no body".to_owned(), Vec::new()))?;
+            Ok((body, section_paragraphs(docx, &id)))
+        }
+        Form::Bookmark | Form::Bare => {
+            let found = bookmark(docx, raw)?;
+            let range = bookmark_range(docx, &found)?;
+            range_paragraphs(docx, &range)
+        }
+        Form::Control => {
+            let controls = crate::docx::controls::controls(docx);
+            let found = control(&controls, raw)?;
+            let part = docx
+                .part(&found.part)
+                .ok_or_else(|| AddressError::not_found(format!("no part {}", found.part), Vec::new()))?;
+            let inner = paragraphs_in(part, &[&found.path]);
+            if !inner.is_empty() {
+                return Ok((part, inner));
+            }
+            let holder = (1..found.path.len())
+                .rev()
+                .find_map(|n| found.path.get(..n).and_then(|p| part.ids.paragraph_at(p)));
+            Ok((part, holder.map(|p| vec![p.index]).unwrap_or_default()))
+        }
+        // an expanded address is never blank or a heading's range: they read as an id
+        Form::Row | Form::Inside { .. } | Form::Block | Form::Empty | Form::Heading => {
+            if let Some(found) = in_table(docx, raw)? {
+                return Ok((found.part, cell_paragraphs(&found)));
+            }
+            let (part, entry) = resolve(docx, raw)?;
+            match entry {
+                Entry::Paragraph(k) => Ok((part, vec![k])),
+                Entry::Table(t) => {
+                    let path = part.ids.tables().get(t).map(|t| t.path.clone()).unwrap_or_default();
+                    Ok((part, paragraphs_in(part, &[&path])))
+                }
+            }
         }
     }
 }
@@ -655,3 +657,7 @@ fn span_paragraphs<'d>(
     let refs: Vec<&[u32]> = paths.iter().map(Vec::as_slice).collect();
     Ok((part, paragraphs_in(part, &refs)))
 }
+
+#[cfg(test)]
+#[path = "reference.rs"]
+pub(crate) mod reference;

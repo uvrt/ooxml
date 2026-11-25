@@ -24,6 +24,7 @@ use crate::structure::common::{blocks_ref_as_place, is_place, name_blocks, outco
 use crate::written::{self, Written};
 use ooxml_tools::{ArgEnum, Outcome as Replied, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::{InsertMarkdown, MarkdownInserted, MarkdownOptions, TextKeep, WriteMap};
+use ooxml_word_model::address::Place;
 use serde_json::{json, Map, Value};
 
 /// A Markdown construct a style map names a style for.
@@ -182,7 +183,7 @@ fn run(args: &WordInsertMarkdown, editing: &Editing<'_>) -> Result<ToolResult<Va
     };
     let command = InsertMarkdown {
         markdown: markdown.clone(),
-        at: args.at.clone(),
+        at: Place::parse(&args.at),
         style_map,
         // docx-agent's tool refuses raw HTML and writes emphasis in its styles
         options: MarkdownOptions::default(),
