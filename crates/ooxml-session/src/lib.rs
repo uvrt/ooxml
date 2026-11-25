@@ -27,6 +27,7 @@
 mod batch;
 pub mod blobs;
 mod changes;
+pub use changes::changed as changed_parts;
 mod context;
 pub mod datasets;
 mod dispatch;

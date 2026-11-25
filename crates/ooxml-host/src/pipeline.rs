@@ -206,9 +206,12 @@ impl HostSession {
             .collect();
         first.append(&mut result.warnings);
         result.warnings = first;
-        // 11. the checks of a changing call
+        // 11. the checks of a changing call, and what it touched
         if changing && !result.is_error() {
             self.checks(&doc, made.as_ref(), &mut result);
+        }
+        if let Some(made) = &made {
+            self.touched(&doc, made, &mut result);
         }
         if let (Some(key), false) = (&key, result.is_error()) {
             self.stores().keys.keep(&doc, entry.name(), key, &result);
@@ -354,6 +357,61 @@ impl HostSession {
         }
     }
 
+    /// What a call that made versions touched, for the application: its format's entries
+    /// and the parts whose bytes changed, each with the document, from the state its first
+    /// edit was applied to through the version its last made.
+    fn touched(&self, doc: &str, made: &ooxml_session::CallMade, result: &mut ToolResult<Value>) {
+        let Some(id) = DocId::parse(doc) else { return };
+        let (Ok(Some(before)), Ok(format)) = (self.session.numbered(&id, made.before), self.session.format_doc(&id))
+        else {
+            return;
+        };
+        self.say_touched(
+            doc,
+            &*format,
+            before.any(),
+            made.last.any(),
+            made.format.as_deref(),
+            result,
+        );
+    }
+
+    /// `result`'s touched and changed parts between `before` and `after` of `doc`.
+    fn say_touched(
+        &self,
+        doc: &str,
+        format: &dyn ooxml_session::FormatDoc,
+        before: &ooxml_session::AnyVersion,
+        after: &ooxml_session::AnyVersion,
+        made: Option<&(dyn std::any::Any + Send + Sync)>,
+        result: &mut ToolResult<Value>,
+    ) {
+        let with_doc = |mut entry: Map<String, Value>| {
+            let mut out = Map::new();
+            out.insert("doc".into(), Value::from(doc));
+            out.append(&mut entry);
+            Value::Object(out)
+        };
+        result.app.touched = format
+            .touched(before, after, made)
+            .into_iter()
+            .map(|entry| match entry {
+                Value::Object(entry) => with_doc(entry),
+                other => other,
+            })
+            .collect();
+        let mut parts = ooxml_session::changed_parts(before.package(), after.package());
+        parts.sort();
+        result.app.changed_parts = parts
+            .into_iter()
+            .map(|part| {
+                let mut entry = Map::new();
+                entry.insert("part".into(), Value::from(part));
+                with_doc(entry)
+            })
+            .collect();
+    }
+
     /// `undo`, the session's, its document's refs brought back to the state it returns to.
     fn undo(
         &self,
@@ -367,10 +425,17 @@ impl HostSession {
             .map(|d| vec![d.to_owned()])
             .unwrap_or_default();
         let context = self.context(caller);
-        let result = self.session.call(&going.tool, Value::Object(arguments), &context);
+        let id = going.docs.first().and_then(|d| DocId::parse(d));
+        let before = id.as_ref().and_then(|id| self.session.snapshot(id).ok());
+        let mut result = self.session.call(&going.tool, Value::Object(arguments), &context);
         if let (false, Some(doc), Some(version)) = (result.is_error(), going.docs.first(), result.version) {
             if let Some(table) = self.stores().refs.get_mut(doc) {
                 table.restore(version);
+            }
+            let after = id.as_ref().and_then(|id| self.session.snapshot(id).ok());
+            let format = id.as_ref().and_then(|id| self.session.format_doc(id).ok());
+            if let (Some(before), Some(after), Some(format)) = (before, after, format) {
+                self.say_touched(doc, &*format, before.any(), after.any(), None, &mut result);
             }
         }
         result

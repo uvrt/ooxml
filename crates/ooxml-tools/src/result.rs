@@ -121,6 +121,9 @@ pub struct Timing {
 pub struct AppOnly {
     /// What the call changed, one entry per thing, in the format's own addresses.
     pub touched: Vec<Value>,
+    /// The zip parts the call changed, `{"doc", "part"}` each, by document and then name:
+    /// what a co-authoring client uploads after the call.
+    pub changed_parts: Vec<Value>,
     /// A batch's `touched` per op: `(op index, touched)`.
     pub touched_by_op: Vec<(usize, Vec<Value>)>,
     /// The tool's name.

@@ -24,6 +24,7 @@ mod from_template;
 mod host_reads;
 mod live_view;
 mod pages;
+pub mod problems;
 mod records;
 mod reflowed;
 mod refused;
