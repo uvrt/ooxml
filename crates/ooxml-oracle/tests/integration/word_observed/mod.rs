@@ -4,11 +4,14 @@
 //! what `LaidPages` draws -- with the deleted tests' tolerances (6e850e18), a family per
 //! module.
 //!
-//! Each family lays out the observed documents (frozen in `corpus/`) with the open faces
-//! the repository ships, Calibri laid out with Carlito (its widths), so a run needs no Word
-//! and no font of the machine's. Where the layout disagrees with Word beyond the tolerance,
-//! the family names the case as a known difference with its reason; the check is strict: a
-//! known difference that agrees fails too, so the list is kept to what is true.
+//! Each family lays out the observed documents (frozen in `corpus/`, or where the gates do
+//! not read them in `tests/data/word-probes/`) with the open faces the repository ships,
+//! Calibri laid out with Carlito (its widths), so a run needs no Word and no font of the
+//! machine's. `wrap_side` names each case the layout disagrees with Word on as a known
+//! difference with its reason, strictly (a known difference that agrees fails too). The
+//! families ported as Phase 3's safety net hold each case to a floor instead ([`Floors`]):
+//! today's agreement, measured, so a change that loses a line Word agrees with fails while
+//! today's gaps stay counted where they are.
 //!
 //! Must not: loosen a tolerance, or score anything but the layout against Word.
 
@@ -16,7 +19,10 @@
 #![allow(clippy::panic, clippy::indexing_slicing)]
 
 mod glyphs;
+mod lines;
+mod tables;
 mod wrap_side;
+mod wrap_table;
 
 use ooxml_fonts::{Folder, Location, WordFontOptions};
 use ooxml_oracle::edits::Unlimited;
@@ -40,6 +46,43 @@ pub fn observations(file: &str) -> Value {
 pub fn corpus(maker: &str, name: &str) -> Vec<u8> {
     let path = format!("{CRATE}/corpus/{maker}/{name}.docx");
     std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"))
+}
+
+/// A probe document: frozen in `corpus/<maker>/` where the gates read it too, else in
+/// `tests/data/word-probes/<maker>/` (built once by the probe's maker, docx2svg's
+/// `tools/make_*_probe.py` at 6e850e18, byte for byte).
+pub fn probe(maker: &str, name: &str) -> Vec<u8> {
+    let corpus = format!("{CRATE}/corpus/{maker}/{name}.docx");
+    if std::path::Path::new(&corpus).exists() {
+        return std::fs::read(&corpus).unwrap_or_else(|e| panic!("{corpus}: {e}"));
+    }
+    let path = format!("{CRATE}/tests/data/word-probes/{maker}/{name}.docx");
+    std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"))
+}
+
+/// A document of the crate's `fixtures/<folder>/`.
+pub fn corpus_fixture(folder: &str, name: &str) -> Vec<u8> {
+    let path = format!("{CRATE}/fixtures/{folder}/{name}");
+    std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"))
+}
+
+/// The case family of each of Word's pages of `document`, as the probe's reader named them
+/// (`tests/data/word-probes/families.json`: per family of recordings, per document, runs of
+/// `[family, pages]`).
+pub fn page_families(recording: &str, document: &str) -> Vec<String> {
+    let path = format!("{CRATE}/tests/data/word-probes/families.json");
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
+    let all: Value = serde_json::from_str(&text).unwrap_or_else(|e| panic!("{path}: {e}"));
+    let runs = all[recording][document]
+        .as_array()
+        .unwrap_or_else(|| panic!("{path}: no pages for {recording} {document}"));
+    let mut out = Vec::new();
+    for run in runs {
+        let family = run[0].as_str().unwrap_or_default();
+        let pages = run[1].as_u64().unwrap_or_default();
+        out.extend((0..pages).map(|_| family.to_owned()));
+    }
+    out
 }
 
 /// A page engine over the open faces the repository ships, Word's substitutes for the faces
@@ -111,7 +154,7 @@ impl Scored {
     }
 
     /// Word's lines (`glyphs::line_score`), a line's case family that of its page.
-    pub fn lines(&mut self, lines: &BTreeMap<glyphs::LineKey, Vec<String>>, family_of: impl Fn(usize) -> &'static str) {
+    pub fn lines<'a>(&mut self, lines: &BTreeMap<glyphs::LineKey, Vec<String>>, family_of: impl Fn(usize) -> &'a str) {
         for ((page, y), problems) in lines {
             let shown = problems
                 .first()
@@ -200,4 +243,117 @@ pub fn check_known(document: &str, scored: &Scored, known: Known) -> Result<(), 
     } else {
         Err(out)
     }
+}
+
+/// A family's floors: per document, per case, `(case, agreeing, scored)` as the layout scores
+/// today. A case's lines are Word's, so their count is fixed; a glyph check's count is the
+/// layout's glyphs where it counts what the layout draws, so only its disagreeing are held.
+pub type Floors = &'static [(&'static str, &'static [(&'static str, usize, usize)])];
+
+/// The cases scored against the floors: `Err` lists every case below its floor (fewer
+/// agreeing, or more disagreeing for a glyph check), a case of Word's whose count changed,
+/// and a case scored with no floor or a floor with nothing scored.
+pub fn check_floors(document: &str, scored: &Scored, floors: Floors) -> Result<(), Vec<String>> {
+    let rows: BTreeMap<&str, (usize, usize)> = floors
+        .iter()
+        .find(|(name, _)| *name == document)
+        .map(|(_, rows)| {
+            rows.iter()
+                .map(|(case, agree, total)| (*case, (*agree, *total)))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut out = Vec::new();
+    for (case, (bad, total)) in &scored.cases {
+        let agree = total - bad;
+        let Some(&(floor, floor_total)) = rows.get(case.as_str()) else {
+            out.push(format!("{document} {case}: {agree} of {total} agree, no floor"));
+            continue;
+        };
+        let words = case.starts_with("lines") || matches!(case.as_str(), "glyphs not drawn" | "warnings" | "pages");
+        let below = if words {
+            *total != floor_total || agree < floor
+        } else {
+            *bad > floor_total - floor
+        };
+        if below {
+            out.push(format!(
+                "{document} {case}: {agree} of {total} agree with Word, floor {floor} of {floor_total}"
+            ));
+        }
+    }
+    for case in rows.keys() {
+        if !scored.cases.contains_key(*case) {
+            out.push(format!("{document} {case}: a floor, nothing scored"));
+        }
+    }
+    if out.is_empty() {
+        Ok(())
+    } else {
+        Err(out)
+    }
+}
+
+impl Scored {
+    /// The document's row of floors as the layout scores it now, for a family's table.
+    pub fn floor_row(&self, document: &str) -> String {
+        let cases: Vec<String> = self
+            .cases
+            .iter()
+            .map(|(case, (bad, total))| format!("(\"{case}\", {}, {total})", total - bad))
+            .collect();
+        format!("    (\"{document}\", &[{}]),\n", cases.join(", "))
+    }
+}
+
+/// One document of a recording of text objects (`objects`, as `read_render.word_objects`
+/// keeps them) scored as `wrap_side`'s are: Word's lines within half a pixel, per case
+/// family when the recording's reader counted them so (`families`), else as one, `all`;
+/// the glyph row's checks; the warning codes.
+pub fn score_objects(recording: &Value, maker: &str, document: &str, families: Option<&str>) -> Scored {
+    let recorded = &recording["documents"][document];
+    let laid = lay_out(document, probe(maker, document));
+    let model = glyphs::laid_glyphs(&laid.pages);
+    let word = glyphs::word_glyphs(&recorded["objects"]);
+    let lines = glyphs::line_score(&model, &word);
+    let pages = families.map(|f| page_families(f, document)).unwrap_or_default();
+    let mut scored = Scored::default();
+    scored.lines(&lines, |page| match families {
+        Some(_) => pages.get(page).map_or("past the last case", String::as_str),
+        None => "all",
+    });
+    scored.glyphs(&glyphs::compare(&model, &word));
+    scored.warnings(&laid.warnings, &recorded["warnings"]);
+    if let Some(word) = recorded["pages"].get(1).and_then(Value::as_u64) {
+        let same = laid.pages.len() as u64 == word;
+        let shown = (!same).then(|| format!("layout {}, Word {word}", laid.pages.len()));
+        scored.add("pages".into(), usize::from(!same), 1, shown);
+    }
+    scored
+}
+
+/// Every document of a family scored and held to its floors; a failure lists every case
+/// below its floor and, to update a floor that has risen, every document's row as scored.
+pub fn check_family(documents: &[&str], floors: Floors, score: impl Fn(&str) -> Scored) {
+    let mut problems = Vec::new();
+    let mut rows = String::new();
+    let mut samples = String::new();
+    for document in documents {
+        let scored = score(document);
+        rows.push_str(&scored.floor_row(document));
+        if let Err(found) = check_floors(document, &scored, floors) {
+            problems.extend(found);
+            samples.push_str(&scored.sample(5));
+        }
+    }
+    for (document, _) in floors {
+        if !documents.contains(document) {
+            problems.push(format!("{document}: a floor, not scored"));
+        }
+    }
+    assert!(
+        problems.is_empty(),
+        "{}\nas scored now:\n{rows}first problems:\n{samples}",
+        problems.join("\n")
+    );
 }
