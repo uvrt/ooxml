@@ -302,7 +302,7 @@ pub(crate) fn stopped(cancel: &dyn Cancel) -> Result<(), ToolError> {
 
 /// Registers the group's tools, in the order a model is shown them (the crate's
 /// [`crate::register`]).
-pub(crate) fn register(r: &mut impl crate::Registrar) {
+pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
     tracking::register(r);
     changes::register(r);
     comments::register(r);

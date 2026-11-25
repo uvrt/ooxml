@@ -6,9 +6,9 @@
 
 use crate::editing::{context, docx};
 use ooxml_base::Cancel;
-use ooxml_session::{CallContext, DocKind, EditHandler, ReadHandler, Registry, Session, SessionConfig};
-use ooxml_tools::{Done, ToolError, ToolResult};
-use ooxml_tools_word::{word_set_text, Describe, Editing, Version, WordSetText};
+use ooxml_session::{CallContext, DocKind, Registry, Session, SessionConfig};
+use ooxml_tools::{Done, EditHandler, ReadHandler, ToolError, ToolResult};
+use ooxml_tools_word::{word_set_text, Describe, Editing, Version, Word, WordSetText};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -36,7 +36,7 @@ fn with(register: impl FnOnce(&mut Registry)) -> Session {
 
 #[test]
 fn a_read_that_panics_is_an_internal_failure_and_counted() {
-    let s = with(|r| r.register(Arc::new(ReadHandler::<Describe>::new(&[DocKind::Docx], boom_read))));
+    let s = with(|r| r.register(DocKind::Docx, Arc::new(ReadHandler::<Word, Describe>::new(boom_read))));
     s.open(docx("<w:p/>"), DocKind::Docx, "a.docx").unwrap();
     let result = s.call("describe", json!({"doc": "d1"}), &CallContext::default());
     assert_eq!(result.app.panic.as_deref(), Some("a read that panics"));
@@ -80,7 +80,10 @@ fn mismatched(_: &WordSetText, _: &Editing<'_>) -> ToolResult<Value> {
 #[test]
 fn an_internal_failure_is_counted_and_a_refusal_is_not() {
     let s = with(|r| {
-        r.register(Arc::new(EditHandler::<WordSetText>::new(&[DocKind::Docx], mismatched)));
+        r.register(
+            DocKind::Docx,
+            Arc::new(EditHandler::<Word, WordSetText>::new(mismatched)),
+        );
     });
     let body = r#"<w:p w14:paraId="11111111" w14:textId="77777777"><w:r><w:t>one</w:t></w:r></w:p>"#;
     s.open(docx(body), DocKind::Docx, "a.docx").unwrap();
@@ -109,7 +112,10 @@ fn an_internal_failure_is_counted_and_a_refusal_is_not() {
 #[test]
 fn an_edit_that_panics_says_whether_it_changed_the_document() {
     let s = with(|r| {
-        r.register(Arc::new(EditHandler::<WordSetText>::new(&[DocKind::Docx], boom_edit)));
+        r.register(
+            DocKind::Docx,
+            Arc::new(EditHandler::<Word, WordSetText>::new(boom_edit)),
+        );
     });
     let body = r#"<w:p w14:paraId="11111111" w14:textId="77777777"><w:r><w:t>one</w:t></w:r></w:p>"#;
     let d = s.open(docx(body), DocKind::Docx, "a.docx").unwrap();
@@ -122,7 +128,10 @@ fn an_edit_that_panics_says_whether_it_changed_the_document() {
     assert_eq!(s.snapshot(&d).unwrap().version(), 0);
 
     let s = with(|r| {
-        r.register(Arc::new(EditHandler::<WordSetText>::new(&[DocKind::Docx], boom_after)));
+        r.register(
+            DocKind::Docx,
+            Arc::new(EditHandler::<Word, WordSetText>::new(boom_after)),
+        );
     });
     let d = s.open(docx(body), DocKind::Docx, "a.docx").unwrap();
     let (result, made) = s.edit("word_set_text", asked, &CallContext::default());

@@ -148,12 +148,7 @@ pub(crate) fn width(node: Option<&Element>) -> Value {
     }
 }
 
-/// Python's `{:g}` for the values a width in percent takes.
+/// Python's `{:g}` for the values a width in percent takes ([`ooxml_base::pyfmt::g`]).
 pub(crate) fn python_g(value: f64) -> String {
-    if value.fract() == 0.0 && value.abs() < 1e16 {
-        format!("{}", value as i64)
-    } else {
-        let text = format!("{value:.6}");
-        text.trim_end_matches('0').trim_end_matches('.').to_owned()
-    }
+    ooxml_base::pyfmt::g(value)
 }

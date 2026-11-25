@@ -156,6 +156,6 @@ fn range_refusal(error: RangeError, doc: &str) -> ToolError {
 }
 
 /// Registers `word_read` (the crate's [`crate::register`]).
-pub(crate) fn register(r: &mut impl crate::Registrar) {
+pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
     r.read::<WordRead>(word_read);
 }

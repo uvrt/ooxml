@@ -20,10 +20,9 @@
 //! Must not: run a tool, or let a group outlive the batch that opened it: the host closes
 //! it on every path (its guard; a dropped Python group takes its work back).
 
-use crate::document::{Held, Word};
-use crate::retired::Made;
+use crate::document::Word;
 use crate::{CallContext, DocId, Session, SessionError};
-use ooxml_store::{DocModel, Error, Store, TxnMark, TxnOwner};
+use ooxml_store::{TxnMark, TxnOwner};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Where a document's step group was, for [`Session::revert_group`]; the mark
@@ -58,10 +57,7 @@ impl Session {
     pub fn open_group(&self, id: &DocId) -> Result<GroupMark, SessionError> {
         let document = self.document(id)?;
         let owner = this_thread();
-        let mark = match &document.held {
-            Held::Package(store) => open(store, owner)?,
-            Held::Word(word) => open(word.editor.store(), owner)?,
-        };
+        let mark = document.stored().open_group(owner)?;
         Ok(GroupMark {
             owner,
             mark,
@@ -75,10 +71,7 @@ impl Session {
     /// [`SessionError::NotOpen`]; the store's without an open group.
     pub fn group_mark(&self, id: &DocId, group: &GroupMark) -> Result<GroupMark, SessionError> {
         let document = self.document(id)?;
-        let mark = match &document.held {
-            Held::Package(store) => store.txn_mark(group.owner)?,
-            Held::Word(word) => word.editor.store().txn_mark(group.owner)?,
-        };
+        let mark = document.stored().group_mark(group.owner)?;
         Ok(GroupMark {
             owner: group.owner,
             mark,
@@ -98,30 +91,12 @@ impl Session {
         context: &CallContext,
     ) -> Result<Option<u64>, SessionError> {
         let document = self.document(id)?;
-        let reverted = match &document.held {
-            Held::Package(store) => store
-                .txn_revert(mark.owner, mark.mark)?
-                .map(|(_, version)| version.seq().0),
-            Held::Word(word) => {
-                let found = word.editor.store().txn_revert(mark.owner, mark.mark)?;
-                if let Some((previous, version)) = &found {
-                    // what the revert removed and brought back, as an undo notes it
-                    let delta = ooxml_word_edit::ids_delta(previous.doc(), version.doc())?;
-                    let made = Made {
-                        seq: version.seq().0,
-                        caller: context.caller.name(),
-                        tool: None,
-                        history: true,
-                    };
-                    word.retired.note(&made, &delta);
-                    word.retired.number(made.seq, version.number());
-                }
-                if let Some(tracking) = &mark.tracking {
-                    word.restore_tracking(tracking.clone());
-                }
-                found.map(|(_, version)| version.seq().0)
-            }
-        };
+        let reverted = document
+            .stored()
+            .revert_group(mark.owner, mark.mark, context.caller.name())?;
+        if let (Some(word), Some(tracking)) = (document.word(), &mark.tracking) {
+            word.restore_tracking(tracking.clone());
+        }
         Ok(reverted)
     }
 
@@ -139,10 +114,7 @@ impl Session {
         tool: Option<&str>,
     ) -> Result<Option<u64>, SessionError> {
         let document = self.document(id)?;
-        let made = match &document.held {
-            Held::Package(store) => commit(store, group.owner, context)?,
-            Held::Word(word) => commit(word.editor.store(), group.owner, context)?,
-        };
+        let made = document.stored().commit_group(group.owner, &context.caller)?;
         if let Some((seq, number)) = made {
             document.stepped(seq, number, tool, context);
         }
@@ -156,16 +128,11 @@ impl Session {
     /// [`SessionError::NotOpen`].
     pub fn abandon_group(&self, id: &DocId, group: &GroupMark) -> Result<bool, SessionError> {
         let document = self.document(id)?;
-        Ok(match &document.held {
-            Held::Package(store) => store.drop_txn(group.owner),
-            Held::Word(word) => {
-                let dropped = word.editor.store().drop_txn(group.owner);
-                if let (true, Some(tracking)) = (dropped, &group.tracking) {
-                    word.restore_tracking(tracking.clone());
-                }
-                dropped
-            }
-        })
+        let dropped = document.stored().drop_group(group.owner);
+        if let (true, Some(word), Some(tracking)) = (dropped, document.word(), &group.tracking) {
+            word.restore_tracking(tracking.clone());
+        }
+        Ok(dropped)
     }
 }
 
@@ -189,7 +156,7 @@ impl Session {
         let Some(word) = document.word() else {
             return Ok(None);
         };
-        let store = word.editor.store();
+        let store = word.editor().store();
         let (Some(start), Some(head)) = (store.txn_base(group.owner), store.txn_current(group.owner)) else {
             return Ok(None);
         };
@@ -215,28 +182,4 @@ impl Session {
             (limit, &cancel),
         ))
     }
-}
-
-/// `owner`'s transaction held open on `store`: the mark it opened at.
-fn open<D: DocModel>(store: &Store<D>, owner: TxnOwner) -> Result<TxnMark, SessionError>
-where
-    D::Setup: Default,
-    SessionError: From<Error<D>>,
-{
-    store.open_txn(owner, &D::Setup::default())?;
-    Ok(store.txn_start())
-}
-
-/// `owner`'s transaction on `store` committed as the context's caller: the version it
-/// published and its state number, `None` when it changed nothing.
-fn commit<D: DocModel>(
-    store: &Store<D>,
-    owner: TxnOwner,
-    context: &CallContext,
-) -> Result<Option<(u64, u64)>, SessionError>
-where
-    SessionError: From<Error<D>>,
-{
-    let done = store.commit_txn(owner, &context.caller)?;
-    Ok(done.changed.then(|| (done.version.seq().0, done.version.number())))
 }

@@ -508,9 +508,13 @@ fn others_seen(
 #[test]
 fn a_call_is_handed_the_other_documents_it_names_pinned() {
     let mut registry = ooxml_session::Registry::empty();
-    registry.register(Arc::new(ooxml_session::ReadHandler::<
-        ooxml_tools_word::WordCompareBlocks,
-    >::new(&[DocKind::Docx], others_seen)));
+    registry.register(
+        DocKind::Docx,
+        Arc::new(ooxml_tools::ReadHandler::<
+            ooxml_tools_word::Word,
+            ooxml_tools_word::WordCompareBlocks,
+        >::new(others_seen)),
+    );
     let s = Session::with_registry(SessionConfig::default(), session_context(), registry);
     s.open(Arc::from(docx()), DocKind::Docx, "a.docx").unwrap();
     let d2 = s.open(Arc::from(docx()), DocKind::Docx, "b.docx").unwrap();

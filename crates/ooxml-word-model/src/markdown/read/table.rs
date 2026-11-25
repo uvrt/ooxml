@@ -50,6 +50,11 @@ impl Reader<'_> {
                 let style = table_style(&table.element);
                 let record = self.paragraph(part, prefix, Some(&style));
                 records.insert(0, Record::Paragraph(Box::new(record)));
+            } else if let Some(Record::Table(record)) = records.first_mut() {
+                // Joined into the table (or, with no paragraph to take them, gone with
+                // nothing to show): the table holds them in the view, as a paragraph holds
+                // those joined into it.
+                record.joins = self.ids_of(part, &prefix);
             }
         }
         records
@@ -163,6 +168,7 @@ impl Reader<'_> {
             table_style: style,
             part: part.to_owned(),
             path: table.path.clone(),
+            joins: Vec::new(),
         };
         (vec![Record::Table(Box::new(record))], grid.placed)
     }

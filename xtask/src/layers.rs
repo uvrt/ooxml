@@ -66,8 +66,14 @@ pub const MAP: &[(&str, Place)] = &[
     ("ooxml-sheets", Place::Layer(3, 0)),
     ("ooxml-tools-derive", Place::Layer(4, 0)),
     ("ooxml-tools", Place::Layer(4, 1)),
-    ("ooxml-tools-word", Place::Layer(4, 2)),
+    // Each format's tools above the tools the formats share (design phase 3, section 3:
+    // chart and SmartArt tools at 4.2, lane ph3-chart).
+    ("ooxml-tools-word", Place::Layer(4, 3)),
     ("ooxml-session", Place::Layer(5, 0)),
+    // Over the format-generic session, side by side: each format's session part and the
+    // Rust host, neither depending on the other (phase 3, lanes ph3-format A2 and ph3-host).
+    ("ooxml-session-word", Place::Layer(5, 1)),
+    ("ooxml-host", Place::Layer(5, 1)),
     // ooxml-python in the design; the prototype holds that package name (lane P0d)
     ("ooxml-python-session", Place::Layer(6, 0)),
     ("xtask", Place::Layer(6, 0)),

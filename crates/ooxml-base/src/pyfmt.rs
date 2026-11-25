@@ -94,6 +94,19 @@ pub fn repr_float(value: f64) -> String {
     format!("{sign}{head}{fraction}e{exp_sign}{:02}", exponent.abs())
 }
 
+/// Python's `{:g}` for the values a width or a length in points takes: a whole number as
+/// itself, else six decimals with the trailing zeros dropped.
+#[must_use]
+#[allow(clippy::cast_possible_truncation)]
+pub fn g(value: f64) -> String {
+    if value.fract() == 0.0 && value.abs() < 1e16 {
+        format!("{}", value as i64)
+    } else {
+        let text = format!("{value:.6}");
+        text.trim_end_matches('0').trim_end_matches('.').to_owned()
+    }
+}
+
 /// Python's `round(value, 2)`: the nearest of two decimals, ties to even on the exact value.
 #[must_use]
 pub fn round2(value: f64) -> f64 {

@@ -475,6 +475,6 @@ fn not_supported(args: &EditChart, what: &str) -> ToolError {
 
 /// Registers `edit_chart` (the group's [`super::register`]): the host asks the session first
 /// (its data actions that change points in place; the rest are refused as not supported yet).
-pub(crate) fn register(r: &mut impl crate::Registrar) {
-    r.reading_edit::<EditChart>(edit_chart_read, edit_chart, crate::Hosting::PLAIN);
+pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {
+    r.reading_edit::<EditChart>(edit_chart_read, edit_chart);
 }
