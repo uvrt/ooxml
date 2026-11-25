@@ -24,8 +24,8 @@ mod merge_heads;
 mod places;
 pub use accepted::{Accepted, Axis, ColumnRuns, Misplaced};
 pub use grid::{
-    grid_columns, grid_count, grid_span, grid_value, placed_row_cells, row_cells, source_cells, CellSpec, Coverage,
-    Elements, Grid, GridCell, GridRow, GridSource, RowSpec, GRID_VALUE_MAX,
+    grid_columns, grid_count, grid_span, grid_value, past_widest, placed_row_cells, row_cells, source_cells, CellSpec,
+    Coverage, Elements, Grid, GridCell, GridRow, GridSource, RowSpec, GRID_VALUE_MAX, TABLE_COLUMNS_MAX,
 };
 pub use labels::{collapse_space, no_cell_text};
 pub use merge_heads::{cell_merge, merge_heads, VMerge};

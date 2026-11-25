@@ -18,6 +18,7 @@ use crate::names::W;
 use crate::tables::shape::{count_of, grid_of, own_rows, span_of};
 use crate::validate::Orders;
 use crate::work::{Id, Work};
+use ooxml_word_model::docx::tables::{past_widest, TABLE_COLUMNS_MAX};
 use std::collections::{BTreeMap, HashSet};
 
 /// Twips a grid column takes where nothing states its width.
@@ -225,9 +226,41 @@ pub(crate) fn reaches(work: &Work, table: Id) -> Vec<(Id, i64, i64)> {
         .collect()
 }
 
-/// Make `table`'s grid fit its rows as Word writes it (`edit/tables.py`'s `fit_grid`).
-fn fit_grid(work: &mut Work, table: Id, orders: &Orders) {
-    let grid = match work.find(table, W, "tblGrid") {
+/// The warning for a table whose row reaches past the widest a table is fitted to
+/// ([`past_widest`]: its `w:tblGrid`'s `columns` or [`TABLE_COLUMNS_MAX`]), where one does
+/// (`reaches`: each row's grid column after its last cell and its `w:gridAfter`).
+fn too_wide(reaches: &[(Id, i64, i64)], columns: usize) -> Option<String> {
+    let (row, reach) = reaches
+        .iter()
+        .map(|(_, end, after)| end + after)
+        .enumerate()
+        .find(|(_, reach)| past_widest(columns, usize::try_from(*reach).unwrap_or(usize::MAX)))?;
+    Some(format!(
+        "a table's grid was left as it is: its row {row} reaches {reach} grid columns, past the \
+         {TABLE_COLUMNS_MAX} a Word table takes and its w:tblGrid's {columns}; Word re-grids such a row its own \
+         way when it opens the document"
+    ))
+}
+
+/// Make `table`'s grid fit its rows as Word writes it (`edit/tables.py`'s `fit_grid`). A
+/// row reaching past the widest a table is fitted to ([`past_widest`]) leaves the table as
+/// it is: the warning saying so.
+fn fit_grid(work: &mut Work, table: Id, orders: &Orders) -> Option<String> {
+    let written = work.find(table, W, "tblGrid");
+    let mut widths: Vec<i64> = written
+        .map(|g| find_all(work, g, "gridCol"))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|c| attr(work, c, "w").map_or(0, |w| if w.is_empty() { 0 } else { w.trim().parse().unwrap_or(0) }))
+        .collect();
+    let reaches = reaches(work, table);
+    let count = |w: &Vec<i64>| i64::try_from(w.len()).unwrap_or(i64::MAX);
+    // a row past the widest leaves the table as it is, its grid not made either (none
+    // does where every row fits)
+    if let Some(warning) = too_wide(&reaches, widths.len()) {
+        return Some(warning);
+    }
+    let grid = match written {
         Some(g) => g,
         None => {
             let g = make(work, "tblGrid", &[]);
@@ -235,17 +268,9 @@ fn fit_grid(work: &mut Work, table: Id, orders: &Orders) {
             g
         }
     };
-    let mut widths: Vec<i64> = find_all(work, grid, "gridCol")
-        .into_iter()
-        .map(|c| attr(work, c, "w").map_or(0, |w| if w.is_empty() { 0 } else { w.trim().parse().unwrap_or(0) }))
-        .collect();
-    let reaches = reaches(work, table);
-    let Some(longest) = reaches.iter().map(|(_, end, after)| end + after).max() else {
-        return;
-    };
-    let count = |w: &Vec<i64>| i64::try_from(w.len()).unwrap_or(i64::MAX);
+    let longest = reaches.iter().map(|(_, end, after)| end + after).max()?;
     if reaches.iter().all(|(_, end, after)| end + after == count(&widths)) {
-        return;
+        return None;
     }
     for &(row, _, _) in &reaches {
         for (cell, start, span) in cells_of(work, row) {
@@ -294,6 +319,7 @@ fn fit_grid(work: &mut Work, table: Id, orders: &Orders) {
             set_after(work, row, skipped, width, orders);
         }
     }
+    None
 }
 
 /// A row's `w:gridAfter` and `w:wAfter`: `count` columns of `width` twips; none at 0.
@@ -545,7 +571,9 @@ impl PartReview<'_, '_> {
                 normalise_grid(self.work, key, self.orders);
             }
             if !fits(self.work, key) {
-                fit_grid(self.work, key, self.orders);
+                if let Some(warning) = fit_grid(self.work, key, self.orders) {
+                    self.warnings.push(warning);
+                }
             }
         }
         for paragraph in self.work.iter(self.work.root(), W, &["p"]) {

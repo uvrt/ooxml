@@ -114,40 +114,6 @@ pub(crate) struct History<D: DocModel> {
     /// Scoped undo's steps, oldest first; kept across commits, up to the depth.
     undone: VecDeque<Undone<D>>,
     depth: usize,
-    /// The step group open now ([`crate::Store::open_group`]).
-    group: Option<Group<D>>,
-}
-
-/// A step group: the commits made while it is open become one step when it closes.
-struct Group<D: DocModel> {
-    /// How many steps at the end of the undo list the group made.
-    made: usize,
-    /// Plain redo as it was when the group opened: dropped once the group closes having
-    /// made a step, given back when it made none.
-    redo: Vec<Undone<D>>,
-    /// How many opens it has not closed yet: a group opened within it joins it.
-    depth: usize,
-    /// The number of the state it opened on: a revert that takes all its commits back
-    /// brings that state back ([`crate::Version::number`]).
-    start: u64,
-    /// The number its commits carry: one more than the highest given when it opened, given
-    /// for good only when it closes having made a step.
-    number: u64,
-}
-
-/// A closed group's step: the version it made and the state number it carries.
-pub(crate) type Closed = (Seq, u64);
-
-/// Where a step group was: how many steps it had made then.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GroupMark(pub(crate) usize);
-
-/// What taking a group's steps back needs from the history: the version before them, the
-/// change set that makes it from the head, the keys it writes.
-pub(crate) struct Revert<D: DocModel> {
-    pub(crate) doc: D,
-    pub(crate) changes: ChangeSet<D>,
-    pub(crate) writes: KeySet<D::Key>,
 }
 
 impl<D: DocModel> History<D> {
@@ -157,7 +123,6 @@ impl<D: DocModel> History<D> {
             redo: Vec::new(),
             undone: VecDeque::new(),
             depth,
-            group: None,
         }
     }
 
@@ -206,166 +171,11 @@ impl<D: DocModel> History<D> {
         }
     }
 
-    /// A new commit: the step goes on the undo list and plain redo is dropped -- within a
-    /// group, held by the group, and the depth not applied until it closes.
+    /// A new commit: the step goes on the undo list and plain redo is dropped.
     pub(crate) fn commit(&mut self, step: Step<D>) -> Garbage<D> {
-        if let Some(group) = self.group.as_mut() {
-            group.made += 1;
-            self.undo.push_back(step);
-            return Garbage {
-                _steps: Vec::new(),
-                _versions: Vec::new(),
-            };
-        }
         let mut garbage = self.push(step);
         garbage.take_redo(&mut self.redo);
         garbage
-    }
-
-    /// Whether a step group is open.
-    pub(crate) fn grouped(&self) -> bool {
-        self.group.is_some()
-    }
-
-    /// Open a step group, or join the one open (its close then only ends the joining):
-    /// `start` the head's state number, `number` the one its commits are to carry.
-    pub(crate) fn open_group(&mut self, start: u64, number: u64) {
-        if let Some(group) = self.group.as_mut() {
-            group.depth += 1;
-            return;
-        }
-        self.group = Some(Group {
-            made: 0,
-            redo: std::mem::take(&mut self.redo),
-            depth: 1,
-            start,
-            number,
-        });
-    }
-
-    /// The state number a commit within the open group carries.
-    pub(crate) fn group_number(&self) -> Option<u64> {
-        self.group.as_ref().map(|group| group.number)
-    }
-
-    /// The state number of the content a revert to `mark` brings back: the group's start
-    /// when it takes back every commit the group made, else the group's own number.
-    pub(crate) fn revert_number(&self, mark: GroupMark) -> Option<u64> {
-        self.group
-            .as_ref()
-            .map(|group| if mark.0 == 0 { group.start } else { group.number })
-    }
-
-    /// Where the open group is now.
-    pub(crate) fn group_mark(&self) -> Option<GroupMark> {
-        self.group.as_ref().map(|group| GroupMark(group.made))
-    }
-
-    /// The group's steps after `mark`, taken back: the version before the first of them
-    /// as the new content (`None` when it made none since). The steps leave the undo list
-    /// and go on no redo list.
-    pub(crate) fn plan_revert(&self, mark: GroupMark) -> Result<Option<Revert<D>>, Error<D>> {
-        let group = self.group.as_ref().ok_or(StoreError::NoGroup)?;
-        if mark.0 > group.made {
-            return Err(StoreError::NoGroup);
-        }
-        let count = group.made - mark.0;
-        let Some(first) = self.undo.len().checked_sub(count) else {
-            return Err(StoreError::NoGroup);
-        };
-        let steps: Vec<&Step<D>> = self.undo.iter().skip(first).collect();
-        let Some(oldest) = steps.first() else {
-            return Ok(None);
-        };
-        let made = joined(&steps)?;
-        let mut writes = KeySet::new();
-        for step in &steps {
-            writes.extend(&step.writes);
-        }
-        let changes = ChangeSet::inverse_of(oldest.before.doc().clone(), ChangeSet::made(made));
-        Ok(Some(Revert {
-            doc: oldest.before.doc().clone(),
-            changes,
-            writes,
-        }))
-    }
-
-    /// A planned revert to `mark` published: the group's steps after it leave the history.
-    pub(crate) fn reverted(&mut self, mark: GroupMark) -> Garbage<D> {
-        let mut garbage = Garbage {
-            _steps: Vec::new(),
-            _versions: Vec::new(),
-        };
-        if let Some(group) = self.group.as_mut() {
-            let count = group.made.saturating_sub(mark.0);
-            let first = self.undo.len().saturating_sub(count);
-            garbage._steps.extend(self.undo.drain(first..));
-            group.made = mark.0;
-        }
-        garbage
-    }
-
-    /// Close the open group: its steps one step of `caller`'s, `head` its "after" (a revert
-    /// after the group's last commit made it, of that commit's content), with the state
-    /// number its commits carried; `None` when it made none: plain redo is as it was when
-    /// it opened.
-    pub(crate) fn close_group(
-        &mut self,
-        caller: Option<Arc<str>>,
-        head: &Snapshot<D>,
-    ) -> Result<(Option<Closed>, Garbage<D>), Error<D>> {
-        let mut garbage = Garbage {
-            _steps: Vec::new(),
-            _versions: Vec::new(),
-        };
-        match self.group.as_mut() {
-            None => return Err(StoreError::NoGroup),
-            Some(group) if group.depth > 1 => {
-                // a joined group's close: the outermost one makes the step
-                group.depth -= 1;
-                return Ok((None, garbage));
-            }
-            Some(_) => {}
-        }
-        let group = self.group.take().ok_or(StoreError::NoGroup)?;
-        if group.made == 0 {
-            self.redo = group.redo;
-            return Ok((None, garbage));
-        }
-        let first = self.undo.len().saturating_sub(group.made);
-        let steps: Vec<Step<D>> = self.undo.drain(first..).collect();
-        let made = match joined(&steps.iter().collect::<Vec<_>>()) {
-            Ok(made) => made,
-            Err(error) => {
-                // (never: a group's steps are commits) the steps stay as they were made
-                self.undo.extend(steps);
-                self.group = Some(group);
-                return Err(error);
-            }
-        };
-        let Some(oldest) = steps.first() else {
-            return Ok((None, garbage));
-        };
-        let mut reads = KeySet::new();
-        let mut writes = KeySet::new();
-        for step in &steps {
-            reads.extend(&step.reads);
-            writes.extend(&step.writes);
-        }
-        let step = Step {
-            before: Arc::clone(&oldest.before),
-            after: Arc::clone(head),
-            changes: ChangeSet::made(made),
-            reads,
-            writes,
-            caller,
-        };
-        let seq = step.after.seq();
-        garbage._steps.extend(steps);
-        garbage._steps.extend(self.push(step)._steps);
-        let mut redo = group.redo;
-        garbage.take_redo(&mut redo);
-        Ok((Some((seq, group.number)), garbage))
     }
 
     fn push(&mut self, step: Step<D>) -> Garbage<D> {
@@ -551,19 +361,6 @@ impl<D: DocModel> History<D> {
         }
         garbage
     }
-}
-
-/// The changes of consecutive `steps`, in the order they apply.
-fn joined<D: DocModel>(steps: &[&Step<D>]) -> Result<Arc<[D::Change]>, Error<D>> {
-    let mut out = Vec::new();
-    for step in steps {
-        let made = step.changes.changes().ok_or(StoreError::Entangled {
-            step: step.after.seq(),
-            overlap: KeySet::Everything,
-        })?;
-        out.extend(made.iter().cloned());
-    }
-    Ok(out.into())
 }
 
 fn info<D: DocModel>(step: &Step<D>) -> StepInfo<D::Key> {

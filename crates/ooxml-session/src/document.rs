@@ -18,7 +18,7 @@ use crate::update::PartUpdate;
 use crate::{DocKind, SessionError};
 use ooxml_base::Context;
 use ooxml_opc::Package;
-use ooxml_store::{Caller, Command, Snapshot, Store, StoreConfig, StoreStats};
+use ooxml_store::{Caller, Command, DocModel, Snapshot, Store, StoreConfig, StoreStats};
 use ooxml_tools_word::{MadeBy, RowsWritten};
 use ooxml_word_edit::validate::Delta;
 use ooxml_word_edit::{EarlierIds, Editor, WordDoc};
@@ -92,17 +92,13 @@ impl Word {
 
     /// The head, or for the thread whose batch holds the document the version its ops left.
     pub(crate) fn head(&self) -> Snapshot<WordDoc> {
-        let store = self.editor.store();
-        store
-            .txn_current(crate::group::this_thread())
-            .unwrap_or_else(|| store.snapshot())
+        head_of(self.editor.store())
     }
 
     /// The owner of the batch this thread holds on the document, if it holds one: its
     /// calls' edits run in the batch's transaction.
     pub(crate) fn batch_owner(&self) -> Option<ooxml_store::TxnOwner> {
-        let owner = crate::group::this_thread();
-        self.editor.store().holds(owner).then_some(owner)
+        batch_owner(self.editor.store())
     }
 
     /// The tracking author a step group's revert goes back to (`None`: untracked).
@@ -258,7 +254,7 @@ impl Document {
     /// ops left ([`crate::group`]).
     pub(crate) fn head(&self) -> At {
         match &self.held {
-            Held::Package(store) => At::Package(store.snapshot()),
+            Held::Package(store) => At::Package(head_of(store)),
             Held::Word(word) => At::Word(word.head()),
         }
     }
@@ -268,14 +264,6 @@ impl Document {
         match &self.held {
             Held::Word(word) => Some(word),
             Held::Package(_) => None,
-        }
-    }
-
-    /// Whether a step group is open on it (its work is numbered as the group closes).
-    pub(crate) fn grouped(&self) -> bool {
-        match &self.held {
-            Held::Package(store) => store.group_mark().is_some(),
-            Held::Word(word) => word.editor.store().txn_held(),
         }
     }
 
@@ -329,30 +317,21 @@ impl Document {
     ) -> Result<(At, bool, u32, bool), SessionError> {
         Ok(match &self.held {
             Held::Package(store) => {
-                let done = store.run(caller, update)?;
-                (At::Package(done.version), done.changed, done.attempts, self.grouped())
+                let ran = run_update(store, caller, update)?;
+                (
+                    At::Package(ran.version),
+                    ran.previous.is_some(),
+                    ran.attempts,
+                    ran.batch,
+                )
             }
             Held::Word(word) => {
-                let store = word.editor.store();
-                let (version, previous, attempts, batch) = match word.batch_owner() {
-                    Some(owner) => {
-                        let ran = store.in_txn(owner, |tx| {
-                            let point = tx.savepoint();
-                            let done = update.validate(tx.doc()).and_then(|()| update.prepare(tx));
-                            if done.is_err() {
-                                tx.rollback(point);
-                            }
-                            done
-                        })?;
-                        ran.out?;
-                        (ran.after, ran.changed.then_some(ran.before), 1, true)
-                    }
-                    None => {
-                        let done = store.run(caller, update)?;
-                        let previous = done.previous.filter(|_| done.changed);
-                        (done.version, previous, done.attempts, false)
-                    }
-                };
+                let Ran {
+                    version,
+                    previous,
+                    attempts,
+                    batch,
+                } = run_update(word.editor.store(), caller, update)?;
                 if let Some(previous) = &previous {
                     let delta = ooxml_word_edit::ids_delta(previous.doc(), version.doc())?;
                     let made = Made {
@@ -367,4 +346,65 @@ impl Document {
             }
         })
     }
+}
+
+/// `store`'s head, or for the thread whose batch holds the document the version its ops
+/// left ([`crate::group`]).
+fn head_of<D: DocModel>(store: &Store<D>) -> Snapshot<D> {
+    store
+        .txn_current(crate::group::this_thread())
+        .unwrap_or_else(|| store.snapshot())
+}
+
+/// The owner of the batch this thread holds on `store`, if it holds one.
+fn batch_owner<D: DocModel>(store: &Store<D>) -> Option<ooxml_store::TxnOwner> {
+    let owner = crate::group::this_thread();
+    store.holds(owner).then_some(owner)
+}
+
+/// What a test's part update made.
+struct Ran<D: DocModel> {
+    version: Snapshot<D>,
+    /// The version it was applied to, where it changed the document.
+    previous: Option<Snapshot<D>>,
+    attempts: u32,
+    /// Whether it ran in this thread's batch (whose close makes the step).
+    batch: bool,
+}
+
+/// `update` run on `store` as `caller`: in this thread's batch where it holds one, at a
+/// savepoint (a commit of its own would wait for the gate the batch holds), else committed.
+fn run_update<D>(store: &Store<D>, caller: &Caller, update: &PartUpdate<'_>) -> Result<Ran<D>, SessionError>
+where
+    D: crate::update::PartsModel,
+    SessionError: From<ooxml_store::Error<D>>,
+{
+    Ok(match batch_owner(store) {
+        Some(owner) => {
+            let ran = store.in_txn(owner, |tx| {
+                let point = tx.savepoint();
+                let done = update.validate(tx.doc()).and_then(|()| update.prepare(tx));
+                if done.is_err() {
+                    tx.rollback(point);
+                }
+                done
+            })?;
+            ran.out?;
+            Ran {
+                previous: ran.changed.then_some(ran.before),
+                version: ran.after,
+                attempts: 1,
+                batch: true,
+            }
+        }
+        None => {
+            let done = store.run(caller, update)?;
+            Ran {
+                previous: done.previous.filter(|_| done.changed),
+                version: done.version,
+                attempts: done.attempts,
+                batch: false,
+            }
+        }
+    })
 }

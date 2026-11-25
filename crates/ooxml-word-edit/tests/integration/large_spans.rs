@@ -7,7 +7,9 @@
 
 use crate::common::editor;
 use ooxml_store::Caller;
-use ooxml_word_edit::{CellWrite, EditError, EditTable, Editor, RevisionPolicy, SetCells, TableChange};
+use ooxml_word_edit::{
+    CellWrite, EditError, EditTable, Editor, Review, RevisionPolicy, Selection, SetCells, TableChange,
+};
 use ooxml_word_model::docx::tables::{grid_span, GRID_VALUE_MAX};
 use ooxml_zip::{Method, NewEntry, Writer};
 use std::sync::Arc;
@@ -47,9 +49,13 @@ fn document(span: &str) -> Editor {
         ),
         format!("<w:tr>{}{}</w:tr>", cell(None, "a"), cell(None, "b")),
     ];
+    table_document(&rows.concat())
+}
+
+/// A document of one table on a grid of two columns whose rows are `rows`.
+fn table_document(rows: &str) -> Editor {
     let body = format!(
-        r#"<w:document xmlns:w="{W}"><w:body><w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid>{}</w:tbl><w:p/></w:body></w:document>"#,
-        rows.concat()
+        r#"<w:document xmlns:w="{W}"><w:body><w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid>{rows}</w:tbl><w:p/></w:body></w:document>"#
     );
     let parts = [
         ("[Content_Types].xml", r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#.to_owned()),
@@ -167,5 +173,47 @@ fn a_split_in_a_table_of_billions_of_columns_is_quick() {
         split(&editor, 0, span).unwrap();
         split(&editor, 0, 0).unwrap();
         assert!(started.elapsed() < QUICK, "{span}: {:?}", started.elapsed());
+    }
+}
+
+#[test]
+fn a_review_leaves_the_grid_of_a_row_reaching_billions_of_columns_with_a_warning() {
+    // accepting an insertion in a table whose first row reaches past the 63 columns a Word
+    // table takes: its grid is not fitted (one w:gridCol per column), it is left as it is
+    // and the review says so
+    for raw in huge() {
+        let started = Instant::now();
+        let inserted = r#"<w:tc><w:p><w:ins w:id="1" w:author="R" w:date="2026-11-25T00:00:00Z"><w:r><w:t>new</w:t></w:r></w:ins></w:p></w:tc>"#;
+        let editor = table_document(&format!(
+            "<w:tr>{}{}</w:tr><w:tr>{inserted}{}</w:tr>",
+            cell(Some(&raw), "wide"),
+            cell(None, "after"),
+            cell(None, "b")
+        ));
+        let review = Review {
+            accept: true,
+            selection: Selection::All,
+        };
+        let done = editor.run(&Caller::anonymous(), &review).unwrap();
+        let reach = grid_span(Some(&raw)) + 1;
+        assert!(
+            done.out.warnings.iter().any(|w| w.contains(&format!(
+                "a table's grid was left as it is: its row 0 reaches {reach} grid columns, past the 63"
+            ))),
+            "{raw}: {:?}",
+            done.out.warnings
+        );
+        let tree = editor
+            .store()
+            .snapshot()
+            .doc()
+            .tree("word/document.xml")
+            .unwrap()
+            .unwrap();
+        let xml = String::from_utf8(tree.write()).unwrap();
+        assert_eq!(xml.matches("<w:gridCol ").count(), 2, "{raw}");
+        assert!(!xml.contains("w:gridAfter"), "{raw}");
+        assert!(!xml.contains("<w:ins "), "{raw}: the insertion is accepted");
+        assert!(started.elapsed() < QUICK, "{raw}: {:?}", started.elapsed());
     }
 }

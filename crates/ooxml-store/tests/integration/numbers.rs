@@ -8,7 +8,7 @@
 use crate::common;
 
 use common::{still, Cells, Put, Rng};
-use ooxml_store::{Caller, Store, StoreConfig, StoreError};
+use ooxml_store::{Caller, Command, Store, StoreConfig, StoreError, TxnOwner};
 
 fn fresh() -> Store<Cells> {
     Store::new(Cells::default(), StoreConfig::default(), still())
@@ -65,25 +65,28 @@ fn numbers_follow_the_tool_layers_rule_in_random_sequences() {
         for _ in 0..400 {
             match rng.below(6) {
                 5 => {
-                    // a group: commits, perhaps all taken back, then closed: one step, one
-                    // number, or none
-                    let mark = store.open_group().unwrap();
-                    let before = store.snapshot().number();
+                    // a held transaction: ops, perhaps all taken back, then committed: one
+                    // step, one number, or none
+                    let owner = TxnOwner::new(1);
+                    let before = store.open_txn(owner, &()).unwrap().number();
                     let mut made = 0;
                     for _ in 0..rng.below(3) {
                         value += 1;
-                        store
-                            .run(&Caller::named("w"), &Put(vec![(rng.below(10) as u32, value)]))
-                            .unwrap();
+                        let put = Put(vec![(rng.below(10) as u32, value)]);
+                        store.in_txn(owner, |tx| put.prepare(tx).unwrap()).unwrap();
                         made += 1;
-                        assert_eq!(store.snapshot().number(), model.last + 1, "seed {seed}");
+                        assert_eq!(
+                            store.txn_current(owner).unwrap().number(),
+                            model.last + 1,
+                            "seed {seed}"
+                        );
                     }
                     if made > 0 && rng.below(3) == 0 {
-                        store.revert_group(mark).unwrap();
-                        assert_eq!(store.snapshot().number(), before, "seed {seed}");
+                        store.txn_revert(owner, store.txn_start()).unwrap();
+                        assert_eq!(store.txn_current(owner).unwrap().number(), before, "seed {seed}");
                         made = 0;
                     }
-                    store.close_group(&Caller::named("w")).unwrap();
+                    store.commit_txn(owner, &Caller::named("w")).unwrap();
                     if made > 0 {
                         model.commit();
                     }
@@ -112,26 +115,28 @@ fn numbers_follow_the_tool_layers_rule_in_random_sequences() {
 }
 
 #[test]
-fn a_group_is_one_number_given_when_it_closes_having_made_a_step() {
+fn a_held_transaction_is_one_number_given_when_it_commits_having_made_a_step() {
     let store = fresh();
     let w = Caller::named("w");
+    let owner = TxnOwner::new(1);
     store.run(&w, &Put(vec![(1, 1)])).unwrap(); // 1
                                                 // all taken back: the number it opened on, and the next step gets 2
-    let mark = store.open_group().unwrap();
-    store.run(&w, &Put(vec![(1, 2)])).unwrap();
-    assert_eq!(store.snapshot().number(), 2);
-    store.revert_group(mark).unwrap();
-    assert_eq!(store.snapshot().number(), 1);
-    assert_eq!(store.close_group(&w).unwrap(), None);
-    // a joined group's revert keeps the outer group's number
-    store.open_group().unwrap();
-    store.run(&w, &Put(vec![(2, 1)])).unwrap();
-    let inner = store.open_group().unwrap();
-    store.run(&w, &Put(vec![(2, 2)])).unwrap();
-    store.revert_group(inner).unwrap();
-    assert_eq!(store.snapshot().number(), 2);
-    assert_eq!(store.close_group(&w).unwrap(), None);
-    assert!(store.close_group(&w).unwrap().is_some());
+    store.open_txn(owner, &()).unwrap();
+    let put = Put(vec![(1, 2)]);
+    store.in_txn(owner, |tx| put.prepare(tx).unwrap()).unwrap();
+    assert_eq!(store.txn_current(owner).unwrap().number(), 2);
+    store.txn_revert(owner, store.txn_start()).unwrap();
+    assert_eq!(store.txn_current(owner).unwrap().number(), 1);
+    assert!(!store.commit_txn(owner, &w).unwrap().changed);
+    // a revert to a mark keeps the transaction's number
+    store.open_txn(owner, &()).unwrap();
+    let (first, second) = (Put(vec![(2, 1)]), Put(vec![(2, 2)]));
+    store.in_txn(owner, |tx| first.prepare(tx).unwrap()).unwrap();
+    let mark = store.txn_mark(owner).unwrap();
+    store.in_txn(owner, |tx| second.prepare(tx).unwrap()).unwrap();
+    store.txn_revert(owner, mark).unwrap();
+    assert_eq!(store.txn_current(owner).unwrap().number(), 2);
+    assert!(store.commit_txn(owner, &w).unwrap().changed);
     assert_eq!(store.snapshot().number(), 2);
     store.run(&w, &Put(vec![(1, 3)])).unwrap();
     assert_eq!(store.snapshot().number(), 3);

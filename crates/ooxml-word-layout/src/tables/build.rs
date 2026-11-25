@@ -140,9 +140,10 @@ pub fn lay_table(
 ) -> Result<MeasuredTable, Unsupported> {
     let resolved = cx.model.resolve_table(cx.document, input.table);
     let mode15 = crate::input::rules(cx.document).mode15();
+    let spec = TableSpec::new(resolved, input.nested, mode15)?;
     let default_style = default_style(cx.document);
     let mut laying = Laying {
-        spec: TableSpec::new(resolved, input.nested, mode15),
+        spec,
         frame: input.frame,
         floating: None,
         cx,

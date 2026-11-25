@@ -99,7 +99,6 @@ fn the_same_owner_is_refused_and_undo_waits_for_the_end() {
     store.open_txn(A, &()).unwrap();
     assert!(matches!(store.open_txn(A, &()), Err(StoreError::TxnHeld)));
     assert!(matches!(store.undo(), Err(StoreError::GroupOpen)));
-    assert!(matches!(store.open_group(), Err(StoreError::TxnHeld)));
     assert!(matches!(store.in_txn(B, |_| ()), Err(StoreError::NotHeld)));
     let empty = store.commit_txn(A, &Caller::anonymous()).unwrap();
     assert!(!empty.changed, "nothing done: no step");
