@@ -4,22 +4,30 @@
 //! the same whichever side reads a document, before and after it is saved and opened again.
 //!
 //! Owns: the part index ([`PartIds`]), the ledger and the value sequences ([`Ledger`],
-//! [`IdPool`]), the state string ([`export_state`], [`load_state`]), a block's id ([`BlockId`]) and the
-//! renames an edit made ([`Renames`]), and the story names
-//! ids are prefixed with ([`story_name`]).
+//! [`IdPool`]), the state string ([`export_state`], [`load_state`]), a block's id ([`BlockId`],
+//! read into its [`StoryName`], [`BlockKind`] and [`BlockName`]) and the renames an edit made
+//! ([`Renames`]), the story names ids are prefixed with ([`story_name`]), and the compact
+//! handles identity is carried by inside a document ([`BlockKey`], [`Anchor`], [`StoryIx`]
+//! interned in a [`StoryTable`]).
+//!
+//! Identity comes from the index (a paraId and a place), never from an element's address:
+//! the tree shares equal subtrees, so two empty paragraphs may be one element in memory.
+//! Element addresses key only memos of content (ADR-008, docs/architecture §7).
 //!
 //! Must not: stamp or write a part (edits do, phase P2), resolve an address (the address
 //! module does), or hold global state: sequences are cached per pool.
 
 mod block_id;
 mod index;
+mod key;
 mod ledger;
 mod sha256;
 pub use sha256::sha256;
 mod state;
 
-pub use block_id::{renames_text, BlockId, Renames};
+pub use block_id::{renames_text, BlockId, BlockKind, BlockName, NotABlockId, ParaId, Renames, StoryName};
 pub use index::{Entry, IdState, ParagraphId, PartIds, Path, PlacedTable, TableHead, TableId};
+pub use key::{Anchor, BlockKey, KeyName, StoryIx, StoryTable, Sub};
 pub use ledger::{
     block_and_drawing_ids, drawing_numbers, held_id, sequence_value, used_long_hex, HeldId, IdPool, Ledger, REACH,
 };

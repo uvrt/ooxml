@@ -18,6 +18,7 @@
 //! Must not: stamp, generate or remember ids (the ledger does), or resolve an address.
 
 mod build;
+mod keys;
 mod query;
 mod segment;
 
@@ -133,9 +134,19 @@ struct Count {
     paragraphs: usize,
     tables: usize,
     unstamped: usize,
+    /// Paragraphs and rows whose valid paraId is written with fewer than eight digits.
+    short: usize,
+    /// The container children by local name (whatever their namespace), for the names
+    /// [`TOP_NAMES`] lists: what a container child's path step counts it among.
+    names: [u32; TOP_NAMES.len()],
     /// The largest label (labels grow in document order).
     last: u64,
 }
+
+/// The local names of the container children whose places among their namesakes the
+/// segment tree counts: every block lives below one of them but in odd markup (another
+/// wrapper's are counted by a walk of the container's children).
+const TOP_NAMES: [&str; 4] = ["p", "tbl", "sdt", "customXml"];
 
 impl Monoid for Count {
     fn empty() -> Self {
@@ -146,6 +157,10 @@ impl Monoid for Count {
             paragraphs: self.paragraphs + other.paragraphs,
             tables: self.tables + other.tables,
             unstamped: self.unstamped + other.unstamped,
+            short: self.short + other.short,
+            names: std::array::from_fn(|k| {
+                self.names.get(k).copied().unwrap_or(0) + other.names.get(k).copied().unwrap_or(0)
+            }),
             last: self.last.max(other.last),
         }
     }
