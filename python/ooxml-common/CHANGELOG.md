@@ -4,6 +4,17 @@ Versions are set in `pyproject.toml`; none is on PyPI yet. Each version that rea
 is tagged `v<version>` on the commit that brought it, from 0.28.0; the earlier ones were
 never tagged.
 
+## 0.45.1 -- v2026.11.25
+
+### Added
+
+- **A part keeps its local record for a writer to copy** (co-authoring request 1).
+  `ZipPart.header` and `ZipPart.descriptor` (and `RawEntry`'s) are the entry's local header
+  and data descriptor as the file has them, and `copyable` says whether the header holds the
+  entry's sizes (no data descriptor, no needless ZIP64) -- `zipparts.local_record`.
+  ooxml-edit's save copies an untouched entry with them byte for byte, so it keeps its
+  MS-FSSHTTPD chunk signature.
+
 ## 0.45.0 -- unreleased
 - **An entry as it was read, for a writer that copies it** (round 46: untouched parts saved
   as their compressed entries, ooxml-edit 0.101.0). `PartStore.compressed(path)` gives the

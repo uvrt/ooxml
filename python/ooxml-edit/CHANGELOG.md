@@ -4,6 +4,54 @@ Versions are those in `pyproject.toml`; none is published to PyPI yet. Each vers
 reaches `main` is tagged `v<version>` on the commit that brought it, from 0.62.0; the
 earlier ones were never tagged.
 
+## 0.129.0 -- v2026.11.25
+
+### Added
+
+- **`Result.changed_parts`** (co-authoring request 6). Beside `touched`, every result lists
+  the zip parts the call changed, `{"doc": "d1", "part": "ppt/slides/slide1.xml"}` each, by
+  document and name, for the application (never in `to_json`): the change's own parts
+  (`history.Change.parts`; for an owned document the owner's `parts_between` the step's
+  heads -- docx-agent's Rust store, by identity, not a diff). `[]` for a read, a save, an
+  error; a `batch` has the union.
+
+`DocumentFormat.withdrawn` (phase 1, lane ph1-release): tools a format no longer serves, each
+with what to call instead. A call of one, alone or in a `batch`, is refused `refused` with
+`details.not_supported` `"<name> (withdrawn)"` and that way out, instead of `invalid_arguments`
+for an unknown tool, and its name is never read as another tool's.
+
+### Changed
+
+- **A save copies untouched entries byte for byte** (co-authoring requests 1 and 2).
+  `OpcPackage.write` copied an untouched part's compressed data but wrote its local header
+  and central directory record anew, so "version needed" 1.0 became 2.0, "version made by"
+  4.5 became 2.0 and the external attributes Unix permissions: each such entry's
+  MS-FSSHTTPD chunk changed and a co-authoring host was sent it again. An untouched entry is
+  now copied byte for byte -- local header, data, data descriptor if it has one, central
+  directory record but for the offset -- so a package saved without an edit is the bytes it
+  was opened from (an archive with directory entries aside: they are not parts), as the
+  Rust package's save does. A part edited, replaced or derived at save (`replacements`,
+  `docProps/app.xml`) whose bytes are the ones read is copied as read too where its header
+  holds its sizes (no data descriptor, no needless ZIP64), rather than compressed again.
+
+### Removed
+
+Architecture review phase 1 (lane ph1-seams, R2 #6): the tool layer keeps no tracking mode.
+`DocumentEntry.tracking`, `Committed.tracking` and `Committed.with_refs(tracking=...)` are
+gone, and a call on a draft is no longer refused as "tracking was switched": the only format
+that tracks changes (Word) keeps its mode in the Rust session alone.
+Instead: `describe`'s `tracking` (Word) says the mode; `word_set_tracking` sets it.
+
+Architecture review phase 1 (lane ph1-seams): the Python view of an owned document is gone.
+A format's `owner` opens its documents from their bytes alone (`open_data`, now required);
+its `open`, `follow`, `bridge` and `reader` methods are no longer called, and
+`OwnedEntry.flush_view`, `OwnedEntry.view_current`, `OwnerDisagrees` and
+`History.follow` are removed. `Session.adopt` refuses a document made in memory for a format
+with an owner (`ArgumentError`). An owned entry holds no Python document (`held` is
+`None`), and a committed version of one has no Python reader copy (as before: its reads
+take the document's lock).
+Instead: open an owned format's document from its bytes (`Session.open`).
+
 ## 0.128.1 -- v2026.11.23
 
 ### Added

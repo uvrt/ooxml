@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "docx-agent"
-version = "0.2.0"
+version = "0.2.1"
 description = "An AI-editable Word layer: inspect, edit and re-render .docx documents losslessly"
 readme = "README.md"
 license = { text = "MIT" }
@@ -26,7 +26,7 @@ classifiers = [
   "Topic :: Text Processing :: Markup :: XML",
 ]
 # Why each dependency, and why at its version: CONTRIBUTING.md, "Dependencies".
-dependencies = ["ooxml-edit>=0.128.1", "ooxml-common>=0.34.0", "docx2svg>=0.14.0", "ooxml-core>=0.10.0"]
+dependencies = ["ooxml-edit>=0.129.0", "ooxml-common>=0.45.1", "docx2svg>=0.15.0", "ooxml-core>=0.11.0"]
 
 [project.optional-dependencies]
 # PNG is drawn by ooxml-core (a dependency): the extra needs nothing.  Kept for one release,
