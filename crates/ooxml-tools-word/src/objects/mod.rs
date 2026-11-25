@@ -35,6 +35,8 @@ mod edit_table_pending;
 mod format_table;
 mod format_table_args;
 mod made_by;
+#[cfg(test)]
+mod planned_tests;
 mod rows_written;
 mod set_cells;
 mod set_from;

@@ -15,7 +15,7 @@ use super::table_view::TableView;
 use crate::originals::Watch;
 use crate::review::Editing;
 use crate::structure::common::{outcome, Outcome};
-use ooxml_store::{Command, Txn};
+use ooxml_store::{Command, Snapshot, Txn};
 use ooxml_tools::{Done as Reply, ToolResult, TryCall};
 use ooxml_word_edit::{
     tracked_row_fates, EditError, KeepText, PlaceRows, PlacedRecord, RowFate, RowsPlaced, TextKeep, WordDoc,
@@ -122,13 +122,11 @@ pub(super) fn said(
 }
 
 /// The table's id and size as accepted (`data`'s first keys).
-fn size(editing: &Editing<'_>, table: &str, retry: &TryCall) -> Map<String, Value> {
-    let head = editing.editor.current();
-    let found = head
-        .doc()
+fn size(doc: &WordDoc, table: &str, retry: &TryCall) -> Map<String, Value> {
+    let found = doc
         .docx()
         .ok()
-        .and_then(|docx| super::edit_table::table_json(&docx, table, head.doc(), false, retry));
+        .and_then(|docx| super::edit_table::table_json(&docx, table, doc, false, retry));
     let mut out = Map::new();
     for key in ["id", "rows", "columns"] {
         out.insert(
@@ -142,7 +140,7 @@ fn size(editing: &Editing<'_>, table: &str, retry: &TryCall) -> Map<String, Valu
 /// Rule 3: the table holds the source's values already -- nothing written (`_unchanged`).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn unchanged(
-    editing: &Editing<'_>,
+    doc: &WordDoc,
     view: &TableView,
     address: &str,
     plan: &Plan,
@@ -151,7 +149,7 @@ pub(super) fn unchanged(
     timing: Timing,
     retry: &TryCall,
 ) -> ToolResult<Value> {
-    let mut data = size(editing, &view.table.id, retry);
+    let mut data = size(doc, &view.table.id, retry);
     for key in ["key", "mapped"] {
         if let Some(value) = said.get(key) {
             data.insert(key.into(), value.clone());
@@ -288,8 +286,14 @@ pub(super) struct Deleted {
 impl Deleted {
     /// The rows of `removed` (row before, row once the rows are added; from the bottom) as
     /// deleting them one after the other leaves them; `total`, the table's rows once the
-    /// rows are added.
-    pub(super) fn of(editing: &Editing<'_>, view: &TableView, removed: &[(usize, usize)], total: usize) -> Deleted {
+    /// rows are added; `doc` the version the sync is applied to.
+    pub(super) fn of(
+        editing: &Editing<'_>,
+        doc: &WordDoc,
+        view: &TableView,
+        removed: &[(usize, usize)],
+        total: usize,
+    ) -> Deleted {
         let rows: Vec<usize> = removed.iter().map(|(_, at)| *at).collect();
         let Some(tracking) = editing.tracking else {
             return Deleted {
@@ -298,8 +302,7 @@ impl Deleted {
                 counted: Vec::new(),
             };
         };
-        let head = editing.editor.current();
-        let fates = tracked_row_fates(head.doc(), &view.table.id, &tracking.author).unwrap_or_default();
+        let fates = tracked_row_fates(doc, &view.table.id, &tracking.author).unwrap_or_default();
         let mut out = Deleted {
             rows,
             ..Deleted::default()
@@ -340,17 +343,16 @@ impl After<'_> {
 
 /// Where the values came from (`_keep_sources`), decided from the plan: the record kept
 /// when every data row is a source row afterwards, else each cell written keeping its
-/// value's source and the record dropped.
+/// value's source and the record dropped; `doc` the version the sync is applied to.
 pub(super) fn record(
-    editing: &Editing<'_>,
+    doc: &WordDoc,
     view: &TableView,
     (plan, taken, matched, compared): (&Plan, &Taken<'_>, &Matched, &Compared),
     (layout, slots): (&Layout, &[Slot]),
     (height, deleted): (usize, &Deleted),
     accepted_columns: Option<Vec<usize>>,
 ) -> Kept {
-    let head = editing.editor.current();
-    let had = head.doc().docx().ok().and_then(|docx| record_of(&docx, &view.table.id));
+    let had = doc.docx().ok().and_then(|docx| record_of(&docx, &view.table.id));
     let after = After {
         layout,
         taken_out: deleted.taken_out.clone(),
@@ -486,9 +488,9 @@ fn cell_keeps(
 /// The sync's command, then each cell written keeping its value's source, as one
 /// transaction.
 pub(super) struct Keeping<'a> {
-    pub(super) command: &'a PlaceRows,
-    pub(super) cells: &'a [CellKeep],
-    pub(super) accepted: Option<&'a [usize]>,
+    pub(super) command: PlaceRows,
+    pub(super) cells: Vec<CellKeep>,
+    pub(super) accepted: Option<Vec<usize>>,
     pub(super) retry: &'a TryCall,
 }
 
@@ -506,7 +508,13 @@ impl Command<WordDoc> for Keeping<'_> {
             return Ok((out, false));
         }
         let docx = tx.doc().docx()?;
-        let keeps = keeps(&docx, tx.doc(), &out.table, self.cells, (self.accepted, self.retry));
+        let keeps = keeps(
+            &docx,
+            tx.doc(),
+            &out.table,
+            &self.cells,
+            (self.accepted.as_deref(), self.retry),
+        );
         if keeps.is_empty() {
             return Ok((out, false));
         }
@@ -595,7 +603,7 @@ pub(super) struct Done<'d> {
 
 /// The reply of a sync that changed the table (`sync`'s end).
 pub(super) fn reply(
-    editing: &Editing<'_>,
+    version: &Snapshot<WordDoc>,
     view: &TableView,
     placed: RowsPlaced,
     (note, done): (Option<String>, Done<'_>),
@@ -603,7 +611,8 @@ pub(super) fn reply(
 ) -> ToolResult<Value> {
     let table = view.table.id.as_str();
     let now = placed.table.clone();
-    let mut data = size(editing, &now, retry);
+    // the version the call made: another caller's commit since is not this call's
+    let mut data = size(version.doc(), &now, retry);
     data.extend(done.said);
     let mut summary = format!(
         "sync of {now} with {}: {} added, {} changed",

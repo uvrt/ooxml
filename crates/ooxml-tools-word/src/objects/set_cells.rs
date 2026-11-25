@@ -20,11 +20,12 @@
 //! Must not: change the document but through the command.
 
 use super::cell_fills::{column_rows, count_fills, fill_brief, Fill};
-use super::cell_values::{any_by_reference, cell_facts, cell_values, CellsGiven, Wrote};
+use super::cell_values::{any_by_reference, cell_facts, cell_values, CellValue, CellsGiven, Wrote};
 use super::edit_table::table_json;
 use super::edit_table_args::{CellArg, WordEditTable};
 use super::table_view::{table_view, AcceptedView, TableView};
 use crate::describe::short;
+use crate::planned::{Plan, Planned};
 use crate::review::{needed, Editing};
 use crate::structure::common::{outcome, policy, refused, Outcome};
 use crate::written;
@@ -32,6 +33,7 @@ use ooxml_base::pyfmt::repr_str;
 use ooxml_tools::{Failure, Refusal, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::{CellAxis, CellEdit, CellWrite, CellsSet, EditError, KeepingRecord, SetCells, TextKeep, WordDoc};
 use ooxml_word_model::docx::tables::{Axis, TableGrid};
+use ooxml_store::{Command, Snapshot, Txn};
 use ooxml_word_model::docx::Docx;
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -54,29 +56,89 @@ impl From<CellEdit> for Outcome {
     }
 }
 
-/// `set_cells` on the table `view` (found on `docx`, the version before), of the cells
-/// `given`.
+/// `set_cells` of the cells `given`, its places and fills worked out on the version the
+/// cells are written to, in the edit's transaction: a row put in meanwhile is a conflict,
+/// and they are counted again.
 pub(super) fn set_cells(
     args: &WordEditTable,
     given: CellsGiven<'_>,
     editing: &Editing<'_>,
-    (docx, view): (&Docx, &TableView),
-    accepted: &mut AcceptedView,
     retry: &TryCall,
 ) -> Result<ToolResult<Value>, ToolError> {
     let cells = given
         .cells
         .as_deref()
         .ok_or_else(|| needed("cells", "", retry.clone()))?;
+    let planned = Planned::new(|doc: &WordDoc| plan(args, cells, editing, doc, retry));
+    let look = |_: &_, doc: &WordDoc| Some((doc.ids().follow(&args.table), Vec::new()));
+    let ran = super::rows_written::run_writing_rows(editing, &planned, &args.table, look, retry);
+    let said = planned.said();
+    let ((done, facts), rows, version) = match ran {
+        Ok((Ok(done), rows, version)) => (done, rows, version),
+        Ok((Err(refusal), _, _)) => return Err(refusal),
+        Err(error @ (EditError::Address(_) | EditError::Argument { .. } | EditError::Position(_))) => {
+            return Ok(ToolResult::failed(crate::review::edit_refusal(
+                error,
+                "",
+                retry.clone(),
+            )));
+        }
+        Err(error) => return Ok(refused(error, retry.clone())),
+    };
+    let Some(Placing {
+        view,
+        mut fills,
+        held,
+        mut notes,
+        texts,
+    }) = said
+    else {
+        return Err(ToolError::internal("no plan".to_owned(), "word:edit_table"));
+    };
+    count_fills(&mut fills, &texts);
+    for note in done.notes {
+        if !notes.contains(&note) {
+            notes.push(note);
+        }
+    }
+    let mut result = reply(&version, &view, done.edits, (&fills, notes, facts), &held, retry);
+    result.warnings.extend(rows);
+    if let Some(read_as) = given.read_as {
+        result.warnings.insert(0, read_as);
+    }
+    Ok(result)
+}
+
+/// What the reply needs of the plan: the table as it found it, the fills, the paragraphs
+/// the table held, the notes its positions made and each entry's text.
+pub(super) struct Placing {
+    view: TableView,
+    fills: Vec<Fill>,
+    held: HashSet<String>,
+    notes: Vec<String>,
+    texts: Vec<String>,
+}
+
+/// The cells' writes worked out on `doc` (the version they are written to): the places as
+/// the table is accepted there, fills by its rows, each entry's value; refused as before
+/// anything changes.
+pub(super) fn plan<'a, 'e>(
+    args: &'a WordEditTable,
+    cells: &'a [CellArg],
+    editing: &'a Editing<'e>,
+    doc: &WordDoc,
+    retry: &'a TryCall,
+) -> Result<Plan<Writing<'a, 'e>, Placing>, ToolError> {
+    let (docx, view, mut accepted) = super::edit_table::accepted_on(args, editing, doc, retry)?;
     let part = docx
         .part(&view.part)
         .ok_or_else(|| ToolError::internal(format!("no part {}", view.part), "word:edit_table"))?;
     let grid = TableGrid::new(part, &view.table);
-    let (places, owners, mut fills) = column_rows(view, &grid, accepted, cells, retry)?;
+    let (places, owners, fills) = column_rows(&view, &grid, &mut accepted, cells, retry)?;
     let held = if fills.is_empty() {
         HashSet::new()
     } else {
-        paragraphs_of(docx, view)
+        paragraphs_of(&docx, &view)
     };
     if places.len() > MOST_CELLS {
         return Err(ToolError::failure(
@@ -90,7 +152,7 @@ pub(super) fn set_cells(
         .iter()
         .map(|k| values.get(*k).map(|v| v.text.as_str()).unwrap_or_default())
         .collect();
-    one_value_per_cell(view, &grid, accepted, &places, &owners, &texts)?;
+    one_value_per_cell(&view, &grid, &mut accepted, &places, &owners, &texts)?;
     let writes = places
         .iter()
         .zip(&texts)
@@ -110,60 +172,72 @@ pub(super) fn set_cells(
         accepted: (accepted.table.active() || accepted.table.rows_active())
             .then(|| std::sync::Arc::new(accepted.table.clone())),
     });
-    let wrote = Wrote {
-        cells,
-        values: &values,
-        owners: &owners,
-        table: &view.table.id,
+    let said = Placing {
+        fills,
+        held,
+        notes: accepted.notes.clone(),
+        texts: values.iter().map(|v| v.text.clone()).collect(),
+        view,
+    };
+    let writing = Writing {
+        command,
+        by_reference: any_by_reference(&values, editing),
+        values,
+        owners,
+        table: said.view.table.id.clone(),
         accepted,
+        args,
+        cells,
+        editing,
+        retry,
     };
-    let ran = if any_by_reference(&values, editing) {
-        // the values written by reference said and kept where they went, in the same step
-        let finish = |out: &CellsSet, after: &written::After| keep_values(args, &wrote, editing, out, after, retry);
-        run(editing, &written::keeping(&command, finish), view, retry).map(|((done, facts), rows)| (done, facts, rows))
-    } else {
-        run(editing, &command, view, retry).map(|(done, rows)| (done, None, rows))
-    };
-    let (done, facts, rows) = match ran {
-        Ok(ran) => ran,
-        Err(refusal) => return Ok(*refusal),
-    };
-    count_fills(&mut fills, &values.iter().map(|v| v.text.clone()).collect::<Vec<_>>());
-    for note in done.notes {
-        if !accepted.notes.contains(&note) {
-            accepted.notes.push(note);
-        }
-    }
-    let notes = std::mem::take(&mut accepted.notes);
-    let mut result = reply(editing, view, done.edits, (&fills, notes, facts), &held, retry);
-    result.warnings.extend(rows);
-    if let Some(read_as) = given.read_as {
-        result.warnings.insert(0, read_as);
-    }
-    Ok(result)
+    Ok(Plan {
+        reads: vec![said.view.key()],
+        command: writing,
+        said,
+    })
 }
 
-/// A refusal given as the call's reply.
-type Replied = Box<ToolResult<Value>>;
+/// The cells written, and the values written by reference said and kept where they went,
+/// in the same step ([`written::keeping`]).
+pub(super) struct Writing<'a, 'e> {
+    command: KeepingRecord<SetCells>,
+    by_reference: bool,
+    values: Vec<CellValue<'e>>,
+    owners: Vec<usize>,
+    table: String,
+    accepted: AcceptedView,
+    args: &'a WordEditTable,
+    cells: &'a [CellArg],
+    editing: &'a Editing<'e>,
+    retry: &'a TryCall,
+}
 
-/// `command` run with the rows it writes looked at against the rows around them (round 58,
-/// R126), in the call's transaction; its refusal as the call's reply.
-fn run<C>(
-    editing: &Editing<'_>,
-    command: &C,
-    view: &TableView,
-    retry: &TryCall,
-) -> Result<(C::Out, Vec<String>), Replied>
-where
-    C: ooxml_store::Command<WordDoc, Error = EditError>,
-{
-    let look = |_: &_, doc: &WordDoc| Some((doc.ids().follow(&view.table.id), Vec::new()));
-    super::rows_written::run_writing_rows(editing, command, &view.table.id, look, retry).map_err(|error| match error {
-        error @ (EditError::Address(_) | EditError::Argument { .. } | EditError::Position(_)) => Box::new(
-            ToolResult::failed(crate::review::edit_refusal(error, "", retry.clone())),
-        ),
-        error => Box::new(refused(error, retry.clone())),
-    })
+impl Command<WordDoc> for Writing<'_, '_> {
+    /// The cells' writes, and the reply's facts of the values written by reference.
+    type Out = (CellsSet, Option<Vec<Value>>);
+    type Error = EditError;
+
+    fn validate(&self, doc: &WordDoc) -> Result<(), EditError> {
+        self.command.validate(doc)
+    }
+
+    fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<Self::Out, EditError> {
+        if !self.by_reference {
+            return self.command.prepare(tx).map(|out| (out, None));
+        }
+        let wrote = Wrote {
+            cells: self.cells,
+            values: &self.values,
+            owners: &self.owners,
+            table: &self.table,
+            accepted: &self.accepted,
+        };
+        let finish = |out: &CellsSet, after: &written::After| {
+            keep_values(self.args, &wrote, self.editing, out, after, self.retry)
+        };
+        written::keeping(&self.command, finish).prepare(tx)
+    }
 }
 
 /// The reply's facts of the values written by reference, and their keeps: the cells' own
@@ -338,7 +412,7 @@ fn clash_refusal(view: &TableView, first: &Clash<'_>, clashes: &[Clash<'_>]) -> 
 
 /// The reply as `_edit_table` gives it after `set_cells`.
 fn reply(
-    editing: &Editing<'_>,
+    version: &Snapshot<WordDoc>,
     view: &TableView,
     edits: Vec<CellEdit>,
     (fills, notes, facts): (&[Fill], Vec<String>, Option<Vec<Value>>),
@@ -346,7 +420,8 @@ fn reply(
     retry: &TryCall,
 ) -> ToolResult<Value> {
     let table = view.table.id.clone();
-    let head = editing.editor.current();
+    // the version the call made: another caller's commit since is not this call's
+    let head = version;
     let now = head.doc().ids().follow(&table);
     let docx = head.doc().docx().ok();
     let mut data = docx

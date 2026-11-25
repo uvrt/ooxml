@@ -14,7 +14,7 @@
 
 use super::table_view::table_view;
 use crate::review::Editing;
-use ooxml_store::{Command, Txn};
+use ooxml_store::{Command, Snapshot, Txn};
 use ooxml_tools::{python_dumps, TryCall};
 use ooxml_word_edit::{
     row_shown, rows_unlike, ColumnCopy, EditError, LikeTheColumn, LookField, RowUnlike, TextLook, WordDoc,
@@ -103,7 +103,9 @@ struct Looked {
 /// the rows kept in the host's record only once it is committed (as drawn). `table` is the
 /// table as the call named it; `look` gives, from the command's out and the version it
 /// made, the table's id after and the rows it added, `None` where the rows are not looked
-/// at. The command's out and the warnings.
+/// at. The command's out, the warnings and the version the call made (the one it was
+/// applied to where it changed nothing): what its reply reads, another caller's commit since
+/// not the call's.
 ///
 /// # Errors
 /// The command's refusal.
@@ -113,7 +115,7 @@ pub(super) fn run_writing_rows<C, F>(
     table: &str,
     look: F,
     retry: &TryCall,
-) -> Result<(C::Out, Vec<String>), EditError>
+) -> Result<(C::Out, Vec<String>, Snapshot<WordDoc>), EditError>
 where
     C: Command<WordDoc, Error = EditError>,
     F: Fn(&C::Out, &WordDoc) -> Option<(String, Vec<String>)>,
@@ -130,7 +132,7 @@ where
     if let Some(record) = editing.rows_written {
         record.note(looked.rows.iter().map(|row| done.drawn.resolve(row)));
     }
-    Ok((out, looked.warnings))
+    Ok((out, looked.warnings, done.version))
 }
 
 /// A command, then the rows it wrote looked at, as one transaction ([`run_writing_rows`]).

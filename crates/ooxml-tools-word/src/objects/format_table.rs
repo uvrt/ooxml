@@ -8,10 +8,13 @@
 use super::format_table_args::{BorderStyle, HeightRule, Look, Scope, WidthOf, WordFormatTable};
 use super::table_view::{regions_off, table_view, AcceptedView, TableView};
 use crate::review::{needed, Editing};
+use crate::planned::{Plan, Planned};
 use crate::structure::common::{call, outcome, policy, refused, Outcome};
 use ooxml_tools::{ArgEnum, Refusal, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::units::twips;
-use ooxml_word_edit::{CellValues, FormatTable, TableEdit, TableFormat, TableValues, TableWidth};
+use ooxml_store::Snapshot;
+use ooxml_word_edit::{CellValues, FormatTable, TableEdit, TableFormat, TableFormatted, TableValues, TableWidth, WordDoc};
+use ooxml_word_model::docx::Docx;
 use serde_json::{json, Value};
 
 /// keep_together on a table taller than a page (docx-agent's `TALLER_THAN_PAGE`, round 25):
@@ -64,17 +67,79 @@ fn invalid(message: &str, field: Option<&str>, options: Option<&[&str]>, call: &
 }
 
 fn run(args: &WordFormatTable, editing: &Editing<'_>, retry: &TryCall) -> Result<ToolResult<Value>, ToolError> {
-    let head = editing.editor.current();
-    let docx = head
-        .doc()
+    // the rows, cells and merges are read where the edit is applied, in its transaction: a
+    // row put in meanwhile is a conflict, and the positions are counted again on it
+    let command = Planned::new(|doc: &WordDoc| plan(args, editing, doc, retry));
+    let done = match editing.editor.run(editing.caller, &command) {
+        Ok(done) => done,
+        Err(error) => return Ok(refused(error, retry.clone())),
+    };
+    let said = command.said().unwrap_or_default();
+    let formatted = done.out?;
+    let version = done.version;
+    if args.scope == Scope::Table {
+        return Ok(table_reply(args, &version, formatted, &said, retry));
+    }
+    let summary = format!("Formatted {} of {}", args.scope.as_str(), args.table);
+    let mut result = finish(args, &version, formatted, summary, false, retry).result;
+    if matches!(result.outcome, ooxml_tools::Outcome::Done(_)) {
+        result.warnings.extend(said.notes);
+    }
+    Ok(result)
+}
+
+/// What the reply needs of the plan: the notes its positions made (a row or column whose
+/// deletion is pending stepped over), and whether it sets the table's own properties.
+#[derive(Default)]
+pub(super) struct Said {
+    notes: Vec<String>,
+    has_values: bool,
+}
+
+/// The edits the call makes, worked out on `doc` (the version the command is applied to),
+/// and the table's key, which they are read from.
+pub(super) fn plan<'e>(
+    args: &WordFormatTable,
+    editing: &Editing<'e>,
+    doc: &WordDoc,
+    retry: &TryCall,
+) -> Result<Plan<FormatTable<'e>, Said>, ToolError> {
+    let docx = doc
         .docx()
         .map_err(|e| crate::review::edit_refusal(e, "", retry.clone()))?;
-    let view = table_view(head.doc(), &docx, &args.table, retry)?;
+    let view = table_view(doc, &docx, &args.table, retry)?;
     let fill = args.shading.as_ref().map(|s| (s != "none").then(|| s.clone()));
     let borders = args.borders.map(|b| BorderStyle::as_str(b).to_owned());
-    if args.scope == Scope::Table {
-        return table_scope(args, editing, &view, fill, borders, retry);
-    }
+    let (formats, said) = if args.scope == Scope::Table {
+        table_formats(args, doc, &view, fill, borders, retry)?
+    } else {
+        part_plan(args, &docx, &view, fill, borders, retry)?
+    };
+    let command = FormatTable {
+        table: ooxml_word_model::address::Address::parse(&args.table),
+        formats,
+        policy: policy(editing),
+        layout: editing.edit_layout(),
+        // inside a host's batch the pages are measured once, after its last op
+        pages_later: editing.editor.in_batch(),
+    };
+    Ok(Plan {
+        command,
+        reads: vec![view.key()],
+        said,
+    })
+}
+
+/// A row's, column's or cell's edits (scope other than the table), positions counted on
+/// `view` as accepted.
+fn part_plan(
+    args: &WordFormatTable,
+    docx: &Docx,
+    view: &TableView,
+    fill: Option<Option<String>>,
+    borders: Option<String>,
+    retry: &TryCall,
+) -> Result<(Vec<TableFormat>, Said), ToolError> {
     for (name, given, message) in [
         ("look", args.look.is_some(), "look is the table's: give scope table"),
         (
@@ -97,14 +162,14 @@ fn run(args: &WordFormatTable, editing: &Editing<'_>, retry: &TryCall) -> Result
             return Err(invalid(message, Some(name), None, retry));
         }
     }
-    let mut accepted = view.accepted(&docx);
+    let mut accepted = view.accepted(docx);
     let mut values = CellValues {
         shading: fill,
         borders,
         vertical_alignment: args.vertical_alignment.map(|v| v.as_str().to_owned()),
         width: None,
     };
-    let (formats, positions) = part_formats(args, &view, &mut accepted, &mut values, retry)?;
+    let (formats, positions) = part_formats(args, view, &mut accepted, &mut values, retry)?;
     let mut formats = formats;
     if values != CellValues::default() {
         let mut seen = Vec::new();
@@ -133,16 +198,15 @@ fn run(args: &WordFormatTable, editing: &Editing<'_>, retry: &TryCall) -> Result
         let message = format!("nothing to set for the {}", args.scope.as_str());
         return Err(invalid(&message, None, Some(&options), retry));
     }
-    let summary = format!("Formatted {} of {}", args.scope.as_str(), args.table);
-    let mut result = finish(args, editing, formats, summary, false, retry).result;
-    if matches!(result.outcome, ooxml_tools::Outcome::Done(_)) {
-        result.warnings.extend(accepted.notes);
-    }
-    Ok(result)
+    let said = Said {
+        notes: accepted.notes,
+        has_values: false,
+    };
+    Ok((formats, said))
 }
 
 /// A row's, column's or cell's own edits, and the grid positions whose cells are formatted.
-type Planned = (Vec<TableFormat>, Vec<(usize, usize)>);
+type Parts = (Vec<TableFormat>, Vec<(usize, usize)>);
 
 /// The row's, column's or cell's own edits and the positions whose cells are formatted,
 /// positions counted as the table is accepted (`_Accepted`: a row or column whose deletion
@@ -154,7 +218,7 @@ fn part_formats(
     accepted: &mut AcceptedView,
     values: &mut CellValues,
     retry: &TryCall,
-) -> Result<Planned, ToolError> {
+) -> Result<Parts, ToolError> {
     let given = |value: Option<i64>, name: &str| value.ok_or_else(|| needed(name, "", retry.clone()));
     let mut formats = Vec::new();
     let positions = match args.scope {
@@ -253,21 +317,22 @@ fn table_values(
     }
 }
 
-fn table_scope(
+/// The table's own edits (scope table), its rows counted on `view`.
+fn table_formats(
     args: &WordFormatTable,
-    editing: &Editing<'_>,
+    doc: &WordDoc,
     view: &TableView,
     fill: Option<Option<String>>,
     borders: Option<String>,
     retry: &TryCall,
-) -> Result<ToolResult<Value>, ToolError> {
+) -> Result<(Vec<TableFormat>, Said), ToolError> {
     let body_or_window = matches!(args.width_of, Some(WidthOf::Body | WidthOf::Window));
     if body_or_window && args.width.is_some() {
         let message = "width_of is what width_percent is of: give width_percent (or nothing, for 100), not width";
         return Err(invalid(message, Some("width_of"), None, retry));
     }
     let body = match args.width_of {
-        Some(WidthOf::Body) => Some(on_body_lines(args, editing, retry)?),
+        Some(WidthOf::Body) => Some(on_body_lines(args, doc, retry)?),
         _ => None,
     };
     let values = table_values(args, body.as_ref(), fill, borders);
@@ -328,14 +393,29 @@ fn table_scope(
             percent: args.width_percent.unwrap_or(100.0),
         });
     }
+    let said = Said {
+        notes: Vec::new(),
+        has_values,
+    };
+    Ok((formats, said))
+}
+
+/// The reply to a call of scope table, its edit made `version`.
+fn table_reply(
+    args: &WordFormatTable,
+    version: &Snapshot<WordDoc>,
+    formatted: TableFormatted,
+    said: &Said,
+    retry: &TryCall,
+) -> ToolResult<Value> {
     let summary = format!("Formatted {}", args.table);
     let regions = args.style.is_some() || args.look.is_some();
     let Finished {
         mut result,
         changed,
         pages,
-    } = finish(args, editing, formats, summary, regions, retry);
-    if !has_values && !changed {
+    } = finish(args, version, formatted, summary, regions, retry);
+    if !said.has_values && !changed {
         // round 27, W7: asked for what the table already is; the warnings say why
         if let ooxml_tools::Outcome::Done(found) = &mut result.outcome {
             found.summary = format!("No change to {}", args.table);
@@ -343,27 +423,22 @@ fn table_scope(
         }
     }
     if args.keep_together.is_some() || args.keep_with_next.is_some() {
-        keep_notes(args, editing, pages, &mut result);
+        keep_notes(args, version, pages, &mut result);
     }
-    Ok(result)
+    result
 }
 
 /// `width_of: "body"` (round 21, T5): the table on the body's lines beside it
 /// ([`ooxml_word_edit::body_width`]), `width_percent` of them (100 unless given); refused
 /// where that is under a point.
-fn on_body_lines(
-    args: &WordFormatTable,
-    editing: &Editing<'_>,
-    retry: &TryCall,
-) -> Result<ooxml_word_edit::BodyWidth, ToolError> {
-    let head = editing.editor.current();
+fn on_body_lines(args: &WordFormatTable, doc: &WordDoc, retry: &TryCall) -> Result<ooxml_word_edit::BodyWidth, ToolError> {
     let percent = args.width_percent.unwrap_or(100.0);
     let alignment = args.alignment.map(|a| a.as_str());
     let refusal = |e| crate::review::edit_refusal(e, "", retry.clone());
-    if let Some(body) = ooxml_word_edit::body_width(head.doc(), &args.table, percent, alignment).map_err(refusal)? {
+    if let Some(body) = ooxml_word_edit::body_width(doc, &args.table, percent, alignment).map_err(refusal)? {
         return Ok(body);
     }
-    let lines = ooxml_word_edit::body_lines(head.doc(), &args.table).map_err(refusal)?;
+    let lines = ooxml_word_edit::body_lines(doc, &args.table).map_err(refusal)?;
     let message = format!(
         "the body's lines beside {} are {} pt wide",
         args.table,
@@ -379,7 +454,7 @@ fn on_body_lines(
 /// that its rows' styles still keep together.
 fn keep_notes(
     args: &WordFormatTable,
-    editing: &Editing<'_>,
+    version: &Snapshot<WordDoc>,
     pages: Option<Result<Vec<usize>, ooxml_word_edit::Unknown>>,
     result: &mut ToolResult<Value>,
 ) {
@@ -401,7 +476,8 @@ fn keep_notes(
         )),
         _ => {}
     }
-    let head = editing.editor.current();
+    // the version the call made: another caller's commit since is not this call's
+    let head = version;
     let loose = if args.keep_with_next == Some(true) {
         ooxml_word_edit::loose_paragraph_after(head.doc(), &table)
             .ok()
@@ -433,42 +509,21 @@ struct Finished {
     pages: Option<Result<Vec<usize>, ooxml_word_edit::Unknown>>,
 }
 
-impl From<ToolResult<Value>> for Finished {
-    fn from(result: ToolResult<Value>) -> Self {
-        Finished {
-            result,
-            changed: false,
-            pages: None,
-        }
-    }
-}
-
-/// Run `formats` as one command and reply as `outcome` does, the table among the changed;
-/// with `regions`, the note where its style formats a region its look turns off.
+/// The reply as `outcome` gives it for the command's `formatted`, which made `version`, the
+/// table among the changed; with `regions`, the note where its style formats a region its
+/// look turns off.
 fn finish(
     args: &WordFormatTable,
-    editing: &Editing<'_>,
-    formats: Vec<TableFormat>,
+    version: &Snapshot<WordDoc>,
+    formatted: TableFormatted,
     summary: String,
     regions: bool,
     retry: &TryCall,
 ) -> Finished {
-    let command = FormatTable {
-        table: ooxml_word_model::address::Address::parse(&args.table),
-        formats,
-        policy: policy(editing),
-        layout: editing.edit_layout(),
-        // inside a host's batch the pages are measured once, after its last op
-        pages_later: editing.editor.in_batch(),
-    };
-    let done = match editing.editor.run(editing.caller, &command) {
-        Ok(done) => done,
-        Err(error) => return refused(error, retry.clone()).into(),
-    };
-    let pages = done.out.pages;
-    let changed = done.out.edits.iter().any(|e| e.changed);
-    let now = done.out.edits.first().map(|e| e.id.clone());
-    let edits: Vec<Outcome> = done.out.edits.into_iter().map(Outcome::from).collect();
+    let pages = formatted.pages;
+    let changed = formatted.edits.iter().any(|e| e.changed);
+    let now = formatted.edits.first().map(|e| e.id.clone());
+    let edits: Vec<Outcome> = formatted.edits.into_iter().map(Outcome::from).collect();
     let mut result = outcome(&edits, summary, None);
     if let ooxml_tools::Outcome::Done(found) = &mut result.outcome {
         // one name per block: a positional address its stamping renamed is named by its new
@@ -483,9 +538,8 @@ fn finish(
         }
     }
     if let (true, Some(now)) = (regions, now) {
-        let head = editing.editor.current();
-        let note = head.doc().docx().ok().and_then(|docx| {
-            let view = table_view(head.doc(), &docx, &now, retry).ok()?;
+        let note = version.doc().docx().ok().and_then(|docx| {
+            let view = table_view(version.doc(), &docx, &now, retry).ok()?;
             regions_off(&docx, &view.table)
         });
         result.warnings.extend(note);

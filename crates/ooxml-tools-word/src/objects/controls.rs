@@ -6,11 +6,12 @@
 //! Must not: change the document but through a command.
 
 use super::drawings_args::{ControlAction, ControlType, WordControls};
+use crate::planned::{Plan, Planned};
 use crate::review::Editing;
 use crate::structure::common::{call, find_once, need, one_of, outcome, policy, refused, Outcome};
 use crate::structure::notes::end_of;
 use ooxml_tools::{Done, Failure, Refusal, ToolError, ToolResult, TryCall, WayOut};
-use ooxml_word_edit::{ControlEdited, ControlKind, FillControl, Filling, InsertControl, RemoveControl};
+use ooxml_word_edit::{ControlEdited, ControlKind, FillControl, Filling, InsertControl, RemoveControl, WordDoc};
 use ooxml_word_model::address::resolve::control;
 use ooxml_word_model::docx::controls::{controls, Control};
 use ooxml_word_model::docx::Docx;
@@ -45,11 +46,11 @@ pub fn word_controls(args: &WordControls, editing: &Editing<'_>) -> ToolResult<V
 
 fn run(args: &WordControls, editing: &Editing<'_>, list: &TryCall) -> Result<ToolResult<Value>, ToolError> {
     let editor = editing.editor;
-    let reply = |result: Result<ooxml_word_edit::Edited<ControlEdited>, ooxml_word_edit::EditError>,
+    let reply = |result: Result<ControlEdited, ooxml_word_edit::EditError>,
                  what: &dyn Fn(&ControlEdited) -> (String, Option<Value>)| match result {
-        Ok(done) => {
-            let (summary, data) = what(&done.out);
-            outcome(&[done.out.into()], summary, data)
+        Ok(out) => {
+            let (summary, data) = what(&out);
+            outcome(&[out.into()], summary, data)
         }
         Err(error) => refused(error, list.clone()),
     };
@@ -64,7 +65,7 @@ fn run(args: &WordControls, editing: &Editing<'_>, list: &TryCall) -> Result<Too
                 alias: args.title.clone(),
                 policy: policy(editing),
             };
-            Ok(reply(editor.run(editing.caller, &command), &|out| {
+            Ok(reply(editor.run(editing.caller, &command).map(|done| done.out), &|out| {
                 let id = out.id.clone().unwrap_or_default();
                 (format!("Inserted {id}"), Some(json!({"id": id})))
             }))
@@ -75,29 +76,45 @@ fn run(args: &WordControls, editing: &Editing<'_>, list: &TryCall) -> Result<Too
                 control: target.clone(),
                 policy: policy(editing),
             };
-            Ok(reply(editor.run(editing.caller, &command), &|_| {
+            Ok(reply(editor.run(editing.caller, &command).map(|done| done.out), &|_| {
                 (format!("Removed {target}"), None)
             }))
         }
         ControlAction::Fill => {
             let target = need(args.control.as_deref(), "control", list)?.to_owned();
             let raw = need(args.value.as_deref(), "value", list)?;
-            let value = if kind_of(editing, &target, list)? == "checkbox" {
-                let said = raw.trim().to_lowercase();
-                Filling::Checked(matches!(said.as_str(), "true" | "yes" | "1" | "checked"))
-            } else {
-                Filling::Text(raw.to_owned())
+            // the control's kind is read where the fill is applied, in its transaction
+            let command = Planned::new(|doc: &WordDoc| fill(editing, doc, (&target, raw), list));
+            let filled = match editor.run(editing.caller, &command) {
+                Ok(done) => Ok(done.out?),
+                Err(error) => Err(error),
             };
-            let command = FillControl {
-                control: target.clone(),
-                value,
-                policy: policy(editing),
-            };
-            Ok(reply(editor.run(editing.caller, &command), &|_| {
-                (format!("Filled {target}"), None)
-            }))
+            Ok(reply(filled, &|_| (format!("Filled {target}"), None)))
         }
     }
+}
+
+/// The fill of `target` with `raw` (`value`) as its kind on `doc` takes it: a check box
+/// checked or not, any other control's text. The kind is read off the control, which the
+/// fill rewrites: an edit of it meanwhile is a conflict, and the kind is read again.
+pub(super) fn fill(
+    editing: &Editing<'_>,
+    doc: &WordDoc,
+    (target, raw): (&str, &str),
+    list: &TryCall,
+) -> Result<Plan<FillControl, ()>, ToolError> {
+    let value = if kind_of(doc, target, list)? == "checkbox" {
+        let said = raw.trim().to_lowercase();
+        Filling::Checked(matches!(said.as_str(), "true" | "yes" | "1" | "checked"))
+    } else {
+        Filling::Text(raw.to_owned())
+    };
+    let command = FillControl {
+        control: target.to_owned(),
+        value,
+        policy: policy(editing),
+    };
+    Ok(Plan::of(command, Vec::new()))
 }
 
 /// The edit core's kind of control `given` (text when none is).
@@ -124,8 +141,8 @@ fn position(args: &WordControls, editing: &Editing<'_>, list: &TryCall) -> Resul
 }
 
 /// The kind of the control `id` names (`content_control(...).kind`); `not_found` for none.
-fn kind_of(editing: &Editing<'_>, id: &str, list: &TryCall) -> Result<&'static str, ToolError> {
-    let docx = head_docx(editing)?;
+fn kind_of(doc: &WordDoc, id: &str, list: &TryCall) -> Result<&'static str, ToolError> {
+    let docx = doc.docx().map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
     let found = control(&controls(&docx), id)
         .map_err(|e| ToolError::refusal(Refusal::NotFound, e.to_string(), WayOut::call(list.clone())))?;
     Ok(found.kind())
