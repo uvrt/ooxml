@@ -98,6 +98,10 @@ struct Looked {
     rows: Vec<String>,
 }
 
+/// What [`run_writing_rows`] gives: the command's out, the warnings, the version the call
+/// made.
+pub(super) type RowsRun<O> = (O, Vec<String>, Snapshot<WordDoc>);
+
 /// A table `command`, then the rows it wrote looked at -- text written into empty cells
 /// given its column's formatting in the same transaction: one commit, one history step, and
 /// the rows kept in the host's record only once it is committed (as drawn). `table` is the
@@ -115,7 +119,7 @@ pub(super) fn run_writing_rows<C, F>(
     table: &str,
     look: F,
     retry: &TryCall,
-) -> Result<(C::Out, Vec<String>, Snapshot<WordDoc>), EditError>
+) -> Result<RowsRun<C::Out>, EditError>
 where
     C: Command<WordDoc, Error = EditError>,
     F: Fn(&C::Out, &WordDoc) -> Option<(String, Vec<String>)>,

@@ -65,10 +65,13 @@ fn run(args: &WordControls, editing: &Editing<'_>, list: &TryCall) -> Result<Too
                 alias: args.title.clone(),
                 policy: policy(editing),
             };
-            Ok(reply(editor.run(editing.caller, &command).map(|done| done.out), &|out| {
-                let id = out.id.clone().unwrap_or_default();
-                (format!("Inserted {id}"), Some(json!({"id": id})))
-            }))
+            Ok(reply(
+                editor.run(editing.caller, &command).map(|done| done.out),
+                &|out| {
+                    let id = out.id.clone().unwrap_or_default();
+                    (format!("Inserted {id}"), Some(json!({"id": id})))
+                },
+            ))
         }
         ControlAction::Remove => {
             let target = need(args.control.as_deref(), "control", list)?.to_owned();
@@ -76,9 +79,10 @@ fn run(args: &WordControls, editing: &Editing<'_>, list: &TryCall) -> Result<Too
                 control: target.clone(),
                 policy: policy(editing),
             };
-            Ok(reply(editor.run(editing.caller, &command).map(|done| done.out), &|_| {
-                (format!("Removed {target}"), None)
-            }))
+            Ok(reply(
+                editor.run(editing.caller, &command).map(|done| done.out),
+                &|_| (format!("Removed {target}"), None),
+            ))
         }
         ControlAction::Fill => {
             let target = need(args.control.as_deref(), "control", list)?.to_owned();
@@ -142,7 +146,9 @@ fn position(args: &WordControls, editing: &Editing<'_>, list: &TryCall) -> Resul
 
 /// The kind of the control `id` names (`content_control(...).kind`); `not_found` for none.
 fn kind_of(doc: &WordDoc, id: &str, list: &TryCall) -> Result<&'static str, ToolError> {
-    let docx = doc.docx().map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
+    let docx = doc
+        .docx()
+        .map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
     let found = control(&controls(&docx), id)
         .map_err(|e| ToolError::refusal(Refusal::NotFound, e.to_string(), WayOut::call(list.clone())))?;
     Ok(found.kind())

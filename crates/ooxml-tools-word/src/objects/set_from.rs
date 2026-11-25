@@ -14,10 +14,10 @@
 use super::edit_table::table_json;
 use super::table_view::TableView;
 use crate::planned::Planned;
-use ooxml_store::Snapshot;
 use crate::review::Editing;
 use crate::sources::{first_rows, fits, placed, thousands, Placed, SourceRows};
 use crate::structure::common::{outcome, policy, refused, Outcome};
+use ooxml_store::Snapshot;
 use ooxml_tools::{ArgEnum, Refusal, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::{CellAxis, CellWrite, EditError, PlaceRows, PlacedRecord, RowsBeside, RowsPlaced, WordDoc};
 use ooxml_word_model::docx::tables::{Accepted, TABLE_COLUMNS_MAX};

@@ -9,6 +9,7 @@
 
 use crate::planned::{Plan, Planned};
 use crate::review::{CallEditor, Editing};
+use crate::sources::{SourceRows, SourceValue};
 use ooxml_base::{Cancel, Limits};
 use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
@@ -21,7 +22,6 @@ use ooxml_word_edit::{
 use ooxml_word_model::address::Address;
 use ooxml_word_model::docx::{at_path, find_path};
 use ooxml_word_model::ids::W;
-use crate::sources::{SourceRows, SourceValue};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -84,7 +84,10 @@ pub(super) fn insert(at: &str, markdown: &str) -> InsertMarkdown {
 pub(super) fn with_table() -> (Editor, String) {
     let editor = editor_of("generated/ids-and-markup.docx");
     let markdown = "| name | value |\n|---|---|\n| r1 | x |\n| r2 | x |\n| r3 | x |\n| r4 | x |\n";
-    editor.store().run(&Caller::anonymous(), &insert("end", markdown)).unwrap();
+    editor
+        .store()
+        .run(&Caller::anonymous(), &insert("end", markdown))
+        .unwrap();
     let docx = editor.store().snapshot().doc().docx().unwrap();
     let table = docx.body().unwrap().ids.tables().iter().last().unwrap().id;
     (editor, table)
@@ -124,8 +127,8 @@ pub(super) fn rows_of(editor: &Editor, table: &str) -> Vec<Row> {
                 .filter(|c| c.name().is(Some(W), "tc"))
                 .map(|cell| {
                     let text = texts(cell);
-                    let fill = find_path(cell, &["tcPr", "shd"])
-                        .and_then(|s| s.attribute(Some(W), "fill").map(str::to_owned));
+                    let fill =
+                        find_path(cell, &["tcPr", "shd"]).and_then(|s| s.attribute(Some(W), "fill").map(str::to_owned));
                     (text, fill)
                 })
                 .collect();
@@ -171,11 +174,7 @@ impl<C: Command<WordDoc, Error = EditError>> Command<WordDoc> for Paused<'_, C> 
         let out = self.command.prepare(tx)?;
         if self.first.swap(false, Ordering::SeqCst) {
             self.prepared.send(()).unwrap();
-            self.go
-                .lock()
-                .unwrap()
-                .recv_timeout(Duration::from_secs(60))
-                .unwrap();
+            self.go.lock().unwrap().recv_timeout(Duration::from_secs(60)).unwrap();
         }
         Ok(out)
     }
@@ -296,7 +295,10 @@ mod format_table {
     /// The row put in, then every row kept whole, one at a time.
     fn serial() -> Vec<Row> {
         let (alone_editor, table) = with_table();
-        alone_editor.store().run(&Caller::anonymous(), &row_at_end(&table)).unwrap();
+        alone_editor
+            .store()
+            .run(&Caller::anonymous(), &row_at_end(&table))
+            .unwrap();
         let call = kept_whole(&table);
         editing(&alone_editor, |editing| {
             let retry = retry();
@@ -328,7 +330,11 @@ mod format_table {
         let call = kept_whole(&table);
         editing(&shared, |editing| {
             let retry = retry();
-            assert!(planned_before(editing, |doc| plan(&call, editing, doc, &retry), &row_at_end(&table)));
+            assert!(planned_before(
+                editing,
+                |doc| plan(&call, editing, doc, &retry),
+                &row_at_end(&table)
+            ));
         });
         assert_ne!(rows_of(&shared, &table), serial());
     }
@@ -357,7 +363,10 @@ mod edit_table {
     /// The first column deleted, then a column put in after the last, one at a time.
     fn serial() -> Vec<Row> {
         let (alone_editor, table) = with_table();
-        alone_editor.store().run(&Caller::anonymous(), &names_gone(&table)).unwrap();
+        alone_editor
+            .store()
+            .run(&Caller::anonymous(), &names_gone(&table))
+            .unwrap();
         let call = column_after_last(&table);
         editing(&alone_editor, |editing| {
             let retry = retry();
@@ -389,7 +398,11 @@ mod edit_table {
         let call = column_after_last(&table);
         let ran = editing(&shared, |editing| {
             let retry = retry();
-            planned_before(editing, |doc| change_plan(&call, editing, doc, &retry), &names_gone(&table))
+            planned_before(
+                editing,
+                |doc| change_plan(&call, editing, doc, &retry),
+                &names_gone(&table),
+            )
         });
         // column 1 is not there any more: refused, or a column put in elsewhere
         assert!(!ran || rows_of(&shared, &table) != serial());
@@ -410,7 +423,10 @@ mod set_cells {
     /// The row put in, then the column filled, one at a time.
     fn serial() -> Vec<Row> {
         let (alone_editor, table) = with_table();
-        alone_editor.store().run(&Caller::anonymous(), &row_at_end(&table)).unwrap();
+        alone_editor
+            .store()
+            .run(&Caller::anonymous(), &row_at_end(&table))
+            .unwrap();
         let call = column_filled(&table);
         let cells = call.cells.clone().unwrap();
         editing(&alone_editor, |editing| {
@@ -463,14 +479,19 @@ mod set_from {
     }
 
     fn placed_from_row_2(table: &str) -> WordEditTable {
-        args(json!({"doc": "d1", "table": table, "action": "set_cells", "from": "d:s", "index": 2,
-                    "grow": true}))
+        args(
+            json!({"doc": "d1", "table": table, "action": "set_cells", "from": "d:s", "index": 2,
+                    "grow": true}),
+        )
     }
 
     /// The row put on top, then the block placed, one at a time.
     fn serial() -> Vec<Row> {
         let (alone_editor, table) = with_table();
-        alone_editor.store().run(&Caller::anonymous(), &row_on_top(&table)).unwrap();
+        alone_editor
+            .store()
+            .run(&Caller::anonymous(), &row_on_top(&table))
+            .unwrap();
         let (call, rows) = (placed_from_row_2(&table), block());
         editing(&alone_editor, |editing| {
             let retry = retry();
@@ -519,14 +540,19 @@ mod sync {
     }
 
     fn synced(table: &str) -> WordEditTable {
-        args(json!({"doc": "d1", "table": table, "action": "sync", "from": "d:s", "key": "name",
-                    "from_columns": ["name", "value"]}))
+        args(
+            json!({"doc": "d1", "table": table, "action": "sync", "from": "d:s", "key": "name",
+                    "from_columns": ["name", "value"]}),
+        )
     }
 
     /// The row put on top, then the sync, one at a time.
     fn serial() -> Vec<Row> {
         let (alone_editor, table) = with_table();
-        alone_editor.store().run(&Caller::anonymous(), &row_on_top(&table)).unwrap();
+        alone_editor
+            .store()
+            .run(&Caller::anonymous(), &row_on_top(&table))
+            .unwrap();
         let (call, rows) = (synced(&table), values());
         editing(&alone_editor, |editing| {
             let retry = retry();
@@ -611,8 +637,10 @@ mod edit_chart {
     }
 
     fn set_value(id: &str, series: &str, category: &str) -> EditChart {
-        args(json!({"doc": "d1", "target": id, "action": "set_value", "series": series,
-                    "category": category, "value": 99}))
+        args(
+            json!({"doc": "d1", "target": id, "action": "set_value", "series": series,
+                    "category": category, "value": 99}),
+        )
     }
 
     fn plan<'e>(
@@ -631,14 +659,25 @@ mod edit_chart {
     }
 
     fn part_of(editor: &Editor, part: &str) -> Vec<u8> {
-        editor.store().snapshot().doc().package().tree(part).unwrap().unwrap().write()
+        editor
+            .store()
+            .snapshot()
+            .doc()
+            .package()
+            .tree(part)
+            .unwrap()
+            .unwrap()
+            .write()
     }
 
     /// The first series removed, then the value set, one at a time.
     fn serial() -> Vec<u8> {
         let alone_editor = editor_of("generated/charts/charts.docx");
         let (id, part, series, category) = chart(&alone_editor);
-        alone_editor.store().run(&Caller::anonymous(), &first_series_gone(&id)).unwrap();
+        alone_editor
+            .store()
+            .run(&Caller::anonymous(), &first_series_gone(&id))
+            .unwrap();
         let call = set_value(&id, &series, &category);
         editing(&alone_editor, |editing| alone(editing, |doc| plan(&call, editing, doc)));
         part_of(&alone_editor, &part)
@@ -697,7 +736,15 @@ mod controls {
     }
 
     fn main_part(editor: &Editor) -> Vec<u8> {
-        editor.store().snapshot().doc().package().tree("word/document.xml").unwrap().unwrap().write()
+        editor
+            .store()
+            .snapshot()
+            .doc()
+            .package()
+            .tree("word/document.xml")
+            .unwrap()
+            .unwrap()
+            .write()
     }
 
     /// The other fill, then this one, one at a time.

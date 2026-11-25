@@ -7,13 +7,15 @@
 
 use super::format_table_args::{BorderStyle, HeightRule, Look, Scope, WidthOf, WordFormatTable};
 use super::table_view::{regions_off, table_view, AcceptedView, TableView};
-use crate::review::{needed, Editing};
 use crate::planned::{Plan, Planned};
+use crate::review::{needed, Editing};
 use crate::structure::common::{call, outcome, policy, refused, Outcome};
+use ooxml_store::Snapshot;
 use ooxml_tools::{ArgEnum, Refusal, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::units::twips;
-use ooxml_store::Snapshot;
-use ooxml_word_edit::{CellValues, FormatTable, TableEdit, TableFormat, TableFormatted, TableValues, TableWidth, WordDoc};
+use ooxml_word_edit::{
+    CellValues, FormatTable, TableEdit, TableFormat, TableFormatted, TableValues, TableWidth, WordDoc,
+};
 use ooxml_word_model::docx::Docx;
 use serde_json::{json, Value};
 
@@ -431,7 +433,11 @@ fn table_reply(
 /// `width_of: "body"` (round 21, T5): the table on the body's lines beside it
 /// ([`ooxml_word_edit::body_width`]), `width_percent` of them (100 unless given); refused
 /// where that is under a point.
-fn on_body_lines(args: &WordFormatTable, doc: &WordDoc, retry: &TryCall) -> Result<ooxml_word_edit::BodyWidth, ToolError> {
+fn on_body_lines(
+    args: &WordFormatTable,
+    doc: &WordDoc,
+    retry: &TryCall,
+) -> Result<ooxml_word_edit::BodyWidth, ToolError> {
     let percent = args.width_percent.unwrap_or(100.0);
     let alignment = args.alignment.map(|a| a.as_str());
     let refusal = |e| crate::review::edit_refusal(e, "", retry.clone());

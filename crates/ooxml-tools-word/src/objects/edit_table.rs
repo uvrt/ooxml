@@ -477,7 +477,8 @@ pub(super) fn change_plan(
 ) -> Result<Plan<KeepingRecord<EditTable>, Changing>, ToolError> {
     let (docx, view, mut accepted) = accepted_on(args, editing, doc, retry)?;
     let tracked = editing.tracking.is_some();
-    let change = change(args, (tracked, &docx), &view, &mut accepted, retry)?.map_err(|what| unsupported(&what, retry))?;
+    let change =
+        change(args, (tracked, &docx), &view, &mut accepted, retry)?.map_err(|what| unsupported(&what, retry))?;
     let ragged_before = !matches!(change, TableChange::InsertRow { .. }) && ragged(doc, &view.table.id).is_some();
     // a table placed from a source keeps its record true through the change (`_Kept`)
     let command = KeepingRecord(EditTable {
@@ -561,27 +562,13 @@ fn finish(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> ToolR
             made_by.renamed(&table, &now);
         }
     }
-    if !ragged_before && !matches!(change, TableChange::InsertRow { .. }) {
-        if let Some(said) = made_ragged(head.doc(), &now) {
-            // round 57 (R125): the call kept for check's `made_by`
-            editing.note_made(TableShape::Ragged, &now, "word_edit_table");
-            result.warnings.push(said);
-        }
-    }
-    let off_now = head
-        .doc()
-        .docx()
-        .ok()
-        .and_then(|docx| table_view(head.doc(), &docx, &now, retry).ok())
-        .is_some_and(|v| v.off_grid());
-    if !off_before && off_now {
-        // round 58 (R128): the call kept for check's `made_by`
-        editing.note_made(TableShape::OffGrid, &now, "word_edit_table");
-        result.warnings.push(format!(
-            "{now} is off its grid now (a row's cells do not reach across its columns: check's \
-             table_grid_mismatch); this call made it so (undo reverses it)"
-        ));
-    }
+    let shaped = (
+        !ragged_before && !matches!(change, TableChange::InsertRow { .. }),
+        !off_before,
+    );
+    result
+        .warnings
+        .extend(made_shapes(editing, head.doc(), &now, shaped, retry));
     if let ooxml_tools::Outcome::Done(found) = &mut result.outcome {
         if !unchanged && !found.changed.contains(&now) {
             found.changed.push(now.clone());
@@ -595,6 +582,40 @@ fn finish(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> ToolR
     }
     result.warnings.extend(rows);
     result
+}
+
+/// The warnings of a change that left the table `now` ragged (`ragged`: where it was not)
+/// or off its grid (`off`: where it was not), on `doc` (the version the call made), each
+/// call kept for check's `made_by`.
+fn made_shapes(
+    editing: &Editing<'_>,
+    doc: &WordDoc,
+    now: &str,
+    (ragged, off): (bool, bool),
+    retry: &TryCall,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    if ragged {
+        if let Some(said) = made_ragged(doc, now) {
+            // round 57 (R125): the call kept for check's `made_by`
+            editing.note_made(TableShape::Ragged, now, "word_edit_table");
+            out.push(said);
+        }
+    }
+    let off_now = doc
+        .docx()
+        .ok()
+        .and_then(|docx| table_view(doc, &docx, now, retry).ok())
+        .is_some_and(|v| v.off_grid());
+    if off && off_now {
+        // round 58 (R128): the call kept for check's `made_by`
+        editing.note_made(TableShape::OffGrid, now, "word_edit_table");
+        out.push(format!(
+            "{now} is off its grid now (a row's cells do not reach across its columns: check's \
+             table_grid_mismatch); this call made it so (undo reverses it)"
+        ));
+    }
+    out
 }
 
 /// The table `id` ragged (docx-agent's `_ragged`, `layout_facts.ragged_rows`: its rows'

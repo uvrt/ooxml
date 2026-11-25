@@ -17,12 +17,12 @@
 //! Must not: change the document but through a command.
 
 use super::chart_data::{ChartDataEdit, DataAction};
-use crate::planned::{Plan, Planned};
 use super::chart_names::{category_names, position, series_names, Stop};
 use super::chart_read::{chart_json, chart_read_json, style_json};
 use super::chart_style;
 use super::chart_style::ChartStyleEdit;
 use super::{ChartAction, ChartAxis, ChartPosition, EditChart};
+use crate::planned::{Plan, Planned};
 use crate::structure::common::{call, policy, refused};
 use crate::{Editing, Version};
 use ooxml_base::pyfmt::repr_str;
@@ -136,7 +136,10 @@ fn chart_action(args: &EditChart, editing: &Editing<'_>, summary: String) -> Res
             })
         };
         let command = Planned::new(|doc: &WordDoc| chart_plan(args, editing, doc, &edit));
-        editing.editor.run(editing.caller, &command).map(|done| (done.out, done.version))
+        editing
+            .editor
+            .run(editing.caller, &command)
+            .map(|done| (done.out, done.version))
     } else {
         let edit = |data: &ChartData, _: &Element, lang: String| {
             planned(args, data, &read, &lang).map(|action| ChartDataEdit {
@@ -145,7 +148,10 @@ fn chart_action(args: &EditChart, editing: &Editing<'_>, summary: String) -> Res
             })
         };
         let command = Planned::new(|doc: &WordDoc| chart_plan(args, editing, doc, &edit));
-        editing.editor.run(editing.caller, &command).map(|done| (done.out, done.version))
+        editing
+            .editor
+            .run(editing.caller, &command)
+            .map(|done| (done.out, done.version))
     };
     let (edited, version) = match ran {
         Ok(done) => done,
@@ -212,7 +218,10 @@ pub(super) fn chart_plan<E: GraphicEdit>(
         edit,
         policy: policy(editing),
     };
-    let reads = styles_part(&docx).map(|part| Key::part(part.as_str())).into_iter().collect();
+    let reads = styles_part(&docx)
+        .map(|part| Key::part(part.as_str()))
+        .into_iter()
+        .collect();
     Ok(Plan::of(command, reads))
 }
 
