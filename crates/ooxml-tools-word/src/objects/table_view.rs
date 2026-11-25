@@ -13,11 +13,12 @@ use ooxml_base::pyfmt::repr_str;
 use ooxml_tools::{ToolError, TryCall};
 use ooxml_word_edit::WordDoc;
 use ooxml_word_model::address::{resolve, AddressError};
-use ooxml_word_model::docx::tables::{Accepted, Misplaced, TableGrid};
+use ooxml_word_model::docx::tables::{
+    grid_columns, Accepted, Coverage, Grid, GridPlaces, Misplaced, RowSpec, TableGrid,
+};
 use ooxml_word_model::docx::{find_path, style_name, Docx};
 use ooxml_word_model::ids::{Entry, TableId, W};
 use ooxml_xml::{Element, Node};
-use std::sync::Arc;
 
 /// A table found on a version.
 pub(crate) struct TableView {
@@ -25,8 +26,13 @@ pub(crate) struct TableView {
     pub(crate) part: String,
     /// The table.
     pub(crate) table: TableId,
-    /// Per row, per grid position: the origin `(row, column)` of the cell there.
-    pub(crate) grid: Vec<Vec<Option<(usize, usize)>>>,
+    /// Its rows on the grid ([`Grid`], by the one value rule): each cell's first grid column
+    /// and span, each row against `w:tblGrid`; a row not found has no cells.
+    shape: Grid,
+    /// Whether each row was found.
+    found: Vec<bool>,
+    /// Per row, per grid position: the origin `(row, column)` of the cell there, as runs.
+    pub(crate) grid: GridPlaces,
 }
 
 /// The table `identifier` names on `doc` (docx-agent's `Document.table`): an id of another
@@ -60,11 +66,13 @@ pub(crate) fn table_view(doc: &WordDoc, docx: &Docx, identifier: &str, call: &Tr
                 .tables()
                 .get(k)
                 .ok_or_else(|| refuse(format!("no table {identifier}"), vec![]))?;
-            let grid = grid(&table);
+            let (shape, found) = shape(&table);
             Ok(TableView {
                 part: story.part.clone(),
+                grid: GridPlaces::of(&shape),
+                shape,
+                found,
                 table,
-                grid,
             })
         }
         Entry::Paragraph(k) => {
@@ -97,126 +105,54 @@ pub(crate) fn table_view(doc: &WordDoc, docx: &Docx, identifier: &str, call: &Tr
     }
 }
 
-/// A row's `w:tc`, also inside row-level `w:sdt` and `w:customXml` (docx-agent's `_cells`).
-fn cells(element: &Element, out: &mut Vec<Arc<Element>>) {
-    for node in element.children().iter() {
-        let Node::Element(child) = node else { continue };
-        let name = child.name();
-        if name.is(Some(W), "tc") {
-            out.push(Arc::clone(child));
-        } else if name.is(Some(W), "sdt") {
-            if let Some(content) = child.find(Some(W), "sdtContent") {
-                cells(content, out);
-            }
-        } else if name.is(Some(W), "customXml") {
-            cells(child, out);
-        }
-    }
-}
-
-fn val(element: &Element, path: &[&str]) -> Option<i64> {
-    find_path(element, path)?.attribute(Some(W), "val")?.trim().parse().ok()
-}
-
-/// Each grid position's cell origin (docx-agent's `Table.grid`).
-fn grid(table: &TableId) -> Vec<Vec<Option<(usize, usize)>>> {
-    let mut out = Vec::new();
-    let mut origins: std::collections::HashMap<usize, (usize, usize)> = std::collections::HashMap::new();
-    for (r, (path, _)) in table.rows.iter().enumerate() {
-        let Some(row) =
+/// The table's rows on its grid ([`Grid::build`], `w:tblGrid` its columns), and whether
+/// each row was found (one not found placed with no cells).
+fn shape(table: &TableId) -> (Grid, Vec<bool>) {
+    let rows: Vec<Option<&Element>> = table
+        .rows
+        .iter()
+        .map(|(path, _)| {
             ooxml_word_model::docx::at_path(&table.element, path.get(table.path.len()..).unwrap_or_default())
-        else {
-            out.push(Vec::new());
-            continue;
-        };
-        let before = usize::try_from(val(row, &["trPr", "gridBefore"]).unwrap_or(0)).unwrap_or(0);
-        let mut line = vec![None; before];
-        let mut column = before;
-        let mut found = Vec::new();
-        cells(row, &mut found);
-        for cell in found {
-            let span = usize::try_from(val(&cell, &["tcPr", "gridSpan"]).unwrap_or(1).max(1)).unwrap_or(1);
-            let merge = find_path(&cell, &["tcPr", "vMerge"]);
-            let continues = merge.is_some_and(|m| m.attribute(Some(W), "val").is_none_or(|v| v == "continue"));
-            let origin = continues
-                .then(|| origins.get(&column).copied())
-                .flatten()
-                .unwrap_or_else(|| {
-                    for c in column..column + span {
-                        origins.insert(c, (r, column));
-                    }
-                    (r, column)
-                });
-            line.extend(std::iter::repeat_n(Some(origin), span));
-            column += span;
-        }
-        out.push(line);
-    }
-    out
+                .map(|row| &**row)
+        })
+        .collect();
+    let specs: Vec<RowSpec> = rows
+        .iter()
+        .map(|row| row.map_or_else(|| RowSpec::new(None, None, Vec::new()), RowSpec::of))
+        .collect();
+    let grid = Grid::build(&specs, grid_columns(&table.element));
+    (grid, rows.iter().map(Option::is_some).collect())
 }
 
 impl TableView {
     /// The grid's column count (`w:gridCol` in `w:tblGrid`).
     pub(crate) fn column_count(&self) -> usize {
-        self.table.element.find(Some(W), "tblGrid").map_or(0, |g| {
-            g.children()
-                .iter()
-                .filter(|n| n.as_element().is_some_and(|e| e.name().is(Some(W), "gridCol")))
-                .count()
-        })
+        self.shape.columns
     }
 
     /// The cell origin at `(row, column)`.
     pub(crate) fn origin(&self, row: usize, column: usize) -> Option<(usize, usize)> {
-        self.grid.get(row)?.get(column).copied().flatten()
+        self.grid.get(row, column)
     }
 
     /// Whether a row's cells, with `w:gridBefore` and `w:gridAfter`, do not reach exactly
     /// across the grid (`_off_grid`: check's `table_grid_mismatch`).
     pub(crate) fn off_grid(&self) -> bool {
-        let count = self.column_count();
-        self.table.rows.iter().any(|(path, _)| {
-            let Some(row) = ooxml_word_model::docx::at_path(
-                &self.table.element,
-                path.get(self.table.path.len()..).unwrap_or_default(),
-            ) else {
-                return false;
-            };
-            let skips = val(row, &["trPr", "gridBefore"]).unwrap_or(0) + val(row, &["trPr", "gridAfter"]).unwrap_or(0);
-            let mut found = Vec::new();
-            cells(row, &mut found);
-            let reach = skips
-                + found
-                    .iter()
-                    .map(|c| val(c, &["tcPr", "gridSpan"]).unwrap_or(1).max(1))
-                    .sum::<i64>();
-            usize::try_from(reach).ok() != Some(count)
-        })
+        self.shape
+            .rows
+            .iter()
+            .zip(&self.found)
+            .any(|(line, found)| *found && line.coverage != Coverage::Exact)
     }
 
     /// Row `row`'s cells as (first grid column, span) (docx-agent's `_row_cells`); none
     /// past the last row.
     pub(crate) fn row_cells(&self, row: usize) -> Vec<(usize, usize)> {
-        let Some(element) = self.table.rows.get(row).and_then(|(path, _)| {
-            ooxml_word_model::docx::at_path(
-                &self.table.element,
-                path.get(self.table.path.len()..).unwrap_or_default(),
-            )
-        }) else {
-            return Vec::new();
-        };
-        let mut column = usize::try_from(val(element, &["trPr", "gridBefore"]).unwrap_or(0)).unwrap_or(0);
-        let mut found = Vec::new();
-        cells(element, &mut found);
-        found
-            .iter()
-            .map(|cell| {
-                let span = usize::try_from(val(cell, &["tcPr", "gridSpan"]).unwrap_or(1).max(1)).unwrap_or(1);
-                let placed = (column, span);
-                column += span;
-                placed
-            })
-            .collect()
+        self.shape
+            .rows
+            .get(row)
+            .map(|line| line.cells.iter().map(|c| (c.first, c.span)).collect())
+            .unwrap_or_default()
     }
 
     /// The table as accepting its tracked changes leaves it (docx-agent's `_Accepted`), read
@@ -413,4 +349,112 @@ fn states(part: &Element) -> bool {
         || has(&["tcPr", "shd"])
         || find_path(part, &["tcPr", "tcBorders"])
             .is_some_and(|b| b.children().iter().any(|n| n.as_element().is_some()))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use super::*;
+    use ooxml_base::Limits;
+    use ooxml_opc::Package;
+    use ooxml_zip::{Method, NewEntry, Writer};
+    use std::sync::Arc;
+
+    const NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    const REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument";
+
+    /// The view of a table on a grid of two columns whose rows are `rows` (each a `w:tr`'s
+    /// content).
+    fn view(rows: &[&str]) -> TableView {
+        let rows: String = rows.iter().map(|r| format!("<w:tr>{r}</w:tr>")).collect();
+        let body = format!(
+            r#"<w:document xmlns:w="{NS}"><w:body><w:tbl><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid>{rows}</w:tbl><w:p/></w:body></w:document>"#
+        );
+        let parts = [
+            ("[Content_Types].xml", r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#.to_owned()),
+            ("_rels/.rels", format!(r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{REL}" Target="word/document.xml"/></Relationships>"#)),
+            ("word/document.xml", body),
+        ];
+        let mut zip = Writer::new();
+        for (name, data) in parts {
+            let entry = NewEntry {
+                name: name.to_owned(),
+                method: Method::Deflated,
+                dos_time: 0,
+                dos_date: 33,
+                external_attr: 0,
+                create_system: 3,
+            };
+            zip.add(&entry, data.as_bytes()).unwrap();
+        }
+        let package = Package::open(Arc::from(zip.finish(b"").unwrap()), &Limits::default()).unwrap();
+        let docx = Docx::open(&package).unwrap();
+        let story = docx.body().unwrap();
+        let table = story.ids.tables().get(0).unwrap();
+        let (shape, found) = shape(&table);
+        TableView {
+            part: story.part.clone(),
+            grid: GridPlaces::of(&shape),
+            shape,
+            found,
+            table,
+        }
+    }
+
+    fn cell(span: Option<&str>) -> String {
+        let span = span.map_or_else(String::new, |s| {
+            format!(r#"<w:tcPr><w:gridSpan w:val="{s}"/></w:tcPr>"#)
+        });
+        format!("<w:tc>{span}<w:p/></w:tc>")
+    }
+
+    const PLAIN: &str = "<w:tc><w:p/></w:tc><w:tc><w:p/></w:tc>";
+
+    #[test]
+    fn a_span_is_read_by_the_one_rule_as_word_reads_it() {
+        // (value, span as read now, span as the view read it before: `trim`, `parse::<i64>`)
+        for (raw, span, _before) in [
+            ("2", 2, 2),
+            ("+2", 2, 2),
+            ("2.0", 2, 1),
+            ("2.5", 2, 1),
+            (" 2", 1, 2),
+            ("99999999999999999999", 1_661_992_959, 1),
+            ("4294967298", 2, 4_294_967_298_usize),
+        ] {
+            let view = view(&[&cell(Some(raw)), PLAIN]);
+            assert_eq!(view.row_cells(0), [(0, span)], "{raw:?}");
+            assert_eq!(view.origin(0, span - 1), Some((0, 0)), "{raw:?}");
+            assert_eq!(view.origin(0, span), None, "{raw:?}");
+            assert_eq!(view.off_grid(), span != 2, "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn grid_before_and_after_are_read_by_the_one_rule() {
+        // `1.0` was 0 before: the row read one column short, off its grid
+        let before = view(&[
+            r#"<w:trPr><w:gridBefore w:val="1.0"/></w:trPr><w:tc><w:p/></w:tc>"#,
+            PLAIN,
+        ]);
+        assert_eq!(before.row_cells(0), [(1, 1)]);
+        assert_eq!((before.origin(0, 0), before.origin(0, 1)), (None, Some((0, 1))));
+        assert!(!before.off_grid());
+        let after = view(&[
+            r#"<w:trPr><w:gridAfter w:val="1.0"/></w:trPr><w:tc><w:p/></w:tc>"#,
+            PLAIN,
+        ]);
+        assert!(!after.off_grid());
+        assert!(view(&[r#"<w:tc><w:p/></w:tc>"#, PLAIN]).off_grid());
+    }
+
+    #[test]
+    fn a_merged_cells_size_is_counted_by_runs() {
+        let view = view(&[
+            r#"<w:tc><w:tcPr><w:gridSpan w:val="2147483645"/><w:vMerge w:val="restart"/></w:tcPr><w:p/></w:tc>"#,
+            r#"<w:tc><w:tcPr><w:gridSpan w:val="2147483645"/><w:vMerge/></w:tcPr><w:p/></w:tc>"#,
+        ]);
+        assert_eq!(view.grid.size_of((0, 0)), (2, 2_147_483_645));
+        assert_eq!(view.origin(1, 2_147_483_644), Some((0, 0)));
+    }
 }

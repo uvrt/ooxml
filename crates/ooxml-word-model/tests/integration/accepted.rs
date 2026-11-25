@@ -109,8 +109,8 @@ fn cells_taken_in_answer_as_the_cell_taking_them_and_a_lost_cell_is_refused() {
     ]));
     assert!(a.active());
     assert_eq!(a.kept, vec![0, 1, 2]);
-    assert_eq!(a.given.get(&(0, 1)), Some(&0));
-    assert_eq!(a.given.get(&(1, 1)), Some(&0));
+    assert_eq!(a.given.get(0, 1), Some(0));
+    assert_eq!(a.given.get(1, 1), Some(0));
     assert!(a.lost.contains(&(2, 2)));
     let mut notes = Vec::new();
     assert_eq!(a.at(0, 1, &mut notes).unwrap(), 0);
@@ -151,4 +151,23 @@ fn labels_count_the_rows_and_columns_kept() {
         (2, 2)
     );
     assert!(notes.is_empty());
+}
+
+#[test]
+fn a_cell_of_billions_of_columns_taken_in_is_one_run() {
+    // the cell after `Joined` spans 2147483645 columns (the largest span Word opens) and is
+    // taken into it: its positions answer as that cell, kept as one run, and only the
+    // grid's three columns are counted
+    let wide = cell(&text("into it"), r#"<w:gridSpan w:val="2147483645"/>"#);
+    let a = accepted(&table(&[
+        row(&[cell(&marked("Joined"), ""), wide], ""),
+        row(&[plain("One"), plain("Two"), plain("Three")], ""),
+    ]));
+    assert!(a.active());
+    assert_eq!(a.kept, vec![0, 1, 2]);
+    assert_eq!(a.given.get(0, 1), Some(0));
+    assert_eq!(a.given.get(0, 2_147_483_645), Some(0));
+    assert_eq!(a.given.get(0, 2_147_483_646), None);
+    assert_eq!(a.given.get(1, 1), None);
+    assert_eq!(a.given.iter().count(), 1);
 }
