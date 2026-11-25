@@ -110,14 +110,42 @@ fn check_id(text: &str, kind: BlockKind, story: &StoryName, tally: &mut Tally) {
 /// Every block of `part` (the story `ix` of `names`) found again by its key, with its place,
 /// id and path.
 fn check_part(names: &VersionNames, ix: StoryIx, part: &StoryPart, tally: &mut Tally) {
-    let ids = &part.ids;
-    let root = part.root();
-    let story = StoryName::new(&part.story);
-    let mut keys: HashSet<BlockKey> = HashSet::new();
-    let mut seen = 0;
     // the reference walks the siblings before each step: in a long story, every k-th block
-    let every = (ids.paragraphs().len() / PATHS_CHECKED).max(1);
-    let sampled = |k: usize| k % every == 0;
+    let every = (part.ids.paragraphs().len() / PATHS_CHECKED).max(1);
+    let story = Story {
+        names,
+        ix,
+        part,
+        name: StoryName::new(&part.story),
+        every,
+        short: short_written(&part.ids),
+    };
+    let mut keys: HashSet<BlockKey> = HashSet::new();
+    let seen = check_paragraphs(&story, &mut keys, tally) + check_tables(&story, &mut keys, tally);
+    assert_eq!(keys.len(), seen, "keys are unique in a story");
+}
+
+/// A story under check.
+struct Story<'a> {
+    names: &'a VersionNames,
+    ix: StoryIx,
+    part: &'a StoryPart,
+    name: StoryName,
+    /// Paths are checked for every `every`-th block.
+    every: usize,
+    /// Whether a paraId is written with fewer than eight digits.
+    short: bool,
+}
+
+impl Story<'_> {
+    fn sampled(&self, k: usize) -> bool {
+        k.is_multiple_of(self.every)
+    }
+}
+
+fn check_paragraphs(story: &Story<'_>, keys: &mut HashSet<BlockKey>, tally: &mut Tally) -> usize {
+    let (names, ix, ids, root) = (story.names, story.ix, &story.part.ids, story.part.root());
+    let mut seen = 0;
     for p in ids.paragraphs().iter() {
         let entry = Entry::Paragraph(p.index);
         let key = ids.key_of(ix, entry).expect("a paragraph has a key");
@@ -126,7 +154,7 @@ fn check_part(names: &VersionNames, ix: StoryIx, part: &StoryPart, tally: &mut T
         assert_eq!(ids.row_of(key), None);
         assert_eq!(ids.place_of(key).as_deref(), Some(&*p.path), "{}", p.id);
         assert_eq!(names.id(key).map(String::from), Some(p.id.clone()));
-        if sampled(p.index) {
+        if story.sampled(p.index) {
             let path = story_model_path(root, &p.path);
             assert_eq!(names.path(Anchor::whole(key)), path, "{}", p.id);
             let label = Anchor {
@@ -138,15 +166,21 @@ fn check_part(names: &VersionNames, ix: StoryIx, part: &StoryPart, tally: &mut T
         }
         let durable = key.durable();
         assert!(!durable || p.state == IdState::Ok, "{}", p.id);
-        if p.state == IdState::Ok && p.raw.as_deref().is_some_and(|r| r.len() == 8) && !short_written(ids) {
+        if p.state == IdState::Ok && p.raw.as_deref().is_some_and(|r| r.len() == 8) && !story.short {
             assert!(durable, "{}", p.id);
         }
         tally.durable += usize::from(durable);
-        check_id(&p.id, BlockKind::Paragraph, &story, tally);
+        check_id(&p.id, BlockKind::Paragraph, &story.name, tally);
         keys.insert(key);
         seen += 1;
         tally.paragraphs += 1;
     }
+    seen
+}
+
+fn check_tables(story: &Story<'_>, keys: &mut HashSet<BlockKey>, tally: &mut Tally) -> usize {
+    let (names, ix, ids, root) = (story.names, story.ix, &story.part.ids, story.part.root());
+    let mut seen = 0;
     for (n, table) in ids.tables().iter().enumerate() {
         let entry = Entry::Table(n);
         let key = ids.key_of(ix, entry).expect("a table has a key");
@@ -162,7 +196,7 @@ fn check_part(names: &VersionNames, ix: StoryIx, part: &StoryPart, tally: &mut T
             None
         );
         tally.durable += usize::from(key.durable());
-        check_id(&table.id, BlockKind::Table, &story, tally);
+        check_id(&table.id, BlockKind::Table, &story.name, tally);
         keys.insert(key);
         seen += 1;
         tally.tables += 1;
@@ -173,20 +207,20 @@ fn check_part(names: &VersionNames, ix: StoryIx, part: &StoryPart, tally: &mut T
             assert_eq!(ids.entry_of(row), None);
             assert_eq!(ids.place_of(row).as_deref(), Some(&**path));
             assert_eq!(names.id(row).map(String::from), Some(id.clone()));
-            if sampled(r) {
+            if story.sampled(r) {
                 assert_eq!(names.path(Anchor::whole(row)), story_model_path(root, path), "{id}");
                 tally.paths += 1;
             }
-            check_id(id, BlockKind::Row, &story, tally);
+            check_id(id, BlockKind::Row, &story.name, tally);
             keys.insert(row);
             seen += 1;
             tally.rows += 1;
         }
-        if sampled(n) {
+        if story.sampled(n) {
             tally.cells += check_cells(names, key, root, &table.path);
         }
     }
-    assert_eq!(keys.len(), seen, "keys are unique in a story");
+    seen
 }
 
 /// Each cell of a table without row- or cell-level wrappers named as the model names it.
