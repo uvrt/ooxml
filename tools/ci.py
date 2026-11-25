@@ -189,11 +189,13 @@ PACKAGES: dict[str, dict] = {
         "gil_imports": "import lxml.etree, lxml.html, pptx2svg, resvg_py, PIL.Image",
     },
     "xlsx-agent": {
+        # ORACLE_TESTS: its suite replays the host goldens' mixed streams (a workbook beside a
+        # Word document, tests/test_host_goldens_mixed.py).
         "uses": ["ooxml-common", "ooxml-edit", "pptx2svg", "pptx-agent", "docx2svg", "ooxml-core", "docx-agent",
-                 "xlsx-agent"],
+                 "xlsx-agent", ORACLE_TESTS],
         # On a pull request: its dependencies and the Python bindings of ooxml-core, not the
         # Rust core's other crates nor the test-only siblings (main runs those).
-        "pr_uses": ["ooxml-common", "ooxml-edit", BINDINGS, "xlsx-agent"],
+        "pr_uses": ["ooxml-common", "ooxml-edit", BINDINGS, "xlsx-agent", ORACLE_TESTS],
         # Test only: pptx2svg and pptx-agent (a deck filled from a workbook's table),
         # docx2svg and docx-agent (a workbook's rich-text cell in a Word document), and
         # docx-agent's ooxml-core.

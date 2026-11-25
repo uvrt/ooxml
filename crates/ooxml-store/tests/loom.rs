@@ -4,7 +4,10 @@
 //! a writer and a reader, and beside an undo; a transaction one owner holds open beside
 //! another owner and beside a writer (the second owner waits, the same owner is refused,
 //! dropping it lets the waiter go), and a writer that waited for one batch publishing before
-//! the next batch's open closes the gate again. Every run equals a serial run in commit order. Run with
+//! the next batch's open closes the gate again; an optimistic batch beside a writer, which re-runs
+//! on the newer version and loses no update, and one that keeps conflicting until it runs behind
+//! the gate (Phase 3's scaffold for the host's batches, design §4 and §7.5). Every run equals a
+//! serial run in commit order. Run with
 //! `RUSTFLAGS="--cfg loom" cargo test -p ooxml-store --test loom --release`.
 // Tests may unwrap, panic and index (docs/architecture/README.md, section 2.5).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
@@ -15,7 +18,7 @@ mod common;
 
 use common::{still, Cells, Fail, Mix, Put};
 use ooxml_store::{Caller, Seq, Store, StoreConfig, StoreError, TxnOwner};
-use ooxml_store::{Command, Txn};
+use ooxml_store::{Batch, Command, Txn};
 use std::sync::Arc;
 
 fn serial(order: &[&Mix]) -> Cells {
@@ -312,6 +315,114 @@ fn a_writer_that_waited_for_a_batch_publishes_before_the_next_batch() {
         assert_eq!(next.doc().get(2), 2, "the writer published first");
         store.drop_txn(a);
         writer.join().unwrap();
+        assert_eq!(store.steps().len(), 2);
+    });
+}
+
+/// The ops of a host's batch: two edits, the second reading what the first wrote, and an op
+/// that refuses (skipped: the batch is not atomic).
+fn batch_ops() -> Vec<Mix> {
+    vec![
+        Mix {
+            reads: vec![1],
+            write: 2,
+            add: 5,
+            dawdle: false,
+        },
+        Mix {
+            reads: vec![2],
+            write: 3,
+            add: 7,
+            dawdle: false,
+        },
+        Mix {
+            reads: vec![],
+            write: common::BAD - 1,
+            add: 0,
+            dawdle: false,
+        },
+    ]
+}
+
+/// The batch's two edits and the writer's put, applied serially in an order.
+fn serial_batch(writer_first: bool) -> Cells {
+    let store = Store::new(Cells::default(), StoreConfig::default(), still());
+    let put = Put(vec![(1, 10)]);
+    let batch = Batch::new(batch_ops());
+    if writer_first {
+        store.run(&Caller::anonymous(), &put).unwrap();
+    }
+    store.run(&Caller::anonymous(), &batch).unwrap();
+    if !writer_first {
+        store.run(&Caller::anonymous(), &put).unwrap();
+    }
+    store.snapshot().doc().clone()
+}
+
+#[test]
+fn an_optimistic_batch_beside_a_writer_reruns_and_loses_no_update() {
+    loom::model(|| {
+        let store = Arc::new(Store::new(Cells::default(), StoreConfig::default(), still()));
+        let batcher = {
+            let store = Arc::clone(&store);
+            loom::thread::spawn(move || {
+                let done = store.run(&Caller::anonymous(), &Batch::new(batch_ops())).unwrap();
+                let outs: Vec<bool> = done.out.iter().map(Result::is_ok).collect();
+                (done.version.seq(), outs)
+            })
+        };
+        let writer = {
+            let store = Arc::clone(&store);
+            loom::thread::spawn(move || {
+                store
+                    .run(&Caller::anonymous(), &Put(vec![(1, 10)]))
+                    .unwrap()
+                    .version
+                    .seq()
+            })
+        };
+        let ((batch_at, outs), written_at) = (batcher.join().unwrap(), writer.join().unwrap());
+        // the refusing op is skipped, the others kept, whichever version they ran on
+        assert_eq!(outs, [true, true, false]);
+        let doc = store.snapshot();
+        // the writer's update is never lost, and the batch read the cell as its commit order says
+        assert_eq!(doc.doc().get(1), 10);
+        assert_eq!(doc.doc(), &serial_batch(written_at < batch_at));
+        // one step each: the batch is one history step however often it ran
+        assert_eq!(store.steps().len(), 2);
+    });
+}
+
+#[test]
+fn a_batch_that_keeps_conflicting_runs_behind_the_gate_and_ends() {
+    loom::model(|| {
+        let once = StoreConfig {
+            optimistic_tries: 1,
+            ..StoreConfig::default()
+        };
+        let store = Arc::new(Store::new(Cells::default(), once, still()));
+        let batcher = {
+            let store = Arc::clone(&store);
+            loom::thread::spawn(move || {
+                store
+                    .run(&Caller::anonymous(), &Batch::new(batch_ops()))
+                    .unwrap()
+                    .version
+                    .seq()
+            })
+        };
+        let writer = {
+            let store = Arc::clone(&store);
+            loom::thread::spawn(move || {
+                store
+                    .run(&Caller::anonymous(), &Put(vec![(1, 10)]))
+                    .unwrap()
+                    .version
+                    .seq()
+            })
+        };
+        let (batch_at, written_at) = (batcher.join().unwrap(), writer.join().unwrap());
+        assert_eq!(store.snapshot().doc(), &serial_batch(written_at < batch_at));
         assert_eq!(store.steps().len(), 2);
     });
 }
