@@ -426,10 +426,10 @@ impl HostSession {
     /// edit was applied to through the version its last made.
     fn touched(&self, doc: &str, made: &ooxml_session::CallMade, result: &mut ToolResult<Value>) {
         let Some(id) = DocId::parse(doc) else { return };
-        let (Ok(Some(before)), Ok(format)) = (self.session.numbered(&id, made.before), self.session.format_doc(&id))
-        else {
+        let Ok(format) = self.session.format_doc(&id) else {
             return;
         };
+        let before = &made.before;
         self.say_touched(
             doc,
             &*format,
