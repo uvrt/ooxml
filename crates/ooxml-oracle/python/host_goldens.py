@@ -1135,12 +1135,10 @@ def known_entries(path: Path = KNOWN) -> list[dict]:
     if not path.exists():
         return []
     text = path.read_text(encoding="utf-8")
-    try:
+    if sys.version_info >= (3, 11):
         import tomllib
-    except ImportError:                       # Python 3.10: only an empty file is read
-        if any(line.strip() and not line.lstrip().startswith("#") for line in text.splitlines()):
-            raise RuntimeError("host/known-differences.toml has entries: reading them needs Python 3.11+")
-        return []
+    else:                                     # Python 3.10: the backport (docx-agent's dev extra)
+        import tomli as tomllib
     entries = tomllib.loads(text).get("difference", [])
     for entry in entries:
         if not entry.get("cause"):

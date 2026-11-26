@@ -34,8 +34,10 @@ dependencies = ["ooxml-edit>=0.129.1", "ooxml-common>=0.45.2", "docx2svg>=0.15.0
 png = []
 # ruff: the linter, which CI's build job runs at the same pin ([tool.ruff] below).  lxml:
 # the tests read the packages' XML themselves (the library does not use it).  markdown-it-py:
-# tests/test_markdown_tables.py compares the Rust core's Markdown tables with its own.
-dev = ["pytest>=7", "pytest-xdist>=3", "lxml>=4.9", "markdown-it-py>=3.0", "ruff==0.17.2"]
+# tests/test_markdown_tables.py compares the Rust core's Markdown tables with its own.  tomli: the
+# oracle's host goldens (crates/ooxml-oracle/python/host_goldens.py) read TOML on Python 3.10.
+dev = ["pytest>=7", "pytest-xdist>=3", "lxml>=4.9", "markdown-it-py>=3.0", "ruff==0.17.2",
+       'tomli>=1.1; python_version < "3.11"']
 
 [project.urls]
 Repository = "https://github.com/uvrt/docx-agent"

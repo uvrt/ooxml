@@ -93,7 +93,6 @@ def test_blessing_a_case_not_recorded_is_refused(tmp_path, capsys) -> None:
 
 
 def test_a_known_difference_needs_rule_1_a_cause_and_fields(tmp_path) -> None:
-    pytest.importorskip("tomllib")
     path = tmp_path / "known.toml"
     path.write_text('[[difference]]\nstream = "*"\nrule = 4\ncause = "x"\nfields = ["result"]\n')
     with pytest.raises(ValueError, match="rule"):
