@@ -11,6 +11,7 @@
 //! Must not: know a format's model or state beyond [`Holds`], word a reply, or plan an undo
 //! itself (the store does).
 
+use crate::batch_run::{BatchCommitted, BatchOps, BatchRefused, OpRan};
 use crate::format::AnyVersion;
 use crate::history::{numbers_of, Direction, Numbers};
 use crate::model::{PackageDoc, PartChange, PartContent};
@@ -19,8 +20,8 @@ use crate::update::{PartUpdate, Parts};
 use crate::SessionError;
 use ooxml_opc::Package;
 use ooxml_store::{
-    Caller, Command, DocModel, Error, HistoryOutcome, LockTimes, Seq, Snapshot, Store, StoreError, StoreStats, TxnMark,
-    TxnOwner,
+    AttemptState, Caller, Command, DocModel, Error, HistoryOutcome, InOp, LockTimes, OpTxn, Seq, Snapshot, Store,
+    StoreError, StoreStats, Txn, TxnMark, TxnOwner,
 };
 use ooxml_xml::Tree;
 use std::marker::PhantomData;
@@ -311,6 +312,41 @@ impl<D: DocModel, H: Holds<D>> Stored<D, H> {
     }
 }
 
+/// Why an attempt of a batch published nothing: an atomic batch's op failed, or the store
+/// refused.
+enum Refused<D: DocModel> {
+    Op(usize),
+    Store(Error<D>),
+}
+
+impl<D: DocModel> From<Error<D>> for Refused<D> {
+    fn from(error: Error<D>) -> Self {
+        Refused::Store(error)
+    }
+}
+
+/// One attempt of a batch in `tx`: its ops in order, each at a savepoint of its own on the
+/// version the ops before it left (a failed op taken back alone, or the attempt refused where
+/// the batch is atomic).
+fn prepare_batch<D: DocModel>(tx: &mut Txn<'static, D>, ops: &dyn BatchOps) -> Result<(), Refused<D>> {
+    ops.attempt();
+    let attempt = AttemptState::default();
+    let mut current = Arc::clone(tx.base());
+    for index in 0..ops.count() {
+        let point = tx.savepoint();
+        let lent = InOp::new(tx, Arc::clone(&current), &attempt);
+        let ran = ops.run(index, &lent);
+        let left = lent.into_current::<D>();
+        match ran {
+            OpRan::Applied => current = left.unwrap_or(current),
+            OpRan::NotRun => {}
+            OpRan::Failed if ops.atomic() => return Err(Refused::Op(index)),
+            OpRan::Failed => tx.rollback(point),
+        }
+    }
+    Ok(())
+}
+
 /// A plain undo's or redo's outcome; `None` when there was none to take.
 fn plain<D: DocModel>(outcome: Result<HistoryOutcome<D>, Error<D>>) -> Result<Option<HistoryOutcome<D>>, SessionError> {
     match outcome {
@@ -389,6 +425,31 @@ pub trait StoredDoc: Send + Sync {
     /// Let `owner`'s open group go, what it did taken back; whether it was open.
     fn drop_group(&self, owner: TxnOwner) -> bool;
 
+    /// The version an op of a host's batch reads in `txn` (the one the ops before it left),
+    /// where `txn` is a transaction of this document's model.
+    fn version_in(&self, txn: &dyn OpTxn) -> Option<AnyVersion>;
+
+    /// Run a host's batch of one document as `caller` ([`crate::batch_run`]): its ops in one
+    /// transaction, prepared again on a conflict, committed once; what it published.
+    ///
+    /// # Errors
+    /// [`BatchRefused::Op`] when an atomic batch's op failed; the store's.
+    fn run_batch(&self, caller: &Caller, ops: &dyn BatchOps) -> Result<BatchCommitted, BatchRefused>;
+
+    /// Run one op of a host's batch over several documents (`run`) in the transaction
+    /// `owner` holds open on this one (its group), on the version its ops so far left; a
+    /// failed op's changes taken back alone; `attempt` what the format keeps across the
+    /// batch's ops on this document. How it ran.
+    ///
+    /// # Errors
+    /// The store's without an open group.
+    fn in_group(
+        &self,
+        owner: TxnOwner,
+        attempt: &AttemptState,
+        run: &mut dyn FnMut(&dyn OpTxn) -> OpRan,
+    ) -> Result<OpRan, SessionError>;
+
     /// The store's counters.
     fn stats(&self) -> StoreStats;
 
@@ -465,6 +526,48 @@ impl<D: DocModel, H: Holds<D>> StoredDoc for Stored<D, H> {
 
     fn drop_group(&self, owner: TxnOwner) -> bool {
         self.store().drop_txn(owner)
+    }
+
+    fn version_in(&self, txn: &dyn OpTxn) -> Option<AnyVersion> {
+        txn.current::<D>().map(Self::any)
+    }
+
+    fn run_batch(&self, caller: &Caller, ops: &dyn BatchOps) -> Result<BatchCommitted, BatchRefused> {
+        let committed = self
+            .store()
+            .run_txn(caller, &D::Setup::default(), |tx| prepare_batch(tx, ops));
+        match committed {
+            Ok(done) => Ok(BatchCommitted {
+                previous: done.previous.filter(|_| done.changed).map(Self::any),
+                version: Self::any(done.version),
+                attempts: done.attempts,
+                exclusive: done.exclusive,
+                timing: done.timing,
+            }),
+            Err(Refused::Op(index)) => Err(BatchRefused::Op(index)),
+            Err(Refused::Store(error)) => Err(BatchRefused::Store(error.into())),
+        }
+    }
+
+    fn in_group(
+        &self,
+        owner: TxnOwner,
+        attempt: &AttemptState,
+        run: &mut dyn FnMut(&dyn OpTxn) -> OpRan,
+    ) -> Result<OpRan, SessionError> {
+        let store = self.store();
+        let current = store
+            .txn_current(owner)
+            .ok_or(StoreError::<D::Key, D::Error>::NotHeld)?;
+        let ran = store.in_txn(owner, |tx| {
+            let point = tx.savepoint();
+            let ran = run(&InOp::new(tx, current, attempt));
+            if ran == OpRan::Failed {
+                tx.rollback(point);
+            }
+            ran
+        })?;
+        Ok(ran.out)
     }
 
     fn stats(&self) -> StoreStats {

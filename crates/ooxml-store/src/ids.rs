@@ -87,17 +87,34 @@ impl Counters {
     }
 }
 
-/// Where every sequence got. Its own lock, never held while taking the commit lock, so a
-/// transaction draws ids while it prepares without waiting for commits.
+/// Where every sequence got, and the version numbers ([`Seq`]): the highest given. Its own
+/// locks, never held while taking the commit lock, so a transaction draws ids -- and a number
+/// for a version it makes but does not publish ([`crate::Txn::version_here`]) -- while it
+/// prepares without waiting for commits; a publish draws its number under the commit lock.
 pub(crate) struct IdAllocator {
     cursors: Mutex<BTreeMap<IdSeq, u64>>,
+    /// The highest version number given.
+    versions: Mutex<Seq>,
 }
 
 impl IdAllocator {
-    pub(crate) fn new(cursors: BTreeMap<IdSeq, u64>) -> Self {
+    pub(crate) fn new(cursors: BTreeMap<IdSeq, u64>, last: Seq) -> Self {
         Self {
             cursors: Mutex::new(cursors),
+            versions: Mutex::new(last),
         }
+    }
+
+    /// A version number never given before.
+    pub(crate) fn next_seq(&self) -> Seq {
+        let mut last = lock(&self.versions);
+        *last = last.next();
+        *last
+    }
+
+    /// The highest version number given.
+    pub(crate) fn last_seq(&self) -> Seq {
+        *lock(&self.versions)
     }
 
     /// The next position of `seq`.

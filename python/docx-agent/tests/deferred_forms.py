@@ -191,24 +191,6 @@ DEFERRED: dict[str, str] = {
         "word_insert_markdown from data (from, blob)",
     "test_tables_from_data.py::test_too_many_rows_from_a_source_without_a_row_range_is_refused_not_internal":
         "word_insert_markdown from data (from, blob)",
-    "test_like.py::test_a_copied_sample_extended_follows_the_copy":
-        "word_insert_markdown like",
-    "test_like.py::test_a_level_below_the_given_ones_is_the_list_a_level_deeper":
-        "word_insert_markdown like",
-    "test_like.py::test_a_sample_in_no_list_and_another_kind_are_said":
-        "word_insert_markdown like",
-    "test_like.py::test_a_style_map_naming_a_paragraph_is_read_as_like":
-        "word_insert_markdown like",
-    "test_like.py::test_an_empty_level_is_written_without_like":
-        "word_insert_markdown like",
-    "test_like.py::test_like_wins_over_the_replaced_items_kept_settings":
-        "word_insert_markdown like",
-    "test_like.py::test_new_nested_items_follow_the_sample_at_each_level":
-        "word_insert_markdown like",
-    "test_like.py::test_numbered_items_count_on_from_the_sample":
-        "word_insert_markdown like",
-    "test_like.py::test_replacing_the_sample_itself_keeps_its_look":
-        "word_insert_markdown like",
     "test_table_regions_r58.py::test_a_frame_copy_is_tracked_as_an_insertion_and_undone_in_one_step":
         "word_insert_markdown like",
     "test_table_regions_r58.py::test_frames_refuse_what_they_cannot_copy_with_the_way_out":

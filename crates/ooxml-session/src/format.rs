@@ -21,7 +21,7 @@ use ooxml_base::pyfmt::repr_str;
 use ooxml_base::Context;
 use ooxml_numfmt::Locale;
 use ooxml_opc::Package;
-use ooxml_store::{Caller, DocModel, Snapshot, StoreConfig};
+use ooxml_store::{Caller, DocModel, OpTxn, Snapshot, StoreConfig};
 use ooxml_tools::datasets::Dataset;
 use ooxml_tools::roles::HostFacts;
 use ooxml_tools::{Refusal, Tool, ToolError, ToolResult, TryCall, WayOut};
@@ -172,7 +172,19 @@ pub struct FormatRun<'a> {
     /// What the call's edits made, as the format keeps it, set as soon as they made it (so
     /// it is the call's even when the handler panics after): [`FormatDoc::finish`] reads it.
     pub made: &'a Mutex<Option<Box<dyn Any + Send>>>,
+    /// The transaction the call's edits run in, handed to it: an op of a host's batch of one
+    /// document ([`crate::BatchOps`]), whose effects wait for the batch's publish
+    /// ([`FormatRun::deferred`]); `None`: the call commits its own.
+    pub txn: Option<&'a dyn OpTxn>,
+    /// What the call keeps once the batch whose transaction it ran in is published (only such
+    /// a call's: [`FormatRun::txn`]), in order.
+    pub deferred: &'a Mutex<Vec<Deferred>>,
 }
+
+/// What a call run in a batch's transaction leaves its format to keep once the batch is
+/// published (a Word call's retired ids, the rows it wrote): run with the document and the
+/// version published, in op order, by the host -- once, however often the batch ran.
+pub type Deferred = Box<dyn FnOnce(&dyn FormatDoc, &AnyVersion) + Send>;
 
 /// The versions one changing call made, as its format finished them.
 pub struct Finished {
@@ -187,6 +199,18 @@ pub struct Finished {
     pub batch: bool,
     /// What the format says of the call beside (a Word call's touched, validation, reflow).
     pub format: Option<Arc<dyn Any + Send + Sync>>,
+    /// Where its commits' time went: how long they held the document's commit lock, and how
+    /// long they waited for it and for the document's gate (R142's per-call timing).
+    pub lock: LockSpent,
+}
+
+/// How long a call's commits held a document's commit lock, and waited for it and its gate.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LockSpent {
+    /// Held.
+    pub held: std::time::Duration,
+    /// Waited for.
+    pub waited: std::time::Duration,
 }
 
 /// One open document as its format keeps it.
@@ -267,6 +291,22 @@ pub trait FormatDoc: Send + Sync + 'static {
     fn checks(&self, at: &AnyVersion, made: Option<&(dyn Any + Send + Sync)>) -> Option<Map<String, Value>> {
         let _ = (at, made);
         None
+    }
+
+    /// The checks a host's batch's reply carries for this document, which the batch took from
+    /// `before` to `after` (`None`: it changed nothing here): [`FormatDoc::checks`] of `after`,
+    /// with what the batch reflowed, measured once after its last op where the format lays
+    /// its documents out (`context`'s layout, within its limit on laying out); by default
+    /// the checks alone.
+    fn batch_checks(
+        &self,
+        before: Option<&AnyVersion>,
+        after: &AnyVersion,
+        context: &CallContext,
+        cancel: &CallCancel<'_>,
+    ) -> Option<Map<String, Value>> {
+        let _ = (before, context, cancel);
+        self.checks(after, None)
     }
 
     /// What a call that went from `before` to `after` touched, one entry per thing in the

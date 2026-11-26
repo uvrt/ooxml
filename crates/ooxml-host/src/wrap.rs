@@ -6,7 +6,7 @@
 //! name, format, size and the gate's report, never its bytes ([`HostSession::output`]);
 //! `check`'s `validation`, what the save would refuse as new, over the whole document
 //! whatever the check asked, and its summary's note ([`validation_fact`]); `describe`'s
-//! `problems`, those the document opened with.
+//! `problems`, those the document opened with, and the session's datasets.
 //!
 //! Must not: find problems (the format does), or keep a file's bytes in the reply.
 
@@ -75,7 +75,10 @@ impl HostSession {
         match tool {
             "save_document" => self.output(doc, &*format, &at, result),
             "check" => self.check_validation(&*format, &at, result),
-            "describe" => describe_problems(&*format, result),
+            "describe" => {
+                describe_problems(&*format, result);
+                self.describe_datasets(result);
+            }
             _ => {}
         }
     }
@@ -141,6 +144,25 @@ impl HostSession {
             done.data = Some(Value::Object(data));
         }
         self.stores().outputs.add(output);
+    }
+
+    /// `describe`'s datasets: the session's, not a document's -- each its id, columns, type
+    /// labels, row count and where it came from, never its values (ooxml-edit's
+    /// `_with_datasets`); no key without any.
+    fn describe_datasets(&self, result: &mut ToolResult<Value>) {
+        let heads: Vec<(String, u64)> = self
+            .session
+            .documents()
+            .into_iter()
+            .filter_map(|id| Some((id.to_string(), self.session.snapshot(&id).ok()?.number())))
+            .collect();
+        let heads = |doc: &str| heads.iter().find(|(d, _)| d == doc).map(|(_, n)| *n);
+        let briefs = self.stores().datasets.briefs(&heads);
+        if let Outcome::Done(done) = &mut result.outcome {
+            if let Some(Value::Object(data)) = &mut done.data {
+                data.extend(briefs);
+            }
+        }
     }
 
     /// `check`'s whole-document `validation` and its summary's note.

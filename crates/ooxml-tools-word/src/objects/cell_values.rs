@@ -20,6 +20,7 @@ use super::edit_table_args::CellArg;
 use super::table_view::{table_view, AcceptedView};
 use crate::review::Editing;
 use crate::written::{self, After, Written};
+use ooxml_tools::sources::SourceRefused;
 use ooxml_tools::{Refusal, ToolError, TryCall, WayOut};
 use ooxml_word_edit::TextKeep;
 use serde_json::{Map, Value};
@@ -151,14 +152,33 @@ fn cell_value<'e>(
         )
         .at(field));
     }
-    if let Some(fact) = editing.written.iter().find(|w| w.field == field) {
+    // a cell given without its own value reads the call's one-value `from` (docx-agent's
+    // `_cell_froms`): the host resolved it once, at `from`
+    let at = |w: &&Written| w.field == field;
+    let inherited = |w: &&Written| w.field == "from";
+    if let Some(fact) = editing
+        .written
+        .iter()
+        .find(at)
+        .or_else(|| editing.written.iter().find(inherited))
+    {
         return Ok(CellValue {
             text: fact.text.clone(),
             fact: Some(fact),
         });
     }
-    Err(match editing.others.refused_value(&field) {
-        Some(refused) => crate::sources::value_refusal(refused, retry),
+    let refused = editing.others.refused_value(&field).cloned().or_else(|| {
+        editing
+            .others
+            .refused_value("from")
+            .filter(|r| r.given == source)
+            .map(|r| SourceRefused {
+                field: Some(field.clone()),
+                ..r.clone()
+            })
+    });
+    Err(match refused {
+        Some(refused) => crate::sources::value_refusal(&refused, retry),
         None => crate::sources::no_rows(source, &field, retry),
     })
 }

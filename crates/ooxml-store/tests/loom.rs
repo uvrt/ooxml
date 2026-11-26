@@ -6,7 +6,9 @@
 //! dropping it lets the waiter go), and a writer that waited for one batch publishing before
 //! the next batch's open closes the gate again; an optimistic batch beside a writer, which re-runs
 //! on the newer version and loses no update, and one that keeps conflicting until it runs behind
-//! the gate (Phase 3's scaffold for the host's batches, design §4 and §7.5). Every run equals a
+//! the gate (Phase 3's scaffold for the host's batches, design §4 and §7.5); and the host's
+//! batch as Phase 3 runs it (`Store::run_txn`, each op handed the transaction erased), beside a
+//! writer and behind the gate. Every run equals a
 //! serial run in commit order. Run with
 //! `RUSTFLAGS="--cfg loom" cargo test -p ooxml-store --test loom --release`.
 // Tests may unwrap, panic and index (docs/architecture/README.md, section 2.5).
@@ -17,7 +19,7 @@
 mod common;
 
 use common::{still, Cells, Fail, Mix, Put};
-use ooxml_store::{Batch, Command, Txn};
+use ooxml_store::{AttemptState, Batch, Command, InOp, OpTxn, Txn};
 use ooxml_store::{Caller, Seq, Store, StoreConfig, StoreError, TxnOwner};
 use std::sync::Arc;
 
@@ -410,6 +412,96 @@ fn a_batch_that_keeps_conflicting_runs_behind_the_gate_and_ends() {
                     .version
                     .seq()
             })
+        };
+        let writer = {
+            let store = Arc::clone(&store);
+            loom::thread::spawn(move || {
+                store
+                    .run(&Caller::anonymous(), &Put(vec![(1, 10)]))
+                    .unwrap()
+                    .version
+                    .seq()
+            })
+        };
+        let (batch_at, written_at) = (batcher.join().unwrap(), writer.join().unwrap());
+        assert_eq!(store.snapshot().doc(), &serial_batch(written_at < batch_at));
+        assert_eq!(store.steps().len(), 2);
+    });
+}
+
+/// A host's batch as Phase 3 runs it ([`Store::run_txn`]): each op handed the transaction
+/// erased ([`OpTxn`]) at a savepoint of its own, on the version the ops before it left
+/// ([`Txn::version_here`]), the refusing op taken back alone.
+fn host_batch(store: &Store<Cells>) -> (Seq, Vec<bool>) {
+    let ops = batch_ops();
+    let done = store
+        .run_txn(&Caller::anonymous(), &(), |tx| {
+            let attempt = AttemptState::default();
+            let mut current = Arc::clone(tx.base());
+            let mut outs = Vec::new();
+            for op in &ops {
+                let point = tx.savepoint();
+                let lent = InOp::new(tx, Arc::clone(&current), &attempt);
+                let txn: &dyn OpTxn = &lent;
+                let ran = txn
+                    .with::<Cells, _>(|tx, current| {
+                        let out = op.validate(tx.doc()).and_then(|()| op.prepare(tx));
+                        if out.is_ok() {
+                            *current = tx.version_here(current);
+                        }
+                        out
+                    })
+                    .unwrap();
+                let left = lent.into_current::<Cells>().unwrap();
+                match ran {
+                    Ok(_) => current = left,
+                    Err(_) => tx.rollback(point),
+                }
+                outs.push(ran.is_ok());
+            }
+            Ok::<_, Fail>(outs)
+        })
+        .unwrap();
+    (done.version.seq(), done.out)
+}
+
+#[test]
+fn a_host_batch_handed_its_transaction_reruns_beside_a_writer_and_loses_no_update() {
+    loom::model(|| {
+        let store = Arc::new(Store::new(Cells::default(), StoreConfig::default(), still()));
+        let batcher = {
+            let store = Arc::clone(&store);
+            loom::thread::spawn(move || host_batch(&store))
+        };
+        let writer = {
+            let store = Arc::clone(&store);
+            loom::thread::spawn(move || {
+                store
+                    .run(&Caller::anonymous(), &Put(vec![(1, 10)]))
+                    .unwrap()
+                    .version
+                    .seq()
+            })
+        };
+        let ((batch_at, outs), written_at) = (batcher.join().unwrap(), writer.join().unwrap());
+        assert_eq!(outs, [true, true, false]);
+        assert_eq!(store.snapshot().doc().get(1), 10);
+        assert_eq!(store.snapshot().doc(), &serial_batch(written_at < batch_at));
+        assert_eq!(store.steps().len(), 2);
+    });
+}
+
+#[test]
+fn a_host_batch_that_keeps_conflicting_runs_behind_the_gate_and_ends() {
+    loom::model(|| {
+        let once = StoreConfig {
+            optimistic_tries: 1,
+            ..StoreConfig::default()
+        };
+        let store = Arc::new(Store::new(Cells::default(), once, still()));
+        let batcher = {
+            let store = Arc::clone(&store);
+            loom::thread::spawn(move || host_batch(&store).0)
         };
         let writer = {
             let store = Arc::clone(&store);

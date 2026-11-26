@@ -33,9 +33,11 @@ use std::time::Duration;
 /// The toy format's types.
 pub struct Toy;
 
-/// What a toy reading tool reads: the version's package.
+/// What a toy reading tool reads: the version's package, and the values the host resolved
+/// for the call.
 pub struct ToyVersion<'a> {
     pub package: &'a Package,
+    pub values: &'a ooxml_tools::written::CallValues,
 }
 
 /// What a toy editing tool edits through: a part written as one step.
@@ -99,6 +101,35 @@ pub struct ToyNotes {
     pub action: NotesAction,
     /// A note's text.
     pub text: Option<String>,
+}
+
+/// `toy_fill`'s arguments: a source and a text with references.
+#[derive(ToolArgs, Debug, Clone, PartialEq, Eq)]
+#[tool(name = "toy_fill", description = "Read a source and a text.")]
+pub struct ToyFill {
+    /// Document id.
+    pub doc: String,
+    /// Rows, or one value.
+    #[arg(rename = "from", sources)]
+    pub source: Option<String>,
+    /// A text.
+    #[arg(facts)]
+    pub text: Option<String>,
+}
+
+/// `toy_fill`: what the tool was handed, as its data.
+fn toy_fill(args: &ToyFill, version: &ToyVersion<'_>, _cancel: &dyn Cancel) -> Result<Done<Value>, ToolError> {
+    let values = version.values;
+    let mut done = Done::new("Filled");
+    done.data = Some(json!({
+        "from": args.source,
+        "text": args.text,
+        "written": values.written.iter().map(|w| json!({"field": w.field, "text": w.text, "start": w.start, "end": w.end})).collect::<Vec<_>>(),
+        "rows": values.sources.rows.iter().map(|r| json!({"given": r.given, "address": r.address, "rows": r.rows.len()})).collect::<Vec<_>>(),
+        "refused": values.sources.refused.iter().map(|r| json!({"given": r.given, "field": r.field, "message": r.message})).collect::<Vec<_>>(),
+        "one": values.one_values.iter().map(|v| json!({"field": v.field, "shown": v.shown, "row": v.row, "column": v.column})).collect::<Vec<_>>(),
+    }));
+    Ok(done)
 }
 
 /// The toy `save_document`'s arguments.
@@ -239,6 +270,7 @@ impl Format for ToyFormat {
         Registrar::<Toy>::edit::<ToySet>(&mut r, toy_set);
         Registrar::<Toy>::edit::<ToyNotes>(&mut r, toy_notes);
         Registrar::<Toy>::read::<ToySave>(&mut r, toy_save);
+        Registrar::<Toy>::read::<ToyFill>(&mut r, toy_fill);
         Registrar::<Toy>::read::<ToyDescribe>(&mut r, toy_describe);
         Registrar::<Toy>::read::<ToyCheck>(&mut r, toy_check);
     }
@@ -353,6 +385,7 @@ impl FormatCall for ToyCall<'_> {
             Run::Read(read) => {
                 let version = ToyVersion {
                     package: self.run.doc.package(),
+                    values: &self.run.context.values,
                 };
                 match read(&version, self.run.cancel) {
                     Ok(done) => ToolResult::done(done),
@@ -428,6 +461,7 @@ impl FormatDoc for ToyDoc {
             last: made.last,
             batch: false,
             format: None,
+            lock: ooxml_session::LockSpent::default(),
         })
     }
 

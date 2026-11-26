@@ -477,6 +477,11 @@ impl FormatDoc for Word {
         let layout = self.layout(host);
         let layout_cancel = run.cancel.layout();
         let made = Mutex::new(None);
+        // an op of a host's batch keeps what it would keep of the document for its attempt
+        let kept = run.txn.map(|_| crate::call::Kept {
+            rows_written: self.rows_written.attempt(),
+            made_by: self.made_by.attempt(),
+        });
         let call = Call {
             doc: run.doc,
             name: run.named,
@@ -497,14 +502,19 @@ impl FormatDoc for Word {
                 .or_else(|| self.default_pages.as_ref().and_then(|p| p.raster.as_deref())),
             image_budgets: &run.context.image_budgets,
             blobs: run.context.blobs.as_deref(),
-            written: &host.written,
+            written: &run.context.values.written,
             others: run.others,
             tables: host.tables.as_deref(),
-            sources: &host.sources,
+            sources: &run.context.values.sources,
+            one_values: &run.context.values.one_values,
+            held_tables: &run.context.values.tables,
             counts: host.counts,
             limits: run.context.limits,
             tracking: self.tracking(),
             placer: host.placer.as_deref(),
+            txn: run.txn,
+            kept: kept.as_ref(),
+            deferred: run.deferred,
         };
         let mut effects = ooxml_tools::OpEffects::default();
         let mut env = CallEnv {
@@ -520,6 +530,15 @@ impl FormatDoc for Word {
         }
         let mut result = ran.unwrap_or_else(|panic| std::panic::resume_unwind(panic));
         effects.give_to(&mut result);
+        if let Some(kept) = kept {
+            let keep: ooxml_session::Deferred = Box::new(move |doc, _| {
+                if let Some(word) = Word::of(doc) {
+                    word.rows_written.note(kept.rows_written.ids());
+                    word.made_by.apply(&kept.made_by);
+                }
+            });
+            run.deferred.lock().unwrap_or_else(PoisonError::into_inner).push(keep);
+        }
         // An id a version removed, refused as one the document lacks: said as such.
         match &result.outcome {
             Outcome::Failed(error) => {
@@ -534,15 +553,35 @@ impl FormatDoc for Word {
 
     fn finish(&self, made: Box<dyn Any + Send>, run: &FormatRun<'_>) -> Option<Finished> {
         let made = *made.downcast::<Made>().ok()?;
-        // the ids each version retired, by whom
-        for (seq, delta) in &made.ids {
-            let by = RetiredMade {
-                seq: seq.0,
-                caller: run.context.caller.name(),
-                tool: Some(run.tool),
-                history: false,
-            };
-            self.retired().note(&by, delta);
+        // the ids each version retired, by whom; an op of a host's batch's, once the batch is
+        // published, by the version published
+        if run.txn.is_some() {
+            let ids: Vec<_> = made.ids.iter().map(|(_, delta)| delta.clone()).collect();
+            let (caller, tool) = (run.context.caller.name().map(str::to_owned), run.tool.to_owned());
+            let keep: ooxml_session::Deferred = Box::new(move |doc, at| {
+                if let Some(word) = Word::of(doc) {
+                    for delta in &ids {
+                        let by = RetiredMade {
+                            seq: at.seq(),
+                            caller: caller.as_deref(),
+                            tool: Some(&tool),
+                            history: false,
+                        };
+                        word.retired().note(&by, delta);
+                    }
+                }
+            });
+            run.deferred.lock().unwrap_or_else(PoisonError::into_inner).push(keep);
+        } else {
+            for (seq, delta) in &made.ids {
+                let by = RetiredMade {
+                    seq: seq.0,
+                    caller: run.context.caller.name(),
+                    tool: Some(run.tool),
+                    history: false,
+                };
+                self.retired().note(&by, delta);
+            }
         }
         let one = made.first.seq() == made.last.seq();
         let none = WordHost::default();
@@ -568,6 +607,10 @@ impl FormatDoc for Word {
             last: Self::any(made.last),
             batch: made.batch,
             format: Some(Arc::new(format)),
+            lock: ooxml_session::LockSpent {
+                held: made.held,
+                waited: made.waited,
+            },
         })
     }
 
@@ -595,6 +638,22 @@ impl FormatDoc for Word {
             "reflow".into(),
             made.and_then(|m| m.reflow.clone()).unwrap_or(Value::Null),
         );
+        Some(checks)
+    }
+
+    fn batch_checks(
+        &self,
+        before: Option<&AnyVersion>,
+        after: &AnyVersion,
+        context: &ooxml_session::CallContext,
+        cancel: &ooxml_session::CallCancel<'_>,
+    ) -> Option<serde_json::Map<String, Value>> {
+        let mut checks = self.checks(after, None)?;
+        let reflow = before
+            .and_then(|b| b.snapshot::<WordDoc>())
+            .zip(after.snapshot::<WordDoc>())
+            .and_then(|(start, head)| self.reflow_between(start, head, context, cancel));
+        checks.insert("reflow".into(), reflow.unwrap_or(Value::Null));
         Some(checks)
     }
 
@@ -652,6 +711,37 @@ impl FormatDoc for Word {
 }
 
 impl Word {
+    /// What changed between `start` and `head` reflowed, measured once (a batch's, after its
+    /// last op): laid out by the call's layout, else the document's own engine -- only where
+    /// that engine laid out `start` (`reflow_after_edit`); `None` where nothing is measured.
+    pub(crate) fn reflow_between(
+        &self,
+        start: &Snapshot<WordDoc>,
+        head: &Snapshot<WordDoc>,
+        context: &ooxml_session::CallContext,
+        cancel: &ooxml_session::CallCancel<'_>,
+    ) -> Option<Value> {
+        if head.seq() == start.seq() {
+            return None;
+        }
+        let none = WordHost::default();
+        let layout = self.layout(WordHost::of(context).unwrap_or(&none))?;
+        let layout_cancel = cancel.layout();
+        let limit = layout_cancel.as_ref().map(limit);
+        let from = ooxml_tools_word::EditedFrom {
+            version: start.seq().0,
+            package: start.doc().package(),
+        };
+        ooxml_tools_word::reflow_after_edit(
+            &*layout,
+            &self.last_check,
+            from,
+            head.doc().package(),
+            head.doc().ids().aliases(),
+            (limit, cancel),
+        )
+    }
+
     /// The layout a call reads: the host's where it gives one, else the session's own engine
     /// of the document.
     pub(crate) fn layout(&self, host: &WordHost) -> Option<Arc<dyn WordLayout>> {

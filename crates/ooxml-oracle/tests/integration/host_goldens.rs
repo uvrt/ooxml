@@ -76,7 +76,8 @@ fn every_call_the_rust_host_serves_answers_as_recorded() {
     let mut differences = Vec::new();
     let streams: Vec<_> = streams
         .into_iter()
-        .filter(|(name, _)| only.as_deref().is_none_or(|o| name.contains(o)))
+        // (several streams: their names' parts, comma-separated)
+        .filter(|(name, _)| only.as_deref().is_none_or(|o| o.split(',').any(|o| name.contains(o))))
         .collect();
     // each stream's cases replayed on one of a few threads (the replay is the host's, and
     // a session is its own: nothing is shared but the faces)

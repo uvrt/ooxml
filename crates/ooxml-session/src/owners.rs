@@ -26,7 +26,7 @@ pub struct StepOwner {
 
 impl StepOwner {
     /// `tool` made by `context`'s caller.
-    pub(crate) fn of(tool: &str, context: &CallContext) -> Self {
+    pub fn of(tool: &str, context: &CallContext) -> Self {
         let caller = context.caller.name().map(Arc::from);
         let context = context.caller_context.clone().unwrap_or_else(|| {
             // no context given: the caller key's own fields (sorted), or the key as its name

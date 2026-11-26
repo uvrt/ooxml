@@ -4,8 +4,9 @@
 //! the result from the change and the version after it ([`Edited`]): what it touched and
 //! the validation delta (design section 5, "Results"); every command followed by the
 //! records of placed values kept in the document ([`crate::provenance`]). A command may also
-//! run in a transaction its owner holds open ([`Editor::run_held`], a host's batch): it then
-//! makes a version only the owner reads, published with the transaction's commit.
+//! run in a transaction its owner holds open ([`Editor::run_held`], a host's batch of several
+//! documents), or in a transaction a host's batch is handed ([`Editor::run_in`]): it then
+//! makes a version only the batch reads, published with the transaction's commit.
 //!
 //! Must not: hold anything but the store and the baseline; read the clock but through the
 //! store's port; run a command's effects outside its transaction.
@@ -18,7 +19,7 @@ use crate::validate::{problems, Delta, Problem};
 use crate::{EditError, Result};
 use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
-use ooxml_store::{Caller, Clock, Command, CommitTiming, Snapshot, Store, StoreConfig, StoreError, TxnOwner};
+use ooxml_store::{Caller, Clock, Command, CommitTiming, Snapshot, Store, StoreConfig, StoreError, Txn, TxnOwner};
 use ooxml_word_model::ids::{LoadedState, VersionDelta};
 use std::sync::Arc;
 use std::time::Duration;
@@ -260,23 +261,9 @@ impl Editor {
         C: Command<WordDoc, Error = EditError>,
     {
         let started = self.clock.monotonic();
-        let followed = crate::provenance::Followed(command);
-        let stamped = crate::stamping::Stamped(&followed);
-        let ran = self.store.in_txn(owner, |tx| {
-            tx.set_up(setup);
-            let spaced = tx.doc().spaced();
-            let point = tx.savepoint();
-            match stamped.validate(tx.doc()).and_then(|()| stamped.prepare(tx)) {
-                Ok(out) => Ok((out, tx.doc().spaced().saturating_sub(spaced))),
-                Err(error) => {
-                    tx.rollback(point);
-                    Err(error)
-                }
-            }
-        });
+        let ran = self.store.in_txn(owner, |tx| prepared(tx, command, setup));
         let ran = ran.map_err(|error: StoreError<_, _>| EditError::from(error))?;
         let (out, spaced) = ran.out?;
-        let total = self.clock.monotonic().saturating_sub(started);
         let ran = Ran {
             previous: ran.changed.then_some(ran.before),
             version: ran.after,
@@ -284,8 +271,50 @@ impl Editor {
             attempts: 1,
             exclusive: false,
             timing: CommitTiming {
-                held: std::time::Duration::ZERO,
-                total,
+                held: Duration::ZERO,
+                waited: Duration::ZERO,
+                total: self.clock.monotonic().saturating_sub(started),
+            },
+        };
+        self.edited(out, ran)
+    }
+
+    /// Run `command` as [`Editor::run_with`] does, in `tx` (a host's batch's transaction,
+    /// committed by whoever runs it): validated and prepared on its working version, its
+    /// changes taken back where it refuses. The version it makes ([`Txn::version_here`]) is
+    /// the transaction's alone, its changes against `previous` (the version read before it,
+    /// the batch's ops so far left).
+    ///
+    /// # Errors
+    /// The command's refusal, nothing changed.
+    pub fn run_in<C>(
+        &self,
+        tx: &mut Txn<'_, WordDoc>,
+        previous: &Snapshot<WordDoc>,
+        command: &C,
+        setup: &Setup,
+    ) -> Result<Edited<C::Out>>
+    where
+        C: Command<WordDoc, Error = EditError>,
+    {
+        let started = self.clock.monotonic();
+        let before = tx.len();
+        let (out, spaced) = prepared(tx, command, setup)?;
+        let changed = tx.len() != before;
+        let ran = Ran {
+            previous: changed.then(|| Arc::clone(previous)),
+            version: if changed {
+                tx.version_here(previous)
+            } else {
+                Arc::clone(previous)
+            },
+            spaced: if changed { spaced } else { 0 },
+            attempts: 1,
+            exclusive: false,
+            timing: CommitTiming {
+                held: Duration::ZERO,
+                waited: Duration::ZERO,
+                total: self.clock.monotonic().saturating_sub(started),
             },
         };
         self.edited(out, ran)
@@ -338,6 +367,27 @@ impl Editor {
                 validation: validated.saturating_sub(found),
             },
         })
+    }
+}
+
+/// `command` validated and prepared in `tx` as `setup` says, followed by the records of
+/// placed values and the stamping of new blocks; its changes taken back where it refuses.
+/// What it returned and the spaces its language spacing wrote.
+fn prepared<C>(tx: &mut Txn<'_, WordDoc>, command: &C, setup: &Setup) -> Result<(C::Out, usize)>
+where
+    C: Command<WordDoc, Error = EditError>,
+{
+    let followed = crate::provenance::Followed(command);
+    let stamped = crate::stamping::Stamped(&followed);
+    tx.set_up(setup);
+    let spaced = tx.doc().spaced();
+    let point = tx.savepoint();
+    match stamped.validate(tx.doc()).and_then(|()| stamped.prepare(tx)) {
+        Ok(out) => Ok((out, tx.doc().spaced().saturating_sub(spaced))),
+        Err(error) => {
+            tx.rollback(point);
+            Err(error)
+        }
     }
 }
 

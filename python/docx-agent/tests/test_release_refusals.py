@@ -155,7 +155,7 @@ CASES = {
         ("shape", "word_delete", {"target": "d:1"}),
     ],
     "word_insert_markdown *": [
-        (None, "word_insert_markdown", {"at": "end", "markdown": "x", "like": ["{p}"]}),
+        (None, "word_insert_markdown", {"at": "end", "markdown": "x", "like": ["{t}"]}),
         (None, "word_insert_markdown", {"at": "end", "from": "d:scores"}),
     ],
     "a picture in Markdown": [(None, "word_insert_markdown", {"at": "end", "markdown": "![a](b.png)"})],

@@ -5,11 +5,9 @@
 //!
 //! Must not: hold documents (the session does) or dispatch a call.
 
-use crate::pages::WordPages;
 use crate::word::Word;
 use ooxml_opc::Package;
 use ooxml_session::{CallCancel, CallContext, DocId, DocKind, GroupMark, Opened, Session, SessionError};
-use ooxml_tools_word::WordLayout;
 use ooxml_word_edit::validate::Delta;
 use ooxml_word_edit::{EarlierIds, EditError, WordDoc};
 use ooxml_word_model::ids::{HeldId, LoadedState};
@@ -143,26 +141,9 @@ impl WordSession for Session {
         if head.seq() == start.seq() {
             return Ok(None);
         }
-        let host = crate::WordHost::of(context).and_then(|h| h.layout.clone());
-        let Some(layout) = host.or_else(|| self.pages(id).ok().flatten().map(|e| e as Arc<dyn WordLayout>)) else {
-            return Ok(None);
-        };
         let ports = self.context();
         let cancel = CallCancel::new(context, &*ports.cancel, &*ports.clock);
-        let layout_cancel = cancel.layout();
-        let limit = layout_cancel.as_ref().map(crate::word::limit);
-        let from = ooxml_tools_word::EditedFrom {
-            version: start.seq().0,
-            package: start.doc().package(),
-        };
-        Ok(ooxml_tools_word::reflow_after_edit(
-            &*layout,
-            &word.last_check,
-            from,
-            head.doc().package(),
-            head.doc().ids().aliases(),
-            (limit, &cancel),
-        ))
+        Ok(word.reflow_between(&start, &head, context, &cancel))
     }
 }
 

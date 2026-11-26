@@ -10,7 +10,9 @@
 //! document's gate after [`StoreConfig::optimistic_tries`] conflicts); batches as one transaction and one history
 //! step ([`Batch`]), also one an owner holds open across calls ([`Store::open_txn`]); history
 //! (undo, redo, scoped undo that refuses entangled steps); version numbers and id sequences
-//! that are never given twice, also across a reopen ([`Counters`]).
+//! that are never given twice, also across a reopen ([`Counters`]); a transaction handed on
+//! erased to one op of a host's batch ([`OpTxn`]), whose versions its ops read are never
+//! published ([`Txn::version_here`]).
 //!
 //! Must not: know any format, do I/O, read the clock except through the [`Clock`] port, or
 //! hold global state. What a key, a change and a document are is the model's
@@ -32,6 +34,7 @@ mod ids;
 mod journal;
 mod keys;
 mod model;
+mod op_txn;
 mod predicate;
 mod stamps;
 mod stats;
@@ -49,6 +52,7 @@ pub use history::{HistoryOutcome, StepInfo};
 pub use ids::{Counters, IdSeq};
 pub use keys::KeySet;
 pub use model::DocModel;
+pub use op_txn::{AttemptState, InOp, OpTxn};
 pub use predicate::ReadPredicate;
 pub use stats::StoreStats;
 pub use store::{Caller, CommitTiming, Committed, Listed, Store, StoreConfig};
