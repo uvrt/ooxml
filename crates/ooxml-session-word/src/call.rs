@@ -13,13 +13,13 @@
 use crate::word::Word;
 use crate::WordVersion;
 use ooxml_base::Cancel;
-use ooxml_session::{CallContext, Opened};
-use ooxml_store::Caller;
+use ooxml_session::{CallContext, Deferred, Opened};
+use ooxml_store::{Caller, OpTxn};
 use ooxml_tools::{Failure, FormatCall, Run, ToolError, ToolResult};
 use ooxml_tools_word::{CallEditor, Editing, Made, Others, Version};
 use serde_json::{Map, Value};
 use std::any::Any;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 
 /// What a Word document's host hands a call beside the rest of its context
 /// ([`CallContext::host`]): the host's layout and where blocks are laid out, its raster,
@@ -120,6 +120,29 @@ pub struct Call<'a> {
     pub(crate) tracking: Option<String>,
     /// Where the call may ask where blocks are laid out (the host's).
     pub(crate) placer: Option<&'a dyn ooxml_tools_word::Placer>,
+    /// The batch's transaction the call's edits run in, where it is an op of a host's batch
+    /// of one document: what it would keep of the document waits for the batch's publish.
+    pub(crate) txn: Option<&'a dyn OpTxn>,
+    /// What the call keeps for its batch's attempt, where it runs in one ([`Kept`]).
+    pub(crate) kept: Option<&'a Kept>,
+    /// What it keeps once its batch is published.
+    pub(crate) deferred: &'a Mutex<Vec<Deferred>>,
+}
+
+/// What an op of a host's batch keeps of its document for the batch's attempt, applied to the
+/// document's once the batch is published: the rows its table calls wrote, the calls that
+/// left tables ragged ([`ooxml_tools_word::RowsWritten::attempt`],
+/// [`ooxml_tools_word::MadeBy::attempt`]).
+pub(crate) struct Kept {
+    pub(crate) rows_written: ooxml_tools_word::RowsWritten,
+    pub(crate) made_by: ooxml_tools_word::MadeBy,
+}
+
+/// What the ops of one attempt of a host's batch keep of a Word document across them
+/// ([`OpTxn::attempt`]): the tracking mode an op set (`word_set_tracking`), which the ops
+/// after it write under and the document takes once the batch is published.
+struct Attempt {
+    tracking: Option<Option<String>>,
 }
 
 impl Call<'_> {
@@ -188,7 +211,18 @@ impl Call<'_> {
         run: impl FnOnce(&Editing<'_>) -> ToolResult<Value>,
     ) -> ToolResult<Value> {
         let mode = word.tracking_read();
-        self.edit_under(word, mode.as_deref(), arguments, run)
+        // in a batch's attempt, the mode an op before it set
+        match self.attempt_tracking() {
+            Some(set) => self.edit_under(word, set.as_deref(), arguments, run),
+            None => self.edit_under(word, mode.as_deref(), arguments, run),
+        }
+    }
+
+    /// The tracking mode an op of the call's batch attempt set before it, where one did.
+    fn attempt_tracking(&self) -> Option<Option<String>> {
+        let txn = self.txn?;
+        let attempt = txn.attempt().lock().unwrap_or_else(PoisonError::into_inner);
+        attempt.as_ref()?.downcast_ref::<Attempt>()?.tracking.clone()
     }
 
     /// [`Call::edit`] of a tool that also sets the tracking mode (`word_set_tracking`): the
@@ -200,6 +234,9 @@ impl Call<'_> {
         arguments: Option<&serde_json::Map<String, Value>>,
         run: impl FnOnce(&Editing<'_>) -> (ToolResult<Value>, Option<ooxml_tools_word::Tracked>),
     ) -> ToolResult<Value> {
+        if let Some(txn) = self.txn {
+            return self.edit_tracking_in(word, txn, arguments, run);
+        }
         let mut mode = word.tracking_write();
         let mut left = None;
         let result = self.edit_under(word, mode.as_deref(), arguments, |editing| {
@@ -212,6 +249,40 @@ impl Call<'_> {
                 ooxml_tools_word::Tracked::On(author) => Some(author),
                 ooxml_tools_word::Tracked::Off => None,
             };
+        }
+        result
+    }
+
+    /// [`Call::edit_tracking`] of an op of a host's batch: the mode `run` leaves kept for the
+    /// attempt's later ops, and taken by the document once the batch is published.
+    fn edit_tracking_in(
+        &self,
+        word: &Word,
+        txn: &dyn OpTxn,
+        arguments: Option<&serde_json::Map<String, Value>>,
+        run: impl FnOnce(&Editing<'_>) -> (ToolResult<Value>, Option<ooxml_tools_word::Tracked>),
+    ) -> ToolResult<Value> {
+        let mode = self.attempt_tracking().unwrap_or_else(|| word.tracking());
+        let mut left = None;
+        let result = self.edit_under(word, mode.as_deref(), arguments, |editing| {
+            let (result, set) = run(editing);
+            left = set;
+            result
+        });
+        if let Some(set) = left {
+            let author = match set {
+                ooxml_tools_word::Tracked::On(author) => Some(author),
+                ooxml_tools_word::Tracked::Off => None,
+            };
+            *txn.attempt().lock().unwrap_or_else(PoisonError::into_inner) = Some(Box::new(Attempt {
+                tracking: Some(author.clone()),
+            }));
+            let keep: Deferred = Box::new(move |doc, _| {
+                if let Some(word) = Word::of(doc) {
+                    word.restore_tracking(author);
+                }
+            });
+            self.deferred.lock().unwrap_or_else(PoisonError::into_inner).push(keep);
         }
         result
     }
@@ -232,7 +303,12 @@ impl Call<'_> {
         // in this thread's batch on the document its edits run in the batch's transaction
         let editor = CallEditor::new(word.editor())
             .with_setup(self.setup)
-            .with_owner(word.batch_owner());
+            .with_owner(word.batch_owner())
+            .in_txn(self.txn);
+        let (rows_written, made_by) = match self.kept {
+            Some(kept) => (&kept.rows_written, &kept.made_by),
+            None => (&word.rows_written, &word.made_by),
+        };
         let others = self.other_versions();
         let editing = Editing::new(
             &editor,
@@ -254,8 +330,8 @@ impl Call<'_> {
         )
         .with_blobs(self.blobs)
         .with_written(self.written)
-        .with_rows_written(Some(&word.rows_written))
-        .with_made_by(Some(&word.made_by))
+        .with_rows_written(Some(rows_written))
+        .with_made_by(Some(made_by))
         .with_arguments(arguments)
         .with_limits(self.limits)
         .with_locale(self.locale)

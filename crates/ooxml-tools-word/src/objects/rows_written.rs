@@ -48,6 +48,16 @@ impl RowsWritten {
     pub fn note<I: IntoIterator<Item = String>>(&self, ids: I) {
         self.ids.lock().unwrap_or_else(PoisonError::into_inner).extend(ids);
     }
+
+    /// A copy of it for an attempt of a host's batch, kept apart until the batch is published
+    /// (then [`RowsWritten::note`]d with its [`RowsWritten::ids`]): an attempt prepared again
+    /// leaves nothing.
+    #[must_use]
+    pub fn attempt(&self) -> RowsWritten {
+        RowsWritten {
+            ids: Mutex::new(self.ids()),
+        }
+    }
 }
 
 /// A row's `w14:paraId`.

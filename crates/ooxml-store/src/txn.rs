@@ -1,5 +1,6 @@
 //! Owns: [`Txn`], a transaction: a snapshot, a private working version made from it, the
-//! keys read, the keys written and the change set; savepoints for batches. A transaction
+//! keys read, the keys written and the change set; savepoints for batches; the versions it
+//! makes for its own reading, never published ([`Txn::version_here`]). A transaction
 //! the store runs borrows the store's id allocator; one it hands out ([`crate::Store::begin`])
 //! shares it, so it may outlive the call that began it.
 //!
@@ -24,6 +25,8 @@ pub struct Txn<'s, D: DocModel> {
     created: KeySet<D::Key>,
     changes: Vec<D::Change>,
     ids: Ids<'s>,
+    /// The state number its commit is expected to be given ([`Txn::version_here`]'s).
+    number: u64,
 }
 
 /// The id allocator a transaction draws from: the store's, borrowed by a run, or shared by
@@ -87,7 +90,15 @@ impl<'s, D: DocModel> Txn<'s, D> {
             created: KeySet::new(),
             changes: Vec::new(),
             ids,
+            number: 0,
         }
+    }
+
+    /// The same, the versions it makes numbered `number` ([`Txn::version_here`]): the state
+    /// number its commit is expected to be given.
+    pub(crate) fn numbered(mut self, number: u64) -> Self {
+        self.number = number;
+        self
     }
 
     /// The snapshot the transaction started from.
@@ -141,6 +152,20 @@ impl<'s, D: DocModel> Txn<'s, D> {
     /// a transaction that runs several commands, each its call's setting.
     pub fn set_up(&mut self, setup: &D::Setup) {
         self.work.set_up(setup);
+    }
+
+    /// The working version as a version of its own that is never published, for the
+    /// transaction's owner to read (a batch's op, the version its edits left): a version number
+    /// never given before, the state number its commit is expected to be given (the store's
+    /// next unless another commit comes first: the commit numbers the version it publishes),
+    /// the keys it wrote stamped, and its changes against `previous` (the version its owner
+    /// read before).
+    pub fn version_here(&self, previous: &Snapshot<D>) -> Snapshot<D> {
+        let seq = self.ids.get().next_seq();
+        let doc = self.work.clone();
+        doc.settle();
+        let version = self.base.succeed(seq, self.number, doc, &self.writes);
+        Arc::new(version.changed_from(previous.doc().clone()))
     }
 
     /// How many changes it holds: one that grew made a change.

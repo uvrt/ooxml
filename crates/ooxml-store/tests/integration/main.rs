@@ -11,6 +11,7 @@ mod created;
 mod held;
 mod history;
 mod numbers;
+mod op_txn;
 mod predicate;
 mod rebase;
 mod serial_replay;
