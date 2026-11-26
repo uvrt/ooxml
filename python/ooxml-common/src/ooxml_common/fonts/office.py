@@ -471,9 +471,63 @@ def name_records(table: bytes) -> list[tuple[int, int, int, int, str]]:
     return out
 
 
+#: The most code points a format 12 or 13 subtable maps (Unicode has 0x110000): a group
+#: wider than this is skipped, and a subtable whose groups claim more than this in all is
+#: refused.  The format states its groups sorted and apart, so only groups laid over each
+#: other again and again can -- an untrusted font's way to ask for billions of insertions.
+CMAP_MOST_CODES = 0x110000
+
+#: The most codes a format 4 subtable maps (its codes are 16-bit): one whose segments
+#: claim more in all is refused, as :data:`CMAP_MOST_CODES`.
+CMAP_MOST_CODES_16 = 0x10000
+
+
+def cmap_subtable_claim(table: bytes, offset: int) -> int:
+    """How many codes the subtable at ``offset`` of a ``cmap`` claims, each a map insertion
+    when it is read: formats 0 and 6 their entries, format 4 its segments' codes, formats
+    12 and 13 their groups' codes (as far as the table holds them, a group wider than
+    :data:`CMAP_MOST_CODES` skipped); 0 for a format not read.  Read without inserting
+    anything; a format 4 header cut short raises :class:`struct.error`."""
+    fmt = struct.unpack_from(">H", table, offset)[0]
+    if fmt == 0:
+        return 256
+    if fmt == 4:
+        segments = struct.unpack_from(">H", table, offset + 6)[0] // 2
+        ends = struct.unpack_from(f">{segments}H", table, offset + 14)
+        starts = struct.unpack_from(f">{segments}H", table, offset + 16 + 2 * segments)
+        return sum(end - start + 1 for start, end in zip(starts, ends) if start != 0xFFFF and end >= start)
+    if fmt == 6:
+        return struct.unpack_from(">H", table, offset + 8)[0]
+    if fmt in (12, 13):
+        groups = struct.unpack_from(">I", table, offset + 12)[0]
+        claimed = 0
+        for i in range(min(groups, max(0, (len(table) - offset - 16) // 12))):
+            start, end, _ = struct.unpack_from(">III", table, offset + 16 + 12 * i)
+            if start <= end and end - start < CMAP_MOST_CODES:
+                claimed += end - start + 1
+        return claimed
+    return 0
+
+
+def cmap_subtable_refused(table: bytes, offset: int) -> bool:
+    """Whether the subtable at ``offset`` claims more codes than its codespace holds in
+    all (:data:`CMAP_MOST_CODES`, :data:`CMAP_MOST_CODES_16`): ranges laid over each
+    other, refused before any is read."""
+    fmt = struct.unpack_from(">H", table, offset)[0]
+    if fmt == 4:
+        return cmap_subtable_claim(table, offset) > CMAP_MOST_CODES_16
+    if fmt in (12, 13):
+        return cmap_subtable_claim(table, offset) > CMAP_MOST_CODES
+    return False
+
+
 def _cmap_subtable(table: bytes, offset: int) -> dict[int, int]:
+    """One subtable's code point -> glyph id; ``{}`` for one whose ranges claim more than
+    its codespace (:func:`cmap_subtable_refused`)."""
     fmt = struct.unpack_from(">H", table, offset)[0]
     out: dict[int, int] = {}
+    if fmt in (4, 12, 13) and cmap_subtable_refused(table, offset):
+        return out
     if fmt == 0:
         for code, glyph in enumerate(table[offset + 6:offset + 262]):
             if glyph:
@@ -511,6 +565,8 @@ def _cmap_subtable(table: bytes, offset: int) -> dict[int, int]:
         groups = struct.unpack_from(">I", table, offset + 12)[0]
         for i in range(groups):
             start, end, glyph = struct.unpack_from(">III", table, offset + 16 + 12 * i)
+            if end - start >= CMAP_MOST_CODES:
+                continue
             for code in range(start, end + 1):
                 value = glyph if fmt == 13 else glyph + (code - start)
                 if value:
@@ -550,6 +606,10 @@ def read_legacy_kern(table: bytes) -> dict[tuple[int, int], int]:
     if len(table) < 4:
         return out
     version = struct.unpack_from(">H", table, 0)[0]
+    # A well-formed table states each pair once, in 6 bytes of its own: more pairs than
+    # that can only be the same bytes read again (subtables whose lengths lay them over
+    # each other), and the table is read no further.
+    budget = len(table) // 6
     try:
         if version == 0:
             count = struct.unpack_from(">H", table, 2)[0]
@@ -558,9 +618,13 @@ def read_legacy_kern(table: bytes) -> dict[tuple[int, int], int]:
                 _, length, coverage = struct.unpack_from(">HHH", table, at)
                 if coverage >> 8 == 0:
                     pairs = struct.unpack_from(">H", table, at + 6)[0]
-                    for i in range(pairs):
+                    read = min(pairs, budget)
+                    budget -= read
+                    for i in range(read):
                         left, right, value = struct.unpack_from(">HHh", table, at + 14 + 6 * i)
                         out.setdefault((left, right), value)
+                    if read < pairs:
+                        break
                 at += length
         else:
             # Apple's version 1.0 header: a 32-bit version and a 32-bit count.
@@ -570,9 +634,17 @@ def read_legacy_kern(table: bytes) -> dict[tuple[int, int], int]:
                 length, coverage = struct.unpack_from(">IH", table, at)
                 if coverage & 0xFF == 0:
                     pairs = struct.unpack_from(">H", table, at + 8)[0]
-                    for i in range(pairs):
+                    read = min(pairs, budget)
+                    budget -= read
+                    for i in range(read):
                         left, right, value = struct.unpack_from(">HHh", table, at + 16 + 6 * i)
                         out.setdefault((left, right), value)
+                    if read < pairs:
+                        break
+                # A subtable holds at least its 8-byte header: a shorter length lays the
+                # next one over it (the count is 32-bit: billions of the same subtable).
+                if length < 8:
+                    break
                 at += length
     except struct.error:
         # A subtable whose length field overflowed past what is there: keep what was read.
