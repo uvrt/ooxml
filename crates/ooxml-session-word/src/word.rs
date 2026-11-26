@@ -393,7 +393,10 @@ impl FormatDoc for Word {
             made: &made,
             layout: layout.as_deref(),
             layout_limit: layout_cancel.as_ref().map(limit),
-            raster: host.raster.as_deref(),
+            raster: host
+                .raster
+                .as_deref()
+                .or_else(|| self.default_pages.as_ref().and_then(|p| p.raster.as_deref())),
             image_budgets: &run.context.image_budgets,
             blobs: run.context.blobs.as_deref(),
             written: &host.written,
@@ -468,6 +471,14 @@ impl FormatDoc for Word {
             batch: made.batch,
             format: Some(Arc::new(format)),
         })
+    }
+
+    fn own_source(&self, at: &AnyVersion, address: &str) -> Option<String> {
+        crate::own_sources::own_source(at.snapshot::<WordDoc>()?.doc(), address)
+    }
+
+    fn source_hint(&self, at: &AnyVersion, value: &str) -> Option<String> {
+        crate::own_sources::source_hint(at.snapshot::<WordDoc>()?.doc(), value)
     }
 
     fn checks(

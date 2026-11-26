@@ -5,6 +5,7 @@
 mod chart_goldens;
 mod chart_layout;
 mod grid_values;
+mod host_goldens;
 mod metafile_cases;
 mod scene_goldens;
 mod word_observed;

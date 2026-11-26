@@ -38,21 +38,37 @@ struct WithRefs {
     /// The arguments.
     arguments: Map<String, Value>,
     /// What was read as what.
-    notes: Vec<String>,
+    pub(crate) notes: Vec<String>,
     /// Each ref name the call gives that it keeps folded: `(kept, given)`.
     folded: Vec<(String, String)>,
 }
 
 /// What one call gathers as it goes through the pipeline, for its reply and its record.
-struct Going {
+pub(crate) struct Going {
     /// The tool as the host read its name.
     tool: String,
     /// The notes on what was read as what: the reply's first warnings.
-    notes: Vec<String>,
+    pub(crate) notes: Vec<String>,
     /// The documents it named.
-    docs: Vec<String>,
+    pub(crate) docs: Vec<String>,
     /// Its arguments as taken (as given, where it failed before they were).
     arguments: Value,
+    /// The versions it reads, where a batch pins them (each document at the version the
+    /// batch's first op on it read); `None`: each document's head.
+    pub(crate) pinned: Option<Vec<ooxml_session::Opened>>,
+}
+
+impl Going {
+    /// A call of `tool` not yet read, with `arguments` as given.
+    pub(crate) fn new(tool: &str, arguments: Value) -> Going {
+        Going {
+            tool: tool.to_owned(),
+            notes: Vec::new(),
+            docs: Vec::new(),
+            arguments,
+            pinned: None,
+        }
+    }
 }
 
 impl HostSession {
@@ -67,12 +83,7 @@ impl HostSession {
         let roles = self.narrowed(how.roles).map_err(NotRun::Roles)?;
         let clock = &self.session.context().clock;
         let started = clock.monotonic();
-        let mut going = Going {
-            tool: name.to_owned(),
-            notes: Vec::new(),
-            docs: Vec::new(),
-            arguments: arguments.clone(),
-        };
+        let mut going = Going::new(name, arguments.clone());
         let ran = catch_unwind(AssertUnwindSafe(|| self.go(name, arguments, roles, how, &mut going)));
         let mut result = ran.unwrap_or_else(|panic| {
             let said = panic
@@ -131,10 +142,7 @@ impl HostSession {
         let caller = how.context.as_ref().filter(|c| !c.is_empty());
         match entry.own {
             Some(Own::Undo) => return self.undo(arguments, caller, going),
-            Some(Own::ReadBatch) => {
-                let context = self.context(caller);
-                return self.session.call(&going.tool, Value::Object(arguments), &context);
-            }
+            Some(Own::ReadBatch) => return self.read_batch(&arguments, roles, caller),
             Some(own) => {
                 let call = OwnCall {
                     own,
@@ -151,7 +159,7 @@ impl HostSession {
     }
 
     /// Steps 4 to 11 of a call of a format's tool, its arguments taken as meant.
-    fn run_format(
+    pub(crate) fn run_format(
         &self,
         entry: &Entry,
         mut arguments: Map<String, Value>,
@@ -188,13 +196,40 @@ impl HostSession {
             .then(|| arguments.get("key").and_then(Value::as_str).map(str::to_owned))
             .flatten();
         if let Some(key) = &key {
-            if let Some(repeat) = self.stores().keys.repeat(&doc, entry.name(), key) {
+            let repeat = self.stores().keys.repeat(&doc, entry.name(), key);
+            if let Some(mut repeat) = repeat {
+                // (the document and the version it is at, as a call that changed nothing)
+                repeat.doc = Some(doc.clone());
+                repeat.version = DocId::parse(&doc)
+                    .and_then(|id| self.session.snapshot(&id).ok())
+                    .map(|head| head.number());
                 return repeat;
             }
         }
         // 9. the handler, by the document's format, on the version the call reads
-        let context = self.context(caller);
+        let mut context = self.context(caller);
+        if let Some(pinned) = &mut going.pinned {
+            for doc in &going.docs {
+                let Some(id) = DocId::parse(doc) else { continue };
+                if pinned.iter().all(|o| *o.id() != id) {
+                    if let Ok(head) = self.session.snapshot(&id) {
+                        pinned.push(head);
+                    }
+                }
+            }
+            context.at.clone_from(pinned);
+        }
+        // (a changing call of one document, no retry key and no value by reference is the
+        // one today's host serves beside the others: refused, it names no document)
+        let served = changing
+            && going.docs.len() == 1
+            && key.is_none()
+            && !Value::Object(arguments.clone()).to_string().contains("{{");
         let (mut result, made) = self.session.edit_accepted(entry.name(), arguments, &context);
+        if served && result.is_error() {
+            result.doc = None;
+            result.version = None;
+        }
         // 10. its effects, applied now its change is published
         if let Err(error) = self.apply_effects(&mut result, &mut refs, &doc, owner.as_ref(), changing, retry) {
             return ToolResult::failed(error);
@@ -259,10 +294,22 @@ impl HostSession {
                 }
             }
         }
+        // a PNG the tool gives back is an image the model is shown
+        let mut images = Vec::new();
+        for file in &effects.files {
+            if let (true, Some((width, height))) = (file.format == "png", crate::images::png_size(&file.bytes)) {
+                images.push(crate::images::descriptor(&file.name, width, height));
+            }
+        }
+        if !images.is_empty() && !result.is_error() {
+            // (the tool refused a call past the budgets before it drew anything)
+            let _ = self.stores().images.reserve(images.len());
+        }
         result.app.files = std::mem::take(&mut effects.files);
         if let Outcome::Done(done) = &mut result.outcome {
             done.refs = defined;
             done.datasets = std::mem::take(&mut effects.datasets);
+            done.images.extend(images);
         }
         Ok(())
     }

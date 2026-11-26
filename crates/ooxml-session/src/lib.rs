@@ -24,7 +24,7 @@
 //! only its table of documents, held for a lookup.
 #![forbid(unsafe_code)]
 
-mod batch;
+pub mod batch;
 pub mod blobs;
 mod changes;
 pub use changes::changed as changed_parts;

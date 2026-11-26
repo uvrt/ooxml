@@ -18,6 +18,7 @@ fn pages() -> SessionPages {
     SessionPages {
         setup: PageSetup::new(test_fonts(), EngineOptions::default()),
         memory: MemoryBudget::new(64 << 20),
+        raster: None,
     }
 }
 

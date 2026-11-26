@@ -13,7 +13,7 @@ use crate::WordVersion;
 use ooxml_session::{CancelToken, Opened, SessionError};
 use ooxml_tools::ToolError;
 use ooxml_word_edit::validate::Problem;
-use ooxml_word_edit::FileKind;
+use ooxml_word_edit::{FileKind, WordDoc};
 use ooxml_word_model::address::direct;
 use ooxml_word_model::docx::controls::controls;
 use ooxml_word_model::docx::drawings::all_drawings;
@@ -162,30 +162,35 @@ impl HostReads for Opened {
     }
 
     fn block_kind(&self, id: &str) -> Result<Option<&'static str>, SessionError> {
-        let Some(word) = self.word() else {
-            return Ok(None);
-        };
-        let docx = word.docx().map_err(SessionError::format)?;
-        if id.starts_with("cc:") || id.starts_with("cc@") {
-            let block = controls(&docx)
-                .into_iter()
-                .find(|c| c.id == id)
-                .is_some_and(|c| docx.part(&c.part).is_some_and(|part| c.level(part) == "block"));
-            return Ok(block.then_some("content control"));
-        }
-        let followed = word.ids().follow(id);
-        let found = direct(&docx, &followed).or_else(|| direct(&docx, id));
-        Ok(found.map(|(_, entry)| match entry {
-            Entry::Paragraph(_) => "paragraph",
-            Entry::Table(_) => "table",
-        }))
+        self.word().map_or(Ok(None), |word| block_kind_of(word, id))
     }
 
     fn has_drawing(&self, id: &str) -> Result<bool, SessionError> {
-        let Some(word) = self.word() else {
-            return Ok(false);
-        };
-        let docx = word.docx().map_err(SessionError::format)?;
-        Ok(all_drawings(&docx).iter().any(|d| d.id == id))
+        self.word().map_or(Ok(false), |word| has_drawing_of(word, id))
     }
+}
+
+/// What kind of block `id` names in `word` (a renamed id followed): `"paragraph"`,
+/// `"table"` or `"content control"` (a block-level one); `None` when it names none.
+pub(crate) fn block_kind_of(word: &WordDoc, id: &str) -> Result<Option<&'static str>, SessionError> {
+    let docx = word.docx().map_err(SessionError::format)?;
+    if id.starts_with("cc:") || id.starts_with("cc@") {
+        let block = controls(&docx)
+            .into_iter()
+            .find(|c| c.id == id)
+            .is_some_and(|c| docx.part(&c.part).is_some_and(|part| c.level(part) == "block"));
+        return Ok(block.then_some("content control"));
+    }
+    let followed = word.ids().follow(id);
+    let found = direct(&docx, &followed).or_else(|| direct(&docx, id));
+    Ok(found.map(|(_, entry)| match entry {
+        Entry::Paragraph(_) => "paragraph",
+        Entry::Table(_) => "table",
+    }))
+}
+
+/// Whether `word` has the drawing `id` (`d:3`).
+pub(crate) fn has_drawing_of(word: &WordDoc, id: &str) -> Result<bool, SessionError> {
+    let docx = word.docx().map_err(SessionError::format)?;
+    Ok(all_drawings(&docx).iter().any(|d| d.id == id))
 }
