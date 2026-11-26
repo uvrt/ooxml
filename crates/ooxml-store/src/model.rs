@@ -19,6 +19,9 @@ pub trait DocModel: Clone + Send + Sync + 'static {
     /// nothing in it is a change), given to its working version ([`DocModel::set_up`]);
     /// `()` for a model with none.
     type Setup: Default + Send + Sync + 'static;
+    /// What one version changed against the version before it, by the model's own identity
+    /// ([`DocModel::delta`]); `()` for a model that has none to give.
+    type Delta: Send + Sync + 'static;
 
     /// Apply `change`. On an error the store discards the value, so it need not be left as
     /// it was. Applied to a version that agrees on every key the change's transaction read,
@@ -55,6 +58,12 @@ pub trait DocModel: Clone + Send + Sync + 'static {
         let _ = key;
         false
     }
+
+    /// What `after` changed against `before`: the store works it out for each version it
+    /// publishes against the version it was published after, when first asked
+    /// ([`crate::Version::changes`]) -- so a commit, an undo, a redo and a revert all get it
+    /// from this one function.
+    fn delta(before: &Self, after: &Self) -> Self::Delta;
 
     /// Derive now what a version keeps beside its content (its indexes), from the version
     /// before it. The store calls it on each version it publishes, so every head has them

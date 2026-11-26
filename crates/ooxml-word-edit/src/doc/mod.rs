@@ -17,7 +17,9 @@ use crate::EditError;
 use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
 use ooxml_word_model::docx::Docx;
-use ooxml_word_model::ids::{drawing_numbers, load_state, used_long_hex, BlockId, LoadedState};
+use ooxml_word_model::ids::{
+    drawing_numbers, load_state, used_long_hex, BlockId, LoadedState, PartsDelta, StoryTable, VersionDelta,
+};
 use ooxml_xml::{Patch, PatchError, Tree};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -85,6 +87,8 @@ pub struct Shared {
     pub(crate) fields: crate::fields::scan::FieldScans,
     /// Tables' shapes as Accept All leaves them, memoised by content.
     pub(crate) accepted: crate::facts::AcceptedShapes,
+    /// The document's stories, interned once: what its versions' change sets key blocks by.
+    stories: Mutex<StoryTable>,
 }
 
 /// A Word document at one version.
@@ -174,6 +178,7 @@ impl WordDoc {
                 fields: crate::fields::scan::FieldScans::new(Arc::clone(&budget)),
                 accepted: crate::facts::AcceptedShapes::new(Arc::clone(&budget), crate::facts::accepted_weight),
                 facts: Facts::new(budget),
+                stories: Mutex::new(StoryTable::new()),
             }),
         }
     }
@@ -219,6 +224,28 @@ impl WordDoc {
     /// [`EditError`] when a story part is not XML.
     pub fn docx(&self) -> Result<Arc<Docx>, EditError> {
         derived(&self.reading, |before| Ok(Docx::open_after(&self.package, before)?))
+    }
+
+    /// What this version changed against `before` (any other version of the document): its
+    /// stories' blocks by key, from the two versions' indexes ([`VersionDelta::between`]).
+    /// Where either version cannot be read, every part that differs, none read as a story.
+    #[must_use]
+    pub fn delta_from(&self, before: &WordDoc) -> VersionDelta {
+        let (Ok(old), Ok(new)) = (before.docx(), self.docx()) else {
+            return VersionDelta {
+                parts: PartsDelta::between(before.package(), self.package()),
+                stories: Vec::new(),
+            };
+        };
+        // the stories interned under the lock; the comparison on a copy of the table
+        let mut stories = {
+            let mut table = self.shared.stories.lock().unwrap_or_else(PoisonError::into_inner);
+            for part in old.parts.iter().chain(&new.parts) {
+                let _ = table.intern(&part.story);
+            }
+            table.clone()
+        };
+        VersionDelta::between(&old, &new, &mut stories)
     }
 
     /// This version's validation facts, kept in place from the latest earlier version's.

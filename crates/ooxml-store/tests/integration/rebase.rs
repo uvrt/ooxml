@@ -32,6 +32,9 @@ impl DocModel for Items {
     type Change = Change;
     type Error = Stale;
     type Setup = ();
+    type Delta = ();
+
+    fn delta(_: &Self, _: &Self) {}
 
     fn apply(&mut self, change: &Change) -> Result<(), Stale> {
         let items = Arc::make_mut(&mut self.0);

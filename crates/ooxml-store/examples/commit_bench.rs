@@ -70,6 +70,9 @@ impl DocModel for Blocks {
     type Change = SetText;
     type Error = NoBlock;
     type Setup = ();
+    type Delta = ();
+
+    fn delta(_: &Self, _: &Self) {}
 
     fn apply(&mut self, change: &SetText) -> Result<(), NoBlock> {
         if self.set(change.0 as usize, Arc::clone(&change.1)) {

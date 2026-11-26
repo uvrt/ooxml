@@ -8,6 +8,7 @@ use super::{Change, Key, ModelError, Setup, WordDoc};
 use crate::pool::IdsChange;
 use ooxml_opc::PartName;
 use ooxml_store::{DocModel, KeySet};
+use ooxml_word_model::ids::VersionDelta;
 use ooxml_xml::PatchError;
 use std::sync::Arc;
 
@@ -16,6 +17,11 @@ impl DocModel for WordDoc {
     type Change = Change;
     type Error = ModelError;
     type Setup = Setup;
+    type Delta = VersionDelta;
+
+    fn delta(before: &Self, after: &Self) -> VersionDelta {
+        after.delta_from(before)
+    }
 
     fn apply(&mut self, change: &Change) -> Result<(), ModelError> {
         let (package, ids) = match change {

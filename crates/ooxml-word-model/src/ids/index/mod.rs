@@ -18,6 +18,7 @@
 //! Must not: stamp, generate or remember ids (the ledger does), or resolve an address.
 
 mod build;
+mod delta;
 mod keys;
 mod query;
 mod segment;

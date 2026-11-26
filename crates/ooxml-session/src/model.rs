@@ -89,6 +89,9 @@ impl DocModel for PackageDoc {
     type Change = PartChange;
     type Error = ModelError;
     type Setup = ();
+    type Delta = ();
+
+    fn delta(_: &Self, _: &Self) {}
 
     fn apply(&mut self, change: &PartChange) -> Result<(), ModelError> {
         self.package = match change {

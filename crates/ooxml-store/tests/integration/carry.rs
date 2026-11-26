@@ -27,6 +27,9 @@ impl DocModel for Ledgered {
     type Change = i64;
     type Error = Never;
     type Setup = ();
+    type Delta = ();
+
+    fn delta(_: &Self, _: &Self) {}
 
     fn apply(&mut self, change: &i64) -> Result<(), Never> {
         self.value = *change;
