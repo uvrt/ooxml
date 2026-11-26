@@ -143,16 +143,16 @@ mod tests {
         }]);
         Block::Paragraph(Arc::new(Paragraph {
             runs,
-            path: text(path),
+            unkeyed: Some(text(path)),
             ..Paragraph::default()
         }))
     }
 
-    /// The block moved to `path`, sharing its runs (as the model moves a kept paragraph).
+    /// The block named `path`, sharing its runs (a paragraph read again, or named otherwise).
     fn moved(block: &Block, path: &str) -> Block {
         match block {
             Block::Paragraph(p) => Block::Paragraph(Arc::new(Paragraph {
-                path: text(path),
+                unkeyed: Some(text(path)),
                 ..(**p).clone()
             })),
             Block::Table(_) => block.clone(),

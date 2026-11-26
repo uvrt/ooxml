@@ -91,7 +91,9 @@ pub fn text_box_labels(model: &mut Model, document: &WordDocument) -> HashMap<St
                         }
                     }
                     Block::Paragraph(p) => {
-                        let path = prefix.map_or_else(|| p.path.to_string(), |at| format!("{at}/{}", p.path));
+                        // its steps below its drawing's paragraph (RD1 keys text-box blocks)
+                        let own = p.unkeyed.as_deref().unwrap_or_default();
+                        let path = prefix.map_or_else(|| own.to_owned(), |at| format!("{at}/{own}"));
                         let label = self.label(p);
                         self.out.insert(path, label);
                     }
@@ -125,15 +127,16 @@ pub fn text_box_labels(model: &mut Model, document: &WordDocument) -> HashMap<St
                         }
                     }
                     Block::Paragraph(p) => {
+                        let host = crate::naming::paragraph_path(&self.document.names, p);
                         for run in p.runs.iter() {
                             for found in run.drawings.iter() {
                                 if let InlineObject::Graphic(g) = found {
-                                    self.graphic(g, &p.path);
+                                    self.graphic(g, &host);
                                 }
                             }
                             for anchor in run.anchors.iter() {
                                 if let Some(g) = anchor.graphic.as_deref() {
-                                    self.graphic(g, &p.path);
+                                    self.graphic(g, &host);
                                 }
                             }
                         }
@@ -163,17 +166,22 @@ pub fn story_blocks(blocks: &[Block], paragraph_path: &str) -> (Vec<Block>, bool
             let block = unmarked(block, &mut taken);
             match block {
                 Block::Paragraph(p) => Block::Paragraph(Arc::new(Paragraph {
-                    path: Text::from(format!("{paragraph_path}/{}", p.path).as_str()),
+                    unkeyed: Some(below(paragraph_path, p.unkeyed.as_deref())),
                     ..(*p).clone()
                 })),
                 Block::Table(t) => Block::Table(Arc::new(Table {
-                    path: Text::from(format!("{paragraph_path}/{}", t.path).as_str()),
+                    unkeyed: Some(below(paragraph_path, t.unkeyed.as_deref())),
                     ..(*t).clone()
                 })),
             }
         })
         .collect();
     (out, taken)
+}
+
+/// A text box's block's steps `own` below its drawing's paragraph's path `paragraph`.
+fn below(paragraph: &str, own: Option<&str>) -> Text {
+    Text::from(format!("{paragraph}/{}", own.unwrap_or_default()).as_str())
 }
 
 /// `block` with the marks of its floating drawings that text does not wrap around taken
@@ -434,7 +442,7 @@ fn box_labels(
     paragraphs
         .iter()
         .map(|p| {
-            if let Some(found) = counted.get(&*p.path) {
+            if let Some(found) = p.unkeyed.as_deref().and_then(|path| counted.get(path)) {
                 return found.clone();
             }
             let pp = model.resolve_paragraph_props(document, p);
@@ -523,7 +531,7 @@ mod tests {
             ..Run::default()
         };
         let paragraph = Paragraph {
-            path: Text::from("w:p[1]"),
+            unkeyed: Some(Text::from("w:p[1]")),
             runs: vec![run].into(),
             ..Paragraph::default()
         };
@@ -532,7 +540,7 @@ mod tests {
         let Some(Block::Paragraph(p)) = blocks.first() else {
             panic!("a paragraph");
         };
-        assert_eq!(&*p.path, "w:body/w:p[3]/w:p[1]");
+        assert_eq!(p.unkeyed.as_deref(), Some("w:body/w:p[3]/w:p[1]"));
         let marks: Vec<&str> = p.runs.iter().flat_map(|r| r.breaks.iter().map(|(_, m)| &**m)).collect();
         assert_eq!(marks, ["anchor:1"]);
         assert_eq!(

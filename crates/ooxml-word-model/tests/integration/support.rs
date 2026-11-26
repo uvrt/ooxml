@@ -10,7 +10,7 @@ use ooxml_zip::{Method, NewEntry, Writer};
 use std::sync::Arc;
 
 /// The WordprocessingML namespace declaration every made-up part uses.
-pub const W: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships""#;
+pub const W: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml""#;
 
 /// A budget without a limit.
 pub struct Unlimited;
@@ -115,6 +115,19 @@ pub fn open(parts: &Parts) -> (Model, WordDocument) {
     let mut m = model();
     let d = m.open(&package(parts)).unwrap();
     (m, d)
+}
+
+/// `body` with every paragraph stamped with a paraId of its own (as every version an edit
+/// makes is): its blocks' keys follow from content.
+pub fn stamped(body: &str) -> String {
+    let mut out = String::new();
+    for (k, piece) in body.split("<w:p>").enumerate() {
+        if k > 0 {
+            out.push_str(&format!(r#"<w:p w14:paraId="{:08X}">"#, 0x1000_0000 + k));
+        }
+        out.push_str(piece);
+    }
+    out
 }
 
 /// A paragraph with one run of `text`, and `ppr` / `rpr` as its properties.

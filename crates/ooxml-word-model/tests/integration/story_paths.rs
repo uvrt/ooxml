@@ -6,7 +6,7 @@
 
 use crate::support::{open, package, Parts};
 use ooxml_word_model::docx::cells::story_model_path;
-use ooxml_word_model::docx::Docx;
+use ooxml_word_model::docx::{Docx, VersionNames};
 use ooxml_word_model::model::Block;
 use ooxml_xml::{Element, Node};
 use std::collections::HashSet;
@@ -31,15 +31,18 @@ fn simple(instruction: &str) -> String {
 }
 
 /// Every model run's path from the story: its paragraph's, then its own.
-fn model_runs(blocks: &[Block], out: &mut Vec<String>) {
+fn model_runs(blocks: &[Block], names: &VersionNames, out: &mut Vec<String>) {
     for block in blocks {
         match block {
-            Block::Paragraph(p) => out.extend(p.runs.iter().map(|r| format!("{}/{}", p.path, r.path))),
+            Block::Paragraph(p) => {
+                let path = p.path_in(names).unwrap();
+                out.extend(p.runs.iter().map(|r| format!("{path}/{}", r.path)));
+            }
             Block::Table(t) => t
                 .rows
                 .iter()
                 .flat_map(|row| row.iter())
-                .for_each(|c| model_runs(c, out)),
+                .for_each(|c| model_runs(c, names, out)),
         }
     }
 }
@@ -83,7 +86,7 @@ fn every_run_the_model_reads_has_the_path_the_walk_gives_it() {
     };
     let (_, document) = open(&parts);
     let mut runs = Vec::new();
-    model_runs(&document.body, &mut runs);
+    model_runs(&document.body, &document.names, &mut runs);
     let docx = Docx::open(&package(&parts)).unwrap();
     let root = docx.part(&docx.main).unwrap().root();
     let mut paths = HashSet::new();

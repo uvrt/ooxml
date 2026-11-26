@@ -22,6 +22,7 @@ pub use sections::{section_props, sections};
 pub(crate) use tables::cell_ends;
 pub use tables::{cell_conditions, leading_header_rows};
 
+use crate::ids::BlockKey;
 use crate::model::{ParaProps, RunProps};
 use crate::props::{paragraph_properties, run_properties};
 use crate::theme::ThemeColours;
@@ -74,6 +75,72 @@ impl Steps {
         let _ = write!(self.written, "w:{name}[{count}]");
         &self.written
     }
+}
+
+/// What keys a story's blocks from its part's index, by their places (child indexes from
+/// the part's root).
+pub(crate) trait KeyOf {
+    /// The key of the paragraph or table at `place`.
+    fn key_at(&self, place: &[u32]) -> Option<BlockKey>;
+    /// The layout path of the block at `place`, for one the index does not key.
+    fn path_at(&self, place: &[u32]) -> Option<String>;
+}
+
+/// Where a container's blocks are read: below a place a story's index holds (each block
+/// keyed from it), or by path (a text box's blocks, their steps below their drawing until
+/// RD1 keys text-box blocks; a part no index holds; a table read on its own).
+#[derive(Clone)]
+pub(crate) enum At<'k> {
+    /// At this place (child indexes from the part's root) of the part `keys` keys.
+    Keyed(&'k dyn KeyOf, Vec<u32>),
+    /// At this path.
+    Path(Text),
+}
+
+impl<'k> At<'k> {
+    /// The child element `node`, child `k` of the node read here, counted by `steps` (the
+    /// path's 1-based count among siblings of its local name).
+    pub(crate) fn child(&self, k: usize, node: &Element, steps: &mut Steps) -> At<'k> {
+        match self {
+            At::Keyed(keys, place) => At::Keyed(*keys, below(place, &[k])),
+            At::Path(_) => At::Path(steps.step(node)),
+        }
+    }
+
+    /// A content control's content, child `k` of the control here.
+    pub(crate) fn content(&self, k: usize) -> At<'k> {
+        match self {
+            At::Keyed(keys, place) => At::Keyed(*keys, below(place, &[k])),
+            At::Path(path) => At::Path(text(&format!("{path}/w:sdtContent[1]"))),
+        }
+    }
+
+    /// The table here's cell at `(row, cell)` (its place as written), at `rel` below the
+    /// table (row- and cell-level wrappers passed through).
+    pub(crate) fn cell(&self, (row, cell): (u32, u32), rel: &[usize]) -> At<'k> {
+        match self {
+            At::Keyed(keys, place) => At::Keyed(*keys, below(place, rel)),
+            At::Path(path) => At::Path(text(&crate::model::cell_path(path, row, cell))),
+        }
+    }
+
+    /// The block here's name: its key, else the path it is named by.
+    pub(crate) fn name(&self) -> (Option<BlockKey>, Option<Text>) {
+        match self {
+            At::Keyed(keys, place) => match keys.key_at(place) {
+                Some(key) => (Some(key), None),
+                None => (None, keys.path_at(place).map(|p| text(&p))),
+            },
+            At::Path(path) => (None, Some(path.clone())),
+        }
+    }
+}
+
+/// `place` with `rel` below it.
+fn below(place: &[u32], rel: &[usize]) -> Vec<u32> {
+    let mut out = place.to_vec();
+    out.extend(rel.iter().map(|k| u32::try_from(*k).unwrap_or(u32::MAX)));
+    out
 }
 
 /// Reads stories of one package: theme colours read as Word draws them.
