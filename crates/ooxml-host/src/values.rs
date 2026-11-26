@@ -97,25 +97,18 @@ impl HostSession {
             });
         }
         let opens = self.opens();
-        let formats: Vec<&dyn Format> = self.host.formats.iter().map(|f| &**f).collect();
-        let docs = opens
-            .iter()
-            .map(|o| FormatOpen {
-                handle: o.handle.clone(),
-                name: o.name.clone(),
-                format: &*o.format,
-                doc: &*o.doc,
-                at: Some(o.at.clone()),
-            })
-            .collect();
-        let host = FormatSources::new(formats, docs, retry);
+        let host = sources_of(&self.host.formats, &opens, retry);
         // (the session's datasets as they stand: read without the stores' lock held)
         let store: DatasetStore = self.stores().datasets.clone();
         let heads = |d: &str| opens.iter().find(|o| o.handle == d).map(|o| o.at.number());
         let given = arguments.clone();
         let mut held: Vec<String> = Vec::new();
+        let row_prefixes = host_prefixes(&self.host.formats);
+        let rows: Vec<&str> = row_prefixes.iter().map(String::as_str).collect();
+        let known = known_prefixes(&rows, &[]);
+        let paths = Paths { sources, named, facts };
         // 6. the sources, qualified (their documents held), and the datasets named
-        let qualified = (|| -> Result<Value, ToolError> {
+        let qualified = {
             let call = CallSources {
                 host: &host,
                 store: &store,
@@ -128,57 +121,12 @@ impl HostSession {
                 retry,
                 own: None,
             };
-            let mut out = Value::Object(arguments);
-            for path in &sources {
-                out = walk(&out, path, &mut |value, field| {
-                    if value.starts_with(DATASET_PREFIX) {
-                        call.name_dataset(value, field, true)?;
-                        return Ok(value.to_owned());
-                    }
-                    match call.qualify(value, field, false)? {
-                        Some((found, written)) => {
-                            push(&mut held, found);
-                            Ok(written)
-                        }
-                        None => Ok(value.to_owned()),
-                    }
-                })?;
-            }
-            for path in &named {
-                walk(&out, path, &mut |value, field| {
-                    if value.starts_with(DATASET_PREFIX) {
-                        call.name_dataset(value, field, false)?;
-                    }
-                    Ok(value.to_owned())
-                })?;
-            }
-            let row_prefixes: Vec<String> = host_prefixes(&self.host.formats);
-            let rows: Vec<&str> = row_prefixes.iter().map(String::as_str).collect();
-            let known = known_prefixes(&rows, &[]);
-            for path in &facts {
-                out = walk(&out, path, &mut |text, field| {
-                    if !text.contains("{{") {
-                        return Ok(text.to_owned());
-                    }
-                    qualify_text(text, &known, &[], |address| {
-                        match call.qualify(address, field, true)? {
-                            Some((found, written)) => {
-                                push(&mut held, found);
-                                Ok(written)
-                            }
-                            None => Ok(address.to_owned()),
-                        }
-                    })
-                })?;
-            }
-            Ok(out)
-        })()
-        .map_err(|error| Refused {
-            error,
-            before: true,
-            held: Vec::new(),
-        })?;
-
+            qualify_sources(&call, arguments, &paths, &known, &mut held).map_err(|error| Refused {
+                error,
+                before: true,
+                held: Vec::new(),
+            })?
+        };
         // 7. the references, and 8. what the format reads of its sources
         let locale = self.session.config().locale.clone().unwrap_or_default();
         let call = CallSources {
@@ -199,9 +147,6 @@ impl HostSession {
             ids.dedup();
             ids
         };
-        let row_prefixes = host_prefixes(&self.host.formats);
-        let rows: Vec<&str> = row_prefixes.iter().map(String::as_str).collect();
-        let known = known_prefixes(&rows, &[]);
         let env = FactEnv {
             known: &known,
             own: &[],
@@ -209,40 +154,11 @@ impl HostSession {
             locale: &locale,
             retry,
         };
-        let (expanded, found) = if facts.is_empty() {
-            (qualified, Vec::new())
-        } else {
-            expand_arguments(&qualified, &facts, &env, &call).map_err(|e| Refused::after(e, &held))?
-        };
-        let mut values = CallValues {
-            written: found
-                .iter()
-                .map(|fact| Written {
-                    field: fact.field.clone(),
-                    start: fact.start,
-                    end: fact.end,
-                    text: fact.text.clone(),
-                    record: fact.record.clone(),
-                    brief: fact.brief(),
-                    markdown: None,
-                })
-                .collect(),
-            ..CallValues::default()
-        };
-        for path in &sources {
-            walk(&expanded, path, &mut |value, field| {
-                read_source(value, field, &call, &env, &store, &mut values)?;
-                Ok(value.to_owned())
-            })
-            .map_err(|e| Refused::after(e, &held))?;
-        }
+        let (arguments, mut values) =
+            read_values(&call, &env, &store, qualified, &paths).map_err(|e| Refused::after(e, &held))?;
         if opens.len() > 1 {
             values.tables = held_tables(&host, &store, retry);
         }
-        let Value::Object(arguments) = expanded else {
-            let error = ToolError::internal("sources resolved to no object", "host:sources");
-            return Err(Refused::after(error, &held));
-        };
         Ok(WithValues {
             arguments,
             values,
@@ -283,6 +199,107 @@ impl HostSession {
     }
 }
 
+/// The argument paths a tool declares: sources, datasets, texts with references.
+struct Paths {
+    sources: Vec<String>,
+    named: Vec<String>,
+    facts: Vec<String>,
+}
+
+/// Step 6: `arguments` with every address of a declared source (and of a reference in a
+/// declared text) qualified with its document, each document noted in `held`; every
+/// dataset a declared argument names checked.
+fn qualify_sources(
+    call: &CallSources<'_>,
+    arguments: Map<String, Value>,
+    paths: &Paths,
+    known: &[String],
+    held: &mut Vec<String>,
+) -> Result<Value, ToolError> {
+    let mut out = Value::Object(arguments);
+    for path in &paths.sources {
+        out = walk(&out, path, &mut |value, field| {
+            if value.starts_with(DATASET_PREFIX) {
+                call.name_dataset(value, field, true)?;
+                return Ok(value.to_owned());
+            }
+            match call.qualify(value, field, false)? {
+                Some((found, written)) => {
+                    push(held, found);
+                    Ok(written)
+                }
+                None => Ok(value.to_owned()),
+            }
+        })?;
+    }
+    for path in &paths.named {
+        walk(&out, path, &mut |value, field| {
+            if value.starts_with(DATASET_PREFIX) {
+                call.name_dataset(value, field, false)?;
+            }
+            Ok(value.to_owned())
+        })?;
+    }
+    for path in &paths.facts {
+        out = walk(&out, path, &mut |text, field| {
+            if !text.contains("{{") {
+                return Ok(text.to_owned());
+            }
+            qualify_text(text, known, &[], |address| {
+                match call.qualify(address, field, true)? {
+                    Some((found, written)) => {
+                        push(held, found);
+                        Ok(written)
+                    }
+                    None => Ok(address.to_owned()),
+                }
+            })
+        })?;
+    }
+    Ok(out)
+}
+
+/// Steps 7 and 8: the references in the declared texts written, and what the format reads
+/// of each declared source.
+fn read_values(
+    call: &CallSources<'_>,
+    env: &FactEnv<'_>,
+    store: &DatasetStore,
+    qualified: Value,
+    paths: &Paths,
+) -> Result<(Map<String, Value>, CallValues), ToolError> {
+    let (expanded, found) = if paths.facts.is_empty() {
+        (qualified, Vec::new())
+    } else {
+        expand_arguments(&qualified, &paths.facts, env, call)?
+    };
+    let mut values = CallValues {
+        written: found
+            .iter()
+            .map(|fact| Written {
+                field: fact.field.clone(),
+                start: fact.start,
+                end: fact.end,
+                text: fact.text.clone(),
+                record: fact.record.clone(),
+                brief: fact.brief(),
+                markdown: None,
+            })
+            .collect(),
+        ..CallValues::default()
+    };
+    for path in &paths.sources {
+        walk(&expanded, path, &mut |value, field| {
+            read_source(value, field, call, env, store, &mut values)?;
+            Ok(value.to_owned())
+        })?;
+    }
+    let Value::Object(arguments) = expanded else {
+        return Err(ToolError::internal("sources resolved to no object", "host:sources"));
+    };
+    Ok((arguments, values))
+}
+
 /// The tables of the open documents, each as a `from` names it (docx-agent's
 /// `_host_tables`: `sources.offered`'s, each qualified with its document).
 fn held_tables(host: &FormatSources<'_>, store: &DatasetStore, retry: &TryCall) -> Vec<HeldTable> {
@@ -300,6 +317,22 @@ fn held_tables(host: &FormatSources<'_>, store: &DatasetStore, retry: &TryCall) 
             Some(HeldTable { name, doc, kind })
         })
         .collect()
+}
+
+/// The sources of the open documents `opens`, as `formats` read them.
+fn sources_of<'a>(formats: &'a [Arc<dyn Format>], opens: &'a [Open], retry: &TryCall) -> FormatSources<'a> {
+    let formats: Vec<&dyn Format> = formats.iter().map(|f| &**f).collect();
+    let docs = opens
+        .iter()
+        .map(|o| FormatOpen {
+            handle: o.handle.clone(),
+            name: o.name.clone(),
+            format: &*o.format,
+            doc: &*o.doc,
+            at: Some(o.at.clone()),
+        })
+        .collect();
+    FormatSources::new(formats, docs, retry)
 }
 
 /// The address prefixes the formats resolve to rows.
@@ -516,7 +549,7 @@ fn with_rows(address: &str, field: &str, error: ToolError, call: &CallSources<'_
             .filter(|n| !n.is_empty() && n.iter().all(|c| rows.columns.contains(c)))
             .map(|n| n.iter().map(|c| format!("{source}/{row}/{}", quote(c))).collect())
     };
-    match replaced.and_then(|r| WayOut::names(r)) {
+    match replaced.and_then(WayOut::names) {
         Some(way_out) => error.with_way_out(way_out),
         None => error,
     }

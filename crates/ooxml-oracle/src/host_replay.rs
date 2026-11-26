@@ -391,6 +391,43 @@ fn frozen_rows(given: &Value) -> Option<ooxml_tools::datasets::Dataset> {
     Some(dataset)
 }
 
+/// The formats a frozen answer's toolbox held beside Word's, each as what the call asked
+/// of it (its prefixes, the runs of addresses it merged); one per kind the session has.
+fn frozen_formats(case: &Value) -> Vec<Arc<dyn ooxml_session::Format>> {
+    let mut formats: Vec<Arc<dyn ooxml_session::Format>> = Vec::new();
+    let mut kinds: Vec<DocKind> = Vec::new();
+    // the formats the toolbox held, a document of theirs open or not
+    let registered = case["formats"].as_array().cloned().unwrap_or_default();
+    for other in &registered {
+        let named = other["kind"].as_str().unwrap_or_default();
+        let kind = frozen_kind(named);
+        if kind == DocKind::Docx || kinds.contains(&kind) {
+            continue;
+        }
+        kinds.push(kind);
+        let merges = case["merges"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|m| m[0] == named)
+            .filter_map(|m| {
+                let list = |v: &Value| -> Option<Vec<String>> {
+                    v.as_array()?.iter().map(|a| Some(a.as_str()?.to_owned())).collect()
+                };
+                Some((list(&m[1])?, list(&m[2])?))
+            })
+            .collect();
+        let prefixes = other["prefixes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|p| p.as_str().map(str::to_owned))
+            .collect();
+        formats.push(Arc::new(crate::frozen::FrozenFormat { kind, prefixes, merges }));
+    }
+    formats
+}
+
 /// The kind a frozen answer's made-up format stands for: its own name where the session
 /// has the kind, a grid's as a workbook's, anything else's as a deck's.
 fn frozen_kind(kind: &str) -> DocKind {
@@ -791,37 +828,7 @@ impl Replayer {
         }
         let head = serde_json::json!({"session": given});
         let others = case["others"].as_array().cloned().unwrap_or_default();
-        let mut formats: Vec<Arc<dyn ooxml_session::Format>> = Vec::new();
-        let mut kinds: Vec<DocKind> = Vec::new();
-        // the formats the toolbox held, a document of theirs open or not
-        let registered = case["formats"].as_array().cloned().unwrap_or_default();
-        for other in &registered {
-            let named = other["kind"].as_str().unwrap_or_default();
-            let kind = frozen_kind(named);
-            if kind == DocKind::Docx || kinds.contains(&kind) {
-                continue;
-            }
-            kinds.push(kind);
-            let merges = case["merges"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter(|m| m[0] == named)
-                .filter_map(|m| {
-                    let list = |v: &Value| -> Option<Vec<String>> {
-                        v.as_array()?.iter().map(|a| Some(a.as_str()?.to_owned())).collect()
-                    };
-                    Some((list(&m[1])?, list(&m[2])?))
-                })
-                .collect();
-            let prefixes = other["prefixes"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|p| p.as_str().map(str::to_owned))
-                .collect();
-            formats.push(Arc::new(crate::frozen::FrozenFormat { kind, prefixes, merges }));
-        }
+        let formats = frozen_formats(case);
         let Ok(session) = self.session_with(&head, formats) else {
             return Outcome::Waiting(Waits::Settings, false);
         };
@@ -877,7 +884,7 @@ impl Replayer {
     fn open_frozen(&self, session: &HostSession, case: &Value, doc: &str, now: Arc<[u8]>) -> Result<(), String> {
         let document = &case["document"];
         let name = document.get("name").and_then(Value::as_str).unwrap_or("document.docx");
-        let reads_first = case["arguments"]["remove"] == Value::Bool(true);
+        let reads_first = case.pointer("/arguments/remove") == Some(&Value::Bool(true));
         let opened = case.get("opened").filter(|o| !o.is_null() && reads_first);
         let first = match opened {
             Some(o) => o

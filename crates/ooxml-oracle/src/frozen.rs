@@ -80,7 +80,9 @@ pub struct FrozenDoc {
 impl FrozenDoc {
     /// What a frozen answer (`{"rows": ...}` or `{"refused": {"code", "message",
     /// "options"}}`) says, the rows read by `rows`.
-    #[must_use]
+    ///
+    /// # Errors
+    /// The refusal the answer froze.
     pub fn answer(given: &Value, rows: impl Fn(&Value) -> Option<Dataset>) -> Result<Dataset, ToolError> {
         if let Some(found) = given.get("rows") {
             return rows(found).ok_or_else(|| ToolError::internal("frozen rows unreadable", "frozen"));

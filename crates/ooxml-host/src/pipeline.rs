@@ -206,36 +206,17 @@ impl HostSession {
         going.notes.append(&mut notes);
         // 6.-8. its sources, the datasets it names, its references
         let mut datasets = CallDatasets::new();
-        // (a call that reads another document is not one today's host serves beside the
-        // others: refused, it names its document; one refused before its documents are held
-        // names none)
-        let other = |held: &[String]| held.iter().any(|h| *h != doc);
-        let WithValues {
-            arguments,
-            values,
-            held,
-        } = match self.with_values(entry, &doc, arguments, retry, &mut datasets) {
-            Ok(found) => found,
-            Err(refused) => {
-                let named = !refused.before && !(served && !other(&refused.held));
-                return self.refused_at(refused.error, named.then_some(doc.as_str()));
-            }
-        };
-        let served = served && !other(&held);
+        let (WithValues { arguments, values, .. }, served) =
+            match self.values_of(entry, &doc, arguments, retry, &mut datasets, served) {
+                Ok(found) => found,
+                Err(refused) => return *refused,
+            };
         // a retry key's repeat
         let key = (changing && entry.spec.flags.retry_key)
             .then(|| arguments.get("key").and_then(Value::as_str).map(str::to_owned))
             .flatten();
-        if let Some(key) = &key {
-            let repeat = self.stores().keys.repeat(&doc, entry.name(), key);
-            if let Some(mut repeat) = repeat {
-                // (the document and the version it is at, as a call that changed nothing)
-                repeat.doc = Some(doc.clone());
-                repeat.version = DocId::parse(&doc)
-                    .and_then(|id| self.session.snapshot(&id).ok())
-                    .map(|head| head.number());
-                return repeat;
-            }
+        if let Some(repeat) = key.as_deref().and_then(|key| self.repeated(&doc, entry.name(), key)) {
+            return repeat;
         }
         // 9. the handler, by the document's format, on the version the call reads
         let mut context = self.context(caller);
@@ -276,6 +257,43 @@ impl HostSession {
             self.stores().keys.keep(&doc, entry.name(), key, &result);
         }
         result
+    }
+
+    /// Steps 6 to 8 ([`HostSession::with_values`]), and whether the call is still one
+    /// today's host serves beside the others (`served`: not where it reads another
+    /// document); a refusal as the call's reply -- naming its document where it is not
+    /// served, none where it came before the documents were held.
+    fn values_of(
+        &self,
+        entry: &Entry,
+        doc: &str,
+        arguments: Map<String, Value>,
+        retry: &TryCall,
+        datasets: &mut CallDatasets,
+        served: bool,
+    ) -> Result<(WithValues, bool), Box<ToolResult<Value>>> {
+        let other = |held: &[String]| held.iter().any(|h| h != doc);
+        match self.with_values(entry, doc, arguments, retry, datasets) {
+            Ok(found) => {
+                let served = served && !other(&found.held);
+                Ok((found, served))
+            }
+            Err(refused) => {
+                let named = !refused.before && !(served && !other(&refused.held));
+                Err(Box::new(self.refused_at(refused.error, named.then_some(doc))))
+            }
+        }
+    }
+
+    /// The reply a retry key's earlier call left, for its repeat: at the document's version
+    /// now, as a call that changed nothing.
+    fn repeated(&self, doc: &str, tool: &str, key: &str) -> Option<ToolResult<Value>> {
+        let mut repeat = self.stores().keys.repeat(doc, tool, key)?;
+        repeat.doc = Some(doc.to_owned());
+        repeat.version = DocId::parse(doc)
+            .and_then(|id| self.session.snapshot(&id).ok())
+            .map(|head| head.number());
+        Some(repeat)
     }
 
     /// `error` as a call's reply, naming `doc` at its head where the call names one.

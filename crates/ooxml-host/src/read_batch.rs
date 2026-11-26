@@ -102,6 +102,18 @@ impl HostSession {
             .filter(|(k, ..)| answers.iter().any(|(_, i, _)| i == k))
             .flat_map(|(_, _, files)| files)
             .collect();
+        self.batch_result(combined, files, cap, first_doc)
+    }
+
+    /// The batch's reply: its answers' images' bytes for the application, its budget, the
+    /// first document its ops name at its version now.
+    fn batch_result(
+        &self,
+        combined: ooxml_tools::Done<Value>,
+        files: Vec<ooxml_tools::File>,
+        cap: usize,
+        first_doc: Option<String>,
+    ) -> ToolResult<Value> {
         let mut result = ToolResult::done(combined);
         result.app.files = files;
         result.app.budget = Some(cap);
