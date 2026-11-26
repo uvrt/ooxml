@@ -13,10 +13,10 @@
 //! calls.
 
 use crate::describe::{cancelled, short};
-use crate::paging::page_list;
 use crate::refusal::address_refusal;
 use crate::version::Version;
 use ooxml_base::Cancel;
+use ooxml_tools::paging::page_list;
 use ooxml_tools::pyre::PyRegex;
 use ooxml_tools::{ArgEnum, Done, Failure, IntOrStr, Refusal, ToolArgs, ToolError, TryCall, WayOut};
 use ooxml_word_model::address::scope_paragraphs;

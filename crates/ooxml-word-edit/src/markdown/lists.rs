@@ -9,6 +9,7 @@
 //!
 //! Must not: write but through the writer and the sink.
 
+use super::keep::Kind;
 use super::writer::{properties, Writer};
 use crate::lists::numbering::{add_builtin, add_num, add_restart, copy_abstract, part_of};
 use crate::names::W;
@@ -82,6 +83,8 @@ impl Writer<'_> {
                     counting.retain(|n| *n <= style_level);
                 }
             }
+            let kind = if list.ordered { Kind::Number } else { Kind::Bullet };
+            self.tag(paragraph, kind, depth, list.ordered && list.start != 1);
             out.push(paragraph);
             for inner in rest {
                 if let Block::List(nested) = inner {

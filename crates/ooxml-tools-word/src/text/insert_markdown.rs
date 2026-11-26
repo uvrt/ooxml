@@ -12,7 +12,7 @@
 //! Refused as not supported yet (nothing changed): rows or a field as the content (`from`),
 //! a blob (`blob`), a place given by reference (`$name`; braces reaching the tool are literal
 //! text, the host having written its references as their values), list items or tables like given blocks (`like`, a style map naming a
-//! paragraph), and what the command does not write yet (pictures, footnotes, `replace:`).
+//! paragraph), and what the command does not write yet (pictures, footnotes).
 //!
 //! Must not: write the document but through the command, or answer a call it does not
 //! support yet, refused ([`Unported`]).
@@ -298,7 +298,11 @@ fn unported(args: &WordInsertMarkdown) -> Option<Unported> {
     like.then_some(Unported::Like)
 }
 
-/// The reply, as docx-agent's `outcome` and `name_blocks` make it of the insertion.
+/// How many paragraphs' kept settings a replacement lists; the rest are counted.
+const KEPT_CAP: usize = 30;
+
+/// The reply, as docx-agent's `outcome` and `name_blocks` make it of the insertion (at
+/// `replace:`, what the new paragraphs kept of the replaced ones: `data.kept`).
 fn reply(args: &WordInsertMarkdown, out: MarkdownInserted) -> ToolResult<Value> {
     let edit = Outcome {
         id: out.first,
@@ -308,8 +312,24 @@ fn reply(args: &WordInsertMarkdown, out: MarkdownInserted) -> ToolResult<Value> 
         renamed: ooxml_word_model::ids::renames_text(&out.renamed),
         warnings: out.warnings,
     };
-    let summary = format!("Inserted {} block(s)", out.blocks.len());
-    let mut result = outcome(&[edit], summary, Some(json!({"blocks": out.blocks})));
+    let mut summary = format!("Inserted {} block(s)", out.blocks.len());
+    let mut data = Map::new();
+    data.insert("blocks".into(), json!(out.blocks));
+    if !out.kept.is_empty() {
+        // what the new paragraphs kept of the replaced ones (rule 4: capped, the rest counted)
+        summary.push_str(&format!("; {} kept the replaced paragraphs' settings", out.kept.len()));
+        let listed: Vec<Value> = out
+            .kept
+            .iter()
+            .take(KEPT_CAP)
+            .map(|k| json!({"block": k.block, "from": k.from, "settings": k.settings}))
+            .collect();
+        data.insert("kept".into(), Value::Array(listed));
+        if out.kept.len() > KEPT_CAP {
+            data.insert("kept_left_out".into(), Value::from(out.kept.len() - KEPT_CAP));
+        }
+    }
+    let mut result = outcome(&[edit], summary, Some(Value::Object(data)));
     name_blocks(&mut result, args.ref_name.as_ref(), &out.blocks);
     result
 }

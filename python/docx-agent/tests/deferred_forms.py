@@ -61,26 +61,6 @@ DEFERRED: dict[str, str] = {
         "word_read final view of Accept All's cell ends",
     "test_tracked_reshape_r55.py::test_the_final_view_reads_the_merge_over_a_deleted_column_as_accepted":
         "word_read final view of Accept All's cell ends",
-    "test_retired_ids.py::test_a_replaced_block_names_the_one_that_replaced_it":
-        "insert_markdown at replace:",
-    "test_id_state.py::test_a_replaced_block_still_names_its_replacement":
-        "insert_markdown at replace:",
-    "test_replace_keeps.py::test_body_paragraphs_keep_their_style_keeps_page_break_and_indent":
-        "insert_markdown at replace:",
-    "test_replace_keeps.py::test_list_items_join_the_replaced_list_at_their_levels":
-        "insert_markdown at replace:",
-    "test_replace_keeps.py::test_a_flat_list_replacing_nested_items_stays_at_their_level":
-        "insert_markdown at replace:",
-    "test_replace_keeps.py::test_markdown_wins_on_kind_level_start_and_named_styles":
-        "insert_markdown at replace:",
-    "test_replace_keeps.py::test_headings_keep_a_same_level_heading_style":
-        "insert_markdown at replace:",
-    "test_replace_keeps.py::test_more_new_paragraphs_take_the_last_donor_without_a_second_page_break":
-        "insert_markdown at replace:",
-    "test_replace_keeps.py::test_tracked_replacement_keeps_settings_and_stays_valid":
-        "insert_markdown at replace:",
-    "test_replace_keeps.py::test_the_replacement_lays_out_as_the_text_rewritten_in_place":
-        "insert_markdown at replace:",
     "test_side_by_side_edits.py::test_a_dataset_table_put_alone_after_edits_side_by_side":
         "word_insert_markdown from data (from, blob)",
     "test_tools_word.py::test_insert_markdown_with_every_style_role_writes_no_direct_formatting[normal0]":
@@ -99,26 +79,8 @@ DEFERRED: dict[str, str] = {
         "edit_chart add from",
     "test_tables_from_data.py::test_a_charts_dates_are_kept_in_the_locales_code":
         "edit_chart add from",
-    "test_addresses.py::test_a_reversed_span_is_refused_alike_everywhere":
-        "insert_markdown at replace:",
-    "test_places.py::test_existing_callers_are_unchanged":
-        "insert_markdown at replace:",
-    "test_replace_keeps.py::test_the_tool_says_what_was_kept":
-        "insert_markdown at replace:",
     "test_tools_word.py::test_find_and_replace_one_or_all_body_or_all_stories":
         "replace_text in the body only while other stories match",
-    "test_addresses.py::test_find_text_and_replace_text_take_a_cell_a_section_a_bookmark_and_an_open_span":
-        "replace_text range",
-    "test_language.py::test_french_spacing_in_english_text_is_a_language_mismatch_never_a_deletion":
-        "replace_text range",
-    "test_numbers.py::test_the_fix_writes_by_reference_and_the_number_is_left_out_after":
-        "replace_text range",
-    "test_settle_removed_r56.py::test_an_edit_inside_an_earlier_insertion_keeps_it_the_earlier_ones":
-        "replace_text range",
-    "test_tools_word.py::test_replace_text_within_a_span_of_paragraphs_and_a_table":
-        "replace_text range",
-    "test_typography.py::test_problems_list_what_is_left_with_fixes_that_clear_them":
-        "replace_text range",
     "test_served_records.py::test_served_reviews_follow_the_records_as_docx_agent_does[accept moving the only record]":
         "word_changes accept moving the document's only table record (its item is made again)",
     "test_served_records.py::test_the_session_reads_the_records_as_docx_agent_does[reviewed_alone]":

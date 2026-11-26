@@ -518,6 +518,7 @@ dependencies = [
  "ooxml-tools",
  "ooxml-zip",
  "serde_json",
+ "thiserror",
 ]
 
 [[package]]

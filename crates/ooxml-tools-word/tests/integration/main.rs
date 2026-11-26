@@ -23,6 +23,7 @@ mod no_head;
 mod objects;
 mod reads;
 mod relayout_report;
+mod replace_keeps;
 mod review;
 mod structure;
 mod style;

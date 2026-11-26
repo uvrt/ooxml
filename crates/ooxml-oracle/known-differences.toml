@@ -448,7 +448,7 @@ cause = "values and addresses by reference, $ref and {{...}} (deferred, referenc
 
 [[not_supported]]
 form = "replace_text *"
-cause = "replace_text regex, range, slides, empty find, styled text, body only (deferred, text forms T)"
+cause = "replace_text slides, empty find, styled text, body only (deferred, text forms T)"
 
 [[not_supported]]
 form = "word_delete a *"
@@ -465,10 +465,6 @@ cause = "insert_markdown pictures (user 2026-11-22: refused at release, added af
 [[not_supported]]
 form = "a footnote in Markdown"
 cause = "insert_markdown footnotes (user 2026-11-22: refused at release, added after)"
-
-[[not_supported]]
-form = "* at replace:"
-cause = "placing at replace: (user 2026-11-22: refused at release, added after)"
 
 [[not_supported]]
 form = "* into an empty container"

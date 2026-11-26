@@ -7,16 +7,17 @@
 //! opening it; read the clock but through the store's port.
 
 use crate::context::StoreClock;
-use crate::format::{AnyVersion, Finished, Format, FormatDoc, FormatRun, OpenEnv};
+use crate::format::{AnyVersion, Finished, Format, FormatDoc, FormatRun, NewDocument, OpenEnv};
 use crate::model::PackageDoc;
 use crate::owners::{Owners, StepOwner};
+use crate::problems::Problem;
 use crate::stored::{Stored, StoredDoc};
 use crate::update::PartUpdate;
 use crate::{DocKind, Registry, SessionError};
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Store};
 use ooxml_tools::{Tool, ToolError, ToolResult};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::any::Any;
 use std::sync::Arc;
 
@@ -40,9 +41,41 @@ impl Format for PackageFormat {
         ))))
     }
 
+    /// A package with the main part of its kind (`ppt/presentation.xml`,
+    /// `xl/workbook.xml`, `word/document.xml`).
+    fn detect(&self, bytes: &[u8], _name: &str) -> bool {
+        package_has_part(bytes, main_part(self.0))
+    }
+
+    fn new_document(&self, _made: &NewDocument<'_>, _env: &OpenEnv<'_>) -> Result<Vec<u8>, ToolError> {
+        // (the application's own host makes them until the kind's format is Rust's)
+        Err(ToolError::internal(
+            format!("the Rust session makes no new {} documents", self.0.as_str()),
+            "session:package",
+        ))
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
+}
+
+/// The main part of a package of `kind`.
+fn main_part(kind: DocKind) -> &'static str {
+    match kind {
+        DocKind::Docx => "word/document.xml",
+        DocKind::Pptx => "ppt/presentation.xml",
+        DocKind::Xlsx => "xl/workbook.xml",
+    }
+}
+
+/// Whether `bytes` are a ZIP package holding the part `name` (a format's `detect` reads
+/// only the central directory).
+#[must_use]
+pub fn package_has_part(bytes: &[u8], name: &str) -> bool {
+    bytes.starts_with(b"PK")
+        && ooxml_zip::Archive::read(Arc::from(bytes), &ooxml_base::ZipLimits::default())
+            .is_ok_and(|archive| archive.entries().iter().any(|e| e.meta().name == name))
 }
 
 /// A package's versions (kinds Rust does not own yet).
@@ -75,6 +108,18 @@ impl FormatDoc for Stored<PackageDoc> {
     }
 
     fn finish(&self, _made: Box<dyn Any + Send>, _run: &FormatRun<'_>) -> Option<Finished> {
+        None
+    }
+
+    fn baseline(&self) -> Vec<Problem> {
+        Vec::new()
+    }
+
+    fn summary(&self, _at: &AnyVersion) -> Option<Map<String, Value>> {
+        None
+    }
+
+    fn state(&self, _at: &AnyVersion) -> Option<String> {
         None
     }
 

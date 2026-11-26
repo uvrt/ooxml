@@ -15,9 +15,9 @@ use super::design_layout::{patterns, section_facts, table_frames, theme, usual_w
 use super::design_look::Design;
 use super::design_styles::{declared_styles, styles};
 use super::design_tables::table_styles;
-use crate::paging::page_list;
 use crate::version::Version;
 use ooxml_base::Cancel;
+use ooxml_tools::paging::page_list;
 use ooxml_tools::{ArgEnum, Done, ToolError, TryCall};
 use serde_json::{Map, Value};
 use std::collections::HashMap;

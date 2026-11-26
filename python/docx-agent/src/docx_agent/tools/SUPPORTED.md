@@ -24,6 +24,6 @@ the body's lines beside it (a template whose Normal runs past a margin); `check`
 such a table as past the margins.
 
 Not supported, in outline: macros (dropped on save), equations and ink beyond keeping them,
-SmartArt (`edit_smartart` is out of the tools until the Rust session has it), values styled by a scale (`style_by_value`, likewise), an asset catalogue (`word_find_asset`, likewise; a call of any of the three is refused with what to use instead), in `word_insert_markdown` a table from a dataset's or another document's rows (`from`), `like` and `at` a `replace:` place (refused with a call that works; the release notes list every form refused), editing a template's styles from another file (`word_template` only
+SmartArt (`edit_smartart` is out of the tools until the Rust session has it), values styled by a scale (`style_by_value`, likewise), an asset catalogue (`word_find_asset`, likewise; a call of any of the three is refused with what to use instead), in `word_insert_markdown` a table from a dataset's or another document's rows (`from`) and `like` (refused with a call that works; the release notes list every form refused), editing a template's styles from another file (`word_template` only
 upgrades the compatibility mode), and anything Word does on its own when it opens a file
 (updating fields, repaginating) beyond what `word_fields update` and the layout facts give.

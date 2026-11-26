@@ -46,6 +46,9 @@ pub(crate) struct Writer<'m> {
     pub(crate) linked: bool,
     /// Writing a code block: its text keeps its spacing (not marked written).
     verbatim: bool,
+    /// The body paragraphs made, by kind (not one in a quote or inside a list item): what a
+    /// replacement's paragraphs are matched to the replaced ones by ([`super::keep`]).
+    pub(crate) tagged: Vec<super::keep::Tagged>,
 }
 
 impl<'m> Writer<'m> {
@@ -65,6 +68,19 @@ impl<'m> Writer<'m> {
             tables: Vec::new(),
             linked: false,
             verbatim: false,
+            tagged: Vec::new(),
+        }
+    }
+
+    /// Note a body paragraph's kind (not one in a quote or inside a list item).
+    pub(crate) fn tag(&mut self, node: Id, kind: super::keep::Kind, level: i64, restarts: bool) {
+        if self.quote == 0 && self.in_list == 0 {
+            self.tagged.push(super::keep::Tagged {
+                node,
+                kind,
+                level,
+                restarts,
+            });
         }
     }
 
@@ -212,11 +228,13 @@ impl<'m> Writer<'m> {
                     self.body_style(sink)?
                 };
                 let made = self.paragraph(sink, work, inline, style.as_deref(), None)?;
+                self.tag(made, super::keep::Kind::Paragraph, 0, false);
                 Ok(vec![made])
             }
             Block::Heading(level, inline) => {
                 let style = self.style(sink, "heading", *level)?;
                 let made = self.paragraph(sink, work, inline, style.as_deref(), None)?;
+                self.tag(made, super::keep::Kind::Heading, *level, false);
                 Ok(vec![made])
             }
             Block::Code(text) => self.code(sink, work, text),

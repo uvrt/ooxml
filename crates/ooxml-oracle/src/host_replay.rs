@@ -14,7 +14,7 @@
 use ooxml_base::context::{FaceData, FaceRequest, Timestamp};
 use ooxml_base::{BaseError, CacheBudget, Cancel, Clock, Context, FontSource, PartStore};
 use ooxml_fonts::{Folder, Location, WordFontOptions};
-use ooxml_host::{CallAs, Host, HostSession, HostSettings, NotYet};
+use ooxml_host::{CallAs, Host, HostSession, HostSettings, HostTools, Opening};
 use ooxml_session::{DocId, DocKind, MemoryBudget, SessionConfig};
 use ooxml_session_word::{SessionPages, WordFormat};
 use ooxml_store::StoreConfig;
@@ -276,24 +276,6 @@ pub fn normalised(result: &ooxml_tools::ToolResult<Value>) -> Value {
     Value::Object(body)
 }
 
-/// The tools the Rust host runs through the session-tool seam until D3.
-const SESSION_TOOLS: [&str; 5] = [
-    "open_document",
-    "new_document",
-    "close_document",
-    "read_blob",
-    "save_document",
-];
-
-/// What the Python host adds to a Rust tool's reply that the session tools' port (D3)
-/// brings: `describe`'s problems the document opened with, `check`'s whole-document
-/// validation (round 53) and its note in the summary.
-const HOST_ADDED: [(&str, &str); 3] = [
-    ("describe", "result.data.problems"),
-    ("check", "result.data.validation"),
-    ("check", "result.summary"),
-];
-
 /// A read_batch op's path split: its index and the rest (`result.data.ops[2].data.x`:
 /// `(2, "data.x")`).
 fn op_path(path: &str) -> Option<(usize, &str)> {
@@ -316,15 +298,42 @@ fn adapted(tool: &str, arguments: &Value) -> bool {
     decks || blob || arguments.get("at").is_some_and(place_ref)
 }
 
+/// Two comparisons of one event as one: the first difference, else the known ones of both.
+fn both(a: Outcome, b: Outcome) -> Outcome {
+    match (a, b) {
+        (Outcome::Equal, other) | (other, Outcome::Equal) => other,
+        (Outcome::Known(mut x), Outcome::Known(y)) => {
+            x.extend(y);
+            x.sort_unstable();
+            x.dedup();
+            Outcome::Known(x)
+        }
+        (different @ Outcome::Different(..), _) | (_, different) => different,
+    }
+}
+
+/// A file's parts' digests as an output's are recorded: a file that is no package, its
+/// digest under `""`.
+fn output_parts(data: &[u8]) -> Value {
+    part_digests(data).map_or_else(
+        || serde_json::json!({"": hex(&ooxml_base::sha256::sha256(data))}),
+        Value::Object,
+    )
+}
+
+/// An output as the streams hold it (`host_goldens.described_output`): its description less
+/// its size, and its parts' digests.
+fn described_output(output: &ooxml_session::outputs::Output) -> Value {
+    serde_json::json!({"name": output.name, "format": output.format, "doc": output.doc,
+        "validate": output.validate, "parts": output_parts(&output.data)})
+}
+
 /// What a call of `tool` with `arguments` waits for, and whether its case's later events
 /// depend on it (it changes the session's state).
 fn waits(tool: &str, arguments: &Value) -> Option<(Waits, bool)> {
     let bare = tool.rsplit('.').next().unwrap_or(tool);
     if bare == "batch" {
         return Some((Waits::D2, true));
-    }
-    if SESSION_TOOLS.contains(&bare) {
-        return Some((Waits::D3, bare != "save_document" && bare != "read_blob"));
     }
     if adapted(bare, arguments) {
         return Some((Waits::Adapters, true));
@@ -542,7 +551,7 @@ impl Replayer {
             raster: Some(Arc::clone(&self.raster)),
         };
         let format = WordFormat { pages: Some(pages) };
-        let host = Arc::new(Host::new(vec![Arc::new(format)], settings, Arc::new(NotYet)));
+        let host = Arc::new(Host::new(vec![Arc::new(format)], settings, Arc::new(HostTools)));
         let context = Context {
             fonts: Arc::new(NoFonts),
             parts: Arc::new(NoParts),
@@ -599,23 +608,7 @@ impl Replayer {
     fn event(&self, stream: &str, session: &HostSession, event: &Value) -> (Outcome, bool) {
         let kind = event.get("event").and_then(Value::as_str).unwrap_or_default();
         match kind {
-            "open" => {
-                let given = ["doc_id", "state"]
-                    .iter()
-                    .any(|k| event.get(*k).is_some_and(|v| !v.is_null()));
-                let bytes = event.get("input").and_then(|i| self.input(i));
-                let name = event.get("name").and_then(Value::as_str).unwrap_or("document.docx");
-                match (given, bytes) {
-                    (false, Some(bytes)) => match session.open(bytes, DocKind::Docx, name) {
-                        Ok(id) => (
-                            self.compare(stream, event, "returned", &Value::from(id.to_string())),
-                            false,
-                        ),
-                        Err(_) => (Outcome::Waiting(Waits::D3, true), true),
-                    },
-                    _ => (Outcome::Waiting(Waits::D3, true), true),
-                }
-            }
+            "open" => (self.open(stream, session, event), false),
             "blob" => {
                 let bytes = event.get("input").and_then(|i| self.input(i));
                 let name = event.get("name").and_then(Value::as_str).unwrap_or("blob");
@@ -636,6 +629,7 @@ impl Replayer {
                 session.new_round();
                 (Outcome::Equal, false)
             }
+            "save" | "undo" | "redo" => self.history(stream, session, event, kind),
             "call" | "change" => self.call(stream, session, event),
             "final" => {
                 let mut documents = Map::new();
@@ -650,18 +644,72 @@ impl Replayer {
             }
             "calls" => (Outcome::Waiting(Waits::D2, true), true),
             "settings" => (Outcome::Waiting(Waits::Settings, true), true),
-            // the application's undo, redo and save: the session tools' (D3)
-            _ => (Outcome::Waiting(Waits::D3, true), true),
+            _ => (Outcome::Waiting(Waits::Settings, true), true),
         }
+    }
+
+    /// The application's open, made again.
+    fn open(&self, stream: &str, session: &HostSession, event: &Value) -> Outcome {
+        let Some(bytes) = event.get("input").and_then(|i| self.input(i)) else {
+            return Outcome::Waiting(Waits::Settings, true);
+        };
+        let text = |key: &str| event.get(key).and_then(Value::as_str);
+        let name = text("name").unwrap_or("document.docx");
+        let how = Opening {
+            kind: text("kind").and_then(DocKind::parse),
+            source: text("source"),
+            doc_id: text("doc_id"),
+            state: text("state"),
+        };
+        let have = match session.open_with(bytes, name, &how) {
+            Ok(id) => (Some(Value::from(id.to_string())), None),
+            Err(refused) => (None, Some(refused.to_string())),
+        };
+        self.compare_app(stream, event, have)
+    }
+
+    /// The application's save, undo or redo (`kind`), made again: how it went, and whether
+    /// the case's later events depend on it.
+    fn history(&self, stream: &str, session: &HostSession, event: &Value, kind: &str) -> (Outcome, bool) {
+        let Some(doc) = event.get("doc").and_then(Value::as_str).and_then(DocId::parse) else {
+            return (Outcome::Waiting(Waits::Settings, true), true);
+        };
+        if kind == "save" {
+            let outcome = match session.save(&doc) {
+                Ok(saved) => {
+                    let have = serde_json::json!({"doc": saved.doc, "name": saved.name,
+                        "kind": saved.kind.as_str(), "version": saved.version,
+                        "parts": part_digests(&saved.data), "state": saved.state});
+                    self.compare(stream, event, "saved", &have)
+                }
+                Err(error) => self.compare_app(stream, event, (None, Some(error.to_string()))),
+            };
+            return (outcome, false);
+        }
+        if event.get("scope").is_some_and(|s| !s.is_null()) {
+            return (Outcome::Waiting(Waits::Settings, true), true);
+        }
+        let steps = event
+            .get("steps")
+            .and_then(Value::as_u64)
+            .and_then(|n| usize::try_from(n).ok())
+            .unwrap_or(1);
+        let caller = event
+            .get("view")
+            .and_then(|v| v.get("context"))
+            .and_then(Value::as_object);
+        let have = match session.history(&doc, steps, kind == "redo", caller) {
+            Ok(count) => (Some(Value::from(count)), None),
+            Err(error) => (None, Some(error.to_string())),
+        };
+        (self.compare_app(stream, event, have), false)
     }
 
     fn call(&self, stream: &str, session: &HostSession, event: &Value) -> (Outcome, bool) {
         let tool = event.get("tool").and_then(Value::as_str).unwrap_or_default();
         let arguments = event.get("arguments").cloned().unwrap_or(Value::Null);
         let waiting = waits(tool, &arguments);
-        if let Some((waits, blocks)) =
-            waiting.filter(|(w, _)| !matches!(w, Waits::G1) && !tool.ends_with("save_document"))
-        {
+        if let Some((waits, blocks)) = waiting.filter(|(w, _)| !matches!(w, Waits::G1)) {
             return (Outcome::Waiting(waits, false), blocks);
         }
         let roles = event
@@ -695,8 +743,43 @@ impl Replayer {
                 let have = serde_json::json!({"ok": !result.is_error(), "changed_parts": result.app.changed_parts});
                 (self.compare(stream, event, "result", &have), false)
             }
-            Ok(result) => (self.compare(stream, event, "result", &normalised(&result)), false),
+            Ok(result) => {
+                let replied = self.compare(stream, event, "result", &normalised(&result));
+                let outputs: Vec<Value> = session.take_outputs().iter().map(described_output).collect();
+                let saved = if event.get("outputs").is_some() {
+                    self.compare(stream, event, "outputs", &Value::Array(outputs))
+                } else {
+                    Outcome::Equal
+                };
+                (both(replied, saved), false)
+            }
             Err(_) => (Outcome::Waiting(Waits::Settings, true), true),
+        }
+    }
+
+    /// An application call's answer (`returned`, else what it raised: its message) against
+    /// the recorded one.
+    fn compare_app(&self, stream: &str, event: &Value, have: (Option<Value>, Option<String>)) -> Outcome {
+        match (event.get("raised").and_then(Value::as_str), have) {
+            (Some(raised), (_, Some(message))) => {
+                let want = raised.split_once(": ").map_or(raised, |(_, m)| m);
+                let mut event = event.clone();
+                if let Value::Object(map) = &mut event {
+                    map.insert("raised".into(), Value::from(want));
+                }
+                self.compare(stream, &event, "raised", &Value::from(message))
+            }
+            (Some(raised), (returned, None)) => Outcome::Different(
+                vec!["raised".into()],
+                Value::from(raised),
+                returned.unwrap_or(Value::Null),
+            ),
+            (None, (_, Some(message))) => Outcome::Different(
+                vec!["returned".into()],
+                event.get("returned").cloned().unwrap_or(Value::Null),
+                Value::from(message),
+            ),
+            (None, (returned, None)) => self.compare(stream, event, "returned", &returned.unwrap_or(Value::Null)),
         }
     }
 
@@ -732,23 +815,6 @@ impl Replayer {
                 Some(index) => used.push(index),
                 None => left.push(path),
             }
-        }
-        let host_added = |p: &String| {
-            // a read_batch op's path as its own call's: `result.data.ops[2].data.x` is op 2's
-            // tool's `result.data.x`
-            let (tool, p) = match op_path(p) {
-                Some((k, rest)) => (
-                    want.pointer(&format!("/data/ops/{k}/tool")).and_then(Value::as_str),
-                    format!("result.{rest}"),
-                ),
-                None => (tool, p.clone()),
-            };
-            HOST_ADDED.iter().any(|(t, f)| {
-                Some(*t) == tool && (p == *f || p.starts_with(&format!("{f}.")) || p.starts_with(&format!("{f}[")))
-            })
-        };
-        if !left.is_empty() && left.iter().all(host_added) {
-            return Outcome::Waiting(Waits::D3, false);
         }
         if left.is_empty() {
             used.sort_unstable();

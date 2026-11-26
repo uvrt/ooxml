@@ -44,15 +44,19 @@ pub(crate) fn is_block(e: &Element) -> bool {
 }
 
 /// The place `at` names (`_locate`): `end` or `end:<story>`, `after:<id>`, `before:<id>`,
-/// a bare id (after it). `doing` names the edit in the refusal of `replace:` (an edit that
-/// replaces blocks reads its place with [`replacing`]).
+/// a bare id (after it). `doing` names the edit in the refusal of `replace:`: an edit that
+/// replaces blocks reads its place with [`replacing`] instead.
 ///
 /// # Errors
-/// A place that does not exist, `replace:` (not ported yet), a story of notes or comments.
+/// A place that does not exist, `replace:`, a story of notes or comments.
 pub(crate) fn locate(doc: &WordDoc, docx: &Docx, at: &Where, doing: &str) -> Result<Place> {
     let (block, after) = match at.kind() {
         PlaceKind::End(story) => return end_of(docx, story.as_deref().unwrap_or("body")),
-        PlaceKind::Replace(_) => return Err(EditError::Unsupported(format!("{doing} at replace:"))),
+        PlaceKind::Replace(_) => {
+            return Err(EditError::Refused(format!(
+                "{doing} puts blocks beside a place: replace: is read with the blocks it replaces"
+            )))
+        }
         PlaceKind::After(block) | PlaceKind::At(block) => (block, true),
         PlaceKind::Before(block) => (block, false),
     };

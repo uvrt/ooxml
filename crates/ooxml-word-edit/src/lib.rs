@@ -99,6 +99,7 @@ mod provenance;
 mod ranges;
 mod ranges_across;
 mod release;
+mod replacing;
 pub mod review;
 mod revision_ids;
 mod saving;
@@ -162,13 +163,15 @@ pub use links::{hyperlink_span, AddBookmark, AddHyperlink, LinkEdited, RemoveBoo
 pub use lists::{
     numbered_by_style, paragraphs_of, unnumbered_styles_like, LevelFormat, ListAction, ListEdit, ListStep, ListsEdited,
 };
-pub use markdown::{markdown_shape, InsertMarkdown, Made, MarkdownInserted, Options as MarkdownOptions, WriteMap};
+pub use markdown::{
+    markdown_shape, InsertMarkdown, KeptSettings, Made, MarkdownInserted, Options as MarkdownOptions, WriteMap,
+};
 pub use moving::{section_blocks, section_blocks_in, BlocksMoved, MoveBlocks, Moving};
 pub use notes::{DeleteNote, EditNote, InsertNote, MoveNote, NoteEdited, NoteKind};
 pub use ooxml_base::difflib::ratio as text_ratio;
 pub use paragraph_style::{SetParagraphStyle, StyleSet};
 pub use paragraphs::{InsertParagraph, ParagraphInserted};
-pub use planning::{anchor_in, last_block_in, read_matching, read_ranges, section_in};
+pub use planning::{anchor_in, last_block_in, read_matching, read_pattern, read_ranges, read_scope, section_in};
 pub use policy::{RevisionPolicy, Tracking};
 pub use pool::{EarlierIds, Ids, IdsChange, Sequences};
 pub use provenance::{KeepText, TextKeep};

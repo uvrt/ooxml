@@ -2409,13 +2409,13 @@
 {"digest":"sha256:a288678c0a4c7aaf5650e75a9d83f74a","id":"text:28fae1deb2d77fea","source":"frozen Python a512c901, unmeasured"}
 {"id":"text:f032d58dcb74072b","not_supported":"word_insert_markdown like","source":"frozen Python a512c901, unmeasured"}
 {"id":"text:6712e071dc732528","not_supported":"word_insert_markdown like","source":"frozen Python a512c901, unmeasured"}
-{"id":"text:74c22f9c5cfb5bf1","not_supported":"insert_markdown at replace:","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:21cbba3905709ee93151358f55db1ab5","id":"text:74c22f9c5cfb5bf1","source":"docx-agent 0.1's answer (frozen Python a512c901, its pending golden), equal field by field; word_insert_markdown at replace: served (round 60, R141)"}
 {"digest":"sha256:0d387751ed39f27ae051d56557784006","id":"text:1e925aaa222fa7ff","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:b4681941761beab559be0109bb65a739","id":"text:b5cf80fea6a8aa45","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:71cd782e271419e380ccd9a822bfbc16","id":"text:05a2e82c5c561398","source":"frozen Python a512c901, unmeasured"}
 {"id":"text:01334420519778f5","not_supported":"word_insert_markdown like","source":"frozen Python a512c901, unmeasured"}
 {"id":"text:a31849b9920eeb79","not_supported":"word_insert_markdown like","source":"frozen Python a512c901, unmeasured"}
-{"id":"text:dc8805a378fa2f50","not_supported":"insert_markdown at replace:","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:7de1fe9380b8d50bf3d6c5c8fc9a838f","id":"text:dc8805a378fa2f50","source":"docx-agent 0.1's answer (frozen Python a512c901, its pending golden), equal field by field; word_insert_markdown at replace: served (round 60, R141)"}
 {"digest":"sha256:c84e00366481ccdee70948ac0a116c0c","id":"text:4773711b38d0d5b6","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:992e436f3529a1bc3163f4c6a00ebc86","id":"tools:1324e32a5bfc3e12","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:9386704ecd20b4358355fb69c51f7cad","id":"tools:70733c238ba24e67","source":"frozen Python a512c901, unmeasured"}

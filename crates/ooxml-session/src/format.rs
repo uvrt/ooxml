@@ -14,7 +14,7 @@
 //! or dispatch a call.
 
 use crate::context::CallCancel;
-use crate::problems::Validation;
+use crate::problems::{Problem, Validation};
 use crate::update::PartUpdate;
 use crate::{CallContext, DocKind, Opened, Registry, SessionError, StoredDoc};
 use ooxml_base::pyfmt::repr_str;
@@ -74,8 +74,67 @@ pub trait Format: Send + Sync + 'static {
     /// The format's, when the package is not a document it can read.
     fn open(&self, package: Package, env: &OpenEnv<'_>) -> Result<Arc<dyn FormatDoc>, SessionError>;
 
+    /// `package` opened as a document of this kind with the state saved beside its bytes
+    /// ([`FormatDoc::state`]): it goes on from where it was (a Word document's retired ids
+    /// stay retired), its history's numbers with it. By default the format keeps no state
+    /// and refuses one ([`SessionError::StateRefused`] without a reason).
+    ///
+    /// # Errors
+    /// [`SessionError::StateRefused`]: no state kept, or one that is not these bytes'; as
+    /// [`Format::open`].
+    fn open_with_state(&self, package: Package, state: &str, env: &OpenEnv<'_>) -> Result<WithState, SessionError> {
+        let _ = (package, state, env);
+        Err(SessionError::StateRefused {
+            kind: self.kind(),
+            reason: None,
+        })
+    }
+
+    /// Whether `bytes` named `name` are a document of this kind (an `open_document` of a
+    /// blob finds its format so).
+    fn detect(&self, bytes: &[u8], name: &str) -> bool;
+
+    /// A new document's bytes, as `new_document` makes one of this kind: blank, or from the
+    /// template `made` gives, with its page size, properties and the call's date; the host
+    /// opens them.
+    ///
+    /// # Errors
+    /// The format's refusal of the call, at its argument (`size`, `template_blob`), or that
+    /// it makes no new documents.
+    fn new_document(&self, made: &NewDocument<'_>, env: &OpenEnv<'_>) -> Result<Vec<u8>, ToolError>;
+
     /// The format's own type, for its code to read (a downcast).
     fn as_any(&self) -> &dyn Any;
+}
+
+/// A document opened with its saved state: the document, and the numbers its history goes
+/// on from (the version it was saved at and the highest its history gave).
+pub struct WithState {
+    /// The document.
+    pub doc: Arc<dyn FormatDoc>,
+    /// `(version, highest)`, where the state numbers them.
+    pub numbers: Option<(u64, u64)>,
+}
+
+/// What `new_document` asks of a format.
+#[derive(Debug, Clone, Copy)]
+pub struct NewDocument<'a> {
+    /// The page or slide size named (`A4`, `16:9`); `None`: the format's own.
+    pub size: Option<&'a str>,
+    /// The title property.
+    pub title: Option<&'a str>,
+    /// The author property.
+    pub author: Option<&'a str>,
+    /// The template's bytes, where it is made from one (its layouts, styles and theme, not
+    /// its content).
+    pub template: Option<&'a [u8]>,
+    /// When it is made (W3CDTF, UTC to the second: `2026-11-21T09:00:00Z`).
+    pub created: &'a str,
+    /// The session's locale (its text's language and separators); `None`: the format's
+    /// default.
+    pub locale: Option<&'a Locale>,
+    /// The call as given, for a refusal's way out.
+    pub retry: &'a TryCall,
 }
 
 /// What a document opens with: its store's configuration and the session's ports.
@@ -274,6 +333,19 @@ pub trait FormatDoc: Send + Sync + 'static {
         let _ = at;
         None
     }
+
+    /// The problems the document opened with (the save gate's baseline; `describe` lists
+    /// them): empty where it opened with none, or its format validates nothing.
+    fn baseline(&self) -> Vec<Problem>;
+
+    /// What `open_document` and `new_document` say of the version `at`: cheap facts, no
+    /// layout (a Word document's headings, paragraphs, tables...); `None` where its format
+    /// says nothing of a document.
+    fn summary(&self, at: &AnyVersion) -> Option<Map<String, Value>>;
+
+    /// The state to keep beside the version `at`'s bytes, for [`Format::open_with_state`] to
+    /// go on from (a Word document's ids); `None` where its format keeps none.
+    fn state(&self, at: &AnyVersion) -> Option<String>;
 
     /// What a step group's revert brings back of the format's own state (a Word document's
     /// tracking mode), taken as the group is marked; `None` by default.

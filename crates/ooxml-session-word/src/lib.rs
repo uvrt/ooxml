@@ -8,7 +8,7 @@
 //! ([`WordSession`], [`HostReads`], [`Records`], [`ValuesOf`], [`BlocksOf`]); the session's
 //! page engines ([`WordPages`], [`SessionPages`]) and where blocks are laid out
 //! ([`BlockPagesOf`]); an application's live view ([`LiveView`]); a document made from a
-//! template ([`FromTemplate`]); and the records of retired ids ([`RetiredIds`]) and rows
+//! template or blank ([`new_document`]); and the records of retired ids ([`RetiredIds`]) and rows
 //! written ([`RowsWrittenOf`]). Each reaches a session's documents through
 //! `ooxml-session`'s [`ooxml_session::FormatDoc`], as extension traits on
 //! [`ooxml_session::Session`] and [`ooxml_session::Opened`] ([`prelude`]).
@@ -20,9 +20,9 @@
 mod block_pages;
 mod blocks_of;
 mod call;
-mod from_template;
 mod host_reads;
 mod live_view;
+mod new_document;
 mod own_sources;
 mod pages;
 pub mod problems;
@@ -39,9 +39,9 @@ mod word;
 pub use block_pages::{BlockAt, BlockPages, BlockPagesOf};
 pub use blocks_of::{BlockFound, BlockRefused, BlocksOf};
 pub use call::{Call, WordHost};
-pub use from_template::FromTemplate;
 pub use host_reads::{HostReads, IdStateOf};
 pub use live_view::{LiveView, PageSvg, TextMode, View, ViewError, ViewPage, VIEW_TOKENS};
+pub use new_document::{from_template, new_document};
 pub use ooxml_word_model::ids::{HeldId, IdStateError};
 pub use pages::{SessionPages, WordPages};
 pub use records::Records;
@@ -58,8 +58,8 @@ use std::sync::Arc;
 /// The extension traits, for `use ooxml_session_word::prelude::*`.
 pub mod prelude {
     pub use crate::{
-        BlockPagesOf, BlocksOf, FromTemplate, HostReads, LiveView, Records, RetiredIds, RowsWrittenOf, ValuesOf,
-        WordPages, WordSession, WordVersion,
+        BlockPagesOf, BlocksOf, HostReads, LiveView, Records, RetiredIds, RowsWrittenOf, ValuesOf, WordPages,
+        WordSession, WordVersion,
     };
 }
 

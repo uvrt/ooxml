@@ -6,7 +6,7 @@
 
 use super::changes::{try_call, ChangeDetail, Reading, WordChanges};
 use crate::describe::short;
-use crate::paging::page_list;
+use ooxml_tools::paging::page_list;
 use ooxml_tools::{Done, ToolError};
 use ooxml_word_model::address::Address;
 use ooxml_word_model::docx::changes::{changes, LogicalChange};

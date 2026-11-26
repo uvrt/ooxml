@@ -147,8 +147,6 @@ CASES = {
     "word_read final view of Accept All's cell ends": [(CELL_ENDS, "word_read", {"view": "final"})],
     "word_inspect of Accept All's cell ends": [(CELL_ENDS, "word_inspect", {"target": "p@body/1"})],
     "replace_text *": [
-        (None, "replace_text", {"find": "T.xt", "replace": "x", "regex": True}),
-        (None, "replace_text", {"find": "Text", "replace": "x", "range": "{p}"}),
         (None, "replace_text", {"find": "", "replace": "x"}),
         (None, "replace_text", {"find": "one", "replace": "**x**"}),
     ],
@@ -162,7 +160,6 @@ CASES = {
     ],
     "a picture in Markdown": [(None, "word_insert_markdown", {"at": "end", "markdown": "![a](b.png)"})],
     "a footnote in Markdown": [(None, "word_insert_markdown", {"at": "end", "markdown": "a[^1]\n\n[^1]: n\n"})],
-    "* at replace:": [(None, "word_insert_markdown", {"at": "replace:{p}", "markdown": "x"})],
     "word_drawings *": [
         (None, "word_drawings", {"action": "insert_text_box", "at": "{p}@0", "text": "t", "ref": "box"}),
         ("svg", "word_drawings", {"action": "insert_picture", "at": "{p}@0", "image": "{blob}",

@@ -1877,13 +1877,13 @@
 {"digest":"sha256:4e76c3100a7f737bdcbec886ff67fe89","id":"text:d7c43917224534bb","source":"frozen Python a512c901, unmeasured"}
 {"id":"text:ae526f51686e1a8a","not_supported":"word_insert_markdown like","source":"frozen Python a512c901, unmeasured"}
 {"id":"text:c0f6fe8004a0f692","not_supported":"word_insert_markdown like","source":"frozen Python a512c901, unmeasured"}
-{"id":"text:76b98390937fb3b3","not_supported":"insert_markdown at replace:","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:698671794e6199f35ec0bdcce3081bbe","id":"text:76b98390937fb3b3","source":"docx-agent 0.1's refusal (frozen Python a512c901), code and message equal, in 0.2's refusal envelope (no field; try_call the same call; valid_options): host known difference, rule 1 (where Python refused with no options, Rust adds try_call); word_insert_markdown at replace: served (round 60, R141)"}
 {"digest":"sha256:1d983797d13ac1e01c03bea3431d3f8f","id":"text:5d03e75d1a2ad70b","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:c4df58228432aaafcbf130fb5b8454f2","id":"text:1cabc5aee45fac51","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:65895e31ce2cbc17a95438ca4d82990d","id":"text:1a23ae7a2452794b","source":"frozen Python a512c901, unmeasured"}
 {"id":"text:1b036ae7dc19f517","not_supported":"word_insert_markdown like","source":"frozen Python a512c901, unmeasured"}
 {"id":"text:38ec87fb4e695df3","not_supported":"word_insert_markdown like","source":"frozen Python a512c901, unmeasured"}
-{"id":"text:2922068af71967d1","not_supported":"insert_markdown at replace:","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:3c4913b8c9c0f15c9035f2675b81f0ed","id":"text:2922068af71967d1","source":"docx-agent 0.1's answer (frozen Python a512c901, its pending golden), equal field by field; word_insert_markdown at replace: served (round 60, R141)"}
 {"digest":"sha256:4ae5fbbdf11098b8b8be83823b768cf0","id":"tools:1324e32a5bfc3e12","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:18c7523a5642aeee76f102a13442157e","id":"tools:70733c238ba24e67","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:80fa7ff15dd2dc479b12521d109eb94f","id":"tools:3e3b183ece5a1e3a","source":"frozen Python a512c901, unmeasured"}
