@@ -70,6 +70,28 @@ def test_differences_name_the_paths_and_known_ones_are_admitted_by_field() -> No
     assert host_goldens.unlisted("docx/tests/x", "c", found, [other])[0] == found
 
 
+def test_blessing_named_cases_rewrites_only_their_lines() -> None:
+    """``bless --case``: the named cases' lines replaced where they stood (a new one at the
+    end), every other line kept byte for byte -- even one not as ``canonical`` writes it."""
+    other = '{"case": "b",  "event": "case"}\n'
+    stream = '{"case":"a","event":"case","v":1}\n' + other + '{"case":"a","event":"call","v":1}\n'
+    lines = [{"case": "a", "event": "case", "v": 2}, {"case": "c", "event": "case"}]
+    out = host_goldens.spliced(stream, lines).splitlines(keepends=True)
+    assert out[0] == host_goldens.canonical(lines[0]) + "\n"
+    assert out[1] == other
+    assert out[2] == host_goldens.canonical(lines[1]) + "\n"
+    assert len(out) == 3
+
+
+def test_blessing_a_case_not_recorded_is_refused(tmp_path, capsys) -> None:
+    (tmp_path / "docx" / "tests").mkdir(parents=True)
+    (tmp_path / "docx" / "tests" / "test_x.jsonl").write_text(
+        '{"case": "test_x::t#1", "event": "case", "at": 0, "source": "Python host at abc"}\n', encoding="utf-8")
+    code = host_goldens.bless(tmp_path, tmp_path / "host", cases=["test_x::u#1"])
+    assert code == 1 and "not recorded: test_x::u#1" in capsys.readouterr().out
+    assert not (tmp_path / "host").exists()
+
+
 def test_a_known_difference_needs_rule_1_a_cause_and_fields(tmp_path) -> None:
     pytest.importorskip("tomllib")
     path = tmp_path / "known.toml"
