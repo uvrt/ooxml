@@ -1408,14 +1408,14 @@
 {"digest":"sha256:1bb09495c68f354cbab22aa469122cd5","id":"text:360d354923a64b39","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:98c870ad508eed162ab8968cc8d30b36","id":"text:694f055d0ccfaf9e","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:77e9e1ae6c8e7f8907957242e87ffdc5","id":"text:d7c43917224534bb","source":"frozen Python a512c901, unmeasured"}
-{"id":"text:ae526f51686e1a8a","not_supported":"word_insert_markdown like","source":"frozen Python a512c901, unmeasured"}
-{"id":"text:c0f6fe8004a0f692","not_supported":"word_insert_markdown like","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:dc7ad2cbbd9dd242bc3691232cc41a3c","id":"text:ae526f51686e1a8a","source":"docx-agent 0.1's answer (frozen Python a512c901, its pending golden)"}
+{"digest":"sha256:e149eb655c83ae898c41b1f2ee796a87","id":"text:c0f6fe8004a0f692","source":"docx-agent 0.1's answer (frozen Python a512c901, its pending golden)"}
 {"digest":"sha256:5f8d80cef6f86e52d287b3337a01968f","id":"text:76b98390937fb3b3","source":"docx-agent 0.1's answer (frozen Python a512c901, its pending golden), equal field by field; word_insert_markdown at replace: served (round 60, R141)"}
 {"digest":"sha256:527bf23a845db47cd73896adf85b2532","id":"text:e983e3e570850add","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:0b0d6e0a31bd675c31885afd3fb9911b","id":"text:7a43a22f87b68061","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:a6d81b8f300c2572f4f01e0e474f72b6","id":"text:7bcecbfb9f79cf1c","source":"frozen Python a512c901, unmeasured"}
-{"id":"text:558a40b600275a20","not_supported":"word_insert_markdown like","source":"frozen Python a512c901, unmeasured"}
-{"id":"text:a42ec1dba68ee759","not_supported":"word_insert_markdown like","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:085a21d44c8a2a5b0c884e6cbaea9e4f","id":"text:558a40b600275a20","source":"docx-agent 0.1's answer (frozen Python a512c901, its pending golden)"}
+{"digest":"sha256:f64145dae11541ac497b489c8cda3971","id":"text:a42ec1dba68ee759","source":"docx-agent 0.1's answer (frozen Python a512c901, its pending golden)"}
 {"digest":"sha256:43990e22a9e15bd6e3f5d99fbec3ce00","id":"text:33fc90543cc8a246","source":"docx-agent 0.1's answer (frozen Python a512c901, its pending golden), equal field by field; word_insert_markdown at replace: served (round 60, R141)"}
 {"digest":"sha256:89870a593092482ef70922584596d374","id":"tools:1324e32a5bfc3e12","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:f03b1e3c4efe3b77042340abb4f67e31","id":"tools:70733c238ba24e67","source":"frozen Python a512c901, unmeasured"}

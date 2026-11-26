@@ -1542,14 +1542,14 @@
 {"digest":"sha256:2c2e232da0a252fcb8ba4d7a6b5b3384","id":"text:9b1af6932b2e5c1b","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:5876b6be8201a0526a96616c759b1c6e","id":"text:2bc2a3190bab33c9","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:32813b9a9a8bcb31cc3efc932a1ce974","id":"text:bc278f00a8026ca8","source":"frozen Python a512c901, unmeasured"}
-{"id":"text:a5e1ec3534690aba","not_supported":"word_insert_markdown like","source":"frozen Python a512c901, unmeasured"}
-{"id":"text:0e4d15851cbc1ddc","not_supported":"word_insert_markdown like","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:6ee208f312994759cac2e1e115cdef3c","id":"text:a5e1ec3534690aba","source":"docx-agent 0.1's answer (frozen Python a512c901, its pending golden)"}
+{"digest":"sha256:814ded5c0d257b447a30f78287bb1c75","id":"text:0e4d15851cbc1ddc","source":"docx-agent 0.1's answer (frozen Python a512c901, its pending golden)"}
 {"digest":"sha256:a5d306de10e0a44c877e27032348c005","id":"text:b144d2ee8e452da8","source":"docx-agent 0.1's answer (frozen Python a512c901, its pending golden), equal field by field; word_insert_markdown at replace: served (round 60, R141)"}
 {"digest":"sha256:7ded1ab0c7e34f9c7e24adbb2b415d1d","id":"text:7d11bfee36850aae","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:36dd5982d479cf71db920565128f217b","id":"text:12f6191527005363","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:fb0954d6611c1063c7749ad990b4c79f","id":"text:f6c709c84c646514","source":"frozen Python a512c901, unmeasured"}
-{"id":"text:5cc974af74b51636","not_supported":"word_insert_markdown like","source":"frozen Python a512c901, unmeasured"}
-{"id":"text:1e15341340233480","not_supported":"word_insert_markdown like","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:3d6fc1e1f6de25f354240e4dc7c9353c","id":"text:5cc974af74b51636","source":"docx-agent 0.1's answer (frozen Python a512c901, its pending golden)"}
+{"digest":"sha256:65e600539e3cc4ccf90cca31e2282ccf","id":"text:1e15341340233480","source":"docx-agent 0.1's answer (frozen Python a512c901, its pending golden)"}
 {"digest":"sha256:84925ee7424d39ed057843f9de6d6e1d","id":"text:59295d6b2b031fc8","source":"docx-agent 0.1's refusal (frozen Python a512c901), code and message equal, in 0.2's refusal envelope (no field; try_call the same call; valid_options): host known difference, rule 1 (where Python refused with no options, Rust adds try_call); word_insert_markdown at replace: served (round 60, R141)"}
 {"digest":"sha256:04caf41d5dbeab901aa2d35a649af836","id":"tools:1324e32a5bfc3e12","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:18272db2f24fda9030437ac75bfaa81f","id":"tools:70733c238ba24e67","source":"frozen Python a512c901, unmeasured"}
