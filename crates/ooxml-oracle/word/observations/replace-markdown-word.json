@@ -1,0 +1,141 @@
+{
+ "_about": "What Word 16.106 for Mac wrote for crates/ooxml-oracle/word/probes/replace_markdown_probe.py (document and case in cases/replace_markdown_cases.py): 'word-replace', two paragraphs selected whole and new ones typed over them, tracked (blocks normalised as e3's; per paragraph key its runs as [kind, text], its mark's revision and its own pPr children); 'tools-opened', whether it opened and saved the tools' tracked word_insert_markdown at replace:; 'tools-accept'/'tools-reject', each key's text and pPr children after its Accept All / Reject All of the tools' document, and whether any revision was left. Regenerate with python crates/ooxml-oracle/word/probes/replace_markdown_probe.py.",
+ "word": "16.106 (macOS), Dutch interface",
+ "word-replace": {
+  "blocks": [
+   "<w:p w14:paraId=\"51000001\" w14:textId=\"77777777\"><w:r><w:t>Head stays.</w:t></w:r></w:p>",
+   "<w:p w14:paraId=\"51000002\" w14:textId=\"284FB9AD\"><w:pPr><w:keepNext/><w:pageBreakBefore/><w:ind w:left=\"720\"/><w:rPr><w:del w:id=\"0\" w:author=\"{author}\" w:date=\"{date}\" w16du:dateUtc=\"{date}\"/></w:rPr></w:pPr><w:del w:id=\"1\" w:author=\"{author}\" w:date=\"{date}\" w16du:dateUtc=\"{date}\"><w:r><w:delText>First body.</w:delText></w:r></w:del></w:p>",
+   "<w:p w14:paraId=\"51000003\" w14:textId=\"3E7BB266\"><w:pPr><w:keepLines/><w:jc w:val=\"center\"/><w:rPr><w:ins w:id=\"2\" w:author=\"{author}\" w:date=\"{date}\" w16du:dateUtc=\"{date}\"/></w:rPr></w:pPr><w:del w:id=\"3\" w:author=\"{author}\" w:date=\"{date}\" w16du:dateUtc=\"{date}\"><w:r><w:delText>Second body.</w:delText></w:r></w:del><w:ins w:id=\"4\" w:author=\"{author}\" w:date=\"{date}\" w16du:dateUtc=\"{date}\"><w:r><w:t>Newone first.</w:t></w:r></w:ins></w:p>",
+   "<w:p w14:paraId=\"52F907F9\" w14:textId=\"36B3B453\"><w:pPr><w:keepLines/><w:jc w:val=\"center\"/><w:rPr><w:ins w:id=\"5\" w:author=\"{author}\" w:date=\"{date}\" w16du:dateUtc=\"{date}\"/></w:rPr></w:pPr><w:ins w:id=\"6\" w:author=\"{author}\" w:date=\"{date}\" w16du:dateUtc=\"{date}\"><w:r><w:t>Newtwo second.</w:t></w:r></w:ins></w:p>",
+   "<w:p w14:paraId=\"1BE7A0F8\" w14:textId=\"77777777\"><w:pPr><w:keepLines/><w:jc w:val=\"center\"/></w:pPr></w:p>",
+   "<w:p w14:paraId=\"51000004\" w14:textId=\"77777777\"><w:r><w:t>After stays.</w:t></w:r></w:p>",
+   "<w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/><w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" w:header=\"708\" w:footer=\"708\" w:gutter=\"0\"/><w:cols w:space=\"708\"/></w:sectPr>"
+  ],
+  "paragraphs": {
+   "Head": {
+    "runs": [
+     [
+      "text",
+      "Head stays."
+     ]
+    ],
+    "mark": null,
+    "settings": []
+   },
+   "First": {
+    "runs": [
+     [
+      "del",
+      "First body."
+     ]
+    ],
+    "mark": "del",
+    "settings": [
+     "keepNext",
+     "pageBreakBefore",
+     "ind"
+    ]
+   },
+   "Second": {
+    "runs": [
+     [
+      "del",
+      "Second body."
+     ],
+     [
+      "ins",
+      "Newone first."
+     ]
+    ],
+    "mark": "ins",
+    "settings": [
+     "keepLines",
+     "jc"
+    ]
+   },
+   "Newtwo": {
+    "runs": [
+     [
+      "ins",
+      "Newtwo second."
+     ]
+    ],
+    "mark": "ins",
+    "settings": [
+     "keepLines",
+     "jc"
+    ]
+   },
+   "After": {
+    "runs": [
+     [
+      "text",
+      "After stays."
+     ]
+    ],
+    "mark": null,
+    "settings": []
+   }
+  }
+ },
+ "tools-opened": {
+  "outcome": "done",
+  "detail": ""
+ },
+ "tools-accept": {
+  "paragraphs": {
+   "Head": {
+    "text": "Head stays.",
+    "settings": []
+   },
+   "Newone": {
+    "text": "Newone first.",
+    "settings": [
+     "keepNext",
+     "pageBreakBefore",
+     "ind"
+    ]
+   },
+   "Newtwo": {
+    "text": "Newtwo second.",
+    "settings": [
+     "keepLines",
+     "jc"
+    ]
+   },
+   "After": {
+    "text": "After stays.",
+    "settings": []
+   }
+  },
+  "revisions": false
+ },
+ "tools-reject": {
+  "paragraphs": {
+   "Head": {
+    "text": "Head stays.",
+    "settings": []
+   },
+   "First": {
+    "text": "First body.",
+    "settings": [
+     "keepNext",
+     "pageBreakBefore",
+     "ind"
+    ]
+   },
+   "Second": {
+    "text": "Second body.",
+    "settings": [
+     "keepLines",
+     "jc"
+    ]
+   },
+   "After": {
+    "text": "After stays.",
+    "settings": []
+   }
+  },
+  "revisions": false
+ }
+}

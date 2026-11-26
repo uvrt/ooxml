@@ -3,17 +3,20 @@
 //! ([`parse`]), each construct written in the style the [`WriteMap`] names for it
 //! ([`writer`], [`lists`], [`table`]), put at its place -- a story's end (a body that is one
 //! empty paragraph typed into: the first new paragraph keeps its ids), after or before a
-//! block -- with a separator paragraph between two tables and a paragraph after a table
-//! that ends its container, stamped, and tracked as one revision group ([`insertion`]);
-//! a table cell style whose indents do not fit its cells said in a warning ([`cell_indents`]).
+//! block, or in place of blocks (`replace:`, the new paragraphs keeping the replaced ones'
+//! settings: [`keep`]) -- with a separator paragraph between two tables and a paragraph
+//! after a table that ends its container, stamped, and tracked as one revision group
+//! ([`insertion`]); a table cell style whose indents do not fit its cells said in a warning
+//! ([`cell_indents`]).
 //!
 //! Not ported yet ([`EditError::Unsupported`]: the host writes them its own way):
-//! pictures, footnotes, `replace:`, and the `like` and `table_like` looks.
+//! pictures, footnotes, and the `like` and `table_like` looks.
 //!
 //! Must not: write but through the sink, or know a tool's JSON.
 
 mod cell_indents;
 mod insertion;
+mod keep;
 pub(crate) use insertion::{insert_content, track, track_table};
 mod lists;
 mod parse;
@@ -71,6 +74,21 @@ pub struct MarkdownInserted {
     pub warnings: Vec<String>,
     /// The top-level blocks made.
     pub blocks: Vec<String>,
+    /// At `replace:`, what each new paragraph that kept any of the replaced ones' settings
+    /// kept, in order.
+    pub kept: Vec<KeptSettings>,
+}
+
+/// What a new paragraph kept of a paragraph it replaced.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeptSettings {
+    /// The new paragraph.
+    pub block: String,
+    /// The replaced paragraph whose settings it took.
+    pub from: String,
+    /// The settings, as a result names them (`style Report Body`, `keep_with_next`,
+    /// `list level 0`).
+    pub settings: Vec<String>,
 }
 
 impl Command<WordDoc> for InsertMarkdown {
@@ -86,7 +104,9 @@ impl Command<WordDoc> for InsertMarkdown {
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<MarkdownInserted> {
         let mut sink = EditSink::new(tx, self.policy.clone());
         let blocks = self.read()?;
-        if !blocks.iter().any(produces) {
+        // in place of blocks, nothing written still takes them away
+        let replaces = matches!(self.at.kind(), ooxml_word_model::address::PlaceKind::Replace(_));
+        if !replaces && !blocks.iter().any(produces) {
             return Ok(MarkdownInserted::default());
         }
         let out = insertion::insert(&mut sink, self, &blocks)?;

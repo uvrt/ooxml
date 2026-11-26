@@ -1,8 +1,9 @@
-//! Owns: the blocks a copy at `replace:` replaces, deleted as docx-agent's `copy_blocks`
-//! deletes them (`delete_block` each, by the copy's policy): first where anything follows
-//! them in their container or the copy is tracked -- the copy then goes before what
-//! followed them, so its ids never meet theirs -- else after the copy is placed (a cell's
-//! last blocks: the container keeps a paragraph throughout).
+//! Owns: the blocks an edit at `replace:` replaces (a copy's, docx-agent's `copy_blocks`;
+//! Markdown's, its `insert_markdown`), deleted as docx-agent deletes them (`delete_block`
+//! each, by the edit's policy): first where anything follows them in their container or the
+//! edit is tracked -- the new blocks then go before what followed them, so their ids never
+//! meet the old ones' -- else after the new blocks are placed (a cell's last blocks: the
+//! container keeps a paragraph throughout).
 //!
 //! Must not: delete but through [`crate::delete_write`].
 
@@ -14,23 +15,23 @@ use ooxml_word_model::docx::at_path;
 use ooxml_xml::{Element, Node};
 use std::sync::Arc;
 
-/// The blocks replaced, and whether they go before the copy is placed.
-pub(super) struct Replaced {
+/// The blocks replaced, and whether they go before the new blocks are placed.
+pub(crate) struct Replaced {
     /// Their ids, in order.
-    pub(super) ids: Vec<String>,
-    /// Deleted before the copy is placed.
-    pub(super) first: bool,
+    pub(crate) ids: Vec<String>,
+    /// Deleted before the new blocks are placed.
+    pub(crate) first: bool,
     /// The ids the deletions removed.
-    pub(super) removed: Vec<String>,
+    pub(crate) removed: Vec<String>,
 }
 
 impl Replaced {
     /// The blocks `ids` (the first at `place`), deleted now where they go first, `place`
-    /// then before what followed them; `tracked`: the copy's policy tracks.
+    /// then before what followed them; `tracked`: the edit's policy tracks.
     ///
     /// # Errors
     /// A deletion's refusal; a place the part does not have.
-    pub(super) fn begin(
+    pub(crate) fn begin(
         sink: &mut EditSink<'_, '_>,
         place: &mut Place,
         ids: Vec<String>,
@@ -62,13 +63,13 @@ impl Replaced {
         Ok(out)
     }
 
-    /// The blocks deleted after the copy is placed, where they did not go first; untracked,
-    /// one block replaced by one noted (`_note_replaced`, of the copies' own ids
+    /// The blocks deleted after the new blocks are placed, where they did not go first; untracked,
+    /// one block replaced by one noted (`_note_replaced`, of the new blocks' own ids
     /// `per_element`).
     ///
     /// # Errors
     /// A deletion's refusal.
-    pub(super) fn finish(
+    pub(crate) fn finish(
         &mut self,
         sink: &mut EditSink<'_, '_>,
         tracked: bool,

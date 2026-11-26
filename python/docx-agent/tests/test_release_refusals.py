@@ -162,7 +162,6 @@ CASES = {
     ],
     "a picture in Markdown": [(None, "word_insert_markdown", {"at": "end", "markdown": "![a](b.png)"})],
     "a footnote in Markdown": [(None, "word_insert_markdown", {"at": "end", "markdown": "a[^1]\n\n[^1]: n\n"})],
-    "* at replace:": [(None, "word_insert_markdown", {"at": "replace:{p}", "markdown": "x"})],
     "word_drawings *": [
         (None, "word_drawings", {"action": "insert_text_box", "at": "{p}@0", "text": "t", "ref": "box"}),
         ("svg", "word_drawings", {"action": "insert_picture", "at": "{p}@0", "image": "{blob}",

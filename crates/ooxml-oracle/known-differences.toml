@@ -467,10 +467,6 @@ form = "a footnote in Markdown"
 cause = "insert_markdown footnotes (user 2026-11-22: refused at release, added after)"
 
 [[not_supported]]
-form = "* at replace:"
-cause = "placing at replace: (user 2026-11-22: refused at release, added after)"
-
-[[not_supported]]
 form = "* into an empty container"
 cause = "placing into an empty container (deferred, text forms T)"
 

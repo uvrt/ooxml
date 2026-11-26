@@ -1,28 +1,32 @@
 //! Owns: where insert_markdown's blocks go and how they are put there (docx-agent's
 //! `_lone_empty_paragraph`, `_insert`, `Writer.stamp`, `Writer.track`): a body that is one
-//! empty paragraph typed into (the place itself is [`crate::placing`]'s), separators and a
+//! empty paragraph typed into (the place itself is [`crate::placing`]'s), blocks replaced
+//! (`replace:`: deleted by [`crate::replacing`], the new paragraphs keeping their settings
+//! by [`super::keep`], the list instances no paragraph names any more removed), separators and a
 //! closing paragraph, paraIds and textIds drawn in document order (rows from their own
 //! sequence), and the insertion tracked as one revision group in Word's typing form.
 //!
 //! Must not: write but through the sink.
 
 use super::writer::Writer;
-use super::{InsertMarkdown, MarkdownInserted};
+use super::{InsertMarkdown, KeptSettings, MarkdownInserted};
 use crate::marks::{clean_properties, insert_in_order, mark, mark_record, pass_mark};
 use crate::names::{W, W14};
 use crate::placing::{Place, Stretch, BLOCKS};
 use crate::policy::{RevisionPolicy, Stamp};
+use crate::replacing::Replaced;
 use crate::sink::EditSink;
 use crate::stamping::{stamp_document, w14_prefix};
 use crate::validate::Orders;
 use crate::work::{Id, Work};
 use crate::{EditError, Result, WordDoc};
-use ooxml_word_model::address::Place as Where;
+use ooxml_word_model::address::{Place as Where, PlaceKind};
 use ooxml_word_model::docx::formatting::Formatting;
 use ooxml_word_model::docx::Docx;
 use ooxml_word_model::ids::valid_long_hex;
 use ooxml_word_model::markdown::model::Block;
 use ooxml_xml::{Element, QName};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 /// Where the blocks go, and the body's one empty paragraph typed into (its id and node
@@ -30,6 +34,8 @@ use std::sync::Arc;
 pub(crate) struct Located {
     place: Place,
     lone: Option<(String, u32)>,
+    /// The blocks `replace:` names, in order.
+    replaced: Vec<String>,
 }
 
 /// `_lone_empty_paragraph`: the id of the body's only block when it is an empty paragraph
@@ -62,8 +68,17 @@ fn lone_empty_paragraph(docx: &Docx) -> Option<(String, Vec<u32>)> {
 /// writes at the body's end and does not start with a table.
 ///
 /// # Errors
-/// A place that does not exist, `replace:` (not ported yet), a story of notes or comments.
+/// A place that does not exist, a block replaced that is neither a paragraph, a table nor a
+/// content control, a story of notes or comments.
 pub(crate) fn locate(doc: &WordDoc, docx: &Docx, at: &Where, blocks: &[Block]) -> Result<Located> {
+    if let PlaceKind::Replace(named) = at.kind() {
+        let (place, replaced) = crate::placing::replacing(doc, docx, named)?;
+        return Ok(Located {
+            place,
+            lone: None,
+            replaced,
+        });
+    }
     let lone = if at.is_body_end() && !matches!(blocks.first(), Some(Block::Table(_))) {
         lone_empty_paragraph(docx)
     } else {
@@ -79,11 +94,13 @@ pub(crate) fn locate(doc: &WordDoc, docx: &Docx, at: &Where, blocks: &[Block]) -
                 before: Some(index),
             },
             lone: (!matches!(blocks.last(), Some(Block::Table(_)))).then_some((id, index)),
+            replaced: Vec::new(),
         });
     }
     Ok(Located {
         place: crate::placing::locate(doc, docx, at, "insert_markdown")?,
         lone: None,
+        replaced: Vec::new(),
     })
 }
 
@@ -94,14 +111,21 @@ pub(crate) fn insert(
     blocks: &[Block],
 ) -> Result<MarkdownInserted> {
     let docx = sink.docx()?;
-    let Located { place, lone } = locate(sink.doc(), &docx, &command.at, blocks)?;
+    let Located {
+        mut place,
+        lone,
+        replaced,
+    } = locate(sink.doc(), &docx, &command.at, blocks)?;
+    // the replaced paragraphs read before anything changes
+    let donors = super::keep::donors(&docx, &place.part, &replaced);
     let renamed = stamp_document(sink, &docx)?;
     let part = place.part.clone();
+    let tracked = matches!(sink.policy(), RevisionPolicy::Tracked(_));
+    let mut replacing = Replaced::begin(sink, &mut place, replaced, tracked)?;
     let mut stretch = Stretch::open(sink, &place, "insert_markdown")?;
     let anchor = stretch.anchor(&place);
     let lone = lone.and_then(|(id, k)| Some((id, stretch.child(k)?)));
     let work = &mut stretch.work;
-    let tracked = matches!(sink.policy(), RevisionPolicy::Tracked(_));
     let mut removed = Vec::new();
     let continued = lone
         .as_ref()
@@ -122,6 +146,7 @@ pub(crate) fn insert(
     }
     let mut writer = Writer::new(&part, &command.style_map, command.options.clone());
     let mut elements = writer.blocks(sink, work, blocks)?;
+    let (kept, unnamed) = keep_settings(sink, work, &writer, &donors)?;
     let root = work.root();
     for element in &elements {
         match insert_before {
@@ -144,6 +169,11 @@ pub(crate) fn insert(
     })?;
     crate::placing::commit(sink, &stretch, &place, &stamped.0, &wrote, false)?;
     let (created, top) = stamped;
+    let kept = said(&stretch.work, kept);
+    let per_block: Vec<Vec<String>> = top.iter().map(|id| vec![id.clone()]).collect();
+    replacing.finish(sink, tracked, &per_block)?;
+    removed.extend(replacing.removed);
+    crate::lists::numbering::reap(sink, &docx.main, &unnamed)?;
     writer.warnings.extend(cell_warnings);
     Ok(MarkdownInserted {
         first: created.first().cloned(),
@@ -153,7 +183,43 @@ pub(crate) fn insert(
         removed,
         warnings: writer.warnings,
         blocks: top,
+        kept,
     })
+}
+
+/// The replaced paragraphs' settings kept by the writer's new ones ([`super::keep`]), and the
+/// list instances these stopped naming; nothing where nothing is replaced.
+fn keep_settings(
+    sink: &EditSink<'_, '_>,
+    work: &mut Work,
+    writer: &Writer<'_>,
+    donors: &[super::keep::Donor],
+) -> Result<(Vec<super::keep::Kept>, BTreeSet<i64>)> {
+    if donors.is_empty() {
+        return Ok((Vec::new(), BTreeSet::new()));
+    }
+    let shared = sink.doc().shared_handle();
+    let docx = sink.docx()?;
+    Ok(super::keep::keep_replaced(
+        work,
+        &writer.tagged,
+        donors,
+        (writer.map, &docx, shared.facts.orders()),
+    ))
+}
+
+/// What each new paragraph kept, by the id it was stamped with.
+fn said(work: &Work, kept: Vec<super::keep::Kept>) -> Vec<KeptSettings> {
+    kept.into_iter()
+        .filter_map(|k| {
+            let block = format!("p:{}", work.get(k.node, Some(W14), "paraId")?);
+            Some(KeptSettings {
+                block,
+                from: k.from,
+                settings: k.settings,
+            })
+        })
+        .collect()
 }
 
 /// The tables the writer made whose cell styles' indents do not fit their cells

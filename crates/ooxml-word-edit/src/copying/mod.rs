@@ -37,7 +37,6 @@ mod flatten;
 mod lists;
 mod notes;
 mod parts;
-mod replace;
 mod source;
 mod stamp;
 mod styles;
@@ -293,7 +292,7 @@ impl CopyBlocks {
         let (mut place, replaced) = destination(sink.doc(), &docx, &self.at)?;
         let renamed = stamp_document(sink, &docx)?;
         let tracked = matches!(self.policy, RevisionPolicy::Tracked(_));
-        let mut replaced = replace::Replaced::begin(sink, &mut place, replaced, tracked)?;
+        let mut replaced = crate::replacing::Replaced::begin(sink, &mut place, replaced, tracked)?;
         let mut stretch = Stretch::open(sink, &place, "copy_from")?;
         let anchor = stretch.anchor(&place);
         let space = Space::default();
