@@ -132,3 +132,24 @@ fn a_replacement_writing_nothing_still_takes_the_blocks_away() {
     assert!(reply.get("error").is_none(), "{reply}");
     assert!(!body.contains("Alpha body.") && body.contains("After."), "{body}");
 }
+
+#[test]
+fn the_paragraph_after_a_last_table_is_replaced_with_the_new_one_placed_first() {
+    // docx-agent's order, untracked: the new blocks go in before the old ones go, so the body
+    // never ends in the table
+    let (reply, body) = replaced(false, "| a | b |\n|---|---|\n| 1 | 2 |\n\nTail.", |editing, blocks| {
+        insert(editing, &format!("replace:{}", blocks.last().unwrap()), "New tail.")
+    });
+    assert!(reply.get("error").is_none(), "{reply}");
+    assert!(!body.contains("Tail.<") && body.contains("New tail."), "{body}");
+}
+
+#[test]
+fn kept_names_the_replaced_paragraph_by_the_id_it_was_stamped_with() {
+    let (reply, _) = replaced(false, "Alpha body.\n\nAfter.", |editing, blocks| {
+        format(editing, &[&blocks[0]], json!({"keep_with_next": true}));
+        insert(editing, &format!("replace:{}", blocks[0]), "New.")
+    });
+    let from = reply["data"]["kept"][0]["from"].as_str().unwrap();
+    assert!(from.starts_with("p:"), "{reply}");
+}

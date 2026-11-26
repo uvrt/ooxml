@@ -14,7 +14,7 @@ use crate::marks::{clean_properties, insert_in_order, mark, mark_record, pass_ma
 use crate::names::{W, W14};
 use crate::placing::{Place, Stretch, BLOCKS};
 use crate::policy::{RevisionPolicy, Stamp};
-use crate::replacing::Replaced;
+use crate::replacing::{Order, Replaced};
 use crate::sink::EditSink;
 use crate::stamping::{stamp_document, w14_prefix};
 use crate::validate::Orders;
@@ -121,7 +121,7 @@ pub(crate) fn insert(
     let renamed = stamp_document(sink, &docx)?;
     let part = place.part.clone();
     let tracked = matches!(sink.policy(), RevisionPolicy::Tracked(_));
-    let mut replacing = Replaced::begin(sink, &mut place, replaced, tracked)?;
+    let mut replacing = Replaced::begin(sink, &mut place, replaced, tracked, Order::After)?;
     let mut stretch = Stretch::open(sink, &place, "insert_markdown")?;
     let anchor = stretch.anchor(&place);
     let lone = lone.and_then(|(id, k)| Some((id, stretch.child(k)?)));
@@ -169,7 +169,7 @@ pub(crate) fn insert(
     })?;
     crate::placing::commit(sink, &stretch, &place, &stamped.0, &wrote, false)?;
     let (created, top) = stamped;
-    let kept = said(&stretch.work, kept);
+    let kept = said(&stretch.work, kept, &renamed);
     let per_block: Vec<Vec<String>> = top.iter().map(|id| vec![id.clone()]).collect();
     replacing.finish(sink, tracked, &per_block)?;
     removed.extend(replacing.removed);
@@ -208,14 +208,20 @@ fn keep_settings(
     ))
 }
 
-/// What each new paragraph kept, by the id it was stamped with.
-fn said(work: &Work, kept: Vec<super::keep::Kept>) -> Vec<KeptSettings> {
+/// What each new paragraph kept, by the id it was stamped with, and the replaced one's id
+/// after the edit's stamping (`renamed`: a paragraph the document never stamped is named by
+/// its new id, as docx-agent names it).
+fn said(
+    work: &Work,
+    kept: Vec<super::keep::Kept>,
+    renamed: &[(ooxml_word_model::ids::BlockId, ooxml_word_model::ids::BlockId)],
+) -> Vec<KeptSettings> {
     kept.into_iter()
         .filter_map(|k| {
             let block = format!("p:{}", work.get(k.node, Some(W14), "paraId")?);
             Some(KeptSettings {
                 block,
-                from: k.from,
+                from: crate::ranges::renamed_id(renamed, &k.from),
                 settings: k.settings,
             })
         })

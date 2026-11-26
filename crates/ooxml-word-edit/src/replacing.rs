@@ -1,9 +1,10 @@
 //! Owns: the blocks an edit at `replace:` replaces (a copy's, docx-agent's `copy_blocks`;
 //! Markdown's, its `insert_markdown`), deleted as docx-agent deletes them (`delete_block`
-//! each, by the edit's policy): first where anything follows them in their container or the
-//! edit is tracked -- the new blocks then go before what followed them, so their ids never
-//! meet the old ones' -- else after the new blocks are placed (a cell's last blocks: the
-//! container keeps a paragraph throughout).
+//! each, by the edit's policy, in the [`Order`] the edit's own docx-agent code takes): first
+//! where the edit is tracked -- and, for a copy, where anything follows them in their
+//! container -- the new blocks then going before what followed them, so their ids never meet
+//! the old ones'; else after the new blocks are placed (the container keeps a block
+//! throughout: a cell's paragraph, a paragraph after a table at a story's end).
 //!
 //! Must not: delete but through [`crate::delete_write`].
 
@@ -14,6 +15,15 @@ use crate::{EditError, Result};
 use ooxml_word_model::docx::at_path;
 use ooxml_xml::{Element, Node};
 use std::sync::Arc;
+
+/// When the blocks replaced go, untracked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Order {
+    /// Before the new blocks are placed where anything follows them (`copy_blocks`).
+    FirstWhereFollowed,
+    /// After the new blocks are placed (`insert_markdown`'s `_insert`).
+    After,
+}
 
 /// The blocks replaced, and whether they go before the new blocks are placed.
 pub(crate) struct Replaced {
@@ -27,7 +37,8 @@ pub(crate) struct Replaced {
 
 impl Replaced {
     /// The blocks `ids` (the first at `place`), deleted now where they go first, `place`
-    /// then before what followed them; `tracked`: the edit's policy tracks.
+    /// then before what followed them; `tracked`: the edit's policy tracks; `order`: when
+    /// they go untracked.
     ///
     /// # Errors
     /// A deletion's refusal; a place the part does not have.
@@ -36,6 +47,7 @@ impl Replaced {
         place: &mut Place,
         ids: Vec<String>,
         tracked: bool,
+        order: Order,
     ) -> Result<Self> {
         let mut out = Replaced {
             ids,
@@ -50,7 +62,7 @@ impl Replaced {
         let container = container(sink, place)?;
         let following = following(&container, place.before, out.ids.len());
         let len = container.children().len();
-        out.first = tracked || following.is_some();
+        out.first = tracked || (order == Order::FirstWhereFollowed && following.is_some());
         if !out.first {
             return Ok(out);
         }
