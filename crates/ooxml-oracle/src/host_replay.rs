@@ -276,6 +276,15 @@ pub fn normalised(result: &ooxml_tools::ToolResult<Value>) -> Value {
     Value::Object(body)
 }
 
+/// What docx-agent's adapters say after a batch's ops (`docx_agent/rust/served/objects.py`'s
+/// table taller than a page, `reads.py`'s check between a batch's changes): D3's docx
+/// adapters port them.
+const ADAPTER_WARNINGS: [&str; 3] = [
+    "taller than a page",
+    "could not be laid out to it",
+    "check laid the document out between the batch's changes",
+];
+
 /// A read_batch op's path split: its index and the rest (`result.data.ops[2].data.x`:
 /// `(2, "data.x")`).
 fn op_path(path: &str) -> Option<(usize, &str)> {
@@ -332,9 +341,6 @@ fn described_output(output: &ooxml_session::outputs::Output) -> Value {
 /// depend on it (it changes the session's state).
 fn waits(tool: &str, arguments: &Value) -> Option<(Waits, bool)> {
     let bare = tool.rsplit('.').next().unwrap_or(tool);
-    if bare == "batch" {
-        return Some((Waits::D2, true));
-    }
     if adapted(bare, arguments) {
         return Some((Waits::Adapters, true));
     }
@@ -520,8 +526,12 @@ impl Replayer {
     }
 
     /// A session for a case whose head is `head`: the toolbox and session settings it gives
-    /// (roles; `Settings` for any other), its clock.
-    fn session(&self, head: &Value) -> Result<HostSession, Waits> {
+    /// (roles, a batch's limits; `Settings` for any other), its clock; Word's format laid out
+    /// with the repository's open faces (a bench's host too).
+    ///
+    /// # Errors
+    /// What it waits for: a setting the replay does not make yet.
+    pub fn session(&self, head: &Value) -> Result<HostSession, Waits> {
         let mut settings = HostSettings::default();
         let given = |which: &str| head.get(which).and_then(Value::as_object).cloned().unwrap_or_default();
         let (toolbox, session) = (given("toolbox"), given("session"));
@@ -536,6 +546,18 @@ impl Replayer {
                         .filter_map(Value::as_str)
                         .collect();
                     settings.roles = RoleSet::parse(names).map_err(|_| Waits::Settings)?;
+                }
+                // a batch's limits (the others the replay does not make yet)
+                "limits" => {
+                    for (limit, given) in value.as_object().into_iter().flatten() {
+                        match (limit.as_str(), given.as_f64()) {
+                            ("max_batch_ops", Some(n)) if n >= 0.0 => settings.max_batch_ops = n as usize,
+                            ("batch_timeout", Some(s)) if s >= 0.0 => {
+                                settings.batch_timeout = Duration::from_secs_f64(s);
+                            }
+                            _ => return Err(Waits::Settings),
+                        }
+                    }
                 }
                 _ => return Err(Waits::Settings),
             }
@@ -816,6 +838,10 @@ impl Replayer {
                 None => left.push(path),
             }
         }
+        // a warning docx-agent's adapters add after a batch's ops (D3's docx adapters)
+        if adapters_said(&left, &leaves(&want, field), |_| false) {
+            return Outcome::Waiting(Waits::Adapters, false);
+        }
         if left.is_empty() {
             used.sort_unstable();
             used.dedup();
@@ -833,6 +859,28 @@ impl Replayer {
         let (want, have) = (pick(&a), pick(&b));
         Outcome::Different(left, want, have)
     }
+}
+
+/// Whether the paths `left` differ only where docx-agent's adapters say something after a
+/// batch's ops (a warning of theirs in `wanted`, with what the host adds and, where the
+/// recording could not lay the document out, the reflow it then did not measure).
+fn adapters_said(left: &[String], wanted: &BTreeMap<String, Value>, host_added: impl Fn(&String) -> bool) -> bool {
+    let adapter = |p: &String| {
+        p.starts_with("result.warnings[")
+            && wanted
+                .get(p)
+                .and_then(Value::as_str)
+                .is_some_and(|w| ADAPTER_WARNINGS.iter().any(|t| w.contains(t)))
+    };
+    let unlaid = wanted
+        .values()
+        .filter_map(Value::as_str)
+        .any(|w| w.contains("could not be laid out to it"));
+    let reflow = |p: &String| unlaid && p.starts_with("result.checks.reflow");
+    left.iter().any(adapter)
+        && left
+            .iter()
+            .all(|p| host_added(p) || adapter(p) || reflow(p) || p == "result.warnings")
 }
 
 /// A concurrent case's changes in the order they were committed (`_commit_order`): grouped

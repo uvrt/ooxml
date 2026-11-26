@@ -1,9 +1,9 @@
 //! Owns: the host's own tools' definitions (ooxml-edit's `SESSION_TOOLS` and `new_document`,
 //! their schemas as today's, so one acceptance takes their calls), and the seam the host
 //! runs the session tools through ([`SessionTools`]): `open_document`, `new_document`,
-//! `close_document`, `read_blob` and `batch` are run by an implementation the host is made
-//! with ([`crate::HostTools`]). [`NotYet`] refuses a tool with the way out until its port
-//! (`batch`: Phase 3 D2).
+//! `close_document` and `read_blob` are run by an implementation the host is made with
+//! ([`crate::HostTools`]); `batch` the host runs itself (`crate::batch`). [`NotYet`] refuses
+//! a tool with the way out until its port.
 //!
 //! Must not: run a format's tool, or change the session's stores but through the
 //! [`HostSession`] the seam is handed.
@@ -143,7 +143,7 @@ pub trait SessionTools: Send + Sync {
     fn run(&self, call: &OwnCall<'_>) -> ToolResult<Value>;
 }
 
-/// A session tool before its port (`batch` until D2): refused as not supported yet, with
+/// A session tool before its port: refused as not supported yet, with
 /// the call that would work in the Python host.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NotYet;

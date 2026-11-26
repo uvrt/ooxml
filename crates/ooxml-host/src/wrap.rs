@@ -72,10 +72,27 @@ impl HostSession {
         let Some((format, at)) = self.version_read(doc, result.version) else {
             return;
         };
+        self.host_added_at(tool, doc, &*format, &at, result);
+    }
+
+    /// [`HostSession::host_added`] of a call that read `at` of `doc` (a batch's op: the version
+    /// the ops before it left, which only its batch reads).
+    pub(crate) fn host_added_at(
+        &self,
+        tool: &str,
+        doc: &str,
+        format: &dyn FormatDoc,
+        at: &AnyVersion,
+        result: &mut ToolResult<Value>,
+    ) {
+        if result.is_error() {
+            return;
+        }
+        let (format, at) = (format, at);
         match tool {
-            "save_document" => self.output(doc, &*format, &at, result),
-            "check" => self.check_validation(&*format, &at, result),
-            "describe" => describe_problems(&*format, result),
+            "save_document" => self.output(doc, format, at, result),
+            "check" => self.check_validation(format, at, result),
+            "describe" => describe_problems(format, result),
             _ => {}
         }
     }

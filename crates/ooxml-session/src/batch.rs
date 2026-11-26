@@ -153,13 +153,13 @@ impl Session {
             used += size;
             answers.push((one, index, result.is_error()));
         }
-        let mut combined = combine(&ops, &answers, &left, cap);
+        let mut combined = combine(&ops, &answers, &left, cap, BATCH_TIMEOUT);
         while !answers.is_empty() && compact(&Value::Object(envelope(&combined))).chars().count() > cap {
             if let Some((_, index, _)) = answers.pop() {
                 left.push((index, Left::Budget));
                 left.sort_by_key(|(k, _)| *k);
             }
-            combined = combine(&ops, &answers, &left, cap);
+            combined = combine(&ops, &answers, &left, cap, BATCH_TIMEOUT);
         }
         Ok(combined)
     }
@@ -178,6 +178,7 @@ pub fn combine(
     answers: &[(Map<String, Value>, usize, bool)],
     left: &[(usize, Left)],
     cap: usize,
+    timeout: Duration,
 ) -> Done<Value> {
     let failed: Vec<&Map<String, Value>> = answers.iter().filter(|(_, _, f)| *f).map(|(a, _, _)| a).collect();
     let mut said = vec![format!("Read {} of {} op(s)", answers.len() - failed.len(), ops.len())];
@@ -216,7 +217,7 @@ pub fn combine(
     );
     if !left.is_empty() {
         let thousands = thousands(cap);
-        let timeout = BATCH_TIMEOUT.as_secs();
+        let timeout = seconds(timeout);
         let why = |w: Left| match w {
             Left::Budget => format!("over the reply's {thousands}-character budget"),
             Left::Deadline => format!("not run: past the {timeout} s deadline"),
@@ -247,6 +248,24 @@ pub fn combine(
     let mut done = Done::new(said.join(". "));
     done.data = Some(Value::Object(data));
     done
+}
+
+/// A deadline in seconds as Python's `{:g}` writes it (`120`, `0.5`).
+#[must_use]
+pub fn seconds(timeout: Duration) -> String {
+    let secs = timeout.as_secs_f64();
+    if secs.fract() == 0.0 {
+        format!("{}", timeout.as_secs())
+    } else {
+        format!("{secs}")
+    }
+}
+
+/// Whether a batch that has run for `elapsed` is past its deadline `timeout` (a deadline of
+/// 0 s has passed as soon as the batch begins).
+#[must_use]
+pub fn passed(elapsed: Duration, timeout: Duration) -> bool {
+    elapsed > timeout || timeout.is_zero()
 }
 
 /// `n` with thousands separated by commas (Python's `{n:,}`).

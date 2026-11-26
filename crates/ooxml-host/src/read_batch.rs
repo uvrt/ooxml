@@ -12,9 +12,7 @@
 use crate::catalogue::Catalogue;
 use crate::pipeline::Going;
 use crate::session::HostSession;
-use ooxml_session::batch::{
-    answer, combine, envelope, Left, BATCH_TIMEOUT, MARGIN, MAX_OPS, MAX_READ_BATCH_CHARS, READ_BATCH,
-};
+use ooxml_session::batch::{answer, combine, envelope, passed, Left, MARGIN, MAX_READ_BATCH_CHARS, READ_BATCH};
 use ooxml_session::DocId;
 use ooxml_tools::roles::RoleSet;
 use ooxml_tools::{compact, Failure, Refusal, ToolError, ToolResult, TryCall, WayOut};
@@ -33,12 +31,22 @@ impl HostSession {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        if ops.len() > MAX_OPS {
+        let (most, timeout) = (self.host.settings.max_batch_ops, self.host.settings.batch_timeout);
+        // (the document an op names first, which a reply that ran none of them names)
+        let named = ops.iter().find_map(|op| {
+            let doc = op.get("arguments")?.get("doc")?.as_str()?;
+            DocId::parse(doc)
+                .filter(|id| self.session.kind_of(id).is_ok())
+                .map(|_| doc.to_owned())
+        });
+        if ops.len() > most {
             let message = format!(
-                "{} ops; at most {MAX_OPS} per read_batch: send the rest in another",
+                "{} ops; at most {most} per read_batch: send the rest in another",
                 ops.len()
             );
-            return ToolResult::failed(ToolError::failure(Failure::Limit, message).at("ops"));
+            let mut result = ToolResult::failed(ToolError::failure(Failure::Limit, message).at("ops"));
+            self.name_doc(&mut result, named);
+            return result;
         }
         let own = self.host.settings.limits.result_chars;
         let cap = MAX_READ_BATCH_CHARS.max(own);
@@ -50,7 +58,7 @@ impl HostSession {
         let mut pinned = Vec::new();
         let mut first_doc: Option<String> = None;
         for (index, op) in ops.iter().enumerate() {
-            if clock.monotonic().saturating_sub(started) > BATCH_TIMEOUT {
+            if passed(clock.monotonic().saturating_sub(started), timeout) {
                 left.push((index, Left::Deadline));
                 continue;
             }
@@ -67,23 +75,28 @@ impl HostSession {
             used += size;
             answers.push((one, index, result.is_error()));
         }
-        let mut combined = combine(&ops, &answers, &left, cap);
+        let mut combined = combine(&ops, &answers, &left, cap, timeout);
         while !answers.is_empty() && compact(&Value::Object(envelope(&combined))).chars().count() > cap {
             if let Some((_, index, _)) = answers.pop() {
                 left.push((index, Left::Budget));
                 left.sort_by_key(|(k, _)| *k);
             }
-            combined = combine(&ops, &answers, &left, cap);
+            combined = combine(&ops, &answers, &left, cap, timeout);
         }
         let mut result = ToolResult::done(combined);
         result.app.budget = Some(cap);
-        if let Some(doc) = first_doc {
+        self.name_doc(&mut result, first_doc.or(named));
+        result
+    }
+
+    /// `result` naming `doc` at its head, where there is one.
+    fn name_doc(&self, result: &mut ToolResult<Value>, doc: Option<String>) {
+        if let Some(doc) = doc {
             result.version = DocId::parse(&doc)
                 .and_then(|id| self.session.snapshot(&id).ok())
                 .map(|head| head.number());
             result.doc = Some(doc);
         }
-        result
     }
 
     /// One op: its result, its tool's name as read, whether its tool takes a cursor, and the

@@ -16,7 +16,8 @@ use ooxml_opc::Package;
 use ooxml_session::problems::{Problem, Severity, Validation};
 use ooxml_session::{
     AnyVersion, DocKind, Finished, Format, FormatDoc, FormatRun, NewDocument, OpenEnv, PackageDoc, PackageFormat,
-    PartUpdate, Registry, SessionConfig, SessionError, StoreClock, Stored, StoredDoc, WithState,
+    PartChange, PartContent, PartUpdate, Registry, SessionConfig, SessionError, StoreClock, Stored, StoredDoc,
+    WithState,
 };
 use ooxml_store::{Caller, Store, StoreConfig};
 use ooxml_tools::roles::{HostFacts, Needs, Role};
@@ -27,6 +28,7 @@ use ooxml_tools::{
 use ooxml_zip::{Method, NewEntry, Writer};
 use serde_json::{json, Map, Value};
 use std::any::Any;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -271,6 +273,8 @@ impl Format for ToyFormat {
         Ok(Arc::new(ToyDoc(
             Stored::new(Store::new(PackageDoc::new(package), env.store, clock)),
             baseline,
+            AtomicUsize::new(0),
+            AtomicUsize::new(0),
         )))
     }
 
@@ -328,14 +332,17 @@ impl Format for ToyFormat {
     }
 }
 
-/// A toy document: its package's versions, and the problems it opened with.
-pub struct ToyDoc(Stored<PackageDoc>, Vec<Problem>);
+/// A toy document: its package's versions; the problems it opened with; how many writes a
+/// writer beside a batch is still to make (one each time a batch's op writes part `a`, so the
+/// batch conflicts and runs again); how many of its batches' effects were kept.
+pub struct ToyDoc(Stored<PackageDoc>, Vec<Problem>, pub AtomicUsize, pub AtomicUsize);
 
 /// What a toy edit made.
 struct Made {
     first: u64,
     before: AnyVersion,
     last: AnyVersion,
+    batch: bool,
 }
 
 /// A toy call's format context.
@@ -361,6 +368,7 @@ impl FormatCall for ToyCall<'_> {
             }
             Run::Edit(edit) => {
                 let write = |name: &str, text: &str| -> Result<(), ToolError> {
+                    let failed = |e: SessionError| ToolError::internal(e.to_string(), "toy:update");
                     let before = self.run.doc.any().clone();
                     let bytes: Arc<[u8]> = text.as_bytes().into();
                     let update = PartUpdate::new(
@@ -368,13 +376,56 @@ impl FormatCall for ToyCall<'_> {
                         ooxml_base::Limits::default(),
                         self.run.cancel,
                     );
-                    let (version, _, _, _) =
-                        FormatDoc::update(&self.doc.0, &self.run.context.caller, Some(self.run.tool), &update)
-                            .map_err(|e| ToolError::internal(e.to_string(), "toy:update"))?;
+                    let (version, batch) = match self.run.txn {
+                        Some(txn) => {
+                            // a writer beside the batch, writing the same part now: the batch
+                            // conflicts and is prepared again
+                            // (part `a` only: once an attempt, as the batch's first write)
+                            if name == part("a") && self.doc.2.load(Ordering::SeqCst) > 0 {
+                                self.doc.2.fetch_sub(1, Ordering::SeqCst);
+                                let theirs: Arc<[u8]> = b"<t>theirs</t>".as_slice().into();
+                                let other = PartUpdate::new(
+                                    vec![(name.to_owned(), Some(theirs))],
+                                    ooxml_base::Limits::default(),
+                                    self.run.cancel,
+                                );
+                                FormatDoc::update(&self.doc.0, &Caller::named("other"), Some("toy_set"), &other)
+                                    .map_err(failed)?;
+                            }
+                            // in the batch's transaction: the part read and written, alone
+                            let put = PartChange::Put {
+                                part: name.to_owned(),
+                                content: PartContent::Bytes(text.as_bytes().into()),
+                            };
+                            let version = txn
+                                .with::<PackageDoc, _>(|tx, current| {
+                                    tx.read(name.to_owned());
+                                    tx.write(put)?;
+                                    *current = tx.version_here(current);
+                                    Ok::<_, ooxml_store::Error<PackageDoc>>(Arc::clone(current))
+                                })
+                                .ok_or_else(|| ToolError::internal("no toy transaction", "toy"))?
+                                .map_err(|e| ToolError::internal(e.to_string(), "toy:write"))?;
+                            let kept: ooxml_session::Deferred = Box::new(|doc, _| {
+                                if let Some(toy) = doc.as_any().downcast_ref::<ToyDoc>() {
+                                    toy.3.fetch_add(1, Ordering::SeqCst);
+                                }
+                            });
+                            self.run.deferred.lock().unwrap().push(kept);
+                            (Stored::<PackageDoc>::any(version), true)
+                        }
+                        None => {
+                            let (version, _, _, _) =
+                                FormatDoc::update(&self.doc.0, &self.run.context.caller, Some(self.run.tool), &update)
+                                    .map_err(failed)?;
+                            (version, false)
+                        }
+                    };
                     *self.run.made.lock().unwrap() = Some(Box::new(Made {
                         first: version.seq(),
                         before,
                         last: version,
+                        batch,
                     }));
                     Ok(())
                 };
@@ -426,7 +477,7 @@ impl FormatDoc for ToyDoc {
             first: made.first,
             before: made.before,
             last: made.last,
-            batch: false,
+            batch: made.batch,
             format: None,
             lock: ooxml_session::LockSpent::default(),
         })
@@ -585,6 +636,16 @@ pub fn empty_session(settings: HostSettings) -> HostSession {
 /// [`session_with`] the default settings.
 pub fn session() -> HostSession {
     session_with(HostSettings::default())
+}
+
+/// The toy document `d1` of `session`.
+pub fn toy(session: &HostSession) -> Arc<dyn FormatDoc> {
+    session.session().format_doc(&ooxml_session::DocId::nth(1)).unwrap()
+}
+
+/// `doc` as a toy document.
+pub fn as_toy(doc: &dyn FormatDoc) -> &ToyDoc {
+    doc.as_any().downcast_ref().unwrap()
 }
 
 /// A call's reply as the model reads it.
