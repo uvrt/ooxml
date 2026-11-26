@@ -14,11 +14,11 @@
 //!
 //! Must not: paint (the engine does), or judge what it measures.
 
-use crate::layout_facts::{cell_line, row_of, story_kind};
-use ooxml_word_layout::paint::{PaintedLine, Span, SpanKind};
+use crate::layout_facts::{story_kind, In};
+use ooxml_word_layout::paint::{ItemName, PaintedLine, Span, SpanKind};
 use ooxml_word_layout::px::Px;
 use ooxml_word_model::docx::VersionNames;
-use ooxml_word_model::ids::{Anchor, BlockKey, StoryIx};
+use ooxml_word_model::ids::{Anchor, BlockKey, StoryIx, Sub};
 use ooxml_word_model::value::Text;
 
 /// What a painted item is drawn for, in the version's blocks.
@@ -103,48 +103,68 @@ pub struct LinePlace {
     /// The body table's row it is in.
     pub row: Option<TableRow>,
     /// Where it is a paragraph right in that row's cell (`_CELL_LINE`): the cell, from 0, and
-    /// the paragraph's steps below the cell (`w:p[n]`, or `w:sdt[n]/w:sdtContent[1]/w:p[n]`).
-    pub cell: Option<(usize, Text)>,
+    /// the paragraph.
+    pub cell: Option<(usize, BlockKey)>,
 }
 
 impl LinePlace {
-    /// The place of a line painted with `path`, of `story` (a header's or footer's kind),
-    /// its table found through the version's `names`.
+    /// The place of a line of the paragraph named `name`, of `story` (a header's or
+    /// footer's kind), read by key through the version's `names`; a text box's line by
+    /// its `host` paragraph's, the box's own tables read from its path (until RD1).
     #[must_use]
-    pub fn of(names: &VersionNames, path: &str, story: Option<&'static str>) -> LinePlace {
-        let row = table_row(names, path);
-        let cell = row
-            .and_then(|_| cell_line(path))
-            .map(|(_, _, cell, below)| (cell, Text::from(below)));
-        LinePlace {
-            story: story.unwrap_or_else(|| story_kind(path)),
-            kind: kind_of(path, story),
-            row,
-            cell,
-        }
+    pub fn of(names: &VersionNames, name: &ItemName, host: Option<Anchor>, story: Option<&'static str>) -> LinePlace {
+        let paragraph = name.anchor().or(host).map(|a| a.block);
+        let at = paragraph.and_then(|key| In::of(names, key));
+        let story = story.unwrap_or_else(|| match paragraph {
+            Some(key) => story_of(names, key),
+            None => name.path().map_or("body", story_kind),
+        });
+        let in_table = at.as_ref().is_some_and(In::in_table) || name.path().is_some_and(|p| p.contains("/w:tc["));
+        let kind = match story {
+            "body" if in_table => "table",
+            "footnotes" => "footnote",
+            "endnotes" => "endnote",
+            other => other,
+        };
+        let row = at.as_ref().and_then(|at| at.row);
+        let cell = at
+            .filter(|at| at.in_cell && name.anchor().is_some())
+            .and_then(|at| Some((at.cell()?, paragraph?)));
+        LinePlace { story, kind, row, cell }
     }
 }
 
-/// The body table's row an item painted with `path` is drawn in ([`row_of`]), its table by
-/// key.
+/// The kind of story (`_story_kind`) the block `key` is of: `body`, `footnotes` or
+/// `endnotes` (a header's and footer's lines say their own).
+fn story_of(names: &VersionNames, key: BlockKey) -> &'static str {
+    if key.story() == StoryIx::BODY {
+        return "body";
+    }
+    match names.part(key.story()).map(|part| part.story.as_str()) {
+        Some("footnotes") => "footnotes",
+        Some("endnotes") => "endnotes",
+        _ => "body",
+    }
+}
+
+/// The body table's row an item drawn for `anchor` is in, as docx-agent's `_ROW` reads its
+/// path: the outermost table's (one right in the body) row holding it, by key through the
+/// version's `names`; a cell of that table itself by its own row.
 #[must_use]
-pub fn table_row(names: &VersionNames, path: &str) -> Option<TableRow> {
-    let (table, row) = row_of(path)?;
-    Some(TableRow {
-        table: names.key_at_path(StoryIx::BODY, table)?,
-        row,
-    })
-}
-
-/// A line's kind of text (`_kind`): `table` for a body table's cell, the story's otherwise.
-fn kind_of(path: &str, story: Option<&'static str>) -> &'static str {
-    match story.unwrap_or_else(|| story_kind(path)) {
-        "body" if path.contains("/w:tc[") => "table",
-        "body" => "body",
-        "footnotes" => "footnote",
-        "endnotes" => "endnote",
-        other => other,
+pub fn table_row(names: &VersionNames, anchor: Anchor) -> Option<TableRow> {
+    if matches!(anchor.sub, Sub::Cols(_) | Sub::LineNumbers(_)) || anchor.block.story() != StoryIx::BODY {
+        return None;
     }
+    let chain = names.blocks_of(anchor.block)?;
+    let table = crate::layout_facts::body_table(names, chain.first()?)?;
+    let row = match (chain.get(2).map(|a| a.sub), anchor.sub) {
+        (Some(Sub::Cell(row, _)), _) | (None, Sub::Cell(row, _)) => row,
+        _ => return None,
+    };
+    Some(TableRow {
+        table,
+        row: usize::from(row),
+    })
 }
 
 /// One painted line's text, as a check reads it.
@@ -227,8 +247,8 @@ impl LineText {
         }
         let story = line.story.as_ref().map(|(kind, _)| *kind);
         LineText {
-            place: ItemPlace::of(names, line.anchor, &line.path, host),
-            at: LinePlace::of(names, &line.path, story),
+            place: ItemPlace::of(names, line.name.anchor(), line.name.path().unwrap_or_default(), host),
+            at: LinePlace::of(names, &line.name, host, story),
             story: line.story.as_ref().map(|(kind, part)| (*kind, part.to_string())),
             number: line.number,
             top: line.top,

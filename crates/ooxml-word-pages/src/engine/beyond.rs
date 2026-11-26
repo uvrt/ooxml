@@ -65,8 +65,9 @@ impl PageEngine {
     /// `None` for an id of no paragraph in a body paragraph's content, or one no page draws.
     pub fn first_page_in_text_box(&mut self, version: &LaidVersion, id: &str) -> Option<usize> {
         let (host, place) = version.in_paragraph(id)?;
+        // a text box's line by the path it was read with (RD1 keys text-box blocks)
         let drawn_in = |line: &ooxml_word_layout::paint::PaintedLine| {
-            version.place_of_path(&line.path).as_deref() == Some(place.as_slice())
+            line.name.path().and_then(|path| version.place_of_path(path)).as_deref() == Some(place.as_slice())
         };
         version.facts().pages_of(Anchor::whole(host)).into_iter().find(|&page| {
             self.paint(version, page).is_some_and(|paint| {
@@ -113,7 +114,7 @@ impl PageEngine {
             .iter()
             .filter(|b| paint.drawings.get(b.slot).is_some_and(|s| s.story.is_none()))
             .flat_map(|b| &b.lines)
-            .filter(|l| l.story.is_none() && story_kind(&l.path) == "body")
+            .filter(|l| l.story.is_none() && l.name.path().is_none_or(|path| story_kind(path) == "body"))
             .map(|l| l.top + l.pitch)
             .max()
     }

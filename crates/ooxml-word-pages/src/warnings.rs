@@ -22,15 +22,18 @@ use ooxml_word_layout::fields::styleref::{body_style_texts, StyleSearch};
 use ooxml_word_layout::fields::update::PageNumbers;
 use ooxml_word_layout::fields::{cross_reference_problems, field_text, page_counts, Uncomputable};
 use ooxml_word_layout::flow::{body_paragraphs, FlowItem};
+use ooxml_word_layout::naming::{paragraph_path, table_path};
 use ooxml_word_layout::px::Px;
 use ooxml_word_layout::stories::story_references;
 use ooxml_word_layout::tables::MeasuredTable;
 use ooxml_word_layout::DocumentLayout;
+use ooxml_word_model::ids::{StoryIx, Sub};
 use ooxml_word_model::model::{Block, InlineObject, Paragraph};
 use ooxml_word_model::value::Value;
 use ooxml_word_model::{Model, WordDocument};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
+use crate::said::At;
 pub use crate::said::{Approximation, DrawnPlaceholder, LayoutWarning, Said};
 
 /// The fields Word computes again when it exports (`RECOMPUTED_BY_WORD`).
@@ -132,7 +135,8 @@ pub fn said(
                         DrawingSaid::Warning(w) => out.warn(w.code, w.message, w.page),
                         DrawingSaid::Approximation(a) => {
                             let reason = a.code.strip_prefix("layout-approximate:").unwrap_or(&a.code);
-                            out.approximate(reason, &a.message, a.page, a.path.as_deref());
+                            let at = a.path.as_deref().map(|path| At { path, key: a.key });
+                            out.approximate(reason, &a.message, a.page, at);
                         }
                     }
                 }
@@ -181,12 +185,13 @@ fn cell_drawings(
                 let Some(paragraph) = found.get(line.block) else {
                     continue;
                 };
-                let path = ooxml_word_layout::paint::drawings::anchor_path(paragraph, a.run, a.index);
+                let names = &layout.document.names;
+                let path = ooxml_word_layout::paint::drawings::anchor_path(names, paragraph, a.run, a.index);
                 let message = format!(
                     "a floating drawing in a table cell ({path}) {why}: the cell's text is laid out as if text did \
                      not wrap around it, and the drawing is placed by its anchor where it can be"
                 );
-                out.approximate("cell-drawing", &message, number, Some(&path));
+                out.approximate("cell-drawing", &message, number, Some(At::path(&path)));
             }
         }
     }
@@ -217,7 +222,7 @@ fn floating_tables_past_foot(layout: &DocumentLayout, out: &mut Said) {
                 continue;
             }
             let path = match layout.document.body.get(t.body) {
-                Some(Block::Table(table)) => table.path.to_string(),
+                Some(Block::Table(table)) => table_path(&layout.document.names, table),
                 _ => continue,
             };
             let message = format!(
@@ -260,6 +265,29 @@ fn line_numbers(document: &WordDocument, out: &mut Said) {
                  measured)",
                 None,
             );
+        }
+    }
+}
+
+/// The rows of the table `item` (its path `path`) on page `laid` not one line of which fits
+/// on an empty page, each said to be drawn whole, its row named by its own key.
+fn overflowed_rows(
+    names: &ooxml_word_model::docx::VersionNames,
+    (laid, item, path): (&ooxml_word_layout::paginate::LaidPage, usize, &str),
+    number: Option<usize>,
+    out: &mut Said,
+) {
+    for row in laid.rows.iter().filter(|r| r.item == item) {
+        if row.row.overflowed && !row.row.header {
+            let message = format!(
+                "a row of {path} (w:tr[{}]) not one line of which fits on an empty page is drawn whole, past the \
+                 page's foot (Word cuts it off there: not modelled)",
+                row.row.row + 1
+            );
+            let row_path = format!("{path}/w:tr[{}]", row.row.row + 1);
+            // a row is named by its own key, found as the tool names it
+            let key = names.key_at_path(StoryIx::BODY, &row_path);
+            out.approximate("table", &message, number, Some(At { path: &row_path, key }));
         }
     }
 }
@@ -463,7 +491,7 @@ impl PageWalk {
                     // Drawn as a box after its last line on the page (`Layout._box`).
                     if order.get(k + 1).is_none_or(|next| next.0 != item) {
                         if let Some(placeholder) = &p.placeholder {
-                            out.placeholder(placeholder, number);
+                            out.placeholder(&layout.document.names, placeholder, number);
                         }
                     }
                 }
@@ -506,7 +534,10 @@ impl PageWalk {
                 "a frame (w:framePr) is laid out as a paragraph of the flow where it stands, not positioned by its \
                  frame",
                 number,
-                Some(&paragraph.path),
+                Some(At {
+                    path: &paragraph_path(&document.names, paragraph),
+                    key: paragraph.key,
+                }),
             );
         }
         if let Some(detail) = column_carry_on(layout, (paragraph, item)).filter(|_| line == 0 && multi) {
@@ -514,7 +545,10 @@ impl PageWalk {
                 "columns",
                 &format!("{detail} in a section of several text columns is laid out as in a column of its own (not measured)"),
                 number,
-                Some(&paragraph.path),
+                Some(At {
+                    path: &paragraph_path(&document.names, paragraph),
+                    key: paragraph.key,
+                }),
             );
         }
         let resolved = model.resolve_paragraph(document, paragraph);
@@ -580,22 +614,12 @@ impl PageWalk {
         let Some(table) = t.flow.as_any().downcast_ref::<MeasuredTable>() else {
             return;
         };
-        let path = &*table.path;
-        for row in laid.rows.iter().filter(|r| r.item == item) {
-            if row.row.overflowed && !row.row.header {
-                let message = format!(
-                    "a row of {path} (w:tr[{}]) not one line of which fits on an empty page is drawn whole, past \
-                     the page's foot (Word cuts it off there: not modelled)",
-                    row.row.row + 1
-                );
-                out.approximate(
-                    "table",
-                    &message,
-                    number,
-                    Some(&format!("{path}/w:tr[{}]", row.row.row + 1)),
-                );
-            }
-        }
+        let names = &layout.document.names;
+        let Some(Block::Table(model_table)) = layout.document.body.get(t.body) else {
+            return;
+        };
+        let path = &*table_path(names, model_table);
+        overflowed_rows(names, (laid, item, path), number, out);
         if !self.tables.insert(item) {
             return;
         }
@@ -604,14 +628,26 @@ impl PageWalk {
                 "{path} is laid out by approximate rules, the measured ones refusing it ({why}); what each \
                  approximates is reported with it"
             );
-            out.approximate("table", &message, number, Some(path));
+            out.approximate(
+                "table",
+                &message,
+                number,
+                Some(At {
+                    path,
+                    key: model_table.key,
+                }),
+            );
         }
         for found in table.approximated.iter().filter(|a| a.reason != "placeholder") {
-            out.approximate(found.reason, &found.message, number, Some(&found.path));
+            let found_path = found.at.named(names);
+            let key = found.at.anchor().filter(|a| a.sub == Sub::Whole).map(|a| a.block);
+            out.approximate(
+                found.reason,
+                &found.message,
+                number,
+                Some(At { path: &found_path, key }),
+            );
         }
-        let Some(Block::Table(model_table)) = layout.document.body.get(t.body) else {
-            return;
-        };
         let resolved = model.resolve_table(&layout.document, model_table);
         if resolved.mismatched.is_empty() {
             return;

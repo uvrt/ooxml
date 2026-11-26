@@ -152,16 +152,14 @@ fn referenced_fields(d: &mut Digester, referenced: &[(&str, String)]) {
 fn numbered_fields(d: &mut Digester, numbered: &[LineNumber]) {
     d.update(&(numbered.len() as u64).to_le_bytes());
     for n in numbered {
-        // its key names the number as its path does (a name, never a memo key: ADR-008)
+        // its paragraph is the laid page's line's (a name, never a memo key: ADR-008)
         let LineNumber {
-            path,
-            key: _,
+            name: _,
             line,
             baseline,
             count,
             section,
         } = n;
-        d.field(path.as_bytes());
         d.update(&(*line as u64).to_le_bytes());
         d.update(&baseline.to_le_bytes());
         d.update(&count.to_le_bytes());

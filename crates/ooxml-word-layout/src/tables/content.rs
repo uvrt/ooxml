@@ -44,7 +44,7 @@ fn pieces(cx: &mut TableContext<'_, '_>, paragraph: &Paragraph) -> Result<(Vec<P
     let found = ooxml_text::pieces(cx.faces, &input).map_err(|e| {
         Unsupported(format!(
             "a cell paragraph that cannot be measured ({}: {e})",
-            paragraph.path
+            crate::naming::paragraph_path(&cx.document.names, paragraph)
         ))
     })?;
     Ok((found, Arc::clone(&resolved.paragraph)))

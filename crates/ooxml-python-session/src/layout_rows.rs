@@ -5,8 +5,10 @@
 //! Must not: lay out, paint or lock an engine (the views are given).
 
 use ooxml_word_layout::paint::drawings::{DrawingSlot, Layer};
+use ooxml_word_layout::paint::names::PageNames;
 use ooxml_word_layout::paint::{Drawn, PaintedLine, Rule, Span};
 use ooxml_word_layout::px::Px;
+use ooxml_word_model::docx::VersionNames;
 use ooxml_word_pages::PageView;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
@@ -89,10 +91,15 @@ pub(crate) fn page_row(
     )
 }
 
-pub(crate) fn slot_dict<'py>(py: Python<'py>, slot: &DrawingSlot) -> PyResult<Bound<'py, PyDict>> {
+pub(crate) fn slot_dict<'py>(
+    py: Python<'py>,
+    slot: &DrawingSlot,
+    names: &PageNames<'_>,
+) -> PyResult<Bound<'py, PyDict>> {
     let d = PyDict::new(py);
-    d.set_item("path", &slot.path)?;
-    d.set_item("paragraph_path", &slot.paragraph_path)?;
+    let paths = names.slot_paths(slot);
+    d.set_item("path", &paths.path)?;
+    d.set_item("paragraph_path", &paths.paragraph)?;
     d.set_item("run", slot.run)?;
     d.set_item("index", slot.index)?;
     d.set_item("inline", slot.inline)?;
@@ -106,10 +113,10 @@ pub(crate) fn slot_dict<'py>(py: Python<'py>, slot: &DrawingSlot) -> PyResult<Bo
     Ok(d)
 }
 
-pub(crate) fn span_tuple<'py>(py: Python<'py>, s: &Span) -> PyResult<Bound<'py, PyTuple>> {
+pub(crate) fn span_tuple<'py>(py: Python<'py>, s: &Span, names: &PageNames<'_>) -> PyResult<Bound<'py, PyTuple>> {
     let xs: Vec<Exact> = s.pens().map(exact).collect();
     let items: Vec<Bound<'py, PyAny>> = vec![
-        s.path.as_str().into_pyobject(py)?.into_any(),
+        names.written(&s.name).into_pyobject(py)?.into_any(),
         s.chars.iter().collect::<String>().into_pyobject(py)?.into_any(),
         xs.into_pyobject(py)?.into_any(),
         s.y.into_pyobject(py)?.into_any(),
@@ -131,18 +138,22 @@ pub(crate) fn span_tuple<'py>(py: Python<'py>, s: &Span) -> PyResult<Bound<'py, 
     PyTuple::new(py, items)
 }
 
-pub(crate) fn line_tuple<'py>(py: Python<'py>, l: &PaintedLine) -> PyResult<Bound<'py, PyTuple>> {
+pub(crate) fn line_tuple<'py>(
+    py: Python<'py>,
+    l: &PaintedLine,
+    names: &PageNames<'_>,
+) -> PyResult<Bound<'py, PyTuple>> {
     let spans = l
         .spans
         .iter()
-        .map(|s| span_tuple(py, s))
+        .map(|s| span_tuple(py, s, names))
         .collect::<PyResult<Vec<_>>>()?;
     let (story, part) = match &l.story {
         Some((kind, part)) => (Some(*kind), Some(part.to_string())),
         None => (None, None),
     };
     let items: Vec<Bound<'py, PyAny>> = vec![
-        l.path.as_ref().into_pyobject(py)?.into_any(),
+        names.written(&l.name).into_pyobject(py)?.into_any(),
         l.number.into_pyobject(py)?.into_any(),
         l.baseline.into_pyobject(py)?.into_any(),
         exact(l.top).into_pyobject(py)?.into_any(),
@@ -157,10 +168,10 @@ pub(crate) fn line_tuple<'py>(py: Python<'py>, l: &PaintedLine) -> PyResult<Boun
     PyTuple::new(py, items)
 }
 
-pub(crate) fn rule_tuple(r: &Rule) -> RuleRow<'_> {
+pub(crate) fn rule_tuple<'a>(r: &'a Rule, names: &PageNames<'_>) -> RuleRow<'a> {
     (
         r.kind,
-        r.path.as_str(),
+        names.written(&r.name),
         exact(r.x),
         exact(r.y),
         exact(r.width),
@@ -173,7 +184,7 @@ pub(crate) fn rule_tuple(r: &Rule) -> RuleRow<'_> {
 /// A rule's row (see `LaidPages.page`).
 pub(crate) type RuleRow<'a> = (
     &'static str,
-    &'a str,
+    String,
     Exact,
     Exact,
     Exact,
@@ -184,10 +195,22 @@ pub(crate) type RuleRow<'a> = (
 
 pub(crate) type CropRow = Option<[Exact; 4]>;
 
-pub(crate) fn picture_tuple(p: &Drawn) -> (&str, Option<&str>, Exact, Exact, Exact, Exact, Option<&str>, CropRow) {
+pub(crate) fn picture_tuple<'a>(
+    p: &'a Drawn,
+    names: &PageNames<'_>,
+) -> (
+    String,
+    Option<&'a str>,
+    Exact,
+    Exact,
+    Exact,
+    Exact,
+    Option<&'a str>,
+    CropRow,
+) {
     let crop = p.crop.map(|c| c.map(|q| (*q.numer(), *q.denom())));
     (
-        p.path.as_str(),
+        names.written(&p.name),
         p.relationship.as_deref(),
         exact(p.x),
         exact(p.y),
@@ -198,7 +221,15 @@ pub(crate) fn picture_tuple(p: &Drawn) -> (&str, Option<&str>, Exact, Exact, Exa
     )
 }
 
-pub(crate) fn view_dict<'py>(py: Python<'py>, view: &PageView, with_lines: bool) -> PyResult<Bound<'py, PyDict>> {
+/// Page `view` as a dict, what it draws named through the version's `names`.
+pub(crate) fn view_dict<'py>(
+    py: Python<'py>,
+    view: &PageView,
+    names: &VersionNames,
+    with_lines: bool,
+) -> PyResult<Bound<'py, PyDict>> {
+    let names = PageNames::new(names, view.lines.iter().chain(view.text_box_lines.iter().flatten()));
+    let names = &names;
     let d = PyDict::new(py);
     d.set_item("number", view.page + 1)?;
     d.set_item("info", page_row(&view.info, &view.frame))?;
@@ -206,23 +237,27 @@ pub(crate) fn view_dict<'py>(py: Python<'py>, view: &PageView, with_lines: bool)
         .lines
         .iter()
         .filter(|_| with_lines)
-        .map(|l| line_tuple(py, l))
+        .map(|l| line_tuple(py, l, names))
         .collect::<PyResult<Vec<_>>>()?;
     d.set_item("lines", lines)?;
-    d.set_item("rules", view.rules.iter().map(rule_tuple).collect::<Vec<_>>())?;
-    d.set_item("pictures", view.pictures.iter().map(picture_tuple).collect::<Vec<_>>())?;
+    d.set_item(
+        "rules",
+        view.rules.iter().map(|r| rule_tuple(r, names)).collect::<Vec<_>>(),
+    )?;
+    let pictures: Vec<_> = view.pictures.iter().map(|p| picture_tuple(p, names)).collect();
+    d.set_item("pictures", pictures)?;
     let slots = view
         .drawings
         .iter()
         .zip(&view.drawing_faces)
         .zip(&view.text_box_lines)
         .map(|((s, faces), text)| {
-            let d = slot_dict(py, s)?;
+            let d = slot_dict(py, s, names)?;
             d.set_item("faces", faces.clone())?;
             let lines = text
                 .iter()
                 .filter(|_| with_lines)
-                .map(|l| line_tuple(py, l))
+                .map(|l| line_tuple(py, l, names))
                 .collect::<PyResult<Vec<_>>>()?;
             d.set_item("lines", lines)?;
             Ok(d)

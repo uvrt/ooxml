@@ -39,10 +39,7 @@ pub fn uncertain(facts: &Facts<'_>, coverage: &Coverage) -> Vec<Uncertain> {
     let shown = |page: Option<usize>| page.filter(|p| facts.shown([*p]));
     for entry in &coverage.placeholders {
         let Some(page) = shown(entry.page) else { continue };
-        let at = entry
-            .path
-            .as_deref()
-            .map(|path| crate::coverage::id_of(facts.version(), entry.key, path).unwrap_or_else(|| path.to_owned()));
+        let at = entry.path.as_deref().map(|path| named(facts, entry.key, path));
         on(&mut pages, page).placeholders.push(Approximated {
             reason: entry.reason().to_owned(),
             at,
@@ -51,15 +48,19 @@ pub fn uncertain(facts: &Facts<'_>, coverage: &Coverage) -> Vec<Uncertain> {
     for entry in &coverage.approximations {
         let Some(page) = shown(entry.page) else { continue };
         let reason = entry.listed().0.to_owned();
-        let at = entry.path.as_deref().map(|path| {
-            path.starts_with("w:body")
-                .then(|| facts.version().id_of(path))
-                .flatten()
-                .unwrap_or_else(|| path.to_owned())
-        });
+        let at = entry.path.as_deref().map(|path| named(facts, entry.key, path));
         on(&mut pages, page).approximations.push(Approximated { reason, at });
     }
     pages.into_values().collect()
+}
+
+/// What an entry about the block `key` at `path` names: the block's id, where it is a body
+/// block the version names, else the path.
+fn named(facts: &Facts<'_>, key: Option<ooxml_word_model::ids::BlockKey>, path: &str) -> String {
+    facts
+        .version()
+        .id_named(key)
+        .map_or_else(|| path.to_owned(), |id| id.to_string())
 }
 
 /// Page `page`'s entry of `pages`, made where it has none yet.

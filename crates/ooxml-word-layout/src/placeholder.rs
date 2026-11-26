@@ -15,6 +15,7 @@
 use crate::flow::FlowItem;
 use crate::heights::LineHeight;
 use crate::input::section_geometry;
+use crate::naming::{paragraph_item, ItemName};
 use crate::paginate::LaidPage;
 use crate::paragraph::MeasuredParagraph;
 use crate::px::Px;
@@ -23,9 +24,10 @@ use crate::vertical::LineRule;
 use ooxml_base::Q;
 use ooxml_text::breaks::Line;
 use ooxml_text::measure::Measured;
-use ooxml_word_model::ids::BlockKey;
+use ooxml_word_model::docx::VersionNames;
+use ooxml_word_model::ids::{BlockKey, Sub};
 use ooxml_word_model::model::Paragraph;
-use ooxml_word_model::value::{Text, Value};
+use ooxml_word_model::value::Value;
 use ooxml_word_model::{Model, WordDocument};
 use std::sync::Arc;
 
@@ -37,10 +39,8 @@ pub struct Placeholder {
     pub reason: &'static str,
     /// What about it is not laid out.
     pub message: &'static str,
-    /// Its element's path (`w:body/w:p[2]`).
-    pub path: Text,
-    /// Its paragraph's key, beside its path (`None`: one no story's index holds).
-    pub key: Option<BlockKey>,
+    /// Its paragraph: its key, or its path where no story's index holds it.
+    pub name: ItemName,
     /// Its height is estimated from its text (not stated in the file).
     pub estimated: bool,
 }
@@ -64,19 +64,32 @@ impl Placeholder {
         unmodelled.then(|| Placeholder {
             reason: DRAWING,
             message: DRAWING_MESSAGE,
-            path: paragraph.path.clone(),
-            key: paragraph.key,
+            name: paragraph_item(paragraph, Sub::Whole),
             estimated: true,
         })
     }
 
-    /// What the layout says of it drawn on a page, `part` the story it is in where it is in
-    /// one (`Layout._box`'s message).
+    /// Its paragraph's key, where a story's index holds it.
     #[must_use]
-    pub fn drawn_message(&self, part: Option<&str>) -> String {
+    pub fn key(&self) -> Option<BlockKey> {
+        self.name.anchor().map(|a| a.block)
+    }
+
+    /// Its path, named through the version's names `names` (`w:body/w:p[2]`).
+    #[must_use]
+    pub fn path(&self, names: &VersionNames) -> String {
+        self.name.named(names)
+    }
+
+    /// What the layout says of it drawn on a page, its paragraph named through the
+    /// version's names `names`, `part` the story it is in where it is in one
+    /// (`Layout._box`'s message).
+    #[must_use]
+    pub fn drawn_message(&self, names: &VersionNames, part: Option<&str>) -> String {
+        let path = self.path(names);
         let at = match part {
-            Some(part) => format!("{} in {part}", self.path),
-            None => self.path.to_string(),
+            Some(part) => format!("{path} in {part}"),
+            None => path,
         };
         let size = if self.estimated {
             "its estimated height"

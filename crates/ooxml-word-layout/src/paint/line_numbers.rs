@@ -16,10 +16,11 @@ use super::{PaintContext, Span, SpanKind};
 use crate::engine::DocumentLayout;
 use crate::geometry::LineSource;
 use crate::input::RunFormatter;
+use crate::naming::{paragraph_item, ItemName};
 use crate::px::Px;
 use ooxml_text::pieces::note_number_units;
 use ooxml_text::FaceKey;
-use ooxml_word_model::ids::{Anchor, BlockKey, Sub};
+use ooxml_word_model::ids::{Anchor, Sub};
 use ooxml_word_model::model::{Block, Paragraph, Run, RunProps};
 use ooxml_word_model::value::{Text, Value};
 use ooxml_word_model::Model;
@@ -28,10 +29,9 @@ use std::sync::Arc;
 /// One number to draw beside a line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LineNumber {
-    /// The line's paragraph's path.
-    pub path: Text,
-    /// The line's paragraph's key, beside its path: what the number is anchored on.
-    pub key: Option<BlockKey>,
+    /// The line's paragraph: what the number is anchored on (its key; its path where no
+    /// story's index holds it).
+    pub name: ItemName,
     /// The line's number in its paragraph.
     pub line: usize,
     /// Its baseline.
@@ -105,8 +105,7 @@ impl LineNumbers {
                     continue;
                 }
                 page.push(LineNumber {
-                    path: paragraph.path.clone(),
-                    key: paragraph.key,
+                    name: paragraph_item(paragraph, Sub::Whole),
                     line: number,
                     baseline,
                     count: n,
@@ -207,14 +206,7 @@ pub fn number_span(
         x += w;
     }
     Some(Span {
-        path: format!("w:sectPr[{}]/w:lnNumType", number.section + 1),
-        anchor: number
-            .key
-            .zip(u32::try_from(number.section).ok())
-            .map(|(block, section)| Anchor {
-                block,
-                sub: Sub::LineNumbers(section),
-            }),
+        name: number_name(number),
         chars: text,
         xs,
         y: number.baseline,
@@ -235,4 +227,18 @@ pub fn number_span(
         vertical_align: None,
         effects: None,
     })
+}
+
+/// What a line's number is drawn for: its section's line numbering, anchored on the line's
+/// paragraph (by the path it is made with where no story's index holds the paragraph).
+fn number_name(number: &LineNumber) -> ItemName {
+    let anchor = number
+        .name
+        .anchor()
+        .zip(u32::try_from(number.section).ok())
+        .map(|(paragraph, section)| Anchor {
+            block: paragraph.block,
+            sub: Sub::LineNumbers(section),
+        });
+    ItemName::of(anchor, || format!("w:sectPr[{}]/w:lnNumType", number.section + 1))
 }

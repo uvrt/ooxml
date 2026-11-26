@@ -76,7 +76,16 @@ impl TableFacts {
         for row in resolved.rows {
             for cell in row.cells {
                 let cell = Arc::unwrap_or_clone(cell);
-                self.cells.insert(cell.path, cell.properties);
+                let path = table.cell_paths.get(cell.row).and_then(|r| r.get(cell.index)).cloned();
+                let path = path.unwrap_or_else(|| {
+                    text(&format!(
+                        "{}/w:tr[{}]/w:tc[{}]",
+                        table.path,
+                        cell.row + 1,
+                        cell.index + 1
+                    ))
+                });
+                self.cells.insert(path, cell.properties);
             }
         }
         for row in table.rows.iter() {

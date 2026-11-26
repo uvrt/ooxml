@@ -5,6 +5,7 @@
 //! warnings' drawings port does).
 
 use crate::drawings::WordDrawings;
+use ooxml_word_layout::paint::names::PageNames;
 use ooxml_word_layout::paint::text_box::{paint_text_box, TextBoxPaint};
 use ooxml_word_layout::paint::{PagePaint, PaintContext};
 use ooxml_word_layout::WordLayout;
@@ -27,11 +28,13 @@ pub(crate) fn text_boxes(
     page: usize,
 ) -> Vec<TextBoxPaint> {
     let mut out = Vec::new();
+    let names = PageNames::of_page(&job.laid.document.names, paint);
     for (k, slot) in paint.drawings.iter().enumerate() {
-        for frame in drawings.text_frames(slot) {
+        let paths = names.slot_paths(slot);
+        for frame in drawings.text_frames(slot, &paths) {
             let story = job
                 .layout
-                .text_box(job.model, job.laid, (&slot.path, &slot.paragraph_path), &frame);
+                .text_box(job.model, job.laid, (&paths.path, &paths.paragraph), &frame);
             out.push(paint_text_box(
                 job.laid,
                 job.model,

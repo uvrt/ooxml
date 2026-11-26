@@ -8,7 +8,8 @@
 //! Must not: paint (the engine does), or judge what it reads.
 
 use crate::line_text::{table_row, ItemPlace, LineText, TableRow};
-use ooxml_word_layout::paint::PagePaint;
+use ooxml_word_layout::paint::names::PageNames;
+use ooxml_word_layout::paint::{ItemName, PagePaint};
 use ooxml_word_layout::px::Px;
 use ooxml_word_model::docx::VersionNames;
 use ooxml_word_model::ids::{Anchor, StoryIx};
@@ -71,12 +72,18 @@ impl PageRead {
     /// version's `names`.
     #[must_use]
     pub fn of(paint: &PagePaint, names: &VersionNames) -> PageRead {
-        let body = |path: &str| path.starts_with("w:body");
+        let page = PageNames::of_page(names, paint);
         let in_body = |anchor: Option<Anchor>, path: &str| match anchor {
             Some(anchor) => anchor.block.story() == StoryIx::BODY,
-            None => body(path),
+            None => path.starts_with("w:body"),
         };
-        let host = |slot: usize| paint.drawings.get(slot).and_then(|d| d.anchor);
+        // an item below a paragraph is placed below it by its name's steps
+        let below = |name: &ItemName| {
+            let path = page.written(name);
+            let host = name.anchor().map(|a| Anchor::whole(a.block));
+            (in_body(host, &path)).then(|| ItemPlace::of(names, None, &path, host))
+        };
+        let host = |slot: usize| paint.drawings.get(slot).and_then(|d| d.name.anchor());
         PageRead {
             texts: paint.lines.iter().map(|l| LineText::of(l, names, None)).collect(),
             box_texts: paint
@@ -90,8 +97,8 @@ impl PageRead {
                     .rules
                     .iter()
                     .map(|r| RuleExtent {
-                        anchor: r.anchor,
-                        row: table_row(names, &r.path),
+                        anchor: r.name.anchor(),
+                        row: r.name.anchor().and_then(|a| table_row(names, a)),
                         x: r.x,
                         width: r.width,
                     })
@@ -99,9 +106,10 @@ impl PageRead {
                 pictures: paint
                     .pictures
                     .iter()
-                    .filter(|p| p.part.is_none() && in_body(p.anchor, &p.path))
-                    .map(|p| Boxed {
-                        place: ItemPlace::of(names, None, &p.path, p.anchor),
+                    .filter(|p| p.part.is_none())
+                    .filter_map(|p| Some((p, below(&p.name)?)))
+                    .map(|(p, place)| Boxed {
+                        place,
                         x: p.x,
                         y: p.y,
                         width: p.width,
@@ -111,9 +119,14 @@ impl PageRead {
                 floats: paint
                     .drawings
                     .iter()
-                    .filter(|d| d.story.is_none() && in_body(d.anchor, &d.path))
-                    .map(|d| Boxed {
-                        place: ItemPlace::of(names, None, &d.path, d.anchor),
+                    .filter(|d| d.story.is_none())
+                    .filter_map(|d| {
+                        let path = page.slot(d);
+                        let host = d.name.anchor().map(|a| Anchor::whole(a.block));
+                        in_body(host, &path).then(|| (d, ItemPlace::of(names, None, &path, host)))
+                    })
+                    .map(|(d, place)| Boxed {
+                        place,
                         x: d.x,
                         y: d.y,
                         width: d.width,

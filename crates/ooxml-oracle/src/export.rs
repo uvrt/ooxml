@@ -211,7 +211,14 @@ fn edge(e: &Edge) -> J {
     json!([border, if e.1 { "right" } else { "left" }])
 }
 
-fn resolved_table(t: &ResolvedTable, path: &str) -> J {
+fn resolved_table(t: &ResolvedTable, table: &Table) -> J {
+    let path = &*table.path;
+    let cell_path = |r: usize, c: usize| {
+        table.cell_paths.get(r).and_then(|row| row.get(c)).map_or_else(
+            || format!("{path}/w:tr[{}]/w:tc[{}]", r + 1, c + 1),
+            ToString::to_string,
+        )
+    };
     json!({
         "path": path, "properties": props(&t.properties), "indent_stated": t.indent_stated, "grid": t.grid,
         "mismatched": J::Array(t.mismatched.iter().map(|(r, n)| json!([r, n])).collect()),
@@ -219,7 +226,7 @@ fn resolved_table(t: &ResolvedTable, path: &str) -> J {
             "index": r.index, "properties": props(&r.properties), "grid_before": r.grid_before, "grid_after": r.grid_after,
             "cells": J::Array(r.cells.iter().map(|c| json!({
                 "row": c.row, "index": c.index, "column": c.column, "span": c.span, "properties": props(&c.properties),
-                "merge": c.merge.as_deref(), "path": &*c.path, "margins": c.margins,
+                "merge": c.merge.as_deref(), "path": cell_path(c.row, c.index), "margins": c.margins,
                 "borders": J::Array(c.borders.iter().map(|b| b.as_ref().map_or(J::Null, |b| json!([b.style.as_deref(), b.size, b.space, b.color.as_deref()]))).collect()),
                 "own": c.own, "left_edge": edge(&c.left_edge), "right_edge": edge(&c.right_edge),
             })).collect()),
@@ -263,7 +270,7 @@ fn walk(model: &mut Model, document: &WordDocument, block: &Block, paragraphs: &
             }));
         }
         Block::Table(t) => {
-            tables.push(resolved_table(&model.resolve_table(document, t), &t.path));
+            tables.push(resolved_table(&model.resolve_table(document, t), t));
             for cell in t.rows.iter().flat_map(|r| r.iter()) {
                 cell.iter().for_each(|b| walk(model, document, b, paragraphs, tables));
             }

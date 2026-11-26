@@ -139,6 +139,11 @@ pub fn facts_weight(facts: &LayoutFacts) -> usize {
     pages + facts.keeps.len() * (size_of::<usize>() + size_of::<BlockKeeps>() + 32)
 }
 
+/// What a painted item's name holds beside it, bytes: a path's (an anchor is in place).
+fn name_len(name: &ooxml_word_layout::paint::ItemName) -> usize {
+    name.path().map_or(0, str::len)
+}
+
 /// What a page's paint holds, bytes, roughly: its lines with their spans' characters and
 /// positions, its rules, pictures and drawings.
 pub fn paint_weight(paint: &PagePaint) -> usize {
@@ -150,14 +155,14 @@ pub fn paint_weight(paint: &PagePaint) -> usize {
             size_of::<ooxml_word_layout::paint::Span>()
                 + span.chars.capacity() * size_of::<char>()
                 + span.xs.capacity() * size_of::<ooxml_word_layout::CompactPx>()
-                + span.path.len()
+                + name_len(&span.name)
                 + span.face.len()
         })
         .sum();
     let lines: usize = paint
         .lines
         .iter()
-        .map(|line| size_of::<ooxml_word_layout::paint::PaintedLine>() + line.path.len())
+        .map(|line| size_of::<ooxml_word_layout::paint::PaintedLine>() + name_len(&line.name))
         .sum();
     size_of::<PagePaint>()
         + spans

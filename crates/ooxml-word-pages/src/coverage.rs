@@ -16,20 +16,9 @@ use crate::engine::PageEngine;
 use crate::version::LaidVersion;
 use crate::warnings::{Approximation, DrawnPlaceholder, LayoutWarning};
 use ooxml_fonts::{Grade, SubstitutionKind};
-use ooxml_word_model::ids::{BlockKey, StoryIx};
+
 use ooxml_word_model::model::Block;
 use ooxml_word_model::value::Text;
-
-/// The id the tool names a block coverage reports by in `version`: through the version's
-/// names from its key `key`; one of no body block's key by its body path `path`
-/// (placeholders and approximations are named from model paths until LK2c keys them).
-#[must_use]
-pub fn id_of(version: &LaidVersion, key: Option<BlockKey>, path: &str) -> Option<String> {
-    match key.filter(|k| k.story() == StoryIx::BODY) {
-        Some(key) => version.id_named(Some(key)).map(|id| id.to_string()),
-        None => version.id_of(path),
-    }
-}
 
 /// `version`'s body blocks laid out, and its body blocks (its top-level blocks, the
 /// endnotes placed in the flow left out): all but those drawn as placeholders
@@ -48,20 +37,17 @@ pub fn blocks_laid_out(version: &LaidVersion) -> (usize, usize) {
     (blocks.saturating_sub(placeheld), blocks)
 }
 
-/// Whether `placeholder` stands for the top-level block `block`: by their keys where both
-/// have one (asserted equal to their paths' answer in debug builds), else by their paths.
+/// Whether `placeholder` stands for the top-level block `block`: by their keys (a block no
+/// story's index holds by its own path).
 fn stands_for(placeholder: &DrawnPlaceholder, block: &Block) -> bool {
-    let (path, key) = match block {
-        Block::Paragraph(p) => (&*p.path, p.key),
-        Block::Table(t) => (&*t.path, t.key),
+    let (unkeyed, key) = match block {
+        Block::Paragraph(p) => (p.unkeyed_path(), p.key),
+        Block::Table(t) => (t.unkeyed_path(), t.key),
     };
-    let by_path = placeholder.path.as_deref() == Some(path);
     match (placeholder.key, key) {
-        (Some(a), Some(b)) => {
-            debug_assert_eq!(a == b, by_path, "{a:?} stands for {b:?} as their paths say");
-            a == b
-        }
-        _ => by_path,
+        (Some(a), Some(b)) => a == b,
+        (None, None) => unkeyed.is_some_and(|path| placeholder.path.as_deref() == Some(&**path)),
+        _ => false,
     }
 }
 
@@ -220,6 +206,7 @@ pub fn glyph_approximation(family: &str, character: char, used: &str) -> Approxi
         ),
         page: None,
         path: None,
+        key: None,
     }
 }
 

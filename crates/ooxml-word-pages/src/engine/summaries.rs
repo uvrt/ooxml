@@ -25,7 +25,12 @@ impl PageEngine {
     /// what tells two versions' pages apart without a reader reading them.
     pub fn page_digests(&mut self, version: &LaidVersion, page: usize) -> Option<PageDigests> {
         let paint = self.painted_page(version, page, false)?;
-        Some(crate::digests::digests(&paint, KEY, Lines::Page))
+        Some(crate::digests::digests(
+            &paint,
+            &version.layout.document.names,
+            KEY,
+            Lines::Page,
+        ))
     }
 
     /// `version`'s pages compared as the layouts themselves are (docx-agent's
@@ -35,7 +40,7 @@ impl PageEngine {
         let mut pages = Vec::with_capacity(version.layout.page_count());
         for page in 0..version.layout.page_count() {
             let paint = self.painted_page(version, page, false)?;
-            let digests = crate::digests::digests(&paint, KEY, Lines::WithTextBoxes);
+            let digests = crate::digests::digests(&paint, &version.layout.document.names, KEY, Lines::WithTextBoxes);
             pages.push(Arc::new(page_summary(digests, version)));
         }
         let known = pages.len();

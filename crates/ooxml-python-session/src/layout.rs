@@ -424,7 +424,7 @@ impl PyLaidPages {
         let view = py
             .detach(|| lock(engine).page(version, page))
             .ok_or_else(|| PyValueError::new_err(format!("no page {page} (0-based) of {}", version.page_count())))?;
-        view_dict(py, &view, lines)
+        view_dict(py, &view, &version.layout().document.names, lines)
     }
 
     /// What every page paints, digested (bytes), painted here: per page `(rest, lines)`,

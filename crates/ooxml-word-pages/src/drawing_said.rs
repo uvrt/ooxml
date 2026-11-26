@@ -7,7 +7,8 @@
 use crate::drawings::WordDrawings;
 use crate::fonts::DocumentFonts;
 use crate::warnings::{Approximation, DrawingSaid, LayoutWarning};
-use ooxml_word_layout::paint::drawings::DrawingSlot;
+use ooxml_word_layout::paint::drawings::{DrawingSlot, SlotPaths};
+use ooxml_word_layout::paint::names::PageNames;
 use ooxml_word_layout::paint::svg::PageDefs;
 use ooxml_word_layout::paint::text_box::paint_text_box;
 use ooxml_word_layout::paint::{paint_page, GlyphSize, PaintContext};
@@ -60,6 +61,7 @@ impl crate::warnings::PageDrawings for DrawingWarnings<'_> {
             ));
         }
         let mut defs = PageDefs::default();
+        let names = PageNames::of_page(&laid.document.names, &paint);
         for (k, slot) in paint.drawings.iter().enumerate() {
             if slot.no_overlap {
                 out.push(warning(
@@ -69,18 +71,19 @@ impl crate::warnings::PageDrawings for DrawingWarnings<'_> {
                         .into(),
                 ));
             }
-            self.painted_said(drawings, slot, &mut defs, number, &mut out);
-            for frame in drawings.text_frames(slot) {
+            let paths = names.slot_paths(slot);
+            self.painted_said(drawings, (slot, &paths), &mut defs, number, &mut out);
+            for frame in drawings.text_frames(slot, &paths) {
                 let story = self
                     .layout
-                    .text_box(model, laid, (&slot.path, &slot.paragraph_path), &frame);
+                    .text_box(model, laid, (&paths.path, &paths.paragraph), &frame);
                 for (code, message) in &story.said {
                     out.push(warning(code, message.clone()));
                 }
                 // Its inline drawings, drawn as the box is laid out (`_text_box`'s scratch page).
                 let boxed = paint_text_box(laid, model, (k, page, slot.story.as_ref()), &story, &cx);
                 for inner in &boxed.drawings {
-                    self.painted_said(drawings, inner, &mut defs, number, &mut out);
+                    self.painted_said(drawings, (inner, &names.slot_paths(inner)), &mut defs, number, &mut out);
                 }
             }
         }
@@ -94,15 +97,15 @@ impl DrawingWarnings<'_> {
     fn painted_said(
         &mut self,
         drawings: &WordDrawings,
-        slot: &DrawingSlot,
+        (slot, paths): (&DrawingSlot, &SlotPaths),
         defs: &mut PageDefs,
         number: Option<usize>,
         out: &mut Vec<DrawingSaid>,
     ) {
-        let painted = drawings.paint(slot, defs);
+        let painted = drawings.paint(slot, paths, defs);
         let key = (
             slot.story.as_ref().map(|(_, part)| part.to_string()),
-            slot.path.to_string(),
+            paths.path.clone(),
         );
         if painted.approximated && !self.text_paths.contains(&key) {
             self.text_paths.push(key);
@@ -112,10 +115,11 @@ impl DrawingWarnings<'_> {
                     "a VML text path ({}: a watermark's text) is drawn stretched to its box, in its face, \
                          colour, opacity and rotation, here and on every page after it that shows it; the glyphs' \
                          size and place in the box are not measured",
-                    slot.path
+                    paths.path
                 ),
                 page: number,
-                path: Some(slot.path.to_string()),
+                path: Some(paths.path.clone()),
+                key: None,
             }));
         }
         out.extend(painted.warnings.into_iter().map(|(code, message)| {

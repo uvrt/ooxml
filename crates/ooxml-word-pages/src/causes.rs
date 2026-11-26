@@ -93,7 +93,8 @@ pub(crate) fn whole_cause(
                 })
                 .collect();
             if let Some(p) = section.last_paragraph.checked_sub(1).and_then(|k| top.get(k)) {
-                let at: String = p.path.split('/').take(2).collect::<Vec<_>>().join("/");
+                let path = ooxml_word_layout::naming::paragraph_path(&laid.document.names, p);
+                let at: String = path.split('/').take(2).collect::<Vec<_>>().join("/");
                 cause.at = Some(at);
                 cause.para_id = p.para_id.as_deref().map(str::to_owned);
             }
