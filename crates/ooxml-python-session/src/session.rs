@@ -106,9 +106,9 @@ type HistoryNumbers = (u64, Vec<NumberedRow>, Vec<NumberedRow>);
 
 /// What `Session.edit` says a call made: its first version's number, its last version,
 /// what it touched (JSON text; `None` where it made more than one version), the last
-/// version's validation, the state number of the version its first edit was applied to, and
+/// version's validation, the version its first edit was applied to (held), and
 /// the reflow its checks report (JSON text; `None` where none was measured).
-type EditMade = (u64, PyVersion, Option<String>, Validation, u64, Option<String>);
+type EditMade = (u64, PyVersion, Option<String>, Validation, PyVersion, Option<String>);
 
 /// A Word document's ids before it was saved, as a host's state keeps them:
 /// `(values, cursors, highest_drawing, drawings)` ([`EarlierIds`]).
@@ -278,8 +278,9 @@ impl PySession {
     /// (`panic`), and what the call's edits made -- `(first, last, touched, validation,
     /// before, reflow)`: the number of the version its first edit made, the version its last
     /// made (held), what it touched as JSON text (`None` where it made more than one version),
-    /// the last version's validation as [`validation`](Self::validation) gives it, the state
-    /// number of the version its first edit was applied to, and the reflow its checks report as
+    /// the last version's validation as [`validation`](Self::validation) gives it, the version
+    /// its first edit was applied to (held: the step's own, read with no lookup however many
+    /// steps others commit meanwhile; its `state` the step's number before), and the reflow its checks report as
     /// JSON text (where the options' page engine laid out the version its first edit was
     /// applied to; else `None`) -- or `None` where it changed nothing. A host that numbers the
     /// document's steps takes the call's step from these, whatever other calls commit to the
@@ -323,7 +324,7 @@ impl PySession {
                 PyVersion { inner: m.last },
                 touched,
                 validation,
-                m.before,
+                PyVersion { inner: m.before },
                 reflow,
             )
         });

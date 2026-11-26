@@ -182,19 +182,21 @@ class OwnedHistory:
         yield
 
     def served(self, first: int, head: Any, then: Any = None,
-               before: int | None = None) -> tuple[int, int]:
+               before: Any = None) -> tuple[int, Any]:
         """The step a served call made -- the owner's versions ``first`` to ``head``, from the
-        state numbered ``before`` (``None``: the version now) -- kept as its state, whatever
-        order the calls end in.  ``then(number, before, seq)`` runs as it is kept (what is
-        counted per step; ``seq`` the owner's count of ``head``).  The step's number and the
-        number before it."""
+        owner's version ``before`` (held, as the owner handed it with the edit; ``None``: the
+        version now) -- kept as its state, whatever order the calls end in.  ``then(number,
+        before, seq)`` runs as it is kept (what is counted per step, ``before`` the version
+        held; ``seq`` the owner's count of ``head``).  The step's number and the version
+        before it, held: what the step changed is read between it and ``head``, never by its
+        number (other calls' steps may have let it go from the owner's history since)."""
         if self._group_head is not None:
             # (within a batch's group: the op's versions are the group's, numbered with it)
             self._group_head = head
-            return self.version, self.version
+            return self.version, self._head
         with self._lock:
             if before is None:
-                before = self.version
+                before = self._head
             self._tell(head)
             number = head.state
             self._entry.owner.keep(self._entry.handle, head, first)
@@ -240,12 +242,15 @@ class OwnedHistory:
 
 class OwnedChange:
     """What an owned document's content did while :meth:`OwnedEntry.watch` was open: the
-    parts between the heads before and after (asked of the owner)."""
+    parts between the heads before and after (asked of the owner).  A served step's change
+    is given its two heads, held (``heads``): its parts are read between them, never looked
+    up by number again (the owner may have let the one before go by then)."""
 
-    def __init__(self, entry: "OwnedEntry") -> None:
+    def __init__(self, entry: "OwnedEntry", heads: tuple[Any, Any] | None = None) -> None:
         self._entry = entry
-        self.start = entry.version
-        self.end: int | None = None
+        self._heads = heads
+        self.start = entry.version if heads is None else heads[0].state
+        self.end: int | None = None if heads is None else heads[1].state
         self._parts: frozenset[str] | None = None
 
     @property
@@ -257,7 +262,10 @@ class OwnedChange:
         if self._parts is None:
             history = self._entry.history
             end = history.version if self.end is None else self.end
-            before, after = history.head(self.start), history.head(end)
+            if self._heads is not None:
+                before, after = self._heads
+            else:
+                before, after = history.head(self.start), history.head(end)
             if end == self.start or before is None or after is None:
                 self._parts = frozenset()
             else:
@@ -437,19 +445,20 @@ class OwnedEntry(DocumentEntry):
 
     def served(self, first: int, head: Any, owner: StepOwner | None = None,
                counted: bool = False, refs: Mapping[str, str] | None = None,
-               before: int | None = None) -> tuple[int, int]:
+               before: Any = None) -> tuple[int, Any]:
         """A call the owner served made its versions ``first`` (the owner's number) to
-        ``head``, from the state numbered ``before`` (``None``: the version now): the call's
-        step, kept whatever order the calls end in.  ``counted``: the call ran without the
+        ``head``, from the owner's version ``before`` (held, as the owner handed it with the
+        edit; ``None``: the version now): the call's step, kept whatever order the calls end in.  ``counted``: the call ran without the
         document's lock (lane P2c6), so the step is counted here as it is kept -- the change
         and its parts, the step's owner, the refs the call defined (``refs``, owned by
         ``owner``'s caller), the committed version for reads -- which the dispatcher does
-        under the lock otherwise.  The step's number and the number before it."""
+        under the lock otherwise.  The step's number and the owner's version before it, held
+        (:meth:`OwnedHistory.served`)."""
         assert self._owned is not None
 
-        def count(number: int, before: int, seq: int) -> None:
-            change = OwnedChange(self)
-            change.start, change.end = before, number
+        def count(number: int, from_head: Any, seq: int) -> None:
+            change = OwnedChange(self, (from_head, head))
+            before = change.start
             newest = self._count_at(seq, before, change)
             if newest:
                 if refs:

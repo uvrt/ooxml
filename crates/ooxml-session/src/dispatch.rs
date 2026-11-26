@@ -52,9 +52,10 @@ pub(crate) struct CallState<'p> {
 pub struct CallMade {
     /// The number of the version its first edit made.
     pub first: u64,
-    /// The state number of the version its first edit was applied to ([`Opened::number`]):
-    /// the state its step goes from.
-    pub before: u64,
+    /// The version its first edit was applied to, held ([`Opened::number`] its state
+    /// number): the state its step goes from, the call's own however many steps others
+    /// commit before the host reads it (the session's history may have let it go by then).
+    pub before: Opened,
     /// The version its last edit made.
     pub last: Opened,
     /// What its format says of the call beside ([`Finished::format`]: a Word call's touched,
@@ -208,7 +209,7 @@ impl Session {
                 } = finished;
                 CallMade {
                     first,
-                    before,
+                    before: Self::opened(&opened.id, document, before),
                     last: Self::opened(&opened.id, document, last),
                     format,
                 }

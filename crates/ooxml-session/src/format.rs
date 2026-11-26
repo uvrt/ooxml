@@ -98,8 +98,9 @@ pub struct FormatRun<'a> {
 pub struct Finished {
     /// The number of the version its first edit made.
     pub first: u64,
-    /// The state number of the version its first edit was applied to.
-    pub before: u64,
+    /// The version its first edit was applied to, held: the state its step goes from (kept
+    /// for the call, however many steps others make before it is read).
+    pub before: AnyVersion,
     /// The version its last edit made.
     pub last: AnyVersion,
     /// Whether it ran in a step group (whose close makes the step).
