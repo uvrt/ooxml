@@ -13,53 +13,23 @@
 //! itself as the first step); `label` (a list label) is its paragraph; `w:sectPr[k]` as
 //! the first step of a main part the k-th section's.
 //!
-//! A part's [`ChildIndex`] finds an indexed step among a parent's many children at once: a
-//! body's paragraphs are read one path after another, and counting each one's siblings
-//! again made reading every paragraph of a long body quadratic.
+//! A part's ids ([`PartIds`]) find an indexed step among its block container's children
+//! in O(log n) ([`resolve_in`]): a body's paragraphs are read one path after another, and
+//! counting each one's siblings again would make reading every paragraph of a long body
+//! quadratic.
 //!
 //! Must not: change the tree, or name what a path is drawn for (the part's ids do).
 
 use super::drawing::{drawing_element, object_mark};
 use super::runs::RUN_OBJECTS;
+use crate::ids::PartIds;
 use crate::xmlread::{attr, child, local};
 use ooxml_xml::{Element, Node};
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 
-/// A parent with fewer element children than this is counted through each time (a run's
-/// or a cell's few): only a long one's places are kept.
-const INDEXED_FROM: usize = 64;
-
-/// The places of a tree's long parents' children by local name (child indexes, every
-/// node counted), made when a path first steps through such a parent and kept with the
-/// tree it was made of (a part's [`crate::docx::StoryPart`]): every caller of that part
-/// finds an indexed step at once. Keyed by the parent element's address, which its tree
-/// holds for as long as the index is kept with it.
-#[derive(Debug, Default)]
-pub struct ChildIndex {
-    places: Mutex<HashMap<ParentName, Arc<[u32]>>>,
-}
-
-/// A parent element (its address) and a child's local name.
-type ParentName = (usize, String);
-
-impl ChildIndex {
-    /// The child indexes of `parent`'s children named `name`, in order; kept where it has
-    /// many children.
-    fn named(&self, parent: &Arc<Element>, name: &str) -> Arc<[u32]> {
-        let count = || -> Arc<[u32]> {
-            indexed(parent)
-                .filter(|(_, c)| local(c) == name)
-                .map(|(j, _)| j)
-                .collect()
-        };
-        if parent.children().len() < INDEXED_FROM {
-            return count();
-        }
-        let key = (Arc::as_ptr(parent) as usize, name.to_owned());
-        let mut places = self.places.lock().unwrap_or_else(PoisonError::into_inner);
-        Arc::clone(places.entry(key).or_insert_with(count))
-    }
+/// The child indexes of `parent`'s children named `name` (by local name), in order.
+fn named<'a>(parent: &'a Arc<Element>, name: &'a str) -> impl Iterator<Item = u32> + 'a {
+    indexed(parent).filter(move |(_, c)| local(c) == name).map(|(j, _)| j)
 }
 
 /// One step of a path: its name (local), its 1-based index, a note's id; `prefixed` false
@@ -222,16 +192,20 @@ fn sections(root: &Arc<Element>) -> Vec<(&Arc<Element>, Vec<u32>)> {
 /// hold (an edited tree, a synthetic step such as Word's own footnote separator).
 #[must_use]
 pub fn resolve_path<'a>(root: &'a Arc<Element>, path: &str) -> Option<(&'a Arc<Element>, Vec<u32>)> {
-    resolve_indexed(root, path, &ChildIndex::default())
+    resolve_within(root, path, None)
 }
 
-/// [`resolve_path`], an indexed step among a long parent's children found by `index` (kept
-/// with `root`'s tree).
+/// [`resolve_path`] in the story part whose root is `root` and whose ids are `ids`: an
+/// indexed step among the part's block container's children found from the ids' counts.
 #[must_use]
-pub fn resolve_indexed<'a>(
+pub fn resolve_in<'a>(root: &'a Arc<Element>, path: &str, ids: &PartIds) -> Option<(&'a Arc<Element>, Vec<u32>)> {
+    resolve_within(root, path, Some(ids))
+}
+
+fn resolve_within<'a>(
     root: &'a Arc<Element>,
     path: &str,
-    index: &ChildIndex,
+    ids: Option<&PartIds>,
 ) -> Option<(&'a Arc<Element>, Vec<u32>)> {
     if path.is_empty() {
         return None;
@@ -268,7 +242,11 @@ pub fn resolve_indexed<'a>(
                 }
                 _ => {
                     let (base, mut at) = members(node).unwrap_or((node, Vec::new()));
-                    let j = *index.named(base, step.name).get(k)?;
+                    let container = ids.filter(|ids| at.is_empty() && place == ids.container());
+                    let j = match container {
+                        Some(ids) => u32::try_from(ids.container_child(step.name, k + 1)?).ok()?,
+                        None => named(base, step.name).nth(k)?,
+                    };
                     let found = base.children().get(j as usize)?.as_element()?;
                     at.push(j);
                     (found, at)
@@ -366,7 +344,7 @@ mod tests {
     }
 
     #[test]
-    fn a_long_body_s_paths_are_found_by_its_index_as_by_counting() {
+    fn a_long_body_s_paths_are_found_by_its_ids_as_by_counting() {
         let paragraphs: String = (0..150)
             .map(|k| {
                 if k % 7 == 0 {
@@ -379,18 +357,18 @@ mod tests {
         let doc = parse(&format!(
             "<w:document {NS}><w:body>{paragraphs}<w:sectPr/></w:body></w:document>"
         ));
-        let index = super::ChildIndex::default();
+        let ids = crate::ids::PartIds::new("body", &doc);
         for k in 1..=140 {
             for path in [
                 format!("w:body/w:p[{k}]"),
                 format!("w:body/w:p[{k}]/w:r[1]"),
                 format!("w:body/w:tbl[{}]/w:tr[1]/w:tc[1]/w:p[1]", 1 + k % 22),
             ] {
-                let indexed = super::resolve_indexed(&doc, &path, &index).map(|(e, at)| (Arc::as_ptr(e), at));
+                let indexed = super::resolve_in(&doc, &path, &ids).map(|(e, at)| (Arc::as_ptr(e), at));
                 let counted = resolve_path(&doc, &path).map(|(e, at)| (Arc::as_ptr(e), at));
                 assert_eq!(indexed, counted, "{path}");
             }
         }
-        assert!(super::resolve_indexed(&doc, "w:body/w:p[200]", &index).is_none());
+        assert!(super::resolve_in(&doc, "w:body/w:p[200]", &ids).is_none());
     }
 }

@@ -153,7 +153,7 @@ impl Facts<'_> {
         let version = self.version();
         for id in ids {
             let (place, held_by, table) = match body.ids.get(id) {
-                Some(Entry::Paragraph(_)) => match version.ids.in_paragraph(id) {
+                Some(Entry::Paragraph(_)) => match version.in_paragraph(id) {
                     Some((host, place)) => (place, host.to_string(), false),
                     None => continue,
                 },
@@ -178,9 +178,10 @@ impl Facts<'_> {
             .map(|read| {
                 read.box_texts
                     .iter()
-                    .filter(|l| l.story.is_none() && super::story_kind(&l.path) == "body")
+                    .filter(|l| l.story.is_none() && matches!(l.at.kind, "body" | "table"))
                     .filter(|l| {
-                        version.ids.place_of_path(&l.path).is_some_and(|at| {
+                        let named = self.path_of_place(&l.place);
+                        named.and_then(|path| version.place_of_path(&path)).is_some_and(|at| {
                             boxed
                                 .places
                                 .iter()

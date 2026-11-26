@@ -234,7 +234,7 @@ fn base(address: &str) -> (String, usize) {
 }
 
 /// A key or column as a reference writes it (`textfacts.quote`).
-fn quote(part: &str) -> String {
+pub(crate) fn quote(part: &str) -> String {
     if part.contains('/') || part.contains('\'') || part == "*" || part.starts_with('#') || part.starts_with('{') {
         format!("'{}'", part.replace('\'', "''"))
     } else {

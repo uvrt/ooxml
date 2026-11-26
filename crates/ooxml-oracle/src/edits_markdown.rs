@@ -33,6 +33,7 @@ pub fn insert_markdown(editor: &Editor, caller: &Caller, package: &Package, case
         options: MarkdownOptions {
             html_as_text: text("html") == "text",
             emphasis_direct: text("emphasis") == "direct",
+            ..MarkdownOptions::default()
         },
         policy: crate::edits::policy(case),
     };

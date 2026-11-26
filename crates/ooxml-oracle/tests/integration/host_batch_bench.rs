@@ -32,8 +32,8 @@ fn caller(name: &str) -> CallAs {
     let mut context = Map::new();
     context.insert("agent".into(), Value::from(name));
     CallAs {
-        roles: None,
         context: Some(context),
+        ..CallAs::default()
     }
 }
 

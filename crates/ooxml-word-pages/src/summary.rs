@@ -11,6 +11,8 @@
 //! anywhere but in a comparison.
 
 use ooxml_base::Digest;
+use ooxml_word_model::docx::VersionNames;
+use ooxml_word_model::ids::{Anchor, StoryIx};
 use ooxml_word_model::value::Text;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -20,8 +22,10 @@ use std::sync::Arc;
 pub struct SummaryLine {
     /// Its paragraph's id, where it is a body paragraph the version names.
     pub id: Option<Text>,
-    /// Its paragraph's path.
-    pub path: Text,
+    /// Its paragraph's path, where it has no id (a header's, footer's or note's line, a
+    /// separator the layout makes): a body block's path moves where its id does not, and a
+    /// page's summary is kept across versions by its blocks' keys.
+    pub path: Option<Text>,
     /// It is the body's (not a header's, footer's or note's).
     pub body: bool,
     /// What it draws, digested.
@@ -44,6 +48,9 @@ pub struct Summary {
     pub pages: Vec<Arc<PageSummary>>,
     /// The pages known (all of them: a layout that stops is a fallback).
     pub known: usize,
+    /// The names of the version it was made of: its body lines' paths are named through
+    /// them at the edge ([`Summary::path_of`]).
+    pub names: Arc<VersionNames>,
 }
 
 /// What changed between two summaries (`Reflow`).
@@ -82,7 +89,10 @@ fn content<'a>(page: &'a PageSummary, body_only: bool, aliases: &'a HashMap<Stri
         .iter()
         .filter(|l| !body_only || l.body)
         .map(|l| {
-            let key = l.id.as_deref().map_or(&*l.path, |id| canon(aliases, id));
+            let key = match (l.id.as_deref(), l.path.as_deref()) {
+                (Some(id), _) => canon(aliases, id),
+                (None, path) => path.unwrap_or_default(),
+            };
             (key, l.drawn)
         })
         .collect()
@@ -185,6 +195,17 @@ pub(crate) fn reflow_of(
 }
 
 impl Summary {
+    /// The path of `line`'s paragraph (a line of one of its pages): its own where it has no
+    /// id, else its block's, named through the version's names.
+    #[must_use]
+    pub fn path_of(&self, line: &SummaryLine) -> Option<String> {
+        if let Some(path) = &line.path {
+            return Some(path.to_string());
+        }
+        let key = self.names.key_of_id(StoryIx::BODY, line.id.as_deref()?)?;
+        self.names.path(Anchor::whole(key))
+    }
+
     /// Its pages.
     pub fn count(&self) -> usize {
         self.pages.len()
@@ -216,24 +237,26 @@ impl Summary {
 const STORIES: [&str; 4] = ["w:footnote[", "w:endnote[", "w:hdr", "w:ftr"];
 
 /// Whether a line of `path`, of `story` (a header's or footer's), is the body's.
-pub(crate) fn in_body(path: &str, story: bool) -> bool {
+fn in_body(path: &str, story: bool) -> bool {
     !story && !STORIES.iter().any(|p| path.starts_with(p))
 }
 
-/// A page's summary from its digests: each body line named by `version`'s id for it.
+/// A page's summary from its digests: each body line named by `version`'s id for it, the
+/// rest by their paths.
 pub(crate) fn page_summary(digests: crate::engine::PageDigests, version: &crate::version::LaidVersion) -> PageSummary {
     let lines = digests
         .lines
         .into_iter()
         .map(|(path, story, drawn)| {
             let body = in_body(&path, story.is_some());
+            let id = if body {
+                version.id_of(&path).map(|id| Text::from(id.as_str()))
+            } else {
+                None
+            };
             SummaryLine {
-                id: if body {
-                    version.ids.id_of(&path).map(Text::from)
-                } else {
-                    None
-                },
-                path: Text::from(path.as_str()),
+                path: id.is_none().then(|| Text::from(path.as_str())),
+                id,
                 body,
                 drawn,
             }
@@ -243,13 +266,4 @@ pub(crate) fn page_summary(digests: crate::engine::PageDigests, version: &crate:
         rest: digests.rest,
         lines,
     }
-}
-
-/// Whether `page` (a summary made of another version's same page) names its body lines
-/// as `version` does.
-pub(crate) fn named_alike(page: &PageSummary, version: &crate::version::LaidVersion) -> bool {
-    page.lines
-        .iter()
-        .filter(|l| l.body)
-        .all(|l| version.ids.id_of(&l.path) == l.id.as_deref())
 }

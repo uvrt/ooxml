@@ -9,7 +9,8 @@
 //!
 //! Must not: lay out or paint but through the facts' pages.
 
-use ooxml_word_pages::layout_facts::{story_kind, Facts};
+use ooxml_word_pages::layout_facts::Facts;
+use ooxml_word_pages::line_text::ItemPlace;
 use std::cell::OnceCell;
 use std::collections::{BTreeSet, HashMap};
 
@@ -55,16 +56,17 @@ impl<'f, 'a> Placed<'f, 'a> {
     fn stories(&self) -> &HashMap<String, BTreeSet<usize>> {
         self.stories.get_or_init(|| {
             let facts = self.facts;
-            let mut named: HashMap<(String, String), Option<String>> = HashMap::new();
+            let mut named: HashMap<(Option<String>, ItemPlace), Option<String>> = HashMap::new();
             let mut out: HashMap<String, BTreeSet<usize>> = HashMap::new();
             for page in (1..=facts.page_count()).filter(|&p| facts.shown([p])) {
                 for line in facts.texts(page - 1).unwrap_or_default() {
-                    let Some(part) = self.part_of(line) else {
+                    if line.at.story == "body" {
                         continue;
-                    };
+                    }
+                    let part = line.story.as_ref().map(|(_, part)| part.clone());
                     let id = named
-                        .entry((part.to_owned(), line.path.clone()))
-                        .or_insert_with(|| self.id_at(part, &line.path));
+                        .entry((part, line.place.clone()))
+                        .or_insert_with(|| facts.version().line_paragraph_id(facts.docx(), line));
                     if let Some(id) = id {
                         out.entry(id.clone()).or_default().insert(page);
                     }
@@ -72,26 +74,5 @@ impl<'f, 'a> Placed<'f, 'a> {
             }
             out
         })
-    }
-
-    /// The part of a header's, footer's or note's line: its story's, or the notes part.
-    fn part_of<'l>(&self, line: &'l ooxml_word_pages::line_text::LineText) -> Option<&'l str>
-    where
-        'a: 'l,
-    {
-        if let Some((_, part)) = &line.story {
-            return Some(part);
-        }
-        match story_kind(&line.path) {
-            kind @ ("footnotes" | "endnotes") => self.facts.docx().story(kind).map(|s| s.part.as_str()),
-            _ => None,
-        }
-    }
-
-    /// The id of the paragraph at `path` (`w:hdr/w:p[1]`) of the part `part`.
-    fn id_at(&self, part: &str, path: &str) -> Option<String> {
-        let story = self.facts.docx().part(part)?;
-        let (_, place) = story.resolve_path(path)?;
-        story.ids.paragraph_at(&place).map(|p| p.id)
     }
 }

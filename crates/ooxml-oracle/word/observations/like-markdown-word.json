@@ -1,0 +1,690 @@
+{
+ "_about": "What Word 16.106 for Mac wrote for crates/ooxml-oracle/word/probes/like_markdown_probe.py (document and cases in cases/like_markdown_cases.py): 'word-added', items added to each list as a person adds them, tracked (Enter at the end of the last item, the text typed, Word's list indent for an item a level down; per paragraph key its runs as [kind, text], its mark's revision and its own pPr settings with their values); 'tools-opened', whether it opened and saved the tools' tracked word_insert_markdown like; 'word-labels'/'tools-labels', each key's text and settings after Word's Accept All and convert numbers to text, of Word's document and of the tools'; 'tools-reject', the same after Word's Reject All of the tools' document. Regenerate with python crates/ooxml-oracle/word/probes/like_markdown_probe.py.",
+ "word": "16.106 (macOS), Dutch interface",
+ "word-added": {
+  "paragraphs": {
+   "Head": {
+    "runs": [
+     [
+      "text",
+      "Head stays."
+     ]
+    ],
+    "mark": null,
+    "settings": {}
+   },
+   "Walk": {
+    "runs": [
+     [
+      "text",
+      "Walk first."
+     ]
+    ],
+    "mark": null,
+    "settings": {
+     "pStyle": {
+      "val": "Lijstnummering"
+     }
+    }
+   },
+   "Ford": {
+    "runs": [
+     [
+      "text",
+      "Ford second."
+     ]
+    ],
+    "mark": "ins",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstnummering"
+     }
+    }
+   },
+   "Cross": {
+    "runs": [
+     [
+      "ins",
+      "Cross third."
+     ]
+    ],
+    "mark": "ins",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstnummering"
+     }
+    }
+   },
+   "Rest": {
+    "runs": [
+     [
+      "ins",
+      "Rest fourth."
+     ]
+    ],
+    "mark": null,
+    "settings": {
+     "pStyle": {
+      "val": "Lijstnummering"
+     }
+    }
+   },
+   "Alpha": {
+    "runs": [
+     [
+      "text",
+      "Alpha point."
+     ]
+    ],
+    "mark": null,
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken"
+     }
+    }
+   },
+   "Bravo": {
+    "runs": [
+     [
+      "text",
+      "Bravo point."
+     ]
+    ],
+    "mark": "ins",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken"
+     }
+    }
+   },
+   "Charlie": {
+    "runs": [
+     [
+      "ins",
+      "Charlie point."
+     ]
+    ],
+    "mark": "ins",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken"
+     }
+    }
+   },
+   "Detail": {
+    "runs": [
+     [
+      "ins",
+      "Detail below."
+     ]
+    ],
+    "mark": null,
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken"
+     },
+     "tabs": {
+      "tab": "num"
+     },
+     "ind": {
+      "left": "720"
+     }
+    }
+   },
+   "Echo": {
+    "runs": [
+     [
+      "text",
+      "Echo point."
+     ]
+    ],
+    "mark": null,
+    "settings": {
+     "pStyle": {
+      "val": "Lijstalinea"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "3"
+     }
+    }
+   },
+   "Foxtrot": {
+    "runs": [
+     [
+      "text",
+      "Foxtrot point."
+     ]
+    ],
+    "mark": "ins",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstalinea"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "3"
+     }
+    }
+   },
+   "Golf": {
+    "runs": [
+     [
+      "ins",
+      "Golf point."
+     ]
+    ],
+    "mark": "ins",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstalinea"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "3"
+     }
+    }
+   },
+   "Hotel": {
+    "runs": [
+     [
+      "ins",
+      "Hotel below."
+     ]
+    ],
+    "mark": null,
+    "settings": {
+     "pStyle": {
+      "val": "Lijstalinea"
+     },
+     "numPr": {
+      "ilvl": "1",
+      "numId": "3"
+     }
+    }
+   },
+   "After": {
+    "runs": [
+     [
+      "text",
+      "After stays."
+     ]
+    ],
+    "mark": null,
+    "settings": {}
+   }
+  }
+ },
+ "tools-opened": {
+  "outcome": "done",
+  "detail": ""
+ },
+ "word-labels": {
+  "paragraphs": {
+   "Head": {
+    "text": "Head stays.",
+    "settings": {}
+   },
+   "Walk": {
+    "text": "1.\tWalk first.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstnummering"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": "left"
+     },
+     "ind": {
+      "left": "360",
+      "hanging": "360"
+     }
+    }
+   },
+   "Ford": {
+    "text": "2.\tFord second.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstnummering"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": "left"
+     },
+     "ind": {
+      "left": "360",
+      "hanging": "360"
+     }
+    }
+   },
+   "Cross": {
+    "text": "3.\tCross third.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstnummering"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": "left"
+     },
+     "ind": {
+      "left": "360",
+      "hanging": "360"
+     }
+    }
+   },
+   "Rest": {
+    "text": "4.\tRest fourth.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstnummering"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": "left"
+     },
+     "ind": {
+      "left": "360",
+      "hanging": "360"
+     }
+    }
+   },
+   "Alpha": {
+    "text": "\tAlpha point.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": "left"
+     },
+     "ind": {
+      "left": "360",
+      "hanging": "360"
+     }
+    }
+   },
+   "Bravo": {
+    "text": "\tBravo point.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": "left"
+     },
+     "ind": {
+      "left": "360",
+      "hanging": "360"
+     }
+    }
+   },
+   "Charlie": {
+    "text": "\tCharlie point.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": "left"
+     },
+     "ind": {
+      "left": "360",
+      "hanging": "360"
+     }
+    }
+   },
+   "Detail": {
+    "text": "\tDetail below.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": "left"
+     },
+     "ind": {
+      "left": "720",
+      "hanging": "360"
+     }
+    }
+   },
+   "Echo": {
+    "text": "\tEcho point.",
+    "settings": {
+     "ind": {
+      "left": "720",
+      "hanging": "360"
+     }
+    }
+   },
+   "Foxtrot": {
+    "text": "\tFoxtrot point.",
+    "settings": {
+     "ind": {
+      "left": "720",
+      "hanging": "360"
+     }
+    }
+   },
+   "Golf": {
+    "text": "\tGolf point.",
+    "settings": {
+     "ind": {
+      "left": "720",
+      "hanging": "360"
+     }
+    }
+   },
+   "Hotel": {
+    "text": "o\tHotel below.",
+    "settings": {
+     "ind": {
+      "left": "1440",
+      "hanging": "360"
+     }
+    }
+   },
+   "After": {
+    "text": "After stays.",
+    "settings": {}
+   }
+  },
+  "revisions": true
+ },
+ "tools-labels": {
+  "paragraphs": {
+   "Head": {
+    "text": "Head stays.",
+    "settings": {}
+   },
+   "Walk": {
+    "text": "1.\tWalk first.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstnummering"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": "left"
+     },
+     "ind": {
+      "left": "360",
+      "hanging": "360"
+     }
+    }
+   },
+   "Ford": {
+    "text": "2.\tFord second.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstnummering"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": "left"
+     },
+     "ind": {
+      "left": "360",
+      "hanging": "360"
+     }
+    }
+   },
+   "Cross": {
+    "text": "3.\tCross third.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstnummering"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": "left"
+     },
+     "ind": {
+      "left": "360",
+      "hanging": "360"
+     }
+    }
+   },
+   "Rest": {
+    "text": "4.\tRest fourth.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstnummering"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": "left"
+     },
+     "ind": {
+      "left": "360",
+      "hanging": "360"
+     }
+    }
+   },
+   "Alpha": {
+    "text": "\tAlpha point.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": "left"
+     },
+     "ind": {
+      "left": "360",
+      "hanging": "360"
+     }
+    }
+   },
+   "Bravo": {
+    "text": "\tBravo point.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": "left"
+     },
+     "ind": {
+      "left": "360",
+      "hanging": "360"
+     }
+    }
+   },
+   "Charlie": {
+    "text": "\tCharlie point.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": "left"
+     },
+     "ind": {
+      "left": "360",
+      "hanging": "360"
+     }
+    }
+   },
+   "Detail": {
+    "text": "o\tDetail below.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken2"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "ind": {
+      "left": "1440",
+      "hanging": "360"
+     }
+    }
+   },
+   "Echo": {
+    "text": "\tEcho point.",
+    "settings": {
+     "ind": {
+      "left": "720",
+      "hanging": "360"
+     }
+    }
+   },
+   "Foxtrot": {
+    "text": "\tFoxtrot point.",
+    "settings": {
+     "ind": {
+      "left": "720",
+      "hanging": "360"
+     }
+    }
+   },
+   "Golf": {
+    "text": "\tGolf point.",
+    "settings": {
+     "ind": {
+      "left": "720",
+      "hanging": "360"
+     }
+    }
+   },
+   "Hotel": {
+    "text": "o\tHotel below.",
+    "settings": {
+     "ind": {
+      "left": "1440",
+      "hanging": "360"
+     }
+    }
+   },
+   "After": {
+    "text": "After stays.",
+    "settings": {}
+   }
+  },
+  "revisions": false
+ },
+ "tools-reject": {
+  "paragraphs": {
+   "Head": {
+    "text": "Head stays.",
+    "settings": {}
+   },
+   "Walk": {
+    "text": "Walk first.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstnummering"
+     }
+    }
+   },
+   "Ford": {
+    "text": "Ford second.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstnummering"
+     }
+    }
+   },
+   "Alpha": {
+    "text": "Alpha point.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken"
+     }
+    }
+   },
+   "Bravo": {
+    "text": "Bravo point.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken"
+     }
+    }
+   },
+   "Echo": {
+    "text": "Echo point.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstalinea"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "3"
+     }
+    }
+   },
+   "Foxtrot": {
+    "text": "Foxtrot point.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstalinea"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "3"
+     }
+    }
+   },
+   "After": {
+    "text": "After stays.",
+    "settings": {}
+   }
+  },
+  "revisions": false
+ }
+}

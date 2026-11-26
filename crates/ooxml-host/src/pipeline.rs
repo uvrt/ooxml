@@ -17,11 +17,13 @@ use crate::catalogue::{Catalogue, Entry, Own};
 use crate::own::OwnCall;
 use crate::records::{digest, shape, CallRecord};
 use crate::session::{CallAs, HostSession};
+use crate::values::WithValues;
+use ooxml_session::datasets::CallDatasets;
 use ooxml_session::{CallContext, CallRefs, DocId, RefOwner};
 use ooxml_store::Caller;
 use ooxml_tools::blobs::BlobList;
 use ooxml_tools::roles::RoleSet;
-use ooxml_tools::{Holding, OpEffects, Outcome, ToolError, ToolResult, TryCall};
+use ooxml_tools::{Holding, OpEffects, Outcome, PlaceKind, ToolError, ToolResult, TryCall};
 use serde_json::{Map, Value};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
@@ -53,6 +55,9 @@ pub(crate) struct Going {
     pub(crate) docs: Vec<String>,
     /// Its arguments as taken (as given, where it failed before they were).
     arguments: Value,
+    /// The values the application resolved for the call itself (the sources of documents
+    /// it holds), handed to the format with the host's own.
+    pub(crate) values: ooxml_tools::written::CallValues,
     /// The versions it reads, where a batch pins them (each document at the version the
     /// batch's first op on it read); `None`: each document's head.
     pub(crate) pinned: Option<Vec<ooxml_session::Opened>>,
@@ -71,6 +76,7 @@ impl Going {
             arguments,
             pinned: None,
             lock: ooxml_session::LockSpent::default(),
+            values: ooxml_tools::written::CallValues::default(),
         }
     }
 }
@@ -88,6 +94,7 @@ impl HostSession {
         let clock = &self.session.context().clock;
         let started = clock.monotonic();
         let mut going = Going::new(name, arguments.clone());
+        going.values = how.values.clone();
         let ran = catch_unwind(AssertUnwindSafe(|| self.go(name, arguments, roles, how, &mut going)));
         let mut result = ran.unwrap_or_else(|panic| {
             let said = panic
@@ -209,27 +216,34 @@ impl HostSession {
             Err(error) => return self.refused_at(error, (!served).then_some(doc.as_str())),
         };
         going.notes.append(&mut notes);
+        // 6.-8. its sources, the datasets it names, its references
+        let mut datasets = CallDatasets::new();
+        let (WithValues { arguments, values, .. }, served) =
+            match self.values_of(entry, &doc, arguments, retry, &mut datasets, served) {
+                Ok(found) => found,
+                Err(refused) => return *refused,
+            };
         // a retry key's repeat
         let key = (changing && entry.spec.flags.retry_key)
             .then(|| arguments.get("key").and_then(Value::as_str).map(str::to_owned))
             .flatten();
-        if let Some(key) = &key {
-            let repeat = self.stores().keys.repeat(&doc, entry.name(), key);
-            if let Some(mut repeat) = repeat {
-                // (the document and the version it is at, as a call that changed nothing)
-                repeat.doc = Some(doc.clone());
-                repeat.version = DocId::parse(&doc)
-                    .and_then(|id| self.session.snapshot(&id).ok())
-                    .map(|head| head.number());
-                return repeat;
-            }
+        if let Some(repeat) = key.as_deref().and_then(|key| self.repeated(&doc, entry.name(), key)) {
+            return repeat;
         }
         // 9. the handler, by the document's format, on the version the call reads
         let mut context = self.context(caller);
         self.pin(going, &mut context);
+        context.values = values;
+        context.values.merge(going.values.clone());
         let (mut result, made) = self.session.edit_accepted(entry.name(), arguments, &context);
         if let Some(made) = &made {
             going.lock = made.lock;
+        }
+        if !result.is_error() {
+            match self.finish_datasets(datasets) {
+                Ok(mut stale) => result.warnings.append(&mut stale),
+                Err(error) => return ToolResult::failed(error),
+            }
         }
         if served && result.is_error() {
             result.doc = None;
@@ -258,6 +272,43 @@ impl HostSession {
             self.stores().keys.keep(&doc, entry.name(), key, &result);
         }
         result
+    }
+
+    /// Steps 6 to 8 ([`HostSession::with_values`]), and whether the call is still one
+    /// today's host serves beside the others (`served`: not where it reads another
+    /// document); a refusal as the call's reply -- naming its document where it is not
+    /// served, none where it came before the documents were held.
+    fn values_of(
+        &self,
+        entry: &Entry,
+        doc: &str,
+        arguments: Map<String, Value>,
+        retry: &TryCall,
+        datasets: &mut CallDatasets,
+        served: bool,
+    ) -> Result<(WithValues, bool), Box<ToolResult<Value>>> {
+        let other = |held: &[String]| held.iter().any(|h| h != doc);
+        match self.with_values(entry, doc, arguments, retry, datasets) {
+            Ok(found) => {
+                let served = served && !other(&found.held);
+                Ok((found, served))
+            }
+            Err(refused) => {
+                let named = !refused.before && !(served && !other(&refused.held));
+                Err(Box::new(self.refused_at(refused.error, named.then_some(doc))))
+            }
+        }
+    }
+
+    /// The reply a retry key's earlier call left, for its repeat: at the document's version
+    /// now, as a call that changed nothing.
+    fn repeated(&self, doc: &str, tool: &str, key: &str) -> Option<ToolResult<Value>> {
+        let mut repeat = self.stores().keys.repeat(doc, tool, key)?;
+        repeat.doc = Some(doc.to_owned());
+        repeat.version = DocId::parse(doc)
+            .and_then(|id| self.session.snapshot(&id).ok())
+            .map(|head| head.number());
+        Some(repeat)
     }
 
     /// `error` as a call's reply, naming `doc` at its head where the call names one.
@@ -388,6 +439,28 @@ impl HostSession {
         let Value::Object(mut arguments) = resolved else {
             return Err(ToolError::internal("refs resolved to no object", "host:refs"));
         };
+        let mut notes = notes;
+        if let Some(places) = &entry.spec.places {
+            let fields: &[&str] = if places.kind == PlaceKind::Sides {
+                &["after", "before"]
+            } else {
+                &["at"]
+            };
+            for field in fields {
+                let Some(Value::String(place)) = arguments.get(*field) else {
+                    continue;
+                };
+                if !place.contains('$') {
+                    continue;
+                }
+                let resolved = place_refs(place, places.kind == PlaceKind::Blocks, retry, |name| {
+                    let (address, note) = refs.resolve_ref(name, doc, table, Some(field), retry)?;
+                    notes.extend(note);
+                    Ok(address)
+                })?;
+                arguments.insert((*field).to_owned(), Value::from(resolved));
+            }
+        }
         let mut folded = Vec::new();
         if changing {
             refs.own_first(&Value::Object(arguments.clone()), doc, table, retry)?;
@@ -414,6 +487,7 @@ impl HostSession {
             caller: caller.map_or_else(Caller::anonymous, |c| Caller::named(&caller_key(c))),
             caller_context: caller.map(|c| Arc::new(c.clone())),
             limits: self.host.settings.limits,
+            layout_timeout: self.host.settings.layout_timeout,
             image_budgets: stores.images.budgets(),
             blobs: Some(Arc::new(BlobList(stores.blobs.blobs().to_vec()))),
             ..CallContext::default()
@@ -558,7 +632,7 @@ impl HostSession {
                 .log_arguments
                 .then(|| arguments.as_object().cloned())
                 .flatten(),
-            roles: (roles != self.roles).then(|| roles.roles().iter().map(|r| r.as_str().to_owned()).collect()),
+            roles: (roles != self.roles()).then(|| roles.roles().iter().map(|r| r.as_str().to_owned()).collect()),
             context: how.context.clone().filter(|c| !c.is_empty()),
             panic: result.app.panic.clone(),
         };
@@ -598,6 +672,57 @@ fn ops_read(mut arguments: Value) -> Value {
 pub fn caller_key(context: &Map<String, Value>) -> String {
     let sorted: std::collections::BTreeMap<&String, &Value> = context.iter().collect();
     serde_json::to_string(&sorted).unwrap_or_default()
+}
+
+/// A place (`after:$x`, `before:$a..$b`, `replace:$x`, `$x`) with each `$name` of its
+/// address resolved by `resolve` (docx-agent's `blocks_at` and `sided`): the side kept, a
+/// span's ends resolved each; for a place of new blocks (`blocks`), a span placed beside
+/// read as its end on that side -- after its last block, before its first -- where it is
+/// no range of characters.
+fn place_refs(
+    place: &str,
+    blocks: bool,
+    retry: &TryCall,
+    mut resolve: impl FnMut(&str) -> Result<String, ToolError>,
+) -> Result<String, ToolError> {
+    let (side, rest) = match place.split_once(':') {
+        Some((side, rest)) if matches!(side, "after" | "before" | "replace") => (Some(side), rest),
+        _ => (None, place),
+    };
+    let parts: Result<Vec<String>, ToolError> = rest
+        .split("..")
+        .map(|part| {
+            if part.starts_with('$') {
+                resolve(part)
+            } else {
+                Ok(part.to_owned())
+            }
+        })
+        .collect();
+    let parts = parts?;
+    if blocks && parts.iter().any(|p| p.starts_with("h:")) {
+        let form = "placing at a heading's range by reference";
+        return Err(ToolError::refusal(
+            ooxml_tools::Refusal::Refused,
+            format!("{form} is not supported yet; give the heading's first or last block's id"),
+            ooxml_tools::WayOut::call(retry.clone()),
+        )
+        .with_detail("not_supported", Value::from(form))
+        .at("at"));
+    }
+    let mut joined = parts.join("..");
+    if let (true, Some(side @ ("after" | "before")), Some((first, last))) = (blocks, side, joined.split_once("..")) {
+        if !joined.contains('@') {
+            let end = if side == "before" { first } else { last }.trim();
+            if !end.is_empty() {
+                joined = end.to_owned();
+            }
+        }
+    }
+    Ok(match side {
+        Some(side) => format!("{side}:{joined}"),
+        None => joined,
+    })
 }
 
 /// Each ref name a call gives (`ref`, `items[].ref`) as `keep` keeps it, where it says one.

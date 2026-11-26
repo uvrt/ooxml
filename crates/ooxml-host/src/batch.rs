@@ -17,6 +17,7 @@ use crate::catalogue::Catalogue;
 use crate::pipeline::{caller_key, Going};
 use crate::session::HostSession;
 use ooxml_session::batch::{passed, seconds};
+use ooxml_session::datasets::CallDatasets;
 use ooxml_session::{
     AnyVersion, BatchOps, BatchRefused, CallContext, CallMade, CallRefs, Deferred, DocId, InBatch, OpRan, RefOwner,
     StepOwner,
@@ -93,6 +94,8 @@ struct Attempt {
     images: usize,
     /// Each applied op's format effects, in op order.
     deferred: Vec<(usize, Vec<Deferred>)>,
+    /// The datasets each applied op named or defined, kept once the batch is published.
+    named: Vec<(usize, CallDatasets)>,
     /// What the applied ops made, by document: the first op's `before`, the last's version.
     made: BTreeMap<String, CallMade>,
     /// The first op the deadline stopped, and when.
@@ -114,6 +117,9 @@ struct Run<'h> {
     attempt: Mutex<Attempt>,
     /// The documents the ops change, which run in a transaction.
     batched: Vec<String>,
+    /// The values the application handed the call (written by reference; the rows of
+    /// sources it resolved), for every op.
+    values: ooxml_tools::written::CallValues,
 }
 
 impl HostSession {
@@ -183,6 +189,7 @@ impl HostSession {
             timeout: settings.batch_timeout,
             attempt: Mutex::new(Attempt::default()),
             batched: batched.clone(),
+            values: going.values.clone(),
         };
         let published = self.run_ops(&run, &batched);
         let mut attempt = std::mem::take(&mut *run.lock());
@@ -322,7 +329,13 @@ impl HostSession {
                 })
             })
             .and_then(|accepted| {
-                Catalogue::check_role(entry, Some(&accepted.arguments), roles, Some("arguments"), &retry)
+                Catalogue::check_role(entry, Some(&accepted.arguments), roles, None, &retry)
+                    .map_err(|error| {
+                        let field = error
+                            .field()
+                            .map_or_else(|| "arguments".to_owned(), |f| format!("arguments.{f}"));
+                        error.at(field)
+                    })
                     .map(|()| accepted)
             });
         match checked {
@@ -454,6 +467,16 @@ impl HostSession {
             };
             for keep in deferred {
                 keep(&*format, &at.version);
+            }
+        }
+        // the datasets the ops named or defined, kept at publish (their staleness said then,
+        // of the attempt that published: an earlier attempt's were dropped with it)
+        for (index, datasets) in std::mem::take(&mut attempt.named) {
+            match self.finish_datasets(datasets) {
+                Ok(stale) => attempt
+                    .warnings
+                    .extend(stale.iter().map(|w| format!("ops[{index}]: {w}"))),
+                Err(error) => attempt.warnings.push(format!("ops[{index}]: {}", error.message())),
             }
         }
         for (doc, at) in published {
@@ -627,6 +650,7 @@ struct OpRun {
     result: ToolResult<Value>,
     inner: Option<InBatch>,
     folded: Vec<(String, String)>,
+    datasets: CallDatasets,
 }
 
 /// What a batch published on one document.
@@ -802,7 +826,17 @@ impl Run<'_> {
         let with = host
             .with_refs(entry, refs, doc, arguments, planned.changes, retry)
             .map_err(|error| Failed { error, own: false })?;
+        // 6.-8. its sources, the datasets it names, its references (as the call alone)
+        let mut datasets = CallDatasets::new();
+        let valued = host
+            .with_values(entry, doc, with.arguments, retry, &mut datasets)
+            .map_err(|refused| Failed {
+                error: refused.error,
+                own: false,
+            })?;
         let mut context = host.context(self.caller);
+        context.values = valued.values;
+        context.values.merge(self.values.clone());
         let txn = txn.filter(|_| self.batched.iter().any(|d| d == doc));
         let id = DocId::parse(doc);
         if let (Some(txn), Some(id)) = (txn, &id) {
@@ -815,9 +849,9 @@ impl Run<'_> {
             context.at.extend(at);
         }
         let mut run = match txn {
-            Some(txn) => host.session.edit_in(entry.name(), with.arguments, &context, txn),
+            Some(txn) => host.session.edit_in(entry.name(), valued.arguments, &context, txn),
             None => {
-                let (result, made) = host.session.edit_accepted(entry.name(), with.arguments, &context);
+                let (result, made) = host.session.edit_accepted(entry.name(), valued.arguments, &context);
                 InBatch {
                     result,
                     made,
@@ -844,6 +878,7 @@ impl Run<'_> {
             result,
             inner: Some(run),
             folded: with.folded,
+            datasets,
         })
     }
 
@@ -861,6 +896,7 @@ impl Run<'_> {
             mut result,
             inner,
             folded,
+            datasets,
         }: OpRun,
         retry: &TryCall,
     ) -> Result<(), Failed> {
@@ -913,6 +949,7 @@ impl Run<'_> {
             .warnings
             .extend(warnings.iter().map(|w| format!("ops[{index}]: {w}")));
         attempt.outcomes.insert(index, outcome(index, &planned.tool, done));
+        attempt.named.push((index, datasets));
         if let Some(inner) = inner {
             if !inner.deferred.is_empty() {
                 attempt.deferred.push((index, inner.deferred));

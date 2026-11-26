@@ -31,6 +31,7 @@ mod read_batch;
 mod records;
 mod session;
 mod tools;
+mod values;
 mod wrap;
 
 pub use catalogue::{Catalogue, Entry, Own};
@@ -40,4 +41,5 @@ pub use pipeline::{caller_key, NotRun};
 pub use records::{digest, shape, CallRecord, RetryKeys};
 pub use session::{CallAs, Host, HostSession, HostSettings, Stores};
 pub use tools::HostTools;
+pub use values::{might_name_one_value, names_one_value};
 pub use wrap::validation_fact;

@@ -52,7 +52,7 @@ use ooxml_word_layout::{DocumentLayout, WordLayout};
 use ooxml_word_model::value::Text;
 use ooxml_word_model::Model;
 use ooxml_zip::Archive;
-use parts::{facts_source, new_layout, pictures_of, say, version_ids, SayWith};
+use parts::{facts_source, new_layout, pictures_of, say, SayWith};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -71,9 +71,6 @@ struct Generation {
     /// What each page of the last version said (its warnings), for the pages the next
     /// version keeps.
     said: crate::page_said::PageMemo,
-    /// The main part's root and its ids as the last version read them, which the next
-    /// version's ids are found from (only what changed walked again).
-    ids: Option<(Arc<ooxml_xml::Element>, Arc<ooxml_word_model::ids::PartIds>)>,
     /// What each page digested to, by the page as laid out and its context, across the
     /// generation's versions.
     digests: crate::digest_cache::DigestCache,
@@ -542,7 +539,6 @@ impl PageEngine {
         };
         let said = say(generation, (&laid, previous.as_deref()), drawings.as_ref(), &with);
         self.stats.pages_said = generation.said.stats();
-        let ids = version_ids(generation, package, &document.main_part);
         self.serial += 1;
         let version = Arc::new(LaidVersion {
             drawings,
@@ -558,7 +554,6 @@ impl PageEngine {
             relaid,
             generation: generation.number,
             serial: self.serial,
-            ids,
             summary: std::sync::OnceLock::new(),
             epoch: generation.epoch,
             context: generation.context,
@@ -617,7 +612,6 @@ impl PageEngine {
             last: None,
             laid_from: None,
             said: crate::page_said::PageMemo::default(),
-            ids: None,
             digests: crate::digest_cache::DigestCache::new(self.digest_limit),
             reads: crate::page_reads::ReadMemo::new(Arc::clone(&self.budgets.paint)),
             laid: crate::laid_entry::LaidMemo::new(Arc::clone(&self.budgets.paint)),
@@ -703,7 +697,14 @@ impl PageEngine {
     /// check reads every page's text once: its reader keeps the text, not the paint).
     pub fn line_texts(&mut self, version: &LaidVersion, page: usize) -> Option<Vec<crate::line_text::LineText>> {
         let paint = self.painted_page(version, page, false)?;
-        Some(paint.lines.iter().map(crate::line_text::LineText::of).collect())
+        let names = &version.layout.document.names;
+        Some(
+            paint
+                .lines
+                .iter()
+                .map(|l| crate::line_text::LineText::of(l, names, None))
+                .collect(),
+        )
     }
 
     /// Page `page` of `version` as a reader sees it.

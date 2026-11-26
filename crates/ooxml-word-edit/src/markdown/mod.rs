@@ -4,20 +4,23 @@
 //! ([`writer`], [`lists`], [`table`]), put at its place -- a story's end (a body that is one
 //! empty paragraph typed into: the first new paragraph keeps its ids), after or before a
 //! block, or in place of blocks (`replace:`, the new paragraphs keeping the replaced ones'
-//! settings: [`keep`]) -- with a separator paragraph between two tables and a paragraph
+//! settings: [`keep`]; list items given a look, [`like`], are not matched to them) -- with a separator paragraph between two tables and a paragraph
 //! after a table that ends its container, stamped, and tracked as one revision group
 //! ([`insertion`]); a table cell style whose indents do not fit its cells said in a warning
-//! ([`cell_indents`]).
+//! ([`cell_indents`]); list items like given paragraphs by level ([`like`]: the sample's
+//! style, list at its level, indents and page settings).
 //!
 //! Not ported yet ([`EditError::Unsupported`]: the host writes them its own way):
-//! pictures, footnotes, and the `like` and `table_like` looks.
+//! pictures, footnotes, and tables in a given table's frame (`table_like`).
 //!
 //! Must not: write but through the sink, or know a tool's JSON.
 
 mod cell_indents;
 mod insertion;
 mod keep;
+mod like;
 pub(crate) use insertion::{insert_content, track, track_table};
+pub use like::{LevelLook, ListKind};
 mod lists;
 mod parse;
 pub(crate) use parse::py_space;
@@ -40,6 +43,8 @@ pub struct Options {
     pub html_as_text: bool,
     /// Emphasis and strong as direct `w:i`/`w:b` (`emphasis="direct"`); else their styles.
     pub emphasis_direct: bool,
+    /// The looks list items take, by level (`like`); none: each list's own.
+    pub like: Vec<LevelLook>,
 }
 
 /// Write Markdown as blocks.

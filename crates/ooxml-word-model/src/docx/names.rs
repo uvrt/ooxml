@@ -163,6 +163,57 @@ impl VersionNames {
     pub fn name(&self, anchor: Anchor) -> Option<(String, BlockId)> {
         Some((self.path(anchor)?, self.id(anchor.block)?))
     }
+
+    /// The key of the paragraph, table or row the layout model's path `path` names in the
+    /// story `story` (a path an edge is handed: [`StoryPart::resolve_path`]'s rules); `None`
+    /// where it names no block of the story's own, or one inside a paragraph's content (a
+    /// text box's).
+    #[must_use]
+    pub fn key_at_path(&self, story: StoryIx, path: &str) -> Option<BlockKey> {
+        let part = self.part(story)?;
+        let (_, place) = part.resolve_path(path)?;
+        let mut node = part.root();
+        for k in place.iter().take(place.len().saturating_sub(1)) {
+            node = node.children().get(*k as usize)?.as_element()?;
+            if node.name().local() == "p" {
+                return None;
+            }
+        }
+        part.ids.key_at(story, &place)
+    }
+
+    /// The key of the paragraph, table or row the tool's id `id` names in the story `story`,
+    /// as written (no alias followed).
+    #[must_use]
+    pub fn key_of_id(&self, story: StoryIx, id: &str) -> Option<BlockKey> {
+        let ids = &self.part(story)?.ids;
+        if let Some(entry) = ids.get(id) {
+            return ids.key_of(story, entry);
+        }
+        // a row: by its own paraId's id, or by its table's and its place
+        let place = ids
+            .tables()
+            .iter()
+            .flat_map(|t| t.rows.into_iter())
+            .filter(|(_, row)| row == id)
+            .map(|(place, _)| place)
+            .min()?;
+        ids.key_at(story, &place)
+    }
+
+    /// The top-level block (the block container's child's, wrappers passed through: a
+    /// paragraph or a table) the paragraph `paragraph` is in, itself where it is one; `None`
+    /// as for [`VersionNames::blocks_of`].
+    #[must_use]
+    pub fn top_block_of(&self, paragraph: BlockKey) -> Option<BlockKey> {
+        self.blocks_of(paragraph)?.first().map(|a| a.block)
+    }
+
+    /// The place (child indexes from its part's root) of the block `key` names.
+    #[must_use]
+    pub fn place_of(&self, key: BlockKey) -> Option<crate::ids::Path> {
+        self.part(key.story())?.ids.place_of(key)
+    }
 }
 
 /// The layout model's path of the block at `place` in `part`: the container child's step

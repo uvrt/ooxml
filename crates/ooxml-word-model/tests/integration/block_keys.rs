@@ -200,6 +200,7 @@ fn check_paragraphs(story: &Story<'_>, keys: &mut HashSet<BlockKey>, tally: &mut
         assert_eq!(ids.row_of(key), None);
         assert_eq!(ids.place_of(key).as_deref(), Some(&*p.path), "{}", p.id);
         assert_eq!(names.id(key).map(String::from), Some(p.id.clone()));
+        assert_eq!(names.key_of_id(ix, &p.id), Some(key), "{}", p.id);
         if story.sampled(p.index) {
             let path = layout_path(root, &p.path);
             assert_eq!(names.path(Anchor::whole(key)), path, "{}", p.id);
@@ -212,6 +213,10 @@ fn check_paragraphs(story: &Story<'_>, keys: &mut HashSet<BlockKey>, tally: &mut
                 .blocks_of(key)
                 .map(|blocks| blocks.iter().map(|a| names.path(*a).unwrap()).collect::<Vec<_>>());
             assert_eq!(chain, path.as_deref().and_then(enclosing), "{}", p.id);
+            if let Some(path) = &path {
+                let found = (!in_paragraph(path)).then_some(key);
+                assert_eq!(names.key_at_path(ix, path), found, "{path}");
+            }
             tally.paths += 1;
         }
         let durable = key.durable();
@@ -238,6 +243,11 @@ fn check_tables(story: &Story<'_>, keys: &mut HashSet<BlockKey>, tally: &mut Tal
         assert_eq!(ids.place_of(key).as_deref(), Some(&*table.path));
         assert_eq!(names.id(key).map(String::from), Some(table.id.clone()));
         assert_eq!(names.path(Anchor::whole(key)), layout_path(root, &table.path));
+        assert_eq!(names.key_of_id(ix, &table.id), Some(key), "{}", table.id);
+        if let Some(path) = layout_path(root, &table.path) {
+            let found = (!in_paragraph(&path)).then_some(key);
+            assert_eq!(names.key_at_path(ix, &path), found, "{path}");
+        }
         assert_eq!(
             names.path(Anchor {
                 block: key,
@@ -257,8 +267,13 @@ fn check_tables(story: &Story<'_>, keys: &mut HashSet<BlockKey>, tally: &mut Tal
             assert_eq!(ids.entry_of(row), None);
             assert_eq!(ids.place_of(row).as_deref(), Some(&**path));
             assert_eq!(names.id(row).map(String::from), Some(id.clone()));
+            assert_eq!(names.key_of_id(ix, id), Some(row), "{id}");
             if story.sampled(r) {
                 assert_eq!(names.path(Anchor::whole(row)), layout_path(root, path), "{id}");
+                if let Some(path) = layout_path(root, path) {
+                    let found = (!in_paragraph(&path)).then_some(row);
+                    assert_eq!(names.key_at_path(ix, &path), found, "{path}");
+                }
                 tally.paths += 1;
             }
             check_id(id, BlockKind::Row, &story.name, tally);
@@ -308,6 +323,14 @@ fn check_cells(names: &VersionNames, key: BlockKey, root: &Arc<Element>, place: 
         }
     }
     count
+}
+
+/// Whether a layout path steps through a paragraph before its last step (a text box's
+/// block): what `VersionNames::key_at_path` names none of.
+fn in_paragraph(path: &str) -> bool {
+    let mut steps: Vec<&str> = path.split('/').collect();
+    steps.pop();
+    steps.iter().any(|step| step.starts_with("w:p["))
 }
 
 /// Whether some paraId of the part is written with fewer than eight digits.

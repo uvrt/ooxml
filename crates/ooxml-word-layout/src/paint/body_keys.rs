@@ -1,5 +1,5 @@
-//! Owns: the paths of the paragraphs a page's body lines are painted for, in the order
-//! its paint draws them ([`body_line_paths`]), read from the page's geometry without
+//! Owns: the keys of the paragraphs a page's body lines are painted for, in the order
+//! its paint draws them ([`body_line_keys`]), read from the page's geometry without
 //! painting it: what a comparison of two versions reads to know on which page each body
 //! block is first drawn.
 //!
@@ -8,13 +8,14 @@
 use super::{body_set, paragraph_of};
 use crate::engine::DocumentLayout;
 use crate::geometry::LineSource;
-use ooxml_word_model::value::Text;
+use ooxml_word_model::ids::BlockKey;
 
-/// The paragraph path of each body line page `page` (0-based, blank pages counted) of
-/// `layout` paints, in drawing order: the lines [`super::paint_page`] paints for its
-/// body (its opening line and its stories' lines not among them). Empty past the last
-/// page.
-pub fn body_line_paths(layout: &DocumentLayout, page: usize) -> Vec<Text> {
+/// The paragraph key of each body line page `page` (0-based, blank pages counted) of
+/// `layout` paints, in drawing order (`None`: a paragraph no story's index holds, such as a
+/// separator the layout makes): the lines [`super::paint_page`] paints for its body (its
+/// opening line and its stories' lines not among them; the endnotes placed in its flow
+/// are). Empty past the last page.
+pub fn body_line_keys(layout: &DocumentLayout, page: usize) -> Vec<Option<BlockKey>> {
     let Some(geometry) = layout.page_geometry(page) else {
         return Vec::new();
     };
@@ -27,7 +28,7 @@ pub fn body_line_paths(layout: &DocumentLayout, page: usize) -> Vec<Text> {
             let (paragraph, measured) = paragraph_of(&set, line)?;
             // `spans::paint_line` paints a line its paragraph broke into, none past them.
             measured.measured.lines.get(line.number)?;
-            Some(paragraph.path.clone())
+            Some(paragraph.key)
         })
         .collect()
 }

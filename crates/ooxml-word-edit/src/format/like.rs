@@ -2,7 +2,9 @@
 //! (round 42): the sample's own `w:pPr` children that make its look ([`ParagraphLook`]:
 //! style, list, indents, keeps, page break, widow control; each without its change
 //! records), which of them a paragraph differs in, and each one it differs in taken whole
-//! ([`take`]: the paragraph's own removed, the sample's copied in schema order).
+//! ([`take`]: the paragraph's own removed, the sample's copied in schema order); the look
+//! of an item a level deeper in the sample's list, as Word demotes one
+//! ([`ParagraphLook::deeper`]).
 //!
 //! Must not: write but on the work it is given, or take anything else of the sample (run
 //! formatting, spacing, alignment and tabs stay the paragraph's own).
@@ -11,8 +13,13 @@ use crate::marks::insert_in_order;
 use crate::names::W;
 use crate::validate::Orders;
 use crate::work::{Id, Work};
-use ooxml_xml::{Element, Node};
+use ooxml_word_model::docx::numbering::{membership, Lists, Membership};
+use ooxml_word_model::docx::Docx;
+use ooxml_xml::{Attribute, Element, Name, Node, QName};
 use std::sync::Arc;
+
+/// The list levels a definition has (`w:ilvl` 0 to 8).
+const LEVELS: i64 = 9;
 
 /// What a paragraph takes from its sample: the part's name, as results say it, and the
 /// `w:pPr` child it is.
@@ -31,7 +38,7 @@ pub const NOT_TAKEN: &str = "run formatting, spacing, alignment and tabs stay ea
 
 /// A sample paragraph's own properties that make its look (copies: a look outlives the
 /// sample).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParagraphLook {
     /// The sample's id.
     pub sample: String,
@@ -53,6 +60,91 @@ impl ParagraphLook {
             parts,
         }
     }
+
+    /// The parts this look gives a paragraph that has none of its own: those the sample has.
+    #[must_use]
+    pub fn stated(&self) -> Vec<&'static str> {
+        PARTS
+            .iter()
+            .zip(&self.parts)
+            .filter(|(_, part)| part.is_some())
+            .map(|((name, _), _)| *name)
+            .collect()
+    }
+
+    /// The list a paragraph of this look is in (its style's, or its own `w:numPr`'s), or
+    /// none.
+    #[must_use]
+    pub fn membership(&self, docx: &Docx, lists: &Lists) -> Option<Membership> {
+        // a stand-in paragraph: what the list is read from, its style and its own numbering
+        let stated: Vec<Node> = ["style", "list"]
+            .iter()
+            .filter_map(|name| self.part(name))
+            .map(|e| Node::Element(Arc::clone(e)))
+            .collect();
+        let properties = Element::new(word("pPr"), Vec::new(), Vec::new(), stated);
+        let paragraph = Element::new(
+            word("p"),
+            Vec::new(),
+            Vec::new(),
+            vec![Node::Element(Arc::new(properties))],
+        );
+        membership(docx, lists, &paragraph)
+    }
+
+    /// The look of an item `levels` deeper in the sample's list, as Word demotes an item
+    /// (Tab): the same style, list and page settings, the level `levels` lower and that
+    /// level's own indent (no direct one). `None` where the sample is in no list, or the
+    /// list has no such level.
+    #[must_use]
+    pub fn deeper(&self, docx: &Docx, lists: &Lists, levels: i64) -> Option<ParagraphLook> {
+        let found = self.membership(docx, lists)?;
+        let level = found.level + levels;
+        if level >= LEVELS || lists.level(docx, found.num_id, level).is_none() {
+            return None;
+        }
+        let value = |local: &str, value: i64| {
+            let attribute = Attribute {
+                name: word("val"),
+                value: Arc::from(value.to_string()),
+            };
+            Node::Element(Arc::new(Element::new(
+                word(local),
+                Vec::new(),
+                vec![attribute],
+                Vec::new(),
+            )))
+        };
+        let numbering = Element::new(
+            word("numPr"),
+            Vec::new(),
+            Vec::new(),
+            vec![value("ilvl", level), value("numId", found.num_id)],
+        );
+        let mut deeper = self.clone();
+        for ((name, _), part) in PARTS.iter().zip(&mut deeper.parts) {
+            match *name {
+                "list" => *part = Some(Arc::new(numbering.clone())),
+                "indent" => *part = None,
+                _ => {}
+            }
+        }
+        Some(deeper)
+    }
+
+    /// The part `name` of [`PARTS`], where the sample has it.
+    fn part(&self, name: &str) -> Option<&Arc<Element>> {
+        PARTS
+            .iter()
+            .zip(&self.parts)
+            .find(|((n, _), _)| *n == name)
+            .and_then(|(_, part)| part.as_ref())
+    }
+}
+
+/// `w:<local>`, as docx-agent's `make` names it.
+fn word(local: &str) -> Name {
+    Arc::new(QName::new(Some("w"), local, Some(W)))
 }
 
 /// A copy of a property without its change records (`w:ins`, `w:del`,
@@ -134,7 +226,7 @@ pub fn differs(paragraph: &Element, look: &ParagraphLook, skip: &[&str]) -> Vec<
     out
 }
 
-/// Give `paragraph` (the work's root) the parts of `look` named in `changed`: its own
+/// Give `paragraph` (in `work`) the parts of `look` named in `changed`: its own
 /// removed, the sample's copied in schema order; its `w:pPr` made, and removed when left
 /// empty.
 pub(crate) fn take(work: &mut Work, paragraph: Id, look: &ParagraphLook, changed: &[&str], orders: &Orders) {

@@ -63,9 +63,9 @@ impl PageEngine {
     /// body paragraph holding the box is drawn on are painted in order, until one draws it.
     /// `None` for an id of no paragraph in a body paragraph's content, or one no page draws.
     pub fn first_page_in_text_box(&mut self, version: &LaidVersion, id: &str) -> Option<usize> {
-        let (host, place) = version.ids.in_paragraph(id)?;
+        let (host, place) = version.in_paragraph(id)?;
         let drawn_in = |line: &ooxml_word_layout::paint::PaintedLine| {
-            version.ids.place_of_path(&line.path).as_deref() == Some(place.as_slice())
+            version.place_of_path(&line.path).as_deref() == Some(place.as_slice())
         };
         version.facts().pages_of(&host).into_iter().find(|&page| {
             self.paint(version, page).is_some_and(|paint| {

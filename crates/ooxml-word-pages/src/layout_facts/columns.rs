@@ -12,6 +12,8 @@ use super::{points, round, Facts};
 use crate::page_parts::Part;
 use crate::page_read::PageRead;
 use ooxml_word_model::docx::tables::placed_row_cells;
+use ooxml_word_model::ids::{Anchor, BlockKey, StoryIx};
+use ooxml_word_model::value::Text;
 use ooxml_xml::Element;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
@@ -67,8 +69,8 @@ pub struct CellsPart {
 /// A table's cells drawn on one page.
 #[derive(Debug, Clone, PartialEq)]
 struct PageTable {
-    /// The table's layout path.
-    path: String,
+    /// The table (the outermost one, as `_ROW` reads it).
+    table: BlockKey,
     cells: Vec<PageCell>,
 }
 
@@ -77,9 +79,9 @@ struct PageTable {
 struct PageCell {
     /// Its row and its place in the row, from 0.
     at: (usize, usize),
-    /// Each paragraph's lines measured on the page, in the order first drawn: its path in
-    /// the cell, how many, and the widest one's ink, pt.
-    paragraphs: Vec<(String, usize, f64)>,
+    /// Each paragraph's lines measured on the page, in the order first drawn: its steps
+    /// below the cell, how many, and the widest one's ink, pt.
+    paragraphs: Vec<(Text, usize, f64)>,
     /// The widest run without a space of those lines, pt (0 where none is measured).
     word: f64,
 }
@@ -89,14 +91,15 @@ impl Part<PageRead> for CellsPart {
     fn of(read: &PageRead) -> CellsPart {
         let mut tables: Vec<PageTable> = Vec::new();
         for line in read.texts.iter().filter(|l| l.story.is_none()) {
-            let Some((table, row, cell, paragraph)) = cell_line(&line.path) else {
+            let (Some(at), Some((cell, paragraph))) = (line.at.row, line.at.cell.as_ref()) else {
                 continue;
             };
-            let k = match tables.iter().position(|t| t.path == table) {
+            let (table, row, cell) = (at.table, at.row, *cell);
+            let k = match tables.iter().position(|t| t.table == table) {
                 Some(k) => k,
                 None => {
                     tables.push(PageTable {
-                        path: table.to_owned(),
+                        table,
                         cells: Vec::new(),
                     });
                     tables.len() - 1
@@ -125,7 +128,7 @@ impl Part<PageRead> for CellsPart {
                     *lines += 1;
                     *wide = wide.max(width);
                 }
-                None => seen.paragraphs.push((paragraph.to_owned(), 1, width)),
+                None => seen.paragraphs.push((paragraph.clone(), 1, width)),
             }
             seen.word = seen.word.max(points(widest));
         }
@@ -136,12 +139,13 @@ impl Part<PageRead> for CellsPart {
     fn weight_of(read: &PageRead) -> usize {
         let each = std::mem::size_of::<PageTable>()
             + std::mem::size_of::<PageCell>()
-            + std::mem::size_of::<(String, usize, f64)>();
+            + std::mem::size_of::<(Text, usize, f64)>();
         let lines = read
             .texts
             .iter()
-            .filter(|l| l.story.is_none() && l.path.contains("/w:tc["))
-            .map(|l| each + l.path.len());
+            .filter(|l| l.story.is_none())
+            .filter_map(|l| l.at.cell.as_ref())
+            .map(|(_, below)| each + below.len());
         std::mem::size_of::<CellsPart>() + lines.sum::<usize>()
     }
 }
@@ -170,8 +174,9 @@ pub fn column_fit(facts: &Facts<'_>) -> Vec<ColumnFit> {
         return Vec::new();
     };
     let mut entries = Vec::new();
-    for path in order {
-        let Some(table) = drawn.get(path) else { continue };
+    let names = facts.names();
+    for key in order {
+        let Some(table) = drawn.get(&key) else { continue };
         let pages: Vec<usize> = table.pages.iter().copied().collect();
         if !facts.shown(pages.iter().copied()) {
             continue;
@@ -179,14 +184,17 @@ pub fn column_fit(facts: &Facts<'_>) -> Vec<ColumnFit> {
         if !table.wraps() {
             continue; // no column can wrap: its element and margins are not read
         }
-        let Some((element, _)) = tree::resolve(body, path) else {
+        let Some(path) = names.path(Anchor::whole(key)) else {
             continue;
         };
-        let fits = fit_columns(facts, element, &table.cells, path);
+        let Some((element, _)) = tree::resolve(body, &path) else {
+            continue;
+        };
+        let fits = fit_columns(facts, element, &table.cells, &path);
         if fits.is_empty() {
             continue;
         }
-        let id = facts.version().id_of(path).unwrap_or(path).to_owned();
+        let id = names.id(key).map_or(path, |id| id.to_string());
         for (roomy, wraps, widths) in fits {
             entries.push(ColumnFit {
                 table: id.clone(),
@@ -214,40 +222,48 @@ impl DrawnTable<'_> {
 /// Each body table's cells as drawn, with the tables in the order first drawn: a fold over
 /// the pages' contributions ([`CellsPart`]); with pages asked for, only the tables drawn on
 /// them, on every page each is.
-fn drawn_cells<'f>(facts: &'f Facts<'_>) -> (Vec<&'f str>, HashMap<&'f str, DrawnTable<'f>>) {
+fn drawn_cells<'f>(facts: &'f Facts<'_>) -> (Vec<BlockKey>, HashMap<BlockKey, DrawnTable<'f>>) {
     let pages = &facts.version().facts().pages;
+    let names = facts.names();
+    let keys: std::cell::RefCell<HashMap<&str, Option<BlockKey>>> = std::cell::RefCell::default();
+    let table_key = |table: &'f str| {
+        *keys
+            .borrow_mut()
+            .entry(table)
+            .or_insert_with(|| names.key_at_path(StoryIx::BODY, table))
+    };
     let body_cells = |index: usize| {
         pages
             .get(index)
             .into_iter()
             .flat_map(|p| p.lines.iter())
             .filter(|l| super::story_kind(&l.path) == "body")
-            .filter_map(|l| cell_line(&l.path).map(|(t, ..)| t))
+            .filter_map(|l| cell_line(&l.path).and_then(|(t, ..)| table_key(t)))
     };
-    let shown: Option<BTreeSet<&str>> = (!facts.whole()).then(|| {
+    let shown: Option<std::collections::HashSet<BlockKey>> = (!facts.whole()).then(|| {
         (0..pages.len())
             .filter(|i| facts.shown([i + 1]))
             .flat_map(body_cells)
             .collect()
     });
-    let wanted = |table: &str| shown.as_ref().is_none_or(|s| s.contains(table));
-    let mut order: Vec<&str> = Vec::new();
-    let mut drawn: HashMap<&str, DrawnTable<'_>> = HashMap::new();
+    let wanted = |table: &BlockKey| shown.as_ref().is_none_or(|s| s.contains(table));
+    let mut order: Vec<BlockKey> = Vec::new();
+    let mut drawn: HashMap<BlockKey, DrawnTable<'_>> = HashMap::new();
     for index in 0..pages.len() {
-        if !body_cells(index).any(wanted) {
+        if !body_cells(index).any(|t| wanted(&t)) {
             continue; // only the pages drawing a cell's line are painted
         }
         let Some(entry) = facts.entry(index) else { continue };
-        for table in entry.cells().tables.iter().filter(|t| wanted(&t.path)) {
-            if !drawn.contains_key(table.path.as_str()) {
-                order.push(&table.path);
+        for table in entry.cells().tables.iter().filter(|t| wanted(&t.table)) {
+            if !drawn.contains_key(&table.table) {
+                order.push(table.table);
             }
-            let seen = drawn.entry(&table.path).or_default();
+            let seen = drawn.entry(table.table).or_default();
             seen.pages.insert(index + 1);
             for cell in &table.cells {
                 let found = seen.cells.entry(cell.at).or_default();
                 for (paragraph, lines, wide) in &cell.paragraphs {
-                    let (count, widest) = found.lines.entry(paragraph).or_insert((0, 0.0));
+                    let (count, widest) = found.lines.entry(&**paragraph).or_insert((0, 0.0));
                     *count += lines;
                     *widest = widest.max(*wide);
                 }

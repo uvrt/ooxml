@@ -23,8 +23,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 /// What a Word document's host hands a call beside the rest of its context
 /// ([`CallContext::host`]): the host's layout and where blocks are laid out, its raster,
-/// the values it wrote for references, the tables and sources it holds, the counts of
-/// its layout, and how the call's text is written.
+/// the tables it holds itself, the counts of its layout, and how the call's text is
+/// written (the values it resolved for the call are [`CallContext::values`]).
 #[derive(Clone, Default)]
 pub struct WordHost {
     /// Where the call may ask where blocks are laid out: the host's layout of the version
@@ -38,15 +38,9 @@ pub struct WordHost {
     /// The faces the host draws pages with, which `render` draws a document's pages from;
     /// `None`: `render` is refused as not supported (`render: no layout`), with the way out.
     pub raster: Option<Arc<ooxml_tools_word::PageRaster>>,
-    /// The values the host wrote into the call's arguments for references (`{{d:...}}`),
-    /// which an editing call keeps on the paragraphs they went into; empty: none.
-    pub written: Vec<ooxml_tools_word::Written>,
     /// The tables of the open documents the host holds itself (a workbook's `t:stock`), as a
     /// `from` names them; `None`: none.
     pub tables: Option<Arc<dyn ooxml_tools_word::HostTables>>,
-    /// The rows of the sources the call names, as the host resolved them before the call,
-    /// each keyed by the value as the call gives it; empty: none.
-    pub sources: ooxml_tools_word::Sources,
     /// The pages and lines of the host's layout of the version the call reads, where it
     /// has laid it out (`save_document`'s `app.xml` statistics); `None`: not laid out.
     pub counts: Option<ooxml_tools_word::LayoutCounts>,
@@ -113,6 +107,10 @@ pub struct Call<'a> {
     pub(crate) tables: Option<&'a dyn ooxml_tools_word::HostTables>,
     /// The rows of the sources the call names, as the host resolved them.
     pub(crate) sources: &'a ooxml_tools_word::Sources,
+    /// Where each source naming one value finds it, as the host read it.
+    pub(crate) one_values: &'a [ooxml_tools::written::OneValue],
+    /// The tables of the other open documents the host read for the call.
+    pub(crate) held_tables: &'a [ooxml_tools::written::HeldTable],
     /// The pages and lines of the version's layout, where the host laid it out.
     pub(crate) counts: Option<ooxml_tools_word::LayoutCounts>,
     /// The host's limits on the call's reply.
@@ -323,7 +321,13 @@ impl Call<'_> {
         .with_tracking(tracking)
         .with_layout(self.layout.map(|layout| layout as &dyn ooxml_word_edit::FieldLayout))
         .with_layout_limit(self.layout_limit)
-        .with_others(Others::new(&others).with_tables(self.tables).with_sources(self.sources))
+        .with_others(
+            Others::new(&others)
+                .with_tables(self.tables)
+                .with_sources(self.sources)
+                .with_one_values(self.one_values)
+                .with_held_tables(self.held_tables),
+        )
         .with_blobs(self.blobs)
         .with_written(self.written)
         .with_rows_written(Some(rows_written))
@@ -357,7 +361,13 @@ impl Call<'_> {
             .doc
             .version_of()
             .with_placer(self.placer)
-            .with_others(Others::new(&others).with_tables(self.tables).with_sources(self.sources))
+            .with_others(
+                Others::new(&others)
+                    .with_tables(self.tables)
+                    .with_sources(self.sources)
+                    .with_one_values(self.one_values)
+                    .with_held_tables(self.held_tables),
+            )
             .with_owned(self.owned())
             .with_limits(self.limits)
             .with_counts(self.counts);

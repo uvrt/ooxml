@@ -1,20 +1,24 @@
 //! Owns: what a check reads of one painted page ([`PageRead`]): its lines' text
-//! ([`LineText`]), its text boxes' apart, and the boxes of what it draws beside them ([`PageBoxes`]) -- each rule's
-//! path and horizontal extent, and the body's inline pictures and drawings as placed --
+//! ([`LineText`]), its text boxes' apart, and the boxes of what it draws beside them
+//! ([`PageBoxes`]) -- each rule's anchor, row and horizontal extent, and the body's inline
+//! pictures and drawings as placed, each named by key ([`ItemPlace`]) --
 //! taken from one paint, so that a check paints a page once for all it reads of it
 //! (docx-agent's `layout_facts` reading `page.rules`, `page.pictures` and `page.floats`).
 //!
 //! Must not: paint (the engine does), or judge what it reads.
 
-use crate::line_text::LineText;
+use crate::line_text::{table_row, ItemPlace, LineText, TableRow};
 use ooxml_word_layout::paint::PagePaint;
 use ooxml_word_layout::px::Px;
+use ooxml_word_model::docx::VersionNames;
+use ooxml_word_model::ids::{Anchor, StoryIx};
 
 /// A box drawn on a page: what it is drawn for and where.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Boxed {
-    /// Its path (a picture's run's, a drawing's `wp:anchor` or run's).
-    pub path: String,
+    /// What it is drawn for: a picture's run, a drawing's `wp:anchor` or run, below their
+    /// paragraph.
+    pub place: ItemPlace,
     /// Its left edge, px from the page's left.
     pub x: Px,
     /// Its top.
@@ -25,18 +29,21 @@ pub struct Boxed {
     pub height: Px,
 }
 
-/// A rule's path and horizontal extent.
+/// A rule's horizontal extent, and the body table's row it is drawn in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuleExtent {
-    /// The path of what it is drawn for.
-    pub path: String,
+    /// What it is drawn for (`None`: what no story's index holds, a separator the layout
+    /// makes).
+    pub anchor: Option<Anchor>,
+    /// The body table's row it is drawn in.
+    pub row: Option<TableRow>,
     /// Its left edge, px.
     pub x: Px,
     /// Its width.
     pub width: Px,
 }
 
-/// What a page draws beside its lines' text.
+/// What a page draws beside its lines.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PageBoxes {
     /// Every rule, in paint order.
@@ -60,24 +67,31 @@ pub struct PageRead {
 }
 
 impl PageRead {
-    /// What a check reads of `paint`.
+    /// What a check reads of `paint`, what it is drawn for named by key through the
+    /// version's `names`.
     #[must_use]
-    pub fn of(paint: &PagePaint) -> PageRead {
+    pub fn of(paint: &PagePaint, names: &VersionNames) -> PageRead {
         let body = |path: &str| path.starts_with("w:body");
+        let in_body = |anchor: Option<Anchor>, path: &str| match anchor {
+            Some(anchor) => anchor.block.story() == StoryIx::BODY,
+            None => body(path),
+        };
+        let host = |slot: usize| paint.drawings.get(slot).and_then(|d| d.anchor);
         PageRead {
-            texts: paint.lines.iter().map(LineText::of).collect(),
+            texts: paint.lines.iter().map(|l| LineText::of(l, names, None)).collect(),
             box_texts: paint
                 .text_boxes
                 .iter()
-                .flat_map(|b| b.lines.iter())
-                .map(LineText::of)
+                .flat_map(|b| b.lines.iter().map(move |l| (l, host(b.slot))))
+                .map(|(l, host)| LineText::of(l, names, host))
                 .collect(),
             boxes: PageBoxes {
                 rules: paint
                     .rules
                     .iter()
                     .map(|r| RuleExtent {
-                        path: r.path.clone(),
+                        anchor: r.anchor,
+                        row: table_row(names, &r.path),
                         x: r.x,
                         width: r.width,
                     })
@@ -85,9 +99,9 @@ impl PageRead {
                 pictures: paint
                     .pictures
                     .iter()
-                    .filter(|p| p.part.is_none() && body(&p.path))
+                    .filter(|p| p.part.is_none() && in_body(p.anchor, &p.path))
                     .map(|p| Boxed {
-                        path: p.path.clone(),
+                        place: ItemPlace::of(names, None, &p.path, p.anchor),
                         x: p.x,
                         y: p.y,
                         width: p.width,
@@ -97,9 +111,9 @@ impl PageRead {
                 floats: paint
                     .drawings
                     .iter()
-                    .filter(|d| d.story.is_none() && body(&d.path))
+                    .filter(|d| d.story.is_none() && in_body(d.anchor, &d.path))
                     .map(|d| Boxed {
-                        path: d.path.clone(),
+                        place: ItemPlace::of(names, None, &d.path, d.anchor),
                         x: d.x,
                         y: d.y,
                         width: d.width,

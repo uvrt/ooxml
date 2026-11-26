@@ -9,7 +9,6 @@ use ooxml_base::context::Timestamp;
 use ooxml_base::{Clock, Context, Limits, Locale};
 use ooxml_session::{CallContext, Caller, DocId, DocKind, Session, SessionConfig, SessionError, Undone};
 use ooxml_session_word::prelude::*;
-use ooxml_session_word::WordHost;
 use ooxml_session_word::{HeldId, RetiredBy};
 use ooxml_zip::{Method, NewEntry, Writer};
 use serde_json::{json, Value};
@@ -650,11 +649,7 @@ fn a_value_written_by_reference_is_kept_on_its_paragraph() {
         "brief": {"from": "d:scores/Alpha/rating", "text": "3.5"},
     }]))
     .unwrap();
-    context.host = WordHost {
-        written,
-        ..WordHost::default()
-    }
-    .into_host();
+    context.values.written = written;
     let reply = call(
         &s,
         "word_set_text",

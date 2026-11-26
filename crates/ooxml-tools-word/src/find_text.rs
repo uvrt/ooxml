@@ -80,6 +80,15 @@ const CONTEXT: usize = 20;
 /// a regular expression not matched here as Python matches it; `invalid_arguments` for a
 /// cursor this tool did not give; `timeout` when cancelled.
 pub fn find_text(args: &FindText, version: &Version<'_>, cancel: &dyn Cancel) -> Result<Done<Value>, ToolError> {
+    if args.slides.is_some() {
+        // docx-agent's `_decks_only`: a deck's parameter, refused with the document's way
+        return Err(ToolError::refusal(
+            Refusal::InvalidArguments,
+            "slides is for decks; for a document use range or stories",
+            WayOut::call(try_call(args)),
+        )
+        .at("slides"));
+    }
     if args.text.is_empty() {
         return Err(ToolError::failure(Failure::Unit, "nothing to find").at("text"));
     }

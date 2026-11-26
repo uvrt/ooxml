@@ -13,7 +13,7 @@
 //! Must not: place lines (the geometry has), measure (the text engine has), or read a
 //! drawing's or picture's bytes.
 
-mod body_paths;
+mod body_keys;
 mod cell_floats;
 mod decorate;
 pub mod drawings;
@@ -28,7 +28,7 @@ pub mod svg;
 mod tables;
 pub mod text_box;
 
-pub use body_paths::body_line_paths;
+pub use body_keys::body_line_keys;
 pub use line_numbers::{LineNumber, LineNumbers};
 pub use page_stories::paint_stories;
 pub use positions::{line_positions, Positions, Setting, TabSpan};
