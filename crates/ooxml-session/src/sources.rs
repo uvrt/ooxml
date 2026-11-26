@@ -16,7 +16,7 @@
 
 use crate::datasets::{CallDatasets, DatasetStore, Heads};
 use crate::facts::FactSources;
-use crate::{no_source, AnyVersion, Format, FormatDoc};
+use crate::{no_source, AnyVersion, DocKind, Format, FormatDoc};
 use ooxml_tools::datasets::{dataset_id, Dataset, DATASET_PREFIX};
 use ooxml_tools::sources::{doc_order, qualified, qualify, Prefixes, SourceRows};
 use ooxml_tools::{ErrorCode, Failure, Refusal, ToolError, TryCall, WayOut};
@@ -31,8 +31,8 @@ pub const MAX_OFFERED: usize = 12;
 pub struct OpenDoc {
     /// Its handle (`d2`).
     pub handle: String,
-    /// Its kind (`xlsx`).
-    pub kind: String,
+    /// Its kind.
+    pub kind: DocKind,
     /// Its name (`stock.xlsx`).
     pub name: String,
 }
@@ -77,7 +77,7 @@ pub trait SourceHost {
 
     /// A run of a `kind` document's own addresses written compactly (`merge_sources`); as
     /// they are by default.
-    fn merge_sources(&self, kind: &str, sources: Vec<String>) -> Vec<String> {
+    fn merge_sources(&self, kind: DocKind, sources: Vec<String>) -> Vec<String> {
         let _ = kind;
         sources
     }
@@ -134,7 +134,7 @@ impl SourceHost for FormatSources<'_> {
             .iter()
             .map(|d| OpenDoc {
                 handle: d.handle.clone(),
-                kind: d.format.kind().as_str().to_owned(),
+                kind: d.format.kind(),
                 name: d.name.clone(),
             })
             .collect()
@@ -172,8 +172,8 @@ impl SourceHost for FormatSources<'_> {
         open.doc.source_hint(open.at.as_ref()?, value)
     }
 
-    fn merge_sources(&self, kind: &str, sources: Vec<String>) -> Vec<String> {
-        match self.formats.iter().find(|f| f.kind().as_str() == kind) {
+    fn merge_sources(&self, kind: DocKind, sources: Vec<String>) -> Vec<String> {
+        match self.formats.iter().find(|f| f.kind() == kind) {
             Some(format) => format.merge_sources(sources),
             None => sources,
         }
@@ -182,7 +182,10 @@ impl SourceHost for FormatSources<'_> {
 
 /// The open documents' handles and kinds, as [`qualify`] takes them.
 fn kinds(documents: &[OpenDoc]) -> Vec<(String, String)> {
-    documents.iter().map(|d| (d.handle.clone(), d.kind.clone())).collect()
+    documents
+        .iter()
+        .map(|d| (d.handle.clone(), d.kind.as_str().to_owned()))
+        .collect()
 }
 
 /// The sources there are, as a `from` takes them (`offered`): the datasets (`pending`: ids
@@ -206,17 +209,24 @@ pub fn offered(host: &dyn SourceHost, session: &[String], pending: &[String]) ->
     documents.sort_by(|a, b| doc_order(&a.handle).cmp(&doc_order(&b.handle)));
     let mut tables: Vec<String> = Vec::new();
     for entry in &documents {
-        if taken.of(&entry.kind).is_empty() {
+        if taken.of(entry.kind.as_str()).is_empty() {
             continue;
         }
         let Some(found) = host.value_sources(&entry.handle) else {
             continue;
         };
         for address in found {
-            let Some(prefix) = taken.of(&entry.kind).iter().find(|p| address.starts_with(p.as_str())) else {
+            let Some(prefix) = taken
+                .of(entry.kind.as_str())
+                .iter()
+                .find(|p| address.starts_with(p.as_str()))
+            else {
                 continue;
             };
-            let sharing = documents.iter().filter(|d| taken.of(&d.kind).contains(prefix)).count();
+            let sharing = documents
+                .iter()
+                .filter(|d| taken.of(d.kind.as_str()).contains(prefix))
+                .count();
             let table = if sharing == 1 {
                 address
             } else {
@@ -437,8 +447,7 @@ fn own_refusal(
         .documents()
         .into_iter()
         .find(|d| d.handle == handle)
-        .map(|d| d.kind)
-        .unwrap_or_default();
+        .map_or("", |d| d.kind.as_str());
     let whose = if Some(handle.as_str()) == at.primary {
         format!("{handle}, the document this call edits")
     } else {
@@ -823,7 +832,7 @@ impl FactSources for CallSources<'_> {
                 .map(|d| d.kind)
         };
         match kind {
-            Some(kind) => self.host.merge_sources(&kind, sources),
+            Some(kind) => self.host.merge_sources(kind, sources),
             None => sources,
         }
     }

@@ -210,6 +210,23 @@ pub trait FormatDoc: Send + Sync + 'static {
         None
     }
 
+    /// What a call that went from `before` to `after` touched, one entry per thing in the
+    /// format's own addresses (`made`: what the format said of the call); by default each
+    /// part whose bytes changed, `{"part": name}`, in name order.
+    fn touched(&self, before: &AnyVersion, after: &AnyVersion, made: Option<&(dyn Any + Send + Sync)>) -> Vec<Value> {
+        let _ = made;
+        let mut parts = crate::changes::changed(before.package(), after.package());
+        parts.sort();
+        parts
+            .into_iter()
+            .map(|part| {
+                let mut entry = Map::new();
+                entry.insert("part".into(), Value::from(part));
+                Value::Object(entry)
+            })
+            .collect()
+    }
+
     /// The problems of the version `at` against those the document opened with, in the
     /// session's one shape ([`Validation`]); `None` where the format validates nothing (by
     /// default).

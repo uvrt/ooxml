@@ -17,6 +17,7 @@
 //! Must not: make a dataset (the formats' producers do), resolve another document's rows
 //! (the host's [`crate::sources`] does), or lock: the host keeps the store behind its own.
 
+use crate::DocKind;
 use ooxml_tools::datasets::{
     check_dataset_id, dataset_id, row_range, rows_text, Dataset, BRIEF_COLUMNS, BRIEF_DATASETS, DATASET_PREFIX,
 };
@@ -61,8 +62,8 @@ impl Default for DatasetLimits {
 pub struct DocMeta {
     /// Its handle (`d2`).
     pub doc: String,
-    /// Its kind (`xlsx`).
-    pub kind: String,
+    /// Its kind.
+    pub kind: DocKind,
     /// Its name (`stock.xlsx`).
     pub name: String,
 }
@@ -76,7 +77,7 @@ pub struct Derivation {
     /// The source document's handle.
     pub doc: Option<String>,
     /// Its kind.
-    pub kind: Option<String>,
+    pub kind: Option<DocKind>,
     /// Its name.
     pub name: Option<String>,
     /// Its version when the dataset was defined (`None` until the defining call ends).
@@ -96,7 +97,7 @@ impl Derivation {
         Derivation {
             id: id.to_owned(),
             doc: of.map(|m| m.doc.clone()),
-            kind: of.map(|m| m.kind.clone()),
+            kind: of.map(|m| m.kind),
             name: of.map(|m| m.name.clone()),
             version: None,
             closed: false,
@@ -851,10 +852,10 @@ impl CallDatasets {
 
     /// The kind of the document a dataset of the call came from (`d:x...`), where it says.
     #[must_use]
-    pub fn kind_of(&self, address: &str, store: &DatasetStore) -> Option<String> {
+    pub fn kind_of(&self, address: &str, store: &DatasetStore) -> Option<DocKind> {
         let id = dataset_id(address)?;
         let entry = self.defined.iter().find(|e| e.id == id).or_else(|| store.find(id))?;
-        entry.source.kind.clone()
+        entry.source.kind
     }
 
     /// The call succeeded: keep what it defined, each with its source's version now (a

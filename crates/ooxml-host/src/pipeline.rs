@@ -38,21 +38,37 @@ struct WithRefs {
     /// The arguments.
     arguments: Map<String, Value>,
     /// What was read as what.
-    notes: Vec<String>,
+    pub(crate) notes: Vec<String>,
     /// Each ref name the call gives that it keeps folded: `(kept, given)`.
     folded: Vec<(String, String)>,
 }
 
 /// What one call gathers as it goes through the pipeline, for its reply and its record.
-struct Going {
+pub(crate) struct Going {
     /// The tool as the host read its name.
     tool: String,
     /// The notes on what was read as what: the reply's first warnings.
-    notes: Vec<String>,
+    pub(crate) notes: Vec<String>,
     /// The documents it named.
-    docs: Vec<String>,
+    pub(crate) docs: Vec<String>,
     /// Its arguments as taken (as given, where it failed before they were).
     arguments: Value,
+    /// The versions it reads, where a batch pins them (each document at the version the
+    /// batch's first op on it read); `None`: each document's head.
+    pub(crate) pinned: Option<Vec<ooxml_session::Opened>>,
+}
+
+impl Going {
+    /// A call of `tool` not yet read, with `arguments` as given.
+    pub(crate) fn new(tool: &str, arguments: Value) -> Going {
+        Going {
+            tool: tool.to_owned(),
+            notes: Vec::new(),
+            docs: Vec::new(),
+            arguments,
+            pinned: None,
+        }
+    }
 }
 
 impl HostSession {
@@ -67,12 +83,7 @@ impl HostSession {
         let roles = self.narrowed(how.roles).map_err(NotRun::Roles)?;
         let clock = &self.session.context().clock;
         let started = clock.monotonic();
-        let mut going = Going {
-            tool: name.to_owned(),
-            notes: Vec::new(),
-            docs: Vec::new(),
-            arguments: arguments.clone(),
-        };
+        let mut going = Going::new(name, arguments.clone());
         let ran = catch_unwind(AssertUnwindSafe(|| self.go(name, arguments, roles, how, &mut going)));
         let mut result = ran.unwrap_or_else(|panic| {
             let said = panic
@@ -131,10 +142,7 @@ impl HostSession {
         let caller = how.context.as_ref().filter(|c| !c.is_empty());
         match entry.own {
             Some(Own::Undo) => return self.undo(arguments, caller, going),
-            Some(Own::ReadBatch) => {
-                let context = self.context(caller);
-                return self.session.call(&going.tool, Value::Object(arguments), &context);
-            }
+            Some(Own::ReadBatch) => return self.read_batch(&arguments, roles, caller),
             Some(own) => {
                 let call = OwnCall {
                     own,
@@ -151,7 +159,7 @@ impl HostSession {
     }
 
     /// Steps 4 to 11 of a call of a format's tool, its arguments taken as meant.
-    fn run_format(
+    pub(crate) fn run_format(
         &self,
         entry: &Entry,
         mut arguments: Map<String, Value>,
@@ -174,13 +182,19 @@ impl HostSession {
         let changing = entry.changes(&arguments);
         let owner: Option<RefOwner> = caller.map(|c| Arc::from(caller_key(c).as_str()));
         let mut refs = CallRefs::new(owner.clone());
+        // (a changing call of one document, no retry key and no value by reference is the
+        // one today's host serves beside the others: refused, it names no document; any other
+        // call refused names its document at the version it read)
+        let keyed = entry.spec.flags.retry_key && arguments.get("key").is_some_and(Value::is_string);
+        let served =
+            changing && going.docs.len() == 1 && !keyed && !Value::Object(arguments.clone()).to_string().contains("{{");
         let WithRefs {
             arguments,
             mut notes,
             folded,
         } = match self.with_refs(entry, &mut refs, &doc, arguments, changing, retry) {
             Ok(found) => found,
-            Err(error) => return ToolResult::failed(error),
+            Err(error) => return self.refused_at(error, (!served).then_some(doc.as_str())),
         };
         going.notes.append(&mut notes);
         // a retry key's repeat
@@ -188,13 +202,24 @@ impl HostSession {
             .then(|| arguments.get("key").and_then(Value::as_str).map(str::to_owned))
             .flatten();
         if let Some(key) = &key {
-            if let Some(repeat) = self.stores().keys.repeat(&doc, entry.name(), key) {
+            let repeat = self.stores().keys.repeat(&doc, entry.name(), key);
+            if let Some(mut repeat) = repeat {
+                // (the document and the version it is at, as a call that changed nothing)
+                repeat.doc = Some(doc.clone());
+                repeat.version = DocId::parse(&doc)
+                    .and_then(|id| self.session.snapshot(&id).ok())
+                    .map(|head| head.number());
                 return repeat;
             }
         }
         // 9. the handler, by the document's format, on the version the call reads
-        let context = self.context(caller);
+        let mut context = self.context(caller);
+        self.pin(going, &mut context);
         let (mut result, made) = self.session.edit_accepted(entry.name(), arguments, &context);
+        if served && result.is_error() {
+            result.doc = None;
+            result.version = None;
+        }
         // 10. its effects, applied now its change is published
         if let Err(error) = self.apply_effects(&mut result, &mut refs, &doc, owner.as_ref(), changing, retry) {
             return ToolResult::failed(error);
@@ -206,14 +231,44 @@ impl HostSession {
             .collect();
         first.append(&mut result.warnings);
         result.warnings = first;
-        // 11. the checks of a changing call
+        // 11. the checks of a changing call, and what it touched
         if changing && !result.is_error() {
             self.checks(&doc, made.as_ref(), &mut result);
+        }
+        if let Some(made) = &made {
+            self.touched(&doc, made, &mut result);
         }
         if let (Some(key), false) = (&key, result.is_error()) {
             self.stores().keys.keep(&doc, entry.name(), key, &result);
         }
         result
+    }
+
+    /// `error` as a call's reply, naming `doc` at its head where the call names one.
+    fn refused_at(&self, error: ToolError, doc: Option<&str>) -> ToolResult<Value> {
+        let mut result = ToolResult::failed(error);
+        if let Some(doc) = doc {
+            result.version = DocId::parse(doc)
+                .and_then(|id| self.session.snapshot(&id).ok())
+                .map(|head| head.number());
+            result.doc = Some(doc.to_owned());
+        }
+        result
+    }
+
+    /// In a batch that pins versions, each document the call names read at the version the
+    /// batch's first op on it read (pinned now where none did yet).
+    fn pin(&self, going: &mut Going, context: &mut CallContext) {
+        let Some(pinned) = &mut going.pinned else { return };
+        for doc in &going.docs {
+            let Some(id) = DocId::parse(doc) else { continue };
+            if pinned.iter().all(|o| *o.id() != id) {
+                if let Ok(head) = self.session.snapshot(&id) {
+                    pinned.push(head);
+                }
+            }
+        }
+        context.at.clone_from(pinned);
     }
 
     /// A call's effects applied once its change is published: the refs it defined, kept
@@ -256,10 +311,22 @@ impl HostSession {
                 }
             }
         }
+        // a PNG the tool gives back is an image the model is shown
+        let mut images = Vec::new();
+        for file in &effects.files {
+            if let (true, Some((width, height))) = (file.format == "png", crate::images::png_size(&file.bytes)) {
+                images.push(crate::images::descriptor(&file.name, width, height));
+            }
+        }
+        if !images.is_empty() && !result.is_error() {
+            // (the tool refused a call past the budgets before it drew anything)
+            let _ = self.stores().images.reserve(images.len());
+        }
         result.app.files = std::mem::take(&mut effects.files);
         if let Outcome::Done(done) = &mut result.outcome {
             done.refs = defined;
             done.datasets = std::mem::take(&mut effects.datasets);
+            done.images.extend(images);
         }
         Ok(())
     }
@@ -354,6 +421,61 @@ impl HostSession {
         }
     }
 
+    /// What a call that made versions touched, for the application: its format's entries
+    /// and the parts whose bytes changed, each with the document, from the state its first
+    /// edit was applied to through the version its last made.
+    fn touched(&self, doc: &str, made: &ooxml_session::CallMade, result: &mut ToolResult<Value>) {
+        let Some(id) = DocId::parse(doc) else { return };
+        let Ok(format) = self.session.format_doc(&id) else {
+            return;
+        };
+        let before = &made.before;
+        self.say_touched(
+            doc,
+            &*format,
+            before.any(),
+            made.last.any(),
+            made.format.as_deref(),
+            result,
+        );
+    }
+
+    /// `result`'s touched and changed parts between `before` and `after` of `doc`.
+    fn say_touched(
+        &self,
+        doc: &str,
+        format: &dyn ooxml_session::FormatDoc,
+        before: &ooxml_session::AnyVersion,
+        after: &ooxml_session::AnyVersion,
+        made: Option<&(dyn std::any::Any + Send + Sync)>,
+        result: &mut ToolResult<Value>,
+    ) {
+        let with_doc = |mut entry: Map<String, Value>| {
+            let mut out = Map::new();
+            out.insert("doc".into(), Value::from(doc));
+            out.append(&mut entry);
+            Value::Object(out)
+        };
+        result.app.touched = format
+            .touched(before, after, made)
+            .into_iter()
+            .map(|entry| match entry {
+                Value::Object(entry) => with_doc(entry),
+                other => other,
+            })
+            .collect();
+        let mut parts = ooxml_session::changed_parts(before.package(), after.package());
+        parts.sort();
+        result.app.changed_parts = parts
+            .into_iter()
+            .map(|part| {
+                let mut entry = Map::new();
+                entry.insert("part".into(), Value::from(part));
+                with_doc(entry)
+            })
+            .collect();
+    }
+
     /// `undo`, the session's, its document's refs brought back to the state it returns to.
     fn undo(
         &self,
@@ -367,10 +489,17 @@ impl HostSession {
             .map(|d| vec![d.to_owned()])
             .unwrap_or_default();
         let context = self.context(caller);
-        let result = self.session.call(&going.tool, Value::Object(arguments), &context);
+        let id = going.docs.first().and_then(|d| DocId::parse(d));
+        let before = id.as_ref().and_then(|id| self.session.snapshot(id).ok());
+        let mut result = self.session.call(&going.tool, Value::Object(arguments), &context);
         if let (false, Some(doc), Some(version)) = (result.is_error(), going.docs.first(), result.version) {
             if let Some(table) = self.stores().refs.get_mut(doc) {
                 table.restore(version);
+            }
+            let after = id.as_ref().and_then(|id| self.session.snapshot(id).ok());
+            let format = id.as_ref().and_then(|id| self.session.format_doc(id).ok());
+            if let (Some(before), Some(after), Some(format)) = (before, after, format) {
+                self.say_touched(doc, &*format, before.any(), after.any(), None, &mut result);
             }
         }
         result

@@ -19,8 +19,10 @@
 
 mod catalogue;
 pub mod hints;
+pub mod images;
 mod own;
 mod pipeline;
+mod read_batch;
 mod records;
 mod session;
 

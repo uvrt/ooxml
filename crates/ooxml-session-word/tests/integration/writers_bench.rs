@@ -75,6 +75,7 @@ fn session() -> Session {
     let pages = Some(SessionPages {
         setup: PageSetup::new(test_fonts(), EngineOptions::default()),
         memory: MemoryBudget::new(4 << 30),
+        raster: None,
     });
     let context = Context {
         fonts: Arc::new(NoFonts),

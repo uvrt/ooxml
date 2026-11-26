@@ -23,6 +23,10 @@ pub struct SessionPages {
     /// The budget every engine counts in: its memos as held, its pages' paint within the
     /// limit.
     pub memory: Arc<MemoryBudget>,
+    /// The faces `render` draws the pages with, where the session draws them itself (a host
+    /// that hands a call its own raster draws with that one); `None`: `render` is refused as
+    /// not supported, with the way out.
+    pub raster: Option<Arc<ooxml_tools_word::PageRaster>>,
 }
 
 impl SessionPages {

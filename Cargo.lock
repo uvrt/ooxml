@@ -566,6 +566,7 @@ dependencies = [
  "ooxml-derive",
  "ooxml-drawingml",
  "ooxml-fonts",
+ "ooxml-host",
  "ooxml-markdown",
  "ooxml-metafile",
  "ooxml-numfmt",
