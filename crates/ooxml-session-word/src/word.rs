@@ -123,6 +123,10 @@ impl Format for WordFormat {
         true
     }
 
+    fn gives_scale_values(&self) -> bool {
+        true
+    }
+
     fn new_document(&self, made: &ooxml_session::NewDocument<'_>, env: &OpenEnv<'_>) -> Result<Vec<u8>, ToolError> {
         crate::new_document(made, env)
     }
@@ -633,6 +637,16 @@ impl FormatDoc for Word {
     ) -> Option<Result<ooxml_session::ReadTexts, ToolError>> {
         let version = at.snapshot::<WordDoc>()?;
         Some(crate::values::number_texts(self, version, read))
+    }
+
+    fn scale_values(
+        &self,
+        at: &AnyVersion,
+        scale: &ooxml_session::scales::Scale,
+        read: &ooxml_session::ValueRead<'_>,
+    ) -> Option<Result<ooxml_session::ReadValues, ToolError>> {
+        let version = at.snapshot::<WordDoc>()?;
+        Some(crate::values::scale_values(self, version, scale, read))
     }
 
     fn checks(

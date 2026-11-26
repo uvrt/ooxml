@@ -9,9 +9,10 @@
 //! Must not: answer a reference the Python host did not read when the case was frozen (it is
 //! refused, as one the host refused).
 
-use crate::host_replay::{frozen_rows, Outcome, Replayer, Waits};
+use crate::host_replay::{frozen_rows, Outcome, Replayer};
 use ooxml_numfmt::Locale;
 use ooxml_session::numbers::{report, Index, NumberRules, NumberText, NumbersEnv, Source};
+use ooxml_session::scales::{self, ScaleEnv, ScaleValue};
 use serde_json::{Map, Value};
 use std::sync::Arc;
 
@@ -23,30 +24,30 @@ impl Replayer {
     /// service answers it.
     #[must_use]
     pub fn frozen_numbers(&self, case: &Value) -> Outcome {
-        let scale = case.get("service").and_then(Value::as_str) == Some("scale")
-            || case.pointer("/arguments/scale").is_some_and(|s| !s.is_null());
-        if scale {
-            return Outcome::Waiting(Waits::G1, false);
+        match case.get("service").and_then(Value::as_str) {
+            Some(service) => self.service(service, case),
+            None => self.frozen_in(STREAM, case),
         }
-        if case.get("service").is_some() {
-            return self.numbers_service(case);
-        }
-        self.frozen_in(STREAM, case)
     }
 
-    /// A service case of numbers: the fact the session's service computes from what the
-    /// Python host's was computed of.
-    fn numbers_service(&self, case: &Value) -> Outcome {
+    /// A service case (`numbers`, `scale`): the fact the session's service computes from what
+    /// the Python host's was computed of, or its refusal.
+    fn service(&self, service: &str, case: &Value) -> Outcome {
         let mut case = case.clone();
         let test = case.get("test").cloned();
         if let (Value::Object(map), Some(test)) = (&mut case, test) {
             map.insert("case".into(), test);
         }
-        let have = match numbers_fact(&case) {
-            Ok(data) => Value::Object(data),
-            Err(why) => return Outcome::Different(vec!["inputs".into()], Value::Null, Value::from(why)),
+        let found = if service == "scale" {
+            scale_fact(&case)
+        } else {
+            numbers_fact(&case).map(Ok)
         };
-        self.compare(STREAM, &case, "data", &have)
+        match found {
+            Ok(Ok(data)) => self.compare(STREAM, &case, "data", &Value::Object(data)),
+            Ok(Err(raised)) => self.compare(STREAM, &case, "raised", &raised),
+            Err(why) => Outcome::Different(vec!["inputs".into()], Value::Null, Value::from(why)),
+        }
     }
 }
 
@@ -68,6 +69,24 @@ impl NumbersEnv for Frozen {
 
     fn fact(&self, address: &str) -> Option<String> {
         self.facts.get(address).and_then(Value::as_str).map(str::to_owned)
+    }
+}
+
+impl ScaleEnv for Frozen {
+    fn locale(&self) -> &Locale {
+        &self.locale
+    }
+
+    fn doc(&self) -> Option<&str> {
+        self.doc.as_deref()
+    }
+
+    fn fact(&self, address: &str) -> Result<String, String> {
+        match self.facts.get(address) {
+            Some(Value::String(text)) => Ok(text.clone()),
+            Some(Value::Object(refused)) => Err(refused["message"].as_str().unwrap_or_default().to_owned()),
+            _ => Err(format!("{address} was not read when the answer was frozen")),
+        }
     }
 }
 
@@ -161,4 +180,70 @@ fn numbers_fact(case: &Value) -> Result<Map<String, Value>, String> {
         facts: case["facts"].as_object().cloned().unwrap_or_default(),
     };
     report(&env, &Index::new(sources), notes, &items, &rules, &narrower)
+}
+
+/// A frozen value a scale's target held (`freeze_numbers`'s values).
+fn value_of(given: &Value) -> Option<ScaleValue> {
+    let text = |key: &str| given.get(key).and_then(Value::as_str).map(str::to_owned);
+    Some(ScaleValue {
+        target: text("target")?,
+        text: text("text").unwrap_or_default(),
+        given: text("given"),
+        now: given
+            .get("now")
+            .and_then(Value::as_u64)
+            .and_then(|n| usize::try_from(n).ok()),
+        exact: given.get("exact").and_then(Value::as_bool).unwrap_or(true),
+        differs: text("differs"),
+        skip: text("skip"),
+        place: given
+            .get("where")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default(),
+        kept: given.get("kept").and_then(Value::as_object).cloned(),
+        source: text("source"),
+    })
+}
+
+/// The fact the service computes from a scale case's inputs, or its refusal as the
+/// freezer writes one (`{"code", "message"}`).
+fn scale_fact(case: &Value) -> Result<Result<Map<String, Value>, Value>, String> {
+    let way_out = ooxml_tools::WayOut::call(ooxml_tools::TryCall {
+        tool: "check".into(),
+        arguments: Map::new(),
+        fill: Vec::new(),
+    });
+    let scale = match scales::parse(&case["given"], &way_out) {
+        Ok(scale) => scale,
+        Err(error) => {
+            return Ok(Err(
+                serde_json::json!({"code": error.code().as_str(), "message": error.message()}),
+            ));
+        }
+    };
+    let Some(values) = case["values"].as_array() else {
+        // (refused before the format read any: it reads none)
+        let reading: Vec<&str> = case["reading"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect();
+        let error = scales::no_reading(&reading, case["kind"].as_str().unwrap_or_default(), way_out);
+        return Ok(Err(
+            serde_json::json!({"code": error.code().as_str(), "message": error.message()}),
+        ));
+    };
+    let values = values
+        .iter()
+        .map(value_of)
+        .collect::<Option<Vec<_>>>()
+        .ok_or("a value unreadable")?;
+    let env = Frozen {
+        locale: locale_of(&case["locale"]),
+        doc: case["doc"].as_str().map(str::to_owned),
+        facts: case["facts"].as_object().cloned().unwrap_or_default(),
+    };
+    Ok(Ok(scales::report(&env, &scale, &values)))
 }

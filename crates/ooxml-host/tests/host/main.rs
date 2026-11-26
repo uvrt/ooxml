@@ -6,6 +6,7 @@ mod dispatch;
 mod lookup;
 mod numbers;
 mod roles;
+mod scales;
 mod session_tools;
 mod toy;
 mod values;

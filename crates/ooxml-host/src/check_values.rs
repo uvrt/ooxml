@@ -1,18 +1,21 @@
-//! Owns: `check`'s `include: ["numbers"]`, done by the host for every format around the
-//! format's own check (design phase 3, section 5; ooxml-edit's `numbers.with_numbers`,
-//! ported exactly): the texts the call's document gives ([`FormatDoc::number_texts`], within
-//! the check's scope), compared with the session's index of values -- its datasets, and the
-//! tables the open documents list ([`FormatDoc::value_sources`]), kept while none of them
-//! changes ([`KeptIndex`]) -- the fact added to the format's reply as `numbers`, with its
-//! seconds where the reply says where its time went; the format's check not run when nothing
-//! else is asked of it.
+//! Owns: `check`'s `include: ["numbers"]` and its `scale`, done by the host for every format
+//! around the format's own check (design phase 3, section 5; ooxml-edit's
+//! `numbers.with_numbers` and `scales.with_scale`, ported exactly). Numbers: the texts the
+//! call's document gives ([`FormatDoc::number_texts`], within the check's scope), compared
+//! with the session's index of values -- its datasets, and the tables the open documents list
+//! ([`FormatDoc::value_sources`]), kept while none of them changes ([`KeptIndex`]). A scale:
+//! read or refused, the values its targets hold as the document's format reads them
+//! ([`FormatDoc::scale_values`]), each checked against its step. Each fact is added to the
+//! format's reply (`numbers`, `scale`), numbers' seconds where the reply says where its time
+//! went; the format's check not run when nothing else is asked of it.
 //!
-//! Must not: read a document's text (its format does), or run the format's check with
-//! `numbers` asked of it.
+//! Must not: read a document (its format does), or run the format's check with `numbers` or
+//! a `scale` asked of it.
 
 use crate::session::HostSession;
 use ooxml_numfmt::Locale;
 use ooxml_session::numbers::{self, Index, NumberRules, NumbersEnv, Source, INCLUDE};
+use ooxml_session::scales::{self, ScaleEnv};
 use ooxml_session::{AnyVersion, CallCancel, CallContext, DocId, FormatDoc, ReadTexts, ValueRead};
 use ooxml_tools::{Done, Outcome, Refusal, ToolError, ToolResult, TryCall, WayOut};
 use serde_json::{Map, Value};
@@ -53,9 +56,9 @@ fn asks(value: Option<&Value>) -> bool {
     }
 }
 
-/// A check's fact of numbers: its data, the warnings its document's read gave, and the
-/// version it read.
-struct NumbersFact {
+/// A check's fact (of numbers, of a scale): its data, the warnings its document's read gave,
+/// and the version it read.
+struct Fact {
     data: Map<String, Value>,
     warnings: Vec<String>,
     read: Read,
@@ -83,12 +86,11 @@ impl HostSession {
         *self.numbers.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = rules;
     }
 
-    /// A call of `tool` on `doc` with `arguments` (taken, refs resolved): a `check` with
-    /// `numbers` asked for, done here
-    /// and added to the format's reply (`run` runs the format's tool with what is left of the
-    /// arguments; `alone` makes a reply of the fact alone; `result` reads a reply); else the
-    /// format's tool alone.
-    pub(crate) fn check_values<T>(
+    /// A call of `tool` on `doc` with `arguments` (taken, refs resolved): a `check` with a
+    /// `scale` or `numbers` asked for, each done here and added to the format's reply (`run`
+    /// runs the format's tool with what is left of the arguments; `alone` makes a reply of the
+    /// facts alone; `result` reads a reply); else the format's tool alone.
+    pub(crate) fn check_values<T, R>(
         &self,
         (tool, doc): (&str, &str),
         mut arguments: Map<String, Value>,
@@ -97,13 +99,51 @@ impl HostSession {
         calls: (
             impl FnOnce(Map<String, Value>) -> T,
             impl FnOnce(ToolResult<Value>) -> T,
-            impl FnOnce(&mut T) -> &mut ToolResult<Value>,
+            R,
         ),
-    ) -> T {
+    ) -> T
+    where
+        R: Fn(&mut T) -> &mut ToolResult<Value>,
+    {
         let (run, alone, result_of) = calls;
         if tool != "check" {
             return run(arguments);
         }
+        let Some(given) = arguments.remove(scales::PARAM).filter(|s| !s.is_null()) else {
+            return self.with_numbers(doc, arguments, context, retry, (run, alone, &result_of));
+        };
+        let fact = match self.scale_fact(doc, &given, &arguments, context, retry) {
+            Ok(found) => found,
+            Err(error) => return alone(self.refused_at_read(error, doc, context)),
+        };
+        let said = scales::summary(&fact.data);
+        let included = arguments.get("include").is_some_and(|i| asks(Some(i)));
+        if !included && !ASKS.iter().any(|name| asks(arguments.get(*name))) {
+            return alone(fact_alone(scales::PARAM, fact, said, doc));
+        }
+        let mut returned = self.with_numbers(doc, arguments, context, retry, (run, alone, &result_of));
+        let result = result_of(&mut returned);
+        added(result, scales::PARAM, fact, &said, None);
+        returned
+    }
+
+    /// [`HostSession::check_values`] of a check without a scale: `numbers`, where asked for.
+    fn with_numbers<T, R>(
+        &self,
+        doc: &str,
+        mut arguments: Map<String, Value>,
+        context: &CallContext,
+        retry: &TryCall,
+        calls: (
+            impl FnOnce(Map<String, Value>) -> T,
+            impl FnOnce(ToolResult<Value>) -> T,
+            &R,
+        ),
+    ) -> T
+    where
+        R: Fn(&mut T) -> &mut ToolResult<Value>,
+    {
+        let (run, alone, result_of) = calls;
         let include: Vec<Value> = arguments
             .get("include")
             .and_then(Value::as_array)
@@ -115,22 +155,14 @@ impl HostSession {
         let rest: Vec<Value> = include.into_iter().filter(|i| i != INCLUDE).collect();
         let clock = &self.session.context().clock;
         let began = clock.monotonic();
-        let NumbersFact { data, warnings, read } = match self.numbers_fact(doc, &arguments, context, retry) {
+        let fact = match self.numbers_fact(doc, &arguments, context, retry) {
             Ok(found) => found,
             Err(error) => return alone(self.refused_at_read(error, doc, context)),
         };
         let took = clock.monotonic().saturating_sub(began).as_secs_f64();
-        let said = numbers::summary(&data);
+        let said = numbers::summary(&fact.data);
         if rest.is_empty() && !ASKS.iter().any(|name| asks(arguments.get(*name))) {
-            let mut fact = Map::new();
-            fact.insert("numbers".into(), Value::Object(data));
-            let mut done = Done::new(said);
-            done.data = Some(Value::Object(fact));
-            done.warnings = warnings;
-            let mut result = ToolResult::done(done);
-            result.doc = Some(doc.to_owned());
-            result.version = Some(read.at.number());
-            return alone(result);
+            return alone(fact_alone(INCLUDE, fact, said, doc));
         }
         if rest.is_empty() {
             arguments.remove("include");
@@ -138,22 +170,66 @@ impl HostSession {
             arguments.insert("include".into(), Value::Array(rest));
         }
         let mut returned = run(arguments);
-        let result = result_of(&mut returned);
-        let mut first = warnings;
-        first.append(&mut result.warnings);
-        result.warnings = first;
-        if let Outcome::Done(done) = &mut result.outcome {
-            if let Some(Value::Object(out)) = &mut done.data {
-                out.insert("numbers".into(), Value::Object(data));
-                timed(out, "numbers", took);
-            }
-            done.summary = if done.summary.is_empty() {
-                said
-            } else {
-                format!("{}; {said}", done.summary)
-            };
-        }
+        added(result_of(&mut returned), INCLUDE, fact, &said, Some(took));
         returned
+    }
+
+    /// The fact of `given`, a scale, for a check of `doc` with `arguments`: the values its
+    /// targets hold, read by the document's format, each checked against its step.
+    fn scale_fact(
+        &self,
+        doc: &str,
+        given: &Value,
+        arguments: &Map<String, Value>,
+        context: &CallContext,
+        retry: &TryCall,
+    ) -> Result<Fact, ToolError> {
+        let read = self
+            .read_of(doc, context)
+            .ok_or_else(|| ToolError::internal(format!("{doc} is not open"), "host:scale"))?;
+        let scale = scales::parse(given, &WayOut::call(retry.clone()))?;
+        let scope = self.scope_of(doc, arguments, retry)?;
+        let cancel = CallCancel::new(context, &*self.session.context().cancel, &*self.session.context().clock);
+        let value_read = ValueRead {
+            named: doc,
+            scope: &scope,
+            context,
+            cancel: &cancel,
+        };
+        let values = match read.doc.scale_values(&read.at, &scale, &value_read) {
+            Some(found) => found?,
+            None => return Err(self.no_reading(doc, retry)),
+        };
+        let locale = self.session.config().locale.clone().unwrap_or_default();
+        let data = self.with_facts(retry, |fact| {
+            let env = Env {
+                locale: &locale,
+                doc,
+                fact,
+            };
+            scales::report(&env, &scale, &values.values)
+        });
+        Ok(Fact {
+            data,
+            warnings: values.warnings,
+            read,
+        })
+    }
+
+    /// A scale refused for a document whose format reads none, naming the kinds that do.
+    fn no_reading(&self, doc: &str, retry: &TryCall) -> ToolError {
+        let mut kinds: Vec<&str> = self
+            .host
+            .formats
+            .iter()
+            .filter(|f| f.gives_scale_values())
+            .map(|f| f.kind().as_str())
+            .collect();
+        kinds.sort_unstable();
+        let kind = DocId::parse(doc)
+            .and_then(|id| self.session.kind_of(&id).ok())
+            .map_or("call without a document", |k| k.as_str());
+        scales::no_reading(&kinds, kind, WayOut::call(retry.clone()))
     }
 
     /// A refusal of a check's fact as the call's reply, naming `doc` at the version it read.
@@ -183,7 +259,7 @@ impl HostSession {
         arguments: &Map<String, Value>,
         context: &CallContext,
         retry: &TryCall,
-    ) -> Result<NumbersFact, ToolError> {
+    ) -> Result<Fact, ToolError> {
         let read = self
             .read_of(doc, context)
             .ok_or_else(|| ToolError::internal(format!("{doc} is not open"), "host:numbers"))?;
@@ -202,7 +278,7 @@ impl HostSession {
             numbers::report(&env, &index, notes, &texts.texts, &rules, &narrower)
         });
         let data = data.map_err(|why| ToolError::internal(why, "host:numbers"))?;
-        Ok(NumbersFact {
+        Ok(Fact {
             data,
             warnings: texts.warnings,
             read,
@@ -431,7 +507,7 @@ impl HostSession {
 struct Env<'a> {
     locale: &'a Locale,
     doc: &'a str,
-    fact: &'a dyn Fn(&str) -> Option<String>,
+    fact: &'a dyn Fn(&str) -> Result<String, String>,
 }
 
 impl NumbersEnv for Env<'_> {
@@ -444,7 +520,55 @@ impl NumbersEnv for Env<'_> {
     }
 
     fn fact(&self, address: &str) -> Option<String> {
+        (self.fact)(address).ok()
+    }
+}
+
+impl ScaleEnv for Env<'_> {
+    fn locale(&self) -> &Locale {
+        self.locale
+    }
+
+    fn doc(&self) -> Option<&str> {
+        Some(self.doc)
+    }
+
+    fn fact(&self, address: &str) -> Result<String, String> {
         (self.fact)(address)
+    }
+}
+
+/// A reply of a check's fact alone, `key` its data's one key, on the version it read.
+fn fact_alone(key: &str, fact: Fact, said: String, doc: &str) -> ToolResult<Value> {
+    let mut data = Map::new();
+    data.insert(key.to_owned(), Value::Object(fact.data));
+    let mut done = Done::new(said);
+    done.data = Some(Value::Object(data));
+    done.warnings = fact.warnings;
+    let mut result = ToolResult::done(done);
+    result.doc = Some(doc.to_owned());
+    result.version = Some(fact.read.at.number());
+    result
+}
+
+/// A check's fact added to the format's reply `result` as `key`: its read's warnings first,
+/// its summary after the reply's, its seconds where the reply says where its time went.
+fn added(result: &mut ToolResult<Value>, key: &str, fact: Fact, said: &str, took: Option<f64>) {
+    let mut first = fact.warnings;
+    first.append(&mut result.warnings);
+    result.warnings = first;
+    if let Outcome::Done(done) = &mut result.outcome {
+        if let Some(Value::Object(out)) = &mut done.data {
+            out.insert(key.to_owned(), Value::Object(fact.data));
+            if let Some(took) = took {
+                timed(out, key, took);
+            }
+        }
+        done.summary = if done.summary.is_empty() {
+            said.to_owned()
+        } else {
+            format!("{}; {said}", done.summary)
+        };
     }
 }
 

@@ -225,3 +225,82 @@ fn slide_refused(doc: &str, index: usize, given: &str) -> ToolError {
     )
     .at("pages")
 }
+
+/// The values a scale's targets hold in the Word version `version` of `word` (the docx
+/// format's `scale_values` hook), each with the step it is styled as now, within the check's
+/// scope `read` gives; placed on their pages, by the call's layout else the document's own
+/// engine, only where `pages` (or `slides`) are asked for.
+///
+/// # Errors
+/// A slide that is no page number; the read's refusal; `internal` when the version cannot be
+/// read.
+pub(crate) fn scale_values(
+    word: &crate::Word,
+    version: &ooxml_store::Snapshot<ooxml_word_edit::WordDoc>,
+    scale: &ooxml_session::scales::Scale,
+    read: &ooxml_session::ValueRead<'_>,
+) -> Result<ooxml_session::ReadValues, ToolError> {
+    let mut warnings = Vec::new();
+    let pages = pages_of(read.named, read.scope, &mut warnings)?;
+    let range = ranges_of(read.scope.get("range"));
+    let none = crate::call::WordHost::default();
+    let host = crate::call::WordHost::of(read.context).unwrap_or(&none);
+    let layout = pages.as_ref().and_then(|_| word.layout(host));
+    let layout_cancel = read.cancel.layout();
+    let cancel: &dyn ooxml_base::Cancel = match &layout_cancel {
+        Some(limit) => limit,
+        None => read.cancel,
+    };
+    let doc = version.doc();
+    let docx = doc
+        .docx()
+        .map_err(|e| ToolError::internal(e.to_string(), "scale_values:docx"))?;
+    let asked = ReadScale {
+        name: scale.name.clone(),
+        steps: scale
+            .steps
+            .iter()
+            .map(|s| ooxml_tools_word::ReadStep {
+                fill: s.fill.clone(),
+                text: s.text.clone(),
+                label: s.label.clone(),
+            })
+            .collect(),
+        targets: scale.targets.clone(),
+        labels: scale.labels,
+    };
+    let range = (!range.is_empty()).then_some(range.as_slice());
+    let found = ooxml_tools_word::scale_values(
+        doc,
+        &docx,
+        read.named,
+        &asked,
+        range,
+        pages.as_deref(),
+        layout.as_deref(),
+        cancel,
+    )?;
+    let values = found
+        .values
+        .into_iter()
+        .map(|v| {
+            let mut place = serde_json::Map::new();
+            if let Some(page) = v.page {
+                place.insert("page".into(), serde_json::Value::from(page));
+            }
+            ooxml_session::scales::ScaleValue {
+                target: v.target,
+                text: v.text,
+                given: v.given,
+                now: v.now,
+                exact: v.exact,
+                differs: v.differs,
+                skip: v.skip,
+                place,
+                kept: v.kept.and_then(|k| k.as_object().cloned()),
+                source: v.source,
+            }
+        })
+        .collect();
+    Ok(ooxml_session::ReadValues { values, warnings })
+}

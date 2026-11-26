@@ -17,6 +17,7 @@ mod index;
 mod read;
 
 pub use index::{How, Index, Source, Value as IndexedValue};
+pub(crate) use read::compiled;
 pub use read::{find_numbers, parse, shown, Decimal, Found, Numbers};
 
 use crate::facts::quote;
