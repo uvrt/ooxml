@@ -11,6 +11,7 @@
 
 use super::Rule;
 use crate::engine::DocumentLayout;
+use crate::naming::ItemName;
 use crate::paginate::{LaidPage, PageColumn};
 use crate::px::Px;
 use ooxml_base::Q;
@@ -74,11 +75,14 @@ pub(super) fn column_separators(layout: &DocumentLayout, laid: &LaidPage) -> Vec
             let (x0, x1) = ((centre - half).round_half_up(), (centre + half).round_half_up());
             out.push(Rule {
                 kind: "column-separator",
-                path: format!("w:sectPr[{}]/w:cols", first.section + 1),
-                anchor: holder.map(|(block, section)| Anchor {
-                    block,
-                    sub: Sub::Cols(section),
-                }),
+                // a section with no block to hold it (none drawn) by the path it is made with
+                name: ItemName::of(
+                    holder.map(|(block, section)| Anchor {
+                        block,
+                        sub: Sub::Cols(section),
+                    }),
+                    || format!("w:sectPr[{}]/w:cols", first.section + 1),
+                ),
                 x: Px::int(x0),
                 y: Px::int(top),
                 width: Px::int(x1 - x0),

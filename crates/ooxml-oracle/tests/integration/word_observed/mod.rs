@@ -112,6 +112,8 @@ pub struct Laid {
     pub pages: Vec<Arc<PagePaint>>,
     /// The layout's warnings' codes, sorted, once each.
     pub warnings: Vec<String>,
+    /// The version's names, what the pages' items are named through.
+    pub names: Arc<ooxml_word_model::docx::VersionNames>,
 }
 
 /// Lay `data` out and paint every page.
@@ -132,7 +134,8 @@ pub fn lay_out(name: &str, data: Vec<u8>) -> Laid {
     let mut warnings: Vec<String> = version.said().warnings.iter().map(|w| w.code.clone()).collect();
     warnings.sort();
     warnings.dedup();
-    Laid { pages, warnings }
+    let names = Arc::clone(&version.layout().document.names);
+    Laid { pages, warnings, names }
 }
 
 /// One document's cases scored: per case, `(disagreeing, scored)` -- `lines <family>`: Word's

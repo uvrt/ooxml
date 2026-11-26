@@ -16,7 +16,9 @@
 
 use crate::error::Fallback;
 use ooxml_word_layout::geometry::text_box;
+use ooxml_word_layout::naming::paragraph_path;
 use ooxml_word_layout::DocumentLayout;
+use ooxml_word_model::docx::VersionNames;
 use ooxml_word_model::model::{Block, Graphic, InlineObject, Paragraph, Table};
 use ooxml_word_model::value::Value;
 use ooxml_word_model::WordDocument;
@@ -82,7 +84,10 @@ enum Story {
 
 /// Why a version cannot be laid out yet, found before it is: the first case found, in the body, its headers and footers, and its notes.
 pub fn unsupported(document: &WordDocument) -> Option<Fallback> {
-    let mut scan = Scan { found: None };
+    let mut scan = Scan {
+        found: None,
+        names: &document.names,
+    };
     scan.story(&document.body, Story::Body);
     for blocks in document.stories.values() {
         scan.story(blocks, Story::HeaderFooter);
@@ -130,11 +135,13 @@ fn text_box(graphic: &Graphic) -> bool {
     text_box::unsupported_in(&graphic.text).is_some() || graphic.children.iter().any(|g| text_box(g))
 }
 
-struct Scan {
+struct Scan<'a> {
     found: Option<Fallback>,
+    /// The version's names, what a case is named through.
+    names: &'a VersionNames,
 }
 
-impl Scan {
+impl Scan<'_> {
     fn story(&mut self, blocks: &[Block], story: Story) {
         for block in blocks {
             if self.found.is_some() {
@@ -158,11 +165,11 @@ impl Scan {
     fn paragraph(&mut self, paragraph: &Paragraph, story: Story) {
         match frame(paragraph) {
             Some(true) if story != Story::Body => {
-                self.found = Some(fallback(DROP_CAP, &paragraph.path));
+                self.found = Some(fallback(DROP_CAP, &paragraph_path(self.names, paragraph)));
                 return;
             }
             Some(false) if matches!(story, Story::HeaderFooter | Story::Note) => {
-                self.found = Some(fallback(FRAME, &paragraph.path));
+                self.found = Some(fallback(FRAME, &paragraph_path(self.names, paragraph)));
                 return;
             }
             _ => {}
@@ -174,7 +181,7 @@ impl Scan {
                     .iter()
                     .any(|a| a.wrap.as_deref().is_some_and(|w| SIDE_WRAPS.contains(&w)))
             {
-                self.found = Some(fallback(TEXT_BESIDE_DRAWING, &paragraph.path));
+                self.found = Some(fallback(TEXT_BESIDE_DRAWING, &paragraph_path(self.names, paragraph)));
                 return;
             }
             if story == Story::Note
@@ -183,7 +190,7 @@ impl Scan {
                     .as_ref()
                     .is_some_and(|f| f.keyword.eq_ignore_ascii_case("STYLEREF"))
             {
-                self.found = Some(fallback(STYLEREF, &paragraph.path));
+                self.found = Some(fallback(STYLEREF, &paragraph_path(self.names, paragraph)));
                 return;
             }
             let boxed = run.anchors.iter().filter_map(|a| a.graphic.as_deref()).any(text_box)
@@ -192,7 +199,7 @@ impl Scan {
                     .iter()
                     .any(|d| matches!(d, InlineObject::Graphic(g) if text_box(g)));
             if boxed {
-                self.found = Some(fallback(TEXT_BOX, &paragraph.path));
+                self.found = Some(fallback(TEXT_BOX, &paragraph_path(self.names, paragraph)));
                 return;
             }
         }

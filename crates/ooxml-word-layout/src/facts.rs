@@ -38,8 +38,8 @@ pub struct LineFact {
     /// Its paragraph's key (`None`: a paragraph no story's index holds, a notes separator
     /// the layout makes).
     pub anchor: Option<Anchor>,
-    /// The layout model's path of a paragraph the layout makes (a notes separator, which no
-    /// index holds): what an edge names its line by; `None` for a line with a key.
+    /// The path a paragraph the layout makes (a notes separator, which no index holds) was
+    /// made with: what an edge names its line by; `None` for a line with a key.
     pub made: Option<Text>,
     /// Its number in the paragraph.
     pub number: usize,
@@ -71,16 +71,13 @@ pub struct PageFacts {
 }
 
 /// A header's or footer's line a page draws, as a check reads it: its story's kind and
-/// part, and the line (its paragraph's path, `w:hdr/w:p[1]`, beside it: the page's
-/// header and footer are laid out for the page, not kept by key).
+/// part, and the line (its paragraph named by its key, as a body line's is).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoryLineFact {
     /// `header` or `footer`.
     pub kind: &'static str,
     /// Its part (`word/header1.xml`).
     pub part: Text,
-    /// Its paragraph's path.
-    pub path: Text,
     /// The line.
     pub line: LineFact,
 }
@@ -98,11 +95,10 @@ pub fn story_line_facts(parts: &crate::geometry::stories::PageParts) -> Vec<Stor
             out.push(StoryLineFact {
                 kind: story.kind,
                 part: story.part.clone(),
-                path: paragraph.path.clone(),
                 line: LineFact {
                     source: line.source,
                     anchor: paragraph.key.map(Anchor::whole),
-                    made: paragraph.key.is_none().then(|| paragraph.path.clone()),
+                    made: paragraph.unkeyed_path().cloned(),
                     number: line.number,
                     top: line.top,
                     pitch: line.pitch,
@@ -210,7 +206,7 @@ fn line_fact(line: &DrawnLine, keys: &LineKeys, body: &[Block]) -> Option<LineFa
     Some(LineFact {
         source: line.source,
         anchor: paragraph.key.map(Anchor::whole),
-        made: paragraph.key.is_none().then(|| paragraph.path.clone()),
+        made: paragraph.unkeyed_path().cloned(),
         number: line.number,
         top: line.top,
         pitch: line.pitch,

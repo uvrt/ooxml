@@ -488,9 +488,9 @@ fn columns_line_numbers_and_a_drop_cap_are_laid_out_and_painted_in_rust() {
         .lines
         .iter()
         .filter(|l| l.story.is_some())
-        .map(|l| (l.path.clone(), l.baseline))
+        .map(|l| (l.name.anchor(), l.baseline))
         .collect();
-    let facts: Vec<_> = story_lines.iter().map(|l| (l.path.clone(), l.line.baseline)).collect();
+    let facts: Vec<_> = story_lines.iter().map(|l| (l.line.anchor, l.line.baseline)).collect();
     assert!(!facts.is_empty());
     assert_eq!(drawn, facts);
     // A section of several columns is not numbered: docx2svg says so.
@@ -518,22 +518,20 @@ fn line_numbers_and_column_separators_are_anchored_on_their_paragraph_and_their_
         .lines
         .iter()
         .flat_map(|l| &l.spans)
-        .filter(|s| s.path == "w:sectPr[1]/w:lnNumType")
+        .filter(|s| s.name.anchor().is_some_and(|a| a.sub == Sub::LineNumbers(0)))
         .collect();
     assert_eq!(numbers.len(), 4, "every line of section 1 numbered");
-    assert!(numbers
-        .iter()
-        .all(|s| s.anchor.is_some_and(|a| a.sub == Sub::LineNumbers(0))));
+    let names = &version.layout().document.names;
+    assert!(numbers.iter().all(|s| s.name.named(names) == "w:sectPr[1]/w:lnNumType"));
     let mut separators = 0;
     for k in 0..version.page_count() {
         let page = kept.paint(&version, k).unwrap();
         for rule in page.rules.iter().filter(|r| r.kind == "column-separator") {
-            assert_eq!(rule.path, "w:sectPr[2]/w:cols");
-            let anchor = rule.anchor.expect("anchored on the body's last block");
+            let anchor = rule.name.anchor().expect("anchored on the body's last block");
             assert_eq!(anchor.sub, Sub::Cols(1));
             assert_eq!(
                 version.layout().document.names.path(anchor).as_deref(),
-                Some(&*rule.path)
+                Some("w:sectPr[2]/w:cols")
             );
             separators += 1;
         }
@@ -604,16 +602,16 @@ fn a_first_edit_that_stamps_an_unstamped_document_names_every_block_by_its_new_k
     for k in 0..after.page_count() {
         let paint = kept.paint(&after, k).unwrap();
         for line in &paint.lines {
-            let anchor = line.anchor.expect("a body line is anchored");
-            assert!(anchor.block.durable(), "{}", line.path);
-            assert_eq!(names.path(anchor).as_deref(), Some(&*line.path));
-            assert_eq!(names.id(anchor.block).map(|id| id.to_string()), after.id_of(&line.path));
+            let anchor = line.name.anchor().expect("a body line is anchored");
+            assert!(anchor.block.durable(), "{anchor:?}");
+            let path = names.path(anchor).expect("named");
+            assert_eq!(names.id(anchor.block).map(|id| id.to_string()), after.id_of(&path));
             lines += 1;
         }
         for rule in paint.rules.iter().filter(|r| r.kind == "table-border") {
-            let anchor = rule.anchor.expect("a cell's rule is anchored");
+            let anchor = rule.name.anchor().expect("a cell's rule is anchored");
             assert!(anchor.block.durable());
-            assert_eq!(names.path(anchor).as_deref(), Some(&*rule.path));
+            assert!(names.path(anchor).is_some());
             rules += 1;
         }
         kept.page_svg(&after, k).unwrap();
@@ -671,7 +669,7 @@ fn summary_names_by_ids(kept: &mut PageEngine, version: &LaidVersion) {
         paint
             .lines
             .iter()
-            .map(|l| l.anchor.and_then(|a| names.id(a.block)).map(|id| id.to_string()))
+            .map(|l| l.name.anchor().and_then(|a| names.id(a.block)).map(|id| id.to_string()))
             .collect()
     };
     let summary = kept.summary(version).unwrap();

@@ -16,7 +16,7 @@
 //!   glyph where Word drew one, and the pages.
 
 use super::notes::{objects_family, text_family};
-use super::{check_family, documents_of, lay_out, observations, probe, Floors, Scored};
+use super::{check_family, documents_of, lay_out, observations, probe, Floors, Laid, Scored};
 use std::collections::BTreeMap;
 
 /// Word's pages of each paragraph's lines (`pages.expand_pages`): per body paragraph, in
@@ -53,12 +53,12 @@ fn word_pages(recorded: &serde_json::Value) -> BTreeMap<usize, Vec<usize>> {
 }
 
 /// The layout's pages of each body paragraph's lines: `w:body/w:p[k]` is paragraph `k - 1`.
-fn laid_pages(pages: &[std::sync::Arc<ooxml_word_layout::paint::PagePaint>]) -> BTreeMap<usize, Vec<usize>> {
+fn laid_pages(laid: &Laid) -> BTreeMap<usize, Vec<usize>> {
     let mut out: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-    for (page, paint) in pages.iter().enumerate() {
+    for (page, paint) in laid.pages.iter().enumerate() {
         for line in paint.lines.iter().filter(|l| l.story.is_none()) {
-            let block = line
-                .path
+            let path = line.name.named(&laid.names);
+            let block = path
                 .strip_prefix("w:body/w:p[")
                 .and_then(|rest| rest.strip_suffix(']'))
                 .and_then(|k| k.parse::<usize>().ok());
@@ -78,7 +78,7 @@ fn pages_family(recording: &str, maker: &str, prefix: &str, floors: Floors) {
     let names: Vec<&str> = names.iter().map(String::as_str).collect();
     check_family(&names, floors, |name| {
         let laid = lay_out(name, probe(maker, &format!("{prefix}{name}")));
-        let ours = laid_pages(&laid.pages);
+        let ours = laid_pages(&laid);
         let mut bad = 0;
         let mut total = 0;
         let mut problems = Vec::new();

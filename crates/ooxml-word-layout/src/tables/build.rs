@@ -20,12 +20,14 @@ use super::widths::{autofit_room, autofit_unmodelled, Extents};
 use crate::floating::anchors_of;
 use crate::flow::{is_empty, paragraph_borders};
 use crate::input::geometry;
+use crate::naming::{paragraph_item, table_item, ItemName};
 use crate::paragraph::{measure_paragraph, MeasureContext, MeasuredParagraph, ParagraphJob, Unmeasured};
 use crate::px::Px;
 use crate::rebreak::ParaSource;
 use crate::table::FloatingTable;
 use crate::table::{TableContext, Unsupported};
 use ooxml_base::Q;
+use ooxml_word_model::ids::Sub;
 use ooxml_word_model::model::{Block, Paragraph, Table};
 use ooxml_word_model::resolve::{border_twips, drawn, ResolvedCell, ResolvedTable};
 use ooxml_word_model::styles::StyleKind;
@@ -159,16 +161,12 @@ pub fn lay_table(
 }
 
 impl Laying<'_, '_, '_, '_> {
-    fn approximate(&mut self, reason: &'static str, message: String, path: &Text) {
-        self.approximated.push(Approximated {
-            reason,
-            message,
-            path: path.clone(),
-        });
+    fn approximate(&mut self, reason: &'static str, message: String, at: ItemName) {
+        self.approximated.push(Approximated { reason, message, at });
     }
 
-    fn table_path(&self) -> Text {
-        self.input.table.path.clone()
+    fn table_name(&self) -> ItemName {
+        table_item(self.input.table)
     }
 
     /// Whether it floats: a floating table is laid out in its frame as a table with its
@@ -199,11 +197,10 @@ impl Laying<'_, '_, '_, '_> {
                 Ok(())
             }
             Err(why) if self.carry_on => {
-                let path = self.table_path();
                 self.approximate(
                     "table",
                     format!("{}: laid out in the flow, where it stands", why.0),
-                    &path,
+                    self.table_name(),
                 );
                 self.spec.properties.remove("tblpPr");
                 Ok(())
@@ -213,13 +210,12 @@ impl Laying<'_, '_, '_, '_> {
     }
 
     fn on_grid(&mut self) {
-        let path = self.table_path();
         self.approximate(
             "table",
             "its columns are laid out on its w:tblGrid widths, as a fixed table's (Word writes the grid it last laid \
              the table out on)"
                 .into(),
-            &path,
+            self.table_name(),
         );
         self.spec.on_grid();
     }
@@ -305,13 +301,12 @@ impl Laying<'_, '_, '_, '_> {
         let widened = self.spec.resolved.grid.len() > self.input.table.grid.len()
             && int(self.spec.resolved.grid.iter().sum()) > autofit_room(&self.spec, frame.column_width);
         if self.autofit && self.spec.extents.is_some() && widened {
-            let path = self.table_path();
             self.approximate(
                 "table",
                 "an autofit table with a row past its w:tblGrid, wider than the room, is sized from its content on \
                  the widened grid (not measured)"
                     .into(),
-                &path,
+                self.table_name(),
             );
         }
         Ok(lines)
@@ -353,8 +348,8 @@ impl Laying<'_, '_, '_, '_> {
         let keeps = rows.iter().map(MeasuredTable::leads_kept).collect();
         let header_rows = rows.iter().take_while(|r| r.header).count();
         let mut table = MeasuredTable {
-            path: self.table_path(),
             key: self.input.table.key,
+            unkeyed_cells: self.input.table.unkeyed_cell_paths().cloned(),
             cell_places: Arc::clone(&self.input.table.cell_places),
             rows,
             bottom_border,
@@ -563,7 +558,7 @@ impl Laying<'_, '_, '_, '_> {
             self.approximate(
                 "frame",
                 "a frame (w:framePr) in a cell is laid out as a paragraph of the cell".into(),
-                &paragraph.path,
+                paragraph_item(paragraph, Sub::Whole),
             );
         }
         refuse_unlaid(paragraph)?;
@@ -640,7 +635,7 @@ impl Laying<'_, '_, '_, '_> {
         self.approximate(
             "cell-drawing",
             format!("{why}: laid out as if text did not wrap around it"),
-            &paragraph.path,
+            paragraph_item(paragraph, Sub::Whole),
         );
         Ok(Arc::new(anchors::unwrapped(paragraph)))
     }
@@ -666,7 +661,7 @@ impl Laying<'_, '_, '_, '_> {
         self.approximate(
             "table",
             "a word wider than its column, which Word would widen the column for, is broken inside it".into(),
-            &paragraph.path,
+            paragraph_item(paragraph, Sub::Whole),
         );
         Ok(())
     }

@@ -132,7 +132,6 @@ impl Weigh for Kept {
         let text = |l: &crate::line_text::LineText| {
             std::mem::size_of_val(l)
                 + place(&l.place)
-                + l.at.cell.as_ref().map_or(0, |(_, below)| below.len())
                 + l.story.as_ref().map_or(0, |(_, part)| part.len())
                 + l.sizes.len() * std::mem::size_of::<(i64, usize)>()
         };

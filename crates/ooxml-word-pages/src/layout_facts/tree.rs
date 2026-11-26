@@ -176,27 +176,39 @@ impl In {
         if paragraph.story() != StoryIx::BODY {
             return None;
         }
+        if paragraph.kind() != KeyKind::Paragraph {
+            return None;
+        }
         let chain = names.blocks_of(paragraph)?;
         let part = names.part(StoryIx::BODY)?;
-        let container = part.ids.container().len();
-        let table = chain
-            .first()
-            .filter(|a| a.sub == Sub::Whole && a.block.kind() == KeyKind::Table)
-            .filter(|a| names.place_of(a.block).is_some_and(|p| p.len() == container + 1));
-        let row = table.and_then(|t| match chain.get(2)?.sub {
+        let table = chain.first().and_then(|a| body_table(names, a));
+        let row = table.and_then(|table| match chain.get(2)?.sub {
             Sub::Cell(row, _) => Some(TableRow {
-                table: t.block,
+                table,
                 row: usize::from(row),
             }),
             _ => None,
         });
         let in_cell = row.is_some()
             && chain.len() == 4
-            && match (table.and_then(|t| names.place_of(t.block)), names.place_of(paragraph)) {
+            && match (table.and_then(|t| names.place_of(t)), names.place_of(paragraph)) {
                 (Some(table), Some(own)) => right_in_cell(part, &table, &own),
                 _ => false,
             };
         Some(In { chain, row, in_cell })
+    }
+
+    /// Whether it is in a table's cell (any table's, wrappers passed through).
+    pub(crate) fn in_table(&self) -> bool {
+        self.chain.iter().any(|a| matches!(a.sub, Sub::Cell(..)))
+    }
+
+    /// The cell, from 0, of the outermost table's row it is in.
+    pub(crate) fn cell(&self) -> Option<usize> {
+        match self.chain.get(2)?.sub {
+            Sub::Cell(_, cell) => Some(usize::from(cell)),
+            _ => None,
+        }
     }
 
     /// Its top-level block (a paragraph or table: itself where it is one).
@@ -211,6 +223,15 @@ impl In {
             .filter(|a| a.sub == Sub::Whole && a.block.kind() == KeyKind::Table)
             .map(|a| a.block)
     }
+}
+
+/// `anchor`'s table, where it is a whole table right in the body (not in a content control
+/// or custom XML: docx-agent's `_ROW` reads no other).
+pub(crate) fn body_table(names: &VersionNames, anchor: &Anchor) -> Option<BlockKey> {
+    let container = names.part(StoryIx::BODY)?.ids.container().len();
+    (anchor.sub == Sub::Whole && anchor.block.kind() == KeyKind::Table && anchor.block.story() == StoryIx::BODY)
+        .then_some(anchor.block)
+        .filter(|table| names.place_of(*table).is_some_and(|p| p.len() == container + 1))
 }
 
 /// Whether the paragraph at `own` (a place in `part`) is right in its cell's `w:tc`: its
@@ -246,58 +267,6 @@ pub(crate) fn top_of(names: &VersionNames, key: BlockKey) -> Option<BlockKey> {
 /// `block_keys(key)[0] == key` reads a page's block.
 pub(crate) fn is_top(names: &VersionNames, anchor: Anchor) -> bool {
     anchor.sub == Sub::Whole && anchor.block.kind() != KeyKind::Row && top_of(names, anchor.block) == Some(anchor.block)
-}
-
-/// A line of a body table's row, as docx-agent's `_ROW` reads it: the outermost table's
-/// path (`w:body/w:tbl[n]`, its content controls written `w:sdt[n]/w:sdtContent`) and the
-/// row, from 0.
-pub(crate) fn row_of(path: &str) -> Option<(&str, usize)> {
-    let rest = path.strip_prefix("w:body/")?;
-    let mut at = "w:body/".len();
-    let mut steps = rest.split('/');
-    loop {
-        let step = steps.next()?;
-        at += step.len();
-        if indexed(step, "w:sdt").is_some() {
-            if steps.next()? != "w:sdtContent" {
-                return None;
-            }
-            at += 1 + "w:sdtContent".len() + 1;
-            continue;
-        }
-        indexed(step, "w:tbl")?;
-        let table = path.get(..at)?;
-        let row = indexed(steps.next()?, "w:tr")?;
-        return Some((table, row.checked_sub(1)?));
-    }
-}
-
-/// A line of a paragraph right in a body table's cell (not a nested table's), as
-/// docx-agent's `_CELL_LINE` reads it: the table's path (as [`row_of`] reads it), the row
-/// and the cell (`w:tc`, among the row's own children) from 0, and the paragraph's steps
-/// below the cell (`w:p[n]`, or `w:sdt[n]/w:sdtContent/w:p[n]`).
-pub(crate) fn cell_line(path: &str) -> Option<(&str, usize, usize, &str)> {
-    let (table, row) = row_of(path)?;
-    let rest = path.get(table.len()..)?.strip_prefix('/')?;
-    let (_, rest) = rest.split_once('/')?;
-    let (cell, paragraph) = rest.split_once('/')?;
-    let cell = indexed(cell, "w:tc")?.checked_sub(1)?;
-    let steps: Vec<&str> = paragraph.split('/').collect();
-    let plain = match steps.as_slice() {
-        [p] => indexed(p, "w:p").is_some(),
-        [sdt, "w:sdtContent", p] => indexed(sdt, "w:sdt").is_some() && indexed(p, "w:p").is_some(),
-        _ => false,
-    };
-    plain.then_some((table, row, cell, paragraph))
-}
-
-/// The count `n` of a step `name[n]` (digits only).
-fn indexed(step: &str, name: &str) -> Option<usize> {
-    let digits = step.strip_prefix(name)?.strip_prefix('[')?.strip_suffix(']')?;
-    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    digits.parse().ok()
 }
 
 /// The element a layout path names in `story` and its place (child indexes from the
@@ -409,40 +378,4 @@ pub(crate) fn py_space(c: char) -> bool {
 /// `text` stripped of Python's white space at both ends.
 pub(crate) fn py_strip(text: &str) -> &str {
     text.trim_matches(py_space)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_painted_line_names_its_row_and_cell() {
-        assert_eq!(
-            row_of("w:body/w:tbl[2]/w:tr[3]/w:tc[1]/w:p[1]"),
-            Some(("w:body/w:tbl[2]", 2))
-        );
-        // docx-agent's pattern names a content control's content without a count
-        assert_eq!(
-            row_of("w:body/w:sdt[1]/w:sdtContent[1]/w:tbl[1]/w:tr[1]/w:tc[1]/w:p[1]"),
-            None
-        );
-        assert_eq!(
-            row_of("w:body/w:sdt[1]/w:sdtContent/w:tbl[1]/w:tr[1]"),
-            Some(("w:body/w:sdt[1]/w:sdtContent/w:tbl[1]", 0))
-        );
-        assert_eq!(row_of("w:body/w:p[1]"), None);
-        assert_eq!(
-            cell_line("w:body/w:tbl[2]/w:tr[3]/w:tc[1]/w:p[4]"),
-            Some(("w:body/w:tbl[2]", 2, 0, "w:p[4]"))
-        );
-        assert_eq!(
-            cell_line("w:body/w:tbl[1]/w:tr[1]/w:tc[2]/w:sdt[1]/w:sdtContent/w:p[1]"),
-            Some(("w:body/w:tbl[1]", 0, 1, "w:sdt[1]/w:sdtContent/w:p[1]"))
-        );
-        // a nested table's paragraph is not its outer cell's
-        assert_eq!(
-            cell_line("w:body/w:tbl[1]/w:tr[1]/w:tc[1]/w:tbl[1]/w:tr[1]/w:tc[1]/w:p[1]"),
-            None
-        );
-    }
 }

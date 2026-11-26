@@ -15,6 +15,7 @@ use crate::paragraph::MeasuredParagraph;
 use crate::px::Px;
 use ooxml_base::Q;
 use ooxml_text::{Geometry, Piece, Units};
+use ooxml_word_model::docx::VersionNames;
 use ooxml_word_model::model::{Anchor, Graphic, Paragraph};
 use ooxml_word_model::value::{Text, Value};
 use ooxml_word_model::ResolvedParagraph;
@@ -32,12 +33,8 @@ pub enum Layer {
 /// A drawing a page draws, by where it goes: what its painter fills.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DrawingSlot {
-    /// Its path (`.../w:r[2]/wp:anchor[1]`, or an inline one's run's).
-    pub path: String,
-    /// Its paragraph's path.
-    pub paragraph_path: String,
-    /// Its run, beside its path (`None`: a paragraph no story's index holds).
-    pub anchor: Option<ooxml_word_model::ids::Anchor>,
+    /// What names it: its run, or its paths where no story's index holds its paragraph.
+    pub name: SlotName,
     /// Its run's index in the paragraph.
     pub run: usize,
     /// Its index among the run's anchors (or inline drawings).
@@ -62,6 +59,64 @@ pub struct DrawingSlot {
     pub graphic: Option<Arc<Graphic>>,
     /// Whether text may not overlap it (`allowOverlap="0"`): Word moves it clear.
     pub no_overlap: bool,
+}
+
+/// What names a drawing's slot at the edge.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SlotName {
+    /// Its run: the slot is named below it (an inline one as it, a floating one by its
+    /// `wp:anchor[n]` or a VML shape's own path).
+    Anchored(ooxml_word_model::ids::Anchor),
+    /// Its path and its paragraph's, where no story's index holds the paragraph (a text
+    /// box's, until RD1).
+    Path {
+        /// Its path.
+        path: Text,
+        /// Its paragraph's path.
+        paragraph: Text,
+    },
+}
+
+impl SlotName {
+    /// Its run's anchor, where a story's index holds its paragraph.
+    #[must_use]
+    pub fn anchor(&self) -> Option<ooxml_word_model::ids::Anchor> {
+        match self {
+            SlotName::Anchored(anchor) => Some(*anchor),
+            SlotName::Path { .. } => None,
+        }
+    }
+
+    /// The name of drawing `index` of run `run` of `paragraph` (inline or floating): its
+    /// run's anchor, else its paths made from the paragraph's own.
+    pub(crate) fn of(paragraph: &Paragraph, run: usize, index: usize, inline: bool) -> SlotName {
+        if let Some(anchor) = run_anchor(paragraph, run) {
+            return SlotName::Anchored(anchor);
+        }
+        let own = paragraph.unkeyed_path().map_or("", |p| &**p);
+        let path = if inline {
+            match paragraph.runs.get(run).map(|r| &*r.path) {
+                Some(r) if !r.is_empty() => format!("{own}/{r}"),
+                _ => own.to_owned(),
+            }
+        } else {
+            below(own, anchor_below(&paragraph.runs, run, index))
+        };
+        SlotName::Path {
+            path: Text::from(path.as_str()),
+            paragraph: Text::from(own),
+        }
+    }
+}
+
+/// A drawing's paths as its painter and its text boxes' layout are handed them, named at
+/// the edge: its own and its paragraph's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlotPaths {
+    /// Its path (`.../w:r[2]/wp:anchor[1]`, or an inline one's run's).
+    pub path: String,
+    /// Its paragraph's path.
+    pub paragraph: String,
 }
 
 /// The pen x, layout units from the column's left, of the character a drawing anchored
@@ -117,12 +172,20 @@ pub(crate) fn character_px(
     Some(super::spans::px_at(left, units))
 }
 
-/// A floating drawing's path (`anchor_path`): its `wp:anchor[n]` among the run's DrawingML
-/// ones, or a VML shape's own path.
-pub fn anchor_path(paragraph: &Paragraph, run: usize, k: usize) -> String {
-    match anchor_below(&paragraph.runs, run, k) {
-        Some(below) => format!("{}/{below}", paragraph.path),
-        None => paragraph.path.to_string(),
+/// A floating drawing's path (`anchor_path`), its paragraph named by the version's names
+/// `names`: its `wp:anchor[n]` among the run's DrawingML ones, or a VML shape's own path.
+pub fn anchor_path(names: &VersionNames, paragraph: &Paragraph, run: usize, k: usize) -> String {
+    below(
+        &crate::naming::paragraph_path(names, paragraph),
+        anchor_below(&paragraph.runs, run, k),
+    )
+}
+
+/// A path `below` a paragraph's `paragraph`, the paragraph's own where there is none.
+fn below(paragraph: &str, below: Option<String>) -> String {
+    match below {
+        Some(below) => format!("{paragraph}/{below}"),
+        None => paragraph.to_owned(),
     }
 }
 
@@ -226,9 +289,8 @@ pub(super) fn line_floats(job: &FloatJob<'_>, count: &mut usize) -> (Vec<Drawing
         let Some(frames) = job.frames((paragraph_top, line_top), character) else {
             continue;
         };
-        let path = anchor_path(job.paragraph, a.run, a.index);
         let Some((x, y, width, height)) = anchor_box(&a.anchor, &frames) else {
-            missed.push(path);
+            missed.push(anchor_path(&job.layout.document.names, job.paragraph, a.run, a.index));
             continue;
         };
         let key = crate::paginate::DrawingKey {
@@ -248,9 +310,7 @@ pub(super) fn line_floats(job: &FloatJob<'_>, count: &mut usize) -> (Vec<Drawing
         };
         *count += 1;
         out.push(DrawingSlot {
-            path,
-            paragraph_path: job.paragraph.path.to_string(),
-            anchor: run_anchor(job.paragraph, a.run),
+            name: SlotName::of(job.paragraph, a.run, a.index, false),
             run: a.run,
             index: a.index,
             inline: false,

@@ -10,7 +10,7 @@
 //!
 //! Must not: lay the cell out (`crate::tables` has), or paint a drawing.
 
-use super::drawings::{anchor_box, anchor_path, character_px, page_frames, run_anchor, DrawingSlot, Layer};
+use super::drawings::{anchor_box, anchor_path, character_px, page_frames, DrawingSlot, Layer, SlotName};
 use super::spans::PageOut;
 use crate::geometry::PageFrame;
 use crate::tables::{grid_twips_px, in_cell, AnchoredLine, CellPage};
@@ -72,9 +72,9 @@ pub(super) fn cell_floats(job: &CellFloatJob<'_>, out: &mut PageOut) {
             let tops = [line.row_top, line_top, line.top + line.pitch];
             page_frames(job.layout, (job.frame.section, job.page), tops, character)
         };
-        let path = anchor_path(job.paragraph, a.run, a.index);
         let Some((x, y, width, height)) = frames.and_then(|f| anchor_box(&a.anchor, &f)) else {
-            out.unplaced.push(path);
+            out.unplaced
+                .push(anchor_path(&job.layout.document.names, job.paragraph, a.run, a.index));
             continue;
         };
         let positioned = line
@@ -90,9 +90,7 @@ pub(super) fn cell_floats(job: &CellFloatJob<'_>, out: &mut PageOut) {
         };
         out.drawn += 1;
         out.drawings.push(DrawingSlot {
-            path,
-            paragraph_path: job.paragraph.path.to_string(),
-            anchor: run_anchor(job.paragraph, a.run),
+            name: SlotName::of(job.paragraph, a.run, a.index, false),
             run: a.run,
             index: a.index,
             inline: false,

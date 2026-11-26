@@ -192,18 +192,20 @@ pub fn style_reference_known(document: &WordDocument, locale: &Locale, instructi
         .map_err(|Uncomputable(why)| Unknown(why))
 }
 
-/// The text `page` draws for the run whose model path is `run` (`w:body/w:p[3]/w:r[2]`):
-/// the characters of its spans, in drawing order, on the body's lines -- or, with `story`, on
-/// the lines of that header's or footer's part (`word/header1.xml`). Empty where it draws
-/// none (what Word stores for a `STYLEREF` that shows nothing).
-pub fn drawn_text(page: &PagePaint, story: Option<&str>, run: &str) -> String {
+/// The text `page` of the version named by `names` draws for the run whose model path is
+/// `run` (`w:body/w:p[3]/w:r[2]`): the characters of its spans, in drawing order, on the
+/// body's lines -- or, with `story`, on the lines of that header's or footer's part
+/// (`word/header1.xml`). Empty where it draws none (what Word stores for a `STYLEREF` that
+/// shows nothing).
+pub fn drawn_text(page: &PagePaint, names: &VersionNames, story: Option<&str>, run: &str) -> String {
     let part = |name: &str| name.trim_start_matches('/').to_owned();
     let wanted = story.map(part);
+    let named = crate::paint::names::PageNames::new(names, &page.lines);
     page.lines
         .iter()
         .filter(|line| line.story.as_ref().map(|(_, p)| part(p)) == wanted)
         .flat_map(|line| line.spans.iter())
-        .filter(|span| span.path == run)
+        .filter(|span| named.written(&span.name) == run)
         .flat_map(|span| span.chars.iter())
         .collect()
 }

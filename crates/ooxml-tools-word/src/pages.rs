@@ -362,7 +362,12 @@ impl LaidFields for Laid<'_> {
         let painted = engine
             .paint(&self.version, page)
             .ok_or_else(|| Unknown(format!("page {page} is not painted")))?;
-        Ok(drawn_text(&painted, story, run.path))
+        Ok(drawn_text(
+            &painted,
+            &self.version.layout().document.names,
+            story,
+            run.path,
+        ))
     }
 
     fn blocks_pages(&self, ids: &[&str]) -> Vec<Result<Vec<usize>, Unknown>> {

@@ -9,6 +9,7 @@
 
 use super::cells::{CellFlow, Content, RowFlow};
 use super::place::{place_table, MergeDown};
+use crate::naming::ItemName;
 use crate::paragraph::MeasuredParagraph;
 use crate::px::Px;
 use crate::table::{
@@ -26,8 +27,8 @@ pub struct Approximated {
     pub reason: &'static str,
     /// What was done.
     pub message: String,
-    /// The element's path.
-    pub path: Text,
+    /// What it is about: the table, or a paragraph of a cell.
+    pub at: ItemName,
 }
 
 /// How far below a nested table's top its placement may reach: a page that never ends.
@@ -63,10 +64,10 @@ fn white_text(props: &ooxml_word_model::value::Props) -> bool {
 /// A table measured for the page stack.
 #[derive(Debug, Clone)]
 pub struct MeasuredTable {
-    /// Its path.
-    pub path: Text,
-    /// Its block's key, beside its path (`None`: a table no story's index holds).
+    /// Its block's key (`None`: a table no story's index holds).
     pub key: Option<BlockKey>,
+    /// Each cell's path, where no story's index holds it (a text box's table, until RD1).
+    pub unkeyed_cells: Option<Arc<[Arc<[Text]>]>>,
     /// Each cell's place in the table as written (the model's [`Table::cell_places`]).
     ///
     /// [`Table::cell_places`]: ooxml_word_model::model::Table::cell_places
@@ -107,13 +108,24 @@ pub struct MeasuredTable {
 
 impl MeasuredTable {
     /// What the cell `cell` of row `row` (the final view's) is drawn for: the table's cell
-    /// at its place as written; `None` for a table no story's index holds.
-    pub fn cell_anchor(&self, row: usize, cell: usize) -> Option<Anchor> {
-        let &(r, c) = self.cell_places.get(row)?.get(cell)?;
-        Some(Anchor {
-            block: self.key?,
-            sub: Sub::Cell(u16::try_from(r).ok()?, u16::try_from(c).ok()?),
-        })
+    /// at its place as written; its path for a table no story's index holds.
+    pub fn cell_name(&self, row: usize, cell: usize) -> ItemName {
+        let anchor = (|| {
+            let &(r, c) = self.cell_places.get(row)?.get(cell)?;
+            Some(Anchor {
+                block: self.key?,
+                sub: Sub::Cell(u16::try_from(r).ok()?, u16::try_from(c).ok()?),
+            })
+        })();
+        match anchor {
+            Some(anchor) => ItemName::Anchored(anchor),
+            None => ItemName::Path(
+                self.unkeyed_cells
+                    .as_ref()
+                    .and_then(|cells| cells.get(row)?.get(cell).cloned())
+                    .unwrap_or_default(),
+            ),
+        }
     }
 
     /// Row `row`'s cell `cell`.

@@ -235,6 +235,12 @@ impl Paragraph {
         self.runs.iter().map(|r| &*r.text).collect()
     }
 
+    /// Its path where no story's index holds it (a text box's, one the layout makes): what
+    /// names it then. A paragraph an index holds is named by its key.
+    pub fn unkeyed_path(&self) -> Option<&Text> {
+        self.key.is_none().then_some(&self.path)
+    }
+
     /// Whether `other` lays out as this paragraph does wherever it stands: everything the
     /// same but its path, its key and its bookmarks. A layout names a paragraph's lines by its block
     /// and reads its path from the version's body; its bookmarks are read from the body by
@@ -320,6 +326,20 @@ pub struct Table {
     pub cell_places: CellPlaces,
     /// The final view moved content across its edge.
     pub joined: bool,
+}
+
+impl Table {
+    /// Its path where no story's index holds it (a text box's): what names it then. A table
+    /// an index holds is named by its key.
+    pub fn unkeyed_path(&self) -> Option<&Text> {
+        self.key.is_none().then_some(&self.path)
+    }
+
+    /// Each cell's path, where no story's index holds the table (a text box's): what names
+    /// its cells then.
+    pub fn unkeyed_cell_paths(&self) -> Option<&Arc<[Arc<[Text]>]>> {
+        self.key.is_none().then_some(&self.cell_paths)
+    }
 }
 
 /// A block of a story.
