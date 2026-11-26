@@ -384,7 +384,7 @@ fn pages_of(laid: &LaidVersion) -> Vec<ViewPage> {
         .enumerate()
         .map(|(k, page)| ViewPage {
             number: k + 1,
-            blocks: laid.top_blocks(k).into_iter().map(str::to_owned).collect(),
+            blocks: laid.top_blocks(k),
             width: points(page.frame.width_pt),
             height: points(page.frame.height_pt),
         })

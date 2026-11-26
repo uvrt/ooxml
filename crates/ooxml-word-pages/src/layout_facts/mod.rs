@@ -35,6 +35,7 @@ pub mod trials;
 pub mod uncertain;
 
 use crate::laid_entry::LaidEntry;
+use crate::line_text::ItemPlace;
 use crate::line_text::LineText;
 use crate::page_entry::PageEntry;
 use crate::page_read::{PageBoxes, PageRead};
@@ -42,14 +43,14 @@ use crate::LaidVersion;
 use ooxml_word_layout::facts::LineFact;
 use ooxml_word_layout::px::Px;
 use ooxml_word_model::docx::formatting::{EffectiveParagraph, Formatting};
-use ooxml_word_model::docx::Docx;
+use ooxml_word_model::docx::{Docx, StoryPart, VersionNames};
 use ooxml_word_model::model::Table;
 use ooxml_word_model::resolve::{resolve_table, ResolvedTable};
 use ooxml_xml::Element;
 use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
-pub(crate) use tree::block_keys_top;
+pub(crate) use tree::{cell_line, row_of};
 
 pub use ranges::{room, BeyondFacts, Break, Extent, RangeLayout};
 pub use scope::{Range, Scope, ScopeError};
@@ -149,7 +150,13 @@ impl<'a> Facts<'a> {
         // The runs of one paragraph in a row (across pages), each group asked once; a path
         // of another story than the body's is named by none (it does not start `w:body`).
         let groups: Vec<&[(usize, &[LineFact])]> = runs.chunk_by(|a, b| path_of(a.1) == path_of(b.1)).collect();
-        let named = version.are_named(groups.iter().filter_map(|g| g.first()).map(|(_, run)| path_of(run)));
+        let named = groups.iter().map(|group| {
+            group.first().is_some_and(|(_, run)| {
+                let first = run.first();
+                version.is_named_by(first.and_then(|l| l.anchor).map(|a| a.block), path_of(run))
+            })
+        });
+        let named: Vec<bool> = named.collect();
         for (group, named) in groups.into_iter().zip(named) {
             if !named {
                 continue;
@@ -238,6 +245,31 @@ impl<'a> Facts<'a> {
     #[must_use]
     pub fn version(&self) -> &'a LaidVersion {
         self.version
+    }
+
+    /// The version's names: its story parts' indexes, which what a page read is drawn for
+    /// is named through.
+    #[must_use]
+    pub fn names(&self) -> &'a VersionNames {
+        &self.version.layout().document.names
+    }
+
+    /// The layout model's path of what a page read is drawn for at `place`, named through
+    /// the version's names.
+    #[must_use]
+    pub fn path_of_place(&self, place: &ItemPlace) -> Option<String> {
+        place.named(self.names())
+    }
+
+    /// The story part (the reading's), element and place (child indexes from the part's
+    /// root) of what a page read is drawn for at `place`; `part`, the story part of a
+    /// header's or footer's line drawn for no block its index holds.
+    pub(crate) fn element_of(
+        &self,
+        place: &ItemPlace,
+        part: Option<&str>,
+    ) -> Option<(&'a StoryPart, &'a Arc<Element>, Vec<u32>)> {
+        self.version.element_of(self.docx, place, part)
     }
 
     /// The version's reading.

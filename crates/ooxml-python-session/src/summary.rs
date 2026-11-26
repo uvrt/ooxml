@@ -55,8 +55,8 @@ impl PyLayoutSummary {
     /// Every page as `(rest, [(id, path, body, digest)])`, digests as bytes: what a
     /// comparison with a summary made in Python reads.
     fn pages<'py>(&self, py: Python<'py>) -> PyResult<Vec<(Bound<'py, PyBytes>, Vec<SummaryRow<'py>>)>> {
-        Ok(self
-            .whole(py)?
+        let whole = self.whole(py)?;
+        Ok(whole
             .pages
             .iter()
             .map(|page| {
@@ -66,7 +66,7 @@ impl PyLayoutSummary {
                     .map(|l| {
                         (
                             l.id.as_deref().map(str::to_owned),
-                            l.path.to_string(),
+                            whole.path_of(l).unwrap_or_default(),
                             l.body,
                             PyBytes::new(py, &l.drawn.0),
                         )

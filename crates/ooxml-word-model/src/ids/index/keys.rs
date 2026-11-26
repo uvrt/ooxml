@@ -271,6 +271,38 @@ impl PartIds {
         }
     }
 
+    /// The key of the paragraph, table or row at `place` (child indexes from the root), in
+    /// the story `story` (this part's); `None` where no block the index holds is there.
+    #[must_use]
+    pub fn key_at(&self, story: StoryIx, place: &[u32]) -> Option<BlockKey> {
+        let (at, k) = self.find_path(place)?;
+        self.key_in(story, &at, k)
+    }
+
+    /// The child index of the block container's `n`-th child (from 1) of local name `local`
+    /// (an element, whatever its namespace): the inverse of [`PartIds::container_step`].
+    /// O(log n) for the names the segment tree counts (`TOP_NAMES`), a walk of the children
+    /// for any other.
+    #[must_use]
+    pub fn container_child(&self, local: &str, n: usize) -> Option<usize> {
+        let wanted = u32::try_from(n.checked_sub(1)?).ok()?;
+        match super::TOP_NAMES.iter().position(|name| *name == local) {
+            Some(slot) => {
+                let (k, _) = self
+                    .segments
+                    .seek(|c| c.names.get(slot).is_some_and(|count| *count > wanted))?;
+                Some(k)
+            }
+            None => self
+                .segments
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| s.body.local() == Some(local))
+                .nth(wanted as usize)
+                .map(|(k, _)| k),
+        }
+    }
+
     /// The local name of the block container's child `k` (an element, whatever its
     /// namespace) and its count among the container's children of that local name, from 1:
     /// its step in a path from the container. O(log n) for the names the segment tree

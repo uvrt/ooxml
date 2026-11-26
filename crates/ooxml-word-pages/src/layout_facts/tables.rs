@@ -121,24 +121,24 @@ impl Part<PageFacts> for RowsPart {
 #[derive(Debug, Default)]
 pub struct DrawnTables<'f> {
     /// Each table's path, in the order first drawn.
-    order: Vec<&'f str>,
+    order: Vec<Text>,
     /// Each table's rows (from 0), each with its lines by 1-based page.
-    rows: HashMap<&'f str, BTreeMap<usize, RowLines<'f>>>,
+    rows: HashMap<Text, BTreeMap<usize, RowLines<'f>>>,
     /// The 1-based pages each table draws a line or a rule on.
-    pages: HashMap<&'f str, BTreeSet<usize>>,
+    pages: HashMap<Text, BTreeSet<usize>>,
 }
 
 impl<'f> DrawnTables<'f> {
-    fn page(&mut self, table: &'f str, page: usize) {
+    fn page(&mut self, table: &str, page: usize) {
         if !self.pages.contains_key(table) {
-            self.order.push(table);
+            self.order.push(Text::from(table));
         }
-        self.pages.entry(table).or_default().insert(page);
+        self.pages.entry(Text::from(table)).or_default().insert(page);
     }
 
     /// Each table's path and pages, in the order first drawn.
-    pub fn tables(&self) -> impl Iterator<Item = (&'f str, &BTreeSet<usize>)> + '_ {
-        self.order.iter().filter_map(|t| Some((*t, self.pages.get(t)?)))
+    pub fn tables(&self) -> impl Iterator<Item = (&str, &BTreeSet<usize>)> + '_ {
+        self.order.iter().filter_map(|t| Some((&**t, self.pages.get(t)?)))
     }
 
     /// The rows of the table at `path`, from 0, each with its lines by page.
@@ -158,7 +158,7 @@ pub fn drawn_tables<'f>(facts: &'f Facts<'_>) -> DrawnTables<'f> {
         let number = index + 1;
         let Some(laid) = facts.laid(index) else { continue };
         for table in laid.rows().tables() {
-            let rows = out.rows.entry(table.path()).or_default();
+            let rows = out.rows.entry(Text::from(table.path())).or_default();
             for (row, lines) in &table.rows {
                 rows.entry(*row).or_default().insert(number, lines.as_slice());
             }
@@ -169,7 +169,10 @@ pub fn drawn_tables<'f>(facts: &'f Facts<'_>) -> DrawnTables<'f> {
         }
         let Some(entry) = facts.entry(index) else { continue };
         for table in entry.tables().0.iter().filter(|t| t.ruled) {
-            out.page(&table.path, number);
+            // the rules' table is kept by key in the page tier: named for the rows' paths
+            if let Some(path) = facts.names().path(ooxml_word_model::ids::Anchor::whole(table.table)) {
+                out.page(&path, number);
+            }
         }
     }
     out
@@ -226,7 +229,7 @@ pub fn tables(facts: &Facts<'_>, drawn: &DrawnTables) -> (Vec<SplitRow>, Vec<Unr
         if pages.len() < 2 || !facts.shown(pages.iter().copied()) {
             continue;
         }
-        let id = facts.version().id_of(table).unwrap_or(table).to_owned();
+        let id = facts.version().id_of(table).unwrap_or_else(|| table.to_owned());
         let element = tree::resolve(body, table);
         let header_rows = element.as_ref().map_or(0, |(e, _)| header_rows(e));
         let ordered: Vec<usize> = pages.iter().copied().collect();
