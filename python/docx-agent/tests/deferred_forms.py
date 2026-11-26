@@ -81,18 +81,6 @@ DEFERRED: dict[str, str] = {
         "edit_chart add from",
     "test_tools_word.py::test_find_and_replace_one_or_all_body_or_all_stories":
         "replace_text in the body only while other stories match",
-    "test_addresses.py::test_find_text_and_replace_text_take_a_cell_a_section_a_bookmark_and_an_open_span":
-        "replace_text range",
-    "test_language.py::test_french_spacing_in_english_text_is_a_language_mismatch_never_a_deletion":
-        "replace_text range",
-    "test_numbers.py::test_the_fix_writes_by_reference_and_the_number_is_left_out_after":
-        "replace_text range",
-    "test_settle_removed_r56.py::test_an_edit_inside_an_earlier_insertion_keeps_it_the_earlier_ones":
-        "replace_text range",
-    "test_tools_word.py::test_replace_text_within_a_span_of_paragraphs_and_a_table":
-        "replace_text range",
-    "test_typography.py::test_problems_list_what_is_left_with_fixes_that_clear_them":
-        "replace_text range",
     "test_served_records.py::test_served_reviews_follow_the_records_as_docx_agent_does[accept moving the only record]":
         "word_changes accept moving the document's only table record (its item is made again)",
     "test_served_records.py::test_the_session_reads_the_records_as_docx_agent_does[reviewed_alone]":

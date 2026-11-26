@@ -47,13 +47,19 @@ pub struct DeleteText {
 }
 
 /// Every place a find matches replaced (docx-agent's `Document.replace`): within each
-/// paragraph, or across paragraphs; the first `count` when given.
+/// paragraph, or across paragraphs; in every story or only in the paragraphs `within`
+/// holds; the first `count` when given.
 #[derive(Debug, Clone)]
 pub struct ReplaceText {
     /// What is looked for, and what replaces each match.
     pub pattern: Arc<dyn Pattern>,
     /// Whether a match may run across paragraphs (in each story's text joined by `\n`).
+    /// Not with `within`.
     pub across: bool,
+    /// Only the paragraphs this address holds (docx-agent's `within`: a story, a block or
+    /// span, a row, a cell, a section, a bookmark, a range), each paragraph's text alone;
+    /// `None`: every story.
+    pub within: Option<Address>,
     /// At most this many, in document order.
     pub count: Option<usize>,
     /// How the replacement takes its formatting.
@@ -516,7 +522,15 @@ impl Command<WordDoc> for ReplaceText {
         } else {
             sink.read_where(Arc::new(HoldsMatch::new(Arc::clone(&self.pattern))));
         }
-        let mut found = crate::find::matches(&docx, self.pattern.as_ref(), self.across)?;
+        let mut found = match &self.within {
+            Some(within) if self.across => {
+                return Err(EditError::Unsupported(format!(
+                    "a replace across paragraphs within {within}"
+                )))
+            }
+            Some(within) => crate::find::matches_within(&docx, self.pattern.as_ref(), within.as_str())?,
+            None => crate::find::matches(&docx, self.pattern.as_ref(), self.across)?,
+        };
         if let Some(count) = self.count {
             found.truncate(count);
         }

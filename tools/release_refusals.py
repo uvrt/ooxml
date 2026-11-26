@@ -38,8 +38,8 @@ READER: dict[str, str | None] = {
         "`word_inspect` of a document with a table cell whose paragraph mark is deleted while its row stays",
     "* by reference": None,  # the tool layer writes a reference's value, or resolves a $name, first
     "replace_text *":
-        "`replace_text` with `regex` or `range`, an empty `find`, or styled text in `replace` "
-        "(`**`, `*`, `[text]{Style}`, escapes)",
+        "`replace_text` with an empty `find`, or styled text in `replace` (`**`, `*`, `[text]{Style}`, escapes; "
+        "with `regex`, a backslash is the replacement's group)",
     "word_delete a *":
         "`word_delete` of a picture (a `d:` target) or of a heading alone (an `h:` target without a range)",
     "word_insert_markdown *":

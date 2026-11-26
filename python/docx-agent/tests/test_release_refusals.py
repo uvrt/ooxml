@@ -147,8 +147,6 @@ CASES = {
     "word_read final view of Accept All's cell ends": [(CELL_ENDS, "word_read", {"view": "final"})],
     "word_inspect of Accept All's cell ends": [(CELL_ENDS, "word_inspect", {"target": "p@body/1"})],
     "replace_text *": [
-        (None, "replace_text", {"find": "T.xt", "replace": "x", "regex": True}),
-        (None, "replace_text", {"find": "Text", "replace": "x", "range": "{p}"}),
         (None, "replace_text", {"find": "", "replace": "x"}),
         (None, "replace_text", {"find": "one", "replace": "**x**"}),
     ],

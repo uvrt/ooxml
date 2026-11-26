@@ -1,0 +1,194 @@
+{
+ "_about": "What Word 16.106 for Mac wrote for crates/ooxml-oracle/word/probes/replace_text_probe.py (documents and cases in cases/replace_text_cases.py): 'word-replace', its own tracked Find and Replace of each case in its range (blocks normalised as e3's; 'runs' per paragraph key as [kind, text], kind text/ins/del); 'word-replace-untracked', each key's text after the same replaces untracked; 'tools-opened', whether it opened and saved the tools' tracked replace_text of the same cases; 'tools-accept'/'tools-reject', each key's text after its Accept All / Reject All of the tools' document and whether any revision was left. Regenerate with python crates/ooxml-oracle/word/probes/replace_text_probe.py.",
+ "word": "16.106 (macOS), Dutch interface",
+ "word-replace": {
+  "blocks": [
+   "<w:p w14:paraId=\"50000004\" w14:textId=\"77777777\"><w:r><w:t>Head 2026 stays outside.</w:t></w:r></w:p>",
+   "<w:p w14:paraId=\"50000005\" w14:textId=\"5F88996B\"><w:r><w:t xml:space=\"preserve\">Alpha the year </w:t></w:r><w:del w:id=\"0\" w:author=\"{author}\" w:date=\"{date}\" w16du:dateUtc=\"{date}\"><w:r><w:delText>2026</w:delText></w:r></w:del><w:ins w:id=\"1\" w:author=\"{author}\" w:date=\"{date}\" w16du:dateUtc=\"{date}\"><w:r><w:t>2027</w:t></w:r></w:ins><w:r><w:t xml:space=\"preserve\"> begins.</w:t></w:r></w:p>",
+   "<w:p w14:paraId=\"50000006\" w14:textId=\"41786681\"><w:r><w:t xml:space=\"preserve\">Bravo </w:t></w:r><w:del w:id=\"2\" w:author=\"{author}\" w:date=\"{date}\" w16du:dateUtc=\"{date}\"><w:r><w:delText>2026</w:delText></w:r></w:del><w:ins w:id=\"3\" w:author=\"{author}\" w:date=\"{date}\" w16du:dateUtc=\"{date}\"><w:r><w:t>2027</w:t></w:r></w:ins><w:r><w:t xml:space=\"preserve\"> and </w:t></w:r><w:del w:id=\"4\" w:author=\"{author}\" w:date=\"{date}\" w16du:dateUtc=\"{date}\"><w:r><w:delText>2026</w:delText></w:r></w:del><w:ins w:id=\"5\" w:author=\"{author}\" w:date=\"{date}\" w16du:dateUtc=\"{date}\"><w:r><w:t>2027</w:t></w:r></w:ins><w:r><w:t xml:space=\"preserve\"> again.</w:t></w:r></w:p>",
+   "<w:tbl><w:tblPr><w:tblStyle w:val=\"Tabelraster\"/><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblLook w:val=\"04A0\" w:firstRow=\"1\" w:lastRow=\"0\" w:firstColumn=\"1\" w:lastColumn=\"0\" w:noHBand=\"0\" w:noVBand=\"1\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"3000\"/><w:gridCol w:w=\"3000\"/></w:tblGrid><w:tr w14:paraId=\"50000003\" w14:textId=\"77777777\"><w:tc><w:tcPr><w:tcW w:w=\"3000\" w:type=\"dxa\"/></w:tcPr><w:p w14:paraId=\"50000001\" w14:textId=\"77777777\"><w:r><w:t>Cell 2026 left</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w=\"3000\" w:type=\"dxa\"/></w:tcPr><w:p w14:paraId=\"50000002\" w14:textId=\"4485E7B1\"><w:r><w:t xml:space=\"preserve\">Other </w:t></w:r><w:del w:id=\"6\" w:author=\"{author}\" w:date=\"{date}\" w16du:dateUtc=\"{date}\"><w:r><w:delText>2026</w:delText></w:r></w:del><w:ins w:id=\"7\" w:author=\"{author}\" w:date=\"{date}\" w16du:dateUtc=\"{date}\"><w:r><w:t>2028</w:t></w:r></w:ins><w:r><w:t xml:space=\"preserve\"> right</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+   "<w:p w14:paraId=\"50000007\" w14:textId=\"206D9D68\"><w:r><w:t xml:space=\"preserve\">Charlie dates </w:t></w:r><w:ins w:id=\"8\" w:author=\"{author}\" w:date=\"{date}\" w16du:dateUtc=\"{date}\"><w:r><w:t>11</w:t></w:r></w:ins><w:del w:id=\"9\" w:author=\"{author}\" w:date=\"{date}\" w16du:dateUtc=\"{date}\"><w:r><w:delText>2</w:delText></w:r></w:del><w:ins w:id=\"10\" w:author=\"{author}\" w:date=\"{date}\" w16du:dateUtc=\"{date}\"><w:r><w:t>2026</w:t></w:r></w:ins><w:del w:id=\"11\" w:author=\"{author}\" w:date=\"{date}\" w16du:dateUtc=\"{date}\"><w:r><w:delText>026-11</w:delText></w:r></w:del><w:ins w:id=\"12\" w:author=\"{author}\" w:date=\"{date}\" w16du:dateUtc=\"{date}\"><w:r><w:t>/</w:t></w:r></w:ins><w:r><w:t xml:space=\"preserve\"> and </w:t></w:r><w:ins w:id=\"13\" w:author=\"{author}\" w:date=\"{date}\" w16du:dateUtc=\"{date}\"><w:r><w:t>03</w:t></w:r></w:ins><w:del w:id=\"14\" w:author=\"{author}\" w:date=\"{date}\" w16du:dateUtc=\"{date}\"><w:r><w:delText>2</w:delText></w:r></w:del><w:ins w:id=\"15\" w:author=\"{author}\" w:date=\"{date}\" w16du:dateUtc=\"{date}\"><w:r><w:t>2025</w:t></w:r></w:ins><w:del w:id=\"16\" w:author=\"{author}\" w:date=\"{date}\" w16du:dateUtc=\"{date}\"><w:r><w:delText>025-03</w:delText></w:r></w:del><w:ins w:id=\"17\" w:author=\"{author}\" w:date=\"{date}\" w16du:dateUtc=\"{date}\"><w:r><w:t>/</w:t></w:r></w:ins><w:r><w:t xml:space=\"preserve\"> here.</w:t></w:r></w:p>",
+   "<w:p w14:paraId=\"50000008\" w14:textId=\"77777777\"><w:r><w:t>Tail 2026 stays too.</w:t></w:r></w:p>",
+   "<w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/><w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" w:header=\"708\" w:footer=\"708\" w:gutter=\"0\"/><w:cols w:space=\"708\"/></w:sectPr>"
+  ],
+  "runs": {
+   "Head": [
+    [
+     "text",
+     "Head 2026 stays outside."
+    ]
+   ],
+   "Alpha": [
+    [
+     "text",
+     "Alpha the year "
+    ],
+    [
+     "del",
+     "2026"
+    ],
+    [
+     "ins",
+     "2027"
+    ],
+    [
+     "text",
+     " begins."
+    ]
+   ],
+   "Bravo": [
+    [
+     "text",
+     "Bravo "
+    ],
+    [
+     "del",
+     "2026"
+    ],
+    [
+     "ins",
+     "2027"
+    ],
+    [
+     "text",
+     " and "
+    ],
+    [
+     "del",
+     "2026"
+    ],
+    [
+     "ins",
+     "2027"
+    ],
+    [
+     "text",
+     " again."
+    ]
+   ],
+   "Cell": [
+    [
+     "text",
+     "Cell 2026 left"
+    ]
+   ],
+   "Other": [
+    [
+     "text",
+     "Other "
+    ],
+    [
+     "del",
+     "2026"
+    ],
+    [
+     "ins",
+     "2028"
+    ],
+    [
+     "text",
+     " right"
+    ]
+   ],
+   "Charlie": [
+    [
+     "text",
+     "Charlie dates "
+    ],
+    [
+     "ins",
+     "11"
+    ],
+    [
+     "del",
+     "2"
+    ],
+    [
+     "ins",
+     "2026"
+    ],
+    [
+     "del",
+     "026-11"
+    ],
+    [
+     "ins",
+     "/"
+    ],
+    [
+     "text",
+     " and "
+    ],
+    [
+     "ins",
+     "03"
+    ],
+    [
+     "del",
+     "2"
+    ],
+    [
+     "ins",
+     "2025"
+    ],
+    [
+     "del",
+     "025-03"
+    ],
+    [
+     "ins",
+     "/"
+    ],
+    [
+     "text",
+     " here."
+    ]
+   ],
+   "Tail": [
+    [
+     "text",
+     "Tail 2026 stays too."
+    ]
+   ]
+  }
+ },
+ "word-replace-untracked": {
+  "texts": {
+   "Head": "Head 2026 stays outside.",
+   "Alpha": "Alpha the year 2027 begins.",
+   "Bravo": "Bravo 2027 and 2027 again.",
+   "Cell": "Cell 2026 left",
+   "Other": "Other 2028 right",
+   "Charlie": "Charlie dates 11/2026 and 03/2025 here.",
+   "Tail": "Tail 2026 stays too."
+  }
+ },
+ "tools-opened": {
+  "outcome": "done",
+  "detail": ""
+ },
+ "tools-accept": {
+  "texts": {
+   "Head": "Head 2026 stays outside.",
+   "Alpha": "Alpha the year 2027 begins.",
+   "Bravo": "Bravo 2027 and 2027 again.",
+   "Cell": "Cell 2026 left",
+   "Other": "Other 2028 right",
+   "Charlie": "Charlie dates 11/2026 and 03/2025 here.",
+   "Tail": "Tail 2026 stays too."
+  },
+  "revisions": false
+ },
+ "tools-reject": {
+  "texts": {
+   "Head": "Head 2026 stays outside.",
+   "Alpha": "Alpha the year 2026 begins.",
+   "Bravo": "Bravo 2026 and 2026 again.",
+   "Cell": "Cell 2026 left",
+   "Other": "Other 2026 right",
+   "Charlie": "Charlie dates 2026-11 and 2025-03 here.",
+   "Tail": "Tail 2026 stays too."
+  },
+  "revisions": false
+ }
+}

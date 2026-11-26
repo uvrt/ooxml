@@ -168,6 +168,7 @@ fn edit(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
             let command = ReplaceText {
                 pattern,
                 across: case.get("across").and_then(Value::as_bool).unwrap_or(false),
+                within: None,
                 count: case
                     .get("count")
                     .and_then(Value::as_u64)

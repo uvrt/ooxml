@@ -1,7 +1,8 @@
 //! Owns: what a tool plans its edit from, read in the edit's transaction on the version the
 //! edit is applied to, with what it depends on recorded there: the one place a text occurs
 //! ([`anchor_in`], as [`crate::anchor`] finds it), the reads of a find the caller made on the
-//! transaction's version itself ([`read_matching`], [`read_ranges`]), a heading's section ([`section_in`]) and
+//! transaction's version itself ([`read_matching`], [`read_pattern`], [`read_ranges`]), what a
+//! find's scope holds ([`read_scope`]), a heading's section ([`section_in`]) and
 //! the body's last block ([`last_block_in`], what `end` is after). A commit meanwhile that
 //! changes what was read is a conflict, and the plan is made again where the edit is
 //! prepared again -- never applied as worked out on the version before that commit.
@@ -13,6 +14,7 @@ use crate::find::{HoldsMatch, Literal, Pattern};
 use crate::text_range::{anchor_range, range_id};
 use crate::Result;
 use ooxml_store::Txn;
+use ooxml_word_model::address::{scope_paragraphs, Address};
 use ooxml_word_model::docx::controls::controls;
 use ooxml_word_model::docx::outline::body_blocks;
 use ooxml_word_model::docx::Docx;
@@ -43,8 +45,36 @@ pub fn anchor_in(tx: &mut Txn<'_, WordDoc>, text: &str, within: Option<&str>) ->
 /// # Errors
 /// `nothing to find` for empty text.
 pub fn read_matching(tx: &mut Txn<'_, WordDoc>, text: &str) -> Result<()> {
-    let pattern: Arc<dyn Pattern> = Arc::new(Literal::new(text, true, false, "")?);
+    read_pattern(tx, Arc::new(Literal::new(text, true, false, "")?));
+    Ok(())
+}
+
+/// [`read_matching`] of any pattern (a regular expression the tool layer matches): every
+/// paragraph that holds a match of `pattern` where a commit is applied, by condition.
+pub fn read_pattern(tx: &mut Txn<'_, WordDoc>, pattern: Arc<dyn Pattern>) {
     tx.read_where(Arc::new(HoldsMatch::new(pattern)));
+}
+
+/// Record in `tx` that a plan read what `within` holds (any form a find's scope takes: a
+/// story, a block or span, a row, a cell, a section, a bookmark, a range): each of its
+/// paragraphs by key -- a block put into the scope is put beside one of them, writing its
+/// key, so a commit that changes what the scope holds is a conflict. A story read whole is
+/// its part.
+///
+/// # Errors
+/// `within`'s refusal; when a story part is not XML.
+pub fn read_scope(tx: &mut Txn<'_, WordDoc>, within: &Address) -> Result<()> {
+    let docx = tx.doc().docx()?;
+    if let Some(story) = docx.story(within.as_str()) {
+        tx.read(Key::part(story.part.as_str()));
+        return Ok(());
+    }
+    let (story, places) = scope_paragraphs(&docx, within).map_err(crate::EditError::Address)?;
+    for k in places {
+        if let Some(paragraph) = story.ids.paragraphs().get(k) {
+            tx.read(Key::block(story.part.as_str(), paragraph.id.as_str()));
+        }
+    }
     Ok(())
 }
 

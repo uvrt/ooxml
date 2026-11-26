@@ -106,6 +106,11 @@ OBSERVATIONS: dict[str, dict] = {
         "readers": ["crates/ooxml-oracle/word/tests/test_replace_markdown_recorded.py"],
         "unread": {},
     },
+    "replace-text-word.json": {
+        "probe": "crates/ooxml-oracle/word/probes/replace_text_probe.py",
+        "readers": ["crates/ooxml-oracle/word/tests/test_replace_text_recorded.py"],
+        "unread": {},
+    },
     "row-format-word.json": {
         "probe": "crates/ooxml-oracle/word/probes/row_format_probe.py",
         "readers": ["python/docx-agent/tests/test_rows_r58.py"],
