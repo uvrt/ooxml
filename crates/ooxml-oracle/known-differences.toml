@@ -456,7 +456,7 @@ cause = "word_delete of a picture (d:) or of a heading without its end (deferred
 
 [[not_supported]]
 form = "word_insert_markdown *"
-cause = "insert_markdown like, from, blob (user 2026-11-22: refused at release, added after)"
+cause = "insert_markdown like naming a table (frames), from, blob (user 2026-11-22: refused at release, added after)"
 
 [[not_supported]]
 form = "a picture in Markdown"

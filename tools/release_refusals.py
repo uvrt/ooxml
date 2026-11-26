@@ -43,7 +43,8 @@ READER: dict[str, str | None] = {
     "word_delete a *":
         "`word_delete` of a picture (a `d:` target) or of a heading alone (an `h:` target without a range)",
     "word_insert_markdown *":
-        "`word_insert_markdown` with `like`, or a table from a dataset's or another document's rows "
+        "`word_insert_markdown` with `like` naming a table (its frame for new tables), or a table from a "
+        "dataset's or another document's rows "
         "(`from`; one field of one row is served)",
     "a picture in Markdown":
         "A picture in Markdown given to `word_insert_markdown`",

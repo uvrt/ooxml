@@ -12,5 +12,3 @@
     paragraph names any more are removed.
   - The result says what each new paragraph kept (`data.kept`: `block`, `from`, `settings`; at most 30,
     the rest counted in `kept_left_out`), and the summary counts them.
-- Still refused as not supported: `like` (list items or a table looking like given blocks), and a style map
-  naming a paragraph (read as `like`).

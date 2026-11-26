@@ -49,6 +49,8 @@ pub(crate) struct Writer<'m> {
     /// The body paragraphs made, by kind (not one in a quote or inside a list item): what a
     /// replacement's paragraphs are matched to the replaced ones by ([`super::keep`]).
     pub(crate) tagged: Vec<super::keep::Tagged>,
+    /// The looks list items take, by level ([`super::like`]).
+    pub(crate) like: super::like::Levels,
 }
 
 impl<'m> Writer<'m> {
@@ -56,7 +58,6 @@ impl<'m> Writer<'m> {
         Writer {
             part: part.to_owned(),
             map,
-            options,
             warnings: Vec::new(),
             styles: HashMap::new(),
             abstracts: HashMap::new(),
@@ -69,6 +70,8 @@ impl<'m> Writer<'m> {
             linked: false,
             verbatim: false,
             tagged: Vec::new(),
+            like: super::like::Levels::new(&options.like),
+            options,
         }
     }
 
