@@ -116,49 +116,11 @@ impl HostReads for Opened {
     }
 
     fn summary(&self) -> Result<Option<Value>, ToolError> {
-        let Some(word) = self.word() else {
-            return Ok(None);
-        };
-        let docx = word
-            .docx()
-            .map_err(|e| ToolError::internal(e.to_string(), "summary:docx"))?;
-        ooxml_tools_word::summary(word.package(), &docx, &CancelToken::new()).map(Some)
+        self.word().map(summary_of).transpose()
     }
 
     fn id_state(&self, host: &IdStateOf) -> Result<Option<String>, SessionError> {
-        let Some(word) = self.word() else {
-            return Ok(None);
-        };
-        let package = word.package();
-        let mut trees: Vec<Tree> = Vec::new();
-        for part in parts(package)? {
-            if let Some(tree) = word.tree(&part).map_err(SessionError::format)? {
-                trees.push(tree);
-            }
-        }
-        let roots: Vec<&ooxml_xml::Element> = trees.iter().map(|t| t.root().as_ref()).collect();
-        let ids = word.ids();
-        let mut pool = IdPool::of(ids.values().collect());
-        for (seed, k) in ids.cursors() {
-            pool.set_cursor(seed, *k);
-        }
-        let ledger = Ledger {
-            pool: Some(pool),
-            gone: host.gone.iter().copied().collect(),
-            drawings_gone: host.drawings_gone.iter().copied().collect(),
-            highest_drawing: ids.highest_drawing(),
-            replaced: ids.replaced().iter().map(|(v, id)| (*v, id.clone())).collect(),
-            earlier: host.earlier.iter().cloned().collect(),
-            aliases: ids.aliases().clone(),
-            ..Ledger::default()
-        };
-        let said: HashMap<i64, &str> = host.said.iter().map(|(v, w)| (*v, w.as_str())).collect();
-        let versions = Versions {
-            version: host.version,
-            last: host.last,
-        };
-        let describe = |version: i64| said.get(&version).map(|w| (*w).to_owned());
-        Ok(Some(export_state(&ledger, &roots, &versions, &describe)))
+        self.word().map(|word| id_state_of(word, host)).transpose()
     }
 
     fn block_kind(&self, id: &str) -> Result<Option<&'static str>, SessionError> {
@@ -168,6 +130,48 @@ impl HostReads for Opened {
     fn has_drawing(&self, id: &str) -> Result<bool, SessionError> {
         self.word().map_or(Ok(false), |word| has_drawing_of(word, id))
     }
+}
+
+/// What `open_document` says of `word`: cheap facts, no layout.
+pub(crate) fn summary_of(word: &WordDoc) -> Result<Value, ToolError> {
+    let docx = word
+        .docx()
+        .map_err(|e| ToolError::internal(e.to_string(), "summary:docx"))?;
+    ooxml_tools_word::summary(word.package(), &docx, &CancelToken::new())
+}
+
+/// `word`'s id state, its versions and retired ids as `host` numbers them.
+pub(crate) fn id_state_of(word: &WordDoc, host: &IdStateOf) -> Result<String, SessionError> {
+    let package = word.package();
+    let mut trees: Vec<Tree> = Vec::new();
+    for part in parts(package)? {
+        if let Some(tree) = word.tree(&part).map_err(SessionError::format)? {
+            trees.push(tree);
+        }
+    }
+    let roots: Vec<&ooxml_xml::Element> = trees.iter().map(|t| t.root().as_ref()).collect();
+    let ids = word.ids();
+    let mut pool = IdPool::of(ids.values().collect());
+    for (seed, k) in ids.cursors() {
+        pool.set_cursor(seed, *k);
+    }
+    let ledger = Ledger {
+        pool: Some(pool),
+        gone: host.gone.iter().copied().collect(),
+        drawings_gone: host.drawings_gone.iter().copied().collect(),
+        highest_drawing: ids.highest_drawing(),
+        replaced: ids.replaced().iter().map(|(v, id)| (*v, id.clone())).collect(),
+        earlier: host.earlier.iter().cloned().collect(),
+        aliases: ids.aliases().clone(),
+        ..Ledger::default()
+    };
+    let said: HashMap<i64, &str> = host.said.iter().map(|(v, w)| (*v, w.as_str())).collect();
+    let versions = Versions {
+        version: host.version,
+        last: host.last,
+    };
+    let describe = |version: i64| said.get(&version).map(|w| (*w).to_owned());
+    Ok(export_state(&ledger, &roots, &versions, &describe))
 }
 
 /// What kind of block `id` names in `word` (a renamed id followed): `"paragraph"`,

@@ -14,6 +14,7 @@ ooxml-tools.workspace = true
 ooxml-session.workspace = true
 ooxml-numfmt.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 ooxml-opc.workspace = true

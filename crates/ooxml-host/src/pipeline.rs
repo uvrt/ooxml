@@ -248,6 +248,7 @@ impl HostSession {
         if let Some(made) = &made {
             self.touched(&doc, made, &mut result);
         }
+        self.host_added(entry.name(), &doc, &mut result);
         if let (Some(key), false) = (&key, result.is_error()) {
             self.stores().keys.keep(&doc, entry.name(), key, &result);
         }

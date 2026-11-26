@@ -70,6 +70,8 @@ pub(crate) fn to_py(error: &SessionError) -> PyErr {
         return NotWordPackage::new_err(message);
     }
     match error {
+        SessionError::StateRefused { .. } => StateRefused::new_err(message),
+        SessionError::IdTaken(_) => PyValueError::new_err(message),
         SessionError::NotOpen { .. } => PyKeyError::new_err(message),
         SessionError::Kind(_) | SessionError::PartName(_) | SessionError::Package(_) => PyValueError::new_err(message),
         SessionError::Base(ooxml_base::BaseError::Cancelled) => PyTimeoutError::new_err(message),
@@ -390,7 +392,7 @@ impl PySession {
         let bytes: Arc<[u8]> = Arc::from(template);
         let session = &self.inner;
         let data = py
-            .detach(|| session.new_from_template(bytes, &made))
+            .detach(|| ooxml_session_word::from_template(bytes, &made, &session.open_env()))
             .map_err(|e| to_py(&e))?;
         Ok(PyBytes::new(py, &data))
     }

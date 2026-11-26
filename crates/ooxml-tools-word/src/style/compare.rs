@@ -13,10 +13,10 @@
 use super::compare_args::WordCompareBlocks;
 use super::compare_paragraphs::paragraphs;
 use super::compare_tables::tables;
-use crate::paging::page_list;
 use crate::refusal::address_refused;
 use crate::version::Version;
 use ooxml_base::Cancel;
+use ooxml_tools::paging::page_list;
 use ooxml_tools::{Done, Refusal, ToolError, TryCall, WayOut};
 use ooxml_word_model::address::{resolve, AddressError};
 use ooxml_word_model::docx::formatting::{Cell, Formatting};
