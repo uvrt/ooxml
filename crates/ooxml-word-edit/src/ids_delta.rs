@@ -87,7 +87,8 @@ pub fn ids_delta_of(before: &WordDoc, after: &WordDoc, delta: &VersionDelta) -> 
 /// renamed and changed.
 fn block_ids(delta: &BlockDelta, (old, new): (&PartIds, &PartIds), held: &mut Held) {
     let value = |ids: &PartIds, key: BlockKey| ids.raw_id_of(key).and_then(|raw| hex_value(&raw)).map(HeldId::Block);
-    let old_key = |key: BlockKey| delta.renamed.iter().find(|(_, n)| *n == key).map_or(key, |(o, _)| *o);
+    let renamed_from = delta.renamed_from();
+    let old_key = |key: BlockKey| renamed_from.get(&key).copied().unwrap_or(key);
     let both = delta.changed.iter().chain(&delta.stamp_only).copied();
     let earlier = delta
         .gone
