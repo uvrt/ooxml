@@ -1,0 +1,164 @@
+//! Owns: a version's names ([`VersionNames`]: its story parts' indexes, each found from the
+//! version before's where its tree changed, taken as it was where it did not) and its
+//! blocks' keys beside their paths (phase 3 identity design, LK1): every paragraph and
+//! table of the body, the headers and footers and the notes the model reads keyed from its
+//! story's index ([`Keyer`]), a block taken from a memo keyed again only where its key could
+//! have changed.
+//!
+//! A key read from the index is the block's own where the part's keys follow from content
+//! ([`PartIds::keys_by_content`]: every paragraph and row stamped with a paraId of its own,
+//! written one way): such a key is kept with the block it was read with. Any other key (an
+//! ordinal, a repeat, a rowless table's) names a block by its place, and is found again in
+//! every version.
+//!
+//! Until the layout model drops its paths (LK2) a block's key is found from its path, the
+//! place the reader names it by.
+//!
+//! Must not: key a memo (keys name blocks; memos are keyed by content, ADR-008), or name a
+//! text box's blocks (no story's index holds them).
+
+use crate::docx::{Kept as DocxKept, StoryPart, VersionNames};
+use crate::ids::{BlockKey, StoryIx, StoryTable};
+use crate::model::{Block, Paragraph, Table};
+use ooxml_xml::Tree;
+use std::collections::HashMap;
+use std::sync::Arc;
+
+/// One document's story parts as its versions read them: each version's names are made
+/// from the version before's.
+#[derive(Debug, Default)]
+pub(super) struct Names {
+    /// Every story the document's versions named, by index.
+    stories: StoryTable,
+    /// The last version's parts, by part name.
+    last: HashMap<String, Arc<StoryPart>>,
+    /// This version's parts, by part name, as they are found.
+    now: HashMap<String, (StoryIx, Arc<StoryPart>)>,
+    /// What a story part keeps beside its ids (unused by naming: never filled).
+    kept: Arc<DocxKept>,
+}
+
+impl Names {
+    /// The part `part` of story `story` in this version, whose tree is `tree`: the last
+    /// version's where it is the same tree, else found from it. `None` past the story
+    /// table's limit.
+    pub(super) fn part(&mut self, part: &str, story: &str, tree: &Tree) -> Option<(StoryIx, Arc<StoryPart>)> {
+        if let Some(found) = self.now.get(part) {
+            return Some(found.clone());
+        }
+        let ix = self.stories.intern(story)?;
+        let earlier = self.last.get(part).filter(|p| p.story == story);
+        let made = match earlier {
+            Some(same) if Arc::ptr_eq(same.root(), tree.root()) => Arc::clone(same),
+            _ => Arc::new(StoryPart::new(
+                part.to_owned(),
+                story.to_owned(),
+                tree.clone(),
+                earlier.map(|e| &**e),
+                &self.kept,
+            )),
+        };
+        self.now.insert(part.to_owned(), (ix, Arc::clone(&made)));
+        Some((ix, made))
+    }
+
+    /// This version's names; the next version's parts are found from its.
+    pub(super) fn finish(&mut self) -> Arc<VersionNames> {
+        let now = std::mem::take(&mut self.now);
+        let names = VersionNames::from_parts(now.values().map(|(ix, part)| (*ix, Arc::clone(part))));
+        self.last = now.into_iter().map(|(name, (_, part))| (name, part)).collect();
+        Arc::new(names)
+    }
+}
+
+/// Keys one story's blocks from its part's index.
+pub(super) struct Keyer<'a> {
+    part: &'a StoryPart,
+    story: StoryIx,
+    /// The part's keys follow from content: a durable key read before is the block's.
+    by_content: bool,
+}
+
+impl<'a> Keyer<'a> {
+    /// The keyer of `part`, the story `story`'s.
+    pub(super) fn new(story: StoryIx, part: &'a StoryPart) -> Keyer<'a> {
+        Keyer {
+            part,
+            story,
+            by_content: part.ids.keys_by_content(),
+        }
+    }
+
+    /// The key of the paragraph or table at the layout path `path`.
+    fn key(&self, path: &str) -> Option<BlockKey> {
+        let (_, place) = self.part.resolve_path(path)?;
+        self.part.ids.key_of(self.story, self.part.ids.at(&place)?)
+    }
+
+    /// `blocks` keyed: read now (`fresh`), each keyed; taken from a memo, keyed again
+    /// unless every key in them is durable and the part's keys follow from content. A block
+    /// whose keys are all right already is returned as it was (the same `Arc`).
+    pub(super) fn keyed(&self, blocks: &[Block], fresh: bool) -> Option<Vec<Block>> {
+        if !fresh && self.by_content && blocks.iter().all(|b| durable(b, self.story)) {
+            return None;
+        }
+        Some(blocks.iter().map(|b| self.block(b)).collect())
+    }
+
+    fn block(&self, block: &Block) -> Block {
+        match block {
+            Block::Paragraph(p) => {
+                let key = self.key(&p.path);
+                if key == p.key {
+                    return block.clone();
+                }
+                Block::Paragraph(Arc::new(Paragraph { key, ..(**p).clone() }))
+            }
+            Block::Table(t) => {
+                let key = self.key(&t.path);
+                let mut changed = key != t.key;
+                let rows: Vec<Arc<[Arc<[Block]>]>> = t
+                    .rows
+                    .iter()
+                    .map(|row| {
+                        row.iter()
+                            .map(|cell| {
+                                let blocks: Vec<Block> = cell.iter().map(|b| self.block(b)).collect();
+                                if super::same_blocks(&blocks, cell) {
+                                    Arc::clone(cell)
+                                } else {
+                                    changed = true;
+                                    Arc::from(blocks)
+                                }
+                            })
+                            .collect()
+                    })
+                    .collect();
+                if !changed {
+                    return block.clone();
+                }
+                Block::Table(Arc::new(Table {
+                    key,
+                    rows: Arc::from(rows),
+                    ..(**t).clone()
+                }))
+            }
+        }
+    }
+}
+
+/// Whether every key in `block` is durable and of `story`.
+fn durable(block: &Block, story: StoryIx) -> bool {
+    let ok = |key: Option<BlockKey>| key.is_some_and(|k| k.durable() && k.story() == story);
+    match block {
+        Block::Paragraph(p) => ok(p.key),
+        Block::Table(t) => {
+            ok(t.key)
+                && t.rows
+                    .iter()
+                    .flat_map(|r| r.iter())
+                    .flat_map(|c| c.iter())
+                    .all(|b| durable(b, story))
+        }
+    }
+}

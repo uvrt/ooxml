@@ -30,6 +30,7 @@ use ooxml_xml::{Element, Tree};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
+mod keys;
 mod labels;
 
 const OFFICE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
@@ -162,6 +163,8 @@ pub struct Model {
     block_keys: labels::LabelKeys,
     labels: MonoidTree<BlockItems>,
     label_memo: Memo<Digest, BlockItems>,
+    /// Each version's story parts' indexes, which its blocks are keyed and named by.
+    names: keys::Names,
     stats: OpenStats,
 }
 
@@ -244,6 +247,7 @@ impl Model {
             block_keys: labels::LabelKeys::default(),
             labels: MonoidTree::new(),
             label_memo: Memo::new(Arc::clone(&budget)),
+            names: keys::Names::default(),
             stats: OpenStats::default(),
             budget,
         }
@@ -376,6 +380,15 @@ impl Model {
             warnings.push(text("document-no-body"));
             return (Vec::new(), Vec::new(), None);
         };
+        let named = self.names.part(&p.main, "body", &p.document);
+        let keyer = named.as_ref().map(|(ix, part)| keys::Keyer::new(*ix, part));
+        let keyed = |blocks: &[Block], fresh: bool, out: &mut Vec<Block>| match keyer
+            .as_ref()
+            .and_then(|k| k.keyed(blocks, fresh))
+        {
+            Some(keyed) => out.extend(keyed),
+            None => out.extend(blocks.iter().cloned()),
+        };
         let mut fields = Fields::new(true, true);
         let mut steps = Steps::new("w:body");
         let mut out = Vec::new();
@@ -399,7 +412,7 @@ impl Model {
             let placed = paragraph.then(|| element_key(self.key, colours_d, content, &fields, Some(here)));
             if let Some(Kept(kept)) = placed.as_ref().and_then(|placed| self.elements.get(placed)) {
                 fields.cached.extend(kept.cached.iter().cloned());
-                out.extend(kept.blocks.iter().cloned());
+                keyed(&kept.blocks, false, &mut out);
                 continue;
             }
             let key = element_key(self.key, colours_d, content, &fields, (!paragraph).then_some(here));
@@ -411,7 +424,7 @@ impl Model {
                     // it), and the paragraphs in it keep their paths below it.
                     Some(placed) => {
                         let blocks: Arc<[Block]> = kept.blocks.iter().map(|b| moved(b, here)).collect();
-                        out.extend(blocks.iter().cloned());
+                        keyed(&blocks, false, &mut out);
                         if !same_blocks(&blocks, &kept.blocks) {
                             let at_place = BodyElement {
                                 blocks,
@@ -420,14 +433,16 @@ impl Model {
                             self.elements.insert(placed, Kept(Arc::new(at_place)));
                         }
                     }
-                    None => out.extend(kept.blocks.iter().cloned()),
+                    None => keyed(&kept.blocks, false, &mut out),
                 }
                 continue;
             }
             read += 1;
             let before = fields.stack.clone();
-            let element = reader.body_element(node, &text(here), &mut fields);
-            out.extend(element.blocks.iter().cloned());
+            let mut element = reader.body_element(node, &text(here), &mut fields);
+            let start = out.len();
+            keyed(&element.blocks, true, &mut out);
+            element.blocks = out.get(start..).map(Arc::from).unwrap_or_default();
             if fields.stack == before {
                 self.elements.insert(key, Kept(Arc::new(element)));
             }
@@ -441,6 +456,7 @@ impl Model {
     fn story(
         &mut self,
         package: &Package,
+        main: &str,
         part: &str,
         colours_d: Digest,
         cx: &Context,
@@ -451,14 +467,26 @@ impl Model {
         let mut d = Digester::new(self.key);
         d.field(&colours_d.0);
         d.field(&self.digests.of(self.key, part, &tree).0);
+        // its blocks are keyed in its own story: a part of the same content is another story
+        d.field(part.as_bytes());
         let key = d.finish();
+        let story = crate::ids::story_name(main, part);
+        let named = self.names.part(part, &story, &tree);
+        let keyer = named.as_ref().map(|(ix, part)| keys::Keyer::new(*ix, part));
         if let Some(Kept(kept)) = self.stories.get(&key) {
-            return Ok(Some((*kept).clone()));
+            let (blocks, cached) = (*kept).clone();
+            return Ok(Some(match keyer.and_then(|k| k.keyed(&blocks, false)) {
+                Some(keyed) => (Arc::from(keyed), cached),
+                None => (blocks, cached),
+            }));
         }
         let mut fields = Fields::new(false, true);
         let path = format!("w:{}", local(tree.root()));
-        let blocks: Arc<[Block]> = Arc::from(Reader::new(&cx.colours).story(tree.root(), &path, &mut fields));
-        let made = (blocks, Arc::from(fields.cached));
+        let mut blocks = Reader::new(&cx.colours).story(tree.root(), &path, &mut fields);
+        if let Some(keyed) = keyer.and_then(|k| k.keyed(&blocks, true)) {
+            blocks = keyed;
+        }
+        let made = (Arc::from(blocks), Arc::from(fields.cached));
         self.stories.insert(key, Kept(Arc::new(made.clone())));
         Ok(Some(made))
     }
@@ -466,7 +494,7 @@ impl Model {
     fn notes(
         &mut self,
         package: &Package,
-        part: Option<String>,
+        (main, part): (&str, Option<String>),
         kind: &str,
         colours_d: Digest,
         cx: &Context,
@@ -480,13 +508,34 @@ impl Model {
         d.field(&self.digests.of(self.key, &part, &tree).0);
         d.field(kind.as_bytes());
         let key = d.finish();
-        if let Some(Kept(kept)) = self.notes.get(&key) {
-            return Ok((*kept).clone());
+        let story = crate::ids::story_name(main, &part);
+        let named = self.names.part(&part, &story, &tree);
+        let keyer = named.as_ref().map(|(ix, part)| keys::Keyer::new(*ix, part));
+        let (notes, fresh) = match self.notes.get(&key) {
+            Some(Kept(kept)) => ((*kept).clone(), false),
+            None => (read_notes(&Reader::new(&cx.colours), tree.root(), kind), true),
+        };
+        let notes = match &keyer {
+            Some(keyer) => keyed_notes(keyer, notes, fresh),
+            None => notes,
+        };
+        if fresh {
+            self.notes.insert(key, Kept(Arc::new(notes.clone())));
         }
-        let notes = read_notes(&Reader::new(&cx.colours), tree.root(), kind);
-        self.notes.insert(key, Kept(Arc::new(notes.clone())));
         Ok(notes)
     }
+}
+
+/// `notes` with every note's and separator's blocks keyed (`fresh`: read now).
+fn keyed_notes(keyer: &keys::Keyer<'_>, mut notes: Notes, fresh: bool) -> Notes {
+    let keyed = |blocks: &mut Arc<[Block]>| {
+        if let Some(made) = keyer.keyed(blocks, fresh) {
+            *blocks = Arc::from(made);
+        }
+    };
+    notes.notes.values_mut().for_each(keyed);
+    notes.separators.values_mut().for_each(keyed);
+    notes
 }
 
 fn read_notes(reader: &Reader<'_>, root: &Element, kind: &str) -> Notes {
@@ -576,7 +625,7 @@ impl Model {
             if !package.has_part(&part) {
                 continue;
             }
-            if let Some((blocks, fields)) = self.story(package, &part, colours_d, cx)? {
+            if let Some((blocks, fields)) = self.story(package, &p.main, &part, colours_d, cx)? {
                 cached.extend(fields.iter().cloned());
                 stories.insert(rid.clone(), blocks);
                 parts_of.insert(rid.clone(), text(&part));
@@ -604,10 +653,23 @@ impl Model {
             warnings.push(text("styles-part-missing"));
         }
         let (stories, story_parts) = self.header_stories(package, &p, &sections, colours_d, &cx, &mut cached)?;
-        let footnotes = self.notes(package, first_of_type(&p.rels, "footnotes"), "footnote", colours_d, &cx)?;
-        let endnotes = self.notes(package, first_of_type(&p.rels, "endnotes"), "endnote", colours_d, &cx)?;
+        let footnotes = self.notes(
+            package,
+            (&p.main, first_of_type(&p.rels, "footnotes")),
+            "footnote",
+            colours_d,
+            &cx,
+        )?;
+        let endnotes = self.notes(
+            package,
+            (&p.main, first_of_type(&p.rels, "endnotes")),
+            "endnote",
+            colours_d,
+            &cx,
+        )?;
         let picture_bullets = self.picture_bullets(package, &p, &cx)?;
         self.update_labels(&cx, &body_blocks);
+        let names = self.names.finish();
         self.stats.resolutions = self.resolver.stats().misses - misses_before;
         Ok(WordDocument {
             main_part: text(&p.main),
@@ -622,6 +684,7 @@ impl Model {
             cached_fields: Arc::from(cached),
             warnings: Arc::from(warnings),
             labels: self.labels.clone(),
+            names,
         })
     }
 

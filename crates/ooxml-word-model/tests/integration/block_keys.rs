@@ -3,8 +3,8 @@
 //! names reads back as written (`BlockId::parse(x).to_string() == x`), odd forms of it too
 //! (lower case, short hex, `#k`, `@n`, `/rK`); every paragraph's, table's and row's key
 //! finds that block again (`entry_of(key_of(e)) == e`) with its place and id; and every
-//! block's name at the edge (`VersionNames::path`) is the path the model writes today
-//! (`story_model_path`).
+//! block's name at the edge (`VersionNames::path`) is the path the layout model writes today
+//! (`story_model_path`'s, a note's blocks named from their note by its id).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 
 use crate::block_index::{document, edited, Rng};
@@ -18,6 +18,52 @@ use ooxml_xml::{Element, Tree};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+/// The layout model's path of the element at `place` (the reference): `story_model_path`'s,
+/// a note's blocks named from their note by its id (`w:footnote[@w:id=2]/w:p[1]`), as the
+/// model reads a note as a story of its own.
+fn layout_path(root: &Arc<Element>, place: &[u32]) -> Option<String> {
+    let path = story_model_path(root, place)?;
+    let kind = match root.name().local() {
+        "footnotes" => "footnote",
+        "endnotes" => "endnote",
+        _ => return Some(path),
+    };
+    let note = root.children().get(*place.first()? as usize)?.as_element()?;
+    let id = note.attribute(Some(W), "id").unwrap_or("None");
+    let rest = path.strip_prefix(&format!("w:{}s/", kind))?;
+    let below = rest.split_once('/').map_or("", |(_, below)| below);
+    let named = format!("w:{kind}[@w:id={id}]");
+    Some(if below.is_empty() {
+        named
+    } else {
+        format!("{named}/{below}")
+    })
+}
+
+/// The paths of the blocks the paragraph at layout path `path` is in, outermost first,
+/// ending with it (the reference for `VersionNames::blocks_of`): each prefix ending at a
+/// table, row, cell or the paragraph, past the container's step and through wrappers;
+/// `None` where anything else stands between (a text box's paragraph).
+fn enclosing(path: &str) -> Option<Vec<String>> {
+    let mut steps = path.split('/').peekable();
+    let mut prefix = steps.next()?.to_owned();
+    let mut out = Vec::new();
+    while let Some(step) = steps.next() {
+        prefix = format!("{prefix}/{step}");
+        let local = step.split('[').next()?.rsplit(':').next()?;
+        match local {
+            "tbl" | "tr" | "tc" => out.push(prefix.clone()),
+            "p" => {
+                out.push(prefix);
+                return steps.peek().is_none().then_some(out);
+            }
+            "sdt" | "sdtContent" | "customXml" => {}
+            _ => return None,
+        }
+    }
+    None
+}
 
 /// What the checks saw.
 #[derive(Default, Debug)]
@@ -155,13 +201,17 @@ fn check_paragraphs(story: &Story<'_>, keys: &mut HashSet<BlockKey>, tally: &mut
         assert_eq!(ids.place_of(key).as_deref(), Some(&*p.path), "{}", p.id);
         assert_eq!(names.id(key).map(String::from), Some(p.id.clone()));
         if story.sampled(p.index) {
-            let path = story_model_path(root, &p.path);
+            let path = layout_path(root, &p.path);
             assert_eq!(names.path(Anchor::whole(key)), path, "{}", p.id);
             let label = Anchor {
                 block: key,
                 sub: Sub::Label,
             };
-            assert_eq!(names.path(label), path.map(|b| format!("{b}/label")));
+            assert_eq!(names.path(label), path.clone().map(|b| format!("{b}/label")));
+            let chain = names
+                .blocks_of(key)
+                .map(|blocks| blocks.iter().map(|a| names.path(*a).unwrap()).collect::<Vec<_>>());
+            assert_eq!(chain, path.as_deref().and_then(enclosing), "{}", p.id);
             tally.paths += 1;
         }
         let durable = key.durable();
@@ -187,7 +237,7 @@ fn check_tables(story: &Story<'_>, keys: &mut HashSet<BlockKey>, tally: &mut Tal
         assert_eq!(ids.entry_of(key), Some(entry), "{}", table.id);
         assert_eq!(ids.place_of(key).as_deref(), Some(&*table.path));
         assert_eq!(names.id(key).map(String::from), Some(table.id.clone()));
-        assert_eq!(names.path(Anchor::whole(key)), story_model_path(root, &table.path));
+        assert_eq!(names.path(Anchor::whole(key)), layout_path(root, &table.path));
         assert_eq!(
             names.path(Anchor {
                 block: key,
@@ -208,7 +258,7 @@ fn check_tables(story: &Story<'_>, keys: &mut HashSet<BlockKey>, tally: &mut Tal
             assert_eq!(ids.place_of(row).as_deref(), Some(&**path));
             assert_eq!(names.id(row).map(String::from), Some(id.clone()));
             if story.sampled(r) {
-                assert_eq!(names.path(Anchor::whole(row)), story_model_path(root, path), "{id}");
+                assert_eq!(names.path(Anchor::whole(row)), layout_path(root, path), "{id}");
                 tally.paths += 1;
             }
             check_id(id, BlockKind::Row, &story.name, tally);
@@ -253,7 +303,7 @@ fn check_cells(names: &VersionNames, key: BlockKey, root: &Arc<Element>, place: 
             let mut at = place.to_vec();
             at.extend([u32::try_from(tr_at).unwrap(), u32::try_from(tc_at).unwrap()]);
             let sub = Sub::Cell(u16::try_from(r).unwrap(), u16::try_from(c).unwrap());
-            assert_eq!(names.path(Anchor { block: key, sub }), story_model_path(root, &at));
+            assert_eq!(names.path(Anchor { block: key, sub }), layout_path(root, &at));
             count += 1;
         }
     }

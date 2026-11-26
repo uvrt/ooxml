@@ -28,7 +28,19 @@ repository file with those bytes (``$ROOT/...``) or a file of ``host/inputs`` (`
 and ``GROUPS`` always (a case whose toolbox has other tools or formats is not recorded: the
 application's own tools stay in Python, decision D1), plus the settings that differ from the
 defaults (``limits``, ``roles``, ``locale``, ``numbers``, ``block_edits``,
-``allow_new_problems``, ``batch_defers``...) and the session's clock.
+``allow_new_problems``, ``batch_defers``...) and the session's clock.  A ``kit`` other than
+``docx`` names the libraries: ``docx+xlsx`` adds xlsx-agent's tools and format (a workbook the
+Python host holds beside a Word document; those streams are under ``mixed/`` and xlsx-agent's
+suite replays them).  Settings the application changes between calls are a ``settings`` event.
+
+**Concurrent cases.**  A session whose calls overlapped (threads) is recorded with
+``concurrent: true``, each call's ``span`` (the recorder's ticks at its start and end) and a
+``final`` event (its open documents' part digests once the calls ended).  Its replay is a
+serial one in commit order (:func:`expected_of`): the calls that changed something as
+``change`` events (``ok`` and ``changed_parts``), ordered by overlap and version, then the final
+state -- the batch concurrency oracle (Phase 3 design §7.5), frozen.  Generated streams
+(host_features.py, ``record-features``) cover each host feature; tests/test_host_concurrency.py
+runs the oracle live on new seeds.
 
 **A result, normalised** (:func:`normalised_result`): what the model reads (``to_json``), plus
 the application's ``touched``, ``touched_by_op`` (its keys as strings) and ``changed_parts``.
@@ -65,7 +77,7 @@ both ``style`` and ``targets`` unknown) -- the Rust host should name them in the
 
 **Kept only what replays.**  :func:`bless` replays every recorded case twice before it keeps
 it: a case whose replay differs from its recording -- a test that changed a document behind the
-toolbox's back, calls from several threads at once -- is left out, with why, in the bless's
+toolbox's back -- is left out, with why, in the bless's
 summary.  The replay (:func:`replay_case`, ``tests/test_host_goldens.py``) then holds the host to
 0 differences on every runner.
 
@@ -338,18 +350,62 @@ def _setting(value: Any, default: Any) -> Any:
     return plain(value)
 
 
-_REFERENCE: Any = None
+#: The kits a recorded toolbox may be: the libraries' tools, formats and groups, by name.
+#: ``docx``: docx-agent's; ``docx+xlsx``: docx-agent's and xlsx-agent's (a workbook held by the
+#: Python host beside a Word document: datasets, sources and facts across them).
+KITS = ("docx", "docx+xlsx")
 
 
-def reference_toolbox() -> Any:
-    """docx-agent's toolbox with every default: what a recorded toolbox is compared with."""
-    global _REFERENCE
-    if _REFERENCE is None:
-        from docx_agent.tools import FORMAT, GROUPS, TOOLS
+def kit_parts(kit: str) -> tuple[list, list, list]:
+    """``(tools, formats, groups)`` of ``kit``."""
+    from docx_agent import tools as docx
+
+    if kit == "docx":
+        return list(docx.TOOLS), [docx.FORMAT], list(docx.GROUPS)
+    if kit == "docx+xlsx":
+        from xlsx_agent import tools as xlsx
+
+        return [*docx.TOOLS, *xlsx.TOOLS], [docx.FORMAT, xlsx.FORMAT], [*docx.GROUPS, *xlsx.GROUPS]
+    raise ValueError(f"no kit {kit!r}")
+
+
+_REFERENCE: dict[str, Any] = {}
+
+
+def reference_toolbox(kit: str = "docx") -> Any:
+    """``kit``'s toolbox with every default: what a recorded toolbox is compared with."""
+    if kit not in _REFERENCE:
         from ooxml_edit.tools import Toolbox
 
-        _REFERENCE = Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0)
-    return _REFERENCE
+        tools, formats, groups = kit_parts(kit)
+        _REFERENCE[kit] = Toolbox(tools, formats=formats, groups=groups, workers=0)
+    return _REFERENCE[kit]
+
+
+def kit_of(box: Any) -> str:
+    """The kit ``box`` is; :class:`NotJson` (why) for none."""
+    why = "the application's own tools"
+    for kit in KITS:
+        try:
+            ref = reference_toolbox(kit)
+        except ImportError:
+            continue
+        if list(box.formats) != list(ref.formats):
+            continue
+        if any(box.formats[k] is not ref.formats[k] for k in box.formats):
+            why = "the application's own formats"
+            continue
+        if [_tool_key(t) for t in box.tools.values()] != [_tool_key(t) for t in ref.tools.values()]:
+            theirs = set(box.tools) ^ set(ref.tools)
+            why = "the application's own tools" + (f" ({', '.join(sorted(theirs))})" if theirs else "")
+            continue
+        if list(box.groups) != list(ref.groups):
+            why = "other tool groups"
+            continue
+        return kit
+    if not any(set(box.formats) == set(reference_toolbox(k).formats) for k in KITS if k in _REFERENCE):
+        why = "the application's own formats" if why == "the application's own tools" else why
+    raise NotJson(why)
 
 
 def _tool_key(tool: Any) -> tuple:
@@ -364,21 +420,16 @@ SESSION_SETTINGS = ("limits", "font_dirs", "locale", "roles", "numbers")
 
 
 def toolbox_config(box: Any) -> dict:
-    """The settings a replay makes ``box`` again with; :class:`NotJson` (why) for a toolbox the
-    streams cannot hold: other tools, formats or groups, its own error map."""
-    ref = reference_toolbox()
-    if [_tool_key(t) for t in box.tools.values()] != [_tool_key(t) for t in ref.tools.values()]:
-        theirs = set(box.tools) ^ set(ref.tools)
-        raise NotJson("the application's own tools" + (f" ({', '.join(sorted(theirs))})" if theirs else ""))
-    if list(box.formats) != list(ref.formats) or any(box.formats[k] is not ref.formats[k] for k in box.formats):
-        raise NotJson("the application's own formats")
-    if list(box.groups) != list(ref.groups):
-        raise NotJson("other tool groups")
+    """The settings a replay makes ``box`` again with (its ``kit`` when not ``docx``);
+    :class:`NotJson` (why) for a toolbox the streams cannot hold: other tools, formats or
+    groups, its own error map."""
+    kit = kit_of(box)
+    ref = reference_toolbox(kit)
     if box._errors != ref._errors:
         raise NotJson("the application's own error map")
     if box.font_dirs:
         raise NotJson("the application's font folders (the faces are pinned)")
-    out = {}
+    out: dict = {} if kit == "docx" else {"kit": kit}
     for name in TOOLBOX_SETTINGS:
         value, default = getattr(box, name), getattr(ref, name)
         if value != default:
@@ -447,11 +498,11 @@ def apply_settings(target: Any, config: dict | None, reference: Any, names: tupl
 
 
 def make_toolbox(config: dict) -> Any:
-    from docx_agent.tools import FORMAT, GROUPS, TOOLS
     from ooxml_edit.tools import Toolbox
 
-    settings = {name: _built(name, value) for name, value in config.items() if name != "batch_defers"}
-    box = Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0, **settings)
+    tools, formats, groups = kit_parts(config.get("kit", "docx"))
+    settings = {name: _built(name, value) for name, value in config.items() if name not in ("batch_defers", "kit")}
+    box = Toolbox(tools, formats=formats, groups=groups, workers=0, **settings)
     if "batch_defers" in config:
         box.batch_defers = config["batch_defers"]
     return box
@@ -489,6 +540,11 @@ class _Case:
         self.recorded_clock: Any = None
         self.fixed_clock = False
         self.formats: list = []
+        #: Calls overlapped: the session is kept (``keep``) until its final state is taken.
+        self.concurrent = False
+        self.session_ref: Any = None
+        self.keep: Any = None
+        self.final: dict | None = None
 
     def taint(self, why: str) -> None:
         if self.tainted is None:
@@ -511,6 +567,7 @@ class Recorder:
         #: Whether this thread is inside a recorded call: the host's own calls of the API it
         #: makes then are part of that call, not the application's.
         self._inside = threading.local()
+        self._ticks = 0
 
     # -- installing
 
@@ -543,6 +600,7 @@ class Recorder:
                 case.recorded_clock = recorded_clock
                 case.fixed_clock = fixed
                 case.formats = list(formats)
+                case.session_ref = weakref.ref(session)
                 with recorder._lock:
                     recorder._by_session[session] = case
             return __init__
@@ -637,6 +695,7 @@ class Recorder:
                     event.update({"tool": plain(name), "arguments": goldens.portable(plain(arguments))})
                 except NotJson as why:
                     case.taint(f"arguments: {why}")
+                start = recorder._tick()
                 with recorder._active(case):
                     try:
                         result = original(box, session, name, arguments, roles=roles, context=context)
@@ -646,6 +705,7 @@ class Recorder:
                         raise
                     finally:
                         event["outputs"] = case.outputs_now
+                event["span"] = [start, recorder._tick()]
                 try:
                     event["result"] = normalised_result(result)
                 except NotJson as why:
@@ -665,6 +725,7 @@ class Recorder:
                     event["calls"] = goldens.portable(plain([[name, arguments] for name, arguments in calls]))
                 except (NotJson, TypeError, ValueError) as why:
                     case.taint(f"calls: {why}")
+                start = recorder._tick()
                 with recorder._active(case):
                     try:
                         results = original(box, session, calls, max_workers=max_workers, roles=roles,
@@ -675,6 +736,7 @@ class Recorder:
                         raise
                     finally:
                         event["outputs"] = case.outputs_now
+                event["span"] = [start, recorder._tick()]
                 try:
                     event["results"] = [normalised_result(result) for result in results]
                 except NotJson as why:
@@ -706,14 +768,24 @@ class Recorder:
         with self._lock:
             return self._by_session.get(base)
 
+    def _tick(self) -> int:
+        """The next number of the recorder's clock of call starts and ends: a concurrent case's
+        calls that did not overlap keep their order (:func:`expected_of`)."""
+        with self._lock:
+            self._ticks += 1
+            return self._ticks
+
     def _is_inside(self) -> bool:
         return getattr(self._inside, "depth", 0) > 0
 
     @contextlib.contextmanager
     def _active(self, case: _Case):
         with case.lock:
-            if case.active:
-                case.taint("calls from several threads at once")
+            if case.active and not case.concurrent:
+                # Calls from several threads at once: a concurrent case, held to a serial
+                # replay of its changes in commit order (:func:`expected_of`).
+                case.concurrent = True
+                case.keep = case.session_ref() if case.session_ref is not None else None
             case.active += 1
             case.outputs_now = []
         self._inside.depth = getattr(self._inside, "depth", 0) + 1
@@ -770,7 +842,8 @@ class Recorder:
             self._add(case, {"event": "settings", **settings})
         if base.clock is not case.recorded_clock:
             case.taint("the session's clock replaced")
-        if case.formats != list(reference_toolbox().formats.values()):
+        if case.toolbox is not None and case.formats != list(
+                reference_toolbox(case.toolbox.get("kit", "docx")).formats.values()):
             case.taint("a session of other formats")
         if type(session).__name__ == "SessionView":
             event["view"] = self._view(session, case)
@@ -791,9 +864,25 @@ class Recorder:
 
     # -- the cases
 
+    def settle(self) -> None:
+        """Each concurrent case's final state, taken once its calls have ended (a test's end):
+        the part digests of every document its session holds open."""
+        for case in self.cases:
+            if case.concurrent and case.final is None and case.keep is not None:
+                session, case.keep = case.keep, None
+                self._inside.depth = getattr(self._inside, "depth", 0) + 1
+                try:
+                    case.final = {doc: part_digests(session.save(doc).data) for doc in sorted(session.documents)}
+                    self._add(case, {"event": "final", "documents": case.final})
+                except Exception as exc:  # noqa: BLE001 -- a case whose end cannot be read
+                    case.taint(f"its final state: {type(exc).__name__}: {exc}")
+                finally:
+                    self._inside.depth -= 1
+
     def finished(self, source: str, stream: Callable[[_Case], str]) -> tuple[dict[str, list[dict]], list[dict]]:
         """``({stream: lines}, skipped)``: each recorded case with calls, as lines; the cases not
         recorded, each ``{"case", "why"}``."""
+        self.settle()
         streams: dict[str, list[dict]] = {}
         skipped = []
         for case in self.cases:
@@ -803,15 +892,21 @@ class Recorder:
             case_id = f"{case.test}#{case.number}"
             if case.tainted is None and len(case.clocks) > 1:
                 case.taint("clock varies")
+            if case.tainted is None and case.concurrent and case.final is None:
+                case.taint("calls from several threads at once, its final state not taken")
             if case.tainted is not None:
                 skipped.append({"stream": name, "case": case_id, "why": case.tainted, "calls": case.calls})
                 continue
             clock = FIXED_CLOCK.isoformat() if case.fixed_clock else next(iter(case.clocks))
             head = {"case": case_id, "at": 0, "event": "case", "source": source, "test": case.test,
                     "toolbox": case.toolbox or {}, "session": {**(case.session or {}), "clock": clock}}
+            if case.concurrent:
+                head["concurrent"] = True
             lines = streams.setdefault(name, [])
             lines.append(head)
             for at, event in enumerate(case.events, 1):
+                if not case.concurrent:
+                    event = {key: value for key, value in event.items() if key != "span"}
                 lines.append({"case": case_id, "at": at, **event})
         return streams, skipped
 
@@ -867,11 +962,77 @@ def _session_or_view(session: Any, view: dict | None) -> Any:
     return session.view(roles=view.get("roles"), context=view.get("context") or None)
 
 
+def _changing(result: dict | None) -> bool:
+    return bool(result and result.get("ok") and (result.get("app") or {}).get("changed_parts"))
+
+
+def _commit_order(changes: list[tuple[tuple, dict]]) -> list[dict]:
+    """A concurrent case's changes in the order they were committed.  The calls are grouped by
+    overlap (each call's span: the recorder's tick when it started and when it ended): calls
+    whose spans chain together ran at once, and a group that ended before the next began came
+    first.  Within a group the version each call left orders them -- a commit's version is one
+    past the one before it.  An undo does not advance the version (it goes back), so undos run
+    beside other changes cannot be ordered here: the recorded scenarios undo only once their
+    writers have ended."""
+    by_start = sorted(changes, key=lambda item: (item[0][0], item[0][3]))
+    groups: list[list[tuple[tuple, dict]]] = []
+    end = None
+    for item in by_start:
+        if end is None or item[0][0] > end:
+            groups.append([])
+            end = item[0][1]
+        else:
+            end = max(end, item[0][1])
+        groups[-1].append(item)
+    return [change for group in groups for _key, change in sorted(group, key=lambda item: (item[0][2], item[0][3]))]
+
+
+def expected_of(lines: list[dict]) -> list[dict]:
+    """What a replay of a case must give.  A case of calls on one thread: its lines.  A
+    concurrent case (calls from several threads at once): its calls that changed something,
+    as ``change`` events in the order their versions were committed (each answer its ``ok``
+    and ``changed_parts``), in the slots the calls took among the application's own events,
+    and its ``final`` state -- what a serial replay in commit order must give; the reads, and
+    calls that changed nothing, are left out (when they ran decided what they saw)."""
+    head = lines[0]
+    if not head.get("concurrent"):
+        return lines
+    changes: list[tuple[tuple, dict]] = []
+    shape: list[dict | None] = []
+    for event in lines[1:]:
+        kind = event["event"]
+        if kind == "call":
+            items = [(event["tool"], event["arguments"], event.get("result"))]
+        elif kind == "calls":
+            items = [(c[0], c[1], r) for c, r in zip(event.get("calls") or [], event.get("results") or [])]
+        else:
+            shape.append(event)
+            continue
+        for tool, arguments, result in items:
+            if not _changing(result):
+                continue
+            change = {"event": "change", "tool": tool, "arguments": arguments,
+                      "result": {"ok": True, "changed_parts": result["app"]["changed_parts"]}}
+            for key in ("view", "roles", "context"):
+                if key in event:
+                    change[key] = event[key]
+            span = event.get("span") or [len(changes), len(changes)]
+            changes.append(((span[0], span[1], result.get("version") or 0, len(changes)), change))
+            shape.append(None)
+    ordered = iter(_commit_order(changes))
+    out = [head]
+    for at, event in enumerate(shape, 1):
+        body = next(ordered) if event is None else {k: v for k, v in event.items() if k not in ("case", "at")}
+        out.append({"case": head["case"], "at": at, **body})
+    return out
+
+
 def replay_case(lines: list[dict], host: Path = HOST) -> list[dict]:
     """A case's events as the Python host answers them now: the lines it was recorded as, with
     each answer (``returned``, ``saved``, ``result``/``results``, ``outputs``, ``raised``) made
-    again."""
+    again; a concurrent case's :func:`expected_of`, run serially."""
     pin_faces()
+    lines = expected_of(lines)
     head, events = lines[0], lines[1:]
     replayed = [head]
     with make_toolbox(head["toolbox"]) as box:
@@ -881,7 +1042,7 @@ def replay_case(lines: list[dict], host: Path = HOST) -> list[dict]:
         session.on_output = outputs_now.append
         for event in events:
             out = {key: value for key, value in event.items()
-                   if key not in ("returned", "saved", "result", "results", "outputs", "raised")}
+                   if key not in ("returned", "saved", "result", "results", "outputs", "raised", "documents")}
             target = _session_or_view(session, event.get("view"))
             outputs_now.clear()
             try:
@@ -905,13 +1066,20 @@ def replay_case(lines: list[dict], host: Path = HOST) -> list[dict]:
                 elif kind == "new_round":
                     session.new_round()
                 elif kind == "settings":
-                    apply_settings(box, event.get("toolbox"), reference_toolbox(), TOOLBOX_SETTINGS)
+                    apply_settings(box, event.get("toolbox"), reference_toolbox(head["toolbox"].get("kit", "docx")),
+                                   TOOLBOX_SETTINGS)
                     apply_settings(session, event.get("session"), reference_session(), SESSION_SETTINGS)
                 elif kind == "call":
                     result = box.dispatch(target, goldens.local(event["tool"]), goldens.local(event["arguments"]),
                                           roles=event.get("roles"), context=event.get("context"))
                     out["outputs"] = [described_output(o) for o in outputs_now]
                     out["result"] = normalised_result(result)
+                elif kind == "change":
+                    result = box.dispatch(target, goldens.local(event["tool"]), goldens.local(event["arguments"]),
+                                          roles=event.get("roles"), context=event.get("context"))
+                    out["result"] = {"ok": result.ok, "changed_parts": plain(result.changed_parts)}
+                elif kind == "final":
+                    out["documents"] = {doc: part_digests(session.save(doc).data) for doc in sorted(session.documents)}
                 elif kind == "calls":
                     results = box.dispatch_many(target, [tuple(call) for call in goldens.local(event["calls"])],
                                                 roles=event.get("roles"), context=event.get("context"))
@@ -1067,6 +1235,41 @@ def record_transcripts(out: Path, names: Iterable[str] = ()) -> int:
     return 0
 
 
+def record_features(out: Path, names: Iterable[str] = ()) -> int:
+    """The generated host-feature streams (host_features.py), recorded into ``out``:
+    ``docx/features/<feature>.jsonl``, or ``mixed/features/<feature>.jsonl`` for a scenario
+    with a workbook the Python host holds."""
+    import host_features
+
+    current = {"test": ""}
+    kits: dict[str, str] = {}
+    recorder = install(out / "inputs", lambda: current["test"])
+    try:
+        for item in host_features.SCENARIOS:
+            if names and item.feature not in names and item.name not in names:
+                continue
+            current["test"] = f"features/{item.feature}::{item.name}"
+            kits[current["test"]] = item.kit
+            host_features.run_scenario(item)
+            recorder.settle()
+    finally:
+        recorder.uninstall()
+
+    def stream(case: _Case) -> str:
+        kit = kits.get(case.test, "docx")
+        return ("docx/" if kit == "docx" else "mixed/") + case.test.split("::")[0]
+
+    found, skipped = recorder.finished(SOURCE.format(sha=host_sha()), stream)
+    for name, lines in found.items():
+        write_stream(out / f"{name}.jsonl", lines)
+    write_skipped(out, "features", skipped)
+    print(f"recorded {sum(len(cases_of(v)) for v in found.values())} feature case(s) into {out}"
+          + (f"; {len(skipped)} not recorded" if skipped else ""))
+    for item in skipped:
+        print(f"  not recorded: {item['case']}: {item['why']}")
+    return 0
+
+
 def write_skipped(out: Path, name: str, skipped: list[dict]) -> None:
     if skipped:
         path = out / "skipped" / f"{name.replace('/', '_')}.{os.getpid()}.json"
@@ -1138,7 +1341,9 @@ def _replays_the_same(work: tuple[str, list[dict], Path]) -> tuple[str, list[dic
         try:
             first = replay_case(events, staged)
             second = replay_case(events, staged)
-            found = differences(events, first) or differences(first, second)
+            entries = known_entries()
+            found = (unlisted(name, case, differences(expected_of(events), first), entries)[0]
+                     or unlisted(name, case, differences(first, second), entries)[0])
             why = "replays differently: " + ", ".join(found[0]["paths"][:3]) if found else None
         except Exception as exc:  # noqa: BLE001 -- a case the replay cannot run is not kept
             why = f"replay failed: {type(exc).__name__}: {exc}"
@@ -1206,11 +1411,19 @@ def bless(staged: Path, host: Path = HOST, *, write: bool = True, reason: str | 
             stale = host / f"{name}.jsonl"
             if stale.exists():
                 stale.unlink()
-        (host / "skipped.json").write_text(json.dumps(
-            sorted(dropped, key=lambda d: (d["stream"], d["case"])), indent=1, ensure_ascii=False) + "\n",
-            encoding="utf-8")
+        write_skipped_list(host, set(merged) | {d["stream"] for d in dropped}, dropped)
         _drop_unused_inputs(host)
     return 0
+
+
+def write_skipped_list(host: Path, recorded: set[str], dropped: list[dict]) -> None:
+    """``host/skipped.json``: the cases not kept, with why -- this bless's for the streams it
+    recorded, the earlier list's for every other stream."""
+    path = host / "skipped.json"
+    earlier = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+    kept = [d for d in earlier if d["stream"] not in recorded]
+    path.write_text(json.dumps(sorted(kept + dropped, key=lambda d: (d["stream"], d["case"])), indent=1,
+                               ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def _inputs_of(line: dict) -> list[dict]:
@@ -1239,7 +1452,7 @@ def run_replay(names: list[str]) -> int:
             continue
         for case, events in cases_of(read_stream(path)).items():
             total["cases"] += 1
-            left, _used = unlisted(name, case, differences(events, replay_case(events)), entries)
+            left, _used = unlisted(name, case, differences(expected_of(events), replay_case(events)), entries)
             if left:
                 bad += 1
                 print(f"DIFFERS {name} {case}:")
@@ -1255,6 +1468,9 @@ def main(argv: list[str] | None = None) -> int:
     t = sub.add_parser("record-transcripts", help="record the docx transcripts into OUT")
     t.add_argument("out", type=Path)
     t.add_argument("names", nargs="*")
+    f = sub.add_parser("record-features", help="record the generated host-feature streams into OUT")
+    f.add_argument("out", type=Path)
+    f.add_argument("names", nargs="*", help="features or scenarios (default: all)")
     r = sub.add_parser("record-tests", help="record docx-agent's Toolbox tests into OUT (pytest with the hook)")
     r.add_argument("out", type=Path)
     r.add_argument("files", nargs="*")
@@ -1270,6 +1486,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "record-transcripts":
         return record_transcripts(args.out, args.names)
+    if args.command == "record-features":
+        return record_features(args.out, args.names)
     if args.command == "record-tests":
         return record_tests(args.out, args.files, args.n)
     if args.command == "bless":

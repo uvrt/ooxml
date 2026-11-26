@@ -54,3 +54,16 @@ rule = 1
 tool = "check"
 fields = ["result.error.field"]
 cause = "Phase 3 D1 (ooxml-host, decision D4): a document named in a nested argument that is not open is refused at that argument (copies[].reference.doc), as Rust's acceptance names it"
+
+# Today's Python host names the first unknown argument in a set's order, which the process's hash
+# seed decides: `word_style` (read as word_styles) with both `style` and `targets` unknown names
+# either.  The Rust host names them in the call's order (tool design rule 1: the refusal says
+# plainly which argument it did not take; the same call gets the same answer).
+[[difference]]
+stream = "docx/features/names"
+case = "features/names::unknown_arguments_named#*"
+tool = "word_style"
+fields = ["result.error.field", "result.error.message"]
+rule = 1
+cause = """Hash-seed order: Python's set of unknown arguments decides which one a refusal names; the \
+Rust host names the first in the call's order (ph3-diff F2, found by F1 #396)."""

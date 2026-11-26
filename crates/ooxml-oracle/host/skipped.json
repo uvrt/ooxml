@@ -306,18 +306,6 @@
   "calls": 1
  },
  {
-  "stream": "docx/tests/test_id_state",
-  "case": "test_id_state::test_writers_on_threads_after_a_reopen_never_take_a_retired_id#3",
-  "why": "calls from several threads at once",
-  "calls": 64
- },
- {
-  "stream": "docx/tests/test_keep_trials",
-  "case": "test_keep_trials::test_checks_with_trials_and_edits_at_once_all_finish#1",
-  "why": "calls from several threads at once",
-  "calls": 9
- },
- {
   "stream": "docx/tests/test_language",
   "case": "test_language::test_a_bare_language_lists_its_own_country_first#1",
   "why": "the application's own formats",
@@ -1242,12 +1230,6 @@
   "calls": 3
  },
  {
-  "stream": "docx/tests/test_retired_ids",
-  "case": "test_retired_ids::test_writers_on_threads_deleting_and_adding_never_share_an_id#1",
-  "why": "calls from several threads at once",
-  "calls": 144
- },
- {
   "stream": "docx/tests/test_rows_joins_r54r",
   "case": "test_rows_joins_r54r::test_a_from_block_fills_the_rows_as_accepted#1",
   "why": "the application's own tools (rows_put)",
@@ -1372,66 +1354,6 @@
   "case": "test_scale_styles::test_check_with_scale_and_pages_scopes_by_page#1",
   "why": "a document adopted from Python objects",
   "calls": 3
- },
- {
-  "stream": "docx/tests/test_served_batch",
-  "case": "test_served_batch::test_a_writer_arriving_mid_batch_waits_and_loses_nothing#1",
-  "why": "calls from several threads at once",
-  "calls": 7
- },
- {
-  "stream": "docx/tests/test_served_drafts",
-  "case": "test_served_drafts::test_an_owned_documents_edits_are_served_never_on_drafts[always]#1",
-  "why": "calls from several threads at once",
-  "calls": 6
- },
- {
-  "stream": "docx/tests/test_served_drafts",
-  "case": "test_served_drafts::test_an_owned_documents_edits_are_served_never_on_drafts[auto]#1",
-  "why": "calls from several threads at once",
-  "calls": 6
- },
- {
-  "stream": "docx/tests/test_served_side_by_side",
-  "case": "test_served_side_by_side::test_served_edits_side_by_side_are_one_step_each#1",
-  "why": "calls from several threads at once",
-  "calls": 48
- },
- {
-  "stream": "docx/tests/test_session_checks",
-  "case": "test_session_checks::test_concurrent_field_updates_and_edits_stay_consistent#1",
-  "why": "calls from several threads at once",
-  "calls": 8
- },
- {
-  "stream": "docx/tests/test_session_concurrency",
-  "case": "test_session_concurrency::test_lone_checks_and_a_batch_with_a_check_between_changes_all_finish#1",
-  "why": "calls from several threads at once",
-  "calls": 15
- },
- {
-  "stream": "docx/tests/test_session_concurrency",
-  "case": "test_session_concurrency::test_lone_checks_and_a_fields_update_all_finish#1",
-  "why": "calls from several threads at once",
-  "calls": 18
- },
- {
-  "stream": "docx/tests/test_session_concurrency",
-  "case": "test_session_concurrency::test_lone_checks_and_a_lone_inspect_all_finish#1",
-  "why": "calls from several threads at once",
-  "calls": 19
- },
- {
-  "stream": "docx/tests/test_session_concurrency",
-  "case": "test_session_concurrency::test_lone_checks_and_a_read_batch_of_check_and_inspect_all_finish#2",
-  "why": "calls from several threads at once",
-  "calls": 19
- },
- {
-  "stream": "docx/tests/test_session_concurrency",
-  "case": "test_session_concurrency::test_many_rounds_of_checks_reads_and_edits_all_finish#1",
-  "why": "calls from several threads at once",
-  "calls": 27
  },
  {
   "stream": "docx/tests/test_side_by_side_edits",
@@ -3256,12 +3178,6 @@
   "case": "test_tools_word::test_a_batch_runs_a_tool_the_application_registered#1",
   "why": "the application's own tools (app_keep)",
   "calls": 2
- },
- {
-  "stream": "docx/tests/test_tools_word",
-  "case": "test_tools_word::test_a_check_lays_out_with_the_lock_let_go#1",
-  "why": "calls from several threads at once",
-  "calls": 1
  },
  {
   "stream": "docx/tests/test_tools_word",

@@ -106,8 +106,25 @@ pub const DECISIONS: [&str; 1] = ["structured-problems-2026-11-25"];
 /// decision.
 pub fn known_entries(text: &str) -> Result<Vec<Known>, String> {
     let mut out: Vec<Known> = Vec::new();
-    for (number, raw) in text.lines().enumerate() {
-        let line = raw.trim();
+    let lines: Vec<&str> = text.lines().collect();
+    let mut number = 0;
+    while number < lines.len() {
+        let mut line = lines.get(number).map_or("", |l| l.trim()).to_owned();
+        number += 1;
+        // a multi-line basic string (`"""..."""`, a `\` at a line's end joining the next)
+        if let Some(at) = line.find("\"\"\"") {
+            let mut body = line.get(at + 3..).unwrap_or("").to_owned();
+            while !body.contains("\"\"\"") && number < lines.len() {
+                body = match body.strip_suffix('\\') {
+                    Some(joined) => format!("{joined}{}", lines.get(number).map_or("", |l| l.trim_start())),
+                    None => format!("{body}\n{}", lines.get(number).unwrap_or(&"")),
+                };
+                number += 1;
+            }
+            let body = body.split("\"\"\"").next().unwrap_or("");
+            line = format!("{}{}", line.get(..at).unwrap_or(""), Value::from(body));
+        }
+        let line = line.as_str();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
@@ -117,11 +134,11 @@ pub fn known_entries(text: &str) -> Result<Vec<Known>, String> {
         }
         let (key, value) = line
             .split_once('=')
-            .ok_or_else(|| format!("line {}: not key = value", number + 1))?;
+            .ok_or_else(|| format!("line {number}: not key = value"))?;
         let entry = out
             .last_mut()
-            .ok_or_else(|| format!("line {}: outside [[difference]]", number + 1))?;
-        let value: Value = serde_json::from_str(value.trim()).map_err(|e| format!("line {}: {e}", number + 1))?;
+            .ok_or_else(|| format!("line {number}: outside [[difference]]"))?;
+        let value: Value = serde_json::from_str(value.trim()).map_err(|e| format!("line {number}: {e}"))?;
         let text = || value.as_str().map(str::to_owned);
         match key.trim() {
             "stream" => entry.stream = text(),
@@ -136,7 +153,7 @@ pub fn known_entries(text: &str) -> Result<Vec<Known>, String> {
                     .map(|a| a.iter().filter_map(Value::as_str).map(str::to_owned).collect())
                     .unwrap_or_default();
             }
-            other => return Err(format!("line {}: no key {other}", number + 1)),
+            other => return Err(format!("line {number}: no key {other}")),
         }
     }
     for entry in &out {
@@ -445,7 +462,7 @@ impl Replayer {
     #[must_use]
     pub fn streams(&self) -> Vec<(String, PathBuf)> {
         let mut out = Vec::new();
-        for kind in ["tests", "transcripts"] {
+        for kind in ["tests", "transcripts", "features"] {
             let dir = self.host.join("docx").join(kind);
             let Ok(found) = std::fs::read_dir(&dir) else { continue };
             for entry in found.flatten() {

@@ -4,6 +4,7 @@ plan job runs them (`python3 -m unittest discover -s tools -p 'test_*.py'`)."""
 from __future__ import annotations
 
 import json
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -102,6 +103,10 @@ class PlanTest(unittest.TestCase):
                      "crates/ooxml-oracle/pytest.ini"):
             self.assertEqual(ci.affected([path]), ["docx-agent"], path)
         self.assertEqual(ci.affected(["crates/ooxml-oracle/known-differences.toml"]), [])
+        # the host goldens: docx streams replayed there, mixed ones (a workbook) in xlsx-agent's
+        for path in ("crates/ooxml-oracle/host/mixed/features/datasets.jsonl",
+                     "crates/ooxml-oracle/python/host_goldens.py", "crates/ooxml-oracle/python/host_features.py"):
+            self.assertEqual(ci.affected([path]), ["docx-agent", "xlsx-agent"], path)
         self.assertEqual(ci.PACKAGES["docx-agent"]["also_tests"], "crates/ooxml-oracle")
         self.assertTrue((ci.ROOT / "crates" / "ooxml-oracle" / "pytest.ini").is_file())
 
@@ -383,6 +388,65 @@ class RustPlanTest(unittest.TestCase):
         for job_crate, listed in (("ooxml-opc", ci.FUZZ_CRATES), ("ooxml-store", ci.LOOM_CRATES),
                                   ("ooxml-oracle", ci.MODEL_CRATES)):
             self.assertEqual(_workspace_deps(job_crate), set(listed), job_crate)
+
+
+def _dist(requirement: str) -> tuple[str, list[str]]:
+    """A pip requirement's normalized distribution name and its extras."""
+    name, _, rest = re.match(r"([A-Za-z0-9_.-]+)(\[[^\]]*\])?", requirement.strip()).group(0).partition("[")
+    extras = [e.strip() for e in rest.rstrip("]").split(",") if e.strip()]
+    return re.sub(r"[-_.]+", "-", name).lower(), extras
+
+
+def _leg_distributions(name: str) -> set[str]:
+    """Every distribution ``tools/ci.py install NAME --free-threading`` asks for, by its
+    pyproject.toml files: the package with its extras, its siblings (with theirs), pip_extra,
+    and the dependencies of each monorepo package among them, transitively."""
+    import tomllib
+
+    projects = {}
+    for path in [*ci.PY.glob("*/pyproject.toml"), *ci.PY.glob("*/packages/*/pyproject.toml")]:
+        project = tomllib.loads(path.read_text())["project"]
+        projects[_dist(project["name"])[0]] = project
+    spec = ci.PACKAGES[name]
+    todo = [_dist(s.rsplit("/", 1)[-1]) for s in [*spec["siblings"], *spec.get("editable_siblings", [])]]
+    todo += [(_dist(name)[0], spec["extras"].split(","))] + [_dist(r) for r in spec.get("pip_extra", [])]
+    if spec.get("lxml7"):
+        todo.append(("lxml", []))
+    found: set[str] = set()
+    seen: set[tuple[str, str]] = set()
+    while todo:
+        dist, extras = todo.pop()
+        found.add(dist)
+        project = projects.get(dist)
+        if project is None:
+            continue
+        for part in ["", *extras]:
+            if (dist, part) in seen:
+                continue
+            seen.add((dist, part))
+            requirements = project.get("optional-dependencies", {}).get(part, []) if part else \
+                project.get("dependencies", [])
+            todo += [_dist(r) for r in requirements]
+    return found
+
+
+class GilImportsTest(unittest.TestCase):
+    """gil-check imports exactly the extension modules a free-threaded leg installs."""
+
+    @unittest.skipIf(sys.version_info < (3, 11), "tomllib")
+    def test_gil_imports_are_the_legs_extension_modules(self) -> None:
+        for name, spec in ci.PACKAGES.items():
+            with self.subTest(name):
+                installed = _leg_distributions(name)
+                expected = {module for dist, module in ci.EXTENSION_DISTRIBUTIONS.items() if dist in installed}
+                listed = {module.split(".")[0] for module in spec["gil_imports"]}
+                self.assertEqual(listed, expected)
+
+    def test_a_leg_that_installs_lxml_takes_lxml_7(self) -> None:
+        # lxml 6 turns the GIL back on on 3.15t: every leg that imports lxml installs 7.
+        for name, spec in ci.PACKAGES.items():
+            if any(module.startswith("lxml") for module in spec["gil_imports"]):
+                self.assertTrue(spec.get("lxml7"), name)
 
 
 class MainPushTest(unittest.TestCase):

@@ -18,6 +18,7 @@ mod cell_floats;
 mod decorate;
 pub mod drawings;
 mod line_numbers;
+pub mod names;
 mod page_stories;
 mod paragraphs;
 mod positions;
@@ -31,6 +32,7 @@ pub use body_paths::body_line_paths;
 pub use line_numbers::{LineNumber, LineNumbers};
 pub use page_stories::paint_stories;
 pub use positions::{line_positions, Positions, Setting, TabSpan};
+pub(crate) use separators::section_holders;
 
 use crate::engine::DocumentLayout;
 use crate::faces::Faces;
@@ -41,6 +43,7 @@ use crate::paginate::LaidPage;
 use crate::paragraph::MeasuredParagraph;
 use crate::px::{CompactPx, Px};
 use crate::table::PlacedRow;
+use ooxml_word_model::ids::Anchor;
 use ooxml_word_model::model::{Block, Paragraph};
 use ooxml_word_model::value::Text;
 use ooxml_word_model::{Model, WordDocument};
@@ -82,6 +85,10 @@ impl SpanKind {
 pub struct Span {
     /// The run's path (the paragraph's for a label).
     pub path: String,
+    /// What it is drawn for, beside its path: its paragraph's run (by its place among the
+    /// projection's runs), label or the paragraph itself; `None` for a paragraph no story's
+    /// index holds (a text box's).
+    pub anchor: Option<Anchor>,
     /// Its characters.
     pub chars: Vec<char>,
     /// Each glyph's pen x, px from the page's left edge, kept compact ([`Span::x`] reads
@@ -151,6 +158,9 @@ pub struct Rule {
     pub kind: &'static str,
     /// The path of what it is drawn for.
     pub path: String,
+    /// What it is drawn for, beside its path (`None`: what no story's index holds, a table's
+    /// cell, a section's columns).
+    pub anchor: Option<Anchor>,
     /// Its left edge, px.
     pub x: Px,
     /// Its top.
@@ -171,6 +181,9 @@ pub struct Rule {
 pub struct Drawn {
     /// Its path (`.../w:r[2]` of an inline one).
     pub path: String,
+    /// Its run (a picture bullet: its paragraph's label), beside its path (`None`: a text
+    /// box's, or a run with no path).
+    pub anchor: Option<Anchor>,
     /// The relationship of its picture part, where it is a picture.
     pub relationship: Option<Text>,
     /// The part the relationship is the part's own (a header's), `None` the document's.
@@ -204,6 +217,10 @@ impl Span {
 pub struct PaintedLine {
     /// Its paragraph's path.
     pub path: Text,
+    /// Its paragraph's key, beside its path (`None`: a paragraph no story's index holds).
+    pub anchor: Option<Anchor>,
+    /// Its paragraph's runs, as projected: what its spans' anchors name a run by.
+    pub runs: Arc<[ooxml_word_model::model::Run]>,
     /// Its paragraph's `w14:paraId`.
     pub paragraph_id: Option<Text>,
     /// Its number in the paragraph.
@@ -448,14 +465,12 @@ fn paragraph_rules(
     let starts_here = first.number == 0;
     let ends_here = end.number + 1 == p.count();
     let (left, right) = paragraphs::text_edges(&pp, (first.left, first.left + width));
-    let path = set
-        .paragraphs
-        .get(p.block)
-        .map(|q| q.path.to_string())
-        .unwrap_or_default();
+    let paragraph = set.paragraphs.get(p.block);
+    let path = paragraph.map(|q| q.path.to_string()).unwrap_or_default();
     let bx = paragraphs::ParagraphBox {
         pp: &pp,
         path: &path,
+        anchor: paragraph.and_then(|q| q.key).map(Anchor::whole),
         left,
         right,
         band: (first.band.0, end.band.1),

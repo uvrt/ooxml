@@ -152,8 +152,10 @@ fn referenced_fields(d: &mut Digester, referenced: &[(&str, String)]) {
 fn numbered_fields(d: &mut Digester, numbered: &[LineNumber]) {
     d.update(&(numbered.len() as u64).to_le_bytes());
     for n in numbered {
+        // its key names the number as its path does (a name, never a memo key: ADR-008)
         let LineNumber {
             path,
+            key: _,
             line,
             baseline,
             count,

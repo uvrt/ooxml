@@ -87,6 +87,8 @@ pub struct LayoutMemo {
     page_paths: std::sync::OnceLock<Arc<[Arc<[ooxml_word_model::value::Text]>]>>,
     /// Each body paragraph path's first page.
     first_pages: std::sync::OnceLock<Arc<std::collections::HashMap<ooxml_word_model::value::Text, usize>>>,
+    /// Per section, the key of the block holding its `w:sectPr`.
+    section_holders: std::sync::OnceLock<Arc<[Option<ooxml_word_model::ids::BlockKey>]>>,
     /// Per section, the pages it has content on (`SECTIONPAGES`).
     section_pages: std::sync::OnceLock<Arc<std::collections::BTreeMap<usize, usize>>>,
 }
@@ -187,6 +189,15 @@ impl DocumentLayout {
         self.memo
             .section_pages
             .get_or_init(|| Arc::new(crate::fields::section_page_counts(self)))
+    }
+
+    /// Per section (of [`DocumentLayout::sections`]), the key of the block holding its
+    /// `w:sectPr` ([`crate::paint::section_holders`]), made when first asked: what a
+    /// section's column separators are anchored on.
+    pub fn section_holders(&self) -> &Arc<[Option<ooxml_word_model::ids::BlockKey>]> {
+        self.memo
+            .section_holders
+            .get_or_init(|| crate::paint::section_holders(self).into())
     }
 
     /// Where each page's line numbers count from (`w:lnNumType`), made when first asked.

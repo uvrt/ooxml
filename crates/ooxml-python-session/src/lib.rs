@@ -3,7 +3,8 @@
 //!
 //! Owns: the PyO3 handles -- [`PySession`] (`ooxml_core.Session`), [`PyCancelToken`]
 //! (`ooxml_core.CancelToken`), [`PyLimits`] (`ooxml_core.Limits`) and [`PyCallContext`] (`ooxml_core.CallContext`), [`PyCallOptions`] (`ooxml_core.CallOptions`, what one call runs with) [`PyCallDocuments`] (`ooxml_core.CallDocuments`, the open documents it names), [`PyCallLayout`] (`ooxml_core.CallLayout`, the layout it reads) and [`PyCallWriting`] (`ooxml_core.CallWriting`, how it writes) -- and `ooxml_core.tool_specs(kind)` (`tools`);
-//! the Word layout's handles (`layout`: `WordFonts`, `WordPages`, `LaidPages`, lane L4); the live view's
+//! a saved file's MS-FSSHTTPD chunks and their delta (`chunks`: `chunk_file`, `FileChunks`, `FileChunk`,
+//! `ChunkDelta`); the Word layout's handles (`layout`: `WordFonts`, `WordPages`, `LaidPages`, lane L4); the live view's
 //! (`view`: `Session.view`, `Session.page_svg`, `UnknownToken`, `ViewRefused`); the conversion of their
 //! arguments and results (bytes copied in while the interpreter lock is held, then every
 //! Rust call made with it released, `py.detach`); the mapping of session errors to Python
@@ -22,6 +23,7 @@
 
 mod adapters;
 mod budget;
+mod chunks;
 mod context;
 mod drawn;
 mod fonts;
@@ -56,7 +58,8 @@ pub use version::PyVersion;
 /// `CallWriting`, `CallLayout`, `Version` and
 /// `tool_specs`, `new_document`; and the Word layout's handles: `WordFonts`, `WordPages`, `LaidPages`,
 /// `LayoutSummary`, `MemoryBudget` and `BudgetAccount`; `PageRaster`, `drawing_plan` and
-/// `element_path` (docx2svg's drawing and paths); the live view's `UnknownToken` and
+/// `element_path` (docx2svg's drawing and paths); `chunk_file` with `FileChunks`, `FileChunk` and
+/// `ChunkDelta` (a saved file's MS-FSSHTTPD chunks for a co-authoring host); the live view's `UnknownToken` and
 /// `ViewRefused`; and the refusals of an open, `StateRefused` and `NotWordPackage`.
 ///
 /// # Errors
@@ -85,6 +88,10 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPageRaster>()?;
     m.add_function(wrap_pyfunction!(raster::drawing_plan, m)?)?;
     m.add_function(wrap_pyfunction!(paths::element_path, m)?)?;
+    m.add_function(wrap_pyfunction!(chunks::chunk_file, m)?)?;
+    m.add_class::<chunks::PyFileChunks>()?;
+    m.add_class::<chunks::PyFileChunk>()?;
+    m.add_class::<chunks::PyChunkDelta>()?;
     m.add("UnknownToken", m.py().get_type::<view::UnknownToken>())?;
     m.add("ViewRefused", m.py().get_type::<view::ViewRefused>())?;
     m.add("StateRefused", m.py().get_type::<session::StateRefused>())?;

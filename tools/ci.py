@@ -37,8 +37,8 @@ differences live here and nowhere else:
         the JUnit reports of a run's shards (the `junit-*` artifacts of python-tests.yml,
         ci.yml's run or freethreading.yml's), so the split stays even.
     python tools/ci.py gil-check PACKAGE
-        On a free-threaded Python: importing the package, its modules and its extras' modules
-        leaves the GIL off.
+        On a free-threaded Python: importing the package, its modules and the extension
+        modules its leg installs (``gil_imports``) leaves the GIL off.
     python tools/ci.py build-check PACKAGE
         The build job's checks: the version agrees with CHANGELOG.md and the changelog
         fragments (tools/changelog.py check), ruff, mypy where the package type checks.
@@ -73,6 +73,12 @@ BINDINGS = "ooxml-core bindings"
 ORACLE_TESTS = "ooxml-oracle tests"
 ORACLE_TEST_PREFIXES = ("crates/ooxml-oracle/python/", "crates/ooxml-oracle/word/", "crates/ooxml-oracle/pytest.ini",
                         "crates/ooxml-oracle/reference.toml", "crates/ooxml-oracle/host/")
+#: The host goldens (crates/ooxml-oracle/python/host_goldens.py): the oracle's tests replay their
+#: docx streams, xlsx-agent's suite their mixed ones (a workbook xlsx-agent holds), so a change to
+#: them or to what records and replays them selects xlsx-agent's legs too.
+HOST_GOLDENS = "host goldens"
+HOST_GOLDENS_PREFIXES = ("crates/ooxml-oracle/host/", "crates/ooxml-oracle/python/host_goldens.py",
+                         "crates/ooxml-oracle/python/host_features.py")
 
 #: Each package: the monorepo packages its test run uses (itself included; a package's
 #: tests run when any of them changes), its siblings to install (pip requirement paths,
@@ -99,7 +105,9 @@ PACKAGES: dict[str, dict] = {
         # Windows's font folders (fonts/office.py, rasterdb.py): a Windows leg on every
         # event (LEGS, "smoke").
         "windows_smoke": True,
-        "gil_imports": "import fontTools.ttLib",
+        # Its test-only sibling ooxml-edit installs lxml: lxml 7 on the free-threaded leg.
+        "lxml7": True,
+        "gil_imports": ["fontTools.ttLib", "lxml.etree", "lxml.html", "resvg_py"],
     },
     "ooxml-edit": {
         "uses": ["ooxml-common", "ooxml-edit"],
@@ -114,7 +122,7 @@ PACKAGES: dict[str, dict] = {
         # The worker's pipes in binary mode (tools/subworker.py, msvcrt) and zlib-ng's
         # deflate (opc.py): a Windows leg on every event (LEGS, "smoke").
         "windows_smoke": True,
-        "gil_imports": "import lxml.etree, lxml.html",
+        "gil_imports": ["lxml.etree", "lxml.html"],
     },
     "docx2svg": {
         # A thin layer over the Rust core's layout and drawing (ooxml-core, built here by maturin).
@@ -138,7 +146,7 @@ PACKAGES: dict[str, dict] = {
         "fixture_check": True,
         # No Windows leg: ooxml-core's wheels are Linux only, and production runs Linux.
         "windows": False,
-        "gil_imports": "import ooxml_core",
+        "gil_imports": ["ooxml_core"],
     },
     "pptx2svg": {
         "uses": ["ooxml-common", "pptx2svg"],
@@ -148,7 +156,7 @@ PACKAGES: dict[str, dict] = {
         "min_python": "3.10",
         "pytest": [],
         "mypy": False,
-        "gil_imports": "import resvg_py, pypdfium2, fontTools.ttLib, PIL.Image, numpy",
+        "gil_imports": ["resvg_py", "pypdfium2", "fontTools.ttLib", "PIL.Image", "numpy"],
     },
     "docx-agent": {
         # ooxml-core (the Rust core, built here by maturin) serves its checks of ranges.
@@ -172,7 +180,7 @@ PACKAGES: dict[str, dict] = {
         "mypy": False,
         "fonts": True,
         "lxml7": True,
-        "gil_imports": "import lxml.etree, lxml.html, docx2svg, resvg_py",
+        "gil_imports": ["lxml.etree", "lxml.html", "ooxml_core"],
     },
     "pptx-agent": {
         "uses": ["ooxml-common", "ooxml-edit", "pptx2svg", "pptx-agent"],
@@ -186,14 +194,16 @@ PACKAGES: dict[str, dict] = {
         "ft_pytest": [],
         "mypy": False,
         "lxml7": True,
-        "gil_imports": "import lxml.etree, lxml.html, pptx2svg, resvg_py, PIL.Image",
+        "gil_imports": ["lxml.etree", "lxml.html", "resvg_py", "PIL.Image"],
     },
     "xlsx-agent": {
+        # HOST_GOLDENS: its suite replays the host goldens' mixed streams (a workbook beside a
+        # Word document, tests/test_host_goldens_mixed.py).
         "uses": ["ooxml-common", "ooxml-edit", "pptx2svg", "pptx-agent", "docx2svg", "ooxml-core", "docx-agent",
-                 "xlsx-agent"],
+                 "xlsx-agent", HOST_GOLDENS],
         # On a pull request: its dependencies and the Python bindings of ooxml-core, not the
         # Rust core's other crates nor the test-only siblings (main runs those).
-        "pr_uses": ["ooxml-common", "ooxml-edit", BINDINGS, "xlsx-agent"],
+        "pr_uses": ["ooxml-common", "ooxml-edit", BINDINGS, "xlsx-agent", HOST_GOLDENS],
         # Test only: pptx2svg and pptx-agent (a deck filled from a workbook's table),
         # docx2svg and docx-agent (a workbook's rich-text cell in a Word document), and
         # docx-agent's ooxml-core.
@@ -210,11 +220,23 @@ PACKAGES: dict[str, dict] = {
         "mypy": True,
         "mypy_siblings": ["ooxml-common", "ooxml-edit"],
         "lxml7": True,
-        "gil_imports": "import lxml.etree, lxml.html, pptx_agent, pptx2svg",
+        "gil_imports": ["lxml.etree", "lxml.html", "ooxml_core"],
     },
 }
 
 IMPORT_NAMES = {name: name.replace("-", "_") for name in PACKAGES}
+
+#: The distributions with extension modules that a leg may install, and their top-level
+#: module.  A package's ``gil_imports`` (gil-check imports them) are exactly the modules of
+#: those its leg installs -- its own dependencies, its extras' and its siblings' (pip
+#: requirements in pyproject.toml); tools/test_ci.py derives that set from the pyproject
+#: files and compares, so a dependency dropped or added updates the list or fails the plan
+#: job.  The tools (ruff, mypy, pytest) are not the packages' modules and are not listed.  A
+#: new extension dependency goes here.
+EXTENSION_DISTRIBUTIONS = {
+    "fonttools": "fontTools", "lxml": "lxml", "numpy": "numpy", "ooxml-core": "ooxml_core",
+    "pillow": "PIL", "pymupdf": "pymupdf", "pypdfium2": "pypdfium2", "resvg-py": "resvg_py",
+}
 
 #: A change to one of these runs every job of the test workflows: those workflows and this
 #: script.  The other files under .github/ and tools/ (gates, release, the release tools) run
@@ -277,6 +299,8 @@ def _units(path: str) -> set[str]:
             units.add(BINDINGS)
     if path.startswith(ORACLE_TEST_PREFIXES):
         units.add(ORACLE_TESTS)
+    if path.startswith(HOST_GOLDENS_PREFIXES):
+        units.add(HOST_GOLDENS)
     parts = path.split("/")
     if len(parts) > 2 and parts[0] == "python" and parts[1] in PACKAGES and not _is_notes(path):
         units.add(parts[1])
@@ -687,7 +711,7 @@ import {IMPORT_NAMES[name]} as package
 for module in pkgutil.walk_packages(package.__path__, package.__name__ + "."):
     if not module.name.endswith("__main__"):
         importlib.import_module(module.name)
-{spec['gil_imports']}  # the extras' modules
+import {", ".join(spec["gil_imports"])}  # the extension modules its leg installs
 if {bool(spec.get('lxml7'))}:
     import lxml.etree
     assert lxml.etree.LXML_VERSION >= (7,), lxml.etree.LXML_VERSION

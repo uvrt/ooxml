@@ -46,6 +46,15 @@ impl PartIds {
         found
     }
 
+    /// Whether every key the index makes follows from its block's content: every paragraph
+    /// and row has a valid paraId of its own, each written with eight digits (so one
+    /// spelling per value). A durable key read from such a part is its block's whatever its
+    /// place, in every version whose part is such too.
+    #[must_use]
+    pub fn keys_by_content(&self) -> bool {
+        self.fully_stamped() && self.short_total() == 0
+    }
+
     /// `block`'s paraId where it is valid and written one way only in the part.
     fn unique_id(&self, block: &Block) -> Option<ParaId> {
         let raw = block.raw.as_deref()?;

@@ -534,3 +534,14 @@ jobs:
           name: bench
           path: ${{ runner.temp }}/bench/
           retention-days: 14
+
+  # A failed nightly run opens an issue, or comments on the one still open (nightly-issue.yml).
+  nightly-issue:
+    name: nightly failure issue
+    needs: [plan, oracles, differential, summary, reference-cache, seeds, bench]
+    if: always() && github.event_name == 'schedule' && contains(needs.*.result, 'failure')
+    permissions:
+      issues: write
+    uses: ./.github/workflows/nightly-issue.yml
+    with:
+      needs: ${{ toJSON(needs) }}

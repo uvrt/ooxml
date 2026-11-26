@@ -5,8 +5,11 @@
 //! the block's place in its segment -- so a block is named when it is written out, not
 //! carried by name through layout, paint and facts (phase 3 identity design, section 2).
 //!
-//! The paths are the ones the model writes today ([`super::cells::story_model_path`]); a
-//! run's or a drawing's need its paragraph's projection, and are named there.
+//! The paths are the ones the layout model writes today: [`super::cells::story_model_path`]'s,
+//! but a note's blocks named from their note by its id (`w:footnote[@w:id=2]/w:p[1]`, as the
+//! model reads a note as a story of its own) where `story_model_path` counts the notes
+//! (`w:footnotes/w:footnote[3]/w:p[1]`). A run's or a drawing's need its paragraph's
+//! projection, and are named there.
 //!
 //! Must not: key a memo, or keep a name past its version (a version's names are its own).
 
@@ -81,6 +84,70 @@ impl VersionNames {
         }
     }
 
+    /// The blocks the paragraph `paragraph` is in, outermost first, ending with it: each
+    /// table, row and cell between its story's block container (a note, in a notes part)
+    /// and it (a cell as its
+    /// table's [`Sub::Cell`]), wrappers passed through -- what a page draws something of
+    /// where it draws a line of the paragraph (`paths.block_keys`). `None` where the key is
+    /// not a paragraph's of this version, or where something other than a table, row,
+    /// cell or wrapper stands between (a text box's paragraph).
+    #[must_use]
+    pub fn blocks_of(&self, paragraph: BlockKey) -> Option<Vec<Anchor>> {
+        if paragraph.kind() != BlockKind::Paragraph {
+            return None;
+        }
+        let story = paragraph.story();
+        let part = self.part(story)?;
+        let ids = &part.ids;
+        let place = ids.place_of(paragraph)?;
+        let container = ids.container();
+        if !place.starts_with(container) {
+            return None;
+        }
+        // a note's blocks are below their note: the story's container is each note
+        let c = container.len() + usize::from(matches!(part.root().name().local(), "footnotes" | "endnotes"));
+        let mut node = element_at(part.root(), place.get(..c)?)?;
+        let mut out = Vec::new();
+        // the innermost table (its key, element and place) and row (its place in it)
+        let mut table: Option<(BlockKey, &Arc<Element>, usize)> = None;
+        let mut row: Option<(&Arc<Element>, usize, u32)> = None;
+        for depth in c..place.len() {
+            node = node.children().get(*place.get(depth)? as usize)?.as_element()?;
+            let here = place.get(..=depth)?;
+            match node.name().local() {
+                "tbl" => {
+                    let key = ids.key_of(story, ids.at(here)?)?;
+                    out.push(Anchor::whole(key));
+                    table = Some((key, node, depth + 1));
+                }
+                "tr" => {
+                    let (_, element, from) = table?;
+                    let r = position(element, "tr", here.get(from..)?)?;
+                    let crate::ids::Entry::Table(n) = ids.at(place.get(..from)?)? else {
+                        return None;
+                    };
+                    out.push(Anchor::whole(ids.row_key_of(story, n, r)?));
+                    row = Some((node, depth + 1, u32::try_from(r).ok()?));
+                }
+                "tc" => {
+                    let ((key, ..), (element, from, r)) = (table?, row?);
+                    let cell = position(element, "tc", here.get(from..)?)?;
+                    out.push(Anchor {
+                        block: key,
+                        sub: Sub::Cell(u16::try_from(r).ok()?, u16::try_from(cell).ok()?),
+                    });
+                }
+                "p" => {
+                    out.push(Anchor::whole(paragraph));
+                    return (depth + 1 == place.len()).then_some(out);
+                }
+                "sdt" | "sdtContent" | "customXml" => {}
+                _ => return None,
+            }
+        }
+        None
+    }
+
     /// `anchor`'s path and its block's id: what an output edge writes
     /// (`data-docx-path`, `data-docx-id`).
     #[must_use]
@@ -94,6 +161,9 @@ impl VersionNames {
 /// (below the root, beside the body) by a walk from the root.
 fn block_path(part: &StoryPart, place: &[u32]) -> Option<String> {
     let root = part.root();
+    if let Some(path) = note_path(root, place) {
+        return path;
+    }
     let container = part.ids.container();
     let c = container.len();
     if place.len() <= c || !place.starts_with(container) {
@@ -107,6 +177,30 @@ fn block_path(part: &StoryPart, place: &[u32]) -> Option<String> {
     };
     let child = parent.children().get(k as usize)?.as_element()?;
     path_below(child, format!("w:{head}/w:{local}[{count}]"), place.get(c + 1..)?)
+}
+
+/// The layout model's path of the element at `place` in a notes part whose root is `root`,
+/// from its note (`w:footnote[@w:id=2]/w:p[1]`: a note's id as written, `None` where it has
+/// none); `None` (not a note's) where `root` is not a notes part.
+fn note_path(root: &Arc<Element>, place: &[u32]) -> Option<Option<String>> {
+    let kind = match root.name().local() {
+        "footnotes" => "footnote",
+        "endnotes" => "endnote",
+        _ => return None,
+    };
+    let (first, below) = place.split_first()?;
+    let note = root.children().get(*first as usize)?.as_element()?;
+    if note.name().local() != kind {
+        return Some(None);
+    }
+    let id = crate::w::Note::new(note).id().unwrap_or("None");
+    Some(path_below(note, format!("w:{kind}[@w:id={id}]"), below))
+}
+
+/// The place among `parent`'s rows or cells (`level`, counted through wrappers) of the one
+/// at `below` (child indexes from `parent`).
+fn position(parent: &Element, level: &str, below: &[u32]) -> Option<usize> {
+    level_places(parent, level).iter().position(|p| p.as_slice() == below)
 }
 
 /// The element at child indexes `place` below `from`.
