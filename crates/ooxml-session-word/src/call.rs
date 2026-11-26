@@ -22,8 +22,8 @@ use std::any::Any;
 use std::sync::{Arc, Mutex};
 
 /// What a Word document's host hands a call beside the rest of its context
-/// ([`CallContext::host`]): the host's layout and where blocks are laid out, its raster, its
-/// blobs, the values it wrote for references, the tables and sources it holds, the counts of
+/// ([`CallContext::host`]): the host's layout and where blocks are laid out, its raster,
+/// the values it wrote for references, the tables and sources it holds, the counts of
 /// its layout, and how the call's text is written.
 #[derive(Clone, Default)]
 pub struct WordHost {
@@ -38,9 +38,6 @@ pub struct WordHost {
     /// The faces the host draws pages with, which `render` draws a document's pages from;
     /// `None`: `render` is refused as not supported (`render: no layout`), with the way out.
     pub raster: Option<Arc<ooxml_tools_word::PageRaster>>,
-    /// The session's blobs as the host keeps them (an inserted picture's bytes); `None`: a
-    /// call that reads one is refused as not supported, with the way out.
-    pub blobs: Option<Arc<dyn ooxml_tools_word::Blobs>>,
     /// The values the host wrote into the call's arguments for references (`{{d:...}}`),
     /// which an editing call keeps on the paragraphs they went into; empty: none.
     pub written: Vec<ooxml_tools_word::Written>,

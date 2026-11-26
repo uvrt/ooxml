@@ -86,12 +86,61 @@ pub trait FormatCall {
     fn run(&self, tool: &str, arguments: &Map<String, Value>, run: &dyn Any) -> ToolResult<Value>;
 }
 
-/// What a tool is handed for one call: every field required, set by the host.
+/// What one call (or one op of a batch) leaves for the host to apply once its change is
+/// published, never before: a handler writes no session state itself (design phase 3,
+/// section 4). A re-run starts from empty effects, so nothing is applied twice.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct OpEffects {
+    /// The refs it defined, `(name, address)`, as the tool gave them (the host folds and
+    /// keeps them).
+    pub refs: Vec<(String, String)>,
+    /// The datasets it defined, by address.
+    pub datasets: Vec<String>,
+    /// The files it gives the application.
+    pub files: Vec<crate::File>,
+    /// The images it shows the model, counted against the session's and the round's budgets.
+    pub images: usize,
+}
+
+impl OpEffects {
+    /// The effects a reply carries, taken out of it: its refs, datasets, files and the
+    /// count of its images (the reply keeps the images' descriptors).
+    pub fn take_from(&mut self, result: &mut crate::ToolResult<Value>) {
+        self.files.append(&mut result.app.files);
+        if let crate::Outcome::Done(done) = &mut result.outcome {
+            self.refs.append(&mut done.refs);
+            self.datasets.append(&mut done.datasets);
+            self.images += done.images.len();
+        }
+    }
+
+    /// Hand the effects a handler wrote back to the reply it made, which carries them to the
+    /// host (a format runs its tools and returns their replies alone).
+    pub fn give_to(self, result: &mut crate::ToolResult<Value>) {
+        let OpEffects {
+            refs,
+            datasets,
+            mut files,
+            images: _,
+        } = self;
+        result.app.files.append(&mut files);
+        if let crate::Outcome::Done(done) = &mut result.outcome {
+            done.refs.extend(refs);
+            done.datasets.extend(datasets);
+        }
+    }
+}
+
+/// What a tool is handed for one call: every field required, set by the host. It reaches
+/// the version the call reads (through its format's context) and nothing newer: no field or
+/// method leads to a document's head, so a plan is made on the call's own version.
 pub struct CallEnv<'a> {
     /// The call's cancellation.
     pub cancel: &'a dyn Cancel,
     /// The format's context of the call, for the document the call names.
     pub format: &'a dyn FormatCall,
+    /// What the call leaves for the host to apply once its change is published.
+    pub effects: &'a mut OpEffects,
 }
 
 /// A tool as a host dispatches it, its format's types erased.

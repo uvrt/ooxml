@@ -255,7 +255,7 @@ impl PyCallOptions {
             host.raster.clone_from(&layout.raster);
             built.image_budgets.clone_from(&layout.image_budgets);
         }
-        host.blobs = blobs.map(|b| Arc::new(PyBlobs(b)) as Arc<dyn Blobs>);
+        built.blobs = blobs.map(|b| Arc::new(PyBlobs(b)) as Arc<dyn Blobs>);
         if let Some(written) = written {
             host.written = serde_json::from_str::<Value>(written)
                 .ok()

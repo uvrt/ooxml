@@ -81,6 +81,9 @@ pub struct CallContext {
     /// where the host set one ([`crate::SessionConfig::locale`]), else each document's own
     /// language (`w:themeFontLang`, then the default run language).
     pub locale: Option<ooxml_numfmt::Locale>,
+    /// The session's blobs as the host keeps them (an inserted picture's bytes), for a tool
+    /// that reads one; `None`: such a call is refused as not supported, with the way out.
+    pub blobs: Option<Arc<dyn ooxml_tools::blobs::Blobs>>,
     /// What the host hands the call for its document's format beside the rest (a Word
     /// call's layout, blobs, values written by reference: `ooxml-session-word`'s
     /// `WordHost`), read by that format alone; `None`: nothing.

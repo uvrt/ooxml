@@ -144,6 +144,30 @@ pub fn close_match_difflib<'a>(word: &[char], options: &[&'a [char]], cutoff: f6
     best.map(|(_, option)| option)
 }
 
+/// Python's `difflib.get_close_matches(word, options, n, cutoff)`: the best `n` options at
+/// `cutoff` or above, best first; on a tie, the greater string first.
+#[must_use]
+pub fn close_matches(word: &str, options: &[&str], n: usize, cutoff: f64) -> Vec<String> {
+    let word: Vec<char> = word.chars().collect();
+    let mut scored: Vec<(f64, Vec<char>)> = Vec::new();
+    for option in options {
+        let option: Vec<char> = option.chars().collect();
+        if real_quick_ratio(&option, &word) < cutoff || quick_ratio(&option, &word) < cutoff {
+            continue;
+        }
+        let score = ratio(&option, &word);
+        if score >= cutoff {
+            scored.push((score, option));
+        }
+    }
+    scored.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+    scored
+        .into_iter()
+        .take(n)
+        .map(|(_, option)| option.into_iter().collect())
+        .collect()
+}
+
 /// `text` lower-cased, without white space, `_` and `-`.
 #[must_use]
 pub fn fold(text: &str) -> String {

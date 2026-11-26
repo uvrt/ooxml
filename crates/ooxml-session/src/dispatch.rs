@@ -44,6 +44,9 @@ pub(crate) struct CallState<'p> {
     made: Mutex<Option<Box<dyn Any + Send>>>,
     /// The date the call's writes carry.
     date: String,
+    /// Whether the call's arguments were taken as meant already (by the host: design phase
+    /// 3, one acceptance), so the session takes them as they are.
+    accepted: bool,
 }
 
 /// The versions one changing call made ([`Session::edit`]): its first edit's number and its
@@ -125,6 +128,19 @@ impl Session {
         self.run_one(name, arguments, context, "", Some(&mut pinned))
     }
 
+    /// [`Session::edit`] of a call whose arguments its host took as meant already
+    /// ([`ooxml_tools::ToolSpec::accept`], the one acceptance): they are validated arguments,
+    /// run as they are -- no note is added twice, no alias read again.
+    pub fn edit_accepted(
+        &self,
+        name: &str,
+        arguments: Map<String, Value>,
+        context: &CallContext,
+    ) -> (ToolResult<Value>, Option<CallMade>) {
+        let mut pinned = pinned_by(context);
+        self.run(name, Value::Object(arguments), context, "", Some(&mut pinned), true)
+    }
+
     /// One call; `within` names the batch it runs in (`""`: none), whose refusals name it and
     /// whose op's argument errors are fielded under `arguments`; `pinned`, the versions the
     /// batch reads (each document at the version its first op read, as today's batch holds
@@ -149,6 +165,19 @@ impl Session {
         within: &str,
         pinned: Option<&mut Pinned>,
     ) -> (ToolResult<Value>, Option<CallMade>) {
+        self.run(name, arguments, context, within, pinned, false)
+    }
+
+    /// [`Session::run_one`]; `accepted`: the arguments were taken as meant by the host.
+    fn run(
+        &self,
+        name: &str,
+        arguments: Value,
+        context: &CallContext,
+        within: &str,
+        pinned: Option<&mut Pinned>,
+        accepted: bool,
+    ) -> (ToolResult<Value>, Option<CallMade>) {
         self.counts.calls.fetch_add(1, Ordering::Relaxed);
         let cancel = CallCancel::new(context, &*self.context.cancel, &*self.context.clock);
         let mut state = CallState {
@@ -163,6 +192,7 @@ impl Session {
                 .date
                 .clone()
                 .unwrap_or_else(|| revision_date(self.context.clock.now())),
+            accepted,
         };
         // a panic in the handler is the call's internal failure (crate::panics), never the host's
         let retry = arguments.clone();
@@ -287,7 +317,13 @@ impl Session {
     ) -> Result<Found, ToolError> {
         cancel.check().map_err(|e| SessionError::from(e).to_tool_error())?;
         let spec = self.spec_named(name)?;
-        let Accepted { mut arguments, notes } = spec.accept(arguments)?;
+        let Accepted { mut arguments, notes } = match arguments {
+            Value::Object(arguments) if state.accepted => Accepted {
+                arguments,
+                notes: Vec::new(),
+            },
+            arguments => spec.accept(arguments)?,
+        };
         state.warnings.extend(notes);
         let (named, doc) = self.document_of(spec, &arguments, &state.names, state.pinned.as_deref_mut())?;
         state.others = self.others_of(spec, &arguments, &doc.id, &state.names, state.pinned.as_deref_mut())?;
