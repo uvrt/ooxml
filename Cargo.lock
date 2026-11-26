@@ -660,6 +660,7 @@ dependencies = [
 name = "ooxml-session"
 version = "0.1.0"
 dependencies = [
+ "fancy-regex",
  "ooxml-base",
  "ooxml-derive",
  "ooxml-numfmt",

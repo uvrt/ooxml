@@ -366,7 +366,8 @@ fn the_save_gate_refuses_new_problems_unless_the_application_allows_them() {
     );
     assert_eq!(
         checked["data"],
-        json!({"ok": true, "validation": {"new": [problem], "baseline": 0}, "timing": {"total": 0.0, "validation": 0.0}})
+        json!({"ok": true, "include": null, "validation": {"new": [problem], "baseline": 0},
+            "timing": {"total": 0.0, "validation": 0.0}})
     );
     let allowing = empty_session(HostSettings {
         allow_new_problems: true,

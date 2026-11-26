@@ -16,6 +16,7 @@ use crate::records::{CallRecord, RetryKeys};
 use ooxml_base::Context;
 use ooxml_session::blobs::{BlobLimits, BlobStore, LimitError};
 use ooxml_session::datasets::{DatasetLimits, DatasetStore};
+use ooxml_session::numbers::NumberRules;
 use ooxml_session::outputs::{ImageBudgets, OutputStore};
 use ooxml_session::{DocId, DocKind, Format, RefTable, Registry, Session, SessionConfig, SessionError};
 use ooxml_tools::roles::{HostFacts, RoleSet};
@@ -58,6 +59,9 @@ pub struct HostSettings {
     pub layout_timeout: Option<Duration>,
     /// A `read_batch`'s reply budget, characters (`Limits.max_read_batch_chars`).
     pub read_batch_chars: usize,
+    /// The rules of a session's checks of numbers, unless the application sets its own
+    /// ([`HostSession::set_number_rules`]).
+    pub numbers: NumberRules,
 }
 
 impl Default for HostSettings {
@@ -76,6 +80,7 @@ impl Default for HostSettings {
             batch_timeout: std::time::Duration::from_secs(120),
             layout_timeout: Some(Duration::from_secs(30)),
             read_batch_chars: ooxml_session::MAX_READ_BATCH_CHARS,
+            numbers: NumberRules::default(),
         }
     }
 }
@@ -136,6 +141,7 @@ impl Host {
         HostSession {
             host: Arc::clone(self),
             roles: Mutex::new(settings.roles),
+            numbers: Mutex::new(settings.numbers.clone()),
             session,
             stores: Mutex::new(Stores {
                 blobs: BlobStore::new(settings.blobs),
@@ -146,6 +152,7 @@ impl Host {
                 docs: BTreeMap::new(),
                 keys: RetryKeys::default(),
                 log: Vec::new(),
+                numbers: None,
             }),
         }
     }
@@ -216,6 +223,9 @@ pub struct Stores {
     pub keys: RetryKeys,
     /// Every call's record, in order.
     pub log: Vec<CallRecord>,
+    /// The index of values its checks of numbers compare with, kept while nothing it was
+    /// built from changes.
+    pub numbers: Option<crate::KeptIndex>,
 }
 
 /// The roles and context a call runs with: a view's, or a dispatch's own.
@@ -234,6 +244,7 @@ pub struct CallAs {
 pub struct HostSession {
     pub(crate) host: Arc<Host>,
     roles: Mutex<RoleSet>,
+    pub(crate) numbers: Mutex<NumberRules>,
     pub(crate) session: Session,
     stores: Mutex<Stores>,
 }

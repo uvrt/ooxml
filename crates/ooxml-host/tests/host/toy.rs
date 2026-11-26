@@ -13,11 +13,12 @@ use ooxml_base::context::{FaceData, FaceRequest, Timestamp};
 use ooxml_base::{BaseError, CacheBudget, Cancel, Clock, Context, FontSource, PartStore};
 use ooxml_host::{CallAs, Host, HostSession, HostSettings, HostTools};
 use ooxml_opc::Package;
+use ooxml_session::numbers::NumberText;
 use ooxml_session::problems::{Problem, Severity, Validation};
 use ooxml_session::{
     AnyVersion, DocKind, Finished, Format, FormatDoc, FormatRun, NewDocument, OpenEnv, PackageDoc, PackageFormat,
-    PartChange, PartContent, PartUpdate, Registry, SessionConfig, SessionError, StoreClock, Stored, StoredDoc,
-    WithState,
+    PartChange, PartContent, PartUpdate, ReadTexts, Registry, SessionConfig, SessionError, StoreClock, Stored,
+    StoredDoc, ValueRead, WithState,
 };
 use ooxml_store::{Caller, Store, StoreConfig};
 use ooxml_tools::roles::{HostFacts, Needs, Role};
@@ -160,6 +161,10 @@ pub struct ToyDescribe {
 pub struct ToyCheck {
     /// Document id.
     pub doc: String,
+    /// What to check.
+    pub include: Option<Vec<String>>,
+    /// The parts to check.
+    pub slides: Option<Vec<String>>,
 }
 
 fn toy_save(args: &ToySave, version: &ToyVersion<'_>, _cancel: &dyn Cancel) -> Result<Done<Value>, ToolError> {
@@ -187,9 +192,9 @@ fn toy_describe(_args: &ToyDescribe, version: &ToyVersion<'_>, _cancel: &dyn Can
     Ok(done)
 }
 
-fn toy_check(_args: &ToyCheck, _version: &ToyVersion<'_>, _cancel: &dyn Cancel) -> Result<Done<Value>, ToolError> {
+fn toy_check(args: &ToyCheck, _version: &ToyVersion<'_>, _cancel: &dyn Cancel) -> Result<Done<Value>, ToolError> {
     let mut done = Done::new("Checked");
-    done.data = Some(json!({"ok": true, "timing": {"total": 0.0}}));
+    done.data = Some(json!({"ok": true, "include": args.include, "timing": {"total": 0.0}}));
     Ok(done)
 }
 
@@ -336,6 +341,10 @@ impl Format for ToyFormat {
             doc: self.open(package, env)?,
             numbers: Some((version, highest)),
         })
+    }
+
+    fn gives_number_texts(&self) -> bool {
+        true
     }
 
     fn detect(&self, bytes: &[u8], name: &str) -> bool {
@@ -548,6 +557,47 @@ impl FormatDoc for ToyDoc {
         let mut checks = Map::new();
         checks.insert("parts".into(), Value::from(at.package().part_names().len()));
         Some(checks)
+    }
+
+    /// The text of each `toy/text-<at>.xml` part (`<t>...</t>`), within the slides asked for;
+    /// none where the deck has a part `toy/no-texts.xml`.
+    fn number_texts(&self, at: &AnyVersion, read: &ValueRead<'_>) -> Option<Result<ReadTexts, ToolError>> {
+        let package = at.package();
+        if package.has_part("toy/no-texts.xml") {
+            return None;
+        }
+        let wanted: Option<Vec<String>> = read
+            .scope
+            .get("slides")
+            .and_then(Value::as_array)
+            .map(|s| s.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect());
+        let mut texts = Vec::new();
+        for name in package.part_names() {
+            let Some(at) = name.strip_prefix("toy/text-").and_then(|n| n.strip_suffix(".xml")) else {
+                continue;
+            };
+            if wanted.as_ref().is_some_and(|w| !w.iter().any(|s| s == at)) {
+                continue;
+            }
+            let bytes = package.read(&name).ok().flatten().unwrap_or_default();
+            let xml = String::from_utf8_lossy(&bytes);
+            let text = xml.trim_start_matches("<t>").trim_end_matches("</t>").to_owned();
+            let mut scope = Map::new();
+            scope.insert("slides".into(), json!([at]));
+            let mut place = Map::new();
+            place.insert("slide".into(), json!(at));
+            texts.push(NumberText {
+                at: at.to_owned(),
+                text,
+                written: Vec::new(),
+                scope,
+                place,
+            });
+        }
+        Some(Ok(ReadTexts {
+            texts,
+            warnings: Vec::new(),
+        }))
     }
 
     fn as_any(&self) -> &dyn Any {

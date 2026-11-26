@@ -119,6 +119,10 @@ impl Format for WordFormat {
             || ooxml_session::package_has_part(bytes, "word/document.xml")
     }
 
+    fn gives_number_texts(&self) -> bool {
+        true
+    }
+
     fn new_document(&self, made: &ooxml_session::NewDocument<'_>, env: &OpenEnv<'_>) -> Result<Vec<u8>, ToolError> {
         crate::new_document(made, env)
     }
@@ -620,6 +624,15 @@ impl FormatDoc for Word {
 
     fn source_hint(&self, at: &AnyVersion, value: &str) -> Option<String> {
         crate::own_sources::source_hint(at.snapshot::<WordDoc>()?.doc(), value)
+    }
+
+    fn number_texts(
+        &self,
+        at: &AnyVersion,
+        read: &ooxml_session::ValueRead<'_>,
+    ) -> Option<Result<ooxml_session::ReadTexts, ToolError>> {
+        let version = at.snapshot::<WordDoc>()?;
+        Some(crate::values::number_texts(self, version, read))
     }
 
     fn checks(
