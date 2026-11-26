@@ -137,6 +137,8 @@ TIMING_KEYS = frozenset({"timing"})
 ENCODING_FIELDS = {"save_document": frozenset({"size"})}
 #: The tool design rules a known difference may give (decision D4: rule 1, acceptance).
 ALLOWED_RULES = frozenset({1})
+#: The user decisions a known difference may give instead (one problems shape, 2026-11-25).
+ALLOWED_DECISIONS = frozenset({"structured-problems-2026-11-25"})
 #: Repository folders whose files an input may name instead of a copy in host/inputs.
 REPOSITORY_INPUTS = (ORACLE / "fixtures", ORACLE / "corpus", ORACLE / "cases" / "inputs",
                      DOCX_AGENT / "tests" / "goldens")
@@ -1142,8 +1144,9 @@ def known_entries(path: Path = KNOWN) -> list[dict]:
     for entry in entries:
         if not entry.get("cause"):
             raise ValueError(f"a known difference without a cause: {entry}")
-        if entry.get("rule") not in ALLOWED_RULES:
-            raise ValueError(f"a known difference whose rule is not one of {sorted(ALLOWED_RULES)}: {entry}")
+        if entry.get("rule") not in ALLOWED_RULES and entry.get("decision") not in ALLOWED_DECISIONS:
+            raise ValueError(f"a known difference whose rule is not one of {sorted(ALLOWED_RULES)} and whose "
+                             f"decision is not one of {sorted(ALLOWED_DECISIONS)}: {entry}")
         if not entry.get("fields"):
             raise ValueError(f"a known difference that names no fields: {entry}")
     return entries

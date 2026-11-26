@@ -393,7 +393,10 @@ impl FormatDoc for Word {
             made: &made,
             layout: layout.as_deref(),
             layout_limit: layout_cancel.as_ref().map(limit),
-            raster: host.raster.as_deref(),
+            raster: host
+                .raster
+                .as_deref()
+                .or_else(|| self.default_pages.as_ref().and_then(|p| p.raster.as_deref())),
             image_budgets: &run.context.image_budgets,
             blobs: run.context.blobs.as_deref(),
             written: &host.written,
@@ -468,6 +471,54 @@ impl FormatDoc for Word {
             batch: made.batch,
             format: Some(Arc::new(format)),
         })
+    }
+
+    fn own_source(&self, at: &AnyVersion, address: &str) -> Option<String> {
+        crate::own_sources::own_source(at.snapshot::<WordDoc>()?.doc(), address)
+    }
+
+    fn source_hint(&self, at: &AnyVersion, value: &str) -> Option<String> {
+        crate::own_sources::source_hint(at.snapshot::<WordDoc>()?.doc(), value)
+    }
+
+    fn checks(
+        &self,
+        at: &AnyVersion,
+        made: Option<&(dyn Any + Send + Sync)>,
+    ) -> Option<serde_json::Map<String, Value>> {
+        let made = made.and_then(|m| m.downcast_ref::<WordMade>());
+        let validation = match made {
+            Some(made) => crate::problems::structured(&made.validation),
+            None => FormatDoc::validation(self, at)?,
+        };
+        let mut checks = serde_json::Map::new();
+        checks.insert("validate".into(), validation.to_json());
+        checks.insert(
+            "reflow".into(),
+            made.and_then(|m| m.reflow.clone()).unwrap_or(Value::Null),
+        );
+        Some(checks)
+    }
+
+    fn validation(&self, at: &AnyVersion) -> Option<ooxml_session::problems::Validation> {
+        let version = at.snapshot::<WordDoc>()?;
+        let delta = Word::validation(self, version).ok()?;
+        Some(crate::problems::structured(&delta))
+    }
+
+    fn touched(&self, before: &AnyVersion, after: &AnyVersion, made: Option<&(dyn Any + Send + Sync)>) -> Vec<Value> {
+        if let Some(touched) = made
+            .and_then(|m| m.downcast_ref::<WordMade>())
+            .and_then(|m| m.touched.clone())
+        {
+            return touched;
+        }
+        let (Some(then), Some(now)) = (before.snapshot::<WordDoc>(), after.snapshot::<WordDoc>()) else {
+            return Vec::new();
+        };
+        ooxml_word_edit::touched::touched(then.doc(), now.doc())
+            .map(|found| found.iter().map(crate::version::touched_json).collect())
+            .unwrap_or_default()
     }
 
     fn group_state(&self) -> Option<Arc<dyn Any + Send + Sync>> {

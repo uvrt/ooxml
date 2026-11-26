@@ -20,18 +20,23 @@ impl Opened {
                 open: vec![self.id().to_string()],
             });
         }
-        let (now, then) = (self.package(), before.package());
-        let mut out = Vec::new();
-        for name in now.part_names() {
-            let same = match (now.part(&name), then.part(&name)) {
-                (Some(here), Some(there)) => here.same(there),
-                _ => false,
-            };
-            if !same {
-                out.push(name);
-            }
-        }
-        out.extend(then.part_names().into_iter().filter(|name| !now.has_part(name)));
-        Ok(out)
+        Ok(changed(before.package(), self.package()))
     }
+}
+
+/// The parts whose bytes differ between `then` and `now` (the session's `changed_parts`): changed or added ones in `now`'s
+/// order, then the removed ones.
+pub fn changed(then: &ooxml_opc::Package, now: &ooxml_opc::Package) -> Vec<String> {
+    let mut out = Vec::new();
+    for name in now.part_names() {
+        let same = match (now.part(&name), then.part(&name)) {
+            (Some(here), Some(there)) => here.same(there),
+            _ => false,
+        };
+        if !same {
+            out.push(name);
+        }
+    }
+    out.extend(then.part_names().into_iter().filter(|name| !now.has_part(name)));
+    out
 }

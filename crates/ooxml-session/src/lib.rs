@@ -24,9 +24,10 @@
 //! only its table of documents, held for a lookup.
 #![forbid(unsafe_code)]
 
-mod batch;
+pub mod batch;
 pub mod blobs;
 mod changes;
+pub use changes::changed as changed_parts;
 mod context;
 pub mod datasets;
 mod dispatch;
@@ -53,7 +54,7 @@ mod undo;
 mod update;
 
 pub use batch::{ReadBatch, ReadOp, BATCH_TIMEOUT, MAX_READ_BATCH_CHARS, READ_BATCH};
-pub use context::{CallCancel, CallContext, CancelToken, LayoutCancel, StoreClock};
+pub use context::{CallCancel, CallContext, CancelToken, FormatHost, LayoutCancel, StoreClock};
 pub use dispatch::CallMade;
 pub use document::PackageFormat;
 pub use error::SessionError;

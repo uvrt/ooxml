@@ -77,6 +77,7 @@ fn checks_after_edits_on_a_long_document() {
         Some(SessionPages {
             setup: PageSetup::new(test_fonts(), EngineOptions::default()),
             memory: MemoryBudget::new(4 << 30),
+            raster: None,
         }),
     );
     let started = Instant::now();

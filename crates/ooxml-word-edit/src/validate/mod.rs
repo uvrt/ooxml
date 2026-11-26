@@ -82,6 +82,10 @@ pub struct Delta {
     pub baseline: usize,
     /// Each warning now that the baseline lacks, in order.
     pub warnings: Vec<String>,
+    /// The problems of [`Delta::new`] themselves, in order (a reply's structured problems).
+    pub new_found: Vec<Problem>,
+    /// The problems of [`Delta::fixed`] themselves, in order.
+    pub fixed_found: Vec<Problem>,
 }
 
 impl Delta {
@@ -90,21 +94,26 @@ impl Delta {
     pub fn of(baseline: &[Problem], now: &[Problem]) -> Delta {
         let before: std::collections::HashSet<&Problem> = baseline.iter().collect();
         let after: std::collections::HashSet<&Problem> = now.iter().collect();
-        let came = |warning: bool| -> Vec<String> {
+        let came = |warning: bool| -> Vec<Problem> {
             now.iter()
                 .filter(|p| p.is_warning() == warning && !before.contains(p))
-                .map(ToString::to_string)
+                .cloned()
                 .collect()
         };
+        let said = |found: &[Problem]| -> Vec<String> { found.iter().map(ToString::to_string).collect() };
+        let new_found = came(false);
+        let fixed_found: Vec<Problem> = baseline
+            .iter()
+            .filter(|p| !p.is_warning() && !after.contains(p))
+            .cloned()
+            .collect();
         Delta {
-            new: came(false),
-            fixed: baseline
-                .iter()
-                .filter(|p| !p.is_warning() && !after.contains(p))
-                .map(ToString::to_string)
-                .collect(),
+            new: said(&new_found),
+            fixed: said(&fixed_found),
             baseline: baseline.iter().filter(|p| !p.is_warning()).count(),
-            warnings: came(true),
+            warnings: said(&came(true)),
+            new_found,
+            fixed_found,
         }
     }
 }

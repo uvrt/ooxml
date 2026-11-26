@@ -87,7 +87,15 @@ pub struct CallContext {
     /// What the host hands the call for its document's format beside the rest (a Word
     /// call's layout, blobs, values written by reference: `ooxml-session-word`'s
     /// `WordHost`), read by that format alone; `None`: nothing.
-    pub host: Option<Arc<dyn Any + Send + Sync>>,
+    pub host: Option<Arc<dyn FormatHost>>,
+}
+
+/// What a host hands a call for its document's format beside the rest of its context
+/// ([`CallContext::host`]): a format's own type (a Word call's layout and the values the host
+/// wrote, `ooxml-session-word`'s `WordHost`), which only that format reads.
+pub trait FormatHost: Any + Send + Sync {
+    /// Itself, for its format to read (a downcast).
+    fn as_any(&self) -> &dyn Any;
 }
 
 impl std::fmt::Debug for CallContext {

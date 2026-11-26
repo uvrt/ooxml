@@ -203,7 +203,7 @@ impl Sess {
         self.held.insert(handle.clone(), Arc::new(toy));
         self.docs.push(OpenDoc {
             handle: handle.clone(),
-            kind: kind.into(),
+            kind: DocKind::parse(kind).unwrap(),
             name: name.into(),
         });
         handle
@@ -267,7 +267,7 @@ impl Sess {
                 FormatOpen {
                     handle: d.handle.clone(),
                     name: d.name.clone(),
-                    format: self.formats.iter().find(|f| f.0.as_str() == d.kind).unwrap(),
+                    format: self.formats.iter().find(|f| f.0 == d.kind).unwrap(),
                     doc: doc.as_ref(),
                     at: Some(doc.stored().head()),
                 }
@@ -310,7 +310,7 @@ impl SourceHost for Sess {
         self.sources().source_hint(doc, value)
     }
 
-    fn merge_sources(&self, kind: &str, sources: Vec<String>) -> Vec<String> {
+    fn merge_sources(&self, kind: DocKind, sources: Vec<String>) -> Vec<String> {
         self.sources().merge_sources(kind, sources)
     }
 }

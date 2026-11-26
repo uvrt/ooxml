@@ -11,9 +11,49 @@
 #   at         the event's number within its case (any when left out);
 #   arguments  a subset of the call's arguments.
 # Every entry gives its `rule` -- the tool design rule that makes the new answer the right one;
-# only rule 1 (accept intent: one acceptance, Rust's, decision D4 of the Phase 3 design) -- and
-# its `cause`, citing the pull request that changed the answer.  An entry without either is
-# refused.  Each entry is also a release-notes line.
+# only rule 1 (accept intent: one acceptance, Rust's, decision D4 of the Phase 3 design) -- or
+# its `decision` -- a user decision whose new answer it is; only
+# "structured-problems-2026-11-25" (one problems shape in every reply: an edit's
+# checks.validate gives the problems it added and fixed as {code, part, element, message,
+# severity}) -- and its `cause`, citing the pull request that changed the answer.  An entry
+# without a cause, or without an allowed rule or decision, is refused.  Each entry is also a
+# release-notes line.  The Rust replayer (crates/ooxml-oracle/src/host_replay.rs) reads this
+# file's subset: `[[difference]]` tables of strings, integers and lists of strings.
+
+[[difference]]
+decision = "structured-problems-2026-11-25"
+fields = ["result.checks.validate.new", "result.checks.validate.fixed"]
+cause = "Phase 3 D1b (ooxml-host): an edit's checks.validate says each problem it added or fixed as {code, part, element, message, severity}, element the problem's detail and message today's text"
+
+[[difference]]
+rule = 1
+fields = ["result.error.try_call"]
+cause = "Phase 3 C1 (#405), C2 (#408) and D1 (ooxml-host): a refusal that today offered no options carries the call that would be made again (rule 2's way out; one acceptance, Rust's)"
+
+
+[[difference]]
+rule = 1
+stream = "docx/tests/test_places"
+fields = ["result.error"]
+cause = "Phase 3 D1 (ooxml-host, decision D4): a place written in another placing tool's words (before, where) is taken or refused by the tool's own acceptance (Rust's places), in its words; today's Python check ran first"
+
+[[difference]]
+rule = 1
+tool = "undo"
+fields = ["result.error", "result.doc", "result.version"]
+cause = "Phase 3 D1 (ooxml-host, decision D4): undo's scope (decks' and workbooks' only) is refused by Rust's acceptance as an argument a document's undo does not take, before the document is read"
+
+[[difference]]
+rule = 1
+tool = "word_compare_blocks"
+fields = ["result.error.field"]
+cause = "Phase 3 D1 (ooxml-host, decision D4): a document named in a nested argument that is not open is refused at that argument (reference.doc), as Rust's acceptance names it"
+
+[[difference]]
+rule = 1
+tool = "check"
+fields = ["result.error.field"]
+cause = "Phase 3 D1 (ooxml-host, decision D4): a document named in a nested argument that is not open is refused at that argument (copies[].reference.doc), as Rust's acceptance names it"
 
 # Today's Python host names the first unknown argument in a set's order, which the process's hash
 # seed decides: `word_style` (read as word_styles) with both `style` and `targets` unknown names
