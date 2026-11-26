@@ -94,8 +94,10 @@ struct Attempt {
     images: usize,
     /// Each applied op's format effects, in op order.
     deferred: Vec<(usize, Vec<Deferred>)>,
-    /// The datasets each applied op named or defined, kept once the batch is published.
-    named: Vec<(usize, CallDatasets)>,
+    /// The datasets the ops named or defined (as one call's, today's batch's context): an
+    /// op over the session's limit refused as it defines (`CallDatasets::define`), a failed
+    /// op's taken back; kept once the batch is published.
+    datasets_of: CallDatasets,
     /// What the applied ops made, by document: the first op's `before`, the last's version.
     made: BTreeMap<String, CallMade>,
     /// The first op the deadline stopped, and when.
@@ -221,7 +223,9 @@ impl HostSession {
         notes: Vec<String>,
     ) -> ToolResult<Value> {
         let context = self.context(run.caller);
-        self.keep_published(run, attempt, published, &context);
+        if let Err(error) = self.keep_published(run, attempt, published, &context) {
+            return ToolResult::failed(error);
+        }
         let mut done = Done::new(String::new());
         if run.split > 0 && !published.is_empty() {
             self.batch_checks(named, published, &context, &mut done);
@@ -454,7 +458,13 @@ impl HostSession {
         attempt: &mut Attempt,
         published: &BTreeMap<String, Published>,
         context: &CallContext,
-    ) {
+    ) -> Result<(), ToolError> {
+        // the datasets the ops named or defined, kept at publish as today's batch keeps them
+        // (their staleness said then, of the attempt that published; an earlier attempt's
+        // went with it): over the limit only where another call filled it meanwhile, which
+        // today's batch refuses too, after its ops applied
+        let stale = self.finish_datasets(std::mem::take(&mut attempt.datasets_of))?;
+        attempt.warnings.extend(stale);
         for (index, deferred) in std::mem::take(&mut attempt.deferred) {
             let Some(doc) = run.planned.get(index).and_then(|p| p.docs.first()) else {
                 continue;
@@ -467,16 +477,6 @@ impl HostSession {
             };
             for keep in deferred {
                 keep(&*format, &at.version);
-            }
-        }
-        // the datasets the ops named or defined, kept at publish (their staleness said then,
-        // of the attempt that published: an earlier attempt's were dropped with it)
-        for (index, datasets) in std::mem::take(&mut attempt.named) {
-            match self.finish_datasets(datasets) {
-                Ok(stale) => attempt
-                    .warnings
-                    .extend(stale.iter().map(|w| format!("ops[{index}]: {w}"))),
-                Err(error) => attempt.warnings.push(format!("ops[{index}]: {}", error.message())),
             }
         }
         for (doc, at) in published {
@@ -509,6 +509,7 @@ impl HostSession {
             // (the format refused an op past the budgets before it drew anything)
             let _ = stores.images.reserve(attempt.images);
         }
+        Ok(())
     }
 
     /// The checks of each document the batch names, of the version it published: one
@@ -650,7 +651,6 @@ struct OpRun {
     result: ToolResult<Value>,
     inner: Option<InBatch>,
     folded: Vec<(String, String)>,
-    datasets: CallDatasets,
 }
 
 /// What a batch published on one document.
@@ -762,15 +762,24 @@ impl Run<'_> {
             .take()
             .unwrap_or_else(|| CallRefs::new(self.owner.clone()));
         let mark = refs.mark();
-        let ran = self.run_op(planned, entry, &doc, &mut refs, txn, &retry);
+        let mut datasets = std::mem::take(&mut self.lock().datasets_of);
+        datasets.start_op(index);
+        let datasets_mark = datasets.mark();
+        let ran = self.run_op(planned, entry, &doc, &mut refs, &mut datasets, txn, &retry);
         let mut attempt = self.lock();
         let ran = match ran {
             Ok(op) => self.keep_op(&mut attempt, index, planned, &doc, &mut refs, op, &retry),
             Err(failed) => Err(failed),
         };
         let ran = match ran {
-            Ok(()) => OpRan::Applied,
+            Ok(()) => {
+                if planned.changes {
+                    datasets.changed(&doc);
+                }
+                OpRan::Applied
+            }
             Err(failed) => {
+                datasets.reset(datasets_mark);
                 refs.reset(mark);
                 refs.failed(index, &planned.raw);
                 fail(&mut attempt, index, planned, failed);
@@ -778,6 +787,7 @@ impl Run<'_> {
             }
         };
         attempt.refs = Some(refs);
+        attempt.datasets_of = datasets;
         ran
     }
 
@@ -816,6 +826,7 @@ impl Run<'_> {
         entry: &crate::catalogue::Entry,
         doc: &str,
         refs: &mut CallRefs,
+        datasets: &mut CallDatasets,
         txn: Option<&dyn OpTxn>,
         retry: &TryCall,
     ) -> Result<OpRun, Failed> {
@@ -827,9 +838,8 @@ impl Run<'_> {
             .with_refs(entry, refs, doc, arguments, planned.changes, retry)
             .map_err(|error| Failed { error, own: false })?;
         // 6.-8. its sources, the datasets it names, its references (as the call alone)
-        let mut datasets = CallDatasets::new();
         let valued = host
-            .with_values(entry, doc, with.arguments, retry, &mut datasets)
+            .with_values(entry, doc, with.arguments, retry, datasets)
             .map_err(|refused| Failed {
                 error: refused.error,
                 own: false,
@@ -878,7 +888,6 @@ impl Run<'_> {
             result,
             inner: Some(run),
             folded: with.folded,
-            datasets,
         })
     }
 
@@ -896,7 +905,6 @@ impl Run<'_> {
             mut result,
             inner,
             folded,
-            datasets,
         }: OpRun,
         retry: &TryCall,
     ) -> Result<(), Failed> {
@@ -949,7 +957,6 @@ impl Run<'_> {
             .warnings
             .extend(warnings.iter().map(|w| format!("ops[{index}]: {w}")));
         attempt.outcomes.insert(index, outcome(index, &planned.tool, done));
-        attempt.named.push((index, datasets));
         if let Some(inner) = inner {
             if !inner.deferred.is_empty() {
                 attempt.deferred.push((index, inner.deferred));
