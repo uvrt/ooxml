@@ -19,6 +19,7 @@ use crate::input::RunFormatter;
 use crate::px::Px;
 use ooxml_text::pieces::note_number_units;
 use ooxml_text::FaceKey;
+use ooxml_word_model::ids::{Anchor, BlockKey, Sub};
 use ooxml_word_model::model::{Block, Paragraph, Run, RunProps};
 use ooxml_word_model::value::{Text, Value};
 use ooxml_word_model::Model;
@@ -29,6 +30,8 @@ use std::sync::Arc;
 pub struct LineNumber {
     /// The line's paragraph's path.
     pub path: Text,
+    /// The line's paragraph's key, beside its path: what the number is anchored on.
+    pub key: Option<BlockKey>,
     /// The line's number in its paragraph.
     pub line: usize,
     /// Its baseline.
@@ -103,6 +106,7 @@ impl LineNumbers {
                 }
                 page.push(LineNumber {
                     path: paragraph.path.clone(),
+                    key: paragraph.key,
                     line: number,
                     baseline,
                     count: n,
@@ -204,7 +208,13 @@ pub fn number_span(
     }
     Some(Span {
         path: format!("w:sectPr[{}]/w:lnNumType", number.section + 1),
-        anchor: None,
+        anchor: number
+            .key
+            .zip(u32::try_from(number.section).ok())
+            .map(|(block, section)| Anchor {
+                block,
+                sub: Sub::LineNumbers(section),
+            }),
         chars: text,
         xs,
         y: number.baseline,

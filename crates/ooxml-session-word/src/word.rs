@@ -68,6 +68,18 @@ impl Format for WordFormat {
         ooxml_tools_word::register(&mut tools.registrar(self.kind()));
     }
 
+    fn host_facts(&self) -> Vec<(String, ooxml_tools::roles::HostFacts)> {
+        ooxml_tools_word::host_facts()
+    }
+
+    fn tool_hints(&self) -> Vec<(String, String)> {
+        pairs(&ooxml_tools_word::TOOL_HINTS)
+    }
+
+    fn withdrawn(&self) -> Vec<(String, String)> {
+        pairs(&ooxml_tools_word::WITHDRAWN)
+    }
+
     fn open(&self, package: Package, env: &OpenEnv<'_>) -> Result<Arc<dyn FormatDoc>, SessionError> {
         let word = Word::open(package, env, &EarlierIds::default(), self.pages.clone())?;
         Ok(Arc::new(word))
@@ -76,6 +88,10 @@ impl Format for WordFormat {
     fn as_any(&self) -> &dyn Any {
         self
     }
+}
+
+fn pairs(table: &[(&str, &str)]) -> Vec<(String, String)> {
+    table.iter().map(|(a, b)| ((*a).to_owned(), (*b).to_owned())).collect()
 }
 
 /// What holds a Word document's store: its editor, and the ids its versions retired, noted
@@ -379,7 +395,7 @@ impl FormatDoc for Word {
             layout_limit: layout_cancel.as_ref().map(limit),
             raster: host.raster.as_deref(),
             image_budgets: &run.context.image_budgets,
-            blobs: host.blobs.as_deref(),
+            blobs: run.context.blobs.as_deref(),
             written: &host.written,
             others: run.others,
             tables: host.tables.as_deref(),
@@ -389,9 +405,11 @@ impl FormatDoc for Word {
             tracking: self.tracking(),
             placer: host.placer.as_deref(),
         };
+        let mut effects = ooxml_tools::OpEffects::default();
         let mut env = CallEnv {
             cancel: run.cancel,
             format: &call,
+            effects: &mut effects,
         };
         // what its edits made is the call's even where the handler panics after them
         let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tool.run(run.arguments, &mut env)));
@@ -399,7 +417,8 @@ impl FormatDoc for Word {
         if let Some(made) = made {
             *run.made.lock().unwrap_or_else(PoisonError::into_inner) = Some(Box::new(made));
         }
-        let result = ran.unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+        let mut result = ran.unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+        effects.give_to(&mut result);
         // An id a version removed, refused as one the document lacks: said as such.
         match &result.outcome {
             Outcome::Failed(error) => {

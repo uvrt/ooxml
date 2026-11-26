@@ -14,6 +14,7 @@
 //! or dispatch a call.
 
 use crate::context::CallCancel;
+use crate::problems::Validation;
 use crate::update::PartUpdate;
 use crate::{CallContext, DocKind, Opened, Registry, SessionError, StoredDoc};
 use ooxml_base::pyfmt::repr_str;
@@ -22,6 +23,7 @@ use ooxml_numfmt::Locale;
 use ooxml_opc::Package;
 use ooxml_store::{Caller, DocModel, Snapshot, StoreConfig};
 use ooxml_tools::datasets::Dataset;
+use ooxml_tools::roles::HostFacts;
 use ooxml_tools::{Refusal, Tool, ToolError, ToolResult, TryCall, WayOut};
 use serde_json::{Map, Value};
 use std::any::Any;
@@ -46,6 +48,25 @@ pub trait Format: Send + Sync + 'static {
 
     /// Its tools, registered for its kind ([`Registry::registrar`]).
     fn register(&self, tools: &mut Registry);
+
+    /// What a host holds of its tools beside their specs (the roles of their actions, the
+    /// calls of a changing tool that only read), by tool name; none by default.
+    fn host_facts(&self) -> Vec<(String, HostFacts)> {
+        Vec::new()
+    }
+
+    /// The names a model writes that the host's reading of names does not settle, each with
+    /// the tool (and action) it means (`("word_add_table", "word_insert_markdown")`); none by
+    /// default.
+    fn tool_hints(&self) -> Vec<(String, String)> {
+        Vec::new()
+    }
+
+    /// The tools withdrawn from it until it has them again, each with what to call instead
+    /// (a call of one is refused with this way out, not as an unknown tool); none by default.
+    fn withdrawn(&self) -> Vec<(String, String)> {
+        Vec::new()
+    }
 
     /// `package` opened as a document of this kind.
     ///
@@ -180,6 +201,22 @@ pub trait FormatDoc: Send + Sync + 'static {
     /// What a changing call made (its `run.made`, taken after it ran or panicked): its
     /// versions, noted as the format keeps them; `None` where it made nothing to finish.
     fn finish(&self, made: Box<dyn Any + Send>, run: &FormatRun<'_>) -> Option<Finished>;
+
+    /// The checks a changing call's reply carries (`checks`: the validation delta, the
+    /// pages it reflowed) of the version `at` it left, `made` what the format said of the
+    /// call ([`Finished::format`]); `None` where the format checks nothing (by default).
+    fn checks(&self, at: &AnyVersion, made: Option<&(dyn Any + Send + Sync)>) -> Option<Map<String, Value>> {
+        let _ = (at, made);
+        None
+    }
+
+    /// The problems of the version `at` against those the document opened with, in the
+    /// session's one shape ([`Validation`]); `None` where the format validates nothing (by
+    /// default).
+    fn validation(&self, at: &AnyVersion) -> Option<Validation> {
+        let _ = at;
+        None
+    }
 
     /// What a step group's revert brings back of the format's own state (a Word document's
     /// tracking mode), taken as the group is marked; `None` by default.

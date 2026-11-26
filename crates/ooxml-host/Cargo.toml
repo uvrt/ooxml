@@ -1,0 +1,23 @@
+[package]
+name = "ooxml-host"
+version = "0.1.0"
+description = "The Rust host: one call's pipeline from a tool's name to its reply -- lookup, roles, one acceptance, refs, the handler, effects, checks, the reply within its budget, records and retry keys"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ooxml-base.workspace = true
+ooxml-store.workspace = true
+ooxml-tools.workspace = true
+ooxml-session.workspace = true
+ooxml-numfmt.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+ooxml-opc.workspace = true
+ooxml-zip.workspace = true
+
+[lints]
+workspace = true

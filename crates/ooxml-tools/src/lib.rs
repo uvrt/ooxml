@@ -43,6 +43,7 @@
 //! ```
 #![forbid(unsafe_code)]
 
+pub mod blobs;
 mod check;
 pub mod cost;
 pub mod datasets;
@@ -59,6 +60,7 @@ pub mod pyfmt;
 pub mod pyre;
 pub mod refs;
 mod result;
+pub mod roles;
 pub mod schema;
 pub mod sources;
 mod spec;
@@ -68,10 +70,11 @@ pub mod tiles;
 mod types;
 mod validate;
 
+pub use difflib::close_matches;
 pub use error::{ErrorCode, Failure, Refusal, ToolError, TryCall, WayOut};
 pub use handlers::{
-    CallEnv, EditFn, EditHandler, EditRun, FormatCall, FormatTypes, ReadFn, ReadHandler, ReadRun, ReadingEditHandler,
-    Registrar, Run, Tool, TrackingFn, TrackingRun,
+    CallEnv, EditFn, EditHandler, EditRun, FormatCall, FormatTypes, OpEffects, ReadFn, ReadHandler, ReadRun,
+    ReadingEditHandler, Registrar, Run, Tool, TrackingFn, TrackingRun,
 };
 pub use intent::Accepted;
 pub use limits::{BudgetSpan, ImageBudget, Limits};

@@ -507,6 +507,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ooxml-host"
+version = "0.1.0"
+dependencies = [
+ "ooxml-base",
+ "ooxml-numfmt",
+ "ooxml-opc",
+ "ooxml-session",
+ "ooxml-store",
+ "ooxml-tools",
+ "ooxml-zip",
+ "serde_json",
+]
+
+[[package]]
 name = "ooxml-markdown"
 version = "0.1.0"
 

@@ -105,7 +105,11 @@ def test_every_input_is_there_with_its_bytes() -> None:
 @pytest.mark.parametrize("stream,case", CASES, ids=[f"{name}::{case}" for name, case in CASES])
 def test_a_recorded_case_replays_with_no_unlisted_difference(stream: str, case: str) -> None:
     pytest.importorskip("docx_agent.tools")
+    if stream.startswith("mixed/"):
+        # A workbook the Python host holds: xlsx-agent's suite replays these (its tests'
+        # test_host_goldens_mixed.py), where xlsx-agent is installed.
+        pytest.importorskip("xlsx_agent.tools")
     events = _cases(stream)[case]
-    found = host_goldens.differences(events, host_goldens.replay_case(events))
+    found = host_goldens.differences(host_goldens.expected_of(events), host_goldens.replay_case(events))
     left, _used = host_goldens.unlisted(stream, case, found, host_goldens.known_entries())
     assert left == [], left[:3]

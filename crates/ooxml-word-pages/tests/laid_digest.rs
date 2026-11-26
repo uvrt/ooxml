@@ -41,10 +41,58 @@ impl CacheBudget for Unlimited {
     }
 }
 
-/// The painted lines recorded, and those of them anchored (their paragraph's key beside
-/// their path: named at the edge through the version's names).
-static LINES: AtomicUsize = AtomicUsize::new(0);
-static ANCHORED: AtomicUsize = AtomicUsize::new(0);
+/// Items recorded, and those of them anchored (named at the edge through the version's
+/// names): `[all, anchored]` of a kind.
+struct Counted([AtomicUsize; 2]);
+
+impl Counted {
+    const fn new() -> Counted {
+        Counted([AtomicUsize::new(0), AtomicUsize::new(0)])
+    }
+
+    fn add(&self, anchored: bool) {
+        self.0[0].fetch_add(1, Ordering::Relaxed);
+        if anchored {
+            self.0[1].fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn count(&self, all: usize, anchored: usize) {
+        self.0[0].fetch_add(all, Ordering::Relaxed);
+        self.0[1].fetch_add(anchored, Ordering::Relaxed);
+    }
+
+    /// `(anchored, all)`.
+    fn get(&self) -> (usize, usize) {
+        (self.0[1].load(Ordering::Relaxed), self.0[0].load(Ordering::Relaxed))
+    }
+}
+
+/// Body and story lines (their paragraph's key beside their path).
+static LINES: Counted = Counted::new();
+/// Their spans (a run, a label or a line number).
+static SPANS: Counted = Counted::new();
+/// Rules (paragraph, cell and table rules, decorations, column separators).
+static RULES: Counted = Counted::new();
+/// Text boxes' lines, named below a drawing that is anchored.
+static BOXED: Counted = Counted::new();
+/// Lines and rules, and those of them of a separator the layout makes (Word's own, where
+/// the notes part names none): no block of the version, so not anchored.
+static MADE: Counted = Counted::new();
+/// The body blocks the pages' facts say each page draws something of (`Page.blocks`),
+/// anchored beside their paths.
+static BLOCKS: Counted = Counted::new();
+
+/// Whether `path` is a separator paragraph the layout makes (`notes::default_separator`).
+fn made_separator(path: &str) -> bool {
+    matches!(
+        path,
+        "w:footnotes/separator"
+            | "w:footnotes/continuationSeparator"
+            | "w:endnotes/separator"
+            | "w:endnotes/continuationSeparator"
+    )
+}
 
 const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/laid-digest.txt.gz");
 
@@ -284,14 +332,23 @@ fn page(out: &mut String, k: usize, paint: &PagePaint, svg: &str) {
     let frame = format!("{}|{:?}|{:?}|{drawn:?}", g.page, g.info, g.frame);
     let _ = writeln!(out, "page {} {} svg {}", k + 1, hex(&frame, 8), hex(svg, 8));
     for l in &paint.lines {
-        LINES.fetch_add(1, Ordering::Relaxed);
-        if l.anchor.is_some() {
-            ANCHORED.fetch_add(1, Ordering::Relaxed);
+        LINES.add(l.anchor.is_some());
+        MADE.add(l.anchor.is_none() && made_separator(&l.path));
+        for s in &l.spans {
+            SPANS.add(s.anchor.is_some());
         }
         line(out, l);
     }
     for r in &paint.rules {
+        RULES.add(r.anchor.is_some());
+        MADE.add(r.anchor.is_none() && made_separator(r.path.split("/w:r[").next().unwrap_or_default()));
         rule(out, r);
+    }
+    for t in &paint.text_boxes {
+        let anchored = paint.drawings.get(t.slot).is_some_and(|d| d.anchor.is_some());
+        for _ in &t.lines {
+            BOXED.add(anchored);
+        }
     }
     for d in &paint.pictures {
         picture(out, d);
@@ -349,6 +406,11 @@ fn document(name: &str, file: &Path) -> (String, usize) {
                 let paint = engine.paint(&version, k).unwrap();
                 let (svg, _) = engine.page_svg(&version, k).unwrap();
                 page(&mut out, k, &paint, &svg);
+            }
+            // the facts name each page's blocks by anchor (asserted against their paths in a
+            // debug build); not recorded: the golden is the paint's
+            for facts in &version.facts().pages {
+                BLOCKS.count(facts.blocks.len(), facts.anchors.len());
             }
             (out, count)
         }
@@ -428,11 +490,32 @@ fn every_page_of_every_oracle_document_is_laid_out_box_by_box_as_recorded() {
         documents > 250 && pages > documents,
         "{documents} documents, {pages} pages"
     );
-    // the SVG names every anchored item through the version's names, asserting its old
-    // path in a debug build: nearly every line is anchored (a text box's are not)
-    let (lines, anchored) = (LINES.load(Ordering::Relaxed), ANCHORED.load(Ordering::Relaxed));
-    eprintln!("{anchored} of {lines} lines anchored");
-    assert!(anchored * 100 > lines * 95, "{anchored} of {lines} lines anchored");
+    // the SVG and the facts name every anchored item through the version's names,
+    // asserting its old path in a debug build
+    for (what, counted) in [
+        ("lines", &LINES),
+        ("spans", &SPANS),
+        ("rules", &RULES),
+        ("text-box lines", &BOXED),
+        ("page blocks", &BLOCKS),
+    ] {
+        let (anchored, all) = counted.get();
+        eprintln!("{anchored} of {all} {what} anchored");
+    }
+    // every line and rule is anchored but a separator's the layout makes (of no block);
+    // every span, text-box line and page block is
+    let (made, _) = MADE.get();
+    let ((lines_anchored, lines), (rules_anchored, rules)) = (LINES.get(), RULES.get());
+    eprintln!("{made} lines and rules of separators the layout makes");
+    assert_eq!(
+        lines_anchored + rules_anchored + made,
+        lines + rules,
+        "lines and rules anchored"
+    );
+    for (what, counted) in [("spans", &SPANS), ("text-box lines", &BOXED), ("page blocks", &BLOCKS)] {
+        let (anchored, all) = counted.get();
+        assert_eq!(anchored, all, "{what} anchored");
+    }
     if std::env::var_os("LAID_DIGEST_BLESS").is_some() {
         bless(&records);
         return;
