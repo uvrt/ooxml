@@ -1,7 +1,6 @@
 //! Owns: the layout half of the page tier of the caching policy (ADR-008): one page's
 //! contributions to the layout facts made from its layout facts alone, without painting it
-//! ([`LaidEntry`]: the body line lowest on it, [`crate::layout_facts::keeps::FootPart`];
-//! the body tables' rows it draws lines of, [`crate::layout_facts::tables::RowsPart`]),
+//! ([`LaidEntry`]: the body line lowest on it, [`crate::layout_facts::keeps::FootPart`]),
 //! and the memo keeping them across a generation's versions by the page's facts
 //! ([`LaidMemo`]): a version keeps a page's facts, the very same, where it lays the page
 //! out the same ([`ooxml_word_layout::facts::LayoutFacts::after`]), so a check after a
@@ -16,7 +15,6 @@
 //! contribution (the fold's), or keep a page's facts alive.
 
 use crate::layout_facts::keeps::FootPart;
-use crate::layout_facts::tables::RowsPart;
 use crate::page_parts::Part;
 use ooxml_derive::{CacheBudget, Memo, Weigh};
 use ooxml_word_layout::facts::PageFacts;
@@ -27,7 +25,6 @@ use std::sync::{Arc, Weak};
 #[derive(Debug, Default)]
 pub struct LaidEntry {
     foot: FootPart,
-    rows: RowsPart,
 }
 
 impl LaidEntry {
@@ -36,7 +33,6 @@ impl LaidEntry {
     pub fn of(facts: &PageFacts) -> LaidEntry {
         LaidEntry {
             foot: FootPart::of(facts),
-            rows: RowsPart::of(facts),
         }
     }
 
@@ -46,17 +42,9 @@ impl LaidEntry {
         &self.foot
     }
 
-    /// The body tables' rows the page draws lines of.
-    #[must_use]
-    pub fn rows(&self) -> &RowsPart {
-        &self.rows
-    }
-
     /// What it holds at most, bytes, for a page whose layout facts are `facts`.
     fn weight_of(facts: &PageFacts) -> usize {
-        std::mem::size_of::<LaidEntry>()
-            + <FootPart as Part<PageFacts>>::weight_of(facts)
-            + <RowsPart as Part<PageFacts>>::weight_of(facts)
+        std::mem::size_of::<LaidEntry>() + <FootPart as Part<PageFacts>>::weight_of(facts)
     }
 }
 

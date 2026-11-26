@@ -49,7 +49,7 @@ fn convert_on_a_long_document() {
         .unwrap();
         let opened = editor.store().snapshot().doc().clone();
         let started = Instant::now();
-        let first = engine.lock().unwrap().lay_out(opened.package()).unwrap().unwrap();
+        let first = engine.lock().unwrap().lay_out(opened.package(), None).unwrap().unwrap();
         println!(
             "head laid out: {} pages, {:.0} ms",
             first.page_count(),

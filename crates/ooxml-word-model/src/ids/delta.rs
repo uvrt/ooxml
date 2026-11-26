@@ -13,10 +13,49 @@
 //! block by text (the index does, at the edge).
 
 use super::key::{BlockKey, StoryIx};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// One document's identity in this process, whatever its versions: what tells one
+/// document's store numbers from another's ([`VersionRef`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DocumentId(u64);
+
+impl DocumentId {
+    /// A document's identity no other document in this process has.
+    #[must_use]
+    pub fn fresh() -> DocumentId {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        DocumentId(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
+/// One version of one document: the document, and the number its store gave the version
+/// (`Seq`, unique within the document's store only).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct VersionRef {
+    /// The document.
+    pub document: DocumentId,
+    /// The version's number in the document's store.
+    pub seq: u64,
+}
+
+/// The two versions a [`VersionDelta`] is between: its base, the version it was worked out
+/// against, and the version it leads to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VersionSpan {
+    /// The version it was worked out against.
+    pub base: VersionRef,
+    /// The version it leads to.
+    pub version: VersionRef,
+}
 
 /// A version's changes against an earlier version of the same document.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct VersionDelta {
+    /// The two versions it is between, where the store that holds them names them: what a
+    /// layout engine checks before taking the delta for the change from the version it laid
+    /// out last ([`VersionSpan`]).
+    pub span: Option<VersionSpan>,
     /// The parts that are not stories (styles, numbering, settings, relationships, media...)
     /// whose content differs.
     pub parts: PartsDelta,
@@ -26,6 +65,19 @@ pub struct VersionDelta {
 }
 
 impl VersionDelta {
+    /// The same delta, between the versions `span` names.
+    #[must_use]
+    pub fn spanning(mut self, span: VersionSpan) -> VersionDelta {
+        self.span = Some(span);
+        self
+    }
+
+    /// The version it was worked out against, where it is named.
+    #[must_use]
+    pub fn base(&self) -> Option<VersionRef> {
+        self.span.map(|s| s.base)
+    }
+
     /// Whether nothing differs.
     #[must_use]
     pub fn is_empty(&self) -> bool {

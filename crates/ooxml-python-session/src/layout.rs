@@ -252,15 +252,13 @@ impl PyLaidPages {
                         .iter()
                         .map(|l| {
                             (
-                                l.path.to_string(),
+                                version.line_path(l).unwrap_or_default(),
                                 l.number,
                                 exact(l.top),
                                 exact(l.pitch),
                                 l.baseline,
                                 l.column,
-                                version
-                                    .id_named(l.anchor.map(|a| a.block), &l.path)
-                                    .map(|id| id.to_string()),
+                                version.id_named(l.anchor.map(|a| a.block)).map(|id| id.to_string()),
                             )
                         })
                         .collect()
@@ -402,10 +400,11 @@ impl PyLaidPages {
         let version = &self.version;
         py.detach(|| {
             let numbers = PageNumbers::new(version.layout());
+            let key = version.key_of_path(path)?;
             if keyword.eq_ignore_ascii_case("PAGEREF") {
-                numbers.page_reference(instruction, path).ok()
+                numbers.page_reference(instruction, key).ok()
             } else {
-                numbers.page_field(instruction, keyword, path).ok()
+                numbers.page_field(instruction, keyword, key).ok()
             }
         })
     }

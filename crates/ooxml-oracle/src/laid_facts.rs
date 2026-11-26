@@ -69,7 +69,7 @@ fn facts(package: &Package, fonts: &Value, min_size: Option<&Value>, range: Opti
     let engine = Mutex::new(crate::structure_tools::page_engine(fonts));
     let version = {
         let mut held = engine.lock().unwrap_or_else(PoisonError::into_inner);
-        match held.lay_out(package).map_err(|e| e.to_string())? {
+        match held.lay_out(package, None).map_err(|e| e.to_string())? {
             Ok(version) => version,
             Err(fallback) => return Err(format!("falls back: {} at {}", fallback.reason, fallback.at)),
         }

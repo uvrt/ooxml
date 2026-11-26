@@ -28,7 +28,7 @@ use ooxml_word_edit::{
     CharAdvance, FieldLayout, FieldPlace, FieldRun, LaidFields, LayOutError, PageReflow, PageShows, Unknown,
 };
 use ooxml_word_layout::fields::update::{drawn_text, style_reference_known, PageNumbers};
-use ooxml_word_model::value::Text;
+use ooxml_word_model::ids::{Anchor, BlockKey, StoryIx};
 use ooxml_word_pages::summary::Summary;
 use ooxml_word_pages::{
     support, EngineBudgets, EngineOptions, EngineSeed, Fallback, FontSetup, LaidVersion, PageEngine, PagesError,
@@ -295,9 +295,13 @@ impl<'e> Laid<'e> {
         }
     }
 
-    fn path(&self, id: &str) -> Result<Text, Unknown> {
+    /// The key of the block `id` names in the body.
+    fn key(&self, id: &str) -> Result<BlockKey, Unknown> {
         self.version
-            .path_of(id)
+            .layout()
+            .document
+            .names
+            .key_of_id(StoryIx::BODY, id)
             .ok_or_else(|| Unknown(format!("{id} is not laid out")))
     }
 
@@ -305,14 +309,15 @@ impl<'e> Laid<'e> {
     /// a paragraph of a text box, which the body's lines leave out -- the first page the
     /// box draws it on (docx-agent's `layout().where` reads both).
     fn first_page(&self, id: &str) -> Result<usize, Unknown> {
-        let path = self.path(id)?;
-        if let Some(page) = self.numbers.drawn_on(&path) {
+        let key = self.key(id)?;
+        if let Some(page) = self.numbers.drawn_on(key) {
             return Ok(page);
         }
         let mut engine = ooxml_word_pages::lock_engine(self.engine);
-        engine
-            .first_page_in_text_box(&self.version, id)
-            .ok_or_else(|| Unknown(format!("{path} is not drawn")))
+        engine.first_page_in_text_box(&self.version, id).ok_or_else(|| {
+            let named = self.version.layout().document.names.path(Anchor::whole(key));
+            Unknown(format!("{} is not drawn", named.as_deref().unwrap_or(id)))
+        })
     }
 }
 
@@ -344,10 +349,9 @@ impl LaidFields for Laid<'_> {
     fn style_reference(&self, instruction: &str, at: FieldPlace<'_>, run: FieldRun<'_>) -> Result<String, Unknown> {
         let (page, story) = match at {
             FieldPlace::Body(id) => {
-                let path = self.path(id)?;
                 let page = self
                     .numbers
-                    .drawn_on(&path)
+                    .drawn_on(self.key(id)?)
                     .ok_or_else(|| Unknown(format!("{id} is not drawn")))?;
                 (page, None)
             }
@@ -362,13 +366,14 @@ impl LaidFields for Laid<'_> {
     }
 
     fn blocks_pages(&self, ids: &[&str]) -> Vec<Result<Vec<usize>, Unknown>> {
-        let paths: Vec<Option<Text>> = ids.iter().map(|id| self.version.path_of(id)).collect();
-        let keys: Vec<&str> = paths.iter().map(|p| p.as_deref().unwrap_or_default()).collect();
-        let found = self.version.facts().pages_of_each(&keys);
+        let names = &self.version.layout().document.names;
+        let keys: Vec<Option<BlockKey>> = ids.iter().map(|id| names.key_of_id(StoryIx::BODY, id)).collect();
+        let blocks: Vec<Anchor> = keys.iter().flatten().map(|k| Anchor::whole(*k)).collect();
+        let mut found = self.version.facts().pages_of_each(&blocks).into_iter();
         ids.iter()
-            .zip(paths.iter().zip(found))
-            .map(|(id, (path, pages))| match path {
-                Some(_) if !pages.is_empty() => Ok(pages),
+            .zip(keys.iter().map(|key| key.and_then(|_| found.next())))
+            .map(|(id, pages)| match pages {
+                Some(pages) if !pages.is_empty() => Ok(pages),
                 Some(_) => Err(Unknown(format!("{id} is not drawn: the layout stops before it"))),
                 None => Err(Unknown(format!("{id} is not laid out"))),
             })

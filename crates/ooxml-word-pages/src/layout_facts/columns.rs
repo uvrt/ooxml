@@ -7,12 +7,13 @@
 //!
 //! Must not: word an entry (the tool layer does) or cap a list.
 
-use super::tree::{self, cell_line, is_w, W};
+use super::tree::{is_w, W};
 use super::{points, round, Facts};
 use crate::page_parts::Part;
 use crate::page_read::PageRead;
+use ooxml_word_model::docx::at_path;
 use ooxml_word_model::docx::tables::placed_row_cells;
-use ooxml_word_model::ids::{Anchor, BlockKey, StoryIx};
+use ooxml_word_model::ids::{Anchor, BlockKey};
 use ooxml_word_model::value::Text;
 use ooxml_xml::Element;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -184,17 +185,20 @@ pub fn column_fit(facts: &Facts<'_>) -> Vec<ColumnFit> {
         if !table.wraps() {
             continue; // no column can wrap: its element and margins are not read
         }
-        let Some(path) = names.path(Anchor::whole(key)) else {
+        let Some(element) = names.place_of(key).and_then(|place| at_path(body.root(), &place)) else {
             continue;
         };
-        let Some((element, _)) = tree::resolve(body, &path) else {
-            continue;
-        };
-        let fits = fit_columns(facts, element, &table.cells, &path);
+        let fits = fit_columns(facts, element, &table.cells, key);
         if fits.is_empty() {
             continue;
         }
-        let id = names.id(key).map_or(path, |id| id.to_string());
+        let Some(id) = names
+            .id(key)
+            .map(|id| id.to_string())
+            .or_else(|| names.path(Anchor::whole(key)))
+        else {
+            continue;
+        };
         for (roomy, wraps, widths) in fits {
             entries.push(ColumnFit {
                 table: id.clone(),
@@ -224,21 +228,14 @@ impl DrawnTable<'_> {
 /// them, on every page each is.
 fn drawn_cells<'f>(facts: &'f Facts<'_>) -> (Vec<BlockKey>, HashMap<BlockKey, DrawnTable<'f>>) {
     let pages = &facts.version().facts().pages;
-    let names = facts.names();
-    let keys: std::cell::RefCell<HashMap<&str, Option<BlockKey>>> = std::cell::RefCell::default();
-    let table_key = |table: &'f str| {
-        *keys
-            .borrow_mut()
-            .entry(table)
-            .or_insert_with(|| names.key_at_path(StoryIx::BODY, table))
-    };
     let body_cells = |index: usize| {
         pages
             .get(index)
             .into_iter()
             .flat_map(|p| p.lines.iter())
-            .filter(|l| super::story_kind(&l.path) == "body")
-            .filter_map(|l| cell_line(&l.path).and_then(|(t, ..)| table_key(t)))
+            .filter_map(|l| facts.place_of(l.anchor?.block))
+            .filter(|place| place.in_cell)
+            .filter_map(|place| Some(place.row?.table))
     };
     let shown: Option<std::collections::HashSet<BlockKey>> = (!facts.whole()).then(|| {
         (0..pages.len())
@@ -289,14 +286,14 @@ fn fit_columns(
     facts: &Facts<'_>,
     table: &Arc<Element>,
     cells: &BTreeMap<(usize, usize), DrawnCell<'_>>,
-    path: &str,
+    key: BlockKey,
 ) -> Vec<(FitColumn, FitColumn, Vec<f64>)> {
     #[allow(clippy::cast_precision_loss)]
     let grid: Vec<f64> = grid_widths(table).iter().map(|w| *w as f64 / 20.0).collect();
     if grid.len() < 2 {
         return Vec::new();
     }
-    let margins = cell_margins(facts, path);
+    let margins = cell_margins(facts, key);
     let mut columns: BTreeMap<usize, Measured> = BTreeMap::new();
     for (r, row) in table.child_elements().filter(|e| is_w(e, "tr")).enumerate() {
         for (k, (start, span)) in row_cells(row).into_iter().enumerate() {
@@ -397,9 +394,9 @@ fn int(value: Option<&str>) -> Option<i64> {
 }
 
 /// Each cell's left and right margins, pt, as the layout model resolves the table at
-/// `path` (`_cell_margins`), by `(row, cell)`.
-fn cell_margins(facts: &Facts<'_>, path: &str) -> HashMap<(usize, usize), (f64, f64)> {
-    let Some(table) = facts.model_table(path) else {
+/// `key` (`_cell_margins`), by `(row, cell)`.
+fn cell_margins(facts: &Facts<'_>, key: BlockKey) -> HashMap<(usize, usize), (f64, f64)> {
+    let Some(table) = facts.model_table(key) else {
         return HashMap::new();
     };
     let resolved = facts.resolved_table(table);

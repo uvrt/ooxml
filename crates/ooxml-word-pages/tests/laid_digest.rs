@@ -57,11 +57,6 @@ impl Counted {
         }
     }
 
-    fn count(&self, all: usize, anchored: usize) {
-        self.0[0].fetch_add(all, Ordering::Relaxed);
-        self.0[1].fetch_add(anchored, Ordering::Relaxed);
-    }
-
     /// `(anchored, all)`.
     fn get(&self) -> (usize, usize) {
         (self.0[1].load(Ordering::Relaxed), self.0[0].load(Ordering::Relaxed))
@@ -79,9 +74,38 @@ static BOXED: Counted = Counted::new();
 /// Lines and rules, and those of them of a separator the layout makes (Word's own, where
 /// the notes part names none): no block of the version, so not anchored.
 static MADE: Counted = Counted::new();
-/// The body blocks the pages' facts say each page draws something of (`Page.blocks`),
-/// anchored beside their paths.
+/// The pages whose facts' body blocks (`Page.blocks`, by key, named through the version's
+/// names) are the ones their paint's body lines' paths say (docx2svg's `paths.block_keys`).
 static BLOCKS: Counted = Counted::new();
+
+/// The pages' facts' lines: each of a paragraph by key, or of a separator the layout makes
+/// by its path.
+static FACT_LINES: Counted = Counted::new();
+
+/// The body's blocks a body path is in, outermost first (docx2svg's `paths.block_keys`):
+/// every prefix ending at a paragraph, table, row or cell step, up to the first paragraph.
+fn block_keys(path: &str) -> Vec<String> {
+    let mut steps = path.split('/');
+    if steps.next() != Some("w:body") {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut prefix = String::from("w:body");
+    for step in steps {
+        prefix.push('/');
+        prefix.push_str(step);
+        match step.split('[').next().unwrap_or("") {
+            "w:p" => {
+                out.push(prefix.clone());
+                break;
+            }
+            "w:tbl" | "w:tr" | "w:tc" => out.push(prefix.clone()),
+            "w:sdt" | "w:sdtContent" | "w:customXml" => {}
+            _ => break,
+        }
+    }
+    out
+}
 
 /// Whether `path` is a separator paragraph the layout makes (`notes::default_separator`).
 fn made_separator(path: &str) -> bool {
@@ -406,11 +430,23 @@ fn document(name: &str, file: &Path) -> (String, usize) {
                 let paint = engine.paint(&version, k).unwrap();
                 let (svg, _) = engine.page_svg(&version, k).unwrap();
                 page(&mut out, k, &paint, &svg);
-            }
-            // the facts name each page's blocks by anchor (asserted against their paths in a
-            // debug build); not recorded: the golden is the paint's
-            for facts in &version.facts().pages {
-                BLOCKS.count(facts.blocks.len(), facts.anchors.len());
+                // the facts name each page's blocks by key, as its paint's paths say; not
+                // recorded: the golden is the paint's
+                if let Some(facts) = version.page_facts(k) {
+                    let mut said: Vec<String> = Vec::new();
+                    for line in paint.lines.iter().filter(|l| l.story.is_none()) {
+                        for block in block_keys(&line.path) {
+                            if !said.contains(&block) {
+                                said.push(block);
+                            }
+                        }
+                    }
+                    BLOCKS.add(version.page_blocks(facts) == said);
+                    for line in &facts.lines {
+                        let made = line.made.as_deref().is_some_and(made_separator);
+                        FACT_LINES.add(line.anchor.is_some() != made);
+                    }
+                }
             }
             (out, count)
         }
@@ -498,6 +534,7 @@ fn every_page_of_every_oracle_document_is_laid_out_box_by_box_as_recorded() {
         ("rules", &RULES),
         ("text-box lines", &BOXED),
         ("page blocks", &BLOCKS),
+        ("fact lines", &FACT_LINES),
     ] {
         let (anchored, all) = counted.get();
         eprintln!("{anchored} of {all} {what} anchored");
@@ -512,7 +549,12 @@ fn every_page_of_every_oracle_document_is_laid_out_box_by_box_as_recorded() {
         lines + rules,
         "lines and rules anchored"
     );
-    for (what, counted) in [("spans", &SPANS), ("text-box lines", &BOXED), ("page blocks", &BLOCKS)] {
+    for (what, counted) in [
+        ("spans", &SPANS),
+        ("text-box lines", &BOXED),
+        ("page blocks", &BLOCKS),
+        ("fact lines", &FACT_LINES),
+    ] {
         let (anchored, all) = counted.get();
         assert_eq!(anchored, all, "{what} anchored");
     }

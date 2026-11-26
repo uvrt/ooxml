@@ -240,7 +240,7 @@ impl Drawer<'_> {
             data.insert(
                 "coverage".into(),
                 crate::coverage::coverage_facts(&coverage, |key, path| {
-                    laid.id_named(key, path).map(|id| id.to_string())
+                    ooxml_word_pages::coverage::id_of(laid, key, path)
                 }),
             );
         }

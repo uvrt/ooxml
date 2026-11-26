@@ -55,7 +55,7 @@ impl LaidRead<'_> {
             .coverage(&self.laid)
             .ok_or_else(not_ours)?;
         Ok(coverage_facts(&coverage, |key, path| {
-            self.laid.id_named(key, path).map(|id| id.to_string())
+            ooxml_word_pages::coverage::id_of(&self.laid, key, path)
         }))
     }
 

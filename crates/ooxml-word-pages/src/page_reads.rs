@@ -4,12 +4,12 @@
 //! read depends on: the page as laid out (its `LaidPage` and the flow
 //! items it draws, by identity), its context ([`crate::page_context`]: its number,
 //! counts, section, header and footer texts, line numbers), the stories' epoch and the
-//! model's context it was painted in, and the paths and keys of the blocks it draws (a read
-//! names what it read by key: [`crate::line_text::ItemPlace`]; [`PageBlocks`]). A page another version
-//! lays out the same, of the same blocks at the same places, is read as it was: a check
-//! after a local edit paints only the pages it changed. The keys are checked, never part of
-//! the memo's key (ADR-008): an edit that stamps a block keeps its content and its place,
-//! and renames it.
+//! model's context it was painted in, and the keys of the blocks it draws (a read names
+//! what it read by key: [`crate::line_text::ItemPlace`]; [`PageBlocks`]). A page another
+//! version lays out the same, of blocks with the same keys, is read as it was, wherever
+//! their paths moved: a check after a local edit paints only the pages it changed. The
+//! keys are checked, never part of the memo's key (ADR-008): an edit that stamps a block
+//! keeps its content and its place, and renames it.
 //!
 //! A read is kept by its page's body context; its stories' context (the counts, the
 //! `STYLEREF` texts) beside it. A page whose stories show other values -- another page
@@ -34,7 +34,6 @@ use ooxml_word_layout::flow::FlowItem;
 use ooxml_word_layout::DocumentLayout;
 use ooxml_word_model::ids::BlockKey;
 use ooxml_word_model::model::{Block, Table};
-use ooxml_word_model::value::Text;
 use std::sync::{Arc, Weak};
 
 /// A page's key: its laid page by address, its context, the stories' epoch and the
@@ -42,13 +41,12 @@ use std::sync::{Arc, Weak};
 type ReadKey = (usize, Digest, u64, u64);
 
 /// What a page read depends on beyond its key's address: the page as laid out, and the
-/// paths and keys of the blocks it draws.
+/// keys of the blocks it draws.
 pub(crate) struct ReadOf<'k> {
     pub(crate) page: &'k PageKey,
     pub(crate) context: PageContext,
     pub(crate) epoch: u64,
     pub(crate) model: u64,
-    pub(crate) places: Arc<[Text]>,
     pub(crate) blocks: PageBlocks,
 }
 
@@ -109,7 +107,6 @@ impl Split {
 #[derive(Clone)]
 struct Kept {
     page: PageRef,
-    places: Arc<[Text]>,
     blocks: PageBlocks,
     /// Its stories' context.
     stories: Digest,
@@ -146,7 +143,6 @@ impl Weigh for Kept {
         std::mem::size_of::<Kept>()
             + read.texts.iter().chain(&read.box_texts).map(text).sum::<usize>()
             + boxed.chain(rules).sum::<usize>()
-            + self.places.iter().map(|p| 16 + p.len()).sum::<usize>()
             + self.blocks.weight()
             + self.page.weight()
             + self.read.parts_weight()
@@ -176,7 +172,7 @@ impl ReadMemo {
     /// body part, where its stories showed other values.
     pub(crate) fn get(&mut self, of: &ReadOf<'_>) -> Option<Found> {
         let found = self.memo.get(&of.key())?;
-        if !(found.page.is(of.page) && found.places == of.places && found.blocks == of.blocks) {
+        if !(found.page.is(of.page) && found.blocks == of.blocks) {
             return None;
         }
         if found.stories == of.context.stories {
@@ -190,7 +186,6 @@ impl ReadMemo {
     pub(crate) fn insert(&mut self, of: &ReadOf<'_>, read: Arc<PageEntry>, split: Option<Split>) {
         let kept = Kept {
             page: PageRef::of(of.page),
-            places: Arc::clone(&of.places),
             blocks: of.blocks.clone(),
             stories: of.context.stories,
             split,
@@ -209,31 +204,6 @@ impl ReadMemo {
     pub(crate) fn sweep(&mut self) -> usize {
         self.memo.sweep(|kept| kept.page.alive())
     }
-}
-
-/// The paths of the blocks a page's items draw, in order: a paragraph's (and its drop
-/// cap's), a table's. A read names its lines by these; an item kept from the version
-/// before whose block moved names it otherwise.
-pub(crate) fn places(layout: &DocumentLayout, items: &[FlowItem]) -> Arc<[Text]> {
-    let paragraphs = layout.body_paragraphs();
-    let body = &layout.document.body;
-    let body_path = |k: usize| match body.get(k) {
-        Some(Block::Paragraph(p)) => Some(p.path.clone()),
-        Some(Block::Table(t)) => Some(t.path.clone()),
-        None => None,
-    };
-    let mut out = Vec::with_capacity(items.len());
-    for item in items {
-        match item {
-            FlowItem::Para(p) => {
-                out.extend(paragraphs.get(p.block).map(|q| q.path.clone()));
-                out.extend(p.drop_cap.as_ref().and_then(|d| body_path(d.body)));
-            }
-            FlowItem::Table(t) => out.extend(body_path(t.body)),
-            FlowItem::Stop(_) => {}
-        }
-    }
-    out.into()
 }
 
 /// What names the blocks a page's items draw, in order ([`page_blocks`]): a paragraph's

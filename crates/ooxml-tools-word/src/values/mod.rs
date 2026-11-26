@@ -26,7 +26,7 @@ use ooxml_tools::{Failure, ToolError, TryCall, WayOut};
 use ooxml_word_model::docx::tables::cells_at;
 use ooxml_word_model::docx::{at_path, StoryPart};
 use ooxml_word_model::ids::W;
-use ooxml_word_pages::layout_facts::story_kind;
+use ooxml_word_model::ids::{BlockKey, StoryIx};
 use ooxml_word_pages::LaidVersion;
 use serde_json::Value;
 use std::collections::{BTreeSet, HashMap};
@@ -36,19 +36,19 @@ use std::sync::Arc;
 /// `DocumentLayout.pages_of` of a Rust layout: each page that draws a line of it).
 pub(crate) struct Pages {
     version: Arc<LaidVersion>,
-    /// Each body paragraph's 1-based pages, by its path.
-    body: HashMap<String, BTreeSet<usize>>,
+    /// Each body paragraph's 1-based pages, by its key.
+    body: HashMap<BlockKey, BTreeSet<usize>>,
 }
 
 impl Pages {
     /// `package` laid out by `layout`, stopped where `cancel` says so.
     pub(crate) fn of(layout: &dyn WordLayout, package: &Package, cancel: &dyn Cancel) -> Result<Pages, NotLaid> {
         let version = layout.laid(package, cancel)?;
-        let mut body: HashMap<String, BTreeSet<usize>> = HashMap::new();
+        let mut body: HashMap<BlockKey, BTreeSet<usize>> = HashMap::new();
         for (index, page) in version.facts().pages.iter().enumerate() {
-            for line in &page.lines {
-                if story_kind(&line.path) == "body" {
-                    body.entry(line.path.to_string()).or_default().insert(index + 1);
+            for key in page.lines.iter().filter_map(|l| l.anchor).map(|a| a.block) {
+                if key.story() == StoryIx::BODY {
+                    body.entry(key).or_default().insert(index + 1);
                 }
             }
         }
@@ -59,7 +59,8 @@ impl Pages {
     pub(crate) fn of_paragraphs<'a>(&self, ids: impl IntoIterator<Item = &'a str>) -> Vec<usize> {
         let mut out: BTreeSet<usize> = BTreeSet::new();
         for id in ids {
-            if let Some(found) = self.version.path_of(id).and_then(|path| self.body.get(&*path)) {
+            let key = self.version.layout().document.names.key_of_id(StoryIx::BODY, id);
+            if let Some(found) = key.and_then(|key| self.body.get(&key)) {
                 out.extend(found);
             }
         }

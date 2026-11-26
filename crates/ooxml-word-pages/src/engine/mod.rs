@@ -49,6 +49,7 @@ use ooxml_opc::Package;
 use ooxml_word_layout::paint::svg::{page_svg, Drawings, Pictures, SvgContext};
 use ooxml_word_layout::paint::{paint_page, GlyphSize, PagePaint, PaintContext};
 use ooxml_word_layout::{DocumentLayout, WordLayout};
+use ooxml_word_model::ids::{VersionDelta, VersionRef};
 use ooxml_word_model::value::Text;
 use ooxml_word_model::Model;
 use ooxml_zip::Archive;
@@ -236,6 +237,9 @@ pub struct PageEngine {
     /// The last version given, however it was given: what the next one changed is found
     /// from it.
     given: Option<Package>,
+    /// That version, where its store named it (the delta it was given with led to it): a
+    /// delta given next is taken for the change only where it was worked out against it.
+    given_version: Option<VersionRef>,
     /// What it is made from, and the last version it laid out, published there.
     seed: EngineSeed,
 }
@@ -299,6 +303,7 @@ impl PageEngine {
             watched: Vec::new(),
             digest_limit: crate::digest_cache::DIGEST_CACHE_BYTES,
             given: None,
+            given_version: None,
             seed,
         }
     }
@@ -350,7 +355,7 @@ impl PageEngine {
             archive,
             package: package.clone(),
         });
-        self.lay_out(&package)
+        self.lay_out(&package, None)
     }
 
     /// Lay out the version of the last one given with `parts` put in place (bytes) or
@@ -379,7 +384,7 @@ impl PageEngine {
             archive: source.archive,
             package: package.clone(),
         });
-        self.lay_out(&package)
+        self.lay_out(&package, None)
     }
 
     /// `package` with `name` as `bytes`: a tree, parsed once, where the part is XML.
@@ -437,12 +442,19 @@ impl PageEngine {
     }
 
     /// Lay out the version `package`, from the last version laid out where the fonts are
-    /// the same.
+    /// the same. `delta`, what the version changed against the one its store published it
+    /// after, is what it changed from the last version given only where that version is
+    /// its base ([`VersionDelta::base`]: the same document's, by its store's number); else
+    /// the change is found by comparing the two packages.
     ///
     /// # Errors
     /// Its Word parts do not open.
-    pub fn lay_out(&mut self, package: &Package) -> Result<Result<Arc<LaidVersion>, Fallback>, PagesError> {
-        self.lay_out_within(package, None)
+    pub fn lay_out(
+        &mut self,
+        package: &Package,
+        delta: Option<&VersionDelta>,
+    ) -> Result<Result<Arc<LaidVersion>, Fallback>, PagesError> {
+        self.lay_out_within(package, delta, None)
     }
 
     /// [`PageEngine::lay_out`], stopped where `cancel` says so (asked before each top-level
@@ -457,18 +469,29 @@ impl PageEngine {
         package: &Package,
         cancel: &dyn Cancel,
     ) -> Result<Result<Arc<LaidVersion>, Fallback>, PagesError> {
-        self.lay_out_within(package, Some(cancel))
+        self.lay_out_within(package, None, Some(cancel))
     }
 
     /// Keep `package` as the version given last, and what it changed from the one given
-    /// before, by identity (a session's edit gives its parts untouched as they were, its
-    /// edited ones anew), sorted.
-    fn note_given(&mut self, package: &Package) {
-        self.changed = self
-            .given
-            .replace(package.clone())
-            .map(|before| package.changed_parts(&before))
-            .unwrap_or_default();
+    /// before, sorted: `delta`'s parts where its base is that version; else the parts the
+    /// two packages do not share, by identity (a session's edit gives its parts untouched
+    /// as they were, its edited ones anew).
+    fn note_given(&mut self, package: &Package, delta: Option<&VersionDelta>) {
+        let before = self.given.replace(package.clone());
+        let base = delta.and_then(VersionDelta::base);
+        let taken = delta.filter(|_| base.is_some() && base == self.given_version && before.is_some());
+        self.changed = match (taken, before) {
+            (Some(delta), _) => {
+                self.stats.changes_from.0 += 1;
+                delta.changed_parts().into_iter().map(str::to_owned).collect()
+            }
+            (None, Some(before)) => {
+                self.stats.changes_from.1 += 1;
+                package.changed_parts(&before)
+            }
+            (None, None) => Vec::new(),
+        };
+        self.given_version = delta.and_then(|d| d.span).map(|span| span.version);
         self.changed.sort();
     }
 
@@ -477,9 +500,10 @@ impl PageEngine {
     fn lay_out_within(
         &mut self,
         package: &Package,
+        delta: Option<&VersionDelta>,
         cancel: Option<&dyn Cancel>,
     ) -> Result<Result<Arc<LaidVersion>, Fallback>, PagesError> {
-        let laid = self.lay_out_given(package, cancel);
+        let laid = self.lay_out_given(package, delta, cancel);
         self.publish();
         laid
     }
@@ -487,9 +511,10 @@ impl PageEngine {
     fn lay_out_given(
         &mut self,
         package: &Package,
+        delta: Option<&VersionDelta>,
         cancel: Option<&dyn Cancel>,
     ) -> Result<Result<Arc<LaidVersion>, Fallback>, PagesError> {
-        self.note_given(package);
+        self.note_given(package, delta);
         let fonts = self.setup.document(package);
         let (generation, mut cause) = self.generation_for(fonts);
         let generation = self.generation.insert(generation);
@@ -710,7 +735,16 @@ impl PageEngine {
     /// Page `page` of `version` as a reader sees it.
     pub fn page(&mut self, version: &LaidVersion, page: usize) -> Option<PageView> {
         let paint = self.paint(version, page)?;
-        let blocks = version.page_facts(page).map(|p| p.blocks.clone()).unwrap_or_default();
+        let blocks = version
+            .page_facts(page)
+            .map(|p| {
+                version
+                    .page_blocks(p)
+                    .into_iter()
+                    .map(|b| Text::from(b.as_str()))
+                    .collect()
+            })
+            .unwrap_or_default();
         let mut paint = Arc::unwrap_or_clone(paint);
         let mut text_box_lines: Vec<Vec<_>> = paint.drawings.iter().map(|_| Vec::new()).collect();
         for text_box in std::mem::take(&mut paint.text_boxes) {

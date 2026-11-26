@@ -1,13 +1,15 @@
 //! Owns: what the layout facts read of the document's tree: the body's top-level blocks
-//! with their layout paths, places and ids ([`top_level`], docx-agent's `_top_level`), the
-//! top-level block a line's path is in, the table and row a line of a body table's row
-//! names (`_ROW`), a layout path's element in its part, a paragraph's style, and the
-//! paragraph tests the facts share (`_page_break_at`, `_CONTENT`).
+//! with their keys, layout paths, places and ids ([`top_level`], docx-agent's
+//! `_top_level`), where a body paragraph is among the body's blocks by key (its top-level
+//! block, its tables, the body table's row and cell it is in: [`In`], docx-agent's
+//! `_ROW` and `_CELL_LINE`), a layout path's element in its part, a paragraph's style, and
+//! the paragraph tests the facts share (`_page_break_at`, `_CONTENT`).
 //!
 //! Must not: read the layout.
 
-use ooxml_word_model::docx::{Docx, StoryPart};
-use ooxml_word_model::ids::{Entry, PartIds};
+use crate::line_text::TableRow;
+use ooxml_word_model::docx::{Docx, StoryPart, VersionNames};
+use ooxml_word_model::ids::{Anchor, BlockKey, BlockKind as KeyKind, Entry, PartIds, StoryIx, Sub};
 use ooxml_xml::{Element, Node};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
@@ -37,6 +39,8 @@ pub struct Block<'a> {
     pub place: Vec<u32>,
     /// Its layout path.
     pub path: String,
+    /// Its key.
+    pub key: Option<BlockKey>,
     /// The ids that name it, and its entry among them.
     ids: &'a PartIds,
     entry: Entry,
@@ -59,6 +63,7 @@ impl<'a> Block<'a> {
             element,
             place,
             path,
+            key: ids.key_of(StoryIx::BODY, entry),
             ids,
             entry,
             id: OnceLock::new(),
@@ -150,36 +155,97 @@ fn visit<'a>(
     }
 }
 
-/// The top-level block a body line's path is in: its steps up to the first paragraph or
-/// table below the body and its block-level content controls.
-pub(crate) fn top_block_path(path: &str) -> Option<&str> {
-    let mut end = 0;
-    for step in path.split('/') {
-        end += step.len();
-        let local = step.split('[').next().unwrap_or(step);
-        if local == "w:p" || local == "w:tbl" {
-            return path.get(..end);
+/// Where a body paragraph is among the body's blocks, read by key through the version's
+/// names: what docx-agent reads of a line's path.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct In {
+    /// The blocks it is in, outermost first, ending with it ([`VersionNames::blocks_of`]).
+    chain: Vec<Anchor>,
+    /// The outermost table's row it is in, where that table is right in the body
+    /// (`_ROW`: docx-agent's pattern reads no table in a content control or custom XML).
+    pub(crate) row: Option<TableRow>,
+    /// Whether it is right in that row's cell, not in a nested table or a wrapper
+    /// (`_CELL_LINE`).
+    pub(crate) in_cell: bool,
+}
+
+impl In {
+    /// Where the body paragraph `paragraph` is; `None` where it is not a body paragraph
+    /// of the version.
+    pub(crate) fn of(names: &VersionNames, paragraph: BlockKey) -> Option<In> {
+        if paragraph.story() != StoryIx::BODY {
+            return None;
         }
-        end += 1;
+        let chain = names.blocks_of(paragraph)?;
+        let part = names.part(StoryIx::BODY)?;
+        let container = part.ids.container().len();
+        let table = chain
+            .first()
+            .filter(|a| a.sub == Sub::Whole && a.block.kind() == KeyKind::Table)
+            .filter(|a| names.place_of(a.block).is_some_and(|p| p.len() == container + 1));
+        let row = table.and_then(|t| match chain.get(2)?.sub {
+            Sub::Cell(row, _) => Some(TableRow {
+                table: t.block,
+                row: usize::from(row),
+            }),
+            _ => None,
+        });
+        let in_cell = row.is_some()
+            && chain.len() == 4
+            && match (table.and_then(|t| names.place_of(t.block)), names.place_of(paragraph)) {
+                (Some(table), Some(own)) => right_in_cell(part, &table, &own),
+                _ => false,
+            };
+        Some(In { chain, row, in_cell })
+    }
+
+    /// Its top-level block (a paragraph or table: itself where it is one).
+    pub(crate) fn top(&self) -> Option<BlockKey> {
+        self.chain.first().map(|a| a.block)
+    }
+
+    /// Every table it is in, outermost first.
+    pub(crate) fn tables(&self) -> impl Iterator<Item = BlockKey> + '_ {
+        self.chain
+            .iter()
+            .filter(|a| a.sub == Sub::Whole && a.block.kind() == KeyKind::Table)
+            .map(|a| a.block)
+    }
+}
+
+/// Whether the paragraph at `own` (a place in `part`) is right in its cell's `w:tc`: its
+/// parent is the `w:tc`, `table` the place of the table it is a cell paragraph of.
+fn right_in_cell(part: &StoryPart, table: &[u32], own: &[u32]) -> bool {
+    let Some((_, parent)) = own.split_last() else {
+        return false;
+    };
+    parent.starts_with(table) && ooxml_word_model::docx::at_path(part.root(), parent).is_some_and(|e| is_w(e, "tc"))
+}
+
+/// The top-level block of the body's (a paragraph or table below the body and its
+/// block-level content controls and custom XML) the body block `key` is in, itself where it
+/// is one -- docx2svg's `block_keys(key)[0]`.
+pub(crate) fn top_of(names: &VersionNames, key: BlockKey) -> Option<BlockKey> {
+    if key.story() != StoryIx::BODY {
+        return None;
+    }
+    let part = names.part(StoryIx::BODY)?;
+    let place = names.place_of(key)?;
+    let container = part.ids.container();
+    let mut node = ooxml_word_model::docx::at_path(part.root(), container)?;
+    for depth in container.len()..place.len() {
+        node = node.children().get(*place.get(depth)? as usize)?.as_element()?;
+        if is_w(node, "p") || is_w(node, "tbl") {
+            return part.ids.key_at(StoryIx::BODY, place.get(..=depth)?);
+        }
     }
     None
 }
 
-/// Every table a body line's path is in, outermost first: its path's prefixes ending at a
-/// `w:tbl` step.
-pub(crate) fn table_paths(path: &str) -> impl Iterator<Item = &str> + '_ {
-    let mut end = 0;
-    path.split('/').filter_map(move |step| {
-        let at = end + step.len();
-        end = at + 1;
-        step.starts_with("w:tbl[").then(|| path.get(..at)).flatten()
-    })
-}
-
-/// Whether a page's block key is a top-level block's (`block_keys(key)[0] == key`): a
-/// paragraph or table below the body and its block-level content controls.
-pub(crate) fn block_keys_top(key: &str) -> bool {
-    top_block_path(key) == Some(key)
+/// Whether `anchor` is a top-level block of the body's ([`top_of`]), as docx2svg's
+/// `block_keys(key)[0] == key` reads a page's block.
+pub(crate) fn is_top(names: &VersionNames, anchor: Anchor) -> bool {
+    anchor.sub == Sub::Whole && anchor.block.kind() != KeyKind::Row && top_of(names, anchor.block) == Some(anchor.block)
 }
 
 /// A line of a body table's row, as docx-agent's `_ROW` reads it: the outermost table's
@@ -350,15 +416,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_line_names_its_top_level_block_and_row() {
-        assert_eq!(
-            top_block_path("w:body/w:tbl[2]/w:tr[3]/w:tc[1]/w:p[1]"),
-            Some("w:body/w:tbl[2]")
-        );
-        assert_eq!(
-            top_block_path("w:body/w:sdt[1]/w:sdtContent[1]/w:p[4]"),
-            Some("w:body/w:sdt[1]/w:sdtContent[1]/w:p[4]")
-        );
+    fn a_painted_line_names_its_row_and_cell() {
         assert_eq!(
             row_of("w:body/w:tbl[2]/w:tr[3]/w:tc[1]/w:p[1]"),
             Some(("w:body/w:tbl[2]", 2))
