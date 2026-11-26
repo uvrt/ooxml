@@ -42,6 +42,7 @@ pub mod geometry;
 pub mod heights;
 pub mod incremental;
 pub mod input;
+pub mod naming;
 pub mod notes;
 pub mod page_stories;
 pub mod paginate;

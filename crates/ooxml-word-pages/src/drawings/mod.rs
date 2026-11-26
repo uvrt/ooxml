@@ -25,7 +25,7 @@ use colours::{colour_map_slots, Said, WordColours};
 use ooxml_drawingml::source::FormatScheme;
 use ooxml_render::Painter;
 use ooxml_word_layout::geometry::text_box::TextBoxFrame;
-use ooxml_word_layout::paint::drawings::DrawingSlot;
+use ooxml_word_layout::paint::drawings::{DrawingSlot, SlotPaths};
 use ooxml_word_layout::paint::svg::{Drawings, PageDefs};
 use ooxml_word_layout::paint::TextEffects;
 use ooxml_word_model::model::Graphic;
@@ -143,8 +143,8 @@ impl WordDrawings {
         Some(main.to_owned())
     }
 
-    /// What drawing `slot`'s graphic makes, its resources added to `defs`.
-    fn drawn(&self, slot: &DrawingSlot, defs: &mut PageDefs) -> Drawn {
+    /// What drawing `slot`'s graphic, its paths `paths`, makes, its resources added to `defs`.
+    fn drawn(&self, slot: &DrawingSlot, paths: &SlotPaths, defs: &mut PageDefs) -> Drawn {
         let colours = self.colours();
         let measurer = ooxml_render::table_measurer(&ooxml_render::WORD);
         let mut painter = Painter::new(ooxml_render::WORD, &measurer);
@@ -175,11 +175,11 @@ impl WordDrawings {
             width: slot.width,
             height: slot.height,
         };
-        draw.graphic(slot.graphic.as_ref(), &at, &slot.path);
+        draw.graphic(slot.graphic.as_ref(), &at, &paths.path);
         let mut drawn = draw.drawn;
         for p in &mut drawn.primitives {
-            if let Some(path) = p.path_mut().filter(|p| **p != slot.path) {
-                *path = format!("{}/{path}", slot.paragraph_path);
+            if let Some(path) = p.path_mut().filter(|p| **p != paths.path) {
+                *path = format!("{}/{path}", paths.paragraph);
             }
         }
         defs.ids = painter.ids();
@@ -188,13 +188,13 @@ impl WordDrawings {
         drawn
     }
 
-    /// The text boxes of `slot`'s drawing, where the layout lays their text out: each
-    /// shape holding text in its box as the drawing is painted.
-    pub fn text_frames(&self, slot: &DrawingSlot) -> Vec<TextBoxFrame> {
+    /// The text boxes of `slot`'s drawing, its paths `paths`, where the layout lays their
+    /// text out: each shape holding text in its box as the drawing is painted.
+    pub fn text_frames(&self, slot: &DrawingSlot, paths: &SlotPaths) -> Vec<TextBoxFrame> {
         if !slot.graphic.as_deref().is_some_and(text_boxes::holds_text) {
             return Vec::new();
         }
-        let drawn = self.drawn(slot, &mut PageDefs::default());
+        let drawn = self.drawn(slot, paths, &mut PageDefs::default());
         let colours = self.colours();
         drawn
             .text_boxes
@@ -203,15 +203,15 @@ impl WordDrawings {
             .collect()
     }
 
-    /// `slot`'s drawing painted, its resources added to `defs`.
-    pub fn paint(&self, slot: &DrawingSlot, defs: &mut PageDefs) -> Painted {
+    /// `slot`'s drawing painted, its paths `paths`, its resources added to `defs`.
+    pub fn paint(&self, slot: &DrawingSlot, paths: &SlotPaths, defs: &mut PageDefs) -> Painted {
         let part = slot.story.as_ref().map(|(_, p)| p.to_string());
         let Drawn {
             primitives,
             said,
             faces,
             ..
-        } = self.drawn(slot, defs);
+        } = self.drawn(slot, paths, defs);
         let source = ImageSource {
             pictures: &self.pictures,
             part: part.as_deref(),
@@ -219,7 +219,7 @@ impl WordDrawings {
         let (lines, pictures) = write::lines(&primitives, &source);
         Painted {
             lines,
-            warnings: messages(&said, &slot.path),
+            warnings: messages(&said, &paths.path),
             pictures,
             approximated: said.iter().any(|c| c == TEXT_PATH_APPROXIMATE),
             faces,
@@ -231,15 +231,15 @@ impl WordDrawings {
 const TEXT_PATH_APPROXIMATE: &str = "drawing-approximate:text path";
 
 impl WordDrawings {
-    /// The faces `slot`'s text is drawn in (a text path's): `(face, bold, italic)`, for a
-    /// rasteriser to be given (docx2svg's `drawn_faces`).
-    pub fn faces(&self, slot: &DrawingSlot) -> Vec<(String, bool, bool)> {
+    /// The faces `slot`'s text is drawn in (a text path's), its paths `paths`: `(face,
+    /// bold, italic)`, for a rasteriser to be given (docx2svg's `drawn_faces`).
+    pub fn faces(&self, slot: &DrawingSlot, paths: &SlotPaths) -> Vec<(String, bool, bool)> {
         fn written(g: &Graphic) -> bool {
             matches!(&*g.kind, "chart" | "diagram") || g.children.iter().any(|c| written(c))
         }
         if slot.graphic.as_deref().is_some_and(written) {
             // A chart's or a diagram's text: its faces are what its renderer wrote.
-            return self.paint(slot, &mut PageDefs::default()).faces;
+            return self.paint(slot, paths, &mut PageDefs::default()).faces;
         }
         let Some(graphic) = slot.graphic.as_deref().filter(|g| &*g.kind == "textpath") else {
             return Vec::new();
@@ -280,8 +280,8 @@ fn messages(said: &Said, path: &str) -> Vec<(String, String)> {
 }
 
 impl Drawings for WordDrawings {
-    fn drawing(&self, slot: &DrawingSlot, defs: &mut PageDefs) -> Option<Vec<String>> {
-        Some(self.paint(slot, defs).lines)
+    fn drawing(&self, slot: &DrawingSlot, paths: &SlotPaths, defs: &mut PageDefs) -> Option<Vec<String>> {
+        Some(self.paint(slot, paths, defs).lines)
     }
 
     fn text_paint(

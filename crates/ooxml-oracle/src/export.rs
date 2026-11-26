@@ -9,6 +9,8 @@
 use ooxml_base::{DigestKey, Limits};
 use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
+use ooxml_word_model::docx::VersionNames;
+use ooxml_word_model::model::cell_path;
 use ooxml_word_model::model::{
     Anchor, AnchorPosition, Block, BodyValue, Graphic, InlineObject, Paragraph, Run, RunProps, SectionProps, Table,
 };
@@ -78,11 +80,11 @@ fn position(p: &AnchorPosition) -> J {
     json!({"relative": p.relative.as_deref(), "offset": p.offset, "align": p.align.as_deref()})
 }
 
-fn graphic(g: &Graphic) -> J {
+fn graphic(g: &Graphic, names: &VersionNames) -> J {
     let mut out = json!({
         "kind": &*g.kind, "offset": [g.offset.0, g.offset.1], "extent": [g.extent.0, g.extent.1],
         "rotation": g.rotation, "flip_h": g.flip_h, "flip_v": g.flip_v, "relationship": g.relationship.as_deref(),
-        "text": blocks(&g.text), "children": J::Array(g.children.iter().map(|c| graphic(c)).collect()),
+        "text": blocks(&g.text, names), "children": J::Array(g.children.iter().map(|c| graphic(c, names)).collect()),
         "child_offset": [g.child_offset.0, g.child_offset.1], "child_extent": [g.child_extent.0, g.child_extent.1],
         "unsupported": J::Array(g.unsupported.iter().map(|u| json!(&**u)).collect()),
         "uri": g.uri.as_deref(), "path": &*g.path,
@@ -108,19 +110,19 @@ fn graphic(g: &Graphic) -> J {
     out
 }
 
-fn anchor(a: &Anchor) -> J {
+fn anchor(a: &Anchor, names: &VersionNames) -> J {
     json!({
         "extent": [a.extent.0, a.extent.1], "effect": a.effect, "h": position(&a.h), "v": position(&a.v),
         "simple": a.simple.map(|(x, y)| json!([x, y])), "wrap": a.wrap.as_deref(), "wrap_text": a.wrap_text.as_deref(),
         "distance": a.distance, "behind": a.behind, "relative_height": a.relative_height,
         "allow_overlap": a.allow_overlap, "layout_in_cell": a.layout_in_cell, "locked": a.locked,
-        "graphic": a.graphic.as_deref().map(graphic), "identifier": a.identifier.as_deref(),
+        "graphic": a.graphic.as_deref().map(|g| graphic(g, names)), "identifier": a.identifier.as_deref(),
         "polygon": a.polygon.as_ref().map(|p| J::Array(p.iter().map(|(x, y)| json!([x, y])).collect())),
         "vml": a.vml,
     })
 }
 
-fn run_json(r: &Run) -> J {
+fn run_json(r: &Run, names: &VersionNames) -> J {
     json!({
         "text": &*r.text, "properties": run_props(r.properties.as_ref()),
         "breaks": J::Array(r.breaks.iter().map(|(i, m)| json!([i, &**m])).collect()),
@@ -128,9 +130,9 @@ fn run_json(r: &Run) -> J {
         "drawings": J::Array(r.drawings.iter().map(|d| match d {
             InlineObject::None => J::Null,
             InlineObject::Picture(rid) => json!({"picture": &**rid}),
-            InlineObject::Graphic(g) => graphic(g),
+            InlineObject::Graphic(g) => graphic(g, names),
         }).collect()),
-        "anchors": J::Array(r.anchors.iter().map(anchor).collect()),
+        "anchors": J::Array(r.anchors.iter().map(|a| anchor(a, names)).collect()),
         "field": r.field.as_ref().map(|f| json!({
             "instruction": &*f.instruction, "keyword": &*f.keyword,
             "cached": J::Array(f.cached.iter().map(|(t, p)| json!([&**t, run_props(p.as_ref())])).collect()),
@@ -160,10 +162,10 @@ pub fn section_props(s: &SectionProps) -> J {
     })
 }
 
-fn paragraph(p: &Paragraph) -> J {
+fn paragraph(p: &Paragraph, names: &VersionNames) -> J {
     json!({
-        "type": "p", "path": &*p.path, "para_id": p.para_id.as_deref(),
-        "runs": J::Array(p.runs.iter().map(run_json).collect()),
+        "type": "p", "path": p.path_in(names).unwrap_or_default(), "para_id": p.para_id.as_deref(),
+        "runs": J::Array(p.runs.iter().map(|r| run_json(r, names)).collect()),
         "properties": p.properties.as_ref().map(|x| json!({
             "style_id": x.style_id.as_deref(), "declared": props(&x.declared), "mark": run_props(x.mark.as_ref()),
         })),
@@ -175,30 +177,31 @@ fn paragraph(p: &Paragraph) -> J {
     })
 }
 
-fn table(t: &Table) -> J {
+fn table(t: &Table, names: &VersionNames) -> J {
     let l = &t.look;
+    let path = t.path_in(names).unwrap_or_default();
     json!({
-        "type": "tbl", "style_id": t.style_id.as_deref(), "path": &*t.path, "grid": &*t.grid,
+        "type": "tbl", "style_id": t.style_id.as_deref(), "path": &path, "grid": &*t.grid,
         "properties": props(&t.properties),
         "row_properties": J::Array(t.row_properties.iter().map(props).collect()),
         "cell_properties": J::Array(t.cell_properties.iter().map(|r| J::Array(r.iter().map(props).collect())).collect()),
         "look": {"firstRow": l.first_row, "lastRow": l.last_row, "firstColumn": l.first_column,
                  "lastColumn": l.last_column, "noHBand": l.no_h_band, "noVBand": l.no_v_band},
         "conditions": J::Array(t.conditions.iter().map(|r| J::Array(r.iter().map(|c| json!(c.iter().map(|x| &**x).collect::<Vec<_>>())).collect())).collect()),
-        "cell_paths": J::Array(t.cell_paths.iter().map(|r| json!(r.iter().map(|x| &**x).collect::<Vec<_>>())).collect()),
+        "cell_paths": J::Array(t.cell_places.iter().map(|r| json!(r.iter().map(|(row, cell)| cell_path(&cells_below(t, &path), *row, *cell)).collect::<Vec<_>>())).collect()),
         "joined": t.joined,
-        "rows": J::Array(t.rows.iter().map(|r| J::Array(r.iter().map(|c| blocks(c)).collect())).collect()),
+        "rows": J::Array(t.rows.iter().map(|r| J::Array(r.iter().map(|c| blocks(c, names)).collect())).collect()),
     })
 }
 
 /// A story's blocks.
-pub fn blocks(items: &[Block]) -> J {
+pub fn blocks(items: &[Block], names: &VersionNames) -> J {
     J::Array(
         items
             .iter()
             .map(|b| match b {
-                Block::Paragraph(p) => paragraph(p),
-                Block::Table(t) => table(t),
+                Block::Paragraph(p) => paragraph(p, names),
+                Block::Table(t) => table(t, names),
             })
             .collect(),
     )
@@ -211,7 +214,21 @@ fn edge(e: &Edge) -> J {
     json!([border, if e.1 { "right" } else { "left" }])
 }
 
-fn resolved_table(t: &ResolvedTable, path: &str) -> J {
+/// The path `table`'s cells are named below: the one it was read at where no index holds
+/// it, else its own (`path`).
+fn cells_below(table: &Table, path: &str) -> String {
+    table.unkeyed_cells.as_deref().unwrap_or(path).to_owned()
+}
+
+fn resolved_table(t: &ResolvedTable, table: &Table, names: &VersionNames) -> J {
+    let path = &*table.path_in(names).unwrap_or_default();
+    let below = cells_below(table, path);
+    let cell_path = |r: usize, c: usize| {
+        table.cell_places.get(r).and_then(|row| row.get(c)).map_or_else(
+            || format!("{path}/w:tr[{}]/w:tc[{}]", r + 1, c + 1),
+            |(row, cell)| cell_path(&below, *row, *cell),
+        )
+    };
     json!({
         "path": path, "properties": props(&t.properties), "indent_stated": t.indent_stated, "grid": t.grid,
         "mismatched": J::Array(t.mismatched.iter().map(|(r, n)| json!([r, n])).collect()),
@@ -219,7 +236,7 @@ fn resolved_table(t: &ResolvedTable, path: &str) -> J {
             "index": r.index, "properties": props(&r.properties), "grid_before": r.grid_before, "grid_after": r.grid_after,
             "cells": J::Array(r.cells.iter().map(|c| json!({
                 "row": c.row, "index": c.index, "column": c.column, "span": c.span, "properties": props(&c.properties),
-                "merge": c.merge.as_deref(), "path": &*c.path, "margins": c.margins,
+                "merge": c.merge.as_deref(), "path": cell_path(c.row, c.index), "margins": c.margins,
                 "borders": J::Array(c.borders.iter().map(|b| b.as_ref().map_or(J::Null, |b| json!([b.style.as_deref(), b.size, b.space, b.color.as_deref()]))).collect()),
                 "own": c.own, "left_edge": edge(&c.left_edge), "right_edge": edge(&c.right_edge),
             })).collect()),
@@ -256,14 +273,14 @@ fn walk(model: &mut Model, document: &WordDocument, block: &Block, paragraphs: &
         Block::Paragraph(p) => {
             let r = model.resolve_paragraph(document, p);
             paragraphs.push(json!({
-                "path": &*p.path, "paragraph": props(&r.paragraph), "mark": props(&r.mark),
+                "path": p.path_in(&document.names).unwrap_or_default(), "paragraph": props(&r.paragraph), "mark": props(&r.mark),
                 "runs": J::Array(r.runs.iter().map(|x| props(x)).collect()),
                 "formats": J::Array(r.runs.iter().map(|x| formats(document, x)).collect()),
                 "mark_formats": formats(document, &r.mark),
             }));
         }
         Block::Table(t) => {
-            tables.push(resolved_table(&model.resolve_table(document, t), &t.path));
+            tables.push(resolved_table(&model.resolve_table(document, t), t, &document.names));
             for cell in t.rows.iter().flat_map(|r| r.iter()) {
                 cell.iter().for_each(|b| walk(model, document, b, paragraphs, tables));
             }
@@ -288,7 +305,7 @@ pub fn document_json(model: &mut Model, d: &WordDocument) -> J {
         J::Object(o) => o,
         _ => Map::new(),
     };
-    out.insert("body".into(), blocks(&d.body));
+    out.insert("body".into(), blocks(&d.body, &d.names));
     out.insert("labels".into(), json!(d.body_labels()));
     let stories: Map<String, J> = d
         .stories

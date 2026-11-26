@@ -10,7 +10,6 @@ mod control_delete;
 mod copy_writers;
 mod cross_references;
 mod delta_differential;
-mod delta_reference;
 mod history;
 mod interleave;
 mod kept_facts;

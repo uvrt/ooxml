@@ -69,8 +69,7 @@ fn whole(v: i64) -> Px {
 fn rule(kind: &'static str, span: &Span, at: (i64, i64), size: (i64, i64)) -> Rule {
     Rule {
         kind,
-        path: span.path.clone(),
-        anchor: span.anchor,
+        name: span.name.clone(),
         x: whole(at.0),
         y: whole(at.1),
         width: whole(size.0),

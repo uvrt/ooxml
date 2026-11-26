@@ -49,8 +49,6 @@ pub struct ResolvedCell {
     pub properties: Props,
     /// `w:vMerge`.
     pub merge: Option<Text>,
-    /// Its path.
-    pub path: Text,
     /// Margins, twips, in [`SIDES`] order.
     pub margins: [i64; 4],
     /// Each side's border before neighbours are settled, in [`SIDES`] order.
@@ -516,12 +514,6 @@ fn resolve_row<T: Trace>(
         let (props, trace) = merged_traced::<T>(chain, Attribute::Cell, direct, &conditions, at, true);
         traces.push(trace);
         let span = int(&props, "gridSpan").filter(|s| *s != 0).unwrap_or(1).max(1);
-        let path = table
-            .cell_paths
-            .get(r)
-            .and_then(|row| row.get(c))
-            .cloned()
-            .unwrap_or_else(|| key(&format!("{}/w:tr[{}]/w:tc[{}]", table.path, r + 1, c + 1)));
         cells.push(Arc::new(ResolvedCell {
             row: r,
             index: c,
@@ -530,7 +522,6 @@ fn resolve_row<T: Trace>(
             merge: props.get("vMerge").and_then(Value::str).map(key),
             margins: cell_margins(&props, properties),
             properties: props,
-            path,
             borders: Default::default(),
             own: [false; 4],
             left_edge: (None, false),

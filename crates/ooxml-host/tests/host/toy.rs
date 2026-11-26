@@ -13,11 +13,12 @@ use ooxml_base::context::{FaceData, FaceRequest, Timestamp};
 use ooxml_base::{BaseError, CacheBudget, Cancel, Clock, Context, FontSource, PartStore};
 use ooxml_host::{CallAs, Host, HostSession, HostSettings, HostTools};
 use ooxml_opc::Package;
+use ooxml_session::numbers::NumberText;
 use ooxml_session::problems::{Problem, Severity, Validation};
 use ooxml_session::{
     AnyVersion, DocKind, Finished, Format, FormatDoc, FormatRun, NewDocument, OpenEnv, PackageDoc, PackageFormat,
-    PartChange, PartContent, PartUpdate, Registry, SessionConfig, SessionError, StoreClock, Stored, StoredDoc,
-    WithState,
+    PartChange, PartContent, PartUpdate, ReadTexts, Registry, SessionConfig, SessionError, StoreClock, Stored,
+    StoredDoc, ValueRead, WithState,
 };
 use ooxml_store::{Caller, Store, StoreConfig};
 use ooxml_tools::roles::{HostFacts, Needs, Role};
@@ -155,11 +156,35 @@ pub struct ToyDescribe {
 }
 
 /// The toy `check`'s arguments.
-#[derive(ToolArgs, Debug, Clone, PartialEq, Eq)]
+#[derive(ToolArgs, Debug, Clone, PartialEq)]
 #[tool(name = "check", description = "Check the deck.")]
 pub struct ToyCheck {
     /// Document id.
     pub doc: String,
+    /// What to check.
+    pub include: Option<Vec<String>>,
+    /// The parts to check.
+    pub slides: Option<Vec<String>>,
+    /// Values styled by a scale's steps or not.
+    pub scale: Option<ToyScale>,
+}
+
+/// One step of a toy scale.
+#[allow(missing_docs)]
+#[derive(ToolArgs, Debug, Clone, PartialEq)]
+pub struct ToyStep {
+    pub fill: String,
+    pub min: Option<f64>,
+    pub label: Option<String>,
+}
+
+/// A toy scale.
+#[allow(missing_docs)]
+#[derive(ToolArgs, Debug, Clone, PartialEq)]
+pub struct ToyScale {
+    pub steps: Vec<ToyStep>,
+    pub targets: Vec<String>,
+    pub name: Option<String>,
 }
 
 fn toy_save(args: &ToySave, version: &ToyVersion<'_>, _cancel: &dyn Cancel) -> Result<Done<Value>, ToolError> {
@@ -187,9 +212,9 @@ fn toy_describe(_args: &ToyDescribe, version: &ToyVersion<'_>, _cancel: &dyn Can
     Ok(done)
 }
 
-fn toy_check(_args: &ToyCheck, _version: &ToyVersion<'_>, _cancel: &dyn Cancel) -> Result<Done<Value>, ToolError> {
+fn toy_check(args: &ToyCheck, _version: &ToyVersion<'_>, _cancel: &dyn Cancel) -> Result<Done<Value>, ToolError> {
     let mut done = Done::new("Checked");
-    done.data = Some(json!({"ok": true, "timing": {"total": 0.0}}));
+    done.data = Some(json!({"ok": true, "include": args.include, "timing": {"total": 0.0}}));
     Ok(done)
 }
 
@@ -337,6 +362,14 @@ impl Format for ToyFormat {
             doc: self.open(package, env)?,
             numbers: Some((version, highest)),
         })
+    }
+
+    fn gives_number_texts(&self) -> bool {
+        true
+    }
+
+    fn gives_scale_values(&self) -> bool {
+        true
     }
 
     fn detect(&self, bytes: &[u8], name: &str) -> bool {
@@ -568,6 +601,82 @@ impl FormatDoc for ToyDoc {
         let mut checks = Map::new();
         checks.insert("parts".into(), Value::from(at.package().part_names().len()));
         Some(checks)
+    }
+
+    /// The text of each target's `toy/text-<target>.xml` part, styled with no step; a target
+    /// with no such part skipped.
+    fn scale_values(
+        &self,
+        at: &AnyVersion,
+        scale: &ooxml_session::scales::Scale,
+        _read: &ValueRead<'_>,
+    ) -> Option<Result<ooxml_session::ReadValues, ToolError>> {
+        let package = at.package();
+        let values = scale
+            .targets
+            .iter()
+            .map(|target| {
+                let bytes = package.read(&format!("toy/text-{target}.xml")).ok().flatten();
+                let mut value = ooxml_session::scales::ScaleValue {
+                    target: target.clone(),
+                    exact: true,
+                    ..Default::default()
+                };
+                match bytes {
+                    Some(bytes) => {
+                        let xml = String::from_utf8_lossy(&bytes).into_owned();
+                        value.text = xml.trim_start_matches("<t>").trim_end_matches("</t>").to_owned();
+                    }
+                    None => value.skip = Some(format!("no text {target}")),
+                }
+                value
+            })
+            .collect();
+        Some(Ok(ooxml_session::ReadValues {
+            values,
+            warnings: Vec::new(),
+        }))
+    }
+
+    /// The text of each `toy/text-<at>.xml` part (`<t>...</t>`), within the slides asked for;
+    /// none where the deck has a part `toy/no-texts.xml`.
+    fn number_texts(&self, at: &AnyVersion, read: &ValueRead<'_>) -> Option<Result<ReadTexts, ToolError>> {
+        let package = at.package();
+        if package.has_part("toy/no-texts.xml") {
+            return None;
+        }
+        let wanted: Option<Vec<String>> = read
+            .scope
+            .get("slides")
+            .and_then(Value::as_array)
+            .map(|s| s.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect());
+        let mut texts = Vec::new();
+        for name in package.part_names() {
+            let Some(at) = name.strip_prefix("toy/text-").and_then(|n| n.strip_suffix(".xml")) else {
+                continue;
+            };
+            if wanted.as_ref().is_some_and(|w| !w.iter().any(|s| s == at)) {
+                continue;
+            }
+            let bytes = package.read(&name).ok().flatten().unwrap_or_default();
+            let xml = String::from_utf8_lossy(&bytes);
+            let text = xml.trim_start_matches("<t>").trim_end_matches("</t>").to_owned();
+            let mut scope = Map::new();
+            scope.insert("slides".into(), json!([at]));
+            let mut place = Map::new();
+            place.insert("slide".into(), json!(at));
+            texts.push(NumberText {
+                at: at.to_owned(),
+                text,
+                written: Vec::new(),
+                scope,
+                place,
+            });
+        }
+        Some(Ok(ReadTexts {
+            texts,
+            warnings: Vec::new(),
+        }))
     }
 
     fn as_any(&self) -> &dyn Any {

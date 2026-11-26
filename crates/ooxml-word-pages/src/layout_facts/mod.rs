@@ -52,7 +52,7 @@ use ooxml_xml::Element;
 use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
-pub(crate) use tree::{cell_line, row_of, In};
+pub(crate) use tree::{body_table, In};
 
 pub use ranges::{room, BeyondFacts, Break, Extent, RangeLayout};
 pub use scope::{Range, Scope, ScopeError};

@@ -102,16 +102,16 @@ impl VersionNames {
         }
     }
 
-    /// The blocks the paragraph `paragraph` is in, outermost first, ending with it: each
-    /// table, row and cell between its story's block container (a note, in a notes part)
-    /// and it (a cell as its
-    /// table's [`Sub::Cell`]), wrappers passed through -- what a page draws something of
-    /// where it draws a line of the paragraph (`paths.block_keys`). `None` where the key is
-    /// not a paragraph's of this version, or where something other than a table, row,
-    /// cell or wrapper stands between (a text box's paragraph).
+    /// The blocks the paragraph or table `paragraph` is in, outermost first, ending with
+    /// it: each table, row and cell between its story's block container (a note, in a notes
+    /// part) and it (a cell as its table's [`Sub::Cell`]), wrappers passed through -- what a
+    /// page draws something of where it draws a line of the paragraph (`paths.block_keys`).
+    /// `None` where the key is not a paragraph's or table's of this version, or where
+    /// something other than a table, row, cell or wrapper stands between (a text box's
+    /// paragraph).
     #[must_use]
     pub fn blocks_of(&self, paragraph: BlockKey) -> Option<Vec<Anchor>> {
-        if paragraph.kind() != BlockKind::Paragraph {
+        if !matches!(paragraph.kind(), BlockKind::Paragraph | BlockKind::Table) {
             return None;
         }
         let story = paragraph.story();
@@ -136,6 +136,9 @@ impl VersionNames {
                 "tbl" => {
                     let key = ids.key_of(story, ids.at(here)?)?;
                     out.push(Anchor::whole(key));
+                    if depth + 1 == place.len() {
+                        return (key == paragraph).then_some(out);
+                    }
                     table = Some((key, node, depth + 1));
                 }
                 "tr" => {
@@ -228,7 +231,7 @@ impl VersionNames {
 /// The layout model's path of the block at `place` in `part`: the container child's step
 /// from the index, the steps below it counted in that child; a block outside the container
 /// (below the root, beside the body) by a walk from the root.
-fn block_path(part: &StoryPart, place: &[u32]) -> Option<String> {
+pub(crate) fn block_path(part: &StoryPart, place: &[u32]) -> Option<String> {
     let root = part.root();
     if let Some(path) = note_path(root, place) {
         return path;

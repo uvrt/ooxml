@@ -42,12 +42,14 @@ mod ids;
 mod memory;
 mod model;
 mod names;
+pub mod numbers;
 pub mod outputs;
 mod owners;
 mod panics;
 pub mod problems;
 mod refs;
 mod registry;
+pub mod scales;
 mod session;
 pub mod sources;
 mod stored;
@@ -62,7 +64,7 @@ pub use document::{package_has_part, PackageFormat};
 pub use error::SessionError;
 pub use format::{
     no_source, AnyVersion, BatchHold, Deferred, Finished, Format, FormatDoc, FormatRun, Holding, LockSpent,
-    NewDocument, OpenEnv, WithState,
+    NewDocument, OpenEnv, ReadTexts, ReadValues, ValueRead, WithState,
 };
 pub use group::GroupMark;
 pub use history::{Direction, NumberedStep, Numbers, Undone};

@@ -36,8 +36,6 @@ pub enum Waits {
     D3,
     /// `batch` and turns of several calls: Phase 3 D2.
     D2,
-    /// check's numbers and scales: Phase 3 G1.
-    G1,
     /// A host setting the replay does not make yet (limits, a toolbox's own settings).
     Settings,
 }
@@ -49,7 +47,6 @@ impl Waits {
         match self {
             Waits::D3 => "D3 (session tools)",
             Waits::D2 => "D2 (batch)",
-            Waits::G1 => "G1 (numbers, scales)",
             Waits::Settings => "settings",
         }
     }
@@ -309,24 +306,6 @@ fn described_output(output: &ooxml_session::outputs::Output) -> Value {
         "validate": output.validate, "parts": output_parts(&output.data)})
 }
 
-/// What a call of `tool` with `arguments` waits for, and whether its case's later events
-/// depend on it (it changes the session's state).
-fn waits(tool: &str, arguments: &Value) -> Option<(Waits, bool)> {
-    let bare = tool.rsplit('.').next().unwrap_or(tool);
-    if bare == "check" {
-        let include = arguments.get("include");
-        let numbers = match include {
-            Some(Value::Array(items)) => items.iter().any(|i| i == "numbers"),
-            Some(Value::String(one)) => one == "numbers",
-            _ => false,
-        };
-        if numbers || arguments.get("scale").is_some_and(|s| !s.is_null()) {
-            return Some((Waits::G1, false));
-        }
-    }
-    None
-}
-
 /// A dataset as `freeze_values.py` froze it: its id, columns, rows (values as the adapters
 /// hand them over), sources, keys, types and Markdown, of no document.
 fn frozen_dataset(given: &Value) -> Option<ooxml_session::datasets::DatasetEntry> {
@@ -339,7 +318,7 @@ fn frozen_dataset(given: &Value) -> Option<ooxml_session::datasets::DatasetEntry
 }
 
 /// The rows of a frozen dataset or resolver answer (`freeze_values._dataset`).
-fn frozen_rows(given: &Value) -> Option<ooxml_tools::datasets::Dataset> {
+pub(crate) fn frozen_rows(given: &Value) -> Option<ooxml_tools::datasets::Dataset> {
     use ooxml_tools::datasets::{Cache, Dataset, Markdown};
     use ooxml_tools::sources::Cell;
     let texts =
@@ -378,6 +357,11 @@ fn frozen_rows(given: &Value) -> Option<ooxml_tools::datasets::Dataset> {
         .collect();
     if !markdown.is_empty() {
         dataset = dataset.with_markdown(Markdown::Given(markdown)).ok()?;
+    }
+    if let Some(formats) = given.get("formats").and_then(Value::as_array) {
+        dataset = dataset
+            .with_formats(formats.iter().map(|f| f.as_str().map(str::to_owned)).collect())
+            .ok()?;
     }
     if let Some(cache) = given.get("cache").and_then(Value::as_object) {
         let counts: Vec<(&str, i64)> = cache
@@ -823,6 +807,12 @@ impl Replayer {
     /// with the frozen ones. A case the freezer skipped waits, with why.
     #[must_use]
     pub fn frozen(&self, case: &Value) -> Outcome {
+        self.frozen_in("frozen/values", case)
+    }
+
+    /// [`Replayer::frozen`] of a case of the frozen answers `stream` (the known differences'
+    /// stream it is matched as), the session's rules for numbers made where it froze them.
+    pub(crate) fn frozen_in(&self, stream: &str, case: &Value) -> Outcome {
         if case.get("skipped").is_some() {
             return Outcome::Waiting(Waits::Settings, false);
         }
@@ -838,6 +828,15 @@ impl Replayer {
         let Ok(session) = self.session_with(&head, formats) else {
             return Outcome::Waiting(Waits::Settings, false);
         };
+        if let Some(rules) = case
+            .get("numbers")
+            .filter(|r| r.as_object().is_some_and(|r| !r.is_empty()))
+        {
+            match ooxml_session::numbers::NumberRules::from_json(rules) {
+                Ok(rules) => session.set_number_rules(rules),
+                Err(_) => return Outcome::Waiting(Waits::Settings, false),
+            }
+        }
         if let Err(why) = self.open_others(&session, &others) {
             return Outcome::Different(vec!["others".into()], Value::Array(others), Value::from(why));
         }
@@ -866,7 +865,6 @@ impl Replayer {
         let Ok(result) = session.call(tool, arguments.clone(), &CallAs::default()) else {
             return Outcome::Waiting(Waits::Settings, false);
         };
-        let stream = "frozen/values";
         // (its test as the case a known difference names)
         let mut case = case.clone();
         let test = case.get("test").cloned();
@@ -1110,10 +1108,6 @@ impl Replayer {
     fn call(&self, stream: &str, session: &HostSession, event: &Value) -> (Outcome, bool) {
         let tool = event.get("tool").and_then(Value::as_str).unwrap_or_default();
         let arguments = event.get("arguments").cloned().unwrap_or(Value::Null);
-        let waiting = waits(tool, &arguments);
-        if let Some((waits, blocks)) = waiting.filter(|(w, _)| !matches!(w, Waits::G1)) {
-            return (Outcome::Waiting(waits, false), blocks);
-        }
         let roles = event
             .get("roles")
             .or_else(|| event.get("view").and_then(|v| v.get("roles")))
@@ -1139,9 +1133,6 @@ impl Replayer {
             ..CallAs::default()
         };
         match session.call(tool, arguments, &how) {
-            // (save_document and a check of numbers run for what they leave: their layout,
-            // the check seen; their answers wait)
-            Ok(_) if waiting.is_some() => (Outcome::Waiting(waiting.map_or(Waits::D3, |w| w.0), false), false),
             Ok(result) if event.get("event").and_then(Value::as_str) == Some("change") => {
                 let have = serde_json::json!({"ok": !result.is_error(), "changed_parts": result.app.changed_parts});
                 (self.compare(stream, event, "result", &have), false)
@@ -1187,7 +1178,7 @@ impl Replayer {
     }
 
     /// `have` against the event's recorded `field`, with the known differences admitted.
-    fn compare(&self, stream: &str, event: &Value, field: &str, have: &Value) -> Outcome {
+    pub(crate) fn compare(&self, stream: &str, event: &Value, field: &str, have: &Value) -> Outcome {
         let want = event.get(field).cloned().unwrap_or(Value::Null);
         let paths = differing(&want, have, field);
         if paths.is_empty() {

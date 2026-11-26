@@ -134,7 +134,11 @@ fn model_tables(
         .tables()
         .iter()
         .map(|table| {
-            let id = ids.iter().find(|(p, _)| **p == *table.path).map(|(_, id)| id.clone());
+            // a table read on its own is named by its path
+            let id = ids
+                .iter()
+                .find(|(p, _)| Some(&**p) == table.unkeyed.as_deref())
+                .map(|(_, id)| id.clone());
             (Arc::clone(table), id)
         })
         .collect()
@@ -249,7 +253,8 @@ fn sample(style: &str, look: Look) -> Table {
         rows: (0..SAMPLE_ROWS)
             .map(|_| (0..SAMPLE_COLUMNS).map(|_| Arc::clone(&empty)).collect())
             .collect(),
-        path: key("T"),
+        unkeyed: Some(key("T")),
+        unkeyed_cells: Some(key("T")),
         grid: Arc::from(vec![1440; SAMPLE_COLUMNS]),
         properties: Props::new(),
         row_properties: (0..SAMPLE_ROWS).map(|_| Props::new()).collect(),

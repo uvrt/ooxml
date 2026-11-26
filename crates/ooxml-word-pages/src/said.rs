@@ -28,6 +28,8 @@ pub struct Approximation {
     pub page: Option<usize>,
     /// The element it is of.
     pub path: Option<String>,
+    /// The body block it is of, where it is of a whole one: what a tool names it by.
+    pub key: Option<ooxml_word_model::ids::BlockKey>,
 }
 
 /// One placeholder drawn where the layout carried on past what it cannot lay out:
@@ -42,7 +44,7 @@ pub struct DrawnPlaceholder {
     pub page: Option<usize>,
     /// The element it stands for.
     pub path: Option<String>,
-    /// Its paragraph's key, beside its path (`None`: one no story's index holds).
+    /// Its paragraph's key (`None`: one no story's index holds).
     pub key: Option<ooxml_word_model::ids::BlockKey>,
 }
 
@@ -51,6 +53,22 @@ impl DrawnPlaceholder {
     #[must_use]
     pub fn reason(&self) -> &str {
         self.code.split_once(':').map_or(self.code.as_str(), |(_, r)| r)
+    }
+}
+
+/// What an approximation is of: its path, and its key where it is a whole block.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct At<'a> {
+    /// Its path.
+    pub(crate) path: &'a str,
+    /// Its key, where it is a whole block.
+    pub(crate) key: Option<ooxml_word_model::ids::BlockKey>,
+}
+
+impl<'a> At<'a> {
+    /// What is at `path`, no whole block (a drawing, a row by its table).
+    pub(crate) fn path(path: &'a str) -> At<'a> {
+        At { path, key: None }
     }
 }
 
@@ -94,19 +112,20 @@ impl Said {
         }
     }
 
-    /// Placeholder `placeholder` drawn on 1-based page `page` (`Layout.placeholder`): recorded
-    /// once, and warned of.
+    /// Placeholder `placeholder` drawn on 1-based page `page` (`Layout.placeholder`), named
+    /// through the version's names `names`: recorded once, and warned of.
     pub(crate) fn placeholder(
         &mut self,
+        names: &ooxml_word_model::docx::VersionNames,
         placeholder: &ooxml_word_layout::placeholder::Placeholder,
         page: Option<usize>,
     ) {
         let entry = DrawnPlaceholder {
             code: format!("layout-placeholder:{}", placeholder.reason),
-            message: placeholder.drawn_message(None),
+            message: placeholder.drawn_message(names, None),
             page,
-            path: Some(placeholder.path.to_string()),
-            key: placeholder.key,
+            path: Some(placeholder.path(names)),
+            key: placeholder.key(),
         };
         if !self.placeholders.contains(&entry) {
             self.placeholders.push(entry.clone());
@@ -114,12 +133,15 @@ impl Said {
         self.warn(entry.code, entry.message, page);
     }
 
-    pub(crate) fn approximate(&mut self, reason: &str, message: &str, page: Option<usize>, path: Option<&str>) {
+    /// An approximation, of the element at `at` (its path, and its key where it is a whole
+    /// block), recorded once and warned of.
+    pub(crate) fn approximate(&mut self, reason: &str, message: &str, page: Option<usize>, at: Option<At<'_>>) {
         let entry = Approximation {
             code: format!("layout-approximate:{reason}"),
             message: message.to_owned(),
             page,
-            path: path.map(str::to_owned),
+            path: at.map(|at| at.path.to_owned()),
+            key: at.and_then(|at| at.key),
         };
         if !self.approximations.contains(&entry) {
             self.approximations.push(entry.clone());

@@ -13,6 +13,7 @@
 use crate::{LaidVersion, PageEngine};
 use ooxml_base::{Digest, DigestKey, Digester};
 use ooxml_fonts::Face;
+use ooxml_word_layout::paint::names::PageNames;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -116,8 +117,9 @@ impl PageEngine {
                 }
             }
             if let Some(drawings) = &version.drawings {
+                let names = PageNames::of_page(&version.layout().document.names, &paint);
                 for slot in &paint.drawings {
-                    faces.extend(drawings.faces(slot));
+                    faces.extend(drawings.faces(slot, &names.slot_paths(slot)));
                 }
             }
         }

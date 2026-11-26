@@ -73,8 +73,6 @@ struct TableKey {
     cell_properties: Arc<[Arc<[Props]>]>,
     conditions: Arc<[crate::model::RowConditions]>,
     grid: Arc<[i64]>,
-    cell_paths: Arc<[Arc<[Text]>]>,
-    path: Text,
 }
 
 /// Resolved formats memoised by their inputs, valid for one set of parts (styles,
@@ -221,8 +219,6 @@ impl Resolver {
             cell_properties: Arc::clone(&t.cell_properties),
             conditions: Arc::clone(&t.conditions),
             grid: Arc::clone(&t.grid),
-            cell_paths: Arc::clone(&t.cell_paths),
-            path: t.path.clone(),
         };
         self.tables
             .get_or_compute(&key, || Kept(Arc::new(table::resolve_table(&sources(cx), t))))

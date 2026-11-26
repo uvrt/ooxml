@@ -94,6 +94,18 @@ pub trait Format: Send + Sync + 'static {
     /// blob finds its format so).
     fn detect(&self, bytes: &[u8], name: &str) -> bool;
 
+    /// Whether its documents give a check of numbers their texts
+    /// ([`FormatDoc::number_texts`]); a refusal of one that gives none names those that do.
+    fn gives_number_texts(&self) -> bool {
+        false
+    }
+
+    /// Whether its documents read a scale's values for a check ([`FormatDoc::scale_values`]);
+    /// a refusal of one that reads none names those that do.
+    fn gives_scale_values(&self) -> bool {
+        false
+    }
+
     /// A new document's bytes, as `new_document` makes one of this kind: blank, or from the
     /// template `made` gives, with its page size, properties and the call's date; the host
     /// opens them.
@@ -250,6 +262,33 @@ pub trait FormatDoc: Send + Sync + 'static {
         None
     }
 
+    /// The texts a check of numbers reads in it at `at`, within the check's scope `read`
+    /// gives (`number_texts`; design phase 3, section 3: what a document's check reads);
+    /// `None` where its format gives none (by default).
+    ///
+    /// # Errors
+    /// The format's refusal of the scope (a range it lacks, pages it cannot lay out).
+    fn number_texts(&self, at: &AnyVersion, read: &ValueRead<'_>) -> Option<Result<ReadTexts, ToolError>> {
+        let _ = (at, read);
+        None
+    }
+
+    /// The values `scale`'s targets hold in it at `at`, each with the step of the scale it is
+    /// styled with now, within the check's scope `read` gives (`scale_values`); `None` where
+    /// its format reads none (by default).
+    ///
+    /// # Errors
+    /// The format's refusal of the scope.
+    fn scale_values(
+        &self,
+        at: &AnyVersion,
+        scale: &crate::scales::Scale,
+        read: &ValueRead<'_>,
+    ) -> Option<Result<ReadValues, ToolError>> {
+        let _ = (at, scale, read);
+        None
+    }
+
     /// What `address` names in it at `at` that gives no rows (`"a table"`, for a refusal's
     /// words: `own_source`); `None` by default.
     fn own_source(&self, at: &AnyVersion, address: &str) -> Option<String> {
@@ -383,6 +422,39 @@ pub trait FormatDoc: Send + Sync + 'static {
 
     /// The format's own type, for its code to read (a downcast).
     fn as_any(&self) -> &dyn Any;
+}
+
+/// What a check of values reads of one document: the document as the call names it, the
+/// check's arguments that narrow it as given (`slides`, `pages`, `range`; a range's refs
+/// resolved), what the host gave the call (a layout) and the call's cancellation.
+pub struct ValueRead<'a> {
+    /// The document as the call names it.
+    pub named: &'a str,
+    /// The check's arguments that narrow it.
+    pub scope: &'a Map<String, Value>,
+    /// What the host gave the call.
+    pub context: &'a CallContext,
+    /// The call's cancellation.
+    pub cancel: &'a CallCancel<'a>,
+}
+
+/// The texts a document gives a check of numbers, and what the reader is warned of (a
+/// layout that failed, `slides` read as pages).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ReadTexts {
+    /// The texts, in document order.
+    pub texts: Vec<crate::numbers::NumberText>,
+    /// The warnings.
+    pub warnings: Vec<String>,
+}
+
+/// The values a document reads at a scale's targets, and what the reader is warned of.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ReadValues {
+    /// The values, in the targets' order.
+    pub values: Vec<crate::scales::ScaleValue>,
+    /// The warnings.
+    pub warnings: Vec<String>,
 }
 
 /// The refusal of an address a document's format takes no rows from (`sources.resolve`).

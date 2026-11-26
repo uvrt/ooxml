@@ -28,6 +28,7 @@ pub mod svg;
 mod tables;
 pub mod text_box;
 
+pub use crate::naming::ItemName;
 pub use body_keys::body_line_keys;
 pub use line_numbers::{LineNumber, LineNumbers};
 pub use page_stories::paint_stories;
@@ -39,11 +40,12 @@ use crate::faces::Faces;
 use crate::flow::{body_paragraphs, FlowItem};
 use crate::geometry::stories::{PageParts, StoryPage};
 use crate::geometry::{DrawnLine, LineSource, PageGeometry};
+use crate::naming::paragraph_item;
 use crate::paginate::LaidPage;
 use crate::paragraph::MeasuredParagraph;
 use crate::px::{CompactPx, Px};
 use crate::table::PlacedRow;
-use ooxml_word_model::ids::Anchor;
+use ooxml_word_model::ids::Sub;
 use ooxml_word_model::model::{Block, Paragraph};
 use ooxml_word_model::value::Text;
 use ooxml_word_model::{Model, WordDocument};
@@ -83,12 +85,10 @@ impl SpanKind {
 /// Consecutive glyphs of one run, in one format, on one line (`layout.Span`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Span {
-    /// The run's path (the paragraph's for a label).
-    pub path: String,
-    /// What it is drawn for, beside its path: its paragraph's run (by its place among the
-    /// projection's runs), label or the paragraph itself; `None` for a paragraph no story's
-    /// index holds (a text box's).
-    pub anchor: Option<Anchor>,
+    /// What it is drawn for: its paragraph's run (by its place among the projection's
+    /// runs), label or the paragraph itself; a path for a paragraph no story's index holds
+    /// (a text box's).
+    pub name: ItemName,
     /// Its characters.
     pub chars: Vec<char>,
     /// Each glyph's pen x, px from the page's left edge, kept compact ([`Span::x`] reads
@@ -156,11 +156,9 @@ pub struct Rule {
     /// What it is: `underline`, `strike`, `highlight`, `shading`, `paragraph-border`,
     /// `paragraph-shading`, `table-border`, `cell-shading`, `separator`.
     pub kind: &'static str,
-    /// The path of what it is drawn for.
-    pub path: String,
-    /// What it is drawn for, beside its path (`None`: what no story's index holds, a table's
-    /// cell, a section's columns).
-    pub anchor: Option<Anchor>,
+    /// What it is drawn for: a block, a table's cell, a section's columns; a path for what
+    /// no story's index holds.
+    pub name: ItemName,
     /// Its left edge, px.
     pub x: Px,
     /// Its top.
@@ -179,11 +177,8 @@ pub struct Rule {
 /// or SmartArt fills.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Drawn {
-    /// Its path (`.../w:r[2]` of an inline one).
-    pub path: String,
-    /// Its run (a picture bullet: its paragraph's label), beside its path (`None`: a text
-    /// box's, or a run with no path).
-    pub anchor: Option<Anchor>,
+    /// Its run (a picture bullet: its paragraph's label); a path for a text box's.
+    pub name: ItemName,
     /// The relationship of its picture part, where it is a picture.
     pub relationship: Option<Text>,
     /// The part the relationship is the part's own (a header's), `None` the document's.
@@ -215,10 +210,8 @@ impl Span {
 /// One line drawn, with its spans.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaintedLine {
-    /// Its paragraph's path.
-    pub path: Text,
-    /// Its paragraph's key, beside its path (`None`: a paragraph no story's index holds).
-    pub anchor: Option<Anchor>,
+    /// Its paragraph: its key, or a path for a paragraph no story's index holds.
+    pub name: ItemName,
     /// Its paragraph's runs, as projected: what its spans' anchors name a run by.
     pub runs: Arc<[ooxml_word_model::model::Run]>,
     /// Its paragraph's `w14:paraId`.
@@ -466,11 +459,9 @@ fn paragraph_rules(
     let ends_here = end.number + 1 == p.count();
     let (left, right) = paragraphs::text_edges(&pp, (first.left, first.left + width));
     let paragraph = set.paragraphs.get(p.block);
-    let path = paragraph.map(|q| q.path.to_string()).unwrap_or_default();
     let bx = paragraphs::ParagraphBox {
         pp: &pp,
-        path: &path,
-        anchor: paragraph.and_then(|q| q.key).map(Anchor::whole),
+        name: paragraph.map_or(ItemName::Path(Text::default()), |q| paragraph_item(q, Sub::Whole)),
         left,
         right,
         band: (first.band.0, end.band.1),
@@ -652,7 +643,7 @@ fn number_lines(
     let numbers = layout.line_numbers(model);
     for number in numbers.on(page) {
         let line = lines.iter_mut().find(|l| {
-            l.story.is_none() && l.path == number.path && l.number == number.line && l.baseline == number.baseline
+            l.story.is_none() && l.name == number.name && l.number == number.line && l.baseline == number.baseline
         });
         if let (Some(line), Some(span)) = (line, line_numbers::number_span(cx, layout, model, number, left)) {
             line.spans.insert(0, span);
@@ -763,7 +754,8 @@ pub fn paint_page(
         // docx2svg draws a marked box of a placeholder's extent, which Word does not: not
         // painted here.
         for (_, placeholder) in crate::placeholder::placeholders_on(&layout.flow.items, laid) {
-            out.unpainted.push(format!("a placeholder of {}", placeholder.path));
+            out.unpainted
+                .push(format!("a placeholder of {}", placeholder.path(&layout.document.names)));
         }
     }
     number_lines(layout, model, (page, frame.left), cx, &mut lines);

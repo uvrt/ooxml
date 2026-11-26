@@ -46,10 +46,11 @@ use crate::version::{LaidVersion, PageView};
 use ooxml_base::{Cancel, DigestKey, Limits, Locale};
 use ooxml_derive::{CacheBudget, Memo, Weigh};
 use ooxml_opc::Package;
+use ooxml_word_layout::paint::names::PageNames;
 use ooxml_word_layout::paint::svg::{page_svg, Drawings, Pictures, SvgContext};
 use ooxml_word_layout::paint::{paint_page, GlyphSize, PagePaint, PaintContext};
 use ooxml_word_layout::{DocumentLayout, WordLayout};
-use ooxml_word_model::ids::{VersionDelta, VersionRef};
+use ooxml_word_model::ids::{Anchor, VersionDelta, VersionRef};
 use ooxml_word_model::value::Text;
 use ooxml_word_model::Model;
 use ooxml_zip::Archive;
@@ -745,6 +746,17 @@ impl PageEngine {
                     .collect()
             })
             .unwrap_or_default();
+        let drawing_faces = {
+            let names = PageNames::of_page(&version.layout.document.names, &paint);
+            paint
+                .drawings
+                .iter()
+                .map(|slot| {
+                    let faces = |d: &crate::drawings::WordDrawings| d.faces(slot, &names.slot_paths(slot));
+                    version.drawings.as_ref().map(faces).unwrap_or_default()
+                })
+                .collect()
+        };
         let mut paint = Arc::unwrap_or_clone(paint);
         let mut text_box_lines: Vec<Vec<_>> = paint.drawings.iter().map(|_| Vec::new()).collect();
         for text_box in std::mem::take(&mut paint.text_boxes) {
@@ -759,11 +771,7 @@ impl PageEngine {
             lines: paint.lines,
             rules: paint.rules,
             pictures: paint.pictures,
-            drawing_faces: paint
-                .drawings
-                .iter()
-                .map(|slot| version.drawings.as_ref().map(|d| d.faces(slot)).unwrap_or_default())
-                .collect(),
+            drawing_faces,
             text_box_lines,
             drawings: paint.drawings,
             blocks,
@@ -773,7 +781,7 @@ impl PageEngine {
 
     /// The tool's ids of the paragraphs page `page` of `version` draws lines of, named
     /// through the version's names from the lines' anchors (each with the name its group is
-    /// written under: its path, asserted in debug builds): `(part, path, id)`, `part` a
+    /// written under, its path): `(part, path, id)`, `part` a
     /// header's or footer's story part (`None`: the body's, a note's). What a reader of the
     /// page's SVG tags its paragraph groups with; a line with no anchor (a text box's, a
     /// separator the layout makes) is left out. `None` past its last page, or where
@@ -782,19 +790,18 @@ impl PageEngine {
         let paint = self.paint(version, page)?;
         let names = &version.layout.document.names;
         let mut out: Vec<(Option<Text>, String, String)> = Vec::new();
+        let mut last: Option<(Option<Text>, Anchor)> = None;
         for line in &paint.lines {
-            let Some(anchor) = line.anchor else { continue };
+            let Some(anchor) = line.name.anchor() else { continue };
             let part = line.story.as_ref().map(|(_, part)| part.clone());
-            if out
-                .last()
-                .is_some_and(|(p, path, _)| *p == part && **path == *line.path)
-            {
+            let here = Some((part.clone(), anchor));
+            if last == here {
                 continue;
             }
+            last = here;
             let (Some(path), Some(id)) = (names.path(anchor), names.id(anchor.block)) else {
                 continue;
             };
-            debug_assert_eq!(path, &*line.path, "{anchor:?} is named as its path");
             out.push((part, path, id.to_string()));
         }
         Some(out)

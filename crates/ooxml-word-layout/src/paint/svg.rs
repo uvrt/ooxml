@@ -8,9 +8,10 @@
 //!
 //! Must not: lay out or paint anything (the paint has), or read a picture part.
 
-use super::drawings::{DrawingSlot, Layer};
-use super::names::{Namer, PageNames};
+use super::drawings::{DrawingSlot, Layer, SlotPaths};
+use super::names::PageNames;
 use super::text_box::TextBoxPaint;
+use super::ItemName;
 use super::{DrawingName, Drawn, FaceNames, GlyphSize, PagePaint, PaintedLine, Rule, Span, SpanKind, TextEffects};
 use crate::px::Px;
 use ooxml_base::Q;
@@ -52,8 +53,8 @@ pub struct PageDefs {
 /// its text boxes' lines -- each a line of markup, its resources added to `defs`, or `None`
 /// where it has no painter.
 pub trait Drawings {
-    /// The paint of the drawing in `slot`.
-    fn drawing(&self, slot: &DrawingSlot, defs: &mut PageDefs) -> Option<Vec<String>>;
+    /// The paint of the drawing in `slot`, its paths `paths` (named at the edge).
+    fn drawing(&self, slot: &DrawingSlot, paths: &SlotPaths, defs: &mut PageDefs) -> Option<Vec<String>>;
 
     /// The paint of glyphs drawn with Word 2010 text effects in `bounds` (`x`, `y`, width,
     /// height, px), their colour `colour` where the effects state no fill: its attributes
@@ -77,7 +78,7 @@ pub trait Drawings {
 pub struct NoDrawings;
 
 impl Drawings for NoDrawings {
-    fn drawing(&self, _slot: &DrawingSlot, _defs: &mut PageDefs) -> Option<Vec<String>> {
+    fn drawing(&self, _slot: &DrawingSlot, _paths: &SlotPaths, _defs: &mut PageDefs) -> Option<Vec<String>> {
         None
     }
 }
@@ -164,11 +165,11 @@ fn font(span: &Span, name: Option<DrawingName>) -> Vec<(&'static str, Value)> {
     out
 }
 
-fn text(span: &Span, cx: &SvgContext<'_>, defs: &mut PageDefs, names: &dyn Namer) -> Element {
+fn text(span: &Span, cx: &SvgContext<'_>, defs: &mut PageDefs, names: &PageNames<'_>) -> Element {
     let chars: String = span.chars.iter().collect();
     let attrs = font(span, cx.names.drawing_name(&span.face, span.bold, span.italic));
     let mut e = Element::new("text")
-        .attr("data-docx-path", Value::Text(names.written(span.anchor, &span.path)))
+        .attr("data-docx-path", Value::Text(names.written(&span.name)))
         .attr("x", Value::Numbers(span.pens().map(|x| number(x.value())).collect()))
         .attr("y", Value::Int(span.y));
     let mut attrs = attrs.into_iter();
@@ -215,14 +216,14 @@ fn effects_paint(span: &Span, effects: &TextEffects, cx: &SvgContext<'_>, defs: 
     cx.drawings.text_paint(effects, bounds, span.color.as_deref(), defs)
 }
 
-fn rect(rule: &Rule, names: &dyn Namer) -> Element {
+fn rect(rule: &Rule, names: &PageNames<'_>) -> Element {
     Element::new("rect")
         .attr("x", px(rule.x))
         .attr("y", px(rule.y))
         .attr("width", px(rule.width))
         .attr("height", px(rule.height))
         .attr("fill", colour(rule.color.as_deref()))
-        .attr("data-docx-path", Value::Text(names.written(rule.anchor, &rule.path)))
+        .attr("data-docx-path", Value::Text(names.written(&rule.name)))
         .attr("data-docx-kind", Value::Plain(rule.kind.into()))
 }
 
@@ -238,15 +239,15 @@ fn under_rank(kind: &str) -> Option<u8> {
 }
 
 /// Lines of text, grouped by paragraph.
-fn lines(painted: &[PaintedLine], cx: &SvgContext<'_>, defs: &mut PageDefs, names: &dyn Namer) -> Vec<Element> {
+fn lines(painted: &[PaintedLine], cx: &SvgContext<'_>, defs: &mut PageDefs, names: &PageNames<'_>) -> Vec<Element> {
     let mut out: Vec<Element> = Vec::new();
-    let mut current: Option<(&str, Option<&(&'static str, ooxml_word_model::value::Text)>)> = None;
+    let mut current: Option<(&ItemName, Option<&(&'static str, ooxml_word_model::value::Text)>)> = None;
     for line in painted {
-        let key = (&*line.path, line.story.as_ref());
+        let key = (&line.name, line.story.as_ref());
         if current != Some(key) {
             let mut group = Element::new("g")
                 .paired()
-                .attr("data-docx-path", Value::Text(names.written(line.anchor, &line.path)));
+                .attr("data-docx-path", Value::Text(names.written(&line.name)));
             if let Some(id) = line.paragraph_id.as_deref().filter(|i| !i.is_empty()) {
                 group = group.attr("data-docx-id", Value::Text(id.to_owned()));
             }
@@ -276,11 +277,11 @@ fn lines(painted: &[PaintedLine], cx: &SvgContext<'_>, defs: &mut PageDefs, name
 }
 
 /// A stand-in box of a drawing's extent.
-fn stand_in(d: &Drawn, what: &str, names: &dyn Namer) -> Element {
+fn stand_in(d: &Drawn, what: &str, names: &PageNames<'_>) -> Element {
     Element::new("g")
         .inline()
         .attr("data-docx-unsupported", Value::Plain(what.into()))
-        .attr("data-docx-path", Value::Text(names.written(d.anchor, &d.path)))
+        .attr("data-docx-path", Value::Text(names.written(&d.name)))
         .with_child(
             Element::new("rect")
                 .attr("x", px(d.x))
@@ -297,7 +298,7 @@ fn stand_in(d: &Drawn, what: &str, names: &dyn Namer) -> Element {
 const IMAGE_TYPES: [&str; 4] = ["image/png", "image/jpeg", "image/gif", "image/svg+xml"];
 
 /// A picture in its box, or a stand-in box where it cannot be carried.
-fn picture(d: &Drawn, cx: &SvgContext<'_>, names: &dyn Namer) -> Element {
+fn picture(d: &Drawn, cx: &SvgContext<'_>, names: &PageNames<'_>) -> Element {
     let found = d
         .relationship
         .as_deref()
@@ -312,7 +313,7 @@ fn picture(d: &Drawn, cx: &SvgContext<'_>, names: &dyn Namer) -> Element {
         return stand_in(d, what, names);
     };
     Element::new("image")
-        .attr("data-docx-path", Value::Text(names.written(d.anchor, &d.path)))
+        .attr("data-docx-path", Value::Text(names.written(&d.name)))
         .attr("x", px(d.x))
         .attr("y", px(d.y))
         .attr("width", px(d.width))
@@ -354,8 +355,7 @@ pub fn page_element(paint: &PagePaint, cx: &SvgContext<'_>) -> Element {
             .attr("height", Value::Int(frame.height_px))
             .attr("fill", Value::Plain("#FFFFFF".into())),
     );
-    let text_lines = paint.text_boxes.iter().flat_map(|t| t.lines.iter());
-    let names = PageNames::new(cx.version, paint.lines.iter().chain(text_lines));
+    let names = PageNames::of_page(cx.version, paint);
     let names = &names;
     // Painted in the order they were placed, which is the order their resources' ids are
     // minted in; written by layer.
@@ -418,13 +418,12 @@ fn painted_slots<'p>(
         .map(|(k, slot)| {
             // A text box's inline drawings are painted after its own (docx2svg draws them as
             // it lays the box out), their resources' ids minted in that order.
-            let drawn = cx.drawings.drawing(&names.named_slot(slot), defs);
+            let drawn = cx.drawings.drawing(slot, &names.slot_paths(slot), defs);
             let text: Vec<&TextBoxPaint> = paint.text_boxes.iter().filter(|t| t.slot == k).collect();
-            let boxed = names.boxed(slot);
             let inner = text
                 .iter()
                 .flat_map(|t| t.drawings.iter())
-                .map(|inner| cx.drawings.drawing(&boxed.named_slot(inner), defs))
+                .map(|inner| cx.drawings.drawing(inner, &names.slot_paths(inner), defs))
                 .collect();
             Painted {
                 slot,
@@ -437,14 +436,14 @@ fn painted_slots<'p>(
 }
 
 /// The rules drawn under the text, in their kinds' order (`_rules`).
-fn under_rules(rules: &[Rule], names: &dyn Namer) -> Vec<Element> {
+fn under_rules(rules: &[Rule], names: &PageNames<'_>) -> Vec<Element> {
     let mut under: Vec<&Rule> = rules.iter().filter(|r| under_rank(r.kind).is_some()).collect();
     under.sort_by_key(|r| under_rank(r.kind));
     under.into_iter().map(|r| rect(r, names)).collect()
 }
 
 /// The rules drawn over the text, in the order made.
-fn over_rules(rules: &[Rule], names: &dyn Namer) -> Vec<Element> {
+fn over_rules(rules: &[Rule], names: &PageNames<'_>) -> Vec<Element> {
     rules
         .iter()
         .filter(|r| under_rank(r.kind).is_none())
@@ -480,20 +479,17 @@ fn floats(slots: &[&Painted<'_>], cx: &SvgContext<'_>, defs: &mut PageDefs, name
                 .attr("data-docx-part", Value::Text(part.to_string()));
         }
         g.children = paint.iter().cloned().map(Element::raw).collect();
-        // a text box's items are named below its drawing's name
-        let boxed = names.boxed(slot);
-        let boxed: &dyn Namer = &boxed;
         for text in &painted.text {
-            g.children.extend(text.pictures.iter().map(|d| picture(d, cx, boxed)));
+            g.children.extend(text.pictures.iter().map(|d| picture(d, cx, names)));
         }
         for inner in painted.inner.iter().flatten() {
             g.children.extend(inner.iter().cloned().map(Element::raw));
         }
         let rules: Vec<Rule> = painted.text.iter().flat_map(|t| t.rules.iter().cloned()).collect();
         let text_lines: Vec<PaintedLine> = painted.text.iter().flat_map(|t| t.lines.iter().cloned()).collect();
-        g.children.extend(under_rules(&rules, boxed));
-        g.children.extend(lines(&text_lines, cx, defs, boxed));
-        g.children.extend(over_rules(&rules, boxed));
+        g.children.extend(under_rules(&rules, names));
+        g.children.extend(lines(&text_lines, cx, defs, names));
+        g.children.extend(over_rules(&rules, names));
         out.push(g);
     }
     out

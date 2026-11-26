@@ -13,7 +13,7 @@
 //! through ([`SessionTools`]) and the tools themselves ([`HostTools`]); the documents as the
 //! application opens, saves, undoes and closes them ([`Opening`], [`Saved`]); and what the
 //! host adds to a format tool's reply (`save_document`'s output behind the save gate,
-//! `check`'s validation, `describe`'s problems).
+//! `check`'s validation, `describe`'s problems) and does around one (`check`'s numbers).
 //!
 //! Must not: know a format (each comes as an [`ooxml_session::Format`]), hand a handler a
 //! document's head (the format runs it on the version the call reads), hold the stores'
@@ -22,6 +22,7 @@
 
 mod batch;
 mod catalogue;
+mod check_values;
 mod documents;
 pub mod hints;
 pub mod images;
@@ -35,6 +36,7 @@ mod values;
 mod wrap;
 
 pub use catalogue::{Catalogue, Entry, Own};
+pub use check_values::KeptIndex;
 pub use documents::{DocumentLimits, Held, OpenRefused, Opening, Saved};
 pub use own::{Batch, CloseDocument, NewDocument, NewKind, NotYet, OpenDocument, OwnCall, ReadBlob, SessionTools};
 pub use pipeline::{caller_key, NotRun};

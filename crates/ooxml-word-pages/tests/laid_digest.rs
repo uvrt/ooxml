@@ -18,9 +18,11 @@
 
 use ooxml_derive::CacheBudget;
 use ooxml_fonts::{Folder, Location, WordFontOptions};
-use ooxml_word_layout::paint::drawings::DrawingSlot;
+use ooxml_word_layout::paint::drawings::{DrawingSlot, SlotPaths};
+use ooxml_word_layout::paint::names::PageNames;
 use ooxml_word_layout::paint::text_box::TextBoxPaint;
 use ooxml_word_layout::paint::{Drawn, PagePaint, PaintedLine, Rule, Span};
+use ooxml_word_model::docx::VersionNames;
 use ooxml_word_model::model::Graphic;
 use ooxml_word_pages::{DiskFonts, EngineBudgets, EngineOptions, FontSetup, PageEngine};
 use std::fmt::Write as _;
@@ -167,9 +169,9 @@ fn word(name: Option<&str>) -> String {
     }
 }
 
-fn span(out: &mut String, s: &Span) {
+fn span(out: &mut String, n: &PageNames<'_>, s: &Span) {
+    let path = &n.written(&s.name);
     let Span {
-        path,
         chars,
         xs,
         y,
@@ -197,9 +199,9 @@ fn span(out: &mut String, s: &Span) {
     let _ = writeln!(out, "  span {} {}", word(Some(path)), digest(&fields));
 }
 
-fn line(out: &mut String, l: &PaintedLine) {
+fn line(out: &mut String, n: &PageNames<'_>, l: &PaintedLine) {
+    let path = &n.written(&l.name);
     let PaintedLine {
-        path,
         paragraph_id,
         number,
         baseline,
@@ -220,14 +222,14 @@ fn line(out: &mut String, l: &PaintedLine) {
         digest(&fields)
     );
     for s in spans {
-        span(out, s);
+        span(out, n, s);
     }
 }
 
-fn rule(out: &mut String, r: &Rule) {
+fn rule(out: &mut String, n: &PageNames<'_>, r: &Rule) {
+    let path = &n.written(&r.name);
     let Rule {
         kind,
-        path,
         x,
         y,
         width,
@@ -240,9 +242,9 @@ fn rule(out: &mut String, r: &Rule) {
     let _ = writeln!(out, " rule {kind} {} {}", word(Some(path)), digest(&fields));
 }
 
-fn picture(out: &mut String, d: &Drawn) {
+fn picture(out: &mut String, n: &PageNames<'_>, d: &Drawn) {
+    let path = &n.written(&d.name);
     let Drawn {
-        path,
         relationship,
         part,
         x,
@@ -287,10 +289,12 @@ fn graphic(g: &Graphic) -> String {
     )
 }
 
-fn slot(out: &mut String, indent: &str, s: &DrawingSlot) {
-    let DrawingSlot {
+fn slot(out: &mut String, n: &PageNames<'_>, indent: &str, s: &DrawingSlot) {
+    let SlotPaths {
         path,
-        paragraph_path,
+        paragraph: paragraph_path,
+    } = n.slot_paths(s);
+    let DrawingSlot {
         run,
         index,
         inline,
@@ -312,28 +316,28 @@ fn slot(out: &mut String, indent: &str, s: &DrawingSlot) {
     let _ = writeln!(
         out,
         "{indent}drawing {} {} {}",
-        word(Some(path)),
-        word(Some(paragraph_path)),
+        word(Some(&path)),
+        word(Some(&paragraph_path)),
         digest(&fields)
     );
 }
 
-fn text_box(out: &mut String, t: &TextBoxPaint) {
+fn text_box(out: &mut String, n: &PageNames<'_>, t: &TextBoxPaint) {
     let _ = writeln!(out, " text-box {}", t.slot);
     for l in &t.lines {
         out.push(' ');
-        line(out, l);
+        line(out, n, l);
     }
     for r in &t.rules {
         out.push(' ');
-        rule(out, r);
+        rule(out, n, r);
     }
     for d in &t.pictures {
         out.push(' ');
-        picture(out, d);
+        picture(out, n, d);
     }
     for s in &t.drawings {
-        slot(out, "  ", s);
+        slot(out, n, "  ", s);
     }
     for u in &t.unpainted {
         let _ = writeln!(out, "  unpainted {}", word(Some(u)));
@@ -341,7 +345,8 @@ fn text_box(out: &mut String, t: &TextBoxPaint) {
 }
 
 /// Page `k`'s record: its frame and every box, then its SVG.
-fn page(out: &mut String, k: usize, paint: &PagePaint, svg: &str) {
+fn page(out: &mut String, k: usize, (paint, names): (&PagePaint, &VersionNames), svg: &str) {
+    let n = &PageNames::of_page(names, paint);
     let g = &paint.geometry;
     let drawn: Vec<String> = g
         .lines
@@ -356,32 +361,36 @@ fn page(out: &mut String, k: usize, paint: &PagePaint, svg: &str) {
     let frame = format!("{}|{:?}|{:?}|{drawn:?}", g.page, g.info, g.frame);
     let _ = writeln!(out, "page {} {} svg {}", k + 1, hex(&frame, 8), hex(svg, 8));
     for l in &paint.lines {
-        LINES.add(l.anchor.is_some());
-        MADE.add(l.anchor.is_none() && made_separator(&l.path));
+        LINES.add(l.name.anchor().is_some());
+        MADE.add(l.name.path().is_some_and(made_separator));
         for s in &l.spans {
-            SPANS.add(s.anchor.is_some());
+            SPANS.add(s.name.anchor().is_some());
         }
-        line(out, l);
+        line(out, n, l);
     }
     for r in &paint.rules {
-        RULES.add(r.anchor.is_some());
-        MADE.add(r.anchor.is_none() && made_separator(r.path.split("/w:r[").next().unwrap_or_default()));
-        rule(out, r);
+        RULES.add(r.name.anchor().is_some());
+        let made = r
+            .name
+            .path()
+            .is_some_and(|p| made_separator(p.split("/w:r[").next().unwrap_or_default()));
+        MADE.add(made);
+        rule(out, n, r);
     }
     for t in &paint.text_boxes {
-        let anchored = paint.drawings.get(t.slot).is_some_and(|d| d.anchor.is_some());
+        let anchored = paint.drawings.get(t.slot).is_some_and(|d| d.name.anchor().is_some());
         for _ in &t.lines {
             BOXED.add(anchored);
         }
     }
     for d in &paint.pictures {
-        picture(out, d);
+        picture(out, n, d);
     }
     for s in &paint.drawings {
-        slot(out, " ", s);
+        slot(out, n, " ", s);
     }
     for t in &paint.text_boxes {
-        text_box(out, t);
+        text_box(out, n, t);
     }
     for u in &paint.unpainted {
         let _ = writeln!(out, " unpainted {}", word(Some(u)));
@@ -429,13 +438,15 @@ fn document(name: &str, file: &Path) -> (String, usize) {
             for k in 0..count {
                 let paint = engine.paint(&version, k).unwrap();
                 let (svg, _) = engine.page_svg(&version, k).unwrap();
-                page(&mut out, k, &paint, &svg);
+                let names = &version.layout().document.names;
+                page(&mut out, k, (&paint, names), &svg);
                 // the facts name each page's blocks by key, as its paint's paths say; not
                 // recorded: the golden is the paint's
                 if let Some(facts) = version.page_facts(k) {
                     let mut said: Vec<String> = Vec::new();
+                    let n = PageNames::of_page(names, &paint);
                     for line in paint.lines.iter().filter(|l| l.story.is_none()) {
-                        for block in block_keys(&line.path) {
+                        for block in block_keys(&n.written(&line.name)) {
                             if !said.contains(&block) {
                                 said.push(block);
                             }

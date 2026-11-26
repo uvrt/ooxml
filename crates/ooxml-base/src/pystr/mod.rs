@@ -49,6 +49,18 @@ pub fn is_decimal(c: char) -> bool {
     within(DECIMAL, c)
 }
 
+/// The value of a decimal digit as Python's `int` and `Decimal` read it (`unicodedata.decimal`),
+/// any script's; `None` for a character that is no decimal digit. (Each run of decimal digits
+/// in the table starts at a zero and spans whole tens.)
+#[must_use]
+pub fn decimal_value(c: char) -> Option<u32> {
+    if c.is_ascii() {
+        return c.to_digit(10);
+    }
+    let run = DECIMAL.iter().find(|(low, high)| (*low..=*high).contains(&c))?;
+    Some((u32::from(c) - u32::from(run.0)) % 10)
+}
+
 /// Python's `str.isdigit` for one character.
 #[must_use]
 pub fn is_digit(c: char) -> bool {
@@ -109,6 +121,15 @@ mod tests {
             assert!(c.is_numeric() && is_numeric(c), "{c:?} is numeric");
             assert!(!is_digit(c), "{c:?} is no digit in Python");
         }
+    }
+
+    #[test]
+    fn a_decimal_digit_s_value_is_python_s() {
+        for (c, value) in [('7', 7), ('٣', 3), ('۵', 5), ('０', 0), ('𝟗', 9), ('𝟎', 0)] {
+            assert_eq!(decimal_value(c), Some(value), "{c:?}");
+        }
+        assert_eq!(decimal_value('²'), None);
+        assert_eq!(decimal_value('a'), None);
     }
 
     #[test]

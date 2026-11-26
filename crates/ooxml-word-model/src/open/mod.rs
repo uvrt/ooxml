@@ -16,13 +16,13 @@ use crate::error::WordError;
 use crate::labels::BlockItems;
 use crate::model::{Block, Paragraph, Story, Table};
 use crate::numbering::{Numbering, PictureBullet};
-use crate::read::{sections, BodyElement, Fields, Reader, Steps};
+use crate::read::{sections, At, BodyElement, Fields, KeyOf, Reader, Steps};
 use crate::resolve::{ResolvedTable, Resolver};
 use crate::settings::Settings;
 use crate::styles::StyleSheet;
 use crate::theme::{colour_mapping, colour_scheme, font_scheme, ThemeColours};
 use crate::value::{text, Props, Text};
-use crate::xmlread::{elements, local};
+use crate::xmlread::local;
 use ooxml_base::{Digest, DigestKey, Digester};
 use ooxml_derive::{CacheBudget, Memo, MemoStats, MonoidTree, Weigh};
 use ooxml_opc::{Package, Relationships};
@@ -156,6 +156,11 @@ pub struct Model {
     bodies: ElementDigests,
     context: Option<(Digest, Context)>,
     elements: Memo<Digest, Kept<BodyElement>>,
+    /// The last version's top-level body elements' blocks, by their ordinal among the
+    /// body's block elements: what a reading whose keys name places (an unstamped part's) is
+    /// shared with where it reads the same, keys included -- a candidate by place, taken
+    /// only where equal (never a memo key, ADR-008).
+    read_before: Vec<Arc<[Block]>>,
     stories: Memo<Digest, Kept<StoryRead>>,
     notes: Memo<Digest, Kept<Notes>>,
     resolver: Resolver,
@@ -240,6 +245,7 @@ impl Model {
             bodies: ElementDigests::default(),
             context: None,
             elements: Memo::new(Arc::clone(&budget)),
+            read_before: Vec::new(),
             stories: Memo::new(Arc::clone(&budget)),
             notes: Memo::new(Arc::clone(&budget)),
             resolver: Resolver::new(&budget),
@@ -324,10 +330,10 @@ impl Model {
     }
 }
 
-/// The key of a top-level body element's reading: its content, the fields open at it,
-/// the theme's colours, and its place unless it is a paragraph (a table's cells' paths
-/// start with its own).
-fn element_key(key: DigestKey, colours: Digest, content: Digest, fields: &Fields, place: Option<&str>) -> Digest {
+/// The key of a top-level body element's reading: its content, the fields open at it and
+/// the theme's colours -- never its place (a reading names its blocks by key; one whose keys
+/// name places is read again where it is taken, [`keys::Keyer::reusable`]).
+fn element_key(key: DigestKey, colours: Digest, content: Digest, fields: &Fields) -> Digest {
     let mut d = Digester::new(key);
     d.field(&colours.0);
     d.field(&content.0);
@@ -339,31 +345,7 @@ fn element_key(key: DigestKey, colours: Digest, content: Digest, fields: &Fields
         d.field(open.keyword.as_bytes());
     }
     d.update(b"|");
-    if let Some(place) = place {
-        d.field(place.as_bytes());
-    }
     d.finish()
-}
-
-/// Whether two lists hold the same blocks (the same `Arc`s).
-fn same_blocks(a: &[Block], b: &[Block]) -> bool {
-    a.len() == b.len()
-        && a.iter().zip(b).all(|(x, y)| match (x, y) {
-            (Block::Paragraph(p), Block::Paragraph(q)) => Arc::ptr_eq(p, q),
-            (Block::Table(t), Block::Table(u)) => Arc::ptr_eq(t, u),
-            _ => false,
-        })
-}
-
-/// A paragraph taken from the memo, at its new place.
-fn moved(block: &Block, here: &str) -> Block {
-    match block {
-        Block::Paragraph(p) if *p.path != *here => Block::Paragraph(Arc::new(Paragraph {
-            path: text(here),
-            ..(**p).clone()
-        })),
-        other => other.clone(),
-    }
 }
 
 impl Model {
@@ -376,25 +358,30 @@ impl Model {
     ) -> (Vec<Block>, Vec<Text>, Option<Arc<Element>>) {
         let reader = Reader::new(&cx.colours);
         let root = p.document.root();
-        let Some(body) = elements(root).find(|e| local(e) == "body").cloned() else {
+        let found = root.children().iter().enumerate().find_map(|(k, n)| {
+            n.as_element()
+                .filter(|e| local(e) == "body")
+                .map(|e| (k, Arc::clone(e)))
+        });
+        let Some((at_body, body)) = found else {
             warnings.push(text("document-no-body"));
             return (Vec::new(), Vec::new(), None);
         };
         let named = self.names.part(&p.main, "body", &p.document);
         let keyer = named.as_ref().map(|(ix, part)| keys::Keyer::new(*ix, part));
-        let keyed = |blocks: &[Block], fresh: bool, out: &mut Vec<Block>| match keyer
-            .as_ref()
-            .and_then(|k| k.keyed(blocks, fresh))
-        {
-            Some(keyed) => out.extend(keyed),
-            None => out.extend(blocks.iter().cloned()),
+        // the body's blocks keyed from its index where it has one, else named by their paths
+        let at = match &keyer {
+            Some(keyer) => At::Keyed(keyer, vec![u32::try_from(at_body).unwrap_or(u32::MAX)]),
+            None => At::Path(text("w:body")),
         };
         let mut fields = Fields::new(true, true);
         let mut steps = Steps::new("w:body");
         let mut out = Vec::new();
         let (mut count, mut read) = (0, 0);
-        for node in elements(&body) {
-            let here = steps.step_str(node);
+        let mut read_now: Vec<Arc<[Block]>> = Vec::new();
+        for (k, node) in body.children().iter().enumerate() {
+            let Some(node) = node.as_element() else { continue };
+            let here = at.child(k, node, &mut steps);
             let name = local(node);
             if !matches!(name, "p" | "tbl" | "sdt" | "customXml") {
                 let known = matches!(name, "sectPr") || MARKERS.contains(&name);
@@ -406,48 +393,39 @@ impl Model {
             }
             count += 1;
             let content = self.bodies.of(self.key, node);
-            let paragraph = name == "p";
-            // A paragraph taken to a new place is kept there too (by its content and its
-            // place): the versions after it, where it stays, share its blocks.
-            let placed = paragraph.then(|| element_key(self.key, colours_d, content, &fields, Some(here)));
-            if let Some(Kept(kept)) = placed.as_ref().and_then(|placed| self.elements.get(placed)) {
+            let key = element_key(self.key, colours_d, content, &fields);
+            // kept by its content wherever it stands, where its blocks' keys are its own there
+            let kept = self.elements.get(&key);
+            if let Some(Kept(kept)) = kept
+                .as_ref()
+                .filter(|Kept(kept)| keyer.as_ref().is_some_and(|k| k.reusable(&kept.blocks)))
+            {
                 fields.cached.extend(kept.cached.iter().cloned());
-                keyed(&kept.blocks, false, &mut out);
-                continue;
-            }
-            let key = element_key(self.key, colours_d, content, &fields, (!paragraph).then_some(here));
-            if let Some(Kept(kept)) = self.elements.get(&key) {
-                fields.cached.extend(kept.cached.iter().cloned());
-                match placed {
-                    // A paragraph is kept by its content wherever it stands: it takes its
-                    // new place. Any other element is kept at its own place (its key holds
-                    // it), and the paragraphs in it keep their paths below it.
-                    Some(placed) => {
-                        let blocks: Arc<[Block]> = kept.blocks.iter().map(|b| moved(b, here)).collect();
-                        keyed(&blocks, false, &mut out);
-                        if !same_blocks(&blocks, &kept.blocks) {
-                            let at_place = BodyElement {
-                                blocks,
-                                cached: Arc::clone(&kept.cached),
-                            };
-                            self.elements.insert(placed, Kept(Arc::new(at_place)));
-                        }
-                    }
-                    None => keyed(&kept.blocks, false, &mut out),
-                }
+                read_now.push(Arc::clone(&kept.blocks));
+                out.extend(kept.blocks.iter().cloned());
                 continue;
             }
             read += 1;
             let before = fields.stack.clone();
-            let mut element = reader.body_element(node, &text(here), &mut fields);
-            let start = out.len();
-            keyed(&element.blocks, true, &mut out);
-            element.blocks = out.get(start..).map(Arc::from).unwrap_or_default();
-            if fields.stack == before {
+            let mut element = reader.body_element(node, &here, &mut fields);
+            // read again to the same blocks, keys included, as the last version's element at
+            // this ordinal: its blocks are shared (what was measured of them is kept too). The
+            // ordinal only nominates a candidate and equality decides: never a memo key
+            // (ADR-008)
+            let before_here = self.read_before.get(count - 1).filter(|b| **b == element.blocks);
+            if let Some(blocks) =
+                before_here.or(kept.as_ref().map(|Kept(k)| &k.blocks).filter(|b| **b == element.blocks))
+            {
+                element.blocks = Arc::clone(blocks);
+            }
+            read_now.push(Arc::clone(&element.blocks));
+            out.extend(element.blocks.iter().cloned());
+            if fields.stack == before && keyer.is_some() {
                 self.elements.insert(key, Kept(Arc::new(element)));
             }
         }
         self.bodies.finish();
+        self.read_before = read_now;
         self.stats.elements = count;
         self.stats.elements_read = read;
         (out, std::mem::take(&mut fields.cached), Some(body))
@@ -473,19 +451,21 @@ impl Model {
         let story = crate::ids::story_name(main, part);
         let named = self.names.part(part, &story, &tree);
         let keyer = named.as_ref().map(|(ix, part)| keys::Keyer::new(*ix, part));
-        if let Some(Kept(kept)) = self.stories.get(&key) {
-            let (blocks, cached) = (*kept).clone();
-            return Ok(Some(match keyer.and_then(|k| k.keyed(&blocks, false)) {
-                Some(keyed) => (Arc::from(keyed), cached),
-                None => (blocks, cached),
-            }));
+        // kept where its blocks' keys are its own (a part no index holds by its paths, the
+        // part's: its key holds it)
+        let kept = self
+            .stories
+            .get(&key)
+            .filter(|Kept(kept)| keyer.as_ref().is_none_or(|k| k.reusable(&kept.0)));
+        if let Some(Kept(kept)) = kept {
+            return Ok(Some((*kept).clone()));
         }
         let mut fields = Fields::new(false, true);
-        let path = format!("w:{}", local(tree.root()));
-        let mut blocks = Reader::new(&cx.colours).story(tree.root(), &path, &mut fields);
-        if let Some(keyed) = keyer.and_then(|k| k.keyed(&blocks, true)) {
-            blocks = keyed;
-        }
+        let at = match &keyer {
+            Some(keyer) => At::Keyed(keyer, Vec::new()),
+            None => At::Path(text(&format!("w:{}", local(tree.root())))),
+        };
+        let blocks = Reader::new(&cx.colours).story(tree.root(), &at, &mut fields);
         let made = (Arc::from(blocks), Arc::from(fields.cached));
         self.stories.insert(key, Kept(Arc::new(made.clone())));
         Ok(Some(made))
@@ -511,39 +491,40 @@ impl Model {
         let story = crate::ids::story_name(main, &part);
         let named = self.names.part(&part, &story, &tree);
         let keyer = named.as_ref().map(|(ix, part)| keys::Keyer::new(*ix, part));
-        let (notes, fresh) = match self.notes.get(&key) {
-            Some(Kept(kept)) => ((*kept).clone(), false),
-            None => (read_notes(&Reader::new(&cx.colours), tree.root(), kind), true),
+        // kept where every note's blocks' keys are their own
+        let reusable = |notes: &Notes| {
+            keyer.as_ref().is_none_or(|k| {
+                notes
+                    .notes
+                    .values()
+                    .chain(notes.separators.values())
+                    .all(|blocks| k.reusable(blocks))
+            })
         };
-        let notes = match &keyer {
-            Some(keyer) => keyed_notes(keyer, notes, fresh),
-            None => notes,
-        };
-        if fresh {
-            self.notes.insert(key, Kept(Arc::new(notes.clone())));
+        if let Some(Kept(kept)) = self.notes.get(&key).filter(|Kept(kept)| reusable(kept)) {
+            return Ok((*kept).clone());
         }
+        let keys = keyer.as_ref().map(|k| k as &dyn KeyOf);
+        let notes = read_notes(&Reader::new(&cx.colours), tree.root(), kind, keys);
+        self.notes.insert(key, Kept(Arc::new(notes.clone())));
         Ok(notes)
     }
 }
 
-/// `notes` with every note's and separator's blocks keyed (`fresh`: read now).
-fn keyed_notes(keyer: &keys::Keyer<'_>, mut notes: Notes, fresh: bool) -> Notes {
-    let keyed = |blocks: &mut Arc<[Block]>| {
-        if let Some(made) = keyer.keyed(blocks, fresh) {
-            *blocks = Arc::from(made);
-        }
-    };
-    notes.notes.values_mut().for_each(keyed);
-    notes.separators.values_mut().for_each(keyed);
-    notes
-}
-
-fn read_notes(reader: &Reader<'_>, root: &Element, kind: &str) -> Notes {
+/// The notes of kind `kind` below `root`, their blocks keyed by `keys` where the part has an
+/// index, else named by their paths.
+fn read_notes(reader: &Reader<'_>, root: &Element, kind: &str, keys: Option<&dyn KeyOf>) -> Notes {
     let mut out = Notes::default();
-    for node in elements(root).filter(|n| local(n) == kind) {
+    for (k, node) in root.children().iter().enumerate() {
+        let Some(node) = node.as_element().filter(|n| local(n) == kind) else {
+            continue;
+        };
         let view = crate::w::Note::new(node);
-        let path = format!("w:{kind}[@w:id={}]", view.id().unwrap_or("None"));
-        let mut blocks = reader.story(node, &path, &mut Fields::new(false, false));
+        let at = match keys {
+            Some(keys) => At::Keyed(keys, vec![u32::try_from(k).unwrap_or(u32::MAX)]),
+            None => At::Path(text(&format!("w:{kind}[@w:id={}]", view.id().unwrap_or("None")))),
+        };
+        let mut blocks = reader.story(node, &at, &mut Fields::new(false, false));
         if kind == "footnote" {
             blocks.retain(|b| matches!(b, Block::Paragraph(_)));
         }

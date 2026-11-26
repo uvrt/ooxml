@@ -150,9 +150,7 @@ pub(super) fn laid_facts(layout: &dyn WordLayout, version: &LaidVersion) -> Resu
     facts.insert("complete".into(), Value::from(true));
     facts.insert(
         "coverage".into(),
-        coverage_facts(&coverage, |key, path| {
-            ooxml_word_pages::coverage::id_of(version, key, path)
-        }),
+        coverage_facts(&coverage, |key| version.id_named(key).map(|id| id.to_string())),
     );
     let warnings = (!coverage.warnings.is_empty()).then(|| {
         let listed: Vec<String> = coverage

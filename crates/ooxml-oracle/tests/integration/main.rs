@@ -4,6 +4,7 @@
 
 mod chart_goldens;
 mod chart_layout;
+mod frozen_numbers;
 mod frozen_values;
 mod grid_values;
 mod host_batch_bench;

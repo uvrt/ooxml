@@ -1,25 +1,26 @@
 //! Owns: a version's names ([`VersionNames`]: its story parts' indexes, each found from the
 //! version before's where its tree changed, taken as it was where it did not) and its
-//! blocks' keys beside their paths (phase 3 identity design, LK1): every paragraph and
-//! table of the body, the headers and footers and the notes the model reads keyed from its
-//! story's index ([`Keyer`]), a block taken from a memo keyed again only where its key could
-//! have changed.
+//! blocks' keys (phase 3 identity design, LK1, LK2c): every paragraph and table of the
+//! body, the headers and footers and the notes the model reads keyed from its story's index
+//! ([`Keyer`]), a block taken from a memo only where its keys are its own wherever it
+//! stands.
 //!
 //! A key read from the index is the block's own where the part's keys follow from content
 //! ([`PartIds::keys_by_content`]: every paragraph and row stamped with a paraId of its own,
 //! written one way): such a key is kept with the block it was read with. Any other key (an
-//! ordinal, a repeat, a rowless table's) names a block by its place, and is found again in
-//! every version.
+//! ordinal, a repeat, a rowless table's) names a block by its place: a block holding one is
+//! read again where it is taken.
 //!
-//! Until the layout model drops its paths (LK2) a block's key is found from its path, the
-//! place the reader names it by.
+//! The reader keys each block as it reads it, by its place ([`KeyOf`]); a block it reads
+//! where no index keys it is named by its path.
 //!
 //! Must not: key a memo (keys name blocks; memos are keyed by content, ADR-008), or name a
 //! text box's blocks (no story's index holds them).
 
 use crate::docx::{Kept as DocxKept, StoryPart, VersionNames};
 use crate::ids::{BlockKey, StoryIx, StoryTable};
-use crate::model::{Block, Paragraph, Table};
+use crate::model::Block;
+use crate::read::KeyOf;
 use ooxml_xml::Tree;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -71,7 +72,7 @@ impl Names {
     }
 }
 
-/// Keys one story's blocks from its part's index.
+/// Keys one story's blocks from its part's index, by their places, as the reader reads them.
 pub(super) struct Keyer<'a> {
     part: &'a StoryPart,
     story: StoryIx,
@@ -89,61 +90,22 @@ impl<'a> Keyer<'a> {
         }
     }
 
-    /// The key of the paragraph or table at the layout path `path`.
-    fn key(&self, path: &str) -> Option<BlockKey> {
-        let (_, place) = self.part.resolve_path(path)?;
-        self.part.ids.key_of(self.story, self.part.ids.at(&place)?)
+    /// Whether `blocks`, read before (a memo's), are this part's wherever they stand now:
+    /// every key in them durable and the part's keys following content. Any other key (an
+    /// ordinal, a repeat, a rowless table's, a path where none) names a block by its place,
+    /// and the blocks are read again (ADR-008: memos are keyed by content).
+    pub(super) fn reusable(&self, blocks: &[Block]) -> bool {
+        self.by_content && blocks.iter().all(|b| durable(b, self.story))
+    }
+}
+
+impl KeyOf for Keyer<'_> {
+    fn key_at(&self, place: &[u32]) -> Option<BlockKey> {
+        self.part.ids.key_of(self.story, self.part.ids.at(place)?)
     }
 
-    /// `blocks` keyed: read now (`fresh`), each keyed; taken from a memo, keyed again
-    /// unless every key in them is durable and the part's keys follow from content. A block
-    /// whose keys are all right already is returned as it was (the same `Arc`).
-    pub(super) fn keyed(&self, blocks: &[Block], fresh: bool) -> Option<Vec<Block>> {
-        if !fresh && self.by_content && blocks.iter().all(|b| durable(b, self.story)) {
-            return None;
-        }
-        Some(blocks.iter().map(|b| self.block(b)).collect())
-    }
-
-    fn block(&self, block: &Block) -> Block {
-        match block {
-            Block::Paragraph(p) => {
-                let key = self.key(&p.path);
-                if key == p.key {
-                    return block.clone();
-                }
-                Block::Paragraph(Arc::new(Paragraph { key, ..(**p).clone() }))
-            }
-            Block::Table(t) => {
-                let key = self.key(&t.path);
-                let mut changed = key != t.key;
-                let rows: Vec<Arc<[Arc<[Block]>]>> = t
-                    .rows
-                    .iter()
-                    .map(|row| {
-                        row.iter()
-                            .map(|cell| {
-                                let blocks: Vec<Block> = cell.iter().map(|b| self.block(b)).collect();
-                                if super::same_blocks(&blocks, cell) {
-                                    Arc::clone(cell)
-                                } else {
-                                    changed = true;
-                                    Arc::from(blocks)
-                                }
-                            })
-                            .collect()
-                    })
-                    .collect();
-                if !changed {
-                    return block.clone();
-                }
-                Block::Table(Arc::new(Table {
-                    key,
-                    rows: Arc::from(rows),
-                    ..(**t).clone()
-                }))
-            }
-        }
+    fn path_at(&self, place: &[u32]) -> Option<String> {
+        crate::docx::names::block_path(self.part, place)
     }
 }
 

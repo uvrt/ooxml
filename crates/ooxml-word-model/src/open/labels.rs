@@ -205,6 +205,7 @@ impl Model {
         let mut boxes = TextBoxes {
             model: self,
             cx: &document.context,
+            names: &document.names,
             counters: Counters::default(),
             out: BTreeMap::new(),
         };
@@ -217,6 +218,7 @@ impl Model {
 struct TextBoxes<'m> {
     model: &'m mut Model,
     cx: &'m Context,
+    names: &'m crate::docx::VersionNames,
     counters: Counters,
     out: BTreeMap<Text, Option<String>>,
 }
@@ -231,7 +233,9 @@ impl TextBoxes<'_> {
                     .flat_map(|r| r.iter())
                     .for_each(|cell| self.blocks(cell, None)),
                 Block::Paragraph(p) => {
-                    let path = prefix.map_or_else(|| p.path.clone(), |pre| text(&format!("{pre}/{}", p.path)));
+                    // a text box's paragraph by its steps below its drawing's paragraph
+                    let own = p.unkeyed.as_deref().unwrap_or_default();
+                    let path = prefix.map_or_else(|| text(own), |pre| text(&format!("{pre}/{own}")));
                     let label = self.model.label_of(self.cx, &mut self.counters, p);
                     self.out.insert(path, label);
                 }
@@ -257,15 +261,16 @@ impl TextBoxes<'_> {
                     .flat_map(|r| r.iter())
                     .for_each(|cell| self.paragraphs(cell)),
                 Block::Paragraph(p) => {
+                    let host = p.path_in(self.names).unwrap_or_default();
                     for run in p.runs.iter() {
                         for found in run.drawings.iter() {
                             if let crate::model::InlineObject::Graphic(g) = found {
-                                self.graphic(g, &p.path);
+                                self.graphic(g, &host);
                             }
                         }
                         for anchor in run.anchors.iter() {
                             if let Some(g) = &anchor.graphic {
-                                self.graphic(g, &p.path);
+                                self.graphic(g, &host);
                             }
                         }
                     }
