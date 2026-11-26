@@ -562,6 +562,7 @@ impl Replayer {
     /// `events` (one case, its head first) made again.
     #[must_use]
     pub fn replay(&self, stream: &str, events: &[Value]) -> Replayed {
+        let events = expected_of(events);
         let Some((head, rest)) = events.split_first() else {
             return Vec::new();
         };
@@ -635,7 +636,18 @@ impl Replayer {
                 session.new_round();
                 (Outcome::Equal, false)
             }
-            "call" => self.call(stream, session, event),
+            "call" | "change" => self.call(stream, session, event),
+            "final" => {
+                let mut documents = Map::new();
+                for id in session.session().documents() {
+                    let parts = session.session().save(&id).ok().and_then(|bytes| part_digests(&bytes));
+                    documents.insert(id.to_string(), parts.map_or(Value::Null, Value::Object));
+                }
+                (
+                    self.compare(stream, event, "documents", &Value::Object(documents)),
+                    false,
+                )
+            }
             "calls" => (Outcome::Waiting(Waits::D2, true), true),
             "settings" => (Outcome::Waiting(Waits::Settings, true), true),
             // the application's undo, redo and save: the session tools' (D3)
@@ -679,6 +691,10 @@ impl Replayer {
             // (save_document and a check of numbers run for what they leave: their layout,
             // the check seen; their answers wait)
             Ok(_) if waiting.is_some() => (Outcome::Waiting(waiting.map_or(Waits::D3, |w| w.0), false), false),
+            Ok(result) if event.get("event").and_then(Value::as_str) == Some("change") => {
+                let have = serde_json::json!({"ok": !result.is_error(), "changed_parts": result.app.changed_parts});
+                (self.compare(stream, event, "result", &have), false)
+            }
             Ok(result) => (self.compare(stream, event, "result", &normalised(&result)), false),
             Err(_) => (Outcome::Waiting(Waits::Settings, true), true),
         }
@@ -692,7 +708,10 @@ impl Replayer {
             return Outcome::Equal;
         }
         let case = event.get("case").and_then(Value::as_str).unwrap_or_default();
-        let tool = event.get("tool").and_then(Value::as_str);
+        let tool = event
+            .get("tool")
+            .and_then(Value::as_str)
+            .map(|t| t.rsplit('.').next().unwrap_or(t));
         let mut used = Vec::new();
         let mut left: Vec<String> = Vec::new();
         for path in paths {
@@ -748,4 +767,176 @@ impl Replayer {
         let (want, have) = (pick(&a), pick(&b));
         Outcome::Different(left, want, have)
     }
+}
+
+/// A concurrent case's changes in the order they were committed (`_commit_order`): grouped
+/// by overlap of their spans, a group that ended before the next began first, within a group
+/// by the version each left.
+/// A change's place among a case's changes: its span's start and end, the version it left
+/// and its position, and the change itself.
+type Placed = ((i64, i64, i64, usize), Value);
+
+fn commit_order(mut changes: Vec<Placed>) -> Vec<Value> {
+    changes.sort_by_key(|(k, _)| (k.0, k.3));
+    let mut groups: Vec<Vec<Placed>> = Vec::new();
+    let mut end: Option<i64> = None;
+    for item in changes {
+        match end {
+            Some(e) if item.0 .0 <= e => {
+                end = Some(e.max(item.0 .1));
+                if let Some(group) = groups.last_mut() {
+                    group.push(item);
+                }
+            }
+            _ => {
+                end = Some(item.0 .1);
+                groups.push(vec![item]);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for mut group in groups {
+        group.sort_by_key(|(k, _)| (k.2, k.3));
+        out.extend(group.into_iter().map(|(_, change)| change));
+    }
+    out
+}
+
+/// What a replay of a case must give (`host_goldens.expected_of`): a case of calls on one
+/// thread, its lines; a concurrent one (calls from several threads at once), its calls that
+/// changed something as `change` events in commit order (each answer its `ok` and
+/// `changed_parts`), in the slots the calls took among the application's own events, and its
+/// `final` state -- what a serial replay in commit order must give.
+#[must_use]
+pub fn expected_of(lines: &[Value]) -> Vec<Value> {
+    let Some((head, rest)) = lines.split_first() else {
+        return Vec::new();
+    };
+    if head.get("concurrent") != Some(&Value::Bool(true)) {
+        return lines.to_vec();
+    }
+    let changing = |result: Option<&Value>| {
+        result.is_some_and(|r| {
+            r.get("ok") == Some(&Value::Bool(true))
+                && r.pointer("/app/changed_parts")
+                    .and_then(Value::as_array)
+                    .is_some_and(|a| !a.is_empty())
+        })
+    };
+    let mut changes = Vec::new();
+    let mut shape: Vec<Option<Value>> = Vec::new();
+    for event in rest {
+        let items: Vec<(Value, Value, Option<Value>)> = match event.get("event").and_then(Value::as_str) {
+            Some("call") => vec![(
+                event["tool"].clone(),
+                event["arguments"].clone(),
+                event.get("result").cloned(),
+            )],
+            Some("calls") => {
+                let calls = event
+                    .get("calls")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                let results = event
+                    .get("results")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                calls
+                    .into_iter()
+                    .zip(results)
+                    .map(|(c, r)| {
+                        let part = |k: usize| c.get(k).cloned().unwrap_or(Value::Null);
+                        (part(0), part(1), Some(r))
+                    })
+                    .collect()
+            }
+            _ => {
+                shape.push(Some(event.clone()));
+                continue;
+            }
+        };
+        for (tool, arguments, result) in items {
+            if changing(result.as_ref()) {
+                changes.push(change_of(event, tool, arguments, result.as_ref(), changes.len()));
+                shape.push(None);
+            }
+        }
+    }
+    let mut ordered = commit_order(changes).into_iter();
+    let case = head.get("case").cloned().unwrap_or(Value::Null);
+    let mut out = vec![head.clone()];
+    for (index, event) in shape.into_iter().enumerate() {
+        let mut body: Map<String, Value> = match event {
+            None => ordered.next().and_then(|v| v.as_object().cloned()).unwrap_or_default(),
+            Some(event) => event
+                .as_object()
+                .map(|m| {
+                    m.iter()
+                        .filter(|(k, _)| *k != "case" && *k != "at")
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect()
+                })
+                .unwrap_or_default(),
+        };
+        let mut line = Map::new();
+        line.insert("case".into(), case.clone());
+        line.insert("at".into(), Value::from(index + 1));
+        line.append(&mut body);
+        out.push(Value::Object(line));
+    }
+    out
+}
+
+/// A package's parts by name, each the sha256 of its bytes, or, for an embedded package,
+/// `package:` and the digest of its own parts' digests (`host_goldens.part_digests`).
+#[must_use]
+pub fn part_digests(data: &[u8]) -> Option<Map<String, Value>> {
+    let archive = ooxml_zip::Archive::read(Arc::from(data), &ooxml_zip::Limits::default()).ok()?;
+    let mut out = BTreeMap::new();
+    for entry in archive.entries() {
+        let body = archive.read_entry(entry).ok()?;
+        out.insert(entry.meta().name.clone(), Value::from(part_digest(&body)));
+    }
+    Some(out.into_iter().collect())
+}
+
+fn part_digest(body: &[u8]) -> String {
+    if body.starts_with(b"PK\x03\x04") {
+        if let Some(inner) = part_digests(body).filter(|d| d.contains_key("[Content_Types].xml")) {
+            // canonical: keys sorted, compact
+            let text = Value::Object(inner).to_string();
+            return format!("package:{}", hex(&ooxml_base::sha256::sha256(text.as_bytes())));
+        }
+    }
+    hex(&ooxml_base::sha256::sha256(body))
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// The `change` event of a concurrent case's changing call, placed for [`commit_order`]
+/// (`n`: the changes before it).
+fn change_of(event: &Value, tool: Value, arguments: Value, result: Option<&Value>, n: usize) -> Placed {
+    let mut change = Map::new();
+    change.insert("event".into(), Value::from("change"));
+    change.insert("tool".into(), tool);
+    change.insert("arguments".into(), arguments);
+    let parts = result.and_then(|r| r.pointer("/app/changed_parts")).cloned();
+    change.insert("result".into(), serde_json::json!({"ok": true, "changed_parts": parts}));
+    for key in ["view", "roles", "context"] {
+        if let Some(v) = event.get(key) {
+            change.insert(key.into(), v.clone());
+        }
+    }
+    let k = i64::try_from(n).unwrap_or(i64::MAX);
+    let span = event.get("span").and_then(Value::as_array);
+    let at = |i: usize| span.and_then(|s| s.get(i)).and_then(Value::as_i64).unwrap_or(k);
+    let version = result
+        .and_then(|r| r.get("version"))
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    ((at(0), at(1), version, n), Value::Object(change))
 }

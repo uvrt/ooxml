@@ -182,13 +182,19 @@ impl HostSession {
         let changing = entry.changes(&arguments);
         let owner: Option<RefOwner> = caller.map(|c| Arc::from(caller_key(c).as_str()));
         let mut refs = CallRefs::new(owner.clone());
+        // (a changing call of one document, no retry key and no value by reference is the
+        // one today's host serves beside the others: refused, it names no document; any other
+        // call refused names its document at the version it read)
+        let keyed = entry.spec.flags.retry_key && arguments.get("key").is_some_and(Value::is_string);
+        let served =
+            changing && going.docs.len() == 1 && !keyed && !Value::Object(arguments.clone()).to_string().contains("{{");
         let WithRefs {
             arguments,
             mut notes,
             folded,
         } = match self.with_refs(entry, &mut refs, &doc, arguments, changing, retry) {
             Ok(found) => found,
-            Err(error) => return ToolResult::failed(error),
+            Err(error) => return self.refused_at(error, (!served).then_some(doc.as_str())),
         };
         going.notes.append(&mut notes);
         // a retry key's repeat
@@ -208,23 +214,7 @@ impl HostSession {
         }
         // 9. the handler, by the document's format, on the version the call reads
         let mut context = self.context(caller);
-        if let Some(pinned) = &mut going.pinned {
-            for doc in &going.docs {
-                let Some(id) = DocId::parse(doc) else { continue };
-                if pinned.iter().all(|o| *o.id() != id) {
-                    if let Ok(head) = self.session.snapshot(&id) {
-                        pinned.push(head);
-                    }
-                }
-            }
-            context.at.clone_from(pinned);
-        }
-        // (a changing call of one document, no retry key and no value by reference is the
-        // one today's host serves beside the others: refused, it names no document)
-        let served = changing
-            && going.docs.len() == 1
-            && key.is_none()
-            && !Value::Object(arguments.clone()).to_string().contains("{{");
+        self.pin(going, &mut context);
         let (mut result, made) = self.session.edit_accepted(entry.name(), arguments, &context);
         if served && result.is_error() {
             result.doc = None;
@@ -252,6 +242,33 @@ impl HostSession {
             self.stores().keys.keep(&doc, entry.name(), key, &result);
         }
         result
+    }
+
+    /// `error` as a call's reply, naming `doc` at its head where the call names one.
+    fn refused_at(&self, error: ToolError, doc: Option<&str>) -> ToolResult<Value> {
+        let mut result = ToolResult::failed(error);
+        if let Some(doc) = doc {
+            result.version = DocId::parse(doc)
+                .and_then(|id| self.session.snapshot(&id).ok())
+                .map(|head| head.number());
+            result.doc = Some(doc.to_owned());
+        }
+        result
+    }
+
+    /// In a batch that pins versions, each document the call names read at the version the
+    /// batch's first op on it read (pinned now where none did yet).
+    fn pin(&self, going: &mut Going, context: &mut CallContext) {
+        let Some(pinned) = &mut going.pinned else { return };
+        for doc in &going.docs {
+            let Some(id) = DocId::parse(doc) else { continue };
+            if pinned.iter().all(|o| *o.id() != id) {
+                if let Ok(head) = self.session.snapshot(&id) {
+                    pinned.push(head);
+                }
+            }
+        }
+        context.at.clone_from(pinned);
     }
 
     /// A call's effects applied once its change is published: the refs it defined, kept

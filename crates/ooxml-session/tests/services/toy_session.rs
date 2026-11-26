@@ -220,7 +220,7 @@ impl Sess {
         let found = self.docs.iter().find(|d| d.handle == doc).unwrap();
         DocMeta {
             doc: found.handle.clone(),
-            kind: found.kind.clone(),
+            kind: found.kind,
             name: found.name.clone(),
         }
     }
