@@ -409,7 +409,9 @@ impl Model {
             let before = fields.stack.clone();
             let mut element = reader.body_element(node, &here, &mut fields);
             // read again to the same blocks, keys included, as the last version's element at
-            // this ordinal: its blocks are shared (what was measured of them is kept too)
+            // this ordinal: its blocks are shared (what was measured of them is kept too). The
+            // ordinal only nominates a candidate and equality decides: never a memo key
+            // (ADR-008)
             let before_here = self.read_before.get(count - 1).filter(|b| **b == element.blocks);
             if let Some(blocks) =
                 before_here.or(kept.as_ref().map(|Kept(k)| &k.blocks).filter(|b| **b == element.blocks))
