@@ -283,7 +283,7 @@ fn a_page_tier_too_small_for_the_pages_still_reports_as_a_cold_check() {
 
 #[test]
 fn a_layout_half_too_small_for_the_pages_still_reports_as_a_cold_check() {
-    let limit = 6 << 10;
+    let limit = 2 << 10;
     let budget = Arc::new(Capped {
         used: AtomicUsize::new(0),
         limit,
