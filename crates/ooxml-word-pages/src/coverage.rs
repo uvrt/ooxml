@@ -27,21 +27,29 @@ pub fn blocks_laid_out(version: &LaidVersion) -> (usize, usize) {
     let layout = version.layout();
     let blocks = layout.roles.iter().filter(|role| role.is_none()).count();
     let said = version.said();
-    let skipped: Vec<&str> = said.placeholders.iter().filter_map(|p| p.path.as_deref()).collect();
     let placeheld = layout
         .document
         .body
         .iter()
-        .filter(|block| skipped.contains(&block_path(block)))
+        .filter(|block| said.placeholders.iter().any(|p| stands_for(p, block)))
         .count();
     (blocks.saturating_sub(placeheld), blocks)
 }
 
-/// A top-level block's element path.
-fn block_path(block: &Block) -> &str {
-    match block {
-        Block::Paragraph(p) => &p.path,
-        Block::Table(t) => &t.path,
+/// Whether `placeholder` stands for the top-level block `block`: by their keys where both
+/// have one (asserted equal to their paths' answer in debug builds), else by their paths.
+fn stands_for(placeholder: &DrawnPlaceholder, block: &Block) -> bool {
+    let (path, key) = match block {
+        Block::Paragraph(p) => (&*p.path, p.key),
+        Block::Table(t) => (&*t.path, t.key),
+    };
+    let by_path = placeholder.path.as_deref() == Some(path);
+    match (placeholder.key, key) {
+        (Some(a), Some(b)) => {
+            debug_assert_eq!(a == b, by_path, "{a:?} stands for {b:?} as their paths say");
+            a == b
+        }
+        _ => by_path,
     }
 }
 

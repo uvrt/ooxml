@@ -45,8 +45,11 @@ class Served:
     #: What the step touched, as the owner's ``touched`` says it, where the owner said it
     #: with the edit (``None``: asked of the owner between the step's versions).
     step_touched: list[dict[str, Any]] | None = None
-    #: The owner's number of the state the step went from (``None``: not said).
-    before: int | None = None
+    #: The owner's version the step went from, held as the owner handed it with the edit
+    #: (``None``: not said -- the version now, as the step is kept).  What the reply says
+    #: the step changed is read between it and ``head``, never looked up by its number: other
+    #: calls' steps may have let it go from the owner's history meanwhile.
+    before: Any = None
 
 
 class Declined:
@@ -101,10 +104,10 @@ def serve_unlocked(toolbox: "Toolbox", session: Session, tool: "Tool", arguments
     if before is not None:
         made = served.step_touched
         if made is None:
-            made = entry.owner.touched(entry.handle, entry.history.head(before), served.head)
+            made = entry.owner.touched(entry.handle, before, served.head)
         result.touched = [{"doc": entry.doc_id, **item} for item in made]
         # the store's parts between the step's heads, as the owner keeps them (not a diff)
-        parts = entry.owner.parts_between(entry.handle, entry.history.head(before), served.head)
+        parts = entry.owner.parts_between(entry.handle, before, served.head)
         result.changed_parts = [{"doc": entry.doc_id, "part": part} for part in sorted(parts)]
     context.touched.setdefault(entry.doc_id, []).extend(served.touched)
     result.checks = {**toolbox._checks(session, entry, context), **result.checks}

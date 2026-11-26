@@ -55,6 +55,15 @@ impl VersionNames {
         self.parts.get(k).map(|(_, part)| part)
     }
 
+    /// Whether the block `key` names is in this version (without naming it).
+    #[must_use]
+    pub fn holds(&self, key: BlockKey) -> bool {
+        self.part(key.story()).is_some_and(|part| match key.kind() {
+            BlockKind::Row => part.ids.row_of(key).is_some(),
+            BlockKind::Paragraph | BlockKind::Table => part.ids.entry_of(key).is_some(),
+        })
+    }
+
     /// The id of the block `key` names.
     #[must_use]
     pub fn id(&self, key: BlockKey) -> Option<BlockId> {

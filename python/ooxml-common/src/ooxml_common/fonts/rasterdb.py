@@ -49,7 +49,7 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 from typing import Mapping, Sequence
 
-from .office import _cmap_subtable, decode_name
+from .office import CMAP_MOST_CODES, _cmap_subtable, cmap_subtable_claim, cmap_subtable_refused, decode_name
 
 __all__ = ["RESVG_DEFAULT_FAMILIES", "file_stamps", "forget", "load_order", "needed_font_files",
            "parsed_svg", "resvg_system_dirs"]
@@ -296,10 +296,46 @@ def _coverage_of(path: str, mtime: int, size: int, number: int) -> "tuple[frozen
         return frozenset(), None
 
 
+#: The most codes a face's ``cmap`` may claim across every record :func:`_coverage` reads
+#: (each record's subtable is read and its codes merged: a map insertion each).  Measured
+#: 2026-11-26 on 1,413 real faces (macOS system fonts, Word's and PowerPoint's DFonts):
+#: the largest is LastResort's 1,114,112 (one format 13 subtable mapping the codespace
+#: once), the next Hiragino Sans GB's 116,088 over five records.  Four times the largest,
+#: the codespace four times over, leaves room for real fonts; a ``cmap`` claiming more
+#: (thousands of subtables, each the codespace) is not read, its face kept.
+_MOST_CLAIMED = 4 * CMAP_MOST_CODES
+
+_READ_FORMATS = (0, 4, 6, 12, 13)
+
+
+def _claim_too_large(table: bytes, count: int) -> bool:
+    """Whether reading every record's subtable would claim more than
+    :data:`_MOST_CLAIMED` codes, or a subtable is refused as laid over itself
+    (:func:`~ooxml_common.fonts.office.cmap_subtable_refused`): counted without inserting
+    any, stopping as soon as the budget is passed."""
+    claims: dict[int, int] = {}
+    total = 0
+    for i in range(count):
+        _, _, at = struct.unpack_from(">HHI", table, 4 + 8 * i)
+        if struct.unpack_from(">H", table, at)[0] not in _READ_FORMATS:
+            continue
+        if at not in claims:
+            if cmap_subtable_refused(table, at):
+                return True
+            claims[at] = cmap_subtable_claim(table, at)
+        total += claims[at]
+        if total > _MOST_CLAIMED:
+            return True
+    return False
+
+
 def _coverage(table: bytes) -> "tuple[frozenset, frozenset | None]":
     count = struct.unpack_from(">H", table, 2)[0]
+    if _claim_too_large(table, count):
+        return frozenset(), None             # not read: nothing surely, anything maybe
     strict: "set[int] | None" = None
     loose: "set[int] | None" = set()
+    subtables: dict[int, frozenset] = {}
     for i in range(count):
         platform, encoding, at = struct.unpack_from(">HHI", table, 4 + 8 * i)
         fmt = struct.unpack_from(">H", table, at)[0]
@@ -311,7 +347,10 @@ def _coverage(table: bytes) -> "tuple[frozenset, frozenset | None]":
             if unicode:
                 strict = set()               # cannot say what it maps: assume nothing
             continue
-        mapped = set(_cmap_subtable(table, at))
+        # Records of one subtable (a font's (0, 3) and (3, 1) often are) read it once.
+        if at not in subtables:
+            subtables[at] = frozenset(_cmap_subtable(table, at))
+        mapped = set(subtables[at])
         if unicode:
             strict = mapped if strict is None else strict & mapped
         if loose is not None:

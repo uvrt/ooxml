@@ -15,6 +15,7 @@ use ooxml_word_layout::paint::drawings::DrawingSlot;
 use ooxml_word_layout::paint::{Drawn, FaceNames, PaintedLine, Rule};
 use ooxml_word_layout::px::Px;
 use ooxml_word_layout::{DocumentLayout, WordGlyphs};
+use ooxml_word_model::ids::{BlockKey, StoryIx};
 use ooxml_word_model::value::Text;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
@@ -91,6 +92,55 @@ impl LaidVersion {
     /// tool names it in this version's bytes.
     pub fn id_of(&self, path: &str) -> Option<&str> {
         self.ids.id_of(path)
+    }
+
+    /// The id the tool names a body block by in this version, through the version's names
+    /// from its key `key`; a block with no key, or not the body's, by its body path `path`
+    /// ([`LaidVersion::id_of`], which a key's id is asserted equal to in debug builds).
+    pub fn id_named(&self, key: Option<BlockKey>, path: &str) -> Option<Text> {
+        let Some(key) = key.filter(|k| k.story() == StoryIx::BODY) else {
+            return self.id_of(path).map(Text::from);
+        };
+        let named = self
+            .layout
+            .document
+            .names
+            .id(key)
+            .map(|id| Text::from(id.to_string().as_str()));
+        debug_assert_eq!(named.as_deref(), self.id_of(path), "{key:?} is named as its path");
+        named
+    }
+
+    /// Whether a body block the tool names in this version is `key`'s, without naming it:
+    /// through the version's names; a block with no key, or not the body's, by its body path
+    /// `path` ([`LaidVersion::is_named`], asserted equal in debug builds).
+    pub fn is_named_by(&self, key: Option<BlockKey>, path: &str) -> bool {
+        let Some(key) = key.filter(|k| k.story() == StoryIx::BODY) else {
+            return self.is_named(path);
+        };
+        let held = self.layout.document.names.holds(key);
+        debug_assert_eq!(held, self.is_named(path), "{key:?} is held as its path is named");
+        held
+    }
+
+    /// The body blocks page `facts` draws something of, as written (`Page.blocks`): named
+    /// through the version's names from their anchors where every one is anchored (each its
+    /// path, asserted in debug builds), else their paths.
+    pub fn page_blocks(&self, facts: &PageFacts) -> Vec<String> {
+        if facts.anchors.len() != facts.blocks.len() {
+            return facts.blocks.iter().map(ToString::to_string).collect();
+        }
+        let names = &self.layout.document.names;
+        facts
+            .anchors
+            .iter()
+            .zip(&facts.blocks)
+            .map(|(anchor, path)| {
+                let named = names.path(*anchor);
+                debug_assert_eq!(named.as_deref(), Some(&**path), "{anchor:?} is named as its path");
+                named.unwrap_or_else(|| path.to_string())
+            })
+            .collect()
     }
 
     /// Whether the body path `path` names a paragraph, table or row the tool names in this

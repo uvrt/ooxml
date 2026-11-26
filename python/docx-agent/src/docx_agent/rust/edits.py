@@ -208,8 +208,8 @@ def _timing(call: Any, arguments: dict[str, Any]) -> Any:
 
 def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tuple[Result, Any, list[Any]]:
     """The call's edit made by the session: its result, what it made (``Session.edit``'s
-    ``(first, head, touched, validation, before, reflow)``, ``None`` where it changed
-    nothing), and the markers its checks get (its ``Timing``).  ``counted``: as for
+    ``(first, head, touched, validation, before, reflow)``, ``before`` the version its first
+    edit was applied to, held; ``None`` where it changed nothing), and the markers its checks get (its ``Timing``).  ``counted``: as for
     :meth:`~ooxml_edit.tools.owned.OwnedEntry.served`."""
     import ooxml_core
 

@@ -49,6 +49,7 @@ use ooxml_opc::Package;
 use ooxml_word_layout::paint::svg::{page_svg, Drawings, Pictures, SvgContext};
 use ooxml_word_layout::paint::{paint_page, GlyphSize, PagePaint, PaintContext};
 use ooxml_word_layout::{DocumentLayout, WordLayout};
+use ooxml_word_model::value::Text;
 use ooxml_word_model::Model;
 use ooxml_zip::Archive;
 use parts::{facts_source, new_layout, pictures_of, say, version_ids, SayWith};
@@ -733,6 +734,35 @@ impl PageEngine {
             blocks,
             unpainted: paint.unpainted,
         })
+    }
+
+    /// The tool's ids of the paragraphs page `page` of `version` draws lines of, named
+    /// through the version's names from the lines' anchors (each with the name its group is
+    /// written under: its path, asserted in debug builds): `(part, path, id)`, `part` a
+    /// header's or footer's story part (`None`: the body's, a note's). What a reader of the
+    /// page's SVG tags its paragraph groups with; a line with no anchor (a text box's, a
+    /// separator the layout makes) is left out. `None` past its last page, or where
+    /// `version` is not of this engine's generation.
+    pub fn paragraph_ids(&mut self, version: &LaidVersion, page: usize) -> Option<Vec<(Option<Text>, String, String)>> {
+        let paint = self.paint(version, page)?;
+        let names = &version.layout.document.names;
+        let mut out: Vec<(Option<Text>, String, String)> = Vec::new();
+        for line in &paint.lines {
+            let Some(anchor) = line.anchor else { continue };
+            let part = line.story.as_ref().map(|(_, part)| part.clone());
+            if out
+                .last()
+                .is_some_and(|(p, path, _)| *p == part && **path == *line.path)
+            {
+                continue;
+            }
+            let (Some(path), Some(id)) = (names.path(anchor), names.id(anchor.block)) else {
+                continue;
+            };
+            debug_assert_eq!(path, &*line.path, "{anchor:?} is named as its path");
+            out.push((part, path, id.to_string()));
+        }
+        Some(out)
     }
 
     /// Page `page` of `version` as SVG, byte for byte docx2svg's where nothing is listed

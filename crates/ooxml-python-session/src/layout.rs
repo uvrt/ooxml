@@ -258,7 +258,9 @@ impl PyLaidPages {
                                 exact(l.pitch),
                                 l.baseline,
                                 l.column,
-                                version.id_of(&l.path).map(str::to_owned),
+                                version
+                                    .id_named(l.anchor.map(|a| a.block), &l.path)
+                                    .map(|id| id.to_string()),
                             )
                         })
                         .collect()
@@ -277,14 +279,7 @@ impl PyLaidPages {
     /// The body blocks each page draws something of (docx2svg's `Page.blocks`).
     fn blocks(&self, py: Python<'_>) -> Vec<Vec<String>> {
         let version = &self.version;
-        py.detach(|| {
-            version
-                .facts()
-                .pages
-                .iter()
-                .map(|p| p.blocks.iter().map(ToString::to_string).collect())
-                .collect()
-        })
+        py.detach(|| version.facts().pages.iter().map(|p| version.page_blocks(p)).collect())
     }
 
     /// Each top-level body block's keeps: `{index: ("paragraph", keep_next, keep_lines,

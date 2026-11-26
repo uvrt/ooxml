@@ -466,7 +466,7 @@ impl FormatDoc for Word {
         };
         Some(Finished {
             first: made.first.seq().0,
-            before: made.before.number(),
+            before: Self::any(made.before),
             last: Self::any(made.last),
             batch: made.batch,
             format: Some(Arc::new(format)),

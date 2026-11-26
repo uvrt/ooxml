@@ -30,9 +30,13 @@ pub(crate) fn short(text: &str, limit: usize) -> String {
     out
 }
 
-/// `layout.coverage_facts()` of a version laid out in Rust, `id_of` naming the block at an
+/// `layout.coverage_facts()` of a version laid out in Rust, `id_of` naming a block by its key
+/// (through the version's names) or, where it has none, by its
 /// element path (`ids`).
-pub(crate) fn coverage_facts(coverage: &Coverage, id_of: impl Fn(&str) -> Option<String>) -> Value {
+pub(crate) fn coverage_facts(
+    coverage: &Coverage,
+    id_of: impl Fn(Option<ooxml_word_model::ids::BlockKey>, &str) -> Option<String>,
+) -> Value {
     let mut out = Map::new();
     let status = if !coverage.complete {
         "partial"
@@ -94,7 +98,7 @@ pub(crate) fn coverage_facts(coverage: &Coverage, id_of: impl Fn(&str) -> Option
                 let at = p
                     .path
                     .as_deref()
-                    .map(|path| id_of(path).unwrap_or_else(|| path.to_owned()));
+                    .map(|path| id_of(p.key, path).unwrap_or_else(|| path.to_owned()));
                 let mut entry = Map::new();
                 entry.insert("page".into(), p.page.map_or(Value::Null, Value::from));
                 entry.insert("reason".into(), Value::from(p.reason()));
@@ -133,7 +137,7 @@ mod tests {
         // A face with no glyph for the character (no MS Gothic on Linux: simulated).
         let facts = coverage_facts(
             &coverage(vec![glyph_approximation("MS Gothic", '\u{2612}', ".notdef")]),
-            |_| None,
+            |_, _| None,
         );
         assert_eq!(facts["status"], "approximate");
         assert_eq!(
@@ -145,9 +149,10 @@ mod tests {
                 "message": "",
             })
         );
-        let other = coverage_facts(&coverage(vec![glyph_approximation("Calibri", 'x', "Carlito")]), |_| {
-            None
-        });
+        let other = coverage_facts(
+            &coverage(vec![glyph_approximation("Calibri", 'x', "Carlito")]),
+            |_, _| None,
+        );
         assert_eq!(
             other["approximations"][0]["reason"],
             "'Calibri' has no glyph for 'x': measured with 'Carlito'"
@@ -164,7 +169,7 @@ mod tests {
         };
         let facts = coverage_facts(
             &coverage(vec![approximation("layout-approximate:frame"), approximation("odd")]),
-            |_| None,
+            |_, _| None,
         );
         assert_eq!(
             facts["approximations"][0],

@@ -239,7 +239,9 @@ impl Drawer<'_> {
         if let Some(coverage) = coverage {
             data.insert(
                 "coverage".into(),
-                crate::coverage::coverage_facts(&coverage, |path| laid.id_of(path).map(str::to_owned)),
+                crate::coverage::coverage_facts(&coverage, |key, path| {
+                    laid.id_named(key, path).map(|id| id.to_string())
+                }),
             );
         }
         if let Some(relaid) = draw::relaid(laid) {
