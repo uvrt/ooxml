@@ -58,7 +58,13 @@ impl Default for StoreConfig {
         Self {
             history_depth: 50,
             optimistic_tries: 3,
-            rebase_window: 64,
+            // Measured (D2c, host_batch_bench): a host's batch of 20 edits prepares in 100-180 ms
+            // beside six writers committing about 450 times a second, so 45-80 commits land
+            // meanwhile. At 64, most such batches found the change sets they had to move past
+            // let go and ended behind the gate; at 256 none did, on a short document and on a
+            // 61-page one, for about 50 MB more peak memory there (of 2 GB) -- 512 and 1024 gave
+            // nothing more. A batch that outlasts even this runs behind the gate, as it should.
+            rebase_window: 256,
         }
     }
 }

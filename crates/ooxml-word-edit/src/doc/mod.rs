@@ -294,6 +294,17 @@ impl WordDoc {
         Ok(self.package.tree(part)?)
     }
 
+    /// `patch`, a later splice of this version's transaction in `part`, naming what the
+    /// transaction's earlier splices inserted as they are here ([`redrawn::Redrawn::patch`]);
+    /// `None` where it names none.
+    fn redrawn_patch(&self, part: &str, patch: &Patch, draws: &[Draw]) -> Option<Patch> {
+        if self.redrawn.is_empty() {
+            return None;
+        }
+        let tree = self.package.tree(part).ok()??;
+        self.redrawn.patch(patch, draws, &tree)
+    }
+
     /// The next version: `package` and `ids`, its reading made from this one's.
     fn succeed(&self, package: Package, ids: Ids) -> WordDoc {
         let reading = self.reading.lock().unwrap_or_else(PoisonError::into_inner).handed_on();

@@ -27,13 +27,13 @@ impl DocModel for WordDoc {
         let (package, ids) = match change {
             Change::Splice { part, patch, draws, .. } if !draws.is_empty() => {
                 // what the transaction's earlier splices inserted, named as applied here
-                let named = self.redrawn.patch(patch, draws);
+                let named = self.redrawn_patch(part, patch, draws);
                 let patch = named.as_ref().unwrap_or(patch);
                 let (applied, added) = self.drawn_patch(patch, draws)?;
                 let mut ids = self.ids.clone();
                 ids.apply(&added);
                 let package = self.with_tree(part, |t| applied.apply(t))?;
-                self.redrawn.note(patch.inserted(), applied.inserted(), draws);
+                self.redrawn.note(applied.inserted(), draws);
                 (package, ids)
             }
             Change::Splice { part, patch, .. } => {
@@ -41,7 +41,7 @@ impl DocModel for WordDoc {
                     !crate::drawn::uncovered(patch.inserted(), &[], &self.drawn),
                     "a stand-in in an id attribute no draw writes"
                 );
-                let named = self.redrawn.patch(patch, &[]);
+                let named = self.redrawn_patch(part, patch, &[]);
                 let patch = named.as_ref().unwrap_or(patch);
                 (self.with_tree(part, |t| patch.apply(t))?, self.ids.clone())
             }
@@ -102,7 +102,7 @@ impl DocModel for WordDoc {
                 // what was inserted is what the draws made of it here, the blocks made
                 // under stand-ins named as drawn here; what it removed of the transaction's
                 // earlier splices, as they were applied here
-                let named = self.redrawn.patch(patch, draws);
+                let named = self.redrawn_patch(part, patch, draws);
                 let patch = named.as_ref().unwrap_or(patch);
                 let patch = if draws.is_empty() {
                     patch.clone()

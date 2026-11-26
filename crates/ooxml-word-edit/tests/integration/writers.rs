@@ -431,6 +431,22 @@ fn each_version_reads_as_a_fresh_reading_does() {
     }
 }
 
+/// The end gate's batches: sixty seeds of eight writers, every other one running batches
+/// of two to five common edits (run with `--ignored`, in release). It must pass before E1:
+/// it finds a defect in replaying a batch's several changes onto a newer head (lane D2d) --
+/// an op's insertion lost, text ids drawn in another order beside tracked ops, a batch's
+/// tracked author missing from people.xml.
+#[test]
+#[ignore = "known defect, lane D2d: a batch's changes replayed onto a newer head can differ from the serial replay; must pass before E1 (cargo test --release -- --ignored)"]
+fn sixty_seeds_of_eight_writers_with_batches() {
+    let mut rebased = 0;
+    for seed in 200..260u64 {
+        rebased += run_with("samplelib/sample-long.docx", seed, 8, 5, true).1;
+        run_with("generated/markdown/constructs.docx", seed, 8, 5, true);
+    }
+    println!("60 seeds, 8 writers with batches: {rebased} rebased");
+}
+
 /// The lane's end gate: sixty seeds of eight writers (run with `--ignored`, in release).
 #[test]
 #[ignore = "the end gate's long run: cargo test --release -- --ignored"]

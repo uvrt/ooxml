@@ -312,3 +312,28 @@ fn rebased_batches_beside_writers_equal_a_serial_replay() {
     }
     assert!(rebased > 0);
 }
+
+#[test]
+fn a_batch_outlasting_two_hundred_commits_beside_it_still_rebases() {
+    // the default rebase window keeps the change sets a long batch needs (StoreConfig's
+    // measured choice): two hundred writers' commits land while it prepares
+    let store = Store::new(Items::named(8), StoreConfig::default(), still());
+    let gate = Barrier::new(2);
+    let batch = vec![Op::Insert { name: 50, before: 2 }, Op::Add { name: 3, add: 7 }];
+    let attempts = std::thread::scope(|scope| {
+        let batcher = scope.spawn(|| {
+            let gated = Gated::new(Batch::new(batch.clone()), &gate);
+            store.run(&Caller::named("batch"), &gated).unwrap().attempts
+        });
+        gate.wait(); // the batch prepared
+        for k in 0..200 {
+            store
+                .run(&Caller::named("writer"), &Op::Add { name: 6, add: k })
+                .unwrap();
+        }
+        gate.wait(); // let it commit
+        batcher.join().unwrap()
+    });
+    assert_eq!(attempts, 1, "rebased past them all, not prepared again");
+    assert!(store.snapshot().doc().0.contains(&(3, 7)));
+}
