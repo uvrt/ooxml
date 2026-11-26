@@ -22,9 +22,10 @@ use super::{Count, Located, PartIds};
 use crate::ids::delta::{BlockDelta, Moved, StoryDelta};
 use crate::ids::key::{BlockKey, StoryIx};
 use crate::ids::{W, W14, WP14};
+use ooxml_base::difflib::{opcodes, Tag};
 use ooxml_derive::Monoid;
 use ooxml_xml::{Children, Element, Node};
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::sync::Arc;
@@ -113,16 +114,26 @@ impl PartIds {
             return StoryDelta::Whole;
         }
         let (old_c, new_c) = (old_children, new_children);
-        let runs: Vec<(Range<usize>, Range<usize>)> = ooxml_xml::changed_runs(old_children, new_children)
+        let mut runs: Vec<(Range<usize>, Range<usize>)> = ooxml_xml::changed_runs(old_children, new_children)
             .into_iter()
             .map(|r| (r.old, r.new))
             .collect();
         let by_content = self.keys_by_content() && new.keys_by_content();
         let (old, new_side) = if by_content {
-            (
+            let mut sides = (
                 self.side_of(story, &runs, |r| &r.0, new),
                 new.side_of(story, &runs, |r| &r.1, self),
-            )
+            );
+            // a block moved past blocks both versions share: the runs between its two places
+            // are compared as one, so its order is judged among the blocks it passed
+            if let Some(merged) = across(&sides.0, &sides.1, &runs) {
+                runs = merged;
+                sides = (
+                    self.side_of(story, &runs, |r| &r.0, new),
+                    new.side_of(story, &runs, |r| &r.1, self),
+                );
+            }
+            sides
         } else {
             (self.side_whole(story), new.side_whole(story))
         };
@@ -251,6 +262,35 @@ impl PartIds {
     }
 }
 
+/// `runs` with those between the two places of any block held by both sides in different
+/// runs merged into one (the container's runs are numbered from 1 in `Item::run`); `None`
+/// when no block moved across runs.
+fn across(
+    old: &Side<'_>,
+    new: &Side<'_>,
+    runs: &[(Range<usize>, Range<usize>)],
+) -> Option<Vec<(Range<usize>, Range<usize>)>> {
+    let inner = 1..=runs.len();
+    let (mut low, mut high) = (usize::MAX, 0);
+    for item in &new.items {
+        let Some(was) = old.by_key.get(&item.key).and_then(|i| old.items.get(*i)) else {
+            continue;
+        };
+        if was.run != item.run && inner.contains(&was.run) && inner.contains(&item.run) {
+            low = low.min(was.run.min(item.run));
+            high = high.max(was.run.max(item.run));
+        }
+    }
+    if low > high {
+        return None;
+    }
+    let (first, last) = (runs.get(low - 1)?, runs.get(high - 1)?);
+    let mut out: Vec<(Range<usize>, Range<usize>)> = runs.get(..low - 1)?.to_vec();
+    out.push((first.0.start..last.0.end, first.1.start..last.1.end));
+    out.extend_from_slice(runs.get(high..)?);
+    Some(out)
+}
+
 /// Whether two bodies hold the same blocks (the same allocations at the same places).
 fn same_blocks(a: &super::segment::Body, b: &super::segment::Body) -> bool {
     a.blocks.len() == b.blocks.len()
@@ -280,20 +320,7 @@ fn content(a: &Arc<Element>, b: &Arc<Element>) -> Content {
 
 /// The blocks of `old` and `new` compared: pairs by key, then renames.
 fn compare(old: &Side<'_>, new: &Side<'_>, shared: &[(usize, usize)]) -> BlockDelta {
-    // the old item each new item is paired with: by place where given, then by key
-    let mut pair: Vec<Option<usize>> = vec![None; new.items.len()];
-    let mut taken: Vec<bool> = vec![false; old.items.len()];
-    for (i, j) in shared {
-        link(&mut pair, &mut taken, *i, *j);
-    }
-    for (j, item) in new.items.iter().enumerate() {
-        let Some(&i) = old.by_key.get(&item.key) else { continue };
-        if pair.get(j).copied().flatten().is_none() && !taken.get(i).copied().unwrap_or(true) {
-            link(&mut pair, &mut taken, i, j);
-        }
-    }
-    rename_tables(old, new, &mut pair, &mut taken);
-    rename_stamped(old, new, &mut pair, &mut taken);
+    let (pair, taken) = paired(old, new, shared);
     let renamed: Vec<(usize, usize)> = pair
         .iter()
         .enumerate()
@@ -377,9 +404,12 @@ fn compare(old: &Side<'_>, new: &Side<'_>, shared: &[(usize, usize)]) -> BlockDe
     out
 }
 
+/// Pairs of items (old, new).
+type Pairs = Vec<(usize, usize)>;
+
 /// The paired blocks that crossed blocks both versions share (`crossed`: from one stretch
-/// compared to another), and those outside a longest stretch whose order both versions
-/// keep, in the later version's order.
+/// compared to another), and those a sequence diff of their order does not keep in place, in
+/// the later version's order.
 fn moved(
     pair: &[Option<usize>],
     crossed: impl Fn(usize, usize) -> bool,
@@ -387,13 +417,13 @@ fn moved(
     before_new: impl Fn(usize) -> Option<BlockKey>,
     was_after: impl Fn(usize) -> Option<BlockKey>,
 ) -> Vec<Moved> {
-    let (mut order, across): (Vec<(usize, usize)>, Vec<(usize, usize)>) = pair
+    let (mut order, across): (Pairs, Pairs) = pair
         .iter()
         .enumerate()
         .filter_map(|(j, i)| i.map(|i| (i, j)))
         .partition(|(i, j)| !crossed(*i, *j));
     order.sort_unstable();
-    let kept = longest_increasing(&order.iter().map(|(_, j)| *j).collect::<Vec<_>>());
+    let kept = kept_in_order(&order.iter().map(|(_, j)| *j).collect::<Vec<_>>());
     let mut out: Vec<(usize, Moved)> = order
         .iter()
         .zip(kept)
@@ -413,6 +443,25 @@ fn moved(
         .collect();
     out.sort_by_key(|(j, _)| *j);
     out.into_iter().map(|(_, m)| m).collect()
+}
+
+/// The old item each new item is paired with -- by place where given, then by key, then as a
+/// renamed table or a stamped block -- and which old items are paired.
+fn paired(old: &Side<'_>, new: &Side<'_>, shared: &[(usize, usize)]) -> (Vec<Option<usize>>, Vec<bool>) {
+    let mut pair: Vec<Option<usize>> = vec![None; new.items.len()];
+    let mut taken: Vec<bool> = vec![false; old.items.len()];
+    for (i, j) in shared {
+        link(&mut pair, &mut taken, *i, *j);
+    }
+    for (j, item) in new.items.iter().enumerate() {
+        let Some(&i) = old.by_key.get(&item.key) else { continue };
+        if pair.get(j).copied().flatten().is_none() && !taken.get(i).copied().unwrap_or(true) {
+            link(&mut pair, &mut taken, i, j);
+        }
+    }
+    rename_tables(old, new, &mut pair, &mut taken);
+    rename_stamped(old, new, &mut pair, &mut taken);
+    (pair, taken)
 }
 
 /// A came table paired with a gone one that held one of its rows (its first row changed).
@@ -438,8 +487,9 @@ fn rename_tables(old: &Side<'_>, new: &Side<'_>, pair: &mut [Option<usize>], tak
     }
 }
 
-/// A came block paired with a gone one of its kind whose key named its place and whose
-/// content is the same but for stamps (stamping gave it a paraId of its own), in order.
+/// A came block paired with a gone one of its kind, one of the two keyed by its place, whose
+/// content is the same but for stamps (stamping gave it a paraId, an undo of stamping took
+/// it away): the two sides' unpaired blocks aligned in order by a sequence diff.
 fn rename_stamped(old: &Side<'_>, new: &Side<'_>, pair: &mut [Option<usize>], taken: &mut [bool]) {
     let unpaired_old = old
         .items
@@ -454,35 +504,30 @@ fn rename_stamped(old: &Side<'_>, new: &Side<'_>, pair: &mut [Option<usize>], ta
     if unpaired_old.chain(unpaired_new).all(|(_, item)| item.key.durable()) {
         return; // two durable keys are two blocks
     }
+    // the unpaired blocks of each side in order, aligned by kind and content without stamps
+    // (a sequence diff, so equal blocks pair in order)
     let mut memo: HashMap<*const Element, u64> = HashMap::new();
-    let mut waiting: HashMap<(u8, u64), VecDeque<usize>> = HashMap::new();
-    for (i, item) in old.items.iter().enumerate() {
-        if taken.get(i).copied().unwrap_or(true) {
-            continue;
-        }
-        let digest = stampless_hash(item.element, &mut memo);
-        waiting.entry((kind_tag(item.kind), digest)).or_default().push_back(i);
-    }
-    if waiting.is_empty() {
-        return;
-    }
-    for (j, item) in new.items.iter().enumerate() {
-        if pair.get(j).copied().flatten().is_some() {
-            continue;
-        }
-        let digest = stampless_hash(item.element, &mut memo);
-        let Some(queue) = waiting.get_mut(&(kind_tag(item.kind), digest)) else {
-            continue;
-        };
-        let found = queue.iter().position(|i| {
-            !taken.get(*i).copied().unwrap_or(true)
-                && old
-                    .items
-                    .get(*i)
-                    .is_some_and(|o| !(o.key.durable() && item.key.durable()) && stampless_eq(o.element, item.element))
-        });
-        if let Some(i) = found.and_then(|p| queue.remove(p)) {
-            link(pair, taken, i, j);
+    let mut digests = |items: &[Item<'_>], keep: &dyn Fn(usize) -> bool| -> (Vec<usize>, Vec<(u8, u64)>) {
+        items
+            .iter()
+            .enumerate()
+            .filter(|(n, _)| keep(*n))
+            .map(|(n, item)| (n, (kind_tag(item.kind), stampless_hash(item.element, &mut memo))))
+            .unzip()
+    };
+    let (olds, a) = digests(&old.items, &|i| !taken.get(i).copied().unwrap_or(true));
+    let (news, b) = digests(&new.items, &|j| pair.get(j).copied().flatten().is_none());
+    for op in opcodes(&a, &b).into_iter().filter(|op| op.tag == Tag::Equal) {
+        for (x, y) in (op.i1..op.i2).zip(op.j1..op.j2) {
+            let (Some(&i), Some(&j)) = (olds.get(x), news.get(y)) else {
+                continue;
+            };
+            let (Some(o), Some(n)) = (old.items.get(i), new.items.get(j)) else {
+                continue;
+            };
+            if !(o.key.durable() && n.key.durable()) && stampless_eq(o.element, n.element) {
+                link(pair, taken, i, j);
+            }
         }
     }
 }
@@ -504,29 +549,18 @@ fn kind_tag(kind: Kind) -> u8 {
     }
 }
 
-/// For each place of `seq`, whether it is in a longest strictly increasing subsequence.
-fn longest_increasing(seq: &[usize]) -> Vec<bool> {
-    // patience: tails[l] is the place of the smallest tail of an increasing run of length l+1
-    let mut tails: Vec<usize> = Vec::new();
-    let mut back: Vec<Option<usize>> = vec![None; seq.len()];
-    for (n, v) in seq.iter().enumerate() {
-        let l = tails.partition_point(|t| seq.get(*t).is_some_and(|x| x < v));
-        if let Some(b) = back.get_mut(n) {
-            *b = l.checked_sub(1).and_then(|p| tails.get(p).copied());
-        }
-        if l == tails.len() {
-            tails.push(n);
-        } else if let Some(t) = tails.get_mut(l) {
-            *t = n;
-        }
-    }
+/// For each place of `seq` (the later version's places of the paired blocks, in the earlier
+/// version's order), whether its block kept its order: in a matching block of a sequence diff
+/// of `seq` against itself sorted -- the blocks a move left in place are those `difflib`
+/// matches, as `touched` has always found them.
+fn kept_in_order(seq: &[usize]) -> Vec<bool> {
+    let mut sorted = seq.to_vec();
+    sorted.sort_unstable();
     let mut kept = vec![false; seq.len()];
-    let mut at = tails.last().copied();
-    while let Some(n) = at {
-        if let Some(k) = kept.get_mut(n) {
+    for op in opcodes(seq, &sorted).into_iter().filter(|op| op.tag == Tag::Equal) {
+        for k in kept.get_mut(op.i1..op.i2).into_iter().flatten() {
             *k = true;
         }
-        at = back.get(n).copied().flatten();
     }
     kept
 }

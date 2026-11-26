@@ -32,6 +32,8 @@ const FIXTURES: &[&str] = &[
     "generated/table-keeps.docx",
     "generated/lists-and-styles.docx",
     "generated/review-follow.docx",
+    "wordto/sample-with-table.docx",
+    "samplelib/sample-long.docx",
 ];
 
 /// Every block of every story of `docx`, by key: its element.
@@ -144,10 +146,11 @@ fn step(editor: &Editor, rng: &mut Rng, writer: u64) -> bool {
             let moving = some_block(doc, rng, tables);
             let to = some_block(doc, rng, false);
             moving.zip(to).map(|(moving, to)| {
+                let to = Some(Address::from(to));
                 let command = MoveBlocks {
                     blocks: Moving::Blocks(Address::from(moving)),
-                    after: Some(Address::from(to)),
-                    before: None,
+                    after: to.clone().filter(|_| writer % 2 == 0),
+                    before: to.filter(|_| writer % 2 == 1),
                     policy,
                 };
                 editor.run(&caller, &command).map(|e| e.changed)
