@@ -628,6 +628,14 @@ fn a_first_edit_that_stamps_an_unstamped_document_names_every_block_by_its_new_k
     }
     assert!(lines > 100 && rules > 10, "{lines} lines, {rules} rules");
     summary_names_by_ids(&mut kept, &after);
+    facts_name_by_new_keys(&mut kept, &before, &after);
+}
+
+/// `after`'s facts (a first edit that stamped `before`'s blocks) and the layout half of its
+/// page tier name every block by its new key: the facts are a whole layout's, none kept from
+/// `before` by a key it no longer has.
+fn facts_name_by_new_keys(kept: &mut PageEngine, before: &LaidVersion, after: &LaidVersion) {
+    let names = &after.layout().document.names;
     for page in &after.facts().pages {
         for line in &page.lines {
             assert!(line.anchor.is_some_and(|a| a.block.durable()), "{line:?}");
@@ -637,7 +645,7 @@ fn a_first_edit_that_stamps_an_unstamped_document_names_every_block_by_its_new_k
             assert!(names.path(*block).is_some(), "{block:?}");
         }
         // the layout half of the page tier: its foot by the new keys
-        for key in kept.laid_entry(&after, page.page).unwrap().foot().keys() {
+        for key in kept.laid_entry(after, page.page).unwrap().foot().keys() {
             assert!(key.durable(), "{key:?}");
         }
     }

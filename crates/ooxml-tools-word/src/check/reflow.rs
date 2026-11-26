@@ -151,7 +151,7 @@ pub(super) fn laid_facts(layout: &dyn WordLayout, version: &LaidVersion) -> Resu
     facts.insert(
         "coverage".into(),
         coverage_facts(&coverage, |key, path| {
-            ooxml_word_pages::coverage::id_of(&version, key, path)
+            ooxml_word_pages::coverage::id_of(version, key, path)
         }),
     );
     let warnings = (!coverage.warnings.is_empty()).then(|| {
