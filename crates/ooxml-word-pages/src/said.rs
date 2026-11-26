@@ -42,6 +42,8 @@ pub struct DrawnPlaceholder {
     pub page: Option<usize>,
     /// The element it stands for.
     pub path: Option<String>,
+    /// Its paragraph's key, beside its path (`None`: one no story's index holds).
+    pub key: Option<ooxml_word_model::ids::BlockKey>,
 }
 
 impl DrawnPlaceholder {
@@ -104,6 +106,7 @@ impl Said {
             message: placeholder.drawn_message(None),
             page,
             path: Some(placeholder.path.to_string()),
+            key: placeholder.key,
         };
         if !self.placeholders.contains(&entry) {
             self.placeholders.push(entry.clone());

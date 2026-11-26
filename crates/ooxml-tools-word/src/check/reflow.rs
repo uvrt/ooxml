@@ -150,7 +150,9 @@ pub(super) fn laid_facts(layout: &dyn WordLayout, version: &LaidVersion) -> Resu
     facts.insert("complete".into(), Value::from(true));
     facts.insert(
         "coverage".into(),
-        coverage_facts(&coverage, |path| version.id_of(path).map(str::to_owned)),
+        coverage_facts(&coverage, |key, path| {
+            version.id_named(key, path).map(|id| id.to_string())
+        }),
     );
     let warnings = (!coverage.warnings.is_empty()).then(|| {
         let listed: Vec<String> = coverage
