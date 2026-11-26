@@ -1352,20 +1352,28 @@ def _replays_the_same(work: tuple[str, list[dict], Path]) -> tuple[str, list[dic
 
 
 def bless(staged: Path, host: Path = HOST, *, write: bool = True, reason: str | None = None,
-          only: Iterable[str] = (), jobs: int = 1) -> int:
+          only: Iterable[str] = (), jobs: int = 1, cases: Iterable[str] = ()) -> int:
     """Turn a recording (``staged``) into the host goldens: each case replayed twice and kept only
     where both replays equal the recording; the change summary printed (cases new, gone, and
     each changed case's events by tool and field); with ``write``, the streams and their inputs
     written into ``host`` (streams ``only`` names, or all recorded) and streams no recording
-    covers left as they are.  A recording of a host with uncommitted changes needs ``reason``."""
+    covers left as they are.  With ``cases`` (case ids, ``test_x::test_y#1``), only those cases
+    are blessed (:func:`bless_cases`).  A recording of a host with uncommitted changes needs
+    ``reason``."""
     merged = _merge_staged(staged)
     if only:
         merged = {name: lines for name, lines in merged.items() if any(fnmatch.fnmatchcase(name, o) for o in only)}
+    wanted = set(cases)
+    if wanted:
+        merged = {name: [line for line in lines if line["case"] in wanted] for name, lines in merged.items()}
+        merged = {name: lines for name, lines in merged.items() if lines}
     sources = {line["source"] for lines in merged.values() for line in lines if line["event"] == "case"}
     if any(source.endswith("+dirty") for source in sources) and not reason:
         print(f"refused: recorded from a host with uncommitted changes ({', '.join(sorted(sources))}); "
               "commit them, or give --reason")
         return 1
+    if wanted:
+        return bless_cases(staged, merged, wanted, host, write=write, jobs=jobs)
     kept: dict[str, list[dict]] = {}
     dropped: list[dict] = []
     for path in sorted((staged / "skipped").glob("*.json")) if (staged / "skipped").is_dir() else ():
@@ -1410,6 +1418,81 @@ def bless(staged: Path, host: Path = HOST, *, write: bool = True, reason: str | 
                 stale.unlink()
         write_skipped_list(host, set(merged) | {d["stream"] for d in dropped}, dropped)
         _drop_unused_inputs(host)
+    return 0
+
+
+def spliced(stream: str, lines: list[dict]) -> str:
+    """A stream's text (``stream``) with the cases of ``lines`` written in place of their old
+    lines -- a case it lacks at its end -- and every other line kept as it is, byte for byte."""
+    new = cases_of(lines)
+    out: list[str] = []
+    placed: set[str] = set()
+    for text in stream.splitlines(keepends=True):
+        case = json.loads(text)["case"] if text.strip() else None
+        if case not in new:
+            out.append(text)
+        elif case not in placed:
+            out.extend(canonical(line) + "\n" for line in new[case])
+            placed.add(case)
+    for case, case_lines in new.items():
+        if case not in placed:
+            out.extend(canonical(line) + "\n" for line in case_lines)
+    return "".join(out)
+
+
+def bless_cases(staged: Path, merged: dict[str, list[dict]], wanted: set[str], host: Path = HOST, *,
+                write: bool = True, jobs: int = 1) -> int:
+    """:func:`bless` of the cases ``wanted`` alone (``merged``: their recorded lines, by stream):
+    each replayed twice as every blessed case is; where all replay the same, each is written in
+    its stream in place of its old lines (a case the stream lacks goes at its end) with its own
+    inputs, and every other line of the stream is left as it was, byte for byte.  A case named
+    and not recorded, or not replaying the same, refuses the whole bless (nothing written)."""
+    recorded = {line["case"] for lines in merged.values() for line in lines}
+    missing = sorted(wanted - recorded)
+    if missing:
+        print("refused: not recorded: " + ", ".join(missing))
+        return 1
+    from concurrent.futures import ProcessPoolExecutor
+
+    kept: dict[str, list[dict]] = {}
+    dropped: list[dict] = []
+    with ProcessPoolExecutor(max_workers=max(1, jobs)) as pool:
+        for name, good, bad in pool.map(_replays_the_same, [(n, ls, staged) for n, ls in sorted(merged.items())]):
+            kept[name] = good
+            dropped.extend(bad)
+    if dropped:
+        print("refused: replays differently: " + ", ".join(f"{d['case']} ({d['why']})" for d in dropped))
+        return 1
+    lines_out = []
+    for name, lines in sorted(kept.items()):
+        path = host / f"{name}.jsonl"
+        old = [line for line in read_stream(path) if line["case"] in wanted] if path.exists() else []
+        lines_out.extend(_summarise(name, old, lines))
+    print(f"host goldens: {len(kept)} stream(s), {len(recorded)} case(s) blessed alone")
+    print("changes:" if lines_out else "changes: none")
+    for line in lines_out:
+        print(line)
+    if not write:
+        return 0
+    for name, lines in kept.items():
+        path = host / f"{name}.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(spliced(path.read_text(encoding="utf-8") if path.exists() else "", lines), encoding="utf-8")
+        for line in lines:
+            for spec in _inputs_of(line):
+                if spec["path"].startswith("$HOST/"):
+                    source = staged / spec["path"][len("$HOST/"):]
+                    target = host / spec["path"][len("$HOST/"):]
+                    if source.exists() and not target.exists():
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copyfile(source, target)
+    skipped = host / "skipped.json"
+    if skipped.exists():
+        earlier = json.loads(skipped.read_text(encoding="utf-8"))
+        left = [d for d in earlier if not (d["case"] in wanted and d["stream"] in kept)]
+        if left != earlier:
+            skipped.write_text(json.dumps(left, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    _drop_unused_inputs(host)
     return 0
 
 
@@ -1478,6 +1561,9 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--reason", help="why a recording of uncommitted host code is blessed")
     b.add_argument("--only", nargs="*", default=[], help="stream globs to bless (default: all recorded)")
     b.add_argument("-j", type=int, default=1, help="streams replayed at once (processes)")
+    b.add_argument("--case", action="append", default=[], dest="cases",
+                   help="bless only this case (test_x::test_y#1; repeatable): every other case's lines kept as they are")
+    b.add_argument("--cases-from", type=Path, help="a file of case ids, one a line, blessed as --case")
     p = sub.add_parser("replay", help="replay the host goldens against this host")
     p.add_argument("names", nargs="*", help="stream globs (default: all)")
     args = parser.parse_args(argv)
@@ -1488,7 +1574,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "record-tests":
         return record_tests(args.out, args.files, args.n)
     if args.command == "bless":
-        return bless(args.staged, write=not args.check, reason=args.reason, only=args.only, jobs=args.j)
+        cases = list(args.cases)
+        if args.cases_from:
+            cases += [line.strip() for line in args.cases_from.read_text(encoding="utf-8").splitlines() if line.strip()]
+        return bless(args.staged, write=not args.check, reason=args.reason, only=args.only, jobs=args.j,
+                     cases=cases)
     return run_replay(args.names)
 
 
