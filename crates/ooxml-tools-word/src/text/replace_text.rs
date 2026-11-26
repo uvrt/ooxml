@@ -155,16 +155,6 @@ fn replace_plan<'a>(
         read_ranges(tx, matches.iter().map(|(_, address, _)| address.as_str())).map_err(internal)?;
         let find = repr(&Value::from(args.find.as_str()));
         let inside = range_of(args).map(|r| format!(" in {r}")).unwrap_or_default();
-        if matches.is_empty() && all > 0 {
-            // every match is in a story the call leaves: the call that covers them
-            let mut call = replace_call(args);
-            call.arguments.insert("stories".into(), Value::from("all"));
-            return Err(ToolError::refusal(
-                Refusal::NotFound,
-                format!("{find} occurs nowhere in the body{inside}; {all} place(s) in other stories match: stories \"all\" replaces them"),
-                WayOut::call(call),
-            ));
-        }
         if matches.is_empty() {
             return Err(ToolError::refusal(
                 Refusal::NotFound,
