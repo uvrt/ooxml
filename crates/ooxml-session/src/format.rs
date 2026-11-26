@@ -100,6 +100,12 @@ pub trait Format: Send + Sync + 'static {
         false
     }
 
+    /// Whether its documents read a scale's values for a check ([`FormatDoc::scale_values`]);
+    /// a refusal of one that reads none names those that do.
+    fn gives_scale_values(&self) -> bool {
+        false
+    }
+
     /// A new document's bytes, as `new_document` makes one of this kind: blank, or from the
     /// template `made` gives, with its page size, properties and the call's date; the host
     /// opens them.
@@ -255,6 +261,22 @@ pub trait FormatDoc: Send + Sync + 'static {
         None
     }
 
+    /// The values `scale`'s targets hold in it at `at`, each with the step of the scale it is
+    /// styled with now, within the check's scope `read` gives (`scale_values`); `None` where
+    /// its format reads none (by default).
+    ///
+    /// # Errors
+    /// The format's refusal of the scope.
+    fn scale_values(
+        &self,
+        at: &AnyVersion,
+        scale: &crate::scales::Scale,
+        read: &ValueRead<'_>,
+    ) -> Option<Result<ReadValues, ToolError>> {
+        let _ = (at, scale, read);
+        None
+    }
+
     /// What `address` names in it at `at` that gives no rows (`"a table"`, for a refusal's
     /// words: `own_source`); `None` by default.
     fn own_source(&self, at: &AnyVersion, address: &str) -> Option<String> {
@@ -399,6 +421,15 @@ pub struct ValueRead<'a> {
 pub struct ReadTexts {
     /// The texts, in document order.
     pub texts: Vec<crate::numbers::NumberText>,
+    /// The warnings.
+    pub warnings: Vec<String>,
+}
+
+/// The values a document reads at a scale's targets, and what the reader is warned of.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ReadValues {
+    /// The values, in the targets' order.
+    pub values: Vec<crate::scales::ScaleValue>,
     /// The warnings.
     pub warnings: Vec<String>,
 }

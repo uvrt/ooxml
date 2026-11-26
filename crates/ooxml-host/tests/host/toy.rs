@@ -156,7 +156,7 @@ pub struct ToyDescribe {
 }
 
 /// The toy `check`'s arguments.
-#[derive(ToolArgs, Debug, Clone, PartialEq, Eq)]
+#[derive(ToolArgs, Debug, Clone, PartialEq)]
 #[tool(name = "check", description = "Check the deck.")]
 pub struct ToyCheck {
     /// Document id.
@@ -165,6 +165,26 @@ pub struct ToyCheck {
     pub include: Option<Vec<String>>,
     /// The parts to check.
     pub slides: Option<Vec<String>>,
+    /// Values styled by a scale's steps or not.
+    pub scale: Option<ToyScale>,
+}
+
+/// One step of a toy scale.
+#[allow(missing_docs)]
+#[derive(ToolArgs, Debug, Clone, PartialEq)]
+pub struct ToyStep {
+    pub fill: String,
+    pub min: Option<f64>,
+    pub label: Option<String>,
+}
+
+/// A toy scale.
+#[allow(missing_docs)]
+#[derive(ToolArgs, Debug, Clone, PartialEq)]
+pub struct ToyScale {
+    pub steps: Vec<ToyStep>,
+    pub targets: Vec<String>,
+    pub name: Option<String>,
 }
 
 fn toy_save(args: &ToySave, version: &ToyVersion<'_>, _cancel: &dyn Cancel) -> Result<Done<Value>, ToolError> {
@@ -344,6 +364,10 @@ impl Format for ToyFormat {
     }
 
     fn gives_number_texts(&self) -> bool {
+        true
+    }
+
+    fn gives_scale_values(&self) -> bool {
         true
     }
 
@@ -557,6 +581,41 @@ impl FormatDoc for ToyDoc {
         let mut checks = Map::new();
         checks.insert("parts".into(), Value::from(at.package().part_names().len()));
         Some(checks)
+    }
+
+    /// The text of each target's `toy/text-<target>.xml` part, styled with no step; a target
+    /// with no such part skipped.
+    fn scale_values(
+        &self,
+        at: &AnyVersion,
+        scale: &ooxml_session::scales::Scale,
+        _read: &ValueRead<'_>,
+    ) -> Option<Result<ooxml_session::ReadValues, ToolError>> {
+        let package = at.package();
+        let values = scale
+            .targets
+            .iter()
+            .map(|target| {
+                let bytes = package.read(&format!("toy/text-{target}.xml")).ok().flatten();
+                let mut value = ooxml_session::scales::ScaleValue {
+                    target: target.clone(),
+                    exact: true,
+                    ..Default::default()
+                };
+                match bytes {
+                    Some(bytes) => {
+                        let xml = String::from_utf8_lossy(&bytes).into_owned();
+                        value.text = xml.trim_start_matches("<t>").trim_end_matches("</t>").to_owned();
+                    }
+                    None => value.skip = Some(format!("no text {target}")),
+                }
+                value
+            })
+            .collect();
+        Some(Ok(ooxml_session::ReadValues {
+            values,
+            warnings: Vec::new(),
+        }))
     }
 
     /// The text of each `toy/text-<at>.xml` part (`<t>...</t>`), within the slides asked for;

@@ -168,8 +168,12 @@ impl HostSession {
 
     /// `read` run with what a reference writes in this session (the dispatcher's `Call.fact`):
     /// the text of the value an address names (`d:x/North/avg:0.0`, `d2/t:Scores/door/mean`),
-    /// every open document held for reading; `None` where it is refused.
-    pub(crate) fn with_facts<R>(&self, retry: &TryCall, read: impl FnOnce(&dyn Fn(&str) -> Option<String>) -> R) -> R {
+    /// every open document held for reading; the refusal's message where it is refused.
+    pub(crate) fn with_facts<R>(
+        &self,
+        retry: &TryCall,
+        read: impl FnOnce(&dyn Fn(&str) -> Result<String, String>) -> R,
+    ) -> R {
         let opens = self.opens();
         let host = sources_of(&self.host.formats, &opens, retry);
         let store: DatasetStore = self.stores().datasets.clone();
@@ -203,8 +207,8 @@ impl HostSession {
         };
         let fact = |address: &str| {
             ooxml_session::facts::fact(address, "", &env, &call)
-                .ok()
                 .map(|(text, _)| text)
+                .map_err(|error| error.message().to_owned())
         };
         read(&fact)
     }

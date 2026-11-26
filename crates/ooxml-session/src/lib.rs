@@ -49,6 +49,7 @@ mod panics;
 pub mod problems;
 mod refs;
 mod registry;
+pub mod scales;
 mod session;
 pub mod sources;
 mod stored;
@@ -63,7 +64,7 @@ pub use document::{package_has_part, PackageFormat};
 pub use error::SessionError;
 pub use format::{
     no_source, AnyVersion, Deferred, Finished, Format, FormatDoc, FormatRun, LockSpent, NewDocument, OpenEnv,
-    ReadTexts, ValueRead, WithState,
+    ReadTexts, ReadValues, ValueRead, WithState,
 };
 pub use group::GroupMark;
 pub use history::{Direction, NumberedStep, Numbers, Undone};

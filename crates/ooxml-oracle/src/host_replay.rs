@@ -36,8 +36,6 @@ pub enum Waits {
     D3,
     /// `batch` and turns of several calls: Phase 3 D2.
     D2,
-    /// check's scale: Phase 3 G1b (its numbers came with G1a).
-    G1,
     /// A host setting the replay does not make yet (limits, a toolbox's own settings).
     Settings,
     /// What docx-agent's adapters say after a batch's ops (a table kept together found
@@ -53,7 +51,6 @@ impl Waits {
         match self {
             Waits::D3 => "D3 (session tools)",
             Waits::D2 => "D2 (batch)",
-            Waits::G1 => "G1b (scales)",
             Waits::Settings => "settings",
             Waits::BatchAdapters => "batch adapters (D2 follow-up)",
         }
@@ -320,16 +317,6 @@ fn output_parts(data: &[u8]) -> Value {
 fn described_output(output: &ooxml_session::outputs::Output) -> Value {
     serde_json::json!({"name": output.name, "format": output.format, "doc": output.doc,
         "validate": output.validate, "parts": output_parts(&output.data)})
-}
-
-/// What a call of `tool` with `arguments` waits for, and whether its case's later events
-/// depend on it (it changes the session's state).
-fn waits(tool: &str, arguments: &Value) -> Option<(Waits, bool)> {
-    let bare = tool.rsplit('.').next().unwrap_or(tool);
-    if bare == "check" && arguments.get("scale").is_some_and(|s| !s.is_null()) {
-        return Some((Waits::G1, false));
-    }
-    None
 }
 
 /// A dataset as `freeze_values.py` froze it: its id, columns, rows (values as the adapters
@@ -1134,10 +1121,6 @@ impl Replayer {
     fn call(&self, stream: &str, session: &HostSession, event: &Value) -> (Outcome, bool) {
         let tool = event.get("tool").and_then(Value::as_str).unwrap_or_default();
         let arguments = event.get("arguments").cloned().unwrap_or(Value::Null);
-        let waiting = waits(tool, &arguments);
-        if let Some((waits, blocks)) = waiting.filter(|(w, _)| !matches!(w, Waits::G1)) {
-            return (Outcome::Waiting(waits, false), blocks);
-        }
         let roles = event
             .get("roles")
             .or_else(|| event.get("view").and_then(|v| v.get("roles")))
@@ -1163,9 +1146,6 @@ impl Replayer {
             ..CallAs::default()
         };
         match session.call(tool, arguments, &how) {
-            // (save_document and a check of numbers run for what they leave: their layout,
-            // the check seen; their answers wait)
-            Ok(_) if waiting.is_some() => (Outcome::Waiting(waiting.map_or(Waits::D3, |w| w.0), false), false),
             Ok(result) if event.get("event").and_then(Value::as_str) == Some("change") => {
                 let have = serde_json::json!({"ok": !result.is_error(), "changed_parts": result.app.changed_parts});
                 (self.compare(stream, event, "result", &have), false)

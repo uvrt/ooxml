@@ -95,9 +95,9 @@ def _install_service() -> None:
         record = getattr(_LOCAL, "record", None)
         try:
             found = fact(call, address, *args, **kwargs)
-        except Exception:
+        except Exception as exc:
             if record is not None:
-                record.setdefault("facts", {})[address] = None
+                record.setdefault("facts", {})[address] = {"message": getattr(exc, "message", str(exc))}
             raise
         if record is not None:
             record.setdefault("facts", {})[address] = found[0]
@@ -132,7 +132,10 @@ def _install_service() -> None:
             return run()
         record.update(test=os.environ.get("PYTEST_CURRENT_TEST", "").split(" ")[0],
                       locale=_locale(getattr(call, "locale", None)),
-                      doc=entry.doc_id if entry is not None else None)
+                      doc=entry.doc_id if entry is not None else None,
+                      kind=entry.kind if entry is not None else None,
+                      reading=sorted(k for k, f in call.session.formats.items()
+                                     if getattr(f, "scale_values", None) is not None))
         _LOCAL.record = record
         try:
             data = run()
