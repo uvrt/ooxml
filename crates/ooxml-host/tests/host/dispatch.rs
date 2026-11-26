@@ -102,14 +102,3 @@ fn every_call_is_recorded_by_its_shape_never_its_content() {
     assert!(!log[1].ok);
     assert_eq!(log[1].code.as_deref(), Some("invalid_arguments"));
 }
-
-#[test]
-fn batch_waits_for_its_port_behind_the_seam() {
-    let s = session();
-    let reply = call(
-        &s,
-        "batch",
-        json!({"ops": [{"tool": "toy_set", "arguments": {"doc": "d1", "target": "a", "text": "x"}}]}),
-    );
-    assert_eq!(reply["error"]["details"]["not_supported"], "batch (Rust host)");
-}

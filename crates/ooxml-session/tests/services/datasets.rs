@@ -614,6 +614,37 @@ fn the_session_keeps_at_most_max_datasets_and_an_id_may_be_reused() {
     assert_eq!(ids(&sess), ["d:b", "d:c"]);
 }
 
+/// A batch whose op would keep over the session's limit: that op refused as it defines
+/// (as today's batch refuses it, `define_dataset`'s `limit`), counting what the batch's earlier
+/// ops defined; the rest applied, or none in an atomic batch.
+#[test]
+fn a_batch_op_over_the_dataset_limit_is_refused_and_the_batchs_rule_decides_the_rest() {
+    let mut sess = Sess::new(DatasetLimits {
+        max_datasets: 2,
+        ..DatasetLimits::default()
+    });
+    sess.open("pptx", "deck.pptx");
+    let ops = [
+        (DERIVE, json!({"doc": "d1", "id": "a"})),
+        (DERIVE, json!({"doc": "d1", "id": "b"})),
+        (DERIVE, json!({"doc": "d1", "id": "c"})),
+    ];
+    let atomic = sess.batch(&ops, true);
+    atomic.failed("limit");
+    assert!(sess.store.entries().is_empty(), "an atomic batch keeps none");
+    let partial = sess.batch(&ops, false);
+    assert!(
+        partial.ok() && partial.data["failed"] == json!([2]),
+        "{:?}",
+        partial.data
+    );
+    assert_eq!(
+        partial.data["ops"][2]["error"]["message"],
+        "2 datasets are kept; at most 2: reuse an id to replace one"
+    );
+    assert_eq!(ids(&sess), ["d:a", "d:b"], "never applied over the limit");
+}
+
 /// `test_a_dataset_entry_names_its_address`.
 #[test]
 fn a_dataset_entry_names_its_address() {

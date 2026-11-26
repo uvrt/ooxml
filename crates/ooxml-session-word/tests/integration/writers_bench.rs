@@ -11,11 +11,9 @@
 //! - `batch` (not in the default): the small writers and the reader beside a host's batch of
 //!   [`BATCH_OPS`] text edits on one paragraph, run as one transaction that holds the
 //!   document's gate from its open to its close (`Session::open_group`);
-//! - `batch-call` (not in the default): the same writers and reader beside the model's `batch`
-//!   tool -- one call of [`BATCH_OPS`] text edits, the host's batch as Phase 3 makes it
-//!   optimistic -- timed whole, with the store's conflicts, rebases and exclusive runs counted
-//!   during each batch (`batch conflicts`: what the batch and the writers beside it met while
-//!   it ran), the baseline the optimistic batch is measured against (design §7.6).
+//!
+//! The model's `batch` tool beside the same writers (Phase 3's optimistic batch) is timed through
+//! the Rust host: ooxml-oracle's `host_batch_bench`.
 //!
 //! `SESSION_WRITERS_PHASES` (default `small,mixed`) names the phases; a phase named after one
 //! whole-document worker (`fields`, `styles`, `lists`, `comments`, `check`) runs the small
@@ -146,9 +144,6 @@ struct Calls {
     times: Vec<Duration>,
     failed: usize,
     first_error: Option<String>,
-    /// The store's conflicts, rebases and exclusive runs while each call ran, summed (the
-    /// `batch-call` phase's batch; zero elsewhere).
-    met: [u64; 3],
 }
 
 type Book = Arc<Mutex<BTreeMap<String, Calls>>>;
@@ -304,10 +299,6 @@ fn print_calls(book: &mut BTreeMap<String, Calls>) {
             ms(p99),
             ms(max)
         );
-        if calls.met != [0; 3] {
-            let [conflicts, rebased, exclusive] = calls.met;
-            println!("    while they ran, the store met {conflicts} conflicts, {rebased} rebases, {exclusive} exclusive runs");
-        }
         if let Some(error) = &calls.first_error {
             println!("    first error: {error}");
         }
@@ -389,44 +380,6 @@ fn batch_writer(target: (String, String)) -> Worker {
     });
     Worker {
         label: "batch".to_owned(),
-        whole: true,
-        work,
-    }
-}
-
-/// The model's `batch` tool: one call of [`BATCH_OPS`] text edits of one paragraph, timed
-/// whole, with the store's counters read before and after it.
-fn batch_call_writer(target: (String, String)) -> Worker {
-    let caller = context("batch-call");
-    let (id, text) = target;
-    let other = swapped(&text);
-    let work: Work = Box::new(move |s, d, book, _| {
-        let ops: Vec<Value> = (0..BATCH_OPS)
-            .map(|op| {
-                let set = if op % 2 == 0 { &other } else { &text };
-                json!({"tool": "word_set_text", "arguments": {"doc": d.to_string(), "target": id, "text": set}})
-            })
-            .collect();
-        let before = s.store_stats(d).unwrap();
-        let started = Instant::now();
-        let done = s.call("batch", json!({"ops": ops}), &caller);
-        let took = started.elapsed();
-        let after = s.store_stats(d).unwrap();
-        let mut book = book.lock().unwrap();
-        let calls = book.entry(format!("batch call of {BATCH_OPS}")).or_default();
-        calls.times.push(took);
-        if done.is_error() {
-            calls.failed += 1;
-            calls
-                .first_error
-                .get_or_insert_with(|| Value::Object(done.to_json()).to_string().chars().take(300).collect());
-        }
-        calls.met[0] += after.conflicts.saturating_sub(before.conflicts);
-        calls.met[1] += after.rebased.saturating_sub(before.rebased);
-        calls.met[2] += after.exclusive.saturating_sub(before.exclusive);
-    });
-    Worker {
-        label: "batch-call".to_owned(),
         whole: true,
         work,
     }
@@ -525,7 +478,6 @@ fn mixed_writers_on_one_document() {
                 "small" => {}
                 "mixed" => workers.extend(whole),
                 "batch" => workers.push(batch_writer(list.clone())),
-                "batch-call" => workers.push(batch_call_writer(list.clone())),
                 one => workers.extend(whole.into_iter().filter(|w| w.label == one)),
             }
             run_phase(phase, &bytes, workers, secs, targets.first());

@@ -12,7 +12,7 @@
 use crate::catalogue::Catalogue;
 use crate::pipeline::Going;
 use crate::session::HostSession;
-use ooxml_session::batch::{answer, combine, envelope, Left, BATCH_TIMEOUT, MARGIN, MAX_OPS, READ_BATCH};
+use ooxml_session::batch::{answer, combine, envelope, passed, Left, MARGIN, READ_BATCH};
 use ooxml_session::DocId;
 use ooxml_tools::roles::RoleSet;
 use ooxml_tools::{compact, Failure, Outcome, Refusal, ToolError, ToolResult, TryCall, WayOut};
@@ -31,12 +31,19 @@ impl HostSession {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        if ops.len() > MAX_OPS {
+        let (most, timeout) = (self.host.settings.max_batch_ops, self.host.settings.batch_timeout);
+        // (the batch names the first document an op names, whatever came of the op)
+        let first_doc = ops
+            .iter()
+            .find_map(|op| op.pointer("/arguments/doc").and_then(Value::as_str).map(str::to_owned));
+        if ops.len() > most {
             let message = format!(
-                "{} ops; at most {MAX_OPS} per read_batch: send the rest in another",
+                "{} ops; at most {most} per read_batch: send the rest in another",
                 ops.len()
             );
-            return ToolResult::failed(ToolError::failure(Failure::Limit, message).at("ops"));
+            let mut result = ToolResult::failed(ToolError::failure(Failure::Limit, message).at("ops"));
+            self.name_doc(&mut result, first_doc);
+            return result;
         }
         let own = self.host.settings.limits.result_chars;
         let cap = self.host.settings.read_batch_chars.max(own);
@@ -49,12 +56,8 @@ impl HostSession {
         let mut left: Vec<(usize, Left)> = Vec::new();
         let mut used = MARGIN;
         let mut pinned = Vec::new();
-        // (the batch names the first document an op names, whatever came of the op)
-        let first_doc = ops
-            .iter()
-            .find_map(|op| op.pointer("/arguments/doc").and_then(Value::as_str).map(str::to_owned));
         for (index, op) in ops.iter().enumerate() {
-            if clock.monotonic().saturating_sub(started) > BATCH_TIMEOUT {
+            if passed(clock.monotonic().saturating_sub(started), timeout) {
                 left.push((index, Left::Deadline));
                 continue;
             }
@@ -80,7 +83,7 @@ impl HostSession {
             shown.push((index, images, std::mem::take(&mut result.app.files)));
         }
         let read = |answers: &[(Map<String, Value>, usize, bool)], left: &[(usize, Left)]| {
-            let mut done = combine(&ops, answers, left, cap);
+            let mut done = combine(&ops, answers, left, cap, timeout);
             said_images(&mut done, answers, &shown, &pictured);
             done
         };
@@ -117,13 +120,18 @@ impl HostSession {
         let mut result = ToolResult::done(combined);
         result.app.files = files;
         result.app.budget = Some(cap);
-        if let Some(doc) = first_doc {
+        self.name_doc(&mut result, first_doc);
+        result
+    }
+
+    /// `result` naming `doc` at its head, where there is one.
+    fn name_doc(&self, result: &mut ToolResult<Value>, doc: Option<String>) {
+        if let Some(doc) = doc {
             result.version = DocId::parse(&doc)
                 .and_then(|id| self.session.snapshot(&id).ok())
                 .map(|head| head.number());
             result.doc = Some(doc);
         }
-        result
     }
 
     /// One op: its result, its tool's name as read, whether its tool takes a cursor, and the

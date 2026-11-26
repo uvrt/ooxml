@@ -36,13 +36,13 @@ pub enum NotRun {
 }
 
 /// A call's arguments with their refs resolved.
-struct WithRefs {
+pub(crate) struct WithRefs {
     /// The arguments.
-    arguments: Map<String, Value>,
+    pub(crate) arguments: Map<String, Value>,
     /// What was read as what.
     pub(crate) notes: Vec<String>,
     /// Each ref name the call gives that it keeps folded: `(kept, given)`.
-    folded: Vec<(String, String)>,
+    pub(crate) folded: Vec<(String, String)>,
 }
 
 /// What one call gathers as it goes through the pipeline, for its reply and its record.
@@ -61,6 +61,9 @@ pub(crate) struct Going {
     /// The versions it reads, where a batch pins them (each document at the version the
     /// batch's first op on it read); `None`: each document's head.
     pub(crate) pinned: Option<Vec<ooxml_session::Opened>>,
+    /// How long its commits held its documents' commit locks and waited for them and their
+    /// gates.
+    pub(crate) lock: ooxml_session::LockSpent,
 }
 
 impl Going {
@@ -72,6 +75,7 @@ impl Going {
             docs: Vec::new(),
             arguments,
             pinned: None,
+            lock: ooxml_session::LockSpent::default(),
             values: ooxml_tools::written::CallValues::default(),
         }
     }
@@ -110,6 +114,7 @@ impl HostSession {
         result.warnings = warnings;
         result.app.tool.clone_from(&going.tool);
         let duration = clock.monotonic().saturating_sub(started);
+        result.app.timing = Some(timing(duration, going.lock));
         self.record(&going, &result, roles, how, duration);
         Ok(result)
     }
@@ -136,6 +141,12 @@ impl HostSession {
         if let Err(error) = Catalogue::check_role(entry, None, roles, None, retry) {
             return ToolResult::failed(error);
         }
+        // a batch's op is its tool and its arguments: what else it gives is not read (today's
+        // host reads those two alone)
+        let arguments = match entry.own {
+            Some(Own::Batch | Own::ReadBatch) => ops_read(arguments),
+            _ => arguments,
+        };
         let accepted = match entry.spec.accept(arguments) {
             Ok(accepted) => accepted,
             Err(error) => return ToolResult::failed(self.reworded(entry, retry, error, roles)),
@@ -150,6 +161,7 @@ impl HostSession {
         match entry.own {
             Some(Own::Undo) => return self.undo(arguments, caller, going),
             Some(Own::ReadBatch) => return self.read_batch(&arguments, roles, caller),
+            Some(Own::Batch) => return self.batch(&arguments, roles, caller, going),
             Some(own) => {
                 let call = OwnCall {
                     own,
@@ -224,6 +236,9 @@ impl HostSession {
         context.values = values;
         context.values.merge(going.values.clone());
         let (mut result, made) = self.session.edit_accepted(entry.name(), arguments, &context);
+        if let Some(made) = &made {
+            going.lock = made.lock;
+        }
         if !result.is_error() {
             match self.finish_datasets(datasets) {
                 Ok(mut stale) => result.warnings.append(&mut stale),
@@ -404,7 +419,7 @@ impl HostSession {
     /// `arguments` with their refs resolved on the tool's declared paths (and the notes of
     /// what was read as what); for a changing call, its ref names checked as the call keeps
     /// them (`(kept, given)` for each folded) and owned first.
-    fn with_refs(
+    pub(crate) fn with_refs(
         &self,
         entry: &Entry,
         refs: &mut CallRefs,
@@ -516,7 +531,7 @@ impl HostSession {
     }
 
     /// `result`'s touched and changed parts between `before` and `after` of `doc`.
-    fn say_touched(
+    pub(crate) fn say_touched(
         &self,
         doc: &str,
         format: &dyn ooxml_session::FormatDoc,
@@ -623,6 +638,33 @@ impl HostSession {
         };
         self.stores().log.push(record);
     }
+}
+
+/// Where a call's time went (R142, as 0.1's `Result.block`): the whole call, the time it
+/// waited for its documents' commit locks and gates, the rest, and how long it held the
+/// locks. (The thread's own CPU is not measured by the Rust host: `cpu` is 0.)
+fn timing(total: std::time::Duration, lock: ooxml_session::LockSpent) -> ooxml_tools::Timing {
+    let total = total.as_secs_f64();
+    let lock_wait = lock.waited.as_secs_f64().min(total);
+    ooxml_tools::Timing {
+        total,
+        lock_wait,
+        work: total - lock_wait,
+        cpu: 0.0,
+        held: lock.held.as_secs_f64(),
+    }
+}
+
+/// A batch's arguments with each op held to what is read of it: its `tool` and `arguments`.
+fn ops_read(mut arguments: Value) -> Value {
+    if let Some(Value::Array(ops)) = arguments.get_mut("ops") {
+        for op in ops.iter_mut() {
+            if let Value::Object(op) = op {
+                op.retain(|key, _| key == "tool" || key == "arguments");
+            }
+        }
+    }
+    arguments
 }
 
 /// A caller's context as the session's caller key: its JSON, keys sorted.

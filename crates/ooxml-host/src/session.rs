@@ -22,6 +22,7 @@ use ooxml_tools::roles::{HostFacts, RoleSet};
 use ooxml_tools::Limits;
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
@@ -47,6 +48,11 @@ pub struct HostSettings {
     pub image_budget: Option<usize>,
     /// The images a round may show.
     pub image_budget_per_round: Option<usize>,
+    /// The ops a `batch` may hold (`Limits.max_batch_ops`).
+    pub max_batch_ops: usize,
+    /// How long a `batch` may run its ops (`Limits.batch_timeout`): the ops it has not
+    /// started by then are not run.
+    pub batch_timeout: std::time::Duration,
     /// How long laying a document out may take in a call, from its start (ooxml-edit's
     /// `Limits.layout_timeout`); `None`: as long as the call.
     pub layout_timeout: Option<Duration>,
@@ -66,6 +72,8 @@ impl Default for HostSettings {
             allow_new_problems: false,
             image_budget: Some(40),
             image_budget_per_round: None,
+            max_batch_ops: 200,
+            batch_timeout: std::time::Duration::from_secs(120),
             layout_timeout: Some(Duration::from_secs(30)),
             read_batch_chars: ooxml_session::MAX_READ_BATCH_CHARS,
         }
@@ -78,7 +86,14 @@ pub struct Host {
     pub(crate) catalogue: Catalogue,
     pub(crate) settings: HostSettings,
     pub(crate) own: Arc<dyn SessionTools>,
+    /// The owners its batches of several documents hold their transactions as, one per batch.
+    owners: AtomicU64,
 }
+
+/// Where the owners a host mints begin: above those the Python host's batches hold their
+/// transactions as (one per thread, counted from 1: `ooxml-session`'s step groups, until
+/// Phase 3 E2 deletes them), so the two never meet in one store.
+const OWNERS_FROM: u64 = 1 << 63;
 
 impl Host {
     /// A host of `formats`' documents and tools, with `settings`, its session tools run by
@@ -91,7 +106,13 @@ impl Host {
             catalogue,
             settings,
             own,
+            owners: AtomicU64::new(OWNERS_FROM),
         }
+    }
+
+    /// A batch's owner, never given before (design phase 3, section 4: minted per batch call).
+    pub(crate) fn owner(&self) -> ooxml_store::TxnOwner {
+        ooxml_store::TxnOwner::new(self.owners.fetch_add(1, Ordering::Relaxed))
     }
 
     /// Its tools.

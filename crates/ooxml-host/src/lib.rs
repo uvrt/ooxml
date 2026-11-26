@@ -20,6 +20,7 @@
 //! lock while a handler runs, or depend on `ooxml-session-word` (a sibling at 5.1).
 #![forbid(unsafe_code)]
 
+mod batch;
 mod catalogue;
 mod documents;
 pub mod hints;
