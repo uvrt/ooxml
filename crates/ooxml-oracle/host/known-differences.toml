@@ -36,13 +36,6 @@ cause = "Phase 3 D2c (ooxml-host, ooxml-session-word): a check that lays the doc
 [[difference]]
 decision = "optimistic-batches-2026-11-25"
 tool = "batch"
-case = "test_session_concurrency::test_lone_checks_and_a_batch_with_a_check_between_changes_all_finish#*"
-fields = ["result.warnings"]
-cause = "Phase 3 D2c (ooxml-host, ooxml-session-word): as above, a check between the changes of an optimistic batch on one document, beside lone checks"
-
-[[difference]]
-decision = "optimistic-batches-2026-11-25"
-tool = "batch"
 case = "test_check_timing::test_a_check_in_a_batch_lays_out_there#*"
 fields = ["result.warnings"]
 cause = "Phase 3 D2c (ooxml-host, ooxml-session-word): as above, a check between the changes of an optimistic batch on one document"

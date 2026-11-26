@@ -1,13 +1,15 @@
 //! Owns: [`WordDoc`], a Word document as the store keeps it -- a version of its package, its
 //! ids ([`Ids`]), the version's reading as docx-agent reads it (memoised with the version),
 //! the document-wide caches every version shares, and what the transaction that made the
-//! version drew and spaced. What a change is: [`change`]; how a version takes one: [`model`].
+//! version drew and spaced. What a change is: [`change`]; how a version takes one: [`model`];
+//! a transaction's splices applied where their ids came out otherwise: [`redrawn`].
 //!
 //! Must not: decide an edit (commands do, through the sink), read the clock, or hold global
 //! state: caches belong to the document ([`Shared`]).
 
 mod change;
 mod model;
+mod redrawn;
 
 pub use change::{Change, Draw, DrawFrom, Key, ModelError};
 
@@ -43,6 +45,18 @@ fn set_below(
         .children()
         .splice(k as usize..k as usize + 1, vec![ooxml_xml::Node::Element(edited)])?;
     Some(Arc::new(element.with_children(children)))
+}
+
+/// The value of the attribute `name` of the element at `at` below `element`, if it has one.
+fn attribute_below<'e>(element: &'e ooxml_xml::Element, at: &[u32], name: &ooxml_xml::Name) -> Option<&'e str> {
+    let Some((&k, rest)) = at.split_first() else {
+        return element
+            .attributes()
+            .iter()
+            .find(|a| a.name.as_ref() == name.as_ref())
+            .map(|a| a.value.as_ref());
+    };
+    attribute_below(element.children().get(k as usize)?.as_element()?, rest, name)
 }
 
 /// What a version derives once, on first use, from the latest earlier version's (its
@@ -104,6 +118,10 @@ pub struct WordDoc {
     shared: Arc<Shared>,
     /// What the transaction that made this version drew for its stand-ins.
     drawn: crate::Drawn,
+    /// What the transaction that made this version inserted, as prepared and as applied
+    /// where its ids were drawn again ([`redrawn::Redrawn`]): read only by its own later
+    /// changes' apply.
+    redrawn: redrawn::Redrawn,
     /// How many spaces the transaction that made this version spaced ([`Change::Spaced`]).
     spaced: usize,
     /// Whether the transaction writes its text as given ([`Setup::as_given`]).
@@ -174,6 +192,7 @@ impl WordDoc {
             reading: Arc::new(Mutex::new(Lazy::Ready(docx))),
             tally: Arc::new(Mutex::new(Lazy::Pending(None))),
             drawn: crate::Drawn::default(),
+            redrawn: redrawn::Redrawn::default(),
             spaced: 0,
             as_given: false,
             shared: Arc::new(Shared {
@@ -286,6 +305,7 @@ impl WordDoc {
             tally: Arc::new(Mutex::new(Lazy::Pending(tally))),
             shared: Arc::clone(&self.shared),
             drawn: self.drawn.clone(),
+            redrawn: self.redrawn.clone(),
             spaced: self.spaced,
             as_given: self.as_given,
         }

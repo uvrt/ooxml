@@ -26,14 +26,14 @@ fn opened() -> Arc<HostSession> {
     s
 }
 
-/// The first `wanted` top-level paragraphs' ids a `word_read` names.
+/// The first `wanted` top-level paragraphs a `word_read` names, by id or by place.
 fn paragraphs(s: &HostSession, wanted: usize) -> Vec<String> {
     let read = s.call("word_read", json!({"doc": "d1"}), &CallAs::default()).unwrap();
     let text = Value::Object(read.to_json())["data"].as_str().unwrap_or("").to_owned();
     let found: Vec<String> = text
         .lines()
         .filter_map(|line| line.strip_prefix("<!-- ")?.split_whitespace().next())
-        .filter(|id| id.starts_with("p:"))
+        .filter(|id| id.starts_with("p:") || id.starts_with("p@body/"))
         .map(str::to_owned)
         .take(wanted)
         .collect();
@@ -76,7 +76,8 @@ fn a_tracking_switch_beside_a_batch_never_lands_between_its_ops() {
             }
             switched
         });
-        for round in 0..12 {
+        // (the switcher stops whatever the rounds found, so a failure ends the test)
+        let mixed = (0..12).find_map(|round| {
             let ops: Vec<Value> = targets
                 .iter()
                 .enumerate()
@@ -85,17 +86,19 @@ fn a_tracking_switch_beside_a_batch_never_lands_between_its_ops() {
                 })
                 .collect();
             let reply = s.call("batch", json!({"ops": ops}), &CallAs::default()).unwrap();
-            assert!(!reply.is_error(), "{:?}", reply.to_json());
+            if reply.is_error() {
+                return Some(format!("round {round}: {:?}", reply.to_json()));
+            }
             let head = s.session().format_doc(&DocId::nth(1)).unwrap().stored().head();
             let bytes = head.package().read("word/document.xml").unwrap().unwrap();
             let document = String::from_utf8_lossy(&bytes);
             let modes: Vec<bool> = (0..OPS).map(|k| tracked(&document, &format!("b{round}x{k}"))).collect();
-            assert!(
-                modes.iter().all(|m| *m == modes[0]),
-                "round {round}: the batch's ops written under two modes: {modes:?}"
-            );
-        }
+            (!modes.iter().all(|m| *m == modes[0]))
+                .then(|| format!("round {round}: the batch's ops written under two modes: {modes:?}"))
+        });
         done.store(true, Ordering::SeqCst);
-        assert!(switcher.join().unwrap() > 0);
+        let switched = switcher.join().unwrap();
+        assert_eq!(mixed, None);
+        assert!(switched > 0);
     });
 }

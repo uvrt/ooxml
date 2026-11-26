@@ -555,17 +555,7 @@ impl FormatDoc for Word {
             result.warnings.push(said.to_owned());
         }
         if let Some(kept) = kept {
-            let keep: ooxml_session::Deferred = Box::new(move |doc, _, _, _| {
-                if let Some(word) = Word::of(doc) {
-                    word.rows_written.note(kept.rows_written.ids());
-                    word.made_by.apply(&kept.made_by);
-                }
-                Vec::new()
-            });
-            run.deferred.lock().unwrap_or_else(PoisonError::into_inner).push(keep);
-            if let Some(later) = crate::batch_said::taller_later(run, &result) {
-                run.deferred.lock().unwrap_or_else(PoisonError::into_inner).push(later);
-            }
+            Self::defer(run, kept, &result);
         }
         // An id a version removed, refused as one the document lacks: said as such.
         match &result.outcome {
@@ -783,6 +773,22 @@ impl Word {
 
     /// The layout a call reads: the host's where it gives one, else the session's own engine
     /// of the document.
+    /// What `run`, an op of a host's batch that returned `result`, keeps of the document
+    /// once the batch is published (`kept`: the rows it wrote, who made what), and what it
+    /// says then.
+    fn defer(run: &FormatRun<'_>, kept: crate::call::Kept, result: &ToolResult<Value>) {
+        let keep: ooxml_session::Deferred = Box::new(move |doc, _, _, _| {
+            if let Some(word) = Word::of(doc) {
+                word.rows_written.note(kept.rows_written.ids());
+                word.made_by.apply(&kept.made_by);
+            }
+            Vec::new()
+        });
+        let mut deferred = run.deferred.lock().unwrap_or_else(PoisonError::into_inner);
+        deferred.push(keep);
+        deferred.extend(crate::batch_said::taller_later(run, result));
+    }
+
     pub(crate) fn layout(&self, host: &WordHost) -> Option<Arc<dyn WordLayout>> {
         host.layout.clone().or_else(|| self.own_pages())
     }

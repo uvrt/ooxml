@@ -378,6 +378,29 @@ pub struct ToyDoc(
     pub Mutex<Vec<Box<dyn FnOnce() + Send>>>,
 );
 
+impl ToyDoc {
+    /// A writer beside a batch, writing the same part now (part `a` only: once an attempt,
+    /// as the batch's first write), while it has writes to make: the batch conflicts and is
+    /// prepared again; and what else happens then.
+    fn write_beside(&self, name: &str, cancel: &dyn Cancel) -> Result<(), SessionError> {
+        if name != part("a") || self.2.load(Ordering::SeqCst) == 0 {
+            return Ok(());
+        }
+        self.2.fetch_sub(1, Ordering::SeqCst);
+        let theirs: Arc<[u8]> = b"<t>theirs</t>".as_slice().into();
+        let other = PartUpdate::new(
+            vec![(name.to_owned(), Some(theirs))],
+            ooxml_base::Limits::default(),
+            cancel,
+        );
+        FormatDoc::update(&self.0, &Caller::named("other"), Some("toy_set"), &other)?;
+        for also in std::mem::take(&mut *self.4.lock().unwrap()) {
+            also();
+        }
+        Ok(())
+    }
+}
+
 /// What a toy edit made.
 struct Made {
     first: u64,
@@ -420,24 +443,7 @@ impl FormatCall for ToyCall<'_> {
                     );
                     let (version, batch) = match self.run.txn {
                         Some(txn) => {
-                            // a writer beside the batch, writing the same part now: the batch
-                            // conflicts and is prepared again
-                            // (part `a` only: once an attempt, as the batch's first write)
-                            if name == part("a") && self.doc.2.load(Ordering::SeqCst) > 0 {
-                                self.doc.2.fetch_sub(1, Ordering::SeqCst);
-                                let theirs: Arc<[u8]> = b"<t>theirs</t>".as_slice().into();
-                                let other = PartUpdate::new(
-                                    vec![(name.to_owned(), Some(theirs))],
-                                    ooxml_base::Limits::default(),
-                                    self.run.cancel,
-                                );
-                                FormatDoc::update(&self.doc.0, &Caller::named("other"), Some("toy_set"), &other)
-                                    .map_err(failed)?;
-                                let beside = std::mem::take(&mut *self.doc.4.lock().unwrap());
-                                for also in beside {
-                                    also();
-                                }
-                            }
+                            self.doc.write_beside(name, self.run.cancel).map_err(failed)?;
                             // in the batch's transaction: the part read and written, alone
                             let put = PartChange::Put {
                                 part: name.to_owned(),
