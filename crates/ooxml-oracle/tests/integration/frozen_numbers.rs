@@ -35,7 +35,9 @@ fn every_frozen_answer_of_a_check_of_numbers_is_the_rust_hosts() {
             Outcome::Equal => equal += 1,
             Outcome::Known(_) => known += 1,
             Outcome::Waiting(waits, _) => {
-                let why = case["skipped"].as_str().map_or_else(|| waits.name().to_owned(), str::to_owned);
+                let why = case["skipped"]
+                    .as_str()
+                    .map_or_else(|| waits.name().to_owned(), str::to_owned);
                 *waiting.entry(why).or_default() += 1;
             }
             Outcome::Different(paths, want, have) => {
@@ -51,5 +53,8 @@ fn every_frozen_answer_of_a_check_of_numbers_is_the_rust_hosts() {
         different.len()
     );
     let shown: Vec<&Value> = different.iter().take(5).collect();
-    assert!(different.is_empty(), "answers that differ from the Python host's: {shown:#?}");
+    assert!(
+        different.is_empty(),
+        "answers that differ from the Python host's: {shown:#?}"
+    );
 }

@@ -13,13 +13,13 @@ use ooxml_base::context::{FaceData, FaceRequest, Timestamp};
 use ooxml_base::{BaseError, CacheBudget, Cancel, Clock, Context, FontSource, PartStore};
 use ooxml_host::{CallAs, Host, HostSession, HostSettings, HostTools};
 use ooxml_opc::Package;
+use ooxml_session::numbers::NumberText;
 use ooxml_session::problems::{Problem, Severity, Validation};
 use ooxml_session::{
     AnyVersion, DocKind, Finished, Format, FormatDoc, FormatRun, NewDocument, OpenEnv, PackageDoc, PackageFormat,
     PartChange, PartContent, PartUpdate, ReadTexts, Registry, SessionConfig, SessionError, StoreClock, Stored,
     StoredDoc, ValueRead, WithState,
 };
-use ooxml_session::numbers::NumberText;
 use ooxml_store::{Caller, Store, StoreConfig};
 use ooxml_tools::roles::{HostFacts, Needs, Role};
 use ooxml_tools::{

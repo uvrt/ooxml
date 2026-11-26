@@ -201,7 +201,11 @@ impl HostSession {
             locale: &locale,
             retry,
         };
-        let fact = |address: &str| ooxml_session::facts::fact(address, "", &env, &call).ok().map(|(text, _)| text);
+        let fact = |address: &str| {
+            ooxml_session::facts::fact(address, "", &env, &call)
+                .ok()
+                .map(|(text, _)| text)
+        };
         read(&fact)
     }
 

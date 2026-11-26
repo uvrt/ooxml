@@ -127,7 +127,9 @@ impl Index {
                 .collect();
             for (r, row) in dataset.rows().iter().enumerate() {
                 for (c, item) in row.iter().enumerate() {
-                    let Some(number) = float_of(item).filter(|_| is_number(item)) else { continue };
+                    let Some(number) = float_of(item).filter(|_| is_number(item)) else {
+                        continue;
+                    };
                     let reading = readings.get(c).copied().flatten();
                     let i = values.len();
                     values.push(Value {
@@ -200,7 +202,10 @@ impl Index {
         let half = 0.5 * 10_f64.powi(-i32::try_from(number.decimals).unwrap_or(i32::MAX));
         match number.percent {
             Some(100) => vec![(How::Hundred, t, half, true), (How::Plain, t, half, false)],
-            Some(_) => vec![(How::Plain, t / 1000.0, half / 1000.0, true), (How::Plain, t, half, false)],
+            Some(_) => vec![
+                (How::Plain, t / 1000.0, half / 1000.0, true),
+                (How::Plain, t, half, false),
+            ],
             None => {
                 let mut out = vec![(How::Plain, t, half, false)];
                 if let Some(scale) = number.scale {
@@ -248,7 +253,9 @@ impl Index {
             let first = at.saturating_sub(count + 2);
             let last = (at + count + 2).min(table.keys.len());
             for j in first..last {
-                let (Some(&i), Some(&key)) = (table.ids.get(j), table.keys.get(j)) else { continue };
+                let (Some(&i), Some(&key)) = (table.ids.get(j), table.keys.get(j)) else {
+                    continue;
+                };
                 if !self.takes(i, number, percentages) {
                     continue;
                 }

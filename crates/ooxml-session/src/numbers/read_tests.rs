@@ -26,7 +26,15 @@ fn read_with(text: &str, locale: &Locale, rules: &NumberRules) -> Read {
     (
         found
             .into_iter()
-            .map(|f| (f.text, format!("{}", f.value.to_f64()), f.decimals, f.percent, f.negative))
+            .map(|f| {
+                (
+                    f.text,
+                    format!("{}", f.value.to_f64()),
+                    f.decimals,
+                    f.percent,
+                    f.negative,
+                )
+            })
             .collect(),
         aside.into_iter().collect(),
     )
@@ -40,7 +48,13 @@ fn aside(pairs: &[(&str, usize)]) -> Vec<(String, usize)> {
     pairs.iter().map(|(k, v)| ((*k).to_owned(), *v)).collect()
 }
 
-fn n(text: &str, value: &str, decimals: usize, percent: Option<u32>, negative: bool) -> (String, String, usize, Option<u32>, bool) {
+fn n(
+    text: &str,
+    value: &str,
+    decimals: usize,
+    percent: Option<u32>,
+    negative: bool,
+) -> (String, String, usize, Option<u32>, bool) {
     (text.to_owned(), value.to_owned(), decimals, percent, negative)
 }
 
@@ -61,7 +75,11 @@ fn decimals_and_percentages_are_read_in_the_locale() {
         ]
     );
     assert_eq!(read.1, aside(&[("whole", 1)]));
-    let read = read_with("Rated 2.7/5 by 1,234.5 users; 85% said yes; 0.5‰ left", &Locale::default(), &rules(false));
+    let read = read_with(
+        "Rated 2.7/5 by 1,234.5 users; 85% said yes; 0.5‰ left",
+        &Locale::default(),
+        &rules(false),
+    );
     assert_eq!(texts(&read), ["2.7", "1,234.5", "85%", "0.5‰"]);
     assert_eq!(read.0[3].3, Some(1000));
 }
@@ -79,7 +97,10 @@ fn a_space_groups_thousands_only_where_the_locale_does() {
     };
     assert_eq!(
         read_with("soit 1\u{202f}234,5 et 2,5", &fr, &rules(false)).0,
-        vec![n("1\u{202f}234,5", "1234.5", 1, None, false), n("2,5", "2.5", 1, None, false)]
+        vec![
+            n("1\u{202f}234,5", "1234.5", 1, None, false),
+            n("2,5", "2.5", 1, None, false)
+        ]
     );
 }
 
@@ -113,10 +134,18 @@ fn dates_times_years_list_numbers_and_ids_are_left_aside() {
         &rules(true),
     );
     assert_eq!(read.1, aside(&[("dates", 12), ("years", 1)]));
-    let read = read_with("1. First 2.5\n2.3 Results were 4.25\n(4) last", &Locale::default(), &rules(false));
+    let read = read_with(
+        "1. First 2.5\n2.3 Results were 4.25\n(4) last",
+        &Locale::default(),
+        &rules(false),
+    );
     assert_eq!(texts(&read), ["2.5", "4.25"]);
     assert_eq!(read.1, aside(&[("list numbers", 3)]));
-    let read = read_with("v2.1 build, 3D view at #4.5, 2nd and 1.5x", &Locale::default(), &rules(false));
+    let read = read_with(
+        "v2.1 build, 3D view at #4.5, 2nd and 1.5x",
+        &Locale::default(),
+        &rules(false),
+    );
     assert!(read.0.is_empty());
     assert_eq!(read.1, aside(&[("ids", 3)]));
 }
@@ -201,7 +230,10 @@ fn whole_numbers_only_when_the_application_asks() {
         read_with("41 items, 85%", &Locale::default(), &rules(false)).0,
         vec![n("85%", "85", 0, Some(100), false)]
     );
-    assert_eq!(texts(&read_with("41 items, 85%", &Locale::default(), &rules(true))), ["41", "85%"]);
+    assert_eq!(
+        texts(&read_with("41 items, 85%", &Locale::default(), &rules(true))),
+        ["41", "85%"]
+    );
 }
 
 #[test]
@@ -227,7 +259,14 @@ fn a_number_format_says_its_shown_rounding() {
     assert_eq!(shown(Some("0.0,,\"m\"")), Some((1, false, 1_000_000)));
     assert_eq!(shown(Some("[Red]0.0;-0.0")), Some((1, false, 1)));
     assert_eq!(shown(Some("#,##0.00_);(#,##0.00)")), Some((2, false, 1)));
-    for code in [Some("General"), Some("@"), Some("0.00E+00"), Some("d/m/yyyy"), None, Some("")] {
+    for code in [
+        Some("General"),
+        Some("@"),
+        Some("0.00E+00"),
+        Some("d/m/yyyy"),
+        None,
+        Some(""),
+    ] {
         assert_eq!(shown(code), None, "{code:?}");
     }
 }
@@ -247,4 +286,3 @@ fn digits_of_another_script_are_read_as_python_reads_them() {
     let read = read_with("rated ٢.٥ here", &Locale::default(), &rules(false));
     assert_eq!(read.0, vec![n("٢.٥", "2.5", 1, None, false)]);
 }
-

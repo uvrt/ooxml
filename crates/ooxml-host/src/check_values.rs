@@ -11,9 +11,9 @@
 //! `numbers` asked of it.
 
 use crate::session::HostSession;
+use ooxml_numfmt::Locale;
 use ooxml_session::numbers::{self, Index, NumberRules, NumbersEnv, Source, INCLUDE};
 use ooxml_session::{AnyVersion, CallCancel, CallContext, DocId, FormatDoc, ReadTexts, ValueRead};
-use ooxml_numfmt::Locale;
 use ooxml_tools::{Done, Outcome, Refusal, ToolError, ToolResult, TryCall, WayOut};
 use serde_json::{Map, Value};
 use std::sync::{Arc, Weak};
@@ -53,6 +53,14 @@ fn asks(value: Option<&Value>) -> bool {
     }
 }
 
+/// A check's fact of numbers: its data, the warnings its document's read gave, and the
+/// version it read.
+struct NumbersFact {
+    data: Map<String, Value>,
+    warnings: Vec<String>,
+    read: Read,
+}
+
 /// A call's document at the version it reads: pinned in its context, else the head.
 pub(crate) struct Read {
     pub(crate) doc: Arc<dyn FormatDoc>,
@@ -63,7 +71,10 @@ impl HostSession {
     /// The rules of this session's checks of numbers.
     #[must_use]
     pub fn number_rules(&self) -> NumberRules {
-        self.numbers.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+        self.numbers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// The application sets this session's rules for checks of numbers (`numbers=` of
@@ -104,7 +115,7 @@ impl HostSession {
         let rest: Vec<Value> = include.into_iter().filter(|i| i != INCLUDE).collect();
         let clock = &self.session.context().clock;
         let began = clock.monotonic();
-        let (data, warnings, read) = match self.numbers_fact(doc, &arguments, context, retry) {
+        let NumbersFact { data, warnings, read } = match self.numbers_fact(doc, &arguments, context, retry) {
             Ok(found) => found,
             Err(error) => return alone(self.refused_at_read(error, doc, context)),
         };
@@ -172,7 +183,7 @@ impl HostSession {
         arguments: &Map<String, Value>,
         context: &CallContext,
         retry: &TryCall,
-    ) -> Result<(Map<String, Value>, Vec<String>, Read), ToolError> {
+    ) -> Result<NumbersFact, ToolError> {
         let read = self
             .read_of(doc, context)
             .ok_or_else(|| ToolError::internal(format!("{doc} is not open"), "host:numbers"))?;
@@ -191,15 +202,29 @@ impl HostSession {
             numbers::report(&env, &index, notes, &texts.texts, &rules, &narrower)
         });
         let data = data.map_err(|why| ToolError::internal(why, "host:numbers"))?;
-        Ok((data, texts.warnings, read))
+        Ok(NumbersFact {
+            data,
+            warnings: texts.warnings,
+            read,
+        })
     }
 
     /// The check's arguments that narrow it, as given, a `range`'s refs resolved (`$x`, and
     /// both ends of `$a..$b`).
-    fn scope_of(&self, doc: &str, arguments: &Map<String, Value>, retry: &TryCall) -> Result<Map<String, Value>, ToolError> {
+    fn scope_of(
+        &self,
+        doc: &str,
+        arguments: &Map<String, Value>,
+        retry: &TryCall,
+    ) -> Result<Map<String, Value>, ToolError> {
         let mut scope: Map<String, Value> = SCOPE
             .iter()
-            .filter_map(|name| Some(((*name).to_owned(), arguments.get(*name).filter(|v| !v.is_null())?.clone())))
+            .filter_map(|name| {
+                Some((
+                    (*name).to_owned(),
+                    arguments.get(*name).filter(|v| !v.is_null())?.clone(),
+                ))
+            })
             .collect();
         let Some(range) = scope.get("range").cloned() else {
             return Ok(scope);
@@ -266,7 +291,11 @@ impl HostSession {
         let kind = DocId::parse(doc)
             .and_then(|id| self.session.kind_of(&id).ok())
             .map_or("call without a document", |k| k.as_str());
-        let listed = if kinds.is_empty() { "no".to_owned() } else { kinds.join(" and ") };
+        let listed = if kinds.is_empty() {
+            "no".to_owned()
+        } else {
+            kinds.join(" and ")
+        };
         Err(ToolError::refusal(
             Refusal::InvalidArguments,
             format!(
@@ -321,7 +350,9 @@ impl HostSession {
         let mut out = Vec::new();
         for id in self.session.documents() {
             let doc = id.to_string();
-            let Some(read) = self.read_of(&doc, context) else { continue };
+            let Some(read) = self.read_of(&doc, context) else {
+                continue;
+            };
             if read.doc.value_sources(&read.at).is_none() {
                 continue;
             }

@@ -109,7 +109,15 @@ pub(crate) fn number_texts(
         .docx()
         .map_err(|e| ToolError::internal(e.to_string(), "number_texts:docx"))?;
     let range = (!range.is_empty()).then_some(range.as_slice());
-    let found = ooxml_tools_word::number_texts(doc, &docx, read.named, range, pages.as_deref(), layout.as_deref(), cancel)?;
+    let found = ooxml_tools_word::number_texts(
+        doc,
+        &docx,
+        read.named,
+        range,
+        pages.as_deref(),
+        layout.as_deref(),
+        cancel,
+    )?;
     warnings.extend(found.warnings);
     let texts = found
         .texts
@@ -143,7 +151,9 @@ pub(crate) fn ranges_of(value: Option<&serde_json::Value>) -> Vec<String> {
     };
     let mut out: Vec<String> = Vec::new();
     for item in items {
-        let Some(text) = item.as_str().map(ooxml_session::facts::py_strip) else { continue };
+        let Some(text) = item.as_str().map(ooxml_session::facts::py_strip) else {
+            continue;
+        };
         if !text.is_empty() && !out.iter().any(|o| o == text) {
             out.push(text.to_owned());
         }
@@ -162,10 +172,11 @@ pub(crate) fn pages_of(
     warnings: &mut Vec<String>,
 ) -> Result<Option<Vec<usize>>, ToolError> {
     let pages = || -> Option<Vec<usize>> {
-        scope
-            .get("pages")?
-            .as_array()
-            .map(|p| p.iter().filter_map(|n| n.as_u64().and_then(|n| usize::try_from(n).ok())).collect())
+        scope.get("pages")?.as_array().map(|p| {
+            p.iter()
+                .filter_map(|n| n.as_u64().and_then(|n| usize::try_from(n).ok()))
+                .collect()
+        })
     };
     let Some(slides) = scope.get("slides").and_then(serde_json::Value::as_array) else {
         return Ok(pages());

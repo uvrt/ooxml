@@ -854,7 +854,10 @@ impl Replayer {
         let Ok(session) = self.session_with(&head, formats) else {
             return Outcome::Waiting(Waits::Settings, false);
         };
-        if let Some(rules) = case.get("numbers").filter(|r| r.as_object().is_some_and(|r| !r.is_empty())) {
+        if let Some(rules) = case
+            .get("numbers")
+            .filter(|r| r.as_object().is_some_and(|r| !r.is_empty()))
+        {
             match ooxml_session::numbers::NumberRules::from_json(rules) {
                 Ok(rules) => session.set_number_rules(rules),
                 Err(_) => return Outcome::Waiting(Waits::Settings, false),

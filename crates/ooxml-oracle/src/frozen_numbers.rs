@@ -87,7 +87,9 @@ fn locale_of(given: &Value) -> Locale {
         fields
             .get(key)
             .and_then(Value::as_str)
-            .map_or(std::borrow::Cow::Borrowed(default), |s| std::borrow::Cow::Owned(s.to_owned()))
+            .map_or(std::borrow::Cow::Borrowed(default), |s| {
+                std::borrow::Cow::Owned(s.to_owned())
+            })
     };
     Locale {
         decimal_separator: char_of("decimal_separator", '.'),

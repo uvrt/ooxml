@@ -68,7 +68,11 @@ struct Patterns {
 /// Python's pattern `pattern` (`re.IGNORECASE` where `ignore_case`) as `fancy-regex` reads it.
 pub(crate) fn compiled(pattern: &str, ignore_case: bool) -> Result<Regex, String> {
     let translated = ooxml_tools::pyre::translate(pattern).map_err(|e| format!("{pattern}: {e}"))?;
-    let source = if ignore_case { format!("(?i){translated}") } else { translated };
+    let source = if ignore_case {
+        format!("(?i){translated}")
+    } else {
+        translated
+    };
     Regex::new(&source).map_err(|e| format!("{pattern}: {e}"))
 }
 
@@ -82,7 +86,9 @@ fn anchored(pattern: &str, ignore_case: bool) -> Result<Regex, String> {
 fn months() -> Vec<String> {
     let mut found: Vec<String> = Vec::new();
     for tag in NAMED {
-        let Some(names) = ooxml_numfmt::dates::measured_names(tag) else { continue };
+        let Some(names) = ooxml_numfmt::dates::measured_names(tag) else {
+            continue;
+        };
         for name in names.months.iter().chain(names.short_months.iter()) {
             let folded = super::casefold(name).trim_end_matches('.').to_owned();
             if name.chars().count() >= 3 && !found.contains(&folded) {
@@ -147,7 +153,10 @@ impl Patterns {
                 true,
             )?,
             scale_after: compiled(&format!(r"\d{SPACE}?(?:/|out\s+of|op|van|sur|von){SPACE}?$"), true)?,
-            leading: anchored(&format!(r"\s*\(?\d+(?:\.\d+)*(?:[.)](?=\s)|(?=\t)|(?={SPACE}+[A-Z]))"), false)?,
+            leading: anchored(
+                &format!(r"\s*\(?\d+(?:\.\d+)*(?:[.)](?=\s)|(?=\t)|(?={SPACE}+[A-Z]))"),
+                false,
+            )?,
             lines: compiled(r"[^\n]+", false)?,
         })
     }
@@ -175,7 +184,9 @@ impl Decimal {
     fn of(whole: &str, fraction: &str) -> Option<Decimal> {
         let mut digits = String::with_capacity(whole.len() + fraction.len());
         for c in whole.chars().chain(fraction.chars()) {
-            digits.push(char::from(b'0' + u8::try_from(ooxml_base::pystr::decimal_value(c)?).ok()?));
+            digits.push(char::from(
+                b'0' + u8::try_from(ooxml_base::pystr::decimal_value(c)?).ok()?,
+            ));
         }
         Some(Decimal {
             digits,
@@ -186,7 +197,9 @@ impl Decimal {
     /// Its value as a float (`float(value)`).
     #[must_use]
     pub fn to_f64(&self) -> f64 {
-        let (whole, fraction) = self.digits.split_at(self.digits.len() - self.decimals.min(self.digits.len()));
+        let (whole, fraction) = self
+            .digits
+            .split_at(self.digits.len() - self.decimals.min(self.digits.len()));
         format!("{}.{}", if whole.is_empty() { "0" } else { whole }, fraction)
             .parse()
             .unwrap_or(0.0)
@@ -267,10 +280,11 @@ pub fn parse(body: &str, locale: &Locale) -> Option<(Decimal, usize, bool, bool)
     }
     let parts: Vec<&str> = body.split(|c: char| !is_decimal(c)).collect();
     let grouping = |chars: &[char], pieces: &[&str]| {
-        chars
-            .iter()
-            .all(|c| *c == group || (spaces.contains(c) && spaces.contains(&group)) || (quotes.contains(c) && quotes.contains(&group)))
-            && pieces.first().is_some_and(|p| (1..=3).contains(&p.chars().count()))
+        chars.iter().all(|c| {
+            *c == group
+                || (spaces.contains(c) && spaces.contains(&group))
+                || (quotes.contains(c) && quotes.contains(&group))
+        }) && pieces.first().is_some_and(|p| (1..=3).contains(&p.chars().count()))
             && pieces.iter().skip(1).all(|p| p.chars().count() == 3)
     };
     let (last_sep, first_seps) = seps.split_last()?;
@@ -333,7 +347,11 @@ fn identifier_part(text: &str, start: usize) -> bool {
 
 /// Every match of `pattern` in `text`, as `(start, end)` bytes.
 fn spans(pattern: &Regex, text: &str) -> Vec<(usize, usize)> {
-    pattern.find_iter(text).flatten().map(|m| (m.start(), m.end())).collect()
+    pattern
+        .find_iter(text)
+        .flatten()
+        .map(|m| (m.start(), m.end()))
+        .collect()
 }
 
 /// Whether `pattern` is found in `text` from the byte `from` up to the byte `to` (Python's
@@ -361,7 +379,11 @@ fn ignored_spans(text: &str, phrases: &[String]) -> Vec<(usize, usize)> {
             let start = folded.get(..at).map_or(0, |b| b.chars().count());
             let end = start + phrase.chars().count();
             out.push((byte_of(text, start), byte_of(text, end)));
-            from = at + folded.get(at..).and_then(|r| r.chars().next()).map_or(1, char::len_utf8);
+            from = at
+                + folded
+                    .get(at..)
+                    .and_then(|r| r.chars().next())
+                    .map_or(1, char::len_utf8);
         }
     }
     out
@@ -427,7 +449,14 @@ pub fn find_numbers(
             set_aside("ids"); // 2.1.3; section 4.2, version 2.1
             continue;
         };
-        let number = read_after(text, span, (start, end), sign, (value, decimals, grouped, other), patterns);
+        let number = read_after(
+            text,
+            span,
+            (start, end),
+            sign,
+            (value, decimals, grouped, other),
+            patterns,
+        );
         if let Some(reason) = aside_after_parse(text, &number, body.as_str(), rules, patterns) {
             set_aside(reason);
             continue;
@@ -436,6 +465,9 @@ pub fn find_numbers(
     }
     Ok((out, aside))
 }
+
+/// Spans of a text, bytes.
+type Spans<'a> = &'a [(usize, usize)];
 
 /// Why a candidate at `span` (its digits at `digits`) is left aside before it is read, if
 /// it is: an identifier's digits, digits joined to letters, the ignore list, a date, a list
@@ -446,7 +478,7 @@ fn aside_before_parse(
     sign: &str,
     digits: (usize, usize),
     patterns: &Patterns,
-    (ignored, dates, leading): (&[(usize, usize)], &[(usize, usize)], &[(usize, usize)]),
+    (ignored, dates, leading): (Spans<'_>, Spans<'_>, Spans<'_>),
 ) -> Option<&'static str> {
     if sign.is_empty() && identifier_part(text, digits.0) {
         return Some("ids"); // K7-12.3, DOC-004.2 (round 49)
@@ -461,7 +493,10 @@ fn aside_before_parse(
     if inside(span, dates) {
         return Some("dates");
     }
-    if leading.iter().any(|(first, last)| *first <= digits.0 && digits.1 <= *last) {
+    if leading
+        .iter()
+        .any(|(first, last)| *first <= digits.0 && digits.1 <= *last)
+    {
         return Some("list numbers");
     }
     None

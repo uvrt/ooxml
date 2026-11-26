@@ -19,10 +19,14 @@ fn dataset(rows: &[serde_json::Value], types: Option<&[Option<&str>]>, formats: 
         .collect();
     let mut found = Dataset::new(columns, rows).unwrap();
     if let Some(types) = types {
-        found = found.with_types(types.iter().map(|t| t.map(str::to_owned)).collect()).unwrap();
+        found = found
+            .with_types(types.iter().map(|t| t.map(str::to_owned)).collect())
+            .unwrap();
     }
     if let Some(formats) = formats {
-        found = found.with_formats(formats.iter().map(|t| t.map(str::to_owned)).collect()).unwrap();
+        found = found
+            .with_formats(formats.iter().map(|t| t.map(str::to_owned)).collect())
+            .unwrap();
     }
     found
 }
@@ -55,7 +59,11 @@ fn matches_in(index: &Index, text: &str, locale: &Locale) -> Vec<Vec<f64>> {
     found
         .iter()
         .map(|number| {
-            let mut values: Vec<f64> = index.matches(number).iter().map(|(i, _)| index.values[*i].number).collect();
+            let mut values: Vec<f64> = index
+                .matches(number)
+                .iter()
+                .map(|(i, _)| index.values[*i].number)
+                .collect();
             values.sort_by(f64::total_cmp);
             values
         })
@@ -69,7 +77,12 @@ fn en() -> Locale {
 #[test]
 fn a_number_matches_every_value_that_rounds_to_it() {
     let index = index(
-        &[json!(["a", 2.66]), json!(["b", 2.75]), json!(["c", 2.751]), json!(["d", 2.64])],
+        &[
+            json!(["a", 2.66]),
+            json!(["b", 2.75]),
+            json!(["c", 2.751]),
+            json!(["d", 2.64]),
+        ],
         None,
         None,
     );
@@ -99,7 +112,11 @@ fn percentages_match_fractions_and_points() {
 #[test]
 fn a_percentage_matches_only_when_written_as_one() {
     let index = index(
-        &[json!(["a", 0.27, 0.27]), json!(["b", 0.31, 0.31]), json!(["c", 0.3, 30.0])],
+        &[
+            json!(["a", 0.27, 0.27]),
+            json!(["b", 0.31, 0.31]),
+            json!(["c", 0.3, 30.0]),
+        ],
         Some(&[None, Some("percent"), None]),
         None,
     );
@@ -116,7 +133,10 @@ fn a_percentage_matches_only_when_written_as_one() {
 #[test]
 fn a_percent_format_marks_a_percentage_too() {
     let index = index(&[json!(["a", 0.31, 0.31])], None, Some(&[None, Some("0%"), None]));
-    assert_eq!(matches_in(&index, "0.31 and 31%", &en()), vec![vec![0.31], vec![0.31, 0.31]]);
+    assert_eq!(
+        matches_in(&index, "0.31 and 31%", &en()),
+        vec![vec![0.31], vec![0.31, 0.31]]
+    );
 }
 
 #[test]
@@ -124,7 +144,11 @@ fn a_bare_number_is_unverified_against_a_percentage_and_its_nearest_are_plain() 
     let index = index(&[json!(["a", 0.27, 2.5])], Some(&[None, Some("percent"), None]), None);
     let (found, _) = find_numbers("0.3", &en(), &all(), &[]).unwrap();
     assert!(index.matches(&found[0]).is_empty());
-    let near: Vec<f64> = index.nearest(&found[0], 2).iter().map(|(i, _, _)| index.values[*i].number).collect();
+    let near: Vec<f64> = index
+        .nearest(&found[0], 2)
+        .iter()
+        .map(|(i, _, _)| index.values[*i].number)
+        .collect();
     assert_eq!(near, [2.5]);
 }
 
@@ -158,20 +182,42 @@ impl NumbersEnv for Env {
         Some("d1")
     }
     fn fact(&self, address: &str) -> Option<String> {
-        self.facts.iter().find(|(a, _)| *a == address).map(|(_, t)| (*t).to_owned())
+        self.facts
+            .iter()
+            .find(|(a, _)| *a == address)
+            .map(|(_, t)| (*t).to_owned())
     }
 }
 
 /// `test_tools_numbers.py`'s workbook table `t:Scores`, as its resolver reads it.
 fn scores() -> Index {
     let rows = vec![
-        vec![cell(&json!("door")), cell(&json!(2.66)), cell(&json!(0.853)), cell(&json!(41))],
-        vec![cell(&json!("window")), cell(&json!(2.549)), cell(&json!(0.12)), cell(&json!(17))],
-        vec![cell(&json!("roof")), cell(&json!(-1.25)), cell(&json!(0.5)), cell(&json!(9))],
+        vec![
+            cell(&json!("door")),
+            cell(&json!(2.66)),
+            cell(&json!(0.853)),
+            cell(&json!(41)),
+        ],
+        vec![
+            cell(&json!("window")),
+            cell(&json!(2.549)),
+            cell(&json!(0.12)),
+            cell(&json!(17)),
+        ],
+        vec![
+            cell(&json!("roof")),
+            cell(&json!(-1.25)),
+            cell(&json!(0.5)),
+            cell(&json!(9)),
+        ],
     ];
     let columns = ["topic", "mean", "share", "count"].map(str::to_owned).to_vec();
     let sources = (0..3)
-        .map(|r| (0..4).map(|c| vec![format!("Scores!{}{}", char::from(b'A' + c), r + 2)]).collect())
+        .map(|r| {
+            (0..4)
+                .map(|c| vec![format!("Scores!{}{}", char::from(b'A' + c), r + 2)])
+                .collect()
+        })
         .collect();
     let dataset = Dataset::new(columns, rows)
         .unwrap()
@@ -206,10 +252,21 @@ fn text(at: &str, said: &str, slide: &str) -> NumberText {
 fn numbers_are_listed_unverified_with_the_nearest_values_and_typed_with_their_fix() {
     let env = Env {
         locale: nl_be(),
-        facts: vec![("d2/t:Scores/door/mean:0.0", "2,7"), ("d2/t:Scores/window/mean:0.0", "2,5")],
+        facts: vec![
+            ("d2/t:Scores/door/mean:0.0", "2,7"),
+            ("d2/t:Scores/window/mean:0.0", "2,5"),
+        ],
     };
     let items = [text("256.2", "Doors rated 2,7/5, windows 2,6 and roofs 2,3.", "s:256")];
-    let data = report(&env, &scores(), Vec::new(), &items, &NumberRules::default(), &["slides"]).unwrap();
+    let data = report(
+        &env,
+        &scores(),
+        Vec::new(),
+        &items,
+        &NumberRules::default(),
+        &["slides"],
+    )
+    .unwrap();
     let first = &data["texts"][0];
     assert_eq!(first["at"], "256.2");
     assert_eq!(first["slide"], "s:256");
@@ -230,7 +287,10 @@ fn numbers_are_listed_unverified_with_the_nearest_values_and_typed_with_their_fi
     assert_eq!(data["left_aside"], json!({"whole": 1}));
     assert_eq!(data["values"], 9);
     assert_eq!(data["note"], NOTE);
-    assert_eq!(summary(&data), "1 unverified and 2 typed number(s) in 1 text(s), against 9 value(s)");
+    assert_eq!(
+        summary(&data),
+        "1 unverified and 2 typed number(s) in 1 text(s), against 9 value(s)"
+    );
 }
 
 #[test]
@@ -253,7 +313,10 @@ fn the_lists_are_capped_and_what_did_not_fit_is_counted() {
     assert_eq!(data["texts"][0]["unverified"].as_array().unwrap().len(), 3);
     assert_eq!(data["texts"][0]["more"], 4);
     assert_eq!(data["unverified"], 28);
-    assert_eq!(data["left_out_hint"], "check fewer at a time to see the rest (slides, pages)");
+    assert_eq!(
+        data["left_out_hint"],
+        "check fewer at a time to see the rest (slides, pages)"
+    );
 }
 
 #[test]
@@ -262,7 +325,15 @@ fn a_session_without_values_says_how_to_get_some() {
         locale: en(),
         facts: Vec::new(),
     };
-    let data = report(&env, &Index::new(Vec::new()), Vec::new(), &[text("256.2", "rated 2.66", "s:256")], &NumberRules::default(), &[]).unwrap();
+    let data = report(
+        &env,
+        &Index::new(Vec::new()),
+        Vec::new(),
+        &[text("256.2", "rated 2.66", "s:256")],
+        &NumberRules::default(),
+        &[],
+    )
+    .unwrap();
     assert_eq!(data["values"], 0);
     assert_eq!(data["texts"], json!([]));
     assert!(data["notes"][0].as_str().unwrap().contains("define a dataset"));

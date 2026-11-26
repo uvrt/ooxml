@@ -235,17 +235,7 @@ impl HostSession {
         self.pin(going, &mut context);
         context.values = values;
         context.values.merge(going.values.clone());
-        let (mut result, made) = self.check_values(
-            (entry.name(), &doc),
-            arguments,
-            &context,
-            retry,
-            (
-                |arguments| self.session.edit_accepted(entry.name(), arguments, &context),
-                |alone| (alone, None),
-                |ran: &mut (ToolResult<Value>, Option<ooxml_session::CallMade>)| &mut ran.0,
-            ),
-        );
+        let (mut result, made) = self.handler(entry, &doc, arguments, &context, retry);
         if let Some(made) = &made {
             going.lock = made.lock;
         }
@@ -282,6 +272,29 @@ impl HostSession {
             self.stores().keys.keep(&doc, entry.name(), key, &result);
         }
         result
+    }
+
+    /// Step 9: the handler, run by the document's format on the version the call reads, with
+    /// what the host does around it (check's numbers).
+    fn handler(
+        &self,
+        entry: &Entry,
+        doc: &str,
+        arguments: Map<String, Value>,
+        context: &CallContext,
+        retry: &TryCall,
+    ) -> (ToolResult<Value>, Option<ooxml_session::CallMade>) {
+        self.check_values(
+            (entry.name(), doc),
+            arguments,
+            context,
+            retry,
+            (
+                |arguments| self.session.edit_accepted(entry.name(), arguments, context),
+                |alone| (alone, None),
+                |ran: &mut (ToolResult<Value>, Option<ooxml_session::CallMade>)| &mut ran.0,
+            ),
+        )
     }
 
     /// Steps 6 to 8 ([`HostSession::with_values`]), and whether the call is still one

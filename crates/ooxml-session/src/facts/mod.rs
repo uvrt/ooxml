@@ -23,8 +23,8 @@ mod expand;
 mod value;
 
 pub use address::{
-    bad_format, date_suffix, format_error, is_date_pattern, is_py_space, py_strip, qualified, quote, segments, split, strip_format,
-    Segment, FORMS,
+    bad_format, date_suffix, format_error, is_date_pattern, is_py_space, py_strip, qualified, quote, segments, split,
+    strip_format, Segment, FORMS,
 };
 pub use expand::{expand, expand_arguments, misread, misread_error, qualify_text, references, walk_texts, Reference};
 pub use value::{date_of, is_number, number_text, value_text};

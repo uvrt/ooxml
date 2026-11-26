@@ -18,7 +18,6 @@ mod read;
 
 pub use index::{How, Index, Source, Value as IndexedValue};
 pub use read::{find_numbers, parse, shown, Decimal, Found, Numbers};
-pub(crate) use read::compiled;
 
 use crate::facts::quote;
 use ooxml_base::pyfmt::repr_float;
@@ -123,7 +122,10 @@ impl NumberRules {
         for item in items {
             match item {
                 Value::Number(n) => {
-                    let text = n.as_f64().filter(|_| n.is_f64()).map_or_else(|| n.to_string(), repr_float);
+                    let text = n
+                        .as_f64()
+                        .filter(|_| n.is_f64())
+                        .map_or_else(|| n.to_string(), repr_float);
                     self.numbers.push(decimal_key(&text).unwrap_or((text, 0)));
                 }
                 Value::String(text) if !crate::facts::py_strip(text).is_empty() => {
@@ -279,13 +281,14 @@ fn address(index: &Index, value: &IndexedValue) -> String {
     let key = keys.get(value.row).cloned().flatten();
     let keyed = source.shown.starts_with(crate::facts::DATASET_PREFIX) || dataset.keys() > 0;
     let unique = key.as_deref().filter(|k| {
-        keyed
-            && value.column != 0
-            && keys.iter().filter(|o| o.as_deref() == Some(*k)).count() == 1
-            && !numbered(k)
+        keyed && value.column != 0 && keys.iter().filter(|o| o.as_deref() == Some(*k)).count() == 1 && !numbered(k)
     });
     let part = unique.map_or_else(|| format!("#{}", value.row + 1), quote);
-    let column = dataset.columns().get(value.column).map(String::as_str).unwrap_or_default();
+    let column = dataset
+        .columns()
+        .get(value.column)
+        .map(String::as_str)
+        .unwrap_or_default();
     format!("{}/{part}/{}", source.shown, quote(column))
 }
 
@@ -358,7 +361,13 @@ struct Typed<'a> {
 /// The `replace_text` call that writes `typed`'s number as the reference `address:format`
 /// (`shown`: the address as the model writes it), when the reference writes the same number
 /// -- `writes` saying how, when the text wrote it otherwise -- else `None` (`_fix`).
-fn fix(env: &dyn NumbersEnv, typed: &Typed<'_>, address: &str, shown: &str, format: &str) -> Option<Map<String, Value>> {
+fn fix(
+    env: &dyn NumbersEnv,
+    typed: &Typed<'_>,
+    address: &str,
+    shown: &str,
+    format: &str,
+) -> Option<Map<String, Value>> {
     let written = env.fact(&format!("{address}:{format}"))?;
     let number = typed.number;
     let percent = format.ends_with('%');
@@ -379,7 +388,10 @@ fn fix(env: &dyn NumbersEnv, typed: &Typed<'_>, address: &str, shown: &str, form
     let text = &typed.item.text;
     let replaced = format!("{{{{{shown}:{format}}}}}");
     let line_start = text.get(..start).and_then(|b| b.rfind('\n')).map_or(0, |n| n + 1);
-    let line_end = text.get(end..).and_then(|a| a.find('\n')).map_or(text.len(), |n| end + n);
+    let line_end = text
+        .get(end..)
+        .and_then(|a| a.find('\n'))
+        .map_or(text.len(), |n| end + n);
     for width in [12, 24, 48, 1_000_000] {
         let snippet = snippet_around(text, (start, end), (line_start, line_end), width);
         let (left, right) = snippet;
@@ -397,7 +409,13 @@ fn fix(env: &dyn NumbersEnv, typed: &Typed<'_>, address: &str, shown: &str, form
 fn snippet_around(text: &str, at: (usize, usize), line: (usize, usize), width: usize) -> (usize, usize) {
     let space = crate::facts::is_py_space;
     let mut left = at.0;
-    for (i, _) in text.get(line.0..at.0).unwrap_or_default().char_indices().rev().take(width) {
+    for (i, _) in text
+        .get(line.0..at.0)
+        .unwrap_or_default()
+        .char_indices()
+        .rev()
+        .take(width)
+    {
         left = line.0 + i;
     }
     let mut right = at.1;
@@ -465,7 +483,13 @@ struct Listed {
 }
 
 /// One text's numbers compared with the index.
-fn compared(env: &dyn NumbersEnv, index: &Index, found: &[Found], item: &NumberText, siblings: &[&NumberText]) -> Listed {
+fn compared(
+    env: &dyn NumbersEnv,
+    index: &Index,
+    found: &[Found],
+    item: &NumberText,
+    siblings: &[&NumberText],
+) -> Listed {
     let mut listed = Listed {
         unverified: Vec::new(),
         typed: Vec::new(),
@@ -526,7 +550,10 @@ fn typed_entry(
     let first = addresses.first().cloned().unwrap_or_default();
     entry.insert("from".into(), Value::from(first.as_str()));
     if addresses.len() > 1 {
-        entry.insert("from".into(), Value::from(addresses.iter().take(3).cloned().collect::<Vec<_>>()));
+        entry.insert(
+            "from".into(),
+            Value::from(addresses.iter().take(3).cloned().collect::<Vec<_>>()),
+        );
         entry.insert("matches".into(), Value::from(addresses.len()));
         return Value::Object(entry);
     }
@@ -540,7 +567,11 @@ fn typed_entry(
     let source = index.sources.get(value.source);
     let format = format_for(typed.number, how);
     if let (Some(format), Some(source)) = (format, source) {
-        let full = format!("{}{}", source.address, first.get(source.shown.len()..).unwrap_or_default());
+        let full = format!(
+            "{}{}",
+            source.address,
+            first.get(source.shown.len()..).unwrap_or_default()
+        );
         if let Some(fix) = fix(env, typed, &full, &first, &format) {
             entry.insert("fix".into(), Value::Object(fix));
         }
@@ -581,7 +612,12 @@ pub fn report(
         if found.is_empty() || index.is_empty() {
             continue;
         }
-        let siblings: Vec<&NumberText> = items.iter().zip(&keys).filter(|(_, k)| *k == key).map(|(i, _)| i).collect();
+        let siblings: Vec<&NumberText> = items
+            .iter()
+            .zip(&keys)
+            .filter(|(_, k)| *k == key)
+            .map(|(i, _)| i)
+            .collect();
         let Listed { unverified, typed } = compared(env, index, &found, item, &siblings);
         unverified_count += unverified.len();
         typed_count += typed.len();
@@ -602,7 +638,10 @@ pub fn report(
         data.insert("texts_left_out".into(), Value::from(left_out));
     }
     if !aside.is_empty() {
-        data.insert("left_aside".into(), Value::Object(aside.into_iter().map(|(k, v)| (k, Value::from(v))).collect()));
+        data.insert(
+            "left_aside".into(),
+            Value::Object(aside.into_iter().map(|(k, v)| (k, Value::from(v))).collect()),
+        );
     }
     if index.is_empty() {
         notes.push(
@@ -692,7 +731,8 @@ fn finish(
 #[must_use]
 pub fn summary(data: &Map<String, Value>) -> String {
     let count = |key: &str| data.get(key).and_then(Value::as_u64).unwrap_or(0);
-    let texts = data.get("texts").and_then(Value::as_array).map_or(0, Vec::len) + usize::try_from(count("texts_left_out")).unwrap_or(0);
+    let texts = data.get("texts").and_then(Value::as_array).map_or(0, Vec::len)
+        + usize::try_from(count("texts_left_out")).unwrap_or(0);
     format!(
         "{} unverified and {} typed number(s) in {texts} text(s), against {} value(s)",
         count("unverified"),

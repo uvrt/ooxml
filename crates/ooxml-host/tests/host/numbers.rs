@@ -32,16 +32,19 @@ fn deck(texts: &[(&str, &str)], parts: &[(&str, &str)]) -> HostSession {
 }
 
 fn keep_by_region(s: &HostSession) {
-    let row = |region: &str, avg: f64, rate: f64| {
-        vec![Cell::Text(region.into()), Cell::Float(avg), Cell::Float(rate)]
-    };
+    let row = |region: &str, avg: f64, rate: f64| vec![Cell::Text(region.into()), Cell::Float(avg), Cell::Float(rate)];
     let sources = ["North", "South"]
         .iter()
-        .map(|r| ["region", "avg", "rate"].iter().map(|c| vec![format!("t:x/{r}/{c}")]).collect())
+        .map(|r| {
+            ["region", "avg", "rate"]
+                .iter()
+                .map(|c| vec![format!("t:x/{r}/{c}")])
+                .collect()
+        })
         .collect();
     let dataset = Dataset::new(
         vec!["region".into(), "avg".into(), "rate".into()],
-        vec![row("North", 3.141_59, 0.25), row("South", 1.5, 0.0372)],
+        vec![row("North", 3.138, 0.25), row("South", 1.5, 0.0372)],
     )
     .unwrap()
     .with_sources(sources)
@@ -66,8 +69,20 @@ fn numbers_alone_run_no_format_check_and_beside_others_are_added() {
         "0 unverified and 3 typed number(s) in 1 text(s), against 4 value(s)"
     );
     let typed = &alone["data"]["numbers"]["texts"][0]["typed"];
-    let from: Vec<&str> = typed.as_array().unwrap().iter().map(|t| t["from"].as_str().unwrap()).collect();
-    assert_eq!(from, ["d:by_region/North/avg", "d:by_region/North/rate", "d:by_region/South/avg"]);
+    let from: Vec<&str> = typed
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["from"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        from,
+        [
+            "d:by_region/North/avg",
+            "d:by_region/North/rate",
+            "d:by_region/South/avg"
+        ]
+    );
     assert_eq!(
         typed[0]["fix"],
         json!({"tool": "replace_text", "arguments": {"doc": "d1", "find": "North 3.14 and 25%; 1.5",
@@ -78,7 +93,7 @@ fn numbers_alone_run_no_format_check_and_beside_others_are_added() {
     assert!(both["summary"].as_str().unwrap().starts_with("Checked; 0 unverified"));
     // the format's reply says where its time went: the numbers' seconds too, timing last
     let data = both["data"].as_object().unwrap();
-    assert_eq!(data.keys().last().unwrap(), "timing");
+    assert_eq!(data.keys().next_back().unwrap(), "timing");
     assert!(data["timing"]["numbers"].as_f64().unwrap() >= 0.0);
     let none = call(&s, "check", json!({"doc": "d1"}));
     assert!(none["data"].get("numbers").is_none());
@@ -89,7 +104,10 @@ fn a_document_that_gives_no_texts_is_refused_with_the_way_out() {
     let s = deck(&[], &[("toy/no-texts.xml", "<t/>")]);
     let refused = call(&s, "check", json!({"doc": "d1", "include": ["numbers"]}));
     assert_eq!(refused["error"]["code"], "invalid_arguments", "{refused}");
-    assert!(refused["error"]["message"].as_str().unwrap().contains("leave numbers out of include"));
+    assert!(refused["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("leave numbers out of include"));
     assert_eq!(refused["error"]["valid_options"], json!(["validate", "layout"]));
     assert!(call(&s, "check", json!({"doc": "d1"}))["ok"].as_bool().unwrap());
 }
