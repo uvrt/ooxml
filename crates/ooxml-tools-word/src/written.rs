@@ -297,8 +297,13 @@ where
         let after = After::of(tx.doc())?;
         let (said, keeps) = (self.finish)(&out, &after);
         if !keeps.is_empty() {
-            // (refused, it has read what its refusal rests on)
-            tx.run_op(&KeepText { keeps })?;
+            let keep = KeepText { keeps };
+            // refused, the whole edit refuses (taken back by whoever runs it): what the
+            // keeps' refusal rests on read first
+            if let Err(refused) = keep.validate(tx.doc()).and_then(|()| keep.prepare(tx)) {
+                keep.read_refusal(tx);
+                return Err(refused);
+            }
         }
         Ok((out, said))
     }
