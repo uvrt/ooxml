@@ -193,6 +193,25 @@ impl HostSession {
         Ok(done.count)
     }
 
+    /// Datasets the application keeps itself (ooxml-edit's `Session.keep_datasets`): each
+    /// defined as a call would define it, a redefined id replaced.
+    ///
+    /// # Errors
+    /// `limit`: the session would keep over its limit (nothing is kept).
+    pub fn keep_datasets(
+        &self,
+        entries: Vec<ooxml_session::datasets::DatasetEntry>,
+    ) -> Result<(), ooxml_tools::ToolError> {
+        let heads: Vec<(String, u64)> = self
+            .session
+            .documents()
+            .into_iter()
+            .filter_map(|id| Some((id.to_string(), self.session.snapshot(&id).ok()?.number())))
+            .collect();
+        let heads = |doc: &str| heads.iter().find(|(d, _)| d == doc).map(|(_, n)| *n);
+        self.stores().datasets.keep(entries, &heads)
+    }
+
     /// The files tools saved for the application since it last took them.
     pub fn take_outputs(&self) -> Vec<Output> {
         self.stores().outputs.take()

@@ -23,6 +23,7 @@ use ooxml_tools::Limits;
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::Duration;
 
 /// What a host's sessions run with, the application's settings.
 #[derive(Debug, Clone)]
@@ -46,6 +47,11 @@ pub struct HostSettings {
     pub image_budget: Option<usize>,
     /// The images a round may show.
     pub image_budget_per_round: Option<usize>,
+    /// How long laying a document out may take in a call, from its start (ooxml-edit's
+    /// `Limits.layout_timeout`); `None`: as long as the call.
+    pub layout_timeout: Option<Duration>,
+    /// A `read_batch`'s reply budget, characters (`Limits.max_read_batch_chars`).
+    pub read_batch_chars: usize,
 }
 
 impl Default for HostSettings {
@@ -58,8 +64,10 @@ impl Default for HostSettings {
             datasets: DatasetLimits::default(),
             documents: crate::documents::DocumentLimits::default(),
             allow_new_problems: false,
-            image_budget: None,
+            image_budget: Some(40),
             image_budget_per_round: None,
+            layout_timeout: Some(Duration::from_secs(30)),
+            read_batch_chars: ooxml_session::MAX_READ_BATCH_CHARS,
         }
     }
 }
@@ -106,7 +114,7 @@ impl Host {
         let settings = &self.settings;
         HostSession {
             host: Arc::clone(self),
-            roles: settings.roles,
+            roles: Mutex::new(settings.roles),
             session,
             stores: Mutex::new(Stores {
                 blobs: BlobStore::new(settings.blobs),
@@ -196,12 +204,15 @@ pub struct CallAs {
     pub roles: Option<RoleSet>,
     /// The caller's context, its keys in the order given.
     pub context: Option<Map<String, Value>>,
+    /// What the application resolved for the call itself: the rows of sources in documents
+    /// it holds (a workbook its own host holds), handed to the format beside the host's.
+    pub values: ooxml_tools::written::CallValues,
 }
 
 /// One application session of a host.
 pub struct HostSession {
     pub(crate) host: Arc<Host>,
-    pub(crate) roles: RoleSet,
+    roles: Mutex<RoleSet>,
     pub(crate) session: Session,
     stores: Mutex<Stores>,
 }
@@ -222,7 +233,13 @@ impl HostSession {
     /// The roles its calls hold unless narrowed.
     #[must_use]
     pub fn roles(&self) -> RoleSet {
-        self.roles
+        *self.roles.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The application sets the roles its calls hold from now on (ooxml-edit's
+    /// `session.roles = ...`).
+    pub fn set_roles(&self, roles: RoleSet) {
+        *self.roles.lock().unwrap_or_else(PoisonError::into_inner) = roles;
     }
 
     /// The stores, held for as long as the guard lives: never across a handler.
@@ -282,12 +299,12 @@ impl HostSession {
     /// The application's mistake: roles the session does not hold.
     pub fn narrowed(&self, asked: Option<RoleSet>) -> Result<RoleSet, String> {
         match asked {
-            None => Ok(self.roles),
-            Some(asked) if self.roles.covers(asked) => Ok(asked),
+            None => Ok(self.roles()),
+            Some(asked) if self.roles().covers(asked) => Ok(asked),
             Some(asked) => Err(format!(
                 "roles {} are not all this session's ({})",
                 asked.listed(),
-                self.roles.listed()
+                self.roles().listed()
             )),
         }
     }

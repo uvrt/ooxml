@@ -44,6 +44,7 @@ mod table_sync;
 mod table_sync_keys;
 mod table_sync_read;
 mod table_sync_said;
+pub(crate) use table_sync_said::quote as quote_part;
 mod table_view;
 
 pub use controls::word_controls;

@@ -83,6 +83,7 @@ fn every_call_is_recorded_by_its_shape_never_its_content() {
     let how = CallAs {
         roles: None,
         context: Some(context.clone()),
+        ..CallAs::default()
     };
     call_as(
         &s,

@@ -70,6 +70,7 @@ pub mod support;
 pub mod tiles;
 mod types;
 mod validate;
+pub mod written;
 
 pub use difflib::close_matches;
 pub use error::{ErrorCode, Failure, Refusal, ToolError, TryCall, WayOut};

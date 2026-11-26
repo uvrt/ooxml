@@ -50,6 +50,7 @@ fn a_call_narrows_its_sessions_roles_and_never_widens_them() {
     let narrowed = CallAs {
         roles: RoleSet::of([Role::Review]),
         context: None,
+        ..CallAs::default()
     };
     let reply = call_as(
         &s,
@@ -62,6 +63,7 @@ fn a_call_narrows_its_sessions_roles_and_never_widens_them() {
     let widened = CallAs {
         roles: Some(RoleSet::all()),
         context: None,
+        ..CallAs::default()
     };
     assert!(matches!(r.call("toy_read", json!({}), &widened), Err(NotRun::Roles(_))));
 }

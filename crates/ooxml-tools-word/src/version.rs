@@ -222,6 +222,8 @@ pub struct Others<'a> {
     versions: &'a [(&'a str, Version<'a>)],
     tables: Option<&'a dyn HostTables>,
     sources: Option<&'a crate::Sources>,
+    one_values: &'a [ooxml_tools::written::OneValue],
+    held_tables: &'a [ooxml_tools::written::HeldTable],
 }
 
 impl<'a> Others<'a> {
@@ -232,7 +234,32 @@ impl<'a> Others<'a> {
             versions,
             tables: None,
             sources: None,
+            one_values: &[],
+            held_tables: &[],
         }
+    }
+
+    /// The tables of the other open documents the host read for the call (none unless
+    /// given).
+    #[must_use]
+    pub fn with_held_tables(mut self, tables: &'a [ooxml_tools::written::HeldTable]) -> Self {
+        self.held_tables = tables;
+        self
+    }
+
+    /// Where each source naming one value finds it, as the host read it (none unless
+    /// given).
+    #[must_use]
+    pub fn with_one_values(mut self, one_values: &'a [ooxml_tools::written::OneValue]) -> Self {
+        self.one_values = one_values;
+        self
+    }
+
+    /// Where the source naming one value at `field` (`from`) finds it, where the host read
+    /// it.
+    #[must_use]
+    pub fn one_value(&self, field: &str) -> Option<&'a ooxml_tools::written::OneValue> {
+        self.one_values.iter().find(|v| v.field == field)
     }
 
     /// The tables of the open documents the host holds itself (none unless given).
@@ -276,7 +303,16 @@ impl<'a> Others<'a> {
     /// The host's table `given` names (`t:stock`, `d2/t:stock`), where it holds one.
     #[must_use]
     pub fn host_table(&self, given: &str) -> Option<HostTable> {
-        self.tables?.tables().into_iter().find(|t| t.named_by(given))
+        let held = self.held_tables.iter().map(|t| HostTable {
+            name: t.name.clone(),
+            doc: t.doc.clone(),
+            kind: t.kind.clone(),
+        });
+        let mut all: Vec<HostTable> = held.collect();
+        if let Some(tables) = self.tables {
+            all.extend(tables.tables());
+        }
+        all.into_iter().find(|t| t.named_by(given))
     }
 
     /// The document `id` at its pinned version (`None`: the call names no such open

@@ -40,11 +40,6 @@ pub enum Waits {
     G1,
     /// A host setting the replay does not make yet (limits, a toolbox's own settings).
     Settings,
-    /// What docx-agent's adapters do to a Word call's arguments before the session sees
-    /// them (`docx_agent/rust/served`: refs inside a place, `after:$x`, a span placed by its
-    /// end; a blob's text as the Markdown; a deck's parameters refused): left where it is in
-    /// D1 (`blocks_at`), ported with the session tools.
-    Adapters,
 }
 
 impl Waits {
@@ -56,7 +51,6 @@ impl Waits {
             Waits::D2 => "D2 (batch)",
             Waits::G1 => "G1 (numbers, scales)",
             Waits::Settings => "settings",
-            Waits::Adapters => "D3 (docx adapters)",
         }
     }
 }
@@ -284,20 +278,6 @@ fn op_path(path: &str) -> Option<(usize, &str)> {
     Some((index.parse().ok()?, rest))
 }
 
-/// Whether docx-agent's adapters change the call before the session sees it: a `$ref`
-/// inside a place (`after:$x`), `word_insert_markdown`'s blob read as its Markdown, a deck's
-/// parameter on `find_text`, `replace_text` or `render`.
-fn adapted(tool: &str, arguments: &Value) -> bool {
-    let place_ref = |v: &Value| {
-        v.as_str()
-            .is_some_and(|t| ["after:$", "before:$", "replace:$"].iter().any(|s| t.starts_with(s)))
-    };
-    let decks = ["find_text", "replace_text", "render"].contains(&tool)
-        && arguments.get("slides").is_some_and(|v| !v.is_null());
-    let blob = tool == "word_insert_markdown" && arguments.get("blob").is_some_and(Value::is_string);
-    decks || blob || arguments.get("at").is_some_and(place_ref)
-}
-
 /// Two comparisons of one event as one: the first difference, else the known ones of both.
 fn both(a: Outcome, b: Outcome) -> Outcome {
     match (a, b) {
@@ -335,9 +315,6 @@ fn waits(tool: &str, arguments: &Value) -> Option<(Waits, bool)> {
     if bare == "batch" {
         return Some((Waits::D2, true));
     }
-    if adapted(bare, arguments) {
-        return Some((Waits::Adapters, true));
-    }
     if bare == "check" {
         let include = arguments.get("include");
         let numbers = match include {
@@ -350,6 +327,195 @@ fn waits(tool: &str, arguments: &Value) -> Option<(Waits, bool)> {
         }
     }
     None
+}
+
+/// A dataset as `freeze_values.py` froze it: its id, columns, rows (values as the adapters
+/// hand them over), sources, keys, types and Markdown, of no document.
+fn frozen_dataset(given: &Value) -> Option<ooxml_session::datasets::DatasetEntry> {
+    let id = given.get("id")?.as_str()?;
+    Some(ooxml_session::datasets::DatasetEntry::new(
+        id,
+        Arc::new(frozen_rows(given)?),
+        None,
+    ))
+}
+
+/// The rows of a frozen dataset or resolver answer (`freeze_values._dataset`).
+fn frozen_rows(given: &Value) -> Option<ooxml_tools::datasets::Dataset> {
+    use ooxml_tools::datasets::{Cache, Dataset, Markdown};
+    use ooxml_tools::sources::Cell;
+    let texts =
+        |v: &Value| -> Option<Vec<String>> { v.as_array()?.iter().map(|c| Some(c.as_str()?.to_owned())).collect() };
+    let columns = texts(given.get("columns")?)?;
+    let rows: Option<Vec<Vec<Cell>>> = given
+        .get("rows")?
+        .as_array()?
+        .iter()
+        .map(|row| row.as_array()?.iter().map(Cell::from_json).collect())
+        .collect();
+    let mut dataset = Dataset::new(columns, rows?).ok()?;
+    if let Some(sources) = given.get("sources").and_then(Value::as_array) {
+        let sources: Option<Vec<Vec<Vec<String>>>> = sources
+            .iter()
+            .map(|row| row.as_array()?.iter().map(texts).collect())
+            .collect();
+        dataset = dataset.with_sources(sources?).ok()?;
+    }
+    let keys = given.get("keys").and_then(Value::as_u64).unwrap_or(0);
+    dataset = dataset.with_keys(usize::try_from(keys).ok()?).ok()?;
+    if let Some(types) = given.get("types").and_then(Value::as_array) {
+        dataset = dataset
+            .with_types(types.iter().map(|t| t.as_str().map(str::to_owned)).collect())
+            .ok()?;
+    }
+    let markdown: std::collections::BTreeMap<(usize, usize), String> = given
+        .get("markdown")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|m| {
+            let at = |k: usize| m.get(k)?.as_u64().and_then(|n| usize::try_from(n).ok());
+            Some(((at(0)?, at(1)?), m.get(2)?.as_str()?.to_owned()))
+        })
+        .collect();
+    if !markdown.is_empty() {
+        dataset = dataset.with_markdown(Markdown::Given(markdown)).ok()?;
+    }
+    if let Some(cache) = given.get("cache").and_then(Value::as_object) {
+        let counts: Vec<(&str, i64)> = cache
+            .iter()
+            .filter_map(|(k, v)| Some((k.as_str(), v.as_i64()?)))
+            .collect();
+        dataset = dataset.with_cache(Cache::new(&counts).ok()?);
+    }
+    Some(dataset)
+}
+
+/// The kind a frozen answer's made-up format stands for: its own name where the session
+/// has the kind, a grid's as a workbook's, anything else's as a deck's.
+fn frozen_kind(kind: &str) -> DocKind {
+    match kind {
+        "docx" => DocKind::Docx,
+        "xlsx" | "grid" => DocKind::Xlsx,
+        _ => DocKind::Pptx,
+    }
+}
+
+/// The parts `now` has that `then` has otherwise or not at all (each with its bytes), and
+/// those it lacks (`None`).
+fn changed_parts(then: &[u8], now: &[u8]) -> Vec<(String, Option<Arc<[u8]>>)> {
+    let read = |data: &[u8]| -> BTreeMap<String, Vec<u8>> {
+        ooxml_zip::Archive::read(Arc::from(data), &ooxml_zip::Limits::default())
+            .map(|archive| {
+                archive
+                    .entries()
+                    .iter()
+                    .filter_map(|e| Some((e.meta().name.clone(), archive.read_entry(e).ok()?)))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let (a, b) = (read(then), read(now));
+    let mut out: Vec<(String, Option<Arc<[u8]>>)> = b
+        .iter()
+        .filter(|(name, bytes)| a.get(*name) != Some(*bytes))
+        .map(|(name, bytes)| (name.clone(), Some(Arc::from(bytes.as_slice()))))
+        .collect();
+    out.extend(
+        a.keys()
+            .filter(|name| !b.contains_key(*name))
+            .map(|name| (name.clone(), None)),
+    );
+    out
+}
+
+/// An empty package's bytes.
+fn empty_package() -> Arc<[u8]> {
+    let mut writer = ooxml_zip::Writer::new();
+    let entry = ooxml_zip::NewEntry {
+        name: "[Content_Types].xml".into(),
+        method: ooxml_zip::Method::Deflated,
+        dos_time: 0,
+        dos_date: 33,
+        external_attr: 0,
+        create_system: 3,
+    };
+    let _ = writer.add(&entry, b"<Types/>");
+    writer
+        .finish(b"")
+        .map(Arc::from)
+        .unwrap_or_else(|_| Arc::from(&b""[..]))
+}
+
+/// The roles a settings value names.
+fn roles_of(value: &Value) -> Option<RoleSet> {
+    let names: Vec<&str> = value.as_array()?.iter().filter_map(Value::as_str).collect();
+    RoleSet::parse(names).ok()
+}
+
+/// A locale as the recorder writes one (ooxml-common's `Locale`, its fields as given, the
+/// rest its defaults: en-US's).
+fn locale_of(value: &Value) -> Option<ooxml_numfmt::Locale> {
+    let given = value.as_object()?;
+    let mut locale = ooxml_numfmt::EN_US;
+    let one = |key: &str| -> Option<Option<char>> {
+        match given.get(key) {
+            None => Some(None),
+            Some(v) => v.as_str()?.chars().next().map(Some),
+        }
+    };
+    if let Some(c) = one("decimal_separator")? {
+        locale.decimal_separator = c;
+    }
+    if let Some(c) = one("thousands_separator")? {
+        locale.thousands_separator = c;
+    }
+    if let Some(c) = one("list_separator")? {
+        locale.list_separator = c;
+    }
+    if let Some(order) = given.get("date_order") {
+        locale.date_order = order.as_str()?.to_owned().into();
+    }
+    if let Some(language) = given.get("language") {
+        locale.language = language.as_str()?.to_owned().into();
+    }
+    Some(locale)
+}
+
+/// The host's settings of a recorded `limits` (ooxml-edit's `Limits`, the fields that differ
+/// from its defaults); a batch's own limits are lane D2's.
+fn limits(settings: &mut HostSettings, value: &Value) -> Result<(), Waits> {
+    let given = value.as_object().ok_or(Waits::Settings)?;
+    let count = |v: &Value| v.as_u64().and_then(|n| usize::try_from(n).ok());
+    for (key, v) in given {
+        match key.as_str() {
+            "max_result_chars" => settings.limits.result_chars = count(v).ok_or(Waits::Settings)?,
+            "max_list_items" => settings.limits.list_items = count(v).ok_or(Waits::Settings)?,
+            "max_images_per_call" => settings.limits.images_per_call = count(v).ok_or(Waits::Settings)?,
+            "max_read_batch_chars" => settings.read_batch_chars = count(v).ok_or(Waits::Settings)?,
+            "image_budget" => {
+                settings.image_budget = if v.is_null() {
+                    None
+                } else {
+                    Some(count(v).ok_or(Waits::Settings)?)
+                }
+            }
+            "image_budget_per_round" => {
+                settings.image_budget_per_round = if v.is_null() {
+                    None
+                } else {
+                    Some(count(v).ok_or(Waits::Settings)?)
+                };
+            }
+            "layout_timeout" => {
+                let seconds = v.as_f64().filter(|s| *s >= 0.0).ok_or(Waits::Settings)?;
+                settings.layout_timeout = Some(Duration::from_secs_f64(seconds));
+            }
+            "batch_timeout" | "max_batch_ops" => return Err(Waits::D2),
+            _ => return Err(Waits::Settings),
+        }
+    }
+    Ok(())
 }
 
 struct Fixed(i64);
@@ -522,21 +688,23 @@ impl Replayer {
     /// A session for a case whose head is `head`: the toolbox and session settings it gives
     /// (roles; `Settings` for any other), its clock.
     fn session(&self, head: &Value) -> Result<HostSession, Waits> {
+        self.session_with(head, Vec::new())
+    }
+
+    /// [`Replayer::session`] with `formats` beside Word's.
+    fn session_with(&self, head: &Value, formats: Vec<Arc<dyn ooxml_session::Format>>) -> Result<HostSession, Waits> {
         let mut settings = HostSettings::default();
         let given = |which: &str| head.get(which).and_then(Value::as_object).cloned().unwrap_or_default();
         let (toolbox, session) = (given("toolbox"), given("session"));
+        let mut locale = None;
         for (key, value) in toolbox.iter().chain(session.iter()) {
             match key.as_str() {
-                "clock" | "font_dirs" => {}
-                "roles" => {
-                    let names: Vec<&str> = value
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .filter_map(Value::as_str)
-                        .collect();
-                    settings.roles = RoleSet::parse(names).map_err(|_| Waits::Settings)?;
-                }
+                // (block_edits: when the Python host drafts an edit beside another; the Rust
+                // host's store runs every edit side by side)
+                "clock" | "font_dirs" | "block_edits" => {}
+                "roles" => settings.roles = roles_of(value).ok_or(Waits::Settings)?,
+                "locale" => locale = Some(locale_of(value).ok_or(Waits::Settings)?),
+                "limits" => limits(&mut settings, value)?,
                 _ => return Err(Waits::Settings),
             }
         }
@@ -551,7 +719,9 @@ impl Replayer {
             raster: Some(Arc::clone(&self.raster)),
         };
         let format = WordFormat { pages: Some(pages) };
-        let host = Arc::new(Host::new(vec![Arc::new(format)], settings, Arc::new(HostTools)));
+        let mut all: Vec<Arc<dyn ooxml_session::Format>> = vec![Arc::new(format)];
+        all.extend(formats);
+        let host = Arc::new(Host::new(all, settings, Arc::new(HostTools)));
         let context = Context {
             fonts: Arc::new(NoFonts),
             parts: Arc::new(NoParts),
@@ -563,7 +733,7 @@ impl Replayer {
         };
         let config = SessionConfig {
             store: StoreConfig::default(),
-            locale: None,
+            locale,
         };
         Ok(host.session(config, context))
     }
@@ -602,6 +772,208 @@ impl Replayer {
             out.push((event.clone(), outcome));
         }
         out
+    }
+
+    /// A frozen answer of the Python host (`host/frozen/values.jsonl`, `freeze_values.py`)
+    /// made again: the document opened as it was before the call, the session's datasets
+    /// kept as they were, the call made; its reply and the document's parts after it compared
+    /// with the frozen ones. A case the freezer skipped waits, with why.
+    #[must_use]
+    pub fn frozen(&self, case: &Value) -> Outcome {
+        if case.get("skipped").is_some() {
+            return Outcome::Waiting(Waits::Settings, false);
+        }
+        let mut given = Map::new();
+        for key in ["clock", "locale"] {
+            if let Some(value) = case.get(key).filter(|v| !v.is_null()) {
+                given.insert(key.to_owned(), value.clone());
+            }
+        }
+        let head = serde_json::json!({"session": given});
+        let others = case["others"].as_array().cloned().unwrap_or_default();
+        let mut formats: Vec<Arc<dyn ooxml_session::Format>> = Vec::new();
+        let mut kinds: Vec<DocKind> = Vec::new();
+        // the formats the toolbox held, a document of theirs open or not
+        let registered = case["formats"].as_array().cloned().unwrap_or_default();
+        for other in &registered {
+            let named = other["kind"].as_str().unwrap_or_default();
+            let kind = frozen_kind(named);
+            if kind == DocKind::Docx || kinds.contains(&kind) {
+                continue;
+            }
+            kinds.push(kind);
+            let merges = case["merges"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|m| m[0] == named)
+                .filter_map(|m| {
+                    let list = |v: &Value| -> Option<Vec<String>> {
+                        v.as_array()?.iter().map(|a| Some(a.as_str()?.to_owned())).collect()
+                    };
+                    Some((list(&m[1])?, list(&m[2])?))
+                })
+                .collect();
+            let prefixes = other["prefixes"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|p| p.as_str().map(str::to_owned))
+                .collect();
+            formats.push(Arc::new(crate::frozen::FrozenFormat { kind, prefixes, merges }));
+        }
+        let Ok(session) = self.session_with(&head, formats) else {
+            return Outcome::Waiting(Waits::Settings, false);
+        };
+        if let Err(why) = self.open_others(&session, &others) {
+            return Outcome::Different(vec!["others".into()], Value::Array(others), Value::from(why));
+        }
+        let document = &case["document"];
+        let arguments = case.get("arguments").cloned().unwrap_or(Value::Null);
+        let doc = arguments.get("doc").and_then(Value::as_str).unwrap_or("d1");
+        let Some(bytes) = document.get("input").and_then(|i| self.input(i)) else {
+            return Outcome::Different(vec!["document.input".into()], document.clone(), Value::Null);
+        };
+        if let Err(why) = self.open_frozen(&session, case, doc, bytes) {
+            return Outcome::Different(vec!["document".into()], document.clone(), Value::from(why));
+        }
+        let entries: Option<Vec<_>> = case["datasets"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(frozen_dataset)
+            .collect();
+        let Some(entries) = entries else {
+            return Outcome::Different(vec!["datasets".into()], case["datasets"].clone(), Value::Null);
+        };
+        if let Err(error) = session.keep_datasets(entries) {
+            return Outcome::Different(vec!["datasets".into()], Value::Null, error.to_json());
+        }
+        let tool = case.get("tool").and_then(Value::as_str).unwrap_or_default();
+        let Ok(result) = session.call(tool, arguments.clone(), &CallAs::default()) else {
+            return Outcome::Waiting(Waits::Settings, false);
+        };
+        let stream = "frozen/values";
+        // (its test as the case a known difference names)
+        let mut case = case.clone();
+        let test = case.get("test").cloned();
+        if let (Value::Object(map), Some(test)) = (&mut case, test) {
+            map.insert("case".into(), test);
+        }
+        let case = &case;
+        let replied = self.compare(stream, case, "result", &normalised(&result));
+        let after = DocId::parse(doc)
+            .and_then(|id| session.save(&id).ok())
+            .and_then(|saved| part_digests(&saved.data))
+            .map_or(Value::Null, Value::Object);
+        both(replied, self.compare(stream, case, "after", &after))
+    }
+
+    /// A frozen answer's document opened as it was before the call: its bytes and id state
+    /// then; for a call that removes rows -- which says what it removes of what the document
+    /// was when first opened (`original_removed`) -- opened as it was first opened and brought to
+    /// the version the call read as one step, numbered as the Python host numbered it (the
+    /// ids drawn in between are not drawn again); its tracking set as the test set it.
+    fn open_frozen(&self, session: &HostSession, case: &Value, doc: &str, now: Arc<[u8]>) -> Result<(), String> {
+        let document = &case["document"];
+        let name = document.get("name").and_then(Value::as_str).unwrap_or("document.docx");
+        let reads_first = case["arguments"]["remove"] == Value::Bool(true);
+        let opened = case.get("opened").filter(|o| !o.is_null() && reads_first);
+        let first = match opened {
+            Some(o) => o
+                .get("input")
+                .and_then(|i| self.input(i))
+                .ok_or("the first version's input not found")?,
+            None => Arc::clone(&now),
+        };
+        let state = match opened {
+            Some(o) => o.get("state").and_then(Value::as_str),
+            None => document.get("state").and_then(Value::as_str),
+        };
+        let how = Opening {
+            kind: Some(DocKind::Docx),
+            source: Some("app"),
+            doc_id: Some(doc),
+            state,
+        };
+        let id = session
+            .open_with(Arc::clone(&first), name, &how)
+            .map_err(|e| e.to_string())?;
+        let version = document.get("version").and_then(Value::as_u64).unwrap_or(0);
+        let parts = changed_parts(&first, &now);
+        if !parts.is_empty() && version > 0 {
+            session
+                .session()
+                .continue_numbers(&id, version - 1, version - 1)
+                .map_err(|e| e.to_string())?;
+            session
+                .session()
+                .update(&id, parts, &ooxml_session::CallContext::default())
+                .map_err(|e| e.to_string())?;
+        }
+        if let Some(tracking) = case.get("tracking").filter(|t| !t.is_null()) {
+            let reply = session
+                .call("word_set_tracking", tracking.clone(), &CallAs::default())
+                .map_err(|_| "tracking not set".to_owned())?;
+            if reply.is_error() {
+                return Err(format!("tracking not set: {:?}", reply.to_json()));
+            }
+        }
+        Ok(())
+    }
+
+    /// A frozen answer's other open documents opened under their handles: a Word document
+    /// from its bytes, another as what its format answered.
+    fn open_others(&self, session: &HostSession, others: &[Value]) -> Result<(), String> {
+        for other in others {
+            let handle = other["doc"].as_str().unwrap_or_default();
+            let name = other["name"].as_str().unwrap_or("document");
+            let kind = frozen_kind(other["kind"].as_str().unwrap_or_default());
+            if kind == DocKind::Docx {
+                let bytes = other
+                    .get("input")
+                    .and_then(|i| self.input(i))
+                    .ok_or("an input not found")?;
+                let how = Opening {
+                    kind: Some(DocKind::Docx),
+                    source: Some("app"),
+                    doc_id: Some(handle),
+                    state: other.get("state").and_then(Value::as_str),
+                };
+                session.open_with(bytes, name, &how).map_err(|e| e.to_string())?;
+                continue;
+            }
+            let id = DocId::parse(handle).ok_or("a handle that is no id")?;
+            let package =
+                ooxml_opc::Package::open(empty_package(), &ooxml_base::Limits::default()).map_err(|e| e.to_string())?;
+            let env = session.session().open_env();
+            let inner = ooxml_session::Format::open(&ooxml_session::PackageFormat(kind), package, &env)
+                .map_err(|e| e.to_string())?;
+            let answers = other["answers"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|a| {
+                    Some((
+                        a[0].as_str()?.to_owned(),
+                        crate::frozen::FrozenDoc::answer(&a[1], frozen_rows),
+                    ))
+                })
+                .collect();
+            let value_sources = other["value_sources"]
+                .as_array()
+                .map(|v| v.iter().filter_map(|s| s.as_str().map(str::to_owned)).collect());
+            let doc = crate::frozen::FrozenDoc {
+                inner,
+                answers,
+                value_sources,
+            };
+            session
+                .session()
+                .insert_as(kind, name, Arc::new(doc), Some(id))
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(())
     }
 
     /// One event made again: how it went, and whether the case's later events depend on it.
@@ -643,9 +1015,26 @@ impl Replayer {
                 )
             }
             "calls" => (Outcome::Waiting(Waits::D2, true), true),
-            "settings" => (Outcome::Waiting(Waits::Settings, true), true),
+            "settings" => self.settings(session, event),
             _ => (Outcome::Waiting(Waits::Settings, true), true),
         }
+    }
+
+    /// The application's settings changed between calls: the session's roles (the rest
+    /// the Rust host takes per host, not per session).
+    fn settings(&self, session: &HostSession, event: &Value) -> (Outcome, bool) {
+        let given = event.get("session").and_then(Value::as_object);
+        let toolbox = event.get("toolbox").and_then(Value::as_object);
+        if toolbox.is_some_and(|t| !t.is_empty()) {
+            return (Outcome::Waiting(Waits::Settings, true), true);
+        }
+        for (key, value) in given.into_iter().flatten() {
+            match (key.as_str(), roles_of(value)) {
+                ("roles", Some(roles)) => session.set_roles(roles),
+                _ => return (Outcome::Waiting(Waits::Settings, true), true),
+            }
+        }
+        (Outcome::Equal, false)
     }
 
     /// The application's open, made again.
@@ -734,6 +1123,7 @@ impl Replayer {
         let how = CallAs {
             roles,
             context: (!context.is_empty()).then_some(context),
+            ..CallAs::default()
         };
         match session.call(tool, arguments, &how) {
             // (save_document and a check of numbers run for what they leave: their layout,

@@ -205,7 +205,32 @@ fn fact_of(
     env: &FactEnv<'_>,
     sources: &dyn FactSources,
 ) -> Result<(String, Map<String, Value>), ToolError> {
-    let (source, mut parts, format) = split(address);
+    let (rows, row, column) = one_value(address, field, env, sources)?;
+    let format = split(address).2;
+    let text = value_text(
+        rows.value(row, column),
+        env.locale,
+        (rows.type_of(column), format.as_deref()),
+        &rows.where_is(row, column),
+        field,
+        env.retry,
+    )?;
+    let record = record(&rows, row, column, address, &text, format.as_deref(), sources);
+    Ok((text, record))
+}
+
+/// The rows a one-value `address` reads and the value's `(row, column)` in them, as a
+/// reference picks them (docx-agent's `_rows_and_cell`, the dispatcher's `Call.fact`).
+///
+/// # Errors
+/// The source's refusal; more than one value named; a row or column not found.
+pub fn one_value(
+    address: &str,
+    field: &str,
+    env: &FactEnv<'_>,
+    sources: &dyn FactSources,
+) -> Result<(SourceRows, usize, usize), ToolError> {
+    let (source, mut parts, _format) = split(address);
     let mut selected = false;
     let rows = if source.starts_with(DATASET_PREFIX) {
         sources.rows(&source, field)?
@@ -221,16 +246,7 @@ fn fact_of(
         sources.rows(&source, field)?
     };
     let (row, column) = pick(&rows, &parts, address, field, env, selected)?;
-    let text = value_text(
-        rows.value(row, column),
-        env.locale,
-        (rows.type_of(column), format.as_deref()),
-        &rows.where_is(row, column),
-        field,
-        env.retry,
-    )?;
-    let record = record(&rows, row, column, address, &text, format.as_deref(), sources);
-    Ok((text, record))
+    Ok((rows, row, column))
 }
 
 /// The one value `segments` ([`split`]'s) names in `rows`: `(row, column)`;
