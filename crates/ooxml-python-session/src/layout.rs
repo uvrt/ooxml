@@ -273,7 +273,7 @@ impl PyLaidPages {
     /// tables and rows at `paths` (docx2svg's paths): `None` for a path that names none.
     fn ids_of(&self, py: Python<'_>, paths: Vec<String>) -> Vec<Option<String>> {
         let version = &self.version;
-        py.detach(|| paths.iter().map(|p| version.id_of(p).map(str::to_owned)).collect())
+        py.detach(|| paths.iter().map(|p| version.id_of(p)).collect())
     }
 
     /// The body blocks each page draws something of (docx2svg's `Page.blocks`).
@@ -465,12 +465,14 @@ impl PyLaidPages {
         let (version, engine) = (&self.version, &self.engine);
         let found = py.detach(|| lock(engine).line_texts(version, page));
         let lines = found.ok_or_else(|| PyRuntimeError::new_err("no such page of this engine's generation"))?;
+        let names = &version.layout().document.names;
         Ok(lines
             .into_iter()
             .map(|l| {
+                let path = l.place.named(names).unwrap_or_default();
                 let (story, part) = l.story.map_or((None, None), |(k, p)| (Some(k), Some(p)));
                 (
-                    l.path,
+                    path,
                     story,
                     part,
                     l.number,

@@ -1,7 +1,7 @@
 //! Owns: a page as a check reads it ([`PageEngine::page_read`]): its entry in the page
 //! tier (its read and its facts' contributions), taken from the generation's
 //! [`crate::page_reads::ReadMemo`] where a version before read the page laid out the same,
-//! in the same context and at the same places; else painted (not kept) and read, and the
+//! in the same context, of the same blocks at the same places; else painted (not kept) and read, and the
 //! entry kept. And each page's context ([`PageEngine::page_contexts`]), made
 //! once per version: what a page's read and its digests depend on beyond its laid page.
 //!
@@ -13,7 +13,7 @@ use crate::laid_entry::LaidEntry;
 use crate::page_context::PageContext;
 use crate::page_entry::PageEntry;
 use crate::page_read::PageRead;
-use crate::page_reads::{places, Found, ReadOf, Split};
+use crate::page_reads::{page_keys, places, Found, ReadOf, Split};
 use crate::text_boxes::{text_boxes, TextBoxJob};
 use crate::version::LaidVersion;
 use ooxml_word_layout::paint::{paint_stories, PaintContext};
@@ -38,11 +38,15 @@ impl PageEngine {
             epoch: version.epoch,
             model: version.context,
             places: places(&version.layout, &key.items),
+            keys: page_keys(&version.layout, &key.items),
         });
         let Some(of) = of else {
             let paint = self.painted_page(version, page, false)?;
             self.stats.pages_read.0 += 1;
-            return Some(Arc::new(PageEntry::new(PageRead::of(&paint))));
+            return Some(Arc::new(PageEntry::new(PageRead::of(
+                &paint,
+                &version.layout.document.names,
+            ))));
         };
         match self.generation.as_mut().and_then(|g| g.reads.get(&of)) {
             Some(Found::Whole(entry)) => {
@@ -56,7 +60,7 @@ impl PageEngine {
             }
             None => {
                 let paint = self.painted_page(version, page, false)?;
-                let read = PageRead::of(&paint);
+                let read = PageRead::of(&paint, &version.layout.document.names);
                 self.stats.pages_read.0 += 1;
                 let split = self.stories_read(version, page).and_then(|s| Split::of(&read, &s));
                 Some(self.keep_read(&of, read, split))
@@ -116,7 +120,7 @@ impl PageEngine {
             };
             paint.text_boxes = text_boxes(job, drawings, &paint, page);
         }
-        Some(PageRead::of(&paint))
+        Some(PageRead::of(&paint, &version.layout.document.names))
     }
 
     /// A table of `version`'s layout model (nested ones too) resolved as the layout

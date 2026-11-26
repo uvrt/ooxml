@@ -1,7 +1,9 @@
 //! Owns: each page's summary as digested ([`DigestCache`]), kept across a generation's
 //! versions by the page as laid out -- its `LaidPage` and the flow items it draws, by
 //! identity -- and its context ([`crate::page_context`]): a page another version lays out
-//! the same, in the same context, is taken as digested, not painted again. It holds its
+//! the same, in the same context, is taken as digested, not painted again, where it draws
+//! the same blocks under the same keys (a summary names its body lines by id, an id is its
+//! block's key's: the keys are checked, never part of the memo's key, ADR-008). It holds its
 //! pages within its own bounded account, the least recently used let go first; it goes
 //! with its generation.
 //!
@@ -15,6 +17,7 @@ use ooxml_base::Digest;
 use ooxml_derive::{CacheBudget, Memo, MemoStats, Weigh};
 use ooxml_word_layout::flow::FlowItem;
 use ooxml_word_layout::paginate::LaidPage;
+use ooxml_word_model::ids::BlockKey;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 
@@ -124,6 +127,8 @@ impl PageRef {
 #[derive(Clone)]
 struct Kept {
     page: PageRef,
+    /// The keys of the blocks the page draws ([`crate::page_reads::page_keys`]).
+    keys: Arc<[Option<BlockKey>]>,
     summary: Arc<PageSummary>,
 }
 
@@ -133,9 +138,17 @@ impl Weigh for Kept {
             .summary
             .lines
             .iter()
-            .map(|l| std::mem::size_of_val(l) + l.path.len() + l.id.as_ref().map_or(0, |id| id.len()))
+            .map(|l| {
+                std::mem::size_of_val(l)
+                    + l.path.as_ref().map_or(0, |path| path.len())
+                    + l.id.as_ref().map_or(0, |id| id.len())
+            })
             .sum();
-        std::mem::size_of::<Kept>() + std::mem::size_of::<PageSummary>() + lines + self.page.weight()
+        std::mem::size_of::<Kept>()
+            + std::mem::size_of::<PageSummary>()
+            + lines
+            + self.keys.len() * std::mem::size_of::<Option<BlockKey>>()
+            + self.page.weight()
     }
 }
 
@@ -192,16 +205,32 @@ impl DigestCache {
         }
     }
 
-    /// The summary of the page `key` in `context` and `epoch`, where it was digested.
-    pub(crate) fn get(&mut self, key: &PageKey, context: Digest, epoch: u64) -> Option<Arc<PageSummary>> {
+    /// The summary of the page `key`, drawing the blocks `keys`, in `context` and `epoch`,
+    /// where it was digested.
+    pub(crate) fn get(
+        &mut self,
+        key: &PageKey,
+        keys: &[Option<BlockKey>],
+        context: Digest,
+        epoch: u64,
+    ) -> Option<Arc<PageSummary>> {
         let found = self.memo.get(&(Arc::as_ptr(&key.page) as usize, context, epoch))?;
-        found.page.is(key).then_some(found.summary)
+        (found.page.is(key) && *found.keys == *keys).then_some(found.summary)
     }
 
-    /// Keep `summary` as the page `key`'s in `context` and `epoch`.
-    pub(crate) fn insert(&mut self, key: &PageKey, context: Digest, epoch: u64, summary: Arc<PageSummary>) {
+    /// Keep `summary` as the page `key`'s, drawing the blocks `keys`, in `context` and
+    /// `epoch`.
+    pub(crate) fn insert(
+        &mut self,
+        key: &PageKey,
+        keys: Arc<[Option<BlockKey>]>,
+        context: Digest,
+        epoch: u64,
+        summary: Arc<PageSummary>,
+    ) {
         let kept = Kept {
             page: PageRef::of(key),
+            keys,
             summary,
         };
         self.memo

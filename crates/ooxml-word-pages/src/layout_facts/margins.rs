@@ -8,7 +8,7 @@
 //!
 //! Must not: word an entry (the tool layer does) or cap a list.
 
-use super::tree::{self, is_w, row_of, W};
+use super::tree::{self, is_w, W};
 use super::{points, Facts};
 use crate::page_parts::Part;
 use crate::page_read::PageRead;
@@ -18,6 +18,7 @@ use ooxml_word_layout::tables::outer_part;
 use ooxml_word_model::docx::drawings::pictures;
 use ooxml_word_model::docx::keeps::Keeps;
 use ooxml_word_model::docx::{at_path, StoryPart};
+use ooxml_word_model::ids::BlockKey;
 use ooxml_word_model::model::Block;
 use ooxml_xml::{Element, QName};
 use std::collections::HashMap;
@@ -100,10 +101,10 @@ struct Reader<'f, 'a> {
     body: &'a StoryPart,
     /// The main part's pictures: their places and ids.
     frames: Vec<(Box<[u32]>, String)>,
-    /// What each body table may reach past the margins, by path.
-    allowed: HashMap<String, (Px, Px)>,
-    /// The indents of the body's lines beside each table, by path, as found.
-    indents: HashMap<String, Option<(f64, f64)>>,
+    /// What each body table may reach past the margins, by key.
+    allowed: HashMap<BlockKey, (Px, Px)>,
+    /// The indents of the body's lines beside each table, by key, as found.
+    indents: HashMap<BlockKey, Option<(f64, f64)>>,
 }
 
 /// A page's text column: left, right, top, bottom.
@@ -124,7 +125,10 @@ impl Reader<'_, '_> {
             if past.is_empty() {
                 continue;
             }
-            let id = drawing_id(self.body, &self.frames, &drawn.path).unwrap_or_else(|| drawn.path.clone());
+            let Some(path) = self.facts.path_of_place(&drawn.place) else {
+                continue;
+            };
+            let id = drawing_id(self.body, &self.frames, &path).unwrap_or(path);
             let only_right = matches!(past.as_slice(), [("right", _)]);
             let right = column.1;
             let fit =
@@ -145,15 +149,20 @@ impl Reader<'_, '_> {
         let Some(entry) = facts.entry(index) else { return };
         for table in &entry.tables().0 {
             let (low, high) = table.extent;
-            let (left, right) = self.allowed.get(&*table.path).copied().unwrap_or((Px::ZERO, Px::ZERO));
+            let (left, right) = self.allowed.get(&table.table).copied().unwrap_or((Px::ZERO, Px::ZERO));
             let mut over = past(low + left, high - right, None, column, false);
             if !over.is_empty() {
                 let drawn = past(low, high, None, column, false);
-                self.within_body_lines(&table.path, &mut over, &drawn);
+                self.within_body_lines(table.table, &mut over, &drawn);
             }
             if !over.is_empty() {
+                let names = facts.names();
+                let named = names.id(table.table).map(|id| id.to_string());
+                let Some(id) = named.or_else(|| names.path(ooxml_word_model::ids::Anchor::whole(table.table))) else {
+                    continue;
+                };
                 entries.push(PastMargins::Table {
-                    table: facts.version().id_of(&table.path).unwrap_or(&table.path).to_owned(),
+                    table: id,
                     page: index + 1,
                     past: over,
                 });
@@ -161,14 +170,16 @@ impl Reader<'_, '_> {
         }
     }
 
-    /// `over` less the sides on which the table at `table`, as `drawn`, stays within the
+    /// `over` less the sides on which the table `table`, as `drawn`, stays within the
     /// body's lines beside it (a negative indent's reach; `_past_body_lines`).
-    fn within_body_lines(&mut self, table: &str, over: &mut Past, drawn: &Past) {
+    fn within_body_lines(&mut self, table: BlockKey, over: &mut Past, drawn: &Past) {
         let (facts, body) = (self.facts, self.body);
-        let lines = *self
-            .indents
-            .entry(table.to_owned())
-            .or_insert_with(|| tree::resolve(body, table).map(|(_, place)| body_indents(facts, body, &place)));
+        let lines = *self.indents.entry(table).or_insert_with(|| {
+            facts
+                .names()
+                .place_of(table)
+                .map(|place| body_indents(facts, body, &place))
+        });
         let Some((left, right)) = lines else { return };
         over.retain(|(side, _)| {
             let reach = if *side == "left" { -left } else { -right };
@@ -187,8 +198,8 @@ pub struct TableInkPart(pub(crate) Vec<TableInk>);
 /// A body table's rules and lines' ink on one page.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct TableInk {
-    /// The outermost table's path (as [`row_of`] reads it).
-    pub(crate) path: Box<str>,
+    /// The outermost table (as `_ROW` reads it).
+    pub(crate) table: BlockKey,
     /// Its rules' and lines' ink from left to right, device px.
     pub(crate) extent: (Px, Px),
     /// It draws a rule.
@@ -198,25 +209,21 @@ pub(crate) struct TableInk {
 impl Part<PageRead> for TableInkPart {
     fn of(read: &PageRead) -> TableInkPart {
         let mut out: Vec<TableInk> = Vec::new();
-        let rules = read
-            .boxes
-            .rules
-            .iter()
-            .map(|r| (r.path.as_str(), r.x, r.x + r.width, true));
+        let rules = read.boxes.rules.iter().map(|r| (r.row, r.x, r.x + r.width, true));
         let inks = read
             .texts
             .iter()
             .filter(|l| l.story.is_none())
-            .filter_map(|l| l.ink.map(|(low, high)| (l.path.as_str(), low, high, false)));
-        for (path, low, high, ruled) in rules.chain(inks) {
-            let Some((table, _)) = row_of(path) else { continue };
-            match out.iter_mut().find(|t| &*t.path == table) {
+            .filter_map(|l| l.ink.map(|(low, high)| (l.at.row, low, high, false)));
+        for (row, low, high, ruled) in rules.chain(inks) {
+            let Some(table) = row.map(|r| r.table) else { continue };
+            match out.iter_mut().find(|t| t.table == table) {
                 Some(found) => {
                     found.extent = (found.extent.0.min(low), found.extent.1.max(high));
                     found.ruled |= ruled;
                 }
                 None => out.push(TableInk {
-                    path: table.into(),
+                    table,
                     extent: (low, high),
                     ruled,
                 }),
@@ -227,17 +234,13 @@ impl Part<PageRead> for TableInkPart {
 
     fn weight_of(read: &PageRead) -> usize {
         let each = std::mem::size_of::<TableInk>();
-        let rules = read.boxes.rules.iter().map(|r| r.path.as_str());
+        let rules = read.boxes.rules.iter().filter(|r| r.row.is_some()).count();
         let lines = read
             .texts
             .iter()
-            .filter(|l| l.story.is_none() && l.ink.is_some())
-            .map(|l| l.path.as_str());
-        let tables = rules
-            .chain(lines)
-            .filter(|p| p.contains("w:tbl["))
-            .map(|p| each + p.len());
-        std::mem::size_of::<TableInkPart>() + tables.sum::<usize>()
+            .filter(|l| l.story.is_none() && l.ink.is_some() && l.at.row.is_some())
+            .count();
+        std::mem::size_of::<TableInkPart>() + (rules + lines) * each
     }
 }
 
@@ -324,16 +327,14 @@ fn elements(element: &Arc<Element>) -> impl Iterator<Item = (u32, &Arc<Element>)
 }
 
 /// The device px each body table may reach past the margins as Word places it, by its
-/// path (`_table_allowance`): its first row's first cell's left margin and left outer
+/// key (`_table_allowance`): its first row's first cell's left margin and left outer
 /// border's outer half, its last cell's right margin and right one's.
-fn allowances(facts: &Facts<'_>) -> HashMap<String, (Px, Px)> {
+fn allowances(facts: &Facts<'_>) -> HashMap<BlockKey, (Px, Px)> {
     let px = |twips: i64| Px::points(Q::new(twips.into(), 20.into()));
     let mut out = HashMap::new();
     for block in facts.version().layout().document.body.iter() {
         let Block::Table(table) = block else { continue };
-        if table.path.is_empty() {
-            continue;
-        }
+        let Some(key) = table.key else { continue };
         let resolved = facts.resolved_table(table);
         let Some((first, last)) = resolved
             .rows
@@ -344,7 +345,7 @@ fn allowances(facts: &Facts<'_>) -> HashMap<String, (Px, Px)> {
         };
         let left = first.margins[1] + outer_part(first.left_edge.0.as_ref());
         let right = last.margins[3] + outer_part(last.right_edge.0.as_ref());
-        out.insert(table.path.to_string(), (px(left), px(right)));
+        out.insert(key, (px(left), px(right)));
     }
     out
 }

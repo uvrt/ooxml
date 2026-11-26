@@ -13,7 +13,7 @@
 
 use super::{PageDigests, PageEngine, KEY};
 use crate::digests::Lines;
-use crate::summary::{canon, first_pages, in_body, named_alike, page_change, page_summary, reflow_of};
+use crate::summary::{canon, first_pages, page_change, page_summary, reflow_of};
 use crate::summary::{Counts, PageSummary, Reflow, Summary};
 use crate::version::{LaidVersion, VersionPages};
 use std::collections::HashMap;
@@ -39,7 +39,11 @@ impl PageEngine {
             pages.push(Arc::new(page_summary(digests, version)));
         }
         let known = pages.len();
-        Some(Summary { pages, known })
+        Some(Summary {
+            pages,
+            known,
+            names: Arc::clone(&version.layout.document.names),
+        })
     }
 
     /// Whether `version` is painted as it was laid out: of this engine's generation (in
@@ -64,6 +68,7 @@ impl PageEngine {
         let made = Arc::new(Summary {
             known: made.len(),
             pages: made,
+            names: Arc::clone(&version.layout.document.names),
         });
         Some(Arc::clone(version.summary.get_or_init(|| made)))
     }
@@ -181,7 +186,7 @@ impl PageEngine {
     /// paints it.
     pub fn body_lines(&mut self, version: &LaidVersion) -> Option<usize> {
         let pages = self.version_pages(version)?;
-        Some(pages.paths.iter().map(|page| page.len()).sum())
+        Some(pages.keys.iter().map(|page| page.len()).sum())
     }
 
     /// What a comparison reads of `version`'s pages without painting them, made once;
@@ -193,36 +198,46 @@ impl PageEngine {
         let contexts = self.page_contexts(version)?;
         let layout = &version.layout;
         let donor = self.generation.as_mut().and_then(|g| g.read_before.take());
+        let names = &layout.document.names;
         let mut pages = Vec::with_capacity(layout.page_count());
-        let mut paths = Vec::with_capacity(layout.page_count());
+        let mut blocks = Vec::with_capacity(layout.page_count());
+        let mut keys = Vec::with_capacity(layout.page_count());
         for page in 0..layout.page_count() {
             let key = crate::page_said::page_key(layout, page);
-            // A page laid out the same as the version read before's same page draws the
-            // same body lines: their paths are taken, not read from its geometry again.
+            let drawn = key.as_ref().map(|key| crate::page_reads::page_keys(layout, &key.items));
+            // A page laid out the same as the version read before's same page, of the same
+            // blocks, draws the same body lines: their keys are taken, not read from its
+            // geometry again.
             let taken = donor.as_ref().zip(key.as_ref()).and_then(|(donor, key)| {
-                let same = donor.pages.get(page)?.as_ref()?.is(key);
-                same.then(|| donor.paths.get(page).cloned()).flatten()
+                let same = donor.pages.get(page)?.as_ref()?.is(key) && donor.blocks.get(page)? == &drawn;
+                same.then(|| donor.keys.get(page).cloned()).flatten()
             });
             let found = taken.unwrap_or_else(|| {
-                ooxml_word_layout::paint::body_line_paths(layout, page)
+                ooxml_word_layout::paint::body_line_keys(layout, page)
                     .into_iter()
-                    .filter(|path| in_body(path, false))
+                    .filter(|key| key.is_none_or(|k| k.story() == ooxml_word_model::ids::StoryIx::BODY))
                     .collect()
             });
             pages.push(key.as_ref().map(crate::digest_cache::PageRef::of));
-            paths.push(found);
+            blocks.push(drawn);
+            keys.push(found);
         }
         // A paragraph's lines stand together: its id is asked once for them.
-        let mut last: Option<(&str, Option<ooxml_word_model::value::Text>)> = None;
-        let ids = paths
+        let mut last: Option<(
+            Option<ooxml_word_model::ids::BlockKey>,
+            Option<ooxml_word_model::value::Text>,
+        )> = None;
+        let ids = keys
             .iter()
-            .map(|page| {
+            .map(|page: &Arc<[Option<ooxml_word_model::ids::BlockKey>]>| {
                 page.iter()
-                    .map(|path| match &last {
-                        Some((was, id)) if *was == &**path => id.clone(),
+                    .map(|key| match &last {
+                        Some((was, id)) if was == key => id.clone(),
                         _ => {
-                            let id = version.ids.id_of(path).map(ooxml_word_model::value::Text::from);
-                            last = Some((path, id.clone()));
+                            let id = key
+                                .and_then(|k| names.id(k))
+                                .map(|id| ooxml_word_model::value::Text::from(id.to_string().as_str()));
+                            last = Some((*key, id.clone()));
                             id
                         }
                     })
@@ -232,7 +247,8 @@ impl PageEngine {
         let made = Arc::new(VersionPages {
             contexts,
             pages,
-            paths,
+            blocks,
+            keys,
             ids,
         });
         let made = Arc::clone(version.unpainted.pages.get_or_init(|| made));
@@ -257,11 +273,11 @@ impl PageEngine {
         let key = crate::page_said::page_key(&version.layout, page);
         let context = pages.contexts.get(page).copied().unwrap_or_default().whole;
         if let Some(key) = &key {
+            let drawn = crate::page_reads::page_keys(&version.layout, &key.items);
             let found = self
                 .generation
                 .as_mut()
-                .and_then(|g| g.digests.get(key, context, version.epoch))
-                .filter(|found| named_alike(found, version));
+                .and_then(|g| g.digests.get(key, &drawn, context, version.epoch));
             if found.is_some() {
                 self.stats.pages_digested.1 += 1;
                 return found;
@@ -270,9 +286,10 @@ impl PageEngine {
         let summary = Arc::new(page_summary(self.page_digests(version, page)?, version));
         self.stats.pages_digested.0 += 1;
         if let (Some(key), Some(generation)) = (&key, self.generation.as_mut()) {
+            let drawn = crate::page_reads::page_keys(&version.layout, &key.items);
             generation
                 .digests
-                .insert(key, context, version.epoch, Arc::clone(&summary));
+                .insert(key, drawn, context, version.epoch, Arc::clone(&summary));
         }
         Some(summary)
     }

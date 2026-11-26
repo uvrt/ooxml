@@ -15,6 +15,7 @@ use super::tree::has_content;
 use super::{points, round, Block, BlockKind, Facts};
 use crate::page_parts::Part;
 use crate::page_read::PageRead;
+use ooxml_word_model::ids::Anchor;
 use std::collections::HashMap;
 
 /// The most space before `word_format` takes, points.
@@ -80,42 +81,35 @@ fn table(block: &Block<'_>) -> bool {
 }
 
 /// One page's contribution to `spacers` (the page tier's, [`crate::page_entry`]): its body
-/// lines' characters that are not white space, by paragraph path and line number (a line
-/// drawn twice counts as drawn last).
+/// lines' characters that are not white space, by paragraph (its anchor) and line number
+/// (a line drawn twice counts as drawn last).
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct InkedPart(HashMap<Box<str>, Vec<(usize, usize)>>);
+pub struct InkedPart(HashMap<Anchor, Vec<(usize, usize)>>);
 
 impl InkedPart {
     /// The characters that are not white space of the body line `number` of the paragraph
-    /// at `path`, where the page draws it.
-    fn of_line(&self, path: &str, number: usize) -> Option<usize> {
-        let lines = self.0.get(path)?;
+    /// `anchor`, where the page draws it.
+    fn of_line(&self, anchor: Anchor, number: usize) -> Option<usize> {
+        let lines = self.0.get(&anchor)?;
         lines.iter().rev().find(|(n, _)| *n == number).map(|(_, inked)| *inked)
     }
 }
 
 impl Part<PageRead> for InkedPart {
     fn of(read: &PageRead) -> InkedPart {
-        let mut out: HashMap<Box<str>, Vec<(usize, usize)>> = HashMap::new();
+        let mut out: HashMap<Anchor, Vec<(usize, usize)>> = HashMap::new();
         for line in read.texts.iter().filter(|l| l.story.is_none()) {
-            match out.get_mut(line.path.as_str()) {
-                Some(lines) => lines.push((line.number, line.inked)),
-                None => {
-                    out.insert(line.path.as_str().into(), vec![(line.number, line.inked)]);
-                }
+            if let Some(anchor) = line.place.anchor() {
+                out.entry(anchor).or_default().push((line.number, line.inked));
             }
         }
         InkedPart(out)
     }
 
     fn weight_of(read: &PageRead) -> usize {
-        let each = std::mem::size_of::<(Box<str>, Vec<(usize, usize)>)>() + 2 * std::mem::size_of::<(usize, usize)>();
-        let lines = read
-            .texts
-            .iter()
-            .filter(|l| l.story.is_none())
-            .map(|l| each + l.path.len());
-        std::mem::size_of::<InkedPart>() + lines.sum::<usize>()
+        let each = std::mem::size_of::<(Anchor, Vec<(usize, usize)>)>() + 2 * std::mem::size_of::<(usize, usize)>();
+        let lines = read.texts.iter().filter(|l| l.story.is_none()).count();
+        std::mem::size_of::<InkedPart>() + lines * each
     }
 }
 
@@ -131,7 +125,7 @@ fn is_empty(facts: &Facts<'_>, block: &Block<'_>) -> bool {
     !lines.iter().any(|d| {
         facts
             .entry(d.page - 1)
-            .and_then(|e| e.inked().of_line(&d.line.path, d.line.number))
+            .and_then(|e| e.inked().of_line(d.line.anchor?, d.line.number))
             .is_some_and(|n| n > 0)
     })
 }

@@ -1,7 +1,6 @@
-//! Owns: what laying a version out makes beside its layout -- its body ids (found from the
-//! version before's), its pictures and drawings' painter, what it says (warnings and
-//! approximations), the facts it carries from the version before -- and a generation's
-//! fresh layout engine.
+//! Owns: what laying a version out makes beside its layout -- its pictures and drawings'
+//! painter, what it says (warnings and approximations), the facts it carries from the
+//! version before -- and a generation's fresh layout engine.
 //!
 //! Must not: lay out (its parent does) or keep anything itself.
 
@@ -18,23 +17,6 @@ use ooxml_word_layout::paint::GlyphSize;
 use ooxml_word_layout::tables::WordTables;
 use ooxml_word_layout::WordLayout;
 use std::sync::Arc;
-
-/// The version's body ids: the main part's ids found from the last version's
-/// (`PartIds::after`), its blocks named when asked.
-pub(super) fn version_ids(generation: &mut Generation, package: &Package, main: &str) -> crate::ids::VersionIds {
-    let Ok(Some(tree)) = package.tree(main) else {
-        generation.ids = None;
-        return crate::ids::VersionIds::default();
-    };
-    let root = Arc::clone(tree.root());
-    let ids = match generation.ids.take() {
-        Some((old, ids)) if Arc::ptr_eq(&old, &root) => ids,
-        Some((old, ids)) => Arc::new(ids.after(&old, &root)),
-        None => Arc::new(ooxml_word_model::ids::PartIds::new("body", &root)),
-    };
-    generation.ids = Some((Arc::clone(&root), Arc::clone(&ids)));
-    crate::ids::VersionIds::new(root, ids)
-}
 
 /// A version's pictures (its package less its text parts, its metafiles' drawings kept in
 /// `memo`) and its drawings' painter, writing charts' numbers in `numbers`.

@@ -15,7 +15,7 @@ use ooxml_opc::Package;
 use ooxml_word_layout::px::Px;
 use ooxml_word_model::docx::Docx;
 use ooxml_word_pages::layout_facts::{points, story_kind};
-use ooxml_word_pages::line_text::LineText;
+use ooxml_word_pages::line_text::ItemPlace;
 use ooxml_word_pages::LaidVersion;
 use serde_json::{json, Map, Value};
 use std::cell::OnceCell;
@@ -123,7 +123,7 @@ impl<'v> Laid<'v> {
     /// Every line the pages paint, by its paragraph's id, read once.
     fn painted(&self) -> &HashMap<String, Vec<Line>> {
         self.painted.get_or_init(|| {
-            let mut named: HashMap<(String, String), Option<String>> = HashMap::new();
+            let mut named: HashMap<(Option<String>, ItemPlace), Option<String>> = HashMap::new();
             let mut out: HashMap<String, Vec<Line>> = HashMap::new();
             let pages = self.version.facts().pages.len();
             for page in 0..pages {
@@ -136,12 +136,10 @@ impl<'v> Laid<'v> {
                 };
                 let read = read.read();
                 for (place, line) in read.texts.iter().chain(&read.box_texts).enumerate() {
-                    let Some(part) = self.part_of(line) else {
-                        continue;
-                    };
+                    let part = line.story.as_ref().map(|(_, part)| part.clone());
                     let id = named
-                        .entry((part.clone(), line.path.clone()))
-                        .or_insert_with(|| self.id_at(&part, &line.path));
+                        .entry((part, line.place.clone()))
+                        .or_insert_with(|| self.version.line_paragraph_id(self.docx, line));
                     if let Some(id) = id {
                         out.entry(id.clone()).or_default().push(Line {
                             page,
@@ -149,35 +147,13 @@ impl<'v> Laid<'v> {
                             top: line.top,
                             pitch: line.pitch,
                             column: line.column.unwrap_or(0),
-                            story: line
-                                .story
-                                .as_ref()
-                                .map_or_else(|| story_kind(&line.path), |(kind, _)| kind),
+                            story: line.at.story,
                         });
                     }
                 }
             }
             out
         })
-    }
-
-    /// The part a painted line's paragraph is in: its story's, the notes', else the main
-    /// part's.
-    fn part_of(&self, line: &LineText) -> Option<String> {
-        if let Some((_, part)) = &line.story {
-            return Some(part.clone());
-        }
-        match story_kind(&line.path) {
-            kind @ ("footnotes" | "endnotes") => self.docx.story(kind).map(|s| s.part.clone()),
-            _ => self.docx.body().map(|s| s.part.clone()),
-        }
-    }
-
-    /// The id of the paragraph at `path` of the part `part`.
-    fn id_at(&self, part: &str, path: &str) -> Option<String> {
-        let story = self.docx.part(part)?;
-        let (_, place) = story.resolve_path(path)?;
-        story.ids.paragraph_at(&place).map(|p| p.id)
     }
 }
 

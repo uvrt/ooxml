@@ -45,7 +45,6 @@ pub mod drawings;
 mod engine;
 mod error;
 mod fonts;
-pub mod ids;
 pub mod laid_entry;
 pub mod layout_facts;
 pub mod line_text;

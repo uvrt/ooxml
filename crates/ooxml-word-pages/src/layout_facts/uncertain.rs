@@ -58,8 +58,7 @@ pub fn uncertain(facts: &Facts<'_>, coverage: &Coverage) -> Vec<Uncertain> {
             path.starts_with("w:body")
                 .then(|| facts.version().id_of(path))
                 .flatten()
-                .unwrap_or(path)
-                .to_owned()
+                .unwrap_or_else(|| path.to_owned())
         });
         on(&mut pages, page).approximations.push(Approximated { reason, at });
     }

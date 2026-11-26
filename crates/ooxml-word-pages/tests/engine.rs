@@ -11,7 +11,7 @@
 use ooxml_derive::CacheBudget;
 use ooxml_fonts::{Folder, Location, WordFontOptions};
 use ooxml_word_model::ids::Sub;
-use ooxml_word_pages::{support, DiskFonts, EngineBudgets, EngineOptions, FontSetup, PageEngine};
+use ooxml_word_pages::{support, DiskFonts, EngineBudgets, EngineOptions, FontSetup, LaidVersion, PageEngine};
 use ooxml_zip::{Method, NewEntry, Writer};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -527,6 +527,8 @@ fn a_first_edit_that_stamps_an_unstamped_document_names_every_block_by_its_new_k
         kept.page_read(&before, k).unwrap();
     }
     let _ = before.facts();
+    kept.summary(&before).unwrap();
+    kept.body_ids(&before).unwrap();
     let after = kept
         .lay_out_bytes(Arc::from(package(&stampable(80, 30, true))))
         .unwrap()
@@ -540,10 +542,7 @@ fn a_first_edit_that_stamps_an_unstamped_document_names_every_block_by_its_new_k
             let anchor = line.anchor.expect("a body line is anchored");
             assert!(anchor.block.durable(), "{}", line.path);
             assert_eq!(names.path(anchor).as_deref(), Some(&*line.path));
-            assert_eq!(
-                names.id(anchor.block).map(|id| id.to_string()).as_deref(),
-                after.id_of(&line.path)
-            );
+            assert_eq!(names.id(anchor.block).map(|id| id.to_string()), after.id_of(&line.path));
             lines += 1;
         }
         for rule in paint.rules.iter().filter(|r| r.kind == "table-border") {
@@ -553,9 +552,17 @@ fn a_first_edit_that_stamps_an_unstamped_document_names_every_block_by_its_new_k
             rules += 1;
         }
         kept.page_svg(&after, k).unwrap();
-        kept.page_read(&after, k).unwrap();
+        // what a check read of the page names every block by its new key
+        let read = kept.page_read(&after, k).unwrap();
+        for text in &read.read().texts {
+            assert!(text.place.key().is_some_and(|key| key.durable()), "{:?}", text.place);
+        }
+        for rule in &read.read().boxes.rules {
+            assert!(rule.row.is_none_or(|row| row.table.durable()));
+        }
     }
     assert!(lines > 100 && rules > 10, "{lines} lines, {rules} rules");
+    summary_names_by_ids(&mut kept, &after);
     for page in &after.facts().pages {
         for line in &page.lines {
             assert!(line.anchor.is_some_and(|a| a.block.durable()), "{}", line.path);
@@ -565,6 +572,29 @@ fn a_first_edit_that_stamps_an_unstamped_document_names_every_block_by_its_new_k
             assert!(anchor.block.durable());
             assert_eq!(names.path(*anchor).as_deref(), Some(&**path));
         }
+    }
+}
+
+/// Every page of `version`'s summary and body ids (of a body with no header, footer or note)
+/// names its lines by the version's ids, never by a version before's (its paint's anchors
+/// named through its names).
+fn summary_names_by_ids(kept: &mut PageEngine, version: &LaidVersion) {
+    let names = &version.layout().document.names;
+    let ids_of = |kept: &mut PageEngine, k: usize| -> Vec<Option<String>> {
+        let paint = kept.paint(version, k).unwrap();
+        paint
+            .lines
+            .iter()
+            .map(|l| l.anchor.and_then(|a| names.id(a.block)).map(|id| id.to_string()))
+            .collect()
+    };
+    let summary = kept.summary(version).unwrap();
+    for (k, page) in summary.pages.iter().enumerate() {
+        let said: Vec<Option<String>> = page.lines.iter().map(|l| l.id.as_deref().map(str::to_owned)).collect();
+        assert_eq!(said, ids_of(kept, k), "page {k}");
+    }
+    for (k, page) in kept.body_ids(version).unwrap().iter().enumerate() {
+        assert_eq!(*page, ids_of(kept, k), "page {k}");
     }
 }
 

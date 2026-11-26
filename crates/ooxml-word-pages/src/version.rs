@@ -7,6 +7,7 @@
 //! Must not: lay out or paint (the engine does, under its owner's lock), or change once
 //! made: a version is shared by every reader holding it.
 
+use crate::line_text::{ItemPlace, LineText};
 use crate::pictures::PackagePictures;
 use ooxml_word_layout::facts::{LayoutFacts, PageFacts};
 use ooxml_word_layout::geometry::PageFrame;
@@ -15,8 +16,10 @@ use ooxml_word_layout::paint::drawings::DrawingSlot;
 use ooxml_word_layout::paint::{Drawn, FaceNames, PaintedLine, Rule};
 use ooxml_word_layout::px::Px;
 use ooxml_word_layout::{DocumentLayout, WordGlyphs};
-use ooxml_word_model::ids::{BlockKey, StoryIx};
+use ooxml_word_model::docx::{Docx, StoryPart, VersionNames};
+use ooxml_word_model::ids::{Anchor, BlockKey, StoryIx, Sub};
 use ooxml_word_model::value::Text;
+use ooxml_xml::Element;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 /// One version laid out, immutable.
@@ -39,8 +42,6 @@ pub struct LaidVersion {
     /// Its number among the versions its engine laid out: what its pages' paint is kept
     /// under.
     pub(crate) serial: u64,
-    /// Its body blocks by the tool's ids, named when asked.
-    pub(crate) ids: crate::ids::VersionIds,
     /// Its summary, made once when first asked (its engine paints the pages it needs).
     pub(crate) summary: OnceLock<Arc<crate::summary::Summary>>,
     /// The stories' epoch of its generation it was laid out in.
@@ -71,8 +72,12 @@ pub(crate) struct VersionPages {
     pub(crate) contexts: Arc<[crate::page_context::PageContext]>,
     /// Each page as laid out (`None`: a page with no laid page of its own).
     pub(crate) pages: Vec<Option<crate::digest_cache::PageRef>>,
-    /// Each page's body lines' paragraph paths, in drawing order.
-    pub(crate) paths: Vec<Arc<[Text]>>,
+    /// Each page's blocks' keys as its read is checked by
+    /// ([`crate::page_reads::page_keys`]; `None`: a page with no laid page of its own).
+    pub(crate) blocks: Vec<Option<Arc<[Option<BlockKey>]>>>,
+    /// Each page's body lines' paragraph keys, in drawing order (`None`: a paragraph no
+    /// story's index holds).
+    pub(crate) keys: Vec<Arc<[Option<BlockKey>]>>,
     /// Each page's body lines' ids, in drawing order (`None`: a line of a paragraph the
     /// version does not name).
     pub(crate) ids: Vec<Vec<Option<Text>>>,
@@ -88,39 +93,38 @@ impl std::fmt::Debug for LaidVersion {
 }
 
 impl LaidVersion {
+    /// Its names: its story parts' indexes, which its blocks' keys are named through.
+    fn block_names(&self) -> &VersionNames {
+        &self.layout.document.names
+    }
+
     /// The id of the paragraph, table or row at body path `path` (`w:body/w:p[3]`), as the
-    /// tool names it in this version's bytes.
-    pub fn id_of(&self, path: &str) -> Option<&str> {
-        self.ids.id_of(path)
+    /// tool names it in this version's bytes: the path's block found through the version's
+    /// names ([`VersionNames::key_at_path`]), never one inside a paragraph's content.
+    pub fn id_of(&self, path: &str) -> Option<String> {
+        let names = self.block_names();
+        let key = names.key_at_path(StoryIx::BODY, path)?;
+        names.id(key).map(|id| id.to_string())
     }
 
     /// The id the tool names a body block by in this version, through the version's names
     /// from its key `key`; a block with no key, or not the body's, by its body path `path`
-    /// ([`LaidVersion::id_of`], which a key's id is asserted equal to in debug builds).
+    /// ([`LaidVersion::id_of`]).
     pub fn id_named(&self, key: Option<BlockKey>, path: &str) -> Option<Text> {
         let Some(key) = key.filter(|k| k.story() == StoryIx::BODY) else {
-            return self.id_of(path).map(Text::from);
+            return self.id_of(path).map(|id| Text::from(id.as_str()));
         };
-        let named = self
-            .layout
-            .document
-            .names
-            .id(key)
-            .map(|id| Text::from(id.to_string().as_str()));
-        debug_assert_eq!(named.as_deref(), self.id_of(path), "{key:?} is named as its path");
-        named
+        self.block_names().id(key).map(|id| Text::from(id.to_string().as_str()))
     }
 
     /// Whether a body block the tool names in this version is `key`'s, without naming it:
     /// through the version's names; a block with no key, or not the body's, by its body path
-    /// `path` ([`LaidVersion::is_named`], asserted equal in debug builds).
+    /// `path` ([`LaidVersion::is_named`]).
     pub fn is_named_by(&self, key: Option<BlockKey>, path: &str) -> bool {
-        let Some(key) = key.filter(|k| k.story() == StoryIx::BODY) else {
-            return self.is_named(path);
-        };
-        let held = self.layout.document.names.holds(key);
-        debug_assert_eq!(held, self.is_named(path), "{key:?} is held as its path is named");
-        held
+        match key.filter(|k| k.story() == StoryIx::BODY) {
+            Some(key) => self.block_names().holds(key),
+            None => self.is_named(path),
+        }
     }
 
     /// The body blocks page `facts` draws something of, as written (`Page.blocks`): named
@@ -130,7 +134,7 @@ impl LaidVersion {
         if facts.anchors.len() != facts.blocks.len() {
             return facts.blocks.iter().map(ToString::to_string).collect();
         }
-        let names = &self.layout.document.names;
+        let names = self.block_names();
         facts
             .anchors
             .iter()
@@ -146,29 +150,30 @@ impl LaidVersion {
     /// Whether the body path `path` names a paragraph, table or row the tool names in this
     /// version (`id_of` is `Some`), without naming it.
     pub fn is_named(&self, path: &str) -> bool {
-        self.ids.is_named(path)
-    }
-
-    /// Whether each of the body paths `paths` names a block the tool names in this version
-    /// ([`LaidVersion::is_named`] for many paths at once), in order.
-    pub fn are_named<'p>(&self, paths: impl IntoIterator<Item = &'p str>) -> Vec<bool> {
-        self.ids.are_named(paths)
+        self.block_names().key_at_path(StoryIx::BODY, path).is_some()
     }
 
     /// The tool's ids of the body's top-level blocks (paragraphs and tables, those of its
     /// block-level content controls too) page `page` (0-based) draws something of, each once,
     /// in document order (docx-agent's `DocumentLayout.blocks_on`): a block split across
-    /// pages is on each; empty past the last page. A block the version does not name is left
+    /// pages is on each; empty past the last page. Found from the keys of its lines'
+    /// paragraphs through the version's names; a block the version does not name is left
     /// out.
-    pub fn top_blocks(&self, page: usize) -> Vec<&str> {
+    pub fn top_blocks(&self, page: usize) -> Vec<String> {
         let Some(facts) = self.page_facts(page) else {
             return Vec::new();
         };
-        let mut found: Vec<(Vec<u32>, &str)> = facts
-            .blocks
+        let names = self.block_names();
+        let mut seen = std::collections::HashSet::new();
+        let mut found: Vec<(ooxml_word_model::ids::Path, String)> = facts
+            .lines
             .iter()
-            .filter(|key| crate::layout_facts::block_keys_top(key))
-            .filter_map(|key| Some((self.ids.place_of_path(key)?, self.id_of(key)?)))
+            .filter_map(|line| line.anchor.map(|a| a.block))
+            .filter(|key| key.story() == StoryIx::BODY && seen.insert(*key))
+            .filter_map(|key| {
+                let top = names.top_block_of(key)?;
+                Some((names.place_of(top)?, names.id(top)?.to_string()))
+            })
             .collect();
         found.sort();
         found.dedup_by(|a, b| a.1 == b.1);
@@ -176,9 +181,89 @@ impl LaidVersion {
     }
 
     /// The body path (`w:body/w:p[3]`) of the paragraph, table or row the tool's id `id`
-    /// names in this version, found from the id alone.
+    /// names in this version, found from the id alone through the version's names.
     pub fn path_of(&self, id: &str) -> Option<Text> {
-        self.ids.path_of(id)
+        let names = self.block_names();
+        let key = names.key_of_id(StoryIx::BODY, id)?;
+        names.path(Anchor::whole(key)).map(|path| Text::from(path.as_str()))
+    }
+
+    /// Where the paragraph the id `id` names is inside a body paragraph's content (a text
+    /// box's paragraph, which the body's lines do not draw): the body path of the paragraph
+    /// holding it (`w:body/w:p[2]`), and its own place (child indexes from the root, every
+    /// node counted), which a painted line's path is matched with
+    /// ([`LaidVersion::place_of_path`]). `None` for any other id.
+    pub fn in_paragraph(&self, id: &str) -> Option<(Text, Vec<u32>)> {
+        let names = self.block_names();
+        let part = names.part(StoryIx::BODY)?;
+        let Some(ooxml_word_model::ids::Entry::Paragraph(k)) = part.ids.get(id) else {
+            return None;
+        };
+        let place = part.ids.paragraphs().get(k)?.path;
+        // The first paragraph on the way down (below the body) holds it.
+        let mut node = part.root().children().get(*place.first()? as usize)?.as_element()?;
+        for (depth, step) in place.iter().enumerate().skip(1) {
+            node = node.children().get(*step as usize)?.as_element()?;
+            if node.name().is(Some(ooxml_word_model::ids::W), "p") {
+                if depth + 1 == place.len() {
+                    return None;
+                }
+                let host = part.ids.key_at(StoryIx::BODY, place.get(..=depth)?)?;
+                let path = names.path(Anchor::whole(host))?;
+                return Some((Text::from(path.as_str()), place.to_vec()));
+            }
+        }
+        None
+    }
+
+    /// The place (child indexes from the root, every node counted) of the element a layout
+    /// path names in the main part (a text box's paragraph's
+    /// `…/w:r[2]/wp:anchor[1]/wps:txbx/w:txbxContent/w:p[1]` too).
+    pub fn place_of_path(&self, path: &str) -> Option<Vec<u32>> {
+        let (_, place) = self.block_names().part(StoryIx::BODY)?.resolve_path(path)?;
+        Some(place)
+    }
+
+    /// The story part (of the version's reading `docx`), element and place (child indexes
+    /// from the part's root) of what a page read is drawn for at `place`; `part`, the story
+    /// part of a header's or footer's line drawn for no block its index holds.
+    pub fn element_of<'d>(
+        &self,
+        docx: &'d Docx,
+        place: &ItemPlace,
+        part: Option<&str>,
+    ) -> Option<(&'d StoryPart, &'d Arc<Element>, Vec<u32>)> {
+        let names = self.block_names();
+        let story = match (place.key(), place) {
+            (Some(key), _) => docx.part(&names.part(key.story())?.part)?,
+            (None, ItemPlace::Path(path)) => match part {
+                Some(part) => docx.part(part)?,
+                None => match crate::layout_facts::story_kind(path) {
+                    "footnotes" => docx.story("footnotes"),
+                    "endnotes" => docx.story("endnotes"),
+                    _ => None,
+                }
+                .or_else(|| docx.body())?,
+            },
+            (None, _) => return None,
+        };
+        if let ItemPlace::Anchored(anchor) = place {
+            if anchor.sub == Sub::Whole {
+                let at = names.place_of(anchor.block)?.to_vec();
+                let element = ooxml_word_model::docx::at_path(story.root(), &at)?;
+                return Some((story, element, at));
+            }
+        }
+        let (element, at) = story.resolve_path(&place.named(names)?)?;
+        Some((story, element, at))
+    }
+
+    /// The tool's id of the paragraph a page read's `line` is of, in its story's part (a
+    /// text box's paragraph's too), the version's reading being `docx`.
+    pub fn line_paragraph_id(&self, docx: &Docx, line: &LineText) -> Option<String> {
+        let part = line.story.as_ref().map(|(_, part)| part.as_str());
+        let (story, _, place) = self.element_of(docx, &line.place, part)?;
+        story.ids.paragraph_at(&place).map(|p| p.id)
     }
 
     /// The advance of `ch` in the face this version lays `family` out with, and that face's
@@ -274,7 +359,7 @@ impl LaidVersion {
     /// allocator's count.
     pub fn weight(&self) -> usize {
         let facts = self.facts.get().map_or(0, crate::weight::facts_weight);
-        crate::weight::layout_weight(&self.layout) + facts + self.ids.weight()
+        crate::weight::layout_weight(&self.layout) + facts
     }
 }
 

@@ -7,8 +7,8 @@
 //! Must not: count raised or lowered text (a note's reference mark is drawn small by
 //! design); [`crate::line_text`] leaves it out.
 
-use super::tree::resolve;
-use super::{story_kind, Facts};
+use super::Facts;
+use crate::line_text::ItemPlace;
 use crate::page_parts::Part;
 use crate::page_read::PageRead;
 use ooxml_word_model::docx::cells::PartCells;
@@ -104,23 +104,23 @@ impl Part<PageRead> for SizesPart {
     /// The contribution of a page read as `read`.
     fn of(read: &PageRead) -> SizesPart {
         let mut out = SizesPart::default();
-        let mut at: HashMap<(&str, Option<&str>, i64), usize> = HashMap::new();
+        let mut at: HashMap<(&ItemPlace, Option<&str>, i64), usize> = HashMap::new();
         for (k, line) in read.texts.iter().chain(&read.box_texts).enumerate() {
-            let kind = kind_of(&line.path, line.story.as_ref().map(|(kind, _)| *kind));
+            let kind = line.at.kind;
             let story = line.story.as_ref().map(|(_, part)| part.as_str());
             for &(half_points, chars) in &line.sizes {
                 match out.smallest.iter_mut().find(|(named, _)| *named == kind) {
                     Some((_, least)) => *least = (*least).min(half_points),
                     None => out.smallest.push((kind, half_points)),
                 }
-                match at.get(&(line.path.as_str(), story, half_points)) {
+                match at.get(&(&line.place, story, half_points)) {
                     Some(&found) => {
                         if let Some(sized) = out.sized.get_mut(found) {
                             sized.chars += chars;
                         }
                     }
                     None => {
-                        at.insert((line.path.as_str(), story, half_points), out.sized.len());
+                        at.insert((&line.place, story, half_points), out.sized.len());
                         out.sized.push(Sized {
                             line: k,
                             kind,
@@ -163,8 +163,9 @@ struct Fold<'f, 'a> {
     minimum: Option<&'f Minimum>,
     least: Option<f64>,
     smallest: BTreeMap<String, f64>,
-    /// Each line's paragraph, by its part and path, found once.
-    owners: HashMap<(String, String), Option<Owner<'a>>>,
+    /// Each line's paragraph, by its place (and its story's part, a header's or footer's),
+    /// found once.
+    owners: HashMap<(Option<String>, ItemPlace), Option<Owner<'a>>>,
     small: Vec<((String, String, i64), Seen, Owner<'a>)>,
     at: HashMap<(String, String, i64), usize>,
     captions: HashMap<String, bool>,
@@ -243,11 +244,11 @@ impl<'a> Fold<'_, 'a> {
             .texts
             .get(sized.line)
             .or_else(|| read.box_texts.get(sized.line.checked_sub(read.texts.len())?))?;
-        let part = part_of(self.facts, &line.path, line.story.as_ref().map(|(_, p)| p.as_str()));
+        let part = line.story.as_ref().map(|(_, p)| p.clone());
         let facts = self.facts;
         self.owners
-            .entry((part, line.path.clone()))
-            .or_insert_with_key(|(part, path)| owner(facts, part, path))
+            .entry((part, line.place.clone()))
+            .or_insert_with_key(|(part, place)| owner(facts, part.as_deref(), place))
             .clone()
     }
 
@@ -343,28 +344,10 @@ fn style_size(facts: &Facts<'_>, owner: &Owner<'_>) -> Option<f64> {
     Some(facts.formatting().run(owner.element, None, 'a', cell.as_ref()).size)
 }
 
-/// The part a line's path is in: its story's part for a header's or footer's line, the
-/// notes part for a note's, else the main part (`_part_of`).
-fn part_of(facts: &Facts<'_>, path: &str, part: Option<&str>) -> String {
-    if let Some(part) = part {
-        return part.to_owned();
-    }
-    let docx = facts.docx();
-    let story = match story_kind(path) {
-        "footnotes" => docx.story("footnotes"),
-        "endnotes" => docx.story("endnotes"),
-        _ => None,
-    };
-    story
-        .or_else(|| docx.body())
-        .map(|s| s.part.clone())
-        .unwrap_or_default()
-}
-
-/// The paragraph a line of `part` at `path` is of, where the part's ids name it.
-fn owner<'a>(facts: &Facts<'a>, part: &str, path: &str) -> Option<Owner<'a>> {
-    let story = facts.docx().part(part)?;
-    let (element, place) = resolve(story, path)?;
+/// The paragraph a line at `place` (of the story part `part`, a header's or footer's) is
+/// of, where its part's ids name it.
+fn owner<'a>(facts: &Facts<'a>, part: Option<&str>, place: &ItemPlace) -> Option<Owner<'a>> {
+    let (story, element, place) = facts.element_of(place, part)?;
     if !super::tree::is_w(element, "p") {
         return None;
     }
@@ -375,15 +358,4 @@ fn owner<'a>(facts: &Facts<'a>, part: &str, path: &str) -> Option<Owner<'a>> {
         place,
         story,
     })
-}
-
-/// A line's kind of text (`_kind`): `table` for a body table's cell, the story's otherwise.
-fn kind_of(path: &str, story: Option<&'static str>) -> &'static str {
-    match story.unwrap_or_else(|| story_kind(path)) {
-        "body" if path.contains("/w:tc[") => "table",
-        "body" => "body",
-        "footnotes" => "footnote",
-        "endnotes" => "endnote",
-        other => other,
-    }
 }

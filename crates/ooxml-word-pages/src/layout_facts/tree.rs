@@ -176,6 +176,12 @@ pub(crate) fn table_paths(path: &str) -> impl Iterator<Item = &str> + '_ {
     })
 }
 
+/// Whether a page's block key is a top-level block's (`block_keys(key)[0] == key`): a
+/// paragraph or table below the body and its block-level content controls.
+pub(crate) fn block_keys_top(key: &str) -> bool {
+    top_block_path(key) == Some(key)
+}
+
 /// A line of a body table's row, as docx-agent's `_ROW` reads it: the outermost table's
 /// path (`w:body/w:tbl[n]`, its content controls written `w:sdt[n]/w:sdtContent`) and the
 /// row, from 0.
@@ -337,12 +343,6 @@ pub(crate) fn py_space(c: char) -> bool {
 /// `text` stripped of Python's white space at both ends.
 pub(crate) fn py_strip(text: &str) -> &str {
     text.trim_matches(py_space)
-}
-
-/// Whether a page's block key is a top-level block's (`block_keys(key)[0] == key`): a
-/// paragraph or table below the body and its block-level content controls.
-pub(crate) fn block_keys_top(key: &str) -> bool {
-    top_block_path(key) == Some(key)
 }
 
 #[cfg(test)]

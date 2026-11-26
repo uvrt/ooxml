@@ -4,9 +4,12 @@
 //! read depends on: the page as laid out (its `LaidPage` and the flow
 //! items it draws, by identity), its context ([`crate::page_context`]: its number,
 //! counts, section, header and footer texts, line numbers), the stories' epoch and the
-//! model's context it was painted in, and the paths of the blocks it draws (a read names
-//! its lines by path). A page another version lays out the same, at the same places, is
-//! read as it was: a check after a local edit paints only the pages it changed.
+//! model's context it was painted in, and the paths and keys of the blocks it draws (a read
+//! names what it read by key: [`crate::line_text::ItemPlace`]). A page another version
+//! lays out the same, of the same blocks at the same places, is read as it was: a check
+//! after a local edit paints only the pages it changed. The keys are checked, never part of
+//! the memo's key (ADR-008): an edit that stamps a block keeps its content and its place,
+//! and renames it.
 //!
 //! A read is kept by its page's body context; its stories' context (the counts, the
 //! `STYLEREF` texts) beside it. A page whose stories show other values -- another page
@@ -29,6 +32,7 @@ use ooxml_base::Digest;
 use ooxml_derive::{CacheBudget, Memo, Weigh};
 use ooxml_word_layout::flow::FlowItem;
 use ooxml_word_layout::DocumentLayout;
+use ooxml_word_model::ids::BlockKey;
 use ooxml_word_model::model::Block;
 use ooxml_word_model::value::Text;
 use std::sync::Arc;
@@ -37,14 +41,15 @@ use std::sync::Arc;
 /// model's context it was painted in.
 type ReadKey = (usize, Digest, u64, u64);
 
-/// What a page read depends on beyond its key's address: the page as laid out and the
-/// paths of the blocks it draws.
+/// What a page read depends on beyond its key's address: the page as laid out, and the
+/// paths and keys of the blocks it draws.
 pub(crate) struct ReadOf<'k> {
     pub(crate) page: &'k PageKey,
     pub(crate) context: PageContext,
     pub(crate) epoch: u64,
     pub(crate) model: u64,
     pub(crate) places: Arc<[Text]>,
+    pub(crate) keys: Arc<[Option<BlockKey>]>,
 }
 
 impl ReadOf<'_> {
@@ -105,6 +110,7 @@ impl Split {
 struct Kept {
     page: PageRef,
     places: Arc<[Text]>,
+    keys: Arc<[Option<BlockKey>]>,
     /// Its stories' context.
     stories: Digest,
     split: Option<Split>,
@@ -121,20 +127,27 @@ pub(crate) enum Found {
 
 impl Weigh for Kept {
     fn weight(&self) -> usize {
+        let place = |p: &crate::line_text::ItemPlace| match p {
+            crate::line_text::ItemPlace::Anchored(_) => 0,
+            crate::line_text::ItemPlace::Below(_, below) => below.len(),
+            crate::line_text::ItemPlace::Path(path) => path.len(),
+        };
         let text = |l: &crate::line_text::LineText| {
             std::mem::size_of_val(l)
-                + l.path.len()
+                + place(&l.place)
+                + l.at.cell.as_ref().map_or(0, |(_, below)| below.len())
                 + l.story.as_ref().map_or(0, |(_, part)| part.len())
                 + l.sizes.len() * std::mem::size_of::<(i64, usize)>()
         };
         let read = self.read.read();
         let boxes = &read.boxes;
-        let boxed = boxes.pictures.iter().chain(&boxes.floats).map(|b| 64 + b.path.len());
-        let rules = boxes.rules.iter().map(|r| 48 + r.path.len());
+        let boxed = boxes.pictures.iter().chain(&boxes.floats).map(|b| 64 + place(&b.place));
+        let rules = boxes.rules.iter().map(std::mem::size_of_val);
         std::mem::size_of::<Kept>()
             + read.texts.iter().chain(&read.box_texts).map(text).sum::<usize>()
             + boxed.chain(rules).sum::<usize>()
             + self.places.iter().map(|p| 16 + p.len()).sum::<usize>()
+            + self.keys.len() * std::mem::size_of::<Option<BlockKey>>()
             + self.page.weight()
             + self.read.parts_weight()
     }
@@ -163,7 +176,7 @@ impl ReadMemo {
     /// body part, where its stories showed other values.
     pub(crate) fn get(&mut self, of: &ReadOf<'_>) -> Option<Found> {
         let found = self.memo.get(&of.key())?;
-        if !(found.page.is(of.page) && found.places == of.places) {
+        if !(found.page.is(of.page) && found.places == of.places && found.keys == of.keys) {
             return None;
         }
         if found.stories == of.context.stories {
@@ -178,6 +191,7 @@ impl ReadMemo {
         let kept = Kept {
             page: PageRef::of(of.page),
             places: Arc::clone(&of.places),
+            keys: Arc::clone(&of.keys),
             stories: of.context.stories,
             split,
             read,
@@ -220,4 +234,55 @@ pub(crate) fn places(layout: &DocumentLayout, items: &[FlowItem]) -> Arc<[Text]>
         }
     }
     out.into()
+}
+
+/// The keys of the blocks a page's items draw, in order: a paragraph's (and its drop
+/// cap's), a table's and every block's in it. What a read names its lines and boxes by:
+/// an item kept from the version before whose blocks were renamed (stamped) names them
+/// otherwise.
+pub(crate) fn page_keys(layout: &DocumentLayout, items: &[FlowItem]) -> Arc<[Option<BlockKey>]> {
+    let paragraphs = layout.body_paragraphs();
+    let body = &layout.document.body;
+    let mut out = Vec::with_capacity(items.len());
+    for item in items {
+        match item {
+            FlowItem::Para(p) => {
+                out.push(paragraphs.get(p.block).and_then(|q| q.key));
+                if let Some(cap) = &p.drop_cap {
+                    out.extend(body.get(cap.body).map(block_key));
+                }
+            }
+            FlowItem::Table(t) => {
+                if let Some(Block::Table(table)) = body.get(t.body) {
+                    table_keys(table, &mut out);
+                }
+            }
+            FlowItem::Stop(_) => {}
+        }
+    }
+    out.into()
+}
+
+/// A block's key.
+fn block_key(block: &Block) -> Option<BlockKey> {
+    match block {
+        Block::Paragraph(p) => p.key,
+        Block::Table(t) => t.key,
+    }
+}
+
+/// `table`'s key and every block's in its cells, nested tables' too, in order.
+fn table_keys(table: &ooxml_word_model::model::Table, out: &mut Vec<Option<BlockKey>>) {
+    out.push(table.key);
+    for block in table
+        .rows
+        .iter()
+        .flat_map(|row| row.iter())
+        .flat_map(|cell| cell.iter())
+    {
+        match block {
+            Block::Table(inner) => table_keys(inner, out),
+            Block::Paragraph(p) => out.push(p.key),
+        }
+    }
 }

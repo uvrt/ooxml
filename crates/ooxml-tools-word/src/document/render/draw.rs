@@ -201,7 +201,6 @@ pub(super) fn relaid(version: &LaidVersion) -> Option<Value> {
     if let Some(path) = &cause.at {
         let at = version
             .id_of(path)
-            .map(str::to_owned)
             .or_else(|| cause.para_id.as_ref().map(|id| format!("p:{}", id.to_uppercase())))
             .unwrap_or_else(|| path.clone());
         out.insert("at".into(), Value::from(at));
