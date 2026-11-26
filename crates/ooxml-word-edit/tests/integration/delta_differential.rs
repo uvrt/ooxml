@@ -250,9 +250,35 @@ fn a_versions_change_set_is_the_index_diff_and_gives_todays_touched_and_ids() {
     );
 }
 
-/// A section moved past a shorter one (host golden `w4-restructure`): the moved section is the
-/// one `touched` names, as difflib judges a move among the body's blocks, though it holds
-/// more blocks (a table's cells) than the section it passed.
+/// `bytes` with the section `heading` heads moved after `after` (a block id, or a heading
+/// whose section it goes after); what differs from the reference.
+fn section_moved(bytes: &Arc<[u8]>, heading: &str, after: &str, after_section: bool) -> Vec<String> {
+    let editor = editor(bytes);
+    let before = editor.store().snapshot();
+    let blocks = ooxml_word_edit::section_blocks(before.doc(), heading).unwrap();
+    let after = if after_section {
+        ooxml_word_edit::section_blocks(before.doc(), after)
+            .unwrap()
+            .last()
+            .unwrap()
+            .clone()
+    } else {
+        after.to_owned()
+    };
+    let command = MoveBlocks {
+        blocks: Moving::Ids(blocks),
+        after: Some(Address::from(after)),
+        before: None,
+        policy: ooxml_word_edit::RevisionPolicy::Untracked,
+    };
+    editor.run(&Caller::anonymous(), &command).unwrap();
+    compare_step(&before, &editor.store().snapshot(), &mut StoryTable::new())
+}
+
+/// A section moved past a shorter one (host golden `w4-restructure`; the fixtures gate's
+/// `word_move` cases, on unstamped documents too, where the move stamps every block): the
+/// moved section is the one `touched` names, as difflib judges a move among the body's
+/// blocks, though it holds more blocks (a table's cells) than the section it passed.
 #[test]
 fn a_section_moved_past_a_shorter_one_is_what_moved() {
     let path = concat!(
@@ -260,19 +286,12 @@ fn a_section_moved_past_a_shorter_one_is_what_moved() {
         "/../../python/docx-agent/tests/goldens/trial/_inputs/w4-restructure/input/security-policy.docx"
     );
     let bytes: Arc<[u8]> = Arc::from(std::fs::read(path).unwrap());
-    let editor = editor(&bytes);
-    let before = editor.store().snapshot();
-    let blocks = ooxml_word_edit::section_blocks(before.doc(), "p:70439822").unwrap();
-    let target = ooxml_word_edit::section_blocks(before.doc(), "p:4B50F4CD").unwrap();
-    let command = MoveBlocks {
-        blocks: Moving::Ids(blocks),
-        after: Some(Address::from(target.last().unwrap().clone())),
-        before: None,
-        policy: ooxml_word_edit::RevisionPolicy::Untracked,
-    };
-    editor.run(&Caller::anonymous(), &command).unwrap();
-    let after = editor.store().snapshot();
-    let mut stories = StoryTable::new();
-    let differences = compare_step(&before, &after, &mut stories);
-    assert!(differences.is_empty(), "{differences:#?}");
+    for (bytes, heading, after, after_section) in [
+        (bytes, "p:70439822", "p:4B50F4CD", true),
+        (fixture("samplelib/sample-simple.docx"), "p@body/6", "p@body/30", false),
+        (fixture("wordto/sample-with-table.docx"), "p@body/2", "p@body/28", true),
+    ] {
+        let differences = section_moved(&bytes, heading, after, after_section);
+        assert!(differences.is_empty(), "{heading}: {differences:#?}");
+    }
 }

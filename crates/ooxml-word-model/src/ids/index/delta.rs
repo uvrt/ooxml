@@ -523,31 +523,76 @@ fn rename_tables(old: &Side<'_>, new: &Side<'_>, pair: &mut [Option<usize>], tak
 /// copy of itself under new ids): the two sides' unpaired blocks aligned in order by a
 /// sequence diff, as `touched` has always found such blocks unchanged.
 fn rename_stamped(old: &Side<'_>, new: &Side<'_>, pair: &mut [Option<usize>], taken: &mut [bool]) {
-    // the unpaired blocks of each side in order, aligned by kind and content without stamps
-    // (a sequence diff, so equal blocks pair in order)
     let mut memo: HashMap<*const Element, u64> = HashMap::new();
-    let mut digests = |items: &[Item<'_>], keep: &dyn Fn(usize) -> bool| -> (Vec<usize>, Vec<(u8, u64)>) {
+    // the container children first, whose blocks are all unpaired, by their blocks' digests
+    // (difflib over the body's blocks, as `touched` judged them): a moved section is a
+    // removal and an insertion there, not a stretch of its many nested blocks kept
+    let old_free = |i: usize| !taken.get(i).copied().unwrap_or(true);
+    let new_free = |j: usize, pair: &[Option<usize>]| pair.get(j).copied().flatten().is_none();
+    let children = |side: &Side<'_>, free: &dyn Fn(usize) -> bool, memo: &mut HashMap<*const Element, u64>| {
+        let mut segs: Vec<(usize, Range<usize>)> = side
+            .by_seg
+            .iter()
+            .filter(|(_, r)| !r.is_empty() && Range::clone(r).all(free))
+            .map(|(k, r)| (*k, r.clone()))
+            .collect();
+        segs.sort_by_key(|(k, _)| *k);
+        let digests: Vec<u64> = segs
+            .iter()
+            .map(|(_, r)| {
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                for item in side.items.get(r.clone()).unwrap_or_default() {
+                    (kind_tag(item.kind), stampless_hash(item.element, memo)).hash(&mut h);
+                }
+                h.finish()
+            })
+            .collect();
+        (segs, digests)
+    };
+    let (old_segs, a) = children(old, &old_free, &mut memo);
+    let snapshot: Vec<Option<usize>> = pair.to_vec();
+    let (new_segs, b) = children(new, &|j| new_free(j, &snapshot), &mut memo);
+    for op in opcodes(&a, &b).into_iter().filter(|op| op.tag == Tag::Equal) {
+        for (x, y) in (op.i1..op.i2).zip(op.j1..op.j2) {
+            let (Some((_, ra)), Some((_, rb))) = (old_segs.get(x), new_segs.get(y)) else {
+                continue;
+            };
+            if ra.len() == rb.len() {
+                for (i, j) in ra.clone().zip(rb.clone()) {
+                    link_alike(old, new, pair, taken, i, j);
+                }
+            }
+        }
+    }
+    // then the blocks still unpaired, each side in order, by kind and content without stamps
+    let digests = |items: &[Item<'_>], keep: &dyn Fn(usize) -> bool, memo: &mut HashMap<*const Element, u64>| {
         items
             .iter()
             .enumerate()
             .filter(|(n, _)| keep(*n))
-            .map(|(n, item)| (n, (kind_tag(item.kind), stampless_hash(item.element, &mut memo))))
-            .unzip()
+            .map(|(n, item)| (n, (kind_tag(item.kind), stampless_hash(item.element, memo))))
+            .unzip::<usize, (u8, u64), Vec<usize>, Vec<(u8, u64)>>()
     };
-    let (olds, a) = digests(&old.items, &|i| !taken.get(i).copied().unwrap_or(true));
-    let (news, b) = digests(&new.items, &|j| pair.get(j).copied().flatten().is_none());
+    let (olds, a) = digests(&old.items, &|i| !taken.get(i).copied().unwrap_or(true), &mut memo);
+    let (news, b) = digests(&new.items, &|j| pair.get(j).copied().flatten().is_none(), &mut memo);
     for op in opcodes(&a, &b).into_iter().filter(|op| op.tag == Tag::Equal) {
         for (x, y) in (op.i1..op.i2).zip(op.j1..op.j2) {
-            let (Some(&i), Some(&j)) = (olds.get(x), news.get(y)) else {
-                continue;
-            };
-            let (Some(o), Some(n)) = (old.items.get(i), new.items.get(j)) else {
-                continue;
-            };
-            if stampless_eq(o.element, n.element) {
-                link(pair, taken, i, j);
+            if let (Some(&i), Some(&j)) = (olds.get(x), news.get(y)) {
+                link_alike(old, new, pair, taken, i, j);
             }
         }
+    }
+}
+
+/// `i` and `j` paired where their blocks are the same but for stamps.
+fn link_alike(old: &Side<'_>, new: &Side<'_>, pair: &mut [Option<usize>], taken: &mut [bool], i: usize, j: usize) {
+    let alike = old
+        .items
+        .get(i)
+        .zip(new.items.get(j))
+        .is_some_and(|(o, n)| o.kind == n.kind && stampless_eq(o.element, n.element));
+    if alike {
+        link(pair, taken, i, j);
     }
 }
 
