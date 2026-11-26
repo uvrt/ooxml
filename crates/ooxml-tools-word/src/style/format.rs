@@ -430,7 +430,7 @@ fn known(docx: &Docx, name: &str, kind: &str, field: &str) -> Result<(), ToolErr
 
 /// The look of the paragraph `like` names (docx-agent's `_sample_look`): one paragraph,
 /// or a range, cell or span of one; several refused with them (rule 2).
-fn sample_look(
+pub(crate) fn sample_look(
     tx: &mut Txn<'_, WordDoc>,
     docx: &Docx,
     like: &str,

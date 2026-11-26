@@ -101,6 +101,11 @@ OBSERVATIONS: dict[str, dict] = {
             "word-created": "a document Word made, with no paraIds: its stamping is decided's 'Word-created' case",
         },
     },
+    "like-markdown-word.json": {
+        "probe": "crates/ooxml-oracle/word/probes/like_markdown_probe.py",
+        "readers": ["crates/ooxml-oracle/word/tests/test_like_markdown_recorded.py"],
+        "unread": {},
+    },
     "replace-markdown-word.json": {
         "probe": "crates/ooxml-oracle/word/probes/replace_markdown_probe.py",
         "readers": ["crates/ooxml-oracle/word/tests/test_replace_markdown_recorded.py"],

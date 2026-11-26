@@ -37,7 +37,7 @@ pub enum Unported {
     Reference,
     /// Content from data the host holds: rows or a field (`from`), a blob.
     HostData,
-    /// Blocks whose look new ones take (`like`).
+    /// A table whose frame new tables take (`like` naming a table).
     Like,
 }
 

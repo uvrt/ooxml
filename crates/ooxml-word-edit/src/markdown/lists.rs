@@ -5,12 +5,16 @@
 //! (the insertion's first list at a level counting on, a later one or one starting past 1
 //! restarting with an instance of its own on its first item); otherwise one instance per
 //! list over a definition made for the insertion -- a copy of the document's own nine-level
-//! one of the kind, else Word's own.
+//! one of the kind, else Word's own. A list whose level is given a look (`like`) is written
+//! like the sample instead (`Writer.list_like`): each item the sample's style, its list at
+//! its level, its indents and page settings, with no keeps of a replaced paragraph.
 //!
 //! Must not: write but through the writer and the sink.
 
 use super::keep::Kind;
+use super::like::ListKind;
 use super::writer::{properties, Writer};
+use crate::format::{take, ParagraphLook};
 use crate::lists::numbering::{add_builtin, add_num, add_restart, copy_abstract, part_of};
 use crate::names::W;
 use crate::review::xml::make;
@@ -32,6 +36,21 @@ impl Writer<'_> {
         list: &ListBlock,
         depth: i64,
     ) -> Result<Vec<Id>> {
+        if self.like.any() {
+            let kind = if list.ordered {
+                ListKind::Number
+            } else {
+                ListKind::Bullet
+            };
+            let docx = sink.docx()?;
+            let (look, said) = self.like.at(&docx, kind, depth + 1);
+            for text in said {
+                self.warn_once(text);
+            }
+            if let Some(look) = look {
+                return self.list_like(sink, work, list, depth, &look);
+            }
+        }
         let level = depth.min(MAX_LEVEL);
         let construct = if list.ordered { "ordered_list" } else { "bullet_list" };
         let style = self.style(sink, construct, depth + 1)?;
@@ -66,10 +85,7 @@ impl Writer<'_> {
         }
         let mut out = Vec::new();
         for item in &list.items {
-            let (inline, rest): (&[_], &[Block]) = match item.split_first() {
-                Some((Block::Paragraph(inline), rest)) => (inline, rest),
-                _ => (&[], item),
-            };
+            let (inline, rest) = split_item(item);
             let paragraph = self.paragraph(sink, work, inline, style.as_deref(), None)?;
             if let Some(num) = num_id {
                 set_numbering(work, paragraph, num, by_style.map_or(level, |(_, l)| l));
@@ -86,15 +102,61 @@ impl Writer<'_> {
             let kind = if list.ordered { Kind::Number } else { Kind::Bullet };
             self.tag(paragraph, kind, depth, list.ordered && list.start != 1);
             out.push(paragraph);
-            for inner in rest {
-                if let Block::List(nested) = inner {
-                    out.extend(self.list(sink, work, nested, depth + 1)?);
-                } else {
-                    self.in_list += 1;
-                    let made = self.blocks(sink, work, std::slice::from_ref(inner));
-                    self.in_list -= 1;
-                    out.extend(made?);
-                }
+            out.extend(self.item_rest(sink, work, rest, depth)?);
+        }
+        Ok(out)
+    }
+
+    /// A list whose items look like a given paragraph (docx-agent's `Writer.list_like`): its
+    /// style, its list at its level -- numbered on from it, a start number not taken -- its
+    /// indents and page settings, as `word_format`'s `like` gives them. Not tagged: a
+    /// replacement's kept settings do not overrule the look.
+    fn list_like(
+        &mut self,
+        sink: &mut EditSink<'_, '_>,
+        work: &mut Work,
+        list: &ListBlock,
+        depth: i64,
+        look: &ParagraphLook,
+    ) -> Result<Vec<Id>> {
+        if list.ordered && list.start != 1 {
+            self.warn_once(format!(
+                "like: a numbered list starting at {} continues {}'s numbering",
+                list.start, look.sample
+            ));
+        }
+        let shared = sink.doc().shared_handle();
+        let stated = look.stated();
+        let mut out = Vec::new();
+        for item in &list.items {
+            let (inline, rest) = split_item(item);
+            let paragraph = self.paragraph(sink, work, inline, None, None)?;
+            // a new paragraph has no properties of its own: it differs in what the sample states
+            take(work, paragraph, look, &stated, shared.facts.orders());
+            out.push(paragraph);
+            out.extend(self.item_rest(sink, work, rest, depth)?);
+        }
+        Ok(out)
+    }
+
+    /// The blocks of an item after its first paragraph: a list a level deeper, the others
+    /// inside the item.
+    fn item_rest(
+        &mut self,
+        sink: &mut EditSink<'_, '_>,
+        work: &mut Work,
+        rest: &[Block],
+        depth: i64,
+    ) -> Result<Vec<Id>> {
+        let mut out = Vec::new();
+        for inner in rest {
+            if let Block::List(nested) = inner {
+                out.extend(self.list(sink, work, nested, depth + 1)?);
+            } else {
+                self.in_list += 1;
+                let made = self.blocks(sink, work, std::slice::from_ref(inner));
+                self.in_list -= 1;
+                out.extend(made?);
             }
         }
         Ok(out)
@@ -122,6 +184,15 @@ impl Writer<'_> {
         };
         self.abstracts.insert(ordered, abstract_id);
         Ok(abstract_id)
+    }
+}
+
+/// An item's first paragraph's inline content, and the blocks after it (all of them where
+/// it does not start with a paragraph).
+fn split_item(item: &[Block]) -> (&[ooxml_word_model::markdown::model::Inline], &[Block]) {
+    match item.split_first() {
+        Some((Block::Paragraph(inline), rest)) => (inline, rest),
+        _ => (&[], item),
     }
 }
 

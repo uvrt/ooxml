@@ -164,7 +164,8 @@ pub use lists::{
     numbered_by_style, paragraphs_of, unnumbered_styles_like, LevelFormat, ListAction, ListEdit, ListStep, ListsEdited,
 };
 pub use markdown::{
-    markdown_shape, InsertMarkdown, KeptSettings, Made, MarkdownInserted, Options as MarkdownOptions, WriteMap,
+    markdown_shape, InsertMarkdown, KeptSettings, LevelLook, ListKind, Made, MarkdownInserted,
+    Options as MarkdownOptions, WriteMap,
 };
 pub use moving::{section_blocks, section_blocks_in, BlocksMoved, MoveBlocks, Moving};
 pub use notes::{DeleteNote, EditNote, InsertNote, MoveNote, NoteEdited, NoteKind};

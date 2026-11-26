@@ -9,21 +9,31 @@
 //! and named in the reply's `data.facts` ([`super::fields`]), every value found in the
 //! paragraphs written kept on its place.
 //!
+//! List items take the look of the paragraph `like` gives for their level, or a style map
+//! names for a list role (docx-agent's `_levels_like`: each sample one paragraph, read on the
+//! version the edit is applied to; a style map's paragraph read as like, with a note).
+//!
 //! Refused as not supported yet (nothing changed): rows or a field as the content (`from`),
-//! a blob (`blob`), a place given by reference (`$name`; braces reaching the tool are literal
-//! text, the host having written its references as their values), list items or tables like given blocks (`like`, a style map naming a
-//! paragraph), and what the command does not write yet (pictures, footnotes).
+//! a blob (`blob`), a place or sample given by reference (`$name`; braces reaching the tool
+//! are literal text, the host having written its references as their values), tables in a
+//! given table's frame (`like` naming a table), and what the command does not write yet
+//! (pictures, footnotes).
 //!
 //! Must not: write the document but through the command, or answer a call it does not
 //! support yet, refused ([`Unported`]).
 
 use super::fields::{placed_blocks, with_markdown};
 use super::Unported;
+use crate::planned::Planned;
 use crate::review::{edit_refusal, Editing};
 use crate::structure::common::{blocks_ref_as_place, is_place, name_blocks, outcome, Outcome};
+use crate::style::sample_look;
 use crate::written::{self, Written};
+use ooxml_store::Txn;
 use ooxml_tools::{ArgEnum, Outcome as Replied, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
-use ooxml_word_edit::{InsertMarkdown, MarkdownInserted, MarkdownOptions, TextKeep, WriteMap};
+use ooxml_word_edit::{
+    EditError, InsertMarkdown, LevelLook, ListKind, MarkdownInserted, MarkdownOptions, TextKeep, WordDoc, WriteMap,
+};
 use ooxml_word_model::address::Place;
 use serde_json::{json, Map, Value};
 
@@ -164,15 +174,6 @@ fn run(args: &WordInsertMarkdown, editing: &Editing<'_>) -> Result<ToolResult<Va
         return Err(unported.refusal(call, &["markdown"]));
     }
     let call = try_call(args);
-    let pairs: Vec<(String, Option<String>)> = args
-        .style_map
-        .iter()
-        .flatten()
-        .map(|e| (e.element.as_str().to_owned(), Some(e.style.clone())))
-        .collect();
-    let style_map = WriteMap::from_pairs(&pairs).map_err(|message| {
-        ToolError::refusal(Refusal::InvalidArguments, message, WayOut::call(call.clone())).at("style_map")
-    })?;
     let given = args.markdown.clone().unwrap_or_default();
     let field = editing.written.iter().find(|f| f.field == "from");
     let in_markdown: Vec<&Written> = editing.written.iter().filter(|f| f.field == "markdown").collect();
@@ -181,16 +182,12 @@ fn run(args: &WordInsertMarkdown, editing: &Editing<'_>) -> Result<ToolResult<Va
     } else {
         (given, Vec::new())
     };
-    let command = InsertMarkdown {
-        markdown: markdown.clone(),
-        at: Place::parse(&args.at),
-        style_map,
-        // docx-agent's tool refuses raw HTML and writes emphasis in its styles
-        options: MarkdownOptions::default(),
-        policy: editing.policy(),
-    };
     // the values written by reference kept in the same step
-    let finish = |inserted: &MarkdownInserted, after: &written::After| {
+    let finish = |planned: &Result<(MarkdownInserted, Vec<String>), ToolError>, after: &written::After| {
+        let (inserted, notes) = match planned {
+            Ok(planned) => planned,
+            Err(refusal) => return (ToolResult::failed(refusal.clone()), Vec::new()),
+        };
         let mut result = reply(args, inserted.clone());
         let keeps = if editing.written.is_empty() {
             Vec::new()
@@ -203,12 +200,102 @@ fn run(args: &WordInsertMarkdown, editing: &Editing<'_>) -> Result<ToolResult<Va
             };
             keep_facts(args, editing, &made, after, &mut result)
         };
+        // what the call was read as comes first
+        result.warnings.splice(0..0, notes.iter().cloned());
         (result, keeps)
     };
-    match written::run_keeping(editing, &command, finish) {
+    let done = written::run_keeping(
+        editing,
+        &Planned(markdown_plan(args, &markdown, editing, &call)),
+        finish,
+    );
+    match done {
         Ok((_, result)) => Ok(result),
         Err(error) => Ok(ToolResult::failed(edit_refusal(error, "", call))),
     }
+}
+
+/// The insertion's plan, made in the edit's transaction ([`crate::planned`]): the looks
+/// `like` gives each level and the style map's list roles naming a paragraph give theirs
+/// (docx-agent's `_levels_like`), each sample read on the version the edit is applied to
+/// (a change to it meanwhile is a conflict), then the command; what the call was read as.
+fn markdown_plan<'a, 'e: 'a>(
+    args: &'a WordInsertMarkdown,
+    markdown: &'a str,
+    editing: &'a Editing<'e>,
+    call: &'a TryCall,
+) -> impl Fn(&mut Txn<'_, WordDoc>) -> Result<(InsertMarkdown, Vec<String>), ToolError> + 'a {
+    move |tx| {
+        let internal = |e: EditError| ToolError::internal(e.to_string(), "word:model");
+        let docx = tx.doc().docx().map_err(internal)?;
+        let mut like = Vec::new();
+        for (level, sample) in (1_i64..).zip(args.like.iter().flatten()) {
+            // an empty entry: no look for its level
+            if !sample.is_empty() {
+                let look = sample_look(tx, &docx, sample, call)?;
+                like.push(LevelLook {
+                    kind: None,
+                    level,
+                    look,
+                });
+            }
+        }
+        let mut notes = Vec::new();
+        let mut pairs: Vec<(String, Option<String>)> = Vec::new();
+        for entry in args.style_map.iter().flatten() {
+            let element = entry.element.as_str();
+            let style = &entry.style;
+            match role(entry.element) {
+                Some((kind, level)) if is_place(style) && docx.find_style(style, "paragraph").is_none() => {
+                    let look = sample_look(tx, &docx, style, call)?;
+                    like.push(LevelLook {
+                        kind: Some(kind),
+                        level,
+                        look,
+                    });
+                    notes.push(format!(
+                        "style_map {element}: {style} is a paragraph: read as like, its items looking like it"
+                    ));
+                }
+                _ => pairs.push((element.to_owned(), Some(style.clone()))),
+            }
+        }
+        if let Some(over) = like.iter().find(|l| !(1..=LIKE_LEVELS).contains(&l.level)) {
+            let message = format!("like: level {} is 1 to {LIKE_LEVELS}", over.level);
+            return Err(ToolError::refusal(Refusal::Refused, message, WayOut::call(call.clone())).at("like"));
+        }
+        let style_map = WriteMap::from_pairs(&pairs).map_err(|message| {
+            ToolError::refusal(Refusal::InvalidArguments, message, WayOut::call(call.clone())).at("style_map")
+        })?;
+        let command = InsertMarkdown {
+            markdown: markdown.to_owned(),
+            at: Place::parse(&args.at),
+            style_map,
+            // docx-agent's tool refuses raw HTML and writes emphasis in its styles
+            options: MarkdownOptions {
+                like,
+                ..MarkdownOptions::default()
+            },
+            policy: editing.policy(),
+        };
+        Ok((command, notes))
+    }
+}
+
+/// The list levels a look may be given for (1 the top).
+const LIKE_LEVELS: i64 = 9;
+
+/// The list items a style map's construct is (docx-agent's `ROLES`): their kind and level.
+fn role(element: StyleElement) -> Option<(ListKind, i64)> {
+    Some(match element {
+        StyleElement::Bullet => (ListKind::Bullet, 1),
+        StyleElement::Bullet2 => (ListKind::Bullet, 2),
+        StyleElement::Bullet3 => (ListKind::Bullet, 3),
+        StyleElement::Number => (ListKind::Number, 1),
+        StyleElement::Number2 => (ListKind::Number, 2),
+        StyleElement::Number3 => (ListKind::Number, 3),
+        _ => return None,
+    })
 }
 
 /// What the values written by reference are found by: the Markdown written, the `from`
@@ -278,8 +365,8 @@ fn keep_facts(
     keeps
 }
 
-/// What of the call is the host's: data it holds, values or places by reference, blocks
-/// whose look new ones take.
+/// What of the call is the host's: data it holds, values, places or samples by reference,
+/// a table whose frame new tables take.
 fn unported(args: &WordInsertMarkdown) -> Option<Unported> {
     let from_data = args.source.is_some()
         || args.blob.is_some()
@@ -289,13 +376,13 @@ fn unported(args: &WordInsertMarkdown) -> Option<Unported> {
     if from_data {
         return Some(Unported::HostData);
     }
-    if args.at.contains('$') {
+    let samples = || args.like.iter().flatten().filter(|s| !s.is_empty());
+    if args.at.contains('$') || samples().any(|s| s.starts_with('$')) {
         return Some(Unported::Reference);
     }
-    // a style map naming a paragraph for a construct is read as like (docx-agent's `_levels_like`)
-    let like = args.like.as_ref().is_some_and(|l| !l.is_empty())
-        || args.style_map.iter().flatten().any(|e| is_place(&e.style));
-    like.then_some(Unported::Like)
+    // a table's frame (docx-agent's `_table_like`: a table's id, not a cell's or a span's)
+    let table = |s: &str| s.rsplit('/').next().is_some_and(|last| last.starts_with("t:")) && !s.contains("..");
+    samples().any(|s| table(s)).then_some(Unported::Like)
 }
 
 /// How many paragraphs' kept settings a replacement lists; the rest are counted.

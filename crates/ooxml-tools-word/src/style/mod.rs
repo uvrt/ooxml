@@ -37,6 +37,7 @@ pub use compare_args::{BlockIn, FollowReport, WordCompareBlocks, WordFollowSampl
 pub use design::word_design_facts;
 pub use design_args::{DesignKind, WordDesignFacts};
 pub use follow::word_follow_sample;
+pub(crate) use format::sample_look;
 pub use format::word_format;
 pub use format_args::{Alignment, Cleared, FindExpect, FindItem, WordFormat};
 pub use lists::{word_lists, Follow, ListKind, ListsAction, WordLists};
