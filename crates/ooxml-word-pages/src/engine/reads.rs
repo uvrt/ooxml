@@ -13,7 +13,7 @@ use crate::laid_entry::LaidEntry;
 use crate::page_context::PageContext;
 use crate::page_entry::PageEntry;
 use crate::page_read::PageRead;
-use crate::page_reads::{page_keys, places, Found, ReadOf, Split};
+use crate::page_reads::{page_blocks, places, Found, ReadOf, Split};
 use crate::text_boxes::{text_boxes, TextBoxJob};
 use crate::version::LaidVersion;
 use ooxml_word_layout::paint::{paint_stories, PaintContext};
@@ -38,7 +38,7 @@ impl PageEngine {
             epoch: version.epoch,
             model: version.context,
             places: places(&version.layout, &key.items),
-            keys: page_keys(&version.layout, &key.items),
+            blocks: page_blocks(&version.layout, &key.items),
         });
         let Some(of) = of else {
             let paint = self.painted_page(version, page, false)?;

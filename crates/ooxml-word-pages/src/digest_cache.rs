@@ -12,12 +12,12 @@
 //!
 //! Must not: paint, keep a laid page or flow item alive, or grow past its bound.
 
+use crate::page_reads::PageBlocks;
 use crate::summary::PageSummary;
 use ooxml_base::Digest;
 use ooxml_derive::{CacheBudget, Memo, MemoStats, Weigh};
 use ooxml_word_layout::flow::FlowItem;
 use ooxml_word_layout::paginate::LaidPage;
-use ooxml_word_model::ids::BlockKey;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 
@@ -127,8 +127,8 @@ impl PageRef {
 #[derive(Clone)]
 struct Kept {
     page: PageRef,
-    /// The keys of the blocks the page draws ([`crate::page_reads::page_keys`]).
-    keys: Arc<[Option<BlockKey>]>,
+    /// The blocks the page draws, by key ([`crate::page_reads::page_blocks`]).
+    blocks: PageBlocks,
     summary: Arc<PageSummary>,
 }
 
@@ -147,7 +147,7 @@ impl Weigh for Kept {
         std::mem::size_of::<Kept>()
             + std::mem::size_of::<PageSummary>()
             + lines
-            + self.keys.len() * std::mem::size_of::<Option<BlockKey>>()
+            + self.blocks.weight()
             + self.page.weight()
     }
 }
@@ -205,32 +205,32 @@ impl DigestCache {
         }
     }
 
-    /// The summary of the page `key`, drawing the blocks `keys`, in `context` and `epoch`,
+    /// The summary of the page `key`, drawing the blocks `blocks`, in `context` and `epoch`,
     /// where it was digested.
     pub(crate) fn get(
         &mut self,
         key: &PageKey,
-        keys: &[Option<BlockKey>],
+        blocks: &PageBlocks,
         context: Digest,
         epoch: u64,
     ) -> Option<Arc<PageSummary>> {
         let found = self.memo.get(&(Arc::as_ptr(&key.page) as usize, context, epoch))?;
-        (found.page.is(key) && *found.keys == *keys).then_some(found.summary)
+        (found.page.is(key) && found.blocks == *blocks).then_some(found.summary)
     }
 
-    /// Keep `summary` as the page `key`'s, drawing the blocks `keys`, in `context` and
+    /// Keep `summary` as the page `key`'s, drawing the blocks `blocks`, in `context` and
     /// `epoch`.
     pub(crate) fn insert(
         &mut self,
         key: &PageKey,
-        keys: Arc<[Option<BlockKey>]>,
+        blocks: PageBlocks,
         context: Digest,
         epoch: u64,
         summary: Arc<PageSummary>,
     ) {
         let kept = Kept {
             page: PageRef::of(key),
-            keys,
+            blocks,
             summary,
         };
         self.memo

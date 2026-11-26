@@ -73,8 +73,8 @@ pub(crate) struct VersionPages {
     /// Each page as laid out (`None`: a page with no laid page of its own).
     pub(crate) pages: Vec<Option<crate::digest_cache::PageRef>>,
     /// Each page's blocks' keys as its read is checked by
-    /// ([`crate::page_reads::page_keys`]; `None`: a page with no laid page of its own).
-    pub(crate) blocks: Vec<Option<Arc<[Option<BlockKey>]>>>,
+    /// ([`crate::page_reads::page_blocks`]; `None`: a page with no laid page of its own).
+    pub(crate) blocks: Vec<Option<crate::page_reads::PageBlocks>>,
     /// Each page's body lines' paragraph keys, in drawing order (`None`: a paragraph no
     /// story's index holds).
     pub(crate) keys: Vec<Arc<[Option<BlockKey>]>>,

@@ -204,7 +204,9 @@ impl PageEngine {
         let mut keys = Vec::with_capacity(layout.page_count());
         for page in 0..layout.page_count() {
             let key = crate::page_said::page_key(layout, page);
-            let drawn = key.as_ref().map(|key| crate::page_reads::page_keys(layout, &key.items));
+            let drawn = key
+                .as_ref()
+                .map(|key| crate::page_reads::page_blocks(layout, &key.items));
             // A page laid out the same as the version read before's same page, of the same
             // blocks, draws the same body lines: their keys are taken, not read from its
             // geometry again.
@@ -272,12 +274,19 @@ impl PageEngine {
         }
         let key = crate::page_said::page_key(&version.layout, page);
         let context = pages.contexts.get(page).copied().unwrap_or_default().whole;
-        if let Some(key) = &key {
-            let drawn = crate::page_reads::page_keys(&version.layout, &key.items);
+        let drawn = key.as_ref().map(|key| {
+            pages
+                .blocks
+                .get(page)
+                .cloned()
+                .flatten()
+                .unwrap_or_else(|| crate::page_reads::page_blocks(&version.layout, &key.items))
+        });
+        if let (Some(key), Some(drawn)) = (&key, &drawn) {
             let found = self
                 .generation
                 .as_mut()
-                .and_then(|g| g.digests.get(key, &drawn, context, version.epoch));
+                .and_then(|g| g.digests.get(key, drawn, context, version.epoch));
             if found.is_some() {
                 self.stats.pages_digested.1 += 1;
                 return found;
@@ -285,8 +294,7 @@ impl PageEngine {
         }
         let summary = Arc::new(page_summary(self.page_digests(version, page)?, version));
         self.stats.pages_digested.0 += 1;
-        if let (Some(key), Some(generation)) = (&key, self.generation.as_mut()) {
-            let drawn = crate::page_reads::page_keys(&version.layout, &key.items);
+        if let (Some(key), Some(drawn), Some(generation)) = (&key, drawn, self.generation.as_mut()) {
             generation
                 .digests
                 .insert(key, drawn, context, version.epoch, Arc::clone(&summary));
