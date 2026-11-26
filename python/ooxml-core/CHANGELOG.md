@@ -3,6 +3,91 @@
 ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python module
 `ooxml_core`. Its version is the `crates/python` crate's.
 
+## 0.12.1 -- v2026.11.26
+
+### Added
+
+A saved file's MS-FSSHTTPD 2.4.1 chunks for a co-authoring host (the design page "CyberAI as an Office Client",
+request 4; lane coauth-2): `ooxml_core.chunk_file(data)` cuts and signs a file as Office does (an entry of at most
+4,096 bytes one chunk signed SHA-1(header) XOR (CRC-32, sizes); a larger one a header and a data chunk; the central
+directory the final chunk; a chunk over 1 MiB with random 1 MiB subchunks; a file Office does not analyse as ZIP in
+1 MiB pieces) and gives `FileChunks`: its `chunks` (`FileChunk`: kind, entry name, offset, size, signature, random,
+subchunks), `leaves()` as `(signature, size)`, the `root` and `delta(previous)`, a `ChunkDelta` naming the chunks a
+host holding the previous version's leaves must be sent (`new`, `held`, `repeated`, `new_bytes`; an unchanged large
+entry is reused through its parent leaf). The chunking is the shared Rust package layer's (`ooxml_zip::chunks`), so
+docx, pptx and xlsx saves are signed in one place; written from the probe side's clean-room description and held to
+its four test vectors byte for byte.
+
+### Changed
+
+- `Session.edit`'s fifth value is now the version the call's first edit was applied to, held (an
+  `ooxml_core.Version`; its `state` the number it was), instead of that number: a host reads what
+  the step changed from it, however many steps other writers commit meanwhile. The number alone
+  could name a state the session's undo history had let go by then.
+
+Word's part of the session is its own crate, `ooxml-session-word` (architecture review Phase 3, lane ph3-format, PR
+A2): Word documents' opening, state, tool calls, checks, save gate, live view and page engines. `ooxml-session` is
+format-generic and depends on no Word crate; a session is made with its formats (Word's, and the kinds Rust does not
+own yet as packages). Tool results and the Python API unchanged.
+
+- The Rust host's core (phase 3, D1a; crate `ooxml-host`): one call's pipeline from a tool's name to its
+  reply -- a namespace stripped and another spelling of one tool read as it (with a note), a withdrawn tool
+  refused with what to call instead, an unknown name answered with the tools and actions it most likely
+  means; the roles a tool, an action or a call needs, refused in today's words; one acceptance (the tool's
+  own, rule 1); `$name` refs on the declared paths, a changing call's ref names folded and owned first; a
+  retry key's repeat; the handler run by the document's format on the version the call reads, what it
+  leaves (`OpEffects`: refs, datasets, files, images) applied only once its change is published; the
+  format's checks of a changing call; each call's record (its arguments' digest and shape). Problems in one
+  shape (`code`, `part`, `element`, `message`, `severity`). Blobs are a format-neutral value the session's
+  store stands behind. Nothing dispatches through the host yet: tool output is unchanged.
+
+- Block identity in the Word layout (phase 3, LK1): every paragraph and table the layout reads from the body,
+  the headers and footers and the notes now carries its block key beside its path, and a version holds its
+  story parts' names. Painted lines, spans, paragraph rules, inline pictures and drawings, and the layout's
+  line facts carry the key (a span its run's place), and the page SVG names them through the version's names.
+  A note's blocks are named from their note by id, as the layout writes them. Output is unchanged.
+
+- Block identity in the Word layout (phase 3, LK1b): table borders and cell shading are anchored on their table's
+  cell at its place as written (kept beside the final view's rows), line numbers on their line's paragraph, column
+  separators on the block holding their section's `w:sectPr`, and a text box's items are named below their
+  drawing's name. A page's facts list the blocks it draws something of by anchor beside their paths. Every line
+  and rule but a separator the layout makes itself is now named through the version's names. Output is unchanged.
+
+- Block identity at the Word layout's output edges (phase 3, LK1c): the python layout rows' line ids and page
+  blocks, a range's counted lines, the placeholders the coverage and the check list, and the live view's
+  paragraph ids are now named through the version's names from block keys (each asserted against its old path
+  in debug builds). The facts read from the page tier stay under paths until LK2. Output is unchanged.
+
+- Refs and text facts as Rust session services (phase 3, C1): a document's refs by state number with their
+  owners (undo, redo and scoped undo bring back each state's refs; refs outlive a close), their resolution on a
+  tool's declared paths (`$name/rest`, a span's ends, the camelCase fold and its note, the misspelt suggestion,
+  "was to be made by ops[N], which failed", the refusal to point another caller's ref elsewhere), the ref-name
+  rule in words, and `{{d:...}}`/`{{t:...}}` references parsed and written in the locale (at most 50 per
+  text, braces that look like a reference refused). A source's values (`Cell`, `SourceRows`, a cell's label, a
+  date pattern) move from the Word tools to the shared tool contract. Nothing dispatches through them yet: tool
+  output is unchanged.
+
+- Datasets, sources and the session's stores as Rust session services (phase 3, C2): a dataset as a typed
+  value in the shared tool contract (columns, rows of values, each value's sources, keys, type labels, the
+  formula caches it was read from, number formats, Markdown worked out when first asked for, `from_records`, a
+  run of its rows `d:x/#9:#16`); the session's dataset store in the order defined, within its limits of 50
+  datasets and 50,000 cells, with staleness against each source's version now (undo makes a dataset current
+  again, a scoped undo leaves it stale, a close keeps it as it was, a join's other sources count too) and the
+  stale warning on every use; a dataset kept only when its call succeeds. A source qualified with its document
+  (`t:x` as `d2/t:x`, with today's three refusals), read through the document's format (`FormatDoc::source`;
+  docx takes none), and refused with only the sources that resolve. Blobs (checked by their bytes, images by
+  their header, packages by their central directory), outputs and the image budgets. Nothing dispatches
+  through them yet: tool output is unchanged.
+
+### Fixed
+
+- A font whose `cmap` or `kern` tables lay the same ranges over each other no longer stalls the Word layout
+  or render (a document's embedded face or a font folder; found by the fuzzer, 246 s before, 1.9 ms now).
+  A `cmap` subtable that claims more than its codespace (0x110000 for formats 12 and 13, 0x10000 for format 4)
+  is refused whole, its characters unmapped; a `kern` table reads no more pairs than its bytes hold and stops
+  at an Apple subtable shorter than its header. Fonts within the spec read as before (1,412 macOS and Office
+  faces compared).
+
 ## 0.12.0 -- v2026.11.25.1
 
 ### Changed

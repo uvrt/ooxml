@@ -5,6 +5,15 @@ docx-agent has not been released to PyPI. Each version that reaches `main` is ta
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) has the detail of every phase.
 
+## 0.2.3 -- v2026.11.26
+
+### Fixed
+
+- A `word_*` edit beside other writers on the same document no longer fails with an internal
+  `TypeError: 'None' is not an instance of 'Version'` when they make 50 or more steps between its
+  edit and its reply; the edit was kept, only its reply failed (ooxml-edit's fix; the session hands
+  back the version the step went from, held).
+
 ## 0.2.2 -- v2026.11.25.1
 
 ### Fixed
