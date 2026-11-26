@@ -149,8 +149,8 @@ fn step(editor: &Editor, rng: &mut Rng, writer: u64) -> bool {
                 let to = Some(Address::from(to));
                 let command = MoveBlocks {
                     blocks: Moving::Blocks(Address::from(moving)),
-                    after: to.clone().filter(|_| writer % 2 == 0),
-                    before: to.filter(|_| writer % 2 == 1),
+                    after: to.clone().filter(|_| writer.is_multiple_of(2)),
+                    before: to.filter(|_| !writer.is_multiple_of(2)),
                     policy,
                 };
                 editor.run(&caller, &command).map(|e| e.changed)
