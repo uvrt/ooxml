@@ -235,7 +235,17 @@ impl HostSession {
         self.pin(going, &mut context);
         context.values = values;
         context.values.merge(going.values.clone());
-        let (mut result, made) = self.session.edit_accepted(entry.name(), arguments, &context);
+        let (mut result, made) = self.check_values(
+            (entry.name(), &doc),
+            arguments,
+            &context,
+            retry,
+            (
+                |arguments| self.session.edit_accepted(entry.name(), arguments, &context),
+                |alone| (alone, None),
+                |ran: &mut (ToolResult<Value>, Option<ooxml_session::CallMade>)| &mut ran.0,
+            ),
+        );
         if let Some(made) = &made {
             going.lock = made.lock;
         }

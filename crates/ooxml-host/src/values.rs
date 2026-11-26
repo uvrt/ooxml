@@ -166,6 +166,45 @@ impl HostSession {
         })
     }
 
+    /// `read` run with what a reference writes in this session (the dispatcher's `Call.fact`):
+    /// the text of the value an address names (`d:x/North/avg:0.0`, `d2/t:Scores/door/mean`),
+    /// every open document held for reading; `None` where it is refused.
+    pub(crate) fn with_facts<R>(&self, retry: &TryCall, read: impl FnOnce(&dyn Fn(&str) -> Option<String>) -> R) -> R {
+        let opens = self.opens();
+        let host = sources_of(&self.host.formats, &opens, retry);
+        let store: DatasetStore = self.stores().datasets.clone();
+        let heads = |d: &str| opens.iter().find(|o| o.handle == d).map(|o| o.at.number());
+        let held: Vec<String> = opens.iter().map(|o| o.handle.clone()).collect();
+        let row_prefixes = host_prefixes(&self.host.formats);
+        let rows: Vec<&str> = row_prefixes.iter().map(String::as_str).collect();
+        let known = known_prefixes(&rows, &[]);
+        let locale = self.session.config().locale.clone().unwrap_or_default();
+        let ids = store.ids();
+        let arguments = Map::new();
+        let mut datasets = CallDatasets::new();
+        let call = CallSources {
+            host: &host,
+            store: &store,
+            datasets: RefCell::new(&mut datasets),
+            heads: &heads,
+            tool: retry.tool.as_str(),
+            arguments: &arguments,
+            primary: None,
+            held: &held,
+            retry,
+            own: None,
+        };
+        let env = FactEnv {
+            known: &known,
+            own: &[],
+            datasets: &ids,
+            locale: &locale,
+            retry,
+        };
+        let fact = |address: &str| ooxml_session::facts::fact(address, "", &env, &call).ok().map(|(text, _)| text);
+        read(&fact)
+    }
+
     /// The call's datasets kept as it ends (at publish for a changing call): the warnings
     /// of the stale ones it named.
     ///

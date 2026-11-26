@@ -858,10 +858,10 @@ impl Run<'_> {
                 .and_then(|version| host.session.opened_at(id, version).ok());
             context.at.extend(at);
         }
-        let mut run = match txn {
-            Some(txn) => host.session.edit_in(entry.name(), valued.arguments, &context, txn),
+        let edit = |arguments| match txn {
+            Some(txn) => host.session.edit_in(entry.name(), arguments, &context, txn),
             None => {
-                let (result, made) = host.session.edit_accepted(entry.name(), valued.arguments, &context);
+                let (result, made) = host.session.edit_accepted(entry.name(), arguments, &context);
                 InBatch {
                     result,
                     made,
@@ -869,6 +869,18 @@ impl Run<'_> {
                 }
             }
         };
+        let alone = |result| InBatch {
+            result,
+            made: None,
+            deferred: Vec::new(),
+        };
+        let mut run = host.check_values(
+            (entry.name(), doc),
+            valued.arguments,
+            &context,
+            retry,
+            (edit, alone, |ran: &mut InBatch| &mut ran.result),
+        );
         // what the host adds to the tool's reply (check's validation), of the version it read
         let read = txn.zip(id.as_ref()).and_then(|(txn, id)| {
             let format = host.session.format_doc(id).ok()?;
