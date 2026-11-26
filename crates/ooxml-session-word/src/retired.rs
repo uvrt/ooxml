@@ -153,7 +153,7 @@ impl Retired {
     }
 
     /// The ids retired now, in order.
-    fn list(&self) -> Vec<(HeldId, RetiredBy)> {
+    pub(crate) fn list(&self) -> Vec<(HeldId, RetiredBy)> {
         let records = self.records.lock().unwrap_or_else(PoisonError::into_inner);
         records
             .iter()

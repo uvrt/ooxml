@@ -5,7 +5,6 @@
 
 use crate::editing::{docx, session};
 use ooxml_opc::Package;
-use ooxml_session_word::prelude::*;
 use ooxml_word_edit::{FileKind, NewFromTemplate};
 
 const BODY: &str = r#"<w:p w14:paraId="0A000001"><w:r><w:t>Template text.</w:t></w:r></w:p><w:p w14:paraId="0A000002"/><w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr>"#;
@@ -25,7 +24,7 @@ fn a_template_s_content_goes_and_its_properties_start_again() {
         author: Some("Ann".to_owned()),
         created: "2026-11-23T09:00:00Z".to_owned(),
     };
-    let bytes = s.new_from_template(template, &made).unwrap();
+    let bytes = ooxml_session_word::from_template(template, &made, &s.open_env()).unwrap();
     assert_eq!(*kept, *docx(BODY), "the template's bytes are as they were");
     let package = Package::open(bytes.into(), &ooxml_base::Limits::default()).unwrap();
     assert_eq!(FileKind::of(&package).unwrap(), Some(FileKind::Docx));
@@ -48,7 +47,5 @@ fn bytes_that_are_no_word_document_are_refused() {
         author: None,
         created: "2026-11-23T09:00:00Z".to_owned(),
     };
-    assert!(s
-        .new_from_template(std::sync::Arc::from(&b"not a zip"[..]), &made)
-        .is_err());
+    assert!(ooxml_session_word::from_template(std::sync::Arc::from(&b"not a zip"[..]), &made, &s.open_env()).is_err());
 }

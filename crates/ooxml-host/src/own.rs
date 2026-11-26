@@ -2,8 +2,8 @@
 //! their schemas as today's, so one acceptance takes their calls), and the seam the host
 //! runs the session tools through ([`SessionTools`]): `open_document`, `new_document`,
 //! `close_document`, `read_blob` and `batch` are run by an implementation the host is made
-//! with. Until their port (Phase 3 D3 for the session tools, D2 for `batch`) the host is made
-//! with [`NotYet`], which refuses each with the way out.
+//! with ([`crate::HostTools`]). [`NotYet`] refuses a tool with the way out until its port
+//! (`batch`: Phase 3 D2).
 //!
 //! Must not: run a format's tool, or change the session's stores but through the
 //! [`HostSession`] the seam is handed.
@@ -143,8 +143,8 @@ pub trait SessionTools: Send + Sync {
     fn run(&self, call: &OwnCall<'_>) -> ToolResult<Value>;
 }
 
-/// The session tools before their port: each refused as not supported yet, with the call
-/// that would work in the Python host.
+/// A session tool before its port (`batch` until D2): refused as not supported yet, with
+/// the call that would work in the Python host.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NotYet;
 

@@ -16,7 +16,7 @@ use ooxml_opc::Package;
 use ooxml_store::{StoreConfig, StoreStats};
 use std::any::Any;
 use std::collections::hash_map::RandomState;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
@@ -153,6 +153,8 @@ pub struct Session {
     formats: Vec<Arc<dyn Format>>,
     documents: RwLock<BTreeMap<DocId, Arc<Document>>>,
     last_id: AtomicU64,
+    /// The ids the application gave documents it opened: the counter never gives one.
+    given: std::sync::Mutex<BTreeSet<DocId>>,
     pub(crate) counts: Counts,
     /// What tells this session's live-view tokens from another's (one made at the same
     /// moment, one before a restart): sixteen hex digits, its own.
@@ -182,6 +184,7 @@ impl Session {
             formats,
             documents: RwLock::new(BTreeMap::new()),
             last_id: AtomicU64::new(0),
+            given: std::sync::Mutex::new(BTreeSet::new()),
             counts: Counts::default(),
             nonce: nonce(&context),
             context,
@@ -246,6 +249,46 @@ impl Session {
         Ok(self.insert(kind, name, doc))
     }
 
+    /// Open a package of `kind` from its bytes, as `name`, as the application asks: under
+    /// the id `id` it gives (the one a resumed run's saved conversation names) instead of the
+    /// next one counted, and with the `state` saved beside the bytes
+    /// ([`Format::open_with_state`]), its history's numbers going on from the state's.
+    ///
+    /// # Errors
+    /// [`SessionError::IdTaken`] where a document has `id`; [`SessionError::StateRefused`];
+    /// as [`Session::open`].
+    pub fn open_as(
+        &self,
+        bytes: Arc<[u8]>,
+        kind: DocKind,
+        name: &str,
+        id: Option<&DocId>,
+        state: Option<&str>,
+    ) -> Result<DocId, SessionError> {
+        if let Some(id) = id {
+            if self.read_table().contains_key(id) {
+                return Err(SessionError::IdTaken(id.to_string()));
+            }
+        }
+        let format = self
+            .formats
+            .iter()
+            .find(|f| f.kind() == kind)
+            .ok_or_else(|| SessionError::Kind(kind.as_str().to_owned()))?;
+        let package = Package::open(bytes, &self.context.limits)?;
+        let (doc, numbers) = match state {
+            None => (format.open(package, &self.open_env())?, None),
+            Some(state) => {
+                let opened = format.open_with_state(package, state, &self.open_env())?;
+                (opened.doc, opened.numbers)
+            }
+        };
+        if let Some((version, highest)) = numbers {
+            doc.stored().continue_numbers(version, highest)?;
+        }
+        self.insert_as(kind, name, doc, id.cloned())
+    }
+
     /// Hold `doc`, a document of `kind` its format opened, as `name`: its new id.
     pub fn insert(&self, kind: DocKind, name: &str, doc: Arc<dyn FormatDoc>) -> DocId {
         let document = Arc::new(Document {
@@ -253,9 +296,54 @@ impl Session {
             name: name.to_owned(),
             doc,
         });
-        let id = DocId::nth(self.last_id.fetch_add(1, Ordering::Relaxed) + 1);
-        self.write_table().insert(id.clone(), document);
+        let mut table = self.write_table();
+        let id = self.counted(&table);
+        table.insert(id.clone(), document);
         id
+    }
+
+    /// Hold `doc` as [`Session::insert`] does, under `id` where one is given: the counter
+    /// never gives it after.
+    ///
+    /// # Errors
+    /// [`SessionError::IdTaken`] where a document has `id`.
+    pub fn insert_as(
+        &self,
+        kind: DocKind,
+        name: &str,
+        doc: Arc<dyn FormatDoc>,
+        id: Option<DocId>,
+    ) -> Result<DocId, SessionError> {
+        let Some(id) = id else {
+            return Ok(self.insert(kind, name, doc));
+        };
+        let document = Arc::new(Document {
+            kind,
+            name: name.to_owned(),
+            doc,
+        });
+        let mut table = self.write_table();
+        if table.contains_key(&id) {
+            return Err(SessionError::IdTaken(id.to_string()));
+        }
+        self.given
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(id.clone());
+        table.insert(id.clone(), document);
+        Ok(id)
+    }
+
+    /// The next id the counter gives: one never given before, by it or by the application
+    /// (called with the table held).
+    fn counted(&self, table: &BTreeMap<DocId, Arc<Document>>) -> DocId {
+        let given = self.given.lock().unwrap_or_else(PoisonError::into_inner);
+        loop {
+            let id = DocId::nth(self.last_id.fetch_add(1, Ordering::Relaxed) + 1);
+            if !given.contains(&id) && !table.contains_key(&id) {
+                return id;
+            }
+        }
     }
 
     /// The kind of the open document `id`.

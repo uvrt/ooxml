@@ -25,7 +25,6 @@ mod laid_reads;
 mod objects;
 mod originals;
 mod pages;
-mod paging;
 mod placements;
 mod planned;
 mod refusal;

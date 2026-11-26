@@ -54,11 +54,11 @@ mod undo;
 mod update;
 
 pub use batch::{ReadBatch, ReadOp, BATCH_TIMEOUT, MAX_READ_BATCH_CHARS, READ_BATCH};
-pub use context::{CallCancel, CallContext, CancelToken, FormatHost, LayoutCancel, StoreClock};
+pub use context::{revision_date, CallCancel, CallContext, CancelToken, FormatHost, LayoutCancel, StoreClock};
 pub use dispatch::CallMade;
-pub use document::PackageFormat;
+pub use document::{package_has_part, PackageFormat};
 pub use error::SessionError;
-pub use format::{no_source, AnyVersion, Finished, Format, FormatDoc, FormatRun, OpenEnv};
+pub use format::{no_source, AnyVersion, Finished, Format, FormatDoc, FormatRun, NewDocument, OpenEnv, WithState};
 pub use group::GroupMark;
 pub use history::{Direction, NumberedStep, Numbers, Undone};
 pub use ids::{DocId, DocKind};

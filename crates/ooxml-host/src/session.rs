@@ -37,6 +37,11 @@ pub struct HostSettings {
     pub blobs: BlobLimits,
     /// The limits on a session's datasets.
     pub datasets: DatasetLimits,
+    /// The room for open documents.
+    pub documents: crate::documents::DocumentLimits,
+    /// Whether a save may add validation problems the document did not open with (the
+    /// save gate let through).
+    pub allow_new_problems: bool,
     /// The images a session may show, and a round: `None`, no budget.
     pub image_budget: Option<usize>,
     /// The images a round may show.
@@ -51,6 +56,8 @@ impl Default for HostSettings {
             log_arguments: false,
             blobs: BlobLimits::default(),
             datasets: DatasetLimits::default(),
+            documents: crate::documents::DocumentLimits::default(),
+            allow_new_problems: false,
             image_budget: None,
             image_budget_per_round: None,
         }
@@ -107,6 +114,7 @@ impl Host {
                 images: ImageBudgets::new(settings.image_budget, settings.image_budget_per_round),
                 datasets: DatasetStore::new(settings.datasets),
                 refs: BTreeMap::new(),
+                docs: BTreeMap::new(),
                 keys: RetryKeys::default(),
                 log: Vec::new(),
             }),
@@ -173,6 +181,8 @@ pub struct Stores {
     pub datasets: DatasetStore,
     /// Each document's refs, by its id; kept after it closes.
     pub refs: BTreeMap<String, RefTable>,
+    /// What the session keeps of each open document beside its versions, by its id.
+    pub docs: BTreeMap<String, crate::documents::Held>,
     /// The retry keys.
     pub keys: RetryKeys,
     /// Every call's record, in order.
@@ -220,14 +230,17 @@ impl HostSession {
         self.stores.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Open a package of `kind` from its bytes, as `name`: its id (`d1`), its refs empty.
+    /// Open a package of `kind` from its bytes, as `name`: its id (`d1`), its refs empty
+    /// ([`HostSession::open_with`] as the application opens one of a kind it names).
     ///
     /// # Errors
-    /// The session's ([`Session::open`]).
-    pub fn open(&self, bytes: Arc<[u8]>, kind: DocKind, name: &str) -> Result<DocId, SessionError> {
-        let id = self.session.open(bytes, kind, name)?;
-        self.stores().refs.insert(id.to_string(), RefTable::new());
-        Ok(id)
+    /// As [`HostSession::open_with`].
+    pub fn open(&self, bytes: Arc<[u8]>, kind: DocKind, name: &str) -> Result<DocId, crate::OpenRefused> {
+        let how = crate::Opening {
+            kind: Some(kind),
+            ..crate::Opening::default()
+        };
+        self.open_with(bytes, name, &how)
     }
 
     /// Register an input and return its handle (`b1`).
@@ -247,6 +260,7 @@ impl HostSession {
         let head = self.session.snapshot(doc)?.number();
         self.session.close(doc)?;
         let mut stores = self.stores();
+        stores.docs.remove(&doc.to_string());
         stores.keys.forget(&doc.to_string());
         Ok(stores.datasets.document_closed(&doc.to_string(), Some(head)))
     }

@@ -342,6 +342,14 @@ impl Format for ToyFormat {
 
     fn register(&self, _tools: &mut Registry) {}
 
+    fn detect(&self, _bytes: &[u8], name: &str) -> bool {
+        name.ends_with(self.0.as_str())
+    }
+
+    fn new_document(&self, _made: &ooxml_session::NewDocument<'_>, _env: &OpenEnv<'_>) -> Result<Vec<u8>, ToolError> {
+        Err(ToolError::internal("the services' toys make no new documents", "toy"))
+    }
+
     fn open(&self, _package: Package, _env: &OpenEnv<'_>) -> Result<Arc<dyn FormatDoc>, SessionError> {
         Ok(Arc::new(ToyDoc {
             stored: package_store(),
@@ -446,6 +454,18 @@ impl FormatDoc for ToyDoc {
 
     fn finish(&self, made: Box<dyn Any + Send>, run: &FormatRun<'_>) -> Option<Finished> {
         FormatDoc::finish(&self.stored, made, run)
+    }
+
+    fn baseline(&self) -> Vec<ooxml_session::problems::Problem> {
+        Vec::new()
+    }
+
+    fn summary(&self, _at: &AnyVersion) -> Option<Map<String, Value>> {
+        None
+    }
+
+    fn state(&self, _at: &AnyVersion) -> Option<String> {
+        None
     }
 
     fn as_any(&self) -> &dyn Any {

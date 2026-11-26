@@ -11,11 +11,12 @@
 
 use ooxml_base::context::{FaceData, FaceRequest, Timestamp};
 use ooxml_base::{BaseError, CacheBudget, Cancel, Clock, Context, FontSource, PartStore};
-use ooxml_host::{CallAs, Host, HostSession, HostSettings, NotYet};
+use ooxml_host::{CallAs, Host, HostSession, HostSettings, HostTools};
 use ooxml_opc::Package;
+use ooxml_session::problems::{Problem, Severity, Validation};
 use ooxml_session::{
-    AnyVersion, DocKind, Finished, Format, FormatDoc, FormatRun, OpenEnv, PackageDoc, PartUpdate, Registry,
-    SessionConfig, SessionError, StoreClock, Stored, StoredDoc,
+    AnyVersion, DocKind, Finished, Format, FormatDoc, FormatRun, NewDocument, OpenEnv, PackageDoc, PackageFormat,
+    PartUpdate, Registry, SessionConfig, SessionError, StoreClock, Stored, StoredDoc, WithState,
 };
 use ooxml_store::{Caller, Store, StoreConfig};
 use ooxml_tools::roles::{HostFacts, Needs, Role};
@@ -100,6 +101,83 @@ pub struct ToyNotes {
     pub text: Option<String>,
 }
 
+/// The toy `save_document`'s arguments.
+#[derive(ToolArgs, Debug, Clone, PartialEq, Eq)]
+#[tool(name = "save_document", description = "Save the deck for the application.")]
+pub struct ToySave {
+    /// Document id.
+    pub doc: String,
+    /// File name.
+    pub name: String,
+    /// pptx, or outline: a text copy.
+    pub format: String,
+}
+
+/// The toy `describe` and `check`'s arguments.
+#[derive(ToolArgs, Debug, Clone, PartialEq, Eq)]
+#[tool(name = "describe", description = "Describe the deck.")]
+pub struct ToyDescribe {
+    /// Document id.
+    pub doc: String,
+}
+
+/// The toy `check`'s arguments.
+#[derive(ToolArgs, Debug, Clone, PartialEq, Eq)]
+#[tool(name = "check", description = "Check the deck.")]
+pub struct ToyCheck {
+    /// Document id.
+    pub doc: String,
+}
+
+fn toy_save(args: &ToySave, version: &ToyVersion<'_>, _cancel: &dyn Cancel) -> Result<Done<Value>, ToolError> {
+    let bytes = if args.format == "outline" {
+        b"the outline".to_vec()
+    } else {
+        version
+            .package
+            .save()
+            .map_err(|e| ToolError::internal(e.to_string(), "toy:save"))?
+    };
+    let mut done = Done::new(format!("Saved {} for the application", args.name));
+    done.data = Some(json!({"coverage": {"complete": true}}));
+    done.files.push(ooxml_tools::File {
+        name: args.name.clone(),
+        format: args.format.clone(),
+        bytes,
+    });
+    Ok(done)
+}
+
+fn toy_describe(_args: &ToyDescribe, version: &ToyVersion<'_>, _cancel: &dyn Cancel) -> Result<Done<Value>, ToolError> {
+    let mut done = Done::new("Described");
+    done.data = Some(json!({"parts": version.package.part_names().len(), "controls": [], "after": true}));
+    Ok(done)
+}
+
+fn toy_check(_args: &ToyCheck, _version: &ToyVersion<'_>, _cancel: &dyn Cancel) -> Result<Done<Value>, ToolError> {
+    let mut done = Done::new("Checked");
+    done.data = Some(json!({"ok": true, "timing": {"total": 0.0}}));
+    Ok(done)
+}
+
+/// A toy problem is a part `toy/problem-<code>.xml`: each the version has.
+fn problems_of(package: &Package) -> Vec<Problem> {
+    package
+        .part_names()
+        .into_iter()
+        .filter_map(|name| {
+            let code = name.strip_prefix("toy/problem-")?.strip_suffix(".xml")?.to_owned();
+            Some(Problem {
+                message: format!("[{code}] {name}: made up"),
+                code,
+                part: name,
+                element: "made up".into(),
+                severity: Severity::Problem,
+            })
+        })
+        .collect()
+}
+
 fn part(target: &str) -> String {
     format!("toy/{target}.xml")
 }
@@ -160,6 +238,9 @@ impl Format for ToyFormat {
         Registrar::<Toy>::read::<ToyRead>(&mut r, toy_read);
         Registrar::<Toy>::edit::<ToySet>(&mut r, toy_set);
         Registrar::<Toy>::edit::<ToyNotes>(&mut r, toy_notes);
+        Registrar::<Toy>::read::<ToySave>(&mut r, toy_save);
+        Registrar::<Toy>::read::<ToyDescribe>(&mut r, toy_describe);
+        Registrar::<Toy>::read::<ToyCheck>(&mut r, toy_check);
     }
 
     fn host_facts(&self) -> Vec<(String, HostFacts)> {
@@ -182,12 +263,64 @@ impl Format for ToyFormat {
     }
 
     fn open(&self, package: Package, env: &OpenEnv<'_>) -> Result<Arc<dyn FormatDoc>, SessionError> {
+        if package.has_part("toy/unreadable.xml") {
+            return Err(SessionError::PartName("toy/unreadable.xml".into()));
+        }
         let clock = Arc::new(StoreClock(Arc::clone(&env.context.clock)));
-        Ok(Arc::new(ToyDoc(Stored::new(Store::new(
-            PackageDoc::new(package),
-            env.store,
-            clock,
-        )))))
+        let baseline = problems_of(&package);
+        Ok(Arc::new(ToyDoc(
+            Stored::new(Store::new(PackageDoc::new(package), env.store, clock)),
+            baseline,
+        )))
+    }
+
+    /// A toy state is `toy-state:<parts>:<version>:<highest>`: refused for a package of
+    /// another number of parts.
+    fn open_with_state(&self, package: Package, state: &str, env: &OpenEnv<'_>) -> Result<WithState, SessionError> {
+        let numbers: Vec<u64> = state
+            .strip_prefix("toy-state:")
+            .map(|rest| rest.split(':').filter_map(|n| n.parse().ok()).collect())
+            .unwrap_or_default();
+        let parts = package.part_names().len() as u64;
+        let [given, version, highest] = numbers[..] else {
+            return Err(SessionError::StateRefused {
+                kind: self.kind(),
+                reason: Some(format!(
+                    "{state} is not a toy state: give the one saved with these bytes"
+                )),
+            });
+        };
+        if given != parts {
+            return Err(SessionError::StateRefused {
+                kind: self.kind(),
+                reason: Some("the state is another deck's: open these bytes without it".into()),
+            });
+        }
+        Ok(WithState {
+            doc: self.open(package, env)?,
+            numbers: Some((version, highest)),
+        })
+    }
+
+    fn detect(&self, bytes: &[u8], name: &str) -> bool {
+        name.ends_with(".pptx") || ooxml_session::package_has_part(bytes, "toy/title.xml")
+    }
+
+    /// A new toy deck: an empty package with its title, sized 16:9 or 4:3.
+    fn new_document(&self, made: &NewDocument<'_>, _env: &OpenEnv<'_>) -> Result<Vec<u8>, ToolError> {
+        if let Some(size) = made.size.filter(|s| !["16:9", "4:3"].contains(s)) {
+            return Err(ToolError::refusal(
+                Refusal::InvalidArguments,
+                format!("a deck's size is 16:9 or 4:3, not {size}"),
+                WayOut::names(["16:9", "4:3"]).unwrap(),
+            )
+            .at("size"));
+        }
+        let title = made.title.unwrap_or("");
+        let from = made
+            .template
+            .map_or_else(String::new, |t| format!(" from {} bytes", t.len()));
+        Ok(package_with(&[("toy/title.xml", &format!("<t>{title}{from} at {}</t>", made.created))]).to_vec())
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -195,8 +328,8 @@ impl Format for ToyFormat {
     }
 }
 
-/// A toy document: its package's versions.
-pub struct ToyDoc(Stored<PackageDoc>);
+/// A toy document: its package's versions, and the problems it opened with.
+pub struct ToyDoc(Stored<PackageDoc>, Vec<Problem>);
 
 /// What a toy edit made.
 struct Made {
@@ -298,6 +431,34 @@ impl FormatDoc for ToyDoc {
         })
     }
 
+    fn validation(&self, at: &AnyVersion) -> Option<Validation> {
+        let now = problems_of(at.package());
+        Some(Validation {
+            new: now.iter().filter(|p| !self.1.contains(p)).cloned().collect(),
+            fixed: self.1.iter().filter(|p| !now.contains(p)).cloned().collect(),
+            baseline: self.1.len(),
+        })
+    }
+
+    fn baseline(&self) -> Vec<Problem> {
+        self.1.clone()
+    }
+
+    fn summary(&self, at: &AnyVersion) -> Option<Map<String, Value>> {
+        let mut summary = Map::new();
+        summary.insert("parts".into(), Value::from(at.package().part_names().len()));
+        Some(summary)
+    }
+
+    fn state(&self, at: &AnyVersion) -> Option<String> {
+        let parts = at.package().part_names().len();
+        Some(format!(
+            "toy-state:{parts}:{}:{}",
+            at.number(),
+            self.0.highest().max(at.number())
+        ))
+    }
+
     fn checks(&self, at: &AnyVersion, _made: Option<&(dyn Any + Send + Sync)>) -> Option<Map<String, Value>> {
         let mut checks = Map::new();
         checks.insert("parts".into(), Value::from(at.package().part_names().len()));
@@ -377,32 +538,47 @@ fn context() -> Context {
 
 /// An empty toy package's bytes.
 pub fn package() -> Arc<[u8]> {
+    package_with(&[])
+}
+
+/// A toy package's bytes with `parts` beside its content types.
+pub fn package_with(parts: &[(&str, &str)]) -> Arc<[u8]> {
     let mut writer = Writer::new();
-    let entry = NewEntry {
-        name: "[Content_Types].xml".into(),
+    let entry = |name: &str| NewEntry {
+        name: name.into(),
         method: Method::Deflated,
         dos_time: 0,
         dos_date: 33,
         external_attr: 0,
         create_system: 3,
     };
-    writer.add(&entry, b"<Types/>").unwrap();
+    writer.add(&entry("[Content_Types].xml"), b"<Types/>").unwrap();
+    for (name, text) in parts {
+        writer.add(&entry(name), text.as_bytes()).unwrap();
+    }
     writer.finish(b"").unwrap().into()
 }
 
 /// A host of the toy format with `settings`, and a session of it with one toy document open
 /// (`d1`).
 pub fn session_with(settings: HostSettings) -> HostSession {
-    let host = Arc::new(Host::new(vec![Arc::new(ToyFormat)], settings, Arc::new(NotYet)));
-    let session = host.session(
+    let session = empty_session(settings);
+    session.open(package(), DocKind::Pptx, "deck.pptx").unwrap();
+    session
+}
+
+/// A host of the toy format (and of workbooks kept as packages, which keep no state) with
+/// `settings`, its session tools the host's, and a session of it with nothing open.
+pub fn empty_session(settings: HostSettings) -> HostSession {
+    let formats: Vec<Arc<dyn Format>> = vec![Arc::new(ToyFormat), Arc::new(PackageFormat(DocKind::Xlsx))];
+    let host = Arc::new(Host::new(formats, settings, Arc::new(HostTools)));
+    host.session(
         SessionConfig {
             store: StoreConfig::default(),
             locale: None,
         },
         context(),
-    );
-    session.open(package(), DocKind::Pptx, "deck.pptx").unwrap();
-    session
+    )
 }
 
 /// [`session_with`] the default settings.

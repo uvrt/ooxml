@@ -196,7 +196,7 @@ impl ooxml_store::Clock for StoreClock {
 
 /// The date an edit made at `now` carries, as docx-agent's tools date it (the session's
 /// clock, `utc_now`): UTC, to the second (`2026-11-18T09:30:15Z`).
-pub(crate) fn revision_date(now: ooxml_base::context::Timestamp) -> String {
+pub fn revision_date(now: ooxml_base::context::Timestamp) -> String {
     let days = now.seconds.div_euclid(86_400);
     let seconds = now.seconds.rem_euclid(86_400);
     let minutes = seconds / 60;

@@ -5,8 +5,8 @@
 //!
 //! Must not: know what is paged.
 
+use crate::{Refusal, ToolError, TryCall, WayOut};
 use ooxml_base::pyfmt::repr_str;
-use ooxml_tools::{Refusal, ToolError, TryCall, WayOut};
 
 /// The offset a cursor names (`None`: the start).
 fn offset(cursor: Option<&str>, first: &TryCall) -> Result<usize, ToolError> {
@@ -37,7 +37,7 @@ fn bad_cursor(message: String, first: &TryCall) -> ToolError {
 ///
 /// # Errors
 /// `invalid_arguments` for a cursor no page gave, or one past the end.
-pub(crate) fn page_text(
+pub fn page_text(
     text: &str,
     cursor: Option<&str>,
     limit: usize,
@@ -68,7 +68,7 @@ pub(crate) fn page_text(
 ///
 /// # Errors
 /// `invalid_arguments` for a cursor no page gave, or one past the end.
-pub(crate) fn page_list<T: Clone>(
+pub fn page_list<T: Clone>(
     items: &[T],
     cursor: Option<&str>,
     limit: usize,

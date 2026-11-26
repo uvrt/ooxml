@@ -103,8 +103,12 @@ fn every_call_is_recorded_by_its_shape_never_its_content() {
 }
 
 #[test]
-fn a_session_tool_runs_through_the_seam() {
+fn batch_waits_for_its_port_behind_the_seam() {
     let s = session();
-    let reply = call(&s, "open_document", json!({"blob": "b1"}));
-    assert_eq!(reply["error"]["details"]["not_supported"], "open_document (Rust host)");
+    let reply = call(
+        &s,
+        "batch",
+        json!({"ops": [{"tool": "toy_set", "arguments": {"doc": "d1", "target": "a", "text": "x"}}]}),
+    );
+    assert_eq!(reply["error"]["details"]["not_supported"], "batch (Rust host)");
 }

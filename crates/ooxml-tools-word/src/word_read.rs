@@ -8,9 +8,9 @@
 //! calls.
 
 use crate::describe::cancelled;
-use crate::paging::page_text;
 use crate::version::Version;
 use ooxml_base::Cancel;
+use ooxml_tools::paging::page_text;
 use ooxml_tools::{ArgEnum, Done, Refusal, ToolArgs, ToolError, TryCall, WayOut};
 use ooxml_word_model::address::expand_heading;
 use ooxml_word_model::address::Address;

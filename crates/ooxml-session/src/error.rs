@@ -59,6 +59,18 @@ pub enum SessionError {
     /// A port failed, or the work was cancelled.
     #[error(transparent)]
     Base(#[from] BaseError),
+    /// The state given to open a document with was refused: its format keeps none
+    /// (`reason` `None`), or it is not the state of these bytes (the format's words).
+    #[error("{}", reason.clone().unwrap_or_else(|| format!("{} documents keep no state beside their bytes", kind.as_str())))]
+    StateRefused {
+        /// The document's kind.
+        kind: crate::DocKind,
+        /// Why, where the format keeps a state and refused this one.
+        reason: Option<String>,
+    },
+    /// An id the application gave a document to open is open already.
+    #[error("doc_id {0:?} is in use")]
+    IdTaken(String),
 }
 
 impl SessionError {
