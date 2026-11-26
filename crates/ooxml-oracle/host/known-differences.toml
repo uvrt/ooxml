@@ -14,3 +14,16 @@
 # only rule 1 (accept intent: one acceptance, Rust's, decision D4 of the Phase 3 design) -- and
 # its `cause`, citing the pull request that changed the answer.  An entry without either is
 # refused.  Each entry is also a release-notes line.
+
+# Today's Python host names the first unknown argument in a set's order, which the process's hash
+# seed decides: `word_style` (read as word_styles) with both `style` and `targets` unknown names
+# either.  The Rust host names them in the call's order (tool design rule 1: the refusal says
+# plainly which argument it did not take; the same call gets the same answer).
+[[difference]]
+stream = "docx/features/names"
+case = "features/names::unknown_arguments_named#*"
+tool = "word_style"
+fields = ["result.error.field", "result.error.message"]
+rule = 1
+cause = """Hash-seed order: Python's set of unknown arguments decides which one a refusal names; the \
+Rust host names the first in the call's order (ph3-diff F2, found by F1 #396)."""

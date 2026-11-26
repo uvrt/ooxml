@@ -103,6 +103,10 @@ class PlanTest(unittest.TestCase):
                      "crates/ooxml-oracle/pytest.ini"):
             self.assertEqual(ci.affected([path]), ["docx-agent"], path)
         self.assertEqual(ci.affected(["crates/ooxml-oracle/known-differences.toml"]), [])
+        # the host goldens: docx streams replayed there, mixed ones (a workbook) in xlsx-agent's
+        for path in ("crates/ooxml-oracle/host/mixed/features/datasets.jsonl",
+                     "crates/ooxml-oracle/python/host_goldens.py", "crates/ooxml-oracle/python/host_features.py"):
+            self.assertEqual(ci.affected([path]), ["docx-agent", "xlsx-agent"], path)
         self.assertEqual(ci.PACKAGES["docx-agent"]["also_tests"], "crates/ooxml-oracle")
         self.assertTrue((ci.ROOT / "crates" / "ooxml-oracle" / "pytest.ini").is_file())
 
