@@ -6,7 +6,7 @@ refusals (docx-agent's ``rust/served`` adapters: ``field_from``, ``sources_json`
 tool, which the recorder leaves out.
 
 A pytest plugin (``-p freeze_values``) run over docx-agent's tests writes, for each such call, one
-line of ``host/frozen/values.jsonl``: the document as it was before the call (its bytes kept in
+line of ``frozen/values.jsonl``: the document as it was before the call (its bytes kept in
 ``host/inputs``, its id state), the session's datasets then (each with its values as the
 adapters hand them over: ``served._value``), the session's clock and locale, the call, and the
 Python host's answer normalised as the host goldens normalise one, with the document's parts'
@@ -30,8 +30,6 @@ import os
 import threading
 from pathlib import Path
 from typing import Any
-
-import pytest
 
 import host_goldens as goldens
 
@@ -143,7 +141,7 @@ def _others(session: Any, main: Any, out: Path) -> list:
         if entry.kind == "docx":
             saved = session.save(handle)
             found.append({"doc": handle, "kind": "docx", "name": saved.name,
-                          "input": goldens.keep_input(saved.data, saved.name, out.parent.parent / "inputs"),
+                          "input": goldens.keep_input(saved.data, saved.name, goldens.HOST / "inputs"),
                           "state": goldens.plain(saved.state)})
             continue
         fmt = session.formats[entry.kind]
@@ -164,13 +162,13 @@ def _case(session: Any, box: Any, name: str, arguments: dict, test: str) -> dict
     saved = session.save(doc)
     out = Path(os.environ["FROZEN_OUT"])
     case["document"] = {"name": saved.name,
-                        "input": goldens.keep_input(saved.data, saved.name, out.parent.parent / "inputs"),
+                        "input": goldens.keep_input(saved.data, saved.name, goldens.HOST / "inputs"),
                         "state": goldens.plain(saved.state), "version": saved.version}
     case["datasets"] = [_dataset(e) for e in session.dataset_entries()]
     opened = _OPENED.get(id(session.documents), {}).get(doc)
     if opened is not None:
         case["opened"] = {"name": opened["name"], "state": opened["state"],
-                          "input": goldens.keep_input(opened["data"], opened["name"], out.parent.parent / "inputs")}
+                          "input": goldens.keep_input(opened["data"], opened["name"], goldens.HOST / "inputs")}
     tracking = _TRACKING.get(id(session.documents), {}).get(doc)
     if tracking is not None:
         case["tracking"] = tracking
@@ -186,7 +184,6 @@ def _case(session: Any, box: Any, name: str, arguments: dict, test: str) -> dict
     return case
 
 
-@pytest.hookimpl(tryfirst=True)
 def pytest_configure(config: Any) -> None:
     from ooxml_edit.tools import Toolbox
     from ooxml_edit.tools import session as sessions

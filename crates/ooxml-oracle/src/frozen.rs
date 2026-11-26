@@ -1,4 +1,4 @@
-//! Owns: the formats a frozen answer's test made up beside Word's (`host/frozen/values.jsonl`,
+//! Owns: the formats a frozen answer's test made up beside Word's (`frozen/values.jsonl`,
 //! `python/freeze_values.py`: a grid whose `t:` names its tables), made again from what the
 //! call asked of them: [`FrozenFormat`], a kind with its address prefixes and each run of
 //! addresses it merged; [`FrozenDoc`], one open document of it -- its versions a package's,

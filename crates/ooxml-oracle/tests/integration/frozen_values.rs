@@ -1,5 +1,5 @@
 //! The Python host's frozen answers for the values a Word call reads from its sources
-//! (`host/frozen/values.jsonl`, made by `python/freeze_values.py` over docx-agent's tests):
+//! (`frozen/values.jsonl`, made by `python/freeze_values.py` over docx-agent's tests):
 //! `word_insert_markdown`'s `from` naming one text field, `word_edit_table`'s `from` naming
 //! rows, each cell's one-value `from` and its refusals -- each answered by the Rust host as
 //! the Python host answered it, but where a known difference admits it. The cases the freezer
@@ -19,7 +19,7 @@ fn root() -> &'static Path {
 #[test]
 fn every_frozen_answer_of_a_value_from_a_source_is_the_rust_hosts() {
     let replayer = Replayer::new(root()).unwrap();
-    let path = root().join("crates/ooxml-oracle/host/frozen/values.jsonl");
+    let path = root().join("crates/ooxml-oracle/frozen/values.jsonl");
     let text = std::fs::read_to_string(&path).unwrap();
     let cases: Vec<Value> = text
         .lines()
@@ -65,7 +65,7 @@ fn every_frozen_answer_of_a_value_from_a_source_is_the_rust_hosts() {
 #[test]
 fn insert_markdown_from_rows_is_not_supported_until_r138() {
     let replayer = Replayer::new(root()).unwrap();
-    let path = root().join("crates/ooxml-oracle/host/frozen/values.jsonl");
+    let path = root().join("crates/ooxml-oracle/frozen/values.jsonl");
     let text = std::fs::read_to_string(&path).unwrap();
     let case: Value = text
         .lines()

@@ -811,7 +811,7 @@ impl Replayer {
         out
     }
 
-    /// A frozen answer of the Python host (`host/frozen/values.jsonl`, `freeze_values.py`)
+    /// A frozen answer of the Python host (`frozen/values.jsonl`, `freeze_values.py`)
     /// made again: the document opened as it was before the call, the session's datasets
     /// kept as they were, the call made; its reply and the document's parts after it compared
     /// with the frozen ones. A case the freezer skipped waits, with why.
