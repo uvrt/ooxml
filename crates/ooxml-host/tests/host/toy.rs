@@ -201,7 +201,7 @@ pub struct ToyDoc(Stored<PackageDoc>);
 /// What a toy edit made.
 struct Made {
     first: u64,
-    before: u64,
+    before: AnyVersion,
     last: AnyVersion,
 }
 
@@ -228,7 +228,7 @@ impl FormatCall for ToyCall<'_> {
             }
             Run::Edit(edit) => {
                 let write = |name: &str, text: &str| -> Result<(), ToolError> {
-                    let before = self.run.doc.number();
+                    let before = self.run.doc.any().clone();
                     let bytes: Arc<[u8]> = text.as_bytes().into();
                     let update = PartUpdate::new(
                         vec![(name.to_owned(), Some(bytes))],
