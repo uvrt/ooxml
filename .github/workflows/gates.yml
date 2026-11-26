@@ -413,7 +413,8 @@ jobs:
             echo "| $name | $r | $(( $(date +%s) - at )) |" >> "$RUNNER_TEMP/seeds.md"
           }
           # One test program per crate (tests/integration); each run picks its module's long test by its exact name.
-          for t in writers::sixty_seeds_of_eight_writers style_writers::sixty_seeds_of_eight_writers_styling \
+          for t in writers::sixty_seeds_of_eight_writers writers::sixty_seeds_of_eight_writers_with_batches \
+            style_writers::sixty_seeds_of_eight_writers_styling \
             structure_writers::sixty_seeds_of_eight_writers_structuring review_writers::sixty_seeds_of_eight_writers_reviewing \
             object_writers::sixty_seeds_of_eight_writers_formatting_tables history::sixty_seeds_of_eight_writers_with_undo; do
             run "ooxml-word-edit ${t%%::*}" cargo test --locked --release -p ooxml-word-edit --test integration -- --ignored --nocapture --exact "$t"

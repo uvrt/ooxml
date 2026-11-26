@@ -371,8 +371,10 @@ impl Editor {
 }
 
 /// `command` validated and prepared in `tx` as `setup` says, followed by the records of
-/// placed values and the stamping of new blocks; its changes taken back where it refuses.
-/// What it returned and the spaces its language spacing wrote.
+/// placed values and the stamping of new blocks; its changes taken back where it refuses,
+/// the transaction depending on what the refusal rests on ([`Txn::run_op`]: an op of a
+/// batch or a held transaction, which goes on). What it returned and the spaces its language
+/// spacing wrote.
 fn prepared<C>(tx: &mut Txn<'_, WordDoc>, command: &C, setup: &Setup) -> Result<(C::Out, usize)>
 where
     C: Command<WordDoc, Error = EditError>,
@@ -381,14 +383,8 @@ where
     let stamped = crate::stamping::Stamped(&followed);
     tx.set_up(setup);
     let spaced = tx.doc().spaced();
-    let point = tx.savepoint();
-    match stamped.validate(tx.doc()).and_then(|()| stamped.prepare(tx)) {
-        Ok(out) => Ok((out, tx.doc().spaced().saturating_sub(spaced))),
-        Err(error) => {
-            tx.rollback(point);
-            Err(error)
-        }
-    }
+    let out = tx.run_op(&stamped)?;
+    Ok((out, tx.doc().spaced().saturating_sub(spaced)))
 }
 
 /// What a run made, before what it touched is worked out.

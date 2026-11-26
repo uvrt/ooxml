@@ -79,6 +79,22 @@ impl Command<WordDoc> for Edit {
             Edit::Batch(c) => c.prepare(tx)?.into_iter().any(|out| out.unwrap_or(false)),
         })
     }
+
+    fn read_refusal(&self, tx: &mut Txn<'_, WordDoc>) {
+        match self {
+            Edit::Set(c) => c.read_refusal(tx),
+            Edit::Insert(c) => c.read_refusal(tx),
+            Edit::Delete(c) => c.read_refusal(tx),
+            Edit::Replace(c) => c.read_refusal(tx),
+            Edit::Paragraph(c) => c.read_refusal(tx),
+            Edit::Style(c) => c.read_refusal(tx),
+            Edit::Block(c) => c.read_refusal(tx),
+            Edit::Cells(c) => c.read_refusal(tx),
+            Edit::Styled(c) => c.read_refusal(tx),
+            Edit::Markdown(c) => c.read_refusal(tx),
+            Edit::Batch(c) => c.read_refusal(tx),
+        }
+    }
 }
 
 fn command(rng: &mut Rng, targets: &[String], writer: u64) -> SetText {
@@ -432,12 +448,12 @@ fn each_version_reads_as_a_fresh_reading_does() {
 }
 
 /// The end gate's batches: sixty seeds of eight writers, every other one running batches
-/// of two to five common edits (run with `--ignored`, in release). It must pass before E1:
-/// it finds a defect in replaying a batch's several changes onto a newer head (lane D2d) --
-/// an op's insertion lost, text ids drawn in another order beside tracked ops, a batch's
-/// tracked author missing from people.xml.
+/// of two to five common edits (run with `--ignored`, in release). A batch's op that refuses
+/// depends on what its refusal rests on, as an applied one depends on what it read (lane D2d):
+/// without that, an insertion was lost, text ids were drawn in another order and a tracked
+/// author was missing from people.xml.
 #[test]
-#[ignore = "known defect, lane D2d: a batch's changes replayed onto a newer head can differ from the serial replay; must pass before E1 (cargo test --release -- --ignored)"]
+#[ignore = "the end gate's long run: cargo test --release -- --ignored"]
 fn sixty_seeds_of_eight_writers_with_batches() {
     let mut rebased = 0;
     for seed in 200..260u64 {
@@ -493,6 +509,10 @@ impl Command<WordDoc> for Gated<'_> {
             self.gate.wait(); // the writer committed
         }
         Ok(out)
+    }
+
+    fn read_refusal(&self, tx: &mut Txn<'_, WordDoc>) {
+        self.command.read_refusal(tx);
     }
 }
 
@@ -580,4 +600,193 @@ fn a_batch_of_edits_to_one_paragraph_beside_a_writer_commits_once_as_a_serial_re
             "tracked {tracked}: undone"
         );
     }
+}
+
+/// A document's parts and their bytes.
+type Written = Vec<(String, Arc<[u8]>)>;
+
+/// What a writer does while a batch is held after its first prepare.
+enum Meanwhile {
+    Edit(Box<Edit>),
+    Undo,
+}
+
+impl Meanwhile {
+    fn run(&self, editor: &ooxml_word_edit::Editor) {
+        match self {
+            Meanwhile::Edit(edit) => {
+                editor.run(&Caller::named("writer"), &**edit).unwrap();
+            }
+            Meanwhile::Undo => {
+                editor.store().undo().unwrap();
+            }
+        }
+    }
+}
+
+/// The body's paragraph ids of `editor`'s head.
+fn body_ids(editor: &ooxml_word_edit::Editor) -> Vec<String> {
+    let docx = editor.store().snapshot().doc().docx().unwrap();
+    docx.body()
+        .unwrap()
+        .ids
+        .paragraphs()
+        .iter()
+        .map(|p| p.id.clone())
+        .collect()
+}
+
+fn set_to(target: &str, text: &str) -> Edit {
+    Edit::Set(SetText {
+        target: ooxml_word_model::address::Address::from(target.to_owned()),
+        text: text.to_owned(),
+        policy: RevisionPolicy::Untracked,
+    })
+}
+
+/// sample-long.docx stamped by a first edit, then `setup` (of its body's paragraph ids) run
+/// on two editors; on one, the batch `ops` (of those ids) prepared, held there while
+/// `meanwhile` commits, then committed; on the other, the serial replay in commit order:
+/// `meanwhile`, then the batch. Both give one document; how often the batch was prepared.
+fn a_batch_held_beside(
+    setup: impl Fn(&[String]) -> Vec<Edit>,
+    ops: impl Fn(&[String]) -> Vec<Edit>,
+    meanwhile: impl Fn(&[String]) -> Meanwhile,
+) -> (u32, Written) {
+    let bytes = fixture("samplelib/sample-long.docx");
+    let (shared, serial) = (editor(&bytes), editor(&bytes));
+    let first = body_ids(&shared)[5].clone();
+    for editor in [&shared, &serial] {
+        editor.run(&Caller::anonymous(), &set_to(&first, "Stamped.")).unwrap();
+    }
+    let ids = body_ids(&shared);
+    for edit in setup(&ids) {
+        for editor in [&shared, &serial] {
+            editor.run(&Caller::anonymous(), &edit).unwrap();
+        }
+    }
+    let batch = Edit::Batch(Batch::new(ops(&ids)));
+    let meanwhile = meanwhile(&ids);
+    let gate = Barrier::new(2);
+    let (attempts, version) = std::thread::scope(|scope| {
+        let batcher = scope.spawn(|| {
+            let gated = Gated {
+                command: batch.clone(),
+                gate: &gate,
+                waited: AtomicBool::new(false),
+            };
+            let done = shared.run(&Caller::named("batch"), &gated).unwrap();
+            (done.attempts, done.version)
+        });
+        gate.wait();
+        meanwhile.run(&shared);
+        gate.wait();
+        batcher.join().unwrap()
+    });
+    meanwhile.run(&serial);
+    let done = serial.run(&Caller::anonymous(), &batch).unwrap();
+    assert_eq!(done.version.seq(), version.seq(), "commit order");
+    assert_eq!(written(done.version.doc()), written(version.doc()), "the serial replay");
+    (attempts, written(version.doc()))
+}
+
+#[test]
+fn a_batchs_insertion_refused_on_a_short_paragraph_a_writer_then_lengthens_is_not_lost() {
+    // seed 205's lost op: the batch's insertion at offset 2 refused where its paragraph was
+    // one character long; a writer's text there lets the serial replay apply it
+    let (attempts, _) = a_batch_held_beside(
+        |ids| vec![set_to(&ids[9], "x")],
+        |ids| {
+            vec![
+                Edit::Insert(InsertText {
+                    at: format!("{}@2", ids[4]).into(),
+                    text: "and ".to_owned(),
+                    policy: RevisionPolicy::Untracked,
+                }),
+                Edit::Insert(InsertText {
+                    at: format!("{}@2", ids[9]).into(),
+                    text: "beta ".to_owned(),
+                    policy: RevisionPolicy::Untracked,
+                }),
+            ]
+        },
+        |ids| Meanwhile::Edit(Box::new(set_to(&ids[9], "beta gamma"))),
+    );
+    assert_eq!(
+        attempts, 2,
+        "the refusal read its paragraph: prepared again after the writer"
+    );
+}
+
+#[test]
+fn a_batchs_text_ids_are_drawn_in_the_serial_order_beside_a_refused_tracked_insertion() {
+    // seeds 202 and 223's text ids: the batch's first op, a tracked insertion, refused on a
+    // short paragraph; the serial replay, after the writer's text there, applies it and draws
+    // its text id first, so the batch's next paragraph takes the value after it
+    let (attempts, _) = a_batch_held_beside(
+        |ids| vec![set_to(&ids[16], "x")],
+        |ids| {
+            let tracked = || {
+                RevisionPolicy::Tracked(Tracking {
+                    author: "Writer 3".to_owned(),
+                    date: "2026-11-17T10:00:00Z".to_owned(),
+                })
+            };
+            vec![
+                Edit::Insert(InsertText {
+                    at: format!("{}@2", ids[16]).into(),
+                    text: "report ".to_owned(),
+                    policy: tracked(),
+                }),
+                Edit::Insert(InsertText {
+                    at: format!("{}@1", ids[22]).into(),
+                    text: "delta ".to_owned(),
+                    policy: tracked(),
+                }),
+            ]
+        },
+        |ids| Meanwhile::Edit(Box::new(set_to(&ids[16], "fin : quoi?"))),
+    );
+    assert!(attempts >= 2);
+}
+
+#[test]
+fn a_batchs_tracked_deletion_refused_then_made_possible_lists_its_author() {
+    // seed 216's people.xml: the batch's tracked deletion refused on a paragraph too short;
+    // applied serially after the writer's text, it lists its author
+    let (_, written) = a_batch_held_beside(
+        |ids| vec![set_to(&ids[10], "x")],
+        |ids| {
+            vec![
+                Edit::Delete(DeleteText {
+                    range: format!("{}@0:2", ids[10]).into(),
+                    policy: RevisionPolicy::Tracked(Tracking {
+                        author: "Writer 3".to_owned(),
+                        date: "2026-11-17T10:00:00Z".to_owned(),
+                    }),
+                }),
+                set_to(&ids[5], "fin : «oui»"),
+            ]
+        },
+        |ids| Meanwhile::Edit(Box::new(set_to(&ids[10], "alpha beta"))),
+    );
+    let people = written.iter().find(|(name, _)| name.ends_with("people.xml")).unwrap();
+    assert!(String::from_utf8_lossy(&people.1).contains("Writer 3"));
+}
+
+#[test]
+fn a_batchs_edit_refused_by_validate_on_a_deleted_paragraph_an_undo_brings_back_applies() {
+    // a refusal in validate (the paragraph not there) depends on the document as one in
+    // prepare does: the undo meanwhile brings it back, and the serial replay applies it
+    let (attempts, _) = a_batch_held_beside(
+        |ids| {
+            vec![Edit::Block(DeleteBlock {
+                target: ooxml_word_model::address::Address::from(ids[12].clone()),
+                policy: RevisionPolicy::Untracked,
+            })]
+        },
+        |ids| vec![set_to(&ids[3], "Mine."), set_to(&ids[12], "Back again.")],
+        |_| Meanwhile::Undo,
+    );
+    assert_eq!(attempts, 2);
 }

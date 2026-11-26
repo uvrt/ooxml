@@ -182,6 +182,11 @@ where
         let looked = rows_written(self.editing, tx, &before, (self.table, &now), &made, self.retry);
         Ok((out, looked))
     }
+
+    /// The command's: looking at the rows never refuses.
+    fn read_refusal(&self, tx: &mut Txn<'_, WordDoc>) {
+        self.command.read_refusal(tx);
+    }
 }
 
 /// What the call did beyond its command (`_rows_written`): `table` the table as the call
@@ -304,13 +309,9 @@ fn like_the_column(
         table: ooxml_word_model::address::Address::parse(table),
         cells: cells.iter().map(|(c, _)| c.clone()).collect(),
     };
-    let point = tx.savepoint();
-    let written = match command.validate(tx.doc()).and_then(|()| command.prepare(tx)) {
-        Ok(written) => written,
-        Err(_) => {
-            tx.rollback(point);
-            return Vec::new();
-        }
+    // refused, the edit goes on without it, depending on what the refusal rests on
+    let Ok(written) = tx.run_op(&command) else {
+        return Vec::new();
     };
     written
         .iter()

@@ -159,6 +159,17 @@ impl Command<WordDoc> for SetStyledText {
         }
         Ok(out)
     }
+
+    /// Its text, the paragraph it names and the styles it names; several lines into a cell,
+    /// the whole document.
+    fn read_refusal(&self, tx: &mut Txn<'_, WordDoc>) {
+        if crate::paragraphs::is_lines(&self.text) {
+            tx.read_everything();
+            return;
+        }
+        crate::refusal::read_paragraph(tx, self.target.as_str());
+        crate::refusal::read_styles(tx);
+    }
 }
 
 /// `_plan`: the target, the lines read, the styles checked and the roles' styles.

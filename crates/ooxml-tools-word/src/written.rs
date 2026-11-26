@@ -297,11 +297,15 @@ where
         let after = After::of(tx.doc())?;
         let (said, keeps) = (self.finish)(&out, &after);
         if !keeps.is_empty() {
-            let keep = KeepText { keeps };
-            keep.validate(tx.doc())?;
-            keep.prepare(tx)?;
+            // (refused, it has read what its refusal rests on)
+            tx.run_op(&KeepText { keeps })?;
         }
         Ok((out, said))
+    }
+
+    /// The command's: the keeps', where they refused, are read already.
+    fn read_refusal(&self, tx: &mut Txn<'_, WordDoc>) {
+        self.command.read_refusal(tx);
     }
 }
 
