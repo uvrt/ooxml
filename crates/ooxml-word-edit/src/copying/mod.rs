@@ -46,6 +46,7 @@ mod view;
 use crate::names::W;
 use crate::placing::{locate, Place, Stretch};
 use crate::policy::RevisionPolicy;
+use crate::replacing::{Order, Replaced};
 use crate::review::space::Space;
 use crate::set_text::block_key;
 use crate::sink::EditSink;
@@ -292,13 +293,7 @@ impl CopyBlocks {
         let (mut place, replaced) = destination(sink.doc(), &docx, &self.at)?;
         let renamed = stamp_document(sink, &docx)?;
         let tracked = matches!(self.policy, RevisionPolicy::Tracked(_));
-        let mut replaced = crate::replacing::Replaced::begin(
-            sink,
-            &mut place,
-            replaced,
-            tracked,
-            crate::replacing::Order::FirstWhereFollowed,
-        )?;
+        let mut replaced = Replaced::begin(sink, &mut place, replaced, tracked, Order::FirstWhereFollowed)?;
         let mut stretch = Stretch::open(sink, &place, "copy_from")?;
         let anchor = stretch.anchor(&place);
         let space = Space::default();
