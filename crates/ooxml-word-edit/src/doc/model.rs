@@ -7,7 +7,7 @@
 use super::{Change, Key, ModelError, Setup, WordDoc};
 use crate::pool::IdsChange;
 use ooxml_opc::PartName;
-use ooxml_store::{DocModel, KeySet};
+use ooxml_store::{DocModel, First, KeySet};
 use ooxml_word_model::ids::VersionDelta;
 use ooxml_xml::PatchError;
 use std::sync::Arc;
@@ -26,16 +26,23 @@ impl DocModel for WordDoc {
     fn apply(&mut self, change: &Change) -> Result<(), ModelError> {
         let (package, ids) = match change {
             Change::Splice { part, patch, draws, .. } if !draws.is_empty() => {
-                let (patch, added) = self.drawn_patch(patch, draws)?;
+                // what the transaction's earlier splices inserted, named as applied here
+                let named = self.redrawn_patch(part, patch, draws);
+                let patch = named.as_ref().unwrap_or(patch);
+                let (applied, added) = self.drawn_patch(patch, draws)?;
                 let mut ids = self.ids.clone();
                 ids.apply(&added);
-                (self.with_tree(part, |t| patch.apply(t))?, ids)
+                let package = self.with_tree(part, |t| applied.apply(t))?;
+                self.redrawn.note(applied.inserted(), draws);
+                (package, ids)
             }
             Change::Splice { part, patch, .. } => {
                 debug_assert!(
                     !crate::drawn::uncovered(patch.inserted(), &[], &self.drawn),
                     "a stand-in in an id attribute no draw writes"
                 );
+                let named = self.redrawn_patch(part, patch, &[]);
+                let patch = named.as_ref().unwrap_or(patch);
                 (self.with_tree(part, |t| patch.apply(t))?, self.ids.clone())
             }
             Change::Head { part, patch, .. } => (self.with_tree(part, |t| patch.apply(t))?, self.ids.clone()),
@@ -93,7 +100,10 @@ impl DocModel for WordDoc {
                 created,
             } => {
                 // what was inserted is what the draws made of it here, the blocks made
-                // under stand-ins named as drawn here
+                // under stand-ins named as drawn here; what it removed of the transaction's
+                // earlier splices, as they were applied here
+                let named = self.redrawn_patch(part, patch, draws);
+                let patch = named.as_ref().unwrap_or(patch);
                 let patch = if draws.is_empty() {
                     patch.clone()
                 } else {
@@ -225,6 +235,9 @@ impl DocModel for WordDoc {
         if !self.drawn.is_empty() {
             self.drawn = crate::Drawn::default();
         }
+        if !self.redrawn.is_empty() {
+            self.redrawn = super::redrawn::Redrawn::default();
+        }
         self.spaced = 0;
         self.as_given = false;
     }
@@ -282,7 +295,7 @@ impl DocModel for WordDoc {
         }
     }
 
-    fn rebase(change: &Change, past: &Change) -> Result<Change, ModelError> {
+    fn rebase(change: &Change, past: &Change, first: First) -> Result<Change, ModelError> {
         // parts restored whole (an undo's inverse of a part put) cannot move past another
         // change of one of them, nor another change past them
         let restores = |restore: &Change, other: &Change| match (restore, other.part()) {
@@ -307,7 +320,11 @@ impl DocModel for WordDoc {
                 Change::Splice { patch: earlier, .. },
             ) => Change::Splice {
                 part: Arc::clone(part),
-                patch: patch.rebase(earlier)?,
+                // at one insertion point, the change published first keeps its place first
+                patch: match first {
+                    First::Past => patch.rebase(earlier)?,
+                    First::Change => patch.rebase_first(earlier)?,
+                },
                 keys: Arc::clone(keys),
                 draws: Arc::clone(draws),
                 created: Arc::clone(created),

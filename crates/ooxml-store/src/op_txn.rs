@@ -22,6 +22,10 @@ pub trait OpTxn: Sync {
     /// The version the op reads now, erased.
     fn current_erased(&self) -> &Mutex<Box<dyn Any + Send + Sync>>;
 
+    /// Whether the batch's transaction is prepared behind the document's gate (other writers
+    /// wait for it: [`Txn::gated`]), else optimistically.
+    fn gated(&self) -> bool;
+
     /// `f` handed the transaction, erased (held for `f` alone: what `f` runs may read the
     /// version the op reads, [`OpTxn::current`], but not take the transaction again).
     fn erased(&self, f: &mut dyn FnMut(&mut (dyn Any + Send + 'static)));
@@ -55,6 +59,7 @@ impl dyn OpTxn + '_ {
 /// A transaction lent to one op, with the version the op reads.
 pub struct InOp<'t> {
     tx: Mutex<&'t mut (dyn Any + Send + 'static)>,
+    gated: bool,
     current: Mutex<Box<dyn Any + Send + Sync>>,
     attempt: &'t AttemptState,
 }
@@ -67,6 +72,7 @@ impl<'t> InOp<'t> {
     /// attempt that keeps `attempt`.
     pub fn new<D: DocModel>(tx: &'t mut Txn<'static, D>, current: Snapshot<D>, attempt: &'t AttemptState) -> Self {
         InOp {
+            gated: tx.gated(),
             tx: Mutex::new(tx),
             current: Mutex::new(Box::new(current)),
             attempt,
@@ -87,6 +93,10 @@ impl OpTxn for InOp<'_> {
 
     fn current_erased(&self) -> &Mutex<Box<dyn Any + Send + Sync>> {
         &self.current
+    }
+
+    fn gated(&self) -> bool {
+        self.gated
     }
 
     fn erased(&self, f: &mut dyn FnMut(&mut (dyn Any + Send + 'static))) {

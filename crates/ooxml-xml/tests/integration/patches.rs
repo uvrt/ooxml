@@ -122,6 +122,10 @@ fn rebased_patches_commute() {
                 if !same_point_inserts {
                     assert_eq!(ab, ba);
                 }
+                // `a` published first: moving `b` past it, or `a` past `b` keeping its place,
+                // gives one tree, inserts at one point included
+                let a_first = a.rebase_first(&b).unwrap();
+                assert_eq!(ab, a_first.apply(&b.apply(&tree).unwrap()).unwrap());
                 both += 1;
             }
             (Err(PatchError::Conflict(_)), Err(PatchError::Conflict(_))) => conflicts += 1,
@@ -129,6 +133,102 @@ fn rebased_patches_commute() {
         }
     }
     assert!(both > 500 && conflicts > 3, "{both} rebased, {conflicts} conflicts");
+}
+
+/// `<r>` with the children named, as a tree.
+fn row(names: &[&str]) -> Tree {
+    let xml = names.iter().map(|n| format!("<{n}/>")).collect::<String>();
+    parse(format!("<r>{xml}</r>").as_bytes(), &Limits::default()).unwrap()
+}
+
+/// The names of `tree`'s root's children, in order.
+fn names(tree: &Tree) -> Vec<String> {
+    tree.root()
+        .children()
+        .iter()
+        .map(|n| n.as_element().unwrap().name().local().to_owned())
+        .collect()
+}
+
+/// A splice of the root's children `start .. start + removed` of `tree` by new elements named
+/// `inserted`.
+fn splice(tree: &Tree, start: usize, removed: usize, inserted: &[&str]) -> Patch {
+    let gone = tree
+        .root()
+        .children()
+        .iter()
+        .skip(start)
+        .take(removed)
+        .cloned()
+        .collect();
+    let new = inserted.iter().map(|n| element(n, vec![])).collect();
+    Patch::splice(NodePath::root(), start, gone, new)
+}
+
+/// `past` published first and `later` after it, both made on `tree`: the tree `later` moved
+/// past `past` makes, which `past` carried past `later` (keeping its place first) must make
+/// too; or the conflict, which must be met both ways.
+fn published_in_order(tree: &Tree, past: &Patch, later: &Patch) -> Result<Vec<String>, PatchError> {
+    match (later.rebase(past), past.rebase_first(later)) {
+        (Ok(moved), Ok(carried)) => {
+            let serial = moved.apply(&past.apply(tree).unwrap()).unwrap();
+            let carried = carried.apply(&later.apply(tree).unwrap()).unwrap();
+            assert_eq!(names(&serial), names(&carried), "both ways round, one result");
+            Ok(names(&serial))
+        }
+        (Err(a), Err(_)) => Err(a),
+        other => panic!("a conflict one way only: {other:?}"),
+    }
+}
+
+#[test]
+fn the_tie_rule_at_one_place_case_by_case() {
+    let tree = row(&["a", "b", "c", "d"]);
+    // 1. both insert at one point: the one published first comes first, either one
+    let (x, y) = (splice(&tree, 2, 0, &["x"]), splice(&tree, 2, 0, &["y"]));
+    assert_eq!(
+        published_in_order(&tree, &x, &y).unwrap(),
+        ["a", "b", "x", "y", "c", "d"]
+    );
+    assert_eq!(
+        published_in_order(&tree, &y, &x).unwrap(),
+        ["a", "b", "y", "x", "c", "d"]
+    );
+    // 2. an insert where a range the other replaces starts: before its replacement
+    let (insert, replace) = (splice(&tree, 1, 0, &["x"]), splice(&tree, 1, 2, &["B"]));
+    let before = ["a", "x", "B", "d"];
+    assert_eq!(published_in_order(&tree, &insert, &replace).unwrap(), before);
+    assert_eq!(published_in_order(&tree, &replace, &insert).unwrap(), before);
+    // 3. an insert where that range ends: after its replacement
+    let insert = splice(&tree, 3, 0, &["x"]);
+    let after = ["a", "B", "x", "d"];
+    assert_eq!(published_in_order(&tree, &insert, &replace).unwrap(), after);
+    assert_eq!(published_in_order(&tree, &replace, &insert).unwrap(), after);
+    // 4. two ranges that meet at one point: in document order, no conflict
+    let (left, right) = (splice(&tree, 0, 2, &["L"]), splice(&tree, 2, 2, &["R"]));
+    assert_eq!(published_in_order(&tree, &left, &right).unwrap(), ["L", "R"]);
+    assert_eq!(published_in_order(&tree, &right, &left).unwrap(), ["L", "R"]);
+    // 5. ranges that overlap, or a change inside a node the other replaces: a conflict
+    let (one, two) = (splice(&tree, 0, 2, &["P"]), splice(&tree, 1, 2, &["Q"]));
+    assert!(matches!(
+        published_in_order(&tree, &one, &two),
+        Err(PatchError::Conflict(_))
+    ));
+    assert!(matches!(
+        published_in_order(&tree, &two, &one),
+        Err(PatchError::Conflict(_))
+    ));
+    let nested = parse(b"<r><a><i/></a><b/></r>", &Limits::default()).unwrap();
+    let inside = Patch::splice(NodePath(vec![0, 0]), 0, vec![], vec![element("x", vec![])]);
+    let whole = splice(&nested, 0, 1, &["A"]);
+    assert!(matches!(
+        published_in_order(&nested, &inside, &whole),
+        Err(PatchError::Conflict(_))
+    ));
+    assert!(matches!(
+        published_in_order(&nested, &whole, &inside),
+        Err(PatchError::Conflict(_))
+    ));
 }
 
 #[test]

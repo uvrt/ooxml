@@ -7,140 +7,141 @@
 
 use crate::common;
 
+use crate::items::{Change, Items, Op};
 use common::{still, Rng};
-use ooxml_store::{Caller, Command, DocModel, Error, KeySet, Store, StoreConfig, Txn};
+use ooxml_store::{Batch, Caller, Command, DocModel, First, Store, StoreConfig, Txn};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Barrier};
 
-/// Named items in order, each with a value.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-struct Items(Arc<Vec<(u32, i64)>>);
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Change {
-    /// Item `name` goes in at `at`.
-    Insert { at: usize, name: u32 },
-    /// The item at `at`, which must be `name`, gets `value`.
-    Set { at: usize, name: u32, value: i64 },
-}
-
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
-#[error("the item at {0} is not the one the change names")]
-struct Stale(usize);
-
-impl DocModel for Items {
-    type Key = u32;
-    type Change = Change;
-    type Error = Stale;
-    type Setup = ();
-    type Delta = ();
-
-    fn delta(_: &Self, _: &Self) {}
-
-    fn apply(&mut self, change: &Change) -> Result<(), Stale> {
-        let items = Arc::make_mut(&mut self.0);
-        match *change {
-            Change::Insert { at, name } if at <= items.len() => items.insert(at, (name, 0)),
-            Change::Set { at, name, value } if items.get(at).is_some_and(|i| i.0 == name) => items[at].1 = value,
-            Change::Insert { at, .. } | Change::Set { at, .. } => return Err(Stale(at)),
-        }
-        Ok(())
-    }
-
-    fn inverse(&self, change: &Change) -> Result<Change, Stale> {
-        match *change {
-            Change::Set { at, name, .. } => Ok(Change::Set {
-                at,
-                name,
-                value: self.0.get(at).ok_or(Stale(at))?.1,
-            }),
-            Change::Insert { at, .. } => Err(Stale(at)),
-        }
-    }
-
-    fn agrees(&self, other: &Self, keys: &KeySet<u32>) -> bool {
-        let value = |items: &Items, name: &u32| items.0.iter().find(|i| i.0 == *name).map(|i| i.1);
-        match keys.keys() {
-            Some(keys) => keys.iter().all(|k| value(self, k) == value(other, k)),
-            None => self == other,
-        }
-    }
-
-    fn written(change: &Change, into: &mut KeySet<u32>) {
-        match change {
-            Change::Insert { name, .. } | Change::Set { name, .. } => into.insert(*name),
-        }
-    }
-
-    fn rebase(change: &Change, past: &Change) -> Result<Change, Stale> {
-        let Change::Insert { at: there, .. } = *past else {
-            return Ok(change.clone());
-        };
-        Ok(match *change {
-            Change::Set { at, name, value } if there <= at => Change::Set {
-                at: at + 1,
-                name,
-                value,
-            },
-            Change::Insert { at, name } if there <= at => Change::Insert { at: at + 1, name },
-            ref other => other.clone(),
-        })
-    }
-}
-
-/// Insert a new item before the item named `before`, or add to the value of item `name`.
-#[derive(Debug, Clone)]
-enum Op {
-    Insert { name: u32, before: u32 },
-    Add { name: u32, add: i64 },
-}
-
-impl Command<Items> for Op {
-    type Out = ();
-    type Error = Error<Items>;
-
-    fn validate(&self, _doc: &Items) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn prepare(&self, tx: &mut Txn<'_, Items>) -> Result<(), Self::Error> {
-        let place = |tx: &Txn<'_, Items>, name: u32| tx.doc().0.iter().position(|i| i.0 == name);
-        match *self {
-            Op::Insert { name, before } => {
-                // depends on the item it goes before, not on any other's place
-                tx.read(before);
-                let at = place(tx, before).unwrap_or(tx.doc().0.len());
-                tx.write(Change::Insert { at, name })
-            }
-            Op::Add { name, add } => {
-                tx.read(name);
-                let Some(at) = place(tx, name) else { return Ok(()) };
-                let value = tx.doc().0[at].1 + add;
-                tx.write(Change::Set { at, name, value })
-            }
-        }
-    }
-}
-
-/// An op that, once prepared, waits at `gate` twice: for another writer to commit after the
-/// snapshot it prepared on, which forces its commit to be rebased.
-struct Gated<'a> {
-    op: Op,
+/// A command that, once prepared the first time, waits at `gate` twice: for another writer
+/// to commit after the snapshot it prepared on, which forces its commit to be rebased (or,
+/// where that fails, prepared again, without waiting).
+struct Gated<'a, C> {
+    op: C,
     gate: &'a Barrier,
+    waited: AtomicBool,
 }
 
-impl Command<Items> for Gated<'_> {
-    type Out = ();
-    type Error = Error<Items>;
+impl<'a, C> Gated<'a, C> {
+    fn new(op: C, gate: &'a Barrier) -> Self {
+        Gated {
+            op,
+            gate,
+            waited: AtomicBool::new(false),
+        }
+    }
+}
+
+impl<C: Command<Items>> Command<Items> for Gated<'_, C> {
+    type Out = C::Out;
+    type Error = C::Error;
 
     fn validate(&self, doc: &Items) -> Result<(), Self::Error> {
         self.op.validate(doc)
     }
 
-    fn prepare(&self, tx: &mut Txn<'_, Items>) -> Result<(), Self::Error> {
-        self.op.prepare(tx)?;
-        self.gate.wait(); // prepared
-        self.gate.wait(); // the other writer committed
-        Ok(())
+    fn prepare(&self, tx: &mut Txn<'_, Items>) -> Result<C::Out, Self::Error> {
+        let out = self.op.prepare(tx)?;
+        if !self.waited.swap(true, Ordering::SeqCst) {
+            self.gate.wait(); // prepared
+            self.gate.wait(); // the other writer committed
+        }
+        Ok(out)
+    }
+}
+
+/// `batch` prepared on a list of 8 items, then `writer` committed, then the batch committed:
+/// how many times the batch was prepared, and whether the list equals the serial replay
+/// (the writer, then the batch).
+fn batch_past_a_writer(batch: Vec<Op>, writer: Op) -> (u32, Items, Items) {
+    let store = Store::new(Items::named(8), StoreConfig::default(), still());
+    let gate = Barrier::new(2);
+    let attempts = std::thread::scope(|scope| {
+        let batcher = scope.spawn(|| {
+            let gated = Gated::new(Batch::new(batch.clone()), &gate);
+            let done = store.run(&Caller::named("batch"), &gated).unwrap();
+            assert!(done.out.iter().all(Result::is_ok));
+            done.attempts
+        });
+        gate.wait(); // the batch prepared
+        store.run(&Caller::named("writer"), &writer).unwrap();
+        gate.wait(); // let it commit
+        batcher.join().unwrap()
+    });
+    let serial = Store::new(Items::named(8), StoreConfig::default(), still());
+    serial.run(&Caller::anonymous(), &writer).unwrap();
+    serial.run(&Caller::anonymous(), &Batch::new(batch)).unwrap();
+    (
+        attempts,
+        store.snapshot().doc().clone(),
+        serial.snapshot().doc().clone(),
+    )
+}
+
+#[test]
+fn a_batchs_second_change_is_moved_past_a_commit_as_it_stands_after_the_first() {
+    // the batch inserts before item 2, then sets item 3 (at 4 once the first went in); the
+    // writer inserted before item 4 meanwhile. Moved past the batch's first change, the
+    // writer's insertion is at 5, after item 3: the second change stays at 4 (moved past the
+    // writer's insertion as made, at 4, it would name the wrong item and run again)
+    let batch = vec![Op::Insert { name: 50, before: 2 }, Op::Add { name: 3, add: 7 }];
+    let (attempts, concurrent, serial) = batch_past_a_writer(batch, Op::Insert { name: 60, before: 4 });
+    assert_eq!(attempts, 1, "rebased, not prepared again");
+    assert_eq!(concurrent, serial);
+    assert_eq!(concurrent.0[4], (3, 7));
+}
+
+#[test]
+fn the_tie_rule_in_a_sequence_puts_the_commit_published_first_first() {
+    // both insert before item 3; the writer published first, so its item comes first, and
+    // the batch's set of item 3 lands after both
+    let batch = vec![
+        Op::Insert { name: 50, before: 3 },
+        Op::Add { name: 3, add: 1 },
+        Op::Insert { name: 51, before: 3 },
+    ];
+    let (attempts, concurrent, serial) = batch_past_a_writer(batch, Op::Insert { name: 60, before: 3 });
+    assert_eq!(attempts, 1);
+    assert_eq!(concurrent, serial);
+    let names: Vec<u32> = concurrent.0.iter().map(|i| i.0).collect();
+    assert_eq!(names, [0, 1, 2, 60, 50, 51, 3, 4, 5, 6, 7]);
+}
+
+#[test]
+fn the_tie_rule_case_by_case() {
+    // the model's own rule, each way round: where two insert at one place, the one
+    // published first comes first; anywhere else, the place decides
+    let at = |at| Change::Insert { at, name: 9 };
+    let other = Change::Insert { at: 2, name: 8 };
+    assert_eq!(
+        Items::rebase(&at(2), &other, First::Past).unwrap(),
+        at(3),
+        "theirs first"
+    );
+    assert_eq!(
+        Items::rebase(&at(2), &other, First::Change).unwrap(),
+        at(2),
+        "this first"
+    );
+    for first in [First::Past, First::Change] {
+        assert_eq!(Items::rebase(&at(1), &other, first).unwrap(), at(1), "before: kept");
+        assert_eq!(Items::rebase(&at(3), &other, first).unwrap(), at(4), "after: moved");
+    }
+    let set = Change::Set {
+        at: 2,
+        name: 2,
+        value: 1,
+    };
+    for first in [First::Past, First::Change] {
+        // an insert where an item is goes before it, whichever was published first
+        assert_eq!(
+            Items::rebase(&set, &other, first).unwrap(),
+            Change::Set {
+                at: 3,
+                name: 2,
+                value: 1
+            }
+        );
     }
 }
 
@@ -166,7 +167,7 @@ fn rebased_commits_equal_a_serial_replay() {
                         let mut forced = Vec::new();
                         if t == 0 {
                             let op = Op::Add { name: 11, add: 1 };
-                            let done = store.run(&caller, &Gated { op: op.clone(), gate }).unwrap();
+                            let done = store.run(&caller, &Gated::new(op.clone(), gate)).unwrap();
                             forced.push((done.version.seq(), op, done.version));
                         } else if t == 1 {
                             let op = Op::Insert { name: 999, before: 0 };
@@ -239,6 +240,7 @@ fn a_moved_position_commits_without_preparing_again() {
             value: 7,
         },
         &Change::Insert { at: 0, name: 50 },
+        First::Past,
     )
     .unwrap();
     assert_eq!(
@@ -252,4 +254,86 @@ fn a_moved_position_commits_without_preparing_again() {
     let done = store.run(&Caller::anonymous(), &Op::Add { name: 2, add: 7 }).unwrap();
     assert_eq!(done.attempts, 1);
     assert_eq!(done.version.doc().0[3], (2, 7));
+}
+
+#[test]
+fn rebased_batches_beside_writers_equal_a_serial_replay() {
+    // writers of one op and of batches of two to four, on random places: each batch's
+    // change sequence is moved past the commits since its snapshot as one
+    let mut rebased = 0;
+    for seed in [13u64, 21, 34, 55] {
+        let store = Store::new(Items::named(12), StoreConfig::default(), still());
+        let mut records = Vec::new();
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..6u64)
+                .map(|t| {
+                    let store = &store;
+                    scope.spawn(move || {
+                        let mut rng = Rng(seed ^ (t + 1).wrapping_mul(0x5DEE_CE66));
+                        let caller = Caller::named(&format!("writer {t}"));
+                        (0..60u32)
+                            .map(|k| {
+                                let size = if t % 2 == 1 { 2 + rng.below(3) as u32 } else { 1 };
+                                let ops = (0..size)
+                                    .map(|j| {
+                                        if rng.below(3) == 0 {
+                                            Op::Insert {
+                                                name: 1000 + (t as u32 * 100 + k) * 10 + j,
+                                                before: rng.below(12) as u32,
+                                            }
+                                        } else {
+                                            Op::Add {
+                                                name: rng.below(12) as u32,
+                                                add: rng.below(50) as i64,
+                                            }
+                                        }
+                                    })
+                                    .collect();
+                                let batch = Batch::new(ops);
+                                let done = store.run(&caller, &batch).unwrap();
+                                (done.version.seq(), batch, done.version)
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            for handle in handles {
+                records.extend(handle.join().unwrap());
+            }
+        });
+        records.sort_by_key(|r| r.0);
+        let serial = Store::new(Items::named(12), StoreConfig::default(), still());
+        for (seq, batch, version) in &records {
+            let done = serial.run(&Caller::anonymous(), batch).unwrap();
+            assert_eq!(done.version.seq(), *seq, "seed {seed}");
+            assert_eq!(done.version.doc(), version.doc(), "seed {seed}: document at {seq}");
+        }
+        rebased += store.stats().rebased;
+    }
+    assert!(rebased > 0);
+}
+
+#[test]
+fn a_batch_outlasting_two_hundred_commits_beside_it_still_rebases() {
+    // the default rebase window keeps the change sets a long batch needs (StoreConfig's
+    // measured choice): two hundred writers' commits land while it prepares
+    let store = Store::new(Items::named(8), StoreConfig::default(), still());
+    let gate = Barrier::new(2);
+    let batch = vec![Op::Insert { name: 50, before: 2 }, Op::Add { name: 3, add: 7 }];
+    let attempts = std::thread::scope(|scope| {
+        let batcher = scope.spawn(|| {
+            let gated = Gated::new(Batch::new(batch.clone()), &gate);
+            store.run(&Caller::named("batch"), &gated).unwrap().attempts
+        });
+        gate.wait(); // the batch prepared
+        for k in 0..200 {
+            store
+                .run(&Caller::named("writer"), &Op::Add { name: 6, add: k })
+                .unwrap();
+        }
+        gate.wait(); // let it commit
+        batcher.join().unwrap()
+    });
+    assert_eq!(attempts, 1, "rebased past them all, not prepared again");
+    assert!(store.snapshot().doc().0.contains(&(3, 7)));
 }

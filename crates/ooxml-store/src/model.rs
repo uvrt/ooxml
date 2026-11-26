@@ -122,14 +122,29 @@ pub trait DocModel: Clone + Send + Sync + 'static {
         KeySet::new()
     }
 
-    /// `change`, made on a version `past` had not been applied to, moved to apply after
-    /// `past` (design section 5: a commit's patches rebased through those committed since
-    /// its snapshot). Called only when the two transactions' keys are disjoint; an error
-    /// means the two touch the same content after all, and the commit is prepared again.
-    /// The default keeps the change as it is, right for changes addressed by key rather
-    /// than by position.
-    fn rebase(change: &Self::Change, past: &Self::Change) -> Result<Self::Change, Self::Error> {
-        let _ = past;
+    /// `change`, made on the version `past` was made on, moved to apply after `past`
+    /// (design section 5: a commit's patches rebased through those committed since its
+    /// snapshot). `first` says which of the two was published first: where both put
+    /// something at one place, that one's comes first, whichever is moved
+    /// ([`First`]). So `past` then `rebase(change, past, First::Past)` gives what `change`
+    /// then `rebase(past, change, First::Change)` gives. Called only when the two
+    /// transactions' keys are disjoint; an error means the two touch the same content after
+    /// all, and the commit is prepared again. The default keeps the change as it is, right
+    /// for changes addressed by key rather than by position.
+    fn rebase(change: &Self::Change, past: &Self::Change, first: First) -> Result<Self::Change, Self::Error> {
+        let _ = (past, first);
         Ok(change.clone())
     }
+}
+
+/// Which of two changes made on one version was published first, where one is moved past
+/// the other ([`DocModel::rebase`]): where both put something at one place, its comes first.
+/// The one rule a sequence's rebase needs to give one result either way round.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum First {
+    /// `past` was: a commit's change moved past one published since its snapshot.
+    Past,
+    /// `change` was: a change published since a commit's snapshot, carried past that
+    /// commit's earlier changes (so that it stands where the commit's next change was made).
+    Change,
 }

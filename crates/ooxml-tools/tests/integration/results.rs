@@ -111,7 +111,7 @@ fn application_only_fields_never_reach_the_model() {
         total: 0.5,
         lock_wait: 0.1,
         work: 0.4,
-        cpu: 0.3,
+        cpu: Some(0.3),
         held: 0.2,
     });
     result.app.tool = "word_set_text".into();

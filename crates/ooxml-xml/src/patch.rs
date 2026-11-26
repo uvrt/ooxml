@@ -168,8 +168,31 @@ impl Patch {
 
     /// This patch, made on the version `earlier` was applied to, moved to apply after it.
     /// Fails with [`PatchError::Conflict`] when the two touch the same nodes. Two inserts at
-    /// one position keep commit order: the earlier one's nodes come first.
+    /// one position keep publish order: `earlier`, published first, has its nodes first.
     pub fn rebase(&self, earlier: &Patch) -> Result<Patch, PatchError> {
+        self.moved_past(earlier, false)
+    }
+
+    /// This patch, published before `later` but moved to apply after it (both made on one
+    /// version): the other side of a sequence's rebase, where a change published first is
+    /// carried past a later commit's earlier changes. As [`Patch::rebase`], but two inserts
+    /// at one position keep this patch's nodes first, so moving either past the other gives
+    /// one result: `later.rebase(self)` after `self` equals `self.rebase_first(later)` after
+    /// `later`.
+    pub fn rebase_first(&self, later: &Patch) -> Result<Patch, PatchError> {
+        self.moved_past(later, true)
+    }
+
+    /// This patch moved past `earlier`; `first`: at one insertion point this patch's nodes
+    /// stay first (it was published first), else `earlier`'s come first.
+    ///
+    /// The cases, the same either way round but the first:
+    /// 1. both insert at one point: the one published first comes first;
+    /// 2. an insert where a range the other replaces starts: before its replacement;
+    /// 3. an insert where that range ends: after its replacement;
+    /// 4. two ranges that meet at one point: in document order;
+    /// 5. ranges that overlap, or a change inside a node the other replaces: a conflict.
+    fn moved_past(&self, earlier: &Patch, first: bool) -> Result<Patch, PatchError> {
         let conflict = || PatchError::Conflict(self.parent.0.clone());
         if self.parent.0.is_empty() || earlier.parent.0.is_empty() {
             return Err(conflict());
@@ -179,8 +202,9 @@ impl Patch {
         let mut moved = self.clone();
         if earlier.parent == self.parent {
             let (sb, eb) = (self.start, self.start + self.removed.len());
-            if (sa == ea && sb == eb && sa == sb) || (sb >= ea && !(sb == eb && sb == sa)) {
-                // after the earlier change (or an insert at the same point)
+            let tie = sa == ea && sb == eb && sa == sb;
+            if (tie && !first) || (sb >= ea && !(sb == eb && sb == sa)) {
+                // after the earlier change (or an insert at the same point, published after it)
                 moved.start = shift(sb, delta).ok_or_else(conflict)?;
             } else if eb > sa {
                 return Err(conflict());

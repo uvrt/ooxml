@@ -17,6 +17,7 @@
 //! does), implement a tool's logic (`ooxml-tools-word` does), or depend on `ooxml-host`.
 #![forbid(unsafe_code)]
 
+mod batch_said;
 mod block_pages;
 mod blocks_of;
 mod call;

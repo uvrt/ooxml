@@ -63,8 +63,8 @@ pub use dispatch::{CallMade, InBatch};
 pub use document::{package_has_part, PackageFormat};
 pub use error::SessionError;
 pub use format::{
-    no_source, AnyVersion, Deferred, Finished, Format, FormatDoc, FormatRun, LockSpent, NewDocument, OpenEnv,
-    ReadTexts, ReadValues, ValueRead, WithState,
+    no_source, AnyVersion, BatchHold, Deferred, Finished, Format, FormatDoc, FormatRun, Holding, LockSpent,
+    NewDocument, OpenEnv, ReadTexts, ReadValues, ValueRead, WithState,
 };
 pub use group::GroupMark;
 pub use history::{Direction, NumberedStep, Numbers, Undone};

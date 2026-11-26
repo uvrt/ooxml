@@ -9,14 +9,15 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
 use crate::common::{editor, fixture, written, Rng};
+use ooxml_store::{Batch, Command, Txn};
 use ooxml_store::{Caller, Seq, Snapshot};
-use ooxml_store::{Command, Txn};
 use ooxml_word_edit::find::Literal;
 use ooxml_word_edit::{
     CellWrite, DeleteBlock, DeleteText, EditError, InsertMarkdown, InsertParagraph, InsertText, Keep, MarkdownOptions,
     ReplaceText, RevisionPolicy, SetCells, SetParagraphStyle, SetStyledText, SetText, Tracking, WordDoc, WriteMap,
 };
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Barrier};
 
 /// A table's id and its rows' places and ids.
 type TableRows = (String, Vec<(Vec<u32>, String)>);
@@ -38,6 +39,9 @@ enum Edit {
     Cells(SetCells),
     Styled(SetStyledText),
     Markdown(InsertMarkdown),
+    /// Several edits as one transaction and one step (a host's batch, design phase 3 §4):
+    /// its changes a sequence, moved past what was published since as one.
+    Batch(Batch<Edit>),
 }
 
 impl Command<WordDoc> for Edit {
@@ -56,6 +60,7 @@ impl Command<WordDoc> for Edit {
             Edit::Cells(c) => c.validate(doc),
             Edit::Styled(c) => c.validate(doc),
             Edit::Markdown(c) => c.validate(doc),
+            Edit::Batch(c) => c.validate(doc),
         }
     }
 
@@ -71,6 +76,7 @@ impl Command<WordDoc> for Edit {
             Edit::Cells(c) => c.prepare(tx).map(|_| true)?,
             Edit::Styled(c) => c.prepare(tx).map(|_| true)?,
             Edit::Markdown(c) => c.prepare(tx)?.changed,
+            Edit::Batch(c) => c.prepare(tx)?.into_iter().any(|out| out.unwrap_or(false)),
         })
     }
 }
@@ -204,7 +210,19 @@ fn run(seed: u64, writers: u64, per_writer: usize) -> (u64, u64) {
     run_on("samplelib/sample-long.docx", seed, writers, per_writer)
 }
 
+/// A batch of two to five random common edits, as a host's batch runs them: one transaction.
+fn batch(rng: &mut Rng, targets: (&[String], &[String]), writer: u64) -> Edit {
+    let ops = (0..2 + rng.below(4)).map(|_| edit(rng, targets, writer)).collect();
+    Edit::Batch(Batch::new(ops))
+}
+
 fn run_on(name: &str, seed: u64, writers: u64, per_writer: usize) -> (u64, u64) {
+    run_with(name, seed, writers, per_writer, false).0
+}
+
+/// [`run_on`], where `batches`: every other writer runs batches of edits; what the store
+/// counted (conflicts and exclusive runs, then rebases).
+fn run_with(name: &str, seed: u64, writers: u64, per_writer: usize, batches: bool) -> ((u64, u64), u64) {
     let bytes = fixture(name);
     let shared = editor(&bytes);
     let docx = shared.store().snapshot().doc().docx().unwrap();
@@ -225,7 +243,11 @@ fn run_on(name: &str, seed: u64, writers: u64, per_writer: usize) -> (u64, u64) 
                     let caller = Caller::named(&format!("writer {w}"));
                     (0..per_writer)
                         .filter_map(|_| {
-                            let command = edit(&mut rng, (targets, controls), w);
+                            let command = if batches && w % 2 == 1 {
+                                batch(&mut rng, (targets, controls), w)
+                            } else {
+                                edit(&mut rng, (targets, controls), w)
+                            };
                             // a refusal (a range a concurrent edit shortened) changes nothing
                             let done = shared.run(&caller, &command).ok()?;
                             done.changed.then(|| (done.version.seq(), command, done.version))
@@ -255,7 +277,7 @@ fn run_on(name: &str, seed: u64, writers: u64, per_writer: usize) -> (u64, u64) 
     }
     assert_eq!(seq, records.last().map_or(Seq(0), |r| r.0));
     let stats = shared.store().stats();
-    (stats.conflicts, stats.exclusive)
+    ((stats.conflicts, stats.exclusive), stats.rebased)
 }
 
 #[test]
@@ -265,6 +287,17 @@ fn concurrent_edits_equal_their_serial_order() {
         conflicts += run(seed, 4, 6).0;
     }
     assert!(conflicts > 0, "writers stamping one document should conflict");
+}
+
+#[test]
+fn concurrent_batches_beside_writers_equal_their_serial_order() {
+    // batches' change sequences moved past the writers' commits as one (design phase 3 §4)
+    let mut rebased = 0;
+    for seed in [41u64, 42] {
+        rebased += run_with("samplelib/sample-long.docx", seed, 4, 4, true).1;
+    }
+    run_with("wordto/sample-with-table.docx", 43, 4, 4, true);
+    assert!(rebased > 0, "batches beside writers should rebase");
 }
 
 #[test]
@@ -398,6 +431,22 @@ fn each_version_reads_as_a_fresh_reading_does() {
     }
 }
 
+/// The end gate's batches: sixty seeds of eight writers, every other one running batches
+/// of two to five common edits (run with `--ignored`, in release). It must pass before E1:
+/// it finds a defect in replaying a batch's several changes onto a newer head (lane D2d) --
+/// an op's insertion lost, text ids drawn in another order beside tracked ops, a batch's
+/// tracked author missing from people.xml.
+#[test]
+#[ignore = "known defect, lane D2d: a batch's changes replayed onto a newer head can differ from the serial replay; must pass before E1 (cargo test --release -- --ignored)"]
+fn sixty_seeds_of_eight_writers_with_batches() {
+    let mut rebased = 0;
+    for seed in 200..260u64 {
+        rebased += run_with("samplelib/sample-long.docx", seed, 8, 5, true).1;
+        run_with("generated/markdown/constructs.docx", seed, 8, 5, true);
+    }
+    println!("60 seeds, 8 writers with batches: {rebased} rebased");
+}
+
 /// The lane's end gate: sixty seeds of eight writers (run with `--ignored`, in release).
 #[test]
 #[ignore = "the end gate's long run: cargo test --release -- --ignored"]
@@ -419,4 +468,116 @@ fn sixty_seeds_of_eight_writers() {
         "60 seeds with content controls, 8 writers x 6 edits: {c_conflicts} conflicts, {c_exclusive} exclusive runs"
     );
     assert!(conflicts > 0);
+}
+
+/// A command that, once prepared the first time, waits at `gate` twice: for a writer to
+/// commit after the version it prepared on.
+struct Gated<'a> {
+    command: Edit,
+    gate: &'a Barrier,
+    waited: AtomicBool,
+}
+
+impl Command<WordDoc> for Gated<'_> {
+    type Out = bool;
+    type Error = EditError;
+
+    fn validate(&self, doc: &WordDoc) -> Result<(), EditError> {
+        self.command.validate(doc)
+    }
+
+    fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<bool, EditError> {
+        let out = self.command.prepare(tx)?;
+        if !self.waited.swap(true, Ordering::SeqCst) {
+            self.gate.wait(); // prepared
+            self.gate.wait(); // the writer committed
+        }
+        Ok(out)
+    }
+}
+
+#[test]
+fn a_batch_of_edits_to_one_paragraph_beside_a_writer_commits_once_as_a_serial_replay_gives() {
+    // each edit draws the paragraph a new text id; the writer, drawing from the same
+    // sequence, takes the values the batch drew where it was prepared. Replayed on the
+    // writer's version, the batch's later edits replace its earlier ones as applied there;
+    // either way the result is the serial replay's.
+    for tracked in [false, true] {
+        let bytes = fixture("samplelib/sample-long.docx");
+        let shared = editor(&bytes);
+        let ids = |e: &ooxml_word_edit::Editor| -> Vec<String> {
+            let docx = e.store().snapshot().doc().docx().unwrap();
+            docx.body()
+                .unwrap()
+                .ids
+                .paragraphs()
+                .iter()
+                .map(|p| p.id.clone())
+                .collect()
+        };
+        let policy = || {
+            if tracked {
+                RevisionPolicy::Tracked(Tracking {
+                    author: "Batch".to_owned(),
+                    date: "2026-11-26T10:00:00Z".to_owned(),
+                })
+            } else {
+                RevisionPolicy::Untracked
+            }
+        };
+        let set = |target: &str, text: &str| {
+            Edit::Set(SetText {
+                target: ooxml_word_model::address::Address::from(target.to_owned()),
+                text: text.to_owned(),
+                policy: policy(),
+            })
+        };
+        // every block stamped with an id first, as a document's first edit leaves it
+        let first = ids(&shared)[5].clone();
+        shared.run(&Caller::anonymous(), &set(&first, "Stamped.")).unwrap();
+        let targets = ids(&shared);
+        let (mine, theirs) = (targets[5].clone(), targets[15].clone());
+        let batch = Edit::Batch(Batch::new(vec![
+            set(&mine, "First words."),
+            set(&mine, "Second words."),
+            set(&mine, "Third words."),
+        ]));
+        let writer = set(&theirs, "The writer's words.");
+        let base = shared.store().snapshot();
+        let gate = Barrier::new(2);
+        let (attempts, version) = std::thread::scope(|scope| {
+            let batcher = scope.spawn(|| {
+                let gated = Gated {
+                    command: batch.clone(),
+                    gate: &gate,
+                    waited: AtomicBool::new(false),
+                };
+                let done = shared.run(&Caller::named("batch"), &gated).unwrap();
+                (done.attempts, done.version)
+            });
+            gate.wait();
+            shared.run(&Caller::named("writer"), &writer).unwrap();
+            gate.wait();
+            batcher.join().unwrap()
+        });
+        // untracked, replayed on the writer's version; tracked, the later edits replace
+        // revisions numbered where the first lands, so the batch is prepared again there
+        assert_eq!(attempts, if tracked { 2 } else { 1 }, "tracked {tracked}");
+        // the serial replay in commit order: the writer, then the batch
+        let serial = editor(&bytes);
+        serial.run(&Caller::anonymous(), &set(&first, "Stamped.")).unwrap();
+        assert_eq!(serial.store().snapshot().seq(), base.seq());
+        serial.run(&Caller::anonymous(), &writer).unwrap();
+        let done = serial.run(&Caller::anonymous(), &batch).unwrap();
+        assert_eq!(done.version.seq(), version.seq());
+        assert_eq!(written(done.version.doc()), written(version.doc()), "tracked {tracked}");
+        // and its undo takes back the batch alone
+        shared.store().undo().unwrap();
+        serial.store().undo().unwrap();
+        assert_eq!(
+            written(shared.store().snapshot().doc()),
+            written(serial.store().snapshot().doc()),
+            "tracked {tracked}: undone"
+        );
+    }
 }

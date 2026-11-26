@@ -89,7 +89,7 @@ impl<D: DocModel> Store<D> {
         // under the commit lock with the gate closed: nothing publishes after this head
         state.held = true;
         let number = state.numbered.saturating_add(1);
-        let tx = self.begin(setup).numbered(number);
+        let tx = self.begin(setup).numbered(number).behind_gate();
         drop(state);
         let base = Arc::clone(tx.base());
         let mut holder = lock(&self.holder);

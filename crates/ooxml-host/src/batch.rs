@@ -19,8 +19,8 @@ use crate::session::HostSession;
 use ooxml_session::batch::{passed, seconds};
 use ooxml_session::datasets::CallDatasets;
 use ooxml_session::{
-    AnyVersion, BatchOps, BatchRefused, CallContext, CallMade, CallRefs, Deferred, DocId, InBatch, OpRan, RefOwner,
-    StepOwner,
+    AnyVersion, BatchHold, BatchOps, BatchRefused, CallCancel, CallContext, CallMade, CallRefs, Deferred, DocId,
+    FormatDoc, InBatch, OpRan, RefOwner, StepOwner,
 };
 use ooxml_store::{AttemptState, OpTxn, TxnOwner};
 use ooxml_tools::roles::RoleSet;
@@ -94,6 +94,9 @@ struct Attempt {
     images: usize,
     /// Each applied op's format effects, in op order.
     deferred: Vec<(usize, Vec<Deferred>)>,
+    /// Where each applied op's warnings end among [`Attempt::warnings`]: what its effects
+    /// say once the batch is published goes there.
+    ends: BTreeMap<usize, usize>,
     /// The datasets the ops named or defined (as one call's, today's batch's context): an
     /// op over the session's limit refused as it defines (`CallDatasets::define`), a failed
     /// op's taken back; kept once the batch is published.
@@ -193,6 +196,13 @@ impl HostSession {
             batched: batched.clone(),
             values: going.values.clone(),
         };
+        // what the formats hold for the whole run (design §4: Word's tracking mode), in
+        // document order, let go once the batch's effects are kept
+        let formats: Vec<Arc<dyn FormatDoc>> = batched
+            .iter()
+            .filter_map(|doc| self.session.format_doc(&DocId::parse(doc)?).ok())
+            .collect();
+        let holds = holds(&formats, planned.get(..split).unwrap_or(&[]));
         let published = self.run_ops(&run, &batched);
         let mut attempt = std::mem::take(&mut *run.lock());
         let published = match published {
@@ -208,7 +218,7 @@ impl HostSession {
             going.lock.held += at.lock.held;
             going.lock.waited += at.lock.waited;
         }
-        let result = self.published(&run, &mut attempt, &published, &named, notes);
+        let result = self.published(&run, &mut attempt, &published, (&named, holds), notes);
         self.at_primary(result, primary.as_deref())
     }
 
@@ -219,11 +229,14 @@ impl HostSession {
         run: &Run<'_>,
         attempt: &mut Attempt,
         published: &BTreeMap<String, Published>,
-        named: &[String],
+        (named, holds): (&[String], Vec<BatchHold<'_>>),
         notes: Vec<String>,
     ) -> ToolResult<Value> {
         let context = self.context(run.caller);
-        if let Err(error) = self.keep_published(run, attempt, published, &context) {
+        let kept = self.keep_published(run, attempt, published, &context);
+        // its effects kept (a tracking mode it set among them): what it held is let go
+        drop(holds);
+        if let Err(error) = kept {
             return ToolResult::failed(error);
         }
         let mut done = Done::new(String::new());
@@ -465,6 +478,9 @@ impl HostSession {
         // today's batch refuses too, after its ops applied
         let stale = self.finish_datasets(std::mem::take(&mut attempt.datasets_of))?;
         attempt.warnings.extend(stale);
+        let session = self.session.context();
+        let cancel = CallCancel::new(context, &*session.cancel, &*session.clock);
+        let mut said: Vec<(usize, Vec<String>)> = Vec::new();
         for (index, deferred) in std::mem::take(&mut attempt.deferred) {
             let Some(doc) = run.planned.get(index).and_then(|p| p.docs.first()) else {
                 continue;
@@ -475,9 +491,18 @@ impl HostSession {
             ) else {
                 continue;
             };
+            let mut op_said = Vec::new();
             for keep in deferred {
-                keep(&*format, &at.version);
+                op_said.extend(keep(&*format, &at.version, context, &cancel));
             }
+            said.push((index, op_said));
+        }
+        // what each op says now, in its place among the batch's (ooxml-edit's `_run_deferred`)
+        for (index, op_said) in said.into_iter().rev() {
+            let at = attempt.ends.get(&index).copied().unwrap_or(attempt.warnings.len());
+            attempt
+                .warnings
+                .splice(at..at, op_said.into_iter().map(|w| format!("ops[{index}]: {w}")));
         }
         for (doc, at) in published {
             if at.previous.is_none() {
@@ -968,6 +993,7 @@ impl Run<'_> {
         attempt
             .warnings
             .extend(warnings.iter().map(|w| format!("ops[{index}]: {w}")));
+        attempt.ends.insert(index, attempt.warnings.len());
         attempt.outcomes.insert(index, outcome(index, &planned.tool, done));
         if let Some(inner) = inner {
             if !inner.deferred.is_empty() {
@@ -986,6 +1012,17 @@ impl Run<'_> {
         }
         Ok(())
     }
+}
+
+/// What `formats` hold for a batch whose ops before its reads are `ops`
+/// ([`FormatDoc::hold_for_batch`]), in their order.
+fn holds<'f>(formats: &'f [Arc<dyn FormatDoc>], ops: &[Planned]) -> Vec<BatchHold<'f>> {
+    let tools: Vec<&str> = ops
+        .iter()
+        .filter(|p| p.changes && p.refused.is_none())
+        .map(|p| p.tool.as_str())
+        .collect();
+    formats.iter().filter_map(|f| f.hold_for_batch(&tools)).collect()
 }
 
 /// An op's outcome as the reply lists it: its summary, the ids it created, its data.

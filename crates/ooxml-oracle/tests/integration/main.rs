@@ -8,6 +8,7 @@ mod frozen_numbers;
 mod frozen_values;
 mod grid_values;
 mod host_batch_bench;
+mod host_batch_tracking;
 mod host_goldens;
 mod metafile_cases;
 mod scene_goldens;

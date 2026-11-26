@@ -93,6 +93,7 @@ impl HostSession {
         let roles = self.narrowed(how.roles).map_err(NotRun::Roles)?;
         let clock = &self.session.context().clock;
         let started = clock.monotonic();
+        let cpu = clock.thread_cpu();
         let mut going = Going::new(name, arguments.clone());
         going.values = how.values.clone();
         let ran = catch_unwind(AssertUnwindSafe(|| self.go(name, arguments, roles, how, &mut going)));
@@ -114,7 +115,8 @@ impl HostSession {
         result.warnings = warnings;
         result.app.tool.clone_from(&going.tool);
         let duration = clock.monotonic().saturating_sub(started);
-        result.app.timing = Some(timing(duration, going.lock));
+        let cpu = cpu.zip(clock.thread_cpu()).map(|(then, now)| now.saturating_sub(then));
+        result.app.timing = Some(timing(duration, cpu, going.lock));
         self.record(&going, &result, roles, how, duration);
         Ok(result)
     }
@@ -665,15 +667,19 @@ impl HostSession {
 
 /// Where a call's time went (R142, as 0.1's `Result.block`): the whole call, the time it
 /// waited for its documents' commit locks and gates, the rest, and how long it held the
-/// locks. (The thread's own CPU is not measured by the Rust host: `cpu` is 0.)
-fn timing(total: std::time::Duration, lock: ooxml_session::LockSpent) -> ooxml_tools::Timing {
+/// locks, and the CPU time of the thread the call ran on (`cpu`, where the clock gives it).
+fn timing(
+    total: std::time::Duration,
+    cpu: Option<std::time::Duration>,
+    lock: ooxml_session::LockSpent,
+) -> ooxml_tools::Timing {
     let total = total.as_secs_f64();
     let lock_wait = lock.waited.as_secs_f64().min(total);
     ooxml_tools::Timing {
         total,
         lock_wait,
         work: total - lock_wait,
-        cpu: 0.0,
+        cpu: cpu.map(|cpu| cpu.as_secs_f64()),
         held: lock.held.as_secs_f64(),
     }
 }

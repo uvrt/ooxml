@@ -1,13 +1,21 @@
 //! A batch through the host (design phase 3, section 4): one step however its ops went, its
 //! refs and effects kept once, a failed op skipped or an atomic batch refused whole; and a
 //! batch made to conflict k times beside a writer, prepared again each time, leaving what one
-//! that never conflicted leaves (the conflict-k-times effects test).
+//! that never conflicted leaves (the conflict-k-times effects test); a dataset made stale
+//! between two attempts said stale by the one that published.
 
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 
-use crate::toy::{as_toy, call, session, toy};
+use crate::toy::{as_toy, call, package, session, toy, Never};
+use ooxml_base::Limits;
+use ooxml_session::datasets::{DatasetEntry, DocMeta};
+use ooxml_session::{DocKind, PartUpdate};
+use ooxml_store::Caller;
+use ooxml_tools::datasets::Dataset;
+use ooxml_tools::sources::Cell;
 use serde_json::{json, Value};
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 fn ops() -> Value {
     json!({"ops": [
@@ -111,4 +119,53 @@ fn a_batch_that_conflicts_k_times_leaves_what_one_that_never_did_leaves() {
         assert_eq!(attempts.conflicts, k as u64, "k = {k}");
         assert_eq!(s.log().len(), 2, "one record for the batch");
     }
+}
+
+#[test]
+fn a_dataset_made_stale_between_two_attempts_is_said_stale_by_the_one_that_published() {
+    // a dataset of a second document, read by the batch's first op; as the writer beside
+    // the batch makes it run again, that document changes too
+    let ops = json!({"ops": [
+        {"tool": "toy_fill", "arguments": {"doc": "d1", "from": "d:sales"}},
+        {"tool": "toy_set", "arguments": {"doc": "d1", "target": "a", "text": "one"}},
+    ]});
+    let with_sales = |stale: bool| {
+        let s = session();
+        let other = s.open(package(), DocKind::Pptx, "other.pptx").unwrap();
+        let sales = Dataset::new(vec!["region".into()], vec![vec![Cell::Text("North".into())]]).unwrap();
+        let meta = DocMeta {
+            doc: other.to_string(),
+            kind: DocKind::Pptx,
+            name: "other.pptx".into(),
+        };
+        s.keep_datasets(vec![DatasetEntry::new("sales", Arc::new(sales), Some(&meta))])
+            .unwrap();
+        let doc = toy(&s);
+        as_toy(&*doc).2.store(1, Ordering::SeqCst);
+        if stale {
+            let second = s.session().format_doc(&other).unwrap();
+            let change: Box<dyn FnOnce() + Send> = Box::new(move || {
+                let theirs: Arc<[u8]> = b"<t>theirs</t>".as_slice().into();
+                let update = PartUpdate::new(vec![("toy/b.xml".into(), Some(theirs))], Limits::default(), &Never);
+                second
+                    .update(&Caller::named("other"), Some("toy_set"), &update)
+                    .unwrap();
+            });
+            as_toy(&*doc).4.lock().unwrap().push(change);
+        }
+        let reply = call(&s, "batch", ops.clone());
+        assert_eq!(reply["ok"], true, "{reply}");
+        assert_eq!(doc.stored().stats().conflicts, 1, "run again once");
+        reply
+    };
+    let current = with_sales(false);
+    assert!(!current.to_string().contains("is stale"), "{current}");
+    let stale = with_sales(true);
+    let said: Vec<&Value> = stale["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|w| w.as_str().unwrap().starts_with("d:sales is stale"))
+        .collect();
+    assert_eq!(said.len(), 1, "{stale}");
 }

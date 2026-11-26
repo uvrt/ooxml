@@ -412,6 +412,22 @@ fn table_reply(
     result
 }
 
+/// What a table kept together says of the pages the document draws it on (docx-agent's
+/// `_taller_than_page`): taller than a page where it is drawn on more than one, not known
+/// where the layout could not say (`Err`); nothing where it fits one page or was not
+/// measured (`None`). A host's batch says it once the batch is published.
+#[must_use]
+pub fn kept_together_said(table: &str, pages: Option<Result<&[usize], ()>>) -> Option<String> {
+    match pages {
+        Some(Ok(pages)) if pages.len() > 1 => Some(format!("{table} is {TALLER_THAN_PAGE}")),
+        Some(Err(())) => Some(format!(
+            "{table} is kept together, but the document could not be laid out to it: whether it is taller than a \
+             page is not known (if it is, Word starts it on a new page and breaks it where the page is full)"
+        )),
+        _ => None,
+    }
+}
+
 /// What a call with `keep_together` or `keep_with_next` says after its edit (docx-agent's
 /// `word_format_table`): a table kept together that is taller than a page, or whose pages
 /// the layout cannot say (`_taller_than_page`, from `pages`); a loose paragraph between the
@@ -431,16 +447,8 @@ fn keep_notes(
         .iter()
         .find(|(old, _)| *old == args.table)
         .map_or_else(|| args.table.clone(), |(_, new)| new.clone());
-    match pages {
-        Some(Ok(pages)) if pages.len() > 1 => {
-            result.warnings.push(format!("{table} is {TALLER_THAN_PAGE}"));
-        }
-        Some(Err(_)) => result.warnings.push(format!(
-            "{table} is kept together, but the document could not be laid out to it: whether it is taller than a \
-             page is not known (if it is, Word starts it on a new page and breaks it where the page is full)"
-        )),
-        _ => {}
-    }
+    let pages = pages.as_ref().map(|found| found.as_deref().map_err(|_| ()));
+    result.warnings.extend(kept_together_said(&table, pages));
     // the version the call made: another caller's commit since is not this call's
     let head = version;
     let loose = if args.keep_with_next == Some(true) {

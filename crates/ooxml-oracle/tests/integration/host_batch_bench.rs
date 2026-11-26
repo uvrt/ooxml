@@ -4,8 +4,8 @@
 //! batch): [`WRITERS`] writers (`HOST_BATCH_WRITERS`: 0 times the batch alone) each setting their own paragraph's text (`word_set_text`), a
 //! reader (`word_read`), and a batch of [`BATCH_OPS`] text edits of one paragraph, back to back,
 //! all through one `HostSession` of Word's format, for `HOST_BATCH_SECS` (default 8). Prints
-//! each tool's calls and wall times (p50, p99, max) and the store's commits, conflicts,
-//! rebases and exclusive runs.
+//! each tool's calls and wall times (p50, p99, max) -- a batch with a failed op counted as
+//! failed -- and the store's commits, conflicts, rebases and exclusive runs.
 //!
 //! Must not: run without the variable; it is a timing, not a test.
 
@@ -40,8 +40,21 @@ fn caller(name: &str) -> CallAs {
 /// The paragraphs whose ids and text a `word_read` of the document names, `wanted` of them
 /// spread over it (lowercase text of some length, top level).
 fn paragraphs(s: &HostSession, wanted: usize) -> Vec<(String, String)> {
-    let read = s.call("word_read", json!({"doc": "d1"}), &CallAs::default()).unwrap();
-    let text = Value::Object(read.to_json())["data"].as_str().unwrap_or("").to_owned();
+    // the whole document, page by page of the read
+    let mut text = String::new();
+    let mut cursor = Value::Null;
+    loop {
+        let read = s
+            .call("word_read", json!({"doc": "d1", "cursor": cursor}), &CallAs::default())
+            .unwrap();
+        let read = Value::Object(read.to_json());
+        text.push_str(read["data"].as_str().unwrap_or(""));
+        text.push('\n');
+        cursor = read["next_cursor"].clone();
+        if cursor.is_null() {
+            break;
+        }
+    }
     let mut found = Vec::new();
     let mut lines = text.lines().peekable();
     while let Some(line) = lines.next() {
@@ -52,7 +65,8 @@ fn paragraphs(s: &HostSession, wanted: usize) -> Vec<(String, String)> {
         else {
             continue;
         };
-        if let (true, Some(next)) = (id.starts_with("p:"), lines.peek()) {
+        // (by id, or by place where the document's blocks have no ids yet)
+        if let (true, Some(next)) = (id.starts_with("p:") || id.starts_with("p@body/"), lines.peek()) {
             if next.len() > 20 && next.chars().all(|c| c.is_alphanumeric() || " ,.;:'-()".contains(c)) {
                 found.push((id.to_owned(), (*next).to_owned()));
             }
@@ -139,7 +153,12 @@ fn a_batch_beside_writers_through_the_host() {
                 };
                 let started = Instant::now();
                 let result = s.call(tool, arguments, &how).unwrap();
-                note(&book, &label, started.elapsed(), result.is_error());
+                // a batch whose op failed is no fair timing: counted as failed
+                let ops_failed = batch
+                    && Value::Object(result.to_json())["data"]["failed"]
+                        .as_array()
+                        .is_some_and(|f| !f.is_empty());
+                note(&book, &label, started.elapsed(), result.is_error() || ops_failed);
                 if result.is_error() && round < 2 {
                     eprintln!("{label} failed: {}", Value::Object(result.to_json()));
                 }

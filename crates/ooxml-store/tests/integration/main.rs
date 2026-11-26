@@ -4,6 +4,7 @@
 //! tests/loom.rs stays its own program: it builds only with RUSTFLAGS="--cfg loom".
 
 mod common;
+mod items;
 
 mod carry;
 mod changes;

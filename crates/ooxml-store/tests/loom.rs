@@ -8,8 +8,9 @@
 //! on the newer version and loses no update, and one that keeps conflicting until it runs behind
 //! the gate (Phase 3's scaffold for the host's batches, design §4 and §7.5); and the host's
 //! batch as Phase 3 runs it (`Store::run_txn`, each op handed the transaction erased), beside a
-//! writer and behind the gate. Every run equals a
-//! serial run in commit order. Run with
+//! writer and behind the gate; and a batch of positional changes beside a writer's insertion,
+//! its change sequence moved past the writer's as one (design phase 3 §4, the sequence
+//! rebase). Every run equals a serial run in commit order. Run with
 //! `RUSTFLAGS="--cfg loom" cargo test -p ooxml-store --test loom --release`.
 // Tests may unwrap, panic and index (docs/architecture/README.md, section 2.5).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
@@ -17,6 +18,8 @@
 
 #[path = "integration/common.rs"]
 mod common;
+#[path = "integration/items.rs"]
+mod items;
 
 use common::{still, Cells, Fail, Mix, Put};
 use ooxml_store::{AttemptState, Batch, Command, InOp, OpTxn, Txn};
@@ -515,6 +518,52 @@ fn a_host_batch_that_keeps_conflicting_runs_behind_the_gate_and_ends() {
         };
         let (batch_at, written_at) = (batcher.join().unwrap(), writer.join().unwrap());
         assert_eq!(store.snapshot().doc(), &serial_batch(written_at < batch_at));
+        assert_eq!(store.steps().len(), 2);
+    });
+}
+
+/// The batch beside the writer's insertion: an insertion before item 1, then a set of item 2
+/// (one place further on once the first is in), and the writer's insertion before item 2.
+fn positional() -> (Batch<items::Op>, items::Op) {
+    let batch = Batch::new(vec![
+        items::Op::Insert { name: 50, before: 1 },
+        items::Op::Add { name: 2, add: 7 },
+    ]);
+    (batch, items::Op::Insert { name: 60, before: 2 })
+}
+
+#[test]
+fn a_batchs_change_sequence_rebased_past_a_writers_commit_loses_no_update() {
+    loom::model(|| {
+        let store = Arc::new(Store::new(items::Items::named(4), StoreConfig::default(), still()));
+        let batcher = {
+            let store = Arc::clone(&store);
+            loom::thread::spawn(move || {
+                let done = store.run(&Caller::anonymous(), &positional().0).unwrap();
+                assert!(done.out.iter().all(Result::is_ok));
+                done.version.seq()
+            })
+        };
+        let writer = {
+            let store = Arc::clone(&store);
+            loom::thread::spawn(move || store.run(&Caller::anonymous(), &positional().1).unwrap().version.seq())
+        };
+        let (batch_at, written_at) = (batcher.join().unwrap(), writer.join().unwrap());
+        let serial = Store::new(items::Items::named(4), StoreConfig::default(), still());
+        let (batch, insert) = positional();
+        if written_at < batch_at {
+            serial.run(&Caller::anonymous(), &insert).unwrap();
+            serial.run(&Caller::anonymous(), &batch).unwrap();
+        } else {
+            serial.run(&Caller::anonymous(), &batch).unwrap();
+            serial.run(&Caller::anonymous(), &insert).unwrap();
+        }
+        let doc = store.snapshot();
+        assert_eq!(doc.doc(), serial.snapshot().doc());
+        // both insertions kept and the set landed on item 2, whichever way it ran
+        let names: Vec<u32> = doc.doc().0.iter().map(|i| i.0).collect();
+        assert!(names.contains(&50) && names.contains(&60), "{names:?}");
+        assert!(doc.doc().0.contains(&(2, 7)));
         assert_eq!(store.steps().len(), 2);
     });
 }

@@ -447,7 +447,8 @@ impl DatasetStore {
 
     /// Keep the datasets a call defined: all, or none and `limit`. An id that exists is
     /// replaced (and goes last); a new one needs room. A source closed while the call ran
-    /// keeps its staleness for good.
+    /// keeps its staleness for good; a source given no version (an application's own
+    /// dataset, kept as a call defines one) is of its document's head now.
     ///
     /// # Errors
     /// `limit`: the store would hold more than its limit.
@@ -474,6 +475,10 @@ impl DatasetStore {
                 if heads.head(&doc).is_none() {
                     entry.source.document_closed(&doc, None); // closed while the call ran
                 }
+            }
+            fill(&mut entry.source, false, heads);
+            for other in &mut entry.source.also {
+                fill(other, false, heads);
             }
             self.entries.retain(|e| e.id != entry.id);
             self.entries.push(entry);

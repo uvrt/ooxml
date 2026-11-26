@@ -201,21 +201,23 @@ impl Call<'_> {
     /// made are kept for the call (its `made`), and the ids its edits drew as stand-ins are
     /// named in the reply as they were drawn where the edits landed
     /// ([`ooxml_tools_word::resolve_drawn`]); the spaces their language spacing wrote are
-    /// counted in it ([`ooxml_tools_word::note_spaced`]). The tracking mode is read for the
-    /// whole call ([`Word::tracking_read`]): a `word_set_tracking` waits until the call has
-    /// committed, so its edits are written under the mode they commit under.
+    /// counted in it ([`ooxml_tools_word::note_spaced`]). The tracking mode is held for the
+    /// whole call ([`Word::tracking_held`]): a `word_set_tracking` waits until the call has
+    /// committed, so its edits are written under the mode they commit under. An op of a
+    /// host's batch reads it as the batch holds it (`FormatDoc::hold_for_batch`), or as an
+    /// op before it in the attempt set it.
     pub(crate) fn edit(
         &self,
         word: &Word,
         arguments: Option<&serde_json::Map<String, Value>>,
         run: impl FnOnce(&Editing<'_>) -> ToolResult<Value>,
     ) -> ToolResult<Value> {
-        let mode = word.tracking_read();
-        // in a batch's attempt, the mode an op before it set
-        match self.attempt_tracking() {
-            Some(set) => self.edit_under(word, set.as_deref(), arguments, run),
-            None => self.edit_under(word, mode.as_deref(), arguments, run),
+        if self.txn.is_some() {
+            let mode = self.attempt_tracking().unwrap_or_else(|| word.tracking());
+            return self.edit_under(word, mode.as_deref(), arguments, run);
         }
+        let _held = word.tracking_held();
+        self.edit_under(word, word.tracking().as_deref(), arguments, run)
     }
 
     /// The tracking mode an op of the call's batch attempt set before it, where one did.
@@ -237,24 +239,25 @@ impl Call<'_> {
         if let Some(txn) = self.txn {
             return self.edit_tracking_in(word, txn, arguments, run);
         }
-        let mut mode = word.tracking_write();
+        let _alone = word.tracking_alone();
         let mut left = None;
-        let result = self.edit_under(word, mode.as_deref(), arguments, |editing| {
+        let result = self.edit_under(word, word.tracking().as_deref(), arguments, |editing| {
             let (result, set) = run(editing);
             left = set;
             result
         });
         if let Some(set) = left {
-            *mode = match set {
+            word.set_tracking(match set {
                 ooxml_tools_word::Tracked::On(author) => Some(author),
                 ooxml_tools_word::Tracked::Off => None,
-            };
+            });
         }
         result
     }
 
     /// [`Call::edit_tracking`] of an op of a host's batch: the mode `run` leaves kept for the
-    /// attempt's later ops, and taken by the document once the batch is published.
+    /// attempt's later ops, and taken by the document once the batch is published, while the
+    /// batch still holds the mode alone (`FormatDoc::hold_for_batch`).
     fn edit_tracking_in(
         &self,
         word: &Word,
@@ -277,10 +280,12 @@ impl Call<'_> {
             *txn.attempt().lock().unwrap_or_else(PoisonError::into_inner) = Some(Box::new(Attempt {
                 tracking: Some(author.clone()),
             }));
-            let keep: Deferred = Box::new(move |doc, _| {
+            let keep: Deferred = Box::new(move |doc, _, _, _| {
                 if let Some(word) = Word::of(doc) {
-                    word.restore_tracking(author);
+                    // (the batch holds the mode alone until its effects are kept)
+                    word.set_tracking(author);
                 }
+                Vec::new()
             });
             self.deferred.lock().unwrap_or_else(PoisonError::into_inner).push(keep);
         }
