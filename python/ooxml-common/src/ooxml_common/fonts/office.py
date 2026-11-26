@@ -482,36 +482,11 @@ CMAP_MOST_CODES = 0x110000
 CMAP_MOST_CODES_16 = 0x10000
 
 
-def cmap_subtable_refused(table: bytes, offset: int) -> bool:
-    """Whether the subtable at ``offset`` of a ``cmap`` claims more codes than its
-    codespace holds in all (:data:`CMAP_MOST_CODES`, :data:`CMAP_MOST_CODES_16`): ranges
-    laid over each other, refused before any is read.  Groups are read as far as the table
-    holds them; a format 4 header cut short raises :class:`struct.error`."""
-    fmt = struct.unpack_from(">H", table, offset)[0]
-    if fmt == 4:
-        segments = struct.unpack_from(">H", table, offset + 6)[0] // 2
-        ends = struct.unpack_from(f">{segments}H", table, offset + 14)
-        starts = struct.unpack_from(f">{segments}H", table, offset + 16 + 2 * segments)
-        claimed = sum(end - start + 1 for start, end in zip(starts, ends) if start != 0xFFFF and end >= start)
-        return claimed > CMAP_MOST_CODES_16
-    if fmt in (12, 13):
-        groups = struct.unpack_from(">I", table, offset + 12)[0]
-        claimed = 0
-        for i in range(min(groups, max(0, (len(table) - offset - 16) // 12))):
-            start, end, _ = struct.unpack_from(">III", table, offset + 16 + 12 * i)
-            if start <= end and end - start < CMAP_MOST_CODES:
-                claimed += end - start + 1
-        return claimed > CMAP_MOST_CODES
-    return False
-
-
 def _cmap_subtable(table: bytes, offset: int) -> dict[int, int]:
     """One subtable's code point -> glyph id; ``{}`` for one whose ranges claim more than
-    its codespace (:func:`cmap_subtable_refused`)."""
+    its codespace (:data:`CMAP_MOST_CODES`), refused before any is read."""
     fmt = struct.unpack_from(">H", table, offset)[0]
     out: dict[int, int] = {}
-    if fmt in (4, 12, 13) and cmap_subtable_refused(table, offset):
-        return out
     if fmt == 0:
         for code, glyph in enumerate(table[offset + 6:offset + 262]):
             if glyph:
@@ -524,6 +499,9 @@ def _cmap_subtable(table: bytes, offset: int) -> dict[int, int]:
         deltas = struct.unpack_from(f">{segments}h", table, starts_at + 2 * segments)
         ranges_at = starts_at + 4 * segments
         ranges = struct.unpack_from(f">{segments}H", table, ranges_at)
+        claimed = sum(end - start + 1 for start, end in zip(starts, ends) if start != 0xFFFF and end >= start)
+        if claimed > CMAP_MOST_CODES_16:
+            return out
         for k in range(segments):
             start, end, delta, range_offset = starts[k], ends[k], deltas[k], ranges[k]
             if start == 0xFFFF:
@@ -547,6 +525,14 @@ def _cmap_subtable(table: bytes, offset: int) -> dict[int, int]:
                 out[first + i] = glyph
     elif fmt in (12, 13):
         groups = struct.unpack_from(">I", table, offset + 12)[0]
+        present = min(groups, max(0, (len(table) - offset - 16) // 12))
+        claimed = 0
+        for i in range(present):
+            start, end, _ = struct.unpack_from(">III", table, offset + 16 + 12 * i)
+            if start <= end and end - start < CMAP_MOST_CODES:
+                claimed += end - start + 1
+        if claimed > CMAP_MOST_CODES:
+            return out
         for i in range(groups):
             start, end, glyph = struct.unpack_from(">III", table, offset + 16 + 12 * i)
             if end - start >= CMAP_MOST_CODES:

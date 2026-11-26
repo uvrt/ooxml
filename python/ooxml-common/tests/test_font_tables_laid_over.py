@@ -56,7 +56,7 @@ def test_the_made_up_font_maps_nothing_and_is_read_in_a_moment():
     assert _quick(lambda: face.glyph("A")) is None
     tables = sfnt.read_tables(data)
     assert _quick(sfnt._cmap, tables[b"cmap"]) == {}
-    assert _quick(rasterdb._coverage, tables[b"cmap"]) == (frozenset(), None)  # refused: kept
+    assert _quick(rasterdb._coverage, tables[b"cmap"]) == (frozenset(), frozenset())
 
 
 def test_groups_claiming_more_than_the_codespace_in_all_are_refused():
@@ -86,33 +86,3 @@ def test_kern_subtables_laid_over_each_other_are_read_no_further_than_the_table_
     # Apple's header: 2^32 - 1 subtables, the first of length 0 and not format 0.
     table = struct.pack(">II", 0x00010000, 0xFFFFFFFF) + struct.pack(">IHH", 0, 2, 0)
     assert _quick(office.read_legacy_kern, table) == {}
-
-
-def test_a_raster_face_reads_only_the_subtables_resvg_selects():
-    # 65,535 records, each its own format 13 subtable of one group claiming 65,536 codes:
-    # every one read was 4 billion insertions; the shaper reads the first, the fallback
-    # check (formats 4 and 12 only) none.
-    count = 0xFFFF
-    subtable = struct.pack(">HHIIIIII", 13, 0, 28, 0, 1, 0x10000, 0x1FFFF, 7)
-    first = 4 + 8 * count
-    table = struct.pack(">HH", 0, count) + b"".join(
-        struct.pack(">HHI", 0, 3, first + 28 * k) for k in range(count)) + subtable * count
-    strict, loose = _quick(rasterdb._coverage, table)
-    assert (len(strict), min(strict), max(strict), loose) == (0x10000, 0x10000, 0x1FFFF, frozenset())
-
-
-def test_a_raster_face_covers_what_resvg_selects_not_every_subtable():
-    # (3, 1) maps A, (3, 10) maps A and B: the shaper and the fallback both read (3, 10).
-    bmp, full = _format12([(0x41, 0x41, 3)]), _format12([(0x41, 0x42, 3)])
-    head = struct.pack(">HH", 0, 2)
-    first = 4 + 16
-    table = head + struct.pack(">HHI", 3, 1, first) + struct.pack(">HHI", 3, 10, first + len(bmp)) + bmp + full
-    assert rasterdb._coverage(table) == (frozenset({0x41, 0x42}), frozenset({0x41, 0x42}))
-    # A symbol subtable is chosen over Unicode, its U+F0xx also read as U+00xx.
-    sym = _format4([(0xF041, 0xF041), (0xFFFF, 0xFFFF)])
-    table = head + struct.pack(">HHI", 3, 1, first) + struct.pack(">HHI", 3, 0, first + len(bmp)) + bmp + sym
-    assert rasterdb._coverage(table) == (frozenset({0xF041, 0x41}),) * 2
-    # A subtable laid over itself: nothing for the shaper, anything for the fallback.
-    over = _format12([(0, 0x7FFFF, 1)] * 3)
-    table = struct.pack(">HH", 0, 1) + struct.pack(">HHI", 3, 10, 12) + over
-    assert _quick(rasterdb._coverage, table) == (frozenset(), None)

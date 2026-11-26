@@ -49,7 +49,7 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 from typing import Mapping, Sequence
 
-from .office import _cmap_subtable, cmap_subtable_refused, decode_name
+from .office import _cmap_subtable, decode_name
 
 __all__ = ["RESVG_DEFAULT_FAMILIES", "file_stamps", "forget", "load_order", "needed_font_files",
            "parsed_svg", "resvg_system_dirs"]
@@ -208,13 +208,13 @@ class _FaceInfo:
 
     @property
     def strict(self) -> frozenset:
-        """What the shaper's subtable maps: what it surely finds (:func:`_coverage`)."""
+        """What every Unicode subtable maps: what the shaper surely finds."""
         return _coverage_of(*self.key)[0]
 
     @property
     def loose(self) -> "frozenset | None":
-        """What the fallback check's subtable maps (a symbol subtable's U+F0xx also as
-        U+00xx): what a fallback may find; ``None`` where it cannot be read (anything)."""
+        """What any subtable maps (a symbol subtable's U+F0xx also as U+00xx): what a
+        fallback may find; ``None`` where a subtable's format is not read (anything)."""
         return _coverage_of(*self.key)[1]
 
 
@@ -296,70 +296,33 @@ def _coverage_of(path: str, mtime: int, size: int, number: int) -> "tuple[frozen
         return frozenset(), None
 
 
-#: The subtable resvg's shaper (harfrust 0.12, read-fonts 0.41's ``best_subtable``, as
-#: HarfBuzz) maps a run's characters through: the first record, in this order of
-#: (platform, encoding), whose subtable is one of :data:`_SHAPER_FORMATS`.
-_SHAPER_ORDER = ((3, 0), (3, 10), (0, 6), (0, 4), (3, 1), (0, 3), (0, 2), (0, 1), (0, 0), (1, 0))
-_SHAPER_FORMATS = (0, 4, 6, 10, 12, 13)
-
-
-def _fallback_kind(platform: int, encoding: int) -> int:
-    """How resvg's fallback check (usvg's ``has_char``: skrifa 0.44's ``Charmap``, as
-    FreeType) ranks a record: symbol 3, full Unicode 2, Unicode BMP 1, else 0."""
-    if (platform, encoding) == (3, 0):
-        return 3
-    if (platform, encoding) in ((3, 10), (0, 4)):
-        return 2
-    if (platform == 0 and encoding != 5) or platform == 2 or (platform, encoding) == (3, 1):
-        return 1
-    return 0
-
-
-def _symbol(mapped: set[int]) -> set[int]:
-    """A symbol subtable's codes, with U+F000..F0FF also as U+0000..00FF (both readers)."""
-    return mapped | {code - 0xF000 for code in mapped if 0xF000 <= code <= 0xF0FF}
-
-
 def _coverage(table: bytes) -> "tuple[frozenset, frozenset | None]":
-    """``(strict, loose)``: what resvg's shaper maps (one subtable, :data:`_SHAPER_ORDER`)
-    and what its fallback check finds (one subtable, :func:`_fallback_kind`), each the
-    subtable that reader selects -- a character only another subtable maps is never drawn,
-    and one subtable is read for each.  A subtable this module does not read (format 10),
-    or one refused as laid over itself
-    (:func:`~ooxml_common.fonts.office.cmap_subtable_refused`), is nothing for the shaper
-    and anything (``None``) for the fallback: what is kept is never less."""
     count = struct.unpack_from(">H", table, 2)[0]
-    records = [struct.unpack_from(">HHI", table, 4 + 8 * i) for i in range(count)]
-
-    def fmt(at: int) -> int:
-        return struct.unpack_from(">H", table, at)[0]
-
-    strict: set[int] = set()
-    shaped = next(((p, e, at) for key in _SHAPER_ORDER for p, e, at in records
-                   if (p, e) == key and fmt(at) in _SHAPER_FORMATS), None)
-    if shaped is not None and fmt(shaped[2]) != 10 and not cmap_subtable_refused(table, shaped[2]):
-        mapped = set(_cmap_subtable(table, shaped[2]))
-        if shaped[:2] == (1, 0):
-            # Mac Roman: harfrust takes a character past ASCII to its Mac Roman code.
-            strict = {c for c in mapped if c <= 0x7F} | {
-                ord(bytes([c]).decode("mac_roman")) for c in mapped if 0x80 <= c <= 0xFF}
-        else:
-            strict = _symbol(mapped) if shaped[:2] == (3, 0) else mapped
-
+    strict: "set[int] | None" = None
     loose: "set[int] | None" = set()
-    best = 0
-    fallback = None
-    for p, e, at in reversed(records):          # skrifa reads the records from the last
-        kind = _fallback_kind(p, e)
-        if kind > best and fmt(at) in (4, 12):
-            best, fallback = kind, (p, e, at)
-    if fallback is not None:
-        if cmap_subtable_refused(table, fallback[2]):
+    subtables: dict[int, frozenset] = {}
+    for i in range(count):
+        platform, encoding, at = struct.unpack_from(">HHI", table, 4 + 8 * i)
+        fmt = struct.unpack_from(">H", table, at)[0]
+        if fmt == 14:
+            continue                         # variation sequences, not a character map
+        unicode = platform == 0 or (platform == 3 and encoding in (1, 10))
+        if fmt not in (0, 4, 6, 12, 13):
             loose = None
-        else:
-            mapped = set(_cmap_subtable(table, fallback[2]))
-            loose = _symbol(mapped) if fallback[:2] == (3, 0) else mapped
-    return frozenset(strict), (None if loose is None else frozenset(loose))
+            if unicode:
+                strict = set()               # cannot say what it maps: assume nothing
+            continue
+        # Records of one subtable (a font's (0, 3) and (3, 1) often are) read it once.
+        if at not in subtables:
+            subtables[at] = frozenset(_cmap_subtable(table, at))
+        mapped = set(subtables[at])
+        if unicode:
+            strict = mapped if strict is None else strict & mapped
+        if loose is not None:
+            loose |= mapped
+            if platform == 3 and encoding == 0:
+                loose |= {code - 0xF000 for code in mapped if 0xF000 <= code <= 0xF0FF}
+    return frozenset(strict or ()), (None if loose is None else frozenset(loose))
 
 
 def _stat(path: str) -> "tuple[str, int, int] | None":
