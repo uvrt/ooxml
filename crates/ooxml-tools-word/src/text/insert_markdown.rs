@@ -158,10 +158,60 @@ pub struct WordInsertMarkdown {
 /// HTML, a style it lacks); `refused` (nothing changed) for what is not supported yet.
 #[must_use]
 pub fn word_insert_markdown(args: &WordInsertMarkdown, editing: &Editing<'_>) -> ToolResult<Value> {
-    run(args, editing).unwrap_or_else(ToolResult::failed)
+    adapted(args, editing)
+        .and_then(|(read, value)| run(read.as_ref().unwrap_or(args), editing, value.as_ref()))
+        .unwrap_or_else(ToolResult::failed)
 }
 
-fn run(args: &WordInsertMarkdown, editing: &Editing<'_>) -> Result<ToolResult<Value>, ToolError> {
+/// The call as the tool takes it (docx-agent's adapter): a Markdown blob read as its
+/// Markdown, a `from` naming one text field read as its Markdown, with that value as it is
+/// written ([`super::field_from`]); `None`: as given.
+///
+/// # Errors
+/// The blob's or the field's refusal.
+fn adapted(
+    args: &WordInsertMarkdown,
+    editing: &Editing<'_>,
+) -> Result<(Option<WordInsertMarkdown>, Option<Written>), ToolError> {
+    let read = from_blob(args, editing)?;
+    let given = read.as_ref().unwrap_or(args);
+    Ok(match super::field_from::field_from(given, editing, &try_call(given))? {
+        Some((field, value)) => (Some(field), Some(value)),
+        None => (read, None),
+    })
+}
+
+/// The call with its Markdown blob read as its Markdown (docx-agent's adapter: the blob is
+/// the host's, its text the Markdown), where it gives a blob and neither Markdown nor
+/// `from`, and the host handed the blobs over; `None` otherwise.
+///
+/// # Errors
+/// `not_found` for a blob there is not; `invalid_arguments` for one that is not UTF-8 text.
+fn from_blob(args: &WordInsertMarkdown, editing: &Editing<'_>) -> Result<Option<WordInsertMarkdown>, ToolError> {
+    let (Some(handle), None, None, Some(blobs)) = (&args.blob, &args.markdown, &args.source, editing.blobs) else {
+        return Ok(None);
+    };
+    let call = try_call(args);
+    let found = crate::blobs::blob(blobs, handle, &call)?;
+    let text = String::from_utf8(found.data.to_vec()).map_err(|_| {
+        ToolError::refusal(
+            Refusal::InvalidArguments,
+            format!("{handle} is not UTF-8 text: Markdown is given as text"),
+            WayOut::call(call.clone()),
+        )
+        .at("blob")
+    })?;
+    let mut read = args.clone();
+    read.markdown = Some(text);
+    read.blob = None;
+    Ok(Some(read))
+}
+
+fn run(
+    args: &WordInsertMarkdown,
+    editing: &Editing<'_>,
+    from: Option<&Written>,
+) -> Result<ToolResult<Value>, ToolError> {
     crate::review::stopped(editing.cancel)?;
     if let Some(name) = args.ref_name.as_deref().filter(|r| is_place(r)) {
         return Err(blocks_ref_as_place(name, &args.at));
@@ -175,7 +225,7 @@ fn run(args: &WordInsertMarkdown, editing: &Editing<'_>) -> Result<ToolResult<Va
     }
     let call = try_call(args);
     let given = args.markdown.clone().unwrap_or_default();
-    let field = editing.written.iter().find(|f| f.field == "from");
+    let field = from.or_else(|| editing.written.iter().find(|f| f.field == "from"));
     let in_markdown: Vec<&Written> = editing.written.iter().filter(|f| f.field == "markdown").collect();
     let (markdown, facts) = if field.is_none() && args.markdown.is_some() && !in_markdown.is_empty() {
         with_markdown(&given, &in_markdown)

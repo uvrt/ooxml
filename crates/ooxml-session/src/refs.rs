@@ -413,6 +413,20 @@ impl CallRefs {
             let Value::String(text) = value else {
                 return Ok(value.clone());
             };
+            // a span's ends, each resolved as a handler resolves a ref (docx-agent's `refs`)
+            if let (Some((first, last)), true) = (text.split_once(".."), text.contains('$')) {
+                let mut end = |part: &str| -> Result<String, ToolError> {
+                    let trimmed = part.trim();
+                    if !trimmed.starts_with('$') {
+                        return Ok(part.to_owned());
+                    }
+                    let (address, note) = self.resolve_ref(trimmed, doc, table, Some(field), retry)?;
+                    notes.extend(note);
+                    Ok(address)
+                };
+                let (first, last) = (end(first)?, end(last)?);
+                return Ok(Value::String(format!("{first}..{last}")));
+            }
             let (resolved, note) = self.resolve_value(text, doc, table, field, retry)?;
             notes.extend(note);
             Ok(Value::String(resolved))

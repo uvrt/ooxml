@@ -11,6 +11,7 @@
 //! document but through a command.
 
 mod delete;
+mod field_from;
 mod fields;
 mod insert_markdown;
 mod insert_text;

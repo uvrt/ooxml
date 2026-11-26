@@ -247,7 +247,7 @@ impl PyCallOptions {
             built.at.clone_from(&documents.at);
             built.names = documents.names.clone();
             host.tables.clone_from(&documents.tables);
-            host.sources.clone_from(&documents.sources);
+            built.values.sources.clone_from(&documents.sources);
         }
         if let Some(layout) = layout {
             host.placer.clone_from(&layout.placer);
@@ -257,7 +257,7 @@ impl PyCallOptions {
         }
         built.blobs = blobs.map(|b| Arc::new(PyBlobs(b)) as Arc<dyn Blobs>);
         if let Some(written) = written {
-            host.written = serde_json::from_str::<Value>(written)
+            built.values.written = serde_json::from_str::<Value>(written)
                 .ok()
                 .as_ref()
                 .and_then(Written::list_from_json)

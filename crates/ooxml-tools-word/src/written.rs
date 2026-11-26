@@ -36,66 +36,7 @@ const ECHO_CHARS: usize = 200;
 /// Characters Markdown writes that a paragraph's text does not have.
 const MARKS: &str = "*_`|#>\\";
 
-/// One value a host wrote for a reference.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Written {
-    /// The argument it went into (`text`, `items[0].text`, `replace`).
-    pub field: String,
-    /// Its first character in the argument's text.
-    pub start: usize,
-    /// The character after its last.
-    pub end: usize,
-    /// The value written.
-    pub text: String,
-    /// What the document keeps of it (an `ooxml_edit.provenance` fact's fields).
-    pub record: Map<String, Value>,
-    /// What a reply says of it (`Fact.brief()`: the reference, the value, its sources).
-    pub brief: Map<String, Value>,
-    /// The value's own Markdown, where its source holds one apart from its text (a workbook
-    /// cell's emphasis and list lines: docx-agent's `field_text.reference_markdown`, read by
-    /// the host); `word_insert_markdown` writes it as that.
-    pub markdown: Option<String>,
-}
-
-impl Written {
-    /// The values a host hands over as JSON: a list of `{"field", "start", "end", "text",
-    /// "record", "brief"}` (and the value's own `"markdown"`, where it has one); `None` for
-    /// anything else.
-    #[must_use]
-    pub fn list_from_json(value: &Value) -> Option<Vec<Written>> {
-        value.as_array()?.iter().map(Written::from_json).collect()
-    }
-
-    fn from_json(value: &Value) -> Option<Written> {
-        let index = |name: &str| value.get(name)?.as_u64().and_then(|n| usize::try_from(n).ok());
-        Some(Written {
-            field: value.get("field")?.as_str()?.to_owned(),
-            start: index("start")?,
-            end: index("end")?,
-            text: value.get("text")?.as_str()?.to_owned(),
-            record: value.get("record")?.as_object()?.clone(),
-            brief: value.get("brief")?.as_object()?.clone(),
-            markdown: match value.get("markdown") {
-                None | Some(Value::Null) => None,
-                Some(found) => Some(found.as_str()?.to_owned()),
-            },
-        })
-    }
-
-    /// The item index of a field `items[k].text`; `None` for another field.
-    #[must_use]
-    pub fn item(&self) -> Option<usize> {
-        self.field.strip_prefix("items[")?.strip_suffix("].text")?.parse().ok()
-    }
-
-    /// Whether it is all of `argument` but white space around it.
-    #[must_use]
-    pub fn is_whole(&self, argument: &str) -> bool {
-        let chars: Vec<char> = argument.chars().collect();
-        let blank = |part: Option<&[char]>| part.is_some_and(|p| p.iter().all(|c| py_space(*c)));
-        blank(chars.get(..self.start)) && blank(chars.get(self.end..))
-    }
-}
+pub use ooxml_tools::written::Written;
 
 /// What a reply says of `fact`: the reference, its text (a long or several-line one only
 /// counted, `chars`), the blocks it made, its sources.
@@ -483,8 +424,4 @@ fn common(a: &[char], b: &[char]) -> usize {
     a.iter().zip(b).take_while(|(x, y)| x == y).count()
 }
 
-/// Python's `str.isspace` for one character: Unicode white space and the four information
-/// separators.
-pub(crate) fn py_space(c: char) -> bool {
-    c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
-}
+pub(crate) use ooxml_tools::written::py_space;
