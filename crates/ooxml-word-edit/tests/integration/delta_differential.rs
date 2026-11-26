@@ -249,3 +249,30 @@ fn a_versions_change_set_is_the_index_diff_and_gives_todays_touched_and_ids() {
         found.len()
     );
 }
+
+/// A section moved past a shorter one (host golden `w4-restructure`): the moved section is the
+/// one `touched` names, as difflib judges a move among the body's blocks, though it holds
+/// more blocks (a table's cells) than the section it passed.
+#[test]
+fn a_section_moved_past_a_shorter_one_is_what_moved() {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../python/docx-agent/tests/goldens/trial/_inputs/w4-restructure/input/security-policy.docx"
+    );
+    let bytes: Arc<[u8]> = Arc::from(std::fs::read(path).unwrap());
+    let editor = editor(&bytes);
+    let before = editor.store().snapshot();
+    let blocks = ooxml_word_edit::section_blocks(before.doc(), "p:70439822").unwrap();
+    let target = ooxml_word_edit::section_blocks(before.doc(), "p:4B50F4CD").unwrap();
+    let command = MoveBlocks {
+        blocks: Moving::Ids(blocks),
+        after: Some(Address::from(target.last().unwrap().clone())),
+        before: None,
+        policy: ooxml_word_edit::RevisionPolicy::Untracked,
+    };
+    editor.run(&Caller::anonymous(), &command).unwrap();
+    let after = editor.store().snapshot();
+    let mut stories = StoryTable::new();
+    let differences = compare_step(&before, &after, &mut stories);
+    assert!(differences.is_empty(), "{differences:#?}");
+}

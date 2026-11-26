@@ -9,9 +9,9 @@
 //! place first.
 //!
 //! Renames pair blocks both versions hold under other keys: by place (above), a table with
-//! the table sharing one of its rows (its first row changed), and a block keyed by its place
-//! in one version with the block of the same content but stamps in the other (stamping gave
-//! it a paraId, or an undo of stamping took it away).
+//! the table sharing one of its rows (its first row changed), and a gone block with a came
+//! one of the same content but stamps, aligned in order (stamping gave it a paraId, an undo
+//! of stamping took it away, a copy under new ids replaced it).
 //!
 //! Must not: key identity by an element's address (a pointer only says content is the same,
 //! ADR-008), or name a block by text.
@@ -389,10 +389,10 @@ fn compare(old: &Side<'_>, new: &Side<'_>, shared: &[(usize, usize)]) -> BlockDe
             out.gone.push((item.key, was_after(i)));
         }
     }
-    let crossed = |i: usize, j: usize| old.items.get(i).map(|o| o.run) != new.items.get(j).map(|n| n.run);
+    let moving = out_of_order(old, new, &pair);
     out.moved = moved(
         &pair,
-        crossed,
+        &moving,
         |j| new.items.get(j).map(|i| i.key),
         before_new,
         was_after,
@@ -407,42 +407,73 @@ fn compare(old: &Side<'_>, new: &Side<'_>, shared: &[(usize, usize)]) -> BlockDe
 /// Pairs of items (old, new).
 type Pairs = Vec<(usize, usize)>;
 
-/// The paired blocks that crossed blocks both versions share (`crossed`: from one stretch
-/// compared to another), and those a sequence diff of their order does not keep in place, in
-/// the later version's order.
+/// For each new item, whether its block is out of the order both versions keep: the
+/// container children are compared first, by their first blocks (a sequence diff keeps the
+/// longest stretches in place, as `touched` has always judged a move among the body's
+/// blocks), a block moving with its child or away from it; the rest by a sequence diff of
+/// the blocks themselves.
+fn out_of_order(old: &Side<'_>, new: &Side<'_>, pair: &[Option<usize>]) -> Vec<bool> {
+    let mut out = vec![false; new.items.len()];
+    let pairs: Pairs = pair.iter().enumerate().filter_map(|(j, i)| i.map(|i| (i, j))).collect();
+    let first_of = |i: usize| {
+        let seg = old.items.get(i)?.seg?;
+        (old.by_seg.get(&seg)?.start == i).then_some(seg)
+    };
+    let mut firsts: Pairs = pairs.iter().copied().filter(|(i, _)| first_of(*i).is_some()).collect();
+    firsts.sort_unstable();
+    let kept = kept_in_order(&firsts.iter().map(|(_, j)| *j).collect::<Vec<_>>());
+    // per old container child: whether it kept its place, and where its first block went
+    let children: HashMap<usize, (bool, Option<usize>)> = firsts
+        .iter()
+        .zip(kept)
+        .filter_map(|((i, j), kept)| Some((first_of(*i)?, (kept, new.items.get(*j)?.seg))))
+        .collect();
+    let mut rest: Pairs = Vec::new();
+    for (i, j) in pairs {
+        let (Some(o), Some(n)) = (old.items.get(i), new.items.get(j)) else {
+            continue;
+        };
+        let moving = match o.seg.and_then(|s| children.get(&s)) {
+            Some((false, _)) => true,
+            Some((true, to)) if *to != n.seg => true,
+            _ => {
+                rest.push((i, j));
+                false
+            }
+        };
+        if let Some(flag) = out.get_mut(j) {
+            *flag = moving;
+        }
+    }
+    rest.sort_unstable();
+    let kept = kept_in_order(&rest.iter().map(|(_, j)| *j).collect::<Vec<_>>());
+    for ((_, j), kept) in rest.iter().zip(kept) {
+        if let Some(flag) = out.get_mut(*j) {
+            *flag = !kept;
+        }
+    }
+    out
+}
+
+/// The paired blocks `moving` marks, in the later version's order.
 fn moved(
     pair: &[Option<usize>],
-    crossed: impl Fn(usize, usize) -> bool,
+    moving: &[bool],
     key: impl Fn(usize) -> Option<BlockKey>,
     before_new: impl Fn(usize) -> Option<BlockKey>,
     was_after: impl Fn(usize) -> Option<BlockKey>,
 ) -> Vec<Moved> {
-    let (mut order, across): (Pairs, Pairs) = pair
-        .iter()
+    pair.iter()
         .enumerate()
-        .filter_map(|(j, i)| i.map(|i| (i, j)))
-        .partition(|(i, j)| !crossed(*i, *j));
-    order.sort_unstable();
-    let kept = kept_in_order(&order.iter().map(|(_, j)| *j).collect::<Vec<_>>());
-    let mut out: Vec<(usize, Moved)> = order
-        .iter()
-        .zip(kept)
-        .filter(|(_, kept)| !kept)
-        .map(|(pair, _)| pair)
-        .chain(&across)
-        .filter_map(|(i, j)| {
-            Some((
-                *j,
-                Moved {
-                    key: key(*j)?,
-                    after: before_new(*j),
-                    was_after: was_after(*i),
-                },
-            ))
+        .filter(|(j, _)| moving.get(*j).copied().unwrap_or(false))
+        .filter_map(|(j, i)| {
+            Some(Moved {
+                key: key(j)?,
+                after: before_new(j),
+                was_after: was_after((*i)?),
+            })
         })
-        .collect();
-    out.sort_by_key(|(j, _)| *j);
-    out.into_iter().map(|(_, m)| m).collect()
+        .collect()
 }
 
 /// The old item each new item is paired with -- by place where given, then by key, then as a
@@ -487,23 +518,11 @@ fn rename_tables(old: &Side<'_>, new: &Side<'_>, pair: &mut [Option<usize>], tak
     }
 }
 
-/// A came block paired with a gone one of its kind, one of the two keyed by its place, whose
-/// content is the same but for stamps (stamping gave it a paraId, an undo of stamping took
-/// it away): the two sides' unpaired blocks aligned in order by a sequence diff.
+/// A came block paired with a gone one of its kind whose content is the same but for stamps
+/// (stamping gave it a paraId, an undo of stamping took it away, a block was replaced by a
+/// copy of itself under new ids): the two sides' unpaired blocks aligned in order by a
+/// sequence diff, as `touched` has always found such blocks unchanged.
 fn rename_stamped(old: &Side<'_>, new: &Side<'_>, pair: &mut [Option<usize>], taken: &mut [bool]) {
-    let unpaired_old = old
-        .items
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| !taken.get(*i).copied().unwrap_or(true));
-    let unpaired_new = new
-        .items
-        .iter()
-        .enumerate()
-        .filter(|(j, _)| pair.get(*j).copied().flatten().is_none());
-    if unpaired_old.chain(unpaired_new).all(|(_, item)| item.key.durable()) {
-        return; // two durable keys are two blocks
-    }
     // the unpaired blocks of each side in order, aligned by kind and content without stamps
     // (a sequence diff, so equal blocks pair in order)
     let mut memo: HashMap<*const Element, u64> = HashMap::new();
@@ -525,7 +544,7 @@ fn rename_stamped(old: &Side<'_>, new: &Side<'_>, pair: &mut [Option<usize>], ta
             let (Some(o), Some(n)) = (old.items.get(i), new.items.get(j)) else {
                 continue;
             };
-            if !(o.key.durable() && n.key.durable()) && stampless_eq(o.element, n.element) {
+            if stampless_eq(o.element, n.element) {
                 link(pair, taken, i, j);
             }
         }
