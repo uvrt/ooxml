@@ -51,7 +51,7 @@ pub use held::{InTxn, Reverted, TxnMark, TxnOwner};
 pub use history::{HistoryOutcome, StepInfo};
 pub use ids::{Counters, IdSeq};
 pub use keys::KeySet;
-pub use model::DocModel;
+pub use model::{DocModel, First};
 pub use op_txn::{AttemptState, InOp, OpTxn};
 pub use predicate::ReadPredicate;
 pub use stats::StoreStats;

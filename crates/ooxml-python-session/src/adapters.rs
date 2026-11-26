@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// The system's clocks: wall time from `SystemTime`, monotonic time from an `Instant`
-/// taken when the session was made.
+/// taken when the session was made, and the thread's CPU time where the system counts it.
 pub(crate) struct SystemClock {
     origin: Instant,
 }
@@ -31,6 +31,13 @@ impl Clock for SystemClock {
 
     fn monotonic(&self) -> Duration {
         self.origin.elapsed()
+    }
+
+    /// Linux's: the time the thread has run on a CPU (`/proc/thread-self/schedstat`'s first
+    /// field, in nanoseconds). None elsewhere, or where the kernel keeps no such count.
+    fn thread_cpu(&self) -> Option<Duration> {
+        let stat = std::fs::read_to_string("/proc/thread-self/schedstat").ok()?;
+        stat.split_whitespace().next()?.parse().ok().map(Duration::from_nanos)
     }
 }
 

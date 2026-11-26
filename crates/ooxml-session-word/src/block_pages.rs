@@ -45,45 +45,53 @@ impl BlockPagesOf for Session {
         let held = self.format_doc(id)?;
         let word =
             Word::of(&*held).ok_or_else(|| SessionError::Kind("block pages are a Word document's".to_owned()))?;
-        let Some(layout) = WordHost::of(context)
-            .and_then(|h| h.layout.clone())
-            .or_else(|| word.own_pages())
-        else {
-            return Ok(Err("no layout".to_owned()));
-        };
-        let head = word.head();
         let cancel = CallCancel::new(context, &*self.context().cancel, &*self.context().clock);
-        let layout_cancel = cancel.layout();
-        let edit = EditLayout {
-            layout: &*layout as &dyn FieldLayout,
-            stop: layout_cancel
-                .as_ref()
-                .map_or(&cancel as &dyn Cancel, |l| l as &dyn Cancel),
-            limit: layout_cancel.as_ref().map(|l| l.timeout()),
-        };
-        let laid = match edit.lay_out(head.doc().package()) {
-            Ok(laid) => laid,
-            Err(error @ (EditError::LayoutStopped(_) | EditError::Unsupported(_))) => {
-                return Ok(Err(error.to_string()))
-            }
-            Err(other) => return Err(SessionError::format(other)),
-        };
-        let docx = head.doc().docx().map_err(SessionError::format)?;
-        let outside = |id: &str| {
-            paragraphs_of(head.doc(), &docx, &ooxml_word_model::address::Address::parse(id))
-                .ok()
-                .and_then(|found| found.first().map(|(part, _)| *part != docx.main))
-                .unwrap_or(false)
-        };
-        let ids: Vec<&str> = blocks.iter().map(String::as_str).collect();
-        Ok(Ok(ids
-            .iter()
-            .zip(laid.blocks_pages(&ids))
-            .map(|(id, found)| match found {
-                _ if outside(id) => BlockAt::Outside,
-                Ok(pages) => BlockAt::Pages(pages.into_iter().map(|page| page + 1).collect()),
-                Err(unknown) => BlockAt::Unknown(unknown.0),
-            })
-            .collect()))
+        block_pages(word, blocks, context, &cancel)
     }
+}
+
+/// [`BlockPagesOf::block_pages`] of `word`, within `cancel`.
+pub(crate) fn block_pages(
+    word: &Word,
+    blocks: &[String],
+    context: &CallContext,
+    cancel: &CallCancel<'_>,
+) -> Result<BlockPages, SessionError> {
+    let Some(layout) = WordHost::of(context)
+        .and_then(|h| h.layout.clone())
+        .or_else(|| word.own_pages())
+    else {
+        return Ok(Err("no layout".to_owned()));
+    };
+    let head = word.head();
+    let layout_cancel = cancel.layout();
+    let edit = EditLayout {
+        layout: &*layout as &dyn FieldLayout,
+        stop: layout_cancel
+            .as_ref()
+            .map_or(cancel as &dyn Cancel, |l| l as &dyn Cancel),
+        limit: layout_cancel.as_ref().map(|l| l.timeout()),
+    };
+    let laid = match edit.lay_out(head.doc().package()) {
+        Ok(laid) => laid,
+        Err(error @ (EditError::LayoutStopped(_) | EditError::Unsupported(_))) => return Ok(Err(error.to_string())),
+        Err(other) => return Err(SessionError::format(other)),
+    };
+    let docx = head.doc().docx().map_err(SessionError::format)?;
+    let outside = |id: &str| {
+        paragraphs_of(head.doc(), &docx, &ooxml_word_model::address::Address::parse(id))
+            .ok()
+            .and_then(|found| found.first().map(|(part, _)| *part != docx.main))
+            .unwrap_or(false)
+    };
+    let ids: Vec<&str> = blocks.iter().map(String::as_str).collect();
+    Ok(Ok(ids
+        .iter()
+        .zip(laid.blocks_pages(&ids))
+        .map(|(id, found)| match found {
+            _ if outside(id) => BlockAt::Outside,
+            Ok(pages) => BlockAt::Pages(pages.into_iter().map(|page| page + 1).collect()),
+            Err(unknown) => BlockAt::Unknown(unknown.0),
+        })
+        .collect()))
 }

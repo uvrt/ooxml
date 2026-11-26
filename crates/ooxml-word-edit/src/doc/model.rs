@@ -7,7 +7,7 @@
 use super::{Change, Key, ModelError, Setup, WordDoc};
 use crate::pool::IdsChange;
 use ooxml_opc::PartName;
-use ooxml_store::{DocModel, KeySet};
+use ooxml_store::{DocModel, First, KeySet};
 use ooxml_word_model::ids::VersionDelta;
 use ooxml_xml::PatchError;
 use std::sync::Arc;
@@ -282,7 +282,7 @@ impl DocModel for WordDoc {
         }
     }
 
-    fn rebase(change: &Change, past: &Change) -> Result<Change, ModelError> {
+    fn rebase(change: &Change, past: &Change, first: First) -> Result<Change, ModelError> {
         // parts restored whole (an undo's inverse of a part put) cannot move past another
         // change of one of them, nor another change past them
         let restores = |restore: &Change, other: &Change| match (restore, other.part()) {
@@ -307,7 +307,11 @@ impl DocModel for WordDoc {
                 Change::Splice { patch: earlier, .. },
             ) => Change::Splice {
                 part: Arc::clone(part),
-                patch: patch.rebase(earlier)?,
+                // at one insertion point, the change published first keeps its place first
+                patch: match first {
+                    First::Past => patch.rebase(earlier)?,
+                    First::Change => patch.rebase_first(earlier)?,
+                },
                 keys: Arc::clone(keys),
                 draws: Arc::clone(draws),
                 created: Arc::clone(created),

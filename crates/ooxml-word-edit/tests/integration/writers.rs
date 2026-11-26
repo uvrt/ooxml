@@ -9,8 +9,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
 use crate::common::{editor, fixture, written, Rng};
+use ooxml_store::{Batch, Command, Txn};
 use ooxml_store::{Caller, Seq, Snapshot};
-use ooxml_store::{Command, Txn};
 use ooxml_word_edit::find::Literal;
 use ooxml_word_edit::{
     CellWrite, DeleteBlock, DeleteText, EditError, InsertMarkdown, InsertParagraph, InsertText, Keep, MarkdownOptions,
@@ -38,6 +38,9 @@ enum Edit {
     Cells(SetCells),
     Styled(SetStyledText),
     Markdown(InsertMarkdown),
+    /// Several edits as one transaction and one step (a host's batch, design phase 3 §4):
+    /// its changes a sequence, moved past what was published since as one.
+    Batch(Batch<Edit>),
 }
 
 impl Command<WordDoc> for Edit {
@@ -56,6 +59,7 @@ impl Command<WordDoc> for Edit {
             Edit::Cells(c) => c.validate(doc),
             Edit::Styled(c) => c.validate(doc),
             Edit::Markdown(c) => c.validate(doc),
+            Edit::Batch(c) => c.validate(doc),
         }
     }
 
@@ -71,6 +75,7 @@ impl Command<WordDoc> for Edit {
             Edit::Cells(c) => c.prepare(tx).map(|_| true)?,
             Edit::Styled(c) => c.prepare(tx).map(|_| true)?,
             Edit::Markdown(c) => c.prepare(tx)?.changed,
+            Edit::Batch(c) => c.prepare(tx)?.into_iter().any(|out| out.unwrap_or(false)),
         })
     }
 }
@@ -204,7 +209,19 @@ fn run(seed: u64, writers: u64, per_writer: usize) -> (u64, u64) {
     run_on("samplelib/sample-long.docx", seed, writers, per_writer)
 }
 
+/// A batch of two to five random common edits, as a host's batch runs them: one transaction.
+fn batch(rng: &mut Rng, targets: (&[String], &[String]), writer: u64) -> Edit {
+    let ops = (0..2 + rng.below(4)).map(|_| edit(rng, targets, writer)).collect();
+    Edit::Batch(Batch::new(ops))
+}
+
 fn run_on(name: &str, seed: u64, writers: u64, per_writer: usize) -> (u64, u64) {
+    run_with(name, seed, writers, per_writer, false).0
+}
+
+/// [`run_on`], where `batches`: every other writer runs batches of edits; what the store
+/// counted (conflicts and exclusive runs, then rebases).
+fn run_with(name: &str, seed: u64, writers: u64, per_writer: usize, batches: bool) -> ((u64, u64), u64) {
     let bytes = fixture(name);
     let shared = editor(&bytes);
     let docx = shared.store().snapshot().doc().docx().unwrap();
@@ -225,7 +242,11 @@ fn run_on(name: &str, seed: u64, writers: u64, per_writer: usize) -> (u64, u64) 
                     let caller = Caller::named(&format!("writer {w}"));
                     (0..per_writer)
                         .filter_map(|_| {
-                            let command = edit(&mut rng, (targets, controls), w);
+                            let command = if batches && w % 2 == 1 {
+                                batch(&mut rng, (targets, controls), w)
+                            } else {
+                                edit(&mut rng, (targets, controls), w)
+                            };
                             // a refusal (a range a concurrent edit shortened) changes nothing
                             let done = shared.run(&caller, &command).ok()?;
                             done.changed.then(|| (done.version.seq(), command, done.version))
@@ -255,7 +276,7 @@ fn run_on(name: &str, seed: u64, writers: u64, per_writer: usize) -> (u64, u64) 
     }
     assert_eq!(seq, records.last().map_or(Seq(0), |r| r.0));
     let stats = shared.store().stats();
-    (stats.conflicts, stats.exclusive)
+    ((stats.conflicts, stats.exclusive), stats.rebased)
 }
 
 #[test]
@@ -265,6 +286,17 @@ fn concurrent_edits_equal_their_serial_order() {
         conflicts += run(seed, 4, 6).0;
     }
     assert!(conflicts > 0, "writers stamping one document should conflict");
+}
+
+#[test]
+fn concurrent_batches_beside_writers_equal_their_serial_order() {
+    // batches' change sequences moved past the writers' commits as one (design phase 3 §4)
+    let mut rebased = 0;
+    for seed in [41u64, 42] {
+        rebased += run_with("samplelib/sample-long.docx", seed, 4, 4, true).1;
+    }
+    run_with("wordto/sample-with-table.docx", 43, 4, 4, true);
+    assert!(rebased > 0, "batches beside writers should rebase");
 }
 
 #[test]

@@ -27,6 +27,8 @@ pub struct Txn<'s, D: DocModel> {
     ids: Ids<'s>,
     /// The state number its commit is expected to be given ([`Txn::version_here`]'s).
     number: u64,
+    /// Whether it is prepared behind the document's gate ([`Txn::gated`]).
+    gated: bool,
 }
 
 /// The id allocator a transaction draws from: the store's, borrowed by a run, or shared by
@@ -91,6 +93,7 @@ impl<'s, D: DocModel> Txn<'s, D> {
             changes: Vec::new(),
             ids,
             number: 0,
+            gated: false,
         }
     }
 
@@ -99,6 +102,20 @@ impl<'s, D: DocModel> Txn<'s, D> {
     pub(crate) fn numbered(mut self, number: u64) -> Self {
         self.number = number;
         self
+    }
+
+    /// The same, prepared behind the document's gate (a run after conflicts, a held
+    /// transaction): no other commit comes before its own, and other writers wait for it.
+    pub(crate) fn behind_gate(mut self) -> Self {
+        self.gated = true;
+        self
+    }
+
+    /// Whether it is prepared behind the document's gate, other writers waiting for it to
+    /// commit; else optimistically, prepared again where it conflicts.
+    #[must_use]
+    pub fn gated(&self) -> bool {
+        self.gated
     }
 
     /// The snapshot the transaction started from.

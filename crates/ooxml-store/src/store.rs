@@ -591,7 +591,7 @@ impl<D: DocModel> Store<D> {
         let closing = self.clock.monotonic().saturating_sub(asked);
         loop {
             attempts += 1;
-            let mut tx = begin(self.snapshot());
+            let mut tx = begin(self.snapshot()).behind_gate();
             let out = prepare(&mut tx)?;
             if let Some(mut done) = self.try_commit(caller, tx.into_parts(), true, None) {
                 done.waited += closing;

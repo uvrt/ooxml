@@ -40,10 +40,6 @@ pub enum Waits {
     G1,
     /// A host setting the replay does not make yet (limits, a toolbox's own settings).
     Settings,
-    /// What docx-agent's adapters say after a batch's ops (a table kept together found
-    /// taller than a page once the batch ran; a check that laid the document out between a
-    /// batch's changes): not ported with D3b's adapters, a follow-up of D2's batch.
-    BatchAdapters,
 }
 
 impl Waits {
@@ -55,7 +51,6 @@ impl Waits {
             Waits::D2 => "D2 (batch)",
             Waits::G1 => "G1 (numbers, scales)",
             Waits::Settings => "settings",
-            Waits::BatchAdapters => "batch adapters (D2 follow-up)",
         }
     }
 }
@@ -88,14 +83,15 @@ pub struct Known {
     pub fields: Vec<String>,
     /// The tool design rule that makes the new answer right (rule 1), where it is one.
     pub rule: Option<i64>,
-    /// The user decision it is, where it is one (`structured-problems-2026-11-25`).
+    /// The user decision it is, where it is one (`structured-problems-2026-11-25`,
+    /// `optimistic-batches-2026-11-25`).
     pub decision: Option<String>,
     /// Why.
     pub cause: String,
 }
 
 /// The user decisions an entry may give instead of a rule.
-pub const DECISIONS: [&str; 1] = ["structured-problems-2026-11-25"];
+pub const DECISIONS: [&str; 2] = ["structured-problems-2026-11-25", "optimistic-batches-2026-11-25"];
 
 /// The known differences in `text` (the TOML subset the file uses: `[[difference]]` tables
 /// of strings, integers and lists of strings).
@@ -274,15 +270,6 @@ pub fn normalised(result: &ooxml_tools::ToolResult<Value>) -> Value {
     body.insert("app".into(), Value::Object(app));
     Value::Object(body)
 }
-
-/// What docx-agent's adapters say after a batch's ops (`docx_agent/rust/served/objects.py`'s
-/// table taller than a page, `reads.py`'s check between a batch's changes): not ported by
-/// D3b's adapters (they run per call), a follow-up of the batch ([`Waits::BatchAdapters`]).
-const ADAPTER_WARNINGS: [&str; 3] = [
-    "taller than a page",
-    "could not be laid out to it",
-    "check laid the document out between the batch's changes",
-];
 
 /// A read_batch op's path split: its index and the rest (`result.data.ops[2].data.x`:
 /// `(2, "data.x")`).
@@ -1232,10 +1219,6 @@ impl Replayer {
                 None => left.push(path),
             }
         }
-        // a warning docx-agent's adapters add after a batch's ops (a D2 follow-up)
-        if adapters_said(&left, &leaves(&want, field), |_| false) {
-            return Outcome::Waiting(Waits::BatchAdapters, false);
-        }
         if left.is_empty() {
             used.sort_unstable();
             used.dedup();
@@ -1253,28 +1236,6 @@ impl Replayer {
         let (want, have) = (pick(&a), pick(&b));
         Outcome::Different(left, want, have)
     }
-}
-
-/// Whether the paths `left` differ only where docx-agent's adapters say something after a
-/// batch's ops (a warning of theirs in `wanted`, with what the host adds and, where the
-/// recording could not lay the document out, the reflow it then did not measure).
-fn adapters_said(left: &[String], wanted: &BTreeMap<String, Value>, host_added: impl Fn(&String) -> bool) -> bool {
-    let adapter = |p: &String| {
-        p.starts_with("result.warnings[")
-            && wanted
-                .get(p)
-                .and_then(Value::as_str)
-                .is_some_and(|w| ADAPTER_WARNINGS.iter().any(|t| w.contains(t)))
-    };
-    let unlaid = wanted
-        .values()
-        .filter_map(Value::as_str)
-        .any(|w| w.contains("could not be laid out to it"));
-    let reflow = |p: &String| unlaid && p.starts_with("result.checks.reflow");
-    left.iter().any(adapter)
-        && left
-            .iter()
-            .all(|p| host_added(p) || adapter(p) || reflow(p) || p == "result.warnings")
 }
 
 /// A concurrent case's changes in the order they were committed (`_commit_order`): grouped

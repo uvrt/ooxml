@@ -18,7 +18,7 @@ use crate::WordVersion;
 use ooxml_base::Context;
 use ooxml_opc::Package;
 use ooxml_session::{
-    AnyVersion, Finished, Format, FormatDoc, FormatRun, Holds, LayoutCancel, OpenEnv, PartUpdate, Registry,
+    AnyVersion, BatchHold, Finished, Format, FormatDoc, FormatRun, Holds, LayoutCancel, OpenEnv, PartUpdate, Registry,
     SessionError, StepBy, StoreClock, Stored, StoredDoc,
 };
 use ooxml_store::{Caller, Snapshot, Store};
@@ -33,6 +33,9 @@ use serde_json::Value;
 use std::any::Any;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
+
+/// The tool that sets a document's tracking mode: a batch with it holds the mode alone.
+const TRACKING_TOOL: &str = "word_set_tracking";
 
 /// The context's cache budget, as the edit core's caches reserve from it.
 pub(crate) struct Budget(pub(crate) Arc<dyn ooxml_base::CacheBudget>);
@@ -227,9 +230,13 @@ pub struct Word {
     /// The version it was opened as.
     pub(crate) opened: Snapshot<WordDoc>,
     /// Who its edits are tracked as (`None`: untracked), as `word_set_tracking` left it: the
-    /// session's alone (no host keeps a copy). An edit reads it for its whole call, so a
-    /// change of it never falls between an edit's prepare and its commit.
-    tracking: RwLock<Option<String>>,
+    /// session's alone (no host keeps a copy). Changed only by who holds [`Word::held`]
+    /// alone.
+    tracking: Mutex<Option<String>>,
+    /// The tracking mode held: shared by an edit for its whole call and by a host's batch for
+    /// its whole run, alone while the mode changes -- so a change of it never falls between
+    /// an edit's prepare and its commit, nor between two ops of a batch (design phase 3 §4).
+    held: RwLock<()>,
     /// What its last check with `reflow` saw.
     pub(crate) last_check: Arc<ooxml_tools_word::LastCheck>,
     /// Its pages drawn by `render`, kept within the session's memory budget.
@@ -366,7 +373,8 @@ impl Word {
                 retired: Retired::default(),
             }),
             opened,
-            tracking: RwLock::new(None),
+            tracking: Mutex::new(None),
+            held: RwLock::new(()),
             last_check: Arc::new(ooxml_tools_word::LastCheck::with_languages(
                 ooxml_word_edit::facts::Detections::new(Arc::new(Budget(Arc::clone(&context.budget)))),
             )),
@@ -396,21 +404,30 @@ impl Word {
         &self.stored.held().retired
     }
 
-    /// The author edits are tracked as now, if any.
+    /// The author edits are tracked as now, if any. (Read it under [`Word::tracking_held`]
+    /// for it to stay so until the edit commits.)
     pub(crate) fn tracking(&self) -> Option<String> {
-        self.tracking_read().clone()
+        self.tracking.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
-    /// The tracking mode, held for an edit's whole call: `word_set_tracking` and a step
-    /// group's revert wait until the edits holding it have committed. (A panic while it is
-    /// held leaves the plain value whole: the poison is ignored.)
-    pub(crate) fn tracking_read(&self) -> RwLockReadGuard<'_, Option<String>> {
-        self.tracking.read().unwrap_or_else(PoisonError::into_inner)
+    /// The tracking mode held shared, for an edit's whole call or a host's batch's whole run:
+    /// `word_set_tracking` and a step group's revert wait until those holding it have
+    /// committed. (A panic while it is held leaves the plain value whole: the poison is
+    /// ignored.)
+    pub(crate) fn tracking_held(&self) -> RwLockReadGuard<'_, ()> {
+        self.held.read().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The tracking mode, held alone (`word_set_tracking`'s whole call).
-    pub(crate) fn tracking_write(&self) -> RwLockWriteGuard<'_, Option<String>> {
-        self.tracking.write().unwrap_or_else(PoisonError::into_inner)
+    /// The tracking mode held alone: `word_set_tracking`'s whole call, or a host's batch
+    /// that sets it.
+    pub(crate) fn tracking_alone(&self) -> RwLockWriteGuard<'_, ()> {
+        self.held.write().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Set the tracking author (`None`: untracked); the caller holds the mode alone
+    /// ([`Word::tracking_alone`], or a batch's hold of it alone).
+    pub(crate) fn set_tracking(&self, author: Option<String>) {
+        *self.tracking.lock().unwrap_or_else(PoisonError::into_inner) = author;
     }
 
     /// A version of it, erased.
@@ -431,7 +448,8 @@ impl Word {
 
     /// The tracking author a step group's revert goes back to (`None`: untracked).
     pub(crate) fn restore_tracking(&self, author: Option<String>) {
-        *self.tracking_write() = author;
+        let _alone = self.tracking_alone();
+        self.set_tracking(author);
     }
 
     /// `version`'s problems against those the document opened with: what the save gate
@@ -516,6 +534,9 @@ impl FormatDoc for Word {
             kept: kept.as_ref(),
             deferred: run.deferred,
         };
+        // a check in a batch's transaction lays out between the batch's changes, unless the
+        // version it reads is the one laid out last
+        let between = crate::batch_said::check_between(run, layout.as_deref());
         let mut effects = ooxml_tools::OpEffects::default();
         let mut env = CallEnv {
             cancel: run.cancel,
@@ -530,14 +551,21 @@ impl FormatDoc for Word {
         }
         let mut result = ran.unwrap_or_else(|panic| std::panic::resume_unwind(panic));
         effects.give_to(&mut result);
+        if let (Some(said), Outcome::Done(_)) = (between, &result.outcome) {
+            result.warnings.push(said.to_owned());
+        }
         if let Some(kept) = kept {
-            let keep: ooxml_session::Deferred = Box::new(move |doc, _| {
+            let keep: ooxml_session::Deferred = Box::new(move |doc, _, _, _| {
                 if let Some(word) = Word::of(doc) {
                     word.rows_written.note(kept.rows_written.ids());
                     word.made_by.apply(&kept.made_by);
                 }
+                Vec::new()
             });
             run.deferred.lock().unwrap_or_else(PoisonError::into_inner).push(keep);
+            if let Some(later) = crate::batch_said::taller_later(run, &result) {
+                run.deferred.lock().unwrap_or_else(PoisonError::into_inner).push(later);
+            }
         }
         // An id a version removed, refused as one the document lacks: said as such.
         match &result.outcome {
@@ -558,7 +586,7 @@ impl FormatDoc for Word {
         if run.txn.is_some() {
             let ids: Vec<_> = made.ids.iter().map(|(_, delta)| delta.clone()).collect();
             let (caller, tool) = (run.context.caller.name().map(str::to_owned), run.tool.to_owned());
-            let keep: ooxml_session::Deferred = Box::new(move |doc, at| {
+            let keep: ooxml_session::Deferred = Box::new(move |doc, at, _, _| {
                 if let Some(word) = Word::of(doc) {
                     for delta in &ids {
                         let by = RetiredMade {
@@ -570,6 +598,7 @@ impl FormatDoc for Word {
                         word.retired().note(&by, delta);
                     }
                 }
+                Vec::new()
             });
             run.deferred.lock().unwrap_or_else(PoisonError::into_inner).push(keep);
         } else {
@@ -693,6 +722,16 @@ impl FormatDoc for Word {
         ooxml_word_edit::touched::touched(then.doc(), now.doc())
             .map(|found| found.iter().map(crate::version::touched_json).collect())
             .unwrap_or_default()
+    }
+
+    fn hold_for_batch(&self, tools: &[&str]) -> Option<BatchHold<'_>> {
+        // a batch that sets the mode holds it alone, and its new mode is kept before it lets
+        // go (`Call::edit_tracking_in`); any other holds it shared
+        Some(if tools.contains(&TRACKING_TOOL) {
+            Box::new(self.tracking_alone())
+        } else {
+            Box::new(self.tracking_held())
+        })
     }
 
     fn group_state(&self) -> Option<Arc<dyn Any + Send + Sync>> {

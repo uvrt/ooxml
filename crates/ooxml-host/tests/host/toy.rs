@@ -28,8 +28,8 @@ use ooxml_tools::{
 use ooxml_zip::{Method, NewEntry, Writer};
 use serde_json::{json, Map, Value};
 use std::any::Any;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// The toy format's types.
@@ -307,6 +307,7 @@ impl Format for ToyFormat {
             baseline,
             AtomicUsize::new(0),
             AtomicUsize::new(0),
+            Mutex::new(Vec::new()),
         )))
     }
 
@@ -366,8 +367,16 @@ impl Format for ToyFormat {
 
 /// A toy document: its package's versions; the problems it opened with; how many writes a
 /// writer beside a batch is still to make (one each time a batch's op writes part `a`, so the
-/// batch conflicts and runs again); how many of its batches' effects were kept.
-pub struct ToyDoc(Stored<PackageDoc>, Vec<Problem>, pub AtomicUsize, pub AtomicUsize);
+/// batch conflicts and runs again); how many of its batches' effects were kept; and what
+/// else happens as that writer writes, once each (another document changed between two
+/// attempts of the batch).
+pub struct ToyDoc(
+    Stored<PackageDoc>,
+    Vec<Problem>,
+    pub AtomicUsize,
+    pub AtomicUsize,
+    pub Mutex<Vec<Box<dyn FnOnce() + Send>>>,
+);
 
 /// What a toy edit made.
 struct Made {
@@ -424,6 +433,10 @@ impl FormatCall for ToyCall<'_> {
                                 );
                                 FormatDoc::update(&self.doc.0, &Caller::named("other"), Some("toy_set"), &other)
                                     .map_err(failed)?;
+                                let beside = std::mem::take(&mut *self.doc.4.lock().unwrap());
+                                for also in beside {
+                                    also();
+                                }
                             }
                             // in the batch's transaction: the part read and written, alone
                             let put = PartChange::Put {
@@ -439,10 +452,11 @@ impl FormatCall for ToyCall<'_> {
                                 })
                                 .ok_or_else(|| ToolError::internal("no toy transaction", "toy"))?
                                 .map_err(|e| ToolError::internal(e.to_string(), "toy:write"))?;
-                            let kept: ooxml_session::Deferred = Box::new(|doc, _| {
+                            let kept: ooxml_session::Deferred = Box::new(|doc, _, _, _| {
                                 if let Some(toy) = doc.as_any().downcast_ref::<ToyDoc>() {
                                     toy.3.fetch_add(1, Ordering::SeqCst);
                                 }
+                                Vec::new()
                             });
                             self.run.deferred.lock().unwrap().push(kept);
                             (Stored::<PackageDoc>::any(version), true)
@@ -555,7 +569,9 @@ impl FormatDoc for ToyDoc {
     }
 }
 
-struct Fixed;
+/// A clock standing still, but for the thread's CPU time: 2 ms more at every reading.
+#[derive(Default)]
+struct Fixed(AtomicU64);
 
 impl Clock for Fixed {
     fn now(&self) -> Timestamp {
@@ -566,6 +582,9 @@ impl Clock for Fixed {
     }
     fn monotonic(&self) -> Duration {
         Duration::ZERO
+    }
+    fn thread_cpu(&self) -> Option<Duration> {
+        Some(Duration::from_millis(self.0.fetch_add(2, Ordering::SeqCst) + 2))
     }
 }
 
@@ -600,7 +619,8 @@ impl CacheBudget for Unlimited {
     }
 }
 
-struct Never;
+/// Never cancelled.
+pub struct Never;
 
 impl Cancel for Never {
     fn is_cancelled(&self) -> bool {
@@ -613,7 +633,7 @@ fn context() -> Context {
     Context {
         fonts: Arc::new(NoFonts),
         parts: Arc::new(NoParts),
-        clock: Arc::new(Fixed),
+        clock: Arc::new(Fixed::default()),
         budget: Arc::new(Unlimited),
         cancel: Arc::new(Never),
         limits: ooxml_base::Limits::default(),

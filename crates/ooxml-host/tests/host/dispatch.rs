@@ -102,3 +102,18 @@ fn every_call_is_recorded_by_its_shape_never_its_content() {
     assert!(!log[1].ok);
     assert_eq!(log[1].code.as_deref(), Some("invalid_arguments"));
 }
+
+#[test]
+fn a_calls_timing_gives_its_threads_cpu_where_the_clock_counts_it() {
+    // the toy clock counts 2 ms of CPU at every reading: one at the call's start, one at its end
+    let s = session();
+    let result = s
+        .call(
+            "toy_set",
+            json!({"doc": "d1", "target": "a", "text": "x"}),
+            &CallAs::default(),
+        )
+        .unwrap();
+    let timing = result.app.timing.unwrap();
+    assert_eq!(timing.cpu, Some(0.002));
+}

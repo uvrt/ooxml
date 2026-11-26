@@ -59,6 +59,11 @@ pub trait Clock: Send + Sync {
     fn now(&self) -> Timestamp;
     /// Time since an arbitrary fixed origin, never going backwards.
     fn monotonic(&self) -> Duration;
+    /// The CPU time the calling thread has used so far, where the platform's clock gives
+    /// it; `None` (by default) where it does not.
+    fn thread_cpu(&self) -> Option<Duration> {
+        None
+    }
 }
 
 /// A memory budget that caches reserve from and release to.

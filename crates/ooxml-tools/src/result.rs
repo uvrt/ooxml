@@ -110,8 +110,8 @@ pub struct Timing {
     pub lock_wait: f64,
     /// The rest.
     pub work: f64,
-    /// The thread's own CPU.
-    pub cpu: f64,
+    /// The thread's own CPU, where the platform's clock gives it (`None`: not measured).
+    pub cpu: Option<f64>,
     /// How long it held its documents' locks.
     pub held: f64,
 }

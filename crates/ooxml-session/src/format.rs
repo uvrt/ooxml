@@ -182,9 +182,12 @@ pub struct FormatRun<'a> {
 }
 
 /// What a call run in a batch's transaction leaves its format to keep once the batch is
-/// published (a Word call's retired ids, the rows it wrote): run with the document and the
-/// version published, in op order, by the host -- once, however often the batch ran.
-pub type Deferred = Box<dyn FnOnce(&dyn FormatDoc, &AnyVersion) + Send>;
+/// published (a Word call's retired ids, the rows it wrote), and to say then (a Word table
+/// kept together that the document after the batch draws taller than a page): run with the
+/// document, the version published and the batch's call, in op order, by the host -- once,
+/// however often the batch ran, before the batch's checks. What it returns is the op's to
+/// say (ooxml-edit's `Call.defer`: its warnings, in its place among the batch's).
+pub type Deferred = Box<dyn FnOnce(&dyn FormatDoc, &AnyVersion, &CallContext, &CallCancel<'_>) -> Vec<String> + Send>;
 
 /// The versions one changing call made, as its format finished them.
 pub struct Finished {
@@ -212,6 +215,15 @@ pub struct LockSpent {
     /// Waited for.
     pub waited: std::time::Duration,
 }
+
+/// What a format holds for a host's batch ([`FormatDoc::hold_for_batch`]) until it is let
+/// go: a lock's guard, of whatever kind.
+pub trait Holding {}
+
+impl<T> Holding for T {}
+
+/// [`FormatDoc::hold_for_batch`]'s hold, let go when dropped.
+pub type BatchHold<'a> = Box<dyn Holding + 'a>;
 
 /// One open document as its format keeps it.
 pub trait FormatDoc: Send + Sync + 'static {
@@ -346,6 +358,17 @@ pub trait FormatDoc: Send + Sync + 'static {
     /// The state to keep beside the version `at`'s bytes, for [`Format::open_with_state`] to
     /// go on from (a Word document's ids); `None` where its format keeps none.
     fn state(&self, at: &AnyVersion) -> Option<String>;
+
+    /// Hold, for the whole of a host's batch on this document -- every attempt, a run behind
+    /// the gate, the commit and the keeping of its effects -- what its ops' edits read beside
+    /// the document's versions, so no other call changes it between two of them (design §4:
+    /// Word's tracking mode, held shared, or alone where `tools`, the batch's changing ops,
+    /// include one that sets it). An op run in the batch's transaction then reads it without
+    /// holding it again. `None`: nothing to hold (by default).
+    fn hold_for_batch(&self, tools: &[&str]) -> Option<BatchHold<'_>> {
+        let _ = tools;
+        None
+    }
 
     /// What a step group's revert brings back of the format's own state (a Word document's
     /// tracking mode), taken as the group is marked; `None` by default.

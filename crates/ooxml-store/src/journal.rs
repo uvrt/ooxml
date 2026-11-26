@@ -11,7 +11,7 @@
 //! to what the history can still reach.
 
 use crate::changeset::ChangeSet;
-use crate::{DocModel, KeySet, Seq};
+use crate::{DocModel, First, KeySet, Seq};
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -48,13 +48,28 @@ impl<D: DocModel> Since<D> {
         written
     }
 
-    /// `changes` moved past theirs, in order; `None` when a change cannot be moved past one
-    /// of theirs (or a change set of theirs is no longer kept).
+    /// `changes`, a sequence made on the version these entries were published after, moved
+    /// past theirs, in order; `None` when a change cannot be moved past one of theirs, or
+    /// one of theirs past a change (or a change set of theirs is no longer kept).
+    ///
+    /// The invariant: for `changes` C = c1..cn made on version B and their changes P =
+    /// p1..pm, the result C' gives B·P·C' = B·C·P'. Each c_i is moved past each p_j as p_j
+    /// stands where c_i was made: p_j carried past c1..c(i-1) first. Where two put
+    /// something at one place, the one published first -- theirs -- comes first
+    /// ([`First`]). With the keys disjoint (checked before), B·P·C' is what preparing C on
+    /// B·P gives: the serial result in commit order.
     pub(crate) fn rebase(&self, mut changes: Vec<D::Change>) -> Option<Vec<D::Change>> {
         for entry in &self.0 {
             for past in entry.1.changes()?.iter() {
-                for change in &mut changes {
-                    *change = D::rebase(change, past).ok()?;
+                let mut past = past.clone();
+                let last = changes.len().saturating_sub(1);
+                for (i, change) in changes.iter_mut().enumerate() {
+                    let moved = D::rebase(change, &past, First::Past).ok()?;
+                    if i < last {
+                        // where the next change was made: after this one
+                        past = D::rebase(&past, change, First::Change).ok()?;
+                    }
+                    *change = moved;
                 }
             }
         }

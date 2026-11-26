@@ -15,7 +15,8 @@
 # its `decision` -- a user decision whose new answer it is; only
 # "structured-problems-2026-11-25" (one problems shape in every reply: an edit's
 # checks.validate gives the problems it added and fixed as {code, part, element, message,
-# severity}) -- and its `cause`, citing the pull request that changed the answer.  An entry
+# severity}) or "optimistic-batches-2026-11-25" (a batch on one document runs optimistically,
+# holding nothing, and run again where it conflicts: what it says of itself says so) -- and its `cause`, citing the pull request that changed the answer.  An entry
 # without a cause, or without an allowed rule or decision, is refused.  Each entry is also a
 # release-notes line.  The Rust replayer (crates/ooxml-oracle/src/host_replay.rs) reads this
 # file's subset: `[[difference]]` tables of strings, integers and lists of strings.
@@ -24,6 +25,27 @@
 decision = "structured-problems-2026-11-25"
 fields = ["result.checks.validate.new", "result.checks.validate.fixed"]
 cause = "Phase 3 D1b (ooxml-host): an edit's checks.validate says each problem it added or fixed as {code, part, element, message, severity}, element the problem's detail and message today's text"
+
+[[difference]]
+decision = "optimistic-batches-2026-11-25"
+tool = "batch"
+case = "test_session_checks::test_a_check_between_a_batch_s_changes_holds_the_document_and_says_so#*"
+fields = ["result.warnings"]
+cause = "Phase 3 D2c (ooxml-host, ooxml-session-word): a check that lays the document out between the changes of a batch on one document says \"check laid the document out between the batch's changes, and lays it out again each time the batch runs again. Put check after the batch's last change (or call it alone)\": the batch holds nothing, so no other call waits for it (a batch over several documents, or one run behind the gate, still says it held the document and others waited)"
+
+[[difference]]
+decision = "optimistic-batches-2026-11-25"
+tool = "batch"
+case = "test_session_concurrency::test_lone_checks_and_a_batch_with_a_check_between_changes_all_finish#*"
+fields = ["result.warnings"]
+cause = "Phase 3 D2c (ooxml-host, ooxml-session-word): as above, a check between the changes of an optimistic batch on one document, beside lone checks"
+
+[[difference]]
+decision = "optimistic-batches-2026-11-25"
+tool = "batch"
+case = "test_check_timing::test_a_check_in_a_batch_lays_out_there#*"
+fields = ["result.warnings"]
+cause = "Phase 3 D2c (ooxml-host, ooxml-session-word): as above, a check between the changes of an optimistic batch on one document"
 
 [[difference]]
 rule = 1
