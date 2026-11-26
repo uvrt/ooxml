@@ -54,7 +54,7 @@ mod undo;
 mod update;
 
 pub use batch::{ReadBatch, ReadOp, BATCH_TIMEOUT, MAX_READ_BATCH_CHARS, READ_BATCH};
-pub use context::{CallCancel, CallContext, CancelToken, LayoutCancel, StoreClock};
+pub use context::{CallCancel, CallContext, CancelToken, FormatHost, LayoutCancel, StoreClock};
 pub use dispatch::CallMade;
 pub use document::PackageFormat;
 pub use error::SessionError;

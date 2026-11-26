@@ -622,6 +622,6 @@ fn a_format_taking_no_rows_is_refused_by_its_kind() {
     let error = sess.resolve("d1", "t:sales").unwrap_err().to_json();
     assert_eq!(error["code"], "invalid_arguments");
     assert_eq!(error["message"], "pptx documents take no such address: 't:sales'");
-    assert_eq!(sess.documents()[1].kind, "xlsx");
+    assert_eq!(sess.documents()[1].kind, ooxml_session::DocKind::Xlsx);
     assert_eq!(sess.prefixes().of("xlsx"), ["t:".to_owned()]);
 }
