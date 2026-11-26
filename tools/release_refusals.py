@@ -49,8 +49,6 @@ READER: dict[str, str | None] = {
         "A picture in Markdown given to `word_insert_markdown`",
     "a footnote in Markdown":
         "A footnote in Markdown given to `word_insert_markdown`",
-    "* at replace:":
-        "`word_insert_markdown` `at` a `replace:` place",
     "* into an empty container": None,
     "a block of * without an id": None,
     "ranges sharing a paragraph with a range across paragraphs": None,
