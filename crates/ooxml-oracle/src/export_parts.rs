@@ -5,6 +5,7 @@
 
 use crate::export::{blocks, props, section_props};
 use ooxml_word_model::document::Notes;
+use ooxml_word_model::docx::VersionNames;
 use ooxml_word_model::numbering::Level;
 use ooxml_word_model::styles::Style;
 use ooxml_word_model::theme::ThemeFonts;
@@ -63,9 +64,14 @@ fn fonts(f: &ThemeFonts) -> J {
     json!({"latin": &*f.latin, "east_asian": &*f.east_asian, "complex_script": &*f.complex_script, "scripts": text_map(&f.scripts)})
 }
 
-fn notes(n: &Notes) -> (J, J, J) {
-    let by_id = J::Object(n.notes.iter().map(|(k, v)| (k.to_string(), blocks(v))).collect());
-    let separators = J::Object(n.separators.iter().map(|(k, v)| (k.to_string(), blocks(v))).collect());
+fn notes(n: &Notes, names: &VersionNames) -> (J, J, J) {
+    let by_id = J::Object(n.notes.iter().map(|(k, v)| (k.to_string(), blocks(v, names))).collect());
+    let separators = J::Object(
+        n.separators
+            .iter()
+            .map(|(k, v)| (k.to_string(), blocks(v, names)))
+            .collect(),
+    );
     let ids = J::Object(n.separator_ids.iter().map(|(k, v)| (k.to_string(), json!(v))).collect());
     (by_id, separators, ids)
 }
@@ -75,8 +81,8 @@ pub fn parts(d: &WordDocument) -> J {
     let cx = &d.context;
     let s = &cx.settings;
     let numbering = &cx.numbering;
-    let (footnotes, footnote_separators, footnote_separator_ids) = notes(&d.footnotes);
-    let (endnotes, endnote_separators, endnote_separator_ids) = notes(&d.endnotes);
+    let (footnotes, footnote_separators, footnote_separator_ids) = notes(&d.footnotes, &d.names);
+    let (endnotes, endnote_separators, endnote_separator_ids) = notes(&d.endnotes, &d.names);
     json!({
         "sections": J::Array(d.sections.iter().map(|x| {
             let mut out = section_props(&x.properties);
@@ -113,7 +119,7 @@ pub fn parts(d: &WordDocument) -> J {
         "footnote_named": ints(&s.footnote_named),
         "footnotes": footnotes, "footnote_separators": footnote_separators, "footnote_separator_ids": footnote_separator_ids,
         "endnotes": endnotes, "endnote_separators": endnote_separators, "endnote_separator_ids": endnote_separator_ids,
-        "stories": J::Object(d.stories.iter().map(|(k, v)| (k.to_string(), blocks(v))).collect()),
+        "stories": J::Object(d.stories.iter().map(|(k, v)| (k.to_string(), blocks(v, &d.names))).collect()),
         "story_parts": text_map(&d.story_parts),
         "cached_fields": texts(d.cached_fields.iter()),
         "warnings": texts(d.warnings.iter()),

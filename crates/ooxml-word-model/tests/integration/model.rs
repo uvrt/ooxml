@@ -8,7 +8,7 @@ use crate::support;
 use ooxml_word_model::labels::Counters;
 use ooxml_word_model::model::Block;
 use ooxml_word_model::value::Value;
-use support::{model, open, p, package, Parts};
+use support::{model, open, p, package, stamped, Parts};
 
 fn first_paragraph(d: &ooxml_word_model::WordDocument, k: usize) -> std::sync::Arc<ooxml_word_model::model::Paragraph> {
     match &d.body[k] {
@@ -82,7 +82,7 @@ fn a_deleted_mark_joins_the_paragraph_after_it() {
     let joined = first_paragraph(&d, 0);
     assert_eq!(joined.text(), "one two");
     assert_eq!(&*joined.joins, &[1]);
-    assert_eq!(&*joined.path, "w:body/w:p[1]");
+    assert_eq!(joined.path_in(&d.names).as_deref(), Some("w:body/w:p[1]"));
     let jc = joined.properties.as_ref().unwrap().declared.get("jc");
     assert_eq!(jc, Some(&Value::Str("center".into())));
 }
@@ -184,7 +184,31 @@ fn incremental_labels_equal_labels_from_scratch_after_every_edit() {
 #[test]
 fn a_reopened_version_reads_only_the_changed_block_and_equals_a_fresh_open() {
     let items: Vec<(i64, i64)> = (0..30).map(|k| (1 + (k % 2), k % 2)).collect();
-    let parts = list(&items);
+    let unstamped = list(&items);
+    // a part whose keys name places (no paraIds) is read again whole: its blocks' keys may
+    // not be theirs where they are taken (ADR-008); where a block reads the same, keys
+    // included, as the last version's at its place, it is shared
+    let mut m = model();
+    let first = m.open(&package(&unstamped)).unwrap();
+    let mut edited = unstamped.clone();
+    edited.body = edited.body.replacen(">item<", ">edited<", 1);
+    let reread = m.open(&package(&edited)).unwrap();
+    let shared = first
+        .body
+        .iter()
+        .zip(reread.body.iter())
+        .filter(|(a, b)| match (*a, *b) {
+            (Block::Paragraph(p), Block::Paragraph(q)) => std::sync::Arc::ptr_eq(p, q),
+            _ => false,
+        })
+        .count();
+    assert_eq!(shared, 29);
+    assert_eq!((m.stats().elements, m.stats().elements_read), (30, 30));
+    assert_eq!(reread.body, open(&edited).1.body);
+    let parts = Parts {
+        body: stamped(&unstamped.body),
+        ..unstamped
+    };
     let mut m = model();
     m.open(&package(&parts)).unwrap();
     let mut changed = parts.clone();
@@ -197,7 +221,9 @@ fn a_reopened_version_reads_only_the_changed_block_and_equals_a_fresh_open() {
     assert_eq!(reopened.body_labels(), fresh.body_labels());
     // Making a paragraph a list item finds that block's items again, and the labels after.
     let mut listed = changed.clone();
-    listed.body = listed.body.replacen(&item(1, 0), &item(2, 0), 1);
+    // the item's content (its paragraph's stamp stays)
+    let content = |num| item(num, 0).replacen("<w:p>", "", 1);
+    listed.body = listed.body.replacen(&content(1), &content(2), 1);
     let again = m.open(&package(&listed)).unwrap();
     assert_eq!((m.stats().elements_read, m.stats().label_blocks), (1, 1));
     assert_eq!(again.body_labels(), open(&listed).1.body_labels());
@@ -212,7 +238,7 @@ fn a_content_controls_paragraphs_keep_their_paths_when_it_is_taken_as_it_was() {
         p("", "", "after")
     );
     let parts = Parts {
-        body,
+        body: stamped(&body),
         ..Parts::default()
     };
     let mut m = model();
@@ -224,7 +250,10 @@ fn a_content_controls_paragraphs_keep_their_paths_when_it_is_taken_as_it_was() {
     let Block::Paragraph(inside) = &reopened.body[1] else {
         panic!("not a paragraph")
     };
-    assert_eq!(&*inside.path, "w:body/w:sdt[1]/w:sdtContent[1]/w:p[1]");
+    assert_eq!(
+        inside.path_in(&reopened.names).as_deref(),
+        Some("w:body/w:sdt[1]/w:sdtContent[1]/w:p[1]")
+    );
     assert_eq!(reopened.body, open(&changed).1.body);
 }
 

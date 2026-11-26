@@ -66,8 +66,9 @@ fn white_text(props: &ooxml_word_model::value::Props) -> bool {
 pub struct MeasuredTable {
     /// Its block's key (`None`: a table no story's index holds).
     pub key: Option<BlockKey>,
-    /// Each cell's path, where no story's index holds it (a text box's table, until RD1).
-    pub unkeyed_cells: Option<Arc<[Arc<[Text]>]>>,
+    /// Where no story's index holds it, the path its cells are named below (a text box's
+    /// table, until RD1).
+    pub unkeyed_cells: Option<Text>,
     /// Each cell's place in the table as written (the model's [`Table::cell_places`]).
     ///
     /// [`Table::cell_places`]: ooxml_word_model::model::Table::cell_places
@@ -120,10 +121,12 @@ impl MeasuredTable {
         match anchor {
             Some(anchor) => ItemName::Anchored(anchor),
             None => ItemName::Path(
-                self.unkeyed_cells
-                    .as_ref()
-                    .and_then(|cells| cells.get(row)?.get(cell).cloned())
-                    .unwrap_or_default(),
+                (|| {
+                    let table = self.unkeyed_cells.as_deref()?;
+                    let &(r, c) = self.cell_places.get(row)?.get(cell)?;
+                    Some(Text::from(ooxml_word_model::model::cell_path(table, r, c).as_str()))
+                })()
+                .unwrap_or_default(),
             ),
         }
     }

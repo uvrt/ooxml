@@ -212,11 +212,13 @@ pub struct Paragraph {
     pub table_style_id: Option<Text>,
     /// The table style's regions that apply to its cell, in order (band positions unnamed).
     pub table_conditions: Arc<[Text]>,
-    /// Its structural path in its part.
-    pub path: Text,
-    /// Its block's key in its story, beside its path (`None`: a paragraph no story's index
-    /// holds -- a text box's, one the layout makes); a joined paragraph's is its first's.
+    /// Its block's key in its story (`None`: a paragraph no story's index holds -- a text
+    /// box's, one the layout makes); a joined paragraph's is its first's.
     pub key: Option<BlockKey>,
+    /// Where no story's index holds it, the path it is named by: a text box's (its steps
+    /// below its drawing, until RD1 keys text-box blocks), one the layout makes, one of a
+    /// part no index holds. `None` with a key.
+    pub unkeyed: Option<Text>,
     /// `w14:paraId`.
     pub para_id: Option<Text>,
     /// Where each joined paragraph's runs begin (the final view of a deleted mark).
@@ -238,11 +240,21 @@ impl Paragraph {
     /// Its path where no story's index holds it (a text box's, one the layout makes): what
     /// names it then. A paragraph an index holds is named by its key.
     pub fn unkeyed_path(&self) -> Option<&Text> {
-        self.key.is_none().then_some(&self.path)
+        self.unkeyed.as_ref()
+    }
+
+    /// Its path: named through the version's names `names` where a story's index holds it,
+    /// else its own.
+    #[must_use]
+    pub fn path_in(&self, names: &crate::docx::VersionNames) -> Option<String> {
+        match self.key {
+            Some(key) => names.path(crate::ids::Anchor::whole(key)),
+            None => self.unkeyed.as_deref().map(str::to_owned),
+        }
     }
 
     /// Whether `other` lays out as this paragraph does wherever it stands: everything the
-    /// same but its path, its key and its bookmarks. A layout names a paragraph's lines by its block
+    /// same but its name (its key or path) and its bookmarks. A layout names a paragraph's lines by its block
     /// and reads its path from the version's body; its bookmarks are read from the body by
     /// the fields that look them up. The model gives a paragraph it kept by its content and
     /// moved the same parts (`Arc`s), so there this is a few pointer compares.
@@ -253,8 +265,8 @@ impl Paragraph {
             properties,
             table_style_id,
             table_conditions,
-            path: _,
             key: _,
+            unkeyed: _,
             para_id,
             joins,
             mark_deleted,
@@ -300,11 +312,16 @@ pub struct Table {
     pub style_id: Option<Text>,
     /// rows -> cells -> blocks.
     pub rows: Arc<[Cells]>,
-    /// Its path.
-    pub path: Text,
-    /// Its block's key in its story, beside its path (`None`: a table no story's index
-    /// holds); each part of a table the final view parts has the table's.
+    /// Its block's key in its story (`None`: a table no story's index holds); each part of
+    /// a table the final view parts has the table's.
     pub key: Option<BlockKey>,
+    /// Where no story's index holds it, the path it is named by (a text box's table, its
+    /// steps below its drawing until RD1; one of a part no index holds). `None` with a key.
+    pub unkeyed: Option<Text>,
+    /// Where no story's index holds it, the path its cells are named below: the path it was
+    /// read at (a text box's top-level table is named below its drawing's paragraph once
+    /// laid out, its cells as they were read).
+    pub unkeyed_cells: Option<Text>,
     /// `w:tblGrid`'s widths, twips.
     pub grid: Arc<[i64]>,
     /// `w:tblPr` as declared.
@@ -317,9 +334,7 @@ pub struct Table {
     pub look: Look,
     /// Each cell's regions.
     pub conditions: Arc<[RowConditions]>,
-    /// Each cell's path.
-    pub cell_paths: Arc<[Arc<[Text]>]>,
-    /// Each cell's place in the table as written, beside its path: its row among the
+    /// Each cell's place in the table as written: its row among the
     /// table's rows and its place among the row's cells, each counted through row- and
     /// cell-level wrappers (what [`crate::ids::Sub::Cell`] names; the final view's rows and
     /// cells, deleted ones dropped, lose it).
@@ -332,14 +347,33 @@ impl Table {
     /// Its path where no story's index holds it (a text box's): what names it then. A table
     /// an index holds is named by its key.
     pub fn unkeyed_path(&self) -> Option<&Text> {
-        self.key.is_none().then_some(&self.path)
+        self.unkeyed.as_ref()
     }
 
-    /// Each cell's path, where no story's index holds the table (a text box's): what names
-    /// its cells then.
-    pub fn unkeyed_cell_paths(&self) -> Option<&Arc<[Arc<[Text]>]>> {
-        self.key.is_none().then_some(&self.cell_paths)
+    /// Its path: named through the version's names `names` where a story's index holds it,
+    /// else its own.
+    #[must_use]
+    pub fn path_in(&self, names: &crate::docx::VersionNames) -> Option<String> {
+        match self.key {
+            Some(key) => names.path(crate::ids::Anchor::whole(key)),
+            None => self.unkeyed.as_deref().map(str::to_owned),
+        }
     }
+
+    /// The path of the final view's cell `cell` of row `row`, where no story's index holds
+    /// the table: its own path and the cell's place as written (`w:tr[r]/w:tc[c]`).
+    #[must_use]
+    pub fn unkeyed_cell_path(&self, row: usize, cell: usize) -> Option<String> {
+        let table = self.unkeyed_cells.as_ref()?;
+        let &(r, c) = self.cell_places.get(row)?.get(cell)?;
+        Some(cell_path(table, r, c))
+    }
+}
+
+/// The path of the cell at `(row, cell)` (its place as written) of the table at `table`.
+#[must_use]
+pub fn cell_path(table: &str, row: u32, cell: u32) -> String {
+    format!("{table}/w:tr[{}]/w:tc[{}]", u64::from(row) + 1, u64::from(cell) + 1)
 }
 
 /// A block of a story.

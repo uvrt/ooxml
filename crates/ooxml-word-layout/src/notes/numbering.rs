@@ -75,7 +75,8 @@ pub fn default_separator(kind: &str, part: NotesPart) -> Paragraph {
         })),
         table_style_id: None,
         table_conditions: Arc::from(Vec::new()),
-        path: text(&format!("w:{}s/{kind}", part.name())),
+        // no index holds it: named by the path it is made with
+        unkeyed: Some(text(&format!("w:{}s/{kind}", part.name()))),
         para_id: None,
         joins: Arc::from(Vec::new()),
         mark_deleted: false,

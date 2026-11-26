@@ -16,7 +16,7 @@
 use super::formatting::{Cell, Formatting};
 use crate::ids::W;
 use crate::model::{Block, Story, Table};
-use crate::read::{Fields, Reader};
+use crate::read::{At, Fields, Reader};
 use crate::resolve::resolve_table;
 use crate::value::{text, Props, Text};
 use ooxml_derive::{AddressHash, CacheBudget, Limit, Memo, MemoStats, Weigh};
@@ -45,7 +45,7 @@ impl TableFacts {
         let context = formatting.context();
         let reader = Reader::new(&context.colours);
         let mut fields = Fields::new(true, true);
-        let blocks = reader.table_blocks(table, &text(ROOT), &mut fields);
+        let blocks = reader.table_blocks(table, &At::Path(text(ROOT)), &mut fields);
         let mut out = TableFacts::default();
         out.blocks(formatting, &blocks);
         out
@@ -55,9 +55,9 @@ impl TableFacts {
         for block in blocks {
             match block {
                 Block::Paragraph(p) => {
-                    if let Some(style) = &p.table_style_id {
+                    if let (Some(style), Some(path)) = (&p.table_style_id, &p.unkeyed) {
                         self.paragraphs.insert(
-                            p.path.clone(),
+                            path.clone(),
                             Cell {
                                 style: style.clone(),
                                 conditions: Arc::clone(&p.table_conditions),
@@ -76,16 +76,10 @@ impl TableFacts {
         for row in resolved.rows {
             for cell in row.cells {
                 let cell = Arc::unwrap_or_clone(cell);
-                let path = table.cell_paths.get(cell.row).and_then(|r| r.get(cell.index)).cloned();
-                let path = path.unwrap_or_else(|| {
-                    text(&format!(
-                        "{}/w:tr[{}]/w:tc[{}]",
-                        table.path,
-                        cell.row + 1,
-                        cell.index + 1
-                    ))
-                });
-                self.cells.insert(path, cell.properties);
+                // a table read on its own is read by path: every cell has one
+                if let Some(path) = table.unkeyed_cell_path(cell.row, cell.index) {
+                    self.cells.insert(text(&path), cell.properties);
+                }
             }
         }
         for row in table.rows.iter() {

@@ -10,7 +10,7 @@
 use super::fields::Fields;
 use super::join::{join, joined};
 use super::paragraph::mark_removed;
-use super::Reader;
+use super::{At, Reader};
 use crate::docx::tables::{cell_merge, merge_heads, VMerge};
 use crate::model::{Block, Look, Paragraph, Table};
 use crate::props::table_properties;
@@ -41,6 +41,38 @@ pub(crate) fn row_level<'a>(parent: &'a Element, name: &str, out: &mut Vec<&'a E
 fn level_of<'a>(parent: &'a Element, name: &str) -> Vec<&'a Element> {
     let mut out = Vec::new();
     row_level(parent, name, &mut out);
+    out
+}
+
+/// [`level_of`] with each element's place below `parent` (child indexes, wrappers passed
+/// through).
+fn level_placed<'a>(parent: &'a Element, name: &str) -> Vec<(Vec<usize>, &'a Element)> {
+    fn walk<'a>(parent: &'a Element, name: &str, above: &mut Vec<usize>, out: &mut Vec<(Vec<usize>, &'a Element)>) {
+        for (k, node) in parent.children().iter().enumerate() {
+            let Some(node) = node.as_element() else { continue };
+            above.push(k);
+            match local(node) {
+                l if l == name => out.push((above.clone(), node)),
+                "sdt" => {
+                    let content = node
+                        .children()
+                        .iter()
+                        .enumerate()
+                        .find_map(|(c, n)| n.as_element().filter(|e| local(e) == "sdtContent").map(|e| (c, e)));
+                    if let Some((c, content)) = content {
+                        above.push(c);
+                        walk(content, name, above, out);
+                        above.pop();
+                    }
+                }
+                "customXml" => walk(node, name, above, out),
+                _ => {}
+            }
+            above.pop();
+        }
+    }
+    let mut out = Vec::new();
+    walk(parent, name, &mut Vec::new(), &mut out);
     out
 }
 
@@ -346,7 +378,6 @@ struct Built {
     row_properties: Vec<Props>,
     cell_properties: Vec<Arc<[Props]>>,
     conditions: Vec<Arc<[Arc<[Text]>]>>,
-    cell_paths: Vec<Arc<[Text]>>,
     cell_places: Vec<Arc<[(u32, u32)]>>,
     moved: Vec<(usize, Vec<Block>)>,
 }
@@ -354,7 +385,7 @@ struct Built {
 /// What every row of a table is read with.
 struct Shape<'t> {
     style: &'t Text,
-    path: &'t str,
+    at: &'t At<'t>,
     look: Look,
     rows: usize,
     headers: usize,
@@ -365,6 +396,8 @@ struct Shape<'t> {
 /// One row's plan: its cells shown, and their groups.
 struct Plan<'a> {
     index: usize,
+    /// Its place below the table.
+    rel: Vec<usize>,
     row: &'a Element,
     shown: Vec<&'a Element>,
     groups: Vec<Vec<usize>>,
@@ -376,14 +409,14 @@ impl Reader<'_> {
         cell: &Element,
         style: &Text,
         conditions: &Arc<[Text]>,
-        path: &Text,
+        at: &At<'_>,
         fields: &mut Fields,
     ) -> Vec<Block> {
-        join(self.block_list(cell, Some((style, conditions)), path, fields))
+        join(self.block_list(cell, Some((style, conditions)), at, fields))
     }
 
     fn row(&self, k: usize, plan: &Plan<'_>, shape: &Shape<'_>, fields: &mut Fields, built: &mut Built) {
-        let (style, path) = (shape.style, shape.path);
+        let style = shape.style;
         let kept: HashSet<*const Element> = plan
             .groups
             .iter()
@@ -391,7 +424,18 @@ impl Reader<'_> {
             .filter_map(|&n| plan.shown.get(n))
             .map(|c| std::ptr::from_ref(*c))
             .collect();
-        let all = level_of(plan.row, "tc");
+        let placed = level_placed(plan.row, "tc");
+        let all: Vec<&Element> = placed.iter().map(|(_, c)| *c).collect();
+        // the cell `j` of the row's own, where it is read
+        let at = |j: usize| {
+            let rel: Vec<usize> = plan
+                .rel
+                .iter()
+                .chain(placed.get(j).map(|(r, _)| r.as_slice()).unwrap_or_default())
+                .copied()
+                .collect();
+            shape.at.cell((count(plan.index), count(j)), &rel)
+        };
         let mut cells: Vec<(usize, &Element)> = Vec::new();
         let mut props_of: Vec<Props> = Vec::new();
         for (j, cell) in all.iter().enumerate() {
@@ -416,17 +460,13 @@ impl Reader<'_> {
                 ))
             })
             .collect();
-        let paths: Vec<Text> = cells
-            .iter()
-            .map(|(j, _)| text(&format!("{path}/w:tr[{}]/w:tc[{}]", plan.index + 1, j + 1)))
-            .collect();
         let places: Vec<(u32, u32)> = cells.iter().map(|(j, _)| (count(plan.index), count(*j))).collect();
         let mut row_blocks: Vec<Arc<[Block]>> = Vec::new();
-        for (n, (_, cell)) in cells.iter().enumerate() {
-            let (Some(conds), Some(cell_path)) = (row_conditions.get(n), paths.get(n)) else {
+        for (n, (j, cell)) in cells.iter().enumerate() {
+            let Some(conds) = row_conditions.get(n) else {
                 continue;
             };
-            let mut blocks = self.cell_blocks(cell, style, conds, cell_path, fields);
+            let mut blocks = self.cell_blocks(cell, style, conds, &at(*j), fields);
             let group = plan.groups.iter().find(|g| {
                 g.first()
                     .and_then(|&f| plan.shown.get(f))
@@ -443,8 +483,7 @@ impl Reader<'_> {
                 }
                 for other in others {
                     let j = all.iter().position(|c| std::ptr::eq(*c, other)).unwrap_or(0);
-                    let there = text(&format!("{path}/w:tr[{}]/w:tc[{}]", plan.index + 1, j + 1));
-                    let taken = self.cell_blocks(other, style, conds, &there, fields);
+                    let taken = self.cell_blocks(other, style, conds, &at(j), fields);
                     blocks = cell_taken(blocks, taken);
                 }
             }
@@ -456,20 +495,20 @@ impl Reader<'_> {
             .push(table_properties(child(plan.row, "trPr"), self.colours()));
         built.cell_properties.push(Arc::from(props_of));
         built.conditions.push(Arc::from(row_conditions));
-        built.cell_paths.push(Arc::from(paths));
         built.cell_places.push(Arc::from(places));
     }
 
     /// A `w:tbl`'s blocks in the final view: the table, or its parts with the blocks moved
     /// out between them.
-    pub(crate) fn table_blocks(&self, element: &Element, path: &Text, fields: &mut Fields) -> Vec<Block> {
+    pub(crate) fn table_blocks(&self, element: &Element, at: &At<'_>, fields: &mut Fields) -> Vec<Block> {
         let props_element = child(element, "tblPr");
         let tbl_pr = props_element.map(w::TblPr::new);
         let style = text(tbl_pr.and_then(w::TblPr::style).and_then(w::Val::val).unwrap_or(""));
         let look = table_look(tbl_pr.and_then(w::TblPr::look).map(w::TblLook::element));
         let kept =
             |row: &Element| child(row, "trPr").and_then(|p| child(p, "del")).is_none() && !all_cells_deleted(row);
-        let all_rows = level_of(element, "tr");
+        let placed_rows = level_placed(element, "tr");
+        let all_rows: Vec<&Element> = placed_rows.iter().map(|(_, r)| *r).collect();
         let heads = merge_heads(&all_rows, &kept, &|cell| cell_merge(cell, true));
         let row_elements: Vec<(usize, &Element)> = all_rows
             .iter()
@@ -483,6 +522,7 @@ impl Reader<'_> {
         let mut gone: HashSet<*const Element> = HashSet::new();
         let mut plans = Vec::new();
         for (index, row) in &row_elements {
+            let rel = placed_rows.get(*index).map(|(r, _)| r.clone()).unwrap_or_default();
             let shown: Vec<&Element> = level_of(row, "tc").into_iter().filter(|c| !cell_deleted(c)).collect();
             let (groups, gone_here) = cell_ends(&shown);
             gone.extend(
@@ -493,6 +533,7 @@ impl Reader<'_> {
             );
             plans.push(Plan {
                 index: *index,
+                rel,
                 row,
                 shown,
                 groups,
@@ -503,7 +544,7 @@ impl Reader<'_> {
         let mut built = Built::default();
         let shape = Shape {
             style: &style,
-            path,
+            at,
             look,
             rows: row_elements.len(),
             headers,
@@ -522,18 +563,19 @@ impl Reader<'_> {
                 .map(|(_, w)| *w)
                 .collect()
         };
+        let (key, unkeyed) = at.name();
         let table = Table {
             style_id: (!style.is_empty()).then(|| style.clone()),
             rows: Arc::from(std::mem::take(&mut built.rows)),
-            path: path.clone(),
-            key: None,
+            key,
+            unkeyed_cells: unkeyed.clone(),
+            unkeyed,
             grid: grid_of(0, plans.len()),
             properties: table_properties(props_element, self.colours()),
             row_properties: Arc::from(std::mem::take(&mut built.row_properties)),
             cell_properties: Arc::from(std::mem::take(&mut built.cell_properties)),
             look,
             conditions: Arc::from(std::mem::take(&mut built.conditions)),
-            cell_paths: Arc::from(std::mem::take(&mut built.cell_paths)),
             cell_places: Arc::from(std::mem::take(&mut built.cell_places)),
             joined: false,
         };
@@ -556,7 +598,6 @@ fn part_of(table: &Table, start: usize, end: usize, grid: Arc<[i64]>) -> Table {
         row_properties: slice(&table.row_properties, start, end),
         cell_properties: slice(&table.cell_properties, start, end),
         conditions: slice(&table.conditions, start, end),
-        cell_paths: slice(&table.cell_paths, start, end),
         cell_places: slice(&table.cell_places, start, end),
         joined: true,
         ..table.clone()

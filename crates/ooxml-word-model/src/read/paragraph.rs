@@ -1,10 +1,10 @@
 //! Owns: a `w:p` as a [`Paragraph`] -- its runs and bookmarks, its properties, its table
-//! context, its path and id, whether its mark is deleted, the section it ends.
+//! context, its key (or path) and id, whether its mark is deleted, the section it ends.
 //!
 //! Must not: join paragraphs (`join`), or read runs (`runs`).
 
 use super::fields::Fields;
-use super::{Reader, Steps};
+use super::{At, Reader, Steps};
 use crate::model::Paragraph;
 use crate::value::{text, Text};
 use crate::w;
@@ -26,9 +26,10 @@ impl Reader<'_> {
         &self,
         element: &Element,
         table: Option<(&Text, &Arc<[Text]>)>,
-        path: Text,
+        at: &At<'_>,
         fields: &mut Fields,
     ) -> Paragraph {
+        let (key, unkeyed) = at.name();
         let mut runs = Vec::new();
         let outer = fields.bookmarks.replace(Vec::new());
         self.inline(element, &mut Steps::new(""), fields, &mut runs);
@@ -42,8 +43,8 @@ impl Reader<'_> {
             properties: self.para_props(ppr),
             table_style_id: table.map(|(s, _)| s.clone()),
             table_conditions: table.map_or_else(|| Arc::from(Vec::new()), |(_, c)| Arc::clone(c)),
-            path,
-            key: None,
+            key,
+            unkeyed,
             para_id: w::P::new(element).para_id().map(text),
             joins: Arc::from(Vec::new()),
             mark_deleted: mark_removed(element),

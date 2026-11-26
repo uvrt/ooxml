@@ -231,7 +231,7 @@ impl VersionNames {
 /// The layout model's path of the block at `place` in `part`: the container child's step
 /// from the index, the steps below it counted in that child; a block outside the container
 /// (below the root, beside the body) by a walk from the root.
-fn block_path(part: &StoryPart, place: &[u32]) -> Option<String> {
+pub(crate) fn block_path(part: &StoryPart, place: &[u32]) -> Option<String> {
     let root = part.root();
     if let Some(path) = note_path(root, place) {
         return path;
