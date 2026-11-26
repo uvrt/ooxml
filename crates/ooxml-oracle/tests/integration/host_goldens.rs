@@ -31,7 +31,7 @@ fn replay_stream(replayer: &Replayer, name: &str, path: &Path, every: usize) -> 
     let mut differences = Vec::new();
     for (case, events) in Replayer::cases(path).unwrap().into_iter().step_by(every) {
         for (event, outcome) in replayer.replay(name, &events) {
-            let call = matches!(event["event"].as_str(), Some("call" | "calls"));
+            let call = matches!(event["event"].as_str(), Some("call" | "calls" | "change"));
             if call && event["tool"] == "check" && event["result"]["data"].get("validate").is_some() {
                 counts.at_e1 += 1;
             }
