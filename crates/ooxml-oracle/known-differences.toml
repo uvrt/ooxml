@@ -448,7 +448,7 @@ cause = "values and addresses by reference, $ref and {{...}} (deferred, referenc
 
 [[not_supported]]
 form = "replace_text *"
-cause = "replace_text regex, range, slides, empty find, styled text, body only (deferred, text forms T)"
+cause = "replace_text slides, empty find, styled text, body only (deferred, text forms T)"
 
 [[not_supported]]
 form = "word_delete a *"
